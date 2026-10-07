@@ -141,11 +141,31 @@ const UTILIZATION_FIELDS: {
     label: "POA Live Audits / POA PQ Audits",
     integer: true,
   },
-  { key: "fixedUtilizationForecast", label: "Utilization Forecast", integer: false },
-  { key: "fixedUtilizationWithAdhoc", label: "Utilization with Adhoc", integer: false },
-  { key: "fixedUtilizationWithoutAdhoc", label: "Utilization without Adhoc", integer: false },
-  { key: "fixedUtilizationWithAdhocPct", label: "Utilization with Adhoc %", integer: false },
-  { key: "fixedUtilizationWithoutAdhocPct", label: "Utilization without Adhoc %", integer: false },
+  {
+    key: "fixedUtilizationForecast",
+    label: "Utilization Forecast",
+    integer: false,
+  },
+  {
+    key: "fixedUtilizationWithAdhoc",
+    label: "Utilization with Adhoc",
+    integer: false,
+  },
+  {
+    key: "fixedUtilizationWithoutAdhoc",
+    label: "Utilization without Adhoc",
+    integer: false,
+  },
+  {
+    key: "fixedUtilizationWithAdhocPct",
+    label: "Utilization with Adhoc %",
+    integer: false,
+  },
+  {
+    key: "fixedUtilizationWithoutAdhocPct",
+    label: "Utilization without Adhoc %",
+    integer: false,
+  },
   { key: "fixedPoaAnsweringPct", label: "POA Answering", integer: false },
   { key: "fixedEscalatedPct", label: "Escalated %", integer: false },
 ];

@@ -35,7 +35,9 @@ export interface PersonalDataExport {
   };
 }
 
-export async function buildPersonalDataExport(principalId: string): Promise<PersonalDataExport> {
+export async function buildPersonalDataExport(
+  principalId: string,
+): Promise<PersonalDataExport> {
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code, e.full_name, e.first_name, e.last_name, e.date_of_birth, e.gender,
             e.blood_group, e.official_email, e.personal_email, e.mobile, e.address1,
@@ -48,7 +50,7 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
      LEFT JOIN designation_master dg ON dg.id = e.designation_id
      LEFT JOIN department_master dp ON dp.id = e.department_id
      WHERE e.user_id = ? AND e.active_status = 1 LIMIT 1`,
-    [principalId]
+    [principalId],
   );
 
   const emp = empRows[0] ?? null;
@@ -108,7 +110,7 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
        WHERE employee_id = ?
        ORDER BY effective_from DESC
        LIMIT 50`,
-      [employeeId]
+      [employeeId],
     );
     payrollComponents = prRows;
   }
@@ -135,7 +137,7 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
          MAX(record_date) AS latest_date
        FROM attendance_daily_record
        WHERE employee_id = ?`,
-      [employeeId]
+      [employeeId],
     );
     attendanceSummary = attRows[0] ?? null;
   }
@@ -155,7 +157,7 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
        WHERE lr.employee_id = ?
        ORDER BY lr.from_date DESC
        LIMIT 100`,
-      [employeeId]
+      [employeeId],
     );
     leaveSummary = lvRows;
   }
@@ -166,7 +168,7 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
      FROM data_consent
      WHERE data_principal_id = ?
      ORDER BY consented_at DESC`,
-    [principalId]
+    [principalId],
   );
 
   // ── Rights requests
@@ -175,7 +177,7 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
      FROM data_rights_request
      WHERE principal_id = ?
      ORDER BY created_at DESC`,
-    [principalId]
+    [principalId],
   );
 
   // ── Document metadata (no binaries, no access_level=payroll/confidential file paths)
@@ -186,7 +188,7 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
        FROM document_vault_inventory
        WHERE owner_employee_id = ? AND is_soft_deleted = 0
        ORDER BY created_at DESC`,
-      [employeeId]
+      [employeeId],
     );
     docRows = dr;
   }
@@ -198,7 +200,7 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
      WHERE actor_user_id = ?
      ORDER BY acted_at DESC
      LIMIT 200`,
-    [principalId]
+    [principalId],
   );
 
   return {

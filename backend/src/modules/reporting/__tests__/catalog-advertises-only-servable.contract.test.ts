@@ -26,7 +26,9 @@ describe("report suite catalog", () => {
   );
 
   /** Codes in the hand-curated CATALOG const. */
-  const curatedCodes = [...source.matchAll(/\{ code: "([a-z0-9-]+)", module:/g)].map((m) => m[1]!);
+  const curatedCodes = [
+    ...source.matchAll(/\{ code: "([a-z0-9-]+)", module:/g),
+  ].map((m) => m[1]!);
 
   it("has a curated list to check", () => {
     expect(curatedCodes.length).toBeGreaterThan(0);
@@ -34,12 +36,18 @@ describe("report suite catalog", () => {
 
   it("serves a filtered list rather than the raw curated one", () => {
     // The handler must not hand back CATALOG directly — that is what allowed the drift.
-    expect(source).toMatch(/reportSuiteRouter\.get\("\/catalog"[\s\S]{0,200}SERVED_CATALOG/);
-    expect(source).not.toMatch(/reportSuiteRouter\.get\("\/catalog"[\s\S]{0,120}data: CATALOG \}/);
+    expect(source).toMatch(
+      /reportSuiteRouter\.get\("\/catalog"[\s\S]{0,200}SERVED_CATALOG/,
+    );
+    expect(source).not.toMatch(
+      /reportSuiteRouter\.get\("\/catalog"[\s\S]{0,120}data: CATALOG \}/,
+    );
   });
 
   it("filters on REPORT_CATALOG membership, which is what the access middleware checks", () => {
-    expect(source).toMatch(/SERVED_CATALOG\s*=\s*CATALOG\.filter\([\s\S]{0,120}REPORT_CATALOG\.some/);
+    expect(source).toMatch(
+      /SERVED_CATALOG\s*=\s*CATALOG\.filter\([\s\S]{0,120}REPORT_CATALOG\.some/,
+    );
   });
 
   it("reports what it omitted instead of quietly serving a shorter list", () => {
@@ -49,7 +57,9 @@ describe("report suite catalog", () => {
 
   it("every curated code that IS in REPORT_CATALOG stays servable", () => {
     // Guards the other direction: the filter must not be so aggressive it empties the list.
-    const servable = curatedCodes.filter((c) => REPORT_CATALOG.some((r) => r.code === c));
+    const servable = curatedCodes.filter((c) =>
+      REPORT_CATALOG.some((r) => r.code === c),
+    );
     expect(servable.length).toBeGreaterThan(0);
     expect(servable.length).toBeLessThanOrEqual(curatedCodes.length);
   });

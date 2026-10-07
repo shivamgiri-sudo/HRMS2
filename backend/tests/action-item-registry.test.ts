@@ -23,7 +23,7 @@ describe("Action Item Registry — structural invariants", () => {
   });
 
   it("no two entries share the same itemType", () => {
-    const types = ACTION_ITEM_REGISTRY.map(d => d.itemType);
+    const types = ACTION_ITEM_REGISTRY.map((d) => d.itemType);
     expect(new Set(types).size).toBe(types.length);
   });
 
@@ -102,7 +102,10 @@ describe("Action Item Registry — trigger coverage", () => {
   it("all existing trigger item types are registered", () => {
     for (const type of KNOWN_TRIGGER_TYPES) {
       const def = resolveActionItemDef(type);
-      expect(def, `Missing registry entry for trigger type: ${type}`).not.toBeNull();
+      expect(
+        def,
+        `Missing registry entry for trigger type: ${type}`,
+      ).not.toBeNull();
     }
   });
 
@@ -111,28 +114,50 @@ describe("Action Item Registry — trigger coverage", () => {
   });
 
   it("TAT_BREACH has CRITICAL priority", () => {
-    expect(resolveActionItemDef("TAT_BREACH")!.defaultPriority).toBe(ACTION_PRIORITY.CRITICAL);
+    expect(resolveActionItemDef("TAT_BREACH")!.defaultPriority).toBe(
+      ACTION_PRIORITY.CRITICAL,
+    );
   });
 
   it("DPDP_WITHDRAWAL_REVIEW has CRITICAL priority", () => {
-    expect(resolveActionItemDef("DPDP_WITHDRAWAL_REVIEW")!.defaultPriority).toBe(ACTION_PRIORITY.CRITICAL);
+    expect(
+      resolveActionItemDef("DPDP_WITHDRAWAL_REVIEW")!.defaultPriority,
+    ).toBe(ACTION_PRIORITY.CRITICAL);
   });
 
   it("PAYROLL_SIGN_OFF_PENDING has CRITICAL priority", () => {
-    expect(resolveActionItemDef("PAYROLL_SIGN_OFF_PENDING")!.defaultPriority).toBe(ACTION_PRIORITY.CRITICAL);
+    expect(
+      resolveActionItemDef("PAYROLL_SIGN_OFF_PENDING")!.defaultPriority,
+    ).toBe(ACTION_PRIORITY.CRITICAL);
   });
 
   it("scoped items require branchId (requiresScope=true)", () => {
-    const scoped = ["ONBOARDING_STUCK", "ROSTER_PUBLISH_PENDING", "LEAVE_APPROVAL_PENDING"];
+    const scoped = [
+      "ONBOARDING_STUCK",
+      "ROSTER_PUBLISH_PENDING",
+      "LEAVE_APPROVAL_PENDING",
+    ];
     for (const type of scoped) {
-      expect(resolveActionItemDef(type)!.requiresScope, `Expected requiresScope=true for ${type}`).toBe(true);
+      expect(
+        resolveActionItemDef(type)!.requiresScope,
+        `Expected requiresScope=true for ${type}`,
+      ).toBe(true);
     }
   });
 
   it("global items do not require scope (requiresScope=false)", () => {
-    const global = ["NAME_MISMATCH", "INCENTIVE_APPROVAL", "PAYROLL_SIGN_OFF_PENDING", "DPDP_WITHDRAWAL_REVIEW", "TAT_BREACH"];
+    const global = [
+      "NAME_MISMATCH",
+      "INCENTIVE_APPROVAL",
+      "PAYROLL_SIGN_OFF_PENDING",
+      "DPDP_WITHDRAWAL_REVIEW",
+      "TAT_BREACH",
+    ];
     for (const type of global) {
-      expect(resolveActionItemDef(type)!.requiresScope, `Expected requiresScope=false for ${type}`).toBe(false);
+      expect(
+        resolveActionItemDef(type)!.requiresScope,
+        `Expected requiresScope=false for ${type}`,
+      ).toBe(false);
     }
   });
 });

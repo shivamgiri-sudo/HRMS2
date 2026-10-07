@@ -109,10 +109,15 @@ async function perUserAggregates(
 ): Promise<PerUserAgg[]> {
   if (userCodes.length === 0) return [];
   const placeholders = userCodes.map(() => "?").join(",");
-  const whereClause = window === "d1"
-    ? "CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)"
-    : "CallDate >= DATE_SUB(?, INTERVAL 7 DAY) AND CallDate < ?";
-  const rows = await querySource<{ User: string; score_sum: string | null; scored_calls: number }>(
+  const whereClause =
+    window === "d1"
+      ? "CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)"
+      : "CallDate >= DATE_SUB(?, INTERVAL 7 DAY) AND CallDate < ?";
+  const rows = await querySource<{
+    User: string;
+    score_sum: string | null;
+    scored_calls: number;
+  }>(
     `SELECT User,
             SUM(CASE WHEN quality_percentage IS NOT NULL THEN quality_percentage ELSE 0 END) AS score_sum,
             SUM(quality_percentage IS NOT NULL) AS scored_calls
@@ -129,7 +134,10 @@ async function perUserAggregates(
   }));
 }
 
-function emptyResult(detailLevel: QualityDetailLevel, teamSize: number): QualityModuleResult {
+function emptyResult(
+  detailLevel: QualityDetailLevel,
+  teamSize: number,
+): QualityModuleResult {
   return {
     detailLevel,
     teamSize,
@@ -154,7 +162,12 @@ export async function buildQualityModule(
   if (teamSize === 0) {
     const result = emptyResult(detailLevel, 0);
     result.sourceHealth = [
-      { module: "quality", state: "NOT_APPLICABLE", detail: "No team members in scope", asOfDate: reportingDate },
+      {
+        module: "quality",
+        state: "NOT_APPLICABLE",
+        detail: "No team members in scope",
+        asOfDate: reportingDate,
+      },
     ];
     return result;
   }
@@ -180,7 +193,12 @@ export async function buildQualityModule(
     if (codes.length === 0) {
       const result = emptyResult(detailLevel, teamSize);
       result.sourceHealth = [
-        { module: "quality", state: "NO_DATA", detail: "No resolvable employee codes for this team", asOfDate: reportingDate },
+        {
+          module: "quality",
+          state: "NO_DATA",
+          detail: "No resolvable employee codes for this team",
+          asOfDate: reportingDate,
+        },
       ];
       return result;
     }
@@ -192,10 +210,15 @@ export async function buildQualityModule(
 
     const auditedUsers = d1PerUser.filter((r) => r.scoredCalls > 0);
     const totalScoreSum = auditedUsers.reduce((sum, r) => sum + r.scoreSum, 0);
-    const totalScoredCalls = auditedUsers.reduce((sum, r) => sum + r.scoredCalls, 0);
-    const avgQualityPct = totalScoredCalls > 0 ? round1(totalScoreSum / totalScoredCalls) : null;
+    const totalScoredCalls = auditedUsers.reduce(
+      (sum, r) => sum + r.scoredCalls,
+      0,
+    );
+    const avgQualityPct =
+      totalScoredCalls > 0 ? round1(totalScoreSum / totalScoredCalls) : null;
     const auditedEmployeeCount = auditedUsers.length;
-    const auditCoveragePct = teamSize > 0 ? round1((auditedEmployeeCount / teamSize) * 100) : null;
+    const auditCoveragePct =
+      teamSize > 0 ? round1((auditedEmployeeCount / teamSize) * 100) : null;
 
     const topPerformers: QualityTopPerformer[] = auditedUsers
       .filter((r) => r.scoredCalls >= MIN_SCORED_CALLS_FOR_SIGNAL)
@@ -212,19 +235,29 @@ export async function buildQualityModule(
       .sort((a, b) => b.avgQualityPct - a.avgQualityPct)
       .slice(0, 3);
 
-    const baselineScoredCalls = baselinePerUser.reduce((sum, r) => sum + r.scoredCalls, 0);
-    const baselineScoreSum = baselinePerUser.reduce((sum, r) => sum + r.scoreSum, 0);
-    const baselineAvg = baselineScoredCalls > 0 ? round1(baselineScoreSum / baselineScoredCalls) : null;
-    const trailingBaseline = baselineScoredCalls > 0
-      ? { avgQualityPct: baselineAvg, scoredCallCount: baselineScoredCalls }
-      : null;
+    const baselineScoredCalls = baselinePerUser.reduce(
+      (sum, r) => sum + r.scoredCalls,
+      0,
+    );
+    const baselineScoreSum = baselinePerUser.reduce(
+      (sum, r) => sum + r.scoreSum,
+      0,
+    );
+    const baselineAvg =
+      baselineScoredCalls > 0
+        ? round1(baselineScoreSum / baselineScoredCalls)
+        : null;
+    const trailingBaseline =
+      baselineScoredCalls > 0
+        ? { avgQualityPct: baselineAvg, scoredCallCount: baselineScoredCalls }
+        : null;
 
     let deterioration: QualityModuleResult["deterioration"] = null;
     if (
-      avgQualityPct !== null
-      && totalScoredCalls >= MIN_SCORED_CALLS_FOR_SIGNAL
-      && baselineAvg !== null
-      && baselineScoredCalls >= MIN_SCORED_CALLS_FOR_SIGNAL
+      avgQualityPct !== null &&
+      totalScoredCalls >= MIN_SCORED_CALLS_FOR_SIGNAL &&
+      baselineAvg !== null &&
+      baselineScoredCalls >= MIN_SCORED_CALLS_FOR_SIGNAL
     ) {
       const deltaPoints = round1(avgQualityPct - baselineAvg);
       const isMaterial = deltaPoints <= -MATERIAL_DELTA_POINTS;
@@ -255,7 +288,10 @@ export async function buildQualityModule(
       ).catch(() => []);
       const p = paramRows[0];
       if (p) {
-        const rate = (fail: unknown, n: unknown): QualityParameterFailRate["failRatePct"] => {
+        const rate = (
+          fail: unknown,
+          n: unknown,
+        ): QualityParameterFailRate["failRatePct"] => {
           const nn = numberValue(n);
           return nn > 0 ? round1((numberValue(fail) / nn) * 100) : 0;
         };
@@ -276,11 +312,12 @@ export async function buildQualityModule(
       }
     }
 
-    const state = totalScoredCalls === 0
-      ? "NO_DATA"
-      : totalScoredCalls < MIN_SCORED_CALLS_FOR_SIGNAL
-        ? "INSUFFICIENT_SAMPLE"
-        : "AVAILABLE";
+    const state =
+      totalScoredCalls === 0
+        ? "NO_DATA"
+        : totalScoredCalls < MIN_SCORED_CALLS_FOR_SIGNAL
+          ? "INSUFFICIENT_SAMPLE"
+          : "AVAILABLE";
 
     return {
       detailLevel,
@@ -297,9 +334,10 @@ export async function buildQualityModule(
         {
           module: "quality",
           state,
-          detail: state === "INSUFFICIENT_SAMPLE"
-            ? `Only ${totalScoredCalls} scored call(s) for D-1 — below the editorial ${MIN_SCORED_CALLS_FOR_SIGNAL}-call floor reused from coaching-trigger.ts's MIN_SAMPLE_FOR_TREND.`
-            : undefined,
+          detail:
+            state === "INSUFFICIENT_SAMPLE"
+              ? `Only ${totalScoredCalls} scored call(s) for D-1 — below the editorial ${MIN_SCORED_CALLS_FOR_SIGNAL}-call floor reused from coaching-trigger.ts's MIN_SAMPLE_FOR_TREND.`
+              : undefined,
           asOfDate: reportingDate,
         },
       ],

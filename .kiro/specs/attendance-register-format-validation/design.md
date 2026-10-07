@@ -45,7 +45,7 @@ Three layers are involved, and the fix touches the labeling seam of two of them 
 
 Both derivations run at request/render time because the static catalogs have no notion of "which month is selected" ? only the request (backend) or the filter state (frontend) knows that. The label computation is duplicated in two small, independent, unit-tested functions rather than shared, because the frontend (`src/`) and backend (`backend/src/`) are separate compiled TypeScript projects with no shared package boundary in this repo today.
 
-The backend catalog's declared column list (Requirement 1.4) is a static edit ? it doesn't need request-time computation, only the addition of a `profile` entry (and, per the derived-label approach above, the day columns don't need to be individually declared there any more than they are today, since `buildCatalogWorkbook` receives the *derived* columns array at request time, not `catalogEntry.columns` directly).
+The backend catalog's declared column list (Requirement 1.4) is a static edit ? it doesn't need request-time computation, only the addition of a `profile` entry (and, per the derived-label approach above, the day columns don't need to be individually declared there any more than they are today, since `buildCatalogWorkbook` receives the _derived_ columns array at request time, not `catalogEntry.columns` directly).
 
 ## Components and Interfaces
 
@@ -54,8 +54,18 @@ The backend catalog's declared column list (Requirement 1.4) is a static edit ? 
 ```ts
 /** Fixed English 3-letter month names ? never locale-dependent. */
 const SHORT_MONTHS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ] as const;
 
 /**
@@ -82,7 +92,7 @@ export function daysInMonth(year: number, month: number): number {
  */
 export function withDayColumnLabels<T extends { key: string; label: string }>(
   columns: T[],
-  monthStr: string | undefined
+  monthStr: string | undefined,
 ): T[] {
   if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) return columns;
   const [year, month] = monthStr.split("-").map(Number);
@@ -91,7 +101,10 @@ export function withDayColumnLabels<T extends { key: string; label: string }>(
 
   return columns.reduce<T[]>((out, col) => {
     const m = dayKeyRe.exec(col.key);
-    if (!m) { out.push(col); return out; }
+    if (!m) {
+      out.push(col);
+      return out;
+    }
     const dayNum = Number(m[1]);
     if (dayNum > dim) return out; // drop day columns past the month's actual length
     out.push({ ...col, label: buildDayColumnLabel(month, dayNum) });
@@ -107,7 +120,7 @@ import { withDayColumnLabels } from "@/lib/attendance-register-columns";
 
 const displayColumns = useMemo(
   () => withDayColumnLabels(selectedReport?.columns ?? [], filterValues.month),
-  [selectedReport, filterValues.month]
+  [selectedReport, filterValues.month],
 );
 ```
 
@@ -121,16 +134,32 @@ Logically identical to the frontend version (same `SHORT_MONTHS` table, same `bu
 
 ```ts
 const SHORT_MONTHS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ] as const;
 
-export function buildDayColumnLabel(month: number, day: number): string { /* identical body */ }
-export function daysInMonth(year: number, month: number): number { /* identical body */ }
+export function buildDayColumnLabel(month: number, day: number): string {
+  /* identical body */
+}
+export function daysInMonth(year: number, month: number): number {
+  /* identical body */
+}
 export function withDayColumnLabels<T extends { key: string; label: string }>(
   columns: T[],
-  monthStr: string | undefined
-): T[] { /* identical body */ }
+  monthStr: string | undefined,
+): T[] {
+  /* identical body */
+}
 ```
 
 A code comment at the top of each file cross-references the other's path and states they must be kept logically identical, with the paired unit tests (see Testing Strategy) as the enforcement mechanism in lieu of a shared module.
@@ -142,7 +171,10 @@ Two changes at the export handler (`GET /:code/export`):
 a) Extend the catalog-format set (line ~45):
 
 ```ts
-const CATALOG_FORMAT_CODES = new Set(["leave-utilization", "attendance-register-monthly"]);
+const CATALOG_FORMAT_CODES = new Set([
+  "leave-utilization",
+  "attendance-register-monthly",
+]);
 ```
 
 b) At the `CATALOG_FORMAT_CODES.has(code)` branch (~line 321), build derived columns from `filters.month` (already parsed at line ~249, in scope here) before calling `buildCatalogWorkbook`:
@@ -151,9 +183,10 @@ b) At the `CATALOG_FORMAT_CODES.has(code)` branch (~line 321), build derived col
 import { withDayColumnLabels } from "./attendance-register-columns.js";
 
 if (CATALOG_FORMAT_CODES.has(code)) {
-  const exportColumns = code === "attendance-register-monthly"
-    ? withDayColumnLabels(catalogEntry.columns, filters.month)
-    : catalogEntry.columns;
+  const exportColumns =
+    code === "attendance-register-monthly"
+      ? withDayColumnLabels(catalogEntry.columns, filters.month)
+      : catalogEntry.columns;
 
   const catalogBuffer = await buildCatalogWorkbook({
     rows,
@@ -202,11 +235,11 @@ columns: [
 
 `viewRoles`/`exportRoles`/`filters`/`sourceTables`/`branchScoped`/`processScoped`/`sensitivityLevel`/`containsPII` on this entry are left untouched ? only the `columns` array changes, satisfying Requirement 7.1's "remain unchanged" constraint by construction (the diff touches one field).
 
-The placeholder "Day N" labels in the backend catalog's static declaration are harmless: nothing reads the backend catalog's labels for preview (preview headers come only from the frontend catalog per the investigation), and the export path overwrites them via `withDayColumnLabels` before they ever reach `buildCatalogWorkbook`. They exist only so the column *keys* are present for `buildCatalogWorkbook` to iterate and for `withDayColumnLabels` to have something to override.
+The placeholder "Day N" labels in the backend catalog's static declaration are harmless: nothing reads the backend catalog's labels for preview (preview headers come only from the frontend catalog per the investigation), and the export path overwrites them via `withDayColumnLabels` before they ever reach `buildCatalogWorkbook`. They exist only so the column _keys_ are present for `buildCatalogWorkbook` to iterate and for `withDayColumnLabels` to have something to override.
 
 ### 5. Frontend catalog ? `src/lib/report-catalog.ts`
 
-The `day_1`..`day_31` entries' static `label` fields ("Day 1".."Day 31") are left as-is in the catalog source; Requirement 3.1's removal of the generic label is satisfied by the *rendering* layer (Component 1) never using `selectedReport.columns` directly, only the derived `displayColumns`. An alternative would be editing the static labels to something neutral (e.g. empty string) since they're always overridden ? but leaving them as descriptive fallback text means any future code path that reads `selectedReport.columns` directly without going through `withDayColumnLabels` fails safe with a recognizable placeholder instead of an empty header. No changes needed to `viewRoles`/`exportRoles` here either (Requirement 7.2).
+The `day_1`..`day_31` entries' static `label` fields ("Day 1".."Day 31") are left as-is in the catalog source; Requirement 3.1's removal of the generic label is satisfied by the _rendering_ layer (Component 1) never using `selectedReport.columns` directly, only the derived `displayColumns`. An alternative would be editing the static labels to something neutral (e.g. empty string) since they're always overridden ? but leaving them as descriptive fallback text means any future code path that reads `selectedReport.columns` directly without going through `withDayColumnLabels` fails safe with a recognizable placeholder instead of an empty header. No changes needed to `viewRoles`/`exportRoles` here either (Requirement 7.2).
 
 ## Data Models
 
@@ -214,20 +247,20 @@ No database schema changes. The only new "model" is the derived column-label map
 
 Example mapping for `month = "2026-07"`:
 
-| key | pre-transform label | post-transform label |
-|---|---|---|
-| `day_1` | `Day 1` | `Jul-01` |
-| `day_15` | `Day 15` | `Jul-15` |
-| `day_31` | `Day 31` | `Jul-31` |
+| key      | pre-transform label | post-transform label |
+| -------- | ------------------- | -------------------- |
+| `day_1`  | `Day 1`             | `Jul-01`             |
+| `day_15` | `Day 15`            | `Jul-15`             |
+| `day_31` | `Day 31`            | `Jul-31`             |
 
 Example for `month = "2026-02"` (28-day month, non-leap):
 
-| key | pre-transform label | post-transform label |
-|---|---|---|
-| `day_28` | `Day 28` | `Feb-28` |
-| `day_29` | `Day 29` | *(column dropped from output ? Requirement 3.4)* |
-| `day_30` | `Day 30` | *(dropped)* |
-| `day_31` | `Day 31` | *(dropped)* |
+| key      | pre-transform label | post-transform label                             |
+| -------- | ------------------- | ------------------------------------------------ |
+| `day_28` | `Day 28`            | `Feb-28`                                         |
+| `day_29` | `Day 29`            | _(column dropped from output ? Requirement 3.4)_ |
+| `day_30` | `Day 30`            | _(dropped)_                                      |
+| `day_31` | `Day 31`            | _(dropped)_                                      |
 
 ## Error Handling
 
@@ -325,9 +358,9 @@ No change in this design SHALL alter what attendanceRegisterMonthly() returns fo
 
 **Validates: Requirements 6.3**
 
+- **Header CSS case-transform gap (found during Task 5 implementation, not caught in initial design)**: `ReportLibraryView.tsx`'s shared `<th>` className applies `uppercase` unconditionally to every report's header text. Since `withDayColumnLabels` produces mixed-case labels ("Jul-01"), the on-screen preview would render "JUL-01" while the exported XLSX (which writes `cell.value` verbatim with no CSS) shows "Jul-01" ï¿½ violating both Requirement 3.1's exact casing and Requirement 3.5's preview/export parity. Fix: at the header `<th>` render call site only, conditionally omit the `uppercase` class when `col.key` matches `/^day_(\d+)$/` (the same pattern `withDayColumnLabels` itself uses), leaving every other column and every other report's headers unaffected.
+- **Async worker export path gap (found during Task 7/10 review, not in the original design)**: `backend/src/workers/report-generation.worker.ts`, used for scheduled/emailed report deliveries, is a SEPARATE code path from the immediate `/export` route fixed in Component 3 ï¿½ it calls `buildSecureXlsxBuffer` directly with no `CATALOG_FORMAT_CODES` check at all, so an emailed/scheduled export of `attendance-register-monthly` would still show `DAY_1`, `DAY_2` uppercased, bypassing the fix entirely. Fixed under Task 11: the worker gets the same `CATALOG_FORMAT_CODES` branch ï¿½ look up the report's catalog entry (already imports `REPORT_CATALOG`), compute `exportColumns` via `withDayColumnLabels` the same way the route does, and call `buildCatalogWorkbook` instead of `buildSecureXlsxBuffer` for codes in that set.
 
-- **Header CSS case-transform gap (found during Task 5 implementation, not caught in initial design)**: `ReportLibraryView.tsx`'s shared `<th>` className applies `uppercase` unconditionally to every report's header text. Since `withDayColumnLabels` produces mixed-case labels ("Jul-01"), the on-screen preview would render "JUL-01" while the exported XLSX (which writes `cell.value` verbatim with no CSS) shows "Jul-01" — violating both Requirement 3.1's exact casing and Requirement 3.5's preview/export parity. Fix: at the header `<th>` render call site only, conditionally omit the `uppercase` class when `col.key` matches `/^day_(\d+)$/` (the same pattern `withDayColumnLabels` itself uses), leaving every other column and every other report's headers unaffected.
-- **Async worker export path gap (found during Task 7/10 review, not in the original design)**: `backend/src/workers/report-generation.worker.ts`, used for scheduled/emailed report deliveries, is a SEPARATE code path from the immediate `/export` route fixed in Component 3 — it calls `buildSecureXlsxBuffer` directly with no `CATALOG_FORMAT_CODES` check at all, so an emailed/scheduled export of `attendance-register-monthly` would still show `DAY_1`, `DAY_2` uppercased, bypassing the fix entirely. Fixed under Task 11: the worker gets the same `CATALOG_FORMAT_CODES` branch — look up the report's catalog entry (already imports `REPORT_CATALOG`), compute `exportColumns` via `withDayColumnLabels` the same way the route does, and call `buildCatalogWorkbook` instead of `buildSecureXlsxBuffer` for codes in that set.
 ## Risk and Rollback Notes
 
 - Moving `attendance-register-monthly`'s export from `buildSecureXlsxBuffer` to `buildCatalogWorkbook` is an intentional visual change beyond just headers: `buildCatalogWorkbook` has no metadata sheet and uses plain thin borders/Calibri 11 styling, versus the generic builder's styled Excel table and metadata sheet. Requirement 6 only requires row-count and pagination behavior parity (Requirements 6.1, 6.2, 6.4), not visual/styling parity, so this is in scope and acceptable ? but should be visually spot-checked once (open the exported file, confirm it's readable and the data is intact) rather than assumed identical to today's export appearance.

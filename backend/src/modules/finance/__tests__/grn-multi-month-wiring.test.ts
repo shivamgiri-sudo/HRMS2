@@ -20,8 +20,14 @@ const at = (rel: string) =>
   new URL(rel, import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 
 const SRC = readFileSync(at("../grn-smart.service.ts"), "utf8");
-const SPLIT_SRC = readFileSync(at("../grn-period-allocation.service.ts"), "utf8");
-const MIGRATION = readFileSync(at("../../../../sql/1099_grn_period_allocation.sql"), "utf8");
+const SPLIT_SRC = readFileSync(
+  at("../grn-period-allocation.service.ts"),
+  "utf8",
+);
+const MIGRATION = readFileSync(
+  at("../../../../sql/1099_grn_period_allocation.sql"),
+  "utf8",
+);
 
 /**
  * The body of a top-level function, up to its closing brace at column 0.
@@ -35,7 +41,10 @@ function bodyOf(source: string, declaration: string): string {
   expect(start, `${declaration} must exist`).toBeGreaterThan(-1);
   const rest = source.slice(start);
   const end = rest.indexOf("\n}\n");
-  expect(end, `${declaration} must have a closing brace at column 0`).toBeGreaterThan(-1);
+  expect(
+    end,
+    `${declaration} must have a closing brace at column 0`,
+  ).toBeGreaterThan(-1);
   return rest.slice(0, end);
 }
 
@@ -44,8 +53,12 @@ describe("consumptionPeriodOf — the widened period check", () => {
     // Order is the whole point: the month Finance booked the GRN to wins over where recognition
     // starts, and both win over the vendor-controlled invoice date.
     const body = bodyOf(SRC, "function consumptionPeriodOf");
-    expect(body.indexOf("accounting_period")).toBeLessThan(body.indexOf("recognition_start_period"));
-    expect(body.indexOf("recognition_start_period")).toBeLessThan(body.indexOf("bill_date"));
+    expect(body.indexOf("accounting_period")).toBeLessThan(
+      body.indexOf("recognition_start_period"),
+    );
+    expect(body.indexOf("recognition_start_period")).toBeLessThan(
+      body.indexOf("bill_date"),
+    );
   });
 
   it("falls back to bill_date when both new columns are NULL, so history is unaffected", () => {
@@ -65,9 +78,16 @@ describe("consumptionPeriodOf — the widened period check", () => {
   it("gates both allocation paths, and neither still slices bill_date", () => {
     // grn-smart.service.ts holds two independent period comparisons — the allocation path and
     // the cost-centre-split path. Widening one and not the other leaves multi-month half-blocked.
-    const widened = SRC.match(/if \(consumptionPeriodOf\(grn\) !== String\(line\.period_code\)\)/g) ?? [];
+    const widened =
+      SRC.match(
+        /if \(consumptionPeriodOf\(grn\) !== String\(line\.period_code\)\)/g,
+      ) ?? [];
     expect(widened, "both paths must be widened").toHaveLength(2);
-    expect(SRC.includes("String(grn.bill_date).slice(0, 7) !== String(line.period_code)")).toBe(false);
+    expect(
+      SRC.includes(
+        "String(grn.bill_date).slice(0, 7) !== String(line.period_code)",
+      ),
+    ).toBe(false);
   });
 });
 
@@ -76,7 +96,9 @@ describe("writePeriodSplits", () => {
     // A GRN re-saved as single-month that kept its twelve rows would go on recognising months it
     // no longer claims, and the P&L would never tie again.
     const body = bodyOf(SRC, "async function writePeriodSplits");
-    expect(body).toContain("DELETE FROM grn_period_allocation WHERE grn_request_id = ?");
+    expect(body).toContain(
+      "DELETE FROM grn_period_allocation WHERE grn_request_id = ?",
+    );
     expect(body).toContain("period_allocation_mode = 'single'");
     expect(body).toContain("is_multi_month = 0");
   });
@@ -90,8 +112,12 @@ describe("writePeriodSplits", () => {
     // Recoverable GST is not an expense; spreading amount_with_tax would recognise tax as cost.
     // Splitting per allocation also avoids rounding twice on a multi-cost-centre invoice.
     const body = bodyOf(SRC, "async function writePeriodSplits");
-    expect(body).toContain("SELECT id, pnl_cost_amount FROM grn_cost_allocation");
-    expect(body).toContain("recognitionAmount: Number(row.pnl_cost_amount ?? 0)");
+    expect(body).toContain(
+      "SELECT id, pnl_cost_amount FROM grn_cost_allocation",
+    );
+    expect(body).toContain(
+      "recognitionAmount: Number(row.pnl_cost_amount ?? 0)",
+    );
     expect(body).not.toContain("amount_with_tax");
   });
 
@@ -100,9 +126,15 @@ describe("writePeriodSplits", () => {
     // must sit before the commit rather than after it.
     // actorRole was added to the signature when the recognition override gate landed;
     // matched loosely so a later argument does not silently drop this assertion to zero
-    const calls = [...SRC.matchAll(/await writePeriodSplits\(connection, grnId, grn, input, actorUserId[^)]*\);/g)];
-    expect(calls, "saveAllocations and saveComponentAllocations both author the schedule")
-      .toHaveLength(2);
+    const calls = [
+      ...SRC.matchAll(
+        /await writePeriodSplits\(connection, grnId, grn, input, actorUserId[^)]*\);/g,
+      ),
+    ];
+    expect(
+      calls,
+      "saveAllocations and saveComponentAllocations both author the schedule",
+    ).toHaveLength(2);
 
     // Checked structurally rather than inside a fixed character window. This assertion used to
     // slice 400 characters after each call and look for the commit in there; both call sites are
@@ -118,15 +150,24 @@ describe("writePeriodSplits", () => {
       const commitAt = after.indexOf("await connection.commit();");
       const rollbackAt = after.indexOf("await connection.rollback();");
 
-      expect(commitAt, "a commit must follow this writePeriodSplits call").toBeGreaterThan(0);
+      expect(
+        commitAt,
+        "a commit must follow this writePeriodSplits call",
+      ).toBeGreaterThan(0);
       // A rollback may appear later in the catch block; it must not come first.
       if (rollbackAt !== -1) {
-        expect(rollbackAt, "rollback must not precede the commit for this call").toBeGreaterThan(commitAt);
+        expect(
+          rollbackAt,
+          "rollback must not precede the commit for this call",
+        ).toBeGreaterThan(commitAt);
       }
       // And the commit must belong to the same function — no later call site may satisfy it.
       const nextCallAt = after.indexOf("await writePeriodSplits(connection", 1);
       if (nextCallAt !== -1) {
-        expect(commitAt, "each call must reach its own commit, not a later one").toBeLessThan(nextCallAt);
+        expect(
+          commitAt,
+          "each call must reach its own commit, not a later one",
+        ).toBeLessThan(nextCallAt);
       }
     }
   });
@@ -149,8 +190,12 @@ describe("one invoice is still one payable", () => {
   it("hangs the schedule off the cost allocation, not off the GRN header", () => {
     // As a child of grn_cost_allocation, cost-centre/process/LOB attribution survives the split:
     // a 3-cost-centre invoice over 12 months is 36 facts, not 12.
-    expect(MIGRATION).toMatch(/FOREIGN KEY \(cost_allocation_id\)\s+REFERENCES grn_cost_allocation\(id\)/);
-    expect(MIGRATION).toContain("UNIQUE KEY uq_grn_period_month (cost_allocation_id, period_code)");
+    expect(MIGRATION).toMatch(
+      /FOREIGN KEY \(cost_allocation_id\)\s+REFERENCES grn_cost_allocation\(id\)/,
+    );
+    expect(MIGRATION).toContain(
+      "UNIQUE KEY uq_grn_period_month (cost_allocation_id, period_code)",
+    );
   });
 
   it("adds no unguarded ALTER, which would 503 the app at boot", () => {
@@ -158,6 +203,8 @@ describe("one invoice is still one payable", () => {
     // ADD COLUMN must be guarded on information_schema rather than IF NOT EXISTS.
     expect(MIGRATION).not.toMatch(/ADD COLUMN IF NOT EXISTS/i);
     expect(MIGRATION).toContain("information_schema.columns");
-    expect(MIGRATION).toContain("ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    expect(MIGRATION).toContain(
+      "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+    );
   });
 });

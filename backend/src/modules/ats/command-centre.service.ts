@@ -1,10 +1,14 @@
-import { db } from '../../db/mysql.js';
-import { RowDataPacket } from 'mysql2/promise';
-import { excludeEmployeeShapedCandidatesSql } from './ats-reporting-scope.js';
-import { canonicalChannel, CANONICAL_CHANNEL_LABEL } from "./ats-source-channel-model.js";
+import { db } from "../../db/mysql.js";
+import { RowDataPacket } from "mysql2/promise";
+import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
+import {
+  canonicalChannel,
+  CANONICAL_CHANNEL_LABEL,
+} from "./ats-source-channel-model.js";
 
-const EXCLUDE_EMPLOYEE_SHAPED = excludeEmployeeShapedCandidatesSql('ats_candidate');
-const EXCLUDE_EMPLOYEE_SHAPED_C = excludeEmployeeShapedCandidatesSql('c');
+const EXCLUDE_EMPLOYEE_SHAPED =
+  excludeEmployeeShapedCandidatesSql("ats_candidate");
+const EXCLUDE_EMPLOYEE_SHAPED_C = excludeEmployeeShapedCandidatesSql("c");
 
 /**
  * ATS Command Centre Service
@@ -85,13 +89,13 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     [joinedRes],
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as total FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+      `SELECT COUNT(*) as total FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as active FROM ats_candidate
        WHERE active_status = 1
        AND current_stage NOT IN ('rejected', 'joined', 'rejected_by_branch_head')
-       AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+       AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
     ),
     db.execute<RowDataPacket[]>(
       // active_status = 1 is load-bearing, not decoration. conversion_rate below divides this
@@ -100,7 +104,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       `SELECT COUNT(*) as selected FROM ats_candidate
        WHERE active_status = 1
        AND current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted')
-       AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+       AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
     ),
     db.execute<RowDataPacket[]>(
       // Same reason: rejected is rendered beside total and selected, so it has to be counted
@@ -108,11 +112,11 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       `SELECT COUNT(*) as rejected FROM ats_candidate
        WHERE active_status = 1
        AND current_stage IN ('rejected', 'rejected_by_branch_head')
-       AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+       AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as today_interviews FROM ats_interview_result
-       WHERE DATE(interviewed_at) = CURDATE()`
+       WHERE DATE(interviewed_at) = CURDATE()`,
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as pending FROM ats_payroll_hr_validation
@@ -120,7 +124,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
        AND candidate_id IN (
          SELECT id FROM ats_candidate
           WHERE current_stage = 'payroll_validated' AND ${EXCLUDE_EMPLOYEE_SHAPED}
-       )`
+       )`,
     ),
     db.execute<RowDataPacket[]>(
       // Joined to ats_candidate so the exclusion can apply: this read stage_log alone, so a
@@ -131,15 +135,14 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
        WHERE sl.to_stage = 'joined'
          AND MONTH(sl.stage_date) = MONTH(CURRENT_DATE())
          AND YEAR(sl.stage_date) = YEAR(CURRENT_DATE())
-         AND ${EXCLUDE_EMPLOYEE_SHAPED_C}`
+         AND ${EXCLUDE_EMPLOYEE_SHAPED_C}`,
     ),
   ]);
 
   const totalCandidates = totalRes[0]?.total || 0;
   const selectedCandidates = selectedRes[0]?.selected || 0;
-  const conversionRate = totalCandidates > 0
-    ? (selectedCandidates / totalCandidates) * 100
-    : 0;
+  const conversionRate =
+    totalCandidates > 0 ? (selectedCandidates / totalCandidates) * 100 : 0;
 
   return {
     total_candidates: totalCandidates,
@@ -168,7 +171,7 @@ export async function getSourceMetrics(): Promise<SourceMetrics[]> {
       SUM(CASE WHEN current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN 1 ELSE 0 END) as selected_count
     FROM ats_candidate
     WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
-    GROUP BY sourcing_channel`
+    GROUP BY sourcing_channel`,
   );
 
   /**
@@ -182,8 +185,12 @@ export async function getSourceMetrics(): Promise<SourceMetrics[]> {
    * conversion_rate is recomputed from the merged totals rather than averaged from the rows —
    * averaging percentages across groups of different sizes is its own error.
    */
-  const merged = new Map<string, { label: string; total: number; selected: number; merged_from: string[] }>();
-  const unmapped: Array<{ channel: string; total: number; selected: number }> = [];
+  const merged = new Map<
+    string,
+    { label: string; total: number; selected: number; merged_from: string[] }
+  >();
+  const unmapped: Array<{ channel: string; total: number; selected: number }> =
+    [];
 
   for (const row of results as Array<Record<string, unknown>>) {
     const raw = row.source_channel == null ? "" : String(row.source_channel);
@@ -196,7 +203,12 @@ export async function getSourceMetrics(): Promise<SourceMetrics[]> {
       continue;
     }
     const key = canonical;
-    const entry = merged.get(key) ?? { label: CANONICAL_CHANNEL_LABEL[canonical], total: 0, selected: 0, merged_from: [] };
+    const entry = merged.get(key) ?? {
+      label: CANONICAL_CHANNEL_LABEL[canonical],
+      total: 0,
+      selected: 0,
+      merged_from: [],
+    };
     entry.total += total;
     entry.selected += selected;
     if (raw) entry.merged_from.push(raw);
@@ -206,7 +218,12 @@ export async function getSourceMetrics(): Promise<SourceMetrics[]> {
   // An unrecognised channel is still shown, under its raw name, rather than being dropped —
   // otherwise the chart's total silently stops matching the candidate count.
   for (const u of unmapped) {
-    merged.set(`raw:${u.channel}`, { label: u.channel || "Unspecified", total: u.total, selected: u.selected, merged_from: [u.channel] });
+    merged.set(`raw:${u.channel}`, {
+      label: u.channel || "Unspecified",
+      total: u.total,
+      selected: u.selected,
+      merged_from: [u.channel],
+    });
   }
 
   return [...merged.entries()]
@@ -214,7 +231,8 @@ export async function getSourceMetrics(): Promise<SourceMetrics[]> {
       source_channel: e.label,
       total_candidates: e.total,
       selected_count: e.selected,
-      conversion_rate: e.total > 0 ? Number(((e.selected / e.total) * 100).toFixed(2)) : 0,
+      conversion_rate:
+        e.total > 0 ? Number(((e.selected / e.total) * 100).toFixed(2)) : 0,
       merged_from: e.merged_from,
     }))
     .sort((a, b) => b.total_candidates - a.total_candidates);
@@ -241,7 +259,7 @@ export async function getBranchMetrics(): Promise<BranchMetrics[]> {
     LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id AND DATE(qt.created_at) = CURDATE()
     WHERE c.active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED_C}
     GROUP BY c.applied_for_branch, c.branch_display_name
-    ORDER BY total_candidates DESC`
+    ORDER BY total_candidates DESC`,
   );
 
   return results as BranchMetrics[];
@@ -251,13 +269,15 @@ export async function getBranchMetrics(): Promise<BranchMetrics[]> {
  * Get recruiter performance
  */
 function getIstDateString(offsetDays = 0): string {
-  const d = new Date(Date.now() + (5.5 * 60 - offsetDays * 24 * 60) * 60 * 1000);
+  const d = new Date(
+    Date.now() + (5.5 * 60 - offsetDays * 24 * 60) * 60 * 1000,
+  );
   return d.toISOString().slice(0, 10);
 }
 
 export async function getRecruiterPerformance(
   fromDate?: string,
-  toDate?: string
+  toDate?: string,
 ): Promise<RecruiterPerformance[]> {
   const from = fromDate || getIstDateString(30);
   const to = toDate || getIstDateString(0);
@@ -281,7 +301,7 @@ export async function getRecruiterPerformance(
     HAVING total_interviews > 0
     ORDER BY total_interviews DESC
     LIMIT 20`,
-    [from, to]
+    [from, to],
   );
 
   return results as RecruiterPerformance[];
@@ -290,7 +310,9 @@ export async function getRecruiterPerformance(
 /**
  * Get timeline data (max 30 days — UNION date-series is hard-coded to 30 rows)
  */
-export async function getTimelineData(days: number = 30): Promise<TimelineData[]> {
+export async function getTimelineData(
+  days: number = 30,
+): Promise<TimelineData[]> {
   const safeDays = Math.min(days, 30); // UNION only generates 30 rows; cap to avoid silent truncation
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -336,7 +358,7 @@ export async function getTimelineData(days: number = 30): Promise<TimelineData[]
       GROUP BY DATE(interviewed_at)
     ) rej ON date_series.date = rej.date
     ORDER BY date_series.date ASC`,
-    [safeDays, safeDays, safeDays, safeDays, safeDays]
+    [safeDays, safeDays, safeDays, safeDays, safeDays],
   );
 
   return results as TimelineData[];
@@ -354,7 +376,7 @@ export async function getStageDistribution(): Promise<StageDistribution[]> {
     FROM ats_candidate
     WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY current_stage
-    ORDER BY count DESC`
+    ORDER BY count DESC`,
   );
 
   return results as StageDistribution[];
@@ -363,7 +385,9 @@ export async function getStageDistribution(): Promise<StageDistribution[]> {
 /**
  * Get role-wise applications
  */
-export async function getRoleMetrics(): Promise<{ role: string; count: number }[]> {
+export async function getRoleMetrics(): Promise<
+  { role: string; count: number }[]
+> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
       COALESCE(role_applied, applied_for_process) as role,
@@ -372,7 +396,7 @@ export async function getRoleMetrics(): Promise<{ role: string; count: number }[
     WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY COALESCE(role_applied, applied_for_process)
     ORDER BY count DESC
-    LIMIT 10`
+    LIMIT 10`,
   );
 
   return results as { role: string; count: number }[];
@@ -381,7 +405,9 @@ export async function getRoleMetrics(): Promise<{ role: string; count: number }[
 /**
  * Get experience-wise distribution
  */
-export async function getExperienceDistribution(): Promise<{ experience: string; count: number }[]> {
+export async function getExperienceDistribution(): Promise<
+  { experience: string; count: number }[]
+> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
       experience,
@@ -395,7 +421,7 @@ export async function getExperienceDistribution(): Promise<{ experience: string;
         WHEN experience LIKE '%-%' THEN CAST(SUBSTRING_INDEX(experience, '-', 1) AS UNSIGNED)
         WHEN experience LIKE '%+%' THEN CAST(SUBSTRING_INDEX(experience, '+', 1) AS UNSIGNED)
         ELSE 999
-      END`
+      END`,
   );
 
   return results as { experience: string; count: number }[];

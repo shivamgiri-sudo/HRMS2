@@ -12,7 +12,9 @@ const INGESTION_MIGRATIONS = [
 
 function requireApplyFlag(): void {
   if (!process.argv.includes("--apply")) {
-    throw new Error("Dry safety stop: pass --apply to install the performance ingestion schema");
+    throw new Error(
+      "Dry safety stop: pass --apply to install the performance ingestion schema",
+    );
   }
 }
 
@@ -72,11 +74,17 @@ async function main() {
          (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_metric_master' AND COLUMN_NAME = 'aggregation_method') AS dynamic_metric_column,
          (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'performance_governance_audit') AS governance_audit_table`,
     );
-    console.log(JSON.stringify({
-      installed: true,
-      migrations: INGESTION_MIGRATIONS,
-      verification: (rows as any[])[0] ?? {},
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          installed: true,
+          migrations: INGESTION_MIGRATIONS,
+          verification: (rows as any[])[0] ?? {},
+        },
+        null,
+        2,
+      ),
+    );
   } finally {
     await connection.end();
   }

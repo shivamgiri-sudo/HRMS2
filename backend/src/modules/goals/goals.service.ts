@@ -71,7 +71,10 @@ export interface EmployeeSkill {
 // ─── Goals ────────────────────────────────────────────────────────────────────
 
 export const goalsService = {
-  async listGoals(filters: { employeeId?: string; period?: string }): Promise<Goal[]> {
+  async listGoals(filters: {
+    employeeId?: string;
+    period?: string;
+  }): Promise<Goal[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
 
@@ -94,7 +97,7 @@ export const goalsService = {
        LEFT JOIN employees e ON e.id = g.employee_id
        ${where}
        ORDER BY g.created_at DESC`,
-      params
+      params,
     );
     return rows as Goal[];
   },
@@ -122,7 +125,7 @@ export const goalsService = {
         input.target_value ?? null,
         input.weightage ?? 100,
         input.created_by,
-      ]
+      ],
     );
     const insertId = (result as unknown as { insertId: number }).insertId;
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -133,7 +136,7 @@ export const goalsService = {
        LEFT JOIN employees e ON e.id = g.employee_id
        WHERE g.id = LAST_INSERT_ID()
        LIMIT 1`,
-      []
+      [],
     );
     void insertId;
     return (rows as Goal[])[0];
@@ -145,11 +148,11 @@ export const goalsService = {
       actual_value?: number | null;
       status?: "draft" | "active" | "completed" | "cancelled";
       description?: string | null;
-    }
+    },
   ): Promise<Goal> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM goal WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     if (!(check as RowDataPacket[]).length) throw new Error("Goal not found");
 
@@ -173,7 +176,7 @@ export const goalsService = {
 
     await db.execute(
       `UPDATE goal SET ${setClauses.join(", ")} WHERE id = ?`,
-      params
+      params,
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -184,7 +187,7 @@ export const goalsService = {
        LEFT JOIN employees e ON e.id = g.employee_id
        WHERE g.id = ?
        LIMIT 1`,
-      [id]
+      [id],
     );
     return (rows as Goal[])[0];
   },
@@ -193,7 +196,7 @@ export const goalsService = {
 
   async listCycles(): Promise<AppraisalCycle[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM appraisal_cycle ORDER BY start_date DESC"
+      "SELECT * FROM appraisal_cycle ORDER BY start_date DESC",
     );
     return rows as AppraisalCycle[];
   },
@@ -207,32 +210,33 @@ export const goalsService = {
     await db.execute(
       `INSERT INTO appraisal_cycle (cycle_name, period, start_date, end_date)
        VALUES (?, ?, ?, ?)`,
-      [input.cycle_name, input.period, input.start_date, input.end_date]
+      [input.cycle_name, input.period, input.start_date, input.end_date],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM appraisal_cycle WHERE id = LAST_INSERT_ID() LIMIT 1"
+      "SELECT * FROM appraisal_cycle WHERE id = LAST_INSERT_ID() LIMIT 1",
     );
     return (rows as AppraisalCycle[])[0];
   },
 
   async updateCycleStatus(
     id: string,
-    status: "draft" | "active" | "closed"
+    status: "draft" | "active" | "closed",
   ): Promise<AppraisalCycle> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM appraisal_cycle WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
-    if (!(check as RowDataPacket[]).length) throw new Error("Appraisal cycle not found");
+    if (!(check as RowDataPacket[]).length)
+      throw new Error("Appraisal cycle not found");
 
-    await db.execute(
-      "UPDATE appraisal_cycle SET status = ? WHERE id = ?",
-      [status, id]
-    );
+    await db.execute("UPDATE appraisal_cycle SET status = ? WHERE id = ?", [
+      status,
+      id,
+    ]);
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM appraisal_cycle WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return (rows as AppraisalCycle[])[0];
   },
@@ -248,15 +252,18 @@ export const goalsService = {
        LEFT JOIN employees e ON e.id = ar.employee_id
        WHERE ar.cycle_id = ?
        ORDER BY employee_name ASC`,
-      [cycleId]
+      [cycleId],
     );
     return rows as AppraisalRating[];
   },
 
-  async ensureRatingRecord(cycleId: string, employeeId: string): Promise<AppraisalRating> {
+  async ensureRatingRecord(
+    cycleId: string,
+    employeeId: string,
+  ): Promise<AppraisalRating> {
     await db.execute(
       `INSERT IGNORE INTO appraisal_rating (cycle_id, employee_id) VALUES (?, ?)`,
-      [cycleId, employeeId]
+      [cycleId, employeeId],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ar.*,
@@ -266,7 +273,7 @@ export const goalsService = {
        LEFT JOIN employees e ON e.id = ar.employee_id
        WHERE ar.cycle_id = ? AND ar.employee_id = ?
        LIMIT 1`,
-      [cycleId, employeeId]
+      [cycleId, employeeId],
     );
     return (rows as AppraisalRating[])[0];
   },
@@ -274,7 +281,7 @@ export const goalsService = {
   async submitSelfRating(
     cycleId: string,
     employeeId: string,
-    input: { self_rating: number; self_comments?: string | null }
+    input: { self_rating: number; self_comments?: string | null },
   ): Promise<AppraisalRating> {
     await goalsService.ensureRatingRecord(cycleId, employeeId);
 
@@ -282,7 +289,7 @@ export const goalsService = {
       `UPDATE appraisal_rating
        SET self_rating = ?, self_comments = ?, status = 'self_done', updated_at = NOW()
        WHERE cycle_id = ? AND employee_id = ?`,
-      [input.self_rating, input.self_comments ?? null, cycleId, employeeId]
+      [input.self_rating, input.self_comments ?? null, cycleId, employeeId],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -293,7 +300,7 @@ export const goalsService = {
        LEFT JOIN employees e ON e.id = ar.employee_id
        WHERE ar.cycle_id = ? AND ar.employee_id = ?
        LIMIT 1`,
-      [cycleId, employeeId]
+      [cycleId, employeeId],
     );
     return (rows as AppraisalRating[])[0];
   },
@@ -306,11 +313,12 @@ export const goalsService = {
       manager_rating: number;
       final_rating?: number | null;
       manager_comments?: string | null;
-    }
+    },
   ): Promise<AppraisalRating> {
     await goalsService.ensureRatingRecord(cycleId, employeeId);
 
-    const newStatus = input.final_rating != null ? "calibrated" : "manager_done";
+    const newStatus =
+      input.final_rating != null ? "calibrated" : "manager_done";
 
     await db.execute(
       `UPDATE appraisal_rating
@@ -325,7 +333,7 @@ export const goalsService = {
         ratedBy,
         cycleId,
         employeeId,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -336,7 +344,7 @@ export const goalsService = {
        LEFT JOIN employees e ON e.id = ar.employee_id
        WHERE ar.cycle_id = ? AND ar.employee_id = ?
        LIMIT 1`,
-      [cycleId, employeeId]
+      [cycleId, employeeId],
     );
     return (rows as AppraisalRating[])[0];
   },
@@ -345,7 +353,7 @@ export const goalsService = {
 
   async listSkillMaster(): Promise<SkillMaster[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM skill_master WHERE is_active = 1 ORDER BY skill_category, skill_name"
+      "SELECT * FROM skill_master WHERE is_active = 1 ORDER BY skill_category, skill_name",
     );
     return rows as SkillMaster[];
   },
@@ -358,10 +366,14 @@ export const goalsService = {
     await db.execute(
       `INSERT INTO skill_master (skill_name, skill_category, description)
        VALUES (?, ?, ?)`,
-      [input.skill_name, input.skill_category ?? null, input.description ?? null]
+      [
+        input.skill_name,
+        input.skill_category ?? null,
+        input.description ?? null,
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM skill_master WHERE id = LAST_INSERT_ID() LIMIT 1"
+      "SELECT * FROM skill_master WHERE id = LAST_INSERT_ID() LIMIT 1",
     );
     return (rows as SkillMaster[])[0];
   },
@@ -375,7 +387,7 @@ export const goalsService = {
        JOIN skill_master sm ON sm.id = es.skill_id
        WHERE es.employee_id = ?
        ORDER BY sm.skill_category, sm.skill_name`,
-      [employeeId]
+      [employeeId],
     );
     return rows as EmployeeSkill[];
   },
@@ -388,7 +400,7 @@ export const goalsService = {
       certified?: number;
       assessed_date?: string | null;
       notes?: string | null;
-    }
+    },
   ): Promise<EmployeeSkill> {
     await db.execute(
       `INSERT INTO employee_skill
@@ -406,7 +418,7 @@ export const goalsService = {
         input.certified ?? 0,
         input.assessed_date ?? null,
         input.notes ?? null,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -417,7 +429,7 @@ export const goalsService = {
        JOIN skill_master sm ON sm.id = es.skill_id
        WHERE es.employee_id = ? AND es.skill_id = ?
        LIMIT 1`,
-      [employeeId, input.skill_id]
+      [employeeId, input.skill_id],
     );
     return (rows as EmployeeSkill[])[0];
   },
@@ -425,13 +437,16 @@ export const goalsService = {
   async deleteGoal(id: string, actorEmployeeId: string | null): Promise<void> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id, employee_id, status FROM goal WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     const row = (check as RowDataPacket[])[0];
-    if (!row) throw Object.assign(new Error("Goal not found"), { statusCode: 404 });
+    if (!row)
+      throw Object.assign(new Error("Goal not found"), { statusCode: 404 });
     // Only the owner or admin can delete; completed goals cannot be deleted
     if (row.status === "completed") {
-      throw Object.assign(new Error("Completed goals cannot be deleted"), { statusCode: 409 });
+      throw Object.assign(new Error("Completed goals cannot be deleted"), {
+        statusCode: 409,
+      });
     }
     await db.execute("DELETE FROM goal WHERE id = ?", [id]);
   },
@@ -439,20 +454,28 @@ export const goalsService = {
   async deleteAppraisalRating(id: string): Promise<void> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id, status FROM appraisal_rating WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     const row = (check as RowDataPacket[])[0];
-    if (!row) throw Object.assign(new Error("Appraisal rating not found"), { statusCode: 404 });
+    if (!row)
+      throw Object.assign(new Error("Appraisal rating not found"), {
+        statusCode: 404,
+      });
     if (!["pending"].includes(String(row.status))) {
-      throw Object.assign(new Error("Only pending ratings can be deleted"), { statusCode: 409 });
+      throw Object.assign(new Error("Only pending ratings can be deleted"), {
+        statusCode: 409,
+      });
     }
     await db.execute("DELETE FROM appraisal_rating WHERE id = ?", [id]);
   },
 
-  async deleteEmployeeSkill(employeeId: string, skillId: string): Promise<void> {
+  async deleteEmployeeSkill(
+    employeeId: string,
+    skillId: string,
+  ): Promise<void> {
     await db.execute(
       "DELETE FROM employee_skill WHERE employee_id = ? AND skill_id = ?",
-      [employeeId, skillId]
+      [employeeId, skillId],
     );
   },
 };

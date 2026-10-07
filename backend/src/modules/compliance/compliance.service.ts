@@ -32,8 +32,14 @@ export interface PoshComplaint {
   date_of_complaint: string;
   nature_of_complaint: string | null;
   icc_members: string[] | null;
-  status: "received" | "under_inquiry" | "settled" | "closed" | "referred_to_police";
-  outcome: "substantiated" | "not_substantiated" | "malicious_complaint" | "conciliation" | null;
+  status:
+    "received" | "under_inquiry" | "settled" | "closed" | "referred_to_police";
+  outcome:
+    | "substantiated"
+    | "not_substantiated"
+    | "malicious_complaint"
+    | "conciliation"
+    | null;
   closure_date: string | null;
   annual_report_year: number | null;
   created_at: string;
@@ -88,19 +94,22 @@ export const complianceService = {
          LEFT JOIN employees e ON e.id = bc.employee_id
          ${where}
          ORDER BY bc.financial_year DESC, e.employee_code ASC`,
-      params
+      params,
     );
     return rows as BonusCalculation[];
   },
 
-  async calculateBonus(financialYear: string, actorUserId: string): Promise<{ upserted: number; skipped: number }> {
+  async calculateBonus(
+    financialYear: string,
+    actorUserId: string,
+  ): Promise<{ upserted: number; skipped: number }> {
     // Fetch all active employees with current salary assignment
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id,
               esa.ctc_annual
          FROM employees e
          JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-         WHERE e.active_status = 1 AND e.LOWER(employment_status) = 'active'`
+         WHERE e.active_status = 1 AND e.LOWER(employment_status) = 'active'`,
     );
 
     const employees = empRows as { employee_id: string; ctc_annual: number }[];
@@ -123,14 +132,16 @@ export const complianceService = {
         continue;
       }
 
-      const minBonus = Math.round(MIN_WAGE_MONTHLY * 12 * (ALLOCABLE_PCT / 100) * 100) / 100;
-      const maxBonus = Math.round(annualSalary * 0.20 * 100) / 100;
-      const calculatedBonus = Math.round(annualSalary * (ALLOCABLE_PCT / 100) * 100) / 100;
+      const minBonus =
+        Math.round(MIN_WAGE_MONTHLY * 12 * (ALLOCABLE_PCT / 100) * 100) / 100;
+      const maxBonus = Math.round(annualSalary * 0.2 * 100) / 100;
+      const calculatedBonus =
+        Math.round(annualSalary * (ALLOCABLE_PCT / 100) * 100) / 100;
 
       // Check for existing record to decide insert vs update
       const [existing] = await db.execute<RowDataPacket[]>(
         "SELECT id FROM bonus_calculation WHERE employee_id = ? AND financial_year = ? LIMIT 1",
-        [emp.employee_id, financialYear]
+        [emp.employee_id, financialYear],
       );
 
       if ((existing as RowDataPacket[]).length > 0) {
@@ -141,7 +152,16 @@ export const complianceService = {
                  allocable_surplus_pct = ?, calculated_bonus = ?, min_bonus = ?, max_bonus = ?,
                  status = 'calculated', approved_by = NULL
            WHERE id = ?`,
-          [monthlySalary, annualSalary, eligible, ALLOCABLE_PCT, calculatedBonus, minBonus, maxBonus, existingId]
+          [
+            monthlySalary,
+            annualSalary,
+            eligible,
+            ALLOCABLE_PCT,
+            calculatedBonus,
+            minBonus,
+            maxBonus,
+            existingId,
+          ],
         );
       } else {
         const id = randomUUID();
@@ -150,7 +170,18 @@ export const complianceService = {
              (id, employee_id, financial_year, monthly_salary, annual_salary, eligible,
               allocable_surplus_pct, calculated_bonus, min_bonus, max_bonus, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')`,
-          [id, emp.employee_id, financialYear, monthlySalary, annualSalary, eligible, ALLOCABLE_PCT, calculatedBonus, minBonus, maxBonus]
+          [
+            id,
+            emp.employee_id,
+            financialYear,
+            monthlySalary,
+            annualSalary,
+            eligible,
+            ALLOCABLE_PCT,
+            calculatedBonus,
+            minBonus,
+            maxBonus,
+          ],
         );
       }
       upserted++;
@@ -160,18 +191,22 @@ export const complianceService = {
     return { upserted, skipped };
   },
 
-  async approveBonus(id: string, actorUserId: string): Promise<BonusCalculation> {
+  async approveBonus(
+    id: string,
+    actorUserId: string,
+  ): Promise<BonusCalculation> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, status FROM bonus_calculation WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     const rec = (rows as { id: string; status: string }[])[0];
     if (!rec) throw new Error("Bonus record not found");
-    if (rec.status === "paid") throw new Error("Cannot change status of a paid bonus record");
+    if (rec.status === "paid")
+      throw new Error("Cannot change status of a paid bonus record");
 
     await db.execute(
       "UPDATE bonus_calculation SET status = 'approved', approved_by = ? WHERE id = ?",
-      [actorUserId, id]
+      [actorUserId, id],
     );
 
     const [updated] = await db.execute<RowDataPacket[]>(
@@ -179,7 +214,7 @@ export const complianceService = {
          FROM bonus_calculation bc
          LEFT JOIN employees e ON e.id = bc.employee_id
          WHERE bc.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     return (updated as BonusCalculation[])[0];
   },
@@ -192,7 +227,7 @@ export const complianceService = {
               b.branch_name
          FROM posh_complaint pc
          LEFT JOIN branch_master b ON b.id = pc.branch_id
-         ORDER BY pc.date_of_complaint DESC`
+         ORDER BY pc.date_of_complaint DESC`,
     );
     return (rows as PoshComplaint[]).map((r) => ({
       ...r,
@@ -220,7 +255,9 @@ export const complianceService = {
     const complaint_ref = `POSH-${ym}-${suffix}`;
 
     const annual_report_year = new Date(input.date_of_complaint).getFullYear();
-    const icc_members_json = input.icc_members ? JSON.stringify(input.icc_members) : null;
+    const icc_members_json = input.icc_members
+      ? JSON.stringify(input.icc_members)
+      : null;
 
     await db.execute(
       `INSERT INTO posh_complaint
@@ -237,12 +274,12 @@ export const complianceService = {
         input.nature_of_complaint ?? null,
         icc_members_json,
         annual_report_year,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM posh_complaint WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     const rec = (rows as PoshComplaint[])[0];
     return {
@@ -261,29 +298,42 @@ export const complianceService = {
       status?: PoshComplaint["status"];
       outcome?: PoshComplaint["outcome"];
       closure_date?: string;
-    }
+    },
   ): Promise<PoshComplaint> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM posh_complaint WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
-    if (!(check as RowDataPacket[]).length) throw new Error("Complaint not found");
+    if (!(check as RowDataPacket[]).length)
+      throw new Error("Complaint not found");
 
     const sets: string[] = [];
     const params: unknown[] = [];
 
-    if (input.status !== undefined) { sets.push("status = ?"); params.push(input.status); }
-    if (input.outcome !== undefined) { sets.push("outcome = ?"); params.push(input.outcome); }
-    if (input.closure_date !== undefined) { sets.push("closure_date = ?"); params.push(input.closure_date); }
+    if (input.status !== undefined) {
+      sets.push("status = ?");
+      params.push(input.status);
+    }
+    if (input.outcome !== undefined) {
+      sets.push("outcome = ?");
+      params.push(input.outcome);
+    }
+    if (input.closure_date !== undefined) {
+      sets.push("closure_date = ?");
+      params.push(input.closure_date);
+    }
 
     if (sets.length > 0) {
       params.push(id);
-      await db.execute(`UPDATE posh_complaint SET ${sets.join(", ")} WHERE id = ?`, params);
+      await db.execute(
+        `UPDATE posh_complaint SET ${sets.join(", ")} WHERE id = ?`,
+        params,
+      );
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM posh_complaint WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     const rec = (rows as PoshComplaint[])[0];
     return {
@@ -305,7 +355,7 @@ export const complianceService = {
          SUM(CASE WHEN outcome = 'malicious_complaint' THEN 1 ELSE 0 END) AS complaints_malicious
        FROM posh_complaint
        WHERE annual_report_year = ?`,
-      [year]
+      [year],
     );
     const row = (rows as Record<string, number>[])[0] ?? {};
     return {
@@ -335,7 +385,7 @@ export const complianceService = {
          LEFT JOIN employees e ON e.id = mbr.employee_id
          ${where}
          ORDER BY mbr.leave_start_date DESC`,
-      params
+      params,
     );
     return rows as MaternityRecord[];
   },
@@ -362,7 +412,7 @@ export const complianceService = {
         input.leave_start_date,
         paid_weeks,
         complications,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -370,7 +420,7 @@ export const complianceService = {
          FROM maternity_benefit_record mbr
          LEFT JOIN employees e ON e.id = mbr.employee_id
          WHERE mbr.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     return (rows as MaternityRecord[])[0];
   },
@@ -382,13 +432,14 @@ export const complianceService = {
       status?: MaternityRecord["status"];
       actual_delivery_date?: string;
       leave_end_date?: string;
-    }
+    },
   ): Promise<MaternityRecord> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM maternity_benefit_record WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
-    if (!(check as RowDataPacket[]).length) throw new Error("Maternity record not found");
+    if (!(check as RowDataPacket[]).length)
+      throw new Error("Maternity record not found");
 
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -412,7 +463,10 @@ export const complianceService = {
 
     if (sets.length > 0) {
       params.push(id);
-      await db.execute(`UPDATE maternity_benefit_record SET ${sets.join(", ")} WHERE id = ?`, params);
+      await db.execute(
+        `UPDATE maternity_benefit_record SET ${sets.join(", ")} WHERE id = ?`,
+        params,
+      );
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -420,7 +474,7 @@ export const complianceService = {
          FROM maternity_benefit_record mbr
          LEFT JOIN employees e ON e.id = mbr.employee_id
          WHERE mbr.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     return (rows as MaternityRecord[])[0];
   },

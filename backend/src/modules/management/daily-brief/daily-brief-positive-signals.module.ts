@@ -29,7 +29,12 @@
  * here as needing product sign-off, not a discovered business rule. Now
  * centralized in daily-brief-editorial-constants.ts.
  */
-import type { AttendanceSummary, BriefAction, BriefSignal, HygieneIssue } from "./daily-brief.types.js";
+import type {
+  AttendanceSummary,
+  BriefAction,
+  BriefSignal,
+  HygieneIssue,
+} from "./daily-brief.types.js";
 import type { KpiPerformanceModuleResult } from "./daily-brief-kpi.module.js";
 import type { QualityModuleResult } from "./daily-brief-quality.module.js";
 import { MATERIAL_DELTA_POINTS as MATERIAL_IMPROVEMENT_POINTS } from "./daily-brief-editorial-constants.js";
@@ -45,7 +50,11 @@ export interface PositiveSignal extends BriefSignal {
 
 function attendanceSignals(attendance: AttendanceSummary): PositiveSignal[] {
   const out: PositiveSignal[] = [];
-  if (attendance.expectedToWork > 0 && attendance.attendancePct !== null && attendance.attendancePct >= 100) {
+  if (
+    attendance.expectedToWork > 0 &&
+    attendance.attendancePct !== null &&
+    attendance.attendancePct >= 100
+  ) {
     out.push({
       key: "attendance_100pct",
       category: "attendance",
@@ -76,7 +85,9 @@ function kpiSignals(kpi: KpiPerformanceModuleResult): PositiveSignal[] {
   const out: PositiveSignal[] = [];
   if (kpi.employeeSignals.length === 0) return out;
 
-  const aboveTarget = kpi.employeeSignals.filter((s) => s.observation === "above_or_at_target");
+  const aboveTarget = kpi.employeeSignals.filter(
+    (s) => s.observation === "above_or_at_target",
+  );
   if (aboveTarget.length > 0) {
     out.push({
       key: "kpi_target_exceeded",
@@ -89,7 +100,9 @@ function kpiSignals(kpi: KpiPerformanceModuleResult): PositiveSignal[] {
     });
   }
 
-  const improved = kpi.employeeSignals.filter((s) => s.trendVsBaseline === "improved");
+  const improved = kpi.employeeSignals.filter(
+    (s) => s.trendVsBaseline === "improved",
+  );
   if (improved.length > 0) {
     out.push({
       key: "kpi_improved_vs_baseline",
@@ -98,8 +111,9 @@ function kpiSignals(kpi: KpiPerformanceModuleResult): PositiveSignal[] {
       value: improved.length,
       unit: "count",
       confidence: "medium",
-      detail: `${improved.length} KPI reading(s) improved vs their 7-day trailing baseline `
-        + `(editorial ${MATERIAL_IMPROVEMENT_POINTS}-point materiality floor not yet applied at the signal level — needs product sign-off).`,
+      detail:
+        `${improved.length} KPI reading(s) improved vs their 7-day trailing baseline ` +
+        `(editorial ${MATERIAL_IMPROVEMENT_POINTS}-point materiality floor not yet applied at the signal level — needs product sign-off).`,
     });
   }
 
@@ -109,15 +123,16 @@ function kpiSignals(kpi: KpiPerformanceModuleResult): PositiveSignal[] {
 function qualitySignals(quality: QualityModuleResult): PositiveSignal[] {
   const out: PositiveSignal[] = [];
   if (
-    quality.avgQualityPct !== null
-    && quality.trailingBaseline?.avgQualityPct !== null
-    && quality.trailingBaseline?.avgQualityPct !== undefined
-    && quality.deterioration !== null
+    quality.avgQualityPct !== null &&
+    quality.trailingBaseline?.avgQualityPct !== null &&
+    quality.trailingBaseline?.avgQualityPct !== undefined &&
+    quality.deterioration !== null
     // Adequate sample already gated inside buildQualityModule — deterioration
     // is only ever populated when both D-1 and baseline sample sizes cleared
     // MIN_SCORED_CALLS_FOR_SIGNAL there.
   ) {
-    const deltaPoints = quality.avgQualityPct - quality.trailingBaseline.avgQualityPct;
+    const deltaPoints =
+      quality.avgQualityPct - quality.trailingBaseline.avgQualityPct;
     if (deltaPoints >= MATERIAL_IMPROVEMENT_POINTS) {
       out.push({
         key: "quality_improved_vs_baseline",
@@ -126,8 +141,9 @@ function qualitySignals(quality: QualityModuleResult): PositiveSignal[] {
         value: Math.round(deltaPoints * 10) / 10,
         unit: "percent",
         confidence: quality.scoredCallCount >= 3 ? "medium" : "low",
-        detail: `Team average quality up ${Math.round(deltaPoints * 10) / 10} points vs the 7-day baseline `
-          + `on ${quality.scoredCallCount} scored call(s) (editorial ${MATERIAL_IMPROVEMENT_POINTS}-point floor — needs product sign-off).`,
+        detail:
+          `Team average quality up ${Math.round(deltaPoints * 10) / 10} points vs the 7-day baseline ` +
+          `on ${quality.scoredCallCount} scored call(s) (editorial ${MATERIAL_IMPROVEMENT_POINTS}-point floor — needs product sign-off).`,
       });
     }
   }
@@ -144,7 +160,11 @@ export function buildPositiveSignals(
   kpi: KpiPerformanceModuleResult,
   quality: QualityModuleResult,
 ): PositiveSignal[] {
-  const confidenceRank: Record<PositiveSignalConfidence, number> = { high: 0, medium: 1, low: 2 };
+  const confidenceRank: Record<PositiveSignalConfidence, number> = {
+    high: 0,
+    medium: 1,
+    low: 2,
+  };
 
   const candidates = [
     ...attendanceSignals(attendance),
@@ -187,7 +207,8 @@ export function buildOperationalPositiveSignals(
       value: 0,
       unit: "count",
       confidence: "high",
-      detail: "No open attendance-hygiene/discipline items for your team on D-1.",
+      detail:
+        "No open attendance-hygiene/discipline items for your team on D-1.",
     });
   }
   if (actions.length === 0) {

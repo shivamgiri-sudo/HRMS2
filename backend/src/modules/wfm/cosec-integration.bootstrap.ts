@@ -12,13 +12,18 @@ const TARGET_TABLE = "integration_biometric_daily";
 
 function configured(): boolean {
   if (env.NCOSEC_SOURCE_MODE === "mysql") return true;
-  return Boolean(env.NCOSEC_DB_HOST && env.NCOSEC_DB_USER && env.NCOSEC_DB_PASSWORD);
+  return Boolean(
+    env.NCOSEC_DB_HOST && env.NCOSEC_DB_USER && env.NCOSEC_DB_PASSWORD,
+  );
 }
 
 export async function bootstrapCosecIntegration(): Promise<boolean> {
-  const explicitlyDisabled = env.NCOSEC_SYNC_ENABLED === "false" && env.NCOSEC_SOURCE_MODE === "mssql";
+  const explicitlyDisabled =
+    env.NCOSEC_SYNC_ENABLED === "false" && env.NCOSEC_SOURCE_MODE === "mssql";
   if (explicitlyDisabled || !configured()) {
-    console.log("[cosec-sync] automatic Integration Hub schedule is disabled or not configured");
+    console.log(
+      "[cosec-sync] automatic Integration Hub schedule is disabled or not configured",
+    );
     return false;
   }
 
@@ -138,9 +143,10 @@ export async function bootstrapCosecIntegration(): Promise<boolean> {
         INTEGRATION_KEY,
         "COSEC read-only automatic attendance sync is active",
         JSON.stringify({
-          source: env.NCOSEC_SOURCE_MODE === "mysql"
-            ? "mas_hrms.integration_biometric_daily/wfm_external_punch_staging/stg_legacy_attendance"
-            : `${env.NCOSEC_DB_NAME}.${env.NCOSEC_EVENT_TABLE}`,
+          source:
+            env.NCOSEC_SOURCE_MODE === "mysql"
+              ? "mas_hrms.integration_biometric_daily/wfm_external_punch_staging/stg_legacy_attendance"
+              : `${env.NCOSEC_DB_NAME}.${env.NCOSEC_EVENT_TABLE}`,
           target: TARGET_TABLE,
           cron: env.NCOSEC_SYNC_CRON,
           scheduler_mode: "disabled_generic_scheduler_dedicated_worker_enabled",

@@ -18,28 +18,48 @@ const ACTOR_ID = "11111111-1111-1111-1111-111111111111";
 const EMPLOYEE_ID = "22222222-2222-2222-2222-222222222222";
 const APPROVAL_ID = "33333333-3333-3333-3333-333333333333";
 
-const { dbExecute, encryptField, blindIndex, logSensitiveAction } = vi.hoisted(() => ({
-  dbExecute: vi.fn(),
-  encryptField: vi.fn((v: string) => `enc(${v})`),
-  blindIndex: vi.fn((v: string) => `blind(${v})`),
-  logSensitiveAction: vi.fn(),
-}));
+const { dbExecute, encryptField, blindIndex, logSensitiveAction } = vi.hoisted(
+  () => ({
+    dbExecute: vi.fn(),
+    encryptField: vi.fn((v: string) => `enc(${v})`),
+    blindIndex: vi.fn((v: string) => `blind(${v})`),
+    logSensitiveAction: vi.fn(),
+  }),
+);
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 // bankAccountDuplicate.ts (the new cross-employee duplicate check) also imports
 // blindIndex from this module — must be mocked alongside encryptField or its
 // call inside findDuplicateAccountOwner()/computeAccountBlindIndex() 500s.
-vi.mock("../../../shared/fieldEncryption.js", () => ({ encryptField, blindIndex }));
+vi.mock("../../../shared/fieldEncryption.js", () => ({
+  encryptField,
+  blindIndex,
+}));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
-vi.mock("../run-status.js", () => ({ isRunClosed: vi.fn().mockResolvedValue(false) }));
+vi.mock("../run-status.js", () => ({
+  isRunClosed: vi.fn().mockResolvedValue(false),
+}));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = { id: ACTOR_ID };
+  requireAuth: (
+    req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = {
+      id: ACTOR_ID,
+    };
     next();
   },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+  requireRole:
+    () =>
+    (
+      _req: express.Request,
+      _res: express.Response,
+      next: express.NextFunction,
+    ) =>
+      next(),
 }));
 
 const { payrollWindowCronRouter } = await import("../payroll-window.routes.js");
@@ -54,7 +74,10 @@ function app() {
 const PENDING_REQUEST = {
   id: APPROVAL_ID,
   employee_id: EMPLOYEE_ID,
-  old_values: JSON.stringify({ bank_name: "Old Bank", account_number: "1111222233334444" }),
+  old_values: JSON.stringify({
+    bank_name: "Old Bank",
+    account_number: "1111222233334444",
+  }),
   new_values: JSON.stringify({
     bank_name: "New Bank",
     account_holder_name: "Test Employee",
@@ -75,13 +98,13 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
 
   it("encrypts and persists the submitted account number", async () => {
     dbExecute
-      .mockResolvedValueOnce([[PENDING_REQUEST]])           // SELECT profile_update_approval
-      .mockResolvedValueOnce([[{ run_month: "2026-09" }]])   // SELECT salary_prep_run
-      .mockResolvedValueOnce([[]])                            // findDuplicateAccountOwner -> no match
-      .mockResolvedValueOnce([{}])                            // UPDATE archive old primary
-      .mockResolvedValueOnce([[{ next_seq: 2 }]])             // SELECT MAX(account_seq)
-      .mockResolvedValueOnce([{}])                            // INSERT new primary
-      .mockResolvedValueOnce([{}]);                           // UPDATE profile_update_approval status
+      .mockResolvedValueOnce([[PENDING_REQUEST]]) // SELECT profile_update_approval
+      .mockResolvedValueOnce([[{ run_month: "2026-09" }]]) // SELECT salary_prep_run
+      .mockResolvedValueOnce([[]]) // findDuplicateAccountOwner -> no match
+      .mockResolvedValueOnce([{}]) // UPDATE archive old primary
+      .mockResolvedValueOnce([[{ next_seq: 2 }]]) // SELECT MAX(account_seq)
+      .mockResolvedValueOnce([{}]) // INSERT new primary
+      .mockResolvedValueOnce([{}]); // UPDATE profile_update_approval status
 
     const res = await request(app())
       .patch(`/api/payroll/bank-change-requests/${APPROVAL_ID}`)
@@ -90,7 +113,9 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
     expect(res.status).toBe(200);
     expect(encryptField).toHaveBeenCalledWith("5555666677778888");
 
-    const insertCall = dbExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"));
+    const insertCall = dbExecute.mock.calls.find((c) =>
+      String(c[0]).includes("INSERT INTO employee_bank_detail"),
+    );
     expect(insertCall).toBeTruthy();
     expect(insertCall![1]).toContain("enc(5555666677778888)");
     expect(String(insertCall![0])).toContain("account_number_blind_index");
@@ -101,9 +126,9 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
     dbExecute
       .mockResolvedValueOnce([[PENDING_REQUEST]])
       .mockResolvedValueOnce([[{ run_month: "2026-09" }]])
-      .mockResolvedValueOnce([[]])  // findDuplicateAccountOwner -> no match
+      .mockResolvedValueOnce([[]]) // findDuplicateAccountOwner -> no match
       .mockResolvedValueOnce([{}])
-      .mockResolvedValueOnce([[{ next_seq: 3 }]])  // employee already has seq 1 and 2 archived
+      .mockResolvedValueOnce([[{ next_seq: 3 }]]) // employee already has seq 1 and 2 archived
       .mockResolvedValueOnce([{}])
       .mockResolvedValueOnce([{}]);
 
@@ -111,7 +136,9 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
       .patch(`/api/payroll/bank-change-requests/${APPROVAL_ID}`)
       .send({ decision: "approved" });
 
-    const insertCall = dbExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"));
+    const insertCall = dbExecute.mock.calls.find((c) =>
+      String(c[0]).includes("INSERT INTO employee_bank_detail"),
+    );
     expect(insertCall![1]).toContain(3); // nextSeq param, not hardcoded 1
   });
 
@@ -119,7 +146,7 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
     dbExecute
       .mockResolvedValueOnce([[PENDING_REQUEST]])
       .mockResolvedValueOnce([[{ run_month: "2026-09" }]])
-      .mockResolvedValueOnce([[]])  // findDuplicateAccountOwner -> no match
+      .mockResolvedValueOnce([[]]) // findDuplicateAccountOwner -> no match
       .mockResolvedValueOnce([{}])
       .mockResolvedValueOnce([[{ next_seq: 2 }]])
       .mockResolvedValueOnce([{}])
@@ -129,7 +156,9 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
       .patch(`/api/payroll/bank-change-requests/${APPROVAL_ID}`)
       .send({ decision: "approved" });
 
-    const archiveCall = dbExecute.mock.calls.find((c) => String(c[0]).includes("UPDATE employee_bank_detail SET is_primary = 0"));
+    const archiveCall = dbExecute.mock.calls.find((c) =>
+      String(c[0]).includes("UPDATE employee_bank_detail SET is_primary = 0"),
+    );
     expect(String(archiveCall![0])).toContain("active_status = 0");
   });
 
@@ -137,7 +166,7 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
     dbExecute
       .mockResolvedValueOnce([[PENDING_REQUEST]])
       .mockResolvedValueOnce([[{ run_month: "2026-09" }]])
-      .mockResolvedValueOnce([[]])  // findDuplicateAccountOwner -> no match
+      .mockResolvedValueOnce([[]]) // findDuplicateAccountOwner -> no match
       .mockResolvedValueOnce([{}])
       .mockResolvedValueOnce([[{ next_seq: 2 }]])
       .mockResolvedValueOnce([{}])
@@ -152,30 +181,44 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
     expect(entry.action_type).toBe("BANK_DETAILS_APPROVED");
     expect(entry.employee_id).toBe(EMPLOYEE_ID);
     expect(entry.reason).toBe("ok");
-    expect(JSON.stringify(entry.new_value_json)).not.toContain("5555666677778888");
+    expect(JSON.stringify(entry.new_value_json)).not.toContain(
+      "5555666677778888",
+    );
     expect(entry.new_value_json.masked_account_number).toBe("****8888");
-    expect(JSON.stringify(entry.old_value_json)).not.toContain("1111222233334444");
+    expect(JSON.stringify(entry.old_value_json)).not.toContain(
+      "1111222233334444",
+    );
     expect(entry.old_value_json.masked_account_number).toBe("****4444");
   });
 
   it("rejects with a reason and still writes an audit log, without touching employee_bank_detail", async () => {
     dbExecute
       .mockResolvedValueOnce([[PENDING_REQUEST]]) // SELECT
-      .mockResolvedValueOnce([{}]);                // UPDATE status = rejected
+      .mockResolvedValueOnce([{}]); // UPDATE status = rejected
 
     const res = await request(app())
       .patch(`/api/payroll/bank-change-requests/${APPROVAL_ID}`)
       .send({ decision: "rejected", note: "IFSC does not match branch" });
 
     expect(res.status).toBe(200);
-    expect(dbExecute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"))).toBe(false);
+    expect(
+      dbExecute.mock.calls.some((c) =>
+        String(c[0]).includes("INSERT INTO employee_bank_detail"),
+      ),
+    ).toBe(false);
     expect(logSensitiveAction).toHaveBeenCalledTimes(1);
-    expect(logSensitiveAction.mock.calls[0][0].action_type).toBe("BANK_DETAILS_REJECTED");
-    expect(logSensitiveAction.mock.calls[0][0].reason).toBe("IFSC does not match branch");
+    expect(logSensitiveAction.mock.calls[0][0].action_type).toBe(
+      "BANK_DETAILS_REJECTED",
+    );
+    expect(logSensitiveAction.mock.calls[0][0].reason).toBe(
+      "IFSC does not match branch",
+    );
   });
 
   it("refuses to re-process an already-decided request (409)", async () => {
-    dbExecute.mockResolvedValueOnce([[{ ...PENDING_REQUEST, status: "approved" }]]);
+    dbExecute.mockResolvedValueOnce([
+      [{ ...PENDING_REQUEST, status: "approved" }],
+    ]);
 
     const res = await request(app())
       .patch(`/api/payroll/bank-change-requests/${APPROVAL_ID}`)
@@ -187,10 +230,17 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
 
   it("rejects an approval carrying a malformed IFSC, before touching employee_bank_detail", async () => {
     dbExecute
-      .mockResolvedValueOnce([[{
-        ...PENDING_REQUEST,
-        new_values: JSON.stringify({ ...JSON.parse(PENDING_REQUEST.new_values), ifsc_code: "NOT-AN-IFSC" }),
-      }]])
+      .mockResolvedValueOnce([
+        [
+          {
+            ...PENDING_REQUEST,
+            new_values: JSON.stringify({
+              ...JSON.parse(PENDING_REQUEST.new_values),
+              ifsc_code: "NOT-AN-IFSC",
+            }),
+          },
+        ],
+      ])
       .mockResolvedValueOnce([[{ run_month: "2026-09" }]]); // SELECT salary_prep_run, reached before validation
 
     const res = await request(app())
@@ -198,17 +248,30 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
       .send({ decision: "approved" });
 
     expect(res.status).toBe(400);
-    expect(res.body.details.some((d: any) => d.field === "ifsc_code")).toBe(true);
-    expect(dbExecute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"))).toBe(false);
+    expect(res.body.details.some((d: any) => d.field === "ifsc_code")).toBe(
+      true,
+    );
+    expect(
+      dbExecute.mock.calls.some((c) =>
+        String(c[0]).includes("INSERT INTO employee_bank_detail"),
+      ),
+    ).toBe(false);
     expect(logSensitiveAction).not.toHaveBeenCalled();
   });
 
   it("rejects an approval carrying a malformed account number", async () => {
     dbExecute
-      .mockResolvedValueOnce([[{
-        ...PENDING_REQUEST,
-        new_values: JSON.stringify({ ...JSON.parse(PENDING_REQUEST.new_values), account_number: "abc123" }),
-      }]])
+      .mockResolvedValueOnce([
+        [
+          {
+            ...PENDING_REQUEST,
+            new_values: JSON.stringify({
+              ...JSON.parse(PENDING_REQUEST.new_values),
+              account_number: "abc123",
+            }),
+          },
+        ],
+      ])
       .mockResolvedValueOnce([[{ run_month: "2026-09" }]]);
 
     const res = await request(app())
@@ -216,19 +279,26 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
       .send({ decision: "approved" });
 
     expect(res.status).toBe(400);
-    expect(res.body.details.some((d: any) => d.field === "account_number")).toBe(true);
+    expect(
+      res.body.details.some((d: any) => d.field === "account_number"),
+    ).toBe(true);
   });
 
   it("refuses an approval whose account number is already on file for another employee", async () => {
     dbExecute
       .mockResolvedValueOnce([[PENDING_REQUEST]])
       .mockResolvedValueOnce([[{ run_month: "2026-09" }]])
-      .mockResolvedValueOnce([[{ // findDuplicateAccountOwner -> match on another employee
-        bank_detail_id: "44444444-4444-4444-4444-444444444444",
-        employee_id: "55555555-5555-5555-5555-555555555555",
-        employee_code: "MAS00999",
-        employee_name: "Someone Else",
-      }]]);
+      .mockResolvedValueOnce([
+        [
+          {
+            // findDuplicateAccountOwner -> match on another employee
+            bank_detail_id: "44444444-4444-4444-4444-444444444444",
+            employee_id: "55555555-5555-5555-5555-555555555555",
+            employee_code: "MAS00999",
+            employee_name: "Someone Else",
+          },
+        ],
+      ]);
 
     const res = await request(app())
       .patch(`/api/payroll/bank-change-requests/${APPROVAL_ID}`)
@@ -236,7 +306,11 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.message).toContain("MAS00999");
-    expect(dbExecute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"))).toBe(false);
+    expect(
+      dbExecute.mock.calls.some((c) =>
+        String(c[0]).includes("INSERT INTO employee_bank_detail"),
+      ),
+    ).toBe(false);
     expect(logSensitiveAction).not.toHaveBeenCalled();
   });
 });

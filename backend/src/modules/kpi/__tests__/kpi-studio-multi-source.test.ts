@@ -18,7 +18,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConnection: vi.fn() } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute, query: execute, getConnection: vi.fn() },
+}));
 
 // Neither external route is reachable from a unit test, and neither is what is under test here.
 vi.mock("../../external-db/external-db.service.js", () => ({
@@ -29,11 +31,18 @@ vi.mock("../../external-db/external-db.service.js", () => ({
 
 const fetchSheetCsv = vi.fn();
 vi.mock("../kpi-studio.gsheet.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../kpi-studio.gsheet.js")>();
-  return { ...original, fetchSheetCsv: (...args: unknown[]) => fetchSheetCsv(...args) };
+  const original =
+    await importOriginal<typeof import("../kpi-studio.gsheet.js")>();
+  return {
+    ...original,
+    fetchSheetCsv: (...args: unknown[]) => fetchSheetCsv(...args),
+  };
 });
 
-import { readMergedSourceValues, readConfigJson } from "../kpi-studio.sources.js";
+import {
+  readMergedSourceValues,
+  readConfigJson,
+} from "../kpi-studio.sources.js";
 import { evaluateFormula } from "../kpi-formula.engine.js";
 
 const EMPLOYEE = "emp-1";
@@ -47,7 +56,9 @@ const sheetSource = {
   source_type: "google_sheet_csv",
   employee_key_column: "Employee Code",
   date_column: "Audit Date",
-  config_json: { csv_url: "https://docs.google.com/spreadsheets/d/e/x/pub?output=csv" },
+  config_json: {
+    csv_url: "https://docs.google.com/spreadsheets/d/e/x/pub?output=csv",
+  },
 };
 
 /** A local table carrying dialer volumes. */
@@ -81,16 +92,32 @@ function mockDb(localRows: Array<Record<string, unknown>> = []) {
 describe("readMergedSourceValues", () => {
   it("combines fields from a sheet and a local table into one input set", () => {
     // The headline case. Neither source alone can answer the formula.
-    mockDb([{ __employee_key: EMPLOYEE, __score_date: DATE, total_calls: 240 }]);
+    mockDb([
+      { __employee_key: EMPLOYEE, __score_date: DATE, total_calls: 240 },
+    ]);
     fetchSheetCsv.mockResolvedValue({
       headers: ["Employee Code", "Audit Date", "audited_passed"],
-      rows: [{ "Employee Code": "MAS001", "Audit Date": DATE, audited_passed: "12" }],
+      rows: [
+        { "Employee Code": "MAS001", "Audit Date": DATE, audited_passed: "12" },
+      ],
     });
 
     return readMergedSourceValues(
       [
-        { source: sheetSource as any, fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }] },
-        { source: localSource as any, fields: [{ field_name: "total_calls", source_column: "total_calls", aggregate_fn: "SUM" }] },
+        {
+          source: sheetSource as any,
+          fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }],
+        },
+        {
+          source: localSource as any,
+          fields: [
+            {
+              field_name: "total_calls",
+              source_column: "total_calls",
+              aggregate_fn: "SUM",
+            },
+          ],
+        },
       ],
       [EMPLOYEE],
       DATE,
@@ -102,7 +129,10 @@ describe("readMergedSourceValues", () => {
       expect(merged.failures).toEqual([]);
 
       // And the formula that motivated all of this actually evaluates.
-      const result = evaluateFormula("PCT(audited_passed, total_calls)", Object.fromEntries(bucket!));
+      const result = evaluateFormula(
+        "PCT(audited_passed, total_calls)",
+        Object.fromEntries(bucket!),
+      );
       expect(result.value).toBeCloseTo(5, 5);
     });
   });
@@ -121,12 +151,19 @@ describe("readMergedSourceValues", () => {
     });
 
     return readMergedSourceValues(
-      [{ source: sheetSource as any, fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }] }],
+      [
+        {
+          source: sheetSource as any,
+          fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }],
+        },
+      ],
       [EMPLOYEE],
       DATE,
       DATE,
     ).then((merged) => {
-      expect(merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("audited_passed")).toBe(12);
+      expect(
+        merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("audited_passed"),
+      ).toBe(12);
       expect(merged.rowsRead).toBe(3);
     });
   });
@@ -142,7 +179,12 @@ describe("readMergedSourceValues", () => {
     });
 
     return readMergedSourceValues(
-      [{ source: sheetSource as any, fields: [{ field_name: "score", aggregate_fn: "AVG" }] }],
+      [
+        {
+          source: sheetSource as any,
+          fields: [{ field_name: "score", aggregate_fn: "AVG" }],
+        },
+      ],
       [EMPLOYEE],
       DATE,
       DATE,
@@ -157,7 +199,14 @@ describe("readMergedSourceValues", () => {
     mockDb();
     fetchSheetCsv.mockResolvedValue({
       headers: ["Employee Code", "Audit Date", "audited_passed", "fatal_count"],
-      rows: [{ "Employee Code": "MAS001", "Audit Date": DATE, audited_passed: "12", fatal_count: "" }],
+      rows: [
+        {
+          "Employee Code": "MAS001",
+          "Audit Date": DATE,
+          audited_passed: "12",
+          fatal_count: "",
+        },
+      ],
     });
 
     return readMergedSourceValues(
@@ -178,7 +227,10 @@ describe("readMergedSourceValues", () => {
       expect(bucket.has("fatal_count")).toBe(true);
       expect(bucket.get("fatal_count")).toBeNull();
 
-      const evaluated = evaluateFormula("audited_passed - fatal_count", Object.fromEntries(bucket));
+      const evaluated = evaluateFormula(
+        "audited_passed - fatal_count",
+        Object.fromEntries(bucket),
+      );
       expect(evaluated.value).toBeNull();
       expect(evaluated.error).toBeUndefined();
       expect(evaluated.nullReason).toContain("fatal_count");
@@ -188,24 +240,48 @@ describe("readMergedSourceValues", () => {
   it("resolves a field supplied by two sources deterministically and reports it", () => {
     // Validation forbids this at save time. If it reaches here anyway the first source in read order
     // wins — deterministic, and visibly reported rather than depending on which query returned first.
-    mockDb([{ __employee_key: EMPLOYEE, __score_date: DATE, total_calls: 999 }]);
+    mockDb([
+      { __employee_key: EMPLOYEE, __score_date: DATE, total_calls: 999 },
+    ]);
     fetchSheetCsv.mockResolvedValue({
       headers: ["Employee Code", "Audit Date", "total_calls"],
-      rows: [{ "Employee Code": "MAS001", "Audit Date": DATE, total_calls: "240" }],
+      rows: [
+        { "Employee Code": "MAS001", "Audit Date": DATE, total_calls: "240" },
+      ],
     });
 
     return readMergedSourceValues(
       [
-        { source: sheetSource as any, fields: [{ field_name: "total_calls", aggregate_fn: "SUM" }] },
-        { source: localSource as any, fields: [{ field_name: "total_calls", source_column: "total_calls", aggregate_fn: "SUM" }] },
+        {
+          source: sheetSource as any,
+          fields: [{ field_name: "total_calls", aggregate_fn: "SUM" }],
+        },
+        {
+          source: localSource as any,
+          fields: [
+            {
+              field_name: "total_calls",
+              source_column: "total_calls",
+              aggregate_fn: "SUM",
+            },
+          ],
+        },
       ],
       [EMPLOYEE],
       DATE,
       DATE,
     ).then((merged) => {
-      expect(merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("total_calls")).toBe(240);
-      expect(merged.failures.some((failure) => failure.error.includes('"total_calls"'))).toBe(true);
-      expect(merged.failures.some((failure) => failure.error.includes("QA_SHEET"))).toBe(true);
+      expect(merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("total_calls")).toBe(
+        240,
+      );
+      expect(
+        merged.failures.some((failure) =>
+          failure.error.includes('"total_calls"'),
+        ),
+      ).toBe(true);
+      expect(
+        merged.failures.some((failure) => failure.error.includes("QA_SHEET")),
+      ).toBe(true);
     });
   });
 
@@ -218,20 +294,38 @@ describe("readMergedSourceValues", () => {
       headers: ["Employee Code", "Audit Date", "total_calls"],
       rows: [
         { "Employee Code": "MAS001", "Audit Date": DATE, total_calls: "10" },
-        { "Employee Code": "MAS001", "Audit Date": "2026-08-20", total_calls: "20" },
+        {
+          "Employee Code": "MAS001",
+          "Audit Date": "2026-08-20",
+          total_calls: "20",
+        },
       ],
     });
 
     return readMergedSourceValues(
       [
-        { source: sheetSource as any, fields: [{ field_name: "total_calls", aggregate_fn: "SUM" }] },
-        { source: localSource as any, fields: [{ field_name: "total_calls", source_column: "total_calls", aggregate_fn: "SUM" }] },
+        {
+          source: sheetSource as any,
+          fields: [{ field_name: "total_calls", aggregate_fn: "SUM" }],
+        },
+        {
+          source: localSource as any,
+          fields: [
+            {
+              field_name: "total_calls",
+              source_column: "total_calls",
+              aggregate_fn: "SUM",
+            },
+          ],
+        },
       ],
       [EMPLOYEE],
       "2026-08-20",
       DATE,
     ).then((merged) => {
-      const collisionReports = merged.failures.filter((failure) => failure.error.includes('"total_calls"'));
+      const collisionReports = merged.failures.filter((failure) =>
+        failure.error.includes('"total_calls"'),
+      );
       expect(collisionReports).toHaveLength(1);
     });
   });
@@ -239,19 +333,39 @@ describe("readMergedSourceValues", () => {
   it("keeps a reachable source's data when another source fails", () => {
     // One unreachable external system must not discard what the others returned. The formula's own
     // null handling then decides whether a result is possible.
-    mockDb([{ __employee_key: EMPLOYEE, __score_date: DATE, total_calls: 240 }]);
-    fetchSheetCsv.mockResolvedValue({ headers: [], rows: [], error: "The sheet took too long to respond." });
+    mockDb([
+      { __employee_key: EMPLOYEE, __score_date: DATE, total_calls: 240 },
+    ]);
+    fetchSheetCsv.mockResolvedValue({
+      headers: [],
+      rows: [],
+      error: "The sheet took too long to respond.",
+    });
 
     return readMergedSourceValues(
       [
-        { source: sheetSource as any, fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }] },
-        { source: localSource as any, fields: [{ field_name: "total_calls", source_column: "total_calls", aggregate_fn: "SUM" }] },
+        {
+          source: sheetSource as any,
+          fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }],
+        },
+        {
+          source: localSource as any,
+          fields: [
+            {
+              field_name: "total_calls",
+              source_column: "total_calls",
+              aggregate_fn: "SUM",
+            },
+          ],
+        },
       ],
       [EMPLOYEE],
       DATE,
       DATE,
     ).then((merged) => {
-      expect(merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("total_calls")).toBe(240);
+      expect(merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("total_calls")).toBe(
+        240,
+      );
       expect(merged.failures).toHaveLength(1);
       expect(merged.failures[0].source_code).toBe("QA_SHEET");
       expect(merged.failures[0].error).toContain("too long");
@@ -273,7 +387,13 @@ describe("readMergedSourceValues", () => {
             employee_key_column: "UserID",
             date_column: "ReportDate",
           } as any,
-          fields: [{ field_name: "talk_seconds", source_column: "talk_sec", aggregate_fn: "SUM" }],
+          fields: [
+            {
+              field_name: "talk_seconds",
+              source_column: "talk_sec",
+              aggregate_fn: "SUM",
+            },
+          ],
         },
       ],
       [EMPLOYEE],
@@ -288,13 +408,16 @@ describe("readMergedSourceValues", () => {
 
   it("skips a source with no fields rather than querying it", () => {
     mockDb();
-    return readMergedSourceValues([{ source: sheetSource as any, fields: [] }], [EMPLOYEE], DATE, DATE).then(
-      (merged) => {
-        expect(fetchSheetCsv).not.toHaveBeenCalled();
-        expect(merged.values.size).toBe(0);
-        expect(merged.failures).toEqual([]);
-      },
-    );
+    return readMergedSourceValues(
+      [{ source: sheetSource as any, fields: [] }],
+      [EMPLOYEE],
+      DATE,
+      DATE,
+    ).then((merged) => {
+      expect(fetchSheetCsv).not.toHaveBeenCalled();
+      expect(merged.values.size).toBe(0);
+      expect(merged.failures).toEqual([]);
+    });
   });
 
   it("names the missing column when a sheet field has no matching header", () => {
@@ -332,16 +455,29 @@ describe("readMergedSourceValues", () => {
     mockDb();
     fetchSheetCsv.mockResolvedValue({
       headers: ["employee code", "audit date", "Audited Passed"],
-      rows: [{ "employee code": "MAS001", "audit date": DATE, "Audited Passed": "12" }],
+      rows: [
+        {
+          "employee code": "MAS001",
+          "audit date": DATE,
+          "Audited Passed": "12",
+        },
+      ],
     });
 
     return readMergedSourceValues(
-      [{ source: sheetSource as any, fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }] }],
+      [
+        {
+          source: sheetSource as any,
+          fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }],
+        },
+      ],
       [EMPLOYEE],
       DATE,
       DATE,
     ).then((merged) => {
-      expect(merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("audited_passed")).toBe(12);
+      expect(
+        merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("audited_passed"),
+      ).toBe(12);
     });
   });
 
@@ -350,18 +486,29 @@ describe("readMergedSourceValues", () => {
     fetchSheetCsv.mockResolvedValue({
       headers: ["Employee Code", "Audit Date", "audited_passed"],
       rows: [
-        { "Employee Code": "MAS001", "Audit Date": "2026-01-01", audited_passed: "99" },
+        {
+          "Employee Code": "MAS001",
+          "Audit Date": "2026-01-01",
+          audited_passed: "99",
+        },
         { "Employee Code": "MAS001", "Audit Date": DATE, audited_passed: "12" },
       ],
     });
 
     return readMergedSourceValues(
-      [{ source: sheetSource as any, fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }] }],
+      [
+        {
+          source: sheetSource as any,
+          fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }],
+        },
+      ],
       [EMPLOYEE],
       DATE,
       DATE,
     ).then((merged) => {
-      expect(merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("audited_passed")).toBe(12);
+      expect(
+        merged.values.get(`${EMPLOYEE}|${DATE}`)?.get("audited_passed"),
+      ).toBe(12);
       expect(merged.values.has(`${EMPLOYEE}|2026-01-01`)).toBe(false);
     });
   });
@@ -371,11 +518,22 @@ describe("readMergedSourceValues", () => {
     mockDb();
     fetchSheetCsv.mockResolvedValue({
       headers: ["Employee Code", "Audit Date", "audited_passed"],
-      rows: [{ "Employee Code": "WHO-IS-THIS", "Audit Date": DATE, audited_passed: "12" }],
+      rows: [
+        {
+          "Employee Code": "WHO-IS-THIS",
+          "Audit Date": DATE,
+          audited_passed: "12",
+        },
+      ],
     });
 
     return readMergedSourceValues(
-      [{ source: sheetSource as any, fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }] }],
+      [
+        {
+          source: sheetSource as any,
+          fields: [{ field_name: "audited_passed", aggregate_fn: "SUM" }],
+        },
+      ],
       [EMPLOYEE],
       DATE,
       DATE,
@@ -388,11 +546,15 @@ describe("readMergedSourceValues", () => {
 
 describe("readConfigJson", () => {
   it("reads an already-parsed JSON column", () => {
-    expect(readConfigJson({ config_json: { csv_url: "x" } } as any)).toEqual({ csv_url: "x" });
+    expect(readConfigJson({ config_json: { csv_url: "x" } } as any)).toEqual({
+      csv_url: "x",
+    });
   });
 
   it("parses the string older drivers return", () => {
-    expect(readConfigJson({ config_json: '{"csv_url":"x"}' } as any)).toEqual({ csv_url: "x" });
+    expect(readConfigJson({ config_json: '{"csv_url":"x"}' } as any)).toEqual({
+      csv_url: "x",
+    });
   });
 
   it("returns an empty object for null or malformed JSON rather than throwing", () => {

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { parseNumber, parseDate, PROCESS_MANUAL_KPI_HEADERS } from "../process-manual-kpi-bulk.service.js";
+import {
+  parseNumber,
+  parseDate,
+  PROCESS_MANUAL_KPI_HEADERS,
+} from "../process-manual-kpi-bulk.service.js";
 
 describe("parseNumber", () => {
   it("reads Indian-formatted thousands", () => {

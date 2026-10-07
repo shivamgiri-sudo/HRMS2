@@ -24,12 +24,18 @@ export interface ProcessPnlRecord {
   branchName: string | null;
   billingModel: string | null;
   resolvedRate: number | null;
-  rateSource: "process_billing_rate" | "client_contract_master" | "billing_unit" | "missing" | "overlap_exception";
+  rateSource:
+    | "process_billing_rate"
+    | "client_contract_master"
+    | "billing_unit"
+    | "missing"
+    | "overlap_exception";
   rateType: string | null;
   billingUnit: string | null;
   rateEffectiveFrom: string | null;
   approvalReference: string | null;
-  configurationStatus: "approved" | "fallback" | "missing" | "overlap_exception";
+  configurationStatus:
+    "approved" | "fallback" | "missing" | "overlap_exception";
   contractedSeats: number | null;
   billableHc: number | null;
   requiredProductiveHc: number;
@@ -93,7 +99,11 @@ export interface PnlSummaryResponse {
     totalIndirectCost: number;
     operatingProfit: number;
     operatingMarginPct: number | null;
-    mostProfitableProcess: { processId: string; processName: string; value: number } | null;
+    mostProfitableProcess: {
+      processId: string;
+      processName: string;
+      value: number;
+    } | null;
     lossMakingProcesses: number;
     revenueAtRisk: number;
     receivableRisk: number;

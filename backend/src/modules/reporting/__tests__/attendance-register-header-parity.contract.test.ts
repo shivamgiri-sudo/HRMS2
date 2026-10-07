@@ -26,10 +26,16 @@ describe("attendance-register-monthly header-parity preconditions", () => {
 
     const marker = 'code: "attendance-register-monthly"';
     const start = src.indexOf(marker);
-    expect(start, "attendance-register-monthly entry not found in report-catalog.ts").toBeGreaterThanOrEqual(0);
+    expect(
+      start,
+      "attendance-register-monthly entry not found in report-catalog.ts",
+    ).toBeGreaterThanOrEqual(0);
 
     const nextCodeIdx = src.indexOf('code: "', start + marker.length);
-    const segment = src.slice(start, nextCodeIdx === -1 ? src.length : nextCodeIdx);
+    const segment = src.slice(
+      start,
+      nextCodeIdx === -1 ? src.length : nextCodeIdx,
+    );
 
     const dayKeys = new Set(
       [...segment.matchAll(/key:\s*"day_(\d+)"/g)].map((m) => Number(m[1])),
@@ -51,7 +57,10 @@ describe("attendance-register-monthly header-parity preconditions", () => {
 
     const declRe = /CATALOG_FORMAT_CODES\s*=\s*new Set\(\s*\[[^\]]*\]\s*\)/;
     const decl = declRe.exec(src);
-    expect(decl, "CATALOG_FORMAT_CODES declaration not found in report-suite.routes.ts").not.toBeNull();
+    expect(
+      decl,
+      "CATALOG_FORMAT_CODES declaration not found in report-suite.routes.ts",
+    ).not.toBeNull();
 
     expect(decl![0]).toContain('"attendance-register-monthly"');
   });

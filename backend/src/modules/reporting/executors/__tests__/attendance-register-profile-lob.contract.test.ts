@@ -16,7 +16,10 @@ import { describe, expect, it } from "vitest";
  *      catalogued here.
  */
 const src = readFileSync(
-  resolve(process.cwd(), "src/modules/reporting/executors/attendance.executor.ts"),
+  resolve(
+    process.cwd(),
+    "src/modules/reporting/executors/attendance.executor.ts",
+  ),
   "utf8",
 );
 const catalog = readFileSync(
@@ -26,8 +29,12 @@ const catalog = readFileSync(
 
 describe("Attendance Register — Profile column has no employment_type fallback", () => {
   it("selects profile_type alone, not a fallback to employment_type", () => {
-    expect(src).toContain("COALESCE(NULLIF(e.profile_type, ''), '') AS profile");
-    expect(src).not.toContain("COALESCE(NULLIF(e.profile_type, ''), e.employment_type, '') AS profile");
+    expect(src).toContain(
+      "COALESCE(NULLIF(e.profile_type, ''), '') AS profile",
+    );
+    expect(src).not.toContain(
+      "COALESCE(NULLIF(e.profile_type, ''), e.employment_type, '') AS profile",
+    );
   });
 });
 
@@ -46,7 +53,10 @@ describe("Attendance Register — Process LOB Name", () => {
     const start = catalog.indexOf('code: "attendance-register-monthly"');
     expect(start).toBeGreaterThanOrEqual(0);
     const nextCodeIdx = catalog.indexOf('code: "', start + 1);
-    const segment = catalog.slice(start, nextCodeIdx === -1 ? catalog.length : nextCodeIdx);
+    const segment = catalog.slice(
+      start,
+      nextCodeIdx === -1 ? catalog.length : nextCodeIdx,
+    );
     expect(segment).toContain('{ key: "process_lob_name"');
   });
 });

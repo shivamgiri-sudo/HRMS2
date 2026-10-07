@@ -43,9 +43,14 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--recalc") out.recalc = true;
   }
   if (!out.from || !out.to) {
-    throw new Error("Usage: npm run night-shift:repair -- --from YYYY-MM-DD --to YYYY-MM-DD [--run-month YYYY-MM] [--run-id ID] [--limit N] [--apply] [--recalc]");
+    throw new Error(
+      "Usage: npm run night-shift:repair -- --from YYYY-MM-DD --to YYYY-MM-DD [--run-month YYYY-MM] [--run-id ID] [--limit N] [--apply] [--recalc]",
+    );
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(out.from) || !/^\d{4}-\d{2}-\d{2}$/.test(out.to)) {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(out.from) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(out.to)
+  ) {
     throw new Error("--from and --to must be YYYY-MM-DD");
   }
   if (out.runMonth && !/^\d{4}-\d{2}$/.test(out.runMonth)) {
@@ -57,13 +62,19 @@ function parseArgs(argv: string[]): Args {
   return out as Args;
 }
 
-function classifyAprMinutes(minutes: number): { status: "present" | "half_day" | "absent"; lwpValue: number } {
+function classifyAprMinutes(minutes: number): {
+  status: "present" | "half_day" | "absent";
+  lwpValue: number;
+} {
   if (minutes >= 480) return { status: "present", lwpValue: 0 };
   if (minutes >= 240) return { status: "half_day", lwpValue: 0.5 };
   return { status: "absent", lwpValue: 1 };
 }
 
-async function latestRunIdForMonth(db: any, runMonth: string): Promise<string | null> {
+async function latestRunIdForMonth(
+  db: any,
+  runMonth: string,
+): Promise<string | null> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT id
        FROM salary_prep_run
@@ -75,7 +86,12 @@ async function latestRunIdForMonth(db: any, runMonth: string): Promise<string | 
   return (rows[0] as any)?.id ?? null;
 }
 
-async function loadCandidates(db: any, from: string, to: string, limit: number): Promise<CandidateRow[]> {
+async function loadCandidates(
+  db: any,
+  from: string,
+  to: string,
+  limit: number,
+): Promise<CandidateRow[]> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT
         e.id AS employee_id,
@@ -140,9 +156,12 @@ async function loadCandidates(db: any, from: string, to: string, limit: number):
       apr_combined_minutes: aprCombinedMinutes,
       adr_status: row.adr_status ? String(row.adr_status) : null,
       adr_source: row.adr_source ? String(row.adr_source) : null,
-      adr_raw_minutes: row.adr_raw_minutes === null ? null : Number(row.adr_raw_minutes),
+      adr_raw_minutes:
+        row.adr_raw_minutes === null ? null : Number(row.adr_raw_minutes),
       is_locked: row.is_locked === null ? null : Number(row.is_locked),
-      regularization_id: row.regularization_id ? String(row.regularization_id) : null,
+      regularization_id: row.regularization_id
+        ? String(row.regularization_id)
+        : null,
       override_by: row.override_by ? String(row.override_by) : null,
       branch_id: row.branch_id ? String(row.branch_id) : null,
       process_id: row.process_id ? String(row.process_id) : null,
@@ -155,17 +174,39 @@ async function loadCandidates(db: any, from: string, to: string, limit: number):
     const actual = row.adr_status;
     const expected = row.inferred_expected_status;
     if (actual === null) return true;
-    if (["leave_approved", "holiday", "week_off", "week_off_worked"].includes(actual)) return false;
-    if (expected === "present" && (actual === "half_day" || actual === "absent" || actual === "missing_punch")) return true;
-    if (expected === "half_day" && (actual === "absent" || actual === "missing_punch")) return true;
+    if (
+      ["leave_approved", "holiday", "week_off", "week_off_worked"].includes(
+        actual,
+      )
+    )
+      return false;
+    if (
+      expected === "present" &&
+      (actual === "half_day" ||
+        actual === "absent" ||
+        actual === "missing_punch")
+    )
+      return true;
+    if (
+      expected === "half_day" &&
+      (actual === "absent" || actual === "missing_punch")
+    )
+      return true;
     return false;
   });
 
   return limit > 0 ? truePayrollRisk.slice(0, limit) : truePayrollRisk;
 }
 
-async function repairCandidate(db: any, row: CandidateRow): Promise<"repaired" | "skipped"> {
-  if (Number(row.is_locked ?? 0) === 1 || row.regularization_id || row.override_by) {
+async function repairCandidate(
+  db: any,
+  row: CandidateRow,
+): Promise<"repaired" | "skipped"> {
+  if (
+    Number(row.is_locked ?? 0) === 1 ||
+    row.regularization_id ||
+    row.override_by
+  ) {
     return "skipped";
   }
 
@@ -242,15 +283,25 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const runMonth = args.runMonth ?? args.from.slice(0, 7);
   const { db, closePool } = await import("../src/db/mysql.js");
-  const { calculatePayrollRunScoped } = await import("../src/modules/payroll/payrollCalculate.service.js");
+  const { calculatePayrollRunScoped } =
+    await import("../src/modules/payroll/payrollCalculate.service.js");
   try {
-    const runId = args.runId ?? await latestRunIdForMonth(db, runMonth);
+    const runId = args.runId ?? (await latestRunIdForMonth(db, runMonth));
     const candidates = await loadCandidates(db, args.from, args.to, args.limit);
 
-    const protectedRows = candidates.filter((row) => Number(row.is_locked ?? 0) === 1 || row.regularization_id || row.override_by);
-    const repairableRows = candidates.filter((row) => !protectedRows.includes(row));
+    const protectedRows = candidates.filter(
+      (row) =>
+        Number(row.is_locked ?? 0) === 1 ||
+        row.regularization_id ||
+        row.override_by,
+    );
+    const repairableRows = candidates.filter(
+      (row) => !protectedRows.includes(row),
+    );
 
-    console.log(`Inferred APR night-shift repair audit — ${args.from} to ${args.to}`);
+    console.log(
+      `Inferred APR night-shift repair audit — ${args.from} to ${args.to}`,
+    );
     console.log(`Run month: ${runMonth}`);
     console.log(`Run id: ${runId ?? "not found"}`);
     console.table([
@@ -264,7 +315,9 @@ async function main() {
     console.table(protectedRows.slice(0, 20));
 
     if (!args.apply) {
-      console.log("Dry-run only. Re-run with --apply to update unlocked/unprotected ADR rows.");
+      console.log(
+        "Dry-run only. Re-run with --apply to update unlocked/unprotected ADR rows.",
+      );
       return;
     }
 
@@ -289,18 +342,28 @@ async function main() {
 
     if (args.recalc) {
       if (!runId) {
-        throw new Error("Cannot recalculate payroll without a salary_prep_run id. Pass --run-id.");
+        throw new Error(
+          "Cannot recalculate payroll without a salary_prep_run id. Pass --run-id.",
+        );
       }
       const scoped = Array.from(affectedEmployeeIds);
       if (scoped.length > 0) {
-        const recalc = await calculatePayrollRunScoped(runId, "night_shift_apr_repair", { employeeIds: scoped });
+        const recalc = await calculatePayrollRunScoped(
+          runId,
+          "night_shift_apr_repair",
+          { employeeIds: scoped },
+        );
         console.log("Payroll recalculation result:");
         console.dir(recalc, { depth: null });
       } else {
-        console.log("No repaired employees, so payroll recalculation was skipped.");
+        console.log(
+          "No repaired employees, so payroll recalculation was skipped.",
+        );
       }
     } else {
-      console.log("ADR repair applied. Payroll recalculation not run because --recalc was not passed.");
+      console.log(
+        "ADR repair applied. Payroll recalculation not run because --recalc was not passed.",
+      );
     }
   } finally {
     await closePool();

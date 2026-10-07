@@ -1,5 +1,5 @@
-import { createHash, createHmac, hkdfSync, timingSafeEqual } from 'crypto';
-import { env } from '../../config/env.js';
+import { createHash, createHmac, hkdfSync, timingSafeEqual } from "crypto";
+import { env } from "../../config/env.js";
 
 /**
  * Gate QR token for the Asset & Material Exit Pass (Phase 4, migration 1633).
@@ -34,14 +34,14 @@ import { env } from '../../config/env.js';
  */
 
 /** Bumping this invalidates every printed QR — it changes the HMAC message. */
-const TOKEN_VERSION = 'v1';
+const TOKEN_VERSION = "v1";
 
 /**
  * HKDF `info` label. Domain separation lives here: changing this string yields
  * a completely unrelated key from the same JWT_SECRET, which is what stops a
  * gate token from having any relationship to a session token.
  */
-const HKDF_INFO = 'hrms2/exit-pass-qr/v1';
+const HKDF_INFO = "hrms2/exit-pass-qr/v1";
 
 /**
  * 16 bytes of a SHA-256 HMAC = 128 bits, base64url-encoded to 22 chars.
@@ -71,7 +71,7 @@ let cachedSecret: Buffer | null = null;
 function qrSecret(): Buffer {
   if (cachedSecret) return cachedSecret;
   if (env.EXIT_PASS_QR_SECRET) {
-    cachedSecret = Buffer.from(env.EXIT_PASS_QR_SECRET, 'utf8');
+    cachedSecret = Buffer.from(env.EXIT_PASS_QR_SECRET, "utf8");
   } else {
     // Empty salt is correct for HKDF when the IKM is already a high-entropy
     // secret; the `info` label carries the domain separation. See the
@@ -79,7 +79,13 @@ function qrSecret(): Buffer {
     // JWT_SECRET here is safe rather than the secret-sharing bug that comment
     // warns about.
     cachedSecret = Buffer.from(
-      hkdfSync('sha256', Buffer.from(env.JWT_SECRET, 'utf8'), Buffer.alloc(0), Buffer.from(HKDF_INFO, 'utf8'), 32),
+      hkdfSync(
+        "sha256",
+        Buffer.from(env.JWT_SECRET, "utf8"),
+        Buffer.alloc(0),
+        Buffer.from(HKDF_INFO, "utf8"),
+        32,
+      ),
     );
   }
   return cachedSecret;
@@ -90,16 +96,16 @@ function qrSecret(): Buffer {
  * produces a byte-identical QR.
  */
 export function deriveQrToken(passId: string): string {
-  return createHmac('sha256', qrSecret())
+  return createHmac("sha256", qrSecret())
     .update(`exitpass:${TOKEN_VERSION}:${passId}`)
     .digest()
     .subarray(0, TOKEN_BYTES)
-    .toString('base64url');
+    .toString("base64url");
 }
 
 /** sha256 hex — the only form that reaches the database. CHAR(64) in 1633. */
 export function qrTokenHash(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+  return createHash("sha256").update(token).digest("hex");
 }
 
 /**
@@ -114,8 +120,8 @@ export function qrTokenHash(token: string): string {
  * a string=== on a credential.
  */
 export function qrTokenHashEquals(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, 'utf8');
-  const bufB = Buffer.from(b, 'utf8');
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
   if (bufA.length !== bufB.length) return false;
   return timingSafeEqual(bufA, bufB);
 }

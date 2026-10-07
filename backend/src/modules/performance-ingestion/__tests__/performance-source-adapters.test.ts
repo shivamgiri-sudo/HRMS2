@@ -7,9 +7,19 @@ import {
 
 describe("assertReadOnlyQuery", () => {
   it("allows SELECT and CTE-based reporting queries", () => {
-    expect(() => assertReadOnlyQuery("SELECT employee_code FROM reporting_view WHERE report_date BETWEEN ? AND ?")).not.toThrow();
-    expect(() => assertReadOnlyQuery("WITH daily AS (SELECT 1 AS ok) SELECT * FROM daily")).not.toThrow();
-    expect(() => assertReadOnlyQuery("SELECT 'DROP TABLE is only text' AS label FROM reporting_view")).not.toThrow();
+    expect(() =>
+      assertReadOnlyQuery(
+        "SELECT employee_code FROM reporting_view WHERE report_date BETWEEN ? AND ?",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertReadOnlyQuery("WITH daily AS (SELECT 1 AS ok) SELECT * FROM daily"),
+    ).not.toThrow();
+    expect(() =>
+      assertReadOnlyQuery(
+        "SELECT 'DROP TABLE is only text' AS label FROM reporting_view",
+      ),
+    ).not.toThrow();
   });
 
   it.each([
@@ -26,9 +36,11 @@ describe("assertReadOnlyQuery", () => {
 
 describe("assertAllowedGoogleSheetUrl", () => {
   it("accepts approved Google Sheet export hosts", () => {
-    expect(assertAllowedGoogleSheetUrl(
-      "https://docs.google.com/spreadsheets/d/example/export?format=csv&gid=0",
-    ).hostname).toBe("docs.google.com");
+    expect(
+      assertAllowedGoogleSheetUrl(
+        "https://docs.google.com/spreadsheets/d/example/export?format=csv&gid=0",
+      ).hostname,
+    ).toBe("docs.google.com");
   });
 
   it.each([
@@ -48,7 +60,11 @@ describe("assertConnectorType", () => {
   });
 
   it("rejects accidental cross-database connector configuration", () => {
-    expect(() => assertConnectorType("mssql", "mysql")).toThrow(/does not match/);
-    expect(() => assertConnectorType("mysql", "mssql")).toThrow(/does not match/);
+    expect(() => assertConnectorType("mssql", "mysql")).toThrow(
+      /does not match/,
+    );
+    expect(() => assertConnectorType("mysql", "mssql")).toThrow(
+      /does not match/,
+    );
   });
 });

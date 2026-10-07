@@ -33,7 +33,9 @@ describe("migration 1217 suspends only the 6 unhandled retention-policy rows", (
       "wfm_attendance_session",
       "employees",
     ]) {
-      expect(migration, `missing entity_type: ${entityType}`).toContain(`'${entityType}'`);
+      expect(migration, `missing entity_type: ${entityType}`).toContain(
+        `'${entityType}'`,
+      );
     }
   });
 
@@ -55,10 +57,12 @@ describe("migration 1217 suspends only the 6 unhandled retention-policy rows", (
     const worker = read("src/workers/privacy-retention.worker.ts");
     const handlersBlock = worker.slice(
       worker.indexOf("const ANONYMIZE_HANDLERS"),
-      worker.indexOf("async function hasActiveHold")
+      worker.indexOf("async function hasActiveHold"),
     );
     // Exactly one entity_type key inside the handlers map.
-    const keys = [...handlersBlock.matchAll(/^\s{2}(\w+):\s*async/gm)].map((m) => m[1]);
+    const keys = [...handlersBlock.matchAll(/^\s{2}(\w+):\s*async/gm)].map(
+      (m) => m[1],
+    );
     expect(keys).toEqual(["ats_candidate"]);
   });
 });

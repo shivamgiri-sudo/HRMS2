@@ -41,8 +41,10 @@ describe("my-onboarding-status", () => {
     it(`does not query ${table}, which does not exist`, () => {
       // \b(?!_) so ats_onboarding does not match ats_onboarding_bridge.
       const pattern = new RegExp(`FROM\\s+${table}\\b(?!_)`);
-      expect(handler, `${table} does not exist; every call throws and reports completion`)
-        .not.toMatch(pattern);
+      expect(
+        handler,
+        `${table} does not exist; every call throws and reports completion`,
+      ).not.toMatch(pattern);
     });
   }
 

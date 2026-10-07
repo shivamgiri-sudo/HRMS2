@@ -21,8 +21,10 @@
 import { db } from "../src/db/mysql.js";
 import { attendanceEngineService } from "../src/modules/wfm/attendance-engine.service.js";
 
-const FROM = process.argv.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? "2026-08-01";
-const TO = process.argv.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a))[1] ?? "2026-08-11";
+const FROM =
+  process.argv.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? "2026-08-01";
+const TO =
+  process.argv.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a))[1] ?? "2026-08-11";
 
 const KEEP_PROCESS_IDS = [
   "b0afc80e-6969-11f1-adb1-00155d0ab410", // IDAM Natural Wellness
@@ -67,7 +69,11 @@ const KEEP_PROCESS_IDS = [
   console.log(`affected employees (moved off APR by 1127): ${affected.length}`);
 
   const ids = affected.map((e) => e.id);
-  if (!ids.length) { console.log("nothing to do"); await db.end(); return; }
+  if (!ids.length) {
+    console.log("nothing to do");
+    await db.end();
+    return;
+  }
   const ph = ids.map(() => "?").join(",");
 
   // Existing rows in the window that were judged via APR — these are stale post-1127.
@@ -79,17 +85,26 @@ const KEEP_PROCESS_IDS = [
     [...ids, FROM, TO],
   );
   console.log(`existing APR-judged ADR rows in window: ${existing.length}`);
-  if (!existing.length) { console.log("nothing stale in this window"); await db.end(); return; }
+  if (!existing.length) {
+    console.log("nothing stale in this window");
+    await db.end();
+    return;
+  }
 
   const empById = new Map(affected.map((e) => [e.id, e]));
   const transitions: Record<string, number> = {};
-  let lwpBefore = 0, lwpAfter = 0;
+  let lwpBefore = 0,
+    lwpAfter = 0;
   let sampled = 0;
   const samples: any[] = [];
 
   for (const row of existing) {
-    const date = row.record_date.toISOString?.().slice(0, 10) ?? row.record_date;
-    const fresh = await attendanceEngineService.processEmployee(row.employee_id, date);
+    const date =
+      row.record_date.toISOString?.().slice(0, 10) ?? row.record_date;
+    const fresh = await attendanceEngineService.processEmployee(
+      row.employee_id,
+      date,
+    );
     const key = `${row.attendance_status} -> ${fresh.status}`;
     transitions[key] = (transitions[key] ?? 0) + 1;
     lwpBefore += Number(row.lwp_value ?? 0);
@@ -98,21 +113,34 @@ const KEEP_PROCESS_IDS = [
     if (samples.length < 15 && row.attendance_status !== fresh.status) {
       const emp = empById.get(row.employee_id);
       samples.push({
-        code: emp?.employee_code, process: emp?.process_name, date,
-        before: row.attendance_status, after: fresh.status,
-        beforeLwp: row.lwp_value, afterLwp: fresh.lwpValue,
+        code: emp?.employee_code,
+        process: emp?.process_name,
+        date,
+        before: row.attendance_status,
+        after: fresh.status,
+        beforeLwp: row.lwp_value,
+        afterLwp: fresh.lwpValue,
       });
     }
   }
 
   console.log(`\nrows evaluated: ${sampled}`);
-  console.log(`transitions (before -> after):`, JSON.stringify(transitions, null, 2));
-  console.log(`LWP total: before=${lwpBefore.toFixed(1)} after=${lwpAfter.toFixed(1)} delta=${(lwpAfter - lwpBefore).toFixed(1)}`);
+  console.log(
+    `transitions (before -> after):`,
+    JSON.stringify(transitions, null, 2),
+  );
+  console.log(
+    `LWP total: before=${lwpBefore.toFixed(1)} after=${lwpAfter.toFixed(1)} delta=${(lwpAfter - lwpBefore).toFixed(1)}`,
+  );
   console.log(`\nsample of changed rows:`, JSON.stringify(samples, null, 2));
   console.log(`\nDRY RUN COMPLETE — nothing written.`);
   await db.end();
 })().catch(async (e) => {
   console.error("ERR", e?.message ?? e);
-  try { await db.end(); } catch { /* ignore */ }
+  try {
+    await db.end();
+  } catch {
+    /* ignore */
+  }
   process.exit(1);
 });

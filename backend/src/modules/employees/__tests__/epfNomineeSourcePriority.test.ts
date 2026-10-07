@@ -22,7 +22,8 @@ vi.mock("../../../db/mysql.js", () => ({
       const s = String(sql);
       if (s.includes("employee_epf_nominee")) return [epfNominees];
       if (s.includes("FROM employee_nominee")) return [generalNominees];
-      if (s.includes("FROM employees e")) return [[{ id: EMPLOYEE, full_name: "TEST MEMBER" }]];
+      if (s.includes("FROM employees e"))
+        return [[{ id: EMPLOYEE, full_name: "TEST MEMBER" }]];
       return [[]];
     }),
   },
@@ -33,10 +34,14 @@ vi.mock("../branchPayrollHrSignatory.service.js", () => ({
   mergeBranchSignatureIntoSeal: async () => null,
 }));
 
-const { buildSourceContext } = await import("../universalDigitalFormFill.service.js");
+const { buildSourceContext } =
+  await import("../universalDigitalFormFill.service.js");
 
 const nomineeOf = async () => {
-  const ctx = (await buildSourceContext(EMPLOYEE, null)) as Record<string, never>;
+  const ctx = (await buildSourceContext(EMPLOYEE, null)) as Record<
+    string,
+    never
+  >;
   return ctx.nominee as Record<string, unknown>;
 };
 
@@ -49,12 +54,21 @@ describe("Form 2 nominee source priority", () => {
   it("uses the EPF compliance nominee when one exists", async () => {
     // The SQL aliases guardian_relationship -> guardian_relation and builds the
     // address from its four parts, so assert the shape the flattener consumes.
-    epfNominees = [{
-      nominee_name: "MEENA DEVI", relationship: "Mother", date_of_birth: "1970-04-02",
-      share_percentage: 100, guardian_name: null, guardian_relation: null,
-      address: "12 Nehru Nagar, Bhopal, Madhya Pradesh, 462001", is_minor: 0,
-    }];
-    generalNominees = [{ nominee_name: "SOMEONE ELSE", relationship: "Father" }];
+    epfNominees = [
+      {
+        nominee_name: "MEENA DEVI",
+        relationship: "Mother",
+        date_of_birth: "1970-04-02",
+        share_percentage: 100,
+        guardian_name: null,
+        guardian_relation: null,
+        address: "12 Nehru Nagar, Bhopal, Madhya Pradesh, 462001",
+        is_minor: 0,
+      },
+    ];
+    generalNominees = [
+      { nominee_name: "SOMEONE ELSE", relationship: "Father" },
+    ];
 
     const nominee = await nomineeOf();
     expect(nominee.n1_name).toBe("MEENA DEVI");
@@ -65,7 +79,13 @@ describe("Form 2 nominee source priority", () => {
   it("falls back to the general nominee table when the EPF one is empty", async () => {
     // 33,438 employees have rows only in the general table; they must not
     // regress to a blank Part A.
-    generalNominees = [{ nominee_name: "RAMESH SINGH", relationship: "Father", date_of_birth: "1966-11-02" }];
+    generalNominees = [
+      {
+        nominee_name: "RAMESH SINGH",
+        relationship: "Father",
+        date_of_birth: "1966-11-02",
+      },
+    ];
     const nominee = await nomineeOf();
     expect(nominee.n1_name).toBe("RAMESH SINGH");
   });
@@ -74,21 +94,35 @@ describe("Form 2 nominee source priority", () => {
     // employee_epf_nominee has no is_minor column and the flattener prints a
     // guardian only for a minor, so a hardcoded 0 would drop the guardian that
     // screen had just collected.
-    epfNominees = [{
-      nominee_name: "AARAV SINGH", relationship: "Son", date_of_birth: "2015-06-30",
-      share_percentage: 100, guardian_name: "MEENA DEVI", guardian_relation: "Mother",
-      address: "12 Nehru Nagar", is_minor: 1,
-    }];
+    epfNominees = [
+      {
+        nominee_name: "AARAV SINGH",
+        relationship: "Son",
+        date_of_birth: "2015-06-30",
+        share_percentage: 100,
+        guardian_name: "MEENA DEVI",
+        guardian_relation: "Mother",
+        address: "12 Nehru Nagar",
+        is_minor: 1,
+      },
+    ];
     const nominee = await nomineeOf();
     expect(nominee.n1_guardian_name).toBe("MEENA DEVI");
   });
 
   it("does not print a guardian for an adult nominee", async () => {
-    epfNominees = [{
-      nominee_name: "MEENA DEVI", relationship: "Mother", date_of_birth: "1970-04-02",
-      share_percentage: 100, guardian_name: null, guardian_relation: null,
-      address: "12 Nehru Nagar", is_minor: 0,
-    }];
+    epfNominees = [
+      {
+        nominee_name: "MEENA DEVI",
+        relationship: "Mother",
+        date_of_birth: "1970-04-02",
+        share_percentage: 100,
+        guardian_name: null,
+        guardian_relation: null,
+        address: "12 Nehru Nagar",
+        is_minor: 0,
+      },
+    ];
     const nominee = await nomineeOf();
     expect(nominee.n1_guardian_name).toBeNull();
   });

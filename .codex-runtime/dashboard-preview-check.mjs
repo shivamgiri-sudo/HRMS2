@@ -5,7 +5,9 @@ const baseUrl = process.env.PREVIEW_BASE_URL || "http://127.0.0.1:8081";
 const email = process.env.PREVIEW_LOGIN_EMAIL;
 const password = process.env.PREVIEW_LOGIN_PASSWORD;
 if (!email || !password) {
-  console.error("Set PREVIEW_LOGIN_EMAIL and PREVIEW_LOGIN_PASSWORD env vars before running this script.");
+  console.error(
+    "Set PREVIEW_LOGIN_EMAIL and PREVIEW_LOGIN_PASSWORD env vars before running this script.",
+  );
   process.exit(1);
 }
 const outDir = ".codex-runtime/playwright-preview";
@@ -65,35 +67,48 @@ const result = {
 
 try {
   await page.goto(`${baseUrl}/hr/dashboard`, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+  await page
+    .waitForLoadState("networkidle", { timeout: 20_000 })
+    .catch(() => {});
   result.loginUrl = page.url();
   await screenshot("01-initial");
 
-  if (/login/i.test(page.url()) || await page.locator("input[type='password']").count()) {
-    await fillFirst([
-      "input[type='email']",
-      "input[name='email']",
-      "input[name='identifier']",
-      "input[name='login']",
-      "input[placeholder*='email' i]",
-      "input[placeholder*='employee' i]",
-      "input[placeholder*='company' i]",
-      "input[placeholder*='EMP' i]",
-      "input[type='text']",
-      "input:not([type])",
-    ], email);
-    await fillFirst([
-      "input[type='password']",
-      "input[name='password']",
-      "input[placeholder*='password' i]",
-    ], password);
+  if (
+    /login/i.test(page.url()) ||
+    (await page.locator("input[type='password']").count())
+  ) {
+    await fillFirst(
+      [
+        "input[type='email']",
+        "input[name='email']",
+        "input[name='identifier']",
+        "input[name='login']",
+        "input[placeholder*='email' i]",
+        "input[placeholder*='employee' i]",
+        "input[placeholder*='company' i]",
+        "input[placeholder*='EMP' i]",
+        "input[type='text']",
+        "input:not([type])",
+      ],
+      email,
+    );
+    await fillFirst(
+      [
+        "input[type='password']",
+        "input[name='password']",
+        "input[placeholder*='password' i]",
+      ],
+      password,
+    );
     await clickFirst([
       "button[type='submit']",
       "button:has-text('Login')",
       "button:has-text('Sign in')",
       "button:has-text('Continue')",
     ]);
-    await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+    await page
+      .waitForLoadState("networkidle", { timeout: 20_000 })
+      .catch(() => {});
     await screenshot("02-after-login");
   }
 
@@ -107,14 +122,29 @@ try {
 
   for (const [key, route, expected] of routes) {
     await page.goto(`${baseUrl}${route}`, { waitUntil: "domcontentloaded" });
-    await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+    await page
+      .waitForLoadState("networkidle", { timeout: 20_000 })
+      .catch(() => {});
     await screenshot(`route-${key}`);
     result.titleTexts[key] = {
       url: page.url(),
       expected,
-      h1: await page.locator("h1").first().textContent().catch(() => null),
-      bodyHasExpected: await page.getByText(expected, { exact: false }).first().isVisible().catch(() => false),
-      bodyTextSample: (await page.locator("body").innerText().catch(() => "")).slice(0, 1000),
+      h1: await page
+        .locator("h1")
+        .first()
+        .textContent()
+        .catch(() => null),
+      bodyHasExpected: await page
+        .getByText(expected, { exact: false })
+        .first()
+        .isVisible()
+        .catch(() => false),
+      bodyTextSample: (
+        await page
+          .locator("body")
+          .innerText()
+          .catch(() => "")
+      ).slice(0, 1000),
     };
   }
 

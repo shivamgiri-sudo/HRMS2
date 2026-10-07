@@ -2,7 +2,13 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, dirname, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { columnRefsIn, brokenRefs, unknownWriteTargets, writeColumnRefs, type ColumnRef } from "./schema-column-refs.js";
+import {
+  columnRefsIn,
+  brokenRefs,
+  unknownWriteTargets,
+  writeColumnRefs,
+  type ColumnRef,
+} from "./schema-column-refs.js";
 
 /**
  * Regenerate the baseline (same scanner as the assertions, so the two cannot drift):
@@ -22,7 +28,11 @@ const BASELINE = resolve(HERE, "schema-column-refs.baseline.json");
 const TABLE_BASELINE = resolve(HERE, "schema-unknown-tables.baseline.json");
 const WRITE_COL_BASELINE = resolve(HERE, "schema-write-columns.baseline.json");
 
-type Snapshot = { tableCount: number; columnCount: number; tables: Record<string, string[]> };
+type Snapshot = {
+  tableCount: number;
+  columnCount: number;
+  tables: Record<string, string[]>;
+};
 
 function tsFilesUnder(dir: string, acc: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -40,7 +50,10 @@ function tsFilesUnder(dir: string, acc: string[] = []): string[] {
 function scanRepo(schema: Snapshot): Map<string, ColumnRef[]> {
   const byFile = new Map<string, ColumnRef[]>();
   for (const file of tsFilesUnder(SRC_DIR)) {
-    const broken = brokenRefs(columnRefsIn(readFileSync(file, "utf8")), schema.tables);
+    const broken = brokenRefs(
+      columnRefsIn(readFileSync(file, "utf8")),
+      schema.tables,
+    );
     if (broken.length) {
       byFile.set(relative(SRC_DIR, file).split(sep).join("/"), broken);
     }
@@ -52,7 +65,9 @@ const key = (f: string, r: ColumnRef) => `${f}::${r.table}.${r.column}`;
 
 function writeBaseline(byFile: Map<string, ColumnRef[]>): void {
   const out: Record<string, string[]> = {};
-  for (const [file, refs] of [...byFile].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [file, refs] of [...byFile].sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
     out[file] = refs.map((r) => `${r.table}.${r.column}`).sort();
   }
   writeFileSync(BASELINE, JSON.stringify(out, null, 2) + "\n");
@@ -63,7 +78,8 @@ describe("schema column references", () => {
   const schema = { dept: ["id", "dept_name"] };
 
   it("resolves an alias and flags a column the table does not have", () => {
-    const sql = "const q = `SELECT dm.dept_name, dm.department_name FROM dept dm`;";
+    const sql =
+      "const q = `SELECT dm.dept_name, dm.department_name FROM dept dm`;";
     expect(brokenRefs(columnRefsIn(sql), schema)).toEqual([
       { table: "dept", column: "department_name" },
     ]);
@@ -83,62 +99,109 @@ describe("schema column references", () => {
   });
 
   it("skips an alias bound to two tables in one statement rather than guessing", () => {
-    const sql = "const q = `SELECT dm.department_name FROM dept d JOIN other dm ON 1=1`;";
+    const sql =
+      "const q = `SELECT dm.department_name FROM dept d JOIN other dm ON 1=1`;";
     expect(brokenRefs(columnRefsIn(sql), schema)).toEqual([]);
   });
 
   it("does not treat prose in a SQL comment as a column use", () => {
-    const sql = "const q = `SELECT dm.dept_name -- dm.department_name was the old name\n FROM dept dm`;";
+    const sql =
+      "const q = `SELECT dm.dept_name -- dm.department_name was the old name\n FROM dept dm`;";
     expect(brokenRefs(columnRefsIn(sql), schema)).toEqual([]);
   });
 
   it("does not treat a JS method call as a column", () => {
-    const sql = "const q = `SELECT dm.dept_name FROM dept d WHERE id IN (${dm.join(',')})`;";
+    const sql =
+      "const q = `SELECT dm.dept_name FROM dept d WHERE id IN (${dm.join(',')})`;";
     expect(brokenRefs(columnRefsIn(sql), schema)).toEqual([]);
   });
 
   it("ignores template literals that contain no SQL", () => {
-    expect(columnRefsIn("const s = `hello ${dm.department_name} world`;")).toEqual([]);
+    expect(
+      columnRefsIn("const s = `hello ${dm.department_name} world`;"),
+    ).toEqual([]);
   });
-
 
   it("sees write targets the column scanner is blind to", () => {
     const known = { leave_request: ["id"] };
     // None of these yield a single column ref, which is how three broken
     // statements survived in the exit flow.
-    expect(unknownWriteTargets("const q = `UPDATE leave_requests SET status = ?`;", known)).toEqual(["leave_requests"]);
-    expect(unknownWriteTargets("const q = `INSERT INTO leave_requests (id) VALUES (?)`;", known)).toEqual(["leave_requests"]);
-    expect(unknownWriteTargets("const q = `DELETE FROM leave_requests WHERE id = ?`;", known)).toEqual(["leave_requests"]);
-    expect(unknownWriteTargets("const q = `UPDATE leave_request SET status = ?`;", known)).toEqual([]);
+    expect(
+      unknownWriteTargets(
+        "const q = `UPDATE leave_requests SET status = ?`;",
+        known,
+      ),
+    ).toEqual(["leave_requests"]);
+    expect(
+      unknownWriteTargets(
+        "const q = `INSERT INTO leave_requests (id) VALUES (?)`;",
+        known,
+      ),
+    ).toEqual(["leave_requests"]);
+    expect(
+      unknownWriteTargets(
+        "const q = `DELETE FROM leave_requests WHERE id = ?`;",
+        known,
+      ),
+    ).toEqual(["leave_requests"]);
+    expect(
+      unknownWriteTargets(
+        "const q = `UPDATE leave_request SET status = ?`;",
+        known,
+      ),
+    ).toEqual([]);
   });
 
   it("does not treat prose in a template literal as a write", () => {
-    expect(unknownWriteTargets("const s = `update the leave_requests page`;", {})).toEqual([]);
+    expect(
+      unknownWriteTargets("const s = `update the leave_requests page`;", {}),
+    ).toEqual([]);
     expect(unknownWriteTargets("const s = `SELECT 1`;", {})).toEqual([]);
   });
 
-
   it("sees columns inside writes, which the column scanner cannot", () => {
     const known = { upload_batch_row: ["id", "row_status", "error_messages"] };
-    const bad = (sql: string) => brokenRefs(writeColumnRefs(sql), known).map((r) => `${r.table}.${r.column}`);
+    const bad = (sql: string) =>
+      brokenRefs(writeColumnRefs(sql), known).map(
+        (r) => `${r.table}.${r.column}`,
+      );
 
-    expect(bad("const q = `UPDATE upload_batch_row SET row_status = 'error', error_message = ? WHERE id = ?`;"))
-      .toEqual(["upload_batch_row.error_message"]);
-    expect(bad("const q = `UPDATE upload_batch_row SET row_status = 'error', error_messages = ? WHERE id = ?`;"))
-      .toEqual([]);
-    expect(bad("const q = `INSERT INTO upload_batch_row (id, error_message) VALUES (?, ?)`;"))
-      .toEqual(["upload_batch_row.error_message"]);
+    expect(
+      bad(
+        "const q = `UPDATE upload_batch_row SET row_status = 'error', error_message = ? WHERE id = ?`;",
+      ),
+    ).toEqual(["upload_batch_row.error_message"]);
+    expect(
+      bad(
+        "const q = `UPDATE upload_batch_row SET row_status = 'error', error_messages = ? WHERE id = ?`;",
+      ),
+    ).toEqual([]);
+    expect(
+      bad(
+        "const q = `INSERT INTO upload_batch_row (id, error_message) VALUES (?, ?)`;",
+      ),
+    ).toEqual(["upload_batch_row.error_message"]);
   });
 
   it("skips writes it cannot attribute with certainty", () => {
     const known = { upload_batch_row: ["id"] };
     const bad = (sql: string) => brokenRefs(writeColumnRefs(sql), known);
     // dynamic column list
-    expect(bad("const q = `UPDATE upload_batch_row SET ${sets.join(',')} WHERE id = ?`;")).toEqual([]);
+    expect(
+      bad(
+        "const q = `UPDATE upload_batch_row SET ${sets.join(',')} WHERE id = ?`;",
+      ),
+    ).toEqual([]);
     // multi-table update: a SET column could belong to either side
-    expect(bad("const q = `UPDATE upload_batch_row JOIN u ON u.id = upload_batch_row.id SET zzz = ?`;")).toEqual([]);
+    expect(
+      bad(
+        "const q = `UPDATE upload_batch_row JOIN u ON u.id = upload_batch_row.id SET zzz = ?`;",
+      ),
+    ).toEqual([]);
     // qualified assignment
-    expect(bad("const q = `UPDATE upload_batch_row SET upload_batch_row.zzz = ?`;")).toEqual([]);
+    expect(
+      bad("const q = `UPDATE upload_batch_row SET upload_batch_row.zzz = ?`;"),
+    ).toEqual([]);
   });
 
   // --- the snapshot ------------------------------------------------------
@@ -171,7 +234,9 @@ describe("schema column references", () => {
       writeBaseline(scanRepo(snap));
       return;
     }
-    const baseline: Record<string, string[]> = JSON.parse(readFileSync(BASELINE, "utf8"));
+    const baseline: Record<string, string[]> = JSON.parse(
+      readFileSync(BASELINE, "utf8"),
+    );
 
     const allowed = new Set<string>();
     for (const [file, refs] of Object.entries(baseline)) {
@@ -190,10 +255,9 @@ describe("schema column references", () => {
       `New broken column reference(s). The column does not exist in mas_hrms, so this query ` +
         `throws at runtime and whatever wraps it will report nothing — or a fabricated zero.\n` +
         `Check backend/sql/schema-snapshot.json for the real column name.\n` +
-        regressions.map((r) => `  - ${r}`).join("\n")
+        regressions.map((r) => `  - ${r}`).join("\n"),
     ).toEqual([]);
   }, 60_000);
-
 
   // --- the table ratchet -------------------------------------------------
   /**
@@ -215,20 +279,28 @@ describe("schema column references", () => {
 
     const found = new Map<string, string[]>();
     for (const file of tsFilesUnder(SRC_DIR)) {
-      const tables = unknownWriteTargets(readFileSync(file, "utf8"), snap.tables);
-      if (tables.length) found.set(relative(SRC_DIR, file).split(sep).join("/"), tables);
+      const tables = unknownWriteTargets(
+        readFileSync(file, "utf8"),
+        snap.tables,
+      );
+      if (tables.length)
+        found.set(relative(SRC_DIR, file).split(sep).join("/"), tables);
     }
 
     if (WRITE_BASELINE) {
       const out: Record<string, string[]> = {};
-      for (const [file, tables] of [...found].sort(([a], [b]) => a.localeCompare(b))) {
+      for (const [file, tables] of [...found].sort(([a], [b]) =>
+        a.localeCompare(b),
+      )) {
         out[file] = tables;
       }
       writeFileSync(TABLE_BASELINE, JSON.stringify(out, null, 2) + "\n");
       return;
     }
 
-    const baseline: Record<string, string[]> = JSON.parse(readFileSync(TABLE_BASELINE, "utf8"));
+    const baseline: Record<string, string[]> = JSON.parse(
+      readFileSync(TABLE_BASELINE, "utf8"),
+    );
     const allowed = new Set<string>();
     for (const [file, tables] of Object.entries(baseline)) {
       for (const t of tables) allowed.add(`${file}::${t}`);
@@ -247,10 +319,9 @@ describe("schema column references", () => {
         `another database, add it to schema-unknown-tables.baseline.json. If it is a ` +
         `typo or a renamed table, the statement throws at runtime — and if it is ` +
         `wrapped in a .catch(), it fails silently and the caller reports success.\n` +
-        regressions.map((r) => `  - ${r}`).join("\n")
+        regressions.map((r) => `  - ${r}`).join("\n"),
     ).toEqual([]);
   }, 60_000);
-
 
   // --- the write-column ratchet ------------------------------------------
   /**
@@ -269,23 +340,31 @@ describe("schema column references", () => {
 
     const found = new Map<string, string[]>();
     for (const file of tsFilesUnder(SRC_DIR)) {
-      const bad = brokenRefs(writeColumnRefs(readFileSync(file, "utf8")), snap.tables);
+      const bad = brokenRefs(
+        writeColumnRefs(readFileSync(file, "utf8")),
+        snap.tables,
+      );
       if (bad.length) {
         found.set(
           relative(SRC_DIR, file).split(sep).join("/"),
-          bad.map((r) => `${r.table}.${r.column}`).sort()
+          bad.map((r) => `${r.table}.${r.column}`).sort(),
         );
       }
     }
 
     if (WRITE_BASELINE) {
       const out: Record<string, string[]> = {};
-      for (const [file, refs] of [...found].sort(([a], [b]) => a.localeCompare(b))) out[file] = refs;
+      for (const [file, refs] of [...found].sort(([a], [b]) =>
+        a.localeCompare(b),
+      ))
+        out[file] = refs;
       writeFileSync(WRITE_COL_BASELINE, JSON.stringify(out, null, 2) + "\n");
       return;
     }
 
-    const baseline: Record<string, string[]> = JSON.parse(readFileSync(WRITE_COL_BASELINE, "utf8"));
+    const baseline: Record<string, string[]> = JSON.parse(
+      readFileSync(WRITE_COL_BASELINE, "utf8"),
+    );
     const allowed = new Set<string>();
     for (const [file, refs] of Object.entries(baseline)) {
       for (const r of refs) allowed.add(`${file}::${r}`);
@@ -304,14 +383,16 @@ describe("schema column references", () => {
         `ER_BAD_FIELD_ERROR at runtime. If it sits in a catch, the failure is ` +
         `invisible - or worse, the handler throws from inside itself.\n` +
         `Check backend/sql/schema-snapshot.json for the real column name.\n` +
-        regressions.map((r) => `  - ${r}`).join("\n")
+        regressions.map((r) => `  - ${r}`).join("\n"),
     ).toEqual([]);
   }, 60_000);
 
   it("keeps the baseline honest — every entry is still broken and still present", () => {
     if (WRITE_BASELINE) return;
     const snap = JSON.parse(readFileSync(SNAPSHOT, "utf8")) as Snapshot;
-    const baseline: Record<string, string[]> = JSON.parse(readFileSync(BASELINE, "utf8"));
+    const baseline: Record<string, string[]> = JSON.parse(
+      readFileSync(BASELINE, "utf8"),
+    );
 
     const live = new Set<string>();
     for (const [file, refs] of scanRepo(snap)) {
@@ -329,7 +410,7 @@ describe("schema column references", () => {
       stale,
       `Baseline entries that are no longer broken — good news. Remove them from ` +
         `schema-column-refs.baseline.json so the ratchet tightens and cannot regress:\n` +
-        stale.map((s) => `  - ${s}`).join("\n")
+        stale.map((s) => `  - ${s}`).join("\n"),
     ).toEqual([]);
     // Same full-repo scan as the ratchet above, so the same timeout applies.
   }, 60_000);

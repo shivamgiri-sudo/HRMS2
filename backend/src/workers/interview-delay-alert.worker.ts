@@ -1,19 +1,23 @@
-import { randomUUID } from 'crypto';
-import { db } from '../db/mysql.js';
-import { env } from '../config/env.js';
-import nodemailer from 'nodemailer';
-import { inboxService } from '../modules/inbox/inbox.service.js';
-import { isWorkerEnabled, markWorkerRun } from '../shared/worker-config.js';
-import { shouldAlert, markAlerted, cleanupCooldowns } from '../shared/alert-cooldown.js';
+import { randomUUID } from "crypto";
+import { db } from "../db/mysql.js";
+import { env } from "../config/env.js";
+import nodemailer from "nodemailer";
+import { inboxService } from "../modules/inbox/inbox.service.js";
+import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
+import {
+  shouldAlert,
+  markAlerted,
+  cleanupCooldowns,
+} from "../shared/alert-cooldown.js";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
 // Must match the worker_config.worker_name row seeded by migration 1054, or the
 // kill switch silently does nothing — isWorkerEnabled fails open on a missing row.
-const WORKER_NAME = 'interview-delay-alert';
-const DELAY_THRESHOLD_MINUTES = 120;         // Alert after 2 hours in called/in_interview
-const CHECK_INTERVAL_MS = 10 * 60 * 1000;   // Poll every 10 minutes
-const ALERT_COOLDOWN_MS  = 2 * 60 * 60 * 1000; // Re-alert cooldown: 2 hours per token
+const WORKER_NAME = "interview-delay-alert";
+const DELAY_THRESHOLD_MINUTES = 120; // Alert after 2 hours in called/in_interview
+const CHECK_INTERVAL_MS = 10 * 60 * 1000; // Poll every 10 minutes
+const ALERT_COOLDOWN_MS = 2 * 60 * 60 * 1000; // Re-alert cooldown: 2 hours per token
 
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
@@ -24,16 +28,19 @@ let intervalRef: ReturnType<typeof setInterval> | undefined;
 // ── Email ─────────────────────────────────────────────────────────────────────
 
 const transporter = nodemailer.createTransport({
-  host:   env.SMTP_HOST   || '',
-  port:   Number(env.SMTP_PORT || 587),
+  host: env.SMTP_HOST || "",
+  port: Number(env.SMTP_PORT || 587),
   secure: false,
-  auth: { user: env.SMTP_USER || '', pass: env.SMTP_PASS || '' },
+  auth: { user: env.SMTP_USER || "", pass: env.SMTP_PASS || "" },
 });
 
 function escapeHtml(v: unknown): string {
-  return String(v ?? '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 async function sendDelayAlert(row: {
@@ -49,17 +56,19 @@ async function sendDelayAlert(row: {
   delay_minutes: number;
 }): Promise<void> {
   const to = row.reporting_manager_email?.trim();
-  if (!to || !to.includes('@')) {
-    console.warn(`[InterviewDelayAlert] No reporting_manager email for recruiter "${row.recruiter_name}" — skipping candidate ${row.candidate_id}`);
+  if (!to || !to.includes("@")) {
+    console.warn(
+      `[InterviewDelayAlert] No reporting_manager email for recruiter "${row.recruiter_name}" — skipping candidate ${row.candidate_id}`,
+    );
     return;
   }
   if (!env.SMTP_USER || !env.SMTP_PASS) {
-    console.warn('[InterviewDelayAlert] SMTP not configured — skipping alert');
+    console.warn("[InterviewDelayAlert] SMTP not configured — skipping alert");
     return;
   }
 
   const hours = Math.floor(row.delay_minutes / 60);
-  const mins  = row.delay_minutes % 60;
+  const mins = row.delay_minutes % 60;
   const delayStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
   const subject = `[Interview Delay Alert] ${escapeHtml(row.candidate_name)} pending ${delayStr} — ${escapeHtml(row.branch_name)}`;
@@ -94,30 +103,36 @@ async function sendDelayAlert(row: {
 
   const fromAddr = env.SMTP_FROM || env.SMTP_USER;
   const ccList: string[] = [];
-  if (row.recruiter_email?.includes('@')) ccList.push(row.recruiter_email);
+  if (row.recruiter_email?.includes("@")) ccList.push(row.recruiter_email);
 
   try {
     await transporter.sendMail({
       from: `"MAS Callnet HRMS" <${fromAddr}>`,
       to,
-      cc: ccList.join(',') || undefined,
+      cc: ccList.join(",") || undefined,
       subject,
       html,
     });
     await db.execute(
       `INSERT IGNORE INTO ats_email_log (id, candidate_id, email_type, sent_to, status)
        VALUES (?, ?, 'interview_delay_alert', ?, 'sent')`,
-      [randomUUID(), row.candidate_id, to]
+      [randomUUID(), row.candidate_id, to],
     );
-    console.log(`[InterviewDelayAlert] Sent alert for ${row.candidate_name} to ${to}`);
+    console.log(
+      `[InterviewDelayAlert] Sent alert for ${row.candidate_name} to ${to}`,
+    );
   } catch (err: unknown) {
     const msg = (err as Error)?.message ?? String(err);
-    console.error(`[InterviewDelayAlert] Failed to send for ${row.candidate_name}: ${msg}`);
-    await db.execute(
-      `INSERT IGNORE INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message)
+    console.error(
+      `[InterviewDelayAlert] Failed to send for ${row.candidate_name}: ${msg}`,
+    );
+    await db
+      .execute(
+        `INSERT IGNORE INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message)
        VALUES (?, ?, 'interview_delay_alert', ?, 'failed', ?)`,
-      [randomUUID(), row.candidate_id, to, msg]
-    ).catch(() => {});
+        [randomUUID(), row.candidate_id, to, msg],
+      )
+      .catch(() => {});
   }
 }
 
@@ -157,11 +172,11 @@ async function findDelayedInterviews(): Promise<any[]> {
          AND TIMESTAMPDIFF(MINUTE, qt.called_at, NOW()) >= ?
          AND DATE(COALESCE(qt.arrival_time, qt.created_at)) = CURDATE()
        ORDER BY delay_minutes DESC`,
-      [DELAY_THRESHOLD_MINUTES]
+      [DELAY_THRESHOLD_MINUTES],
     );
     return rows || [];
   } catch (err: any) {
-    console.error('[InterviewDelayAlert] Query failed:', err.message);
+    console.error("[InterviewDelayAlert] Query failed:", err.message);
     return [];
   }
 }
@@ -176,19 +191,23 @@ async function checkDelays(): Promise<void> {
     return;
   }
 
-  console.log('[InterviewDelayAlert] Checking for delayed interviews...');
+  console.log("[InterviewDelayAlert] Checking for delayed interviews...");
   const rows = await findDelayedInterviews();
 
   if (rows.length === 0) {
-    console.log('[InterviewDelayAlert] No delayed interviews found');
+    console.log("[InterviewDelayAlert] No delayed interviews found");
     return;
   }
 
-  console.log(`[InterviewDelayAlert] Found ${rows.length} delayed interview(s)`);
+  console.log(
+    `[InterviewDelayAlert] Found ${rows.length} delayed interview(s)`,
+  );
 
   for (const row of rows) {
     if (!(await shouldAlert(WORKER_NAME, row.token_id, ALERT_COOLDOWN_MS))) {
-      console.log(`[InterviewDelayAlert] Skipping ${row.candidate_name} (cooldown active)`);
+      console.log(
+        `[InterviewDelayAlert] Skipping ${row.candidate_name} (cooldown active)`,
+      );
       continue;
     }
     await sendDelayAlert(row);
@@ -196,18 +215,22 @@ async function checkDelays(): Promise<void> {
     // Inbox alert so the recruiter sees a toast + bell in the app
     if (row.recruiter_user_id) {
       const hours = Math.floor(row.delay_minutes / 60);
-      const mins  = row.delay_minutes % 60;
+      const mins = row.delay_minutes % 60;
       const delayStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-      await inboxService.createItem({
-        user_id: row.recruiter_user_id,
-        type: "interview_submission_overdue",
-        title: `Interview result not submitted — ${row.candidate_name}`,
-        description: `Token ${row.token_number} (${row.applied_role}) has been in interview for ${delayStr} without a submission. Please close out this interview.`,
-        entity_type: "ats_candidate",
-        entity_id: row.candidate_id,
-        action_url: "/ats/walkin-queue",
-        priority: "urgent",
-      }).catch((e: unknown) => console.warn("[InterviewDelayAlert] inbox write failed:", e));
+      await inboxService
+        .createItem({
+          user_id: row.recruiter_user_id,
+          type: "interview_submission_overdue",
+          title: `Interview result not submitted — ${row.candidate_name}`,
+          description: `Token ${row.token_number} (${row.applied_role}) has been in interview for ${delayStr} without a submission. Please close out this interview.`,
+          entity_type: "ats_candidate",
+          entity_id: row.candidate_id,
+          action_url: "/ats/walkin-queue",
+          priority: "urgent",
+        })
+        .catch((e: unknown) =>
+          console.warn("[InterviewDelayAlert] inbox write failed:", e),
+        );
     }
 
     await markAlerted(WORKER_NAME, row.token_id);
@@ -218,9 +241,13 @@ async function checkDelays(): Promise<void> {
 }
 
 export function startInterviewDelayAlertWorker(): void {
-  console.log(`[InterviewDelayAlert] Starting — threshold: ${DELAY_THRESHOLD_MINUTES}min, interval: ${CHECK_INTERVAL_MS / 60000}min`);
+  console.log(
+    `[InterviewDelayAlert] Starting — threshold: ${DELAY_THRESHOLD_MINUTES}min, interval: ${CHECK_INTERVAL_MS / 60000}min`,
+  );
   void checkDelays();
-  intervalRef = setInterval(() => { void checkDelays(); }, CHECK_INTERVAL_MS);
+  intervalRef = setInterval(() => {
+    void checkDelays();
+  }, CHECK_INTERVAL_MS);
 }
 
 export function stopInterviewDelayAlertWorker(): void {

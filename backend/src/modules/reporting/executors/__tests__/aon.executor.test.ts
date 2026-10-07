@@ -38,7 +38,9 @@ const OPTIONS: ExecOptions = {
 
 describe("AON reference date uses salary_start_date with date_of_joining fallback", () => {
   it("AON_REFERENCE_JOIN_DATE_SQL is the documented COALESCE expression", () => {
-    expect(AON_REFERENCE_JOIN_DATE_SQL).toBe("COALESCE(e.salary_start_date, e.date_of_joining)");
+    expect(AON_REFERENCE_JOIN_DATE_SQL).toBe(
+      "COALESCE(e.salary_start_date, e.date_of_joining)",
+    );
   });
 
   it("aonBucketHeadcount's SQL references salary_start_date, not date_of_joining alone", async () => {
@@ -74,16 +76,20 @@ describe("AON reference date uses salary_start_date with date_of_joining fallbac
     // Use the LAST call, not calls[0] -- this mock's call log is file-scoped with no reset,
     // so calls[0] is whichever executor ran first across the whole file, not necessarily
     // this test's own call.
-    const sql = String(mockExecute.mock.calls[mockExecute.mock.calls.length - 1][0]);
-    expect(sql).toContain(
-      "DATE_FORMAT(COALESCE(e.salary_start_date, e.date_of_joining), '%Y-%m') AS cohort_month"
+    const sql = String(
+      mockExecute.mock.calls[mockExecute.mock.calls.length - 1][0],
     );
-    expect(sql).not.toMatch(/DATE_FORMAT\(\s*e\.date_of_joining\s*,\s*'%Y-%m'\)/);
+    expect(sql).toContain(
+      "DATE_FORMAT(COALESCE(e.salary_start_date, e.date_of_joining), '%Y-%m') AS cohort_month",
+    );
+    expect(sql).not.toMatch(
+      /DATE_FORMAT\(\s*e\.date_of_joining\s*,\s*'%Y-%m'\)/,
+    );
     // The GROUP BY must use the same COALESCE'd expression for cohort_month, not the raw column.
     const groupByMatch = sql.match(/GROUP BY([\s\S]*?)ORDER BY/);
     expect(groupByMatch).not.toBeNull();
     expect(groupByMatch![1]).toContain(
-      "DATE_FORMAT(COALESCE(e.salary_start_date, e.date_of_joining), '%Y-%m')"
+      "DATE_FORMAT(COALESCE(e.salary_start_date, e.date_of_joining), '%Y-%m')",
     );
   });
 });

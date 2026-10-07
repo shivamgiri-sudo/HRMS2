@@ -1,14 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const execute = vi.fn();
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: (...a: unknown[]) => execute(...a) },
+}));
 vi.mock("../src/modules/kpi/kpi-score-engine.js", () => ({
-  calculateMetricScore: () => ({ metricScore: 0, weightedScore: 0, status: "calculated", note: "" }),
+  calculateMetricScore: () => ({
+    metricScore: 0,
+    weightedScore: 0,
+    status: "calculated",
+    note: "",
+  }),
 }));
 
-const { resolveEmployeeKpis, resetEffectiveDatingSupport } = await import(
-  "../src/modules/kpi/kpi-master.service.js"
-);
+const { resolveEmployeeKpis, resetEffectiveDatingSupport } =
+  await import("../src/modules/kpi/kpi-master.service.js");
 
 /**
  * kpi_master_config upserts in place, so editing a target rewrites history: a
@@ -23,7 +29,17 @@ const { resolveEmployeeKpis, resetEffectiveDatingSupport } = await import(
  * exact sequence took reimbursements down from the day it shipped.
  */
 
-const EMPLOYEE = [[{ department_id: "d1", designation_id: "des1", process_id: "p1", cost_centre_id: null }], []];
+const EMPLOYEE = [
+  [
+    {
+      department_id: "d1",
+      designation_id: "des1",
+      process_id: "p1",
+      cost_centre_id: null,
+    },
+  ],
+  [],
+];
 
 function columnsPresent(n: number) {
   return [[{ n }], []];
@@ -52,7 +68,9 @@ describe("undated rows must still resolve", () => {
     await resolveEmployeeKpis("emp-1");
 
     const sql = String(execute.mock.calls[2][0]);
-    expect(sql).toMatch(/kmc\.effective_from IS NULL OR kmc\.effective_from <= CURDATE\(\)/);
+    expect(sql).toMatch(
+      /kmc\.effective_from IS NULL OR kmc\.effective_from <= CURDATE\(\)/,
+    );
     // The bare form must not survive anywhere in the predicate.
     expect(sql).not.toMatch(/AND kmc\.effective_from <= CURDATE\(\)/);
   });
@@ -61,15 +79,17 @@ describe("undated rows must still resolve", () => {
 describe("target resolution when the migration has been applied", () => {
   it("restricts to the version in force today", async () => {
     execute
-      .mockResolvedValueOnce(EMPLOYEE)      // employee org units
+      .mockResolvedValueOnce(EMPLOYEE) // employee org units
       .mockResolvedValueOnce(columnsPresent(2)) // both columns exist
-      .mockResolvedValueOnce([[], []]);     // candidates
+      .mockResolvedValueOnce([[], []]); // candidates
 
     await resolveEmployeeKpis("emp-1");
 
     const resolutionSql = String(execute.mock.calls[2][0]);
     expect(resolutionSql).toMatch(/kmc\.effective_from <= CURDATE\(\)/);
-    expect(resolutionSql).toMatch(/kmc\.effective_to IS NULL OR kmc\.effective_to >= CURDATE\(\)/);
+    expect(resolutionSql).toMatch(
+      /kmc\.effective_to IS NULL OR kmc\.effective_to >= CURDATE\(\)/,
+    );
   });
 });
 
@@ -101,7 +121,9 @@ describe("target resolution before 1048 is applied", () => {
   it("degrades to unsupported if the column check itself fails", async () => {
     execute
       .mockResolvedValueOnce(EMPLOYEE)
-      .mockImplementationOnce(() => Promise.reject(new Error("information_schema unavailable")))
+      .mockImplementationOnce(() =>
+        Promise.reject(new Error("information_schema unavailable")),
+      )
       .mockResolvedValueOnce([[], []]);
 
     await resolveEmployeeKpis("emp-1");
@@ -114,8 +136,11 @@ describe("the support check is cached", () => {
     // resolveEmployeeKpis is called once per direct report by getTeamKpiSummary,
     // so an uncached check would add a metadata query per employee per request.
     execute
-      .mockResolvedValueOnce(EMPLOYEE).mockResolvedValueOnce(columnsPresent(2)).mockResolvedValueOnce([[], []])
-      .mockResolvedValueOnce(EMPLOYEE).mockResolvedValueOnce([[], []]);
+      .mockResolvedValueOnce(EMPLOYEE)
+      .mockResolvedValueOnce(columnsPresent(2))
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce(EMPLOYEE)
+      .mockResolvedValueOnce([[], []]);
 
     await resolveEmployeeKpis("emp-1");
     await resolveEmployeeKpis("emp-2");

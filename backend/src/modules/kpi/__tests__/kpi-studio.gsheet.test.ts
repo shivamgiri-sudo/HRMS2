@@ -23,7 +23,8 @@ import {
  * worse than one that is obviously broken.
  */
 
-const PUBLISHED = "https://docs.google.com/spreadsheets/d/e/2PACX-1vABC/pub?gid=0&single=true&output=csv";
+const PUBLISHED =
+  "https://docs.google.com/spreadsheets/d/e/2PACX-1vABC/pub?gid=0&single=true&output=csv";
 
 describe("validateSheetCsvUrl — SSRF guard", () => {
   it("accepts a genuine published CSV link", () => {
@@ -31,14 +32,19 @@ describe("validateSheetCsvUrl — SSRF guard", () => {
   });
 
   it("accepts the export form", () => {
-    const url = "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=0";
+    const url =
+      "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=0";
     expect(validateSheetCsvUrl(url)).toContain("export");
   });
 
   it("refuses the cloud metadata endpoint", () => {
     // The canonical SSRF target. On AWS this returns instance credentials.
-    expect(() => validateSheetCsvUrl("http://169.254.169.254/latest/meta-data/")).toThrow(SheetUrlError);
-    expect(() => validateSheetCsvUrl("https://169.254.169.254/latest/meta-data/")).toThrow(/Only published Google Sheets/);
+    expect(() =>
+      validateSheetCsvUrl("http://169.254.169.254/latest/meta-data/"),
+    ).toThrow(SheetUrlError);
+    expect(() =>
+      validateSheetCsvUrl("https://169.254.169.254/latest/meta-data/"),
+    ).toThrow(/Only published Google Sheets/);
   });
 
   it("refuses localhost and internal addresses", () => {
@@ -56,26 +62,38 @@ describe("validateSheetCsvUrl — SSRF guard", () => {
   it("refuses a host that merely CONTAINS a Google domain", () => {
     // The bug a substring or unanchored-regex check would have. docs.google.com.attacker.example is
     // an attacker-controlled host.
-    expect(() => validateSheetCsvUrl("https://docs.google.com.attacker.example/pub?output=csv")).toThrow(
-      /Only published Google Sheets/,
-    );
-    expect(() => validateSheetCsvUrl("https://notdocs.google.com.evil.io/pub?output=csv")).toThrow(SheetUrlError);
+    expect(() =>
+      validateSheetCsvUrl(
+        "https://docs.google.com.attacker.example/pub?output=csv",
+      ),
+    ).toThrow(/Only published Google Sheets/);
+    expect(() =>
+      validateSheetCsvUrl("https://notdocs.google.com.evil.io/pub?output=csv"),
+    ).toThrow(SheetUrlError);
   });
 
   it("refuses http", () => {
-    expect(() => validateSheetCsvUrl("http://docs.google.com/spreadsheets/d/e/x/pub?output=csv")).toThrow(
-      /must start with https/,
-    );
+    expect(() =>
+      validateSheetCsvUrl(
+        "http://docs.google.com/spreadsheets/d/e/x/pub?output=csv",
+      ),
+    ).toThrow(/must start with https/);
   });
 
   it("refuses credentials embedded in the URL", () => {
     expect(() =>
-      validateSheetCsvUrl("https://user:pass@docs.google.com/spreadsheets/d/e/x/pub?output=csv"),
+      validateSheetCsvUrl(
+        "https://user:pass@docs.google.com/spreadsheets/d/e/x/pub?output=csv",
+      ),
     ).toThrow(/username or password/);
   });
 
   it("refuses other schemes outright", () => {
-    for (const url of ["file:///etc/passwd", "gopher://docs.google.com/", "ftp://docs.google.com/x.csv"]) {
+    for (const url of [
+      "file:///etc/passwd",
+      "gopher://docs.google.com/",
+      "ftp://docs.google.com/x.csv",
+    ]) {
       expect(() => validateSheetCsvUrl(url)).toThrow(SheetUrlError);
     }
   });
@@ -88,35 +106,49 @@ describe("validateSheetCsvUrl — SSRF guard", () => {
   });
 
   it("refuses blanks and non-URLs", () => {
-    expect(() => validateSheetCsvUrl("")).toThrow(/Paste the published CSV link/);
+    expect(() => validateSheetCsvUrl("")).toThrow(
+      /Paste the published CSV link/,
+    );
     expect(() => validateSheetCsvUrl("   ")).toThrow(SheetUrlError);
-    expect(() => validateSheetCsvUrl("just some text")).toThrow(/not a valid URL/);
+    expect(() => validateSheetCsvUrl("just some text")).toThrow(
+      /not a valid URL/,
+    );
   });
 
   it("accepts the googleusercontent host published links redirect to", () => {
     expect(() =>
-      validateSheetCsvUrl("https://doc-0g-4s-sheets.googleusercontent.com/pub?output=csv"),
+      validateSheetCsvUrl(
+        "https://doc-0g-4s-sheets.googleusercontent.com/pub?output=csv",
+      ),
     ).not.toThrow();
   });
 });
 
 describe("parseCsv — RFC 4180", () => {
   it("parses a plain sheet", () => {
-    const { headers, rows } = parseCsv("employee_code,call_date,audited\nMAS001,2026-08-21,12\n");
+    const { headers, rows } = parseCsv(
+      "employee_code,call_date,audited\nMAS001,2026-08-21,12\n",
+    );
     expect(headers).toEqual(["employee_code", "call_date", "audited"]);
-    expect(rows).toEqual([{ employee_code: "MAS001", call_date: "2026-08-21", audited: "12" }]);
+    expect(rows).toEqual([
+      { employee_code: "MAS001", call_date: "2026-08-21", audited: "12" },
+    ]);
   });
 
   it("keeps a comma inside quotes as data", () => {
     // The exact case split(',') gets wrong, shifting every later column by one.
-    const { rows } = parseCsv('code,process,score\nMAS001,"Onfido, Voice",85\n');
+    const { rows } = parseCsv(
+      'code,process,score\nMAS001,"Onfido, Voice",85\n',
+    );
     expect(rows[0].process).toBe("Onfido, Voice");
     expect(rows[0].score).toBe("85");
   });
 
   it("keeps a newline inside quotes as data", () => {
     // The case split('\n') gets wrong, which turns one row into two malformed ones.
-    const { rows } = parseCsv('code,note,score\nMAS001,"line one\nline two",85\n');
+    const { rows } = parseCsv(
+      'code,note,score\nMAS001,"line one\nline two",85\n',
+    );
     expect(rows).toHaveLength(1);
     expect(rows[0].note).toBe("line one\nline two");
     expect(rows[0].score).toBe("85");
@@ -130,7 +162,9 @@ describe("parseCsv — RFC 4180", () => {
   it("strips the UTF-8 BOM Google prefixes", () => {
     // Left in place the BOM becomes part of the first header's name, so a column called
     // employee_code silently fails to match.
-    const { headers, rows } = parseCsv("\uFEFFemployee_code,score\nMAS001,85\n");
+    const { headers, rows } = parseCsv(
+      "\uFEFFemployee_code,score\nMAS001,85\n",
+    );
     expect(headers[0]).toBe("employee_code");
     expect(rows[0].employee_code).toBe("MAS001");
   });

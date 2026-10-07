@@ -25,12 +25,17 @@
  * and a short server outage must not silently drop a real exit's tasks.
  */
 
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { createDefaultClearanceTasks } from './exit-intelligence.service.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { createDefaultClearanceTasks } from "./exit-intelligence.service.js";
 
 const TERMINAL_STATUSES = [
-  'draft', 'exited', 'revoked', 'rejected', 'cancelled', 'withdrawn',
+  "draft",
+  "exited",
+  "revoked",
+  "rejected",
+  "cancelled",
+  "withdrawn",
 ] as const;
 
 /** Days back to scan for unprocessed LWDs (covers short outages) — same window as NOC. */
@@ -49,7 +54,7 @@ export interface ExitClearanceLwdTriggerResult {
 }
 
 export async function runExitClearanceLwdTrigger(): Promise<ExitClearanceLwdTriggerResult> {
-  const placeholders = TERMINAL_STATUSES.map(() => '?').join(',');
+  const placeholders = TERMINAL_STATUSES.map(() => "?").join(",");
   const [rows] = await db.execute<TriggerRow[]>(
     `SELECT er.id AS exit_request_id, er.employee_id
        FROM exit_request er
@@ -75,7 +80,10 @@ export async function runExitClearanceLwdTrigger(): Promise<ExitClearanceLwdTrig
   // noc-lwd-trigger.service.ts's own comment on this exact point).
   for (const row of rows) {
     try {
-      const outcome = await createDefaultClearanceTasks(row.exit_request_id, row.employee_id);
+      const outcome = await createDefaultClearanceTasks(
+        row.exit_request_id,
+        row.employee_id,
+      );
       if (outcome.skipped) {
         result.alreadyExisted++;
       } else {

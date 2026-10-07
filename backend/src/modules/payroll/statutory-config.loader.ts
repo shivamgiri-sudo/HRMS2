@@ -66,9 +66,13 @@ export async function loadFlatStatutoryConfig(
   );
 
   const config: Record<string, number> = {};
-  for (const row of rows as Array<{ config_key: string; config_value: unknown }>) {
+  for (const row of rows as Array<{
+    config_key: string;
+    config_value: unknown;
+  }>) {
     const value = Number(row.config_value);
-    if (Number.isFinite(value)) config[String(row.config_key).toLowerCase()] = value;
+    if (Number.isFinite(value))
+      config[String(row.config_key).toLowerCase()] = value;
   }
   return config;
 }

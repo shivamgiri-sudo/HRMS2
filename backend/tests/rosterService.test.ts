@@ -75,8 +75,15 @@ describe("rosterService.createPlan", () => {
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
     mockExecute.mockResolvedValueOnce([[fakePlan]]);
     const result = await rosterService.createPlan(
-      { planName: "May Week 1", fromDate: "2026-05-20", toDate: "2026-05-26", requiredHeadcount: 10, shiftId: "shift-1", processId: "proc-1" },
-      "user-1"
+      {
+        planName: "May Week 1",
+        fromDate: "2026-05-20",
+        toDate: "2026-05-26",
+        requiredHeadcount: 10,
+        shiftId: "shift-1",
+        processId: "proc-1",
+      },
+      "user-1",
     );
     expect(result.plan_name).toBe("May Week 1");
     expect(result.plan_status).toBe("draft");
@@ -85,9 +92,14 @@ describe("rosterService.createPlan", () => {
   it("throws when toDate < fromDate", async () => {
     await expect(
       rosterService.createPlan(
-        { planName: "Bad", fromDate: "2026-05-26", toDate: "2026-05-20", requiredHeadcount: 5 },
-        "user-1"
-      )
+        {
+          planName: "Bad",
+          fromDate: "2026-05-26",
+          toDate: "2026-05-20",
+          requiredHeadcount: 5,
+        },
+        "user-1",
+      ),
     ).rejects.toThrow("toDate must be >= fromDate");
   });
 });
@@ -129,11 +141,16 @@ function stubRosterSql(opts: { failInsertOnce?: boolean } = {}) {
   mockExecute.mockImplementation(async (sql?: unknown) => {
     const s = String(sql ?? "");
     if (/INSERT INTO wfm_roster_assignment/i.test(s)) {
-      if (insertFailuresLeft > 0) { insertFailuresLeft--; throw new Error("DB error"); }
+      if (insertFailuresLeft > 0) {
+        insertFailuresLeft--;
+        throw new Error("DB error");
+      }
       return [{ affectedRows: 1 }, []];
     }
-    if (/SELECT \* FROM wfm_roster_assignment/i.test(s)) return [[fakeAssignment], []];
-    if (/INSERT INTO sensitive_action_log/i.test(s)) return [{ affectedRows: 1 }, []];
+    if (/SELECT \* FROM wfm_roster_assignment/i.test(s))
+      return [[fakeAssignment], []];
+    if (/INSERT INTO sensitive_action_log/i.test(s))
+      return [{ affectedRows: 1 }, []];
     return [[], []]; // is_locked, INFORMATION_SCHEMA probes, everything else
   });
 }
@@ -144,8 +161,15 @@ describe("rosterService.assignEmployee", () => {
   it("upserts assignment and returns it", async () => {
     stubRosterSql();
     const result = await rosterService.assignEmployee(
-      { employeeId: "emp-1", rosterDate: "2026-05-20", shiftId: "shift-1", planId: "plan-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },
-      "user-1"
+      {
+        employeeId: "emp-1",
+        rosterDate: "2026-05-20",
+        shiftId: "shift-1",
+        planId: "plan-1",
+        shiftStartTime: "09:00",
+        shiftEndTime: "18:00",
+      },
+      "user-1",
     );
     expect(result.employee_id).toBe("emp-1");
   });
@@ -157,8 +181,20 @@ describe("rosterService.bulkAssign", () => {
   it("upserts multiple rows and returns count", async () => {
     stubRosterSql();
     const rows = [
-      { employeeId: "emp-1", rosterDate: "2026-05-20", shiftId: "shift-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },
-      { employeeId: "emp-2", rosterDate: "2026-05-20", shiftId: "shift-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },
+      {
+        employeeId: "emp-1",
+        rosterDate: "2026-05-20",
+        shiftId: "shift-1",
+        shiftStartTime: "09:00",
+        shiftEndTime: "18:00",
+      },
+      {
+        employeeId: "emp-2",
+        rosterDate: "2026-05-20",
+        shiftId: "shift-1",
+        shiftStartTime: "09:00",
+        shiftEndTime: "18:00",
+      },
     ];
     const result = await rosterService.bulkAssign(rows, "plan-1", "user-1");
     expect(result.assigned).toBe(2);
@@ -170,8 +206,20 @@ describe("rosterService.bulkAssign", () => {
     // rather than by position means the failure lands on the write, not on a probe.
     stubRosterSql({ failInsertOnce: true });
     const rows = [
-      { employeeId: "emp-1", rosterDate: "2026-05-20", shiftId: "shift-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },
-      { employeeId: "emp-2", rosterDate: "2026-05-20", shiftId: "shift-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },
+      {
+        employeeId: "emp-1",
+        rosterDate: "2026-05-20",
+        shiftId: "shift-1",
+        shiftStartTime: "09:00",
+        shiftEndTime: "18:00",
+      },
+      {
+        employeeId: "emp-2",
+        rosterDate: "2026-05-20",
+        shiftId: "shift-1",
+        shiftStartTime: "09:00",
+        shiftEndTime: "18:00",
+      },
     ];
     const result = await rosterService.bulkAssign(rows, "plan-1", "user-1");
     expect(result.failed).toBe(1);
@@ -183,17 +231,21 @@ describe("rosterService.publishPlan", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("updates plan_status to published and all assignments to published", async () => {
-    mockExecute.mockResolvedValueOnce([[fakePlan]]);          // getPlan check
+    mockExecute.mockResolvedValueOnce([[fakePlan]]); // getPlan check
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // update plan
     mockExecute.mockResolvedValueOnce([{ affectedRows: 5 }]); // update assignments
-    mockExecute.mockResolvedValueOnce([[{ ...fakePlan, plan_status: "published" }]]); // re-fetch
+    mockExecute.mockResolvedValueOnce([
+      [{ ...fakePlan, plan_status: "published" }],
+    ]); // re-fetch
     const result = await rosterService.publishPlan("plan-1", "user-1");
     expect(result.plan_status).toBe("published");
   });
 
   it("throws when plan not found", async () => {
     mockExecute.mockResolvedValueOnce([[]]); // empty
-    await expect(rosterService.publishPlan("missing", "user-1")).rejects.toThrow("Plan not found");
+    await expect(
+      rosterService.publishPlan("missing", "user-1"),
+    ).rejects.toThrow("Plan not found");
   });
 });
 
@@ -216,7 +268,10 @@ describe("rosterService.listAssignments", () => {
 
   it("filters by rosterDate range", async () => {
     mockExecute.mockResolvedValueOnce([[fakeAssignment]]);
-    await rosterService.listAssignments({ fromDate: "2026-05-20", toDate: "2026-05-26" });
+    await rosterService.listAssignments({
+      fromDate: "2026-05-20",
+      toDate: "2026-05-26",
+    });
     const [sql] = mockExecute.mock.calls[0];
     expect(sql).toMatch(/roster_date/i);
   });

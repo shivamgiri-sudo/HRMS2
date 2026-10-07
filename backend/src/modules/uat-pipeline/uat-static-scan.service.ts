@@ -35,7 +35,12 @@ import {
   fanIn,
   type ImpactIndex,
 } from "./uat-impact-index.js";
-import { explainDeny, hitsForPaths, loadProtectedPaths, pathTierFor } from "./protected-paths.js";
+import {
+  explainDeny,
+  hitsForPaths,
+  loadProtectedPaths,
+  pathTierFor,
+} from "./protected-paths.js";
 import {
   CAPABILITY_CLASS_RANK,
   PATH_TIER_RANK,
@@ -54,29 +59,61 @@ export const SCANNER_VERSION = "1.0.0";
  * on purpose: the registry decides the risk CLASS, these decide which files to look at.
  */
 const SUBJECT_HINTS: Array<[RegExp, string[]]> = [
-  [/payslip|salary|\bCTC\b|\bPF\b|\bUAN\b|\bESIC?\b|\bTDS\b|gratuity|F&F|arrear|deduction/i,
-    ["backend/src/modules/payroll/", "backend/src/modules/payroll-compliance/", "backend/src/modules/payroll-masters/"]],
-  [/punch|biometric|cosec|attendance|half.?day|\blate\b|missing punch/i,
-    ["backend/src/modules/wfm/", "backend/src/modules/attendance/"]],
-  [/leave|accrual|entitlement|comp.?off|encash|carry.?forward/i,
-    ["backend/src/modules/leave/"]],
-  [/roster|shift|week.?off|\bOT\b|overtime|regulari[sz]ation|shrinkage/i,
-    ["backend/src/modules/roster/", "backend/src/modules/wfm/"]],
-  [/login|password|\bOTP\b|role|permission|access denied|unauthori[sz]ed/i,
-    ["backend/src/modules/auth/", "backend/src/modules/access/", "backend/src/middleware/"]],
-  [/candidate|interview|offer letter|recruit|requisition|shortlist/i,
-    ["backend/src/modules/ats/"]],
-  [/resignation|exit|clearance|relieving|notice period|full and final/i,
-    ["backend/src/modules/exit/"]],
-  [/invoice|vendor|\bGRN\b|budget|\bP&L\b|cost cent|disburs|payment/i,
-    ["backend/src/modules/finance/", "backend/src/modules/process-pnl/"]],
-  [/report|dashboard|export|does not tally|mismatch/i,
-    ["backend/src/modules/reporting/", "backend/src/modules/dashboards/"]],
-  [/\bLMS\b|course|curriculum|certification|trainee|\bMCQ\b/i,
-    ["backend/src/modules/lms/", "backend/src/modules/lms-integration/"]],
+  [
+    /payslip|salary|\bCTC\b|\bPF\b|\bUAN\b|\bESIC?\b|\bTDS\b|gratuity|F&F|arrear|deduction/i,
+    [
+      "backend/src/modules/payroll/",
+      "backend/src/modules/payroll-compliance/",
+      "backend/src/modules/payroll-masters/",
+    ],
+  ],
+  [
+    /punch|biometric|cosec|attendance|half.?day|\blate\b|missing punch/i,
+    ["backend/src/modules/wfm/", "backend/src/modules/attendance/"],
+  ],
+  [
+    /leave|accrual|entitlement|comp.?off|encash|carry.?forward/i,
+    ["backend/src/modules/leave/"],
+  ],
+  [
+    /roster|shift|week.?off|\bOT\b|overtime|regulari[sz]ation|shrinkage/i,
+    ["backend/src/modules/roster/", "backend/src/modules/wfm/"],
+  ],
+  [
+    /login|password|\bOTP\b|role|permission|access denied|unauthori[sz]ed/i,
+    [
+      "backend/src/modules/auth/",
+      "backend/src/modules/access/",
+      "backend/src/middleware/",
+    ],
+  ],
+  [
+    /candidate|interview|offer letter|recruit|requisition|shortlist/i,
+    ["backend/src/modules/ats/"],
+  ],
+  [
+    /resignation|exit|clearance|relieving|notice period|full and final/i,
+    ["backend/src/modules/exit/"],
+  ],
+  [
+    /invoice|vendor|\bGRN\b|budget|\bP&L\b|cost cent|disburs|payment/i,
+    ["backend/src/modules/finance/", "backend/src/modules/process-pnl/"],
+  ],
+  [
+    /report|dashboard|export|does not tally|mismatch/i,
+    ["backend/src/modules/reporting/", "backend/src/modules/dashboards/"],
+  ],
+  [
+    /\bLMS\b|course|curriculum|certification|trainee|\bMCQ\b/i,
+    ["backend/src/modules/lms/", "backend/src/modules/lms-integration/"],
+  ],
 ];
 
-function filesUnderPrefixes(prefixes: string[], index: ImpactIndex, cap = 40): string[] {
+function filesUnderPrefixes(
+  prefixes: string[],
+  index: ImpactIndex,
+  cap = 40,
+): string[] {
   const out: string[] = [];
   for (const f of index.forward.keys()) {
     if (prefixes.some((p) => f.startsWith(p))) {
@@ -101,7 +138,11 @@ interface Candidate {
  */
 function resolveCandidates(input: ScanInput, index: ImpactIndex): Candidate[] {
   const byPath = new Map<string, Candidate>();
-  const add = (path: string, confidence: Candidate["confidence"], why: string) => {
+  const add = (
+    path: string,
+    confidence: Candidate["confidence"],
+    why: string,
+  ) => {
     const p = normalisePath(path);
     const existing = byPath.get(p);
     // Keep the highest-confidence explanation for a path reached more than one way.
@@ -118,7 +159,8 @@ function resolveCandidates(input: ScanInput, index: ImpactIndex): Candidate[] {
     if (component) {
       add(component, "high", `page component for route ${route}`);
       for (const dep of directDependencies(component, index)) {
-        if (dep.startsWith("src/")) add(dep, "medium", `imported by the ${route} page`);
+        if (dep.startsWith("src/"))
+          add(dep, "medium", `imported by the ${route} page`);
       }
       const apis = [...(index.apiLiterals.get(component) ?? [])];
       for (const f of backendFilesForApiPaths(apis, index)) {
@@ -138,7 +180,11 @@ function resolveCandidates(input: ScanInput, index: ImpactIndex): Candidate[] {
   if (input.moduleHint) {
     const safe = input.moduleHint.replace(/[^A-Za-z0-9_-]/g, "");
     if (safe.length >= 2) {
-      for (const f of filesUnderPrefixes([`backend/src/modules/${safe}/`], index, 25)) {
+      for (const f of filesUnderPrefixes(
+        [`backend/src/modules/${safe}/`],
+        index,
+        25,
+      )) {
         add(f, "low", `user-selected module hint "${safe}" (advisory)`);
       }
     }
@@ -204,12 +250,15 @@ export function runStaticScan(input: ScanInput): StaticScanResult {
   const text = `${input.title}\n${input.text}`;
   const capabilityHits = matchCapabilities(
     { paths: evidenceBackedPaths, text, tokens: extractIdentifierTokens(text) },
-    registry
+    registry,
   );
   const capabilityClass = capabilityClassFor(capabilityHits);
 
   // The whole point of the two-dimensional model: the worse of the two decides.
-  const effectiveRank = Math.max(PATH_TIER_RANK[riskTier], CAPABILITY_CLASS_RANK[capabilityClass]);
+  const effectiveRank = Math.max(
+    PATH_TIER_RANK[riskTier],
+    CAPABILITY_CLASS_RANK[capabilityClass],
+  );
   const effectiveRisk = rankToPathTier(effectiveRank);
 
   // Reporting surfaces use every candidate, including low-confidence ones: a reviewer
@@ -218,7 +267,7 @@ export function runStaticScan(input: ScanInput): StaticScanResult {
     ...new Set(
       allPaths
         .map((p) => /^backend\/src\/modules\/([^/]+)\//.exec(p)?.[1])
-        .filter((m): m is string => Boolean(m))
+        .filter((m): m is string => Boolean(m)),
     ),
   ].sort();
 
@@ -245,7 +294,7 @@ export function runStaticScan(input: ScanInput): StaticScanResult {
     // Path reason first: it names a concrete file, which is more actionable than a category.
     blockedReason:
       effectiveRisk === "deny"
-        ? explainDeny(protectedHits) ?? explainCapabilityDeny(capabilityHits)
+        ? (explainDeny(protectedHits) ?? explainCapabilityDeny(capabilityHits))
         : null,
   };
 }
@@ -253,7 +302,7 @@ export function runStaticScan(input: ScanInput): StaticScanResult {
 export async function persistScan(
   feedbackId: string,
   scan: StaticScanResult,
-  conn?: PoolConnection
+  conn?: PoolConnection,
 ): Promise<void> {
   const exec = conn ?? db;
   await exec.execute(
@@ -279,10 +328,10 @@ export async function persistScan(
       scan.capabilityClass,
       scan.effectiveRisk,
       scan.durationMs,
-    ]
+    ],
   );
   await exec.execute(
     "UPDATE uat_feedback SET risk_tier = ?, capability_class = ? WHERE id = ?",
-    [scan.effectiveRisk, scan.capabilityClass, feedbackId]
+    [scan.effectiveRisk, scan.capabilityClass, feedbackId],
   );
 }

@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 
 // The route module pulls in the db pool and auth middleware at import time.
 // Only the pure error-guard is under test here, so stub the edges.
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn(), query: vi.fn() } }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: vi.fn(), query: vi.fn() },
+}));
 vi.mock("../src/middleware/authMiddleware.js", () => ({
   requireAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
@@ -10,7 +12,8 @@ vi.mock("../src/middleware/requireRole.js", () => ({
   requireRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 vi.mock("../src/middleware/scopeMiddleware.js", () => ({
-  requireScopedRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireScopedRole: () => (_req: unknown, _res: unknown, next: () => void) =>
+    next(),
 }));
 vi.mock("../src/shared/apiResponse.js", () => ({ logSourceFailure: vi.fn() }));
 

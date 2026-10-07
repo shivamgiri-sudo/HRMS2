@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const CreateSlabSchema = z.object({
   slab_code: z.string().min(1).max(50),
@@ -24,50 +24,51 @@ export const UpdateBandSchema = CreateBandSchema.partial();
 const moneyField = z.coerce.number().min(0).default(0);
 
 export const CreatePackageSchema = z.object({
-  branch_name:       z.string().min(1),
-  band_code:         z.string().min(1),
-  cost_centre_code:  z.string().optional().nullable(),
-  package_amount:    z.coerce.number().min(0),
-  basic:             moneyField,
-  hra:               moneyField,
+  branch_name: z.string().min(1),
+  band_code: z.string().min(1),
+  cost_centre_code: z.string().optional().nullable(),
+  package_amount: z.coerce.number().min(0),
+  basic: moneyField,
+  hra: moneyField,
   // lta was missing from this schema while being present in the service's
   // PACKAGE_MONEY_COLUMNS, so zod stripped it out of every payload and the INSERT
   // wrote 0 for it no matter what was submitted — a silent drop, not an error.
   // Dormant until now only because LTA is 0 on all 302 catalog rows; the admin
   // package form gained an LTA input on 2026-08-27, which would have made it live.
-  lta:               moneyField,
-  conveyance:        moneyField,
-  portfolio:         moneyField,
-  medical:           moneyField,
+  lta: moneyField,
+  conveyance: moneyField,
+  portfolio: moneyField,
+  medical: moneyField,
   special_allowance: moneyField,
-  other_allowance:   moneyField,
-  bonus:             moneyField,
-  pli:               moneyField,
-  gross:             moneyField,
-  epf_employee:      moneyField,
-  esic_employee:     moneyField,
+  other_allowance: moneyField,
+  bonus: moneyField,
+  pli: moneyField,
+  gross: moneyField,
+  epf_employee: moneyField,
+  esic_employee: moneyField,
   // PT removed 2026-09-11 per user decision — still accepted on the wire so old
   // clients don't get a validation error, but payrollMasters.service.ts's
   // amtColumn() forces this to 0 on every create/update regardless of what is
   // submitted here.
-  professional_tax:  moneyField,
-  net_in_hand:       moneyField,
-  epf_employer:      moneyField,
-  esic_employer:     moneyField,
-  admin_charges:     moneyField,
-  ctc:               moneyField,
-  active_status:     z.coerce.number().int().min(0).max(1).optional().default(1),
+  professional_tax: moneyField,
+  net_in_hand: moneyField,
+  epf_employer: moneyField,
+  esic_employer: moneyField,
+  admin_charges: moneyField,
+  ctc: moneyField,
+  active_status: z.coerce.number().int().min(0).max(1).optional().default(1),
 });
 
 export const UpdatePackageSchema = CreatePackageSchema.partial();
 
 /** For creating one package definition across multiple branches/cost-centres in one shot. */
-export const BulkCreatePackageSchema = CreatePackageSchema
-  .omit({ branch_name: true, cost_centre_code: true })
-  .extend({
-    branch_names:      z.array(z.string().min(1)).min(1, 'Select at least one branch'),
-    cost_centre_codes: z.array(z.string()).optional().default([]),
-  });
+export const BulkCreatePackageSchema = CreatePackageSchema.omit({
+  branch_name: true,
+  cost_centre_code: true,
+}).extend({
+  branch_names: z.array(z.string().min(1)).min(1, "Select at least one branch"),
+  cost_centre_codes: z.array(z.string()).optional().default([]),
+});
 
 export const CreateMatrixEntrySchema = z.object({
   department_id: z.string().uuid(),
@@ -78,12 +79,15 @@ export const CreateMatrixEntrySchema = z.object({
 
 export const UpdateMatrixEntrySchema = CreateMatrixEntrySchema.partial();
 
-export const BulkMatrixUpsertSchema = z.array(CreateMatrixEntrySchema).min(1).max(500);
+export const BulkMatrixUpsertSchema = z
+  .array(CreateMatrixEntrySchema)
+  .min(1)
+  .max(500);
 
 export const CreateMinWageSchema = z.object({
   state_code: z.string().min(1).max(10),
   state_name: z.string().min(1).max(64),
-  category: z.enum(['unskilled', 'semi_skilled', 'skilled', 'highly_skilled']),
+  category: z.enum(["unskilled", "semi_skilled", "skilled", "highly_skilled"]),
   daily_rate: z.coerce.number().min(0),
   monthly_rate: z.coerce.number().min(0),
   effective_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

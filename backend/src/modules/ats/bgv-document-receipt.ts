@@ -32,14 +32,22 @@ export type ReceiptFlag =
   | "offer_letter_received";
 
 export const RECEIPT_FLAGS: ReceiptFlag[] = [
-  "photo_received", "aadhaar_received", "pan_received", "passport_received",
-  "driving_license_received", "edu_cert_received", "prev_exp_received",
-  "bank_proof_received", "offer_letter_received",
+  "photo_received",
+  "aadhaar_received",
+  "pan_received",
+  "passport_received",
+  "driving_license_received",
+  "edu_cert_received",
+  "prev_exp_received",
+  "bank_proof_received",
+  "offer_letter_received",
 ];
 
 /** "PAN Card" and "pan_card" both become "pancard". */
 function normalise(docType: unknown): string {
-  return String(docType ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return String(docType ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 /**
@@ -50,22 +58,55 @@ function normalise(docType: unknown): string {
  * candidate who uploaded a headshot would be recorded as having produced a
  * passport, and 36 of them did exactly that.
  */
-const RULES: ReadonlyArray<{ flag: ReceiptFlag; matches: (n: string) => boolean }> = [
+const RULES: ReadonlyArray<{
+  flag: ReceiptFlag;
+  matches: (n: string) => boolean;
+}> = [
   // Must precede the passport rule. See above.
-  { flag: "photo_received", matches: (n) => n.includes("passportphoto") || n.includes("photo") || n.includes("selfie") },
-  { flag: "aadhaar_received", matches: (n) => n.includes("aadhaar") || n.includes("aadhar") },
-  { flag: "pan_received", matches: (n) => n === "pan" || n.includes("pancard") },
-  { flag: "driving_license_received", matches: (n) => n.includes("driving") || n.includes("dl") },
+  {
+    flag: "photo_received",
+    matches: (n) =>
+      n.includes("passportphoto") ||
+      n.includes("photo") ||
+      n.includes("selfie"),
+  },
+  {
+    flag: "aadhaar_received",
+    matches: (n) => n.includes("aadhaar") || n.includes("aadhar"),
+  },
+  {
+    flag: "pan_received",
+    matches: (n) => n === "pan" || n.includes("pancard"),
+  },
+  {
+    flag: "driving_license_received",
+    matches: (n) => n.includes("driving") || n.includes("dl"),
+  },
   { flag: "passport_received", matches: (n) => n.includes("passport") },
   {
     flag: "edu_cert_received",
     matches: (n) =>
-      n.includes("marksheet") || n.includes("degree") || n.includes("diploma") ||
-      n.includes("certificate") && !n.includes("experience"),
+      n.includes("marksheet") ||
+      n.includes("degree") ||
+      n.includes("diploma") ||
+      (n.includes("certificate") && !n.includes("experience")),
   },
-  { flag: "prev_exp_received", matches: (n) => n.includes("experience") || n.includes("relieving") || n.includes("payslip") },
-  { flag: "bank_proof_received", matches: (n) => n.includes("passbook") || n.includes("cheque") || n.includes("bank") },
-  { flag: "offer_letter_received", matches: (n) => n.includes("appointment") || n.includes("offer") },
+  {
+    flag: "prev_exp_received",
+    matches: (n) =>
+      n.includes("experience") ||
+      n.includes("relieving") ||
+      n.includes("payslip"),
+  },
+  {
+    flag: "bank_proof_received",
+    matches: (n) =>
+      n.includes("passbook") || n.includes("cheque") || n.includes("bank"),
+  },
+  {
+    flag: "offer_letter_received",
+    matches: (n) => n.includes("appointment") || n.includes("offer"),
+  },
 ];
 
 /**

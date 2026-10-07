@@ -34,7 +34,7 @@
 // convention stands.
 
 /** Permitted Attendance_Source values (criterion 1.2). Mirrors the engine's AttendanceSource. */
-export type AttendanceSource = 'dialler' | 'biometric';
+export type AttendanceSource = "dialler" | "biometric";
 
 /**
  * The classifications one employee-day can land on here. Every value is already a member of
@@ -53,11 +53,7 @@ export type AttendanceSource = 'dialler' | 'biometric';
  *   resolves`), so it is mirrored rather than replaced.
  */
 export type DayClassification =
-  | 'present'
-  | 'half_day'
-  | 'absent'
-  | 'unreconciled'
-  | 'missing_punch';
+  "present" | "half_day" | "absent" | "unreconciled" | "missing_punch";
 
 /**
  * Why a day landed where it did. Recorded on the provenance so a reviewer sees the reason, not
@@ -65,17 +61,17 @@ export type DayClassification =
  */
 export type ClassificationReason =
   /** Minutes reached full_day_minutes (criterion 4.1). */
-  | 'at_or_above_full_day'
+  | "at_or_above_full_day"
   /** Minutes reached half_day_minutes but not full_day_minutes (criterion 4.1). */
-  | 'at_or_above_half_day'
+  | "at_or_above_half_day"
   /** Minutes fell below half_day_minutes with the resolved source reporting (criterion 4.1). */
-  | 'below_half_day'
+  | "below_half_day"
   /** Criterion 4.6: resolved source silent, other feed reported minutes. */
-  | 'resolved_source_silent_other_feed_reported'
+  | "resolved_source_silent_other_feed_reported"
   /** Criterion 4.7: dialler resolved, no Dialler_Source record in the preceding window. */
-  | 'dialler_resolved_no_recent_coverage'
+  | "dialler_resolved_no_recent_coverage"
   /** Neither feed reported anything for the date. Mirrors the engine's missing_punch path. */
-  | 'no_evidence_from_either_feed';
+  | "no_evidence_from_either_feed";
 
 /**
  * The resolved Day_Threshold_Rule values for this employee and date (criteria 1.14-1.16).
@@ -134,7 +130,7 @@ export interface PayableDayProvenance {
   appliedGraceMinutes: number;
   thresholdRuleId: string | null;
   /** Stated rather than implied, because it decides the pay of a day sitting exactly on a threshold. */
-  thresholdComparison: 'at_or_above';
+  thresholdComparison: "at_or_above";
   reason: ClassificationReason;
 }
 
@@ -206,19 +202,31 @@ function assertUsableMinutes(name: string, value: number | null): void {
 export function classifyMinutes(
   minutes: number,
   thresholds: ResolvedDayThresholds,
-): { classification: 'present' | 'half_day' | 'absent'; lwpValue: 0 | 0.5 | 1; reason: ClassificationReason } {
-  assertUsableThreshold('fullDayMinutes', thresholds.fullDayMinutes);
-  assertUsableThreshold('halfDayMinutes', thresholds.halfDayMinutes);
-  assertUsableThreshold('graceMinutes', thresholds.graceMinutes);
-  assertUsableMinutes('minutes', minutes);
+): {
+  classification: "present" | "half_day" | "absent";
+  lwpValue: 0 | 0.5 | 1;
+  reason: ClassificationReason;
+} {
+  assertUsableThreshold("fullDayMinutes", thresholds.fullDayMinutes);
+  assertUsableThreshold("halfDayMinutes", thresholds.halfDayMinutes);
+  assertUsableThreshold("graceMinutes", thresholds.graceMinutes);
+  assertUsableMinutes("minutes", minutes);
 
   if (minutes >= thresholds.fullDayMinutes) {
-    return { classification: 'present', lwpValue: 0, reason: 'at_or_above_full_day' };
+    return {
+      classification: "present",
+      lwpValue: 0,
+      reason: "at_or_above_full_day",
+    };
   }
   if (minutes >= thresholds.halfDayMinutes) {
-    return { classification: 'half_day', lwpValue: 0.5, reason: 'at_or_above_half_day' };
+    return {
+      classification: "half_day",
+      lwpValue: 0.5,
+      reason: "at_or_above_half_day",
+    };
   }
-  return { classification: 'absent', lwpValue: 1, reason: 'below_half_day' };
+  return { classification: "absent", lwpValue: 1, reason: "below_half_day" };
 }
 
 /**
@@ -230,19 +238,26 @@ export function classifyMinutes(
 export function classifyPayableDay(input: PayableDayInput): PayableDayResult {
   const { resolvedSource, thresholds } = input;
 
-  assertUsableThreshold('fullDayMinutes', thresholds.fullDayMinutes);
-  assertUsableThreshold('halfDayMinutes', thresholds.halfDayMinutes);
-  assertUsableThreshold('graceMinutes', thresholds.graceMinutes);
-  assertUsableMinutes('biometricMinutes', input.biometricMinutes);
-  assertUsableMinutes('canonicalProductiveMinutes', input.canonicalProductiveMinutes);
+  assertUsableThreshold("fullDayMinutes", thresholds.fullDayMinutes);
+  assertUsableThreshold("halfDayMinutes", thresholds.halfDayMinutes);
+  assertUsableThreshold("graceMinutes", thresholds.graceMinutes);
+  assertUsableMinutes("biometricMinutes", input.biometricMinutes);
+  assertUsableMinutes(
+    "canonicalProductiveMinutes",
+    input.canonicalProductiveMinutes,
+  );
 
   // Criteria 4.2 and 4.3: the resolved source decides which figure is classified, and the other
   // figure is retained as evidence only. This selection is the whole point of Requirement 4 —
   // it is what replaces the engine's `configuredAprEmployee || hasScopedDiallerRule` OR.
   const resolvedMinutes =
-    resolvedSource === 'biometric' ? input.biometricMinutes : input.canonicalProductiveMinutes;
+    resolvedSource === "biometric"
+      ? input.biometricMinutes
+      : input.canonicalProductiveMinutes;
   const otherFeedMinutes =
-    resolvedSource === 'biometric' ? input.canonicalProductiveMinutes : input.biometricMinutes;
+    resolvedSource === "biometric"
+      ? input.canonicalProductiveMinutes
+      : input.biometricMinutes;
 
   const provenanceBase = {
     resolvedSource,
@@ -253,7 +268,7 @@ export function classifyPayableDay(input: PayableDayInput): PayableDayResult {
     appliedHalfDayMinutes: thresholds.halfDayMinutes,
     appliedGraceMinutes: thresholds.graceMinutes,
     thresholdRuleId: thresholds.decidingRuleId ?? null,
-    thresholdComparison: 'at_or_above' as const,
+    thresholdComparison: "at_or_above" as const,
   };
 
   // "Reports no minutes" covers both null and zero. Defect E4 in requirements.md: a stored zero
@@ -270,14 +285,14 @@ export function classifyPayableDay(input: PayableDayInput): PayableDayResult {
     // day is reviewed. Both feeds' minutes are on the provenance either way.
     if (otherFeedReported) {
       return {
-        classification: 'unreconciled',
+        classification: "unreconciled",
         lwpValue: 0,
         payableDayValue: null,
         requiresReview: true,
         provenance: {
           ...provenanceBase,
           classifiedFromMinutes: null,
-          reason: 'resolved_source_silent_other_feed_reported',
+          reason: "resolved_source_silent_other_feed_reported",
         },
       };
     }
@@ -287,16 +302,19 @@ export function classifyPayableDay(input: PayableDayInput): PayableDayResult {
     // in the preceding 30 days is not enrolled, and requirements.md measured the cost of judging
     // that population on the dialler anyway (1,577.5 paid days removed, 461 people taken to zero
     // paid days in six days of one month).
-    if (resolvedSource === 'dialler' && input.diallerRecordInPrecedingWindow !== true) {
+    if (
+      resolvedSource === "dialler" &&
+      input.diallerRecordInPrecedingWindow !== true
+    ) {
       return {
-        classification: 'missing_punch',
+        classification: "missing_punch",
         lwpValue: 0,
         payableDayValue: null,
         requiresReview: true,
         provenance: {
           ...provenanceBase,
           classifiedFromMinutes: null,
-          reason: 'dialler_resolved_no_recent_coverage',
+          reason: "dialler_resolved_no_recent_coverage",
         },
       };
     }
@@ -307,7 +325,7 @@ export function classifyPayableDay(input: PayableDayInput): PayableDayResult {
     //     classifier and lands on absent with lwp 1.00, per the 2026-08-07 ruling recorded in
     //     that file ("a short or missing dialler login IS the attendance answer for that role").
     //   - otherwise: 'missing_punch' with `lwpValue: 0.0, // LWP NOT applied until WFM resolves`.
-    if (resolvedSource === 'dialler') {
+    if (resolvedSource === "dialler") {
       const zeroMinuteClassification = classifyMinutes(0, thresholds);
       return {
         classification: zeroMinuteClassification.classification,
@@ -325,14 +343,14 @@ export function classifyPayableDay(input: PayableDayInput): PayableDayResult {
     }
 
     return {
-      classification: 'missing_punch',
+      classification: "missing_punch",
       lwpValue: 0,
       payableDayValue: null,
       requiresReview: true,
       provenance: {
         ...provenanceBase,
         classifiedFromMinutes: null,
-        reason: 'no_evidence_from_either_feed',
+        reason: "no_evidence_from_either_feed",
       },
     };
   }
@@ -360,16 +378,18 @@ export function classifyPayableDay(input: PayableDayInput): PayableDayResult {
  * strictly worse-paid day. absent < half_day < present. The review states are unranked (null)
  * because they are not reached by varying minutes with the rest of the input held fixed.
  */
-export function classificationRank(classification: DayClassification): number | null {
+export function classificationRank(
+  classification: DayClassification,
+): number | null {
   switch (classification) {
-    case 'absent':
+    case "absent":
       return 0;
-    case 'half_day':
+    case "half_day":
       return 1;
-    case 'present':
+    case "present":
       return 2;
-    case 'unreconciled':
-    case 'missing_punch':
+    case "unreconciled":
+    case "missing_punch":
       return null;
   }
 }

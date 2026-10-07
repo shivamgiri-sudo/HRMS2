@@ -8,7 +8,11 @@
  * and the JSON agree, and that every non-glob path still exists on disk so a rename cannot
  * quietly void a rule.
  */
-import { matchGlob, normalisePath, readControlPlaneFile } from "./control-plane.js";
+import {
+  matchGlob,
+  normalisePath,
+  readControlPlaneFile,
+} from "./control-plane.js";
 import type {
   PathTier,
   ProtectedHit,
@@ -24,13 +28,18 @@ export interface LoadedProtectedPaths {
 }
 
 export function loadProtectedPaths(): LoadedProtectedPaths {
-  const { data, sha256 } = readControlPlaneFile<ProtectedPathsFile>(PROTECTED_PATHS_FILE);
+  const { data, sha256 } =
+    readControlPlaneFile<ProtectedPathsFile>(PROTECTED_PATHS_FILE);
   if (!Array.isArray(data.rules) || data.rules.length === 0) {
     // An empty rule set would classify a payroll edit as safe. Refuse rather than degrade.
-    throw new Error("[uat] protected-paths.json contains no rules; refusing to classify risk.");
+    throw new Error(
+      "[uat] protected-paths.json contains no rules; refusing to classify risk.",
+    );
   }
   if (!data.rules.some((r) => r.tier === "deny")) {
-    throw new Error("[uat] protected-paths.json has no deny-tier rules; refusing to classify risk.");
+    throw new Error(
+      "[uat] protected-paths.json has no deny-tier rules; refusing to classify risk.",
+    );
   }
   return { rules: data.rules, sha256 };
 }
@@ -40,7 +49,10 @@ export function loadProtectedPaths(): LoadedProtectedPaths {
  * triage console shows the reviewer *why* something was blocked and one file commonly
  * matches both a business-critical rule and a control-plane one.
  */
-export function hitsForPath(path: string, rules: ProtectedPathRule[]): ProtectedHit[] {
+export function hitsForPath(
+  path: string,
+  rules: ProtectedPathRule[],
+): ProtectedHit[] {
   const p = normalisePath(path);
   const out: ProtectedHit[] = [];
   for (const rule of rules) {
@@ -57,7 +69,10 @@ export function hitsForPath(path: string, rules: ProtectedPathRule[]): Protected
   return out;
 }
 
-export function hitsForPaths(paths: string[], rules: ProtectedPathRule[]): ProtectedHit[] {
+export function hitsForPaths(
+  paths: string[],
+  rules: ProtectedPathRule[],
+): ProtectedHit[] {
   const out: ProtectedHit[] = [];
   for (const p of paths) out.push(...hitsForPath(p, rules));
   return out;
@@ -81,6 +96,9 @@ export function explainDeny(hits: ProtectedHit[]): string | null {
   const deny = hits.filter((h) => h.tier === "deny");
   if (deny.length === 0) return null;
   const first = deny[0];
-  const more = deny.length > 1 ? ` (and ${deny.length - 1} other protected path${deny.length > 2 ? "s" : ""})` : "";
+  const more =
+    deny.length > 1
+      ? ` (and ${deny.length - 1} other protected path${deny.length > 2 ? "s" : ""})`
+      : "";
   return `This request would touch ${first.path}${more}, which is protected: ${first.reason}`;
 }

@@ -42,7 +42,11 @@ export async function recalculateOpenPayrollForEmployee(params: {
    * (self-feeding loop; ~16 KB reasons, multi-GB table). The drainer marks its own row instead.
    */
   enqueueOnMiss?: boolean;
-}): Promise<{ status: "recalculated" | "queued" | "no_open_run"; runId: string | null; message: string }> {
+}): Promise<{
+  status: "recalculated" | "queued" | "no_open_run";
+  runId: string | null;
+  message: string;
+}> {
   // EVERY run the employee has a line in for this month, not just the newest.
   //
   // `salary_prep_run` carries UNIQUE (run_month, branch_filter, process_filter),
@@ -69,15 +73,21 @@ export async function recalculateOpenPayrollForEmployee(params: {
   const enqueueOnMiss = params.enqueueOnMiss !== false;
 
   if (runs.length === 0) {
-    if (enqueueOnMiss) await queuePayrollRecalculation({
-      employeeId: params.employeeId,
-      payrollMonth: params.payrollMonth,
-      sourceEventType: params.sourceEventType,
-      sourceEventId: params.sourceEventId,
-      reason: `${params.reason}; no active salary run line found`,
-      requestedBy: params.actorUserId,
-    });
-    return { status: "no_open_run", runId: null, message: "No salary run line exists for this employee/month; queued recalculation." };
+    if (enqueueOnMiss)
+      await queuePayrollRecalculation({
+        employeeId: params.employeeId,
+        payrollMonth: params.payrollMonth,
+        sourceEventType: params.sourceEventType,
+        sourceEventId: params.sourceEventId,
+        reason: `${params.reason}; no active salary run line found`,
+        requestedBy: params.actorUserId,
+      });
+    return {
+      status: "no_open_run",
+      runId: null,
+      message:
+        "No salary run line exists for this employee/month; queued recalculation.",
+    };
   }
 
   const openRuns = runs.filter((r) => !isRunClosed(r.status));
@@ -98,7 +108,9 @@ export async function recalculateOpenPayrollForEmployee(params: {
   }
 
   if (openRuns.length === 0) {
-    const statuses = [...new Set(closedRuns.map((r) => String(r.status)))].join(", ");
+    const statuses = [...new Set(closedRuns.map((r) => String(r.status)))].join(
+      ", ",
+    );
     return {
       status: "queued",
       runId: String(closedRuns[0].id),
@@ -116,9 +128,13 @@ export async function recalculateOpenPayrollForEmployee(params: {
     );
     const before = (beforeRows as any[])[0] ?? null;
 
-    await calculatePayrollRunScoped(String(run.id), params.actorUserId ?? "system", {
-      employeeIds: [params.employeeId],
-    });
+    await calculatePayrollRunScoped(
+      String(run.id),
+      params.actorUserId ?? "system",
+      {
+        employeeIds: [params.employeeId],
+      },
+    );
 
     // Snapshot AFTER
     const [afterRows] = await db.execute<RowDataPacket[]>(
@@ -131,10 +147,18 @@ export async function recalculateOpenPayrollForEmployee(params: {
 
     // Write audit event only when values changed
     if (before && after) {
-      const diffPaidDays = Number(after.paid_working_days) - Number(before.paid_working_days);
-      const diffFinalDays = Number(after.final_payable_days) - Number(before.final_payable_days);
-      const diffNet = Math.round((Number(after.net_salary) - Number(before.net_salary)) * 100) / 100;
-      const diffGross = Math.round((Number(after.gross_salary) - Number(before.gross_salary)) * 100) / 100;
+      const diffPaidDays =
+        Number(after.paid_working_days) - Number(before.paid_working_days);
+      const diffFinalDays =
+        Number(after.final_payable_days) - Number(before.final_payable_days);
+      const diffNet =
+        Math.round(
+          (Number(after.net_salary) - Number(before.net_salary)) * 100,
+        ) / 100;
+      const diffGross =
+        Math.round(
+          (Number(after.gross_salary) - Number(before.gross_salary)) * 100,
+        ) / 100;
       if (diffPaidDays !== 0 || diffFinalDays !== 0 || diffNet !== 0) {
         await db.execute(
           `INSERT INTO payroll_calculation_audit (id, run_id, employee_id, event_type, event_detail, actor_user_id)
@@ -172,13 +196,16 @@ export async function recalculateOpenPayrollForEmployee(params: {
     }
   }
 
-  const suffix = closedRuns.length ? `; ${closedRuns.length} closed run(s) queued instead` : "";
+  const suffix = closedRuns.length
+    ? `; ${closedRuns.length} closed run(s) queued instead`
+    : "";
   return {
     status: "recalculated",
     runId: String(openRuns[0].id),
-    message: openRuns.length === 1
-      ? `Employee salary line recalculated.${suffix}`
-      : `Employee salary line recalculated across ${openRuns.length} open runs.${suffix}`,
+    message:
+      openRuns.length === 1
+        ? `Employee salary line recalculated.${suffix}`
+        : `Employee salary line recalculated across ${openRuns.length} open runs.${suffix}`,
   };
 }
 

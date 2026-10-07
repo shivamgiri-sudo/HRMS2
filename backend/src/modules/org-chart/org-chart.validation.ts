@@ -40,9 +40,10 @@ export interface DataQualitySummary {
 /**
  * Run all data-quality validations and return summary + issues.
  */
-export async function validateOrgChartDataQuality(
-  scopeFilter?: { branchId?: string; processId?: string }
-): Promise<DataQualitySummary> {
+export async function validateOrgChartDataQuality(scopeFilter?: {
+  branchId?: string;
+  processId?: string;
+}): Promise<DataQualitySummary> {
   const issues: DataQualityIssue[] = [];
 
   // Run all validators
@@ -63,12 +64,15 @@ export async function validateOrgChartDataQuality(
   // Total employees in scope
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM employees WHERE active_status = 1 ${scopeFilter?.branchId ? "AND branch_id = ?" : ""} ${scopeFilter?.processId ? "AND process_id = ?" : ""}`,
-    [scopeFilter?.branchId, scopeFilter?.processId].filter(Boolean)
+    [scopeFilter?.branchId, scopeFilter?.processId].filter(Boolean),
   );
   const total_employees = (countRows as any[])[0]?.cnt ?? 0;
 
   // Confidence score: 100 - (issues_count / total_employees * 100)
-  const confidence_score = Math.max(0, Math.min(100, 100 - (issues.length / Math.max(total_employees, 1)) * 100));
+  const confidence_score = Math.max(
+    0,
+    Math.min(100, 100 - (issues.length / Math.max(total_employees, 1)) * 100),
+  );
 
   return {
     total_employees,
@@ -85,7 +89,10 @@ export async function validateOrgChartDataQuality(
 /**
  * Detect employees without reporting_manager_id.
  */
-async function detectMissingManagers(scopeFilter?: { branchId?: string; processId?: string }): Promise<DataQualityIssue[]> {
+async function detectMissingManagers(scopeFilter?: {
+  branchId?: string;
+  processId?: string;
+}): Promise<DataQualityIssue[]> {
   const wheres: string[] = [
     "e.active_status = 1",
     "(e.reporting_manager_id IS NULL OR e.reporting_manager_id = '')",
@@ -114,7 +121,7 @@ async function detectMissingManagers(scopeFilter?: { branchId?: string; processI
         )
       ORDER BY e.created_at DESC
       LIMIT 50`,
-    params
+    params,
   );
 
   return (rows as any[]).map((row) => ({
@@ -132,7 +139,10 @@ async function detectMissingManagers(scopeFilter?: { branchId?: string; processI
 /**
  * Detect employees with inactive reporting managers.
  */
-async function detectInactiveManagers(scopeFilter?: { branchId?: string; processId?: string }): Promise<DataQualityIssue[]> {
+async function detectInactiveManagers(scopeFilter?: {
+  branchId?: string;
+  processId?: string;
+}): Promise<DataQualityIssue[]> {
   const wheres: string[] = [
     "e.active_status = 1",
     "e.reporting_manager_id IS NOT NULL",
@@ -157,7 +167,7 @@ async function detectInactiveManagers(scopeFilter?: { branchId?: string; process
       WHERE ${wheres.join(" AND ")}
       ORDER BY e.created_at DESC
       LIMIT 50`,
-    params
+    params,
   );
 
   return (rows as any[]).map((row) => ({
@@ -166,7 +176,10 @@ async function detectInactiveManagers(scopeFilter?: { branchId?: string; process
     employee_code: row.employee_code,
     issue_type: "inactive_manager",
     severity: "critical",
-    issue_detail: { manager_id: row.manager_id, manager_name: row.manager_name },
+    issue_detail: {
+      manager_id: row.manager_id,
+      manager_name: row.manager_name,
+    },
     suggested_fix: `Assign a new active manager for ${row.full_name}. Current manager ${row.manager_name} is inactive.`,
     detected_at: new Date().toISOString(),
   }));
@@ -175,7 +188,10 @@ async function detectInactiveManagers(scopeFilter?: { branchId?: string; process
 /**
  * Detect circular reporting chains (A→B→C→A).
  */
-async function detectCircularMappings(scopeFilter?: { branchId?: string; processId?: string }): Promise<DataQualityIssue[]> {
+async function detectCircularMappings(scopeFilter?: {
+  branchId?: string;
+  processId?: string;
+}): Promise<DataQualityIssue[]> {
   const wheres: string[] = ["e.active_status = 1"];
   const params: unknown[] = [];
 
@@ -194,7 +210,7 @@ async function detectCircularMappings(scopeFilter?: { branchId?: string; process
        FROM employees e
       WHERE ${wheres.join(" AND ")}
         AND e.reporting_manager_id IS NOT NULL`,
-    params
+    params,
   );
 
   const issues: DataQualityIssue[] = [];
@@ -222,7 +238,9 @@ async function detectCircularMappings(scopeFilter?: { branchId?: string; process
         break;
       }
       visited.add(current);
-      const next = employees.find((e) => e.id === current)?.reporting_manager_id;
+      const next = employees.find(
+        (e) => e.id === current,
+      )?.reporting_manager_id;
       if (!next || visited.has(next)) break;
       chain.push(next);
       current = next;
@@ -236,7 +254,10 @@ async function detectCircularMappings(scopeFilter?: { branchId?: string; process
 /**
  * Detect managers from a different branch than their reports.
  */
-async function detectCrossBranchManagers(scopeFilter?: { branchId?: string; processId?: string }): Promise<DataQualityIssue[]> {
+async function detectCrossBranchManagers(scopeFilter?: {
+  branchId?: string;
+  processId?: string;
+}): Promise<DataQualityIssue[]> {
   const wheres: string[] = [
     "e.active_status = 1",
     "e.reporting_manager_id IS NOT NULL",
@@ -267,7 +288,7 @@ async function detectCrossBranchManagers(scopeFilter?: { branchId?: string; proc
       WHERE ${wheres.join(" AND ")}
       ORDER BY e.created_at DESC
       LIMIT 50`,
-    params
+    params,
   );
 
   return (rows as any[]).map((row) => ({
@@ -289,7 +310,10 @@ async function detectCrossBranchManagers(scopeFilter?: { branchId?: string; proc
 /**
  * Detect process mismatches (employee and manager in different processes).
  */
-async function detectProcessMismatches(scopeFilter?: { branchId?: string; processId?: string }): Promise<DataQualityIssue[]> {
+async function detectProcessMismatches(scopeFilter?: {
+  branchId?: string;
+  processId?: string;
+}): Promise<DataQualityIssue[]> {
   const wheres: string[] = [
     "e.active_status = 1",
     "e.reporting_manager_id IS NOT NULL",
@@ -320,7 +344,7 @@ async function detectProcessMismatches(scopeFilter?: { branchId?: string; proces
       WHERE ${wheres.join(" AND ")}
       ORDER BY e.created_at DESC
       LIMIT 50`,
-    params
+    params,
   );
 
   return (rows as any[]).map((row) => ({
@@ -342,7 +366,10 @@ async function detectProcessMismatches(scopeFilter?: { branchId?: string; proces
 /**
  * Detect employees without branch/process/department.
  */
-async function detectUnmappedEmployees(scopeFilter?: { branchId?: string; processId?: string }): Promise<DataQualityIssue[]> {
+async function detectUnmappedEmployees(scopeFilter?: {
+  branchId?: string;
+  processId?: string;
+}): Promise<DataQualityIssue[]> {
   const wheres: string[] = [
     "e.active_status = 1",
     "(e.branch_id IS NULL OR e.process_id IS NULL OR e.department_id IS NULL)",
@@ -365,7 +392,7 @@ async function detectUnmappedEmployees(scopeFilter?: { branchId?: string; proces
       WHERE ${wheres.join(" AND ")}
       ORDER BY e.created_at DESC
       LIMIT 50`,
-    params
+    params,
   );
 
   return (rows as any[]).map((row) => {
@@ -390,7 +417,10 @@ async function detectUnmappedEmployees(scopeFilter?: { branchId?: string; proces
 /**
  * Detect employees without designation.
  */
-async function detectNoDesignation(scopeFilter?: { branchId?: string; processId?: string }): Promise<DataQualityIssue[]> {
+async function detectNoDesignation(scopeFilter?: {
+  branchId?: string;
+  processId?: string;
+}): Promise<DataQualityIssue[]> {
   const wheres: string[] = ["e.active_status = 1", "e.designation_id IS NULL"];
   const params: unknown[] = [];
 
@@ -409,7 +439,7 @@ async function detectNoDesignation(scopeFilter?: { branchId?: string; processId?
       WHERE ${wheres.join(" AND ")}
       ORDER BY e.created_at DESC
       LIMIT 50`,
-    params
+    params,
   );
 
   return (rows as any[]).map((row) => ({
@@ -434,7 +464,7 @@ async function getEmployeeNames(ids: string[]): Promise<string[]> {
     `SELECT id, CONCAT(first_name, ' ', COALESCE(last_name, '')) AS full_name
        FROM employees
       WHERE id IN (${placeholders})`,
-    ids
+    ids,
   );
   const nameMap = new Map((rows as any[]).map((r) => [r.id, r.full_name]));
   return ids.map((id) => nameMap.get(id) ?? id);
@@ -443,18 +473,28 @@ async function getEmployeeNames(ids: string[]): Promise<string[]> {
 /**
  * Persist issues to org_chart_data_issue table (optional — for historical tracking).
  */
-export async function persistDataQualityIssues(issues: DataQualityIssue[]): Promise<void> {
+export async function persistDataQualityIssues(
+  issues: DataQualityIssue[],
+): Promise<void> {
   if (issues.length === 0) return;
 
   // Clear old issues (active_status = 0)
-  await db.execute("UPDATE org_chart_data_issue SET active_status = 0 WHERE active_status = 1");
+  await db.execute(
+    "UPDATE org_chart_data_issue SET active_status = 0 WHERE active_status = 1",
+  );
 
   // Insert new issues
   for (const issue of issues) {
     await db.execute(
       `INSERT INTO org_chart_data_issue (employee_id, issue_type, severity, issue_detail, suggested_fix, detected_at, active_status)
        VALUES (?, ?, ?, ?, ?, NOW(), 1)`,
-      [issue.employee_id, issue.issue_type, issue.severity, JSON.stringify(issue.issue_detail), issue.suggested_fix]
+      [
+        issue.employee_id,
+        issue.issue_type,
+        issue.severity,
+        JSON.stringify(issue.issue_detail),
+        issue.suggested_fix,
+      ],
     );
   }
 }

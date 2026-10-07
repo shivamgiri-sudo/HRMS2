@@ -1,6 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { resolveBucket, refreshRunningSalarySnapshot } from "../pnl-running-salary.service.js";
-import { getStatement, type ComponentDefinition, type StatementDependencies } from "../pnl-statement.service.js";
+import {
+  resolveBucket,
+  refreshRunningSalarySnapshot,
+} from "../pnl-running-salary.service.js";
+import {
+  getStatement,
+  type ComponentDefinition,
+  type StatementDependencies,
+} from "../pnl-statement.service.js";
 
 // ---------------------------------------------------------------------------
 // Mocks for refreshRunningSalarySnapshot tests
@@ -38,7 +45,9 @@ import { getCostCentrePeriods } from "../cost-centre-history.service.js";
  *      inflated profit as fact.
  */
 
-function component(overrides: Partial<ComponentDefinition>): ComponentDefinition {
+function component(
+  overrides: Partial<ComponentDefinition>,
+): ComponentDefinition {
   return {
     component_key: "recognized_revenue",
     display_name: "Recognised Revenue",
@@ -55,13 +64,47 @@ function component(overrides: Partial<ComponentDefinition>): ComponentDefinition
 }
 
 const COMPONENTS: ComponentDefinition[] = [
-  component({ component_key: "recognized_revenue", source_field: "recognizedRevenue", display_order: 1 }),
-  component({ component_key: "agent_salary", source_field: "agentSalary", display_order: 2 }),
-  component({ component_key: "dsc_salary", source_field: "dscSalary", display_order: 3 }),
-  component({ component_key: "bmc_salary", source_field: "bmcSalary", display_order: 4 }),
-  component({ component_key: "dc_total", source_field: "directCostTotal", display_order: 5, component_type: "SUBTOTAL", is_subtotal: 1 }),
-  component({ component_key: "total_cost", source_field: "totalCost", display_order: 6, component_type: "SUBTOTAL", is_subtotal: 1 }),
-  component({ component_key: "operating_profit", source_field: "operatingProfit", display_order: 7, component_type: "SUBTOTAL", is_subtotal: 1 }),
+  component({
+    component_key: "recognized_revenue",
+    source_field: "recognizedRevenue",
+    display_order: 1,
+  }),
+  component({
+    component_key: "agent_salary",
+    source_field: "agentSalary",
+    display_order: 2,
+  }),
+  component({
+    component_key: "dsc_salary",
+    source_field: "dscSalary",
+    display_order: 3,
+  }),
+  component({
+    component_key: "bmc_salary",
+    source_field: "bmcSalary",
+    display_order: 4,
+  }),
+  component({
+    component_key: "dc_total",
+    source_field: "directCostTotal",
+    display_order: 5,
+    component_type: "SUBTOTAL",
+    is_subtotal: 1,
+  }),
+  component({
+    component_key: "total_cost",
+    source_field: "totalCost",
+    display_order: 6,
+    component_type: "SUBTOTAL",
+    is_subtotal: 1,
+  }),
+  component({
+    component_key: "operating_profit",
+    source_field: "operatingProfit",
+    display_order: 7,
+    component_type: "SUBTOTAL",
+    is_subtotal: 1,
+  }),
 ];
 
 function branchRow(overrides: Record<string, unknown> = {}) {
@@ -83,10 +126,17 @@ function branchRow(overrides: Record<string, unknown> = {}) {
 
 const emptyActuals = () => ({ byBranch: new Map(), byProcess: new Map() });
 
-function makeDeps(rows: any[], overrides: Partial<StatementDependencies> = {}): StatementDependencies {
+function makeDeps(
+  rows: any[],
+  overrides: Partial<StatementDependencies> = {},
+): StatementDependencies {
   return {
     getComponents: async () => COMPONENTS,
-    getSummary: async () => ({ rows, generatedAt: "2026-07-31T00:00:00.000Z", calculationEngine: "bpo_allocation_v2" }),
+    getSummary: async () => ({
+      rows,
+      generatedAt: "2026-07-31T00:00:00.000Z",
+      calculationEngine: "bpo_allocation_v2",
+    }),
     getProcessSummary: async () => ({ rows: [] }),
     getIndirectCost: async () => emptyActuals() as any,
     getDriverRevenue: async () => emptyActuals() as any,
@@ -100,7 +150,6 @@ function makeDeps(rows: any[], overrides: Partial<StatementDependencies> = {}): 
     ...overrides,
   };
 }
-
 
 /**
  * The month that is currently open, computed rather than hardcoded.
@@ -118,47 +167,64 @@ function openPeriod(): string {
 describe("resolveBucket — which P&L line a person's salary belongs to", () => {
   it("honours a seeded classification rule over any inference", () => {
     // The rule is the business's own statement of intent; a designation heuristic must not overrule it.
-    expect(resolveBucket({
-      process_id: "p1",
-      department_name: "OPERATIONS",
-      designation_name: "Customer Support Executive",
-      rule_bucket: "bmc_people",
-    })).toBe("bmc_people");
+    expect(
+      resolveBucket({
+        process_id: "p1",
+        department_name: "OPERATIONS",
+        designation_name: "Customer Support Executive",
+        rule_bucket: "bmc_people",
+      }),
+    ).toBe("bmc_people");
   });
 
   it("classifies an unmapped person as BMC — no process means shared across branches", () => {
-    expect(resolveBucket({
-      process_id: null,
-      department_name: "OPERATIONS",
-      designation_name: "Customer Support Executive",
-      rule_bucket: null,
-    })).toBe("bmc_people");
+    expect(
+      resolveBucket({
+        process_id: null,
+        department_name: "OPERATIONS",
+        designation_name: "Customer Support Executive",
+        rule_bucket: null,
+      }),
+    ).toBe("bmc_people");
   });
 
   it("classifies a process-mapped front-line agent as Agent Salary", () => {
-    expect(resolveBucket({
-      process_id: "p1",
-      department_name: "OPERATIONS",
-      designation_name: "Customer Support Executive",
-      rule_bucket: null,
-    })).toBe("agent_salary");
+    expect(
+      resolveBucket({
+        process_id: "p1",
+        department_name: "OPERATIONS",
+        designation_name: "Customer Support Executive",
+        rule_bucket: null,
+      }),
+    ).toBe("agent_salary");
   });
 
   it("classifies a process-mapped support role as that process's own DSC", () => {
-    for (const designation of ["Team Leader", "Quality Auditor", "Trainer", "Assistant Manager"]) {
-      expect(resolveBucket({
-        process_id: "p1",
-        department_name: "OPERATIONS",
-        designation_name: designation,
-        rule_bucket: null,
-      })).toBe("dsc_people");
+    for (const designation of [
+      "Team Leader",
+      "Quality Auditor",
+      "Trainer",
+      "Assistant Manager",
+    ]) {
+      expect(
+        resolveBucket({
+          process_id: "p1",
+          department_name: "OPERATIONS",
+          designation_name: designation,
+          rule_bucket: null,
+        }),
+      ).toBe("dsc_people");
     }
   });
 
   it("splits WFM by process mapping rather than by department", () => {
     // The reason 'DIALER & WFM' is deliberately left unseeded (migration 437). A WFM person tied to
     // a process is that process's support; one who is not works across branches.
-    const wfm = { department_name: "DIALER & WFM", designation_name: "WFM Executive", rule_bucket: null };
+    const wfm = {
+      department_name: "DIALER & WFM",
+      designation_name: "WFM Executive",
+      rule_bucket: null,
+    };
     expect(resolveBucket({ ...wfm, process_id: "p1" })).toBe("dsc_people");
     expect(resolveBucket({ ...wfm, process_id: null })).toBe("bmc_people");
   });
@@ -168,15 +234,23 @@ describe("pnl-statement — running salary snapshot", () => {
   it("uses the snapshot's Agent/DSC/BMC split in place of the undifferentiated upstream figure", async () => {
     const deps = makeDeps([branchRow()], {
       getPeopleCost: async () => ({
-        byBranch: new Map([["b1", { agent_salary: 322_479, dsc_people: 118_207, bmc_people: 81_414 }]]),
+        byBranch: new Map([
+          [
+            "b1",
+            { agent_salary: 322_479, dsc_people: 118_207, bmc_people: 81_414 },
+          ],
+        ]),
         byProcess: new Map(),
-        coverageByBranch: new Map([["b1", { activeEmployees: 362, coveredEmployees: 357 }]]),
+        coverageByBranch: new Map([
+          ["b1", { activeEmployees: 362, coveredEmployees: 357 }],
+        ]),
         coverageByProcess: new Map(),
         asOfDate: "2026-07-31",
       }),
     });
     const result = await getStatement({ period: openPeriod() }, "branch", deps);
-    const value = (k: string) => result.rows.find((r) => r.componentKey === k)!.values.b1;
+    const value = (k: string) =>
+      result.rows.find((r) => r.componentKey === k)!.values.b1;
 
     expect(value("agent_salary")).toBe(322_479);
     expect(value("dsc_salary")).toBe(118_207);
@@ -189,41 +263,63 @@ describe("pnl-statement — running salary snapshot", () => {
   it("keeps the upstream figure when no snapshot has been refreshed for the period", async () => {
     // An un-refreshed period must not silently zero the people cost — that would report the
     // branch's entire revenue as profit.
-    const result = await getStatement({ period: openPeriod() }, "branch", makeDeps([branchRow()]));
-    expect(result.rows.find((r) => r.componentKey === "agent_salary")!.values.b1).toBe(600_000);
+    const result = await getStatement(
+      { period: openPeriod() },
+      "branch",
+      makeDeps([branchRow()]),
+    );
+    expect(
+      result.rows.find((r) => r.componentKey === "agent_salary")!.values.b1,
+    ).toBe(600_000);
   });
 
   it("reconciles: Operating Profit equals Revenue minus Total Cost", async () => {
     const deps = makeDeps([branchRow()], {
       getPeopleCost: async () => ({
-        byBranch: new Map([["b1", { agent_salary: 322_479, dsc_people: 118_207, bmc_people: 81_414 }]]),
+        byBranch: new Map([
+          [
+            "b1",
+            { agent_salary: 322_479, dsc_people: 118_207, bmc_people: 81_414 },
+          ],
+        ]),
         byProcess: new Map(),
-        coverageByBranch: new Map([["b1", { activeEmployees: 362, coveredEmployees: 357 }]]),
+        coverageByBranch: new Map([
+          ["b1", { activeEmployees: 362, coveredEmployees: 357 }],
+        ]),
         coverageByProcess: new Map(),
         asOfDate: "2026-07-31",
       }),
-      getIndirectCost: async () => ({ byBranch: new Map([["b1", 66_500]]), byProcess: new Map() }) as any,
+      getIndirectCost: async () =>
+        ({ byBranch: new Map([["b1", 66_500]]), byProcess: new Map() }) as any,
     });
     const result = await getStatement({ period: openPeriod() }, "branch", deps);
-    const value = (k: string) => result.rows.find((r) => r.componentKey === k)!.values.b1;
+    const value = (k: string) =>
+      result.rows.find((r) => r.componentKey === k)!.values.b1;
 
     expect(value("total_cost")).toBe(322_479 + 118_207 + 81_414 + 66_500);
-    expect(value("operating_profit")).toBe(value("recognized_revenue") - value("total_cost"));
+    expect(value("operating_profit")).toBe(
+      value("recognized_revenue") - value("total_cost"),
+    );
   });
 
   it("publishes people-cost coverage so an under-covered column cannot pass as complete", async () => {
     // KARNAL in July 2026: attendance carries no present days, so nobody earns and the branch
     // reports no people cost at all. Operating Profit then comes out at ~100% of revenue — entirely
     // plausible on screen, and completely wrong. Coverage is what makes that visible.
-    const deps = makeDeps([branchRow({ branchId: "b2", branchName: "Branch 2", agentSalary: 0 })], {
-      getPeopleCost: async () => ({
-        byBranch: new Map(),
-        byProcess: new Map(),
-        coverageByBranch: new Map([["b2", { activeEmployees: 51, coveredEmployees: 0 }]]),
-        coverageByProcess: new Map(),
-        asOfDate: "2026-07-31",
-      }),
-    });
+    const deps = makeDeps(
+      [branchRow({ branchId: "b2", branchName: "Branch 2", agentSalary: 0 })],
+      {
+        getPeopleCost: async () => ({
+          byBranch: new Map(),
+          byProcess: new Map(),
+          coverageByBranch: new Map([
+            ["b2", { activeEmployees: 51, coveredEmployees: 0 }],
+          ]),
+          coverageByProcess: new Map(),
+          asOfDate: "2026-07-31",
+        }),
+      },
+    );
     const result = await getStatement({ period: openPeriod() }, "branch", deps);
     const column = result.columns.find((c) => c.id === "b2") as any;
 
@@ -239,27 +335,40 @@ describe("pnl-statement — running salary snapshot", () => {
       getPeopleCost: async () => ({
         byBranch: new Map(),
         byProcess: new Map(),
-        coverageByBranch: new Map([["b1", { activeEmployees: 406, coveredEmployees: 0 }]]),
+        coverageByBranch: new Map([
+          ["b1", { activeEmployees: 406, coveredEmployees: 0 }],
+        ]),
         coverageByProcess: new Map(),
         asOfDate: null,
       }),
     });
     const result = await getStatement({ period: openPeriod() }, "branch", deps);
-    expect((result.columns.find((c) => c.id === "b1") as any).peopleCostCoveragePct).toBeUndefined();
+    expect(
+      (result.columns.find((c) => c.id === "b1") as any).peopleCostCoveragePct,
+    ).toBeUndefined();
   });
 
   it("reports full coverage as 100 so a healthy column is not flagged", async () => {
     const deps = makeDeps([branchRow()], {
       getPeopleCost: async () => ({
-        byBranch: new Map([["b1", { agent_salary: 322_479, dsc_people: 118_207, bmc_people: 81_414 }]]),
+        byBranch: new Map([
+          [
+            "b1",
+            { agent_salary: 322_479, dsc_people: 118_207, bmc_people: 81_414 },
+          ],
+        ]),
         byProcess: new Map(),
-        coverageByBranch: new Map([["b1", { activeEmployees: 200, coveredEmployees: 200 }]]),
+        coverageByBranch: new Map([
+          ["b1", { activeEmployees: 200, coveredEmployees: 200 }],
+        ]),
         coverageByProcess: new Map(),
         asOfDate: "2026-07-31",
       }),
     });
     const result = await getStatement({ period: openPeriod() }, "branch", deps);
-    expect((result.columns.find((c) => c.id === "b1") as any).peopleCostCoveragePct).toBe(100);
+    expect(
+      (result.columns.find((c) => c.id === "b1") as any).peopleCostCoveragePct,
+    ).toBe(100);
   });
 });
 
@@ -270,18 +379,21 @@ describe("getCostCentrePeriods integration in refreshRunningSalarySnapshot", () 
 
   it("produces single row when no mid-month CC transfer exists", async () => {
     // loadEmployees returns one employee
-    vi.mocked(db.execute).mockResolvedValueOnce([[
-      {
-        id: "emp-1",
-        employee_code: "E001",
-        branch_id: "b1",
-        process_id: "p1",
-        cost_centre_id: "cc-1",
-        department_name: "OPERATIONS",
-        designation_name: "Customer Support Executive",
-        rule_bucket: null,
-      },
-    ], []]);
+    vi.mocked(db.execute).mockResolvedValueOnce([
+      [
+        {
+          id: "emp-1",
+          employee_code: "E001",
+          branch_id: "b1",
+          process_id: "p1",
+          cost_centre_id: "cc-1",
+          department_name: "OPERATIONS",
+          designation_name: "Customer Support Executive",
+          rule_bucket: null,
+        },
+      ],
+      [],
+    ]);
 
     // computeRunningSalary returns a salary of 31000
     vi.mocked(computeRunningSalary).mockResolvedValueOnce({
@@ -293,13 +405,20 @@ describe("getCostCentrePeriods integration in refreshRunningSalarySnapshot", () 
 
     // getCostCentrePeriods: single period — no mid-month transfer
     vi.mocked(getCostCentrePeriods).mockResolvedValueOnce([
-      { costCentreId: "cc-1", fromDate: "2026-08-01", toDate: "2026-08-31", days: 31 },
+      {
+        costCentreId: "cc-1",
+        fromDate: "2026-08-01",
+        toDate: "2026-08-31",
+        days: 31,
+      },
     ]);
 
     // flushRows db.query
     vi.mocked(db.query).mockResolvedValueOnce([{ affectedRows: 1 }] as any);
 
-    const result = await refreshRunningSalarySnapshot("2026-08", { asOfDate: "2026-08-22" });
+    const result = await refreshRunningSalarySnapshot("2026-08", {
+      asOfDate: "2026-08-22",
+    });
 
     expect(result.snapshotted).toBe(1);
     expect(result.totalEarned).toBe(31000);
@@ -313,18 +432,21 @@ describe("getCostCentrePeriods integration in refreshRunningSalarySnapshot", () 
 
   it("produces two rows when mid-month CC transfer exists", async () => {
     // loadEmployees returns one employee
-    vi.mocked(db.execute).mockResolvedValueOnce([[
-      {
-        id: "emp-2",
-        employee_code: "E002",
-        branch_id: "b1",
-        process_id: "p1",
-        cost_centre_id: "cc-new",
-        department_name: "OPERATIONS",
-        designation_name: "Customer Support Executive",
-        rule_bucket: null,
-      },
-    ], []]);
+    vi.mocked(db.execute).mockResolvedValueOnce([
+      [
+        {
+          id: "emp-2",
+          employee_code: "E002",
+          branch_id: "b1",
+          process_id: "p1",
+          cost_centre_id: "cc-new",
+          department_name: "OPERATIONS",
+          designation_name: "Customer Support Executive",
+          rule_bucket: null,
+        },
+      ],
+      [],
+    ]);
 
     // computeRunningSalary returns earned_salary_till_date of 31000
     vi.mocked(computeRunningSalary).mockResolvedValueOnce({
@@ -336,14 +458,26 @@ describe("getCostCentrePeriods integration in refreshRunningSalarySnapshot", () 
 
     // getCostCentrePeriods: two periods — transfer on 2026-08-15
     vi.mocked(getCostCentrePeriods).mockResolvedValueOnce([
-      { costCentreId: "cc-old", fromDate: "2026-08-01", toDate: "2026-08-14", days: 14 },
-      { costCentreId: "cc-new", fromDate: "2026-08-15", toDate: "2026-08-31", days: 17 },
+      {
+        costCentreId: "cc-old",
+        fromDate: "2026-08-01",
+        toDate: "2026-08-14",
+        days: 14,
+      },
+      {
+        costCentreId: "cc-new",
+        fromDate: "2026-08-15",
+        toDate: "2026-08-31",
+        days: 17,
+      },
     ]);
 
     // flushRows db.query
     vi.mocked(db.query).mockResolvedValueOnce([{ affectedRows: 2 }] as any);
 
-    const result = await refreshRunningSalarySnapshot("2026-08", { asOfDate: "2026-08-31" });
+    const result = await refreshRunningSalarySnapshot("2026-08", {
+      asOfDate: "2026-08-31",
+    });
 
     // Should produce 2 snapshot rows (one per CC period)
     expect(result.snapshotted).toBe(2);
@@ -354,7 +488,10 @@ describe("getCostCentrePeriods integration in refreshRunningSalarySnapshot", () 
     expect(result.totalEarned).toBeCloseTo(expectedOld + expectedNew, 2);
 
     // Both amounts go to agent_salary bucket (same process-mapped front-line agent)
-    expect(result.byBucket.agent_salary).toBeCloseTo(expectedOld + expectedNew, 2);
+    expect(result.byBucket.agent_salary).toBeCloseTo(
+      expectedOld + expectedNew,
+      2,
+    );
 
     // db.query (flushRows) should have been called with two placeholders
     const queryCall = vi.mocked(db.query).mock.calls[0];

@@ -18,7 +18,7 @@
  *   9. Custom field rules (meta_screening_config.custom_field_rules)
  */
 
-import type { MetaScreeningConfig } from '../job-requisition/job-requisition.types.js';
+import type { MetaScreeningConfig } from "../job-requisition/job-requisition.types.js";
 
 export interface ScreeningInput {
   parsedAge: number | null;
@@ -55,7 +55,7 @@ export interface RequisitionState {
   fulfilledHeadcount: number | null;
 }
 
-const DEAD_APPROVAL_STATUSES = ['closed', 'cancelled', 'rejected', 'on_hold'];
+const DEAD_APPROVAL_STATUSES = ["closed", "cancelled", "rejected", "on_hold"];
 
 /**
  * Why a batch requisition can no longer take candidates, or null when it is still open.
@@ -65,29 +65,56 @@ const DEAD_APPROVAL_STATUSES = ['closed', 'cancelled', 'rejected', 'on_hold'];
  * seats that no longer exist. Only clearly-dead states block — draft / pending approval are left
  * alone because a live campaign may legitimately run ahead of the approval record.
  */
-export function requisitionClosedReason(state: RequisitionState | null): string | null {
+export function requisitionClosedReason(
+  state: RequisitionState | null,
+): string | null {
   if (!state) return null;
-  if (state.activeStatus !== null && Number(state.activeStatus) === 0) return 'requisition is inactive';
-  if (state.closedAt) return 'requisition is closed';
-  const status = (state.approvalStatus ?? '').toLowerCase();
-  if (DEAD_APPROVAL_STATUSES.includes(status)) return `requisition is ${status.replace('_', ' ')}`;
+  if (state.activeStatus !== null && Number(state.activeStatus) === 0)
+    return "requisition is inactive";
+  if (state.closedAt) return "requisition is closed";
+  const status = (state.approvalStatus ?? "").toLowerCase();
+  if (DEAD_APPROVAL_STATUSES.includes(status))
+    return `requisition is ${status.replace("_", " ")}`;
   const requested = Number(state.requestedHeadcount ?? 0);
   const fulfilled = Number(state.fulfilledHeadcount ?? 0);
-  if (requested > 0 && fulfilled >= requested) return 'all seats in this batch are filled';
+  if (requested > 0 && fulfilled >= requested)
+    return "all seats in this batch are filled";
   return null;
 }
 
 // ── Education ladder ──────────────────────────────────────────────────────────────────────────
 const EDU_RANK: Record<string, number> = {
-  'below 10th': 1, 'under 10th': 1, '8th': 1,
-  '10th': 2, sslc: 2, matric: 2,
-  '12th': 3, hsc: 3, 'higher secondary': 3, intermediate: 3,
-  diploma: 4, iti: 4,
-  graduate: 5, bachelor: 5, 'b.a': 5, 'b.com': 5, 'b.sc': 5, 'b.tech': 5, be: 5,
-  'post graduate': 6, postgraduate: 6, master: 6, 'm.a': 6, 'm.com': 6,
-  'm.sc': 6, mba: 6, 'm.tech': 6,
+  "below 10th": 1,
+  "under 10th": 1,
+  "8th": 1,
+  "10th": 2,
+  sslc: 2,
+  matric: 2,
+  "12th": 3,
+  hsc: 3,
+  "higher secondary": 3,
+  intermediate: 3,
+  diploma: 4,
+  iti: 4,
+  graduate: 5,
+  bachelor: 5,
+  "b.a": 5,
+  "b.com": 5,
+  "b.sc": 5,
+  "b.tech": 5,
+  be: 5,
+  "post graduate": 6,
+  postgraduate: 6,
+  master: 6,
+  "m.a": 6,
+  "m.com": 6,
+  "m.sc": 6,
+  mba: 6,
+  "m.tech": 6,
 };
-const EDU_KEYS_BY_SPECIFICITY = Object.keys(EDU_RANK).sort((a, b) => b.length - a.length);
+const EDU_KEYS_BY_SPECIFICITY = Object.keys(EDU_RANK).sort(
+  (a, b) => b.length - a.length,
+);
 
 export function eduRank(value: string | null): number {
   if (!value) return 0;
@@ -98,7 +125,8 @@ export function eduRank(value: string | null): number {
   return 0;
 }
 
-const SOFT_REQUIREMENT = /\b(preferred|preferable|preferrable|desirable|desired|nice to have|not mandatory|optional|any)\b/i;
+const SOFT_REQUIREMENT =
+  /\b(preferred|preferable|preferrable|desirable|desired|nice to have|not mandatory|optional|any)\b/i;
 
 export function isSoftRequirement(value: string | null): boolean {
   return Boolean(value && SOFT_REQUIREMENT.test(value));
@@ -107,8 +135,10 @@ export function isSoftRequirement(value: string | null): boolean {
 // ── Affirmative answer detection ──────────────────────────────────────────────────────────────
 // Handles the messy real-world answers META forms produce when free-text is used.
 // "Yas", "I m DRA certified", "Yes DRA certificate", etc.
-const AFFIRMATIVE = /\b(yes|y|yep|ya|yah|yas|yea|yeah|have|hold|got|possess|certified|done|ok|okay|sure|confirmed|available|willing)\b/i;
-const NEGATIVE = /\b(no|nope|nahi|nahin|not|don't have|dont have|non|naan|without|fresher|na|n\/a)\b/i;
+const AFFIRMATIVE =
+  /\b(yes|y|yep|ya|yah|yas|yea|yeah|have|hold|got|possess|certified|done|ok|okay|sure|confirmed|available|willing)\b/i;
+const NEGATIVE =
+  /\b(no|nope|nahi|nahin|not|don't have|dont have|non|naan|without|fresher|na|n\/a)\b/i;
 
 function isAffirmative(answer: string): boolean | null {
   const pos = AFFIRMATIVE.test(answer);
@@ -121,10 +151,10 @@ function isAffirmative(answer: string): boolean | null {
 // ── Certification field detection ─────────────────────────────────────────────────────────────
 // Maps a certification code to patterns that appear in META form field names.
 const CERT_FIELD_PATTERNS: Record<string, RegExp> = {
-  DRA:  /dra/i,
+  DRA: /dra/i,
   IRDA: /irda|insurance.*certif|certif.*insurance/i,
   NCFM: /ncfm/i,
-  NSE:  /nse/i,
+  NSE: /nse/i,
   AMFI: /amfi|mutual.*fund.*certif|arn/i,
   NISM: /nism/i,
 };
@@ -133,11 +163,14 @@ const CERT_FIELD_PATTERNS: Record<string, RegExp> = {
 // Maps a skill type to patterns in form field names that capture that skill.
 const LANG_SKILL_PATTERNS: Record<string, RegExp> = {
   speak: /speak|spoken|verbal|voice|converse|talk/i,
-  read:  /read|reading/i,
+  read: /read|reading/i,
   write: /write|writing|written|type/i,
 };
 
-function findRawFieldValue(rawFields: Record<string, string>, pattern: RegExp): string | null {
+function findRawFieldValue(
+  rawFields: Record<string, string>,
+  pattern: RegExp,
+): string | null {
   for (const [key, val] of Object.entries(rawFields)) {
     if (pattern.test(key)) return val;
   }
@@ -152,7 +185,12 @@ function extractWpm(answer: string): number | null {
 }
 
 // ── Written English level ─────────────────────────────────────────────────────────────────────
-const ENGLISH_RANK: Record<string, number> = { basic: 1, intermediate: 2, advanced: 3, fluent: 3 };
+const ENGLISH_RANK: Record<string, number> = {
+  basic: 1,
+  intermediate: 2,
+  advanced: 3,
+  fluent: 3,
+};
 
 function englishRank(answer: string): number {
   const lower = answer.toLowerCase();
@@ -164,8 +202,8 @@ function englishRank(answer: string): number {
 
 // ── Custom rule evaluation ────────────────────────────────────────────────────────────────────
 function evaluateCustomRule(
-  rule: NonNullable<MetaScreeningConfig['custom_field_rules']>[number],
-  rawFields: Record<string, string>
+  rule: NonNullable<MetaScreeningConfig["custom_field_rules"]>[number],
+  rawFields: Record<string, string>,
 ): boolean | null {
   const raw = rawFields[rule.field] ?? rawFields[rule.field.toLowerCase()];
   if (raw === undefined) return null; // field not present — skip
@@ -174,39 +212,63 @@ function evaluateCustomRule(
   const expected = rule.value.toLowerCase();
 
   switch (rule.op) {
-    case 'is_yes':       return isAffirmative(val);
-    case 'eq':           return val === expected;
-    case 'neq':          return val !== expected;
-    case 'contains':     return val.includes(expected);
-    case 'not_contains': return !val.includes(expected);
-    case 'gte': {
+    case "is_yes":
+      return isAffirmative(val);
+    case "eq":
+      return val === expected;
+    case "neq":
+      return val !== expected;
+    case "contains":
+      return val.includes(expected);
+    case "not_contains":
+      return !val.includes(expected);
+    case "gte": {
       const n = parseFloat(val);
       const e = parseFloat(expected);
       if (Number.isNaN(n) || Number.isNaN(e)) return null;
       return n >= e;
     }
-    default: return null;
+    default:
+      return null;
   }
 }
 
 // ── Main screener ─────────────────────────────────────────────────────────────────────────────
 
-export function screenLead(input: ScreeningInput, req: ScreeningRequirements): ScreeningResult {
+export function screenLead(
+  input: ScreeningInput,
+  req: ScreeningRequirements,
+): ScreeningResult {
   const skipped: string[] = [];
   const cfg = req.screeningConfig;
 
   // ── 1. Age ────────────────────────────────────────────────────────────────────────────────
-  const hasAgeBand = req.metaTargetAgeMin !== null || req.metaTargetAgeMax !== null;
+  const hasAgeBand =
+    req.metaTargetAgeMin !== null || req.metaTargetAgeMax !== null;
   if (!hasAgeBand) {
-    skipped.push('age (no target band set)');
+    skipped.push("age (no target band set)");
   } else if (input.parsedAge === null) {
-    skipped.push('age (lead did not provide a parseable age)');
+    skipped.push("age (lead did not provide a parseable age)");
   } else {
-    if (req.metaTargetAgeMin !== null && input.parsedAge < req.metaTargetAgeMin) {
-      return { qualified: false, reason: `Age ${input.parsedAge} below minimum ${req.metaTargetAgeMin}`, skipped };
+    if (
+      req.metaTargetAgeMin !== null &&
+      input.parsedAge < req.metaTargetAgeMin
+    ) {
+      return {
+        qualified: false,
+        reason: `Age ${input.parsedAge} below minimum ${req.metaTargetAgeMin}`,
+        skipped,
+      };
     }
-    if (req.metaTargetAgeMax !== null && input.parsedAge > req.metaTargetAgeMax) {
-      return { qualified: false, reason: `Age ${input.parsedAge} above maximum ${req.metaTargetAgeMax}`, skipped };
+    if (
+      req.metaTargetAgeMax !== null &&
+      input.parsedAge > req.metaTargetAgeMax
+    ) {
+      return {
+        qualified: false,
+        reason: `Age ${input.parsedAge} above maximum ${req.metaTargetAgeMax}`,
+        skipped,
+      };
     }
   }
 
@@ -214,13 +276,17 @@ export function screenLead(input: ScreeningInput, req: ScreeningRequirements): S
   const requiredEdu = eduRank(req.educationRequirement);
   const providedEdu = eduRank(input.parsedEducation);
   if (!req.educationRequirement) {
-    skipped.push('education (no requirement set)');
+    skipped.push("education (no requirement set)");
   } else if (isSoftRequirement(req.educationRequirement)) {
-    skipped.push(`education ("${req.educationRequirement}" is a preference, not enforced)`);
+    skipped.push(
+      `education ("${req.educationRequirement}" is a preference, not enforced)`,
+    );
   } else if (requiredEdu === 0) {
-    skipped.push(`education ("${req.educationRequirement}" not on known ladder)`);
+    skipped.push(
+      `education ("${req.educationRequirement}" not on known ladder)`,
+    );
   } else if (providedEdu === 0) {
-    skipped.push('education (lead answer unrecognised)');
+    skipped.push("education (lead answer unrecognised)");
   } else if (providedEdu < requiredEdu) {
     return {
       qualified: false,
@@ -231,9 +297,9 @@ export function screenLead(input: ScreeningInput, req: ScreeningRequirements): S
 
   // ── 3. Experience ─────────────────────────────────────────────────────────────────────────
   if (req.experienceMinYears === null) {
-    skipped.push('experience (no minimum set)');
+    skipped.push("experience (no minimum set)");
   } else if (input.parsedExperienceYr === null) {
-    skipped.push('experience (lead did not provide a parseable value)');
+    skipped.push("experience (lead did not provide a parseable value)");
   } else if (input.parsedExperienceYr < req.experienceMinYears) {
     return {
       qualified: false,
@@ -248,30 +314,38 @@ export function screenLead(input: ScreeningInput, req: ScreeningRequirements): S
   }
 
   // ── 4. Gender ─────────────────────────────────────────────────────────────────────────────
-  const requiredGender = cfg.gender ?? 'any';
-  if (requiredGender !== 'any') {
+  const requiredGender = cfg.gender ?? "any";
+  if (requiredGender !== "any") {
     if (!input.parsedGender) {
-      skipped.push(`gender (lead did not provide; required: ${requiredGender})`);
+      skipped.push(
+        `gender (lead did not provide; required: ${requiredGender})`,
+      );
     } else {
       const g = input.parsedGender.toLowerCase();
-      const isMale   = /male|man|boy|m\b/i.test(g);
+      const isMale = /male|man|boy|m\b/i.test(g);
       const isFemale = /female|woman|girl|f\b/i.test(g);
-      if (requiredGender === 'male'   && !isMale)   return { qualified: false, reason: 'Gender: male required', skipped };
-      if (requiredGender === 'female' && !isFemale) return { qualified: false, reason: 'Gender: female required', skipped };
+      if (requiredGender === "male" && !isMale)
+        return { qualified: false, reason: "Gender: male required", skipped };
+      if (requiredGender === "female" && !isFemale)
+        return { qualified: false, reason: "Gender: female required", skipped };
     }
   }
 
   // ── 5. Certifications ─────────────────────────────────────────────────────────────────────
-  for (const cert of (cfg.certifications ?? [])) {
+  for (const cert of cfg.certifications ?? []) {
     const pattern = CERT_FIELD_PATTERNS[cert.toUpperCase()];
     if (!pattern) {
       // Cert type not in our known set — fall back to custom_field_rules approach, skip here
-      skipped.push(`certification "${cert}" (unknown type, add a custom field rule for it)`);
+      skipped.push(
+        `certification "${cert}" (unknown type, add a custom field rule for it)`,
+      );
       continue;
     }
     const answer = findRawFieldValue(input.rawFields, pattern);
     if (answer === null) {
-      skipped.push(`certification "${cert}" (form field not found — add the question to the META form)`);
+      skipped.push(
+        `certification "${cert}" (form field not found — add the question to the META form)`,
+      );
       continue;
     }
     const affirm = isAffirmative(answer);
@@ -283,36 +357,46 @@ export function screenLead(input: ScreeningInput, req: ScreeningRequirements): S
       };
     }
     if (affirm === null) {
-      skipped.push(`certification "${cert}" answer "${answer}" is ambiguous — recruiter should verify`);
+      skipped.push(
+        `certification "${cert}" answer "${answer}" is ambiguous — recruiter should verify`,
+      );
     }
     // affirm === true → passes
   }
 
   // ── 6. Language requirements ──────────────────────────────────────────────────────────────
-  for (const lr of (cfg.language_requirements ?? [])) {
+  for (const lr of cfg.language_requirements ?? []) {
     for (const skill of lr.skills) {
       const pattern = LANG_SKILL_PATTERNS[skill];
       if (!pattern) continue;
 
       // Look for a field whose name mentions both the language and the skill
-      const langPattern = new RegExp(lr.language, 'i');
+      const langPattern = new RegExp(lr.language, "i");
       let answer: string | null = null;
 
       for (const [key, val] of Object.entries(input.rawFields)) {
-        if (langPattern.test(key) && pattern.test(key)) { answer = val; break; }
+        if (langPattern.test(key) && pattern.test(key)) {
+          answer = val;
+          break;
+        }
       }
       if (!answer) {
         // Fallback: field mentioning the skill generally (e.g. "language_speak")
         for (const [key, val] of Object.entries(input.rawFields)) {
           if (pattern.test(key)) {
             // Check if this multi-language answer mentions our required language
-            if (langPattern.test(val)) { answer = val; break; }
+            if (langPattern.test(val)) {
+              answer = val;
+              break;
+            }
           }
         }
       }
 
       if (answer === null) {
-        skipped.push(`language "${lr.language}" ${skill} (form field not found)`);
+        skipped.push(
+          `language "${lr.language}" ${skill} (form field not found)`,
+        );
         continue;
       }
 
@@ -330,9 +414,14 @@ export function screenLead(input: ScreeningInput, req: ScreeningRequirements): S
 
   // ── 7. Minimum typing speed ───────────────────────────────────────────────────────────────
   if (cfg.min_typing_speed_wpm) {
-    const wpmAnswer = findRawFieldValue(input.rawFields, /typing.*speed|wpm|words.*per.*min/i);
+    const wpmAnswer = findRawFieldValue(
+      input.rawFields,
+      /typing.*speed|wpm|words.*per.*min/i,
+    );
     if (!wpmAnswer) {
-      skipped.push(`typing speed (form field not found; required: ≥${cfg.min_typing_speed_wpm} WPM)`);
+      skipped.push(
+        `typing speed (form field not found; required: ≥${cfg.min_typing_speed_wpm} WPM)`,
+      );
     } else {
       const wpm = extractWpm(wpmAnswer);
       if (wpm === null) {
@@ -350,9 +439,14 @@ export function screenLead(input: ScreeningInput, req: ScreeningRequirements): S
   // ── 8. Written English level ──────────────────────────────────────────────────────────────
   if (cfg.written_english_level) {
     const requiredRank = ENGLISH_RANK[cfg.written_english_level] ?? 0;
-    const answer = findRawFieldValue(input.rawFields, /written.*english|english.*written|english.*level|english.*proficien/i);
+    const answer = findRawFieldValue(
+      input.rawFields,
+      /written.*english|english.*written|english.*level|english.*proficien/i,
+    );
     if (!answer) {
-      skipped.push(`written English level (form field not found; required: ${cfg.written_english_level})`);
+      skipped.push(
+        `written English level (form field not found; required: ${cfg.written_english_level})`,
+      );
     } else {
       const rank = englishRank(answer);
       if (rank === 0) {
@@ -368,16 +462,18 @@ export function screenLead(input: ScreeningInput, req: ScreeningRequirements): S
   }
 
   // ── 9. Custom field rules ─────────────────────────────────────────────────────────────────
-  for (const rule of (cfg.custom_field_rules ?? [])) {
+  for (const rule of cfg.custom_field_rules ?? []) {
     const result = evaluateCustomRule(rule, input.rawFields);
     if (result === null) {
-      skipped.push(`custom rule "${rule.label ?? rule.field}" (field not present in form)`);
+      skipped.push(
+        `custom rule "${rule.label ?? rule.field}" (field not present in form)`,
+      );
       continue;
     }
     if (!result) {
       return {
         qualified: false,
-        reason: `Custom rule failed: ${rule.label ?? rule.field} (${rule.op === 'is_yes' ? 'expected a yes answer' : `expected ${rule.value}`})`,
+        reason: `Custom rule failed: ${rule.label ?? rule.field} (${rule.op === "is_yes" ? "expected a yes answer" : `expected ${rule.value}`})`,
         skipped,
       };
     }

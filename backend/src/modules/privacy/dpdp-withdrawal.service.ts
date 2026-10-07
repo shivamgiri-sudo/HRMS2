@@ -25,7 +25,7 @@ export async function insertAuditLog(
   withdrawalId: string,
   action: string,
   performedBy: string,
-  opts?: { fromStatus?: string; toStatus?: string; remarks?: string }
+  opts?: { fromStatus?: string; toStatus?: string; remarks?: string },
 ): Promise<void> {
   await db.execute(
     `INSERT INTO dpdp_withdrawal_audit_log
@@ -38,7 +38,7 @@ export async function insertAuditLog(
       opts?.toStatus ?? null,
       performedBy,
       opts?.remarks ?? null,
-    ]
+    ],
   );
 }
 
@@ -53,7 +53,7 @@ export async function submitRequest(
   scopeJson: unknown,
   reason: string,
   channel: string,
-  extras?: { requester_ip?: string; requester_ua?: string }
+  extras?: { requester_ip?: string; requester_ua?: string },
 ): Promise<{ id: string; request_ref: string }> {
   const id = randomUUID();
   const requestRef = `WDR-${id.slice(0, 8).toUpperCase()}`;
@@ -73,7 +73,7 @@ export async function submitRequest(
       requestRef,
       extras?.requester_ip ?? null,
       extras?.requester_ua ?? null,
-    ]
+    ],
   );
 
   await insertAuditLog(id, "DPDP_WITHDRAWAL_SUBMITTED", requesterId, {
@@ -82,14 +82,16 @@ export async function submitRequest(
   });
 
   // Work item for compliance/DPO to pick up (DPDP Act §13 — 72-hour review SLA)
-  await db.execute(
-    `INSERT INTO work_item
+  await db
+    .execute(
+      `INSERT INTO work_item
        (id, item_type, title, module_code, entity_type, entity_id, assigned_to_role, priority, status, created_at)
      VALUES (UUID(), 'DPDP_WITHDRAWAL_REVIEW', ?, 'compliance', 'dpdp_withdrawal', ?, 'compliance', 'high', 'pending', NOW())`,
-    ["DPDP Withdrawal pending review", id]
-  ).catch(() => {
-    // work_item table may not exist in all environments — non-fatal
-  });
+      ["DPDP Withdrawal pending review", id],
+    )
+    .catch(() => {
+      // work_item table may not exist in all environments — non-fatal
+    });
 
   return { id, request_ref: requestRef };
 }
@@ -97,7 +99,9 @@ export async function submitRequest(
 /**
  * Employee views their own requests.
  */
-export async function getMyRequests(requesterId: string): Promise<RowDataPacket[]> {
+export async function getMyRequests(
+  requesterId: string,
+): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, requester_id, requester_type, withdrawal_scope_json, withdrawal_reason,
             request_channel, status, processing_hold_active, hold_applied_at, hold_released_at,
@@ -106,7 +110,7 @@ export async function getMyRequests(requesterId: string): Promise<RowDataPacket[
      FROM dpdp_consent_withdrawal
      WHERE requester_id = ?
      ORDER BY created_at DESC`,
-    [requesterId]
+    [requesterId],
   );
   return rows;
 }
@@ -114,7 +118,9 @@ export async function getMyRequests(requesterId: string): Promise<RowDataPacket[
 /**
  * HR/compliance views all requests with optional filters.
  */
-export async function listAll(filters: WithdrawalFilters): Promise<RowDataPacket[]> {
+export async function listAll(
+  filters: WithdrawalFilters,
+): Promise<RowDataPacket[]> {
   const conditions: string[] = ["1=1"];
   const params: unknown[] = [];
 
@@ -150,7 +156,7 @@ export async function listAll(filters: WithdrawalFilters): Promise<RowDataPacket
      WHERE ${where}
      ORDER BY dcw.created_at DESC
      LIMIT 500`,
-    params
+    params,
   );
   return rows;
 }
@@ -172,7 +178,7 @@ export async function getById(
    * A data principal reading their own request is not logged — the DPDP interest is in who
    * ELSE looked at it, so only HR/DPO reads produce an entry.
    */
-  logView = false
+  logView = false,
 ): Promise<RowDataPacket | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT dcw.*,
@@ -186,7 +192,7 @@ export async function getById(
      LEFT JOIN employees requester_emp ON requester_emp.user_id = requester_user.id AND requester_emp.active_status = 1
      WHERE dcw.id = ?
      LIMIT 1`,
-    [id]
+    [id],
   );
   if (!rows.length) return null;
   const record = rows[0];
@@ -204,21 +210,26 @@ export async function getById(
 /**
  * HR starts review: status → in_review, insert processing hold.
  */
-export async function startReview(id: string, reviewedBy: string): Promise<void> {
+export async function startReview(
+  id: string,
+  reviewedBy: string,
+): Promise<void> {
   await db.execute(
     `UPDATE dpdp_consent_withdrawal
      SET status = 'in_review', reviewed_by = ?, reviewed_at = NOW(),
          processing_hold_active = 1, hold_applied_at = NOW()
      WHERE id = ? AND status = 'submitted'`,
-    [reviewedBy, id]
+    [reviewedBy, id],
   );
 
-  await db.execute(
-    `INSERT INTO dpdp_processing_hold
+  await db
+    .execute(
+      `INSERT INTO dpdp_processing_hold
        (id, withdrawal_id, held_by, hold_reason, is_active, held_at)
      VALUES (UUID(), ?, ?, 'Withdrawal review in progress', 1, NOW())`,
-    [id, reviewedBy]
-  ).catch(() => {});
+      [id, reviewedBy],
+    )
+    .catch(() => {});
 
   await insertAuditLog(id, "DPDP_WITHDRAWAL_REVIEW_STARTED", reviewedBy, {
     fromStatus: "submitted",
@@ -236,13 +247,17 @@ export async function startReview(id: string, reviewedBy: string): Promise<void>
 export async function approve(
   id: string,
   approvedBy: string,
-  remarks?: string
+  remarks?: string,
 ): Promise<void> {
   // Read current status for accurate audit log
   const [preRows] = await db.execute<RowDataPacket[]>(
-    'SELECT status FROM dpdp_consent_withdrawal WHERE id = ? LIMIT 1', [id]
+    "SELECT status FROM dpdp_consent_withdrawal WHERE id = ? LIMIT 1",
+    [id],
   );
-  if (!preRows.length) throw Object.assign(new Error('Withdrawal request not found'), { statusCode: 404 });
+  if (!preRows.length)
+    throw Object.assign(new Error("Withdrawal request not found"), {
+      statusCode: 404,
+    });
   const fromStatus = preRows[0].status as string;
 
   const [result] = await db.execute<any>(
@@ -257,19 +272,24 @@ export async function approve(
          data_restriction_at = NOW(),
          restricted_by = ?
      WHERE id = ? AND status IN ('submitted', 'in_review')`,
-    [approvedBy, remarks ?? null, approvedBy, id]
+    [approvedBy, remarks ?? null, approvedBy, id],
   );
   if (result.affectedRows === 0) {
-    throw Object.assign(new Error(`Cannot approve: request is in status '${fromStatus}'`), { statusCode: 409 });
+    throw Object.assign(
+      new Error(`Cannot approve: request is in status '${fromStatus}'`),
+      { statusCode: 409 },
+    );
   }
 
   // Release any active hold record
-  await db.execute(
-    `UPDATE dpdp_processing_hold
+  await db
+    .execute(
+      `UPDATE dpdp_processing_hold
      SET is_active = 0, released_at = NOW(), released_by = ?, release_reason = 'Withdrawal approved'
      WHERE withdrawal_id = ? AND is_active = 1`,
-    [approvedBy, id]
-  ).catch(() => {});
+      [approvedBy, id],
+    )
+    .catch(() => {});
 
   await insertAuditLog(id, "DPDP_WITHDRAWAL_APPROVED", approvedBy, {
     fromStatus,
@@ -286,15 +306,17 @@ export async function approve(
   // Notification work item for requester
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT requester_id FROM dpdp_consent_withdrawal WHERE id = ? LIMIT 1",
-    [id]
+    [id],
   );
   if (rows.length) {
-    await db.execute(
-      `INSERT INTO work_item
+    await db
+      .execute(
+        `INSERT INTO work_item
          (id, item_type, title, module_code, entity_type, entity_id, assigned_to_user_id, assigned_to_role, priority, status, created_at)
        VALUES (UUID(), 'DPDP_WITHDRAWAL_APPROVED', 'Your data withdrawal request was approved', 'compliance', 'dpdp_withdrawal', ?, ?, 'employee', 'normal', 'pending', NOW())`,
-      [id, rows[0].requester_id]
-    ).catch(() => {});
+        [id, rows[0].requester_id],
+      )
+      .catch(() => {});
   }
 }
 
@@ -304,7 +326,7 @@ export async function approve(
 export async function reject(
   id: string,
   rejectedBy: string,
-  reason: string
+  reason: string,
 ): Promise<void> {
   await db.execute(
     `UPDATE dpdp_consent_withdrawal
@@ -315,15 +337,17 @@ export async function reject(
          processing_hold_active = 0,
          hold_released_at = NOW()
      WHERE id = ?`,
-    [rejectedBy, reason, id]
+    [rejectedBy, reason, id],
   );
 
-  await db.execute(
-    `UPDATE dpdp_processing_hold
+  await db
+    .execute(
+      `UPDATE dpdp_processing_hold
      SET is_active = 0, released_at = NOW(), released_by = ?, release_reason = 'Withdrawal rejected'
      WHERE withdrawal_id = ? AND is_active = 1`,
-    [rejectedBy, id]
-  ).catch(() => {});
+      [rejectedBy, id],
+    )
+    .catch(() => {});
 
   await insertAuditLog(id, "DPDP_WITHDRAWAL_REJECTED", rejectedBy, {
     fromStatus: "in_review",
@@ -338,19 +362,24 @@ export async function reject(
 /**
  * Manually release a processing hold without full approval/rejection.
  */
-export async function releaseHold(id: string, releasedBy: string): Promise<void> {
-  await db.execute(
-    `UPDATE dpdp_processing_hold
+export async function releaseHold(
+  id: string,
+  releasedBy: string,
+): Promise<void> {
+  await db
+    .execute(
+      `UPDATE dpdp_processing_hold
      SET is_active = 0, released_at = NOW(), released_by = ?, release_reason = 'Manual hold release'
      WHERE withdrawal_id = ? AND is_active = 1`,
-    [releasedBy, id]
-  ).catch(() => {});
+      [releasedBy, id],
+    )
+    .catch(() => {});
 
   await db.execute(
     `UPDATE dpdp_consent_withdrawal
      SET processing_hold_active = 0, hold_released_at = NOW()
      WHERE id = ?`,
-    [id]
+    [id],
   );
 
   await insertAuditLog(id, "DPDP_PROCESSING_HOLD_RELEASED", releasedBy, {
@@ -365,7 +394,10 @@ export async function releaseHold(id: string, releasedBy: string): Promise<void>
 /**
  * Return full audit trail for a withdrawal request.
  */
-export async function getAudit(id: string, viewedBy?: string): Promise<RowDataPacket[]> {
+export async function getAudit(
+  id: string,
+  viewedBy?: string,
+): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT dwal.*,
             COALESCE(
@@ -378,7 +410,7 @@ export async function getAudit(id: string, viewedBy?: string): Promise<RowDataPa
      LEFT JOIN employees performed_emp ON performed_emp.user_id = performed_user.id AND performed_emp.active_status = 1
      WHERE dwal.withdrawal_id = ?
      ORDER BY dwal.performed_at DESC`,
-    [id]
+    [id],
   );
   if (viewedBy) {
     // Reading the audit trail of someone's withdrawal is itself an access event a regulator
@@ -392,10 +424,12 @@ export async function getAudit(id: string, viewedBy?: string): Promise<RowDataPa
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
-export async function getTasksForWithdrawal(withdrawalId: string): Promise<RowDataPacket[]> {
+export async function getTasksForWithdrawal(
+  withdrawalId: string,
+): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM dpdp_withdrawal_task WHERE withdrawal_id = ? ORDER BY created_at ASC`,
-    [withdrawalId]
+    [withdrawalId],
   );
   return rows;
 }
@@ -403,13 +437,13 @@ export async function getTasksForWithdrawal(withdrawalId: string): Promise<RowDa
 export async function completeTask(
   taskId: string,
   completedBy: string,
-  notes?: string
+  notes?: string,
 ): Promise<void> {
   await db.execute(
     `UPDATE dpdp_withdrawal_task
      SET status = 'completed', completed_by = ?, completed_at = NOW(), notes = COALESCE(?, notes)
      WHERE id = ?`,
-    [completedBy, notes ?? null, taskId]
+    [completedBy, notes ?? null, taskId],
   );
 
   /**
@@ -422,7 +456,7 @@ export async function completeTask(
    */
   const [taskRows] = await db.execute<RowDataPacket[]>(
     `SELECT withdrawal_id, module_key FROM dpdp_withdrawal_task WHERE id = ? LIMIT 1`,
-    [taskId]
+    [taskId],
   );
   const task = taskRows[0];
   if (task?.withdrawal_id) {
@@ -430,17 +464,21 @@ export async function completeTask(
       String(task.withdrawal_id),
       "DPDP_WITHDRAWAL_MODULE_ACTION_COMPLETED",
       completedBy,
-      { remarks: `Task completed${task.module_key ? ` for module ${String(task.module_key)}` : ""}` },
+      {
+        remarks: `Task completed${task.module_key ? ` for module ${String(task.module_key)}` : ""}`,
+      },
     ).catch(() => undefined);
   }
 }
 
 // ── Evidence ─────────────────────────────────────────────────────────────────
 
-export async function getEvidenceForWithdrawal(withdrawalId: string): Promise<RowDataPacket[]> {
+export async function getEvidenceForWithdrawal(
+  withdrawalId: string,
+): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM dpdp_withdrawal_evidence WHERE withdrawal_id = ? ORDER BY recorded_at DESC`,
-    [withdrawalId]
+    [withdrawalId],
   );
   return rows;
 }
@@ -450,13 +488,13 @@ export async function addEvidence(
   evidenceType: string,
   description: string,
   recordedBy: string,
-  fileRef?: string
+  fileRef?: string,
 ): Promise<void> {
   await db.execute(
     `INSERT INTO dpdp_withdrawal_evidence
        (id, withdrawal_id, evidence_type, description, file_ref, recorded_by, recorded_at)
      VALUES (UUID(), ?, ?, ?, ?, ?, NOW())`,
-    [withdrawalId, evidenceType, description, fileRef ?? null, recordedBy]
+    [withdrawalId, evidenceType, description, fileRef ?? null, recordedBy],
   );
 }
 
@@ -470,7 +508,7 @@ export async function getStats(): Promise<Record<string, number>> {
        SUM(status = 'approved' AND MONTH(created_at) = MONTH(NOW()) AND YEAR(created_at) = YEAR(NOW())) AS approved_this_month,
        SUM(sla_due_at IS NOT NULL AND sla_due_at < NOW() AND status IN ('submitted','in_review')) AS sla_breached,
        SUM(processing_hold_active = 1) AS on_hold
-     FROM dpdp_consent_withdrawal`
+     FROM dpdp_consent_withdrawal`,
   );
   return rows[0] as Record<string, number>;
 }

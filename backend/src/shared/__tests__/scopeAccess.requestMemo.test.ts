@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockExecute = vi.fn();
-vi.mock("../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => mockExecute(...a) } }));
+vi.mock("../../db/mysql.js", () => ({
+  db: { execute: (...a: unknown[]) => mockExecute(...a) },
+}));
 
 import { getUserRoleKeys, hasAnyRole } from "../scopeAccess.js";
 import { runWithRequestContext } from "../requestContext.js";

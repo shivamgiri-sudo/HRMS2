@@ -14,7 +14,9 @@ describe("excludeUnregisteredLeadCandidatesSql", () => {
     expect(sql).toContain("ats_candidate.sourcing_channel = 'Social Media'");
     expect(sql).toContain("COALESCE(ats_candidate.profile_status, '') = ''");
     expect(sql).toContain("ats_candidate.walk_in_date IS NULL");
-    expect(sql).toMatch(/NOT EXISTS \(SELECT 1 FROM ats_queue_token lqt WHERE lqt\.candidate_id = ats_candidate\.id\)/);
+    expect(sql).toMatch(
+      /NOT EXISTS \(SELECT 1 FROM ats_queue_token lqt WHERE lqt\.candidate_id = ats_candidate\.id\)/,
+    );
   });
 
   it("uses whatever alias the caller passes", () => {
@@ -26,9 +28,14 @@ describe("excludeUnregisteredLeadCandidatesSql", () => {
 
   it("is applied to both recruiter pending queues", () => {
     const service = fs.readFileSync(
-      path.join(backendRoot, "src/modules/ats-full-parity/recruiterInterview.service.ts"),
+      path.join(
+        backendRoot,
+        "src/modules/ats-full-parity/recruiterInterview.service.ts",
+      ),
       "utf8",
     );
-    expect(service.match(/excludeUnregisteredLeadCandidatesSql\("ats_candidate"\)/g)).toHaveLength(2);
+    expect(
+      service.match(/excludeUnregisteredLeadCandidatesSql\("ats_candidate"\)/g),
+    ).toHaveLength(2);
   });
 });

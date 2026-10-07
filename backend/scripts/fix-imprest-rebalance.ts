@@ -69,7 +69,7 @@ async function run() {
          FROM imprest_manager im
          LEFT JOIN employees e ON e.id = im.employee_id
         WHERE im.current_balance < 0
-        ORDER BY im.branch_id, im.current_balance ASC`
+        ORDER BY im.branch_id, im.current_balance ASC`,
     );
 
     if (deficitRows.length === 0) {
@@ -81,7 +81,7 @@ async function run() {
     for (const row of deficitRows) {
       console.log(
         `  ${row.full_name ?? row.manager_id} (branch ${row.branch_id}): ` +
-        `balance = ${row.current_balance}`
+          `balance = ${row.current_balance}`,
       );
     }
 
@@ -98,13 +98,13 @@ async function run() {
     for (const [branchId, managers] of byBranch) {
       const totalDeficit = managers.reduce(
         (sum, m) => sum + Math.abs(m.current_balance),
-        0
+        0,
       );
       const pool = BRANCH_POOLS[branchId] ?? 0;
 
       if (pool === 0) {
         console.log(
-          `\nBranch ${branchId}: no pool configured — deficit of ${totalDeficit} left open.`
+          `\nBranch ${branchId}: no pool configured — deficit of ${totalDeficit} left open.`,
         );
         continue;
       }
@@ -114,7 +114,7 @@ async function run() {
       const proportion = Math.min(1, pool / totalDeficit);
       console.log(
         `\nBranch ${branchId}: total deficit ${totalDeficit}, pool ${pool}, ` +
-        `proportion ${(proportion * 100).toFixed(1)}%`
+          `proportion ${(proportion * 100).toFixed(1)}%`,
       );
 
       for (const manager of managers) {
@@ -126,7 +126,7 @@ async function run() {
 
         console.log(
           `  ${manager.full_name ?? manager.manager_id}: ` +
-          `deficit ${deficit} → credit ${credit}`
+            `deficit ${deficit} → credit ${credit}`,
         );
 
         if (!APPLY) continue;
@@ -138,7 +138,7 @@ async function run() {
               AND created_by = ?
               AND narration LIKE ?
             LIMIT 1`,
-          [manager.manager_id, MIGRATION_USER, `${NARRATION_PREFIX}%`]
+          [manager.manager_id, MIGRATION_USER, `${NARRATION_PREFIX}%`],
         );
         if (existing.length > 0) {
           console.log("    Already rebalanced — skipping.");
@@ -152,14 +152,14 @@ async function run() {
                (id, imprest_manager_id, entry_type, amount, narration,
                 reference_type, transaction_date, created_by, created_at, updated_at)
              VALUES (UUID(), ?, 'adjustment', ?, ?, 'manual', CURDATE(), ?, NOW(), NOW())`,
-            [manager.manager_id, credit, narration, MIGRATION_USER]
+            [manager.manager_id, credit, narration, MIGRATION_USER],
           );
 
           await conn.execute(
             `UPDATE imprest_manager
                 SET current_balance = current_balance + ?
               WHERE id = ?`,
-            [credit, manager.manager_id]
+            [credit, manager.manager_id],
           );
 
           await conn.execute(
@@ -170,7 +170,7 @@ async function run() {
               manager.manager_id,
               MIGRATION_USER,
               JSON.stringify({ credit, deficit, proportion, pool, branchId }),
-            ]
+            ],
           );
 
           await conn.commit();
@@ -185,7 +185,7 @@ async function run() {
 
     console.log(
       `\nDone. Total credits posted: ${totalCredits}` +
-      (APPLY ? "" : " (DRY-RUN — pass --apply to write)")
+        (APPLY ? "" : " (DRY-RUN — pass --apply to write)"),
     );
   } finally {
     await conn.end();

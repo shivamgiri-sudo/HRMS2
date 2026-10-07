@@ -1,16 +1,23 @@
-import crypto from 'crypto';
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../db/mysql.js';
-import { withWorkerLock, registerTimer, unregisterTimer } from './worker-utils.js';
-import { storeReportFile } from '../modules/reporting/report-file-storage.js';
-import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from '../modules/reporting/report-audit.service.js';
+import crypto from "crypto";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../db/mysql.js";
+import {
+  withWorkerLock,
+  registerTimer,
+  unregisterTimer,
+} from "./worker-utils.js";
+import { storeReportFile } from "../modules/reporting/report-file-storage.js";
+import {
+  recordReportAuditEvent,
+  REPORT_AUDIT_EVENTS,
+} from "../modules/reporting/report-audit.service.js";
 import {
   buildSecureXlsxBuffer,
   buildSecureFilename,
   stripCursorField,
   XlsxRowLimitError,
   XlsxFileSizeError,
-} from '../modules/reporting/xlsx-secure-builder.js';
+} from "../modules/reporting/xlsx-secure-builder.js";
 import {
   executeReport,
   ReportExecutorNotFoundError,
@@ -18,31 +25,48 @@ import {
   type ExecScope,
   type ExecOptions,
   type ExecResult,
-} from '../modules/reporting/executors/index.js';
-import { isBpoMasterCode, isIdentityBuilderCode } from '../modules/reporting/all-reports.registry.js';
-import { REPORT_CATALOG } from '../modules/reporting/report-catalog.js';
+} from "../modules/reporting/executors/index.js";
+import {
+  isBpoMasterCode,
+  isIdentityBuilderCode,
+} from "../modules/reporting/all-reports.registry.js";
+import { REPORT_CATALOG } from "../modules/reporting/report-catalog.js";
 
 // ── Configuration (all values from env) ───────────────────────────────────────
-const WORKER_NAME             = 'report-generation';
-const INTERVAL_MS             = 30_000;
-const STALE_PROCESSING_MINUTES = Number(process.env.REPORT_STALE_PROCESSING_MINUTES ?? 25);
-const CHUNK_SIZE              = Number(process.env.REPORT_WORKER_CHUNK_SIZE ?? 5_000);
-const MAX_ROWS                = Number(process.env.REPORT_MAX_XLSX_ROWS ?? 100_000);
-const ATTACHMENT_MAX_BYTES    = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520); // 20 MB
-const LARGE_FILE_THRESHOLD    = Number(process.env.REPORT_LARGE_FILE_THRESHOLD_BYTES ?? 15_728_640); // 15 MB
-const TOKEN_TTL_HOURS         = Number(process.env.REPORT_DOWNLOAD_TOKEN_TTL_HOURS ?? 48);
-const RETENTION_RESTRICTED    = Number(process.env.REPORT_RETENTION_RESTRICTED_DAYS ?? 2);
-const RETENTION_DEFAULT       = Number(process.env.REPORT_RETENTION_DEFAULT_DAYS ?? 7);
-const MAX_RETRIES             = 3;
-const BASE_URL                = process.env.BACKEND_URL ?? 'http://localhost:5055';
+const WORKER_NAME = "report-generation";
+const INTERVAL_MS = 30_000;
+const STALE_PROCESSING_MINUTES = Number(
+  process.env.REPORT_STALE_PROCESSING_MINUTES ?? 25,
+);
+const CHUNK_SIZE = Number(process.env.REPORT_WORKER_CHUNK_SIZE ?? 5_000);
+const MAX_ROWS = Number(process.env.REPORT_MAX_XLSX_ROWS ?? 100_000);
+const ATTACHMENT_MAX_BYTES = Number(
+  process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520,
+); // 20 MB
+const LARGE_FILE_THRESHOLD = Number(
+  process.env.REPORT_LARGE_FILE_THRESHOLD_BYTES ?? 15_728_640,
+); // 15 MB
+const TOKEN_TTL_HOURS = Number(
+  process.env.REPORT_DOWNLOAD_TOKEN_TTL_HOURS ?? 48,
+);
+const RETENTION_RESTRICTED = Number(
+  process.env.REPORT_RETENTION_RESTRICTED_DAYS ?? 2,
+);
+const RETENTION_DEFAULT = Number(
+  process.env.REPORT_RETENTION_DEFAULT_DAYS ?? 7,
+);
+const MAX_RETRIES = 3;
+const BASE_URL = process.env.BACKEND_URL ?? "http://localhost:5055";
 
 let intervalTimer: NodeJS.Timeout | null = null;
 
 function isMissingReportTableError(error: unknown): boolean {
-  return typeof error === 'object'
-    && error !== null
-    && 'code' in error
-    && String((error as { code?: unknown }).code ?? '') === 'ER_NO_SUCH_TABLE';
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    String((error as { code?: unknown }).code ?? "") === "ER_NO_SUCH_TABLE"
+  );
 }
 
 async function reportGenerationTablesAvailable(): Promise<boolean> {
@@ -51,7 +75,9 @@ async function reportGenerationTablesAvailable(): Promise<boolean> {
     return true;
   } catch (error) {
     if (isMissingReportTableError(error)) {
-      console.warn(`[${WORKER_NAME}] report_request table missing - worker disabled until reporting schema is migrated`);
+      console.warn(
+        `[${WORKER_NAME}] report_request table missing - worker disabled until reporting schema is migrated`,
+      );
       return false;
     }
     throw error;
@@ -60,27 +86,33 @@ async function reportGenerationTablesAvailable(): Promise<boolean> {
 
 // ── Sensitivity helpers ────────────────────────────────────────────────────────
 
-type SensitivityLevel = 'internal' | 'confidential' | 'restricted' | 'highly_restricted';
+type SensitivityLevel =
+  "internal" | "confidential" | "restricted" | "highly_restricted";
 
 function getSensitivityLevel(reportCode: string): SensitivityLevel {
-  const entry = (REPORT_CATALOG as Array<{ code: string; sensitivityLevel?: string }>)
-    .find(e => e.code === reportCode);
-  const level = entry?.sensitivityLevel ?? 'confidential';
-  if (['internal','confidential','restricted','highly_restricted'].includes(level)) {
+  const entry = (
+    REPORT_CATALOG as Array<{ code: string; sensitivityLevel?: string }>
+  ).find((e) => e.code === reportCode);
+  const level = entry?.sensitivityLevel ?? "confidential";
+  if (
+    ["internal", "confidential", "restricted", "highly_restricted"].includes(
+      level,
+    )
+  ) {
     return level as SensitivityLevel;
   }
-  return 'confidential';
+  return "confidential";
 }
 
 function getRetentionDays(level: SensitivityLevel): number {
-  return (level === 'restricted' || level === 'highly_restricted')
+  return level === "restricted" || level === "highly_restricted"
     ? RETENTION_RESTRICTED
     : RETENTION_DEFAULT;
 }
 
 /** restricted/highly_restricted → link only; internal/confidential → attachment (or link if large) */
 function requiresSecureLink(level: SensitivityLevel): boolean {
-  return level === 'restricted' || level === 'highly_restricted';
+  return level === "restricted" || level === "highly_restricted";
 }
 
 // ── Multi-family dispatcher ────────────────────────────────────────────────────
@@ -89,7 +121,7 @@ async function dispatchWorkerReport(
   code: string,
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   // BPO master and identity builder families have dedicated adapters.
   // For now both fall through to the suite executor — their codes are either
@@ -106,17 +138,20 @@ async function createDownloadToken(
   fileId: string,
   requestingUserId: string,
   reportCode: string,
-  retentionDays: number
+  retentionDays: number,
 ): Promise<string> {
-  const rawToken   = crypto.randomBytes(32).toString('hex'); // 64 hex chars
-  const tokenHash  = crypto.createHash('sha256').update(rawToken).digest('hex');
-  const ttlSeconds = Math.min(TOKEN_TTL_HOURS * 3600, retentionDays * 24 * 3600);
+  const rawToken = crypto.randomBytes(32).toString("hex"); // 64 hex chars
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+  const ttlSeconds = Math.min(
+    TOKEN_TTL_HOURS * 3600,
+    retentionDays * 24 * 3600,
+  );
 
   await db.execute(
     `INSERT INTO report_download_token
        (token_hash, file_id, requesting_user_id, report_code, expires_at)
      VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))`,
-    [tokenHash, fileId, requestingUserId, reportCode, ttlSeconds]
+    [tokenHash, fileId, requestingUserId, reportCode, ttlSeconds],
   );
 
   return rawToken; // returned to caller; stored hash is never returned
@@ -128,7 +163,7 @@ async function deletePartialFile(requestId: string): Promise<void> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT storage_key FROM report_generated_file WHERE report_request_id = ? LIMIT 1`,
-      [requestId]
+      [requestId],
     );
     if (!rows.length) return;
     const { storage_key } = rows[0] as { storage_key: string };
@@ -136,17 +171,19 @@ async function deletePartialFile(requestId: string): Promise<void> {
     // Remove DB record
     await db.execute(
       `DELETE FROM report_generated_file WHERE report_request_id = ?`,
-      [requestId]
+      [requestId],
     );
 
     // Remove from filesystem (best-effort)
-    const { unlinkSync, existsSync } = await import('fs');
-    const { resolve } = await import('path');
-    const absPath = resolve(process.cwd(), 'uploads', storage_key);
+    const { unlinkSync, existsSync } = await import("fs");
+    const { resolve } = await import("path");
+    const absPath = resolve(process.cwd(), "uploads", storage_key);
     if (existsSync(absPath)) unlinkSync(absPath);
   } catch {
     // Non-fatal: log but don't re-throw
-    console.warn(`[${WORKER_NAME}] Failed to clean partial file for request ${requestId}`);
+    console.warn(
+      `[${WORKER_NAME}] Failed to clean partial file for request ${requestId}`,
+    );
   }
 }
 
@@ -159,7 +196,7 @@ async function markFailed(
   attemptNumber: number,
   failureCode: string,
   userMessage: string,
-  internalDetail: string
+  internalDetail: string,
 ): Promise<void> {
   // report_request has failure_message. It has no failure_message_user and no
   // failure_message_internal, so this UPDATE raised ER_BAD_FIELD_ERROR and a
@@ -181,13 +218,13 @@ async function markFailed(
        failed_at       = NOW(),
        updated_at      = NOW()
      WHERE id = ?`,
-    [failureCode, userMessage, requestId]
+    [failureCode, userMessage, requestId],
   );
   await deletePartialFile(requestId);
   await recordReportAuditEvent({
     reportRequestId: requestId,
     eventType: REPORT_AUDIT_EVENTS.GENERATION_FAILED,
-    actorType: 'worker',
+    actorType: "worker",
     reportCode,
     correlationId,
     message: `Generation permanently failed after attempt ${attemptNumber}`,
@@ -209,16 +246,19 @@ async function processOneRequest(): Promise<void> {
       `SELECT id FROM report_request
        WHERE status = 'QUEUED'
        ORDER BY priority DESC, requested_at ASC
-       LIMIT 1 FOR UPDATE SKIP LOCKED`
+       LIMIT 1 FOR UPDATE SKIP LOCKED`,
     );
-    if (!claimRows.length) { await conn.rollback(); return; }
+    if (!claimRows.length) {
+      await conn.rollback();
+      return;
+    }
 
     requestId = (claimRows[0] as { id: string }).id;
     await conn.execute(
       `UPDATE report_request
        SET status = 'PROCESSING', processing_started_at = NOW(), updated_at = NOW()
        WHERE id = ?`,
-      [requestId]
+      [requestId],
     );
     await conn.commit();
   } catch (err) {
@@ -241,7 +281,7 @@ async function processOneRequest(): Promise<void> {
             requested_by_employee_id, requester_role_snapshot, correlation_id,
             retry_count
      FROM report_request WHERE id = ?`,
-    [requestId]
+    [requestId],
   );
   if (!reqRows.length) return;
 
@@ -262,39 +302,55 @@ async function processOneRequest(): Promise<void> {
   };
 
   const filters: ExecFilters =
-    typeof req.requested_filters_json === 'string'
+    typeof req.requested_filters_json === "string"
       ? (JSON.parse(req.requested_filters_json) as ExecFilters)
-      : (req.requested_filters_json as ExecFilters ?? {});
+      : ((req.requested_filters_json as ExecFilters) ?? {});
 
-  const rawScope = typeof req.resolved_scope_json === 'string'
-    ? (JSON.parse(req.resolved_scope_json) as ExecScope)
-    : (req.resolved_scope_json as ExecScope);
+  const rawScope =
+    typeof req.resolved_scope_json === "string"
+      ? (JSON.parse(req.resolved_scope_json) as ExecScope)
+      : (req.resolved_scope_json as ExecScope);
 
   // Normalise legacy scope shape (older requests may lack new DimensionScope fields)
   const scope: ExecScope = {
-    companyId:              (rawScope as any).companyId ?? '1',
-    isSuperAdmin:           (rawScope as any).isSuperAdmin ?? false,
-    branchScope:            (rawScope as any).branchScope ?? { mode: 'all', ids: [] },
-    processScope:           (rawScope as any).processScope ?? { mode: 'all', ids: [] },
-    departmentScope:        (rawScope as any).departmentScope ?? { mode: 'all', ids: [] },
-    costCentreScope:        (rawScope as any).costCentreScope ?? { mode: 'all', ids: [] },
-    canViewAllEmployees:    (rawScope as any).canViewAllEmployees ?? (rawScope as any).isSuperAdmin ?? false,
-    canViewSensitiveFields: (rawScope as any).canViewSensitiveFields ?? (rawScope as any).isSuperAdmin ?? false,
-    canExportSensitiveReports: (rawScope as any).canExportSensitiveReports ?? (rawScope as any).isSuperAdmin ?? false,
-    roles:                  (rawScope as any).roles ?? [],
-    managerEmployeeId:      (rawScope as any).managerEmployeeId,
-    selfEmployeeId:         (rawScope as any).selfEmployeeId,
+    companyId: (rawScope as any).companyId ?? "1",
+    isSuperAdmin: (rawScope as any).isSuperAdmin ?? false,
+    branchScope: (rawScope as any).branchScope ?? { mode: "all", ids: [] },
+    processScope: (rawScope as any).processScope ?? { mode: "all", ids: [] },
+    departmentScope: (rawScope as any).departmentScope ?? {
+      mode: "all",
+      ids: [],
+    },
+    costCentreScope: (rawScope as any).costCentreScope ?? {
+      mode: "all",
+      ids: [],
+    },
+    canViewAllEmployees:
+      (rawScope as any).canViewAllEmployees ??
+      (rawScope as any).isSuperAdmin ??
+      false,
+    canViewSensitiveFields:
+      (rawScope as any).canViewSensitiveFields ??
+      (rawScope as any).isSuperAdmin ??
+      false,
+    canExportSensitiveReports:
+      (rawScope as any).canExportSensitiveReports ??
+      (rawScope as any).isSuperAdmin ??
+      false,
+    roles: (rawScope as any).roles ?? [],
+    managerEmployeeId: (rawScope as any).managerEmployeeId,
+    selfEmployeeId: (rawScope as any).selfEmployeeId,
     subordinateEmployeeIds: (rawScope as any).subordinateEmployeeIds ?? [],
   };
 
   const sensitivityLevel = getSensitivityLevel(req.report_code);
-  const retentionDays    = getRetentionDays(sensitivityLevel);
-  const attemptNumber    = Number(req.retry_count ?? 0) + 1;
+  const retentionDays = getRetentionDays(sensitivityLevel);
+  const attemptNumber = Number(req.retry_count ?? 0) + 1;
 
   await recordReportAuditEvent({
     reportRequestId: requestId,
     eventType: REPORT_AUDIT_EVENTS.GENERATION_STARTED,
-    actorType: 'worker',
+    actorType: "worker",
     reportCode: req.report_code,
     reportName: req.report_name_snapshot,
     correlationId: req.correlation_id,
@@ -314,12 +370,15 @@ async function processOneRequest(): Promise<void> {
         offset: 0,
         cursor: lastCursor,
         includeTotal: false,
-        mode: 'worker',
+        mode: "worker",
         asOf: reportAsOf,
       };
 
       const batch: ExecResult = await dispatchWorkerReport(
-        req.report_code, filters, scope, chunkOptions
+        req.report_code,
+        filters,
+        scope,
+        chunkOptions,
       );
 
       const cleanRows = stripCursorField(batch.rows);
@@ -327,8 +386,8 @@ async function processOneRequest(): Promise<void> {
       totalWritten += cleanRows.length;
       lastCursor = batch.nextCursor ?? null;
 
-      if (cleanRows.length < CHUNK_SIZE) break;      // last page
-      if (lastCursor === null) break;                 // executor signals no more pages
+      if (cleanRows.length < CHUNK_SIZE) break; // last page
+      if (lastCursor === null) break; // executor signals no more pages
       if (totalWritten >= MAX_ROWS) {
         // Mark the row-limit condition but still build the file from the rows
         // fetched so far.
@@ -344,11 +403,15 @@ async function processOneRequest(): Promise<void> {
         await recordReportAuditEvent({
           reportRequestId: requestId,
           eventType: REPORT_AUDIT_EVENTS.SOURCE_QUERY_COMPLETED,
-          actorType: 'worker',
+          actorType: "worker",
           reportCode: req.report_code,
           correlationId: req.correlation_id,
           message: `Row limit reached - report truncated at ${MAX_ROWS} rows`,
-          metadataJson: { rowLimitReached: true, totalWritten, maxRows: MAX_ROWS },
+          metadataJson: {
+            rowLimitReached: true,
+            totalWritten,
+            maxRows: MAX_ROWS,
+          },
         });
         break;
       }
@@ -357,7 +420,7 @@ async function processOneRequest(): Promise<void> {
     await recordReportAuditEvent({
       reportRequestId: requestId,
       eventType: REPORT_AUDIT_EVENTS.SOURCE_QUERY_COMPLETED,
-      actorType: 'worker',
+      actorType: "worker",
       reportCode: req.report_code,
       correlationId: req.correlation_id,
       message: `Query complete: ${totalWritten} rows fetched`,
@@ -366,48 +429,58 @@ async function processOneRequest(): Promise<void> {
 
     // ── Build XLSX ─────────────────────────────────────────────────────────────
     const scopeSummary = scope.isSuperAdmin
-      ? 'ALL BRANCHES'
-      : `BRANCHES: ${scope.branchScope.mode === 'all' ? 'ALL' : scope.branchScope.ids.join(', ')}`;
+      ? "ALL BRANCHES"
+      : `BRANCHES: ${scope.branchScope.mode === "all" ? "ALL" : scope.branchScope.ids.join(", ")}`;
 
     const buffer = await buildSecureXlsxBuffer({
-      reportName:            req.report_name_snapshot,
-      requestReference:      req.request_reference,
-      requesterEmployeeCode: req.requested_by_employee_code ?? 'UNKNOWN',
-      filters:               filters as Record<string, unknown>,
+      reportName: req.report_name_snapshot,
+      requestReference: req.request_reference,
+      requesterEmployeeCode: req.requested_by_employee_code ?? "UNKNOWN",
+      filters: filters as Record<string, unknown>,
       scopeSummary,
-      rows:                  allRows,
-      totalRows:             totalWritten,
+      rows: allRows,
+      totalRows: totalWritten,
       // Restricted reports use a signed download link — file size cap only applies
       // to email attachments, so skip it for link-delivery sensitivity levels.
-      skipSizeCap:           requiresSecureLink(sensitivityLevel),
+      skipSizeCap: requiresSecureLink(sensitivityLevel),
     });
 
-    const filename = buildSecureFilename(req.report_name_snapshot, req.request_reference);
+    const filename = buildSecureFilename(
+      req.report_name_snapshot,
+      req.request_reference,
+    );
 
     // ── Store file ─────────────────────────────────────────────────────────────
     const stored = await storeReportFile({
       requestId,
       buffer,
       filename,
-      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      rowCount:  totalWritten,
-      colCount:  allRows.length > 0 ? Object.keys(allRows[0]).length : 0,
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      rowCount: totalWritten,
+      colCount: allRows.length > 0 ? Object.keys(allRows[0]).length : 0,
       retentionDays,
     });
 
     await recordReportAuditEvent({
       reportRequestId: requestId,
       eventType: REPORT_AUDIT_EVENTS.FILE_STORED,
-      actorType: 'worker',
+      actorType: "worker",
       reportCode: req.report_code,
       fileId: stored.fileId,
       correlationId: req.correlation_id,
       message: `File stored: ${filename} (${buffer.length} bytes)`,
-      metadataJson: { fileId: stored.fileId, fileSizeBytes: buffer.length, rowCount: totalWritten },
+      metadataJson: {
+        fileId: stored.fileId,
+        fileSizeBytes: buffer.length,
+        rowCount: totalWritten,
+      },
     });
 
     // ── Decide delivery method ─────────────────────────────────────────────────
-    const useLink = requiresSecureLink(sensitivityLevel) || buffer.length > ATTACHMENT_MAX_BYTES;
+    const useLink =
+      requiresSecureLink(sensitivityLevel) ||
+      buffer.length > ATTACHMENT_MAX_BYTES;
     const useAttachment = !useLink;
 
     let downloadUrl: string | null = null;
@@ -416,16 +489,17 @@ async function processOneRequest(): Promise<void> {
         stored.fileId,
         req.requested_by_user_id,
         req.report_code,
-        retentionDays
+        retentionDays,
       );
       downloadUrl = `${BASE_URL}/api/reports/download/${rawToken}`;
     }
 
     // ── Queue email delivery ───────────────────────────────────────────────────
     const emailSubject = `HRMS Report Ready: ${req.report_name_snapshot} — ${req.request_reference}`;
-    const sizeWarning = buffer.length >= LARGE_FILE_THRESHOLD && useAttachment
-      ? ` (large file: ${(buffer.length / 1_048_576).toFixed(1)} MB)`
-      : '';
+    const sizeWarning =
+      buffer.length >= LARGE_FILE_THRESHOLD && useAttachment
+        ? ` (large file: ${(buffer.length / 1_048_576).toFixed(1)} MB)`
+        : "";
 
     // report_email_delivery has neither delivery_method nor secure_download_url,
     // so this INSERT raised ER_BAD_FIELD_ERROR and no delivery has ever been
@@ -450,7 +524,7 @@ async function processOneRequest(): Promise<void> {
         emailSubject + sizeWarning,
         useAttachment ? filename : null,
         useAttachment ? buffer.length : null,
-      ]
+      ],
     );
 
     // ── Finalise request ───────────────────────────────────────────────────────
@@ -458,43 +532,54 @@ async function processOneRequest(): Promise<void> {
       `UPDATE report_request
        SET status = 'GENERATED', generation_completed_at = NOW(), email_queued_at = NOW(), updated_at = NOW()
        WHERE id = ?`,
-      [requestId]
+      [requestId],
     );
 
     await recordReportAuditEvent({
       reportRequestId: requestId,
       eventType: REPORT_AUDIT_EVENTS.GENERATION_COMPLETED,
-      actorType: 'worker',
+      actorType: "worker",
       reportCode: req.report_code,
       fileId: stored.fileId,
       correlationId: req.correlation_id,
-      message: `Generation complete. ${totalWritten} rows. Delivery: ${useAttachment ? 'attachment' : 'secure link'}. Email queued to ${req.official_email}.`,
-      metadataJson: { rowCount: totalWritten, fileSizeBytes: buffer.length, deliveryMethod: useAttachment ? 'ATTACHMENT' : 'LINK' },
+      message: `Generation complete. ${totalWritten} rows. Delivery: ${useAttachment ? "attachment" : "secure link"}. Email queued to ${req.official_email}.`,
+      metadataJson: {
+        rowCount: totalWritten,
+        fileSizeBytes: buffer.length,
+        deliveryMethod: useAttachment ? "ATTACHMENT" : "LINK",
+      },
     });
 
-    console.log(`[${WORKER_NAME}] ${req.request_reference} — ${totalWritten} rows, ${buffer.length} bytes, delivery=${useAttachment ? 'attachment' : 'link'}`);
-
+    console.log(
+      `[${WORKER_NAME}] ${req.request_reference} — ${totalWritten} rows, ${buffer.length} bytes, delivery=${useAttachment ? "attachment" : "link"}`,
+    );
   } catch (err: unknown) {
     const isNoExecutor = err instanceof ReportExecutorNotFoundError;
-    const isRowLimit   = err instanceof XlsxRowLimitError;
-    const isFileSize   = err instanceof XlsxFileSizeError;
-    const rawMsg       = err instanceof Error ? err.message : String(err);
+    const isRowLimit = err instanceof XlsxRowLimitError;
+    const isFileSize = err instanceof XlsxFileSizeError;
+    const rawMsg = err instanceof Error ? err.message : String(err);
 
-    let failureCode    = 'GENERATION_ERROR';
-    let userMessage    = 'Report generation failed. Please try again or contact support.';
+    let failureCode = "GENERATION_ERROR";
+    let userMessage =
+      "Report generation failed. Please try again or contact support.";
 
     if (isNoExecutor) {
-      failureCode = 'NO_EXECUTOR';
-      userMessage = 'This report type is not yet available. Please contact support.';
+      failureCode = "NO_EXECUTOR";
+      userMessage =
+        "This report type is not yet available. Please contact support.";
     } else if (isRowLimit) {
-      failureCode = 'ROW_LIMIT_EXCEEDED';
-      userMessage = 'The report exceeds the maximum row limit. Please apply filters to reduce the dataset.';
+      failureCode = "ROW_LIMIT_EXCEEDED";
+      userMessage =
+        "The report exceeds the maximum row limit. Please apply filters to reduce the dataset.";
     } else if (isFileSize) {
-      failureCode = 'FILE_SIZE_EXCEEDED';
-      userMessage = 'The generated report file is too large. Please apply filters to reduce the dataset.';
+      failureCode = "FILE_SIZE_EXCEEDED";
+      userMessage =
+        "The generated report file is too large. Please apply filters to reduce the dataset.";
     }
 
-    console.error(`[${WORKER_NAME}] Attempt ${attemptNumber} failed for ${requestId}: [${failureCode}] ${rawMsg}`);
+    console.error(
+      `[${WORKER_NAME}] Attempt ${attemptNumber} failed for ${requestId}: [${failureCode}] ${rawMsg}`,
+    );
 
     // No executor → permanent failure (retrying will not help)
     const permanentFail = isNoExecutor || isRowLimit || isFileSize;
@@ -505,12 +590,12 @@ async function processOneRequest(): Promise<void> {
          SET status = 'QUEUED', retry_count = retry_count + 1, last_retry_at = NOW(),
              failure_code = ?, failure_message = ?, updated_at = NOW()
          WHERE id = ?`,
-        [failureCode, rawMsg.slice(0, 500), requestId]
+        [failureCode, rawMsg.slice(0, 500), requestId],
       );
       await recordReportAuditEvent({
         reportRequestId: requestId,
         eventType: REPORT_AUDIT_EVENTS.RETRY_SCHEDULED,
-        actorType: 'worker',
+        actorType: "worker",
         reportCode: req.report_code,
         correlationId: req.correlation_id,
         message: `Generation failed (attempt ${attemptNumber}/${MAX_RETRIES}). Requeued.`,
@@ -525,7 +610,7 @@ async function processOneRequest(): Promise<void> {
         attemptNumber,
         failureCode,
         userMessage,
-        rawMsg
+        rawMsg,
       );
     }
   }
@@ -539,7 +624,7 @@ async function recoverStaleLocks(): Promise<void> {
      SET status = 'QUEUED', failure_message = 'Recovered from stale PROCESSING lock', updated_at = NOW()
      WHERE status = 'PROCESSING'
        AND processing_started_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
-    [STALE_PROCESSING_MINUTES]
+    [STALE_PROCESSING_MINUTES],
   );
 }
 
@@ -561,7 +646,9 @@ export async function startReportGenerationWorker(): Promise<void> {
   if (!(await reportGenerationTablesAvailable())) {
     return;
   }
-  console.log(`[${WORKER_NAME}] Starting (interval: ${INTERVAL_MS / 1000}s, chunk: ${CHUNK_SIZE})`);
+  console.log(
+    `[${WORKER_NAME}] Starting (interval: ${INTERVAL_MS / 1000}s, chunk: ${CHUNK_SIZE})`,
+  );
   void runGenerationWorker();
   intervalTimer = setInterval(() => void runGenerationWorker(), INTERVAL_MS);
   registerTimer(`${WORKER_NAME}-interval`, intervalTimer);

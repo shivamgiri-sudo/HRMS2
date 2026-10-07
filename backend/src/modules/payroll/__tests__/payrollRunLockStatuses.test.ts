@@ -38,7 +38,10 @@ function lockedSetFrom(source: string): Set<string> {
   const m = source.match(/LOCKED_STATUSES\s*=\s*new Set\(\[([^\]]*)\]\)/);
   expect(m, "LOCKED_STATUSES has moved or changed shape").toBeTruthy();
   return new Set(
-    m![1].split(",").map((s) => s.trim().replace(/^["']|["']$/g, "")).filter(Boolean),
+    m![1]
+      .split(",")
+      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+      .filter(Boolean),
   );
 }
 
@@ -46,7 +49,9 @@ describe("the recalculation lock recognises the real closed status", () => {
   const locked = lockedSetFrom(CALC);
 
   it("includes finalized, which is what 51 of the 66 runs actually are", () => {
-    expect(locked.has("finalized"), "FINALIZED runs were recalculable").toBe(true);
+    expect(locked.has("finalized"), "FINALIZED runs were recalculable").toBe(
+      true,
+    );
   });
 
   it("keeps the original values, which cost nothing to retain", () => {
@@ -55,9 +60,13 @@ describe("the recalculation lock recognises the real closed status", () => {
   });
 
   it("matches at least one status that exists in production", () => {
-    const reachable = LIVE_RUN_STATUSES.filter((s) => locked.has(s.toLowerCase()));
-    expect(reachable.length, `guard matches none of ${LIVE_RUN_STATUSES.join(", ")}`)
-      .toBeGreaterThan(0);
+    const reachable = LIVE_RUN_STATUSES.filter((s) =>
+      locked.has(s.toLowerCase()),
+    );
+    expect(
+      reachable.length,
+      `guard matches none of ${LIVE_RUN_STATUSES.join(", ")}`,
+    ).toBeGreaterThan(0);
   });
 });
 
@@ -66,8 +75,9 @@ describe("the comparison survives the case difference", () => {
     // 'FINALIZED' would miss a lowercase set member. SQL hides this; Set.has()
     // does not.
     expect(CALC).toMatch(/toLowerCase\(\)/);
-    expect(CALC, "the guard should go through the normalising helper")
-      .toMatch(/isLockedRunStatus\(run\.status\)/);
+    expect(CALC, "the guard should go through the normalising helper").toMatch(
+      /isLockedRunStatus\(run\.status\)/,
+    );
   });
 
   for (const status of MUST_BE_LOCKED) {

@@ -16,13 +16,13 @@ import { db } from "../../db/mysql.js";
  */
 export async function isPeriodLocked(
   periodCode: string | undefined | null,
-  conn?: PoolConnection
+  conn?: PoolConnection,
 ): Promise<boolean> {
   if (!periodCode) return false;
   const executor = conn ?? db;
   const [rows] = await executor.execute<RowDataPacket[]>(
     "SELECT status FROM finance_period WHERE period_code = ? LIMIT 1",
-    [periodCode]
+    [periodCode],
   );
   return String((rows as RowDataPacket[])[0]?.status ?? "") === "locked";
 }

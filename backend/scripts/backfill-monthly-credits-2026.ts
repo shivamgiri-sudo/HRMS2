@@ -9,9 +9,9 @@
  * Run from backend/:  npx tsx scripts/backfill-monthly-credits-2026.ts
  */
 
-import { db } from '../src/db/mysql.js';
-import { creditMonthlyLeaves } from '../src/workers/leave-monthly-credit.worker.js';
-import type { RowDataPacket } from 'mysql2';
+import { db } from "../src/db/mysql.js";
+import { creditMonthlyLeaves } from "../src/workers/leave-monthly-credit.worker.js";
+import type { RowDataPacket } from "mysql2";
 
 const YEAR = 2026;
 
@@ -21,7 +21,7 @@ async function main() {
   const upToMonth = now.getMonth(); // getMonth() is 0-indexed → gives last complete month
 
   if (upToMonth < 1) {
-    console.log('Nothing to back-fill yet (January not complete).');
+    console.log("Nothing to back-fill yet (January not complete).");
     await db.end();
     return;
   }
@@ -30,7 +30,7 @@ async function main() {
 
   const [scheduleRows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT month FROM leave_credit_schedule WHERE month <= ? ORDER BY month`,
-    [upToMonth]
+    [upToMonth],
   );
 
   for (const row of scheduleRows) {
@@ -43,14 +43,16 @@ async function main() {
        JOIN leave_type_master lt ON lt.id = l.leave_type_id
        JOIN leave_credit_schedule lcs ON lcs.leave_code = lt.leave_code AND lcs.month = ?
        WHERE l.credit_year = ? AND l.credit_month = ? AND l.credit_type = 'monthly'`,
-      [month, YEAR, month]
+      [month, YEAR, month],
     );
     if (Number((ran as any)[0]?.cnt ?? 0) === 0) {
-      console.log(`  Month ${month}: no worker records — skipping (seeded or not yet run)`);
+      console.log(
+        `  Month ${month}: no worker records — skipping (seeded or not yet run)`,
+      );
       continue;
     }
 
-    const monthStart = `${YEAR}-${String(month).padStart(2, '0')}-01`;
+    const monthStart = `${YEAR}-${String(month).padStart(2, "0")}-01`;
     const [result] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS gap
        FROM employees e
@@ -70,7 +72,7 @@ async function main() {
                SELECT leave_code FROM leave_credit_schedule WHERE month = ?
              )
          )`,
-      [monthStart, YEAR, month, month]
+      [monthStart, YEAR, month, month],
     );
 
     const gap = Number((result as any)[0]?.gap ?? 0);
@@ -79,7 +81,9 @@ async function main() {
       continue;
     }
 
-    console.log(`  Month ${month}: ${gap} employees missing credit — running creditMonthlyLeaves(${YEAR}, ${month})...`);
+    console.log(
+      `  Month ${month}: ${gap} employees missing credit — running creditMonthlyLeaves(${YEAR}, ${month})...`,
+    );
     await creditMonthlyLeaves(YEAR, month);
     console.log(`  Month ${month}: back-fill done\n`);
   }
@@ -97,10 +101,10 @@ async function main() {
        JOIN leave_type_master lt ON lt.id = l.leave_type_id
        JOIN leave_credit_schedule lcs ON lcs.leave_code = lt.leave_code AND lcs.month = ?
        WHERE l.credit_year = ? AND l.credit_month = ? AND l.credit_type = 'monthly'`,
-      [month, YEAR, month]
+      [month, YEAR, month],
     );
     if (Number((ran as any)[0]?.cnt ?? 0) > 0) {
-      const monthStart = `${YEAR}-${String(month).padStart(2, '0')}-01`;
+      const monthStart = `${YEAR}-${String(month).padStart(2, "0")}-01`;
       const [result] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS gap
          FROM employees e
@@ -120,24 +124,28 @@ async function main() {
                  SELECT leave_code FROM leave_credit_schedule WHERE month = ?
                )
            )`,
-        [monthStart, YEAR, month, month]
+        [monthStart, YEAR, month, month],
       );
       const gap = Number((result as any)[0]?.gap ?? 0);
       if (gap > 0) {
-        console.log(`  Month ${month} (current): ${gap} employees missing credit — running back-fill...`);
+        console.log(
+          `  Month ${month} (current): ${gap} employees missing credit — running back-fill...`,
+        );
         await creditMonthlyLeaves(YEAR, month);
         console.log(`  Month ${month}: back-fill done\n`);
       } else {
-        console.log(`  Month ${month} (current): all pre-month employees credited — OK`);
+        console.log(
+          `  Month ${month} (current): all pre-month employees credited — OK`,
+        );
       }
     }
   }
 
-  console.log('\nBackfill complete.');
+  console.log("\nBackfill complete.");
   await db.end();
 }
 
 main().catch((err) => {
-  console.error('Backfill failed:', err);
+  console.error("Backfill failed:", err);
   process.exit(1);
 });

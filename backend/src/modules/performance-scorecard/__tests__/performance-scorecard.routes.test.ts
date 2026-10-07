@@ -2,7 +2,10 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getUserRoleContext } from "../../../shared/roleResolver.js";
-import { resolveDashboardScope, DashboardScopeConfigurationError } from "../../../shared/dashboardScope.js";
+import {
+  resolveDashboardScope,
+  DashboardScopeConfigurationError,
+} from "../../../shared/dashboardScope.js";
 import type { DashboardScope } from "../../../shared/dashboardScope.js";
 
 /**
@@ -29,7 +32,8 @@ vi.mock("../../../shared/roleResolver.js", () => ({
 }));
 
 vi.mock("../../../shared/dashboardScope.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../shared/dashboardScope.js")>();
+  const original =
+    await importOriginal<typeof import("../../../shared/dashboardScope.js")>();
   return {
     ...original,
     resolveDashboardScope: vi.fn(),
@@ -38,7 +42,10 @@ vi.mock("../../../shared/dashboardScope.js", async (importOriginal) => {
 
 let actorRoles: string[] = ["manager"];
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
+  const original =
+    await importOriginal<
+      typeof import("../../../middleware/authMiddleware.js")
+    >();
   return {
     ...original,
     requireAuth: (req: any, _res: any, next: any) => {
@@ -88,12 +95,14 @@ beforeEach(() => {
   execute.mockReset().mockResolvedValue([[], []]);
   actorRoles = ["manager"];
   vi.mocked(resolveDashboardScope).mockReset().mockResolvedValue(teamScope);
-  vi.mocked(getUserRoleContext).mockReset().mockResolvedValue({
-    roleKeys: ["manager"],
-    primaryRole: "manager",
-    isSuperAdmin: false,
-    isHO: false,
-  });
+  vi.mocked(getUserRoleContext)
+    .mockReset()
+    .mockResolvedValue({
+      roleKeys: ["manager"],
+      primaryRole: "manager",
+      isSuperAdmin: false,
+      isHO: false,
+    });
 });
 
 describe("GET /api/performance-scorecard", () => {
@@ -141,7 +150,10 @@ describe("GET /api/performance-scorecard", () => {
       .query({ dateFrom: "2026-08-01", dateTo: "2026-08-24" });
 
     expect(res.status).toBe(200);
-    expect(vi.mocked(resolveDashboardScope)).toHaveBeenCalledWith("u-mgr-1", "branch_head");
+    expect(vi.mocked(resolveDashboardScope)).toHaveBeenCalledWith(
+      "u-mgr-1",
+      "branch_head",
+    );
 
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain("e.branch_id IN");
@@ -178,7 +190,10 @@ describe("GET /api/performance-scorecard", () => {
   });
 
   it("returns 200 with an empty array when the caller's team scope has no resolved employees", async () => {
-    vi.mocked(resolveDashboardScope).mockResolvedValue({ ...teamScope, employeeIds: [] });
+    vi.mocked(resolveDashboardScope).mockResolvedValue({
+      ...teamScope,
+      employeeIds: [],
+    });
 
     const res = await request(app())
       .get("/api/performance-scorecard")

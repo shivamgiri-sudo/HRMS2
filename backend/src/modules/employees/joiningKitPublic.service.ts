@@ -23,7 +23,12 @@ export type KitSession = {
   status: string;
   documentCount: number;
   totalPages: number;
-  documents: Array<{ code: string; name: string; pageFrom: number; pageTo: number }>;
+  documents: Array<{
+    code: string;
+    name: string;
+    pageFrom: number;
+    pageTo: number;
+  }>;
   providerUrl: string | null;
   txStatus: string | null;
   signedAt: string | null;
@@ -32,7 +37,10 @@ export type KitSession = {
 
 /** Anything that is not a live, unexpired kit token gets one flat error. */
 function reject(message: string): never {
-  throw Object.assign(new Error(message), { statusCode: 404, code: "KIT_LINK_INVALID" });
+  throw Object.assign(new Error(message), {
+    statusCode: 404,
+    code: "KIT_LINK_INVALID",
+  });
 }
 
 async function resolveToken(token: string): Promise<RowDataPacket> {
@@ -52,14 +60,25 @@ async function resolveToken(token: string): Promise<RowDataPacket> {
     // re-opened the mail should be told they are finished, not that the link
     // is broken.
     if (String(row.token_status) === "consumed") {
-      throw Object.assign(new Error("These documents have already been signed. No further action is needed."),
-        { statusCode: 410, code: "KIT_ALREADY_SIGNED" });
+      throw Object.assign(
+        new Error(
+          "These documents have already been signed. No further action is needed.",
+        ),
+        { statusCode: 410, code: "KIT_ALREADY_SIGNED" },
+      );
     }
-    reject("This signing link has been replaced by a newer one. Please check your email for the most recent message from MAS Callnet and use the link in that email.");
+    reject(
+      "This signing link has been replaced by a newer one. Please check your email for the most recent message from MAS Callnet and use the link in that email.",
+    );
   }
-  if (row.expires_at && new Date(String(row.expires_at)).getTime() < Date.now()) {
-    throw Object.assign(new Error("This signing link has expired. Please ask HR to resend it."),
-      { statusCode: 410, code: "KIT_LINK_EXPIRED" });
+  if (
+    row.expires_at &&
+    new Date(String(row.expires_at)).getTime() < Date.now()
+  ) {
+    throw Object.assign(
+      new Error("This signing link has expired. Please ask HR to resend it."),
+      { statusCode: 410, code: "KIT_LINK_EXPIRED" },
+    );
   }
   return row;
 }
@@ -111,8 +130,12 @@ export async function getPublicKitSession(token: string): Promise<KitSession> {
     })),
     providerUrl: tx[0]?.provider_url ? String(tx[0].provider_url) : null,
     txStatus: tx[0]?.status ? String(tx[0].status) : null,
-    signedAt: kit.completed_at ? new Date(String(kit.completed_at)).toISOString() : null,
-    expiresAt: tok.expires_at ? new Date(String(tok.expires_at)).toISOString() : null,
+    signedAt: kit.completed_at
+      ? new Date(String(kit.completed_at)).toISOString()
+      : null,
+    expiresAt: tok.expires_at
+      ? new Date(String(tok.expires_at)).toISOString()
+      : null,
   };
 }
 
@@ -123,7 +146,9 @@ export async function getPublicKitSession(token: string): Promise<KitSession> {
  * link keeps working after signing and returns what was actually signed.
  */
 export async function getPublicKitFile(token: string): Promise<{
-  storagePath: string; fileName: string; mimeType: string;
+  storagePath: string;
+  fileName: string;
+  mimeType: string;
 }> {
   const tok = await resolveToken(token).catch(async (e) => {
     // A consumed token must still be able to download its own signed copy.
@@ -149,15 +174,19 @@ export async function getPublicKitFile(token: string): Promise<{
   );
   const file = rows[0];
   if (!file || !file.storage_path) {
-    throw Object.assign(new Error("The document file is not available. Please contact HR."),
-      { statusCode: 404, code: "KIT_FILE_MISSING" });
+    throw Object.assign(
+      new Error("The document file is not available. Please contact HR."),
+      { statusCode: 404, code: "KIT_FILE_MISSING" },
+    );
   }
   const p = String(file.storage_path);
   if (!fs.existsSync(p)) {
     // The row can outlive the file; say so plainly rather than streaming a 0-byte
     // response that looks like a corrupt download.
-    throw Object.assign(new Error("The document file is not available. Please contact HR."),
-      { statusCode: 404, code: "KIT_FILE_MISSING" });
+    throw Object.assign(
+      new Error("The document file is not available. Please contact HR."),
+      { statusCode: 404, code: "KIT_FILE_MISSING" },
+    );
   }
   return {
     storagePath: p,
@@ -171,23 +200,37 @@ export async function getPublicKitFile(token: string): Promise<{
  * only evidence we have that the link was actually reached.
  */
 export async function startKitEsign(params: {
-  token: string; ipAddress?: string | null; userAgent?: string | null;
-}): Promise<{ providerUrl: string | null; txStatus: string | null; message: string | null }> {
+  token: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}): Promise<{
+  providerUrl: string | null;
+  txStatus: string | null;
+  message: string | null;
+}> {
   const session = await getPublicKitSession(params.token);
-  await db.execute(
-    `INSERT INTO employee_joining_document_audit_log
+  await db
+    .execute(
+      `INSERT INTO employee_joining_document_audit_log
        (id, employee_id, document_code, action_type, actor_type, new_value, ip_address, user_agent, created_at)
      VALUES (UUID(), ?, 'JOINING_KIT', 'KIT_ESIGN_OPENED', 'public_token', ?, ?, ?, NOW())`,
-    [
-      // employee_id is NOT NULL; the kit always has one.
-      await kitEmployeeId(session.kitId),
-      JSON.stringify({ kitId: session.kitId, hasProviderUrl: Boolean(session.providerUrl) }),
-      params.ipAddress ?? null,
-      params.userAgent ?? null,
-    ],
-  ).catch((e) => {
-    console.warn("[joining-kit] audit KIT_ESIGN_OPENED failed:", e instanceof Error ? e.message : e);
-  });
+      [
+        // employee_id is NOT NULL; the kit always has one.
+        await kitEmployeeId(session.kitId),
+        JSON.stringify({
+          kitId: session.kitId,
+          hasProviderUrl: Boolean(session.providerUrl),
+        }),
+        params.ipAddress ?? null,
+        params.userAgent ?? null,
+      ],
+    )
+    .catch((e) => {
+      console.warn(
+        "[joining-kit] audit KIT_ESIGN_OPENED failed:",
+        e instanceof Error ? e.message : e,
+      );
+    });
 
   return {
     providerUrl: session.providerUrl,
@@ -200,6 +243,8 @@ export async function startKitEsign(params: {
 
 async function kitEmployeeId(kitId: string): Promise<string> {
   const [r] = await db.execute<RowDataPacket[]>(
-    `SELECT employee_id FROM employee_joining_esign_kit WHERE id = ? LIMIT 1`, [kitId]);
+    `SELECT employee_id FROM employee_joining_esign_kit WHERE id = ? LIMIT 1`,
+    [kitId],
+  );
   return String(r[0]?.employee_id ?? "");
 }

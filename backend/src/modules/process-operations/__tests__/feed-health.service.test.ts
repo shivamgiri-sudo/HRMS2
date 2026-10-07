@@ -19,7 +19,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { getNeverReported, resetExistingRowsCacheForTests } = await import("../feed-health.service.js");
+const { getNeverReported, resetExistingRowsCacheForTests } =
+  await import("../feed-health.service.js");
 
 describe("getNeverReported", () => {
   beforeEach(() => {
@@ -37,18 +38,32 @@ describe("getNeverReported", () => {
     execute.mockResolvedValueOnce([
       [
         {
-          process_id: "p1", process_name: "Onfido", metric_code: "SHRINKAGE_PCT",
-          metric_name: "Shrinkage %", source_object: "attendance_daily_record",
-          process_key_kind: "employee", process_key_column: null, process_key_value: null,
-          employee_key_column: "emp_code", employee_key_kind: "employee_code",
-          upload_type_code: null, upload_type_name: null,
+          process_id: "p1",
+          process_name: "Onfido",
+          metric_code: "SHRINKAGE_PCT",
+          metric_name: "Shrinkage %",
+          source_object: "attendance_daily_record",
+          process_key_kind: "employee",
+          process_key_column: null,
+          process_key_value: null,
+          employee_key_column: "emp_code",
+          employee_key_kind: "employee_code",
+          upload_type_code: null,
+          upload_type_name: null,
         },
         {
-          process_id: "p2", process_name: "Dalmia Cement", metric_code: "SHRINKAGE_PCT",
-          metric_name: "Shrinkage %", source_object: "attendance_daily_record",
-          process_key_kind: "employee", process_key_column: null, process_key_value: null,
-          employee_key_column: "emp_code", employee_key_kind: "employee_code",
-          upload_type_code: null, upload_type_name: null,
+          process_id: "p2",
+          process_name: "Dalmia Cement",
+          metric_code: "SHRINKAGE_PCT",
+          metric_name: "Shrinkage %",
+          source_object: "attendance_daily_record",
+          process_key_kind: "employee",
+          process_key_column: null,
+          process_key_value: null,
+          employee_key_column: "emp_code",
+          employee_key_kind: "employee_code",
+          upload_type_code: null,
+          upload_type_name: null,
         },
       ],
       [],
@@ -58,8 +73,11 @@ describe("getNeverReported", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
-      metricKey: "SHRINKAGE_PCT", sourceObject: "attendance_daily_record",
-      processCount: 2, uploadTypeName: null, existingSourceRows: null,
+      metricKey: "SHRINKAGE_PCT",
+      sourceObject: "attendance_daily_record",
+      processCount: 2,
+      uploadTypeName: null,
+      existingSourceRows: null,
     });
     expect(result[0].processNames).toEqual(["Onfido", "Dalmia Cement"]);
     // No template matched -> no second query is worth the round trip.
@@ -70,18 +88,32 @@ describe("getNeverReported", () => {
     execute.mockResolvedValueOnce([
       [
         {
-          process_id: "visible", process_name: "Onfido", metric_code: "SHRINKAGE_PCT",
-          metric_name: "Shrinkage %", source_object: "attendance_daily_record",
-          process_key_kind: "employee", process_key_column: null, process_key_value: null,
-          employee_key_column: "emp_code", employee_key_kind: "employee_code",
-          upload_type_code: null, upload_type_name: null,
+          process_id: "visible",
+          process_name: "Onfido",
+          metric_code: "SHRINKAGE_PCT",
+          metric_name: "Shrinkage %",
+          source_object: "attendance_daily_record",
+          process_key_kind: "employee",
+          process_key_column: null,
+          process_key_value: null,
+          employee_key_column: "emp_code",
+          employee_key_kind: "employee_code",
+          upload_type_code: null,
+          upload_type_name: null,
         },
         {
-          process_id: "hidden", process_name: "Some Other Client", metric_code: "SHRINKAGE_PCT",
-          metric_name: "Shrinkage %", source_object: "attendance_daily_record",
-          process_key_kind: "employee", process_key_column: null, process_key_value: null,
-          employee_key_column: "emp_code", employee_key_kind: "employee_code",
-          upload_type_code: null, upload_type_name: null,
+          process_id: "hidden",
+          process_name: "Some Other Client",
+          metric_code: "SHRINKAGE_PCT",
+          metric_name: "Shrinkage %",
+          source_object: "attendance_daily_record",
+          process_key_kind: "employee",
+          process_key_column: null,
+          process_key_value: null,
+          employee_key_column: "emp_code",
+          employee_key_kind: "employee_code",
+          upload_type_code: null,
+          upload_type_name: null,
         },
       ],
       [],
@@ -98,12 +130,18 @@ describe("getNeverReported", () => {
       .mockResolvedValueOnce([
         [
           {
-            process_id: "godfrey", process_name: "Godfrey Philips India Ltd",
-            metric_code: "PROCESS_DELIVERED_UNITS", metric_name: "Delivered units",
+            process_id: "godfrey",
+            process_name: "Godfrey Philips India Ltd",
+            metric_code: "PROCESS_DELIVERED_UNITS",
+            metric_name: "Delivered units",
             source_object: "process_delivery_actual",
-            process_key_kind: "column", process_key_column: "process_id", process_key_value: "godfrey",
-            employee_key_column: null, employee_key_kind: null,
-            upload_type_code: "PROCESS_DELIVERY", upload_type_name: "Process Delivery Actuals (planned vs delivered)",
+            process_key_kind: "column",
+            process_key_column: "process_id",
+            process_key_value: "godfrey",
+            employee_key_column: null,
+            employee_key_kind: null,
+            upload_type_code: "PROCESS_DELIVERY",
+            upload_type_name: "Process Delivery Actuals (planned vs delivered)",
           },
         ],
         [],
@@ -113,7 +151,9 @@ describe("getNeverReported", () => {
 
     const result = await getNeverReported(new Set(["godfrey"]));
 
-    expect(result[0].uploadTypeName).toBe("Process Delivery Actuals (planned vs delivered)");
+    expect(result[0].uploadTypeName).toBe(
+      "Process Delivery Actuals (planned vs delivered)",
+    );
     expect(result[0].existingSourceRows).toBe(0);
     const countCall = execute.mock.calls[1];
     expect(String(countCall[0])).toContain("process_delivery_actual");
@@ -125,12 +165,18 @@ describe("getNeverReported", () => {
       .mockResolvedValueOnce([
         [
           {
-            process_id: "onfido", process_name: "Onfido",
-            metric_code: "ROSTER_ACK_PCT", metric_name: "Roster acknowledged by employee %",
+            process_id: "onfido",
+            process_name: "Onfido",
+            metric_code: "ROSTER_ACK_PCT",
+            metric_name: "Roster acknowledged by employee %",
             source_object: "wfm_roster_assignment",
-            process_key_kind: "employee", process_key_column: null, process_key_value: null,
-            employee_key_column: "employee_code", employee_key_kind: "employee_code",
-            upload_type_code: "ROSTER_UPLOAD", upload_type_name: "Shift Roster Bulk Upload",
+            process_key_kind: "employee",
+            process_key_column: null,
+            process_key_value: null,
+            employee_key_column: "employee_code",
+            employee_key_kind: "employee_code",
+            upload_type_code: "ROSTER_UPLOAD",
+            upload_type_name: "Shift Roster Bulk Upload",
           },
         ],
         [],
@@ -150,13 +196,19 @@ describe("getNeverReported", () => {
     execute.mockResolvedValueOnce([
       [
         {
-          process_id: "p1", process_name: "Some Process",
-          metric_code: "SOME_METRIC", metric_name: "Some Metric",
+          process_id: "p1",
+          process_name: "Some Process",
+          metric_code: "SOME_METRIC",
+          metric_name: "Some Metric",
           source_object: "some_table",
           // employee kind but no employee_key_column configured -- can't build a safe join.
-          process_key_kind: "employee", process_key_column: null, process_key_value: null,
-          employee_key_column: null, employee_key_kind: null,
-          upload_type_code: "SOME_TEMPLATE", upload_type_name: "Some Upload Template",
+          process_key_kind: "employee",
+          process_key_column: null,
+          process_key_value: null,
+          employee_key_column: null,
+          employee_key_kind: null,
+          upload_type_code: "SOME_TEMPLATE",
+          upload_type_name: "Some Upload Template",
         },
       ],
       [],
@@ -174,25 +226,46 @@ describe("getNeverReported", () => {
     execute.mockResolvedValueOnce([
       [
         {
-          process_id: "p1", process_name: "A", metric_code: "SMALL_GAP",
-          metric_name: "Small gap", source_object: "t1",
-          process_key_kind: "constant", process_key_column: null, process_key_value: null,
-          employee_key_column: null, employee_key_kind: null,
-          upload_type_code: null, upload_type_name: null,
+          process_id: "p1",
+          process_name: "A",
+          metric_code: "SMALL_GAP",
+          metric_name: "Small gap",
+          source_object: "t1",
+          process_key_kind: "constant",
+          process_key_column: null,
+          process_key_value: null,
+          employee_key_column: null,
+          employee_key_kind: null,
+          upload_type_code: null,
+          upload_type_name: null,
         },
         {
-          process_id: "p1", process_name: "A", metric_code: "BIG_GAP",
-          metric_name: "Big gap", source_object: "t2",
-          process_key_kind: "constant", process_key_column: null, process_key_value: null,
-          employee_key_column: null, employee_key_kind: null,
-          upload_type_code: null, upload_type_name: null,
+          process_id: "p1",
+          process_name: "A",
+          metric_code: "BIG_GAP",
+          metric_name: "Big gap",
+          source_object: "t2",
+          process_key_kind: "constant",
+          process_key_column: null,
+          process_key_value: null,
+          employee_key_column: null,
+          employee_key_kind: null,
+          upload_type_code: null,
+          upload_type_name: null,
         },
         {
-          process_id: "p2", process_name: "B", metric_code: "BIG_GAP",
-          metric_name: "Big gap", source_object: "t2",
-          process_key_kind: "constant", process_key_column: null, process_key_value: null,
-          employee_key_column: null, employee_key_kind: null,
-          upload_type_code: null, upload_type_name: null,
+          process_id: "p2",
+          process_name: "B",
+          metric_code: "BIG_GAP",
+          metric_name: "Big gap",
+          source_object: "t2",
+          process_key_kind: "constant",
+          process_key_column: null,
+          process_key_value: null,
+          employee_key_column: null,
+          employee_key_kind: null,
+          upload_type_code: null,
+          upload_type_name: null,
         },
       ],
       [],

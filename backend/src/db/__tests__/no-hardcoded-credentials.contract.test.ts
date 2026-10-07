@@ -57,7 +57,8 @@ function readIfSmall(rel: string): string | null {
  */
 const LEAKED_FRAGMENT = "qwersdfg";
 
-const SOURCE_LIKE = /\.(ts|tsx|js|jsx|cjs|mjs|py|sh|bat|ps1|yml|yaml|sql|md|txt|example|json)$/i;
+const SOURCE_LIKE =
+  /\.(ts|tsx|js|jsx|cjs|mjs|py|sh|bat|ps1|yml|yaml|sql|md|txt|example|json)$/i;
 
 describe("the leaked password is not back in any tracked file", () => {
   it("appears in no tracked file", () => {
@@ -75,14 +76,14 @@ describe("the leaked password is not back in any tracked file", () => {
       offenders,
       offenders.length
         ? `The leaked database password is back in ${offenders.length} tracked file(s):\n` +
-          offenders.map((f) => `  ${f}`).join("\n") +
-          `\n\nThis repository is public. Read the credential from the environment instead:\n` +
-          `  JS   process.env.DB_PASSWORD      run with: node --env-file=backend/.env <script>\n` +
-          `  py   os.environ["DB_PASSWORD"]\n` +
-          `  sh   "\${DB_PASSWORD:?set it first}"\n` +
-          `\nIf you are here because rotating the password broke a script, that is exactly the\n` +
-          `trap this guard exists to stop — fix the script, do not paste the new value in.`
-        : ""
+            offenders.map((f) => `  ${f}`).join("\n") +
+            `\n\nThis repository is public. Read the credential from the environment instead:\n` +
+            `  JS   process.env.DB_PASSWORD      run with: node --env-file=backend/.env <script>\n` +
+            `  py   os.environ["DB_PASSWORD"]\n` +
+            `  sh   "\${DB_PASSWORD:?set it first}"\n` +
+            `\nIf you are here because rotating the password broke a script, that is exactly the\n` +
+            `trap this guard exists to stop — fix the script, do not paste the new value in.`
+        : "",
     ).toEqual([]);
   });
 });
@@ -101,7 +102,8 @@ describe("credential env reads do not fall back to a literal", () => {
    *
    * An empty-string fallback is fine — it fails closed, which is the point.
    */
-  const FALLBACK = /(?:process\.env\.)?([A-Z0-9_]*(?:PASSWORD|PWD))\s*(?:\|\||\?\?)\s*(['"])([^'"]{4,})\2/g;
+  const FALLBACK =
+    /(?:process\.env\.)?([A-Z0-9_]*(?:PASSWORD|PWD))\s*(?:\|\||\?\?)\s*(['"])([^'"]{4,})\2/g;
 
   /** Placeholders and obvious test values are not credentials. */
   const HARMLESS =
@@ -129,13 +131,13 @@ describe("credential env reads do not fall back to a literal", () => {
       offenders,
       offenders.length
         ? `A credential falls back to a hardcoded value:\n` +
-          offenders.map((o) => `  ${o}`).join("\n") +
-          `\n\nDrop the literal and fail loudly instead — see getDialerDb() in\n` +
-          `backend/src/workers/apr-vicidial-sync.worker.ts for the shape:\n` +
-          `  const pw = process.env.X_PASSWORD;\n` +
-          `  if (!pw) throw new Error("X_PASSWORD is not set, so <thing> cannot run.");\n` +
-          `\nAn empty-string fallback is fine. A real value is not: it ships to a public repo.`
-        : ""
+            offenders.map((o) => `  ${o}`).join("\n") +
+            `\n\nDrop the literal and fail loudly instead — see getDialerDb() in\n` +
+            `backend/src/workers/apr-vicidial-sync.worker.ts for the shape:\n` +
+            `  const pw = process.env.X_PASSWORD;\n` +
+            `  if (!pw) throw new Error("X_PASSWORD is not set, so <thing> cannot run.");\n` +
+            `\nAn empty-string fallback is fine. A real value is not: it ships to a public repo.`
+        : "",
     ).toEqual([]);
   });
 });

@@ -106,9 +106,12 @@ const asDate = (v: unknown): Date | null => {
  * lend its PF/ESIC flags to this one. No matching row at all is fine — the
  * package's own epf_employee/esic_employee amounts then decide applicability.
  */
-async function fromApprovedPackage(employeeId: string): Promise<AppointmentLetterSalary | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT p.*,
+async function fromApprovedPackage(
+  employeeId: string,
+): Promise<AppointmentLetterSalary | null> {
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT p.*,
             a.pf_applicable, a.esi_applicable,
             r.package_effective_from, r.reviewed_by, r.reviewed_at
        FROM employee_payroll_head_review r
@@ -122,8 +125,9 @@ async function fromApprovedPackage(employeeId: string): Promise<AppointmentLette
         AND r.package_accepted = 1
         AND r.salary_package_id IS NOT NULL
       LIMIT 1`,
-    [employeeId],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      [employeeId],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
   const p = (rows as RowDataPacket[])[0];
   if (!p) return null;
 
@@ -152,7 +156,8 @@ async function fromApprovedPackage(employeeId: string): Promise<AppointmentLette
     approvedAt: asDate(p.reviewed_at),
     packageEffectiveFrom: asDate(p.package_effective_from),
     pfApplicable: num(p.epf_employee) > 0 || Number(p.pf_applicable ?? 0) === 1,
-    esicApplicable: num(p.esic_employee) > 0 || Number(p.esi_applicable ?? 0) === 1,
+    esicApplicable:
+      num(p.esic_employee) > 0 || Number(p.esi_applicable ?? 0) === 1,
     unavailableLines: [],
   };
 }
@@ -166,12 +171,16 @@ async function fromApprovedPackage(employeeId: string): Promise<AppointmentLette
  * failure is diagnosed against the review row rather than collapsed into a
  * single condition.
  */
-async function diagnoseMissingApproval(employeeId: string): Promise<AppointmentLetterSalaryError> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT status, package_accepted, salary_package_id, rejection_remarks
+async function diagnoseMissingApproval(
+  employeeId: string,
+): Promise<AppointmentLetterSalaryError> {
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT status, package_accepted, salary_package_id, rejection_remarks
        FROM employee_payroll_head_review WHERE employee_id = ? LIMIT 1`,
-    [employeeId],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      [employeeId],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
   const r = (rows as RowDataPacket[])[0];
 
   if (!r) {
@@ -219,7 +228,9 @@ async function diagnoseMissingApproval(employeeId: string): Promise<AppointmentL
  * what the company committed to, so a figure nobody approved must never appear
  * on one.
  */
-export async function resolveAppointmentLetterSalary(employeeId: string): Promise<AppointmentLetterSalary> {
+export async function resolveAppointmentLetterSalary(
+  employeeId: string,
+): Promise<AppointmentLetterSalary> {
   const resolved = await fromApprovedPackage(employeeId);
   if (!resolved) throw await diagnoseMissingApproval(employeeId);
 
@@ -235,9 +246,24 @@ export async function resolveAppointmentLetterSalary(employeeId: string): Promis
 
 /** Every salary variable the Handlebars letter templates can reference. */
 const LETTER_SALARY_KEYS = [
-  "basic", "hra", "lta", "conveyance", "other_allowance", "special_allowance",
-  "bonus", "medical_allowance", "portfolio", "pli", "gross_salary", "esic",
-  "epf", "net_salary", "employer_esic", "employer_epf", "admin_charges", "ctc",
+  "basic",
+  "hra",
+  "lta",
+  "conveyance",
+  "other_allowance",
+  "special_allowance",
+  "bonus",
+  "medical_allowance",
+  "portfolio",
+  "pli",
+  "gross_salary",
+  "esic",
+  "epf",
+  "net_salary",
+  "employer_esic",
+  "employer_epf",
+  "admin_charges",
+  "ctc",
 ] as const;
 
 /**
@@ -263,16 +289,25 @@ export async function letterSalaryRowsOrBlank(
   employeeId: string,
 ): Promise<{ rows: Record<string, string>; unavailableReason: string | null }> {
   try {
-    return { rows: toLetterRows(await resolveAppointmentLetterSalary(employeeId)), unavailableReason: null };
+    return {
+      rows: toLetterRows(await resolveAppointmentLetterSalary(employeeId)),
+      unavailableReason: null,
+    };
   } catch (err) {
     const rows: Record<string, string> = {};
     for (const k of LETTER_SALARY_KEYS) rows[k] = "";
-    return { rows, unavailableReason: err instanceof Error ? err.message : "Salary unavailable" };
+    return {
+      rows,
+      unavailableReason:
+        err instanceof Error ? err.message : "Salary unavailable",
+    };
   }
 }
 
 /** Shape the renderer expects — string amounts, two decimals. */
-export function toLetterRows(s: AppointmentLetterSalary): Record<string, string> {
+export function toLetterRows(
+  s: AppointmentLetterSalary,
+): Record<string, string> {
   const f = (n: number) => n.toFixed(2);
   return {
     basic: f(s.basic),

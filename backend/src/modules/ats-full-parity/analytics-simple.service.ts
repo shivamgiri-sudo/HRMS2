@@ -15,39 +15,78 @@ export class SimpleAnalyticsService {
 
     // Count candidates by stage
     const registered = candidates.length;
-    const screened = candidates.filter((c: any) =>
-      c.current_stage && !['New', 'Applied', 'Registered'].includes(c.current_stage)
+    const screened = candidates.filter(
+      (c: any) =>
+        c.current_stage &&
+        !["New", "Applied", "Registered"].includes(c.current_stage),
     ).length;
-    const interviewed = candidates.filter((c: any) =>
-      c.current_stage && ['Interview', 'Assessment', "OP's Round", 'Client Round', 'Selected', 'Joined'].includes(c.current_stage)
+    const interviewed = candidates.filter(
+      (c: any) =>
+        c.current_stage &&
+        [
+          "Interview",
+          "Assessment",
+          "OP's Round",
+          "Client Round",
+          "Selected",
+          "Joined",
+        ].includes(c.current_stage),
     ).length;
-    const selected = candidates.filter((c: any) =>
-      c._selected || ['Selected', 'Joined', 'Onboarding'].includes(c.current_stage)
+    const selected = candidates.filter(
+      (c: any) =>
+        c._selected ||
+        ["Selected", "Joined", "Onboarding"].includes(c.current_stage),
     ).length;
-    const joined = candidates.filter((c: any) =>
-      c.current_stage === 'Joined'
+    const joined = candidates.filter(
+      (c: any) => c.current_stage === "Joined",
     ).length;
 
     const funnel = [
       { stage: "Registered", count: registered, percentage: 100 },
-      { stage: "Screened", count: screened, percentage: registered > 0 ? Math.round((screened / registered) * 100) : 0 },
-      { stage: "Interviewed", count: interviewed, percentage: registered > 0 ? Math.round((interviewed / registered) * 100) : 0 },
-      { stage: "Selected", count: selected, percentage: registered > 0 ? Math.round((selected / registered) * 100) : 0 },
-      { stage: "Joined", count: joined, percentage: registered > 0 ? Math.round((joined / registered) * 100) : 0 },
+      {
+        stage: "Screened",
+        count: screened,
+        percentage:
+          registered > 0 ? Math.round((screened / registered) * 100) : 0,
+      },
+      {
+        stage: "Interviewed",
+        count: interviewed,
+        percentage:
+          registered > 0 ? Math.round((interviewed / registered) * 100) : 0,
+      },
+      {
+        stage: "Selected",
+        count: selected,
+        percentage:
+          registered > 0 ? Math.round((selected / registered) * 100) : 0,
+      },
+      {
+        stage: "Joined",
+        count: joined,
+        percentage:
+          registered > 0 ? Math.round((joined / registered) * 100) : 0,
+      },
     ];
 
-    const dropOffAnalysis: Array<{ fromStage: string; toStage: string; dropOff: number; dropOffRate: number }> = [];
+    const dropOffAnalysis: Array<{
+      fromStage: string;
+      toStage: string;
+      dropOff: number;
+      dropOffRate: number;
+    }> = [];
     for (let i = 0; i < funnel.length - 1; i++) {
       const current = funnel[i];
       const next = funnel[i + 1];
       const dropOff = current.count - next.count;
-      const dropOffRate = current.count > 0 ? Math.round((dropOff / current.count) * 100) : 0;
+      const dropOffRate =
+        current.count > 0 ? Math.round((dropOff / current.count) * 100) : 0;
 
       dropOffAnalysis.push({
         fromStage: current.stage,
         toStage: next.stage,
         dropOff,
-        dropOffRate
+        dropOffRate,
       });
     }
 
@@ -67,7 +106,7 @@ export class SimpleAnalyticsService {
       selections: Number(row.Selection || 0),
       rejections: Number(row.Rejection || 0),
       pending: Number(row.Pending || 0),
-      avgWaitHours: Math.round(Number(row["Avg Time"] || 0) / 60 * 10) / 10
+      avgWaitHours: Math.round((Number(row["Avg Time"] || 0) / 60) * 10) / 10,
     }));
 
     // Calculate comparisons from trends
@@ -80,16 +119,19 @@ export class SimpleAnalyticsService {
       timeSeries,
       comparisons: {
         mtdVsLastMonth: {
-          arrivals: Number(mtd.totalArrival || 0) - Number(today.totalArrival || 0),
-          selections: Number(mtd.totalSelection || 0) - Number(today.totalSelection || 0),
-          rejections: Number(mtd.totalRejection || 0) - Number(today.totalRejection || 0)
+          arrivals:
+            Number(mtd.totalArrival || 0) - Number(today.totalArrival || 0),
+          selections:
+            Number(mtd.totalSelection || 0) - Number(today.totalSelection || 0),
+          rejections:
+            Number(mtd.totalRejection || 0) - Number(today.totalRejection || 0),
         },
         wtdVsLastWeek: {
           arrivals: Number(wtd.totalArrival || 0),
           selections: Number(wtd.totalSelection || 0),
-          rejections: Number(wtd.totalRejection || 0)
-        }
-      }
+          rejections: Number(wtd.totalRejection || 0),
+        },
+      },
     };
   }
 
@@ -124,11 +166,11 @@ export class SimpleAnalyticsService {
           selectedCount: Number(r.SelectedCount || 0),
           selectionRate: Math.round(selectionRate),
           slaComplianceRate: Math.round(slaRate),
-          avgWaitMinutes: Math.round(Number(r.AvgWaitMinutes || 0))
+          avgWaitMinutes: Math.round(Number(r.AvgWaitMinutes || 0)),
         },
         performance,
         trend: "stable" as const,
-        attentionFlags: attentionFlags.length > 0 ? attentionFlags : null
+        attentionFlags: attentionFlags.length > 0 ? attentionFlags : null,
       };
     });
 
@@ -136,7 +178,9 @@ export class SimpleAnalyticsService {
       .map((r, index) => ({
         recruiterId: r.id,
         rank: index + 1,
-        score: Math.round((r.metrics.selectionRate + r.metrics.slaComplianceRate) / 2)
+        score: Math.round(
+          (r.metrics.selectionRate + r.metrics.slaComplianceRate) / 2,
+        ),
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
@@ -157,7 +201,7 @@ export class SimpleAnalyticsService {
       selections: Number(s.Selection || 0),
       rejections: Number(s.Rejection || 0),
       selectionRate: Math.round(Number(s.SelectionRate || 0)),
-      avgWaitMinutes: Math.round(Number(s.AvgWaitMinutes || 0))
+      avgWaitMinutes: Math.round(Number(s.AvgWaitMinutes || 0)),
     }));
 
     return { channels };
@@ -184,7 +228,8 @@ export class SimpleAnalyticsService {
       .map(([reason, count]) => ({
         reason,
         count,
-        percentage: totalRejections > 0 ? Math.round((count / totalRejections) * 100) : 0
+        percentage:
+          totalRejections > 0 ? Math.round((count / totalRejections) * 100) : 0,
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
@@ -196,7 +241,7 @@ export class SimpleAnalyticsService {
       selections: 0,
       rejections: Number(row.Rejection || 0),
       pending: 0,
-      avgWaitHours: 0
+      avgWaitHours: 0,
     }));
 
     return { reasons, trends };
@@ -210,15 +255,21 @@ export class SimpleAnalyticsService {
     const queueRows = webData.queueRows || [];
 
     const slaBreachCount = queueRows.filter((r: any) => r.SLAFlag).length;
-    const avgWaitTime = queueRows.length > 0
-      ? Math.round(queueRows.reduce((sum: number, r: any) => sum + Number(r.WaitingMinutes || 0), 0) / queueRows.length)
-      : 0;
+    const avgWaitTime =
+      queueRows.length > 0
+        ? Math.round(
+            queueRows.reduce(
+              (sum: number, r: any) => sum + Number(r.WaitingMinutes || 0),
+              0,
+            ) / queueRows.length,
+          )
+        : 0;
 
     return {
       queueLength: queueRows.length,
       avgWaitTime,
       slaBreachCount,
-      nextInterview: queueRows[0]?.created_at || null
+      nextInterview: queueRows[0]?.created_at || null,
     };
   }
 }

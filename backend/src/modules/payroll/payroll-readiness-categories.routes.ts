@@ -19,7 +19,10 @@
 import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import {
@@ -38,10 +41,20 @@ export const payrollReadinessCategoriesRouter = Router();
  * to act on — but no employee list. A readiness dashboard has no business handing a branch-level
  * account a roster of who has no bank account.
  */
-const DRILLDOWN_ROLES = ["super_admin", "payroll_head", "finance_head", "admin"];
+const DRILLDOWN_ROLES = [
+  "super_admin",
+  "payroll_head",
+  "finance_head",
+  "admin",
+];
 
 /** Same synthetic-run exclusion the two readiness pages use, so all three resolve the same run. */
-const SYNTHETIC_RUN_CREATORS = ["test-auto-gen", "codex-e2e", "smoke-test", "demo-seed"];
+const SYNTHETIC_RUN_CREATORS = [
+  "test-auto-gen",
+  "codex-e2e",
+  "smoke-test",
+  "demo-seed",
+];
 
 /**
  * Keys that must never leave this router, regardless of what a check selects.
@@ -62,14 +75,22 @@ const FORBIDDEN_SAMPLE_KEY_FRAGMENTS = [
 
 function isForbiddenKey(key: string): boolean {
   const k = key.toLowerCase();
-  return FORBIDDEN_SAMPLE_KEY_FRAGMENTS.some((fragment) => k.includes(fragment));
+  return FORBIDDEN_SAMPLE_KEY_FRAGMENTS.some((fragment) =>
+    k.includes(fragment),
+  );
 }
 
-function redactSamples(check: CategoryCheckResult, allowDrilldown: boolean): CategoryCheckResult {
+function redactSamples(
+  check: CategoryCheckResult,
+  allowDrilldown: boolean,
+): CategoryCheckResult {
   if (!check.sample) return check;
   if (!allowDrilldown) {
     const { sample: _sample, ...rest } = check;
-    return { ...rest, detail: { ...(check.detail ?? {}), sample_withheld: "insufficient_role" } };
+    return {
+      ...rest,
+      detail: { ...(check.detail ?? {}), sample_withheld: "insufficient_role" },
+    };
   }
   return {
     ...check,
@@ -83,8 +104,14 @@ function redactSamples(check: CategoryCheckResult, allowDrilldown: boolean): Cat
   };
 }
 
-function shape(result: ReadinessCategoriesResult, allowDrilldown: boolean): ReadinessCategoriesResult {
-  return { ...result, checks: result.checks.map((c) => redactSamples(c, allowDrilldown)) };
+function shape(
+  result: ReadinessCategoriesResult,
+  allowDrilldown: boolean,
+): ReadinessCategoriesResult {
+  return {
+    ...result,
+    checks: result.checks.map((c) => redactSamples(c, allowDrilldown)),
+  };
 }
 
 async function resolveRunForMonth(month: string): Promise<string | null> {
@@ -101,26 +128,48 @@ async function resolveRunForMonth(month: string): Promise<string | null> {
       ORDER BY created_at DESC LIMIT 1`,
     [month, ...SYNTHETIC_RUN_CREATORS],
   );
-  return ((rows[0] as RowDataPacket | undefined)?.id as string | undefined) ?? null;
+  return (
+    ((rows[0] as RowDataPacket | undefined)?.id as string | undefined) ?? null
+  );
 }
 
 payrollReadinessCategoriesRouter.get(
   "/month/:month",
   requireAuth,
-  requireRole("super_admin", "payroll_head", "finance_head", "admin", "payroll", "branch_head", "process_manager"),
+  requireRole(
+    "super_admin",
+    "payroll_head",
+    "finance_head",
+    "admin",
+    "payroll",
+    "branch_head",
+    "process_manager",
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     const month = String(req.params.month ?? "");
     if (!/^\d{4}-\d{2}$/.test(month)) {
-      return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
+      return res
+        .status(400)
+        .json({ success: false, message: "month must be YYYY-MM" });
     }
     try {
       const runId = await resolveRunForMonth(month);
       if (!runId) {
-        return res.json({ success: true, month, status: "not_created", data: null });
+        return res.json({
+          success: true,
+          month,
+          status: "not_created",
+          data: null,
+        });
       }
       const result = await evaluateReadinessCategories(runId);
       const allow = DRILLDOWN_ROLES.includes(String(req.authUser?.role ?? ""));
-      return res.json({ success: true, month, status: "checked", data: shape(result, allow) });
+      return res.json({
+        success: true,
+        month,
+        status: "checked",
+        data: shape(result, allow),
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[ReadinessCategories] month evaluation failed:", message);
@@ -138,10 +187,20 @@ payrollReadinessCategoriesRouter.get(
 payrollReadinessCategoriesRouter.get(
   "/:runId",
   requireAuth,
-  requireRole("super_admin", "payroll_head", "finance_head", "admin", "payroll", "branch_head", "process_manager"),
+  requireRole(
+    "super_admin",
+    "payroll_head",
+    "finance_head",
+    "admin",
+    "payroll",
+    "branch_head",
+    "process_manager",
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const result = await evaluateReadinessCategories(String(req.params.runId));
+      const result = await evaluateReadinessCategories(
+        String(req.params.runId),
+      );
       const allow = DRILLDOWN_ROLES.includes(String(req.authUser?.role ?? ""));
       return res.json({ success: true, data: shape(result, allow) });
     } catch (err: unknown) {

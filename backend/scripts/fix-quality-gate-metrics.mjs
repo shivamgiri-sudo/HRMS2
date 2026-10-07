@@ -11,8 +11,11 @@ import mysql from "mysql2/promise";
 import "dotenv/config";
 
 const conn = await mysql.createConnection({
-  host: process.env.DB_HOST, user: process.env.DB_USER, password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT || 3306, database: process.env.DB_NAME,
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT || 3306,
+  database: process.env.DB_NAME,
 });
 
 const LOW_QUALITY_GATE_CLIENT_IDS = new Set(["375", "409", "475"]);
@@ -23,24 +26,54 @@ const LOW_QUALITY_GATE_CLIENT_IDS = new Set(["375", "409", "475"]);
 // (COMPETITOR_MENTION_PCT, VOC_*_NEG_PCT). 'profanity' is handled specially.
 const METRICS = [
   { code: "QA_EMPATHY_PCT", column: "express_empathy", kind: "ratio" },
-  { code: "QA_CONCERN_PCT", column: "customer_concern_acknowledged", kind: "ratio" },
-  { code: "QA_CONCERN_ACK_PCT", column: "customer_concern_acknowledged", kind: "ratio" },
-  { code: "QA_ACCURACY_PCT", column: "correct_and_complete_information", kind: "ratio" },
-  { code: "QA_INFO_ACCURACY_PCT", column: "correct_and_complete_information", kind: "ratio" },
+  {
+    code: "QA_CONCERN_PCT",
+    column: "customer_concern_acknowledged",
+    kind: "ratio",
+  },
+  {
+    code: "QA_CONCERN_ACK_PCT",
+    column: "customer_concern_acknowledged",
+    kind: "ratio",
+  },
+  {
+    code: "QA_ACCURACY_PCT",
+    column: "correct_and_complete_information",
+    kind: "ratio",
+  },
+  {
+    code: "QA_INFO_ACCURACY_PCT",
+    column: "correct_and_complete_information",
+    kind: "ratio",
+  },
   { code: "QA_PROBING_PCT", column: "accurate_issue_probing", kind: "ratio" },
   { code: "QA_CLOSURE_PCT", column: "proper_call_closure", kind: "ratio" },
   { code: "QA_LISTENING_PCT", column: "active_listening", kind: "ratio" },
-  { code: "COMPETITOR_MENTION_PCT", column: "Competitor_Name", kind: "notblank" },
-  { code: "VOC_LOGISTICS_NEG_PCT", column: "customer_voc_logistic_negative", kind: "notblank" },
-  { code: "VOC_PRODUCT_NEG_PCT", column: "customer_voc_product_negative", kind: "notblank" },
+  {
+    code: "COMPETITOR_MENTION_PCT",
+    column: "Competitor_Name",
+    kind: "notblank",
+  },
+  {
+    code: "VOC_LOGISTICS_NEG_PCT",
+    column: "customer_voc_logistic_negative",
+    kind: "notblank",
+  },
+  {
+    code: "VOC_PRODUCT_NEG_PCT",
+    column: "customer_voc_product_negative",
+    kind: "notblank",
+  },
 ];
 
 async function computeAndWrite(metric, processId, processName) {
   const [emps] = await conn.query(
-    "SELECT employee_code FROM employees WHERE process_id = ?", [processId]
+    "SELECT employee_code FROM employees WHERE process_id = ?",
+    [processId],
   );
   const codes = emps.map((e) => e.employee_code);
-  if (!codes.length) return { code: metric.code, processName, skipped: "no employees" };
+  if (!codes.length)
+    return { code: metric.code, processName, skipped: "no employees" };
   const inList = codes.map(() => "?").join(",");
 
   const [latestRows] = await conn.query(
@@ -50,7 +83,12 @@ async function computeAndWrite(metric, processId, processName) {
     codes,
   );
   const dateIso = latestRows[0]?.latest;
-  if (!dateIso) return { code: metric.code, processName, skipped: "no audited calls in the last 7 days" };
+  if (!dateIso)
+    return {
+      code: metric.code,
+      processName,
+      skipped: "no audited calls in the last 7 days",
+    };
 
   const [cidRows] = await conn.query(
     `SELECT ClientId, COUNT(*) n FROM db_audit.call_quality_assessment
@@ -58,7 +96,12 @@ async function computeAndWrite(metric, processId, processName) {
       GROUP BY ClientId ORDER BY n DESC LIMIT 1`,
     [...codes, dateIso, dateIso],
   );
-  if (!cidRows.length) return { code: metric.code, processName, skipped: "no audited calls that day (race)" };
+  if (!cidRows.length)
+    return {
+      code: metric.code,
+      processName,
+      skipped: "no audited calls that day (race)",
+    };
   const clientId = String(cidRows[0].ClientId);
   const gateApplies = LOW_QUALITY_GATE_CLIENT_IDS.has(clientId);
   const gateClause = gateApplies ? "AND quality_percentage > 35" : "";
@@ -81,7 +124,13 @@ async function computeAndWrite(metric, processId, processName) {
   );
   const score = scoreRows[0].score;
   const n = scoreRows[0].n;
-  if (score === null || n === 0) return { code: metric.code, processName, clientId, skipped: "no scoreable calls after gate" };
+  if (score === null || n === 0)
+    return {
+      code: metric.code,
+      processName,
+      clientId,
+      skipped: "no scoreable calls after gate",
+    };
 
   await conn.query(
     `INSERT INTO process_metric_actual (id, process_id, metric_key, score_date, actual_value, source, note, created_at, updated_at)
@@ -89,7 +138,15 @@ async function computeAndWrite(metric, processId, processName) {
      ON DUPLICATE KEY UPDATE actual_value = VALUES(actual_value), note = VALUES(note), updated_at = NOW()`,
     [processId, metric.code, dateIso, score],
   );
-  return { code: metric.code, processName, clientId, gateApplies, date: dateIso, n, score };
+  return {
+    code: metric.code,
+    processName,
+    clientId,
+    gateApplies,
+    date: dateIso,
+    n,
+    score,
+  };
 }
 
 const results = [];
@@ -110,5 +167,7 @@ for (const metric of METRICS) {
 
 console.log(JSON.stringify(results, null, 2));
 const written = results.filter((r) => r.score !== undefined);
-console.log(`\n${written.length} readings corrected across ${new Set(written.map((r) => r.processName)).size} processes.`);
+console.log(
+  `\n${written.length} readings corrected across ${new Set(written.map((r) => r.processName)).size} processes.`,
+);
 await conn.end();

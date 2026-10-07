@@ -63,13 +63,13 @@ function maskUan(uan: string): string {
  */
 export async function importPfUanBatch(
   batchId: string,
-  importedByUserId: string
+  importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
   const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
       ORDER BY row_no`,
-    [batchId]
+    [batchId],
   );
 
   if (batchRows.length === 0) {
@@ -89,7 +89,7 @@ export async function importPfUanBatch(
         : (row.normalized_data ?? {});
 
     const employeeCode = String(
-      data.employee_code ?? data.employee_id ?? data.emp_code ?? ""
+      data.employee_code ?? data.employee_id ?? data.emp_code ?? "",
     ).trim();
     const rawUan = String(data.uan ?? data.uan_number ?? "").replace(/\D/g, "");
 
@@ -117,7 +117,7 @@ export async function importPfUanBatch(
     const codes = Array.from(employeeCodes);
     const [rows] = await db.execute<EmployeeRow[]>(
       `SELECT id, employee_code FROM employees WHERE employee_code IN (${codes.map(() => "?").join(",")})`,
-      codes
+      codes,
     );
     for (const r of rows) employeeMap.set(r.employee_code, r);
   }
@@ -127,10 +127,11 @@ export async function importPfUanBatch(
   if (employeeIds.length > 0) {
     const [rows] = await db.execute<ExistingUanRow[]>(
       `SELECT employee_id, uan_number FROM employee_statutory_info WHERE employee_id IN (${employeeIds.map(() => "?").join(",")})`,
-      employeeIds
+      employeeIds,
     );
     for (const r of rows) {
-      if (r.uan_number) existingUanByEmployeeId.set(r.employee_id, r.uan_number);
+      if (r.uan_number)
+        existingUanByEmployeeId.set(r.employee_id, r.uan_number);
     }
   }
 
@@ -140,15 +141,19 @@ export async function importPfUanBatch(
     try {
       const emp = employeeMap.get(row.employeeCode);
       if (!emp) {
-        throw new Error(`Row ${row.rowNo}: no employee with code ${row.employeeCode}`);
+        throw new Error(
+          `Row ${row.rowNo}: no employee with code ${row.employeeCode}`,
+        );
       }
       const employeeId = emp.id;
 
-      const currentUan = String(existingUanByEmployeeId.get(employeeId) ?? "").replace(/\D/g, "");
+      const currentUan = String(
+        existingUanByEmployeeId.get(employeeId) ?? "",
+      ).replace(/\D/g, "");
       if (currentUan && currentUan !== row.rawUan) {
         throw new Error(
           `Row ${row.rowNo}: ${row.employeeCode} already holds UAN ${maskUan(currentUan)}. ` +
-            `Clear it deliberately before assigning a different one.`
+            `Clear it deliberately before assigning a different one.`,
         );
       }
 
@@ -157,7 +162,7 @@ export async function importPfUanBatch(
         `INSERT INTO employee_statutory_info (id, employee_id, uan_number, created_at, updated_at)
          VALUES (UUID(), ?, ?, NOW(), NOW())
          ON DUPLICATE KEY UPDATE uan_number = VALUES(uan_number), updated_at = NOW()`,
-        [employeeId, row.rawUan]
+        [employeeId, row.rawUan],
       );
 
       // Keep the normalised table the PF creation service reads in step.
@@ -166,7 +171,7 @@ export async function importPfUanBatch(
            (id, employee_id, uan, eps_eligible, is_active, verification_status, created_at, updated_at)
          SELECT UUID(), ?, ?, 0, 1, 'pending', NOW(), NOW()
          ON DUPLICATE KEY UPDATE uan = VALUES(uan), is_active = 1, updated_at = NOW()`,
-        [employeeId, row.rawUan]
+        [employeeId, row.rawUan],
       );
 
       // Only the masked form reaches the compliance profile, and only when the
@@ -175,7 +180,7 @@ export async function importPfUanBatch(
         `UPDATE employee_epf_compliance_profile
             SET uan_masked = ?, universal_account_status = 'active', updated_at = NOW()
           WHERE employee_id = ?`,
-        [maskUan(row.rawUan), employeeId]
+        [maskUan(row.rawUan), employeeId],
       );
 
       await writeAuditLog({
@@ -187,13 +192,16 @@ export async function importPfUanBatch(
         employee_id: employeeId,
         // Masked on purpose: the audit trail records that a UAN was set, not
         // the number itself.
-        change_summary: { employee_code: row.employeeCode, uan_masked: maskUan(row.rawUan) },
+        change_summary: {
+          employee_code: row.employeeCode,
+          uan_masked: maskUan(row.rawUan),
+        },
         metadata: { upload_batch_id: batchId, row_no: row.rowNo },
       });
 
       await db.execute(
         `UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`,
-        [row.rowId]
+        [row.rowId],
       );
       importedRows++;
     } catch (err: unknown) {
@@ -202,7 +210,7 @@ export async function importPfUanBatch(
       // error_messages is the JSON array column; error_message does not exist.
       await db.execute(
         `UPDATE upload_batch_row SET row_status = 'error', error_messages = ? WHERE id = ?`,
-        [JSON.stringify([msg.slice(0, 500)]), row.rowId]
+        [JSON.stringify([msg.slice(0, 500)]), row.rowId],
       );
       errorRows++;
     }
@@ -214,12 +222,15 @@ export async function importPfUanBatch(
   // batch write for those row-status updates.
   if (errorUpdates.length > 0) {
     const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
-    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+    const caseParams = errorUpdates.flatMap((u) => [
+      u.rowId,
+      JSON.stringify([u.message]),
+    ]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids]
+      [...caseParams, ...ids],
     );
   }
 
@@ -227,12 +238,12 @@ export async function importPfUanBatch(
     errorRows === 0
       ? "imported"
       : importedRows === 0
-      ? "validation_failed"
-      : "imported_with_errors";
+        ? "validation_failed"
+        : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId]
+    [finalStatus, importedRows, errorRows, batchId],
   );
 
   return { importedRows, errorRows, errors };

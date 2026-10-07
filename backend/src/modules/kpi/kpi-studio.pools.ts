@@ -29,12 +29,12 @@
  * stored configuration, and only a key present here can ever resolve to a
  * connection.
  */
-import type { Pool } from 'mysql2/promise';
-import { getDialerPool } from '../../db/dialerDb.js';
-import { getOnfidoPool } from '../../db/onfidoDb.js';
-import { getBellaPool } from '../../db/bellaDb.js';
-import { getAprPool } from '../../db/aprDb.js';
-import { getMasmisPool } from '../../db/masmisDb.js';
+import type { Pool } from "mysql2/promise";
+import { getDialerPool } from "../../db/dialerDb.js";
+import { getOnfidoPool } from "../../db/onfidoDb.js";
+import { getBellaPool } from "../../db/bellaDb.js";
+import { getAprPool } from "../../db/aprDb.js";
+import { getMasmisPool } from "../../db/masmisDb.js";
 
 export interface NamedPool {
   /** Shown when picking a source, so the list reads as places rather than keys. */
@@ -46,28 +46,31 @@ export interface NamedPool {
 
 export const NAMED_POOLS: Readonly<Record<string, NamedPool>> = Object.freeze({
   dialer: {
-    label: 'Dialer (dialer_db)',
-    description: 'Call detail and agent activity logs. ~66M rows, current to yesterday.',
+    label: "Dialer (dialer_db)",
+    description:
+      "Call detail and agent activity logs. ~66M rows, current to yesterday.",
     get: getDialerPool,
   },
   onfido: {
-    label: 'Onfido (onfido_db)',
-    description: 'DOC and POA task, audit and escalation extracts.',
+    label: "Onfido (onfido_db)",
+    description: "DOC and POA task, audit and escalation extracts.",
     get: getOnfidoPool,
   },
   bella: {
-    label: 'Bella Vita (bella_db)',
-    description: 'Sales lines, lead allocation, target plan and cancellations, uploaded monthly.',
+    label: "Bella Vita (bella_db)",
+    description:
+      "Sales lines, lead allocation, target plan and cancellations, uploaded monthly.",
     get: getBellaPool,
   },
   apr: {
-    label: 'APR productivity',
-    description: 'Agent productivity reports.',
+    label: "APR productivity",
+    description: "Agent productivity reports.",
     get: getAprPool,
   },
   masmis: {
-    label: 'MIS (db_masmis)',
-    description: 'Client operational exports: orders, chat tickets, allocations.',
+    label: "MIS (db_masmis)",
+    description:
+      "Client operational exports: orders, chat tickets, allocations.",
     get: getMasmisPool,
   },
 });
@@ -75,7 +78,10 @@ export const NAMED_POOLS: Readonly<Record<string, NamedPool>> = Object.freeze({
 export type NamedPoolKey = keyof typeof NAMED_POOLS;
 
 export function isNamedPool(key: unknown): key is string {
-  return typeof key === 'string' && Object.prototype.hasOwnProperty.call(NAMED_POOLS, key);
+  return (
+    typeof key === "string" &&
+    Object.prototype.hasOwnProperty.call(NAMED_POOLS, key)
+  );
 }
 
 /**
@@ -89,14 +95,18 @@ export async function getNamedPool(key: string): Promise<Pool> {
   const entry = NAMED_POOLS[key];
   if (!entry) {
     throw new Error(
-      `"${key}" is not a database this system knows. Choose one of: ${Object.keys(NAMED_POOLS).join(', ')}`,
+      `"${key}" is not a database this system knows. Choose one of: ${Object.keys(NAMED_POOLS).join(", ")}`,
     );
   }
   return await entry.get();
 }
 
 /** For the picker, and for an error message that can name the alternatives. */
-export function listNamedPools(): Array<{ key: string; label: string; description: string }> {
+export function listNamedPools(): Array<{
+  key: string;
+  label: string;
+  description: string;
+}> {
   return Object.entries(NAMED_POOLS).map(([key, value]) => ({
     key,
     label: value.label,

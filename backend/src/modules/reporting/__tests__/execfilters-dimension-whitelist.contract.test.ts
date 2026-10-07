@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 const ROUTE_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
-  "report-suite.routes.ts"
+  "report-suite.routes.ts",
 );
 
 function readSource(): string {
@@ -30,7 +30,10 @@ describe("report-suite.routes.ts ExecFilters whitelists carry `dimension`", () =
   it("the default-branch (screen) ExecFilters object includes a dimension field", () => {
     const src = readSource();
     const start = src.indexOf("const execFilters: ExecFilters = {");
-    expect(start, "default-branch execFilters object not found").toBeGreaterThan(-1);
+    expect(
+      start,
+      "default-branch execFilters object not found",
+    ).toBeGreaterThan(-1);
     const end = src.indexOf("};", start);
     const block = src.slice(start, end);
     expect(block).toMatch(/dimension:\s*req\.query\.dimension/);

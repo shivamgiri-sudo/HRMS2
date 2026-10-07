@@ -11,9 +11,42 @@ import type { IntegrationFieldMap } from "../src/modules/integration-hub/integra
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
 const dialerMaps: IntegrationFieldMap[] = [
-  { id: "m1", integration_key: "dialer_1", source_field: "emp_id",        target_table: "dialer_session_log", target_column: "employee_code", transform: null, confirmed_by: "u1", confirmed_at: "2026-05-01", active_status: 1, created_at: "2026-05-01" },
-  { id: "m2", integration_key: "dialer_1", source_field: "login_date",    target_table: "dialer_session_log", target_column: "session_date",  transform: null, confirmed_by: "u1", confirmed_at: "2026-05-01", active_status: 1, created_at: "2026-05-01" },
-  { id: "m3", integration_key: "dialer_1", source_field: "login_minutes", target_table: "dialer_session_log", target_column: "login_minutes", transform: null, confirmed_by: "u1", confirmed_at: "2026-05-01", active_status: 1, created_at: "2026-05-01" },
+  {
+    id: "m1",
+    integration_key: "dialer_1",
+    source_field: "emp_id",
+    target_table: "dialer_session_log",
+    target_column: "employee_code",
+    transform: null,
+    confirmed_by: "u1",
+    confirmed_at: "2026-05-01",
+    active_status: 1,
+    created_at: "2026-05-01",
+  },
+  {
+    id: "m2",
+    integration_key: "dialer_1",
+    source_field: "login_date",
+    target_table: "dialer_session_log",
+    target_column: "session_date",
+    transform: null,
+    confirmed_by: "u1",
+    confirmed_at: "2026-05-01",
+    active_status: 1,
+    created_at: "2026-05-01",
+  },
+  {
+    id: "m3",
+    integration_key: "dialer_1",
+    source_field: "login_minutes",
+    target_table: "dialer_session_log",
+    target_column: "login_minutes",
+    transform: null,
+    confirmed_by: "u1",
+    confirmed_at: "2026-05-01",
+    active_status: 1,
+    created_at: "2026-05-01",
+  },
 ];
 
 const rawRows = [
@@ -44,7 +77,14 @@ describe("promoteRows", () => {
 
   it("skips unmapped source fields", async () => {
     mockExecute.mockResolvedValue([{ affectedRows: 1 }]);
-    const rowsWithExtra = [{ emp_id: "EMP001", login_date: "2026-05-20", login_minutes: 480, campaign_id: "C1" }];
+    const rowsWithExtra = [
+      {
+        emp_id: "EMP001",
+        login_date: "2026-05-20",
+        login_minutes: 480,
+        campaign_id: "C1",
+      },
+    ];
     await promoteRows("dialer_1", rowsWithExtra, dialerMaps, "run-1");
     const [sql] = mockExecute.mock.calls[0];
     expect(sql).not.toMatch(/campaign_id/i);
@@ -66,7 +106,12 @@ describe("promoteRows", () => {
   });
 
   it("skips rows with no mappable fields", async () => {
-    const result = await promoteRows("dialer_1", [{ campaign_id: "C1" }], dialerMaps, "run-1");
+    const result = await promoteRows(
+      "dialer_1",
+      [{ campaign_id: "C1" }],
+      dialerMaps,
+      "run-1",
+    );
     expect(result.promoted).toBe(0);
     expect(result.failed).toBe(0);
     expect(mockExecute).not.toHaveBeenCalled();

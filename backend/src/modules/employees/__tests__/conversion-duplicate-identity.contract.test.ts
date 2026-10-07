@@ -42,7 +42,9 @@ const codeOnly = source
 describe("candidate to employee conversion — duplicate identity guard", () => {
   it("checks the employees table, not only employee_statutory_info", () => {
     // The 3.2%-coverage bug: statutory_info as the sole source.
-    expect(source).toMatch(/FROM employees e\s+LEFT JOIN employee_statutory_info/);
+    expect(source).toMatch(
+      /FROM employees e\s+LEFT JOIN employee_statutory_info/,
+    );
     expect(source).toContain("e.pan_number");
     expect(source).toContain("e.aadhaar_number");
   });
@@ -87,7 +89,9 @@ describe("candidate to employee conversion — duplicate identity guard", () => 
     // will eventually make keying on it viable. The write itself is pinned separately, by
     // "employee_statutory_info writers keep the PAN dual-write" in
     // src/shared/__tests__/syncPiiEncryption.test.ts.
-    const start = codeOnly.indexOf("async function findActiveEmployeeByStatutoryId");
+    const start = codeOnly.indexOf(
+      "async function findActiveEmployeeByStatutoryId",
+    );
     expect(start, "duplicate lookup function missing").toBeGreaterThan(-1);
     const rest = codeOnly.slice(start + 1);
     const nextFn = rest.search(/^(?:async )?function /m);
@@ -108,7 +112,9 @@ describe("candidate to employee conversion — duplicate identity guard", () => 
   it("does not fail open when the duplicate lookup errors", () => {
     // The original guard's failure mode was passing everything. A thrown query
     // must fall back to the employees table, not to "no duplicate found".
-    const guard = codeOnly.slice(codeOnly.indexOf("async function findActiveEmployeeByStatutoryId"));
+    const guard = codeOnly.slice(
+      codeOnly.indexOf("async function findActiveEmployeeByStatutoryId"),
+    );
     expect(guard).toContain("catch");
     // The catch must still run a lookup, not return null.
     expect(guard).toMatch(/catch\s*\([\s\S]*?FROM employees/);

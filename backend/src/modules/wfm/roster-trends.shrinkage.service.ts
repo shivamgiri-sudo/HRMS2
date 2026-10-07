@@ -11,17 +11,35 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import {
-  ATT_JOINS, COUNT_COLUMNS, REAL_ROSTER, ABSENT_PREDICATE, scopeSql, type ScopeFilters,
+  ATT_JOINS,
+  COUNT_COLUMNS,
+  REAL_ROSTER,
+  ABSENT_PREDICATE,
+  scopeSql,
+  type ScopeFilters,
 } from "./roster-trends.sql.js";
 import {
-  addDays, clampToToday, daySpan, deriveRates, dayStatus, eachDate, previousWindow, sumCounts, toCounts,
-  weekStartMonday, safePct, type AttendanceCounts,
+  addDays,
+  clampToToday,
+  daySpan,
+  deriveRates,
+  dayStatus,
+  eachDate,
+  previousWindow,
+  sumCounts,
+  toCounts,
+  weekStartMonday,
+  safePct,
+  type AttendanceCounts,
 } from "./roster-trends.calc.js";
 import { todayLocalDateStr } from "./shift-due.util.js";
 
 export const MAX_TREND_DAYS = 92;
 
-export interface TrendFilters extends ScopeFilters { from: string; to: string }
+export interface TrendFilters extends ScopeFilters {
+  from: string;
+  to: string;
+}
 
 export interface DayPoint extends AttendanceCounts {
   date: string;
@@ -37,7 +55,11 @@ function point(date: string, c: AttendanceCounts): DayPoint {
   return { date, hasData: c.scheduled > 0, ...c, ...deriveRates(c) };
 }
 
-async function dailyCounts(from: string, to: string, f: ScopeFilters): Promise<Map<string, AttendanceCounts>> {
+async function dailyCounts(
+  from: string,
+  to: string,
+  f: ScopeFilters,
+): Promise<Map<string, AttendanceCounts>> {
   const s = scopeSql(f);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS d, ${COUNT_COLUMNS}
@@ -61,19 +83,48 @@ export async function getShrinkageTrend(f: TrendFilters) {
   const from = clamped ? addDays(f.to, -(MAX_TREND_DAYS - 1)) : f.from;
   const win = clampToToday(from, f.to, today);
   if (win.empty) {
-    return { from, to: f.to, effectiveTo: win.to, clamped, futureOnly: true, days: [] as DayPoint[], summary: point(from, sumCounts([])), previous: null as DayPoint | null };
+    return {
+      from,
+      to: f.to,
+      effectiveTo: win.to,
+      clamped,
+      futureOnly: true,
+      days: [] as DayPoint[],
+      summary: point(from, sumCounts([])),
+      previous: null as DayPoint | null,
+    };
   }
   const prevWin = previousWindow(win.from, win.to);
   const [cur, prev] = await Promise.all([
     dailyCounts(win.from, win.to, f),
     dailyCounts(prevWin.from, prevWin.to, f),
   ]);
-  const days = eachDate(win.from, win.to).map((d) => point(d, cur.get(d) ?? { scheduled: 0, present: 0, absent: 0, onLeave: 0, late: 0 }));
+  const days = eachDate(win.from, win.to).map((d) =>
+    point(
+      d,
+      cur.get(d) ?? {
+        scheduled: 0,
+        present: 0,
+        absent: 0,
+        onLeave: 0,
+        late: 0,
+      },
+    ),
+  );
   const summary = point(win.from, sumCounts([...cur.values()]));
-  const prevSummary = prev.size ? point(prevWin.from, sumCounts([...prev.values()])) : null;
+  const prevSummary = prev.size
+    ? point(prevWin.from, sumCounts([...prev.values()]))
+    : null;
   return {
-    from: win.from, to: f.to, effectiveTo: win.to, clamped, futureOnly: false,
-    previousWindow: prevWin, days, summary, previous: prevSummary,
+    from: win.from,
+    to: f.to,
+    effectiveTo: win.to,
+    clamped,
+    futureOnly: false,
+    previousWindow: prevWin,
+    days,
+    summary,
+    previous: prevSummary,
     /** Dates in range with no roster/attendance rows at all: shown as gaps, never as 0% shrinkage. */
     missingDates: days.filter((d) => !d.hasData).map((d) => d.date),
   };
@@ -84,7 +135,8 @@ export async function getShrinkageTrend(f: TrendFilters) {
 export async function getProcessShrinkage(f: TrendFilters) {
   const today = todayLocalDateStr();
   const win = clampToToday(f.from, f.to, today);
-  if (win.empty) return { from: f.from, to: f.to, effectiveTo: win.to, processes: [] };
+  if (win.empty)
+    return { from: f.from, to: f.to, effectiveTo: win.to, processes: [] };
   const s = scopeSql(f);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pm.id AS process_id, pm.process_name, ${COUNT_COLUMNS}
@@ -99,7 +151,12 @@ export async function getProcessShrinkage(f: TrendFilters) {
   );
   const processes = rows.map((r) => {
     const c = toCounts(r);
-    return { processId: String(r.process_id), processName: String(r.process_name), ...c, ...deriveRates(c) };
+    return {
+      processId: String(r.process_id),
+      processName: String(r.process_name),
+      ...c,
+      ...deriveRates(c),
+    };
   });
   return { from: f.from, to: f.to, effectiveTo: win.to, processes };
 }
@@ -107,7 +164,14 @@ export async function getProcessShrinkage(f: TrendFilters) {
 export async function getProcessMembers(processId: string, f: TrendFilters) {
   const today = todayLocalDateStr();
   const win = clampToToday(f.from, f.to, today);
-  if (win.empty) return { processId, from: f.from, to: f.to, effectiveTo: win.to, members: [] };
+  if (win.empty)
+    return {
+      processId,
+      from: f.from,
+      to: f.to,
+      effectiveTo: win.to,
+      members: [],
+    };
   const s = scopeSql({ branchId: f.branchId, lob: f.lob });
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
@@ -132,7 +196,8 @@ export async function getProcessMembers(processId: string, f: TrendFilters) {
       employeeName: String(r.employee_name),
       branchName: r.branch_name ? String(r.branch_name) : null,
       ...c,
-      avgLateMinutes: c.late > 0 ? Math.round(Number(r.total_late_minutes ?? 0) / c.late) : 0,
+      avgLateMinutes:
+        c.late > 0 ? Math.round(Number(r.total_late_minutes ?? 0) / c.late) : 0,
       ...deriveRates(c),
     };
   });
@@ -141,7 +206,11 @@ export async function getProcessMembers(processId: string, f: TrendFilters) {
 
 /* ── Member day-by-day + profile ───────────────────────────────────────────── */
 
-export async function getMemberDetail(employeeId: string, from: string, to: string) {
+export async function getMemberDetail(
+  employeeId: string,
+  from: string,
+  to: string,
+) {
   const today = todayLocalDateStr();
   const now = new Date();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
@@ -181,10 +250,17 @@ export async function getMemberDetail(employeeId: string, from: string, to: stri
 
   const days = rows.map((r) => {
     const status = dayStatus({
-      date: String(r.date), today, assignmentType: r.assignment_type ? String(r.assignment_type) : null,
-      isWeekOff: Number(r.is_week_off) === 1, clockIn: r.clock_in ? String(r.clock_in) : null,
-      lateMark: r.late_mark == null ? null : Number(r.late_mark), attendanceStatus: r.attendance_status ? String(r.attendance_status) : null,
-      shiftStart: r.shift_start ? String(r.shift_start) : null, nowMinutes,
+      date: String(r.date),
+      today,
+      assignmentType: r.assignment_type ? String(r.assignment_type) : null,
+      isWeekOff: Number(r.is_week_off) === 1,
+      clockIn: r.clock_in ? String(r.clock_in) : null,
+      lateMark: r.late_mark == null ? null : Number(r.late_mark),
+      attendanceStatus: r.attendance_status
+        ? String(r.attendance_status)
+        : null,
+      shiftStart: r.shift_start ? String(r.shift_start) : null,
+      nowMinutes,
     });
     return {
       date: String(r.date),
@@ -194,8 +270,11 @@ export async function getMemberDetail(employeeId: string, from: string, to: stri
       shiftEnd: r.shift_end ? String(r.shift_end) : null,
       clockIn: r.clock_in ? String(r.clock_in) : null,
       status,
-      lateByMinutes: r.late_by_minutes != null ? Number(r.late_by_minutes) : null,
-      rosterStatus: r.final_roster_status ? String(r.final_roster_status) : null,
+      lateByMinutes:
+        r.late_by_minutes != null ? Number(r.late_by_minutes) : null,
+      rosterStatus: r.final_roster_status
+        ? String(r.final_roster_status)
+        : null,
     };
   });
 
@@ -206,13 +285,20 @@ export async function getMemberDetail(employeeId: string, from: string, to: stri
     late: tally("Late"),
     absent: tally("Absent"),
     onLeave: tally("On Leave"),
-    scheduled: tally("On Time") + tally("Late") + tally("Absent") + tally("On Leave"),
+    scheduled:
+      tally("On Time") + tally("Late") + tally("Absent") + tally("On Leave"),
   };
   const weekly = new Map<string, AttendanceCounts>();
   for (const d of days) {
     if (!["On Time", "Late", "Absent", "On Leave"].includes(d.status)) continue;
     const w = weekStartMonday(d.date);
-    const c = weekly.get(w) ?? { scheduled: 0, present: 0, absent: 0, onLeave: 0, late: 0 };
+    const c = weekly.get(w) ?? {
+      scheduled: 0,
+      present: 0,
+      absent: 0,
+      onLeave: 0,
+      late: 0,
+    };
     c.scheduled += 1;
     if (d.status === "On Time" || d.status === "Late") c.present += 1;
     if (d.status === "Late") c.late += 1;
@@ -222,14 +308,24 @@ export async function getMemberDetail(employeeId: string, from: string, to: stri
   }
   return {
     employee: {
-      employeeId: String(emp.id), employeeCode: String(emp.employee_code), employeeName: String(emp.employee_name),
-      designation: String(emp.designation || ""), branchName: emp.branch_name ? String(emp.branch_name) : null,
-      processName: emp.process_name ? String(emp.process_name) : null, managerName: emp.manager_name ? String(emp.manager_name) : null,
-      dateOfJoining: emp.date_of_joining ? String(emp.date_of_joining).slice(0, 10) : null,
+      employeeId: String(emp.id),
+      employeeCode: String(emp.employee_code),
+      employeeName: String(emp.employee_name),
+      designation: String(emp.designation || ""),
+      branchName: emp.branch_name ? String(emp.branch_name) : null,
+      processName: emp.process_name ? String(emp.process_name) : null,
+      managerName: emp.manager_name ? String(emp.manager_name) : null,
+      dateOfJoining: emp.date_of_joining
+        ? String(emp.date_of_joining).slice(0, 10)
+        : null,
       active: Number(emp.active_status) === 1,
     },
-    from, to, summary: { ...counts, ...deriveRates(counts) },
-    weekly: [...weekly.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([week, c]) => ({ week, ...c, ...deriveRates(c) })),
+    from,
+    to,
+    summary: { ...counts, ...deriveRates(counts) },
+    weekly: [...weekly.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([week, c]) => ({ week, ...c, ...deriveRates(c) })),
     days,
   };
 }
@@ -245,13 +341,17 @@ export async function getShrinkageDayDetail(date: string, f: ScopeFilters) {
          FROM wfm_roster_assignment ra JOIN employees e ON e.id = ra.employee_id AND e.active_status = 1
          JOIN process_master pm ON pm.id = e.process_id ${ATT_JOINS}
         WHERE ra.roster_date = ? AND ${REAL_ROSTER}${s.sql}
-        GROUP BY pm.id, pm.process_name ORDER BY pm.process_name`, baseParams),
+        GROUP BY pm.id, pm.process_name ORDER BY pm.process_name`,
+      baseParams,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT b.id AS id, b.branch_name AS name, ${COUNT_COLUMNS}
          FROM wfm_roster_assignment ra JOIN employees e ON e.id = ra.employee_id AND e.active_status = 1
          JOIN branch_master b ON b.id = e.branch_id ${ATT_JOINS}
         WHERE ra.roster_date = ? AND ${REAL_ROSTER}${s.sql}
-        GROUP BY b.id, b.branch_name ORDER BY b.branch_name`, baseParams),
+        GROUP BY b.id, b.branch_name ORDER BY b.branch_name`,
+      baseParams,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id, e.employee_code,
               COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -259,29 +359,48 @@ export async function getShrinkageDayDetail(date: string, f: ScopeFilters) {
          FROM wfm_roster_assignment ra JOIN employees e ON e.id = ra.employee_id AND e.active_status = 1
          LEFT JOIN process_master p ON p.id = e.process_id LEFT JOIN branch_master b ON b.id = e.branch_id ${ATT_JOINS}
         WHERE ra.roster_date = ? AND ${REAL_ROSTER}${s.sql} AND ${ABSENT_PREDICATE}
-        ORDER BY employee_name LIMIT 50`, baseParams),
+        ORDER BY employee_name LIMIT 50`,
+      baseParams,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT COALESCE(ra.final_roster_status,'generated') AS status, COUNT(*) AS cnt
          FROM wfm_roster_assignment ra JOIN employees e ON e.id = ra.employee_id AND e.active_status = 1
-        WHERE ra.roster_date = ? AND ${REAL_ROSTER}${s.sql} GROUP BY status`, baseParams),
+        WHERE ra.roster_date = ? AND ${REAL_ROSTER}${s.sql} GROUP BY status`,
+      baseParams,
+    ),
   ]);
-  const shape = (r: RowDataPacket) => { const c = toCounts(r); return { id: String(r.id), name: String(r.name), ...c, ...deriveRates(c) }; };
+  const shape = (r: RowDataPacket) => {
+    const c = toCounts(r);
+    return { id: String(r.id), name: String(r.name), ...c, ...deriveRates(c) };
+  };
   const procs = byProc[0].map(shape);
   const total = sumCounts(procs);
-  const trend = await getShrinkageTrend({ ...f, from: addDays(date, -6), to: date });
+  const trend = await getShrinkageTrend({
+    ...f,
+    from: addDays(date, -6),
+    to: date,
+  });
   return {
     date,
     summary: { ...total, ...deriveRates(total) },
     byProcess: procs,
     byBranch: byBranch[0].map(shape),
     absentees: absent[0].map((r) => ({
-      employeeId: String(r.employee_id), employeeCode: String(r.employee_code), employeeName: String(r.employee_name),
-      processName: r.process_name ? String(r.process_name) : null, branchName: r.branch_name ? String(r.branch_name) : null,
+      employeeId: String(r.employee_id),
+      employeeCode: String(r.employee_code),
+      employeeName: String(r.employee_name),
+      processName: r.process_name ? String(r.process_name) : null,
+      branchName: r.branch_name ? String(r.branch_name) : null,
     })),
     absenteesTruncated: absent[0].length >= 50,
-    publishStates: states[0].map((r) => ({ status: String(r.status), count: Number(r.cnt) })),
+    publishStates: states[0].map((r) => ({
+      status: String(r.status),
+      count: Number(r.cnt),
+    })),
     trend7: trend.days,
-    shareOfUnplannedByProcess: procs.map((p) => ({ name: p.name, sharePct: safePct(p.absent, total.absent) })),
+    shareOfUnplannedByProcess: procs.map((p) => ({
+      name: p.name,
+      sharePct: safePct(p.absent, total.absent),
+    })),
   };
 }
-

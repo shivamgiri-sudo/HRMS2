@@ -16,20 +16,32 @@ processRouter.get("/", (req, res, next) => {
 // after it, a request for /my-processes would be handled by getById with id="my-processes"
 // and answer "Process not found" — the literal route would never run.
 processRouter.get("/my-processes", (req, res, next) => {
-  processController.listMyProcesses(req as AuthenticatedRequest, res).catch(next);
+  processController
+    .listMyProcesses(req as AuthenticatedRequest, res)
+    .catch(next);
 });
 
 processRouter.get("/:id", (req, res, next) => {
-  processController.getById(req as unknown as AuthenticatedRequest, res).catch(next);
+  processController
+    .getById(req as unknown as AuthenticatedRequest, res)
+    .catch(next);
 });
 
 processRouter.get("/:id/configuration", (req, res, next) => {
-  processController.getConfiguration(req as unknown as AuthenticatedRequest, res).catch(next);
+  processController
+    .getConfiguration(req as unknown as AuthenticatedRequest, res)
+    .catch(next);
 });
 
-processRouter.put("/:id/configuration", requireRole("admin", "hr"), (req, res, next) => {
-  processController.saveConfiguration(req as AuthenticatedRequest, res).catch(next);
-});
+processRouter.put(
+  "/:id/configuration",
+  requireRole("admin", "hr"),
+  (req, res, next) => {
+    processController
+      .saveConfiguration(req as AuthenticatedRequest, res)
+      .catch(next);
+  },
+);
 
 processRouter.post("/", requireRole("admin", "hr"), (req, res, next) => {
   processController.create(req as AuthenticatedRequest, res).catch(next);
@@ -39,6 +51,12 @@ processRouter.put("/:id", requireRole("admin", "hr"), (req, res, next) => {
   processController.update(req as AuthenticatedRequest, res).catch(next);
 });
 
-processRouter.patch("/:id/status", requireRole("admin", "hr"), (req, res, next) => {
-  processController.updateStatus(req as AuthenticatedRequest, res).catch(next);
-});
+processRouter.patch(
+  "/:id/status",
+  requireRole("admin", "hr"),
+  (req, res, next) => {
+    processController
+      .updateStatus(req as AuthenticatedRequest, res)
+      .catch(next);
+  },
+);

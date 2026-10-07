@@ -8,7 +8,7 @@
  * differently, and none of them agree on inactive employees or which email column wins.
  */
 
-export type Bucket = 'to' | 'cc' | 'bcc';
+export type Bucket = "to" | "cc" | "bcc";
 
 /**
  * Which address to use for a person.
@@ -20,24 +20,25 @@ export type Bucket = 'to' | 'cc' | 'bcc';
  *                               event — full_final_ready, where the employee has left and the
  *                               official mailbox is disabled. Do not use it anywhere else.
  */
-export type EmailPolicy = 'default' | 'official_only' | 'official_then_personal';
+export type EmailPolicy =
+  "default" | "official_only" | "official_then_personal";
 
 export type RecipientSelector =
-  | { kind: 'employee';            employeeId?: string; emailPolicy?: EmailPolicy }
-  | { kind: 'user';                userId: string }
-  | { kind: 'reporting_manager';   employeeId?: string }
-  | { kind: 'skip_level_manager';  employeeId?: string }
-  | { kind: 'branch_head';         branchId?: string }
-  | { kind: 'branch_hr';           branchId?: string }
-  | { kind: 'process_manager';     processId?: string; employeeId?: string }
-  | { kind: 'payroll_hr';          branchId?: string }
-  | { kind: 'wfm_spoc';            branchId?: string }
+  | { kind: "employee"; employeeId?: string; emailPolicy?: EmailPolicy }
+  | { kind: "user"; userId: string }
+  | { kind: "reporting_manager"; employeeId?: string }
+  | { kind: "skip_level_manager"; employeeId?: string }
+  | { kind: "branch_head"; branchId?: string }
+  | { kind: "branch_hr"; branchId?: string }
+  | { kind: "process_manager"; processId?: string; employeeId?: string }
+  | { kind: "payroll_hr"; branchId?: string }
+  | { kind: "wfm_spoc"; branchId?: string }
   /**
    * Ordered fallback: wfm_spoc -> role_scope(wfm, branch) -> branch_hr, stopping at the
    * first link that yields anyone. Exists because branch_wfm_spoc_config has ZERO rows in
    * production — a bare wfm_spoc selector would silently address nobody on every roster event.
    */
-  | { kind: 'wfm_chain';           branchId?: string }
+  | { kind: "wfm_chain"; branchId?: string }
   /**
    * Ordered fallback for "whoever must act on this employee's request":
    * reporting_manager -> branch_head -> branch HR, stopping at the first that yields.
@@ -49,17 +50,21 @@ export type RecipientSelector =
    * request simply sits there unseen. Escalating to the branch is strictly better than
    * telling no one, and it degrades to HR rather than to silence.
    */
-  | { kind: 'approver_chain';      employeeId?: string; branchId?: string }
-  | { kind: 'role_scope';          roleKeys: string[];
-                                   scope?: { type: 'all' }
-                                         | { type: 'branch';  branchIds: string[] }
-                                         | { type: 'process'; processIds: string[] };
-                                   limit?: number;
-                                   /** Named guard evaluated against context before including. */
-                                   conditional?: string }
-  | { kind: 'tat_owner';           tatInstanceId?: string }
-  | { kind: 'tat_owner_manager';   tatInstanceId?: string }
-  | { kind: 'explicit_email';      email: string; name?: string };
+  | { kind: "approver_chain"; employeeId?: string; branchId?: string }
+  | {
+      kind: "role_scope";
+      roleKeys: string[];
+      scope?:
+        | { type: "all" }
+        | { type: "branch"; branchIds: string[] }
+        | { type: "process"; processIds: string[] };
+      limit?: number;
+      /** Named guard evaluated against context before including. */
+      conditional?: string;
+    }
+  | { kind: "tat_owner"; tatInstanceId?: string }
+  | { kind: "tat_owner_manager"; tatInstanceId?: string }
+  | { kind: "explicit_email"; email: string; name?: string };
 
 export interface RecipientSpec {
   to: RecipientSelector[];
@@ -68,17 +73,17 @@ export interface RecipientSpec {
 }
 
 export type DropReason =
-  | 'no_match'            // selector resolved to no rows
-  | 'inactive_employee'
-  | 'no_email'
-  | 'no_official_email'   // official_only policy, employee has none
-  | 'invalid_domain'
-  | 'duplicate'           // already present in an equal-or-higher-priority bucket
-  | 'self_edge'           // would CC the person their own message is about
-  | 'cap_exceeded'
-  | 'unknown_role'
-  | 'condition_not_met'
-  | 'client_audience';    // deny-list: a client address on an internal notification
+  | "no_match" // selector resolved to no rows
+  | "inactive_employee"
+  | "no_email"
+  | "no_official_email" // official_only policy, employee has none
+  | "invalid_domain"
+  | "duplicate" // already present in an equal-or-higher-priority bucket
+  | "self_edge" // would CC the person their own message is about
+  | "cap_exceeded"
+  | "unknown_role"
+  | "condition_not_met"
+  | "client_audience"; // deny-list: a client address on an internal notification
 
 export interface ResolvedRecipient {
   bucket: Bucket;
@@ -87,10 +92,11 @@ export interface ResolvedRecipient {
   employeeCode: string | null;
   name: string;
   email: string;
-  emailSource: 'official_email' | 'office_email' | 'email' | 'auth_user' | 'explicit';
+  emailSource:
+    "official_email" | "office_email" | "email" | "auth_user" | "explicit";
   branchId: string | null;
   processId: string | null;
-  audience: 'internal' | 'client' | 'external';
+  audience: "internal" | "client" | "external";
   /** e.g. "branch_head:<branchId>" — persisted for audit so a wrong CC is traceable. */
   viaSelector: string;
 }
@@ -123,7 +129,7 @@ export interface RecipientContext {
   vars?: Record<string, unknown>;
 }
 
-export type Sensitivity = 'int' | 'conf' | 'fin';
+export type Sensitivity = "int" | "conf" | "fin";
 
 export interface ResolveOptions {
   sensitivity: Sensitivity;
@@ -138,9 +144,9 @@ export interface ResolveOptions {
 }
 
 export type RecipientErrorCode =
-  | 'EMPTY_TO'          // nothing to send to — caller must not fall back to a default address
-  | 'FIN_HAS_CC'        // a financial event about an employee named a CC (catalogue rule)
-  | 'CLIENT_AUDIENCE';  // deny-list breach
+  | "EMPTY_TO" // nothing to send to — caller must not fall back to a default address
+  | "FIN_HAS_CC" // a financial event about an employee named a CC (catalogue rule)
+  | "CLIENT_AUDIENCE"; // deny-list breach
 
 export class RecipientResolutionError extends Error {
   constructor(
@@ -149,6 +155,6 @@ export class RecipientResolutionError extends Error {
     public readonly resolution?: RecipientResolution,
   ) {
     super(message);
-    this.name = 'RecipientResolutionError';
+    this.name = "RecipientResolutionError";
   }
 }

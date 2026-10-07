@@ -82,11 +82,19 @@ export interface AdjustedTotal {
   pendingCount: number;
 }
 
-const ADJUSTMENT_TYPES: AdjustmentType[] = ["projected_revenue", "penalty", "reward"];
+const ADJUSTMENT_TYPES: AdjustmentType[] = [
+  "projected_revenue",
+  "penalty",
+  "reward",
+];
 
 function assertPeriod(periodCode: string) {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) {
-    throw refuse(400, "ADJUSTMENT_PERIOD_INVALID", "period_code must be in YYYY-MM format");
+    throw refuse(
+      400,
+      "ADJUSTMENT_PERIOD_INVALID",
+      "period_code must be in YYYY-MM format",
+    );
   }
 }
 
@@ -98,30 +106,48 @@ export interface AdjustmentActorContext {
 export async function createManualAdjustment(
   input: CreateAdjustmentInput,
   actorId: string,
-  actorContext: AdjustmentActorContext = {}
+  actorContext: AdjustmentActorContext = {},
 ): Promise<ManualAdjustment> {
   if (!(await tableExists("pnl_manual_adjustment"))) {
-    throw refuse(503, "ADJUSTMENT_TABLE_MISSING", "pnl_manual_adjustment table not yet migrated (run sql/1645).");
+    throw refuse(
+      503,
+      "ADJUSTMENT_TABLE_MISSING",
+      "pnl_manual_adjustment table not yet migrated (run sql/1645).",
+    );
   }
-  if (!input.processId) throw refuse(400, "ADJUSTMENT_PROCESS_REQUIRED", "process_id is required");
+  if (!input.processId)
+    throw refuse(400, "ADJUSTMENT_PROCESS_REQUIRED", "process_id is required");
   assertPeriod(input.periodCode);
   if (!ADJUSTMENT_TYPES.includes(input.adjustmentType)) {
-    throw refuse(400, "ADJUSTMENT_TYPE_INVALID", "adjustment_type must be projected_revenue, penalty or reward");
+    throw refuse(
+      400,
+      "ADJUSTMENT_TYPE_INVALID",
+      "adjustment_type must be projected_revenue, penalty or reward",
+    );
   }
   const amount = Number(input.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
-    throw refuse(400, "ADJUSTMENT_AMOUNT_INVALID", "amount must be greater than zero");
+    throw refuse(
+      400,
+      "ADJUSTMENT_AMOUNT_INVALID",
+      "amount must be greater than zero",
+    );
   }
   if (!input.reason?.trim()) {
-    throw refuse(400, "ADJUSTMENT_REASON_REQUIRED", "A reason is required — this money moves a P&L figure");
+    throw refuse(
+      400,
+      "ADJUSTMENT_REASON_REQUIRED",
+      "A reason is required — this money moves a P&L figure",
+    );
   }
 
   const [processRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, branch_id FROM process_master WHERE id = ?`,
-    [input.processId]
+    [input.processId],
   );
   const process = processRows[0];
-  if (!process) throw refuse(404, "ADJUSTMENT_PROCESS_NOT_FOUND", "Process not found");
+  if (!process)
+    throw refuse(404, "ADJUSTMENT_PROCESS_NOT_FOUND", "Process not found");
 
   // F-01: branch_head is in ADJUSTMENT_WRITE_ROLES and can name any process_id in the request
   // body. Without this, a branch head could raise a manual revenue/penalty/reward adjustment
@@ -136,7 +162,11 @@ export async function createManualAdjustment(
       recordBranchId: process.branch_id ?? null,
     });
   } catch {
-    throw refuse(403, "ADJUSTMENT_PROCESS_OUT_OF_SCOPE", "You cannot raise an adjustment for a process outside your branch");
+    throw refuse(
+      403,
+      "ADJUSTMENT_PROCESS_OUT_OF_SCOPE",
+      "You cannot raise an adjustment for a process outside your branch",
+    );
   }
 
   const id = randomUUID();
@@ -144,8 +174,16 @@ export async function createManualAdjustment(
     `INSERT INTO pnl_manual_adjustment
        (id, process_id, branch_id, period_code, adjustment_type, amount, reason, status, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
-    [id, input.processId, process.branch_id ?? null, input.periodCode, input.adjustmentType,
-      Math.round(amount * 100) / 100, input.reason.trim(), actorId]
+    [
+      id,
+      input.processId,
+      process.branch_id ?? null,
+      input.periodCode,
+      input.adjustmentType,
+      Math.round(amount * 100) / 100,
+      input.reason.trim(),
+      actorId,
+    ],
   );
 
   await writeAuditLog({
@@ -155,15 +193,19 @@ export async function createManualAdjustment(
     entity_type: "pnl_manual_adjustment",
     entity_id: id,
     metadata: {
-      processId: input.processId, periodCode: input.periodCode,
-      adjustmentType: input.adjustmentType, amount,
+      processId: input.processId,
+      periodCode: input.periodCode,
+      adjustmentType: input.adjustmentType,
+      amount,
     },
   });
 
   return getManualAdjustment(id);
 }
 
-export async function getManualAdjustment(id: string): Promise<ManualAdjustment> {
+export async function getManualAdjustment(
+  id: string,
+): Promise<ManualAdjustment> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.*, p.process_name, b.branch_name,
             CONCAT(cu.first_name, ' ', COALESCE(cu.last_name, '')) AS created_by_name,
@@ -174,9 +216,10 @@ export async function getManualAdjustment(id: string): Promise<ManualAdjustment>
        LEFT JOIN employees cu ON cu.id = a.created_by
        LEFT JOIN employees au ON au.id = a.approved_by
       WHERE a.id = ?`,
-    [id]
+    [id],
   );
-  if (!rows[0]) throw refuse(404, "ADJUSTMENT_NOT_FOUND", "Manual adjustment not found");
+  if (!rows[0])
+    throw refuse(404, "ADJUSTMENT_NOT_FOUND", "Manual adjustment not found");
   return rows[0] as unknown as ManualAdjustment;
 }
 
@@ -189,10 +232,22 @@ export async function listManualAdjustments(filters: {
   if (!(await tableExists("pnl_manual_adjustment"))) return [];
   const where: string[] = [];
   const params: unknown[] = [];
-  if (filters.processId) { where.push("a.process_id = ?"); params.push(filters.processId); }
-  if (filters.branchId) { where.push("a.branch_id = ?"); params.push(filters.branchId); }
-  if (filters.periodCode) { where.push("a.period_code = ?"); params.push(filters.periodCode); }
-  if (filters.status) { where.push("a.status = ?"); params.push(filters.status); }
+  if (filters.processId) {
+    where.push("a.process_id = ?");
+    params.push(filters.processId);
+  }
+  if (filters.branchId) {
+    where.push("a.branch_id = ?");
+    params.push(filters.branchId);
+  }
+  if (filters.periodCode) {
+    where.push("a.period_code = ?");
+    params.push(filters.periodCode);
+  }
+  if (filters.status) {
+    where.push("a.status = ?");
+    params.push(filters.status);
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.*, p.process_name, b.branch_name,
             CONCAT(cu.first_name, ' ', COALESCE(cu.last_name, '')) AS created_by_name,
@@ -204,7 +259,7 @@ export async function listManualAdjustments(filters: {
        LEFT JOIN employees au ON au.id = a.approved_by
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY a.created_at DESC`,
-    params
+    params,
   );
   return rows as unknown as ManualAdjustment[];
 }
@@ -213,36 +268,46 @@ export async function reviewManualAdjustment(
   id: string,
   decision: "approve" | "reject",
   actorId: string,
-  rejectionReason?: string
+  rejectionReason?: string,
 ): Promise<ManualAdjustment> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM pnl_manual_adjustment WHERE id = ?`,
-    [id]
+    [id],
   );
   const entry = rows[0];
-  if (!entry) throw refuse(404, "ADJUSTMENT_NOT_FOUND", "Manual adjustment not found");
+  if (!entry)
+    throw refuse(404, "ADJUSTMENT_NOT_FOUND", "Manual adjustment not found");
 
   // Maker-checker: the creator cannot approve/reject their own entry — same rule
   // budget-topup.service.ts enforces (P0P1-4), applied here for the same reason.
   if (String(entry.created_by) === actorId) {
     throw refuse(
-      409, "ADJUSTMENT_MAKER_CHECKER",
-      "You created this adjustment, so you cannot review it. A different reviewer must approve or reject it."
+      409,
+      "ADJUSTMENT_MAKER_CHECKER",
+      "You created this adjustment, so you cannot review it. A different reviewer must approve or reject it.",
     );
   }
   if (String(entry.status) !== "pending") {
-    throw refuse(409, "ADJUSTMENT_WRONG_STAGE", `Adjustment is already ${entry.status}`);
+    throw refuse(
+      409,
+      "ADJUSTMENT_WRONG_STAGE",
+      `Adjustment is already ${entry.status}`,
+    );
   }
 
   if (decision === "reject") {
     if (!rejectionReason?.trim()) {
-      throw refuse(400, "ADJUSTMENT_REJECT_REASON_REQUIRED", "A reason is required to reject an adjustment");
+      throw refuse(
+        400,
+        "ADJUSTMENT_REJECT_REASON_REQUIRED",
+        "A reason is required to reject an adjustment",
+      );
     }
     await db.execute(
       `UPDATE pnl_manual_adjustment
           SET status = 'rejected', approved_by = ?, approved_at = NOW(), rejection_reason = ?
         WHERE id = ?`,
-      [actorId, rejectionReason.trim(), id]
+      [actorId, rejectionReason.trim(), id],
     );
     await writeAuditLog({
       actor_user_id: actorId,
@@ -250,7 +315,11 @@ export async function reviewManualAdjustment(
       module_key: "finance_pnl",
       entity_type: "pnl_manual_adjustment",
       entity_id: id,
-      metadata: { from: "pending", to: "rejected", reason: rejectionReason.trim() },
+      metadata: {
+        from: "pending",
+        to: "rejected",
+        reason: rejectionReason.trim(),
+      },
     });
     return getManualAdjustment(id);
   }
@@ -259,7 +328,7 @@ export async function reviewManualAdjustment(
     `UPDATE pnl_manual_adjustment
         SET status = 'approved', approved_by = ?, approved_at = NOW()
       WHERE id = ?`,
-    [actorId, id]
+    [actorId, id],
   );
   await writeAuditLog({
     actor_user_id: actorId,
@@ -284,11 +353,17 @@ export async function reviewManualAdjustment(
 export async function getAdjustedTotal(
   processId: string,
   periodCode: string,
-  systemRevenue: number
+  systemRevenue: number,
 ): Promise<AdjustedTotal> {
   const base: AdjustedTotal = {
-    processId, periodCode, approvedProjectedRevenue: 0, approvedRewards: 0,
-    approvedPenalties: 0, adjustedTotal: systemRevenue, systemRevenue, pendingCount: 0,
+    processId,
+    periodCode,
+    approvedProjectedRevenue: 0,
+    approvedRewards: 0,
+    approvedPenalties: 0,
+    adjustedTotal: systemRevenue,
+    systemRevenue,
+    pendingCount: 0,
   };
   if (!(await tableExists("pnl_manual_adjustment"))) return base;
 
@@ -297,7 +372,7 @@ export async function getAdjustedTotal(
        FROM pnl_manual_adjustment
       WHERE process_id = ? AND period_code = ?
       GROUP BY adjustment_type, status`,
-    [processId, periodCode]
+    [processId, periodCode],
   );
   let approvedProjectedRevenue = 0;
   let approvedRewards = 0;
@@ -305,16 +380,25 @@ export async function getAdjustedTotal(
   let pendingCount = 0;
   for (const row of rows) {
     const total = Number(row.total ?? 0);
-    if (String(row.status) === "pending") { pendingCount += Number(row.cnt ?? 0); continue; }
+    if (String(row.status) === "pending") {
+      pendingCount += Number(row.cnt ?? 0);
+      continue;
+    }
     if (String(row.status) !== "approved") continue;
-    if (row.adjustment_type === "projected_revenue") approvedProjectedRevenue += total;
+    if (row.adjustment_type === "projected_revenue")
+      approvedProjectedRevenue += total;
     else if (row.adjustment_type === "reward") approvedRewards += total;
     else if (row.adjustment_type === "penalty") approvedPenalties += total;
   }
   return {
-    processId, periodCode, approvedProjectedRevenue, approvedRewards, approvedPenalties,
+    processId,
+    periodCode,
+    approvedProjectedRevenue,
+    approvedRewards,
+    approvedPenalties,
     adjustedTotal: systemRevenue + approvedRewards - approvedPenalties,
-    systemRevenue, pendingCount,
+    systemRevenue,
+    pendingCount,
   };
 }
 
@@ -331,7 +415,7 @@ export interface ApprovedAdjustmentBucket {
  * must not turn "show the adjusted total" into an N+1 query storm.
  */
 export async function getApprovedAdjustmentsByProcess(
-  periodCode: string
+  periodCode: string,
 ): Promise<Map<string, ApprovedAdjustmentBucket>> {
   const out = new Map<string, ApprovedAdjustmentBucket>();
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return out;
@@ -342,20 +426,26 @@ export async function getApprovedAdjustmentsByProcess(
        FROM pnl_manual_adjustment
       WHERE period_code = ?
       GROUP BY process_id, adjustment_type, status`,
-    [periodCode]
+    [periodCode],
   );
   for (const row of rows) {
     const key = String(row.process_id);
     const bucket = out.get(key) ?? {
-      approvedProjectedRevenue: 0, approvedRewards: 0, approvedPenalties: 0, pendingCount: 0,
+      approvedProjectedRevenue: 0,
+      approvedRewards: 0,
+      approvedPenalties: 0,
+      pendingCount: 0,
     };
     const total = Number(row.total ?? 0);
     if (String(row.status) === "pending") {
       bucket.pendingCount += Number(row.cnt ?? 0);
     } else if (String(row.status) === "approved") {
-      if (row.adjustment_type === "projected_revenue") bucket.approvedProjectedRevenue += total;
-      else if (row.adjustment_type === "reward") bucket.approvedRewards += total;
-      else if (row.adjustment_type === "penalty") bucket.approvedPenalties += total;
+      if (row.adjustment_type === "projected_revenue")
+        bucket.approvedProjectedRevenue += total;
+      else if (row.adjustment_type === "reward")
+        bucket.approvedRewards += total;
+      else if (row.adjustment_type === "penalty")
+        bucket.approvedPenalties += total;
     }
     out.set(key, bucket);
   }

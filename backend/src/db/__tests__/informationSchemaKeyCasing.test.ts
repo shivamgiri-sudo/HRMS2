@@ -25,7 +25,12 @@ import { describe, expect, it } from "vitest";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(__dirname, "..", "..");
 
-const INFORMATION_SCHEMA_COLUMNS = ["table_name", "column_name", "data_type", "table_rows"];
+const INFORMATION_SCHEMA_COLUMNS = [
+  "table_name",
+  "column_name",
+  "data_type",
+  "table_rows",
+];
 
 function sourceFiles(dir: string, found: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -67,16 +72,26 @@ describe("information_schema key casing", () => {
     const source = stripComments(fs.readFileSync(file, "utf8"));
     if (!/information_schema/i.test(source)) continue;
 
-    for (const match of source.matchAll(/SELECT\s+([\s\S]*?)\s+FROM\s+information_schema/gi)) {
+    for (const match of source.matchAll(
+      /SELECT\s+([\s\S]*?)\s+FROM\s+information_schema/gi,
+    )) {
       const selectList = match[1];
       // A very long capture means the regex ran past the statement it meant to read.
       if (selectList.length > 300) continue;
 
       for (const column of INFORMATION_SCHEMA_COLUMNS) {
-        const selectsBareLowercase = new RegExp(`(?<![.\\w])${column}(?![\\w])`).test(selectList);
+        const selectsBareLowercase = new RegExp(
+          `(?<![.\\w])${column}(?![\\w])`,
+        ).test(selectList);
         const aliased = new RegExp(`AS\\s+${column}`, "i").test(selectList);
-        if (selectsBareLowercase && !aliased && !readsBothCases(source, column)) {
-          offenders.push(`${path.relative(SRC, file).replace(/\\/g, "/")} selects bare \`${column}\``);
+        if (
+          selectsBareLowercase &&
+          !aliased &&
+          !readsBothCases(source, column)
+        ) {
+          offenders.push(
+            `${path.relative(SRC, file).replace(/\\/g, "/")} selects bare \`${column}\``,
+          );
         }
       }
     }
@@ -85,8 +100,8 @@ describe("information_schema key casing", () => {
   it("every information_schema read either aliases or handles both cases", () => {
     expect(
       [...new Set(offenders)],
-      "Selecting bare lowercase from information_schema yields undefined on MySQL 8. "
-        + "Alias it (SELECT TABLE_NAME AS table_name) or read row.TABLE_NAME as a fallback",
+      "Selecting bare lowercase from information_schema yields undefined on MySQL 8. " +
+        "Alias it (SELECT TABLE_NAME AS table_name) or read row.TABLE_NAME as a fallback",
     ).toEqual([]);
   });
 

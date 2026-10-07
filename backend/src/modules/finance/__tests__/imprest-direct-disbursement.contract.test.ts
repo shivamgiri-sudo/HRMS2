@@ -19,7 +19,9 @@ import { resolve } from "node:path";
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 const SERVICE = read("src/modules/finance/imprest.service.ts");
 const ROUTES = read("src/modules/finance/imprest.routes.ts");
-const PANEL = read("../src/components/finance/grn/imprest/ImprestAllocationPanel.tsx");
+const PANEL = read(
+  "../src/components/finance/grn/imprest/ImprestAllocationPanel.tsx",
+);
 
 describe("imprest allocation is raised and disbursed by Finance Head in one act", () => {
   it("the UI disburses on raise rather than leaving it awaiting a second person", () => {
@@ -27,7 +29,9 @@ describe("imprest allocation is raised and disbursed by Finance Head in one act"
   });
 
   it("only Finance Head and Super Admin can raise it", () => {
-    expect(ROUTES).toContain('const IMPREST_WRITE_ROLES = ["finance_head", "super_admin"] as const;');
+    expect(ROUTES).toContain(
+      'const IMPREST_WRITE_ROLES = ["finance_head", "super_admin"] as const;',
+    );
     expect(ROUTES).not.toMatch(/IMPREST_WRITE_ROLES = \[[^\]]*accounts_head/);
     expect(ROUTES).not.toMatch(/IMPREST_WRITE_ROLES = \[[^\]]*branch_head/);
   });
@@ -58,6 +62,8 @@ describe("imprest allocation is raised and disbursed by Finance Head in one act"
     // The guard that makes deferred allocations safe: a pending allocation crediting the balance
     // would let a voucher spend money nobody has sent yet.
     const fn = SERVICE.slice(SERVICE.indexOf("async createAllocation"));
-    expect(fn).toMatch(/if \(input\.disburseImmediately\) \{[\s\S]{0,120}imprestLedgerService\.post/);
+    expect(fn).toMatch(
+      /if \(input\.disburseImmediately\) \{[\s\S]{0,120}imprestLedgerService\.post/,
+    );
   });
 });

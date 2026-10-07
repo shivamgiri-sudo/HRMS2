@@ -1,7 +1,7 @@
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { randomUUID } from 'crypto';
-import { recalculateDocumentProgress } from '../employees/employeeJoiningDocuments.service.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { randomUUID } from "crypto";
+import { recalculateDocumentProgress } from "../employees/employeeJoiningDocuments.service.js";
 
 interface CreateChecklistsResult {
   created: number;
@@ -31,7 +31,7 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
   const result: CreateChecklistsResult = {
     created: 0,
     skipped: 0,
-    templateId: '',
+    templateId: "",
   };
 
   // Get or create "Legacy Employee" template
@@ -39,8 +39,8 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
   // below was ever reached. document_code is the stable key and is what the
   // insert now supplies.
   const [existingTemplates] = await db.execute<TemplateRow[]>(
-    'SELECT id FROM employee_joining_document_template WHERE document_code = ? LIMIT 1',
-    ['LEGACY_EMPLOYEE']
+    "SELECT id FROM employee_joining_document_template WHERE document_code = ? LIMIT 1",
+    ["LEGACY_EMPLOYEE"],
   );
 
   let templateId: string;
@@ -56,12 +56,7 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
       `INSERT INTO employee_joining_document_template
        (id, document_code, document_name, document_category, active_status, created_at, updated_at)
        VALUES (?, ?, ?, ?, 1, NOW(), NOW())`,
-      [
-        templateId,
-        'LEGACY_EMPLOYEE',
-        'Legacy Employee',
-        'legacy'
-      ]
+      [templateId, "LEGACY_EMPLOYEE", "Legacy Employee", "legacy"],
     );
   }
 
@@ -71,7 +66,7 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
   const [systemUsers] = await db.execute<SystemUserRow[]>(
     `SELECT au.id FROM auth_user au
      WHERE au.email = 'system@teammas.in' OR au.email LIKE '%system%'
-     LIMIT 1`
+     LIMIT 1`,
   );
   const systemUserId = systemUsers[0]?.id ?? randomUUID(); // Fallback to random UUID if no system user
 
@@ -84,7 +79,7 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
          SELECT 1 FROM employee_joining_document_checklist jc
          WHERE jc.employee_id = e.id
        )
-     ORDER BY e.employee_code`
+     ORDER BY e.employee_code`,
   );
 
   // Create one checklist item per employee
@@ -106,14 +101,14 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
           checklistId,
           employee.id,
           templateId,
-          'LEGACY_EMPLOYEE',
-          'Legacy Employee Record',
-          'verified',
+          "LEGACY_EMPLOYEE",
+          "Legacy Employee Record",
+          "verified",
           0, // mandatory: a legacy record is not a live requirement
           systemUserId,
-          'verified',
-          'Pre-HRMS employee — documents verified offline before system migration'
-        ]
+          "verified",
+          "Pre-HRMS employee — documents verified offline before system migration",
+        ],
       );
       result.created++;
       // The insert above never updated employees.joining_document_status /
@@ -125,7 +120,10 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
       // outright rather than trying to display this as a status.
       await recalculateDocumentProgress(employee.id);
     } catch (err: any) {
-      console.error(`[createLegacyJoiningChecklists] Failed for ${employee.employee_code}:`, err.message);
+      console.error(
+        `[createLegacyJoiningChecklists] Failed for ${employee.employee_code}:`,
+        err.message,
+      );
       result.skipped++;
     }
   }

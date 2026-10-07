@@ -11,7 +11,11 @@ describe("bulkUpsertAssignments — REST policy check", () => {
     ];
     const srcs = candidates
       .map((f) => {
-        try { return readFileSync(resolve(f), "utf8"); } catch { return ""; }
+        try {
+          return readFileSync(resolve(f), "utf8");
+        } catch {
+          return "";
+        }
       })
       .join("\n");
     expect(srcs).toMatch(/validateMinimumRest/);
@@ -25,7 +29,11 @@ describe("bulkUpsertAssignments — REST policy check", () => {
     ];
     const srcs = candidates
       .map((f) => {
-        try { return readFileSync(resolve(f), "utf8"); } catch { return ""; }
+        try {
+          return readFileSync(resolve(f), "utf8");
+        } catch {
+          return "";
+        }
       })
       .join("\n");
     expect(srcs).toMatch(/warnings/);

@@ -8,7 +8,15 @@ type FieldMapLike = RowDataPacket | Record<string, unknown>;
 
 export type AcroFormFieldInfo = {
   fieldName: string;
-  fieldType: "text" | "checkbox" | "radio" | "dropdown" | "option_list" | "button" | "signature" | "unknown";
+  fieldType:
+    | "text"
+    | "checkbox"
+    | "radio"
+    | "dropdown"
+    | "option_list"
+    | "button"
+    | "signature"
+    | "unknown";
   pageNumber: number | null;
   mapped: boolean;
   required: boolean;
@@ -58,7 +66,10 @@ function fieldValue(valuesByKey: Map<string, string>, map: FieldMapLike) {
 }
 
 function fieldTypeOf(field: unknown): AcroFormFieldInfo["fieldType"] {
-  const ctor = field && typeof field === "object" ? (field as { constructor?: { name?: string } }).constructor?.name : "";
+  const ctor =
+    field && typeof field === "object"
+      ? (field as { constructor?: { name?: string } }).constructor?.name
+      : "";
   if (ctor === "PDFTextField") return "text";
   if (ctor === "PDFCheckBox") return "checkbox";
   if (ctor === "PDFRadioGroup") return "radio";
@@ -90,7 +101,8 @@ export function applyTransformRule(value: unknown, transformRule?: unknown) {
   if (rule === "uppercase") return text.toUpperCase();
   // slice_N_M — substring(N, M), used for multi-row name/email grid fields
   const sliceMatch = rule.match(/^slice_(\d+)_(\d+)$/);
-  if (sliceMatch) return text.substring(Number(sliceMatch[1]), Number(sliceMatch[2]));
+  if (sliceMatch)
+    return text.substring(Number(sliceMatch[1]), Number(sliceMatch[2]));
   // date_ddmmyyyy — concatenates day+month+4-digit-year as 8 chars for comb date fields
   if (rule === "date_ddmmyyyy") {
     const d = splitIsoDate(text);
@@ -99,15 +111,22 @@ export function applyTransformRule(value: unknown, transformRule?: unknown) {
   return text;
 }
 
-export function inspectAcroFormFieldsFromPdfBytes(pdfBytes: Uint8Array, fieldMaps: FieldMapLike[] = []): Promise<AcroFormFieldInfo[]> {
+export function inspectAcroFormFieldsFromPdfBytes(
+  pdfBytes: Uint8Array,
+  fieldMaps: FieldMapLike[] = [],
+): Promise<AcroFormFieldInfo[]> {
   return PDFDocument.load(pdfBytes).then((pdfDoc) => {
     const form = pdfDoc.getForm();
     const mapped = new Map(fieldMaps.map((map) => [fieldName(map), map]));
-    const pageRefs = new Map(pdfDoc.getPages().map((page, index) => [page.ref, index + 1]));
+    const pageRefs = new Map(
+      pdfDoc.getPages().map((page, index) => [page.ref, index + 1]),
+    );
     return form.getFields().map((field) => {
       const name = field.getName();
       const widgets = field.acroField.getWidgets();
-      const pageNumber = widgets[0]?.P() ? pageRefs.get(widgets[0].P()!) ?? null : null;
+      const pageNumber = widgets[0]?.P()
+        ? (pageRefs.get(widgets[0].P()!) ?? null)
+        : null;
       const map = mapped.get(name);
       return {
         fieldName: name,
@@ -121,11 +140,20 @@ export function inspectAcroFormFieldsFromPdfBytes(pdfBytes: Uint8Array, fieldMap
   });
 }
 
-export async function inspectAcroFormTemplate(templatePath: string, fieldMaps: FieldMapLike[] = []) {
-  return inspectAcroFormFieldsFromPdfBytes(fs.readFileSync(templatePath), fieldMaps);
+export async function inspectAcroFormTemplate(
+  templatePath: string,
+  fieldMaps: FieldMapLike[] = [],
+) {
+  return inspectAcroFormFieldsFromPdfBytes(
+    fs.readFileSync(templatePath),
+    fieldMaps,
+  );
 }
 
-export async function validateAcroFormTemplate(templatePath: string, fieldMaps: FieldMapLike[]): Promise<AcroFormValidationResult> {
+export async function validateAcroFormTemplate(
+  templatePath: string,
+  fieldMaps: FieldMapLike[],
+): Promise<AcroFormValidationResult> {
   const fields = await inspectAcroFormTemplate(templatePath, fieldMaps);
   const templateNames = new Set(fields.map((field) => field.fieldName));
   const missingMappedFields: AcroFormValidationIssue[] = [];
@@ -156,14 +184,28 @@ export async function validateAcroFormTemplate(templatePath: string, fieldMaps: 
   return {
     valid: missingRequiredFields.length === 0,
     templateFieldCount: fields.filter((field) => !field.missing).length,
-    mappedFieldCount: fieldMaps.filter((map) => normalize(map.mapping_mode) === "acroform").length,
+    mappedFieldCount: fieldMaps.filter(
+      (map) => normalize(map.mapping_mode) === "acroform",
+    ).length,
     missingRequiredFields,
     missingMappedFields,
     fields,
   };
 }
 
-function setFieldFontSize(textField: { acroField: { getWidgets(): Array<{ getRectangle(): { width: number; height: number } | undefined }> }; setFontSize(size: number): void }, text: string, maxFontSize: number, minFontSize: number) {
+function setFieldFontSize(
+  textField: {
+    acroField: {
+      getWidgets(): Array<{
+        getRectangle(): { width: number; height: number } | undefined;
+      }>;
+    };
+    setFontSize(size: number): void;
+  },
+  text: string,
+  maxFontSize: number,
+  minFontSize: number,
+) {
   const widgets = textField.acroField.getWidgets();
   const rect = widgets[0]?.getRectangle();
   if (!rect) {
@@ -187,17 +229,28 @@ export async function fillAcroFormPdf(params: {
   values: FillValue[];
   flatten?: boolean;
 }) {
-  const validation = await validateAcroFormTemplate(params.templatePath, params.fieldMaps);
+  const validation = await validateAcroFormTemplate(
+    params.templatePath,
+    params.fieldMaps,
+  );
   if (!validation.valid) {
-    const error = new Error("EPF AcroForm template validation failed: required fields are missing.");
-    (error as Error & { validation?: AcroFormValidationResult }).validation = validation;
+    const error = new Error(
+      "EPF AcroForm template validation failed: required fields are missing.",
+    );
+    (error as Error & { validation?: AcroFormValidationResult }).validation =
+      validation;
     throw error;
   }
 
   const pdfDoc = await PDFDocument.load(fs.readFileSync(params.templatePath));
   const form = pdfDoc.getForm();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const valuesByKey = new Map(params.values.map((value) => [value.field_key, normalize(value.value_text)]));
+  const valuesByKey = new Map(
+    params.values.map((value) => [
+      value.field_key,
+      normalize(value.value_text),
+    ]),
+  );
 
   for (const map of params.fieldMaps) {
     if (normalize(map.mapping_mode) !== "acroform") continue;
@@ -209,7 +262,9 @@ export async function fillAcroFormPdf(params: {
     const checkedWhen = normalize(map.checked_when);
     if (fieldType === "checkbox") {
       const checkbox = form.getCheckBox(name);
-      const shouldCheck = checkedWhen ? normalize(value).toLowerCase() === checkedWhen.toLowerCase() : asBool(value);
+      const shouldCheck = checkedWhen
+        ? normalize(value).toLowerCase() === checkedWhen.toLowerCase()
+        : asBool(value);
       if (shouldCheck) checkbox.check();
       else checkbox.uncheck();
       continue;
@@ -217,7 +272,12 @@ export async function fillAcroFormPdf(params: {
 
     const textField = form.getTextField(name);
     textField.setText(value);
-    setFieldFontSize(textField, value, Number(map.max_font_size ?? map.font_size ?? 9), Number(map.min_font_size ?? 5));
+    setFieldFontSize(
+      textField,
+      value,
+      Number(map.max_font_size ?? map.font_size ?? 9),
+      Number(map.min_font_size ?? 5),
+    );
   }
 
   form.updateFieldAppearances(font);
@@ -228,22 +288,47 @@ export async function fillAcroFormPdf(params: {
 export async function createFillableEpfTemplateFromBase(params: {
   inputPath: string;
   outputPath: string;
-  fieldMaps: Array<FieldMapLike & { x?: number; y?: number; width?: number; height?: number; page_no?: number }>;
+  fieldMaps: Array<
+    FieldMapLike & {
+      x?: number;
+      y?: number;
+      width?: number;
+      height?: number;
+      page_no?: number;
+    }
+  >;
 }) {
   const pdfDoc = await PDFDocument.load(fs.readFileSync(params.inputPath));
   const form = pdfDoc.getForm();
   const pages = pdfDoc.getPages();
   for (const map of params.fieldMaps) {
     const name = fieldName(map);
-    if (!name || map.x == null || map.y == null || map.width == null || map.height == null) continue;
+    if (
+      !name ||
+      map.x == null ||
+      map.y == null ||
+      map.width == null ||
+      map.height == null
+    )
+      continue;
     const page = pages[Math.max(0, Number(map.page_no ?? 1) - 1)];
     if (!page) continue;
     if (normalize(map.field_type) === "checkbox") {
       const checkbox = form.createCheckBox(name);
-      checkbox.addToPage(page, { x: Number(map.x), y: Number(map.y), width: Number(map.width), height: Number(map.height) });
+      checkbox.addToPage(page, {
+        x: Number(map.x),
+        y: Number(map.y),
+        width: Number(map.width),
+        height: Number(map.height),
+      });
     } else {
       const text = form.createTextField(name);
-      text.addToPage(page, { x: Number(map.x), y: Number(map.y), width: Number(map.width), height: Number(map.height) });
+      text.addToPage(page, {
+        x: Number(map.x),
+        y: Number(map.y),
+        width: Number(map.width),
+        height: Number(map.height),
+      });
       text.setFontSize(Number(map.max_font_size ?? map.font_size ?? 9));
     }
   }

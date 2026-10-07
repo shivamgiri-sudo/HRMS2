@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { CustomizationRule, CustomizationContext } from '../customization.types.js';
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import type {
+  CustomizationRule,
+  CustomizationContext,
+} from "../customization.types.js";
 
 // Mock the engine functions for testing
-describe('Customization Engine', () => {
-  describe('matchesContext', () => {
-    it('should match rule with no dimension filters (applies to all)', () => {
+describe("Customization Engine", () => {
+  describe("matchesContext", () => {
+    it("should match rule with no dimension filters (applies to all)", () => {
       const rule: Partial<CustomizationRule> = {
         branch_ids: undefined,
         process_ids: undefined,
@@ -15,8 +18,8 @@ describe('Customization Engine', () => {
       };
 
       const context: CustomizationContext = {
-        employeeId: 'emp-1',
-        branchId: 'branch-1',
+        employeeId: "emp-1",
+        branchId: "branch-1",
       };
 
       // Rule with no filters should match any context
@@ -24,44 +27,44 @@ describe('Customization Engine', () => {
       expect(matches).toBe(true);
     });
 
-    it('should match rule with matching branch', () => {
+    it("should match rule with matching branch", () => {
       const rule: Partial<CustomizationRule> = {
-        branch_ids: ['branch-1', 'branch-2'],
+        branch_ids: ["branch-1", "branch-2"],
       };
 
       const context: CustomizationContext = {
-        employeeId: 'emp-1',
-        branchId: 'branch-1',
+        employeeId: "emp-1",
+        branchId: "branch-1",
       };
 
       const matches = rule.branch_ids?.includes(context.branchId!);
       expect(matches).toBe(true);
     });
 
-    it('should NOT match rule with non-matching branch', () => {
+    it("should NOT match rule with non-matching branch", () => {
       const rule: Partial<CustomizationRule> = {
-        branch_ids: ['branch-1', 'branch-2'],
+        branch_ids: ["branch-1", "branch-2"],
       };
 
       const context: CustomizationContext = {
-        employeeId: 'emp-1',
-        branchId: 'branch-3',
+        employeeId: "emp-1",
+        branchId: "branch-3",
       };
 
       const matches = rule.branch_ids?.includes(context.branchId!);
       expect(matches).toBe(false);
     });
 
-    it('should match rule with multiple dimensions (AND logic)', () => {
+    it("should match rule with multiple dimensions (AND logic)", () => {
       const rule: Partial<CustomizationRule> = {
-        branch_ids: ['branch-1'],
-        department_ids: ['dept-1'],
+        branch_ids: ["branch-1"],
+        department_ids: ["dept-1"],
       };
 
       const context: CustomizationContext = {
-        employeeId: 'emp-1',
-        branchId: 'branch-1',
-        departmentId: 'dept-1',
+        employeeId: "emp-1",
+        branchId: "branch-1",
+        departmentId: "dept-1",
       };
 
       const matches =
@@ -70,16 +73,16 @@ describe('Customization Engine', () => {
       expect(matches).toBe(true);
     });
 
-    it('should NOT match if one dimension fails (AND logic)', () => {
+    it("should NOT match if one dimension fails (AND logic)", () => {
       const rule: Partial<CustomizationRule> = {
-        branch_ids: ['branch-1'],
-        department_ids: ['dept-1'],
+        branch_ids: ["branch-1"],
+        department_ids: ["dept-1"],
       };
 
       const context: CustomizationContext = {
-        employeeId: 'emp-1',
-        branchId: 'branch-1',
-        departmentId: 'dept-2', // Different dept
+        employeeId: "emp-1",
+        branchId: "branch-1",
+        departmentId: "dept-2", // Different dept
       };
 
       const matches =
@@ -89,8 +92,8 @@ describe('Customization Engine', () => {
     });
   });
 
-  describe('applyCustomizations - override', () => {
-    it('should override base config values', () => {
+  describe("applyCustomizations - override", () => {
+    it("should override base config values", () => {
       const baseConfig = {
         max_days_per_year: 12,
         carry_forward: true,
@@ -107,8 +110,8 @@ describe('Customization Engine', () => {
     });
   });
 
-  describe('applyCustomizations - merge', () => {
-    it('should deep merge nested objects', () => {
+  describe("applyCustomizations - merge", () => {
+    it("should deep merge nested objects", () => {
       const baseConfig = {
         policy: {
           grace_period_minutes: 0,
@@ -135,18 +138,14 @@ describe('Customization Engine', () => {
     });
   });
 
-  describe('applyCustomizations - extend', () => {
-    it('should append to arrays', () => {
+  describe("applyCustomizations - extend", () => {
+    it("should append to arrays", () => {
       const baseConfig = {
-        components: [
-          { code: 'BASIC', amount: 10000 },
-        ],
+        components: [{ code: "BASIC", amount: 10000 }],
       };
 
       const ruleConfig = {
-        additional_components: [
-          { code: 'TRAVEL', amount: 5000 },
-        ],
+        additional_components: [{ code: "TRAVEL", amount: 5000 }],
       };
 
       const result = {
@@ -157,15 +156,15 @@ describe('Customization Engine', () => {
       };
 
       expect(result.components).toHaveLength(2);
-      expect(result.components[1].code).toBe('TRAVEL');
+      expect(result.components[1].code).toBe("TRAVEL");
     });
   });
 
-  describe('applyCustomizations - disable', () => {
-    it('should mark config as disabled', () => {
+  describe("applyCustomizations - disable", () => {
+    it("should mark config as disabled", () => {
       const baseConfig = {
         visible: true,
-        name: 'Salary Section',
+        name: "Salary Section",
       };
 
       const ruleConfig = {
@@ -175,12 +174,12 @@ describe('Customization Engine', () => {
       const result = { ...baseConfig, ...ruleConfig };
 
       expect(result._disabled).toBe(true);
-      expect(result.name).toBe('Salary Section'); // Other props preserved
+      expect(result.name).toBe("Salary Section"); // Other props preserved
     });
   });
 
-  describe('priority resolution', () => {
-    it('should apply rules by priority (higher wins)', () => {
+  describe("priority resolution", () => {
+    it("should apply rules by priority (higher wins)", () => {
       const baseConfig = { value: 1 };
 
       const rules = [
@@ -202,25 +201,25 @@ describe('Customization Engine', () => {
     });
   });
 
-  describe('caching', () => {
-    it('should generate correct cache key', () => {
-      const employeeId = 'emp-123';
-      const entityType = 'leave_type';
-      const entityId = 'leave-456';
+  describe("caching", () => {
+    it("should generate correct cache key", () => {
+      const employeeId = "emp-123";
+      const entityType = "leave_type";
+      const entityId = "leave-456";
 
       const cacheKey = `${employeeId}:${entityType}:${entityId}`;
 
-      expect(cacheKey).toBe('emp-123:leave_type:leave-456');
+      expect(cacheKey).toBe("emp-123:leave_type:leave-456");
     });
 
-    it('should handle null entityId in cache key', () => {
-      const employeeId = 'emp-123';
-      const entityType = 'attendance_policy';
+    it("should handle null entityId in cache key", () => {
+      const employeeId = "emp-123";
+      const entityType = "attendance_policy";
       const entityId = null;
 
-      const cacheKey = `${employeeId}:${entityType}:${entityId || 'null'}`;
+      const cacheKey = `${employeeId}:${entityType}:${entityId || "null"}`;
 
-      expect(cacheKey).toBe('emp-123:attendance_policy:null');
+      expect(cacheKey).toBe("emp-123:attendance_policy:null");
     });
   });
 });

@@ -18,8 +18,10 @@ import {
 } from "./client-payment-tracking.service.js";
 
 const router = Router();
-const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 const PAYMENT_READ_ROLES = [
   "super_admin",
@@ -55,7 +57,7 @@ router.get(
     };
     const result = await getClientInvoices(filters);
     res.json(result);
-  })
+  }),
 );
 
 router.get(
@@ -67,10 +69,10 @@ router.get(
     const trends = await getClientPaymentTrends(
       clientName as string,
       branchName as string,
-      months ? Number(months) : 12
+      months ? Number(months) : 12,
     );
     res.json({ trends });
-  })
+  }),
 );
 
 router.get(
@@ -80,7 +82,7 @@ router.get(
   h(async (req, res) => {
     const clients = await getClientSummary();
     res.json({ clients });
-  })
+  }),
 );
 
 router.get(
@@ -90,15 +92,17 @@ router.get(
   h(async (req, res) => {
     const { financeYear, month, branchName } = req.query;
     if (!financeYear || !month) {
-      return res.status(400).json({ error: "financeYear and month are required" });
+      return res
+        .status(400)
+        .json({ error: "financeYear and month are required" });
     }
     const rates = await getSeatRatesFromDbBill(
       financeYear as string,
       month as string,
-      branchName as string
+      branchName as string,
     );
     res.json({ rates });
-  })
+  }),
 );
 
 router.get(
@@ -108,14 +112,16 @@ router.get(
   h(async (req, res) => {
     const { financeYear, month } = req.query;
     if (!financeYear || !month) {
-      return res.status(400).json({ error: "financeYear and month are required" });
+      return res
+        .status(400)
+        .json({ error: "financeYear and month are required" });
     }
     const prediction = await getPredictiveRevenue(
       financeYear as string,
-      month as string
+      month as string,
     );
     res.json(prediction);
-  })
+  }),
 );
 
 router.get(
@@ -129,7 +135,7 @@ router.get(
     }
     const history = await getPaymentHistory(invoiceRefId);
     res.json({ history });
-  })
+  }),
 );
 
 router.post(
@@ -153,7 +159,7 @@ router.post(
 
     const result = await updateInvoicePayment(payload, req.authUser.id);
     res.json(result);
-  })
+  }),
 );
 
 export const clientPaymentTrackingRouter = router;

@@ -3,7 +3,12 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const src = readFileSync(
-  resolve(process.cwd(), "src/modules/reporting/report-suite-highrisk.routes.ts"), "utf8");
+  resolve(
+    process.cwd(),
+    "src/modules/reporting/report-suite-highrisk.routes.ts",
+  ),
+  "utf8",
+);
 
 /**
  * The four reports on this router were unpageable, and the failure was invisible.
@@ -50,10 +55,16 @@ describe("high-risk router pagination", () => {
   it("passes an offset at every call site", () => {
     // A helper that accepts an offset nobody supplies is the same bug with more steps.
     const calls = [...src.matchAll(/return sendRows\(([^;]*?)\);/gs)];
-    expect(calls.length, "expected the four high-risk reports").toBeGreaterThanOrEqual(4);
+    expect(
+      calls.length,
+      "expected the four high-risk reports",
+    ).toBeGreaterThanOrEqual(4);
     const missing = calls
-      .filter(m => !/offsetParam\(req\.query\.offset\)/.test(m[1]))
-      .map(m => (/"([a-z-]+)"/.exec(m[1]) ?? [])[1] ?? "?");
-    expect(missing, `these call sendRows without an offset: ${missing.join(", ")}`).toEqual([]);
+      .filter((m) => !/offsetParam\(req\.query\.offset\)/.test(m[1]))
+      .map((m) => (/"([a-z-]+)"/.exec(m[1]) ?? [])[1] ?? "?");
+    expect(
+      missing,
+      `these call sendRows without an offset: ${missing.join(", ")}`,
+    ).toEqual([]);
   });
 });

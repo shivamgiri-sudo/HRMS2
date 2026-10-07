@@ -37,7 +37,15 @@ describe("ATS reporting scope excludes other-entity candidates", () => {
       expect(isOtherEntityCandidateCode(code), code).toBe(true);
     }
     // Real MAS code shapes, from the same census.
-    for (const code of ["CND-MSR880WE", "C20260612165746254_R3945", "MAS47814", "62637C", "", null, undefined]) {
+    for (const code of [
+      "CND-MSR880WE",
+      "C20260612165746254_R3945",
+      "MAS47814",
+      "62637C",
+      "",
+      null,
+      undefined,
+    ]) {
       expect(isOtherEntityCandidateCode(code), String(code)).toBe(false);
     }
   });
@@ -45,25 +53,37 @@ describe("ATS reporting scope excludes other-entity candidates", () => {
   it("builds an alias-qualified predicate", () => {
     // The bare-table-name-into-an-aliased-query bug took out the BMI board for sixteen days.
     // This helper takes the alias for the same reason its sibling does.
-    expect(excludeOtherEntityCandidatesSql("c")).toBe("c.candidate_code NOT LIKE 'IDC%'");
-    expect(excludeOtherEntityCandidatesSql("ats_candidate")).toContain("ats_candidate.candidate_code");
+    expect(excludeOtherEntityCandidatesSql("c")).toBe(
+      "c.candidate_code NOT LIKE 'IDC%'",
+    );
+    expect(excludeOtherEntityCandidatesSql("ats_candidate")).toContain(
+      "ats_candidate.candidate_code",
+    );
   });
 
   it("is applied by the command-center query builder", () => {
     const src = readFileSync(
-      resolve(process.cwd(), "src/modules/ats-full-parity/atsFullParity.service.ts"),
+      resolve(
+        process.cwd(),
+        "src/modules/ats-full-parity/atsFullParity.service.ts",
+      ),
       "utf8",
     );
     expect(src).toContain("excludeOtherEntityCandidatesSql");
     // Both scope rules must be in the shared WHERE builder, not one of them in a single caller.
-    const builder = src.slice(src.indexOf("async function buildCandidateFilters"));
+    const builder = src.slice(
+      src.indexOf("async function buildCandidateFilters"),
+    );
     expect(builder).toContain('excludeEmployeeShapedCandidatesSql("c")');
     expect(builder).toContain('excludeOtherEntityCandidatesSql("c")');
   });
 
   it("reports what it excluded instead of dropping it silently", () => {
     const src = readFileSync(
-      resolve(process.cwd(), "src/modules/ats-full-parity/atsFullParity.service.ts"),
+      resolve(
+        process.cwd(),
+        "src/modules/ats-full-parity/atsFullParity.service.ts",
+      ),
       "utf8",
     );
     // A dashboard that quietly loses 2,738 rows is as misleading as one that quietly counts
@@ -73,7 +93,10 @@ describe("ATS reporting scope excludes other-entity candidates", () => {
 
   it("scopes the data-integrity health probes to MAS too", () => {
     const src = readFileSync(
-      resolve(process.cwd(), "src/modules/ats-full-parity/atsFullParity.service.ts"),
+      resolve(
+        process.cwd(),
+        "src/modules/ats-full-parity/atsFullParity.service.ts",
+      ),
       "utf8",
     );
     /**
@@ -82,6 +105,6 @@ describe("ATS reporting scope excludes other-entity candidates", () => {
      * stop reading it.
      */
     const health = src.slice(src.indexOf("async healthCheck"));
-    expect(health.slice(0, health.indexOf('return {'))).toContain("IDC%");
+    expect(health.slice(0, health.indexOf("return {"))).toContain("IDC%");
   });
 });

@@ -15,12 +15,23 @@ export const manpowerRiskRouter = Router();
 // scope row gets 1=0 — an empty board, not the whole organisation. `ceo` is deliberately absent
 // from the scope list and granted through allowCeoAllRead instead, since it has no scope rows.
 const HIRING_ALERT_ROLES = [
-  "admin", "hr", "hr_admin", "ho_hr", "branch_hr", "process_hr",
-  "recruiter", "recruitment_hr", "manager", "branch_head", "process_manager", "wfm",
+  "admin",
+  "hr",
+  "hr_admin",
+  "ho_hr",
+  "branch_hr",
+  "process_hr",
+  "recruiter",
+  "recruitment_hr",
+  "manager",
+  "branch_head",
+  "process_manager",
+  "wfm",
 ] as const;
 manpowerRiskRouter.use(requireAuth);
 
-const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+const h =
+  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: (e?: unknown) => void) =>
     fn(req, res).catch(next);
 
@@ -126,9 +137,7 @@ manpowerRiskRouter.get(
          wm.branch_id, b.branch_name,
          wm.role_group, wm.mandated_hc, wm.buffer_pct, wm.alert_threshold_pct
        ORDER BY p.process_name, b.branch_name`,
-      [
-        ...scoped.params, ...branchFilterParams,
-      ]
+      [...scoped.params, ...branchFilterParams],
     );
 
     const data = (rows as RowDataPacket[]).map((r) => {
@@ -147,9 +156,10 @@ manpowerRiskRouter.get(
       // better), so the average of start and end is `active + exits3m / 2` — the same case now
       // reads 99%, still high, but no longer a number that looks like a data bug.
       const avgHcForAttrition = active + exits3m / 2;
-      const attritionRate = avgHcForAttrition > 0
-        ? Math.round((exits3m / 3 / avgHcForAttrition) * 12 * 100)
-        : 0;
+      const attritionRate =
+        avgHcForAttrition > 0
+          ? Math.round((exits3m / 3 / avgHcForAttrition) * 12 * 100)
+          : 0;
 
       // Risk: critical if gap >= 20% of mandate, high if gap >= 10%, medium if gap > 0
       const gapPct = mandated > 0 ? (gap / mandated) * 100 : 0;
@@ -192,7 +202,8 @@ manpowerRiskRouter.get(
         target_hc: targetHc,
         shortage,
         surplus: Math.max(0, bufferCount - bufferToMaintain),
-        coverage_pct: targetHc > 0 ? Math.round((active / targetHc) * 100) : null,
+        coverage_pct:
+          targetHc > 0 ? Math.round((active / targetHc) * 100) : null,
         in_notice_count: inNotice,
         effective_hc: effectiveHc,
         gap,
@@ -275,7 +286,7 @@ manpowerRiskRouter.get(
          AND (${unmappedScope.sql})
        GROUP BY cc.branch_id, b.branch_name
        ORDER BY mandated_hc DESC`,
-      unmappedScope.params
+      unmappedScope.params,
     );
     const unmapped = (unmappedRows as RowDataPacket[]).map((r) => ({
       branch_id: r.branch_id,
@@ -293,18 +304,27 @@ manpowerRiskRouter.get(
       low: data.filter((d) => d.risk_level === "low").length,
       total_in_notice: data.reduce((s, d) => s + d.in_notice_count, 0),
       total_gap: data.reduce((s, d) => s + Math.max(0, d.gap), 0),
-      total_hiring_needed: data.reduce((s, d) => s + d.hiring_recommendation, 0),
+      total_hiring_needed: data.reduce(
+        (s, d) => s + d.hiring_recommendation,
+        0,
+      ),
       total_mandate: data.reduce((s, d) => s + d.mandated_hc, 0),
       total_active: data.reduce((s, d) => s + d.active_hc, 0),
-      total_buffer_to_maintain: data.reduce((s, d) => s + d.buffer_to_maintain, 0),
+      total_buffer_to_maintain: data.reduce(
+        (s, d) => s + d.buffer_to_maintain,
+        0,
+      ),
       total_shortage: data.reduce((s, d) => s + d.shortage, 0),
       processes_short: data.filter((d) => d.shortage > 0).length,
       unmapped_mandate: unmapped.reduce((s, u) => s + u.mandated_hc, 0),
-      unmapped_cost_centres: unmapped.reduce((s, u) => s + u.cost_centre_count, 0),
+      unmapped_cost_centres: unmapped.reduce(
+        (s, u) => s + u.cost_centre_count,
+        0,
+      ),
     };
 
     return res.json({ success: true, data, summary, unmapped });
-  })
+  }),
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -373,9 +393,9 @@ manpowerRiskRouter.get(
        LEFT JOIN designation_master des ON des.id = e.designation_id
        LEFT JOIN employees mgr   ON mgr.id  = e.reporting_manager_id
        WHERE er.status IN ('accepted', 'notice_serving')
-       ORDER BY days_remaining ASC, er.created_at DESC`
+       ORDER BY days_remaining ASC, er.created_at DESC`,
     );
 
     return res.json({ success: true, data: rows });
-  })
+  }),
 );

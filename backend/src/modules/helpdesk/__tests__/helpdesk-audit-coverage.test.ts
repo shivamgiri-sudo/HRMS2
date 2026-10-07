@@ -12,36 +12,56 @@ import { describe, expect, it } from "vitest";
  * unrelated edit).
  */
 
-const routes = readFileSync(resolve(process.cwd(), "src/modules/helpdesk/helpdesk.routes.ts"), "utf8");
+const routes = readFileSync(
+  resolve(process.cwd(), "src/modules/helpdesk/helpdesk.routes.ts"),
+  "utf8",
+);
 
-function handlerFor(routeSignature: string, nextRouteSignature?: string): string {
+function handlerFor(
+  routeSignature: string,
+  nextRouteSignature?: string,
+): string {
   const start = routes.indexOf(routeSignature);
   expect(start, `route not found: ${routeSignature}`).toBeGreaterThan(-1);
-  const end = nextRouteSignature ? routes.indexOf(nextRouteSignature, start) : start + 1200;
+  const end = nextRouteSignature
+    ? routes.indexOf(nextRouteSignature, start)
+    : start + 1200;
   return routes.slice(start, end > start ? end : undefined);
 }
 
 describe("helpdesk audit coverage — the 4 previously-missing actions", () => {
   it("POST /tickets (create) writes TICKET_CREATED", () => {
-    const handler = handlerFor('router.post("/tickets",', 'router.get("/tickets/:id"');
+    const handler = handlerFor(
+      'router.post("/tickets",',
+      'router.get("/tickets/:id"',
+    );
     expect(handler).toContain("TICKET_CREATED");
     expect(handler).toContain("writeSensitiveAuditLog");
   });
 
   it("PATCH /tickets/:id (generic update) writes TICKET_UPDATED", () => {
-    const handler = handlerFor('router.patch("/tickets/:id"', 'router.post("/tickets/:id/assign"');
+    const handler = handlerFor(
+      'router.patch("/tickets/:id"',
+      'router.post("/tickets/:id/assign"',
+    );
     expect(handler).toContain("TICKET_UPDATED");
     expect(handler).toContain("writeSensitiveAuditLog");
   });
 
   it("POST /tickets/:id/resolve writes TICKET_RESOLVED", () => {
-    const handler = handlerFor('router.post("/tickets/:id/resolve"', 'router.post("/tickets/:id/reopen"');
+    const handler = handlerFor(
+      'router.post("/tickets/:id/resolve"',
+      'router.post("/tickets/:id/reopen"',
+    );
     expect(handler).toContain("TICKET_RESOLVED");
     expect(handler).toContain("writeSensitiveAuditLog");
   });
 
   it("POST /tickets/:id/comments writes TICKET_COMMENT_ADDED or TICKET_INTERNAL_NOTE_ADDED", () => {
-    const handler = handlerFor('router.post("/tickets/:id/comments"', "// ── Grievances");
+    const handler = handlerFor(
+      'router.post("/tickets/:id/comments"',
+      "// ── Grievances",
+    );
     expect(handler).toContain("TICKET_COMMENT_ADDED");
     expect(handler).toContain("TICKET_INTERNAL_NOTE_ADDED");
     expect(handler).toContain("writeSensitiveAuditLog");

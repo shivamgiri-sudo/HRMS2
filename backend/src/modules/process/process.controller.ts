@@ -5,7 +5,7 @@ import {
   createProcessSchema,
   processFiltersSchema,
   updateProcessSchema,
-  updateProcessStatusSchema
+  updateProcessStatusSchema,
 } from "./process.validation.js";
 
 export const processController = {
@@ -16,7 +16,7 @@ export const processController = {
 
     return res.json({
       success: true,
-      data
+      data,
     });
   },
 
@@ -31,14 +31,16 @@ export const processController = {
   async listMyProcesses(req: AuthenticatedRequest, res: Response) {
     const userId = req.authUser?.id;
     if (!userId) {
-      return res.status(401).json({ success: false, error: "Not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, error: "Not authenticated" });
     }
 
     const data = await processService.listAssignedToUser(userId);
 
     return res.json({
       success: true,
-      data
+      data,
     });
   },
 
@@ -47,7 +49,7 @@ export const processController = {
 
     return res.json({
       success: true,
-      data
+      data,
     });
   },
 
@@ -61,18 +63,18 @@ export const processController = {
     if (!values || typeof values !== "object" || Array.isArray(values)) {
       return res.status(400).json({
         success: false,
-        message: "values must be an object"
+        message: "values must be an object",
       });
     }
     const data = await processService.saveConfiguration(
       req.params.id,
       values,
-      req.authUser!.id
+      req.authUser!.id,
     );
     return res.json({
       success: true,
       data,
-      message: "Process configuration saved"
+      message: "Process configuration saved",
     });
   },
 
@@ -84,7 +86,7 @@ export const processController = {
     return res.status(201).json({
       success: true,
       data,
-      message: "Process created successfully"
+      message: "Process created successfully",
     });
   },
 
@@ -94,13 +96,13 @@ export const processController = {
     const data = await processService.update(
       req.params.id,
       input,
-      req.authUser!.id
+      req.authUser!.id,
     );
 
     return res.json({
       success: true,
       data,
-      message: "Process updated successfully"
+      message: "Process updated successfully",
     });
   },
 
@@ -110,7 +112,7 @@ export const processController = {
     const data = await processService.updateStatus(
       req.params.id,
       input.activeStatus,
-      req.authUser!.id
+      req.authUser!.id,
     );
 
     return res.json({
@@ -118,7 +120,7 @@ export const processController = {
       data,
       message: input.activeStatus
         ? "Process activated successfully"
-        : "Process deactivated successfully"
+        : "Process deactivated successfully",
     });
-  }
+  },
 };

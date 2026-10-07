@@ -42,9 +42,15 @@ describe("candidate journey joins stay indexable", () => {
   it("resolves the two identity columns with separate joins", () => {
     // updated_by holds an employees.id from some writers and an auth user id
     // from others; both still have to be tried, just not in one ON clause.
-    expect(SOURCE).toMatch(/LEFT JOIN employees e_user ON e_user\.user_id = s\.updated_by/);
-    expect(SOURCE).toMatch(/LEFT JOIN employees e_id\s+ON e_id\.id = s\.updated_by/);
-    expect(SOURCE).toMatch(/COALESCE\(e_user\.full_name, e_id\.full_name\) AS actor_name/);
+    expect(SOURCE).toMatch(
+      /LEFT JOIN employees e_user ON e_user\.user_id = s\.updated_by/,
+    );
+    expect(SOURCE).toMatch(
+      /LEFT JOIN employees e_id\s+ON e_id\.id = s\.updated_by/,
+    );
+    expect(SOURCE).toMatch(
+      /COALESCE\(e_user\.full_name, e_id\.full_name\) AS actor_name/,
+    );
   });
 
   it("keeps every source that resolved an actor name resolving one", () => {
@@ -71,8 +77,13 @@ describe("candidate journey joins stay indexable", () => {
       const idAt = SOURCE.indexOf(`e_id.id = ${source}`);
       expect(at, `no user_id join for ${source}`).toBeGreaterThan(-1);
       expect(idAt, `no id join for ${source}`).toBeGreaterThan(-1);
-      expect(at, `${source}: user_id must be joined (and COALESCEd) first`).toBeLessThan(idAt);
+      expect(
+        at,
+        `${source}: user_id must be joined (and COALESCEd) first`,
+      ).toBeLessThan(idAt);
     }
-    expect(SOURCE).not.toMatch(/COALESCE\(e_id\.full_name, e_user\.full_name\)/);
+    expect(SOURCE).not.toMatch(
+      /COALESCE\(e_id\.full_name, e_user\.full_name\)/,
+    );
   });
 });

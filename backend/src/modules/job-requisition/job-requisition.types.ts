@@ -3,7 +3,8 @@
  * Stage 1 of HRMS Journey: Workforce Requirement and Job Requisition
  */
 
-export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern' | 'trainee';
+export type EmploymentType =
+  "full_time" | "part_time" | "contract" | "intern" | "trainee";
 
 /**
  * Structured screening config stored as JSON on job_requisition.meta_screening_config.
@@ -12,18 +13,18 @@ export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern' |
 export interface MetaScreeningConfig {
   /** Send WhatsApp immediately when a lead qualifies. Default true. */
   auto_notify?: boolean;
-  gender?: 'any' | 'male' | 'female';
+  gender?: "any" | "male" | "female";
   /** Required certifications — e.g. ["DRA","IRDA"]. Lead must confirm holding each one. */
   certifications?: string[];
   /** Language requirements. Lead must confirm the listed skills per language. */
   language_requirements?: Array<{
     language: string;
-    skills: Array<'speak' | 'read' | 'write'>;
+    skills: Array<"speak" | "read" | "write">;
   }>;
   /** Minimum typing speed in WPM — for chat/email/back-office processes. */
   min_typing_speed_wpm?: number | null;
   /** Minimum written English level — for chat/email processes. */
-  written_english_level?: 'basic' | 'intermediate' | 'advanced' | null;
+  written_english_level?: "basic" | "intermediate" | "advanced" | null;
   /**
    * Arbitrary form-field conditions. Each rule checks a specific META form answer.
    * op: eq | neq | contains | not_contains | gte (for numeric fields like wpm) | is_yes (a yes/no
@@ -32,15 +33,24 @@ export interface MetaScreeningConfig {
    */
   custom_field_rules?: Array<{
     field: string;
-    op: 'eq' | 'neq' | 'contains' | 'not_contains' | 'gte' | 'is_yes';
+    op: "eq" | "neq" | "contains" | "not_contains" | "gte" | "is_yes";
     value: string;
     label?: string;
   }>;
 }
-export type RequisitionPriority = 'low' | 'normal' | 'high' | 'urgent';
-export type RequisitionType = 'new_position' | 'replacement' | 'expansion' | 'seasonal' | 'project_based';
-export type ApprovalStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'cancelled' | 'on_hold' | 'closed';
-export type CandidateOutcome = 'in_progress' | 'selected' | 'rejected' | 'withdrawn' | 'offer_declined';
+export type RequisitionPriority = "low" | "normal" | "high" | "urgent";
+export type RequisitionType =
+  "new_position" | "replacement" | "expansion" | "seasonal" | "project_based";
+export type ApprovalStatus =
+  | "draft"
+  | "pending_approval"
+  | "approved"
+  | "rejected"
+  | "cancelled"
+  | "on_hold"
+  | "closed";
+export type CandidateOutcome =
+  "in_progress" | "selected" | "rejected" | "withdrawn" | "offer_declined";
 
 export interface JobRequisition {
   id: string;
@@ -178,7 +188,7 @@ export interface RequisitionCandidate {
   candidate_id: string;
   linked_at: string;
   linked_by: string | null;
-  link_source: 'manual' | 'auto_match' | 'candidate_applied';
+  link_source: "manual" | "auto_match" | "candidate_applied";
   current_stage: string | null;
   outcome: CandidateOutcome | null;
   outcome_at: string | null;
@@ -189,7 +199,13 @@ export interface RequisitionApprovalLog {
   id: string;
   requisition_id: string;
   approval_step: number;
-  action: 'submitted' | 'approved' | 'rejected' | 'returned' | 'escalated' | 'cancelled';
+  action:
+    | "submitted"
+    | "approved"
+    | "rejected"
+    | "returned"
+    | "escalated"
+    | "cancelled";
   actor_id: string;
   actor_name: string | null;
   actor_role: string | null;
@@ -215,7 +231,11 @@ export interface RequisitionDashboardMetrics {
   fill_rate_percent: number;
   avg_time_to_fill_days: number;
   by_priority: Record<RequisitionPriority, number>;
-  by_branch: Array<{ branch_name: string; count: number; open_positions: number }>;
+  by_branch: Array<{
+    branch_name: string;
+    count: number;
+    open_positions: number;
+  }>;
   by_status: Record<ApprovalStatus, number>;
 }
 

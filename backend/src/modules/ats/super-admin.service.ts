@@ -1,5 +1,5 @@
-import { db } from '../../db/mysql.js';
-import { RowDataPacket } from 'mysql2/promise';
+import { db } from "../../db/mysql.js";
+import { RowDataPacket } from "mysql2/promise";
 
 /**
  * Super Admin Service
@@ -67,64 +67,64 @@ interface SearchEmployeeRow extends RowDataPacket {
 export async function getAvailableModules(): Promise<Module[]> {
   const modules = [
     {
-      module_name: 'ATS_DASHBOARD',
-      display_name: 'ATS Dashboard',
-      description: 'Main ATS dashboard and analytics',
+      module_name: "ATS_DASHBOARD",
+      display_name: "ATS Dashboard",
+      description: "Main ATS dashboard and analytics",
     },
     {
-      module_name: 'ATS_RECRUITER_PORTAL',
-      display_name: 'Recruiter Portal',
-      description: 'Interview submission and candidate management',
+      module_name: "ATS_RECRUITER_PORTAL",
+      display_name: "Recruiter Portal",
+      description: "Interview submission and candidate management",
     },
     {
-      module_name: 'ATS_PAYROLL_HR',
-      display_name: 'Payroll HR Validation',
-      description: 'Salary validation and approval',
+      module_name: "ATS_PAYROLL_HR",
+      display_name: "Payroll HR Validation",
+      description: "Salary validation and approval",
     },
     {
-      module_name: 'ATS_BRANCH_HEAD_APPROVAL',
-      display_name: 'Branch Head Approval',
-      description: 'Final salary approval and employee code generation',
+      module_name: "ATS_BRANCH_HEAD_APPROVAL",
+      display_name: "Branch Head Approval",
+      description: "Final salary approval and employee code generation",
     },
     {
-      module_name: 'ATS_WALKIN_QUEUE',
-      display_name: 'Walk-in Queue',
-      description: 'Queue management and token system',
+      module_name: "ATS_WALKIN_QUEUE",
+      display_name: "Walk-in Queue",
+      description: "Queue management and token system",
     },
     {
-      module_name: 'ATS_BGV',
-      display_name: 'BGV Verification',
-      description: 'Background verification center',
+      module_name: "ATS_BGV",
+      display_name: "BGV Verification",
+      description: "Background verification center",
     },
     {
-      module_name: 'ATS_COMMAND_CENTRE',
-      display_name: 'Command Centre',
-      description: 'ATS metrics and analytics dashboard',
+      module_name: "ATS_COMMAND_CENTRE",
+      display_name: "Command Centre",
+      description: "ATS metrics and analytics dashboard",
     },
     {
-      module_name: 'COMMAND_CENTRE',
-      display_name: 'Main Command Centre',
-      description: 'Overall HRMS analytics',
+      module_name: "COMMAND_CENTRE",
+      display_name: "Main Command Centre",
+      description: "Overall HRMS analytics",
     },
     {
-      module_name: 'LMS_ADMIN',
-      display_name: 'LMS Admin',
-      description: 'Learning Management System administration',
+      module_name: "LMS_ADMIN",
+      display_name: "LMS Admin",
+      description: "Learning Management System administration",
     },
     {
-      module_name: 'LMS_COORDINATOR',
-      display_name: 'LMS Coordinator',
-      description: 'Course coordination and management',
+      module_name: "LMS_COORDINATOR",
+      display_name: "LMS Coordinator",
+      description: "Course coordination and management",
     },
     {
-      module_name: 'WFM_ROSTER',
-      display_name: 'WFM Roster',
-      description: 'Workforce roster management',
+      module_name: "WFM_ROSTER",
+      display_name: "WFM Roster",
+      description: "Workforce roster management",
     },
     {
-      module_name: 'ACCESS_CONTROL',
-      display_name: 'Access Control',
-      description: 'User access and permission management',
+      module_name: "ACCESS_CONTROL",
+      display_name: "Access Control",
+      description: "User access and permission management",
     },
   ];
 
@@ -133,10 +133,12 @@ export async function getAvailableModules(): Promise<Module[]> {
     `SELECT module_name, COUNT(*) as total_users
      FROM module_access_control
      WHERE has_access = TRUE AND revoked_at IS NULL
-     GROUP BY module_name`
+     GROUP BY module_name`,
   );
 
-  const countMap = new Map((counts as ModuleCountRow[]).map((c) => [c.module_name, c.total_users]));
+  const countMap = new Map(
+    (counts as ModuleCountRow[]).map((c) => [c.module_name, c.total_users]),
+  );
 
   return modules.map((m) => ({
     ...m,
@@ -147,7 +149,9 @@ export async function getAvailableModules(): Promise<Module[]> {
 /**
  * Get module access list
  */
-export async function getModuleAccessList(moduleName?: string): Promise<ModuleAccess[]> {
+export async function getModuleAccessList(
+  moduleName?: string,
+): Promise<ModuleAccess[]> {
   let query = `
     SELECT
       mac.id,
@@ -166,11 +170,11 @@ export async function getModuleAccessList(moduleName?: string): Promise<ModuleAc
   const params: Array<string | null> = [];
 
   if (moduleName) {
-    query += ' WHERE mac.module_name = ?';
+    query += " WHERE mac.module_name = ?";
     params.push(moduleName);
   }
 
-  query += ' ORDER BY mac.granted_at DESC';
+  query += " ORDER BY mac.granted_at DESC";
 
   const [access] = await db.execute<RowDataPacket[]>(query, params);
 
@@ -208,7 +212,7 @@ export async function getEmployeesWithAccess(): Promise<EmployeeWithAccess[]> {
     WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
     GROUP BY e.employee_code, e.first_name, e.last_name, dm.designation_name, bm.branch_name
     HAVING total_access > 0
-    ORDER BY total_access DESC, employee_name ASC`
+    ORDER BY total_access DESC, employee_name ASC`,
   );
 
   return (employees as EmployeeAccessRow[]).map((e) => ({
@@ -216,7 +220,7 @@ export async function getEmployeesWithAccess(): Promise<EmployeeWithAccess[]> {
     employee_name: e.employee_name,
     designation: e.designation,
     branch: e.branch,
-    modules: e.modules ? e.modules.split(',') : [],
+    modules: e.modules ? e.modules.split(",") : [],
     total_access: e.total_access,
   }));
 }
@@ -228,7 +232,7 @@ export async function grantModuleAccess(
   moduleName: string,
   employeeCode: string,
   grantedBy: string,
-  remarks?: string
+  remarks?: string,
 ): Promise<void> {
   await db.execute(
     `INSERT INTO module_access_control
@@ -240,7 +244,7 @@ export async function grantModuleAccess(
       granted_at = NOW(),
       revoked_at = NULL,
       remarks = VALUES(remarks)`,
-    [moduleName, employeeCode, grantedBy, remarks || null]
+    [moduleName, employeeCode, grantedBy, remarks || null],
   );
 }
 
@@ -249,13 +253,13 @@ export async function grantModuleAccess(
  */
 export async function revokeModuleAccess(
   moduleName: string,
-  employeeCode: string
+  employeeCode: string,
 ): Promise<void> {
   await db.execute(
     `UPDATE module_access_control
     SET has_access = FALSE, revoked_at = NOW()
     WHERE module_name = ? AND employee_code = ?`,
-    [moduleName, employeeCode]
+    [moduleName, employeeCode],
   );
 }
 
@@ -266,7 +270,7 @@ export async function bulkGrantAccess(
   moduleName: string,
   employeeCodes: string[],
   grantedBy: string,
-  remarks?: string
+  remarks?: string,
 ): Promise<{ granted: number }> {
   let granted = 0;
 
@@ -287,7 +291,7 @@ export async function bulkGrantAccess(
  */
 export async function bulkRevokeAccess(
   moduleName: string,
-  employeeCodes: string[]
+  employeeCodes: string[],
 ): Promise<{ revoked: number }> {
   let revoked = 0;
 
@@ -308,7 +312,7 @@ export async function bulkRevokeAccess(
  */
 export async function hasModuleAccess(
   employeeCode: string,
-  moduleName: string
+  moduleName: string,
 ): Promise<boolean> {
   const [result] = await db.execute<RowDataPacket[]>(
     `SELECT has_access
@@ -316,7 +320,7 @@ export async function hasModuleAccess(
      WHERE employee_code = ? AND module_name = ?
        AND has_access = TRUE AND revoked_at IS NULL
      LIMIT 1`,
-    [employeeCode, moduleName]
+    [employeeCode, moduleName],
   );
 
   return result.length > 0;
@@ -325,13 +329,15 @@ export async function hasModuleAccess(
 /**
  * Get employee's accessible modules
  */
-export async function getEmployeeModules(employeeCode: string): Promise<string[]> {
+export async function getEmployeeModules(
+  employeeCode: string,
+): Promise<string[]> {
   const [modules] = await db.execute<RowDataPacket[]>(
     `SELECT module_name
      FROM module_access_control
      WHERE employee_code = ? AND has_access = TRUE AND revoked_at IS NULL
      ORDER BY module_name`,
-    [employeeCode]
+    [employeeCode],
   );
 
   return (modules as EmployeeModuleRow[]).map((m) => m.module_name);
@@ -340,7 +346,9 @@ export async function getEmployeeModules(employeeCode: string): Promise<string[]
 /**
  * Search employees by name or code
  */
-export async function searchEmployees(query: string): Promise<SearchEmployeeRow[]> {
+export async function searchEmployees(
+  query: string,
+): Promise<SearchEmployeeRow[]> {
   const [employees] = await db.execute<RowDataPacket[]>(
     `SELECT
       employee_code,
@@ -359,7 +367,7 @@ export async function searchEmployees(query: string): Promise<SearchEmployeeRow[
       )
     ORDER BY employee_name
     LIMIT 50`,
-    [`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`]
+    [`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`],
   );
 
   return employees as SearchEmployeeRow[];

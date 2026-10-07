@@ -101,6 +101,8 @@ describe("classifyDuplicateIdentity", () => {
       { fullName: "RAJESH KUMAR", dateOfBirth: "1990-04-12" },
       { fullName: "RAJESH KUMAR", dateOfBirth: "1990-04-12" },
     );
-    expect(rejoiner.reason.toLowerCase()).toMatch(/same person|rejoin|applied before/);
+    expect(rejoiner.reason.toLowerCase()).toMatch(
+      /same person|rejoin|applied before/,
+    );
   });
 });

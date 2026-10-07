@@ -24,7 +24,11 @@ describe("leavePolicyService.checkELOccurrences", () => {
       return Promise.resolve([[{ cnt: 0 }], []]);
     });
 
-    const result = await leavePolicyService.checkELOccurrences("emp-1", "2026-12-30", "2027-01-02");
+    const result = await leavePolicyService.checkELOccurrences(
+      "emp-1",
+      "2026-12-30",
+      "2027-01-02",
+    );
 
     expect(result.isException).toBe(true);
     expect(exec).toHaveBeenCalledTimes(2); // once per year touched (2026, 2027)
@@ -32,13 +36,21 @@ describe("leavePolicyService.checkELOccurrences", () => {
 
   it("does not flag an exception when neither touched year has reached 2 prior occurrences", async () => {
     exec.mockResolvedValue([[{ cnt: 1 }], []]);
-    const result = await leavePolicyService.checkELOccurrences("emp-1", "2026-06-01", "2026-06-05");
+    const result = await leavePolicyService.checkELOccurrences(
+      "emp-1",
+      "2026-06-01",
+      "2026-06-05",
+    );
     expect(result.isException).toBe(false);
   });
 
   it("single-year request checks only that one year", async () => {
     exec.mockResolvedValue([[{ cnt: 0 }], []]);
-    await leavePolicyService.checkELOccurrences("emp-1", "2026-06-01", "2026-06-05");
+    await leavePolicyService.checkELOccurrences(
+      "emp-1",
+      "2026-06-01",
+      "2026-06-05",
+    );
     expect(exec).toHaveBeenCalledTimes(1);
   });
 });

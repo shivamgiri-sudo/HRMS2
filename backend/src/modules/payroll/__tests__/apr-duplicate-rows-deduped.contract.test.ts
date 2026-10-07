@@ -24,7 +24,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(here, "..", "payroll-governance.service.ts"), "utf8");
+const source = readFileSync(
+  join(here, "..", "payroll-governance.service.ts"),
+  "utf8",
+);
 
 /**
  * Every `FROM apr ... GROUP BY UserID, ReportDate` aggregation block in the source, returned as
@@ -32,7 +35,8 @@ const source = readFileSync(join(here, "..", "payroll-governance.service.ts"), "
  */
 function aprAggregationBlocks(src: string): string[] {
   const out: string[] = [];
-  const re = /SELECT UserID, ReportDate AS report_date[\s\S]*?GROUP BY UserID, ReportDate/g;
+  const re =
+    /SELECT UserID, ReportDate AS report_date[\s\S]*?GROUP BY UserID, ReportDate/g;
   for (const m of src.matchAll(re)) out.push(m[0]);
   return out;
 }

@@ -2,7 +2,10 @@ import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Bla Bli Blu's real "afterhrdata Inbound.xls" export -- after-hours
@@ -31,7 +34,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importBlaBliBluAfterHourBatch(
   batchId: string,
@@ -77,20 +82,31 @@ export async function importBlaBliBluAfterHourBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Bla Bli Blu" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     const contactDate = parseDateTime(data["Date"]);
     const contactNumber = cleanText(data["Contact No"]);
     if (!contactDate || !contactNumber) {
       const msg = `Row ${row.row_no}: "Date" and "Contact No" are both required -- together they are this row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
-      values: [randomUUID(), processId, contactDate, contactNumber, batchId, importedByUserId],
+      values: [
+        randomUUID(),
+        processId,
+        contactDate,
+        contactNumber,
+        batchId,
+        importedByUserId,
+      ],
     });
   }
 
@@ -108,22 +124,33 @@ export async function importBlaBliBluAfterHourBatch(
 
   if (importedRows > 0) {
     const failedRowIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
-    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
+    const successRowIds = toInsert
+      .filter((r) => !failedRowIds.has(r.rowId))
+      .map((r) => r.rowId);
     await markRowsImported(successRowIds);
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

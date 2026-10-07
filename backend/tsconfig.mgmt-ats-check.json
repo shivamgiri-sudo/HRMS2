@@ -1,2 +1,8 @@
-{ "extends": "./tsconfig.json", "compilerOptions": { "noEmit": true },
-  "include": ["src/modules/management/management.service.ts", "src/modules/ats/ats-reporting-scope.ts"] }
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/management/management.service.ts",
+    "src/modules/ats/ats-reporting-scope.ts"
+  ]
+}

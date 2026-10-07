@@ -10,13 +10,22 @@ const resolveDashboardScope = vi.fn();
 
 let currentUser = { id: "user-1" };
 
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: (...a: unknown[]) => execute(...a) },
+}));
 vi.mock("../src/middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: () => void) => { req.authUser = currentUser; next(); },
+  requireAuth: (req: any, _res: any, next: () => void) => {
+    req.authUser = currentUser;
+    next();
+  },
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole: (...roles: string[]) => (req: any, res: any, next: () => void) =>
-    roles.includes(req.__role) ? next() : res.status(403).json({ message: "forbidden" }),
+  requireRole:
+    (...roles: string[]) =>
+    (req: any, res: any, next: () => void) =>
+      roles.includes(req.__role)
+        ? next()
+        : res.status(403).json({ message: "forbidden" }),
 }));
 vi.mock("../src/shared/roleResolver.js", () => ({
   getUserRoleContext: (...a: unknown[]) => getUserRoleContext(...a),
@@ -38,7 +47,10 @@ vi.mock("../src/shared/dashboardScope.js", () => ({
     user: { id: string; role?: string; isDemo?: boolean },
     primaryRole: string,
   ) => {
-    if (user?.isDemo === true && (user.role === "super_admin" || user.role === "admin")) {
+    if (
+      user?.isDemo === true &&
+      (user.role === "super_admin" || user.role === "admin")
+    ) {
       return Promise.resolve({
         level: "ORG_ALL",
         branchIds: [],
@@ -63,10 +75,18 @@ vi.mock("../src/modules/quality-dashboard/qa-form.service.js", () => ({
 vi.mock("../src/modules/quality-dashboard/qa-audit.service.js", () => ({
   submitQaAudit: (...a: unknown[]) => submitQaAudit(...a),
   listAuditsForEmployee: (...a: unknown[]) => listAuditsForEmployee(...a),
-  QaAuditError: class extends Error { constructor(m: string, public statusCode = 400) { super(m); } },
+  QaAuditError: class extends Error {
+    constructor(
+      m: string,
+      public statusCode = 400,
+    ) {
+      super(m);
+    }
+  },
 }));
 
-const { qaAuditRouter } = await import("../src/modules/quality-dashboard/qa-audit.routes.js");
+const { qaAuditRouter } =
+  await import("../src/modules/quality-dashboard/qa-audit.routes.js");
 
 /**
  * A quality score is personal, and "employee" is the largest role in the system
@@ -78,16 +98,24 @@ const { qaAuditRouter } = await import("../src/modules/quality-dashboard/qa-audi
 function appAs(role: string) {
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => { req.__role = role; next(); });
+  app.use((req: any, _res, next) => {
+    req.__role = role;
+    next();
+  });
   app.use("/api/qa", qaAuditRouter);
   return app;
 }
 
 beforeEach(() => {
-  execute.mockReset(); submitQaAudit.mockReset(); listAuditsForEmployee.mockReset();
-  getUserRoleContext.mockReset(); resolveDashboardScope.mockReset();
+  execute.mockReset();
+  submitQaAudit.mockReset();
+  listAuditsForEmployee.mockReset();
+  getUserRoleContext.mockReset();
+  resolveDashboardScope.mockReset();
   currentUser = { id: "user-1" };
-  createForm.mockReset(); activateForm.mockReset(); listForms.mockReset();
+  createForm.mockReset();
+  activateForm.mockReset();
+  listForms.mockReset();
   listAuditsForEmployee.mockResolvedValue([]);
   resolveDashboardScope.mockResolvedValue({ level: "ORG_ALL" });
 });
@@ -97,10 +125,16 @@ describe("an agent may read only their own audits", () => {
     getUserRoleContext.mockResolvedValue({ primaryRole: "employee" });
     execute.mockResolvedValueOnce([[{ id: "emp-self" }], []]);
 
-    const res = await request(appAs("employee")).get("/api/qa/audits?from=2026-07-01&to=2026-07-31");
+    const res = await request(appAs("employee")).get(
+      "/api/qa/audits?from=2026-07-01&to=2026-07-31",
+    );
 
     expect(res.status).toBe(200);
-    expect(listAuditsForEmployee).toHaveBeenCalledWith("emp-self", "2026-07-01", "2026-07-31");
+    expect(listAuditsForEmployee).toHaveBeenCalledWith(
+      "emp-self",
+      "2026-07-01",
+      "2026-07-31",
+    );
   });
 
   it("refuses plainly when they ask for somebody else", async () => {
@@ -109,8 +143,9 @@ describe("an agent may read only their own audits", () => {
     getUserRoleContext.mockResolvedValue({ primaryRole: "employee" });
     execute.mockResolvedValueOnce([[{ id: "emp-self" }], []]);
 
-    const res = await request(appAs("employee"))
-      .get("/api/qa/audits?from=2026-07-01&to=2026-07-31&employeeId=emp-other");
+    const res = await request(appAs("employee")).get(
+      "/api/qa/audits?from=2026-07-01&to=2026-07-31&employeeId=emp-other",
+    );
 
     expect(res.status).toBe(403);
     expect(listAuditsForEmployee).not.toHaveBeenCalled();
@@ -120,7 +155,9 @@ describe("an agent may read only their own audits", () => {
     getUserRoleContext.mockResolvedValue({ primaryRole: "employee" });
     execute.mockResolvedValueOnce([[], []]);
 
-    const res = await request(appAs("employee")).get("/api/qa/audits?from=2026-07-01&to=2026-07-31");
+    const res = await request(appAs("employee")).get(
+      "/api/qa/audits?from=2026-07-01&to=2026-07-31",
+    );
     expect(res.status).toBe(200);
     expect(res.body.reason).toBe("no_employee_profile_linked");
   });
@@ -130,11 +167,12 @@ describe("a privileged reader is still bounded by scope", () => {
   it("refuses an employee outside their scope", async () => {
     getUserRoleContext.mockResolvedValue({ primaryRole: "qa" });
     execute
-      .mockResolvedValueOnce([[{ id: "emp-self" }], []])  // selfEmployeeId
-      .mockResolvedValueOnce([[], []]);                    // scope check finds nobody
+      .mockResolvedValueOnce([[{ id: "emp-self" }], []]) // selfEmployeeId
+      .mockResolvedValueOnce([[], []]); // scope check finds nobody
 
-    const res = await request(appAs("qa"))
-      .get("/api/qa/audits?from=2026-07-01&to=2026-07-31&employeeId=emp-elsewhere");
+    const res = await request(appAs("qa")).get(
+      "/api/qa/audits?from=2026-07-01&to=2026-07-31&employeeId=emp-elsewhere",
+    );
 
     expect(res.status).toBe(403);
     expect(listAuditsForEmployee).not.toHaveBeenCalled();
@@ -146,11 +184,16 @@ describe("a privileged reader is still bounded by scope", () => {
       .mockResolvedValueOnce([[{ id: "emp-self" }], []])
       .mockResolvedValueOnce([[{ id: "emp-in-scope" }], []]);
 
-    const res = await request(appAs("qa"))
-      .get("/api/qa/audits?from=2026-07-01&to=2026-07-31&employeeId=emp-in-scope");
+    const res = await request(appAs("qa")).get(
+      "/api/qa/audits?from=2026-07-01&to=2026-07-31&employeeId=emp-in-scope",
+    );
 
     expect(res.status).toBe(200);
-    expect(listAuditsForEmployee).toHaveBeenCalledWith("emp-in-scope", "2026-07-01", "2026-07-31");
+    expect(listAuditsForEmployee).toHaveBeenCalledWith(
+      "emp-in-scope",
+      "2026-07-01",
+      "2026-07-31",
+    );
   });
 });
 
@@ -164,7 +207,10 @@ describe("scoring is a QA function", () => {
     // Otherwise an auditor could file an audit under somebody else's name.
     submitQaAudit.mockResolvedValue({ id: "a1", status: "submitted" });
     const res = await request(appAs("qa")).post("/api/qa/audits").send({
-      formId: "f1", employeeId: "e1", auditDate: "2026-07-15", scores: [],
+      formId: "f1",
+      employeeId: "e1",
+      auditDate: "2026-07-15",
+      scores: [],
       auditorUserId: "somebody-else",
     });
 
@@ -173,7 +219,8 @@ describe("scoring is a QA function", () => {
   });
 
   it("rejects a payload with no scores array", async () => {
-    const res = await request(appAs("qa")).post("/api/qa/audits")
+    const res = await request(appAs("qa"))
+      .post("/api/qa/audits")
       .send({ formId: "f1", employeeId: "e1", auditDate: "2026-07-15" });
     expect(res.status).toBe(400);
   });
@@ -183,7 +230,9 @@ describe("form lookup", () => {
   it("distinguishes 'no form configured' from an empty result", async () => {
     // An empty list reads as either. The reason code says which.
     execute.mockResolvedValueOnce([[], []]);
-    const res = await request(appAs("qa")).get("/api/qa/audit-forms?processId=p1");
+    const res = await request(appAs("qa")).get(
+      "/api/qa/audit-forms?processId=p1",
+    );
     expect(res.status).toBe(200);
     expect(res.body.reason).toBe("no_active_form_for_process");
   });
@@ -197,24 +246,36 @@ describe("form lookup", () => {
 describe("form definition is narrower than filing an audit", () => {
   it("lets a QA lead create a draft form", async () => {
     createForm.mockResolvedValue({ id: "f1", versionNo: 1 });
-    const res = await request(appAs("qa")).post("/api/qa/audit-forms").send({
-      processId: "p1", formName: "Inbound QA", effectiveFrom: "2026-08-01",
-      parameters: [{ parameterText: "Greeting", maxScore: 10 }],
-    });
+    const res = await request(appAs("qa"))
+      .post("/api/qa/audit-forms")
+      .send({
+        processId: "p1",
+        formName: "Inbound QA",
+        effectiveFrom: "2026-08-01",
+        parameters: [{ parameterText: "Greeting", maxScore: 10 }],
+      });
     expect(res.status).toBe(201);
     expect(createForm.mock.calls[0][0].createdBy).toBe("user-1");
   });
 
   it("refuses a quality_analyst — they file audits, they do not set the criteria", async () => {
-    const res = await request(appAs("quality_analyst")).post("/api/qa/audit-forms").send({
-      processId: "p1", formName: "F", effectiveFrom: "2026-08-01", parameters: [],
-    });
+    const res = await request(appAs("quality_analyst"))
+      .post("/api/qa/audit-forms")
+      .send({
+        processId: "p1",
+        formName: "F",
+        effectiveFrom: "2026-08-01",
+        parameters: [],
+      });
     expect(res.status).toBe(403);
   });
 
   it("names the approver from the session, not the body", async () => {
     // Approving the criteria everyone is judged by is an accountable act.
-    activateForm.mockResolvedValue({ activatedVersion: 2, retiredFormId: "f1" });
+    activateForm.mockResolvedValue({
+      activatedVersion: 2,
+      retiredFormId: "f1",
+    });
     const res = await request(appAs("qa"))
       .post("/api/qa/audit-forms/f2/activate")
       .send({ approvedBy: "somebody-else" });
@@ -223,7 +284,9 @@ describe("form definition is narrower than filing an audit", () => {
   });
 
   it("requires the fields a form cannot exist without", async () => {
-    const res = await request(appAs("qa")).post("/api/qa/audit-forms").send({ processId: "p1" });
+    const res = await request(appAs("qa"))
+      .post("/api/qa/audit-forms")
+      .send({ processId: "p1" });
     expect(res.status).toBe(400);
   });
 });
@@ -234,7 +297,10 @@ describe("an auditor files by agent code, not UUID", () => {
     submitQaAudit.mockResolvedValue({ id: "a1", status: "submitted" });
 
     const res = await request(appAs("qa")).post("/api/qa/audits").send({
-      formId: "f1", employeeCode: "MAS57576", auditDate: "2026-07-15", scores: [],
+      formId: "f1",
+      employeeCode: "MAS57576",
+      auditDate: "2026-07-15",
+      scores: [],
     });
 
     expect(res.status).toBe(201);
@@ -246,7 +312,10 @@ describe("an auditor files by agent code, not UUID", () => {
     // to file it.
     execute.mockResolvedValueOnce([[{ id: "a" }, { id: "b" }], []]);
     const res = await request(appAs("qa")).post("/api/qa/audits").send({
-      formId: "f1", employeeCode: "DUPE", auditDate: "2026-07-15", scores: [],
+      formId: "f1",
+      employeeCode: "DUPE",
+      auditDate: "2026-07-15",
+      scores: [],
     });
     expect(res.status).toBe(409);
     expect(submitQaAudit).not.toHaveBeenCalled();
@@ -255,7 +324,10 @@ describe("an auditor files by agent code, not UUID", () => {
   it("reports an unknown code as 404", async () => {
     execute.mockResolvedValueOnce([[], []]);
     const res = await request(appAs("qa")).post("/api/qa/audits").send({
-      formId: "f1", employeeCode: "NOBODY", auditDate: "2026-07-15", scores: [],
+      formId: "f1",
+      employeeCode: "NOBODY",
+      auditDate: "2026-07-15",
+      scores: [],
     });
     expect(res.status).toBe(404);
   });
@@ -263,7 +335,10 @@ describe("an auditor files by agent code, not UUID", () => {
   it("still accepts an explicit employeeId without a lookup", async () => {
     submitQaAudit.mockResolvedValue({ id: "a1", status: "submitted" });
     const res = await request(appAs("qa")).post("/api/qa/audits").send({
-      formId: "f1", employeeId: "emp-direct", auditDate: "2026-07-15", scores: [],
+      formId: "f1",
+      employeeId: "emp-direct",
+      auditDate: "2026-07-15",
+      scores: [],
     });
     expect(res.status).toBe(201);
     expect(submitQaAudit.mock.calls[0][0].employeeId).toBe("emp-direct");

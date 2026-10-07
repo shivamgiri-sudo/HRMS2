@@ -25,7 +25,10 @@ const BATCH = {
   valid_rows: 6,
 } as never;
 
-const { execute, query } = vi.hoisted(() => ({ execute: vi.fn(), query: vi.fn() }));
+const { execute, query } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  query: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, query } }));
 
 const { logSensitiveAction } = vi.hoisted(() => ({
@@ -72,7 +75,10 @@ function linkedRows(n: number) {
  * Wire db.execute: the first SELECT returns the linked rows, and every UPDATE is handed to
  * `onUpdate` so a test can decide what that particular row's write does.
  */
-function wireDb(rows: ReturnType<typeof linkedRows>, onUpdate: (entityId: string) => Promise<unknown>) {
+function wireDb(
+  rows: ReturnType<typeof linkedRows>,
+  onUpdate: (entityId: string) => Promise<unknown>,
+) {
   execute.mockImplementation(async (sql: string, params: unknown[]) => {
     if (/SELECT[\s\S]*upload_batch_row/i.test(sql)) return [rows, []];
     if (/UPDATE\s+employee_deduction_entries/i.test(sql)) {
@@ -161,7 +167,10 @@ describe("applyDeductionBatch — resilience to database lock errors", () => {
     expect(attempts).toBe(1);
     expect(outcome).toMatchObject({ applied: 0, failed: 1 });
     expect(outcome.errors[0]).toContain("Unknown column");
-    expect(markRowFailed).toHaveBeenCalledWith("row-1", expect.stringContaining("Unknown column"));
+    expect(markRowFailed).toHaveBeenCalledWith(
+      "row-1",
+      expect.stringContaining("Unknown column"),
+    );
   });
 
   it("does not resurrect a row that is no longer pending approval", async () => {
@@ -194,7 +203,10 @@ describe("applyDeductionBatch — resilience to database lock errors", () => {
 
     expect(outcome).toMatchObject({ applied: 0, failed: 4 });
     expect(outcome.errors.map((e) => e.split(":")[0])).toEqual([
-      "Row 1", "Row 2", "Row 3", "Row 4",
+      "Row 1",
+      "Row 2",
+      "Row 3",
+      "Row 4",
     ]);
   });
 

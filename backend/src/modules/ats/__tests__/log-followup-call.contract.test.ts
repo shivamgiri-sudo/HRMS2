@@ -24,10 +24,22 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(process.cwd(), "..");
-const routes = readFileSync(resolve(process.cwd(), "src/modules/ats/recruiter-hiring.routes.ts"), "utf8");
-const atsRoutes = readFileSync(resolve(process.cwd(), "src/modules/ats/ats.routes.ts"), "utf8");
-const migration = readFileSync(resolve(process.cwd(), "sql/1009_ats_hiring_followup_call_feedback.sql"), "utf8");
-const page = readFileSync(resolve(repoRoot, "src/pages/NativeATSHiringEntry.tsx"), "utf8");
+const routes = readFileSync(
+  resolve(process.cwd(), "src/modules/ats/recruiter-hiring.routes.ts"),
+  "utf8",
+);
+const atsRoutes = readFileSync(
+  resolve(process.cwd(), "src/modules/ats/ats.routes.ts"),
+  "utf8",
+);
+const migration = readFileSync(
+  resolve(process.cwd(), "sql/1009_ats_hiring_followup_call_feedback.sql"),
+  "utf8",
+);
+const page = readFileSync(
+  resolve(repoRoot, "src/pages/NativeATSHiringEntry.tsx"),
+  "utf8",
+);
 
 /** The five columns migration 1009 added. */
 const CALL_COLUMNS = [
@@ -51,7 +63,9 @@ const UI_OUTCOMES = [
 
 describe("log-followup-call — the route exists and is reachable", () => {
   it("is declared on the recruiter hiring router", () => {
-    expect(routes).toContain('recruiterHiringRouter.post("/recruiter/hiring-activity/:id/log-followup-call"');
+    expect(routes).toContain(
+      'recruiterHiringRouter.post("/recruiter/hiring-activity/:id/log-followup-call"',
+    );
   });
 
   it("that router is mounted, so the path the page calls resolves", () => {
@@ -98,7 +112,9 @@ describe("log-followup-call — pending vs done matches what the page renders", 
 
   it("a normal outcome clears followup_required, a reschedule keeps it", () => {
     const handler = routes.slice(routes.indexOf("log-followup-call"));
-    expect(handler).toContain('const rescheduled = followup_call_outcome === "Rescheduled"');
+    expect(handler).toContain(
+      'const rescheduled = followup_call_outcome === "Rescheduled"',
+    );
     // Both branches are supplied explicitly rather than defaulted.
     expect(handler).toContain("followup_required = ?");
     expect(handler).toMatch(/rescheduled\s*\n?\s*\?\s*\[/);

@@ -9,33 +9,47 @@
  * READ-ONLY on legacyDb (db_bill). Write only to mas_hrms via db.
  */
 
-import { db } from '../../db/mysql.js';
-import { getLegacyPool } from '../../db/legacyDb.js';
-import { randomUUID } from 'crypto';
-import type { RowDataPacket, ResultSetHeader, Pool } from 'mysql2/promise';
+import { db } from "../../db/mysql.js";
+import { getLegacyPool } from "../../db/legacyDb.js";
+import { randomUUID } from "crypto";
+import type { RowDataPacket, ResultSetHeader, Pool } from "mysql2/promise";
 
 const BATCH_SIZE = 500;
 
 // ─── Doc-category mapping ─────────────────────────────────────────────────────
 
 function mapDocCategory(docType: string): string {
-  const t = (docType ?? '').toLowerCase();
-  if (t.includes('pan'))                                                     return 'pan';
-  if (t.includes('aadhar') || t.includes('aadhaar'))                        return 'aadhaar';
-  if (t.includes('passport'))                                                return 'passport';
-  if (t.includes('driving') || t.includes('dl ') || t === 'dl')             return 'driving_license';
-  if (t.includes('visa'))                                                    return 'visa';
-  if (t.includes('poi') || t.includes('id proof') || t.includes('identity')) return 'identity';
-  if (t.includes('poa') || t.includes('address'))                           return 'address_proof';
-  if (t.includes('poe') || t.includes('education') || t.includes('qual'))   return 'education';
-  if (t.includes('resume') || t.includes('cv') || t.includes('experience')) return 'experience';
-  if (t.includes('bank') || t.includes('cheque') || t.includes('passbook')) return 'bank';
-  if (t.includes('tax') || t.includes('form16') || t.includes('form 16'))   return 'tax';
-  if (t.includes('epf') || t.includes('pf') || t.includes('statutory'))     return 'statutory';
-  if (t.includes('medical') || t.includes('health'))                        return 'medical';
-  if (t.includes('offer') || t.includes('appointment') || t.includes('joining')) return 'offer_letter';
-  if (t.includes('coc') || t.includes('code of conduct') || t.includes('contract') || t.includes('cf_')) return 'contract';
-  return 'other';
+  const t = (docType ?? "").toLowerCase();
+  if (t.includes("pan")) return "pan";
+  if (t.includes("aadhar") || t.includes("aadhaar")) return "aadhaar";
+  if (t.includes("passport")) return "passport";
+  if (t.includes("driving") || t.includes("dl ") || t === "dl")
+    return "driving_license";
+  if (t.includes("visa")) return "visa";
+  if (t.includes("poi") || t.includes("id proof") || t.includes("identity"))
+    return "identity";
+  if (t.includes("poa") || t.includes("address")) return "address_proof";
+  if (t.includes("poe") || t.includes("education") || t.includes("qual"))
+    return "education";
+  if (t.includes("resume") || t.includes("cv") || t.includes("experience"))
+    return "experience";
+  if (t.includes("bank") || t.includes("cheque") || t.includes("passbook"))
+    return "bank";
+  if (t.includes("tax") || t.includes("form16") || t.includes("form 16"))
+    return "tax";
+  if (t.includes("epf") || t.includes("pf") || t.includes("statutory"))
+    return "statutory";
+  if (t.includes("medical") || t.includes("health")) return "medical";
+  if (t.includes("offer") || t.includes("appointment") || t.includes("joining"))
+    return "offer_letter";
+  if (
+    t.includes("coc") ||
+    t.includes("code of conduct") ||
+    t.includes("contract") ||
+    t.includes("cf_")
+  )
+    return "contract";
+  return "other";
 }
 
 // ─── Lookup maps ──────────────────────────────────────────────────────────────
@@ -43,7 +57,7 @@ function mapDocCategory(docType: string): string {
 /** Load employee_code → UUID map from mas_hrms */
 async function buildEmployeeMap(): Promise<Map<string, string>> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT id, employee_code FROM employees WHERE employee_code IS NOT NULL'
+    "SELECT id, employee_code FROM employees WHERE employee_code IS NOT NULL",
   );
   const map = new Map<string, string>();
   for (const row of rows) {
@@ -56,21 +70,23 @@ async function buildEmployeeMap(): Promise<Map<string, string>> {
 /** Load SrNo → EmpCode map from db_bill.employee_master */
 async function buildSrnoMap(legacy: Pool): Promise<Map<number, string>> {
   const [rows] = await legacy.query<RowDataPacket[]>(
-    'SELECT SrNo, EmpCode FROM employee_master WHERE EmpCode IS NOT NULL AND EmpCode != ""'
+    'SELECT SrNo, EmpCode FROM employee_master WHERE EmpCode IS NOT NULL AND EmpCode != ""',
   );
   const map = new Map<number, string>();
   for (const row of rows) {
     map.set(Number(row.SrNo), String(row.EmpCode).toUpperCase());
   }
-  console.log(`[Map] Loaded ${map.size} legacy employees from db_bill.employee_master`);
+  console.log(
+    `[Map] Loaded ${map.size} legacy employees from db_bill.employee_master`,
+  );
   return map;
 }
 
 /** Return set of legacy_ref_ids already migrated for a given source */
 async function getAlreadyMigrated(source: string): Promise<Set<number>> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT legacy_ref_id FROM employee_documents WHERE legacy_source = ?',
-    [source]
+    "SELECT legacy_ref_id FROM employee_documents WHERE legacy_source = ?",
+    [source],
   );
   return new Set(rows.map((r) => Number(r.legacy_ref_id)));
 }
@@ -89,7 +105,9 @@ interface DocRow {
   legacy_ref_id: number;
 }
 
-async function insertBatch(docs: DocRow[]): Promise<{ inserted: number; skipped: number }> {
+async function insertBatch(
+  docs: DocRow[],
+): Promise<{ inserted: number; skipped: number }> {
   if (docs.length === 0) return { inserted: 0, skipped: 0 };
   let inserted = 0;
   let skipped = 0;
@@ -116,7 +134,7 @@ async function insertBatch(docs: DocRow[]): Promise<{ inserted: number; skipped:
           doc.doc_category,
           doc.legacy_source,
           doc.legacy_ref_id,
-        ]
+        ],
       );
       if (result.affectedRows > 0) {
         inserted++;
@@ -125,7 +143,7 @@ async function insertBatch(docs: DocRow[]): Promise<{ inserted: number; skipped:
       }
     } catch (e: unknown) {
       const err = e as NodeJS.ErrnoException & { code?: string };
-      if (err.code === 'ER_DUP_ENTRY') {
+      if (err.code === "ER_DUP_ENTRY") {
         skipped++;
       } else {
         throw e;
@@ -140,11 +158,13 @@ async function insertBatch(docs: DocRow[]): Promise<{ inserted: number; skipped:
 async function migrateDocumentMaster(
   legacy: Pool,
   empMap: Map<string, string>,
-  srnoMap: Map<number, string>
+  srnoMap: Map<number, string>,
 ): Promise<{ inserted: number; skipped: number; unmapped: number }> {
-  console.log('\n[document_master] Starting migration...');
-  const alreadyMigrated = await getAlreadyMigrated('document_master');
-  console.log(`[document_master] Already migrated: ${alreadyMigrated.size} records`);
+  console.log("\n[document_master] Starting migration...");
+  const alreadyMigrated = await getAlreadyMigrated("document_master");
+  console.log(
+    `[document_master] Already migrated: ${alreadyMigrated.size} records`,
+  );
 
   let offset = 0;
   let totalInserted = 0;
@@ -153,8 +173,8 @@ async function migrateDocumentMaster(
 
   while (true) {
     const [rows] = await legacy.query<RowDataPacket[]>(
-      'SELECT Id, EmpSrno, DocumentType, DocumentUploaded, DocumentName, SaveDate FROM document_master ORDER BY Id LIMIT ? OFFSET ?',
-      [BATCH_SIZE, offset]
+      "SELECT Id, EmpSrno, DocumentType, DocumentUploaded, DocumentName, SaveDate FROM document_master ORDER BY Id LIMIT ? OFFSET ?",
+      [BATCH_SIZE, offset],
     );
     if (rows.length === 0) break;
 
@@ -178,14 +198,14 @@ async function migrateDocumentMaster(
       docs.push({
         id: randomUUID(),
         employee_id: employeeId,
-        doc_type: String(row.DocumentType ?? '').trim(),
-        doc_name: String(row.DocumentName ?? row.DocumentType ?? '').trim(),
+        doc_type: String(row.DocumentType ?? "").trim(),
+        doc_name: String(row.DocumentName ?? row.DocumentType ?? "").trim(),
         file_url: row.DocumentUploaded
           ? `legacy://document_master/${row.DocumentUploaded}`
           : null,
         created_at: row.SaveDate ? new Date(row.SaveDate) : new Date(),
-        doc_category: mapDocCategory(String(row.DocumentType ?? '')),
-        legacy_source: 'document_master',
+        doc_category: mapDocCategory(String(row.DocumentType ?? "")),
+        legacy_source: "document_master",
         legacy_ref_id: Number(row.Id),
       });
     }
@@ -197,7 +217,7 @@ async function migrateDocumentMaster(
 
     if (offset % 5000 === 0) {
       console.log(
-        `[document_master] Progress: ${offset} rows scanned, ${totalInserted} inserted, ${totalUnmapped} unmapped`
+        `[document_master] Progress: ${offset} rows scanned, ${totalInserted} inserted, ${totalUnmapped} unmapped`,
       );
     }
 
@@ -205,23 +225,29 @@ async function migrateDocumentMaster(
   }
 
   console.log(
-    `[document_master] DONE — inserted: ${totalInserted}, skipped: ${totalSkipped}, unmapped: ${totalUnmapped}`
+    `[document_master] DONE — inserted: ${totalInserted}, skipped: ${totalSkipped}, unmapped: ${totalUnmapped}`,
   );
-  return { inserted: totalInserted, skipped: totalSkipped, unmapped: totalUnmapped };
+  return {
+    inserted: totalInserted,
+    skipped: totalSkipped,
+    unmapped: totalUnmapped,
+  };
 }
 
 // ─── Source 2: qual_docoments ─────────────────────────────────────────────────
 
 async function migrateQualDocoments(
   legacy: Pool,
-  empMap: Map<string, string>
+  empMap: Map<string, string>,
 ): Promise<{ inserted: number; skipped: number; unmapped: number }> {
-  console.log('\n[qual_docoments] Starting migration...');
-  const alreadyMigrated = await getAlreadyMigrated('qual_docoments');
-  console.log(`[qual_docoments] Already migrated: ${alreadyMigrated.size} records`);
+  console.log("\n[qual_docoments] Starting migration...");
+  const alreadyMigrated = await getAlreadyMigrated("qual_docoments");
+  console.log(
+    `[qual_docoments] Already migrated: ${alreadyMigrated.size} records`,
+  );
 
   const [rows] = await legacy.query<RowDataPacket[]>(
-    'SELECT Id, EmpCode, DocType, DocName, filename, saveDate FROM qual_docoments WHERE EmpCode IS NOT NULL AND EmpCode != ""'
+    'SELECT Id, EmpCode, DocType, DocName, filename, saveDate FROM qual_docoments WHERE EmpCode IS NOT NULL AND EmpCode != ""',
   );
 
   const docs: DocRow[] = [];
@@ -236,19 +262,19 @@ async function migrateQualDocoments(
     docs.push({
       id: randomUUID(),
       employee_id: employeeId,
-      doc_type: String(row.DocType ?? '').trim(),
-      doc_name: String(row.DocName ?? row.DocType ?? '').trim(),
+      doc_type: String(row.DocType ?? "").trim(),
+      doc_name: String(row.DocName ?? row.DocType ?? "").trim(),
       file_url: row.filename ? `legacy://qual_docoments/${row.filename}` : null,
       created_at: row.saveDate ? new Date(row.saveDate) : new Date(),
-      doc_category: mapDocCategory(String(row.DocType ?? '')),
-      legacy_source: 'qual_docoments',
+      doc_category: mapDocCategory(String(row.DocType ?? "")),
+      legacy_source: "qual_docoments",
       legacy_ref_id: Number(row.Id),
     });
   }
 
   const { inserted, skipped } = await insertBatch(docs);
   console.log(
-    `[qual_docoments] DONE — inserted: ${inserted}, skipped: ${skipped}, unmapped: ${unmapped}`
+    `[qual_docoments] DONE — inserted: ${inserted}, skipped: ${skipped}, unmapped: ${unmapped}`,
   );
   return { inserted, skipped, unmapped };
 }
@@ -257,14 +283,16 @@ async function migrateQualDocoments(
 
 async function migrateEsignature(
   legacy: Pool,
-  empMap: Map<string, string>
+  empMap: Map<string, string>,
 ): Promise<{ inserted: number; skipped: number; unmapped: number }> {
-  console.log('\n[Esignature_Document_Master] Starting migration...');
-  const alreadyMigrated = await getAlreadyMigrated('esignature');
-  console.log(`[Esignature_Document_Master] Already migrated: ${alreadyMigrated.size} records`);
+  console.log("\n[Esignature_Document_Master] Starting migration...");
+  const alreadyMigrated = await getAlreadyMigrated("esignature");
+  console.log(
+    `[Esignature_Document_Master] Already migrated: ${alreadyMigrated.size} records`,
+  );
 
   const [rows] = await legacy.query<RowDataPacket[]>(
-    'SELECT Id, EmpCode, DocName, EsignaturePath, EsignatureStatus, CreateDate FROM Esignature_Document_Master WHERE EmpCode IS NOT NULL AND EmpCode != ""'
+    'SELECT Id, EmpCode, DocName, EsignaturePath, EsignatureStatus, CreateDate FROM Esignature_Document_Master WHERE EmpCode IS NOT NULL AND EmpCode != ""',
   );
 
   const docs: DocRow[] = [];
@@ -279,19 +307,19 @@ async function migrateEsignature(
     docs.push({
       id: randomUUID(),
       employee_id: employeeId,
-      doc_type: String(row.DocName ?? '').trim(),
-      doc_name: `${String(row.DocName ?? '').trim()} (E-Signed)`,
+      doc_type: String(row.DocName ?? "").trim(),
+      doc_name: `${String(row.DocName ?? "").trim()} (E-Signed)`,
       file_url: row.EsignaturePath ? String(row.EsignaturePath).trim() : null,
       created_at: row.CreateDate ? new Date(row.CreateDate) : new Date(),
-      doc_category: mapDocCategory(String(row.DocName ?? '')),
-      legacy_source: 'esignature',
+      doc_category: mapDocCategory(String(row.DocName ?? "")),
+      legacy_source: "esignature",
       legacy_ref_id: Number(row.Id),
     });
   }
 
   const { inserted, skipped } = await insertBatch(docs);
   console.log(
-    `[Esignature_Document_Master] DONE — inserted: ${inserted}, skipped: ${skipped}, unmapped: ${unmapped}`
+    `[Esignature_Document_Master] DONE — inserted: ${inserted}, skipped: ${skipped}, unmapped: ${unmapped}`,
   );
   return { inserted, skipped, unmapped };
 }
@@ -300,14 +328,14 @@ async function migrateEsignature(
 
 export interface DocumentMigrationResult {
   document_master: { inserted: number; skipped: number; unmapped: number };
-  qual_docoments:  { inserted: number; skipped: number; unmapped: number };
-  esignature:      { inserted: number; skipped: number; unmapped: number };
-  total_inserted:  number;
+  qual_docoments: { inserted: number; skipped: number; unmapped: number };
+  esignature: { inserted: number; skipped: number; unmapped: number };
+  total_inserted: number;
   elapsed_seconds: number;
 }
 
 export async function migrateDocumentsFromLegacy(): Promise<DocumentMigrationResult> {
-  console.log('=== Employee Document Migration: db_bill → mas_hrms ===');
+  console.log("=== Employee Document Migration: db_bill → mas_hrms ===");
   const startTime = Date.now();
 
   const legacy = await getLegacyPool();
@@ -323,18 +351,24 @@ export async function migrateDocumentsFromLegacy(): Promise<DocumentMigrationRes
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-  console.log('\n=== Migration Complete ===');
-  console.log(`document_master:           inserted=${r1.inserted} skipped=${r1.skipped} unmapped=${r1.unmapped}`);
-  console.log(`qual_docoments:            inserted=${r2.inserted} skipped=${r2.skipped} unmapped=${r2.unmapped}`);
-  console.log(`Esignature_Document_Master: inserted=${r3.inserted} skipped=${r3.skipped} unmapped=${r3.unmapped}`);
+  console.log("\n=== Migration Complete ===");
+  console.log(
+    `document_master:           inserted=${r1.inserted} skipped=${r1.skipped} unmapped=${r1.unmapped}`,
+  );
+  console.log(
+    `qual_docoments:            inserted=${r2.inserted} skipped=${r2.skipped} unmapped=${r2.unmapped}`,
+  );
+  console.log(
+    `Esignature_Document_Master: inserted=${r3.inserted} skipped=${r3.skipped} unmapped=${r3.unmapped}`,
+  );
   console.log(`Total inserted: ${r1.inserted + r2.inserted + r3.inserted}`);
   console.log(`Elapsed: ${elapsed}s`);
 
   return {
     document_master: r1,
-    qual_docoments:  r2,
-    esignature:      r3,
-    total_inserted:  r1.inserted + r2.inserted + r3.inserted,
+    qual_docoments: r2,
+    esignature: r3,
+    total_inserted: r1.inserted + r2.inserted + r3.inserted,
     elapsed_seconds: parseFloat(elapsed),
   };
 }
@@ -342,17 +376,17 @@ export async function migrateDocumentsFromLegacy(): Promise<DocumentMigrationRes
 // ─── Direct script execution ──────────────────────────────────────────────────
 
 const isMain =
-  process.argv[1]?.endsWith('migrateDocumentsFromLegacy.js') ||
-  process.argv[1]?.endsWith('migrateDocumentsFromLegacy.ts');
+  process.argv[1]?.endsWith("migrateDocumentsFromLegacy.js") ||
+  process.argv[1]?.endsWith("migrateDocumentsFromLegacy.ts");
 
 if (isMain) {
   migrateDocumentsFromLegacy()
     .then((result) => {
-      console.log('\nResult:', JSON.stringify(result, null, 2));
+      console.log("\nResult:", JSON.stringify(result, null, 2));
       process.exit(0);
     })
     .catch((err) => {
-      console.error('Migration failed:', err);
+      console.error("Migration failed:", err);
       process.exit(1);
     });
 }

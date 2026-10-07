@@ -30,7 +30,9 @@ function appError(message: string, code = "INVALID_TEMPLATE") {
 
 function uniqueStrings(value: unknown, maximum: number) {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.map((item) => String(item).trim()).filter(Boolean))].slice(0, maximum);
+  return [
+    ...new Set(value.map((item) => String(item).trim()).filter(Boolean)),
+  ].slice(0, maximum);
 }
 
 function validateQuestion(
@@ -43,7 +45,9 @@ function validateQuestion(
   const id = String(question.id ?? "").trim();
   const sectionKey = String(question.sectionKey ?? "").trim();
   const sectionTitle = String(question.sectionTitle ?? "").trim();
-  const type = String(question.type ?? "") as AssessmentQuestionDefinition["type"];
+  const type = String(
+    question.type ?? "",
+  ) as AssessmentQuestionDefinition["type"];
   const prompt = String(question.prompt ?? "").trim();
   const difficulty = String(
     question.difficulty ?? defaultDifficulty,
@@ -54,14 +58,26 @@ function validateQuestion(
     throw appError(`Question ${index + 1} has an invalid or duplicate ID`);
   }
   questionIds.add(id);
-  if (!sectionKey || sectionKey.length > 100 || !sectionTitle || sectionTitle.length > 150) {
-    throw appError(`Question ${index + 1} requires a valid section key and title`);
+  if (
+    !sectionKey ||
+    sectionKey.length > 100 ||
+    !sectionTitle ||
+    sectionTitle.length > 150
+  ) {
+    throw appError(
+      `Question ${index + 1} requires a valid section key and title`,
+    );
   }
-  if (!["single", "multi", "text"].includes(type) || !DIFFICULTY_VALUES.has(difficulty)) {
+  if (
+    !["single", "multi", "text"].includes(type) ||
+    !DIFFICULTY_VALUES.has(difficulty)
+  ) {
     throw appError(`Question ${index + 1} has an invalid type or difficulty`);
   }
   if (prompt.length < 10 || prompt.length > 5000) {
-    throw appError(`Question ${index + 1} prompt must contain 10 to 5,000 characters`);
+    throw appError(
+      `Question ${index + 1} prompt must contain 10 to 5,000 characters`,
+    );
   }
   if (!Number.isFinite(marks) || marks < 1 || marks > 100) {
     throw appError(`Question ${index + 1} marks must be between 1 and 100`);
@@ -81,19 +97,26 @@ function validateQuestion(
   if (type === "single" || type === "multi") {
     const options = uniqueStrings(question.options, 10);
     if (options.length < 2 || options.some((option) => option.length > 1000)) {
-      throw appError(`Question ${index + 1} must contain 2 to 10 unique options`);
+      throw appError(
+        `Question ${index + 1} must contain 2 to 10 unique options`,
+      );
     }
     output.options = options;
     output.manualReview = false;
     if (type === "single") {
       const answer = String(question.correctAnswer ?? "").trim();
       if (!options.includes(answer)) {
-        throw appError(`Question ${index + 1} correct answer must match an option`);
+        throw appError(
+          `Question ${index + 1} correct answer must match an option`,
+        );
       }
       output.correctAnswer = answer;
     } else {
       const answers = uniqueStrings(question.correctAnswer, 10);
-      if (!answers.length || answers.some((answer) => !options.includes(answer))) {
+      if (
+        !answers.length ||
+        answers.some((answer) => !options.includes(answer))
+      ) {
         throw appError(
           `Question ${index + 1} multiple-choice answers must match its options`,
         );
@@ -118,9 +141,13 @@ export function validateCustomAssessmentTemplate(
     .replace(/[^A-Z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 100);
-  const name = String(raw.name ?? "").trim().slice(0, 255);
+  const name = String(raw.name ?? "")
+    .trim()
+    .slice(0, 255);
   if (code.length < 3 || name.length < 3) {
-    throw appError("Template code and name must contain at least three characters");
+    throw appError(
+      "Template code and name must contain at least three characters",
+    );
   }
 
   const process = raw.process as AssessmentProcess;
@@ -134,21 +161,35 @@ export function validateCustomAssessmentTemplate(
   if (!PROCESS_VALUES.has(process) || !ROLE_VALUES.has(role)) {
     throw appError("Select a valid assessment process and role");
   }
-  if (!DIFFICULTY_VALUES.has(difficulty) || !EXPERIENCE_VALUES.has(experienceLevel)) {
+  if (
+    !DIFFICULTY_VALUES.has(difficulty) ||
+    !EXPERIENCE_VALUES.has(experienceLevel)
+  ) {
     throw appError("Select valid difficulty and experience levels");
   }
 
   const durationMinutes = Number(raw.durationMinutes);
   const passingPercentage = Number(raw.passingPercentage);
-  if (!Number.isInteger(durationMinutes) || durationMinutes < 5 || durationMinutes > 180) {
+  if (
+    !Number.isInteger(durationMinutes) ||
+    durationMinutes < 5 ||
+    durationMinutes > 180
+  ) {
     throw appError("Assessment duration must be between 5 and 180 minutes");
   }
-  if (!Number.isFinite(passingPercentage) || passingPercentage < 1 || passingPercentage > 100) {
+  if (
+    !Number.isFinite(passingPercentage) ||
+    passingPercentage < 1 ||
+    passingPercentage > 100
+  ) {
     throw appError("Passing percentage must be between 1 and 100");
   }
 
   const instructions = uniqueStrings(raw.instructions, 20);
-  if (!instructions.length || instructions.some((instruction) => instruction.length > 500)) {
+  if (
+    !instructions.length ||
+    instructions.some((instruction) => instruction.length > 500)
+  ) {
     throw appError("Provide between 1 and 20 concise candidate instructions");
   }
 
@@ -159,8 +200,13 @@ export function validateCustomAssessmentTemplate(
   const minAccuracy = Number(rawTyping.minAccuracy ?? 92);
   const maxAttempts = Number(rawTyping.maxAttempts ?? 2);
   const passage = typingRequired ? String(rawTyping.passage ?? "").trim() : "";
-  if (maxAttempts !== 2) throw appError("Typing attempts must remain fixed at two");
-  if (!Number.isInteger(typingDuration) || typingDuration < 30 || typingDuration > 900) {
+  if (maxAttempts !== 2)
+    throw appError("Typing attempts must remain fixed at two");
+  if (
+    !Number.isInteger(typingDuration) ||
+    typingDuration < 30 ||
+    typingDuration > 900
+  ) {
     throw appError("Typing duration must be between 30 and 900 seconds");
   }
   if (!Number.isFinite(minNetWpm) || minNetWpm < 1 || minNetWpm > 150) {
@@ -170,10 +216,16 @@ export function validateCustomAssessmentTemplate(
     throw appError("Typing accuracy benchmark must be between 1 and 100");
   }
   if (typingRequired && (passage.length < 80 || passage.length > 5000)) {
-    throw appError("A required typing passage must contain 80 to 5,000 characters");
+    throw appError(
+      "A required typing passage must contain 80 to 5,000 characters",
+    );
   }
 
-  if (!Array.isArray(raw.questions) || raw.questions.length < 1 || raw.questions.length > 100) {
+  if (
+    !Array.isArray(raw.questions) ||
+    raw.questions.length < 1 ||
+    raw.questions.length > 100
+  ) {
     throw appError("Template must contain between 1 and 100 questions");
   }
   const questionIds = new Set<string>();
@@ -207,12 +259,18 @@ interface TemplateVersionRow extends RowDataPacket {
   template_version: number;
 }
 
-export async function saveCustomAssessmentTemplate(input: unknown, actorId: string) {
+export async function saveCustomAssessmentTemplate(
+  input: unknown,
+  actorId: string,
+) {
   if (!assessmentService.isAssessmentEnabled()) {
-    throw Object.assign(new Error("Candidate assessment is currently disabled"), {
-      statusCode: 503,
-      code: "ASSESSMENT_DISABLED",
-    });
+    throw Object.assign(
+      new Error("Candidate assessment is currently disabled"),
+      {
+        statusCode: 503,
+        code: "ASSESSMENT_DISABLED",
+      },
+    );
   }
   await assessmentService.ensureAssessmentSchema();
   const template = validateCustomAssessmentTemplate(input);

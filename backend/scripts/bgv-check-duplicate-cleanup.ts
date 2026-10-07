@@ -30,9 +30,13 @@ async function main() {
     `SELECT candidate_id, check_type, COUNT(*) AS cnt
        FROM candidate_bgv_check
       GROUP BY candidate_id, check_type
-     HAVING COUNT(*) > 1`
+     HAVING COUNT(*) > 1`,
   );
-  const groupRows = groups as Array<{ candidate_id: string; check_type: string; cnt: number }>;
+  const groupRows = groups as Array<{
+    candidate_id: string;
+    check_type: string;
+    cnt: number;
+  }>;
 
   if (!groupRows.length) {
     console.log("No duplicate groups found. Nothing to do.");
@@ -48,21 +52,28 @@ async function main() {
          FROM candidate_bgv_check
         WHERE candidate_id = ? AND check_type = ?
         ORDER BY updated_at DESC, created_at DESC, id DESC`,
-      [g.candidate_id, g.check_type]
+      [g.candidate_id, g.check_type],
     );
-    const ordered = rows as Array<{ id: string; status: string; updated_at: string; created_at: string }>;
+    const ordered = rows as Array<{
+      id: string;
+      status: string;
+      updated_at: string;
+      created_at: string;
+    }>;
     const [keep, ...drop] = ordered; // first row after DESC sort = most recently updated
     if (!keep || drop.length === 0) continue;
 
     console.log(
       `${g.candidate_id}  ${g.check_type}: keep ${keep.id} (status=${keep.status}, updated=${keep.updated_at}); ` +
-      `${APPLY ? "deleting" : "would delete"} ${drop.length} row(s): ${drop.map((d) => d.id).join(", ")}`
+        `${APPLY ? "deleting" : "would delete"} ${drop.length} row(s): ${drop.map((d) => d.id).join(", ")}`,
     );
     totalToDelete += drop.length;
     idsToDelete.push(...drop.map((d) => d.id));
   }
 
-  console.log(`\n${APPLY ? "Deleting" : "Would delete"} ${totalToDelete} row(s) across ${groupRows.length} group(s).`);
+  console.log(
+    `\n${APPLY ? "Deleting" : "Would delete"} ${totalToDelete} row(s) across ${groupRows.length} group(s).`,
+  );
 
   if (!APPLY) {
     console.log("Dry run only — re-run with --apply to actually delete.");
@@ -75,7 +86,7 @@ async function main() {
     const placeholders = idsToDelete.map(() => "?").join(",");
     const [result] = await conn.execute(
       `DELETE FROM candidate_bgv_check WHERE id IN (${placeholders})`,
-      idsToDelete
+      idsToDelete,
     );
     await conn.commit();
     console.log(`Committed. Deleted ${(result as any).affectedRows} row(s).`);

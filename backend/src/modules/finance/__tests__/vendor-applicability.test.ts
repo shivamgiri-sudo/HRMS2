@@ -15,12 +15,16 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
  * dead. Restriction is opt-in, and several tests below exist purely to pin that down.
  */
 
-const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
+const { execute, getConnection } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  getConnection: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
-let service: typeof import("../vendor-applicability.service.js")["vendorApplicabilityService"];
+let service: (typeof import("../vendor-applicability.service.js"))["vendorApplicabilityService"];
 beforeAll(async () => {
-  ({ vendorApplicabilityService: service } = await import("../vendor-applicability.service.js"));
+  ({ vendorApplicabilityService: service } =
+    await import("../vendor-applicability.service.js"));
 }, 120_000);
 
 beforeEach(() => {
@@ -47,8 +51,12 @@ describe("no rows means unrestricted", () => {
 
   it("restricts only once rows exist", async () => {
     scriptApplicability([{ company_code: "IDC" }], []);
-    await expect(service.isAvailable("v1", { companyCode: "MAS" })).resolves.toBe(false);
-    await expect(service.isAvailable("v1", { companyCode: "IDC" })).resolves.toBe(true);
+    await expect(
+      service.isAvailable("v1", { companyCode: "MAS" }),
+    ).resolves.toBe(false);
+    await expect(
+      service.isAvailable("v1", { companyCode: "IDC" }),
+    ).resolves.toBe(true);
   });
 
   it("keeps the two concepts independent — a company restriction does not restrict branches", async () => {
@@ -62,8 +70,12 @@ describe("no rows means unrestricted", () => {
 
   it("applies a branch restriction independently of company", async () => {
     scriptApplicability([], [{ branch_id: "br1" }]);
-    await expect(service.isAvailable("v1", { branchId: "br1" })).resolves.toBe(true);
-    await expect(service.isAvailable("v1", { branchId: "br2" })).resolves.toBe(false);
+    await expect(service.isAvailable("v1", { branchId: "br1" })).resolves.toBe(
+      true,
+    );
+    await expect(service.isAvailable("v1", { branchId: "br2" })).resolves.toBe(
+      false,
+    );
   });
 });
 
@@ -84,13 +96,18 @@ describe("vendorFilterClause", () => {
 
   it("ANDs the two restrictions rather than ORing them", async () => {
     // A vendor restricted to IDC and to branch A must satisfy both, not either.
-    const clause = service.vendorFilterClause("v", { companyCode: "IDC", branchId: "br1" });
+    const clause = service.vendorFilterClause("v", {
+      companyCode: "IDC",
+      branchId: "br1",
+    });
     expect(clause.sql).toContain(") AND (");
     expect(clause.params).toEqual(["IDC", "br1"]);
   });
 
   it("binds values as parameters, never interpolating them", async () => {
-    const clause = service.vendorFilterClause("v", { companyCode: "MAS'; DROP TABLE x; --" });
+    const clause = service.vendorFilterClause("v", {
+      companyCode: "MAS'; DROP TABLE x; --",
+    });
     expect(clause.sql).not.toContain("DROP TABLE");
     expect(clause.params[0]).toBe("MAS'; DROP TABLE x; --");
   });
@@ -118,9 +135,15 @@ describe("replaceForVendor", () => {
     getConnection.mockResolvedValue(c);
     scriptApplicability([], []);
     await service.replaceForVendor("v1", { companyCodes: ["MAS"] }, "u1");
-    expect(c.statements.some((s) => /DELETE FROM vendor_company_applicability/.test(s))).toBe(true);
     expect(
-      c.statements.some((s) => /DELETE FROM vendor_branch_applicability/.test(s)),
+      c.statements.some((s) =>
+        /DELETE FROM vendor_company_applicability/.test(s),
+      ),
+    ).toBe(true);
+    expect(
+      c.statements.some((s) =>
+        /DELETE FROM vendor_branch_applicability/.test(s),
+      ),
       "branches were not sent, so they must be left alone",
     ).toBe(false);
   });
@@ -131,16 +154,30 @@ describe("replaceForVendor", () => {
     getConnection.mockResolvedValue(c);
     scriptApplicability([], []);
     await service.replaceForVendor("v1", { companyCodes: [] }, "u1");
-    expect(c.statements.some((s) => /DELETE FROM vendor_company_applicability/.test(s))).toBe(true);
-    expect(c.statements.some((s) => /INSERT INTO vendor_company_applicability/.test(s))).toBe(false);
+    expect(
+      c.statements.some((s) =>
+        /DELETE FROM vendor_company_applicability/.test(s),
+      ),
+    ).toBe(true);
+    expect(
+      c.statements.some((s) =>
+        /INSERT INTO vendor_company_applicability/.test(s),
+      ),
+    ).toBe(false);
   });
 
   it("de-duplicates, so a repeated code cannot trip the unique key", async () => {
     const c = conn();
     getConnection.mockResolvedValue(c);
     scriptApplicability([], []);
-    await service.replaceForVendor("v1", { companyCodes: ["MAS", "MAS", " MAS "] }, "u1");
-    const inserts = c.statements.filter((s) => /INSERT INTO vendor_company_applicability/.test(s));
+    await service.replaceForVendor(
+      "v1",
+      { companyCodes: ["MAS", "MAS", " MAS "] },
+      "u1",
+    );
+    const inserts = c.statements.filter((s) =>
+      /INSERT INTO vendor_company_applicability/.test(s),
+    );
     expect(inserts).toHaveLength(1);
   });
 
@@ -166,10 +203,16 @@ describe("replaceForVendor", () => {
     scriptApplicability([], []);
     await service.replaceForVendor(
       "v1",
-      { branches: [{ branchId: "br1", ship_to_address1: "   ", ship_to_city: "Noida" }] },
+      {
+        branches: [
+          { branchId: "br1", ship_to_address1: "   ", ship_to_city: "Noida" },
+        ],
+      },
       "u1",
     );
-    const insert = c.execute.mock.calls.find(([s]) => /INSERT INTO vendor_branch_applicability/.test(String(s)));
+    const insert = c.execute.mock.calls.find(([s]) =>
+      /INSERT INTO vendor_branch_applicability/.test(String(s)),
+    );
     const params = insert?.[1] as unknown[];
     expect(params).toContain(null);
     expect(params).toContain("Noida");
@@ -179,11 +222,17 @@ describe("replaceForVendor", () => {
 describe("resolveShipTo", () => {
   it("falls back to the branch's own address when nothing is overridden", async () => {
     execute.mockResolvedValue([
-      [{
-        ship_to_address1: null, ship_to_name: null, branch_name: "Noida",
-        branch_address: "A-24, Sector 63", branch_city: "Noida", branch_pincode: "201301",
-        branch_state_code: "09",
-      }],
+      [
+        {
+          ship_to_address1: null,
+          ship_to_name: null,
+          branch_name: "Noida",
+          branch_address: "A-24, Sector 63",
+          branch_city: "Noida",
+          branch_pincode: "201301",
+          branch_state_code: "09",
+        },
+      ],
       [],
     ]);
     const shipTo = await service.resolveShipTo("v1", "br1");
@@ -194,11 +243,18 @@ describe("resolveShipTo", () => {
 
   it("uses the override when one is set, and says where it came from", async () => {
     execute.mockResolvedValue([
-      [{
-        ship_to_name: "Warehouse", ship_to_address1: "Plot 9, Industrial Area",
-        ship_to_city: "Ghaziabad", ship_to_pincode: "201009", ship_to_state_code: "09",
-        branch_name: "Noida", branch_address: "A-24, Sector 63", branch_city: "Noida",
-      }],
+      [
+        {
+          ship_to_name: "Warehouse",
+          ship_to_address1: "Plot 9, Industrial Area",
+          ship_to_city: "Ghaziabad",
+          ship_to_pincode: "201009",
+          ship_to_state_code: "09",
+          branch_name: "Noida",
+          branch_address: "A-24, Sector 63",
+          branch_city: "Noida",
+        },
+      ],
       [],
     ]);
     const shipTo = await service.resolveShipTo("v1", "br1");

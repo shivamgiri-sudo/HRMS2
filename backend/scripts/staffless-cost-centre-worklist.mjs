@@ -55,12 +55,18 @@ const periodArg = (() => {
 function financeYearBounds(period) {
   const [y, m] = period.split("-").map(Number);
   const startYear = m >= 4 ? y : y - 1;
-  return { label: `FY${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`, from: `${startYear}-04` };
+  return {
+    label: `FY${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`,
+    from: `${startYear}-04`,
+  };
 }
 
 function istToday() {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
   }).format(new Date());
 }
 
@@ -118,7 +124,13 @@ const [rows] = await conn.execute(
 );
 
 // Resolve the proposed process ids to names in one pass rather than per row.
-const ids = [...new Set(rows.flatMap((r) => [r.history_process_id, r.name_process_id]).filter(Boolean))];
+const ids = [
+  ...new Set(
+    rows
+      .flatMap((r) => [r.history_process_id, r.name_process_id])
+      .filter(Boolean),
+  ),
+];
 const nameById = new Map();
 if (ids.length) {
   const [pRows] = await conn.execute(
@@ -129,7 +141,9 @@ if (ids.length) {
 }
 
 const worklist = rows.map((r) => {
-  let tier = "NONE", processId = null, evidence = "";
+  let tier = "NONE",
+    processId = null,
+    evidence = "";
   if (r.history_process_id) {
     tier = "HISTORY";
     processId = String(r.history_process_id);
@@ -139,41 +153,81 @@ const worklist = rows.map((r) => {
     processId = String(r.name_process_id);
     evidence = `cost centre client_name "${r.client_name}" matches this process exactly`;
   } else {
-    evidence = r.client_name || r.process_name_bill
-      ? `no match; centre is labelled "${r.client_name || r.process_name_bill}"`
-      : "no history, no client label — needs a decision from scratch";
+    evidence =
+      r.client_name || r.process_name_bill
+        ? `no match; centre is labelled "${r.client_name || r.process_name_bill}"`
+        : "no history, no client label — needs a decision from scratch";
   }
   return {
-    code: r.cost_centre_code, name: r.cost_centre_name, branch: r.branch_name || "-",
-    grns: Number(r.grn_count), amount: Number(r.amount || 0),
-    tier, proposedProcess: processId ? (nameById.get(processId) ?? processId) : "", processId, evidence,
+    code: r.cost_centre_code,
+    name: r.cost_centre_name,
+    branch: r.branch_name || "-",
+    grns: Number(r.grn_count),
+    amount: Number(r.amount || 0),
+    tier,
+    proposedProcess: processId ? (nameById.get(processId) ?? processId) : "",
+    processId,
+    evidence,
   };
 });
 
 if (csvMode) {
   const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  console.log(["cost_centre_code","cost_centre_name","branch","grn_count","amount_inr","evidence_tier","proposed_process","proposed_process_id","evidence"].join(","));
+  console.log(
+    [
+      "cost_centre_code",
+      "cost_centre_name",
+      "branch",
+      "grn_count",
+      "amount_inr",
+      "evidence_tier",
+      "proposed_process",
+      "proposed_process_id",
+      "evidence",
+    ].join(","),
+  );
   for (const w of worklist) {
-    console.log([w.code, w.name, w.branch, w.grns, Math.round(w.amount), w.tier, w.proposedProcess, w.processId || "", w.evidence].map(esc).join(","));
+    console.log(
+      [
+        w.code,
+        w.name,
+        w.branch,
+        w.grns,
+        Math.round(w.amount),
+        w.tier,
+        w.proposedProcess,
+        w.processId || "",
+        w.evidence,
+      ]
+        .map(esc)
+        .join(","),
+    );
   }
 } else {
   const total = worklist.reduce((s, w) => s + w.amount, 0);
   const byTier = (t) => worklist.filter((w) => w.tier === t);
-  console.log(`\nSTAFFLESS COST CENTRE WORKLIST — ${fy.label}, ${fy.from} to ${period}`);
-  console.log(`${worklist.length} cost centres carrying ${money(total)} that reaches no process P&L line.\n`);
+  console.log(
+    `\nSTAFFLESS COST CENTRE WORKLIST — ${fy.label}, ${fy.from} to ${period}`,
+  );
+  console.log(
+    `${worklist.length} cost centres carrying ${money(total)} that reaches no process P&L line.\n`,
+  );
   for (const t of ["HISTORY", "NAME", "NONE"]) {
     const set = byTier(t);
     if (!set.length) continue;
     const sub = set.reduce((s, w) => s + w.amount, 0);
-    const header = { HISTORY: "PROPOSED from staffing history — strongest evidence",
-                     NAME: "PROPOSED from the centre's own client label — weaker, confirm before applying",
-                     NONE: "NEEDS A DECISION — no evidence to propose from" }[t];
+    const header = {
+      HISTORY: "PROPOSED from staffing history — strongest evidence",
+      NAME: "PROPOSED from the centre's own client label — weaker, confirm before applying",
+      NONE: "NEEDS A DECISION — no evidence to propose from",
+    }[t];
     console.log(`── ${header}`);
     console.log(`   ${set.length} centres, ${money(sub)}\n`);
     for (const w of set) {
       console.log(`   ${w.code}  (${w.branch})`);
       console.log(`     ${money(w.amount)} over ${w.grns} GRN(s)`);
-      if (w.proposedProcess) console.log(`     -> propose: ${w.proposedProcess}`);
+      if (w.proposedProcess)
+        console.log(`     -> propose: ${w.proposedProcess}`);
       console.log(`     evidence: ${w.evidence}\n`);
     }
   }
@@ -190,25 +244,48 @@ if (csvMode) {
     const byBranch = new Map();
     for (const w of tail) {
       const e = byBranch.get(w.branch) ?? { n: 0, amount: 0 };
-      e.n += 1; e.amount += w.amount;
+      e.n += 1;
+      e.amount += w.amount;
       byBranch.set(w.branch, e);
     }
-    console.log("-- THE TAIL, GROUPED - one ruling per branch may settle many centres at once");
-    for (const [branch, e] of [...byBranch.entries()].sort((a, b) => b[1].amount - a[1].amount)) {
-      console.log("   " + branch.padEnd(24) + String(e.n).padStart(3) + " centres   " + money(e.amount));
+    console.log(
+      "-- THE TAIL, GROUPED - one ruling per branch may settle many centres at once",
+    );
+    for (const [branch, e] of [...byBranch.entries()].sort(
+      (a, b) => b[1].amount - a[1].amount,
+    )) {
+      console.log(
+        "   " +
+          branch.padEnd(24) +
+          String(e.n).padStart(3) +
+          " centres   " +
+          money(e.amount),
+      );
     }
     console.log("");
     const tailBranches = byBranch.size;
-    console.log("This is " + (byTier("HISTORY").length + byTier("NAME").length + tailBranches)
-      + " decision(s), not " + worklist.length + ": "
-      + byTier("HISTORY").length + " evidenced by staffing, "
-      + byTier("NAME").length + " by client label, and a tail spanning "
-      + tailBranches + " branch(es).");
+    console.log(
+      "This is " +
+        (byTier("HISTORY").length + byTier("NAME").length + tailBranches) +
+        " decision(s), not " +
+        worklist.length +
+        ": " +
+        byTier("HISTORY").length +
+        " evidenced by staffing, " +
+        byTier("NAME").length +
+        " by client label, and a tail spanning " +
+        tailBranches +
+        " branch(es).",
+    );
     console.log("");
   }
 
-  console.log("Nothing here has been changed. Attribution is a finance decision;");
-  console.log("this lists the spend and the evidence so it can be made once, per centre.\n");
+  console.log(
+    "Nothing here has been changed. Attribution is a finance decision;",
+  );
+  console.log(
+    "this lists the spend and the evidence so it can be made once, per centre.\n",
+  );
 }
 
 await conn.end();

@@ -9,14 +9,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockExecute = vi.fn();
 vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: (...args: unknown[]) => mockExecute(...(args as [string, unknown[]])) },
+  db: {
+    execute: (...args: unknown[]) =>
+      mockExecute(...(args as [string, unknown[]])),
+  },
 }));
 
 const logSensitiveAction = vi.fn(async () => undefined);
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 
 const createItem = vi.fn(async () => undefined);
-vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem } }));
+vi.mock("../../inbox/inbox.service.js", () => ({
+  inboxService: { createItem },
+}));
 
 import { refreshSlaBreachFlags } from "../helpdesk-sla.service.js";
 
@@ -37,12 +42,26 @@ describe("refreshSlaBreachFlags — SLA breach now escalates, not just flags", (
 
   it("updates sla_breached and bumps escalation_level for newly-breached tickets", async () => {
     mockExecute
-      .mockResolvedValueOnce([[{ id: "t-1", ticket_code: "TKT-1", subject: "Laptop dead", category: "it", assigned_to: "u-1", escalation_level: 0 }], []])
+      .mockResolvedValueOnce([
+        [
+          {
+            id: "t-1",
+            ticket_code: "TKT-1",
+            subject: "Laptop dead",
+            category: "it",
+            assigned_to: "u-1",
+            escalation_level: 0,
+          },
+        ],
+        [],
+      ])
       .mockResolvedValueOnce([[], []]); // the UPDATE
 
     await refreshSlaBreachFlags();
 
-    const updateCall = mockExecute.mock.calls.find(([sql]) => /UPDATE helpdesk_ticket/.test(sql as string));
+    const updateCall = mockExecute.mock.calls.find(([sql]) =>
+      /UPDATE helpdesk_ticket/.test(sql as string),
+    );
     expect(updateCall).toBeDefined();
     const [sql, params] = updateCall as [string, unknown[]];
     expect(sql).toContain("sla_breached = 1");
@@ -52,35 +71,75 @@ describe("refreshSlaBreachFlags — SLA breach now escalates, not just flags", (
 
   it("logs a TICKET_SLA_BREACHED audit entry for every newly-breached ticket", async () => {
     mockExecute
-      .mockResolvedValueOnce([[{ id: "t-1", ticket_code: "TKT-1", subject: "x", category: "it", assigned_to: null, escalation_level: 1 }], []])
+      .mockResolvedValueOnce([
+        [
+          {
+            id: "t-1",
+            ticket_code: "TKT-1",
+            subject: "x",
+            category: "it",
+            assigned_to: null,
+            escalation_level: 1,
+          },
+        ],
+        [],
+      ])
       .mockResolvedValueOnce([[], []]);
 
     await refreshSlaBreachFlags();
 
-    expect(logSensitiveAction).toHaveBeenCalledWith(expect.objectContaining({
-      action_type: "TICKET_SLA_BREACHED",
-      entity_id: "t-1",
-    }));
+    expect(logSensitiveAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action_type: "TICKET_SLA_BREACHED",
+        entity_id: "t-1",
+      }),
+    );
   });
 
   it("notifies the currently-assigned agent via the work inbox", async () => {
     mockExecute
-      .mockResolvedValueOnce([[{ id: "t-1", ticket_code: "TKT-1", subject: "Laptop dead", category: "it", assigned_to: "u-assignee", escalation_level: 0 }], []])
+      .mockResolvedValueOnce([
+        [
+          {
+            id: "t-1",
+            ticket_code: "TKT-1",
+            subject: "Laptop dead",
+            category: "it",
+            assigned_to: "u-assignee",
+            escalation_level: 0,
+          },
+        ],
+        [],
+      ])
       .mockResolvedValueOnce([[], []]);
 
     await refreshSlaBreachFlags();
 
-    expect(createItem).toHaveBeenCalledWith(expect.objectContaining({
-      user_id: "u-assignee",
-      type: "helpdesk_ticket_sla_breached",
-      priority: "urgent",
-      entity_id: "t-1",
-    }));
+    expect(createItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: "u-assignee",
+        type: "helpdesk_ticket_sla_breached",
+        priority: "urgent",
+        entity_id: "t-1",
+      }),
+    );
   });
 
   it("does not attempt a notification for an unassigned ticket (nothing to route it to here)", async () => {
     mockExecute
-      .mockResolvedValueOnce([[{ id: "t-1", ticket_code: "TKT-1", subject: "x", category: "it", assigned_to: null, escalation_level: 0 }], []])
+      .mockResolvedValueOnce([
+        [
+          {
+            id: "t-1",
+            ticket_code: "TKT-1",
+            subject: "x",
+            category: "it",
+            assigned_to: null,
+            escalation_level: 0,
+          },
+        ],
+        [],
+      ])
       .mockResolvedValueOnce([[], []]);
 
     await refreshSlaBreachFlags();
@@ -93,7 +152,19 @@ describe("refreshSlaBreachFlags — SLA breach now escalates, not just flags", (
   it("one failing notification does not stop the audit log or the flag update from happening", async () => {
     createItem.mockRejectedValueOnce(new Error("inbox down"));
     mockExecute
-      .mockResolvedValueOnce([[{ id: "t-1", ticket_code: "TKT-1", subject: "x", category: "it", assigned_to: "u-1", escalation_level: 0 }], []])
+      .mockResolvedValueOnce([
+        [
+          {
+            id: "t-1",
+            ticket_code: "TKT-1",
+            subject: "x",
+            category: "it",
+            assigned_to: "u-1",
+            escalation_level: 0,
+          },
+        ],
+        [],
+      ])
       .mockResolvedValueOnce([[], []]);
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 

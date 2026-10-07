@@ -23,36 +23,56 @@
 
 export class VoiceTranscriptionError extends Error {}
 
-const OPENAI_TRANSCRIBE_URL = 'https://api.openai.com/v1/audio/transcriptions';
-const DEFAULT_MODEL = 'whisper-1';
+const OPENAI_TRANSCRIBE_URL = "https://api.openai.com/v1/audio/transcriptions";
+const DEFAULT_MODEL = "whisper-1";
 
-export async function transcribeAudio(buffer: Buffer, mimeType: string, filename: string): Promise<{ text: string }> {
+export async function transcribeAudio(
+  buffer: Buffer,
+  mimeType: string,
+  filename: string,
+): Promise<{ text: string }> {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new VoiceTranscriptionError('OpenAI API key is not configured');
+  if (!apiKey)
+    throw new VoiceTranscriptionError("OpenAI API key is not configured");
 
   const form = new FormData();
   // Buffer isn't directly assignable to BlobPart (its underlying
   // ArrayBufferLike can be a SharedArrayBuffer, which BlobPart's typing
   // excludes) — Uint8Array.from copies into a plain ArrayBuffer-backed view.
-  form.append('file', new Blob([Uint8Array.from(buffer)], { type: mimeType }), filename);
-  form.append('model', process.env.OPENAI_TRANSCRIBE_MODEL || DEFAULT_MODEL);
+  form.append(
+    "file",
+    new Blob([Uint8Array.from(buffer)], { type: mimeType }),
+    filename,
+  );
+  form.append("model", process.env.OPENAI_TRANSCRIBE_MODEL || DEFAULT_MODEL);
 
   let response: Response;
   try {
     response = await fetch(OPENAI_TRANSCRIBE_URL, {
-      method: 'POST',
+      method: "POST",
       headers: { Authorization: `Bearer ${apiKey}` },
       body: form,
     });
   } catch (error) {
-    throw new VoiceTranscriptionError(error instanceof Error ? error.message : 'Could not reach OpenAI for transcription');
+    throw new VoiceTranscriptionError(
+      error instanceof Error
+        ? error.message
+        : "Could not reach OpenAI for transcription",
+    );
   }
 
-  const payload = await response.json().catch(() => ({})) as { text?: string; error?: { message?: string } };
+  const payload = (await response.json().catch(() => ({}))) as {
+    text?: string;
+    error?: { message?: string };
+  };
   if (!response.ok) {
-    throw new VoiceTranscriptionError(payload.error?.message || `OpenAI transcription failed with status ${response.status}`);
+    throw new VoiceTranscriptionError(
+      payload.error?.message ||
+        `OpenAI transcription failed with status ${response.status}`,
+    );
   }
-  const text = String(payload.text ?? '').trim();
-  if (!text) throw new VoiceTranscriptionError('OpenAI returned an empty transcript');
+  const text = String(payload.text ?? "").trim();
+  if (!text)
+    throw new VoiceTranscriptionError("OpenAI returned an empty transcript");
   return { text };
 }

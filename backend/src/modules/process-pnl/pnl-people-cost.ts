@@ -29,8 +29,17 @@
  */
 
 /** Columns the rule reads, in the order the rule lists them. */
-export const PEOPLE_COST_CTC_COLUMNS = ["gross_salary", "pf_employer", "esic_employer", "gratuity"] as const;
-export const PEOPLE_COST_OTHER_DEDUCTION_COLUMNS = ["other_deductions", "loan_emi", "advance_recovery"] as const;
+export const PEOPLE_COST_CTC_COLUMNS = [
+  "gross_salary",
+  "pf_employer",
+  "esic_employer",
+  "gratuity",
+] as const;
+export const PEOPLE_COST_OTHER_DEDUCTION_COLUMNS = [
+  "other_deductions",
+  "loan_emi",
+  "advance_recovery",
+] as const;
 export const PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS = ["lwp_deduction"] as const;
 
 /** Legacy fallback used by the column-aware readers when salary_prep_line has no gratuity column. */
@@ -56,12 +65,20 @@ function col(alias: string, column: string): string {
 }
 
 function build(parts: {
-  gross: string; pfEmployer: string; esicEmployer: string; gratuity: string;
-  other: string[]; leave: string[];
+  gross: string;
+  pfEmployer: string;
+  esicEmployer: string;
+  gratuity: string;
+  other: string[];
+  leave: string[];
 }): PeopleCostExprs {
   const ctcPaid = `(${parts.gross} + ${parts.pfEmployer} + ${parts.esicEmployer} + ${parts.gratuity})`;
-  const otherDeduction = parts.other.length ? `(${parts.other.join(" + ")})` : "0";
-  const leaveDeduction = parts.leave.length ? `(${parts.leave.join(" + ")})` : "0";
+  const otherDeduction = parts.other.length
+    ? `(${parts.other.join(" + ")})`
+    : "0";
+  const leaveDeduction = parts.leave.length
+    ? `(${parts.leave.join(" + ")})`
+    : "0";
   return {
     gross: parts.gross,
     pfEmployer: parts.pfEmployer,
@@ -96,24 +113,35 @@ export function peopleCostSql(alias: string): string {
  * contributes 0, and a missing gratuity column falls back to basic × 4.81% exactly as those readers
  * did before this file existed.
  */
-export function peopleCostExprsForColumns(alias: string, columns: ReadonlySet<string>): PeopleCostExprs {
-  const opt = (column: string) => (columns.has(column) ? col(alias, column) : "0");
+export function peopleCostExprsForColumns(
+  alias: string,
+  columns: ReadonlySet<string>,
+): PeopleCostExprs {
+  const opt = (column: string) =>
+    columns.has(column) ? col(alias, column) : "0";
   const gratuity = columns.has("gratuity")
     ? col(alias, "gratuity")
     : columns.has("basic")
-    ? `${col(alias, "basic")} * ${GRATUITY_BASIC_RATE}`
-    : "0";
+      ? `${col(alias, "basic")} * ${GRATUITY_BASIC_RATE}`
+      : "0";
   return build({
     gross: opt("gross_salary"),
     pfEmployer: opt("pf_employer"),
     esicEmployer: opt("esic_employer"),
     gratuity,
-    other: PEOPLE_COST_OTHER_DEDUCTION_COLUMNS.filter((c) => columns.has(c)).map((c) => col(alias, c)),
-    leave: PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS.filter((c) => columns.has(c)).map((c) => col(alias, c)),
+    other: PEOPLE_COST_OTHER_DEDUCTION_COLUMNS.filter((c) =>
+      columns.has(c),
+    ).map((c) => col(alias, c)),
+    leave: PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS.filter((c) =>
+      columns.has(c),
+    ).map((c) => col(alias, c)),
   });
 }
 
 /** Column-aware per-line People Cost SQL expression. */
-export function peopleCostSqlForColumns(alias: string, columns: ReadonlySet<string>): string {
+export function peopleCostSqlForColumns(
+  alias: string,
+  columns: ReadonlySet<string>,
+): string {
   return peopleCostExprsForColumns(alias, columns).peopleCost;
 }

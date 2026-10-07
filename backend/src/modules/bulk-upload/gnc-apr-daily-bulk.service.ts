@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * GNC's daily Agent Productivity Report (APR).
@@ -40,7 +43,9 @@ export const GNC_APR_HEADERS = [
 
 /** total_calls is NOT NULL with a 0 default -- a blank cell means zero, not null. */
 export function parseCallCount(raw: unknown): number {
-  const v = String(raw ?? "").trim().replace(/,/g, "");
+  const v = String(raw ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!v) return 0;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
@@ -82,7 +87,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importGncAprBatch(
   batchId: string,
@@ -94,7 +101,8 @@ export async function importGncAprBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const [procRows] = await db.execute<Ref[]>(
     "SELECT id FROM process_master WHERE process_name = 'GNC' AND active_status = 1 LIMIT 1",
@@ -139,9 +147,11 @@ export async function importGncAprBatch(
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId,
+        randomUUID(),
+        processId,
         String(data["uid"] ?? "").trim() || null,
-        reportDate, userName,
+        reportDate,
+        userName,
         String(data["emp_id"] ?? "").trim() || null,
         String(data["tl_name"] ?? "").trim() || null,
         String(data["process_type"] ?? "").trim() || null,
@@ -165,7 +175,8 @@ export async function importGncAprBatch(
        (id, process_id, uid, report_date, user_name, agent_code, tl_name, process_type,
         total_calls, login_seconds, wait_seconds, talk_seconds, dispo_seconds, pause_seconds,
         net_login_seconds, break_seconds, acht_seconds, attendance, data_source, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
         uid = VALUES(uid),
         agent_code = VALUES(agent_code),
@@ -189,12 +200,17 @@ export async function importGncAprBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 

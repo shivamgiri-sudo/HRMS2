@@ -51,7 +51,16 @@ beforeEach(() => {
 
 describe("resolveSeatRate precedence", () => {
   it("tier 1: employee override wins outright", async () => {
-    execute.mockResolvedValueOnce([[{ id: "r1", seat_rate_monthly: "50000.00", proration_method: "payable_days" }], []]);
+    execute.mockResolvedValueOnce([
+      [
+        {
+          id: "r1",
+          seat_rate_monthly: "50000.00",
+          proration_method: "payable_days",
+        },
+      ],
+      [],
+    ]);
     const result = await resolveSeatRate(EMPLOYEE, "2026-08-15", "2026-08");
     expect(result).toEqual({
       seatRateMonthly: 50000,
@@ -65,7 +74,18 @@ describe("resolveSeatRate precedence", () => {
   it("tier 2/3: cost-centre rate (designation-specific) wins over the process-role tier", async () => {
     execute
       .mockResolvedValueOnce([[], []]) // no employee override
-      .mockResolvedValueOnce([[{ id: "r2", seat_rate_monthly: "40000.00", designation_id: "desig-1", billing_model: "per_seat", proration_method: "payable_days" }], []]);
+      .mockResolvedValueOnce([
+        [
+          {
+            id: "r2",
+            seat_rate_monthly: "40000.00",
+            designation_id: "desig-1",
+            billing_model: "per_seat",
+            proration_method: "payable_days",
+          },
+        ],
+        [],
+      ]);
     const result = await resolveSeatRate(EMPLOYEE, "2026-08-15", "2026-08");
     expect(result.source).toBe("cc_designation");
     expect(result.seatRateMonthly).toBe(40000);
@@ -76,7 +96,10 @@ describe("resolveSeatRate precedence", () => {
     execute
       .mockResolvedValueOnce([[], []]) // no employee override
       .mockResolvedValueOnce([[], []]) // no cost-centre rate
-      .mockResolvedValueOnce([[{ id: "r4", seat_rate_monthly: "35000.00" }], []]); // process_role_billability
+      .mockResolvedValueOnce([
+        [{ id: "r4", seat_rate_monthly: "35000.00" }],
+        [],
+      ]); // process_role_billability
     const result = await resolveSeatRate(EMPLOYEE, "2026-08-15", "2026-08");
     expect(result).toEqual({
       seatRateMonthly: 35000,
@@ -98,7 +121,10 @@ describe("resolveSeatRate precedence", () => {
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []]) // no process-role rate
-      .mockResolvedValueOnce([[{ id: "r5", revenue_rate_per_head: "20000.00" }], []]);
+      .mockResolvedValueOnce([
+        [{ id: "r5", revenue_rate_per_head: "20000.00" }],
+        [],
+      ]);
     const result = await resolveSeatRate(EMPLOYEE, "2026-08-15", "2026-08");
     expect(result.source).toBe("monthly_driver");
     expect(result.seatRateMonthly).toBe(20000);
@@ -125,7 +151,10 @@ describe("resolveSeatRate and getSeatRevenueActuals agree on precedence order", 
 
   it("the batched COALESCE still orders: override, cc-designation, cc-flat, process-role, driver", () => {
     const m = batchedSource.match(/COALESCE\(([^)]+)\) AS rate/);
-    expect(m, "rate COALESCE expression not found in getSeatRevenueActuals").toBeTruthy();
+    expect(
+      m,
+      "rate COALESCE expression not found in getSeatRevenueActuals",
+    ).toBeTruthy();
     const args = m![1].split(",").map((s) => s.trim());
     expect(args).toEqual([
       "ovr.seat_rate_monthly",
@@ -137,17 +166,26 @@ describe("resolveSeatRate and getSeatRevenueActuals agree on precedence order", 
   });
 
   it("resolveSeatRate queries the same four rate sources, in the same order", () => {
-    const fn = perEmployeeSource.match(/export async function resolveSeatRate[\s\S]*?\n\}/);
+    const fn = perEmployeeSource.match(
+      /export async function resolveSeatRate[\s\S]*?\n\}/,
+    );
     expect(fn, "resolveSeatRate function body not found").toBeTruthy();
     const body = fn![0];
-    const order = ["employee_seat_rate_override", "cost_centre_seat_rate", "process_role_billability", "finance_cost_centre_monthly_driver"]
-      .map((table) => ({ table, idx: body.indexOf(`FROM ${table}`) }));
+    const order = [
+      "employee_seat_rate_override",
+      "cost_centre_seat_rate",
+      "process_role_billability",
+      "finance_cost_centre_monthly_driver",
+    ].map((table) => ({ table, idx: body.indexOf(`FROM ${table}`) }));
     for (const { table, idx } of order) {
-      expect(idx, `resolveSeatRate no longer queries ${table}`).toBeGreaterThan(-1);
+      expect(idx, `resolveSeatRate no longer queries ${table}`).toBeGreaterThan(
+        -1,
+      );
     }
     const indices = order.map((o) => o.idx);
-    expect(indices, "resolveSeatRate's query order no longer matches getSeatRevenueActuals' COALESCE order").toEqual(
-      [...indices].sort((a, b) => a - b),
-    );
+    expect(
+      indices,
+      "resolveSeatRate's query order no longer matches getSeatRevenueActuals' COALESCE order",
+    ).toEqual([...indices].sort((a, b) => a - b));
   });
 });

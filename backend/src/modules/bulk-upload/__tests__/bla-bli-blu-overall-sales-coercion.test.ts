@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseDate, parseDateTime, parseCallDurationSeconds, parseNullableInt,
-  parseNullableDecimal, cleanText, BLA_BLI_BLU_OVERALL_SALES_HEADERS,
+  parseDate,
+  parseDateTime,
+  parseCallDurationSeconds,
+  parseNullableInt,
+  parseNullableDecimal,
+  cleanText,
+  BLA_BLI_BLU_OVERALL_SALES_HEADERS,
 } from "../bla-bli-blu-overall-sales-bulk.service.js";
 
 describe("parseDate", () => {

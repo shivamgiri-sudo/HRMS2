@@ -32,7 +32,12 @@ const SOURCE = readFileSync(
 
 /** Strip line comments so the explanatory note above the fix is not scanned. */
 const sqlText = SOURCE.split("\n")
-  .filter((line) => !line.trim().startsWith("--") && !line.trim().startsWith("//") && !line.trim().startsWith("*"))
+  .filter(
+    (line) =>
+      !line.trim().startsWith("--") &&
+      !line.trim().startsWith("//") &&
+      !line.trim().startsWith("*"),
+  )
   .join("\n");
 
 describe("dpdpRestrictionGuard SQL dialect", () => {
@@ -55,14 +60,17 @@ describe("dpdpRestrictionGuard SQL dialect", () => {
     // The LIMIT was redundant, never load-bearing: employees.id is the primary
     // key. Removing it must not have removed the employees lookup itself, which
     // is what lets the guard accept an employees.id as well as an auth_user.id.
-    expect(sqlText).toMatch(/SELECT\s+e\.user_id\s+FROM\s+employees\s+e\s+WHERE\s+e\.id\s*=\s*\?/i);
+    expect(sqlText).toMatch(
+      /SELECT\s+e\.user_id\s+FROM\s+employees\s+e\s+WHERE\s+e\.id\s*=\s*\?/i,
+    );
   });
 
   it("keeps failing closed — the 503 path is deliberate and must not become a bypass", () => {
     expect(SOURCE).toMatch(/DPDP_RESTRICTION_CHECK_FAILED/);
     expect(SOURCE).toMatch(/res\.status\(503\)/);
-    expect(SOURCE, "a catch that calls next() would turn a DB error into silent access").not.toMatch(
-      /catch[\s\S]{0,200}?\bnext\(\)/,
-    );
+    expect(
+      SOURCE,
+      "a catch that calls next() would turn a DB error into silent access",
+    ).not.toMatch(/catch[\s\S]{0,200}?\bnext\(\)/);
   });
 });

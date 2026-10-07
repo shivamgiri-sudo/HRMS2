@@ -14,7 +14,12 @@
  *   name appearing in the request, or a keyword. Deliberately over-broad: a false positive
  *   costs one human review, a false negative costs a wrong salary.
  */
-import { matchGlob, matchTablePattern, normalisePath, readControlPlaneFile } from "./control-plane.js";
+import {
+  matchGlob,
+  matchTablePattern,
+  normalisePath,
+  readControlPlaneFile,
+} from "./control-plane.js";
 import type {
   CapabilityClass,
   CapabilityDefinition,
@@ -30,12 +35,18 @@ export interface LoadedCapabilityRegistry {
 }
 
 export function loadCapabilityRegistry(): LoadedCapabilityRegistry {
-  const { data, sha256 } = readControlPlaneFile<CapabilityRegistryFile>(CAPABILITY_REGISTRY_FILE);
+  const { data, sha256 } = readControlPlaneFile<CapabilityRegistryFile>(
+    CAPABILITY_REGISTRY_FILE,
+  );
   if (!Array.isArray(data.capabilities) || data.capabilities.length === 0) {
-    throw new Error("[uat] capability-registry.json contains no capabilities; refusing to classify risk.");
+    throw new Error(
+      "[uat] capability-registry.json contains no capabilities; refusing to classify risk.",
+    );
   }
   if (!data.capabilities.some((c) => c.class === "DENY")) {
-    throw new Error("[uat] capability-registry.json has no DENY capability; refusing to classify risk.");
+    throw new Error(
+      "[uat] capability-registry.json has no DENY capability; refusing to classify risk.",
+    );
   }
   return { capabilities: data.capabilities, sha256 };
 }
@@ -67,7 +78,9 @@ function keywordMatchers(reg: LoadedCapabilityRegistry): Map<string, RegExp[]> {
         // A malformed pattern must not take the scanner down, but it must be visible:
         // the contract test compiles every keyword, so this can only fire if the file was
         // edited past that gate.
-        console.error(`[uat] capability "${cap.key}" has an invalid keyword regex: ${k}`);
+        console.error(
+          `[uat] capability "${cap.key}" has an invalid keyword regex: ${k}`,
+        );
       }
     }
     map.set(cap.key, res);
@@ -92,7 +105,7 @@ export interface CapabilityMatchInput {
  */
 export function matchCapabilities(
   input: CapabilityMatchInput,
-  reg: LoadedCapabilityRegistry
+  reg: LoadedCapabilityRegistry,
 ): CapabilityHit[] {
   const hits: CapabilityHit[] = [];
   const matchers = keywordMatchers(reg);
@@ -185,7 +198,9 @@ export function explainCapabilityDeny(hits: CapabilityHit[]): string | null {
  */
 export function extractIdentifierTokens(text: string): string[] {
   const out = new Set<string>();
-  for (const m of text.matchAll(/`([A-Za-z0-9_]+)`|\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/gi)) {
+  for (const m of text.matchAll(
+    /`([A-Za-z0-9_]+)`|\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/gi,
+  )) {
     const t = m[1] ?? m[2];
     if (t && t.length >= 3) out.add(t.toLowerCase());
   }

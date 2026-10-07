@@ -37,7 +37,12 @@ export interface IdentitySnapshot {
   govt: GovtIdentity | null;
   selfieDocId: string | null;
   hasDigilockerPhoto: boolean;
-  employee: { code: string; name: string | null; status: string | null; joinedOn: string | null } | null;
+  employee: {
+    code: string;
+    name: string | null;
+    status: string | null;
+    joinedOn: string | null;
+  } | null;
 }
 
 export interface IdentityComparison {
@@ -59,18 +64,24 @@ export function last4(value: unknown): string | null {
 
 /** ABCDE1234F -> ABCXXXX4F. Anything that is not a full PAN is returned as-is only if already masked. */
 export function maskPan(value: unknown): string | null {
-  const raw = String(value ?? "").trim().toUpperCase();
-  if (/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(raw)) return `${raw.slice(0, 3)}XXXX${raw.slice(-2)}`;
+  const raw = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  if (/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(raw))
+    return `${raw.slice(0, 3)}XXXX${raw.slice(-2)}`;
   if (/^[A-Z]{3}X{4}[A-Z0-9]{2}$/.test(raw)) return raw;
   return null;
 }
 
 const clean = (v: unknown): string | null => {
-  const s = typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim();
+  const s =
+    typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim();
   return s ? s : null;
 };
 
-async function loadSnapshot(candidateId: string): Promise<IdentitySnapshot | null> {
+async function loadSnapshot(
+  candidateId: string,
+): Promise<IdentitySnapshot | null> {
   const [candRows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.candidate_code, c.full_name,
             DATE_FORMAT(c.date_of_birth, '%Y-%m-%d') AS cand_dob,
@@ -100,7 +111,12 @@ async function loadSnapshot(candidateId: string): Promise<IdentitySnapshot | nul
     try {
       const d = extractDigilockerDemographics(JSON.parse(String(rj)));
       if (d.fullName || d.dateOfBirth || d.gender || d.aadhaarLast4) {
-        govt = { name: d.fullName, dob: d.dateOfBirth, gender: d.gender, aadhaarLast4: d.aadhaarLast4 };
+        govt = {
+          name: d.fullName,
+          dob: d.dateOfBirth,
+          gender: d.gender,
+          aadhaarLast4: d.aadhaarLast4,
+        };
       }
     } catch {
       govt = null;
@@ -158,7 +174,11 @@ async function sharedDevice(a: string, b: string): Promise<boolean | null> {
     [a, b],
   );
   const keys = (id: string) =>
-    new Set(rows.filter((r) => String(r.candidate_id) === id).map((r) => `${r.ip_address}|${r.ua}`));
+    new Set(
+      rows
+        .filter((r) => String(r.candidate_id) === id)
+        .map((r) => `${r.ip_address}|${r.ua}`),
+    );
   const ka = keys(a);
   const kb = keys(b);
   if (!ka.size || !kb.size) return null;
@@ -176,9 +196,15 @@ export async function buildIdentityComparison(
 ): Promise<IdentityComparison | null> {
   const subject = await loadSnapshot(candidateId);
   if (!subject) return null;
-  const other = matchedCandidateId ? await loadSnapshot(matchedCandidateId) : null;
+  const other = matchedCandidateId
+    ? await loadSnapshot(matchedCandidateId)
+    : null;
   const sharedMobile =
-    other && subject.mobileMasked && other.mobileMasked ? subject.mobileMasked === other.mobileMasked : null;
-  const device = other ? await sharedDevice(candidateId, other.candidateId).catch(() => null) : null;
+    other && subject.mobileMasked && other.mobileMasked
+      ? subject.mobileMasked === other.mobileMasked
+      : null;
+  const device = other
+    ? await sharedDevice(candidateId, other.candidateId).catch(() => null)
+    : null;
   return { subject, other, sharedMobile, sharedDevice: device };
 }

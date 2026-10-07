@@ -1,6 +1,6 @@
-import { getLegacyPool } from '../../db/legacyDb.js';
-import { db } from '../../db/mysql.js';
-import { randomUUID } from 'crypto';
+import { getLegacyPool } from "../../db/legacyDb.js";
+import { db } from "../../db/mysql.js";
+import { randomUUID } from "crypto";
 
 export interface SyncResult {
   domain: string;
@@ -35,12 +35,17 @@ export abstract class DomainSyncBase {
 
   protected abstract fetchBatch(
     lastWatermark: string,
-    batchSize: number
+    batchSize: number,
   ): Promise<any[]>;
 
   protected abstract processBatch(
-    rows: any[]
-  ): Promise<{ inserted: number; updated: number; skipped: number; failed: number }>;
+    rows: any[],
+  ): Promise<{
+    inserted: number;
+    updated: number;
+    skipped: number;
+    failed: number;
+  }>;
 
   protected abstract extractWatermark(rows: any[]): string | null;
 
@@ -55,7 +60,10 @@ export abstract class DomainSyncBase {
     await this.insertRunLog(runId, lastWatermark);
 
     let rows: any[] = [];
-    let inserted = 0, updated = 0, skipped = 0, failed = 0;
+    let inserted = 0,
+      updated = 0,
+      skipped = 0,
+      failed = 0;
     let newWatermark: string | null = null;
 
     try {
@@ -64,28 +72,45 @@ export abstract class DomainSyncBase {
       if (rows.length > 0) {
         const counts = await this.processBatch(rows);
         inserted = counts.inserted;
-        updated  = counts.updated;
-        skipped  = counts.skipped;
-        failed   = counts.failed;
+        updated = counts.updated;
+        skipped = counts.skipped;
+        failed = counts.failed;
         newWatermark = this.extractWatermark(rows);
         if (newWatermark) await this.saveCheckpoint(newWatermark);
       }
 
-      await this.finaliseRunLog(runId, 'success', rows.length, inserted, updated, skipped, failed);
+      await this.finaliseRunLog(
+        runId,
+        "success",
+        rows.length,
+        inserted,
+        updated,
+        skipped,
+        failed,
+      );
     } catch (err: any) {
-      await this.finaliseRunLog(runId, 'failed', rows.length, inserted, updated, skipped, failed, err.message);
+      await this.finaliseRunLog(
+        runId,
+        "failed",
+        rows.length,
+        inserted,
+        updated,
+        skipped,
+        failed,
+        err.message,
+      );
       throw err;
     }
 
     return {
       domain: this.domain,
       syncMapId: this.syncMapId,
-      rowsRead:     rows.length,
+      rowsRead: rows.length,
       rowsInserted: inserted,
-      rowsUpdated:  updated,
-      rowsSkipped:  skipped,
-      rowsFailed:   failed,
-      durationMs:   Date.now() - start,
+      rowsUpdated: updated,
+      rowsSkipped: skipped,
+      rowsFailed: failed,
+      durationMs: Date.now() - start,
       newWatermark,
     };
   }
@@ -96,9 +121,9 @@ export abstract class DomainSyncBase {
     const [rows] = await db.execute<any[]>(
       `SELECT last_watermark_value FROM legacy_sync_checkpoint
        WHERE sync_map_id = ? LIMIT 1`,
-      [this.syncMapId]
+      [this.syncMapId],
     );
-    return rows[0]?.last_watermark_value ?? '2025-04-01 00:00:00';
+    return rows[0]?.last_watermark_value ?? "2025-04-01 00:00:00";
   }
 
   async saveCheckpoint(watermark: string): Promise<void> {
@@ -106,16 +131,16 @@ export abstract class DomainSyncBase {
       `UPDATE legacy_sync_checkpoint
        SET last_watermark_value = ?, last_success_at = NOW(), last_run_status = 'success', updated_at = NOW()
        WHERE sync_map_id = ?`,
-      [watermark, this.syncMapId]
+      [watermark, this.syncMapId],
     );
   }
 
-  async resetCheckpoint(toDate = '2025-04-01 00:00:00'): Promise<void> {
+  async resetCheckpoint(toDate = "2025-04-01 00:00:00"): Promise<void> {
     await db.execute(
       `UPDATE legacy_sync_checkpoint
        SET last_watermark_value = ?, last_run_status = 'reset', updated_at = NOW()
        WHERE sync_map_id = ?`,
-      [toDate, this.syncMapId]
+      [toDate, this.syncMapId],
     );
   }
 
@@ -127,14 +152,19 @@ export abstract class DomainSyncBase {
          (id, sync_map_id, run_type, started_at, rows_read, rows_inserted,
           rows_updated, rows_skipped, rows_failed, status)
        VALUES (?, ?, 'incremental', NOW(), 0, 0, 0, 0, 0, 'running')`,
-      [runId, this.syncMapId]
+      [runId, this.syncMapId],
     );
   }
 
   private async finaliseRunLog(
-    runId: string, status: string,
-    read: number, ins: number, upd: number, skip: number, fail: number,
-    error?: string
+    runId: string,
+    status: string,
+    read: number,
+    ins: number,
+    upd: number,
+    skip: number,
+    fail: number,
+    error?: string,
   ): Promise<void> {
     await db.execute(
       `UPDATE legacy_sync_run_log
@@ -142,7 +172,7 @@ export abstract class DomainSyncBase {
            rows_read = ?, rows_inserted = ?, rows_updated = ?,
            rows_skipped = ?, rows_failed = ?, error_message = ?
        WHERE id = ?`,
-      [status, read, ins, upd, skip, fail, error ?? null, runId]
+      [status, read, ins, upd, skip, fail, error ?? null, runId],
     );
   }
 
@@ -152,14 +182,17 @@ export abstract class DomainSyncBase {
     return getLegacyPool();
   }
 
-  protected resolveEmployeeId(cache: Map<string, string>, empCode: string): string | null {
+  protected resolveEmployeeId(
+    cache: Map<string, string>,
+    empCode: string,
+  ): string | null {
     return cache.get(empCode?.trim()) ?? null;
   }
 
   /** Load full employee_code → id map from mas_hrms once per run */
   protected async loadEmployeeMap(): Promise<Map<string, string>> {
     const [rows] = await db.execute<any[]>(
-      `SELECT id, employee_code FROM employees WHERE active_status = 1`
+      `SELECT id, employee_code FROM employees WHERE active_status = 1`,
     );
     const m = new Map<string, string>();
     for (const r of rows) m.set(r.employee_code, r.id);

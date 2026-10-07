@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * birlanu_apr -- writes into db_masmis.birlanu_apr (sql/1770). Source: Birlanu APR.xlsx (APR sheet).
@@ -10,16 +13,23 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
 function normalizeKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
-function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): string {
+function getByColumn(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string {
   const normalized: Record<string, unknown> = {};
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const col of columnNames) {
     const v = normalized[normalizeKey(col)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
-function n(data: Record<string, unknown>, ...columnNames: string[]): string | null {
+function n(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string | null {
   const v = getByColumn(data, ...columnNames);
   return v || null;
 }
@@ -48,12 +58,15 @@ export async function importBirlanuAprBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
 
-  const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+  const uploadedByInt = /^\d+$/.test(importedByUserId)
+    ? Number(importedByUserId)
+    : null;
 
   const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
@@ -65,7 +78,9 @@ export async function importBirlanuAprBatch(
     const requiredVal = getByColumn(data, "ID");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
@@ -102,7 +117,8 @@ export async function importBirlanuAprBatch(
         n(data, "Total break"),
         n(data, "Net login"),
         n(data, "Attandance"),
-        uploadedByInt, batchId,
+        uploadedByInt,
+        batchId,
       ],
     });
   }
@@ -110,7 +126,8 @@ export async function importBirlanuAprBatch(
   const inserted = await chunkedMasmisInsert({
     insertPrefix: `INSERT INTO db_masmis.birlanu_apr
            (report_date, agent_name, mas_id, total_calls, time_clock, login_time, wait_time, wait_pct, talk_time, talk_time_pct, dispo_time, dispo_time_pct, pause_time, pause_time_pct, dead_time, dead_time_pct, customer_pct, login_pct, logout_count, acht, aom, bio, lagged, login_lagged, lunch, meet, tea, total_break, net_login, attendance, uploaded_by, upload_batch_id)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: toInsert,
   });
   errorUpdates.push(...inserted.errorUpdates);
@@ -127,17 +144,26 @@ export async function importBirlanuAprBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

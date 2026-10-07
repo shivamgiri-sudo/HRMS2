@@ -37,8 +37,10 @@ describe("getDashboardMetrics conversion rate", () => {
     expect(body, "getDashboardMetrics not found").toBeTruthy();
 
     // Each of the three counts rendered together must carry the same population filter.
-    const selected = /as selected FROM ats_candidate[\s\S]*?`/.exec(body)?.[0] ?? "";
-    const rejected = /as rejected FROM ats_candidate[\s\S]*?`/.exec(body)?.[0] ?? "";
+    const selected =
+      /as selected FROM ats_candidate[\s\S]*?`/.exec(body)?.[0] ?? "";
+    const rejected =
+      /as rejected FROM ats_candidate[\s\S]*?`/.exec(body)?.[0] ?? "";
     const total = /as total FROM ats_candidate[\s\S]*?`/.exec(body)?.[0] ?? "";
 
     expect(total).toContain("active_status = 1");
@@ -79,10 +81,16 @@ describe("getBranchMetrics fan-out", () => {
       body,
       "SUM(CASE ... THEN 1) over a fanned-out join counts a candidate once per token; " +
         "selected_count could then exceed total_candidates.",
-    ).not.toMatch(/SUM\(CASE WHEN c\.current_stage[\s\S]*?\) as (selected_count|pending_interviews)/);
+    ).not.toMatch(
+      /SUM\(CASE WHEN c\.current_stage[\s\S]*?\) as (selected_count|pending_interviews)/,
+    );
 
-    expect(body).toMatch(/COUNT\(DISTINCT CASE WHEN c\.current_stage[\s\S]*?END\) as selected_count/);
-    expect(body).toMatch(/COUNT\(DISTINCT CASE WHEN c\.current_stage[\s\S]*?END\) as pending_interviews/);
+    expect(body).toMatch(
+      /COUNT\(DISTINCT CASE WHEN c\.current_stage[\s\S]*?END\) as selected_count/,
+    );
+    expect(body).toMatch(
+      /COUNT\(DISTINCT CASE WHEN c\.current_stage[\s\S]*?END\) as pending_interviews/,
+    );
   });
 });
 
@@ -90,7 +98,9 @@ describe("report-suite ATS date bounds and exclusion", () => {
   const src = read("src/modules/reporting/report-suite.routes.ts");
 
   it("candidate-source-analysis excludes legacy employee records", () => {
-    const block = /case "candidate-source-analysis": \{[\s\S]*?\n    \}/.exec(src)?.[0] ?? "";
+    const block =
+      /case "candidate-source-analysis": \{[\s\S]*?\n    \}/.exec(src)?.[0] ??
+      "";
     expect(block, "case not found").toBeTruthy();
     expect(block).toContain("excludeEmployeeShapedCandidatesSql");
   });
@@ -100,15 +110,20 @@ describe("report-suite ATS date bounds and exclusion", () => {
     // so BETWEEN dropped everything recorded during the last day of the range — 15 candidate
     // rows as of 2026-08-11, and a full day's worth by any evening.
     for (const code of ["candidate-source-analysis", "ats-pipeline-summary"]) {
-      const block = new RegExp(`case "${code}": \\{[\\s\\S]*?\\n    \\}`).exec(src)?.[0] ?? "";
+      const block =
+        new RegExp(`case "${code}": \\{[\\s\\S]*?\\n    \\}`).exec(src)?.[0] ??
+        "";
       expect(block, `${code} not found`).toBeTruthy();
-      expect(block, `${code} must not pass a bare date as the BETWEEN upper bound`).toMatch(
-        /params\.push\(from, endOfDayParam\(to\)\)/,
-      );
+      expect(
+        block,
+        `${code} must not pass a bare date as the BETWEEN upper bound`,
+      ).toMatch(/params\.push\(from, endOfDayParam\(to\)\)/);
     }
   });
 
   it("endOfDayParam exists and produces an end-of-day timestamp", () => {
-    expect(src).toMatch(/function endOfDayParam\(date: string\): string \{[\s\S]*?23:59:59/);
+    expect(src).toMatch(
+      /function endOfDayParam\(date: string\): string \{[\s\S]*?23:59:59/,
+    );
   });
 });

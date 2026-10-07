@@ -22,7 +22,8 @@ vi.mock("../../../shared/piiCiphertext.js", () => ({
   decryptPii: (v: string) => v.replace(/^enc\(|\)$/g, ""),
 }));
 
-const { saveEmployeeDetails, decryptAadhaarForProvider } = await import("../onboarding-full.service.js");
+const { saveEmployeeDetails, decryptAadhaarForProvider } =
+  await import("../onboarding-full.service.js");
 
 const TOKEN = "test-onboarding-token";
 const CANDIDATE_ID = "a7edfea8-fcfd-4744-9223-f109eefcadaf";
@@ -31,13 +32,20 @@ function installTokenAwareMock() {
   execute.mockImplementation(async (sql: string) => {
     const s = String(sql);
     if (s.includes("ats_onboarding_bridge")) {
-      return [[{
-        candidate_id: CANDIDATE_ID,
-        onboarding_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
-        id: CANDIDATE_ID,
-        candidate_code: "MAS63413",
-        full_name: "UDAY KUMAR",
-      }], []];
+      return [
+        [
+          {
+            candidate_id: CANDIDATE_ID,
+            onboarding_token_expires_at: new Date(
+              Date.now() + 3600_000,
+            ).toISOString(),
+            id: CANDIDATE_ID,
+            candidate_code: "MAS63413",
+            full_name: "UDAY KUMAR",
+          },
+        ],
+        [],
+      ];
     }
     if (s.trim().startsWith("INSERT") || s.trim().startsWith("UPDATE")) {
       return [{ affectedRows: 1 }, undefined];
@@ -47,7 +55,11 @@ function installTokenAwareMock() {
 }
 
 function findProfileInsert() {
-  return execute.mock.calls.find(([sql]) => String(sql).includes("candidate_onboarding_profile") && String(sql).includes("INSERT"));
+  return execute.mock.calls.find(
+    ([sql]) =>
+      String(sql).includes("candidate_onboarding_profile") &&
+      String(sql).includes("INSERT"),
+  );
 }
 
 describe("saveEmployeeDetails — Aadhaar encrypted storage", () => {
@@ -66,7 +78,9 @@ describe("saveEmployeeDetails — Aadhaar encrypted storage", () => {
     const call = findProfileInsert();
     expect(call).toBeDefined();
     const [sql, params] = call!;
-    expect(String(sql)).toContain("aadhaar_number_encrypted = COALESCE(VALUES(aadhaar_number_encrypted), aadhaar_number_encrypted)");
+    expect(String(sql)).toContain(
+      "aadhaar_number_encrypted = COALESCE(VALUES(aadhaar_number_encrypted), aadhaar_number_encrypted)",
+    );
     expect(params).toContain("enc(234567890123)");
   });
 
@@ -82,7 +96,11 @@ describe("saveEmployeeDetails — Aadhaar encrypted storage", () => {
     const [, params] = call!;
     // Must NOT encrypt/hash the mask itself.
     expect(params).not.toContain("enc(XXXX-XXXX-0123)");
-    expect(params.some((p: unknown) => typeof p === "string" && p.startsWith("enc("))).toBe(false);
+    expect(
+      params.some(
+        (p: unknown) => typeof p === "string" && p.startsWith("enc("),
+      ),
+    ).toBe(false);
   });
 
   it("does not wipe a previously-stored Aadhaar on a resave that omits it", async () => {
@@ -92,7 +110,9 @@ describe("saveEmployeeDetails — Aadhaar encrypted storage", () => {
 
     const call = findProfileInsert();
     const [sql, params] = call!;
-    expect(String(sql)).toContain("aadhaar_number_encrypted = COALESCE(VALUES(aadhaar_number_encrypted), aadhaar_number_encrypted)");
+    expect(String(sql)).toContain(
+      "aadhaar_number_encrypted = COALESCE(VALUES(aadhaar_number_encrypted), aadhaar_number_encrypted)",
+    );
     // The parameter bound for this submission is null -- SQL-side COALESCE, not JS,
     // is what preserves the existing ciphertext, matching the bank-account fix.
     expect(params).toContain(null);

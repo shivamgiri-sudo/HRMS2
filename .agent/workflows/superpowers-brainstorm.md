@@ -5,25 +5,34 @@ description: Superpowers brainstorm. Produces goal/constraints/risks/options/rec
 # Superpowers Brainstorm
 
 ## Task
+
 Brainstorm for this task (exactly as provided by the user):
 **{{input}}**
 
 If `{{input}}` is empty or missing, ask the user to restate the task in one sentence and STOP.
 
 ## Output sections (use exactly)
+
 ## Goal
+
 ## Constraints
+
 ## Known context
+
 ## Risks
+
 ## Options (2–4)
+
 ## Recommendation
+
 ## Acceptance criteria
 
 ## Persist (mandatory)
+
 After generating the brainstorm content, you MUST write it to disk using this exact procedure:
 
-1) Output the brainstorm markdown content first (the sections above).
-2) Then immediately run:
+1. Output the brainstorm markdown content first (the sections above).
+2. Then immediately run:
 
 ```bash
 python .agent/skills/superpowers-workflow/scripts/write_artifact.py --path artifacts/superpowers/brainstorm.md

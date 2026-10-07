@@ -4,8 +4,8 @@
 // and the branch-scope check (Phase 4, via the already-live resolveUserBusinessScope) are the
 // other two steps in the validation order design.md specifies.
 
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 interface EmployeeIdRow extends RowDataPacket {
   id: string;
@@ -16,7 +16,9 @@ interface EmployeeIdRow extends RowDataPacket {
  * employee (criterion 17.5) -- 56 of 727 distinct apr.UserID values do today; the caller is
  * responsible for rejecting the row and naming the unresolved code, not this function.
  */
-export async function resolveEmployeeIdByCode(employeeCode: string): Promise<string | null> {
+export async function resolveEmployeeIdByCode(
+  employeeCode: string,
+): Promise<string | null> {
   const [rows] = await db.execute<EmployeeIdRow[]>(
     `SELECT id FROM employees WHERE employee_code = ? LIMIT 1`,
     [employeeCode],

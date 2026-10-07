@@ -18,7 +18,9 @@ interface PrivacyAuditEntry {
  * Write a privacy-policy audit entry that includes the policy version
  * and decision outcome so compliance dashboards can query by reason code.
  */
-export async function logPrivacyDecision(entry: PrivacyAuditEntry): Promise<void> {
+export async function logPrivacyDecision(
+  entry: PrivacyAuditEntry,
+): Promise<void> {
   const metadata = {
     policyVersion: PRIVACY_POLICY_VERSION,
     decision: entry.decision.decision,

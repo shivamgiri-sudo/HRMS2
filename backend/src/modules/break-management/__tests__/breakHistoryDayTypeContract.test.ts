@@ -50,24 +50,38 @@ describe("Break History classifies the day from the derived attendance status", 
 
   it("no longer reads the roster publication state as a day type", () => {
     // The exact defect: roster_status only ever holds 'published' or NULL.
-    expect(historyQuery()).not.toMatch(/bds\.roster_status\s+IN\s*\(\s*'W\/O'/i);
+    expect(historyQuery()).not.toMatch(
+      /bds\.roster_status\s+IN\s*\(\s*'W\/O'/i,
+    );
   });
 
   it("maps week_off to W/O and leave_approved to Leave", () => {
     const q = historyQuery();
-    expect(q).toMatch(/adr\.attendance_status\s*=\s*'week_off'[\s\S]{0,40}'W\/O'/);
-    expect(q).toMatch(/adr\.attendance_status\s*=\s*'leave_approved'[\s\S]{0,40}'Leave'/);
+    expect(q).toMatch(
+      /adr\.attendance_status\s*=\s*'week_off'[\s\S]{0,40}'W\/O'/,
+    );
+    expect(q).toMatch(
+      /adr\.attendance_status\s*=\s*'leave_approved'[\s\S]{0,40}'Leave'/,
+    );
   });
 
   it("does NOT collapse week_off_worked into W/O — that day was worked", () => {
     const q = historyQuery();
-    const woBranch = q.slice(q.indexOf("'week_off'"), q.indexOf("'week_off'") + 120);
+    const woBranch = q.slice(
+      q.indexOf("'week_off'"),
+      q.indexOf("'week_off'") + 120,
+    );
     expect(woBranch).not.toContain("week_off_worked");
   });
 
   it("keeps the punch-based classification intact for ordinary days", () => {
     const q = historyQuery();
-    for (const label of ["'Absent'", "'Present'", "'Half Day'", "'Punch Missing'"]) {
+    for (const label of [
+      "'Absent'",
+      "'Present'",
+      "'Half Day'",
+      "'Punch Missing'",
+    ]) {
       expect(q).toContain(label);
     }
   });

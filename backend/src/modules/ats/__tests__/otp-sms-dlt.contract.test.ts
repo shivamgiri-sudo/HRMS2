@@ -25,7 +25,10 @@ import { describe, expect, it } from "vitest";
 
 import { buildSMS } from "../../communication/smartping-dlt-registry.js";
 
-const source = readFileSync(resolve(process.cwd(), "src/modules/ats/ats.otp.service.ts"), "utf8");
+const source = readFileSync(
+  resolve(process.cwd(), "src/modules/ats/ats.otp.service.ts"),
+  "utf8",
+);
 
 describe("candidate OTP SMS uses a registered DLT template", () => {
   it("builds the message with buildSMS rather than hand-writing it", () => {
@@ -38,7 +41,8 @@ describe("candidate OTP SMS uses a registered DLT template", () => {
 
   it("passes the template's dltContentId, never a human label", () => {
     // The exact regression: a descriptive string where the numeric id belongs.
-    const labelInIdSlot = /smsProvider\.send\([^)]*,\s*['"][A-Za-z][^'"]*['"]\s*,/.test(source);
+    const labelInIdSlot =
+      /smsProvider\.send\([^)]*,\s*['"][A-Za-z][^'"]*['"]\s*,/.test(source);
     expect(
       labelInIdSlot,
       "smsProvider.send() is receiving a quoted human label in its dltContentId argument — " +
@@ -56,8 +60,14 @@ describe("candidate OTP SMS uses a registered DLT template", () => {
     );
     const dbMinutes = routes.match(/INTERVAL\s+(\d+)\s+MINUTE/)?.[1];
     const smsMinutes = source.match(/OTP_VALIDITY_MINUTES\s*=\s*(\d+)/)?.[1];
-    expect(dbMinutes, "could not read the OTP expiry from onboarding-full.routes.ts").toBeDefined();
-    expect(smsMinutes, "OTP_VALIDITY_MINUTES not found in ats.otp.service.ts").toBeDefined();
+    expect(
+      dbMinutes,
+      "could not read the OTP expiry from onboarding-full.routes.ts",
+    ).toBeDefined();
+    expect(
+      smsMinutes,
+      "OTP_VALIDITY_MINUTES not found in ats.otp.service.ts",
+    ).toBeDefined();
     expect(
       smsMinutes,
       `the SMS says ${smsMinutes} minutes but the OTP row expires in ${dbMinutes}`,

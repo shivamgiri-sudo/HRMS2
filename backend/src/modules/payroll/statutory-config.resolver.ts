@@ -69,7 +69,9 @@ export async function getStatutoryConfigForPeriod(
   requiredKeys: readonly string[] = REQUIRED_TDS_CONFIG_KEYS,
 ): Promise<StatutoryConfigResolution> {
   if (!isValidPeriod(period)) {
-    throw new Error(`A valid payroll period (YYYY-MM) is required, received "${period}"`);
+    throw new Error(
+      `A valid payroll period (YYYY-MM) is required, received "${period}"`,
+    );
   }
   const start = periodStart(period);
 
@@ -107,14 +109,23 @@ export async function getStatutoryConfigForPeriod(
   }
 
   const values: Record<string, number> = {};
-  for (const row of rows as Array<{ config_key: string; config_value: string }>) {
+  for (const row of rows as Array<{
+    config_key: string;
+    config_value: string;
+  }>) {
     const value = Number(row.config_value);
-    if (Number.isFinite(value)) values[String(row.config_key).toLowerCase()] = value;
+    if (Number.isFinite(value))
+      values[String(row.config_key).toLowerCase()] = value;
   }
 
   const missing = requiredKeys.filter((key) => !(key.toLowerCase() in values));
 
-  return { period, values, missing, source: rows.length ? "versioned" : "unavailable" };
+  return {
+    period,
+    values,
+    missing,
+    source: rows.length ? "versioned" : "unavailable",
+  };
 }
 
 export interface TdsConfigGate {
@@ -136,10 +147,19 @@ export interface TdsConfigGate {
  * go stale invisibly: after a Finance Act the code keeps deducting last year's
  * rates and nothing reports it.
  */
-export async function checkTdsConfigForPeriod(period: string): Promise<TdsConfigGate> {
-  const resolved = await getStatutoryConfigForPeriod(period, REQUIRED_TDS_CONFIG_KEYS);
+export async function checkTdsConfigForPeriod(
+  period: string,
+): Promise<TdsConfigGate> {
+  const resolved = await getStatutoryConfigForPeriod(
+    period,
+    REQUIRED_TDS_CONFIG_KEYS,
+  );
 
-  if (resolved.source === "unavailable" && resolved.values && Object.keys(resolved.values).length === 0) {
+  if (
+    resolved.source === "unavailable" &&
+    resolved.values &&
+    Object.keys(resolved.values).length === 0
+  ) {
     return {
       configured: false,
       period,
@@ -163,5 +183,11 @@ export async function checkTdsConfigForPeriod(period: string): Promise<TdsConfig
     };
   }
 
-  return { configured: true, period, missing: [], reason: null, values: resolved.values };
+  return {
+    configured: true,
+    period,
+    missing: [],
+    reason: null,
+    values: resolved.values,
+  };
 }

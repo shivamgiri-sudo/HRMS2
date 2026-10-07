@@ -27,40 +27,68 @@ describe("engagement workflow hooks", () => {
 
   it("queues a payslip badge check after acknowledgement", async () => {
     mockExecute
-      .mockResolvedValueOnce([[{ id: "payslip-1", employee_id: "employee-1", run_id: "run-1" }], []])
+      .mockResolvedValueOnce([
+        [{ id: "payslip-1", employee_id: "employee-1", run_id: "run-1" }],
+        [],
+      ])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
-      .mockResolvedValueOnce([[{ id: "payslip-1", employee_id: "employee-1", run_id: "run-1" }], []]);
+      .mockResolvedValueOnce([
+        [{ id: "payslip-1", employee_id: "employee-1", run_id: "run-1" }],
+        [],
+      ]);
 
     await payslipService.acknowledgePayslip("payslip-1", "employee-1");
-    expect(mockQueueAutoAwards).toHaveBeenCalledWith("employee-1", "payslip_acknowledged");
+    expect(mockQueueAutoAwards).toHaveBeenCalledWith(
+      "employee-1",
+      "payslip_acknowledged",
+    );
   });
 
   it("queues an attendance badge check after clock-out", async () => {
-    const session = { id: "session-1", employee_id: "employee-1", login_time: new Date().toISOString() };
+    const session = {
+      id: "session-1",
+      employee_id: "employee-1",
+      login_time: new Date().toISOString(),
+    };
     mockExecute
       .mockResolvedValueOnce([[session], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
-      .mockResolvedValueOnce([[{ ...session, current_status: "Logged Out" }], []]);
+      .mockResolvedValueOnce([
+        [{ ...session, current_status: "Logged Out" }],
+        [],
+      ]);
 
     await wfmService.clockOut("session-1", "user-1");
-    expect(mockQueueAutoAwards).toHaveBeenCalledWith("employee-1", "attendance");
+    expect(mockQueueAutoAwards).toHaveBeenCalledWith(
+      "employee-1",
+      "attendance",
+    );
   });
 
   it("queues KPI badge checks once per employee after bulk scores", async () => {
     mockExecute.mockResolvedValueOnce([{ affectedRows: 3 }, []]);
 
-    await kpiService.bulkRecordScores({
-      period: "2026-05",
-      scores: [
-        { employeeId: "employee-1", metricId: "metric-1", actualValue: 110 },
-        { employeeId: "employee-1", metricId: "metric-2", actualValue: 105 },
-        { employeeId: "employee-2", metricId: "metric-1", actualValue: 115 },
-      ],
-    }, "user-1");
+    await kpiService.bulkRecordScores(
+      {
+        period: "2026-05",
+        scores: [
+          { employeeId: "employee-1", metricId: "metric-1", actualValue: 110 },
+          { employeeId: "employee-1", metricId: "metric-2", actualValue: 105 },
+          { employeeId: "employee-2", metricId: "metric-1", actualValue: 115 },
+        ],
+      },
+      "user-1",
+    );
 
     expect(mockQueueAutoAwards).toHaveBeenCalledTimes(2);
-    expect(mockQueueAutoAwards).toHaveBeenCalledWith("employee-1", "kpi_score_recorded");
-    expect(mockQueueAutoAwards).toHaveBeenCalledWith("employee-2", "kpi_score_recorded");
+    expect(mockQueueAutoAwards).toHaveBeenCalledWith(
+      "employee-1",
+      "kpi_score_recorded",
+    );
+    expect(mockQueueAutoAwards).toHaveBeenCalledWith(
+      "employee-2",
+      "kpi_score_recorded",
+    );
   });
 
   it("queues a survey badge check after pulse submission", async () => {
@@ -72,6 +100,9 @@ describe("engagement workflow hooks", () => {
       week_start_date: "2026-06-01",
     });
 
-    expect(mockQueueAutoAwards).toHaveBeenCalledWith("employee-1", "survey_completed");
+    expect(mockQueueAutoAwards).toHaveBeenCalledWith(
+      "employee-1",
+      "survey_completed",
+    );
   });
 });

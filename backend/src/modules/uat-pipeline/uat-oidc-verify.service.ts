@@ -83,7 +83,7 @@ export interface GithubOidcClaims {
 export class OidcError extends Error {
   constructor(
     message: string,
-    readonly claim: string
+    readonly claim: string,
   ) {
     super(message);
     this.name = "OidcError";
@@ -111,10 +111,17 @@ const JWKS_TTL_MS = 10 * 60 * 1000;
  * host per request. A stale cache is NOT used as a fallback when the fetch fails — a key
  * that has been rotated away is exactly the case where accepting the old one is wrong.
  */
-export async function fetchJwks(fetchImpl: typeof fetch = fetch): Promise<Jwk[]> {
-  if (jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS) return jwksCache.keys;
+export async function fetchJwks(
+  fetchImpl: typeof fetch = fetch,
+): Promise<Jwk[]> {
+  if (jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS)
+    return jwksCache.keys;
   const res = await fetchImpl(JWKS_URL, { method: "GET" });
-  if (!res.ok) throw new OidcError(`Could not fetch GitHub JWKS (HTTP ${res.status}).`, "jwks");
+  if (!res.ok)
+    throw new OidcError(
+      `Could not fetch GitHub JWKS (HTTP ${res.status}).`,
+      "jwks",
+    );
   const body = (await res.json()) as { keys?: Jwk[] };
   if (!Array.isArray(body.keys) || body.keys.length === 0) {
     throw new OidcError("GitHub JWKS contained no keys.", "jwks");
@@ -143,7 +150,11 @@ export function verifySignature(token: string, jwk: Jwk): boolean {
   const [headerB64, payloadB64, signatureB64] = token.split(".");
   if (!headerB64 || !payloadB64 || !signatureB64) return false;
   const key = createPublicKey({
-    key: { kty: "RSA", n: jwk.n, e: jwk.e } as unknown as import("node:crypto").JsonWebKey,
+    key: {
+      kty: "RSA",
+      n: jwk.n,
+      e: jwk.e,
+    } as unknown as import("node:crypto").JsonWebKey,
     format: "jwk",
   });
   const verifier = createVerify("RSA-SHA256");
@@ -157,7 +168,8 @@ export function decodeSegments(token: string): {
   claims: GithubOidcClaims;
 } {
   const parts = token.split(".");
-  if (parts.length !== 3) throw new OidcError("Token is not a well-formed JWT.", "format");
+  if (parts.length !== 3)
+    throw new OidcError("Token is not a well-formed JWT.", "format");
   try {
     return {
       header: JSON.parse(b64urlToBuffer(parts[0]).toString("utf8")),
@@ -180,22 +192,30 @@ export function decodeSegments(token: string): {
 export function assertClaims(
   claims: GithubOidcClaims,
   expect: OidcExpectations,
-  now: Date = new Date()
+  now: Date = new Date(),
 ): void {
   const nowSec = Math.floor(now.getTime() / 1000);
 
   if (claims.iss !== GITHUB_ISSUER) {
-    throw new OidcError(`Unexpected issuer: ${claims.iss ?? "(absent)"}.`, "iss");
+    throw new OidcError(
+      `Unexpected issuer: ${claims.iss ?? "(absent)"}.`,
+      "iss",
+    );
   }
 
   // A single audience string or an array both occur. An empty expectation is a
   // configuration error, not a wildcard.
-  if (!expect.audience) throw new OidcError("No expected audience is configured.", "aud");
-  const auds = Array.isArray(claims.aud) ? claims.aud : claims.aud ? [claims.aud] : [];
+  if (!expect.audience)
+    throw new OidcError("No expected audience is configured.", "aud");
+  const auds = Array.isArray(claims.aud)
+    ? claims.aud
+    : claims.aud
+      ? [claims.aud]
+      : [];
   if (!auds.includes(expect.audience)) {
     throw new OidcError(
       `Token was not minted for this service (aud ${JSON.stringify(claims.aud)}).`,
-      "aud"
+      "aud",
     );
   }
 
@@ -209,14 +229,17 @@ export function assertClaims(
   }
 
   if (claims.repository !== expect.repository) {
-    throw new OidcError(`Wrong repository: ${claims.repository ?? "(absent)"}.`, "repository");
+    throw new OidcError(
+      `Wrong repository: ${claims.repository ?? "(absent)"}.`,
+      "repository",
+    );
   }
   // Checked separately from `repository` so a repository of the same name under a different
   // owner cannot satisfy the check by coincidence.
   if (claims.repository_owner !== expect.repositoryOwner) {
     throw new OidcError(
       `Wrong repository owner: ${claims.repository_owner ?? "(absent)"}.`,
-      "repository_owner"
+      "repository_owner",
     );
   }
 
@@ -224,7 +247,7 @@ export function assertClaims(
     throw new OidcError(
       "Refusing a token from a public repository. Automated builds require Gate G2 " +
         "(repository is private) to be satisfied.",
-      "repository_visibility"
+      "repository_visibility",
     );
   }
 
@@ -235,20 +258,20 @@ export function assertClaims(
   if (claims.job_workflow_ref !== expectedJobRef) {
     throw new OidcError(
       `Wrong workflow or ref. Expected ${expectedJobRef}, got ${claims.job_workflow_ref ?? "(absent)"}.`,
-      "job_workflow_ref"
+      "job_workflow_ref",
     );
   }
   if (claims.workflow_ref !== expectedJobRef) {
     throw new OidcError(
       `workflow_ref does not match the permitted workflow: ${claims.workflow_ref ?? "(absent)"}.`,
-      "workflow_ref"
+      "workflow_ref",
     );
   }
 
   if (claims.ref !== expect.allowedRef) {
     throw new OidcError(
       `Builds may only execute from ${expect.allowedRef}; token ref is ${claims.ref ?? "(absent)"}.`,
-      "ref"
+      "ref",
     );
   }
 
@@ -257,7 +280,7 @@ export function assertClaims(
   if (claims.event_name !== "workflow_dispatch") {
     throw new OidcError(
       `Only workflow_dispatch runs may call back; this token is from ${claims.event_name ?? "(absent)"}.`,
-      "event_name"
+      "event_name",
     );
   }
 
@@ -290,7 +313,7 @@ export interface VerifiedToken {
 export async function verifyOidcToken(
   token: string,
   expect: OidcExpectations,
-  deps: { fetchImpl?: typeof fetch; now?: Date } = {}
+  deps: { fetchImpl?: typeof fetch; now?: Date } = {},
 ): Promise<VerifiedToken> {
   if (!token || typeof token !== "string") {
     throw new OidcError("No token was presented.", "format");
@@ -302,12 +325,16 @@ export async function verifyOidcToken(
   if (header.alg && header.alg !== "RS256") {
     throw new OidcError(`Unsupported token algorithm: ${header.alg}.`, "alg");
   }
-  if (!header.kid) throw new OidcError("Token header carries no key id.", "kid");
+  if (!header.kid)
+    throw new OidcError("Token header carries no key id.", "kid");
 
   const keys = await fetchJwks(deps.fetchImpl ?? fetch);
   const jwk = keys.find((k) => k.kid === header.kid);
   if (!jwk) {
-    throw new OidcError(`No GitHub signing key matches kid ${header.kid}.`, "kid");
+    throw new OidcError(
+      `No GitHub signing key matches kid ${header.kid}.`,
+      "kid",
+    );
   }
   if (!verifySignature(token, jwk)) {
     throw new OidcError("Token signature is not valid.", "signature");
@@ -332,13 +359,15 @@ export async function verifyOidcToken(
  * default here is a hole: "" would match nothing on a strict comparison, but a permissive
  * default like "*" would match everything, and the difference is one careless edit.
  */
-export function expectationsFromEnv(env: NodeJS.ProcessEnv = process.env): OidcExpectations {
+export function expectationsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): OidcExpectations {
   const required = (key: string): string => {
     const value = env[key];
     if (!value) {
       throw new OidcError(
         `${key} is not configured. OIDC verification refuses to run with an unset expectation.`,
-        key
+        key,
       );
     }
     return value;
@@ -347,10 +376,12 @@ export function expectationsFromEnv(env: NodeJS.ProcessEnv = process.env): OidcE
     audience: required("UAT_OIDC_AUDIENCE"),
     repository: required("UAT_OIDC_REPOSITORY"),
     repositoryOwner: required("UAT_OIDC_REPOSITORY_OWNER"),
-    workflowPath: env.UAT_OIDC_WORKFLOW_PATH || ".github/workflows/uat-build.yml",
+    workflowPath:
+      env.UAT_OIDC_WORKFLOW_PATH || ".github/workflows/uat-build.yml",
     allowedRef: env.UAT_OIDC_ALLOWED_REF || "refs/heads/main",
     // Defaults to true. Someone who wants to relax this has to say so explicitly, and the
     // saying-so is visible in the environment rather than implied by an omission.
-    requirePrivate: String(env.UAT_OIDC_ALLOW_PUBLIC_REPO ?? "").toLowerCase() !== "true",
+    requirePrivate:
+      String(env.UAT_OIDC_ALLOW_PUBLIC_REPO ?? "").toLowerCase() !== "true",
   };
 }

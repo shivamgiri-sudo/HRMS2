@@ -33,7 +33,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Employee welcome",
     category: "onboarding",
     title: "Welcome to Mas Callnet India Pvt Ltd",
-    message: "Your employee profile is active. Please verify your details, complete pending documents and review your onboarding tasks.",
+    message:
+      "Your employee profile is active. Please verify your details, complete pending documents and review your onboarding tasks.",
     shortMessage: "Your employee profile is active. Complete onboarding tasks.",
     actionUrl: "/profile",
     priority: "high",
@@ -43,7 +44,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Onboarding document pending",
     category: "onboarding",
     title: "Onboarding document action required",
-    message: "{{pending_count}} onboarding document(s) are pending. Please upload them by {{deadline}} to avoid a joining delay.",
+    message:
+      "{{pending_count}} onboarding document(s) are pending. Please upload them by {{deadline}} to avoid a joining delay.",
     shortMessage: "{{pending_count}} onboarding documents are pending.",
     actionUrl: "/profile",
     priority: "high",
@@ -53,7 +55,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Late attendance",
     category: "attendance",
     title: "Late attendance recorded",
-    message: "Your clock-in for {{date}} was recorded at {{clock_in}}. Submit regularisation if this record is incorrect.",
+    message:
+      "Your clock-in for {{date}} was recorded at {{clock_in}}. Submit regularisation if this record is incorrect.",
     shortMessage: "Late clock-in recorded for {{date}}.",
     actionUrl: "/attendance-regularization",
     priority: "normal",
@@ -63,7 +66,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Absence alert",
     category: "attendance",
     title: "Attendance action required",
-    message: "You are marked absent for {{date}}. Review the record and submit regularisation with supporting details if required.",
+    message:
+      "You are marked absent for {{date}}. Review the record and submit regularisation with supporting details if required.",
     shortMessage: "You are marked absent for {{date}}.",
     actionUrl: "/attendance-regularization",
     priority: "high",
@@ -73,7 +77,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Regularisation decision",
     category: "attendance",
     title: "Attendance regularisation {{status}}",
-    message: "Your regularisation request for {{date}} has been {{status}}. {{remarks}}",
+    message:
+      "Your regularisation request for {{date}} has been {{status}}. {{remarks}}",
     shortMessage: "Regularisation for {{date}} is {{status}}.",
     actionUrl: "/attendance-regularization",
     priority: "normal",
@@ -83,7 +88,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Leave submitted",
     category: "leave",
     title: "Leave request submitted",
-    message: "Your {{leave_type}} request from {{from_date}} to {{to_date}} has been submitted for approval.",
+    message:
+      "Your {{leave_type}} request from {{from_date}} to {{to_date}} has been submitted for approval.",
     shortMessage: "Leave request submitted for approval.",
     actionUrl: "/leaves",
     priority: "normal",
@@ -93,7 +99,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Leave decision",
     category: "leave",
     title: "Leave request {{status}}",
-    message: "Your {{leave_type}} request has been {{status}} by {{reviewer_name}}. {{review_notes}}",
+    message:
+      "Your {{leave_type}} request has been {{status}} by {{reviewer_name}}. {{review_notes}}",
     shortMessage: "Your leave request is {{status}}.",
     actionUrl: "/leaves",
     priority: "normal",
@@ -103,7 +110,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Payslip ready",
     category: "payroll",
     title: "Your payslip is ready",
-    message: "Your payslip for {{month}} {{year}} is available in HRMS. Salary amounts remain hidden until you explicitly choose View salary.",
+    message:
+      "Your payslip for {{month}} {{year}} is available in HRMS. Salary amounts remain hidden until you explicitly choose View salary.",
     shortMessage: "Payslip for {{month}} {{year}} is ready.",
     actionUrl: "/profile?tab=payslips",
     priority: "high",
@@ -113,7 +121,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Salary credited",
     category: "payroll",
     title: "Salary payment processed",
-    message: "Salary for {{month}} {{year}} has been processed. Open your private payslip view for the payment reference and breakdown.",
+    message:
+      "Salary for {{month}} {{year}} has been processed. Open your private payslip view for the payment reference and breakdown.",
     shortMessage: "Salary for {{month}} {{year}} has been processed.",
     actionUrl: "/profile?tab=payslips",
     priority: "high",
@@ -123,7 +132,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Salary increment",
     category: "payroll",
     title: "Compensation revision published",
-    message: "Your compensation revision is effective from {{effective_date}}. Open HRMS privately to review the revised structure.",
+    message:
+      "Your compensation revision is effective from {{effective_date}}. Open HRMS privately to review the revised structure.",
     shortMessage: "Compensation revision effective {{effective_date}}.",
     actionUrl: "/employee-stat-card",
     priority: "high",
@@ -133,7 +143,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Tax declaration reminder",
     category: "payroll",
     title: "Tax declaration due on {{deadline}}",
-    message: "Complete or update your tax declaration before {{deadline}}. Late submission may affect projected TDS.",
+    message:
+      "Complete or update your tax declaration before {{deadline}}. Late submission may affect projected TDS.",
     shortMessage: "Tax declaration due {{deadline}}.",
     actionUrl: "/payroll/tax-declaration",
     priority: "high",
@@ -143,7 +154,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Roster published",
     category: "announcements",
     title: "Your roster has been published",
-    message: "Your roster for {{period}} is now available. Please review shift timings, weekly offs and acknowledgement requirements.",
+    message:
+      "Your roster for {{period}} is now available. Please review shift timings, weekly offs and acknowledgement requirements.",
     shortMessage: "Roster for {{period}} is published.",
     actionUrl: "/my-roster",
     priority: "high",
@@ -153,7 +165,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Roster changed",
     category: "alerts",
     title: "Important roster change",
-    message: "Your published roster has changed for {{date}}. New shift: {{shift}}. Reason: {{reason}}",
+    message:
+      "Your published roster has changed for {{date}}. New shift: {{shift}}. Reason: {{reason}}",
     shortMessage: "Roster changed for {{date}}.",
     actionUrl: "/my-roster",
     priority: "urgent",
@@ -164,7 +177,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Performance review ready",
     category: "performance",
     title: "Performance review ready",
-    message: "Your performance review for {{period}} is ready. Please read the feedback and acknowledge it in HRMS.",
+    message:
+      "Your performance review for {{period}} is ready. Please read the feedback and acknowledge it in HRMS.",
     shortMessage: "Performance review for {{period}} is ready.",
     actionUrl: "/performance",
     priority: "high",
@@ -174,7 +188,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Goal reminder",
     category: "performance",
     title: "Goal update due",
-    message: "An update for goal '{{goal_name}}' is due on {{deadline}}. Add progress and supporting evidence before the deadline.",
+    message:
+      "An update for goal '{{goal_name}}' is due on {{deadline}}. Add progress and supporting evidence before the deadline.",
     shortMessage: "Goal update due {{deadline}}.",
     actionUrl: "/goals",
     priority: "normal",
@@ -184,7 +199,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Appreciation received",
     category: "performance",
     title: "You received an appreciation",
-    message: "{{sender_name}} appreciated your contribution: {{appreciation_message}}",
+    message:
+      "{{sender_name}} appreciated your contribution: {{appreciation_message}}",
     shortMessage: "You received a new appreciation.",
     actionUrl: "/engagement/kudos",
     priority: "normal",
@@ -194,7 +210,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Promotion approved",
     category: "performance",
     title: "Promotion update",
-    message: "Your promotion to {{designation}} is effective from {{effective_date}}. Congratulations on this milestone.",
+    message:
+      "Your promotion to {{designation}} is effective from {{effective_date}}. Congratulations on this milestone.",
     shortMessage: "Promotion to {{designation}} effective {{effective_date}}.",
     actionUrl: "/employee-stat-card",
     priority: "high",
@@ -204,7 +221,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Transfer approved",
     category: "announcements",
     title: "Role or department change confirmed",
-    message: "Your {{change_type}} change to {{new_value}} is effective from {{effective_date}}. Review the employee journey for details.",
+    message:
+      "Your {{change_type}} change to {{new_value}} is effective from {{effective_date}}. Review the employee journey for details.",
     shortMessage: "{{change_type}} change effective {{effective_date}}.",
     actionUrl: "/employee-stat-card",
     priority: "high",
@@ -214,7 +232,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "PIP initiated",
     category: "performance",
     title: "Performance improvement plan started",
-    message: "A performance improvement plan has been created from {{start_date}} to {{end_date}}. Review objectives, support and checkpoints.",
+    message:
+      "A performance improvement plan has been created from {{start_date}} to {{end_date}}. Review objectives, support and checkpoints.",
     shortMessage: "PIP active from {{start_date}} to {{end_date}}.",
     actionUrl: "/pip-management",
     priority: "high",
@@ -224,7 +243,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Training assigned",
     category: "performance",
     title: "New learning assigned",
-    message: "The course '{{course_name}}' has been assigned to you. Please complete it by {{deadline}}.",
+    message:
+      "The course '{{course_name}}' has been assigned to you. Please complete it by {{deadline}}.",
     shortMessage: "Training '{{course_name}}' due {{deadline}}.",
     actionUrl: "/lms/my-learning",
     priority: "normal",
@@ -234,7 +254,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Asset assigned",
     category: "announcements",
     title: "Company asset assigned",
-    message: "{{asset_name}} ({{asset_code}}) has been assigned to you. Verify its condition and acknowledge receipt.",
+    message:
+      "{{asset_name}} ({{asset_code}}) has been assigned to you. Verify its condition and acknowledge receipt.",
     shortMessage: "Asset {{asset_code}} assigned to you.",
     actionUrl: "/assets",
     priority: "normal",
@@ -244,7 +265,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Helpdesk update",
     category: "alerts",
     title: "Helpdesk ticket {{status}}",
-    message: "Ticket {{ticket_number}} is now {{status}}. Latest update: {{update_message}}",
+    message:
+      "Ticket {{ticket_number}} is now {{status}}. Latest update: {{update_message}}",
     shortMessage: "Ticket {{ticket_number}} is {{status}}.",
     actionUrl: "/helpdesk",
     priority: "normal",
@@ -254,7 +276,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Policy update",
     category: "announcements",
     title: "Policy acknowledgement required",
-    message: "The {{policy_name}} policy was updated on {{published_date}}. Please review and acknowledge it by {{deadline}}.",
+    message:
+      "The {{policy_name}} policy was updated on {{published_date}}. Please review and acknowledge it by {{deadline}}.",
     shortMessage: "{{policy_name}} policy acknowledgement due {{deadline}}.",
     actionUrl: "/letters",
     priority: "high",
@@ -264,7 +287,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Exit journey update",
     category: "alerts",
     title: "Exit request {{status}}",
-    message: "Your exit request is {{status}}. Last working date: {{last_working_date}}. Review clearance and handover actions in HRMS.",
+    message:
+      "Your exit request is {{status}}. Last working date: {{last_working_date}}. Review clearance and handover actions in HRMS.",
     shortMessage: "Exit request is {{status}}.",
     actionUrl: "/exit-management",
     priority: "high",
@@ -274,7 +298,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Resignation submitted — manager action needed",
     category: "alerts",
     title: "Resignation submitted — {{employee_name}}",
-    message: "{{employee_name}} has submitted their resignation. LWD: {{lwd}}. Please review and approve or return.",
+    message:
+      "{{employee_name}} has submitted their resignation. LWD: {{lwd}}. Please review and approve or return.",
     shortMessage: "Resignation submitted by {{employee_name}}.",
     actionUrl: "/exit/command-center",
     priority: "high",
@@ -285,7 +310,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Resignation acknowledged by manager",
     category: "alerts",
     title: "Resignation acknowledged",
-    message: "Your resignation has been acknowledged. Last working date confirmed: {{lwd}}. Clearance tasks will begin shortly.",
+    message:
+      "Your resignation has been acknowledged. Last working date confirmed: {{lwd}}. Clearance tasks will begin shortly.",
     shortMessage: "Resignation acknowledged. LWD: {{lwd}}.",
     actionUrl: "/exit-management",
     priority: "high",
@@ -295,7 +321,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Resignation returned for correction",
     category: "alerts",
     title: "Resignation returned — action required",
-    message: "Your resignation was returned by your manager: \"{{return_reason}}\". Please correct and resubmit.",
+    message:
+      'Your resignation was returned by your manager: "{{return_reason}}". Please correct and resubmit.',
     shortMessage: "Resignation returned: {{return_reason}}.",
     actionUrl: "/exit-management",
     priority: "high",
@@ -305,7 +332,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Employee exit completed",
     category: "alerts",
     title: "{{employee_name}} has exited — F&F pending",
-    message: "{{employee_name}} reached their last working date. All clearance done. Please initiate F&F.",
+    message:
+      "{{employee_name}} reached their last working date. All clearance done. Please initiate F&F.",
     shortMessage: "{{employee_name}} exit complete — initiate F&F.",
     actionUrl: "/exit/command-center",
     priority: "high",
@@ -316,7 +344,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Full & Final approved",
     category: "alerts",
     title: "Full & Final settlement approved",
-    message: "Your Full & Final settlement of ₹{{net_payable}} has been approved. Payment will be processed soon.",
+    message:
+      "Your Full & Final settlement of ₹{{net_payable}} has been approved. Payment will be processed soon.",
     shortMessage: "F&F approved: ₹{{net_payable}}.",
     actionUrl: "/exit-management",
     priority: "high",
@@ -326,7 +355,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Resignation revoked",
     category: "alerts",
     title: "{{employee_name}} revoked their resignation",
-    message: "{{employee_name}} has revoked their resignation. Reason: {{revoke_reason}}.",
+    message:
+      "{{employee_name}} has revoked their resignation. Reason: {{revoke_reason}}.",
     shortMessage: "Resignation revoked.",
     actionUrl: "/exit/command-center",
     priority: "normal",
@@ -337,7 +367,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Full and final ready",
     category: "payroll",
     title: "Full and final statement ready",
-    message: "Your full and final settlement statement is ready for review and acknowledgement in HRMS.",
+    message:
+      "Your full and final settlement statement is ready for review and acknowledgement in HRMS.",
     shortMessage: "Full and final statement is ready.",
     actionUrl: "/profile",
     priority: "high",
@@ -347,7 +378,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Birthday greeting",
     category: "announcements",
     title: "Happy birthday, {{employee_name}}!",
-    message: "Wishing you a wonderful birthday and a rewarding year ahead from everyone at Mas Callnet India Pvt Ltd.",
+    message:
+      "Wishing you a wonderful birthday and a rewarding year ahead from everyone at Mas Callnet India Pvt Ltd.",
     shortMessage: "Happy birthday from Team MAS!",
     actionUrl: "/engagement",
     priority: "low",
@@ -357,7 +389,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Work anniversary",
     category: "announcements",
     title: "Happy work anniversary!",
-    message: "Thank you for completing {{years}} year(s) with Mas Callnet India Pvt Ltd. We appreciate your contribution and commitment.",
+    message:
+      "Thank you for completing {{years}} year(s) with Mas Callnet India Pvt Ltd. We appreciate your contribution and commitment.",
     shortMessage: "Happy {{years}} year work anniversary!",
     actionUrl: "/engagement",
     priority: "low",
@@ -368,7 +401,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "People experience risk detected",
     category: "alerts",
     title: "Engagement risk detected — action required",
-    message: "An engagement risk has been identified for {{employee_name}}. Risk level: {{risk_label}}. Recommended: {{top_action}}.",
+    message:
+      "An engagement risk has been identified for {{employee_name}}. Risk level: {{risk_label}}. Recommended: {{top_action}}.",
     shortMessage: "Engagement risk detected for {{employee_name}}.",
     actionUrl: "/people-experience/command-center",
     priority: "high",
@@ -380,7 +414,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "People experience action assigned",
     category: "alerts",
     title: "Action assigned to you",
-    message: "You have been assigned a people experience action for {{employee_name}}: {{action_type}}. Due: {{due_date}}.",
+    message:
+      "You have been assigned a people experience action for {{employee_name}}: {{action_type}}. Due: {{due_date}}.",
     shortMessage: "PE action assigned: {{action_type}} for {{employee_name}}.",
     actionUrl: "/people-experience/command-center",
     priority: "normal",
@@ -391,7 +426,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "People experience action overdue",
     category: "alerts",
     title: "People experience action overdue",
-    message: "Action '{{action_type}}' for {{employee_name}} is overdue (due: {{due_date}}). Please update or escalate.",
+    message:
+      "Action '{{action_type}}' for {{employee_name}} is overdue (due: {{due_date}}). Please update or escalate.",
     shortMessage: "PE action overdue: {{action_type}} for {{employee_name}}.",
     actionUrl: "/people-experience/command-center",
     priority: "high",
@@ -403,7 +439,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Support ticket created",
     category: "alerts",
     title: "Support ticket raised: {{ticket_code}}",
-    message: "Your support ticket {{ticket_code}} has been raised for {{category}}. Our team will respond within the SLA window.",
+    message:
+      "Your support ticket {{ticket_code}} has been raised for {{category}}. Our team will respond within the SLA window.",
     shortMessage: "Ticket {{ticket_code}} raised — {{category}}.",
     actionUrl: "/helpdesk",
     priority: "normal",
@@ -413,7 +450,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Support ticket assigned",
     category: "alerts",
     title: "Support ticket {{ticket_code}} assigned",
-    message: "Your ticket {{ticket_code}} has been assigned to {{assigned_name}}. Expected resolution: {{sla_due_at}}.",
+    message:
+      "Your ticket {{ticket_code}} has been assigned to {{assigned_name}}. Expected resolution: {{sla_due_at}}.",
     shortMessage: "Ticket {{ticket_code}} assigned to {{assigned_name}}.",
     actionUrl: "/helpdesk",
     priority: "normal",
@@ -423,7 +461,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "SLA breached",
     category: "alerts",
     title: "SLA breached — ticket {{ticket_code}}",
-    message: "Ticket {{ticket_code}} ({{priority}}/{{category}}) has breached its SLA. Immediate attention required.",
+    message:
+      "Ticket {{ticket_code}} ({{priority}}/{{category}}) has breached its SLA. Immediate attention required.",
     shortMessage: "SLA breached: ticket {{ticket_code}}.",
     actionUrl: "/support/command-center",
     priority: "urgent",
@@ -435,7 +474,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Grievance submitted",
     category: "alerts",
     title: "Grievance {{grievance_code}} received",
-    message: "Your grievance {{grievance_code}} has been received. It will be reviewed with full confidentiality as per policy.",
+    message:
+      "Your grievance {{grievance_code}} has been received. It will be reviewed with full confidentiality as per policy.",
     shortMessage: "Grievance {{grievance_code}} received.",
     actionUrl: "/helpdesk",
     priority: "high",
@@ -445,7 +485,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Grievance escalated",
     category: "alerts",
     title: "Grievance {{grievance_code}} escalated",
-    message: "Grievance {{grievance_code}} has been escalated to level {{escalation_level}} for further review.",
+    message:
+      "Grievance {{grievance_code}} has been escalated to level {{escalation_level}} for further review.",
     shortMessage: "Grievance {{grievance_code}} escalated.",
     actionUrl: "/support/grievance-command-center",
     priority: "urgent",
@@ -457,7 +498,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Kudos received",
     category: "announcements",
     title: "You received a kudos from {{sender_name}}!",
-    message: "{{sender_name}} sent you a kudos: '{{message}}'. Keep up the great work!",
+    message:
+      "{{sender_name}} sent you a kudos: '{{message}}'. Keep up the great work!",
     shortMessage: "Kudos received from {{sender_name}}.",
     actionUrl: "/engagement",
     priority: "low",
@@ -467,7 +509,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Survey reminder",
     category: "announcements",
     title: "Survey pending: {{survey_name}}",
-    message: "Please complete the survey '{{survey_name}}' before {{deadline}}. Your feedback matters.",
+    message:
+      "Please complete the survey '{{survey_name}}' before {{deadline}}. Your feedback matters.",
     shortMessage: "Survey reminder: {{survey_name}} due {{deadline}}.",
     actionUrl: "/engagement",
     priority: "normal",
@@ -477,7 +520,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "Pulse check reminder",
     category: "announcements",
     title: "How are you feeling this week?",
-    message: "Take a moment to share your pulse — it only takes 30 seconds and helps us support you better.",
+    message:
+      "Take a moment to share your pulse — it only takes 30 seconds and helps us support you better.",
     shortMessage: "Quick pulse check waiting for you.",
     actionUrl: "/engagement",
     priority: "low",
@@ -492,7 +536,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     // button would have to mint a second live credential every time it fired. The
     // outstanding link is still valid (the worker only selects rows whose token is
     // active and unexpired), so the reminder points back at it instead.
-    message: "Your {{document_name}} requires Aadhaar eSign. Please complete it before {{deadline}} using the secure signing link already sent to you in your joining documents email — that link is still valid. {{days_pending}} day(s) pending.",
+    message:
+      "Your {{document_name}} requires Aadhaar eSign. Please complete it before {{deadline}} using the secure signing link already sent to you in your joining documents email — that link is still valid. {{days_pending}} day(s) pending.",
     shortMessage: "{{document_name}} eSign pending ({{days_pending}} days).",
     actionUrl: "/profile",
     priority: "high",
@@ -503,7 +548,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "eSign escalation to manager",
     category: "onboarding",
     title: "Employee eSign overdue — action required",
-    message: "{{employee_name}} ({{employee_code}}) has not signed {{document_name}} for {{days_pending}} days. Please follow up.",
+    message:
+      "{{employee_name}} ({{employee_code}}) has not signed {{document_name}} for {{days_pending}} days. Please follow up.",
     shortMessage: "{{employee_name}} eSign overdue ({{days_pending}} days).",
     actionUrl: "/ats/joining-documents-tracker",
     priority: "urgent",
@@ -515,7 +561,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "eSign escalation to HR",
     category: "onboarding",
     title: "eSign link expiring — employee non-responsive",
-    message: "{{employee_name}} ({{employee_code}}) has not completed eSign for {{document_name}}. Link expires on {{deadline}}. Consider manual override or re-issuance.",
+    message:
+      "{{employee_name}} ({{employee_code}}) has not completed eSign for {{document_name}}. Link expires on {{deadline}}. Consider manual override or re-issuance.",
     shortMessage: "{{employee_name}} eSign link expiring.",
     actionUrl: "/ats/joining-documents-tracker",
     priority: "urgent",
@@ -529,7 +576,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "New internal opportunity",
     category: "career",
     title: "New internal job posting: {{job_title}}",
-    message: "A new internal position is available: {{job_title}} in {{department_name}}. You meet the eligibility criteria. Apply by {{closes_at}}.",
+    message:
+      "A new internal position is available: {{job_title}} in {{department_name}}. You meet the eligibility criteria. Apply by {{closes_at}}.",
     shortMessage: "New IJP: {{job_title}}. Apply by {{closes_at}}.",
     actionUrl: "/people/ijp",
     priority: "normal",
@@ -539,7 +587,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "IJP application submitted",
     category: "career",
     title: "Application received: {{job_title}}",
-    message: "Your application for {{job_title}} ({{posting_code}}) has been submitted. {{#if require_manager_approval}}It is pending your manager's approval.{{else}}HR will review your application shortly.{{/if}}",
+    message:
+      "Your application for {{job_title}} ({{posting_code}}) has been submitted. {{#if require_manager_approval}}It is pending your manager's approval.{{else}}HR will review your application shortly.{{/if}}",
     shortMessage: "IJP application submitted for {{job_title}}.",
     actionUrl: "/people/ijp",
     priority: "normal",
@@ -549,8 +598,10 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "IJP manager approval pending",
     category: "career",
     title: "IJP approval required: {{employee_name}}",
-    message: "{{employee_name}} ({{employee_code}}) has applied for {{job_title}}. Please review and approve or reject the application.",
-    shortMessage: "{{employee_name}} applied for {{job_title}}. Action required.",
+    message:
+      "{{employee_name}} ({{employee_code}}) has applied for {{job_title}}. Please review and approve or reject the application.",
+    shortMessage:
+      "{{employee_name}} applied for {{job_title}}. Action required.",
     actionUrl: "/people/ijp",
     priority: "high",
     channels: allChannels,
@@ -560,7 +611,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "IJP application status update",
     category: "career",
     title: "Application update: {{job_title}}",
-    message: "Your application for {{job_title}} has been updated to: {{status}}. {{#if remarks}}Remarks: {{remarks}}{{/if}}",
+    message:
+      "Your application for {{job_title}} has been updated to: {{status}}. {{#if remarks}}Remarks: {{remarks}}{{/if}}",
     shortMessage: "IJP application status: {{status}}.",
     actionUrl: "/people/ijp",
     priority: "normal",
@@ -570,7 +622,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "IJP interview scheduled",
     category: "career",
     title: "Interview scheduled: {{job_title}}",
-    message: "Your interview for {{job_title}} is scheduled for {{interview_date}}. Please be prepared.",
+    message:
+      "Your interview for {{job_title}} is scheduled for {{interview_date}}. Please be prepared.",
     shortMessage: "IJP interview on {{interview_date}}.",
     actionUrl: "/people/ijp",
     priority: "high",
@@ -580,7 +633,8 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "IJP selection",
     category: "career",
     title: "Congratulations! Selected for {{job_title}}",
-    message: "You have been selected for the {{job_title}} position. HR will contact you with next steps regarding the transition.",
+    message:
+      "You have been selected for the {{job_title}} position. HR will contact you with next steps regarding the transition.",
     shortMessage: "Selected for {{job_title}}!",
     actionUrl: "/people/ijp",
     priority: "high",
@@ -657,7 +711,8 @@ class NotificationEventService {
       channels: input.channels ?? (critical ? definition.channels : undefined),
       is_critical: critical,
       // Content about a third party must not land in a personal mailbox.
-      prefer_official_email: "aboutThirdParty" in definition && Boolean(definition.aboutThirdParty),
+      prefer_official_email:
+        "aboutThirdParty" in definition && Boolean(definition.aboutThirdParty),
       // Lets an operator stop ONE runaway event via notification_dispatch_block
       // instead of stopping every notification the platform sends.
       event_code: input.eventCode,
@@ -668,7 +723,9 @@ class NotificationEventService {
           message,
           short_message: shortMessage,
           category: definition.category,
-          action_url: absoluteActionUrl(input.actionUrl ?? definition.actionUrl),
+          action_url: absoluteActionUrl(
+            input.actionUrl ?? definition.actionUrl,
+          ),
           reference: data.reference ?? null,
         },
       },

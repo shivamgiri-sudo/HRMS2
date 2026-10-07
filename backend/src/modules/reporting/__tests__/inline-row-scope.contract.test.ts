@@ -45,7 +45,10 @@ const inlineBlocks = (): Array<{ code: string; body: string }> => {
   const marks = [...src.matchAll(/^\s{4}case "([a-z0-9-]+)"/gm)];
   return marks.map((m, i) => ({
     code: m[1],
-    body: src.slice(m.index!, i + 1 < marks.length ? marks[i + 1].index! : src.length),
+    body: src.slice(
+      m.index!,
+      i + 1 < marks.length ? marks[i + 1].index! : src.length,
+    ),
   }));
 };
 
@@ -55,7 +58,8 @@ const cataloguedCodes = (): Set<string> => {
 };
 
 /** Reads the employees table (or an employee_* table) — i.e. returns employee-level rows. */
-const EMPLOYEE_GRAIN = /\b(FROM|JOIN)\s+`?employees`?\b|\bFROM\s+`?employee_[a-z_]+`?/i;
+const EMPLOYEE_GRAIN =
+  /\b(FROM|JOIN)\s+`?employees`?\b|\bFROM\s+`?employee_[a-z_]+`?/i;
 
 /**
  * Any recognised row-scoping mechanism. addScopedEmployeeFilters is the inline one and
@@ -100,12 +104,18 @@ describe("inline report blocks apply row scope", () => {
     // guarding a live report. This is what let a stale entry hide a real gap before.
     for (const [code, reason] of UNSCOPED_REACHABLE) {
       const block = blocks.find((b) => b.code === code);
-      expect(block, `${code} is exempted but has no inline block — remove the entry`).toBeDefined();
+      expect(
+        block,
+        `${code} is exempted but has no inline block — remove the entry`,
+      ).toBeDefined();
       expect(
         SCOPED.test(block!.body),
         `${code} now applies row scope — remove it from UNSCOPED_REACHABLE`,
       ).toBe(false);
-      expect(reason.length, `${code} needs a real reason, not a placeholder`).toBeGreaterThan(30);
+      expect(
+        reason.length,
+        `${code} needs a real reason, not a placeholder`,
+      ).toBeGreaterThan(30);
     }
   });
 

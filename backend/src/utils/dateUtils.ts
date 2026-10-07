@@ -10,7 +10,9 @@
  */
 export function getIstDateString(offsetDays = 0): string {
   // IST = UTC + 5.5 hours. Subtract offsetDays worth of minutes.
-  const d = new Date(Date.now() + (5.5 * 60 - offsetDays * 24 * 60) * 60 * 1000);
+  const d = new Date(
+    Date.now() + (5.5 * 60 - offsetDays * 24 * 60) * 60 * 1000,
+  );
   return d.toISOString().slice(0, 10);
 }
 
@@ -20,7 +22,7 @@ export function getIstDateString(offsetDays = 0): string {
 export function getIstMonthStart(): string {
   const d = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   const year = d.getUTCFullYear();
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${year}-${month}-01`;
 }
 
@@ -52,20 +54,24 @@ export function assertNotBeforeToday(
   allowPast = false,
 ): void {
   if (allowPast) return;
-  const v = DATE_ONLY.test(String(value ?? '')) ? String(value).slice(0, 10) : '';
+  const v = DATE_ONLY.test(String(value ?? ""))
+    ? String(value).slice(0, 10)
+    : "";
   if (!v) return;
-  const prev = DATE_ONLY.test(String(unchangedFrom ?? '')) ? String(unchangedFrom).slice(0, 10) : '';
+  const prev = DATE_ONLY.test(String(unchangedFrom ?? ""))
+    ? String(unchangedFrom).slice(0, 10)
+    : "";
   if (prev && v === prev) return;
   const today = getIstDateString();
   if (v < today) {
     throw Object.assign(
       new Error(`${label} (${v}) cannot be set before today (${today}).`),
-      { statusCode: 400, code: 'DATE_BEFORE_TODAY' },
+      { statusCode: 400, code: "DATE_BEFORE_TODAY" },
     );
   }
 }
 
 /** Only super_admin and payroll_head may set these dates before today (exception handling). */
 export function canBackdateDates(roles?: readonly string[] | null): boolean {
-  return !!roles?.some((r) => r === 'super_admin' || r === 'payroll_head');
+  return !!roles?.some((r) => r === "super_admin" || r === "payroll_head");
 }

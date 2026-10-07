@@ -62,11 +62,11 @@ export interface ProcessRepository {
   update(
     id: string,
     input: UpdateProcessInput,
-    userId: string
+    userId: string,
   ): Promise<ProcessMaster>;
   updateStatus(
     id: string,
     activeStatus: boolean,
-    userId: string
+    userId: string,
   ): Promise<ProcessMaster>;
 }

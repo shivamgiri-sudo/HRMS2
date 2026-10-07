@@ -15,12 +15,12 @@
  * MAS{n} or {n}C), so standardising on this generator is safe and needs no
  * back-fill.
  */
-import type { PoolConnection } from 'mysql2/promise';
-import type { RowDataPacket } from 'mysql2';
+import type { PoolConnection } from "mysql2/promise";
+import type { RowDataPacket } from "mysql2";
 
 /** Employment types issued an off-roll style code, matched exactly (kept for reference --
  *  isOffRollType() below is what actually runs; this is retained as the exact-match core). */
-const OFF_ROLL_TYPES = new Set(['Trainee', 'OffRoll']);
+const OFF_ROLL_TYPES = new Set(["Trainee", "OffRoll"]);
 
 /**
  * Whether an employment-type label should get an off-roll {n}C code.
@@ -44,10 +44,16 @@ const OFF_ROLL_TYPES = new Set(['Trainee', 'OffRoll']);
  */
 export function isOffRollType(empType: string | null | undefined): boolean {
   if (OFF_ROLL_TYPES.has(String(empType))) return true;
-  const normalized = String(empType ?? '').trim().toUpperCase();
+  const normalized = String(empType ?? "")
+    .trim()
+    .toUpperCase();
   if (!normalized) return false;
-  if (normalized.includes('TRAINEE')) return true;
-  return normalized === 'OFFROLL' || normalized === 'OFF ROLL' || normalized === 'OFF-ROLL';
+  if (normalized.includes("TRAINEE")) return true;
+  return (
+    normalized === "OFFROLL" ||
+    normalized === "OFF ROLL" ||
+    normalized === "OFF-ROLL"
+  );
 }
 
 /**
@@ -57,7 +63,10 @@ export function isOffRollType(empType: string | null | undefined): boolean {
  * advance have to be atomic with the employee insert, or two concurrent
  * approvals can take the same number.
  */
-export async function generateEmployeeCode(conn: PoolConnection, empType: string): Promise<string> {
+export async function generateEmployeeCode(
+  conn: PoolConnection,
+  empType: string,
+): Promise<string> {
   const isOffRoll = isOffRollType(empType);
 
   // One shared counter across every historical format, so on-roll and off-roll
@@ -69,17 +78,18 @@ export async function generateEmployeeCode(conn: PoolConnection, empType: string
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+$'),0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,1,CHAR_LENGTH(employee_code)-1) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^[0-9]+C$'),0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4,CHAR_LENGTH(employee_code)-4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+C$'),0)
-     ) AS global_max`
+     ) AS global_max`,
   );
 
-  const nextSeq = (Number((maxRows as RowDataPacket[])[0]?.global_max) || 0) + 1;
+  const nextSeq =
+    (Number((maxRows as RowDataPacket[])[0]?.global_max) || 0) + 1;
 
   // Keep the bookkeeping table in step. It is advisory only — the max scan
   // above is authoritative, which is why the table currently lags reality.
   await conn.execute(
     `UPDATE employee_code_sequence SET current_sequence = ?, last_generated_at = NOW()
      WHERE current_sequence < ?`,
-    [nextSeq, nextSeq]
+    [nextSeq, nextSeq],
   );
 
   return isOffRoll ? `${nextSeq}C` : `MAS${nextSeq}`;

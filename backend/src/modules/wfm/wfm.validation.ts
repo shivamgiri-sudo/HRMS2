@@ -33,7 +33,9 @@ export const rosterPlanSchema = z
     toDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
     requiredHeadcount: z.coerce.number().int().min(0).default(0),
   })
-  .refine((d) => d.toDate >= d.fromDate, { message: "toDate must be >= fromDate" });
+  .refine((d) => d.toDate >= d.fromDate, {
+    message: "toDate must be >= fromDate",
+  });
 
 export const rosterAssignSchema = z.object({
   employeeId: z.string().uuid(),
@@ -55,20 +57,25 @@ export const attendanceSessionFiltersSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
-export const clockInSchema = z.object({
-  // employeeId removed - derived from auth token for security (prevents spoofing)
-  sessionDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
-  punchSource: z.enum(["MANUAL", "BIOMETRIC", "DIALER"]).default("MANUAL"),
-  branchName: z.string().trim().max(255).nullable().optional(),
-  processName: z.string().trim().max(255).nullable().optional(),
-}).refine(d => {
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
-  return new Date(d.sessionDate) <= today;
-}, {
-  message: "Cannot clock in for a future date",
-  path: ["sessionDate"],
-});
+export const clockInSchema = z
+  .object({
+    // employeeId removed - derived from auth token for security (prevents spoofing)
+    sessionDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
+    punchSource: z.enum(["MANUAL", "BIOMETRIC", "DIALER"]).default("MANUAL"),
+    branchName: z.string().trim().max(255).nullable().optional(),
+    processName: z.string().trim().max(255).nullable().optional(),
+  })
+  .refine(
+    (d) => {
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      return new Date(d.sessionDate) <= today;
+    },
+    {
+      message: "Cannot clock in for a future date",
+      path: ["sessionDate"],
+    },
+  );
 
 export const clockOutSchema = z.object({
   sessionId: z.string().uuid(),
@@ -80,59 +87,85 @@ export const breakSchema = z.object({
 });
 
 export const DISPUTE_TYPES = [
-  'missing_punch',
-  'wrong_punch',
-  'late_mark_dispute',
-  'early_logout_dispute',
-  'half_day_dispute',
-  'absent_wrongly_marked',
-  'week_off_worked',
-  'holiday_worked',
-  'shift_mismatch',
-  'cosec_sync_issue',
-  'manual_punch_correction',
-  'work_from_home',
+  "missing_punch",
+  "wrong_punch",
+  "late_mark_dispute",
+  "early_logout_dispute",
+  "half_day_dispute",
+  "absent_wrongly_marked",
+  "week_off_worked",
+  "holiday_worked",
+  "shift_mismatch",
+  "cosec_sync_issue",
+  "manual_punch_correction",
+  "work_from_home",
 ] as const;
 
-export type DisputeType = typeof DISPUTE_TYPES[number];
+export type DisputeType = (typeof DISPUTE_TYPES)[number];
 
 const MAX_LOOKBACK_DAYS = 90;
 
-export const regularizationSchema = z.object({
-  // employeeId removed - derived from auth token for security
-  sessionDate:     z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
-  reason:          z.string().trim().min(1).max(500),
-  reasonCode:      z.string().min(1).max(50).optional(),
-  requestedStatus: z.enum(['present', 'half_day', 'absent']).nullable().optional(),
-  supportingNote:  z.string().trim().nullable().optional(),
-  // Dispute extension fields (optional — null = plain regularization)
-  disputeType:     z.enum(DISPUTE_TYPES).nullable().optional(),
-  oldStatus:       z.string().trim().nullable().optional(),
-  newStatus:       z.string().trim().nullable().optional(),
-  oldPunchIn:      z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
-  oldPunchOut:     z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
-  newPunchIn:      z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
-  newPunchOut:     z.string().regex(TIME_REGEX, "Time must be HH:MM").nullable().optional(),
-  supportingDocId: z.string().trim().nullable().optional(),
-})
-  .refine(d => {
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-    return new Date(d.sessionDate) <= today;
-  }, {
-    message: "Cannot regularize a future date",
-    path: ["sessionDate"],
+export const regularizationSchema = z
+  .object({
+    // employeeId removed - derived from auth token for security
+    sessionDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
+    reason: z.string().trim().min(1).max(500),
+    reasonCode: z.string().min(1).max(50).optional(),
+    requestedStatus: z
+      .enum(["present", "half_day", "absent"])
+      .nullable()
+      .optional(),
+    supportingNote: z.string().trim().nullable().optional(),
+    // Dispute extension fields (optional — null = plain regularization)
+    disputeType: z.enum(DISPUTE_TYPES).nullable().optional(),
+    oldStatus: z.string().trim().nullable().optional(),
+    newStatus: z.string().trim().nullable().optional(),
+    oldPunchIn: z
+      .string()
+      .regex(TIME_REGEX, "Time must be HH:MM")
+      .nullable()
+      .optional(),
+    oldPunchOut: z
+      .string()
+      .regex(TIME_REGEX, "Time must be HH:MM")
+      .nullable()
+      .optional(),
+    newPunchIn: z
+      .string()
+      .regex(TIME_REGEX, "Time must be HH:MM")
+      .nullable()
+      .optional(),
+    newPunchOut: z
+      .string()
+      .regex(TIME_REGEX, "Time must be HH:MM")
+      .nullable()
+      .optional(),
+    supportingDocId: z.string().trim().nullable().optional(),
   })
-  .refine(d => {
-    const sessionDate = new Date(d.sessionDate);
-    const lookback = new Date();
-    lookback.setDate(lookback.getDate() - MAX_LOOKBACK_DAYS);
-    lookback.setHours(0, 0, 0, 0);
-    return sessionDate >= lookback;
-  }, {
-    message: `Cannot regularize dates older than ${MAX_LOOKBACK_DAYS} days`,
-    path: ["sessionDate"],
-  });
+  .refine(
+    (d) => {
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      return new Date(d.sessionDate) <= today;
+    },
+    {
+      message: "Cannot regularize a future date",
+      path: ["sessionDate"],
+    },
+  )
+  .refine(
+    (d) => {
+      const sessionDate = new Date(d.sessionDate);
+      const lookback = new Date();
+      lookback.setDate(lookback.getDate() - MAX_LOOKBACK_DAYS);
+      lookback.setHours(0, 0, 0, 0);
+      return sessionDate >= lookback;
+    },
+    {
+      message: `Cannot regularize dates older than ${MAX_LOOKBACK_DAYS} days`,
+      path: ["sessionDate"],
+    },
+  );
 
 export const reviewRegularizationSchema = z.object({
   status: z.enum(["approved", "rejected"]),
@@ -143,9 +176,13 @@ export type CreateShiftInput = z.infer<typeof createShiftSchema>;
 export type UpdateShiftInput = z.infer<typeof updateShiftSchema>;
 export type RosterPlanInput = z.infer<typeof rosterPlanSchema>;
 export type RosterAssignInput = z.infer<typeof rosterAssignSchema>;
-export type AttendanceSessionFilters = z.infer<typeof attendanceSessionFiltersSchema>;
+export type AttendanceSessionFilters = z.infer<
+  typeof attendanceSessionFiltersSchema
+>;
 export type ClockInInput = z.infer<typeof clockInSchema>;
 export type ClockOutInput = z.infer<typeof clockOutSchema>;
 export type BreakInput = z.infer<typeof breakSchema>;
 export type RegularizationInput = z.infer<typeof regularizationSchema>;
-export type ReviewRegularizationInput = z.infer<typeof reviewRegularizationSchema>;
+export type ReviewRegularizationInput = z.infer<
+  typeof reviewRegularizationSchema
+>;

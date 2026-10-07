@@ -13,22 +13,24 @@
 // memory where it is directly property-testable (design.md Testing Strategy).
 
 export type RuleDimension =
-  | 'cost_centre'
-  | 'process'
-  | 'branch'
-  | 'department'
-  | 'designation'
-  | 'employment_profile';
+  | "cost_centre"
+  | "process"
+  | "branch"
+  | "department"
+  | "designation"
+  | "employment_profile";
 
 // requirements.md decision A1: cost centre, process, branch, department, designation, profile.
-export const DIMENSION_PRIORITY_ORDER: readonly RuleDimension[] = Object.freeze([
-  'cost_centre',
-  'process',
-  'branch',
-  'department',
-  'designation',
-  'employment_profile',
-]);
+export const DIMENSION_PRIORITY_ORDER: readonly RuleDimension[] = Object.freeze(
+  [
+    "cost_centre",
+    "process",
+    "branch",
+    "department",
+    "designation",
+    "employment_profile",
+  ],
+);
 
 export interface DimensionScopedRule {
   id: string;
@@ -51,10 +53,10 @@ export interface EmployeeAttributes {
 }
 
 export type EliminationStep =
-  | 'not_candidate' // criterion 2.2/2.8: inactive dimension mismatch or employee value missing
-  | 'below_max_specificity' // criterion 2.3
-  | 'priority_order' // criterion 2.4
-  | 'deterministic_tail'; // criterion 2.5
+  | "not_candidate" // criterion 2.2/2.8: inactive dimension mismatch or employee value missing
+  | "below_max_specificity" // criterion 2.3
+  | "priority_order" // criterion 2.4
+  | "deterministic_tail"; // criterion 2.5
 
 export interface ResolutionResult<T extends DimensionScopedRule> {
   winner: T | null;
@@ -65,19 +67,22 @@ export interface ResolutionResult<T extends DimensionScopedRule> {
   unresolvedDimensions: RuleDimension[];
 }
 
-function employeeAttributeFor(dim: RuleDimension, attrs: EmployeeAttributes): string | null {
+function employeeAttributeFor(
+  dim: RuleDimension,
+  attrs: EmployeeAttributes,
+): string | null {
   switch (dim) {
-    case 'cost_centre':
+    case "cost_centre":
       return attrs.costCentreId;
-    case 'process':
+    case "process":
       return attrs.processId;
-    case 'branch':
+    case "branch":
       return attrs.branchId;
-    case 'department':
+    case "department":
       return attrs.departmentId;
-    case 'designation':
+    case "designation":
       return attrs.designationId;
-    case 'employment_profile':
+    case "employment_profile":
       return attrs.employmentProfile;
   }
 }
@@ -118,7 +123,7 @@ export function resolveRule<T extends DimensionScopedRule>(
   // caller; here we filter to dimension-matching.
   const matching = windowedRules.filter((r) => {
     const ok = ruleMatchesEmployee(r, employeeAttrs);
-    if (!ok) eliminatedAt.set(r, 'not_candidate');
+    if (!ok) eliminatedAt.set(r, "not_candidate");
     return ok;
   });
 
@@ -141,7 +146,7 @@ export function resolveRule<T extends DimensionScopedRule>(
   const maxSpec = Math.max(...matching.map(specificityCount));
   let survivors = matching.filter((r) => {
     const keep = specificityCount(r) === maxSpec;
-    if (!keep) eliminatedAt.set(r, 'below_max_specificity');
+    if (!keep) eliminatedAt.set(r, "below_max_specificity");
     return keep;
   });
 
@@ -155,7 +160,7 @@ export function resolveRule<T extends DimensionScopedRule>(
       if (constrainedBy.length > 0 && constrainedBy.length < survivors.length) {
         const constrainedBySet = new Set(constrainedBy);
         for (const r of survivors) {
-          if (!constrainedBySet.has(r)) eliminatedAt.set(r, 'priority_order');
+          if (!constrainedBySet.has(r)) eliminatedAt.set(r, "priority_order");
         }
         survivors = constrainedBy;
         break;
@@ -175,7 +180,7 @@ export function resolveRule<T extends DimensionScopedRule>(
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
   for (const r of survivors.slice(1)) {
-    eliminatedAt.set(r, 'deterministic_tail');
+    eliminatedAt.set(r, "deterministic_tail");
   }
 
   const winner = survivors[0];
@@ -185,7 +190,7 @@ export function resolveRule<T extends DimensionScopedRule>(
     specificityCount: maxSpec,
     candidates: windowedRules.map((r) => ({
       rule: r,
-      eliminatedAtStep: r === winner ? null : eliminatedAt.get(r) ?? null,
+      eliminatedAtStep: r === winner ? null : (eliminatedAt.get(r) ?? null),
     })),
     unresolvedDimensions,
   };

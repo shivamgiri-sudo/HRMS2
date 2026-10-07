@@ -13,7 +13,7 @@
  * follow-up resolution but only released to a provider when they were eligible
  * to go there in the first place.
  */
-import { detectLanguage, type DetectedLang } from './mira-language-detect.js';
+import { detectLanguage, type DetectedLang } from "./mira-language-detect.js";
 
 export interface ConversationTurn {
   question: string;
@@ -42,7 +42,7 @@ export interface ConversationTurn {
  * the user never actually saw drafted.
  */
 export interface PendingLeaveAction {
-  type: 'leave_request';
+  type: "leave_request";
   payload: {
     employeeId: string;
     leaveTypeId: string;
@@ -56,7 +56,7 @@ export interface PendingLeaveAction {
 }
 
 export interface PendingLeaveCancelAction {
-  type: 'leave_cancel';
+  type: "leave_cancel";
   payload: {
     employeeId: string;
     leaveRequestId: string;
@@ -69,12 +69,12 @@ export interface PendingLeaveCancelAction {
 }
 
 export interface PendingRegularizationAction {
-  type: 'attendance_regularization';
+  type: "attendance_regularization";
   payload: {
     employeeId: string;
     sessionDate: string;
     reason: string;
-    requestedStatus: 'present' | 'half_day' | null;
+    requestedStatus: "present" | "half_day" | null;
     newPunchIn: string | null;
     newPunchOut: string | null;
   };
@@ -82,7 +82,7 @@ export interface PendingRegularizationAction {
 }
 
 export interface PendingGrievanceAction {
-  type: 'grievance';
+  type: "grievance";
   payload: {
     employeeId: string;
     description: string;
@@ -183,7 +183,10 @@ function applyLanguageSignal(thread: Thread, question: string): void {
 
   thread.consecutiveEnglishCount = 0;
 
-  if (!thread.preferredLanguage || thread.preferredLanguage.code === detected.code) {
+  if (
+    !thread.preferredLanguage ||
+    thread.preferredLanguage.code === detected.code
+  ) {
     // First detection, or more of the same language: adopt/reaffirm outright.
     thread.preferredLanguage = detected;
     thread.pendingLanguage = undefined;
@@ -219,7 +222,7 @@ function sweep(now: number): void {
 
 export function recordTurn(
   userId: string,
-  turn: Omit<ConversationTurn, 'at'>,
+  turn: Omit<ConversationTurn, "at">,
 ): void {
   if (!userId || !turn.question.trim()) return;
   const now = Date.now();
@@ -227,7 +230,8 @@ export function recordTurn(
 
   const thread = threads.get(userId) ?? newThread(now);
   thread.turns.push({ ...turn, at: now });
-  if (thread.turns.length > MAX_TURNS) thread.turns = thread.turns.slice(-MAX_TURNS);
+  if (thread.turns.length > MAX_TURNS)
+    thread.turns = thread.turns.slice(-MAX_TURNS);
   // Read the language off the question, not the answer: the answer's script is
   // whatever the model chose to reply in, which is the thing being decided here.
   applyLanguageSignal(thread, turn.question);
@@ -253,7 +257,7 @@ export function getThread(userId: string): ConversationTurn[] {
 export function lastIntentTurn(userId: string): ConversationTurn | null {
   const turns = getThread(userId);
   for (let i = turns.length - 1; i >= 0; i -= 1) {
-    if (turns[i].intent && turns[i].intent !== 'unknown') return turns[i];
+    if (turns[i].intent && turns[i].intent !== "unknown") return turns[i];
   }
   return null;
 }
@@ -273,7 +277,10 @@ export function getPreferredLanguage(userId: string): DetectedLang | null {
 }
 
 /** Stash a drafted action for this user, replacing any earlier undrafted one. */
-export function setPendingAction(userId: string, action: AnyPendingAction): void {
+export function setPendingAction(
+  userId: string,
+  action: AnyPendingAction,
+): void {
   if (!userId) return;
   const now = Date.now();
   sweep(now);
@@ -316,11 +323,13 @@ const CANCEL_PATTERNS = [
   /^(?:nahi|ruko|mat karo)\b/i,
 ];
 
-export function detectConfirmation(question: string): 'confirm' | 'cancel' | null {
-  const text = String(question ?? '').trim();
+export function detectConfirmation(
+  question: string,
+): "confirm" | "cancel" | null {
+  const text = String(question ?? "").trim();
   if (!text || text.length > 40) return null;
-  if (CONFIRM_PATTERNS.some((pattern) => pattern.test(text))) return 'confirm';
-  if (CANCEL_PATTERNS.some((pattern) => pattern.test(text))) return 'cancel';
+  if (CONFIRM_PATTERNS.some((pattern) => pattern.test(text))) return "confirm";
+  if (CANCEL_PATTERNS.some((pattern) => pattern.test(text))) return "cancel";
   return null;
 }
 
@@ -347,7 +356,9 @@ function trimAnswer(answer: string): string {
  * The slice of history that may be sent to an external provider: turns that were
  * themselves external-safe, trimmed and oldest-first.
  */
-export function providerHistory(userId: string): Array<{ question: string; answer: string }> {
+export function providerHistory(
+  userId: string,
+): Array<{ question: string; answer: string }> {
   return getThread(userId)
     .filter((turn) => turn.externalSafe)
     .map((turn) => ({
@@ -365,13 +376,15 @@ export function providerHistory(userId: string): Array<{ question: string; answe
  * self-account question, without ever putting a real value in front of an
  * external provider.
  */
-export function providerHistorySummaries(userId: string): Array<{ question: string; summary: string }> {
+export function providerHistorySummaries(
+  userId: string,
+): Array<{ question: string; summary: string }> {
   return getThread(userId).map((turn) => ({
     question: turn.question,
     summary: turn.externalSafe
       ? trimAnswer(turn.answer)
-      : turn.redactedSummary
-        ?? `The user previously asked about ${(turn.intent ?? 'their account').replace(/_/g, ' ')}; Mira answered from live HRMS data without exposing values in this shared history.`,
+      : (turn.redactedSummary ??
+        `The user previously asked about ${(turn.intent ?? "their account").replace(/_/g, " ")}; Mira answered from live HRMS data without exposing values in this shared history.`),
   }));
 }
 
@@ -388,9 +401,15 @@ export function pickConversationEntries(
   conversationSummaries?: Array<{ question: string; summary: string }>,
 ): Array<{ question: string; text: string }> {
   if (conversationSummaries?.length) {
-    return conversationSummaries.map((turn) => ({ question: turn.question, text: turn.summary }));
+    return conversationSummaries.map((turn) => ({
+      question: turn.question,
+      text: turn.summary,
+    }));
   }
-  return (conversation ?? []).map((turn) => ({ question: turn.question, text: turn.answer }));
+  return (conversation ?? []).map((turn) => ({
+    question: turn.question,
+    text: turn.answer,
+  }));
 }
 
 /**
@@ -405,10 +424,11 @@ const FOLLOW_UP_PATTERNS = [
   /^(?:aur|aur batao|uska|uske)\b/i,
 ];
 
-const STANDALONE_HINTS = /\b(salary|payslip|attendance|leave|roster|shift|document|loan|reimbursement|coach|performance)\b/i;
+const STANDALONE_HINTS =
+  /\b(salary|payslip|attendance|leave|roster|shift|document|loan|reimbursement|coach|performance)\b/i;
 
 export function isFollowUp(question: string): boolean {
-  const text = String(question ?? '').trim();
+  const text = String(question ?? "").trim();
   if (!text || text.length > 80) return false;
   // If it names its own subject it can be answered on its own terms.
   if (STANDALONE_HINTS.test(text)) return false;
@@ -420,15 +440,22 @@ export function isFollowUp(question: string): boolean {
  * carrying the previous turn's subject across. "and last month?" after an
  * attendance question becomes "attendance last month".
  */
-export function resolveFollowUp(question: string, previous: ConversationTurn | null): string | null {
+export function resolveFollowUp(
+  question: string,
+  previous: ConversationTurn | null,
+): string | null {
   if (!previous?.intent || !isFollowUp(question)) return null;
 
-  const trimmed = String(question).trim()
-    .replace(/^(?:ok(?:ay)?\s+)?(?:and|then|what about|how about|same|the same|aur batao|aur|uska|uske)\b/i, '')
-    .replace(/^\s*(?:for|about|in|of)\b/i, '')
-    .replace(/[?.!]+$/, '')
+  const trimmed = String(question)
+    .trim()
+    .replace(
+      /^(?:ok(?:ay)?\s+)?(?:and|then|what about|how about|same|the same|aur batao|aur|uska|uske)\b/i,
+      "",
+    )
+    .replace(/^\s*(?:for|about|in|of)\b/i, "")
+    .replace(/[?.!]+$/, "")
     .trim();
 
   if (!trimmed) return null;
-  return `${previous.intent.replace(/_/g, ' ')} ${trimmed}`;
+  return `${previous.intent.replace(/_/g, " ")} ${trimmed}`;
 }

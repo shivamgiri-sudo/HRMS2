@@ -23,9 +23,14 @@ const read = (p: string) => fs.readFileSync(path.join(backendRoot, p), "utf8");
  */
 describe("the GRN number is allocated at final (Finance Head) approval, by whichever path runs", () => {
   it("submission no longer allocates one, on either live submit path", () => {
-    const control = read("src/modules/finance/grn-validation-control.service.ts");
+    const control = read(
+      "src/modules/finance/grn-validation-control.service.ts",
+    );
     const legacy = read("src/modules/finance/grn.service.ts");
-    const controlSubmit = control.slice(control.indexOf("async submit("), control.indexOf("async review("));
+    const controlSubmit = control.slice(
+      control.indexOf("async submit("),
+      control.indexOf("async review("),
+    );
     const legacySubmit = legacy.slice(
       legacy.indexOf("async submitForApproval("),
       legacy.indexOf("async submitForApproval(") + 2500,
@@ -45,13 +50,23 @@ describe("the GRN number is allocated at final (Finance Head) approval, by which
     const legacy = read("src/modules/finance/grn.service.ts");
 
     const smartAnchor = '} else if (role === "finance_head") {';
-    const smartFhBranch = smart.slice(smart.indexOf(smartAnchor), smart.indexOf(smartAnchor) + 3000);
-    expect(smartFhBranch).toContain("grnNumber = await resolveGrnNumberOnSubmit(grn)");
+    const smartFhBranch = smart.slice(
+      smart.indexOf(smartAnchor),
+      smart.indexOf(smartAnchor) + 3000,
+    );
+    expect(smartFhBranch).toContain(
+      "grnNumber = await resolveGrnNumberOnSubmit(grn)",
+    );
     expect(smartFhBranch).toContain("grn_number = COALESCE(grn_number, ?)");
 
     const legacyAnchor = '} else if (effectiveStage === "finance_head") {';
-    const legacyFhBranch = legacy.slice(legacy.indexOf(legacyAnchor), legacy.indexOf(legacyAnchor) + 4000);
-    expect(legacyFhBranch).toContain("grnNumber = await resolveGrnNumberOnSubmit(grn)");
+    const legacyFhBranch = legacy.slice(
+      legacy.indexOf(legacyAnchor),
+      legacy.indexOf(legacyAnchor) + 4000,
+    );
+    expect(legacyFhBranch).toContain(
+      "grnNumber = await resolveGrnNumberOnSubmit(grn)",
+    );
     expect(legacyFhBranch).toContain("grn_number = COALESCE(grn_number, ?)");
   });
 
@@ -110,7 +125,11 @@ describe("the GRN number is allocated at final (Finance Head) approval, by which
     expect(financialYearFromPeriodCode("2026-04")).toBe("2026-27"); // the year starts in April
     expect(financialYearFromPeriodCode("2026-03")).toBe("2025-26"); // March — previous year
     expect(financialYearFromPeriodCode("2027-01")).toBe("2026-27");
-    expect(() => financialYearFromPeriodCode("")).toThrow(/invalid accounting period/i);
-    expect(() => financialYearFromPeriodCode("garbage")).toThrow(/invalid accounting period/i);
+    expect(() => financialYearFromPeriodCode("")).toThrow(
+      /invalid accounting period/i,
+    );
+    expect(() => financialYearFromPeriodCode("garbage")).toThrow(
+      /invalid accounting period/i,
+    );
   });
 });

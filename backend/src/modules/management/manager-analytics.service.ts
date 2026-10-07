@@ -47,7 +47,9 @@ interface ManagerAnalyticsSummary {
   }>;
 }
 
-export async function getManagerAnalyticsSummary(managerId: number): Promise<ManagerAnalyticsSummary> {
+export async function getManagerAnalyticsSummary(
+  managerId: number,
+): Promise<ManagerAnalyticsSummary> {
   const currentMonth = new Date().toISOString().slice(0, 7);
 
   // Team size
@@ -56,7 +58,7 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
      FROM employees
      WHERE reporting_manager_id = ?
        AND status = 'active'`,
-    [managerId]
+    [managerId],
   );
 
   // Team quality average (last 30 days)
@@ -66,7 +68,7 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
      INNER JOIN employees e ON q.employee_id = e.id
      WHERE e.reporting_manager_id = ?
        AND q.audit_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
-    [managerId]
+    [managerId],
   );
 
   // Team KPI average (current month)
@@ -76,7 +78,7 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
      INNER JOIN employees e ON k.employee_id = e.id
      WHERE e.reporting_manager_id = ?
        AND DATE_FORMAT(k.period, '%Y-%m') = ?`,
-    [managerId, currentMonth]
+    [managerId, currentMonth],
   );
 
   // 1:1 completion rate
@@ -87,12 +89,13 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
      FROM one_on_one_meetings
      WHERE manager_id = ?
        AND DATE_FORMAT(scheduled_date, '%Y-%m') = ?`,
-    [managerId, currentMonth]
+    [managerId, currentMonth],
   );
 
   const scheduled = oneOnOne[0]?.scheduled ?? 0;
   const completed = oneOnOne[0]?.completed ?? 0;
-  const completionRate = scheduled > 0 ? Math.round((completed / scheduled) * 100) : 0;
+  const completionRate =
+    scheduled > 0 ? Math.round((completed / scheduled) * 100) : 0;
 
   // PIP tracking
   const [pipStats] = await db.query<RowDataPacket[]>(
@@ -102,7 +105,7 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
      FROM performance_improvement_plans p
      INNER JOIN employees e ON p.employee_id = e.id
      WHERE e.reporting_manager_id = ?`,
-    [currentMonth, managerId]
+    [currentMonth, managerId],
   );
 
   // At-risk employees (quality < 60 OR attendance < 80%)
@@ -124,7 +127,7 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
      WHERE e.reporting_manager_id = ?
        AND e.status = 'active'
        AND (q.avg_quality < 60 OR a.attendance_pct < 80)`,
-    [managerId]
+    [managerId],
   );
 
   // Performance bands (S/A/B/C/D)
@@ -139,7 +142,7 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
      INNER JOIN employees e ON k.employee_id = e.id
      WHERE e.reporting_manager_id = ?
        AND DATE_FORMAT(k.period, '%Y-%m') = ?`,
-    [managerId, currentMonth]
+    [managerId, currentMonth],
   );
 
   // Attrition risk employees (top 10)
@@ -174,7 +177,7 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
        CASE risk_level WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
        q.avg_quality ASC
      LIMIT 10`,
-    [managerId]
+    [managerId],
   );
 
   // Team KPI by process
@@ -192,7 +195,7 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
        AND DATE_FORMAT(k.period, '%Y-%m') = ?
      GROUP BY p.id, p.name
      ORDER BY achievement_pct DESC`,
-    [managerId, currentMonth]
+    [managerId, currentMonth],
   );
 
   // Quality distribution (histogram)
@@ -212,7 +215,7 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
        AND q.audit_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
      GROUP BY score_range
      ORDER BY score_range DESC`,
-    [managerId]
+    [managerId],
   );
 
   return {
@@ -251,7 +254,8 @@ export async function getManagerAnalyticsSummary(managerId: number): Promise<Man
         target: Number(r.target ?? 0),
         actual: Number(r.actual ?? 0),
         achievement_pct: Math.round(achievement),
-        status: achievement >= 90 ? 'green' : achievement >= 75 ? 'amber' : 'red',
+        status:
+          achievement >= 90 ? "green" : achievement >= 75 ? "amber" : "red",
       };
     }),
     quality_distribution: qualityDist.map((r) => ({

@@ -1,18 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { recordWorkerRun } = vi.hoisted(() => ({ recordWorkerRun: vi.fn(async () => undefined) }));
+const { recordWorkerRun } = vi.hoisted(() => ({
+  recordWorkerRun: vi.fn(async () => undefined),
+}));
 vi.mock("../../../workers/worker-utils.js", () => ({ recordWorkerRun }));
 
-const { getAtRiskEmployeeIds } = vi.hoisted(() => ({ getAtRiskEmployeeIds: vi.fn() }));
+const { getAtRiskEmployeeIds } = vi.hoisted(() => ({
+  getAtRiskEmployeeIds: vi.fn(),
+}));
 vi.mock("../predictive-attrition.service.js", () => ({ getAtRiskEmployeeIds }));
 
-const { generateRecommendationsForEmployee } = vi.hoisted(() => ({ generateRecommendationsForEmployee: vi.fn() }));
-vi.mock("../intervention-recommendation.service.js", () => ({ generateRecommendationsForEmployee }));
+const { generateRecommendationsForEmployee } = vi.hoisted(() => ({
+  generateRecommendationsForEmployee: vi.fn(),
+}));
+vi.mock("../intervention-recommendation.service.js", () => ({
+  generateRecommendationsForEmployee,
+}));
 
 // Simulates the "already has an open case" lookup this driver runs before
 // generating — see the cron file's header for why this exists (the upsert it
 // calls into has no unique constraint to dedupe on its own).
-const { poolQuery } = vi.hoisted(() => ({ poolQuery: vi.fn(async () => [[]]) }));
+const { poolQuery } = vi.hoisted(() => ({
+  poolQuery: vi.fn(async () => [[]]),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { query: poolQuery } }));
 
 function candidate(id: string) {
@@ -40,12 +50,14 @@ describe("intervention-recommendation.cron", () => {
 
   describe("default run time", () => {
     it("defaults to 10:00, after the 09:30 daily-brief run it depends on the same signals as", async () => {
-      const { parseRunTime } = await import("../intervention-recommendation.cron.js");
+      const { parseRunTime } =
+        await import("../intervention-recommendation.cron.js");
       expect(parseRunTime(undefined)).toEqual({ hour: 10, minute: 0 });
     });
 
     it("computes a next-run delay consistent with the configured HH:mm", async () => {
-      const { millisecondsUntilNextInterventionRecommendationRun } = await import("../intervention-recommendation.cron.js");
+      const { millisecondsUntilNextInterventionRecommendationRun } =
+        await import("../intervention-recommendation.cron.js");
       process.env.INTERVENTION_RECOMMENDATIONS_TIME = "10:00";
       const now = new Date(2026, 7, 19, 8, 0, 0, 0); // 08:00 local, before today's 10:00
       const ms = millisecondsUntilNextInterventionRecommendationRun(now);
@@ -53,7 +65,8 @@ describe("intervention-recommendation.cron", () => {
     });
 
     it("rolls over to the next day when the configured time has already passed today", async () => {
-      const { millisecondsUntilNextInterventionRecommendationRun } = await import("../intervention-recommendation.cron.js");
+      const { millisecondsUntilNextInterventionRecommendationRun } =
+        await import("../intervention-recommendation.cron.js");
       process.env.INTERVENTION_RECOMMENDATIONS_TIME = "10:00";
       const now = new Date(2026, 7, 19, 11, 0, 0, 0); // after today's 10:00
       const ms = millisecondsUntilNextInterventionRecommendationRun(now);
@@ -62,7 +75,8 @@ describe("intervention-recommendation.cron", () => {
     });
 
     it("falls back to the default for an unparseable INTERVENTION_RECOMMENDATIONS_TIME", async () => {
-      const { parseRunTime } = await import("../intervention-recommendation.cron.js");
+      const { parseRunTime } =
+        await import("../intervention-recommendation.cron.js");
       expect(parseRunTime("not-a-time")).toEqual({ hour: 10, minute: 0 });
       expect(parseRunTime("25:99")).toEqual({ hour: 10, minute: 0 });
     });
@@ -70,8 +84,10 @@ describe("intervention-recommendation.cron", () => {
 
   describe("INTERVENTION_RECOMMENDATIONS_ENABLED gate", () => {
     it("is a no-op (never queries at-risk employees) when unset", async () => {
-      const { startInterventionRecommendationScheduler, stopInterventionRecommendationScheduler } =
-        await import("../intervention-recommendation.cron.js");
+      const {
+        startInterventionRecommendationScheduler,
+        stopInterventionRecommendationScheduler,
+      } = await import("../intervention-recommendation.cron.js");
       vi.useFakeTimers();
       startInterventionRecommendationScheduler();
       await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000);
@@ -79,10 +95,12 @@ describe("intervention-recommendation.cron", () => {
       stopInterventionRecommendationScheduler();
     });
 
-    it("is a no-op when explicitly \"false\"", async () => {
+    it('is a no-op when explicitly "false"', async () => {
       process.env.INTERVENTION_RECOMMENDATIONS_ENABLED = "false";
-      const { startInterventionRecommendationScheduler, stopInterventionRecommendationScheduler } =
-        await import("../intervention-recommendation.cron.js");
+      const {
+        startInterventionRecommendationScheduler,
+        stopInterventionRecommendationScheduler,
+      } = await import("../intervention-recommendation.cron.js");
       vi.useFakeTimers();
       startInterventionRecommendationScheduler();
       await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000);
@@ -110,7 +128,8 @@ describe("intervention-recommendation.cron", () => {
   describe("population targeting", () => {
     it("requests only HIGH+CRITICAL tier (minScore=55) candidates, bounded to 300", async () => {
       getAtRiskEmployeeIds.mockResolvedValue([]);
-      const { runInterventionRecommendationGeneration } = await import("../intervention-recommendation.cron.js");
+      const { runInterventionRecommendationGeneration } =
+        await import("../intervention-recommendation.cron.js");
 
       await runInterventionRecommendationGeneration();
 
@@ -120,11 +139,16 @@ describe("intervention-recommendation.cron", () => {
 
   describe("dedup against the upsert's missing unique constraint (see file header)", () => {
     it("skips candidates who already have an open (action_taken=0) case instead of duplicating it", async () => {
-      getAtRiskEmployeeIds.mockResolvedValue([candidate("e1"), candidate("e2"), candidate("e3")]);
+      getAtRiskEmployeeIds.mockResolvedValue([
+        candidate("e1"),
+        candidate("e2"),
+        candidate("e3"),
+      ]);
       poolQuery.mockResolvedValue([[{ employee_id: "e2" }]]); // e2 already has an open case
       generateRecommendationsForEmployee.mockResolvedValue({});
 
-      const { runInterventionRecommendationGeneration } = await import("../intervention-recommendation.cron.js");
+      const { runInterventionRecommendationGeneration } =
+        await import("../intervention-recommendation.cron.js");
       const summary = await runInterventionRecommendationGeneration();
 
       expect(generateRecommendationsForEmployee).toHaveBeenCalledTimes(2);
@@ -137,12 +161,19 @@ describe("intervention-recommendation.cron", () => {
 
   describe("resilience: one employee failing never aborts the run", () => {
     it("processes the other candidates when one of three throws", async () => {
-      getAtRiskEmployeeIds.mockResolvedValue([candidate("e1"), candidate("e2"), candidate("e3")]);
-      generateRecommendationsForEmployee.mockImplementation(async (id: string) => {
-        if (id === "e2") throw new Error("boom");
-        return {};
-      });
-      const { runInterventionRecommendationGeneration } = await import("../intervention-recommendation.cron.js");
+      getAtRiskEmployeeIds.mockResolvedValue([
+        candidate("e1"),
+        candidate("e2"),
+        candidate("e3"),
+      ]);
+      generateRecommendationsForEmployee.mockImplementation(
+        async (id: string) => {
+          if (id === "e2") throw new Error("boom");
+          return {};
+        },
+      );
+      const { runInterventionRecommendationGeneration } =
+        await import("../intervention-recommendation.cron.js");
 
       const summary = await runInterventionRecommendationGeneration();
 
@@ -155,7 +186,9 @@ describe("intervention-recommendation.cron", () => {
 
   describe("bounded concurrency", () => {
     it("never has more than BATCH_SIZE generateRecommendationsForEmployee calls in flight at once", async () => {
-      const candidates = Array.from({ length: 17 }, (_, i) => candidate(`e${i}`));
+      const candidates = Array.from({ length: 17 }, (_, i) =>
+        candidate(`e${i}`),
+      );
       getAtRiskEmployeeIds.mockResolvedValue(candidates);
 
       let inFlight = 0;
@@ -172,13 +205,18 @@ describe("intervention-recommendation.cron", () => {
         });
       });
 
-      const { runInterventionRecommendationGeneration } = await import("../intervention-recommendation.cron.js");
+      const { runInterventionRecommendationGeneration } =
+        await import("../intervention-recommendation.cron.js");
       const runPromise = runInterventionRecommendationGeneration();
 
       let runSettled = false;
       runPromise.then(
-        () => { runSettled = true; },
-        () => { runSettled = true; },
+        () => {
+          runSettled = true;
+        },
+        () => {
+          runSettled = true;
+        },
       );
 
       const MAX_ROUNDS = 1000;

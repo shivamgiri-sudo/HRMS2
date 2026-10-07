@@ -53,7 +53,12 @@ export type EpfValidationSummary = {
   ready_for_submission: boolean;
   ecr_ready: boolean;
   missing_fields: string[];
-  inferred_status: "draft" | "hr_fill_required" | "employee_review_pending" | "payroll_review_pending" | "ready";
+  inferred_status:
+    | "draft"
+    | "hr_fill_required"
+    | "employee_review_pending"
+    | "payroll_review_pending"
+    | "ready";
   uan_hash: string | null;
   aadhaar_hash: string | null;
   pan_hash: string | null;
@@ -67,8 +72,12 @@ function digitsOnly(value: unknown) {
 }
 
 function hashValue(value: unknown) {
-  const normalized = String(value ?? "").trim().toUpperCase();
-  return normalized ? createHash("sha256").update(normalized).digest("hex") : null;
+  const normalized = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  return normalized
+    ? createHash("sha256").update(normalized).digest("hex")
+    : null;
 }
 
 function maskDigits(value: unknown, last = 4) {
@@ -78,7 +87,9 @@ function maskDigits(value: unknown, last = 4) {
 }
 
 function maskPan(value: unknown) {
-  const pan = String(value ?? "").trim().toUpperCase();
+  const pan = String(value ?? "")
+    .trim()
+    .toUpperCase();
   if (!pan) return null;
   return `${pan.slice(0, 3)}XXXX${pan.slice(-2)}`;
 }
@@ -120,13 +131,29 @@ export async function validateEpfCompliance(
   const uanDigits = digitsOnly(profile.uan_number);
 
   const requiredChecks: Array<[string, string, string | null]> = [
-    ["employee_name", "Employee name is required for EPF declaration.", employeeName],
-    ["father_or_spouse_name", "Father or spouse name is required.", fatherOrSpouseName],
-    ["relationship_type", "Relationship type must be selected.", relationshipType],
+    [
+      "employee_name",
+      "Employee name is required for EPF declaration.",
+      employeeName,
+    ],
+    [
+      "father_or_spouse_name",
+      "Father or spouse name is required.",
+      fatherOrSpouseName,
+    ],
+    [
+      "relationship_type",
+      "Relationship type must be selected.",
+      relationshipType,
+    ],
     ["date_of_birth", "Date of birth is required.", dateOfBirth],
     ["mobile_number", "Mobile number is required.", mobileNumber || null],
     ["joining_date", "Date of joining is required.", joiningDate],
-    ["personal_email", "Personal email is required for employee review.", personalEmail],
+    [
+      "personal_email",
+      "Personal email is required for employee review.",
+      personalEmail,
+    ],
   ];
 
   for (const [fieldName, message, value] of requiredChecks) {
@@ -158,7 +185,8 @@ export async function validateEpfCompliance(
       code: "UAN_REQUIRED_FOR_PREVIOUS_PF",
       severity: "error",
       status: "failed",
-      message: "UAN is required when the employee declares previous PF membership.",
+      message:
+        "UAN is required when the employee declares previous PF membership.",
       field_name: "uan_number",
     });
   }
@@ -168,7 +196,8 @@ export async function validateEpfCompliance(
       code: "EPS_WITHOUT_PF",
       severity: "error",
       status: "failed",
-      message: "Previous EPS membership cannot be marked without previous PF membership.",
+      message:
+        "Previous EPS membership cannot be marked without previous PF membership.",
       field_name: "previous_eps_member",
     });
   }
@@ -184,7 +213,10 @@ export async function validateEpfCompliance(
     });
   }
 
-  const nomineeTotal = nominees.reduce((sum, nominee) => sum + Number(nominee.share_percentage ?? 0), 0);
+  const nomineeTotal = nominees.reduce(
+    (sum, nominee) => sum + Number(nominee.share_percentage ?? 0),
+    0,
+  );
   if (nominees.length === 0) {
     missingFields.push("nominees");
     issues.push({
@@ -227,7 +259,7 @@ export async function validateEpfCompliance(
   });
 
   const uanHash = hashValue(uanDigits);
-  if (uanHash && await findDuplicateUan(uanHash, employeeId)) {
+  if (uanHash && (await findDuplicateUan(uanHash, employeeId))) {
     issues.push({
       code: "UAN_DUPLICATE",
       severity: "error",
@@ -237,12 +269,17 @@ export async function validateEpfCompliance(
     });
   }
 
-  if (grossMonthlyWage > 15000 && !profile.excluded_employee && !profile.previous_pf_member) {
+  if (
+    grossMonthlyWage > 15000 &&
+    !profile.excluded_employee &&
+    !profile.previous_pf_member
+  ) {
     issues.push({
       code: "WAGE_CEILING_WARNING",
       severity: "warning",
       status: "failed",
-      message: "Gross monthly wage is above the usual EPF wage ceiling. Review excluded employee handling before approval.",
+      message:
+        "Gross monthly wage is above the usual EPF wage ceiling. Review excluded employee handling before approval.",
       field_name: "gross_monthly_wage",
       payload: { gross_monthly_wage: grossMonthlyWage },
     });
@@ -253,16 +290,18 @@ export async function validateEpfCompliance(
       code: "INTERNATIONAL_WORKER_REVIEW",
       severity: "info",
       status: "failed",
-      message: "International worker cases require payroll review before ECR readiness.",
+      message:
+        "International worker cases require payroll review before ECR readiness.",
       field_name: "international_worker",
     });
   }
 
   const hasErrors = issues.some((issue) => issue.severity === "error");
-  const inferredStatus: EpfValidationSummary["inferred_status"] =
-    hasErrors ? "hr_fill_required"
-      : missingFields.length > 0 ? "employee_review_pending"
-        : "ready";
+  const inferredStatus: EpfValidationSummary["inferred_status"] = hasErrors
+    ? "hr_fill_required"
+    : missingFields.length > 0
+      ? "employee_review_pending"
+      : "ready";
 
   return {
     issues,

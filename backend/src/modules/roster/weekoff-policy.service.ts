@@ -25,7 +25,8 @@ interface WeekOffPolicyDefaultRow extends RowDataPacket {
   scope_type: "global" | "branch" | "process";
 }
 
-export type WeekOffScopeSource = "process_default" | "branch_default" | "global_default";
+export type WeekOffScopeSource =
+  "process_default" | "branch_default" | "global_default";
 
 /**
  * Tier 3 (process) -> tier 4 (branch) -> tier 5 (organization/global), most
@@ -37,7 +38,7 @@ export type WeekOffScopeSource = "process_default" | "branch_default" | "global_
  */
 export async function resolveWeekOffScopeDefault(
   processId: string,
-  branchId: string | null
+  branchId: string | null,
 ): Promise<{ day: number; source: WeekOffScopeSource } | null> {
   const today = new Date().toISOString().slice(0, 10);
   try {
@@ -58,19 +59,26 @@ export async function resolveWeekOffScopeDefault(
             ELSE 3
           END
         LIMIT 1`,
-      [today, today, processId, branchId]
+      [today, today, processId, branchId],
     );
     const row = rows[0];
     if (!row) return null;
     const source: WeekOffScopeSource =
-      row.scope_type === "process" ? "process_default" : row.scope_type === "branch" ? "branch_default" : "global_default";
+      row.scope_type === "process"
+        ? "process_default"
+        : row.scope_type === "branch"
+          ? "branch_default"
+          : "global_default";
     return { day: Number(row.default_week_off_day), source };
   } catch (error) {
     // Table may not exist yet on a DB that hasn't had migration 1202 applied
     // (this migration is registered but not force-run) — degrade to
     // "nothing configured", same outcome as an empty table, rather than
     // failing generation entirely.
-    console.error("[roster] week_off_policy_default lookup unavailable; treating as unconfigured:", (error as Error)?.message);
+    console.error(
+      "[roster] week_off_policy_default lookup unavailable; treating as unconfigured:",
+      (error as Error)?.message,
+    );
     return null;
   }
 }
@@ -93,14 +101,20 @@ export interface RosterTemplatePattern {
  * 060_roster_master.sql's "5-Day Week (Mon-Fri)" template (cycle_days=7,
  * seven day entries, day_number 1 and 7 marked is_week_off:true).
  */
-export function parseRosterTemplatePattern(patternJson: unknown): RosterTemplatePattern | null {
+export function parseRosterTemplatePattern(
+  patternJson: unknown,
+): RosterTemplatePattern | null {
   try {
-    const parsed = typeof patternJson === "string" ? JSON.parse(patternJson) : patternJson;
+    const parsed =
+      typeof patternJson === "string" ? JSON.parse(patternJson) : patternJson;
     if (parsed && Array.isArray((parsed as RosterTemplatePattern).days)) {
       return parsed as RosterTemplatePattern;
     }
   } catch (error) {
-    console.error("[roster] roster_template.pattern_json malformed; treating template tier as unresolved:", (error as Error)?.message);
+    console.error(
+      "[roster] roster_template.pattern_json malformed; treating template tier as unresolved:",
+      (error as Error)?.message,
+    );
   }
   return null;
 }
@@ -112,8 +126,13 @@ export function parseRosterTemplatePattern(patternJson: unknown): RosterTemplate
  * so the caller can still fall through to the next tier rather than treat a
  * short/malformed pattern as "definitely not a week-off."
  */
-export function isWeekOffByTemplate(pattern: RosterTemplatePattern, dateIndexInCycle: number): boolean | null {
-  const entry = pattern.days?.find((d) => d.day_number === dateIndexInCycle + 1);
+export function isWeekOffByTemplate(
+  pattern: RosterTemplatePattern,
+  dateIndexInCycle: number,
+): boolean | null {
+  const entry = pattern.days?.find(
+    (d) => d.day_number === dateIndexInCycle + 1,
+  );
   if (!entry) return null;
   return !!entry.is_week_off;
 }

@@ -21,7 +21,7 @@ export interface ColumnMapping {
 }
 
 export interface ParsedStatementLine {
-  txn_date: string;      // YYYY-MM-DD
+  txn_date: string; // YYYY-MM-DD
   description: string;
   reference: string | null;
   debit_amount: number;
@@ -30,7 +30,10 @@ export interface ParsedStatementLine {
 
 function columnIndex(headers: string[], name: string): number {
   const idx = headers.indexOf(name);
-  if (idx === -1) throw new Error(`Column mapping refers to "${name}", which is not in the uploaded file's header row.`);
+  if (idx === -1)
+    throw new Error(
+      `Column mapping refers to "${name}", which is not in the uploaded file's header row.`,
+    );
   return idx;
 }
 
@@ -45,17 +48,25 @@ function toIsoDate(value: unknown): string | null {
   const str = String(value).trim();
   // DD/MM/YYYY (the common Indian bank export format)
   const dmy = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+  if (dmy)
+    return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
   // YYYY-MM-DD already
   const iso = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  if (iso)
+    return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
   return null;
 }
 
-export function parseStatementRows(headers: string[], rows: unknown[][], mapping: ColumnMapping): ParsedStatementLine[] {
+export function parseStatementRows(
+  headers: string[],
+  rows: unknown[][],
+  mapping: ColumnMapping,
+): ParsedStatementLine[] {
   const dateIdx = columnIndex(headers, mapping.date);
   const descIdx = columnIndex(headers, mapping.description);
-  const refIdx = mapping.reference ? columnIndex(headers, mapping.reference) : -1;
+  const refIdx = mapping.reference
+    ? columnIndex(headers, mapping.reference)
+    : -1;
   const debitIdx = mapping.debit ? columnIndex(headers, mapping.debit) : -1;
   const creditIdx = mapping.credit ? columnIndex(headers, mapping.credit) : -1;
   const amountIdx = mapping.amount ? columnIndex(headers, mapping.amount) : -1;
@@ -69,7 +80,8 @@ export function parseStatementRows(headers: string[], rows: unknown[][], mapping
     let credit_amount = 0;
     if (amountIdx !== -1) {
       const signed = toNumber(row[amountIdx]);
-      if (signed < 0) debit_amount = Math.abs(signed); else credit_amount = signed;
+      if (signed < 0) debit_amount = Math.abs(signed);
+      else credit_amount = signed;
     } else {
       if (debitIdx !== -1) debit_amount = toNumber(row[debitIdx]);
       if (creditIdx !== -1) credit_amount = toNumber(row[creditIdx]);
@@ -79,7 +91,8 @@ export function parseStatementRows(headers: string[], rows: unknown[][], mapping
     result.push({
       txn_date,
       description: String(row[descIdx] ?? "").trim(),
-      reference: refIdx !== -1 && row[refIdx] ? String(row[refIdx]).trim() : null,
+      reference:
+        refIdx !== -1 && row[refIdx] ? String(row[refIdx]).trim() : null,
       debit_amount,
       credit_amount,
     });
@@ -92,26 +105,53 @@ export const bankStatementImportService = {
   parseWorkbook(buffer: Buffer): { headers: string[]; rows: unknown[][] } {
     const workbook = XLSX.read(buffer, { type: "buffer" });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: "" });
+    const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+    });
     const [headerRow, ...dataRows] = matrix;
-    return { headers: (headerRow ?? []).map((h) => String(h).trim()), rows: dataRows };
+    return {
+      headers: (headerRow ?? []).map((h) => String(h).trim()),
+      rows: dataRows,
+    };
   },
 
   async saveImport(
-    bankAccountId: string, periodId: string, filename: string,
-    mapping: ColumnMapping, lines: ParsedStatementLine[], importedBy: string,
+    bankAccountId: string,
+    periodId: string,
+    filename: string,
+    mapping: ColumnMapping,
+    lines: ParsedStatementLine[],
+    importedBy: string,
   ): Promise<{ importId: string; rowCount: number }> {
     const importId = randomUUID();
     await db.execute<ResultSetHeader>(
       `INSERT INTO bank_statement_import (id, bank_account_id, period_id, original_filename, column_mapping, imported_by, row_count)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [importId, bankAccountId, periodId, filename, JSON.stringify(mapping), importedBy, lines.length],
+      [
+        importId,
+        bankAccountId,
+        periodId,
+        filename,
+        JSON.stringify(mapping),
+        importedBy,
+        lines.length,
+      ],
     );
     if (lines.length > 0) {
       const placeholders = lines.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ");
       const values: unknown[] = [];
       for (const line of lines) {
-        values.push(randomUUID(), importId, line.txn_date, line.description, line.reference, line.debit_amount, line.credit_amount);
+        values.push(
+          randomUUID(),
+          importId,
+          line.txn_date,
+          line.description,
+          line.reference,
+          line.debit_amount,
+          line.credit_amount,
+        );
       }
       await db.execute<ResultSetHeader>(
         `INSERT INTO bank_statement_line (id, import_id, txn_date, description, reference, debit_amount, credit_amount) VALUES ${placeholders}`,

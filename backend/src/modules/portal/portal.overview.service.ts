@@ -13,7 +13,9 @@ function computeRag(achievementPct: number): "green" | "amber" | "red" {
 }
 
 /** kpi-scorecard.service.ts's good/warn/crit vocabulary -> this file's green/amber/red. */
-function mapScorecardRag(rag: "good" | "warn" | "crit" | null): "green" | "amber" | "red" | null {
+function mapScorecardRag(
+  rag: "good" | "warn" | "crit" | null,
+): "green" | "amber" | "red" | null {
   if (rag === "good") return "green";
   if (rag === "warn") return "amber";
   if (rag === "crit") return "red";
@@ -38,19 +40,31 @@ function mapScorecardRag(rag: "good" | "warn" | "crit" | null): "green" | "amber
  * were one. The first real reading always sets the card's rag outright; every reading after
  * that follows the real red/amber/green urgency ordering (RAG_PRIORITY_REAL) among themselves.
  */
-const RAG_PRIORITY_REAL: Record<"red" | "amber" | "green", number> = { red: 0, amber: 1, green: 2 };
+const RAG_PRIORITY_REAL: Record<"red" | "amber" | "green", number> = {
+  red: 0,
+  amber: 1,
+  green: 2,
+};
 function escalate(card: ProcessCard, rag: "green" | "amber" | "red"): void {
   if (card.rag === "no_data") {
     card.rag = rag;
     return;
   }
-  if (card.rag !== "red" && card.rag !== "amber" && card.rag !== "green") return;
+  if (card.rag !== "red" && card.rag !== "amber" && card.rag !== "green")
+    return;
   if (RAG_PRIORITY_REAL[rag] < RAG_PRIORITY_REAL[card.rag]) card.rag = rag;
 }
 
-function computeAchievement(actual: number, target: number, direction: string): number {
+function computeAchievement(
+  actual: number,
+  target: number,
+  direction: string,
+): number {
   if (target === 0) return 0;
-  const raw = direction === "higher_is_better" ? (actual / target) * 100 : (target / actual) * 100;
+  const raw =
+    direction === "higher_is_better"
+      ? (actual / target) * 100
+      : (target / actual) * 100;
   return Math.min(Math.round(raw * 100) / 100, 120);
 }
 
@@ -64,12 +78,36 @@ export const portalOverviewService = {
           client_name: "Airtel India",
           rag: "amber",
           headline_metrics: [
-            { metric_code: "CSAT", metric_name: "Customer Satisfaction", unit: "%", actual: 88.5, target: 90.0, achievement_pct: 98.33, rag: "green" },
-            { metric_code: "AHT", metric_name: "Average Handle Time", unit: "s", actual: 320, target: 280, achievement_pct: 87.5, rag: "amber" },
-            { metric_code: "FCR", metric_name: "First Contact Resolution", unit: "%", actual: 74.0, target: 80.0, achievement_pct: 92.5, rag: "green" }
+            {
+              metric_code: "CSAT",
+              metric_name: "Customer Satisfaction",
+              unit: "%",
+              actual: 88.5,
+              target: 90.0,
+              achievement_pct: 98.33,
+              rag: "green",
+            },
+            {
+              metric_code: "AHT",
+              metric_name: "Average Handle Time",
+              unit: "s",
+              actual: 320,
+              target: 280,
+              achievement_pct: 87.5,
+              rag: "amber",
+            },
+            {
+              metric_code: "FCR",
+              metric_name: "First Contact Resolution",
+              unit: "%",
+              actual: 74.0,
+              target: 80.0,
+              achievement_pct: 92.5,
+              rag: "green",
+            },
           ],
-          last_updated: new Date().toISOString()
-        }
+          last_updated: new Date().toISOString(),
+        },
       ];
     }
     if (processIds.length === 0) return [];
@@ -83,7 +121,7 @@ export const portalOverviewService = {
        JOIN client_master cm ON cm.id = p.client_id
        WHERE p.id IN (${placeholders}) AND p.active_status = 1
        ORDER BY p.process_name`,
-      processIds
+      processIds,
     );
 
     const processMap = new Map<string, ProcessCard>();
@@ -125,22 +163,32 @@ export const portalOverviewService = {
          LEFT JOIN kpi_score ks ON ks.metric_id = m.id AND ks.period = ?
          WHERE p.id IN (${placeholders}) AND p.active_status = 1
          ORDER BY p.id, m.metric_code`,
-        [currentPeriod, ...processIds]
+        [currentPeriod, ...processIds],
       );
 
       for (const row of scoreRows as RowDataPacket[]) {
         const card = processMap.get(row.process_id);
         if (!card) continue;
-        if (row.last_updated && (!card.last_updated || row.last_updated > card.last_updated)) {
+        if (
+          row.last_updated &&
+          (!card.last_updated || row.last_updated > card.last_updated)
+        ) {
           card.last_updated = row.last_updated;
         }
-        if (HEADLINE_METRICS.includes(row.metric_code) && row.actual_value != null) {
+        if (
+          HEADLINE_METRICS.includes(row.metric_code) &&
+          row.actual_value != null
+        ) {
           // Only a real actual_value is a real reading. A null one used to be
           // scored as achievement 0 -> rag "red", which put every unconfigured
           // process's legacy headline metrics in "red" rather than leaving them
           // out -- indistinguishable from a process that IS measured and IS
           // failing badly.
-          const ach = computeAchievement(row.actual_value, row.target_value, row.direction);
+          const ach = computeAchievement(
+            row.actual_value,
+            row.target_value,
+            row.direction,
+          );
           const rag = computeRag(ach);
           card.headline_metrics.push({
             metric_code: row.metric_code,
@@ -185,7 +233,11 @@ export const portalOverviewService = {
     // of the slowest single process instead.
     const processIdList = Array.from(processMap.keys());
     const scorecardResults = await Promise.all(
-      processIdList.map((processId) => getKpiScorecardsForProcessId(processId, sixMonthWindow).catch(() => null))
+      processIdList.map((processId) =>
+        getKpiScorecardsForProcessId(processId, sixMonthWindow).catch(
+          () => null,
+        ),
+      ),
     );
     for (let i = 0; i < processIdList.length; i++) {
       const rows = scorecardResults[i];
@@ -201,8 +253,17 @@ export const portalOverviewService = {
           unit: r.unit,
           actual: r.actual,
           target: r.target,
-          achievement_pct: r.actual == null ? null
-            : Math.min(Math.round((r.direction === "higher_is_better" ? r.actual / r.target : r.target / r.actual) * 10000) / 100, 120),
+          achievement_pct:
+            r.actual == null
+              ? null
+              : Math.min(
+                  Math.round(
+                    (r.direction === "higher_is_better"
+                      ? r.actual / r.target
+                      : r.target / r.actual) * 10000,
+                  ) / 100,
+                  120,
+                ),
           rag,
         });
         escalate(card, rag);
@@ -228,7 +289,11 @@ export const portalOverviewService = {
     // show whichever pass found something real, following the same non-destructive
     // escalate() merge every earlier pass in this function already uses.
     const engineResults = await Promise.all(
-      processIdList.map((processId) => portalKpiEngine.computeHeadlineMetrics(processId, currentPeriod).catch(() => null)),
+      processIdList.map((processId) =>
+        portalKpiEngine
+          .computeHeadlineMetrics(processId, currentPeriod)
+          .catch(() => null),
+      ),
     );
     for (let i = 0; i < processIdList.length; i++) {
       const metrics = engineResults[i];
@@ -250,7 +315,12 @@ export const portalOverviewService = {
     }
 
     const cards = Array.from(processMap.values());
-    const order: Record<PortalRag, number> = { red: 0, amber: 1, no_data: 2, green: 3 };
+    const order: Record<PortalRag, number> = {
+      red: 0,
+      amber: 1,
+      no_data: 2,
+      green: 3,
+    };
     return cards.sort((a, b) => order[a.rag] - order[b.rag]);
   },
 };

@@ -2,7 +2,7 @@ import type {
   CreateProcessInput,
   ProcessFilters,
   ProcessMaster,
-  UpdateProcessInput
+  UpdateProcessInput,
 } from "./process.types.js";
 import { getProcessRepository } from "./process.repository.js";
 import { randomUUID } from "crypto";
@@ -33,19 +33,20 @@ export const processService = {
 
   async create(
     input: CreateProcessInput,
-    userId: string
+    userId: string,
   ): Promise<ProcessMaster> {
     const repository = getProcessRepository();
 
     const existing = await repository.list({
       search: input.processCode,
-      activeStatus: "all"
+      activeStatus: "all",
     });
 
     const duplicate = existing.find(
       (item) =>
         item.process_code.toLowerCase() === input.processCode.toLowerCase() ||
-        item.process_name.trim().toLowerCase() === input.processName.trim().toLowerCase()
+        item.process_name.trim().toLowerCase() ===
+          input.processName.trim().toLowerCase(),
     );
 
     if (duplicate) {
@@ -58,7 +59,7 @@ export const processService = {
   async update(
     id: string,
     input: UpdateProcessInput,
-    userId: string
+    userId: string,
   ): Promise<ProcessMaster> {
     const repository = getProcessRepository();
 
@@ -74,7 +75,7 @@ export const processService = {
   async updateStatus(
     id: string,
     activeStatus: boolean,
-    userId: string
+    userId: string,
   ): Promise<ProcessMaster> {
     const repository = getProcessRepository();
 
@@ -94,7 +95,7 @@ export const processService = {
          FROM process_configuration
         WHERE process_id = ?
           AND active_status = 1`,
-      [processId]
+      [processId],
     );
 
     return rows.reduce<Record<string, unknown>>((configuration, row) => {
@@ -114,7 +115,7 @@ export const processService = {
   async saveConfiguration(
     processId: string,
     values: Record<string, unknown>,
-    userId: string
+    userId: string,
   ): Promise<Record<string, unknown>> {
     await this.getById(processId);
     const connection = await db.getConnection();
@@ -130,7 +131,14 @@ export const processService = {
              active_status = 1,
              updated_by = VALUES(updated_by),
              updated_at = CURRENT_TIMESTAMP`,
-          [randomUUID(), processId, key, JSON.stringify(value ?? null), userId, userId]
+          [
+            randomUUID(),
+            processId,
+            key,
+            JSON.stringify(value ?? null),
+            userId,
+            userId,
+          ],
         );
       }
       await connection.commit();
@@ -142,5 +150,5 @@ export const processService = {
     }
 
     return this.getConfiguration(processId);
-  }
+  },
 };

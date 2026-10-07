@@ -19,7 +19,11 @@ import {
   type DbChecklistRule,
   type SuppliedVerdict,
 } from "../uat-checklist.service.js";
-import type { CapabilityHit, ProtectedHit, StaticScanResult } from "../uat-pipeline.types.js";
+import type {
+  CapabilityHit,
+  ProtectedHit,
+  StaticScanResult,
+} from "../uat-pipeline.types.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -97,7 +101,16 @@ function allPassVerdicts(itemKeys: string[]): SuppliedVerdict[] {
   }));
 }
 
-const ALL_ITEMS = ["BR-01", "BR-02", "BR-02b", "BR-03", "BR-04", "CS-01", "SR-01", "CS-04"];
+const ALL_ITEMS = [
+  "BR-01",
+  "BR-02",
+  "BR-02b",
+  "BR-03",
+  "BR-04",
+  "CS-01",
+  "SR-01",
+  "CS-04",
+];
 const BLOCKING = new Set(ALL_ITEMS);
 
 // ── worstOf ───────────────────────────────────────────────────────────────────
@@ -111,7 +124,12 @@ describe("worstOf", () => {
   });
 
   it("ranks fail above every other verdict", () => {
-    for (const v of ["pass", "warn", "undetermined", "not_applicable"] as const) {
+    for (const v of [
+      "pass",
+      "warn",
+      "undetermined",
+      "not_applicable",
+    ] as const) {
       expect(worstOf(r("fail"), r(v)).verdict).toBe("fail");
       expect(worstOf(r(v), r("fail")).verdict).toBe("fail");
     }
@@ -119,11 +137,19 @@ describe("worstOf", () => {
 
   it("ranks undetermined above pass — an unevaluated item is not a cleared item", () => {
     expect(worstOf(r("pass"), r("undetermined")).verdict).toBe("undetermined");
-    expect(worstOf(r("not_applicable"), r("undetermined")).verdict).toBe("undetermined");
+    expect(worstOf(r("not_applicable"), r("undetermined")).verdict).toBe(
+      "undetermined",
+    );
   });
 
   it("is order-independent", () => {
-    const verdicts = ["pass", "warn", "undetermined", "not_applicable", "fail"] as const;
+    const verdicts = [
+      "pass",
+      "warn",
+      "undetermined",
+      "not_applicable",
+      "fail",
+    ] as const;
     for (const a of verdicts) {
       for (const b of verdicts) {
         expect(worstOf(r(a), r(b)).verdict).toBe(worstOf(r(b), r(a)).verdict);
@@ -146,7 +172,7 @@ describe("a DB rule set cannot loosen the floor", () => {
     const merged = mergeLayers(
       evaluateFloor(s),
       evaluateCapabilities(s),
-      evaluateDbRules(allPassRules(ALL_ITEMS), allPassVerdicts(ALL_ITEMS))
+      evaluateDbRules(allPassRules(ALL_ITEMS), allPassVerdicts(ALL_ITEMS)),
     );
     const gate = gateFor(s, merged, BLOCKING);
 
@@ -169,7 +195,7 @@ describe("a DB rule set cannot loosen the floor", () => {
     const merged = mergeLayers(
       evaluateFloor(s),
       evaluateCapabilities(s),
-      evaluateDbRules(allPassRules(ALL_ITEMS), allPassVerdicts(ALL_ITEMS))
+      evaluateDbRules(allPassRules(ALL_ITEMS), allPassVerdicts(ALL_ITEMS)),
     );
     const gate = gateFor(s, merged, BLOCKING);
 
@@ -180,20 +206,42 @@ describe("a DB rule set cannot loosen the floor", () => {
   it("ignores a DB row that claims to speak for a floor item", () => {
     // isFloor rows are skipped outright, so the merge never even sees a competing verdict.
     const rules: DbChecklistRule[] = [
-      { itemKey: "BR-01", failureMode: "warn", isFloor: true, ruleVersion: 2, evaluator: "llm" },
+      {
+        itemKey: "BR-01",
+        failureMode: "warn",
+        isFloor: true,
+        ruleVersion: 2,
+        evaluator: "llm",
+      },
     ];
     const produced = evaluateDbRules(rules, [
-      { itemKey: "BR-01", verdict: "pass", evidence: "trust me", source: "llm" },
+      {
+        itemKey: "BR-01",
+        verdict: "pass",
+        evidence: "trust me",
+        source: "llm",
+      },
     ]);
     expect(produced).toHaveLength(0);
   });
 
   it("cannot promote a warn-mode rule into a fail, nor a fail into a pass", () => {
     const rules: DbChecklistRule[] = [
-      { itemKey: "OP-05", failureMode: "warn", isFloor: false, ruleVersion: 1, evaluator: "llm" },
+      {
+        itemKey: "OP-05",
+        failureMode: "warn",
+        isFloor: false,
+        ruleVersion: 1,
+        evaluator: "llm",
+      },
     ];
     const out = evaluateDbRules(rules, [
-      { itemKey: "OP-05", verdict: "fail", evidence: "slow build", source: "llm" },
+      {
+        itemKey: "OP-05",
+        verdict: "fail",
+        evidence: "slow build",
+        source: "llm",
+      },
     ]);
     // Downgraded at the point of evaluation, so the stored row matches what the gate saw.
     expect(out[0].verdict).toBe("warn");
@@ -203,7 +251,13 @@ describe("a DB rule set cannot loosen the floor", () => {
 describe("fail closed", () => {
   it("treats a blocking rule with no supplied verdict as undetermined, not pass", () => {
     const rules: DbChecklistRule[] = [
-      { itemKey: "CG-01", failureMode: "block", isFloor: false, ruleVersion: 1, evaluator: "llm" },
+      {
+        itemKey: "CG-01",
+        failureMode: "block",
+        isFloor: false,
+        ruleVersion: 1,
+        evaluator: "llm",
+      },
     ];
     const out = evaluateDbRules(rules, []);
     expect(out[0].verdict).toBe("undetermined");
@@ -230,7 +284,9 @@ describe("fail closed", () => {
 
     expect(gate.outcome).toBe("needs_approval");
     expect(gate.requiredApproverRoles).toContain("hr_head");
-    expect(merged.find((r) => r.itemKey === "BR-02b")?.verdict).toBe("undetermined");
+    expect(merged.find((r) => r.itemKey === "BR-02b")?.verdict).toBe(
+      "undetermined",
+    );
   });
 
   it("does not mark a review-tier path hit as passed", () => {
@@ -248,7 +304,9 @@ describe("fail closed", () => {
       effectiveRisk: "review",
     });
     const merged = mergeLayers(evaluateFloor(s), evaluateCapabilities(s));
-    expect(merged.find((r) => r.itemKey === "BR-02")?.verdict).toBe("undetermined");
+    expect(merged.find((r) => r.itemKey === "BR-02")?.verdict).toBe(
+      "undetermined",
+    );
     expect(gateFor(s, merged, BLOCKING).outcome).toBe("needs_approval");
   });
 });
@@ -263,20 +321,29 @@ describe("the merge is monotone", () => {
       effectiveRisk: "deny",
     });
 
-    const RANK = { not_applicable: 0, pass: 1, undetermined: 2, warn: 3, fail: 4 } as const;
+    const RANK = {
+      not_applicable: 0,
+      pass: 1,
+      undetermined: 2,
+      warn: 3,
+      fail: 4,
+    } as const;
     const base = mergeLayers(evaluateFloor(s), evaluateCapabilities(s));
     const withDb = mergeLayers(
       evaluateFloor(s),
       evaluateCapabilities(s),
-      evaluateDbRules(allPassRules(ALL_ITEMS), allPassVerdicts(ALL_ITEMS))
+      evaluateDbRules(allPassRules(ALL_ITEMS), allPassVerdicts(ALL_ITEMS)),
     );
 
     for (const b of base) {
       const after = withDb.find((r) => r.itemKey === b.itemKey);
-      expect(after, `item ${b.itemKey} disappeared after merging the DB layer`).toBeDefined();
+      expect(
+        after,
+        `item ${b.itemKey} disappeared after merging the DB layer`,
+      ).toBeDefined();
       expect(
         RANK[after!.verdict],
-        `item ${b.itemKey} was loosened from ${b.verdict} to ${after!.verdict}`
+        `item ${b.itemKey} was loosened from ${b.verdict} to ${after!.verdict}`,
       ).toBeGreaterThanOrEqual(RANK[b.verdict]);
     }
   });

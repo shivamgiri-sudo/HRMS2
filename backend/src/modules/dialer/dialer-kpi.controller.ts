@@ -1,5 +1,5 @@
-import type { Request, Response } from 'express';
-import { DialerKpiSync } from '../../workers/domains/dialer-kpi-sync.js';
+import type { Request, Response } from "express";
+import { DialerKpiSync } from "../../workers/domains/dialer-kpi-sync.js";
 
 const dialerKpiSync = new DialerKpiSync();
 
@@ -16,7 +16,7 @@ export async function getEmployeeKpiMetrics(req: Request, res: Response) {
     if (!metrics) {
       return res.status(404).json({
         success: false,
-        message: 'No dialer data found for employee on this date',
+        message: "No dialer data found for employee on this date",
       });
     }
 
@@ -25,7 +25,7 @@ export async function getEmployeeKpiMetrics(req: Request, res: Response) {
       data: metrics,
     });
   } catch (error: any) {
-    console.error('[DIALER-KPI] Error getting employee metrics:', error);
+    console.error("[DIALER-KPI] Error getting employee metrics:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -49,7 +49,7 @@ export async function getProcessKpiMetrics(req: Request, res: Response) {
       count: metrics.length,
     });
   } catch (error: any) {
-    console.error('[DIALER-KPI] Error getting process metrics:', error);
+    console.error("[DIALER-KPI] Error getting process metrics:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -65,7 +65,10 @@ export async function getProcessLeaderboard(req: Request, res: Response) {
   try {
     const { processId, date } = req.params;
 
-    const leaderboard = await dialerKpiSync.getProcessLeaderboard(processId, date);
+    const leaderboard = await dialerKpiSync.getProcessLeaderboard(
+      processId,
+      date,
+    );
 
     return res.json({
       success: true,
@@ -73,7 +76,7 @@ export async function getProcessLeaderboard(req: Request, res: Response) {
       count: leaderboard.length,
     });
   } catch (error: any) {
-    console.error('[DIALER-KPI] Error getting leaderboard:', error);
+    console.error("[DIALER-KPI] Error getting leaderboard:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -96,7 +99,7 @@ export async function getProcessKpiConfig(req: Request, res: Response) {
       data: config,
     });
   } catch (error: any) {
-    console.error('[DIALER-KPI] Error getting config:', error);
+    console.error("[DIALER-KPI] Error getting config:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -116,7 +119,7 @@ export async function syncEmployeeKpi(req: Request, res: Response) {
     if (!employeeCode || !date) {
       return res.status(400).json({
         success: false,
-        message: 'employeeCode and date are required',
+        message: "employeeCode and date are required",
       });
     }
 
@@ -128,7 +131,7 @@ export async function syncEmployeeKpi(req: Request, res: Response) {
       data: { synced },
     });
   } catch (error: any) {
-    console.error('[DIALER-KPI] Error syncing employee KPI:', error);
+    console.error("[DIALER-KPI] Error syncing employee KPI:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -148,7 +151,7 @@ export async function syncProcessKpi(req: Request, res: Response) {
     if (!processId || !date) {
       return res.status(400).json({
         success: false,
-        message: 'processId and date are required',
+        message: "processId and date are required",
       });
     }
 
@@ -160,7 +163,7 @@ export async function syncProcessKpi(req: Request, res: Response) {
       data: result,
     });
   } catch (error: any) {
-    console.error('[DIALER-KPI] Error syncing process KPI:', error);
+    console.error("[DIALER-KPI] Error syncing process KPI:", error);
     return res.status(500).json({
       success: false,
       message: error.message,

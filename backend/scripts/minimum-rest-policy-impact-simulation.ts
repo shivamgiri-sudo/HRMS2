@@ -49,9 +49,16 @@ import "dotenv/config";
 
 async function main() {
   const candidateMinutesArgs = process.argv.slice(2).map(Number);
-  if (candidateMinutesArgs.length === 0 || candidateMinutesArgs.some((n) => !Number.isFinite(n) || n <= 0)) {
-    console.error("Usage: npx tsx scripts/minimum-rest-policy-impact-simulation.ts <minutes> [minutes2] ...");
-    console.error("Example: npx tsx scripts/minimum-rest-policy-impact-simulation.ts 480 660 720");
+  if (
+    candidateMinutesArgs.length === 0 ||
+    candidateMinutesArgs.some((n) => !Number.isFinite(n) || n <= 0)
+  ) {
+    console.error(
+      "Usage: npx tsx scripts/minimum-rest-policy-impact-simulation.ts <minutes> [minutes2] ...",
+    );
+    console.error(
+      "Example: npx tsx scripts/minimum-rest-policy-impact-simulation.ts 480 660 720",
+    );
     process.exit(2);
   }
 
@@ -65,21 +72,23 @@ async function main() {
 
   try {
     const [[activeCount]] = await conn.execute<mysql.RowDataPacket[]>(
-      `SELECT COUNT(*) AS c FROM employees WHERE active_status = 1`
+      `SELECT COUNT(*) AS c FROM employees WHERE active_status = 1`,
     );
     const [[dataWindow]] = await conn.execute<mysql.RowDataPacket[]>(
       `SELECT MIN(roster_date) AS mn, MAX(roster_date) AS mx, COUNT(*) AS c
-         FROM wfm_roster_assignment WHERE is_week_off = 0`
+         FROM wfm_roster_assignment WHERE is_week_off = 0`,
     );
 
     console.log(`Active employees today: ${activeCount.c}`);
     console.log(
-      `Historical roster data evaluated: ${dataWindow.c} worked shift-rows, ${String(dataWindow.mn).slice(0, 10)} .. ${String(dataWindow.mx).slice(0, 10)}`
+      `Historical roster data evaluated: ${dataWindow.c} worked shift-rows, ${String(dataWindow.mn).slice(0, 10)} .. ${String(dataWindow.mx).slice(0, 10)}`,
     );
     console.log(
-      "NOTE: no future-dated roster rows exist (latest published roster_date is in the past relative to today) —"
+      "NOTE: no future-dated roster rows exist (latest published roster_date is in the past relative to today) —",
     );
-    console.log("this simulation is retrospective ('if this value had always applied'), not a forecast of pending work.");
+    console.log(
+      "this simulation is retrospective ('if this value had always applied'), not a forecast of pending work.",
+    );
     console.log("");
 
     // Consecutive worked shift-pairs per employee, gap computed with the exact
@@ -97,21 +106,25 @@ async function main() {
        SELECT employee_id, roster_date, branch_name, process_name,
               TIMESTAMPDIFF(MINUTE, TIMESTAMP(prev_date, prev_end_time), TIMESTAMP(roster_date, shift_start_time)) AS gap_minutes
          FROM ordered
-        WHERE prev_date IS NOT NULL`
+        WHERE prev_date IS NOT NULL`,
     );
     console.log(`Consecutive worked shift-pairs evaluated: ${gapRows.length}`);
     console.log("─".repeat(72));
 
     for (const minutes of candidateMinutesArgs) {
       const violations = gapRows.filter((r) => Number(r.gap_minutes) < minutes);
-      const affectedEmployees = new Set(violations.map((r) => String(r.employee_id)));
+      const affectedEmployees = new Set(
+        violations.map((r) => String(r.employee_id)),
+      );
 
-      console.log(`\nCandidate minimum_rest_minutes = ${minutes} (${(minutes / 60).toFixed(1)}h)`);
       console.log(
-        `  Violating shift-pairs: ${violations.length} / ${gapRows.length} (${((violations.length / gapRows.length) * 100).toFixed(2)}%)`
+        `\nCandidate minimum_rest_minutes = ${minutes} (${(minutes / 60).toFixed(1)}h)`,
       );
       console.log(
-        `  Distinct employees with >=1 violation: ${affectedEmployees.size} / ${activeCount.c} active employees`
+        `  Violating shift-pairs: ${violations.length} / ${gapRows.length} (${((violations.length / gapRows.length) * 100).toFixed(2)}%)`,
+      );
+      console.log(
+        `  Distinct employees with >=1 violation: ${affectedEmployees.size} / ${activeCount.c} active employees`,
       );
 
       if (violations.length > 0) {
@@ -123,30 +136,40 @@ async function main() {
           byProcess.set(p, (byProcess.get(p) ?? 0) + 1);
           byBranch.set(b, (byBranch.get(b) ?? 0) + 1);
         }
-        const topProcess = [...byProcess.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-        const topBranch = [...byBranch.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+        const topProcess = [...byProcess.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10);
+        const topBranch = [...byBranch.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10);
 
         console.log(`  Top processes by violation count:`);
-        for (const [name, count] of topProcess) console.log(`    ${name.padEnd(40)} ${String(count).padStart(6)}`);
+        for (const [name, count] of topProcess)
+          console.log(`    ${name.padEnd(40)} ${String(count).padStart(6)}`);
         console.log(`  Top branches by violation count:`);
-        for (const [name, count] of topBranch) console.log(`    ${name.padEnd(40)} ${String(count).padStart(6)}`);
+        for (const [name, count] of topBranch)
+          console.log(`    ${name.padEnd(40)} ${String(count).padStart(6)}`);
 
-        const worst = [...violations].sort((a, b) => Number(a.gap_minutes) - Number(b.gap_minutes))[0];
+        const worst = [...violations].sort(
+          (a, b) => Number(a.gap_minutes) - Number(b.gap_minutes),
+        )[0];
         console.log(
-          `  Worst observed gap: ${worst.gap_minutes} minute(s) (employee ${worst.employee_id}, ${String(worst.roster_date).slice(0, 10)})`
+          `  Worst observed gap: ${worst.gap_minutes} minute(s) (employee ${worst.employee_id}, ${String(worst.roster_date).slice(0, 10)})`,
         );
         console.log(
-          `  With allows_emergency_override=false, every one of these ${violations.length} pairs would have been a hard, unpublishable block.`
+          `  With allows_emergency_override=false, every one of these ${violations.length} pairs would have been a hard, unpublishable block.`,
         );
         console.log(
-          `  With allows_emergency_override=true, each still requires an individual reason + approver at publish time — not a silent pass.`
+          `  With allows_emergency_override=true, each still requires an individual reason + approver at publish time — not a silent pass.`,
         );
       } else {
         console.log(`  ✓ No historical violations at this threshold.`);
       }
     }
     console.log("\n" + "─".repeat(72));
-    console.log("Read-only simulation complete. No wfm_rest_policy or wfm_rest_override_log row was written.");
+    console.log(
+      "Read-only simulation complete. No wfm_rest_policy or wfm_rest_override_log row was written.",
+    );
   } finally {
     await conn.end();
   }

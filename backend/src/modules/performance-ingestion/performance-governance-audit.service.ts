@@ -3,7 +3,11 @@ import { db } from "../../db/mysql.js";
 import { resolveDashboardScope } from "../../shared/dashboardScope.js";
 import { buildDatasetScopeFilter } from "./performance-governance.service.js";
 
-function positiveInteger(value: unknown, fallback: number, maximum: number): number {
+function positiveInteger(
+  value: unknown,
+  fallback: number,
+  maximum: number,
+): number {
   const parsed = Math.trunc(Number(value));
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(1, Math.min(maximum, parsed));
@@ -20,12 +24,15 @@ function parseJson(value: unknown): unknown {
 }
 
 export const performanceGovernanceAuditService = {
-  async list(userId: string, input: {
-    datasetId?: string | null;
-    actionCode?: string | null;
-    page?: number;
-    pageSize?: number;
-  }) {
+  async list(
+    userId: string,
+    input: {
+      datasetId?: string | null;
+      actionCode?: string | null;
+      page?: number;
+      pageSize?: number;
+    },
+  ) {
     const scope = await resolveDashboardScope(userId, "");
     const scoped = buildDatasetScopeFilter(scope, "psd");
     const page = positiveInteger(input.page, 1, 100000);

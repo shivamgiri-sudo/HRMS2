@@ -1,4 +1,9 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import {
+  Router,
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
 import { createHmac, timingSafeEqual } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -8,7 +13,10 @@ import type { RowDataPacket } from "mysql2";
 import { env } from "../../config/env.js";
 
 const router = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: Request, res: Response, next: NextFunction) =>
+    fn(req, res).catch(next);
 
 // ── Candidate endpoints (token-based for onboarding flow) ──
 
@@ -17,80 +25,91 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: 
  * POST /api/onboarding/penny-drop/initiate
  * Body: { token, accountNo, ifscCode, accountHolderName }
  */
-router.post("/initiate", h(async (req: any, res: Response) => {
-  const { token, accountNo, ifscCode, accountHolderName } = req.body;
+router.post(
+  "/initiate",
+  h(async (req: any, res: Response) => {
+    const { token, accountNo, ifscCode, accountHolderName } = req.body;
 
-  if (!token || !accountNo || !ifscCode || !accountHolderName) {
-    return res.status(400).json({
-      success: false,
-      error: "token, accountNo, ifscCode, accountHolderName required",
-    });
-  }
-
-  try {
-    // Get candidate from token
-    const [candidateRows] = await db.execute<RowDataPacket[]>(
-      `SELECT c.id FROM ats_candidate c
-       JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
-       WHERE ob.onboarding_token = ? LIMIT 1`,
-      [token]
-    );
-
-    if (!candidateRows || candidateRows.length === 0) {
-      return res.status(401).json({ success: false, error: "Invalid onboarding token" });
+    if (!token || !accountNo || !ifscCode || !accountHolderName) {
+      return res.status(400).json({
+        success: false,
+        error: "token, accountNo, ifscCode, accountHolderName required",
+      });
     }
 
-    const candidateId = (candidateRows[0] as RowDataPacket).id as string;
-    const result = await PennyDropService.initiatePennyDrop(
-      candidateId,
-      accountNo.replace(/\s/g, ""),
-      ifscCode.trim().toUpperCase(),
-      accountHolderName
-    );
+    try {
+      // Get candidate from token
+      const [candidateRows] = await db.execute<RowDataPacket[]>(
+        `SELECT c.id FROM ats_candidate c
+       JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+       WHERE ob.onboarding_token = ? LIMIT 1`,
+        [token],
+      );
 
-    res.json({
-      success: true,
-      data: {
-        requestId: result.requestId,
-        message: "Penny drop initiated. Check your bank account for ₹1 debit + verification code.",
-      },
-    });
-  } catch (e: any) {
-    res.status(500).json({ success: false, error: String(e) });
-  }
-}));
+      if (!candidateRows || candidateRows.length === 0) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Invalid onboarding token" });
+      }
+
+      const candidateId = (candidateRows[0] as RowDataPacket).id as string;
+      const result = await PennyDropService.initiatePennyDrop(
+        candidateId,
+        accountNo.replace(/\s/g, ""),
+        ifscCode.trim().toUpperCase(),
+        accountHolderName,
+      );
+
+      res.json({
+        success: true,
+        data: {
+          requestId: result.requestId,
+          message:
+            "Penny drop initiated. Check your bank account for ₹1 debit + verification code.",
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: String(e) });
+    }
+  }),
+);
 
 /**
  * Get penny drop status for candidate
  * GET /api/onboarding/penny-drop/status?token=...
  */
-router.get("/status", h(async (req: any, res: Response) => {
-  const { token } = req.query;
+router.get(
+  "/status",
+  h(async (req: any, res: Response) => {
+    const { token } = req.query;
 
-  if (!token) {
-    return res.status(400).json({ success: false, error: "token required" });
-  }
-
-  try {
-    const [candidateRows] = await db.execute<RowDataPacket[]>(
-      `SELECT c.id FROM ats_candidate c
-       JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
-       WHERE ob.onboarding_token = ? LIMIT 1`,
-      [token]
-    );
-
-    if (!candidateRows || candidateRows.length === 0) {
-      return res.status(401).json({ success: false, error: "Invalid onboarding token" });
+    if (!token) {
+      return res.status(400).json({ success: false, error: "token required" });
     }
 
-    const candidateId = (candidateRows[0] as RowDataPacket).id as string;
-    const status = await PennyDropService.getPennyDropStatus(candidateId);
+    try {
+      const [candidateRows] = await db.execute<RowDataPacket[]>(
+        `SELECT c.id FROM ats_candidate c
+       JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+       WHERE ob.onboarding_token = ? LIMIT 1`,
+        [token],
+      );
 
-    res.json({ success: true, data: status });
-  } catch (e: any) {
-    res.status(500).json({ success: false, error: String(e) });
-  }
-}));
+      if (!candidateRows || candidateRows.length === 0) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Invalid onboarding token" });
+      }
+
+      const candidateId = (candidateRows[0] as RowDataPacket).id as string;
+      const status = await PennyDropService.getPennyDropStatus(candidateId);
+
+      res.json({ success: true, data: status });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: String(e) });
+    }
+  }),
+);
 
 // ── Integration Hub webhook callback ──
 
@@ -100,54 +119,79 @@ router.get("/status", h(async (req: any, res: Response) => {
  * Body: { requestId, transactionId, status, accountName, verificationCode, responseCode, message }
  * Auth: Signature verification (HMAC-SHA256 with integration secret)
  */
-router.post("/webhook", h(async (req: any, res: Response) => {
-  const { requestId, transactionId, status, accountName, verificationCode, responseCode, message } = req.body;
-
-  const webhookSecret = env.PENNY_DROP_WEBHOOK_SECRET;
-  if (!webhookSecret) {
-    console.error('[PENNY_DROP] PENNY_DROP_WEBHOOK_SECRET is not set — rejecting all webhook calls');
-    return res.status(503).json({ success: false, error: 'Webhook not configured — PENNY_DROP_WEBHOOK_SECRET missing' });
-  }
-  const signature = req.get('X-Penny-Drop-Signature') ?? '';
-  const bodyStr = JSON.stringify(req.body);
-  const expected = createHmac('sha256', webhookSecret).update(bodyStr).digest('hex');
-  let signaturesMatch = false;
-  try {
-    signaturesMatch = timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-  } catch {
-    // timingSafeEqual throws if buffers are different lengths — treat as mismatch
-    signaturesMatch = false;
-  }
-  if (!signaturesMatch) {
-    return res.status(401).json({ success: false, error: 'Invalid signature' });
-  }
-
-  if (!requestId || !transactionId || !status || !responseCode) {
-    return res.status(400).json({
-      success: false,
-      error: "requestId, transactionId, status, responseCode required",
-    });
-  }
-
-  try {
-    const result = await PennyDropService.recordPennyDropResult(requestId, {
+router.post(
+  "/webhook",
+  h(async (req: any, res: Response) => {
+    const {
+      requestId,
       transactionId,
-      status: status as any,
+      status,
       accountName,
       verificationCode,
       responseCode,
       message,
-    });
+    } = req.body;
 
-    res.json({
-      success: true,
-      data: result,
-      message: "Penny drop result recorded",
-    });
-  } catch (e: any) {
-    res.status(400).json({ success: false, error: String(e) });
-  }
-}));
+    const webhookSecret = env.PENNY_DROP_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error(
+        "[PENNY_DROP] PENNY_DROP_WEBHOOK_SECRET is not set — rejecting all webhook calls",
+      );
+      return res
+        .status(503)
+        .json({
+          success: false,
+          error: "Webhook not configured — PENNY_DROP_WEBHOOK_SECRET missing",
+        });
+    }
+    const signature = req.get("X-Penny-Drop-Signature") ?? "";
+    const bodyStr = JSON.stringify(req.body);
+    const expected = createHmac("sha256", webhookSecret)
+      .update(bodyStr)
+      .digest("hex");
+    let signaturesMatch = false;
+    try {
+      signaturesMatch = timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(expected),
+      );
+    } catch {
+      // timingSafeEqual throws if buffers are different lengths — treat as mismatch
+      signaturesMatch = false;
+    }
+    if (!signaturesMatch) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid signature" });
+    }
+
+    if (!requestId || !transactionId || !status || !responseCode) {
+      return res.status(400).json({
+        success: false,
+        error: "requestId, transactionId, status, responseCode required",
+      });
+    }
+
+    try {
+      const result = await PennyDropService.recordPennyDropResult(requestId, {
+        transactionId,
+        status: status as any,
+        accountName,
+        verificationCode,
+        responseCode,
+        message,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: "Penny drop result recorded",
+      });
+    } catch (e: any) {
+      res.status(400).json({ success: false, error: String(e) });
+    }
+  }),
+);
 
 // ── HR/Admin endpoints ──
 
@@ -170,14 +214,14 @@ router.get(
          WHERE candidate_id = ?
          ORDER BY initiated_at DESC
          LIMIT 10`,
-        [candidateId]
+        [candidateId],
       );
 
       res.json({ success: true, data: rows || [] });
     } catch (e: any) {
       res.status(500).json({ success: false, error: String(e) });
     }
-  })
+  }),
 );
 
 export { router as pennyDropRouter };

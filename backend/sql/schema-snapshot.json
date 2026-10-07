@@ -3,11 +3,7 @@
   "tableCount": 1216,
   "columnCount": 18100,
   "tables": {
-    "_migrations": [
-      "migration_id",
-      "applied_at",
-      "checksum"
-    ],
+    "_migrations": ["migration_id", "applied_at", "checksum"],
     "absence_penalty_config": [
       "id",
       "config_key",
@@ -161,18 +157,8 @@
       "created_at",
       "updated_at"
     ],
-    "alert_cooldown": [
-      "alert_key",
-      "last_sent_at",
-      "send_count",
-      "updated_at"
-    ],
-    "applicant": [
-      "id",
-      "job_id",
-      "current_stage",
-      "created_at"
-    ],
+    "alert_cooldown": ["alert_key", "last_sent_at", "send_count", "updated_at"],
+    "applicant": ["id", "job_id", "current_stage", "created_at"],
     "appointment_letter_audit": [
       "id",
       "letter_request_id",
@@ -987,12 +973,7 @@
       "candidate_id",
       "details"
     ],
-    "ats_command_config": [
-      "setting",
-      "value_text",
-      "notes",
-      "updated_at"
-    ],
+    "ats_command_config": ["setting", "value_text", "notes", "updated_at"],
     "ats_command_email_log": [
       "id",
       "created_at",
@@ -2181,12 +2162,7 @@
       "derivation_version",
       "derived_at"
     ],
-    "attendance_reason_master": [
-      "code",
-      "label",
-      "allowed_for",
-      "active"
-    ],
+    "attendance_reason_master": ["code", "label", "allowed_for", "active"],
     "attendance_reconciliation_cosec_exclusion": [
       "cosec_user_id",
       "exclusion_reason",
@@ -2512,12 +2488,7 @@
       "attempts",
       "created_at"
     ],
-    "auth_password_history": [
-      "id",
-      "user_id",
-      "password_hash",
-      "changed_at"
-    ],
+    "auth_password_history": ["id", "user_id", "password_hash", "changed_at"],
     "auth_password_policy": [
       "id",
       "expiry_days",
@@ -5398,11 +5369,7 @@
       "device_id",
       "synced_at"
     ],
-    "cosec_sync_watermark": [
-      "wm_key",
-      "wm_value",
-      "updated_at"
-    ],
+    "cosec_sync_watermark": ["wm_key", "wm_value", "updated_at"],
     "cosec_unmapped_users": [
       "id",
       "cosec_user_id",
@@ -5952,11 +5919,7 @@
       "created_at",
       "updated_at"
     ],
-    "day_threshold_rule_dimension_value": [
-      "rule_id",
-      "dimension",
-      "value_id"
-    ],
+    "day_threshold_rule_dimension_value": ["rule_id", "dimension", "value_id"],
     "department_master": [
       "id",
       "dept_code",
@@ -6244,12 +6207,7 @@
       "magic_bytes_validated",
       "quarantine_reason"
     ],
-    "dpdp_config": [
-      "config_key",
-      "config_value",
-      "description",
-      "updated_at"
-    ],
+    "dpdp_config": ["config_key", "config_value", "description", "updated_at"],
     "dpdp_consent_log": [
       "id",
       "employee_id",
@@ -7024,12 +6982,7 @@
       "resolved_by",
       "created_at"
     ],
-    "employee_exit_record": [
-      "id",
-      "employee_id",
-      "exit_date",
-      "created_at"
-    ],
+    "employee_exit_record": ["id", "employee_id", "exit_date", "created_at"],
     "employee_experience": [
       "id",
       "employee_id",
@@ -12749,12 +12702,7 @@
       "raw_data",
       "created_at"
     ],
-    "migration_lock": [
-      "id",
-      "locked_by",
-      "locked_at",
-      "lock_expires_at"
-    ],
+    "migration_lock": ["id", "locked_by", "locked_at", "lock_expires_at"],
     "migration_log": [
       "id",
       "migration_run_id",
@@ -17314,12 +17262,7 @@
       "success",
       "error_message"
     ],
-    "schema_version": [
-      "id",
-      "version",
-      "last_migration",
-      "updated_at"
-    ],
+    "schema_version": ["id", "version", "last_migration", "updated_at"],
     "security_audit_event": [
       "id",
       "event_type",
@@ -17577,10 +17520,7 @@
       "created_at",
       "updated_at"
     ],
-    "stg_dol_update": [
-      "emp_code",
-      "exit_date"
-    ],
+    "stg_dol_update": ["emp_code", "exit_date"],
     "stg_legacy_attendance": [
       "id",
       "sync_run_id",
@@ -17709,10 +17649,7 @@
       "created_at",
       "updated_at"
     ],
-    "sync_log": [
-      "id",
-      "last_sync"
-    ],
+    "sync_log": ["id", "last_sync"],
     "task_escalation_log": [
       "id",
       "tat_instance_id",
@@ -17895,12 +17832,7 @@
       "deactivated_at",
       "deactivated_by"
     ],
-    "tds_deductor_branch": [
-      "id",
-      "deductor_id",
-      "branch_id",
-      "created_at"
-    ],
+    "tds_deductor_branch": ["id", "deductor_id", "branch_id", "created_at"],
     "tenant_config": [
       "id",
       "tenant_key",
@@ -18679,10 +18611,7 @@
       "change_reason",
       "source"
     ],
-    "v_month_working_days": [
-      "run_month",
-      "working_days"
-    ],
+    "v_month_working_days": ["run_month", "working_days"],
     "v_monthly_deductions_summary": [
       "salary_year",
       "salary_month_num",
@@ -20069,10 +19998,7 @@
       "active_status",
       "backed_up_at"
     ],
-    "zz_vpt_due_date_backup_20260827": [
-      "id",
-      "due_date"
-    ],
+    "zz_vpt_due_date_backup_20260827": ["id", "due_date"],
     "portal_admin_impersonation_log": [
       "id",
       "admin_user_id",

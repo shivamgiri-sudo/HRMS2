@@ -1,5 +1,8 @@
 import { Router } from "express";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
@@ -8,8 +11,10 @@ import type { RowDataPacket } from "mysql2";
 export const payrollCostSummaryRouter = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 payrollCostSummaryRouter.use(requireAuth);
 
@@ -227,12 +232,25 @@ payrollCostSummaryRouter.get(
     const groupByRaw = (req.query.group_by as string | undefined) ?? "branch";
 
     if (!/^\d{4}-\d{2}$/.test(month)) {
-      return res.status(400).json({ success: false, message: "Invalid month format. Use YYYY-MM" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid month format. Use YYYY-MM" });
     }
 
-    const validGroupBy: GroupByOption[] = ["branch", "process", "department", "cost_centre"];
+    const validGroupBy: GroupByOption[] = [
+      "branch",
+      "process",
+      "department",
+      "cost_centre",
+    ];
     if (!validGroupBy.includes(groupByRaw as GroupByOption)) {
-      return res.status(400).json({ success: false, message: "group_by must be one of: branch, process, department, cost_centre" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "group_by must be one of: branch, process, department, cost_centre",
+        });
     }
     const groupBy = groupByRaw as GroupByOption;
 
@@ -242,9 +260,17 @@ payrollCostSummaryRouter.get(
         success: true,
         runMonth: month,
         isEstimate: true,
-        kpi: { headcount: 0, total_gross: 0, total_net: 0, total_pf_employer: 0, total_esic_employer: 0, total_gratuity_provision: 0 },
+        kpi: {
+          headcount: 0,
+          total_gross: 0,
+          total_net: 0,
+          total_pf_employer: 0,
+          total_esic_employer: 0,
+          total_gratuity_provision: 0,
+        },
         data: [],
-        message: "Cost centre grouping is not yet configured. Map a cost_centre column on employees table to enable this view.",
+        message:
+          "Cost centre grouping is not yet configured. Map a cost_centre column on employees table to enable this view.",
       });
     }
 
@@ -287,10 +313,16 @@ payrollCostSummaryRouter.get(
       total_allowances: Number(row.total_allowances ?? 0),
       total_gross: Number(row.total_gross ?? 0),
       total_deductions: Number(row.total_deductions ?? 0),
-      total_net: isEstimate ? Number(row.total_gross ?? 0) : Number(row.total_net ?? 0),
+      total_net: isEstimate
+        ? Number(row.total_gross ?? 0)
+        : Number(row.total_net ?? 0),
       total_pf_employer: isEstimate ? 0 : Number(row.total_pf_employer ?? 0),
-      total_esic_employer: isEstimate ? 0 : Number(row.total_esic_employer ?? 0),
-      total_gratuity_provision: isEstimate ? 0 : Number(row.total_gratuity_provision ?? 0),
+      total_esic_employer: isEstimate
+        ? 0
+        : Number(row.total_esic_employer ?? 0),
+      total_gratuity_provision: isEstimate
+        ? 0
+        : Number(row.total_gratuity_provision ?? 0),
     }));
 
     return res.json({

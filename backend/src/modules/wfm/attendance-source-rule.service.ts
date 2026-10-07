@@ -7,23 +7,23 @@
 //
 // Not wired into attendanceEngineService in this phase (Phase 4 of the roadmap does that).
 
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 import {
   resolveRule,
   DIMENSION_PRIORITY_ORDER,
   type DimensionScopedRule,
   type EmployeeAttributes,
   type RuleDimension,
-} from './attendance-source-rule-resolver.js';
+} from "./attendance-source-rule-resolver.js";
 
 export interface AttendanceSourceRuleRow extends DimensionScopedRule {
-  attendanceSource: 'dialler' | 'biometric';
+  attendanceSource: "dialler" | "biometric";
 }
 
 interface RuleRow extends RowDataPacket {
   id: string;
-  attendance_source: 'dialler' | 'biometric';
+  attendance_source: "dialler" | "biometric";
   effective_from: string;
   created_at: string;
 }
@@ -39,7 +39,9 @@ interface DimensionValueRow extends RowDataPacket {
  * with its dimension_value children assembled into Sets. This is the only SQL-side filter —
  * everything else (Requirement 2's matching/specificity/tie-break) happens in resolveRule().
  */
-export async function loadActiveWindowedRules(date: string): Promise<AttendanceSourceRuleRow[]> {
+export async function loadActiveWindowedRules(
+  date: string,
+): Promise<AttendanceSourceRuleRow[]> {
   const [ruleRows] = await db.execute<RuleRow[]>(
     `SELECT id, attendance_source, effective_from, created_at
        FROM attendance_source_rule
@@ -52,7 +54,7 @@ export async function loadActiveWindowedRules(date: string): Promise<AttendanceS
   if (ruleRows.length === 0) return [];
 
   const ruleIds = ruleRows.map((r) => r.id);
-  const placeholders = ruleIds.map(() => '?').join(',');
+  const placeholders = ruleIds.map(() => "?").join(",");
   const [dimRows] = await db.execute<DimensionValueRow[]>(
     `SELECT rule_id, dimension, value_id
        FROM attendance_source_rule_dimension_value
@@ -60,7 +62,10 @@ export async function loadActiveWindowedRules(date: string): Promise<AttendanceS
     ruleIds,
   );
 
-  const dimensionsByRule = new Map<string, Partial<Record<RuleDimension, Set<string>>>>();
+  const dimensionsByRule = new Map<
+    string,
+    Partial<Record<RuleDimension, Set<string>>>
+  >();
   for (const row of dimRows) {
     const existing = dimensionsByRule.get(row.rule_id) ?? {};
     const set = existing[row.dimension] ?? new Set<string>();
@@ -87,7 +92,7 @@ export async function resolveAttendanceSource(
   employeeAttrs: EmployeeAttributes,
   date: string,
 ): Promise<{
-  attendanceSource: 'dialler' | 'biometric';
+  attendanceSource: "dialler" | "biometric";
   decidingRuleId: string;
   unresolvedDimensions: RuleDimension[];
 }> {

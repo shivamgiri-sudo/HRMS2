@@ -8,23 +8,23 @@ The design deliberately does not touch the Backoff_Ladder, the completion writer
 
 ### What changes, and what is merely enabled
 
-| Path | Change |
-|---|---|
-| deployed `backend/.env` (workers process) | `ESIGN_RECONCILIATION_ENABLED=true` — **configuration only** |
-| `backend/src/workers/esign-reconciliation.worker.ts` | poll-counter on the success path, tick log line, per-transaction failure recording, give-up sweep, provider-call counter |
-| `backend/src/modules/integrations/luckpay/luckpay-status.service.ts` | **no change** — the `scope='kit'` branch at 441-455 is already correct |
-| `backend/src/modules/employees/joiningKitDispatch.service.ts` | `finalizeKitEsign` gains the verification write, a transaction boundary, an optional provider `completedAt`, and backfill attribution parameters |
-| `backend/src/modules/employees/employeeJoiningDocuments.service.ts` | `finalizeChecklistEsign` gains the verification write inside a widened transaction boundary |
-| `backend/src/modules/employees/employee.compliance.routes.ts` | webhook rejection classification, audit write, dormancy comment |
-| `backend/src/modules/employees/employeeCompliancePrivacy.ts` | new `classifyLuckpayWebhookAuth`; `verifyLuckpayWebhookSecret` kept as a thin wrapper |
-| `backend/src/modules/ats/esignState.ts` | **new** — the single classifier |
-| `src/lib/esignState.ts` | **new** — frontend mirror, pinned to the backend module by contract test |
-| `backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts` | classifier-generated SQL, bucket partition, null-vs-zero, real pagination, bulk-verify predicate |
-| `backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts` | pass `page` / `limit` through |
-| `src/pages/JoiningDocumentsTrackerPage.tsx` | bucket tiles, dash rendering, invalidation, refetch interval |
-| `src/pages/EmployeeJoiningDocumentsPage.tsx` | `STATUS_COLORS` (lines 71-86) completed from the mirror |
-| `backend/scripts/backfill-stranded-joining-kits.ts` | **new** — Backfill_Runner |
-| `backend/sql/` | **no new migration** — see Migrations |
+| Path                                                                 | Change                                                                                                                                           |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| deployed `backend/.env` (workers process)                            | `ESIGN_RECONCILIATION_ENABLED=true` — **configuration only**                                                                                     |
+| `backend/src/workers/esign-reconciliation.worker.ts`                 | poll-counter on the success path, tick log line, per-transaction failure recording, give-up sweep, provider-call counter                         |
+| `backend/src/modules/integrations/luckpay/luckpay-status.service.ts` | **no change** — the `scope='kit'` branch at 441-455 is already correct                                                                           |
+| `backend/src/modules/employees/joiningKitDispatch.service.ts`        | `finalizeKitEsign` gains the verification write, a transaction boundary, an optional provider `completedAt`, and backfill attribution parameters |
+| `backend/src/modules/employees/employeeJoiningDocuments.service.ts`  | `finalizeChecklistEsign` gains the verification write inside a widened transaction boundary                                                      |
+| `backend/src/modules/employees/employee.compliance.routes.ts`        | webhook rejection classification, audit write, dormancy comment                                                                                  |
+| `backend/src/modules/employees/employeeCompliancePrivacy.ts`         | new `classifyLuckpayWebhookAuth`; `verifyLuckpayWebhookSecret` kept as a thin wrapper                                                            |
+| `backend/src/modules/ats/esignState.ts`                              | **new** — the single classifier                                                                                                                  |
+| `src/lib/esignState.ts`                                              | **new** — frontend mirror, pinned to the backend module by contract test                                                                         |
+| `backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts`     | classifier-generated SQL, bucket partition, null-vs-zero, real pagination, bulk-verify predicate                                                 |
+| `backend/src/modules/ats/ats.joiningDocumentsTracker.routes.ts`      | pass `page` / `limit` through                                                                                                                    |
+| `src/pages/JoiningDocumentsTrackerPage.tsx`                          | bucket tiles, dash rendering, invalidation, refetch interval                                                                                     |
+| `src/pages/EmployeeJoiningDocumentsPage.tsx`                         | `STATUS_COLORS` (lines 71-86) completed from the mirror                                                                                          |
+| `backend/scripts/backfill-stranded-joining-kits.ts`                  | **new** — Backfill_Runner                                                                                                                        |
+| `backend/sql/`                                                       | **no new migration** — see Migrations                                                                                                            |
 
 ### The flag alone is not enough (Requirement 1, criterion 1)
 
@@ -93,11 +93,11 @@ export async function runEsignReconciliationOnce(): Promise<{
 
 The return value is what the tests assert on and what the unconditional tick log line carries (gap 2). Three internal helpers change:
 
-| Helper | Contract |
-|---|---|
-| `sweepAbandoned(): Promise<number>` | **new.** Runs first in each tick, before `claimBatch`. Moves every non-terminal `luckpay` transaction older than `GIVE_UP_AFTER_DAYS` to `status = 'abandoned_unresolved'` with an explanatory `error_message` and `next_poll_at = NULL`, and writes one Audit_Log row per transition. Guarded by `status NOT IN (<TERMINAL>, 'abandoned_unresolved')`, so it is idempotent by construction and a second tick affects zero rows. Returns the number of rows transitioned |
-| `recordPollFailure(id, attempts, message): Promise<void>` | **new.** Folds the failure text into the same `UPDATE` that `scheduleNext` already issues — one statement, so a failure cannot be recorded without also being rescheduled. Writes `error_message`, `poll_attempts = attempts`, `last_polled_at = NOW()` and the next ladder step |
-| `clearSchedule(id, attempts): Promise<void>` | **amended.** Gains the `attempts` parameter and writes `poll_attempts = ?` alongside the existing `last_polled_at = NOW()` and `next_poll_at = NULL`, so a first-poll completion no longer records `poll_attempts = 0` (gap 1) |
+| Helper                                                    | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sweepAbandoned(): Promise<number>`                       | **new.** Runs first in each tick, before `claimBatch`. Moves every non-terminal `luckpay` transaction older than `GIVE_UP_AFTER_DAYS` to `status = 'abandoned_unresolved'` with an explanatory `error_message` and `next_poll_at = NULL`, and writes one Audit_Log row per transition. Guarded by `status NOT IN (<TERMINAL>, 'abandoned_unresolved')`, so it is idempotent by construction and a second tick affects zero rows. Returns the number of rows transitioned |
+| `recordPollFailure(id, attempts, message): Promise<void>` | **new.** Folds the failure text into the same `UPDATE` that `scheduleNext` already issues — one statement, so a failure cannot be recorded without also being rescheduled. Writes `error_message`, `poll_attempts = attempts`, `last_polled_at = NOW()` and the next ladder step                                                                                                                                                                                         |
+| `clearSchedule(id, attempts): Promise<void>`              | **amended.** Gains the `attempts` parameter and writes `poll_attempts = ?` alongside the existing `last_polled_at = NOW()` and `next_poll_at = NULL`, so a first-poll completion no longer records `poll_attempts = 0` (gap 1)                                                                                                                                                                                                                                           |
 
 `BACKOFF_MINUTES`, `TICK_MS`, `BATCH_SIZE`, `GIVE_UP_AFTER_DAYS`, `nextDelayMinutes`, `claimBatch` and the `running` overlap guard keep their current signatures and values, pinned by `esignReconciliationBudget.contract.test.ts`.
 
@@ -107,10 +107,10 @@ Leaf module, imports nothing. Replaces a boolean at the call site with a total, 
 
 ```ts
 export type WebhookAuthOutcome =
-  | { ok: true;  reason: "accepted" }
-  | { ok: false; reason: "secret_not_configured" }   // R2.2 — configuration fault
-  | { ok: false; reason: "header_absent" }           // R2.4 — unauthenticated probe
-  | { ok: false; reason: "header_mismatch" };        // R2.3 — wrong credential
+  | { ok: true; reason: "accepted" }
+  | { ok: false; reason: "secret_not_configured" } // R2.2 — configuration fault
+  | { ok: false; reason: "header_absent" } // R2.4 — unauthenticated probe
+  | { ok: false; reason: "header_mismatch" }; // R2.3 — wrong credential
 
 export function classifyLuckpayWebhookAuth(
   providedSecret: string | null | undefined,
@@ -149,7 +149,9 @@ Leaf module, imports nothing, the single authority for status→bucket.
 ```ts
 export type EsignBucket = "completed" | "in_progress" | "not_started";
 export const ESIGN_STATE_BUCKET: Readonly<Record<string, EsignBucket>>;
-export function classifyEsignState(status: string | null | undefined): EsignBucket;
+export function classifyEsignState(
+  status: string | null | undefined,
+): EsignBucket;
 export function esignBucketCaseSql(column: string): string;
 ```
 
@@ -164,7 +166,9 @@ Presentation only. Re-declares `EsignBucket` and exports a bucket→colour map t
 ```ts
 export type SummaryBucket = "completed" | "in_progress" | "pending";
 export function classifyEmployeeBucket(pct: number): SummaryBucket;
-export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): TrackerSummary;
+export function calculateTrackerSummary(
+  employees: EmployeeDocumentRow[],
+): TrackerSummary;
 ```
 
 `calculateTrackerSummary` keeps its signature and stays the exported pure function the unit tests target; its loop calls `classifyEmployeeBucket` instead of inlining thresholds, so the three counts partition the input by construction. `pending_verification` leaves `TrackerSummary`; `pending_count` is surfaced to the tiles. `overdue_count` and `needs_correction` are cross-cutting and stay as they are.
@@ -173,12 +177,12 @@ export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): Track
 
 `getJoiningDocumentsTracker(actorUserId, filters)` keeps its signature; `TrackerQueryParams` gains `page` and `limit` and `TrackerResponse` gains the page echo and the navigation flags. Four SQL surfaces, one shared text:
 
-| Surface | Contract |
-|---|---|
-| `const` holding `FROM … WHERE ${whereSQL} GROUP BY e.id ${havingClause}` | Built once per call and interpolated into the row query, the summary query and the fallback count, so the three cannot drift. A contract test asserts all three reference it |
-| Row query | The shared text plus the bucket counters from `esignBucketCaseSql('c.status')`, `COUNT(*) OVER () AS total_matching`, `ORDER BY e.date_of_joining DESC, e.employee_code ASC, e.id ASC`, `LIMIT ? OFFSET ?` |
-| Summary aggregate query | The same shared text, returning the four summary figures (`total_employees` plus the three partition members) and the two cross-cutting counts directly, so the tiles describe the whole filtered set rather than the visible page |
-| Wrapped-count fallback | `SELECT COUNT(*) FROM ( <shared text, selecting e.id and overdue_count> ) t`, issued **only** when `rows.length === 0 && page > 1`, because `COUNT(*) OVER ()` returns no rows past the end of the set. On page 1 an empty result genuinely means `total = 0` and no second query fires |
+| Surface                                                                  | Contract                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `const` holding `FROM … WHERE ${whereSQL} GROUP BY e.id ${havingClause}` | Built once per call and interpolated into the row query, the summary query and the fallback count, so the three cannot drift. A contract test asserts all three reference it                                                                                                            |
+| Row query                                                                | The shared text plus the bucket counters from `esignBucketCaseSql('c.status')`, `COUNT(*) OVER () AS total_matching`, `ORDER BY e.date_of_joining DESC, e.employee_code ASC, e.id ASC`, `LIMIT ? OFFSET ?`                                                                              |
+| Summary aggregate query                                                  | The same shared text, returning the four summary figures (`total_employees` plus the three partition members) and the two cross-cutting counts directly, so the tiles describe the whole filtered set rather than the visible page                                                      |
+| Wrapped-count fallback                                                   | `SELECT COUNT(*) FROM ( <shared text, selecting e.id and overdue_count> ) t`, issued **only** when `rows.length === 0 && page > 1`, because `COUNT(*) OVER ()` returns no rows past the end of the set. On page 1 an empty result genuinely means `total = 0` and no second query fires |
 
 `bulkVerifyDocuments` keeps its signature and its per-employee transaction; inside, one `UPDATE` becomes two so the uploaded and eSigned provenances get different end states and different audit rows.
 
@@ -188,7 +192,10 @@ Dependencies injected rather than imported at module scope, which is what makes 
 
 ```ts
 export async function runBackfill(deps: {
-  client: Pick<typeof luckpayClient, "checkESignStatus" | "downloadESignDocument">;
+  client: Pick<
+    typeof luckpayClient,
+    "checkESignStatus" | "downloadESignDocument"
+  >;
   db: Pool;
   actorUserId: string;
   confirm: boolean;
@@ -217,36 +224,36 @@ Every bulk mutation's `onSuccess` calls `queryClient.invalidateQueries({ queryKe
 
 ## Data Models
 
-**No migration is required.** Every column this design writes already exists, and the one new *value* — `abandoned_unresolved` — lands in a `VARCHAR` status column with no enum constraint, so it needs no DDL. See Migrations for the file-by-file evidence. What follows is the shape of what is read and written, not a change list.
+**No migration is required.** Every column this design writes already exists, and the one new _value_ — `abandoned_unresolved` — lands in a `VARCHAR` status column with no enum constraint, so it needs no DDL. See Migrations for the file-by-file evidence. What follows is the shape of what is read and written, not a change list.
 
 ### `employee_joining_document_checklist`
 
 The verification write touches these columns and no others. `status VARCHAR(80)` and `verification_status VARCHAR(80)` are both unconstrained, so `'esign_completed'` and `'verified'` need no widening.
 
-| Column | Written by this design | Note |
-|---|---|---|
-| `status` | `'esign_completed'` on completion; `'verified'` for uploaded rows in bulk-verify | eSigned rows keep `esign_completed` — it is the accurate description of how the document arrived, and `recalculateDocumentProgress` already counts it as complete |
-| `fill_status`, `signature_mode` | as today | `signature_mode = 'aadhaar_esign_verified'` is the gate for the verification write; `'aadhaar_esign_pending_artefact'` (provider signed, download failed) deliberately does **not** qualify |
-| `verification_status` | `'verified'` | `IS NULL`-guarded in bulk-verify, which makes a re-run a zero-row `UPDATE` |
-| `verified_at` | `NOW()` | |
-| `verified_by` | **left NULL** | `CHAR(36)`, no foreign key. Every other writer puts a real user id here; there is no human verifier on an eSign completion, and a sentinel would make the column untrustworthy everywhere else. Provenance lives in `verification_remarks` and, structurally, in Audit_Log. Set only for uploaded rows in bulk-verify, where a human did click |
-| `verification_remarks` | `'Verified by Aadhaar eSign (Luckpay)'` | |
-| `due_at` | `NULL` | Safe per the dependency audit; the overdue predicate `due_at < NOW() AND verification_status IS NULL` is untouched |
-| `completed_at` | `COALESCE(?, NOW())` | The parameter is the provider's time when one was reported |
-| `final_file_locked_at` | `NOW()` when `status = 'esign_completed'` | Unchanged from today |
+| Column                          | Written by this design                                                           | Note                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`                        | `'esign_completed'` on completion; `'verified'` for uploaded rows in bulk-verify | eSigned rows keep `esign_completed` — it is the accurate description of how the document arrived, and `recalculateDocumentProgress` already counts it as complete                                                                                                                                                                              |
+| `fill_status`, `signature_mode` | as today                                                                         | `signature_mode = 'aadhaar_esign_verified'` is the gate for the verification write; `'aadhaar_esign_pending_artefact'` (provider signed, download failed) deliberately does **not** qualify                                                                                                                                                    |
+| `verification_status`           | `'verified'`                                                                     | `IS NULL`-guarded in bulk-verify, which makes a re-run a zero-row `UPDATE`                                                                                                                                                                                                                                                                     |
+| `verified_at`                   | `NOW()`                                                                          |                                                                                                                                                                                                                                                                                                                                                |
+| `verified_by`                   | **left NULL**                                                                    | `CHAR(36)`, no foreign key. Every other writer puts a real user id here; there is no human verifier on an eSign completion, and a sentinel would make the column untrustworthy everywhere else. Provenance lives in `verification_remarks` and, structurally, in Audit_Log. Set only for uploaded rows in bulk-verify, where a human did click |
+| `verification_remarks`          | `'Verified by Aadhaar eSign (Luckpay)'`                                          |                                                                                                                                                                                                                                                                                                                                                |
+| `due_at`                        | `NULL`                                                                           | Safe per the dependency audit; the overdue predicate `due_at < NOW() AND verification_status IS NULL` is untouched                                                                                                                                                                                                                             |
+| `completed_at`                  | `COALESCE(?, NOW())`                                                             | The parameter is the provider's time when one was reported                                                                                                                                                                                                                                                                                     |
+| `final_file_locked_at`          | `NOW()` when `status = 'esign_completed'`                                        | Unchanged from today                                                                                                                                                                                                                                                                                                                           |
 
 ### `employee_document_esign_transaction`
 
-| Column | Role |
-|---|---|
-| `status` | `VARCHAR`, not an `ENUM` — which is why `abandoned_unresolved` needs no DDL. Added to `TERMINAL`, making the abandonment a one-way door |
-| `scope` | `'document'` \| `'kit'` — selects which finalizer `syncEsignStatus` delegates to |
-| `kit_id` | Nullable; set for kit-scope rows, joined on by the backfill selection |
-| `client_transaction_id` | The handle a rejected webhook delivery is resolved by, when it can be resolved at all |
-| `provider_reference_id` | Must match `^APIB` to be pollable; NULL or non-matching yields `unresolvable_no_provider_reference` with no provider call |
-| `signed_file_id` | Non-NULL is `syncEsignStatus`' short-circuit condition (`luckpay-status.service.ts:425`), which is what lets a `pending_artefact` row heal on a later pass |
-| `completed_at` | `COALESCE(?, NOW())` |
-| `error_message` | Written by `recordPollFailure` and by the abandonment sweep |
+| Column                                            | Role                                                                                                                                                                                     |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`                                          | `VARCHAR`, not an `ENUM` — which is why `abandoned_unresolved` needs no DDL. Added to `TERMINAL`, making the abandonment a one-way door                                                  |
+| `scope`                                           | `'document'` \| `'kit'` — selects which finalizer `syncEsignStatus` delegates to                                                                                                         |
+| `kit_id`                                          | Nullable; set for kit-scope rows, joined on by the backfill selection                                                                                                                    |
+| `client_transaction_id`                           | The handle a rejected webhook delivery is resolved by, when it can be resolved at all                                                                                                    |
+| `provider_reference_id`                           | Must match `^APIB` to be pollable; NULL or non-matching yields `unresolvable_no_provider_reference` with no provider call                                                                |
+| `signed_file_id`                                  | Non-NULL is `syncEsignStatus`' short-circuit condition (`luckpay-status.service.ts:425`), which is what lets a `pending_artefact` row heal on a later pass                               |
+| `completed_at`                                    | `COALESCE(?, NOW())`                                                                                                                                                                     |
+| `error_message`                                   | Written by `recordPollFailure` and by the abandonment sweep                                                                                                                              |
 | `next_poll_at`, `poll_attempts`, `last_polled_at` | Poll state from migration `1042_esign_transaction_poll_state.sql`, already applied, with `idx_edet_next_poll`. `SUM(poll_attempts)` is the durable status-call count once gap 1 is fixed |
 
 ### `employee_joining_esign_kit` and `employee_joining_esign_kit_item`
@@ -271,11 +278,11 @@ Kit closure writes `status`, `signed_file_id`, `completed_at` and clears `open_m
 // ats.joiningDocumentsTracker.service.ts — pending_verification removed, pending_count surfaced
 export interface TrackerSummary {
   total_employees: number;
-  completed_count: number;      // classifyEmployeeBucket === "completed"
-  in_progress_count: number;    // "in_progress" — absorbs the former 75-99 band
-  pending_count: number;        // "pending" — 0%
-  overdue_count: number;        // cross-cutting, outside the partition
-  needs_correction: number;     // cross-cutting, outside the partition
+  completed_count: number; // classifyEmployeeBucket === "completed"
+  in_progress_count: number; // "in_progress" — absorbs the former 75-99 band
+  pending_count: number; // "pending" — 0%
+  overdue_count: number; // cross-cutting, outside the partition
+  needs_correction: number; // cross-cutting, outside the partition
 }
 ```
 
@@ -284,8 +291,8 @@ export interface TrackerSummary {
 ```ts
 // nullability pinned between the two declarations by trackerTypeParity.contract.test.ts
 // EmployeeDocumentRow (service) and EmployeeRow (JoiningDocumentsTrackerPage.tsx:37-38)
-esign_completed_count: number | null;   // null iff the employee has no checklist rows
-esign_pending_count:   number | null;
+esign_completed_count: number | null; // null iff the employee has no checklist rows
+esign_pending_count: number | null;
 ```
 
 Produced null in exactly one place — the SQL `CASE WHEN COUNT(c.id) = 0 THEN NULL` — and never coerced afterwards; the mapper drops `Number(row.x ?? 0)` for `row.x === null ? null : Number(row.x)`. Every other count field on the row keeps its current non-null type.
@@ -293,24 +300,24 @@ Produced null in exactly one place — the SQL `CASE WHEN COUNT(c.id) = 0 THEN N
 ```ts
 // Backfill_Runner
 export type KitClassification =
-  | "closed"                              // R3.3, R3.4 — finalizeKitEsign ran
-  | "left_untouched"                       // R3.5 — provider reports unsigned, zero writes
-  | "already_closed"                       // R3.8 — no provider call
-  | "unresolvable_no_provider_reference"   // R3.7 — no provider call, not an error
-  | "error";                               // per-kit throw, message reported, run continues
+  | "closed" // R3.3, R3.4 — finalizeKitEsign ran
+  | "left_untouched" // R3.5 — provider reports unsigned, zero writes
+  | "already_closed" // R3.8 — no provider call
+  | "unresolvable_no_provider_reference" // R3.7 — no provider call, not an error
+  | "error"; // per-kit throw, message reported, run continues
 
 export interface BackfillReportEntry {
   employee_code: string;
   dispatch_date: string;
   provider_reference: string | null;
-  provider_status: string | null;          // null where no call was made
+  provider_status: string | null; // null where no call was made
   classification: KitClassification;
   documents_closed: number;
-  note: string;                            // carries completedAtSource, or the error message
+  note: string; // carries completedAtSource, or the error message
 }
 
 export interface BackfillReport {
-  entries: BackfillReportEntry[];          // exactly one per selected kit — Property 19
+  entries: BackfillReportEntry[]; // exactly one per selected kit — Property 19
   totals: Record<KitClassification, number>;
   providerCalls: { status: number; download: number };
 }
@@ -331,7 +338,7 @@ Read against the current file, these are the only deltas. Each is small and inde
 ```ts
 console.log(
   `[esign-reconciliation] enabled=true selected=${rows.length} ` +
-  `completed=${completed} pending=${stillPending} errors=${errors} providerCalls=${providerCalls}`,
+    `completed=${completed} pending=${stillPending} errors=${errors} providerCalls=${providerCalls}`,
 );
 ```
 
@@ -375,10 +382,10 @@ The route is not broken; it is unused. The change is to make a genuinely misconf
 
 ```ts
 export type WebhookAuthOutcome =
-  | { ok: true;  reason: "accepted" }
-  | { ok: false; reason: "secret_not_configured" }   // R2.2 — configuration fault
-  | { ok: false; reason: "header_absent" }           // R2.4 — unauthenticated probe
-  | { ok: false; reason: "header_mismatch" };        // R2.3 — wrong credential
+  | { ok: true; reason: "accepted" }
+  | { ok: false; reason: "secret_not_configured" } // R2.2 — configuration fault
+  | { ok: false; reason: "header_absent" } // R2.4 — unauthenticated probe
+  | { ok: false; reason: "header_mismatch" }; // R2.3 — wrong credential
 
 export function classifyLuckpayWebhookAuth(
   providedSecret: string | null | undefined,
@@ -390,11 +397,11 @@ Order matters and is part of the contract: `secret_not_configured` is decided **
 
 At the route (`employee.compliance.routes.ts:1238-1244`, and the mirrored authenticated variant at :475-479):
 
-| reason | log level | Audit_Log | response |
-|---|---|---|---|
+| reason                  | log level                                       | Audit_Log                                     | response        |
+| ----------------------- | ----------------------------------------------- | --------------------------------------------- | --------------- |
 | `secret_not_configured` | `console.error` naming `LUCKPAY_WEBHOOK_SECRET` | yes — `LUCKPAY_WEBHOOK_REJECTED_UNCONFIGURED` | 401 (unchanged) |
-| `header_mismatch` | `console.warn` | yes — `LUCKPAY_WEBHOOK_REJECTED_MISMATCH` | 401 (unchanged) |
-| `header_absent` | `console.info` | yes — `LUCKPAY_WEBHOOK_REJECTED_NO_HEADER` | 401 (unchanged) |
+| `header_mismatch`       | `console.warn`                                  | yes — `LUCKPAY_WEBHOOK_REJECTED_MISMATCH`     | 401 (unchanged) |
+| `header_absent`         | `console.info`                                  | yes — `LUCKPAY_WEBHOOK_REJECTED_NO_HEADER`    | 401 (unchanged) |
 
 The response body and status are untouched: a probe must not be able to read the environment's configuration state off the response. Diagnosability is in the logs and the audit trail, which is where Requirement 2 puts it.
 
@@ -402,7 +409,7 @@ The Audit_Log write needs an `employee_id`, which a rejected delivery does not h
 
 ### The comment (Requirement 2, criterion 6)
 
-Placed immediately above `publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", ...)`, stating that the route is dormant because the Luckpay client registers no callback URL (`luckpay.client.ts` only ever *reads* `redirect_url` / `sign_url` / `verificationUrl` out of responses), that the pull path in `esign-reconciliation.worker.ts` is the source of truth, and recording the absolute URL Luckpay would need:
+Placed immediately above `publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", ...)`, stating that the route is dormant because the Luckpay client registers no callback URL (`luckpay.client.ts` only ever _reads_ `redirect_url` / `sign_url` / `verificationUrl` out of responses), that the pull path in `esign-reconciliation.worker.ts` is the source of truth, and recording the absolute URL Luckpay would need:
 
 ```
 https://mcnhrms.teammas.in/api/public/employee-documents/esign/webhook/luckpay
@@ -422,16 +429,16 @@ This is the first workstream to deploy, because Workstream 2 depends on it (Requ
 
 `finalizeChecklistEsign` (`employeeJoiningDocuments.service.ts:1923-2132`) currently issues four independent `db.execute` calls with no surrounding transaction:
 
-| Statement | Lines | Inside the new boundary? |
-|---|---|---|
-| checklist `UPDATE` (status, fill_status, signature_mode, locked_at, completed_at) | 2017-2028 | **yes** |
-| transaction-table `UPDATE` (status, signed_file_id, completed_at, payload) | 2030-2049 | **yes** |
-| public-token `UPDATE` (consumed) | 2051-2057 | **yes** |
-| `auditDocumentAction` | 2061-2073 | no |
-| payroll-HR inbox notification | 2075-2125 | no |
-| `recalculateDocumentProgress` | 2126 | no |
+| Statement                                                                         | Lines     | Inside the new boundary? |
+| --------------------------------------------------------------------------------- | --------- | ------------------------ |
+| checklist `UPDATE` (status, fill_status, signature_mode, locked_at, completed_at) | 2017-2028 | **yes**                  |
+| transaction-table `UPDATE` (status, signed_file_id, completed_at, payload)        | 2030-2049 | **yes**                  |
+| public-token `UPDATE` (consumed)                                                  | 2051-2057 | **yes**                  |
+| `auditDocumentAction`                                                             | 2061-2073 | no                       |
+| payroll-HR inbox notification                                                     | 2075-2125 | no                       |
+| `recalculateDocumentProgress`                                                     | 2126      | no                       |
 
-Widen to cover exactly the three writes that constitute *the completion fact*, using `db.getConnection()` + `beginTransaction` / `commit` / `rollback` / `release` — the same shape `bulkVerifyDocuments` (`ats.joiningDocumentsTracker.service.ts:562-605`) and `bulkAssignHR` (:450-483) already use, so the pattern is established rather than invented.
+Widen to cover exactly the three writes that constitute _the completion fact_, using `db.getConnection()` + `beginTransaction` / `commit` / `rollback` / `release` — the same shape `bulkVerifyDocuments` (`ats.joiningDocumentsTracker.service.ts:562-605`) and `bulkAssignHR` (:450-483) already use, so the pattern is established rather than invented.
 
 Three things stay **outside**, each for a stated reason:
 
@@ -466,14 +473,14 @@ The gate is `signature_mode = 'aadhaar_esign_verified'`, not `status = 'esign_co
 
 Requirement 4 criterion 1 requires `due_at = NULL`. Every reader of `employee_joining_document_checklist.due_at` was checked:
 
-| Consumer | Reads `due_at` | Broken by clearing it? |
-|---|---|---|
-| `ats.joiningDocumentsTracker.service.ts:295` | `overdue_count` predicate | No — a NULL `due_at` fails `due_at < NOW()`, which is the intended effect |
-| `esign-compliance.worker.ts:169` | selects the column | No — the same query gates on `status IN ('esign_initiated','pending_candidate_esign')` (:181), so a completed row has already left the result set regardless of `due_at` |
-| `notification-event.service.ts:444-457` | overdue/expiry templates | No — populated from that worker's rows, which no longer include completed documents |
-| `employeeJoiningDocuments.service.ts:862` | returns it in the document pack | Cosmetic — the detail view shows a blank due date on a verified document, which is correct |
-| `bulkSetDueDate` (:497-506) | writes it | No — HR setting a due date on an already-verified document is a no-op in practice and remains permitted |
-| frontend | nothing | No consumer of this column exists in `src/` |
+| Consumer                                     | Reads `due_at`                  | Broken by clearing it?                                                                                                                                                   |
+| -------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ats.joiningDocumentsTracker.service.ts:295` | `overdue_count` predicate       | No — a NULL `due_at` fails `due_at < NOW()`, which is the intended effect                                                                                                |
+| `esign-compliance.worker.ts:169`             | selects the column              | No — the same query gates on `status IN ('esign_initiated','pending_candidate_esign')` (:181), so a completed row has already left the result set regardless of `due_at` |
+| `notification-event.service.ts:444-457`      | overdue/expiry templates        | No — populated from that worker's rows, which no longer include completed documents                                                                                      |
+| `employeeJoiningDocuments.service.ts:862`    | returns it in the document pack | Cosmetic — the detail view shows a blank due date on a verified document, which is correct                                                                               |
+| `bulkSetDueDate` (:497-506)                  | writes it                       | No — HR setting a due date on an already-verified document is a no-op in practice and remains permitted                                                                  |
+| frontend                                     | nothing                         | No consumer of this column exists in `src/`                                                                                                                              |
 
 **No real dependency.** `due_at = NULL` is safe and no `completed_at`-aware predicate is needed, which is why Requirement 4 criterion 6 can leave the overdue predicate untouched. The one loss is historical: after clearing, the original deadline is unrecoverable from the row. It is preserved in the Audit_Log `old_value` for backfilled rows (Requirement 12 criterion 5) and, for forward completions, in the same audit row's `old_value`. Recorded as a low-severity risk below rather than designed around.
 
@@ -481,13 +488,13 @@ Requirement 4 criterion 1 requires `due_at = NULL`. Every reader of `employee_jo
 
 One `action_type` vocabulary, disjoint from the human-review one, so provenance is a value and not a timestamp comparison:
 
-| `action_type` | Written by |
-|---|---|
-| `ESIGN_VERIFICATION_AUTO` | `finalizeChecklistEsign`, `finalizeKitEsign` — forward completion |
-| `ESIGN_VERIFICATION_BACKFILL` | Backfill_Runner closure (R12.1) |
-| `ESIGN_BACKFILL_EXAMINED_UNSIGNED` | Backfill_Runner, kit left untouched (R12.4) |
-| `BULK_VERIFY_ESIGNED` | `bulkVerifyDocuments`, row arrived by eSign (R5.3) |
-| `BULK_VERIFY` | `bulkVerifyDocuments`, uploaded row — existing value, unchanged |
+| `action_type`                      | Written by                                                        |
+| ---------------------------------- | ----------------------------------------------------------------- |
+| `ESIGN_VERIFICATION_AUTO`          | `finalizeChecklistEsign`, `finalizeKitEsign` — forward completion |
+| `ESIGN_VERIFICATION_BACKFILL`      | Backfill_Runner closure (R12.1)                                   |
+| `ESIGN_BACKFILL_EXAMINED_UNSIGNED` | Backfill_Runner, kit left untouched (R12.4)                       |
+| `BULK_VERIFY_ESIGNED`              | `bulkVerifyDocuments`, row arrived by eSign (R5.3)                |
+| `BULK_VERIFY`                      | `bulkVerifyDocuments`, uploaded row — existing value, unchanged   |
 
 `new_value` carries `{ verificationSource: 'aadhaar_esign', signatureMode, providerReferenceId }`; `old_value` carries `{ status, verification_status, due_at }` as they were before the write.
 
@@ -520,10 +527,10 @@ Two decisions worth stating. The eSigned statement does **not** move `status` to
 
 `backend/scripts/backfill-stranded-joining-kits.ts`, dry-run by default, `--confirm` to act. Matched to `backend/scripts/dispatch-joining-kit.mjs`, which is the nearest existing precedent and settles the question:
 
-- It must run on the server regardless. `dispatch-joining-kit.mjs`' header records that Luckpay accepts only the deployment's egress IP — "from anywhere else the handshake fails with *IP address \<yours\> is not whitelisted*". An admin endpoint would run there too, so the endpoint buys nothing on that axis.
+- It must run on the server regardless. `dispatch-joining-kit.mjs`' header records that Luckpay accepts only the deployment's egress IP — "from anywhere else the handshake fails with _IP address \<yours\> is not whitelisted_". An admin endpoint would run there too, so the endpoint buys nothing on that axis.
 - The repo has ~40 `backfill-*` scripts and an established dry-run pair convention (`apr-rescope-reprocess-dry-run.ts` / `apr-rescope-reprocess.ts`). A one-off remediation matching that convention needs no route, no RBAC grant, no `page_catalog` row and no `role_page_access` migration.
 - Requirement 12 criterion 1 needs an operator. A script takes `--actor-user-id` explicitly and refuses without it, which is a stronger guarantee than an endpoint's ambient `req.authUser.id`: the operator is recorded because it was stated, not because a session happened to exist.
-- A script cannot be re-triggered by an accidental double-click, and its stdout *is* the report.
+- A script cannot be re-triggered by an accidental double-click, and its stdout _is_ the report.
 
 The trade is that it is not runnable from the UI. For a single authorised run before 2026-08-31 that is the right trade.
 
@@ -645,7 +652,9 @@ export const ESIGN_STATE_BUCKET: Readonly<Record<string, EsignBucket>> = {
   template_pending: "not_started",
 };
 
-export function classifyEsignState(status: string | null | undefined): EsignBucket;
+export function classifyEsignState(
+  status: string | null | undefined,
+): EsignBucket;
 /** SQL CASE expression generated from the table above, so the query cannot drift from it. */
 export function esignBucketCaseSql(column: string): string;
 ```
@@ -668,7 +677,7 @@ The anti-drift mechanism is a contract test asserting that every member of `ALLO
 
 `pending_verification` is folded away rather than given a tile of its own. It was invented for documents that were complete but awaiting a human check, and Workstream 3 removes that population outright — a verified Aadhaar eSign is the verification, so there is no longer a 75-99% band that means something different from "in progress". A tile for it would be permanently near-zero and would invite the same drift back.
 
-`pending_count` does get a tile, because Requirement 7 criterion 3 requires the rendered tiles to sum to 309, and `completed + in_progress` cannot reach 309 while any employee sits at 0%. The tile row goes from four to five: Total, Completed, In Progress, **Pending**, Overdue, and the `grid-cols-4` block becomes `grid-cols-5` at the `lg` breakpoint. Total and Overdue stay outside the sum — Total *is* the sum, and Overdue is a cross-cutting count.
+`pending_count` does get a tile, because Requirement 7 criterion 3 requires the rendered tiles to sum to 309, and `completed + in_progress` cannot reach 309 while any employee sits at 0%. The tile row goes from four to five: Total, Completed, In Progress, **Pending**, Overdue, and the `grid-cols-4` block becomes `grid-cols-5` at the `lg` breakpoint. Total and Overdue stay outside the sum — Total _is_ the sum, and Overdue is a cross-cutting count.
 
 So:
 
@@ -677,7 +686,7 @@ export type SummaryBucket = "completed" | "in_progress" | "pending";
 
 export function classifyEmployeeBucket(pct: number): SummaryBucket {
   if (pct >= 100) return "completed";
-  if (pct > 0)    return "in_progress";   // absorbs the former 75-99 pending_verification band
+  if (pct > 0) return "in_progress"; // absorbs the former 75-99 pending_verification band
   return "pending";
 }
 ```
@@ -760,27 +769,27 @@ Avoiding a migration is deliberate. Repository convention (`backend/src/db/runPe
 
 ## Error Handling
 
-| Failure | Behaviour | Why |
-|---|---|---|
-| Provider unreachable during a tick | Per-transaction `error_message` + `next_poll_at` on the ladder; batch continues | An outage must not burn the backoff budget faster than a real pending signature — the reasoning already in the worker's catch block |
-| Provider says signed, download fails | `signature_mode = 'aadhaar_esign_pending_artefact'`; **no** verification write | A signature we cannot produce must not read as verified. Heals on a later pass via the `signed_file_id IS NULL` short-circuit |
-| Completion transaction fails mid-way | Rollback; `status`, `verification_status`, `due_at` all at pre-state | R4.2. The three are one fact |
-| Audit write fails after a committed completion | Logged, not rethrown | Outside the boundary by design; losing an audit row is better than rolling back a real signature |
-| `recalculateDocumentProgress` fails | Logged; percentage stale until next read | Derived value, recomputed on next pack open — the existing reasoning at `bulkVerifyDocuments`:607-615 |
-| Backfill: kit has no `APIB…` reference | Classified `unresolvable_no_provider_reference`, reported, **not** an error, no provider call | R3.7 |
-| Backfill: `finalizeKitEsign` throws for one kit | Caught per kit; classified `error` with the message in the report; run continues | A single bad kit must not abandon the other 25 before the window closes |
-| Backfill run interrupted | Safe to re-run; `already_closed` short-circuits before billing | R3.8 |
-| Webhook: audit write impossible (no resolvable employee) | `console.error` only, audit skipped | `employee_id` is `NOT NULL`; a swallowed insert is how the kit audit log silently lost every row before `joiningKitDispatch.service.ts:57-78` was fixed |
-| Tracker: unrecognised checklist status | Row counted in the denominator; one log line per distinct value per process | R6.5 without a 309-line log storm |
+| Failure                                                  | Behaviour                                                                                     | Why                                                                                                                                                     |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider unreachable during a tick                       | Per-transaction `error_message` + `next_poll_at` on the ladder; batch continues               | An outage must not burn the backoff budget faster than a real pending signature — the reasoning already in the worker's catch block                     |
+| Provider says signed, download fails                     | `signature_mode = 'aadhaar_esign_pending_artefact'`; **no** verification write                | A signature we cannot produce must not read as verified. Heals on a later pass via the `signed_file_id IS NULL` short-circuit                           |
+| Completion transaction fails mid-way                     | Rollback; `status`, `verification_status`, `due_at` all at pre-state                          | R4.2. The three are one fact                                                                                                                            |
+| Audit write fails after a committed completion           | Logged, not rethrown                                                                          | Outside the boundary by design; losing an audit row is better than rolling back a real signature                                                        |
+| `recalculateDocumentProgress` fails                      | Logged; percentage stale until next read                                                      | Derived value, recomputed on next pack open — the existing reasoning at `bulkVerifyDocuments`:607-615                                                   |
+| Backfill: kit has no `APIB…` reference                   | Classified `unresolvable_no_provider_reference`, reported, **not** an error, no provider call | R3.7                                                                                                                                                    |
+| Backfill: `finalizeKitEsign` throws for one kit          | Caught per kit; classified `error` with the message in the report; run continues              | A single bad kit must not abandon the other 25 before the window closes                                                                                 |
+| Backfill run interrupted                                 | Safe to re-run; `already_closed` short-circuits before billing                                | R3.8                                                                                                                                                    |
+| Webhook: audit write impossible (no resolvable employee) | `console.error` only, audit skipped                                                           | `employee_id` is `NOT NULL`; a swallowed insert is how the kit audit log silently lost every row before `joiningKitDispatch.service.ts:57-78` was fixed |
+| Tracker: unrecognised checklist status                   | Row counted in the denominator; one log line per distinct value per process                   | R6.5 without a 309-line log storm                                                                                                                       |
 
 ## Rollout Order
 
 Workstream 3 changes write behaviour and Workstream 2 depends on it (R3.4), so the sequence is not negotiable.
 
-0. **Record the Deployment_Checklist confirmation that `LUCKPAY_WEBHOOK_SECRET` is set in production (R2.7).** Its presence is currently *inferred* — from the startup guard at `env.ts:379-382` not having fired in a backend demonstrably running with `LUCKPAY_PROVIDER_ENABLED=true` — and the value is absent from both the repository and `org_settings`, so nothing in either can confirm it. The checklist entry replaces the inference with an operational check against the running environment. Numbered zero because it is a record against the deployed environment rather than a deploy, which leaves steps 1-6 with the numbering the Risks section and the task list refer to.
+0. **Record the Deployment_Checklist confirmation that `LUCKPAY_WEBHOOK_SECRET` is set in production (R2.7).** Its presence is currently _inferred_ — from the startup guard at `env.ts:379-382` not having fired in a backend demonstrably running with `LUCKPAY_PROVIDER_ENABLED=true` — and the value is absent from both the repository and `org_settings`, so nothing in either can confirm it. The checklist entry replaces the inference with an operational check against the running environment. Numbered zero because it is a record against the deployed environment rather than a deploy, which leaves steps 1-6 with the numbering the Risks section and the task list refer to.
 1. **Workstream 3 + 3b + 4 deploy together, flag still off.** The write path becomes correct and the tracker becomes truthful about the current data before anything new is written. Enabling the tracker fixes first also means the backfill's effect is observable the moment it runs. `ESIGN_RECONCILIATION_ENABLED` stays `false` here.
 2. **Workstream 1b (webhook hardening) rides along.** No behavioural dependency either way; it is in step 1 only to avoid a second deploy.
-3. **Verify on MAS63411.** Its 5 `esign_completed` rows carry `signature_mode = 'aadhaar_esign_verified'` and `completed_at` already, but `verification_status` NULL on all 9. They are *past* completions, so the forward write does not reach them — clear them with `bulk-verify` from the tracker, which now matches eSigned rows (Workstream 3b), and confirm `verified_count = 5` / `overdue_count = 4` (R4.5) and denominator 9 (R6.4). This is the acceptance test for steps 1 and 2 and it needs no provider call.
+3. **Verify on MAS63411.** Its 5 `esign_completed` rows carry `signature_mode = 'aadhaar_esign_verified'` and `completed_at` already, but `verification_status` NULL on all 9. They are _past_ completions, so the forward write does not reach them — clear them with `bulk-verify` from the tracker, which now matches eSigned rows (Workstream 3b), and confirm `verified_count = 5` / `overdue_count = 4` (R4.5) and denominator 9 (R6.4). This is the acceptance test for steps 1 and 2 and it needs no provider call.
 4. **Backfill dry run.** `--actor-user-id <ID>` without `--confirm`. Costs 26 status calls, writes nothing, and produces the report. Its value is answering the open question — how many of the 26 Luckpay actually reports signed — before any write.
 5. **Backfill confirmed run, MAS47814 first.** Ordered `sent_at ASC`. Must complete on or before **2026-08-31**.
 6. **Flip `ESIGN_RECONCILIATION_ENABLED=true` in the deployed `backend/.env`, restart `hrms2-workers`.** Last, deliberately: by now the write path is correct, so the first thing the worker does cannot produce a signed-but-unverified row. Confirm from the first tick's log line that it reports `enabled=true` and a selected count, and that `last_polled_at` is non-NULL and `poll_attempts` non-zero across the table — the observable that has been NULL and 0 on all 48 transactions to date.
@@ -793,31 +802,31 @@ Vitest, matching the repo's existing split: behavioural unit tests for pure func
 
 ### Unit and property tests
 
-| File | Covers |
-|---|---|
-| `backend/src/modules/ats/__tests__/esignState.test.ts` | Classifier totality and disjointness over the union set; `esignBucketCaseSql` emits a `CASE` naming every key exactly once; unknown values bucket and log once per distinct value (Property 13) |
-| `backend/src/modules/ats/__tests__/trackerSummary.test.ts` | `classifyEmployeeBucket` partitions across 0-100 including the 75 and 99 boundaries; `calculateTrackerSummary` sums to input length; badge bucket equals tile bucket; 309-employee fixture (Property 14, and R7.3) |
-| `backend/src/modules/ats/__tests__/trackerPagination.test.ts` | Page concatenation reproduces the ordered set exactly once over colliding `date_of_joining` values; `total` invariant; `hasNext` matches remaining count (Property 16) |
-| `backend/src/modules/ats/__tests__/trackerNullCounts.test.ts` | Counts null iff row count 0, numeric (including 0) otherwise (Property 15) |
-| `backend/tests/employeeCompliancePrivacy.test.ts` (extend) | `classifyLuckpayWebhookAuth` totality and disjointness over arbitrary string/undefined pairs including empty and whitespace; existing `verifyLuckpayWebhookSecret` assertions unchanged (Property 6) |
-| `backend/src/workers/__tests__/esignReconciliation.test.ts` | Ladder membership, monotonicity, terminal repetition; poll counter advances once per outcome including a throw; failing-subset isolation; abandonment written exactly once over repeated ticks; provider-call counts against a counting mock (Properties 1-5) |
-| `backend/src/modules/employees/__tests__/finalizeKitEsign.verification.test.ts` | Every member row of a 1-12 member kit reaches the full verified state; per-member state identical (Property 8) |
-| `backend/scripts/__tests__/backfillStrandedKits.test.ts` | Idempotence, unsigned-kit immutability, report totality, attribution, `completed_at` provenance, call counts (Properties 17-21) |
+| File                                                                            | Covers                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `backend/src/modules/ats/__tests__/esignState.test.ts`                          | Classifier totality and disjointness over the union set; `esignBucketCaseSql` emits a `CASE` naming every key exactly once; unknown values bucket and log once per distinct value (Property 13)                                                               |
+| `backend/src/modules/ats/__tests__/trackerSummary.test.ts`                      | `classifyEmployeeBucket` partitions across 0-100 including the 75 and 99 boundaries; `calculateTrackerSummary` sums to input length; badge bucket equals tile bucket; 309-employee fixture (Property 14, and R7.3)                                            |
+| `backend/src/modules/ats/__tests__/trackerPagination.test.ts`                   | Page concatenation reproduces the ordered set exactly once over colliding `date_of_joining` values; `total` invariant; `hasNext` matches remaining count (Property 16)                                                                                        |
+| `backend/src/modules/ats/__tests__/trackerNullCounts.test.ts`                   | Counts null iff row count 0, numeric (including 0) otherwise (Property 15)                                                                                                                                                                                    |
+| `backend/tests/employeeCompliancePrivacy.test.ts` (extend)                      | `classifyLuckpayWebhookAuth` totality and disjointness over arbitrary string/undefined pairs including empty and whitespace; existing `verifyLuckpayWebhookSecret` assertions unchanged (Property 6)                                                          |
+| `backend/src/workers/__tests__/esignReconciliation.test.ts`                     | Ladder membership, monotonicity, terminal repetition; poll counter advances once per outcome including a throw; failing-subset isolation; abandonment written exactly once over repeated ticks; provider-call counts against a counting mock (Properties 1-5) |
+| `backend/src/modules/employees/__tests__/finalizeKitEsign.verification.test.ts` | Every member row of a 1-12 member kit reaches the full verified state; per-member state identical (Property 8)                                                                                                                                                |
+| `backend/scripts/__tests__/backfillStrandedKits.test.ts`                        | Idempotence, unsigned-kit immutability, report totality, attribution, `completed_at` provenance, call counts (Properties 17-21)                                                                                                                               |
 
 ### Contract tests
 
-| File | Asserts |
-|---|---|
+| File                                                              | Asserts                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `finalizeChecklistEsign.verificationTransaction.contract.test.ts` | The checklist write, the transaction-table write and the token write all sit between `beginTransaction` and `commit` on one connection; `auditDocumentAction`, the inbox block and `recalculateDocumentProgress` all sit **after** `commit`; the checklist `UPDATE` sets `verification_status` and `due_at` in the same statement as `status`. This is R4.1's "same transaction" — unobservable from any post-state assertion, which is why it needs its own test |
-| `esignStateClassifierCoverage.contract.test.ts` | Every member of `ALLOWED_CHECKLIST_STATUSES` (`employeeJoiningDocuments.service.ts:89-107`) has a key in `ESIGN_STATE_BUCKET`; the tracker SQL contains no inline status literal, only the generated `CASE` |
-| `esignStateMirror.contract.test.ts` | `src/lib/esignState.ts` and `backend/src/modules/ats/esignState.ts` declare the same bucket names; `STATUS_COLORS` covers every bucket |
-| `trackerTypeParity.contract.test.ts` | Nullability of every count field agrees between `EmployeeDocumentRow` and the page's `EmployeeRow` (R8.3) |
-| `trackerOverduePredicate.contract.test.ts` | `due_at < NOW() AND verification_status IS NULL` still present verbatim (R4.6); `bulkVerifyDocuments` contains no `joining_document_completion_pct` write and still calls `recalculateDocumentProgress` (R5.4) |
-| `luckpayWebhookDormancy.contract.test.ts` | The dormancy comment and the absolute callback URL sit above the route; the route path literal is unchanged; the three rejection branches each log and audit distinguishably (R2.1, R2.6) |
-| `esignReconciliationBudget.contract.test.ts` | `BACKOFF_MINUTES`, `TICK_MS`, `BATCH_SIZE`, `GIVE_UP_AFTER_DAYS` unchanged; the `scope === 'kit'` delegation to `finalizeKitEsign` precedes the per-document download block in `luckpay-status.service.ts` (R1.2, R1.3, R11.2) |
-| `esignReconciliationRegistration.contract.test.ts` | `startEsignReconciliationWorker` is registered in `all-workers.ts`, and the flag is read from `env.ts` — the registration whose single-file nature is the reason a flag on the API process would do nothing (R1.1) |
-| `env.luckpayWebhookGuard.contract.test.ts` | The `LUCKPAY_PROVIDER_ENABLED === "true" && !LUCKPAY_WEBHOOK_SECRET` guard and its `process.exit(1)` still exist (R2.8) |
-| `esignCompletionSingleWriter.contract.test.ts` | Neither `handleJoiningDocumentEsignWebhook` nor `syncEsignStatus` contains its own `UPDATE … SET status = 'esign_completed'` for a kit-scope transaction; both delegate (R2.5) |
+| `esignStateClassifierCoverage.contract.test.ts`                   | Every member of `ALLOWED_CHECKLIST_STATUSES` (`employeeJoiningDocuments.service.ts:89-107`) has a key in `ESIGN_STATE_BUCKET`; the tracker SQL contains no inline status literal, only the generated `CASE`                                                                                                                                                                                                                                                       |
+| `esignStateMirror.contract.test.ts`                               | `src/lib/esignState.ts` and `backend/src/modules/ats/esignState.ts` declare the same bucket names; `STATUS_COLORS` covers every bucket                                                                                                                                                                                                                                                                                                                            |
+| `trackerTypeParity.contract.test.ts`                              | Nullability of every count field agrees between `EmployeeDocumentRow` and the page's `EmployeeRow` (R8.3)                                                                                                                                                                                                                                                                                                                                                         |
+| `trackerOverduePredicate.contract.test.ts`                        | `due_at < NOW() AND verification_status IS NULL` still present verbatim (R4.6); `bulkVerifyDocuments` contains no `joining_document_completion_pct` write and still calls `recalculateDocumentProgress` (R5.4)                                                                                                                                                                                                                                                    |
+| `luckpayWebhookDormancy.contract.test.ts`                         | The dormancy comment and the absolute callback URL sit above the route; the route path literal is unchanged; the three rejection branches each log and audit distinguishably (R2.1, R2.6)                                                                                                                                                                                                                                                                         |
+| `esignReconciliationBudget.contract.test.ts`                      | `BACKOFF_MINUTES`, `TICK_MS`, `BATCH_SIZE`, `GIVE_UP_AFTER_DAYS` unchanged; the `scope === 'kit'` delegation to `finalizeKitEsign` precedes the per-document download block in `luckpay-status.service.ts` (R1.2, R1.3, R11.2)                                                                                                                                                                                                                                    |
+| `esignReconciliationRegistration.contract.test.ts`                | `startEsignReconciliationWorker` is registered in `all-workers.ts`, and the flag is read from `env.ts` — the registration whose single-file nature is the reason a flag on the API process would do nothing (R1.1)                                                                                                                                                                                                                                                |
+| `env.luckpayWebhookGuard.contract.test.ts`                        | The `LUCKPAY_PROVIDER_ENABLED === "true" && !LUCKPAY_WEBHOOK_SECRET` guard and its `process.exit(1)` still exist (R2.8)                                                                                                                                                                                                                                                                                                                                           |
+| `esignCompletionSingleWriter.contract.test.ts`                    | Neither `handleJoiningDocumentEsignWebhook` nor `syncEsignStatus` contains its own `UPDATE … SET status = 'esign_completed'` for a kit-scope transaction; both delegate (R2.5)                                                                                                                                                                                                                                                                                    |
 
 ### Testing the Backfill_Runner without billed calls
 
@@ -825,7 +834,10 @@ The runner takes its Luckpay dependency by injection rather than importing `luck
 
 ```ts
 export async function runBackfill(deps: {
-  client: Pick<typeof luckpayClient, "checkESignStatus" | "downloadESignDocument">;
+  client: Pick<
+    typeof luckpayClient,
+    "checkESignStatus" | "downloadESignDocument"
+  >;
   db: Pool;
   actorUserId: string;
   confirm: boolean;
@@ -864,7 +876,7 @@ Property-based testing is used for the classifiers, the bucket partition, the pa
 
 ## Correctness Properties
 
-*A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+_A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees._
 
 ### Property 1: The backoff ladder is a total, non-decreasing schedule whose final interval repeats
 

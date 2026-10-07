@@ -1,12 +1,21 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { branchFilter, processDisplay, recruiterNamer, reportingScope, sourceCode, sourceDisplay, leadSourceDisplay } from "../dashboard.scope.js";
+import {
+  branchFilter,
+  processDisplay,
+  recruiterNamer,
+  reportingScope,
+  sourceCode,
+  sourceDisplay,
+  leadSourceDisplay,
+} from "../dashboard.scope.js";
 import { joinedIdSql } from "../dashboard.joined.js";
 
 describe("dashboard labels use the repo's canonical vocabulary", () => {
   it("merges every spelling of walk-in into one source", () => {
-    for (const raw of ["WALKIN", "Walk-In", "walk-in", "walk in", "  Walk-in "]) expect(sourceDisplay(raw)).toBe("Walk-in");
+    for (const raw of ["WALKIN", "Walk-In", "walk-in", "walk in", "  Walk-in "])
+      expect(sourceDisplay(raw)).toBe("Walk-in");
     expect(sourceDisplay("")).toBe("Unspecified");
     expect(sourceDisplay(null)).toBe("Unspecified");
   });
@@ -19,18 +28,28 @@ describe("dashboard labels use the repo's canonical vocabulary", () => {
   });
 
   it("keeps unknown call-log sources readable instead of shouting them", () => {
-    expect(leadSourceDisplay("WorkIndia Data Base")).toBe("Workindia Data Base");
+    expect(leadSourceDisplay("WorkIndia Data Base")).toBe(
+      "Workindia Data Base",
+    );
     expect(leadSourceDisplay("WALKIN")).toBe("Walk-in");
   });
 
   it("shows internal ids in the process column as one bucket, and merges spelling variants", () => {
-    expect(processDisplay("04f20ddc-67ba-11f1-adb1-00155d0ab410")).toBe("Unmapped");
+    expect(processDisplay("04f20ddc-67ba-11f1-adb1-00155d0ab410")).toBe(
+      "Unmapped",
+    );
     expect(processDisplay("")).toBe("Unspecified");
     expect(processDisplay("Backoffice")).toBe(processDisplay("Back Office"));
   });
 
   it("groups one recruiter written several ways and prefers the readable name", () => {
-    const name = recruiterNamer(["SOFIYA SULTAN", "Sofiya Sultan", "SRASHTI CHAUHAN · MAS61660", "SRASHTI CHAUHAN", "Unassigned"]);
+    const name = recruiterNamer([
+      "SOFIYA SULTAN",
+      "Sofiya Sultan",
+      "SRASHTI CHAUHAN · MAS61660",
+      "SRASHTI CHAUHAN",
+      "Unassigned",
+    ]);
     expect(name("SOFIYA SULTAN")).toBe(name("Sofiya Sultan"));
     expect(name("SRASHTI CHAUHAN · MAS61660")).toBe("SRASHTI CHAUHAN");
     expect(name("Unassigned")).toBe("Unassigned");
@@ -51,13 +70,18 @@ describe("dashboard labels use the repo's canonical vocabulary", () => {
 
 describe("reporting scope", () => {
   it("excludes legacy employee rows and the other entity", () => {
-    expect(reportingScope("c")).toBe("c.record_type = 'candidate' AND c.candidate_code NOT LIKE 'IDC%'");
+    expect(reportingScope("c")).toBe(
+      "c.record_type = 'candidate' AND c.candidate_code NOT LIKE 'IDC%'",
+    );
   });
 });
 
 describe("joined resolution", () => {
   it("builds a placeholder list for the resolved ids and a constant false for none", () => {
-    expect(joinedIdSql("c.id", ["a", "b", "c"])).toEqual({ sql: "c.id IN (?,?,?)", params: ["a", "b", "c"] });
+    expect(joinedIdSql("c.id", ["a", "b", "c"])).toEqual({
+      sql: "c.id IN (?,?,?)",
+      params: ["a", "b", "c"],
+    });
     expect(joinedIdSql("id", [])).toEqual({ sql: "1=0", params: [] });
   });
 });
@@ -68,8 +92,11 @@ describe("joined resolution", () => {
  */
 describe("every dashboard query over ats_candidate applies the reporting scope", () => {
   const dir = path.resolve(__dirname, "..");
-  const files = fs.readdirSync(dir).filter((f) => /^dashboard\..*\.ts$/.test(f) && f !== "dashboard.scope.ts");
-  it("finds the dashboard services", () => expect(files.length).toBeGreaterThanOrEqual(5));
+  const files = fs
+    .readdirSync(dir)
+    .filter((f) => /^dashboard\..*\.ts$/.test(f) && f !== "dashboard.scope.ts");
+  it("finds the dashboard services", () =>
+    expect(files.length).toBeGreaterThanOrEqual(5));
 
   for (const file of files) {
     it(`${file}`, () => {
@@ -80,9 +107,17 @@ describe("every dashboard query over ats_candidate applies the reporting scope",
         const rest = src.slice(m.index!);
         const end = rest.search(/`\s*[,);]/);
         const window = rest.slice(0, end < 0 ? 600 : end);
-        const scoped = window.includes("reportingScope(") || window.includes("${w.sql}") || window.includes("${wf.sql}");
-        const byIdOnly = /ats_candidate\s+WHERE\s+id\s*=\s*\?/.test(window.slice(0, 80)); // single-candidate journey, access-checked in the route
-        if (!scoped && !byIdOnly) offenders.push(src.slice(m.index!, m.index! + 90).replace(/\s+/g, " "));
+        const scoped =
+          window.includes("reportingScope(") ||
+          window.includes("${w.sql}") ||
+          window.includes("${wf.sql}");
+        const byIdOnly = /ats_candidate\s+WHERE\s+id\s*=\s*\?/.test(
+          window.slice(0, 80),
+        ); // single-candidate journey, access-checked in the route
+        if (!scoped && !byIdOnly)
+          offenders.push(
+            src.slice(m.index!, m.index! + 90).replace(/\s+/g, " "),
+          );
       }
       expect(offenders).toEqual([]);
     });

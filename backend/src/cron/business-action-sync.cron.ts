@@ -9,7 +9,7 @@
  * - Roster shortages (daily 9 AM IST)
  */
 
-import { businessActionSignalSync } from '../modules/business-actions/business-actions.signal-sync.js';
+import { businessActionSignalSync } from "../modules/business-actions/business-actions.signal-sync.js";
 
 let payrollScheduler: NodeJS.Timeout | undefined;
 let attendanceScheduler: NodeJS.Timeout | undefined;
@@ -32,12 +32,15 @@ function schedulePayrollReadiness(): void {
   if (payrollScheduler) return;
 
   payrollScheduler = setTimeout(async () => {
-    console.log('[CRON] Running payroll readiness sync...');
+    console.log("[CRON] Running payroll readiness sync...");
     try {
-      const result = await businessActionSignalSync.syncPayrollReadiness('system');
-      console.log(`[CRON] Payroll readiness sync complete: ${result.created} actions created (${result.scanned} scanned, ${result.skipped} skipped)`);
+      const result =
+        await businessActionSignalSync.syncPayrollReadiness("system");
+      console.log(
+        `[CRON] Payroll readiness sync complete: ${result.created} actions created (${result.scanned} scanned, ${result.skipped} skipped)`,
+      );
     } catch (error) {
-      console.error('[CRON] Payroll readiness sync error:', error);
+      console.error("[CRON] Payroll readiness sync error:", error);
     } finally {
       payrollScheduler = undefined;
       schedulePayrollReadiness(); // Reschedule for next day
@@ -52,12 +55,15 @@ function scheduleAttendanceGaps(): void {
   if (attendanceScheduler) return;
 
   attendanceScheduler = setTimeout(async () => {
-    console.log('[CRON] Running attendance gap sync...');
+    console.log("[CRON] Running attendance gap sync...");
     try {
-      const result = await businessActionSignalSync.syncAttendanceGaps('system');
-      console.log(`[CRON] Attendance gap sync complete: ${result.created} actions created (${result.scanned} scanned, ${result.skipped} skipped)`);
+      const result =
+        await businessActionSignalSync.syncAttendanceGaps("system");
+      console.log(
+        `[CRON] Attendance gap sync complete: ${result.created} actions created (${result.scanned} scanned, ${result.skipped} skipped)`,
+      );
     } catch (error) {
-      console.error('[CRON] Attendance gap sync error:', error);
+      console.error("[CRON] Attendance gap sync error:", error);
     } finally {
       attendanceScheduler = undefined;
       scheduleAttendanceGaps(); // Reschedule for next day
@@ -72,12 +78,15 @@ function scheduleOnboardingStuck(): void {
   if (onboardingScheduler) return;
 
   onboardingScheduler = setTimeout(async () => {
-    console.log('[CRON] Running onboarding stuck sync...');
+    console.log("[CRON] Running onboarding stuck sync...");
     try {
-      const result = await businessActionSignalSync.syncOnboardingStuck('system');
-      console.log(`[CRON] Onboarding stuck sync complete: ${result.created} actions created (${result.scanned} scanned, ${result.skipped} skipped)`);
+      const result =
+        await businessActionSignalSync.syncOnboardingStuck("system");
+      console.log(
+        `[CRON] Onboarding stuck sync complete: ${result.created} actions created (${result.scanned} scanned, ${result.skipped} skipped)`,
+      );
     } catch (error) {
-      console.error('[CRON] Onboarding stuck sync error:', error);
+      console.error("[CRON] Onboarding stuck sync error:", error);
     } finally {
       onboardingScheduler = undefined;
       scheduleOnboardingStuck(); // Reschedule for next 6 hours
@@ -92,12 +101,15 @@ function scheduleRosterShortages(): void {
   if (rosterScheduler) return;
 
   rosterScheduler = setTimeout(async () => {
-    console.log('[CRON] Running roster shortage sync...');
+    console.log("[CRON] Running roster shortage sync...");
     try {
-      const result = await businessActionSignalSync.syncRosterShortages('system');
-      console.log(`[CRON] Roster shortage sync complete: ${result.created} actions created (${result.scanned} scanned, ${result.skipped} skipped)`);
+      const result =
+        await businessActionSignalSync.syncRosterShortages("system");
+      console.log(
+        `[CRON] Roster shortage sync complete: ${result.created} actions created (${result.scanned} scanned, ${result.skipped} skipped)`,
+      );
     } catch (error) {
-      console.error('[CRON] Roster shortage sync error:', error);
+      console.error("[CRON] Roster shortage sync error:", error);
     } finally {
       rosterScheduler = undefined;
       scheduleRosterShortages(); // Reschedule for next day
@@ -108,18 +120,18 @@ function scheduleRosterShortages(): void {
 }
 
 export function initBusinessActionSyncJobs(): void {
-  console.log('[CRON] Initializing business action sync jobs...');
+  console.log("[CRON] Initializing business action sync jobs...");
 
   schedulePayrollReadiness();
   scheduleAttendanceGaps();
   scheduleOnboardingStuck();
   scheduleRosterShortages();
 
-  console.log('[CRON] Business action sync jobs initialized');
-  console.log('[CRON] - Payroll readiness: Daily 7 AM IST');
-  console.log('[CRON] - Attendance gaps: Daily 6 AM IST');
-  console.log('[CRON] - Onboarding stuck: Every 6 hours');
-  console.log('[CRON] - Roster shortages: Daily 9 AM IST');
+  console.log("[CRON] Business action sync jobs initialized");
+  console.log("[CRON] - Payroll readiness: Daily 7 AM IST");
+  console.log("[CRON] - Attendance gaps: Daily 6 AM IST");
+  console.log("[CRON] - Onboarding stuck: Every 6 hours");
+  console.log("[CRON] - Roster shortages: Daily 9 AM IST");
 }
 
 export function stopBusinessActionSyncJobs(): void {
@@ -133,5 +145,5 @@ export function stopBusinessActionSyncJobs(): void {
   onboardingScheduler = undefined;
   rosterScheduler = undefined;
 
-  console.log('[CRON] Business action sync jobs stopped');
+  console.log("[CRON] Business action sync jobs stopped");
 }

@@ -17,7 +17,17 @@ describe("daily-brief-training: stale-source detection", () => {
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("MAX(synced_at)")) return [[{ last_synced: oldSync }]];
       if (sql.includes("FROM lms_learning_progress_snapshot")) {
-        return [[{ total_rows: 10, completed_d1: 1, in_progress: 3, overdue: 0, completed_total: 5 }]];
+        return [
+          [
+            {
+              total_rows: 10,
+              completed_d1: 1,
+              in_progress: 3,
+              overdue: 0,
+              completed_total: 5,
+            },
+          ],
+        ];
       }
       if (sql.includes("FROM lms_certification_snapshot")) {
         return [[{ expiring_30d: 0, expired: 0 }]];
@@ -27,7 +37,9 @@ describe("daily-brief-training: stale-source detection", () => {
 
     const result = await buildTrainingModule(["e1", "e2"], "2026-08-18");
 
-    const health = result.sourceHealth.find((h) => h.module === "training_progress");
+    const health = result.sourceHealth.find(
+      (h) => h.module === "training_progress",
+    );
     expect(health?.state).toBe("STALE");
     expect(health?.detail).toContain("synced");
   });
@@ -35,9 +47,20 @@ describe("daily-brief-training: stale-source detection", () => {
   it("is AVAILABLE (not STALE) when the last sync is recent", async () => {
     const recentSync = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h ago
     execute.mockImplementation(async (sql: string) => {
-      if (sql.includes("MAX(synced_at)")) return [[{ last_synced: recentSync }]];
+      if (sql.includes("MAX(synced_at)"))
+        return [[{ last_synced: recentSync }]];
       if (sql.includes("FROM lms_learning_progress_snapshot")) {
-        return [[{ total_rows: 10, completed_d1: 1, in_progress: 3, overdue: 0, completed_total: 5 }]];
+        return [
+          [
+            {
+              total_rows: 10,
+              completed_d1: 1,
+              in_progress: 3,
+              overdue: 0,
+              completed_total: 5,
+            },
+          ],
+        ];
       }
       if (sql.includes("FROM lms_certification_snapshot")) {
         return [[{ expiring_30d: 0, expired: 0 }]];
@@ -47,7 +70,9 @@ describe("daily-brief-training: stale-source detection", () => {
 
     const result = await buildTrainingModule(["e1"], "2026-08-18");
 
-    const health = result.sourceHealth.find((h) => h.module === "training_progress");
+    const health = result.sourceHealth.find(
+      (h) => h.module === "training_progress",
+    );
     expect(health?.state).toBe("AVAILABLE");
   });
 });
@@ -59,7 +84,9 @@ describe("daily-brief-training: scope gating", () => {
 
     expect(result.applicable).toBe(false);
     expect(result.coursesCompletedD1).toBeNull();
-    expect(result.sourceHealth.every((h) => h.state === "NOT_APPLICABLE")).toBe(true);
+    expect(result.sourceHealth.every((h) => h.state === "NOT_APPLICABLE")).toBe(
+      true,
+    );
     expect(execute).not.toHaveBeenCalled();
   });
 });
@@ -75,7 +102,9 @@ describe("daily-brief-training: error handling", () => {
     const result = await buildTrainingModule(["e1"], "2026-08-18");
 
     expect(result.coursesCompletedD1).toBeNull();
-    const health = result.sourceHealth.find((h) => h.module === "training_progress");
+    const health = result.sourceHealth.find(
+      (h) => h.module === "training_progress",
+    );
     expect(health?.state).toBe("ERROR");
     expect(health?.detail).toContain("simulated failure");
   });

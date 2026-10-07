@@ -30,14 +30,36 @@ import { describe, expect, it } from "vitest";
 import { isUsable } from "../syncStatutoryDataFromDbBill.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(path.resolve(__dirname, "../syncStatutoryDataFromDbBill.ts"), "utf8");
-const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const source = fs.readFileSync(
+  path.resolve(__dirname, "../syncStatutoryDataFromDbBill.ts"),
+  "utf8",
+);
+const code = source
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/^\s*\/\/.*$/gm, "");
 
 describe("db_bill statutory sync — placeholder rejection", () => {
   it("rejects the placeholder tokens db_bill actually contains", () => {
     // Every one of these was observed in db_bill.employee_master.
-    for (const token of ["NA", "N/A", "NAN", "NIL", "NONE", "0", "-", ".", ",", "A", "N", "AN", "X"]) {
-      expect(isUsable(token), `${token} must not be imported as a statutory number`).toBe(false);
+    for (const token of [
+      "NA",
+      "N/A",
+      "NAN",
+      "NIL",
+      "NONE",
+      "0",
+      "-",
+      ".",
+      ",",
+      "A",
+      "N",
+      "AN",
+      "X",
+    ]) {
+      expect(
+        isUsable(token),
+        `${token} must not be imported as a statutory number`,
+      ).toBe(false);
     }
   });
 
@@ -45,13 +67,24 @@ describe("db_bill statutory sync — placeholder rejection", () => {
     // ' 0 ' matters specifically: the original isEmpty compared the UNTRIMMED value
     // against '0', so a padded zero slipped past the one check that existed.
     for (const token of [" 0 ", "na", "n/a", "  NIL", "None  "]) {
-      expect(isUsable(token), `${JSON.stringify(token)} must not be imported`).toBe(false);
+      expect(
+        isUsable(token),
+        `${JSON.stringify(token)} must not be imported`,
+      ).toBe(false);
     }
   });
 
   it("still accepts genuine identifiers", () => {
-    for (const value of ["ABCDE1234F", "100200300400", "GJ/AHD/1234567/000/0000001", "1013210000123456"]) {
-      expect(isUsable(value), `${value} is a real identifier and must sync`).toBe(true);
+    for (const value of [
+      "ABCDE1234F",
+      "100200300400",
+      "GJ/AHD/1234567/000/0000001",
+      "1013210000123456",
+    ]) {
+      expect(
+        isUsable(value),
+        `${value} is a real identifier and must sync`,
+      ).toBe(true);
     }
   });
 

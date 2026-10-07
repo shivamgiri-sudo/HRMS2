@@ -45,15 +45,20 @@
  * "system" (stored as-is; the column has no FK constraint to users).
  */
 
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import * as nocCaseService from '../payroll/noc-case.service.js';
-import { notifyInviteSent } from '../payroll/noc.notifications.js';
-import { inboxService } from '../inbox/inbox.service.js';
-import { resolveRoleHolderUserIds } from '../../shared/recipient-resolver.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import * as nocCaseService from "../payroll/noc-case.service.js";
+import { notifyInviteSent } from "../payroll/noc.notifications.js";
+import { inboxService } from "../inbox/inbox.service.js";
+import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 
 const TERMINAL_STATUSES = [
-  'draft', 'exited', 'revoked', 'rejected', 'cancelled', 'withdrawn',
+  "draft",
+  "exited",
+  "revoked",
+  "rejected",
+  "cancelled",
+  "withdrawn",
 ] as const;
 
 /** Days back to scan for unprocessed LWDs (covers short outages). */
@@ -76,9 +81,11 @@ export interface NocLwdTriggerResult {
 }
 
 /** Branch HR or branch_hr role holder — used as the system initiator. */
-async function resolveBranchHrUserId(branchId: string | null): Promise<string | null> {
+async function resolveBranchHrUserId(
+  branchId: string | null,
+): Promise<string | null> {
   if (!branchId) return null;
-  for (const role of ['hr', 'branch_hr']) {
+  for (const role of ["hr", "branch_hr"]) {
     const ids = await resolveRoleHolderUserIds(role, branchId);
     if (ids.length > 0) return ids[0];
   }
@@ -86,7 +93,7 @@ async function resolveBranchHrUserId(branchId: string | null): Promise<string | 
 }
 
 export async function runNocLwdTrigger(): Promise<NocLwdTriggerResult> {
-  const placeholders = TERMINAL_STATUSES.map(() => '?').join(',');
+  const placeholders = TERMINAL_STATUSES.map(() => "?").join(",");
   const [rows] = await db.execute<TriggerRow[]>(
     `SELECT er.id       AS exit_request_id,
             er.employee_id,
@@ -114,15 +121,17 @@ export async function runNocLwdTrigger(): Promise<NocLwdTriggerResult> {
   for (const row of rows) {
     try {
       const hrUserId = await resolveBranchHrUserId(row.branch_id);
-      const isAbsconding = ['absconding', 'abandonment'].includes(row.exit_type ?? '');
+      const isAbsconding = ["absconding", "abandonment"].includes(
+        row.exit_type ?? "",
+      );
 
       const { caseId, created } = await nocCaseService.openCase({
         employeeId: row.employee_id,
         exitRequestId: row.exit_request_id,
-        initiatorRole: 'hr',
-        initiatedByUserId: hrUserId ?? 'system',
-        actorName: hrUserId ? null : 'System (LWD auto-trigger)',
-        actorRole: 'hr',
+        initiatorRole: "hr",
+        initiatedByUserId: hrUserId ?? "system",
+        actorName: hrUserId ? null : "System (LWD auto-trigger)",
+        actorRole: "hr",
       });
 
       if (!created) {
@@ -147,18 +156,20 @@ export async function runNocLwdTrigger(): Promise<NocLwdTriggerResult> {
 
       // Work-inbox item for the branch HR so they see it immediately.
       if (hrUserId) {
-        await inboxService.createItem({
-          user_id: hrUserId,
-          type: 'noc_auto_created',
-          title: `NOC auto-started — ${row.employee_name ?? row.employee_id}`,
-          description: isAbsconding
-            ? `Clearance chain opened on LWD. Employee is absconding — use "Record on behalf" to fill their form and unblock the chain.`
-            : `Clearance chain opened on LWD. Form invite sent to the employee.`,
-          entity_type: 'noc_case',
-          entity_id: caseId,
-          action_url: `/payroll/noc?case=${caseId}`,
-          priority: 'high',
-        }).catch(() => undefined);
+        await inboxService
+          .createItem({
+            user_id: hrUserId,
+            type: "noc_auto_created",
+            title: `NOC auto-started — ${row.employee_name ?? row.employee_id}`,
+            description: isAbsconding
+              ? `Clearance chain opened on LWD. Employee is absconding — use "Record on behalf" to fill their form and unblock the chain.`
+              : `Clearance chain opened on LWD. Form invite sent to the employee.`,
+            entity_type: "noc_case",
+            entity_id: caseId,
+            action_url: `/payroll/noc?case=${caseId}`,
+            priority: "high",
+          })
+          .catch(() => undefined);
       }
     } catch (err) {
       result.failed++;

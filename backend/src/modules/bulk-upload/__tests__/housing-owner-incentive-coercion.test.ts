@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  isErrorCode, parseNullableDecimal, parseNullablePctFraction, cleanText, isValidPeriod,
+  isErrorCode,
+  parseNullableDecimal,
+  parseNullablePctFraction,
+  cleanText,
+  isValidPeriod,
   HOUSING_OWNER_INCENTIVE_HEADERS,
 } from "../housing-owner-incentive-bulk.service.js";
 

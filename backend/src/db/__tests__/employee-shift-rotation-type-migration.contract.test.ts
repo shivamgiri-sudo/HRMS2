@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const migration = readFileSync(resolve(__dirname, "../../../sql/225_employee_shift_rotation_type.sql"), "utf8");
+const migration = readFileSync(
+  resolve(__dirname, "../../../sql/225_employee_shift_rotation_type.sql"),
+  "utf8",
+);
 
 describe("employee shift rotation type migration", () => {
   it("does not use MySQL-incompatible ADD COLUMN IF NOT EXISTS syntax", () => {

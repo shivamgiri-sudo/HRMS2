@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseAmount, parseNullableAmount, parseDate, HOUSING_PREMIUM_SALE_RAW_HEADERS,
+  parseAmount,
+  parseNullableAmount,
+  parseDate,
+  HOUSING_PREMIUM_SALE_RAW_HEADERS,
 } from "../housing-premium-sale-raw-bulk.service.js";
 
 describe("parseAmount", () => {

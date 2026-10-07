@@ -23,9 +23,9 @@
  * Registered in BOTH all-workers.ts and server.ts. Registering in only one is how
  * ats-reminders.cron.ts came to never run in production.
  */
-import { runDailyHiringReport } from './ats-reminders.cron.js';
+import { runDailyHiringReport } from "./ats-reminders.cron.js";
 
-const WORKER_NAME = 'ats-daily-report';
+const WORKER_NAME = "ats-daily-report";
 const HOUR_MS = 60 * 60 * 1000;
 /** 6 PM IST — after the working day, matching what the service was always meant to do. */
 const TARGET_HOUR = 18;
@@ -55,7 +55,10 @@ export function startAtsDailyReportScheduler(): void {
         if (r?.success) {
           console.log(`[${WORKER_NAME}] sent to ${r.recipients}`);
         } else {
-          console.warn(`[${WORKER_NAME}] completed without sending:`, r?.error ?? 'no reason given');
+          console.warn(
+            `[${WORKER_NAME}] completed without sending:`,
+            r?.error ?? "no reason given",
+          );
         }
       })
       .catch((e: unknown) =>
@@ -69,7 +72,10 @@ export function startAtsDailyReportScheduler(): void {
 }
 
 export function stopAtsDailyReportScheduler(): void {
-  if (_timer) { clearTimeout(_timer); _timer = null; }
+  if (_timer) {
+    clearTimeout(_timer);
+    _timer = null;
+  }
   _started = false;
   console.log(`[${WORKER_NAME}] stopped`);
 }

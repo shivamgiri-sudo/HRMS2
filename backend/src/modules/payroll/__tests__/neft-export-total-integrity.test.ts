@@ -25,7 +25,10 @@ import { resolve } from "node:path";
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 /** Assert on code, not on the prose that necessarily quotes the old behaviour. */
 const stripComments = (s: string) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*--.*$/gm, "");
+  s
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/^\s*--.*$/gm, "");
 
 const ROUTES = read("src/modules/payroll/payroll.routes.ts");
 const CODE = stripComments(ROUTES);
@@ -39,8 +42,14 @@ function slice(startMarker: string, endMarker: string): string {
 
 // One handler now serves /runs/:id/neft-export and /month/:month/neft-export: a month paid in
 // several runs must still produce ONE bank file. The body lives in the const, so slice that.
-const EXPORT_HANDLER = slice('const neftExportHandler', 'router.get("/runs/:id/neft-export"');
-const SUMMARY_HANDLER = slice('router.get("/runs/:id/neft-summary"', '"/runs/:runId/neft-lines"');
+const EXPORT_HANDLER = slice(
+  "const neftExportHandler",
+  'router.get("/runs/:id/neft-export"',
+);
+const SUMMARY_HANDLER = slice(
+  'router.get("/runs/:id/neft-summary"',
+  '"/runs/:runId/neft-lines"',
+);
 
 describe("only payable rows reach the declared total", () => {
   it("no longer substitutes NOT_LINKED for a missing account or IFSC", () => {
@@ -60,7 +69,9 @@ describe("only payable rows reach the declared total", () => {
     // FINALIZED-run employee whose legacy account_number was exactly that string reached the
     // fixed total below with Rs 55,414 before this check existed.
     expect(EXPORT_HANDLER).toMatch(/SCIENTIFIC_RE\s*=\s*\/\[Ee\]\[\+-\]\//);
-    expect(EXPORT_HANDLER).toMatch(/VALID_ACCT_RE\s*=\s*\/\^\[0-9\]\{6,20\}\$\//);
+    expect(EXPORT_HANDLER).toMatch(
+      /VALID_ACCT_RE\s*=\s*\/\^\[0-9\]\{6,20\}\$\//,
+    );
     // Both checks must gate the same `reason` assignment the presence check gates, not sit
     // unused elsewhere in the handler.
     const reasonBlock = EXPORT_HANDLER.slice(
@@ -88,7 +99,9 @@ describe("only payable rows reach the declared total", () => {
 
 describe("excluded employees are surfaced, never silently dropped", () => {
   it("lists them under an explicit heading after TOTAL", () => {
-    expect(EXPORT_HANDLER).toContain("EXCLUDED — NOT PAYABLE, NOT INCLUDED IN TOTAL ABOVE");
+    expect(EXPORT_HANDLER).toContain(
+      "EXCLUDED — NOT PAYABLE, NOT INCLUDED IN TOTAL ABOVE",
+    );
     expect(EXPORT_HANDLER).toContain("EXCLUDED_TOTAL");
   });
 
@@ -119,7 +132,9 @@ describe("the summary Finance reads first agrees with the file they get", () => 
     // which is what let the summary call an employee banked when the export could not pay them.
     expect(SUMMARY_HANDLER).toMatch(/\^\[A-Z\]\{4\}0\[A-Z0-9\]\{6\}\$/);
     expect(SUMMARY_HANDLER).toMatch(/account_number_enc/);
-    expect(SUMMARY_HANDLER).not.toMatch(/ebd\.id IS NOT NULL AND ebd\.ifsc_code IS NOT NULL/);
+    expect(SUMMARY_HANDLER).not.toMatch(
+      /ebd\.id IS NOT NULL AND ebd\.ifsc_code IS NOT NULL/,
+    );
   });
 
   it("also rejects a scientific-notation-mangled plaintext account, matching the export", () => {
@@ -141,15 +156,23 @@ describe("the summary Finance reads first agrees with the file they get", () => 
     const guarded = SUMMARY_HANDLER.match(
       /COALESCE\(NULLIF\(TRIM\(ebd\.account_number\), ''\),\s*NULLIF\(TRIM\(ebd\.account_number_enc\), ''\)\) IS NOT NULL/,
     );
-    expect(guarded, "account columns must be read inside a presence guard").not.toBeNull();
+    expect(
+      guarded,
+      "account columns must be read inside a presence guard",
+    ).not.toBeNull();
 
-    const legacyReads = (SUMMARY_HANDLER.match(/ebd\.account_number(?!_enc)\b/g) ?? []).length;
-    const encReads = (SUMMARY_HANDLER.match(/ebd\.account_number_enc\b/g) ?? []).length;
+    const legacyReads = (
+      SUMMARY_HANDLER.match(/ebd\.account_number(?!_enc)\b/g) ?? []
+    ).length;
+    const encReads = (SUMMARY_HANDLER.match(/ebd\.account_number_enc\b/g) ?? [])
+      .length;
     // 1 presence read (inside the COALESCE guard) + 3 format-check reads (a null-check plus the
     // REGEXP and NOT REGEXP tests) — all four still inside guard clauses, never in the SELECT
     // list. account_number_enc is ciphertext and can't be format-checked in SQL, so it keeps its
     // single presence read.
-    expect(legacyReads, "presence + format-check reads, still guard-only").toBe(4);
+    expect(legacyReads, "presence + format-check reads, still guard-only").toBe(
+      4,
+    );
     expect(encReads, "one presence read only").toBe(1);
 
     // No aliasing an account column out of the query.
@@ -165,14 +188,23 @@ describe("the summary Finance reads first agrees with the file they get", () => 
     // ") scoredRenamed" still satisfies as a substring. It could never fail, and a mutation run
     // proved exactly that. Asserting counts is what makes it bite.
     const definitions = SUMMARY_HANDLER.match(/AS is_payable\b/g) ?? [];
-    expect(definitions, "payability must be defined exactly once").toHaveLength(1);
+    expect(definitions, "payability must be defined exactly once").toHaveLength(
+      1,
+    );
 
     const references = SUMMARY_HANDLER.match(/\bis_payable\b/g) ?? [];
-    expect(references.length, "the single definition must be reused by the aggregates").toBeGreaterThanOrEqual(4);
+    expect(
+      references.length,
+      "the single definition must be reused by the aggregates",
+    ).toBeGreaterThanOrEqual(4);
 
     // The routability predicate itself must appear once, in that one definition.
-    const ifscChecks = SUMMARY_HANDLER.match(/\^\[A-Z\]\{4\}0\[A-Z0-9\]\{6\}\$/g) ?? [];
-    expect(ifscChecks, "the IFSC predicate must not be repeated per aggregate").toHaveLength(1);
+    const ifscChecks =
+      SUMMARY_HANDLER.match(/\^\[A-Z\]\{4\}0\[A-Z0-9\]\{6\}\$/g) ?? [];
+    expect(
+      ifscChecks,
+      "the IFSC predicate must not be repeated per aggregate",
+    ).toHaveLength(1);
   });
 });
 
@@ -181,11 +213,23 @@ describe("one payment instruction per employee, on all three endpoints", () => {
     // Unfiltered, the LEFT JOIN emits a row per bank record, each with the full net amount.
     // Latent rather than live today (max 1 row per employee across 12,858), but the
     // bank-change workflow exists to create the second one.
-    const unfiltered = CODE.match(/LEFT JOIN employee_bank_detail ebd ON ebd\.employee_id = spl\.employee_id/g) ?? [];
-    expect(unfiltered, "an unfiltered employee_bank_detail join remains").toHaveLength(0);
+    const unfiltered =
+      CODE.match(
+        /LEFT JOIN employee_bank_detail ebd ON ebd\.employee_id = spl\.employee_id/g,
+      ) ?? [];
+    expect(
+      unfiltered,
+      "an unfiltered employee_bank_detail join remains",
+    ).toHaveLength(0);
 
-    const filtered = CODE.match(/LEFT JOIN employee_bank_detail ebd\s+ON ebd\.employee_id = spl\.employee_id\s+AND ebd\.active_status = 1\s+AND ebd\.is_primary = 1/g) ?? [];
-    expect(filtered.length, "expected all three NEFT joins to be filtered").toBeGreaterThanOrEqual(3);
+    const filtered =
+      CODE.match(
+        /LEFT JOIN employee_bank_detail ebd\s+ON ebd\.employee_id = spl\.employee_id\s+AND ebd\.active_status = 1\s+AND ebd\.is_primary = 1/g,
+      ) ?? [];
+    expect(
+      filtered.length,
+      "expected all three NEFT joins to be filtered",
+    ).toBeGreaterThanOrEqual(3);
   });
 
   it("export and summary exclude lines the run itself marks excluded or blocked", () => {
@@ -208,9 +252,13 @@ describe("the shadowed second copy cannot silently become the live one", () => {
 
   it("payrollRouter is mounted before payrollExtendedRouter", () => {
     const iMain = APP.indexOf("listEndpointLimiter, payrollRouter)");
-    const iExtended = APP.indexOf("listEndpointLimiter, payrollExtendedRouter)");
+    const iExtended = APP.indexOf(
+      "listEndpointLimiter, payrollExtendedRouter)",
+    );
     expect(iMain, "payrollRouter mount not found").toBeGreaterThan(-1);
-    expect(iExtended, "payrollExtendedRouter mount not found").toBeGreaterThan(-1);
+    expect(iExtended, "payrollExtendedRouter mount not found").toBeGreaterThan(
+      -1,
+    );
     expect(iMain).toBeLessThan(iExtended);
   });
 });
@@ -222,7 +270,9 @@ describe("the gates that kept this latent stay in place", () => {
      * a single bank file, and a file mixing closed and open runs would pay from a run still being
      * computed. Asserting the filter form is strictly stronger than the old single-run check.
      */
-    expect(EXPORT_HANDLER).toContain("runs.filter((r) => !isRunClosed(r.status))");
+    expect(EXPORT_HANDLER).toContain(
+      "runs.filter((r) => !isRunClosed(r.status))",
+    );
   });
 
   it("still refuses a run that is not validated", () => {

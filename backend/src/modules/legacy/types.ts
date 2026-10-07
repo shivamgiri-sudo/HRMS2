@@ -133,12 +133,12 @@ export interface RelevanceFactors {
 
 export interface LegacyChange {
   SYS_CHANGE_VERSION: bigint;
-  SYS_CHANGE_OPERATION: 'I' | 'U' | 'D';
+  SYS_CHANGE_OPERATION: "I" | "U" | "D";
   [key: string]: any;
 }
 
 export interface TransformedRecord {
-  operation: 'I' | 'U' | 'D';
+  operation: "I" | "U" | "D";
   source_key: string;
   data: Record<string, any>;
 }

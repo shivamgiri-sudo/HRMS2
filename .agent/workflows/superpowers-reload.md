@@ -5,6 +5,7 @@ description: Reloads Superpowers configuration by re-reading Rules, Workflows, a
 # Superpowers Reload
 
 Read these directories from disk and summarize what you loaded:
+
 - `.agent/rules/`
 - `.agent/workflows/`
 - `.agent/skills/` (list skill names + descriptions)

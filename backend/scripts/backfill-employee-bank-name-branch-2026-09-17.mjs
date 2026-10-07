@@ -20,16 +20,25 @@ import mysql from "mysql2/promise";
 const WRITE = process.argv.includes("--write");
 
 const rawConn = await mysql.createConnection({
-  host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
 });
 const conn = {
   query: async (...args) => {
     for (let a = 1; a <= 6; a++) {
-      try { return await rawConn.query(...args); }
-      catch (err) {
-        if ((err.code === "ER_LOCK_DEADLOCK" || err.code === "ER_LOCK_WAIT_TIMEOUT") && a < 6) {
-          await new Promise((r) => setTimeout(r, 1000 * a)); continue;
+      try {
+        return await rawConn.query(...args);
+      } catch (err) {
+        if (
+          (err.code === "ER_LOCK_DEADLOCK" ||
+            err.code === "ER_LOCK_WAIT_TIMEOUT") &&
+          a < 6
+        ) {
+          await new Promise((r) => setTimeout(r, 1000 * a));
+          continue;
         }
         throw err;
       }
@@ -60,11 +69,23 @@ const numericBankName = (v) => /^\d+$/.test(String(v ?? "").trim());
 const suspect = rows.filter((r) => numericBankName(r.bank_name));
 const clean = rows.filter((r) => !numericBankName(r.bank_name));
 
-console.log(`\n=== employee_bank_detail: ${clean.length} employee(s) recoverable ===`);
-console.table(clean.map(r => ({ code: r.employee_code, bank_name: r.bank_name, branch: r.branch_name })));
+console.log(
+  `\n=== employee_bank_detail: ${clean.length} employee(s) recoverable ===`,
+);
+console.table(
+  clean.map((r) => ({
+    code: r.employee_code,
+    bank_name: r.bank_name,
+    branch: r.branch_name,
+  })),
+);
 if (suspect.length) {
-  console.log(`\nSkipped ${suspect.length} row(s) with a purely-numeric "bank name" (data-entry error, not backfilled):`);
-  console.table(suspect.map(r => ({ code: r.employee_code, bank_name: r.bank_name })));
+  console.log(
+    `\nSkipped ${suspect.length} row(s) with a purely-numeric "bank name" (data-entry error, not backfilled):`,
+  );
+  console.table(
+    suspect.map((r) => ({ code: r.employee_code, bank_name: r.bank_name })),
+  );
 }
 const rowsToWrite = clean;
 
@@ -72,12 +93,14 @@ if (WRITE) {
   for (const r of rowsToWrite) {
     await conn.query(
       `UPDATE employee_bank_detail SET bank_name = ?, bank_branch = ? WHERE id = ?`,
-      [r.bank_name, r.branch_name, r.bank_detail_id]
+      [r.bank_name, r.branch_name, r.bank_detail_id],
     );
   }
   console.log(`Updated ${rowsToWrite.length} row(s).`);
 } else {
-  console.log(`\nDRY RUN — would update ${rowsToWrite.length} row(s). Re-run with --write to apply.`);
+  console.log(
+    `\nDRY RUN — would update ${rowsToWrite.length} row(s). Re-run with --write to apply.`,
+  );
 }
 
 await conn.end();

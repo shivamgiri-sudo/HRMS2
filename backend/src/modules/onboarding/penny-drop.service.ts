@@ -35,7 +35,7 @@ export class PennyDropService {
     candidateId: string,
     accountNo: string,
     ifscCode: string,
-    accountHolderName: string
+    accountHolderName: string,
   ): Promise<PennyDropInitiation> {
     const requestId = `PD-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -43,7 +43,7 @@ export class PennyDropService {
       `INSERT INTO onboarding_penny_drop_requests
        (candidate_id, request_id, account_no, ifsc_code, account_holder_name, status, initiated_at)
        VALUES (?, ?, ?, ?, ?, 'initiated', NOW())`,
-      [candidateId, requestId, accountNo, ifscCode, accountHolderName]
+      [candidateId, requestId, accountNo, ifscCode, accountHolderName],
     );
 
     return {
@@ -69,12 +69,12 @@ export class PennyDropService {
       verificationCode?: string;
       responseCode: string;
       message: string;
-    }
+    },
   ): Promise<PennyDropResult> {
     const [existing] = await db.execute<RowDataPacket[]>(
       `SELECT candidate_id, account_holder_name FROM onboarding_penny_drop_requests
        WHERE request_id = ? LIMIT 1`,
-      [requestId]
+      [requestId],
     );
 
     if (!existing || !Array.isArray(existing) || existing.length === 0) {
@@ -90,12 +90,14 @@ export class PennyDropService {
     if (result.accountName) {
       nameMatchScore = this.calculateNameMatch(
         accountHolderName,
-        result.accountName
+        result.accountName,
       );
     }
 
     const finalStatus =
-      result.status === "success" && nameMatchScore < 60 ? "name_mismatch" : result.status;
+      result.status === "success" && nameMatchScore < 60
+        ? "name_mismatch"
+        : result.status;
 
     await db.execute(
       `UPDATE onboarding_penny_drop_requests
@@ -112,7 +114,7 @@ export class PennyDropService {
         result.message,
         nameMatchScore,
         requestId,
-      ]
+      ],
     );
 
     // If name mismatch, flag for manual review
@@ -128,18 +130,18 @@ export class PennyDropService {
     if (finalStatus === "success") {
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM employees WHERE candidate_id = ? AND active_status = 1 LIMIT 1`,
-        [candidateId]
+        [candidateId],
       );
       const employeeId = empRows[0]?.id as string | undefined;
       if (employeeId) {
         const [existingPrimary] = await db.execute<RowDataPacket[]>(
           `SELECT id FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 AND is_primary = 1 LIMIT 1`,
-          [employeeId]
+          [employeeId],
         );
         if (!existingPrimary.length) {
           const [pdRows] = await db.execute<RowDataPacket[]>(
             `SELECT account_no, ifsc_code, account_holder_name FROM onboarding_penny_drop_requests WHERE request_id = ? LIMIT 1`,
-            [requestId]
+            [requestId],
           );
           const pd = pdRows[0];
           if (pd?.account_no) {
@@ -150,12 +152,13 @@ export class PennyDropService {
                   account_number_enc, account_number_blind_index, ifsc_code, account_type, verified, active_status)
                VALUES (?, ?, 1, 1, ?, ?, ?, ?, 'savings', 1, 1)`,
               [
-                randomUUID(), employeeId,
+                randomUUID(),
+                employeeId,
                 pd.account_holder_name ?? null,
                 encryptField(accountNoStr),
                 computeAccountBlindIndex(accountNoStr),
                 pd.ifsc_code ?? null,
-              ]
+              ],
             );
           }
         }
@@ -165,7 +168,8 @@ export class PennyDropService {
     return {
       requestId,
       transactionId: result.transactionId,
-      status: finalStatus as "success" | "pending" | "failed" | "reversed" | any,
+      status: finalStatus as
+        "success" | "pending" | "failed" | "reversed" | any,
       accountName: result.accountName,
       verificationCode: result.verificationCode,
       responseCode: result.responseCode,
@@ -178,7 +182,7 @@ export class PennyDropService {
    * Get penny drop status for candidate
    */
   static async getPennyDropStatus(
-    candidateId: string
+    candidateId: string,
   ): Promise<PennyDropResult | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT request_id, transaction_id, status, account_name,
@@ -187,7 +191,7 @@ export class PennyDropService {
        WHERE candidate_id = ?
        ORDER BY initiated_at DESC
        LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
 
     if (!rows || rows.length === 0) return null;
@@ -210,8 +214,14 @@ export class PennyDropService {
    * Returns 0-100 score
    */
   private static calculateNameMatch(name1: string, name2: string): number {
-    const norm1 = name1.trim().toLowerCase().replace(/[^a-z\s]/g, "");
-    const norm2 = name2.trim().toLowerCase().replace(/[^a-z\s]/g, "");
+    const norm1 = name1
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, "");
+    const norm2 = name2
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, "");
 
     if (norm1 === norm2) return 100;
 
@@ -231,7 +241,7 @@ export class PennyDropService {
    */
   private static async flagForPayrollReview(
     candidateId: string,
-    flagReason: string
+    flagReason: string,
   ): Promise<void> {
     await db.execute(
       `INSERT INTO candidate_payroll_review_flags
@@ -239,7 +249,7 @@ export class PennyDropService {
        VALUES (?, ?, NOW(), 'pending')
        ON DUPLICATE KEY UPDATE
        flag_reason = ?, updated_at = NOW()`,
-      [candidateId, flagReason, flagReason]
+      [candidateId, flagReason, flagReason],
     );
   }
 }

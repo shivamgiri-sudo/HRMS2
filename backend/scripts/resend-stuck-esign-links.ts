@@ -46,11 +46,18 @@ function csvField(value: string): string {
 }
 
 function toCsv(entries: ResendReportEntry[]): string {
-  const columns: (keyof ResendReportEntry)[] = ["candidate_id", "resent", "message", "emailed_to"];
+  const columns: (keyof ResendReportEntry)[] = [
+    "candidate_id",
+    "resent",
+    "message",
+    "emailed_to",
+  ];
   return (
     [
       columns.join(","),
-      ...entries.map((e) => columns.map((c) => csvField(String(e[c] ?? ""))).join(",")),
+      ...entries.map((e) =>
+        columns.map((c) => csvField(String(e[c] ?? ""))).join(","),
+      ),
     ].join("\n") + "\n"
   );
 }
@@ -100,7 +107,8 @@ async function main(): Promise<void> {
   }
 
   const { db } = await import("../src/db/mysql.js");
-  const { resendEsignLink } = await import("../src/modules/ats/joining-control-room.service.js");
+  const { resendEsignLink } =
+    await import("../src/modules/ats/joining-control-room.service.js");
 
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -111,15 +119,23 @@ async function main(): Promise<void> {
             WHERE status = 'pending' AND scope = 'kit' AND candidate_id IS NOT NULL`,
       args.candidateId ? [args.candidateId] : [],
     );
-    const candidateIds = (rows as RowDataPacket[]).map((r) => String(r.candidate_id));
+    const candidateIds = (rows as RowDataPacket[]).map((r) =>
+      String(r.candidate_id),
+    );
 
-    console.log(args.confirm ? "MODE: CONFIRMED (will send)" : "MODE: LIST ONLY (nothing will be sent)");
+    console.log(
+      args.confirm
+        ? "MODE: CONFIRMED (will send)"
+        : "MODE: LIST ONLY (nothing will be sent)",
+    );
     console.log(`Actor: ${args.actorUserId}`);
     console.log(`Eligible candidates: ${candidateIds.length}`);
 
     if (!args.confirm) {
       candidateIds.forEach((id) => console.log(`  ${id}`));
-      console.log("\nLIST ONLY — nothing was sent. Re-run with --confirm to actually resend.");
+      console.log(
+        "\nLIST ONLY — nothing was sent. Re-run with --confirm to actually resend.",
+      );
       return;
     }
 
@@ -128,8 +144,12 @@ async function main(): Promise<void> {
     let failed = 0;
     for (const candidateId of candidateIds) {
       try {
-        const result = await resendEsignLink(candidateId, args.actorUserId.trim());
-        if (result.resent) resent++; else failed++;
+        const result = await resendEsignLink(
+          candidateId,
+          args.actorUserId.trim(),
+        );
+        if (result.resent) resent++;
+        else failed++;
         entries.push({
           candidate_id: candidateId,
           resent: result.resent,
@@ -147,8 +167,14 @@ async function main(): Promise<void> {
       }
     }
 
-    console.log(`\nDone: ${resent} sent, ${failed} not sent, out of ${candidateIds.length}.\n`);
-    entries.forEach((e) => console.log(`  ${e.resent ? "SENT " : "SKIP "} ${e.candidate_id}  ${e.message}`));
+    console.log(
+      `\nDone: ${resent} sent, ${failed} not sent, out of ${candidateIds.length}.\n`,
+    );
+    entries.forEach((e) =>
+      console.log(
+        `  ${e.resent ? "SENT " : "SKIP "} ${e.candidate_id}  ${e.message}`,
+      ),
+    );
 
     if (args.reportPath) {
       const resolved = path.resolve(args.reportPath);
@@ -163,7 +189,10 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && /resend-stuck-esign-links\.(ts|js)$/.test(process.argv[1])) {
+if (
+  process.argv[1] &&
+  /resend-stuck-esign-links\.(ts|js)$/.test(process.argv[1])
+) {
   main().catch((e) => {
     console.error(e);
     process.exit(1);

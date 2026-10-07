@@ -26,7 +26,9 @@ import fs from "fs";
 import path from "path";
 
 const SOURCE = fs.readFileSync(
-  path.resolve(__dirname, "..", "attendance-apr-bulk.routes.ts"), "utf8");
+  path.resolve(__dirname, "..", "attendance-apr-bulk.routes.ts"),
+  "utf8",
+);
 
 describe("APR bulk upload records dialler evidence", () => {
   it("writes the uploaded minutes into apr", () => {
@@ -41,7 +43,9 @@ describe("APR bulk upload records dialler evidence", () => {
     // nothing. The constant that still holds that string here is READ-ONLY - it recognises the
     // 3,810 legacy rows in the "already synced" check - and the assertion below is what stops it
     // being written again.
-    expect(SOURCE).toMatch(/LEGACY_MANUAL_UPLOAD_CAMPAIGN\s*=\s*'MANUAL_UPLOAD'/);
+    expect(SOURCE).toMatch(
+      /LEGACY_MANUAL_UPLOAD_CAMPAIGN\s*=\s*'MANUAL_UPLOAD'/,
+    );
     const insertAt = SOURCE.indexOf("INSERT INTO apr ");
     // Backwards too: the bound parameters are built just above the statement text.
     const insertBlock = SOURCE.slice(insertAt - 900, insertAt + 700);
@@ -49,14 +53,18 @@ describe("APR bulk upload records dialler evidence", () => {
     expect(insertBlock).not.toMatch(/MANUAL_UPLOAD/);
     // Whitespace-tolerant: the statement is formatted across lines, and the strict
     // single-line form made this assertion fail on source it should have accepted.
-    expect(SOURCE).toMatch(/ON DUPLICATE KEY UPDATE\s+Net_Login = VALUES\(Net_Login\)/);
+    expect(SOURCE).toMatch(
+      /ON DUPLICATE KEY UPDATE\s+Net_Login = VALUES\(Net_Login\)/,
+    );
   });
 
   it("carries the upload batch every evidence row must reference (criterion 17.10)", () => {
     // apr.upload_batch_id had 0 distinct values across all 46,163 rows: no audit trail of who
     // uploaded which file. Every row this route writes now names a productivity_upload_batch row,
     // and a re-upload moves that reference to the batch that actually last evidenced the day.
-    expect(SOURCE).toMatch(/INSERT INTO apr \(ReportDate, UserID, campaign_id, Net_Login, source, uploaded_by, upload_batch_id\)/);
+    expect(SOURCE).toMatch(
+      /INSERT INTO apr \(ReportDate, UserID, campaign_id, Net_Login, source, uploaded_by, upload_batch_id\)/,
+    );
     expect(SOURCE).toMatch(/upload_batch_id = VALUES\(upload_batch_id\)/);
     // No fallback: if the batch or the source cannot be created, the rows are reported, not written.
     expect(SOURCE).toMatch(/createAprBulkUploadBatch/);
@@ -80,10 +88,13 @@ describe("APR bulk upload records dialler evidence", () => {
   it("leaves the attendance write and its protections untouched", () => {
     expect(SOURCE).toMatch(/INSERT INTO attendance_daily_record/);
     // is_locked=1 is what stops the nightly sweep erasing an upload.
-    expect(SOURCE).toMatch(/is_locked\s*=\s*IF\(override_by IS NULL AND regularization_id IS NULL, 1,/);
+    expect(SOURCE).toMatch(
+      /is_locked\s*=\s*IF\(override_by IS NULL AND regularization_id IS NULL, 1,/,
+    );
     // The evidence row is written after the verdict, never instead of it.
-    expect(SOURCE.indexOf("INSERT INTO attendance_daily_record"))
-      .toBeLessThan(SOURCE.indexOf("INSERT INTO apr"));
+    expect(SOURCE.indexOf("INSERT INTO attendance_daily_record")).toBeLessThan(
+      SOURCE.indexOf("INSERT INTO apr"),
+    );
   });
 
   it("reports an evidence failure instead of failing the row or hiding it", () => {

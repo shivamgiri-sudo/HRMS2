@@ -23,15 +23,30 @@ import {
 } from "../onboarding-bridge-status.js";
 
 /** Exactly what the live ENUMs accept. */
-const LIVE_DIGILOCKER_ENUM = ["not_started", "initiated", "documents_received", "expired"];
-const LIVE_PENNY_DROP_ENUM = ["not_started", "initiated", "verified", "failed", "name_mismatch"];
+const LIVE_DIGILOCKER_ENUM = [
+  "not_started",
+  "initiated",
+  "documents_received",
+  "expired",
+];
+const LIVE_PENNY_DROP_ENUM = [
+  "not_started",
+  "initiated",
+  "verified",
+  "failed",
+  "name_mismatch",
+];
 
 describe("the declared values match the live columns", () => {
   it("digilocker_status", () => {
-    expect([...BRIDGE_DIGILOCKER_VALUES].sort()).toEqual([...LIVE_DIGILOCKER_ENUM].sort());
+    expect([...BRIDGE_DIGILOCKER_VALUES].sort()).toEqual(
+      [...LIVE_DIGILOCKER_ENUM].sort(),
+    );
   });
   it("penny_drop_status", () => {
-    expect([...BRIDGE_PENNY_DROP_VALUES].sort()).toEqual([...LIVE_PENNY_DROP_ENUM].sort());
+    expect([...BRIDGE_PENNY_DROP_VALUES].sort()).toEqual(
+      [...LIVE_PENNY_DROP_ENUM].sort(),
+    );
   });
 });
 
@@ -54,13 +69,30 @@ describe("the bridge UPDATE names only real columns", () => {
   );
 
   const REAL_COLUMNS = [
-    "id", "candidate_id", "employee_id", "bridge_date", "offer_letter_url",
-    "joining_date", "status", "notes", "created_by", "created_at",
-    "onboarding_token", "onboarding_token_expires_at", "hr_approved_by",
-    "hr_approved_at", "penny_drop_status", "penny_drop_verified_at",
-    "digilocker_status", "digilocker_session_id", "digilocker_completed_at",
-    "joining_document_status", "joining_document_completion_pct",
-    "joining_document_completed_at", "employee_code", "converted_at",
+    "id",
+    "candidate_id",
+    "employee_id",
+    "bridge_date",
+    "offer_letter_url",
+    "joining_date",
+    "status",
+    "notes",
+    "created_by",
+    "created_at",
+    "onboarding_token",
+    "onboarding_token_expires_at",
+    "hr_approved_by",
+    "hr_approved_at",
+    "penny_drop_status",
+    "penny_drop_verified_at",
+    "digilocker_status",
+    "digilocker_session_id",
+    "digilocker_completed_at",
+    "joining_document_status",
+    "joining_document_completion_pct",
+    "joining_document_completed_at",
+    "employee_code",
+    "converted_at",
   ];
 
   it("does not set updated_at, which does not exist on this table", () => {
@@ -72,7 +104,10 @@ describe("the bridge UPDATE names only real columns", () => {
   });
 
   it("stamps the milestone columns that do exist", () => {
-    for (const column of ["digilocker_completed_at", "penny_drop_verified_at"]) {
+    for (const column of [
+      "digilocker_completed_at",
+      "penny_drop_verified_at",
+    ]) {
       expect(REAL_COLUMNS).toContain(column);
       expect(SOURCE).toContain(column);
     }
@@ -113,7 +148,16 @@ describe("DigiLocker state -> bridge", () => {
   }
 
   it("never produces a value outside the ENUM", () => {
-    for (const junk of [null, undefined, "", "nonsense", 42, {}, [], "not_run"]) {
+    for (const junk of [
+      null,
+      undefined,
+      "",
+      "nonsense",
+      42,
+      {},
+      [],
+      "not_run",
+    ]) {
       expect(LIVE_DIGILOCKER_ENUM).toContain(bridgeDigilockerStatus(junk));
     }
   });
@@ -134,7 +178,9 @@ describe("bank outcome -> bridge penny drop", () => {
   it("a provider outage does NOT read as a name mismatch", () => {
     // Nothing is known about the name yet; claiming a mismatch invents a
     // finding no one made.
-    expect(bridgePennyDropStatus("manual_review", ["PROVIDER_UNAVAILABLE"])).toBe("initiated");
+    expect(
+      bridgePennyDropStatus("manual_review", ["PROVIDER_UNAVAILABLE"]),
+    ).toBe("initiated");
     expect(bridgePennyDropStatus("manual_review", [])).toBe("initiated");
     expect(bridgePennyDropStatus("manual_review", null)).toBe("initiated");
   });

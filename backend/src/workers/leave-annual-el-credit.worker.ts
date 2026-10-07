@@ -4,7 +4,9 @@ try {
   const dbModule = await import("../db/mysql.js");
   db = dbModule.db;
 } catch {
-  console.error("[ELAnnualCreditWorker] Database module not found - worker will not run");
+  console.error(
+    "[ELAnnualCreditWorker] Database module not found - worker will not run",
+  );
   process.exit(1);
 }
 
@@ -24,49 +26,54 @@ let intervalRef: ReturnType<typeof setInterval> | undefined;
  * 4. Expire prior year unused CL/ML/PTRL/MTRL balances
  */
 export async function runAnnualLeaveJobs(creditYear: number): Promise<void> {
-  console.log(`[AnnualLeaveWorker] Starting annual leave jobs for ${creditYear}`);
+  console.log(
+    `[AnnualLeaveWorker] Starting annual leave jobs for ${creditYear}`,
+  );
 
   // Resolve all needed leave type IDs
   const [ltRows]: any = await db.execute(
-    `SELECT id, leave_code FROM leave_type_master WHERE leave_code IN ('EL','CL','ML','PTRL','MTRL') AND active_status = 1`
+    `SELECT id, leave_code FROM leave_type_master WHERE leave_code IN ('EL','CL','ML','PTRL','MTRL') AND active_status = 1`,
   );
   const ltMap: Record<string, string> = {};
   for (const r of ltRows) ltMap[r.leave_code] = r.id;
 
   // Get all active employees
   const [employees]: any = await db.execute(
-    `SELECT id, date_of_joining FROM employees WHERE active_status = 1 AND employment_status = 'active'`
+    `SELECT id, date_of_joining FROM employees WHERE active_status = 1 AND employment_status = 'active'`,
   );
 
   const priorYear = creditYear - 1;
-  let elTransferred = 0, ptrlCredited = 0, mtrlCredited = 0, expired = 0;
+  let elTransferred = 0,
+    ptrlCredited = 0,
+    mtrlCredited = 0,
+    expired = 0;
 
   for (const emp of employees) {
     try {
       // ── 1. Transfer EL accrual (priorYear) → balance (creditYear) ──
       const [accrualRows]: any = await db.execute(
         `SELECT accrued_days FROM leave_el_accrual_ledger WHERE employee_id=? AND accrual_year=?`,
-        [emp.id, priorYear]
+        [emp.id, priorYear],
       );
       const accrued = Number(accrualRows[0]?.accrued_days ?? 0);
 
-      if (accrued > 0 && ltMap['EL']) {
+      if (accrued > 0 && ltMap["EL"]) {
         // Check idempotency: has EL already been credited for creditYear?
         const [elExists]: any = await db.execute(
           `SELECT 1 FROM leave_el_credit_log WHERE employee_id=? AND leave_type_id=? AND credit_year=? AND credit_month IS NULL AND credit_type='annual' LIMIT 1`,
-          [emp.id, ltMap['EL'], creditYear]
+          [emp.id, ltMap["EL"], creditYear],
         );
         if (elExists.length === 0) {
           await db.execute(
             `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
              VALUES (UUID(), ?, ?, ?, ?, 0, 0)
              ON DUPLICATE KEY UPDATE allocated_days = ?`,
-            [emp.id, ltMap['EL'], creditYear, accrued, accrued]
+            [emp.id, ltMap["EL"], creditYear, accrued, accrued],
           );
           await db.execute(
             `INSERT INTO leave_el_credit_log (id, employee_id, leave_type_id, credit_year, credit_month, credit_date, days_credited, months_served, credit_type)
              VALUES (UUID(), ?, ?, ?, NULL, CURDATE(), ?, 12, 'annual')`,
-            [emp.id, ltMap['EL'], creditYear, accrued]
+            [emp.id, ltMap["EL"], creditYear, accrued],
           );
           elTransferred++;
         }
@@ -77,52 +84,53 @@ export async function runAnnualLeaveJobs(creditYear: number): Promise<void> {
         `INSERT INTO leave_el_accrual_ledger (id, employee_id, accrual_year, accrued_days, last_credited_month)
          VALUES (UUID(), ?, ?, 0, 0)
          ON DUPLICATE KEY UPDATE accrued_days = accrued_days`,
-        [emp.id, creditYear]
+        [emp.id, creditYear],
       );
 
       // ── 2. Credit PTRL (4 days) ──
-      if (ltMap['PTRL']) {
+      if (ltMap["PTRL"]) {
         await db.execute(
           `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
            VALUES (UUID(), ?, ?, ?, 4.00, 0, 0)
            ON DUPLICATE KEY UPDATE allocated_days = 4.00, used_days = 0`,
-          [emp.id, ltMap['PTRL'], creditYear]
+          [emp.id, ltMap["PTRL"], creditYear],
         );
         ptrlCredited++;
       }
 
       // ── 3. Credit MTRL (180 days) ──
-      if (ltMap['MTRL']) {
+      if (ltMap["MTRL"]) {
         await db.execute(
           `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
            VALUES (UUID(), ?, ?, ?, 180.00, 0, 0)
            ON DUPLICATE KEY UPDATE allocated_days = 180.00, used_days = 0`,
-          [emp.id, ltMap['MTRL'], creditYear]
+          [emp.id, ltMap["MTRL"], creditYear],
         );
         mtrlCredited++;
       }
 
       // ── 4. Expire prior year CL/ML/PTRL/MTRL unused balance ──
       // Set used_days = allocated_days so available = 0 (balance expires, not deleted for audit)
-      for (const code of ['CL', 'ML', 'PTRL', 'MTRL']) {
+      for (const code of ["CL", "ML", "PTRL", "MTRL"]) {
         if (ltMap[code]) {
           await db.execute(
             `UPDATE leave_balance_ledger
              SET used_days = allocated_days + COALESCE(adjusted_days, 0)
              WHERE employee_id=? AND leave_type_id=? AND balance_year=?
              AND (allocated_days + COALESCE(adjusted_days,0) - used_days) > 0`,
-            [emp.id, ltMap[code], priorYear]
+            [emp.id, ltMap[code], priorYear],
           );
         }
       }
       expired++;
-
     } catch (err: any) {
       console.error(`[AnnualLeaveWorker] Error for ${emp.id}:`, err.message);
     }
   }
 
-  console.log(`[AnnualLeaveWorker] Done — EL transferred: ${elTransferred}, PTRL: ${ptrlCredited}, MTRL: ${mtrlCredited}, expiry processed: ${expired}`);
+  console.log(
+    `[AnnualLeaveWorker] Done — EL transferred: ${elTransferred}, PTRL: ${ptrlCredited}, MTRL: ${mtrlCredited}, expiry processed: ${expired}`,
+  );
 }
 
 // ── Worker Logic ─────────────────────────────────────────────────────────────
@@ -135,7 +143,9 @@ async function checkAndRunAnnualCredit(): Promise<void> {
   if (now.getMonth() === 0 && now.getDate() === 1) {
     await runAnnualLeaveJobs(now.getFullYear());
   } else {
-    console.log(`[AnnualLeaveWorker] Not Jan 1 (${now.toDateString()}) — skipping`);
+    console.log(
+      `[AnnualLeaveWorker] Not Jan 1 (${now.toDateString()}) — skipping`,
+    );
   }
 }
 
@@ -147,7 +157,9 @@ async function checkAndRunAnnualCredit(): Promise<void> {
  */
 export async function startWorker(): Promise<void> {
   console.log("[AnnualLeaveWorker] Starting...");
-  console.log(`[AnnualLeaveWorker] Check interval: ${CHECK_INTERVAL_MS / 1000 / 60 / 60} hours`);
+  console.log(
+    `[AnnualLeaveWorker] Check interval: ${CHECK_INTERVAL_MS / 1000 / 60 / 60} hours`,
+  );
 
   // Run immediately on start
   await checkAndRunAnnualCredit();
@@ -174,4 +186,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { startWorker as startAnnualLeaveWorker, stopWorker as stopAnnualLeaveWorker };
+export {
+  startWorker as startAnnualLeaveWorker,
+  stopWorker as stopAnnualLeaveWorker,
+};

@@ -18,7 +18,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { logSensitiveAction } = vi.hoisted(() => ({ logSensitiveAction: vi.fn().mockResolvedValue(undefined) }));
+const { logSensitiveAction } = vi.hoisted(() => ({
+  logSensitiveAction: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 
 import { importReportingManagerBatch } from "../reporting-manager-bulk.service.js";
@@ -39,17 +41,37 @@ describe("importReportingManagerBatch — batched rewrite", () => {
         row("row-1", 1, { employee_code: "MAS001", manager_code: "MAS100" }), // valid
         row("row-2", 2, { employee_code: "MAS002", manager_code: "MAS002" }), // self-managed
         row("row-3", 3, { employee_code: "MAS003", manager_code: "MAS999" }), // manager not found
-        row("row-4", 4, { employee_code: "", manager_code: "MAS100" }),       // missing employee_code
+        row("row-4", 4, { employee_code: "", manager_code: "MAS100" }), // missing employee_code
       ],
       [],
     ]); // 1: SELECT upload_batch_row
 
     execute.mockResolvedValueOnce([
       [
-        { id: "emp-1", employee_code: "MAS001", reporting_manager_id: null, mgr_name: null },
-        { id: "emp-2", employee_code: "MAS002", reporting_manager_id: null, mgr_name: null },
-        { id: "emp-3", employee_code: "MAS003", reporting_manager_id: null, mgr_name: null },
-        { id: "mgr-100", employee_code: "MAS100", reporting_manager_id: null, mgr_name: "Priya Shah" },
+        {
+          id: "emp-1",
+          employee_code: "MAS001",
+          reporting_manager_id: null,
+          mgr_name: null,
+        },
+        {
+          id: "emp-2",
+          employee_code: "MAS002",
+          reporting_manager_id: null,
+          mgr_name: null,
+        },
+        {
+          id: "emp-3",
+          employee_code: "MAS003",
+          reporting_manager_id: null,
+          mgr_name: null,
+        },
+        {
+          id: "mgr-100",
+          employee_code: "MAS100",
+          reporting_manager_id: null,
+          mgr_name: "Priya Shah",
+        },
       ],
       [],
     ]); // 2: bulk SELECT employees for every referenced code
@@ -66,19 +88,25 @@ describe("importReportingManagerBatch — batched rewrite", () => {
     expect(result.errors).toEqual([
       "Row 4: employee_code is required",
       "Row 2: Employee and manager cannot be the same (MAS002)",
-      "Row 3: Manager \"MAS999\" not found or inactive",
+      'Row 3: Manager "MAS999" not found or inactive',
     ]);
 
     // Only the one valid row ever touches employees or gets an audit entry.
     expect(logSensitiveAction).toHaveBeenCalledTimes(1);
-    expect(logSensitiveAction).toHaveBeenCalledWith(expect.objectContaining({
-      entity_id: "emp-1",
-      change_summary: expect.objectContaining({
-        employee_code: "MAS001", new_manager_id: "mgr-100", new_manager_name: "Priya Shah",
+    expect(logSensitiveAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity_id: "emp-1",
+        change_summary: expect.objectContaining({
+          employee_code: "MAS001",
+          new_manager_id: "mgr-100",
+          new_manager_name: "Priya Shah",
+        }),
       }),
-    }));
+    );
 
-    const employeesUpdate = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.startsWith("UPDATE employees"));
+    const employeesUpdate = execute.mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.startsWith("UPDATE employees"),
+    );
     expect(employeesUpdate![0]).toMatch(/CASE id WHEN \? THEN \? END/);
     expect(employeesUpdate![1]).toEqual(["emp-1", "mgr-100", "emp-1"]);
 
@@ -99,8 +127,17 @@ describe("importReportingManagerBatch — batched rewrite", () => {
     // The real guarantee: ONE employees UPDATE for the whole batch, whatever the row count.
     expect(employeesUpdates).toHaveLength(1);
 
-    const summaryUpdate = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.startsWith("UPDATE upload_batch\n") || (typeof sql === "string" && sql.includes("SET batch_status = ?")));
-    expect(summaryUpdate![1]).toEqual(["imported_with_errors", 1, 3, "batch-1"]);
+    const summaryUpdate = execute.mock.calls.find(
+      ([sql]) =>
+        (typeof sql === "string" && sql.startsWith("UPDATE upload_batch\n")) ||
+        (typeof sql === "string" && sql.includes("SET batch_status = ?")),
+    );
+    expect(summaryUpdate![1]).toEqual([
+      "imported_with_errors",
+      1,
+      3,
+      "batch-1",
+    ]);
   });
 
   it("collapses a duplicate employee_code to the LAST row's manager, matching the original sequential-overwrite behavior", async () => {
@@ -113,9 +150,24 @@ describe("importReportingManagerBatch — batched rewrite", () => {
     ]);
     execute.mockResolvedValueOnce([
       [
-        { id: "emp-1", employee_code: "MAS001", reporting_manager_id: null, mgr_name: null },
-        { id: "mgr-100", employee_code: "MAS100", reporting_manager_id: null, mgr_name: "A" },
-        { id: "mgr-200", employee_code: "MAS200", reporting_manager_id: null, mgr_name: "B" },
+        {
+          id: "emp-1",
+          employee_code: "MAS001",
+          reporting_manager_id: null,
+          mgr_name: null,
+        },
+        {
+          id: "mgr-100",
+          employee_code: "MAS100",
+          reporting_manager_id: null,
+          mgr_name: "A",
+        },
+        {
+          id: "mgr-200",
+          employee_code: "MAS200",
+          reporting_manager_id: null,
+          mgr_name: "B",
+        },
       ],
       [],
     ]);
@@ -126,7 +178,9 @@ describe("importReportingManagerBatch — batched rewrite", () => {
     const result = await importReportingManagerBatch("batch-1", "user-1");
 
     expect(result.importedRows).toBe(2); // both rows are still recorded as imported...
-    const employeesUpdate = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.startsWith("UPDATE employees"));
+    const employeesUpdate = execute.mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.startsWith("UPDATE employees"),
+    );
     // ...but the employees table only takes ONE effective assignment, and it's row-2's (the last one).
     expect(employeesUpdate![1]).toEqual(["emp-1", "mgr-200", "emp-1"]);
   });

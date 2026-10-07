@@ -9,7 +9,9 @@ const n = (value: unknown): number => {
 export const vendorPaymentLobAttributionService = {
   async get(paymentId: string) {
     if (!(await tableExists("vendor_payment_tracking"))) {
-      throw Object.assign(new Error("Vendor payment tracking is unavailable"), { statusCode: 503 });
+      throw Object.assign(new Error("Vendor payment tracking is unavailable"), {
+        statusCode: 503,
+      });
     }
     const payments = await queryRows<RowDataPacket>(
       `SELECT id, grn_request_id, grn_number, vendor_id, vendor_name, branch_id,
@@ -19,10 +21,13 @@ export const vendorPaymentLobAttributionService = {
          FROM vendor_payment_tracking
         WHERE id = ?
         LIMIT 1`,
-      [paymentId]
+      [paymentId],
     );
     const payment = payments[0];
-    if (!payment) throw Object.assign(new Error("Vendor payment record not found"), { statusCode: 404 });
+    if (!payment)
+      throw Object.assign(new Error("Vendor payment record not found"), {
+        statusCode: 404,
+      });
 
     if (!(await tableExists("process_lob_master"))) {
       return {
@@ -51,20 +56,36 @@ export const vendorPaymentLobAttributionService = {
          FROM vw_vendor_payment_lob_allocation
         WHERE vendor_payment_id = ?
         ORDER BY sequence_no, process_name, lob_code`,
-      [paymentId]
+      [paymentId],
     ).catch((error) => {
       throw Object.assign(
-        new Error(`Vendor payment LOB allocation view is unavailable: ${error instanceof Error ? error.message : String(error)}`),
-        { statusCode: 503 }
+        new Error(
+          `Vendor payment LOB allocation view is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+        { statusCode: 503 },
       );
     });
 
-    const allocatedPnlCost = viewRows.reduce((total, row) => total + n(row.pnl_cost_amount), 0);
-    const allocatedGrossAmount = viewRows.reduce((total, row) => total + n(row.gross_amount), 0);
+    const allocatedPnlCost = viewRows.reduce(
+      (total, row) => total + n(row.pnl_cost_amount),
+      0,
+    );
+    const allocatedGrossAmount = viewRows.reduce(
+      (total, row) => total + n(row.gross_amount),
+      0,
+    );
     const dueAmount = n(payment.due_amount);
     const grossVariance = dueAmount - allocatedGrossAmount;
-    const missingLobCount = viewRows.filter((row) => row.process_id && !row.process_lob_id).length;
-    const recognitionPeriods = [...new Set(viewRows.map((row) => String(row.recognition_period ?? "")).filter(Boolean))];
+    const missingLobCount = viewRows.filter(
+      (row) => row.process_id && !row.process_lob_id,
+    ).length;
+    const recognitionPeriods = [
+      ...new Set(
+        viewRows
+          .map((row) => String(row.recognition_period ?? ""))
+          .filter(Boolean),
+      ),
+    ];
 
     return {
       payment,
@@ -80,7 +101,10 @@ export const vendorPaymentLobAttributionService = {
         paidAmount: n(payment.paid_amount),
         balanceAmount: n(payment.balance_amount),
         grossVariance,
-        reconciled: viewRows.length > 0 && missingLobCount === 0 && Math.abs(grossVariance) <= 0.02,
+        reconciled:
+          viewRows.length > 0 &&
+          missingLobCount === 0 &&
+          Math.abs(grossVariance) <= 0.02,
       },
     };
   },

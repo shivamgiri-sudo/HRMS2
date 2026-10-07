@@ -127,14 +127,29 @@ function emptyResult(): KpiPerformanceModuleResult {
   return {
     employeeSignals: [],
     performanceAlerts: { unacknowledgedCount: 0, items: [] },
-    coaching: { dueOrOverdueCount: 0, completedD1Count: 0, dueOrOverdue: [], completedD1: [] },
-    trainingNeeds: { openedD1Count: 0, resolvedD1Count: 0, openedD1: [], resolvedD1: [] },
+    coaching: {
+      dueOrOverdueCount: 0,
+      completedD1Count: 0,
+      dueOrOverdue: [],
+      completedD1: [],
+    },
+    trainingNeeds: {
+      openedD1Count: 0,
+      resolvedD1Count: 0,
+      openedD1: [],
+      resolvedD1: [],
+    },
     sourceHealth: [],
   };
 }
 
 function notApplicableHealth(module: string, asOfDate: string): SourceHealth {
-  return { module, state: "NOT_APPLICABLE", detail: "No team members in scope", asOfDate };
+  return {
+    module,
+    state: "NOT_APPLICABLE",
+    detail: "No team members in scope",
+    asOfDate,
+  };
 }
 
 /**
@@ -147,7 +162,10 @@ async function buildKpiSignals(
   reportingDate: string,
 ): Promise<{ signals: EmployeeKpiSignal[]; health: SourceHealth }> {
   if (teamEmployeeIds.length === 0) {
-    return { signals: [], health: notApplicableHealth("kpi_performance", reportingDate) };
+    return {
+      signals: [],
+      health: notApplicableHealth("kpi_performance", reportingDate),
+    };
   }
   const placeholders = teamEmployeeIds.map(() => "?").join(",");
   try {
@@ -186,70 +204,97 @@ async function buildKpiSignals(
       });
     }
 
-    const signals: EmployeeKpiSignal[] = (d1Rows as RowDataPacket[]).map((row) => {
-      const direction = row.direction as KpiDirection;
-      const d1Value = numberValue(row.d1_value);
-      const targetValue = row.target_value !== null && row.target_value !== undefined ? numberValue(row.target_value) : null;
-      const minThreshold = row.min_threshold !== null && row.min_threshold !== undefined ? numberValue(row.min_threshold) : null;
+    const signals: EmployeeKpiSignal[] = (d1Rows as RowDataPacket[]).map(
+      (row) => {
+        const direction = row.direction as KpiDirection;
+        const d1Value = numberValue(row.d1_value);
+        const targetValue =
+          row.target_value !== null && row.target_value !== undefined
+            ? numberValue(row.target_value)
+            : null;
+        const minThreshold =
+          row.min_threshold !== null && row.min_threshold !== undefined
+            ? numberValue(row.min_threshold)
+            : null;
 
-      let observation: KpiObservation = "observation_only";
-      let observationNote = "No configured target for this process/metric — value reported for observation only.";
-      if (minThreshold !== null) {
-        const belowMin = direction === "lower_is_better" ? d1Value > minThreshold : d1Value < minThreshold;
-        if (belowMin) {
-          observation = "below_min_threshold";
-          observationNote = "Below the configured minimum threshold.";
+        let observation: KpiObservation = "observation_only";
+        let observationNote =
+          "No configured target for this process/metric — value reported for observation only.";
+        if (minThreshold !== null) {
+          const belowMin =
+            direction === "lower_is_better"
+              ? d1Value > minThreshold
+              : d1Value < minThreshold;
+          if (belowMin) {
+            observation = "below_min_threshold";
+            observationNote = "Below the configured minimum threshold.";
+          }
         }
-      }
-      if (observation !== "below_min_threshold" && targetValue !== null && targetValue > 0) {
-        // Achievement calc mirrors modules/kpi/kpi.service.ts getEmployeeSummary/getLeaderboard.
-        const achievement = direction === "lower_is_better" ? targetValue / d1Value : d1Value / targetValue;
-        if (Number.isFinite(achievement) && achievement >= 1) {
-          observation = "above_or_at_target";
-          observationNote = "At or above configured target.";
-        } else {
-          observation = "below_target";
-          observationNote = "Below configured target.";
+        if (
+          observation !== "below_min_threshold" &&
+          targetValue !== null &&
+          targetValue > 0
+        ) {
+          // Achievement calc mirrors modules/kpi/kpi.service.ts getEmployeeSummary/getLeaderboard.
+          const achievement =
+            direction === "lower_is_better"
+              ? targetValue / d1Value
+              : d1Value / targetValue;
+          if (Number.isFinite(achievement) && achievement >= 1) {
+            observation = "above_or_at_target";
+            observationNote = "At or above configured target.";
+          } else {
+            observation = "below_target";
+            observationNote = "Below configured target.";
+          }
         }
-      }
 
-      const baseline = baselineMap.get(`${row.employee_id}:${row.metric_id}`) ?? null;
-      let trendVsBaseline: KpiTrend = null;
-      let trendNote = "";
-      if (baseline && baseline.count > 0) {
-        const diff = d1Value - baseline.avg;
-        if (diff === 0) {
-          trendVsBaseline = "flat";
-          trendNote = " In line with the 7-day baseline.";
-        } else {
-          const improved = direction === "lower_is_better" ? diff < 0 : diff > 0;
-          trendVsBaseline = improved ? "improved" : "declined";
-          trendNote = improved ? " Improved vs 7-day baseline." : " Declining vs 7-day baseline.";
+        const baseline =
+          baselineMap.get(`${row.employee_id}:${row.metric_id}`) ?? null;
+        let trendVsBaseline: KpiTrend = null;
+        let trendNote = "";
+        if (baseline && baseline.count > 0) {
+          const diff = d1Value - baseline.avg;
+          if (diff === 0) {
+            trendVsBaseline = "flat";
+            trendNote = " In line with the 7-day baseline.";
+          } else {
+            const improved =
+              direction === "lower_is_better" ? diff < 0 : diff > 0;
+            trendVsBaseline = improved ? "improved" : "declined";
+            trendNote = improved
+              ? " Improved vs 7-day baseline."
+              : " Declining vs 7-day baseline.";
+          }
         }
-      }
 
-      return {
-        employeeId: String(row.employee_id),
-        employeeCode: row.employee_code ? String(row.employee_code) : null,
-        fullName: row.full_name ? String(row.full_name) : null,
-        metricId: String(row.metric_id),
-        metricCode: String(row.metric_code),
-        metricName: String(row.metric_name),
-        direction,
-        d1Value,
-        targetValue,
-        minThreshold,
-        observation,
-        sevenDayBaselineAvg: baseline ? baseline.avg : null,
-        sevenDayBaselineSampleCount: baseline ? baseline.count : 0,
-        trendVsBaseline,
-        note: `${observationNote}${trendNote}`,
-      };
-    });
+        return {
+          employeeId: String(row.employee_id),
+          employeeCode: row.employee_code ? String(row.employee_code) : null,
+          fullName: row.full_name ? String(row.full_name) : null,
+          metricId: String(row.metric_id),
+          metricCode: String(row.metric_code),
+          metricName: String(row.metric_name),
+          direction,
+          d1Value,
+          targetValue,
+          minThreshold,
+          observation,
+          sevenDayBaselineAvg: baseline ? baseline.avg : null,
+          sevenDayBaselineSampleCount: baseline ? baseline.count : 0,
+          trendVsBaseline,
+          note: `${observationNote}${trendNote}`,
+        };
+      },
+    );
 
     return {
       signals,
-      health: { module: "kpi_performance", state: signals.length > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: reportingDate },
+      health: {
+        module: "kpi_performance",
+        state: signals.length > 0 ? "AVAILABLE" : "NO_DATA",
+        asOfDate: reportingDate,
+      },
     };
   } catch (err) {
     return {
@@ -267,9 +312,15 @@ async function buildKpiSignals(
 async function buildPerformanceAlerts(
   teamEmployeeIds: string[],
   reportingDate: string,
-): Promise<{ result: KpiPerformanceModuleResult["performanceAlerts"]; health: SourceHealth }> {
+): Promise<{
+  result: KpiPerformanceModuleResult["performanceAlerts"];
+  health: SourceHealth;
+}> {
   if (teamEmployeeIds.length === 0) {
-    return { result: { unacknowledgedCount: 0, items: [] }, health: notApplicableHealth("performance_alerts", reportingDate) };
+    return {
+      result: { unacknowledgedCount: 0, items: [] },
+      health: notApplicableHealth("performance_alerts", reportingDate),
+    };
   }
   const placeholders = teamEmployeeIds.map(() => "?").join(",");
   try {
@@ -296,7 +347,11 @@ async function buildPerformanceAlerts(
     }));
     return {
       result: { unacknowledgedCount: all.length, items },
-      health: { module: "performance_alerts", state: all.length > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: reportingDate },
+      health: {
+        module: "performance_alerts",
+        state: all.length > 0 ? "AVAILABLE" : "NO_DATA",
+        asOfDate: reportingDate,
+      },
     };
   } catch (err) {
     return {
@@ -314,10 +369,18 @@ async function buildPerformanceAlerts(
 async function buildCoaching(
   teamEmployeeIds: string[],
   reportingDate: string,
-): Promise<{ result: KpiPerformanceModuleResult["coaching"]; health: SourceHealth }> {
+): Promise<{
+  result: KpiPerformanceModuleResult["coaching"];
+  health: SourceHealth;
+}> {
   if (teamEmployeeIds.length === 0) {
     return {
-      result: { dueOrOverdueCount: 0, completedD1Count: 0, dueOrOverdue: [], completedD1: [] },
+      result: {
+        dueOrOverdueCount: 0,
+        completedD1Count: 0,
+        dueOrOverdue: [],
+        completedD1: [],
+      },
       health: notApplicableHealth("coaching", reportingDate),
     };
   }
@@ -355,11 +418,20 @@ async function buildCoaching(
         dueOrOverdue,
         completedD1,
       },
-      health: { module: "coaching", state: all.length > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: reportingDate },
+      health: {
+        module: "coaching",
+        state: all.length > 0 ? "AVAILABLE" : "NO_DATA",
+        asOfDate: reportingDate,
+      },
     };
   } catch (err) {
     return {
-      result: { dueOrOverdueCount: 0, completedD1Count: 0, dueOrOverdue: [], completedD1: [] },
+      result: {
+        dueOrOverdueCount: 0,
+        completedD1Count: 0,
+        dueOrOverdue: [],
+        completedD1: [],
+      },
       health: {
         module: "coaching",
         state: "ERROR",
@@ -373,10 +445,18 @@ async function buildCoaching(
 async function buildTrainingNeeds(
   teamEmployeeIds: string[],
   reportingDate: string,
-): Promise<{ result: KpiPerformanceModuleResult["trainingNeeds"]; health: SourceHealth }> {
+): Promise<{
+  result: KpiPerformanceModuleResult["trainingNeeds"];
+  health: SourceHealth;
+}> {
   if (teamEmployeeIds.length === 0) {
     return {
-      result: { openedD1Count: 0, resolvedD1Count: 0, openedD1: [], resolvedD1: [] },
+      result: {
+        openedD1Count: 0,
+        resolvedD1Count: 0,
+        openedD1: [],
+        resolvedD1: [],
+      },
       health: notApplicableHealth("training_needs", reportingDate),
     };
   }
@@ -407,17 +487,37 @@ async function buildTrainingNeeds(
       status: String(r.status),
     });
     const all = rows as RowDataPacket[];
-    const openedD1 = all.filter((r) => String(r.created_date) === reportingDate).map(toItem);
+    const openedD1 = all
+      .filter((r) => String(r.created_date) === reportingDate)
+      .map(toItem);
     const resolvedD1 = all
-      .filter((r) => ["completed", "closed"].includes(String(r.status)) && String(r.updated_date) === reportingDate)
+      .filter(
+        (r) =>
+          ["completed", "closed"].includes(String(r.status)) &&
+          String(r.updated_date) === reportingDate,
+      )
       .map(toItem);
     return {
-      result: { openedD1Count: openedD1.length, resolvedD1Count: resolvedD1.length, openedD1, resolvedD1 },
-      health: { module: "training_needs", state: all.length > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: reportingDate },
+      result: {
+        openedD1Count: openedD1.length,
+        resolvedD1Count: resolvedD1.length,
+        openedD1,
+        resolvedD1,
+      },
+      health: {
+        module: "training_needs",
+        state: all.length > 0 ? "AVAILABLE" : "NO_DATA",
+        asOfDate: reportingDate,
+      },
     };
   } catch (err) {
     return {
-      result: { openedD1Count: 0, resolvedD1Count: 0, openedD1: [], resolvedD1: [] },
+      result: {
+        openedD1Count: 0,
+        resolvedD1Count: 0,
+        openedD1: [],
+        resolvedD1: [],
+      },
       health: {
         module: "training_needs",
         state: "ERROR",
@@ -443,19 +543,25 @@ export async function buildKpiPerformanceModule(
     return result;
   }
 
-  const [kpiResult, alertsResult, coachingResult, trainingResult] = await Promise.all([
-    buildKpiSignals(teamEmployeeIds, reportingDate),
-    buildPerformanceAlerts(teamEmployeeIds, reportingDate),
-    buildCoaching(teamEmployeeIds, reportingDate),
-    buildTrainingNeeds(teamEmployeeIds, reportingDate),
-  ]);
+  const [kpiResult, alertsResult, coachingResult, trainingResult] =
+    await Promise.all([
+      buildKpiSignals(teamEmployeeIds, reportingDate),
+      buildPerformanceAlerts(teamEmployeeIds, reportingDate),
+      buildCoaching(teamEmployeeIds, reportingDate),
+      buildTrainingNeeds(teamEmployeeIds, reportingDate),
+    ]);
 
   return {
     employeeSignals: kpiResult.signals,
     performanceAlerts: alertsResult.result,
     coaching: coachingResult.result,
     trainingNeeds: trainingResult.result,
-    sourceHealth: [kpiResult.health, alertsResult.health, coachingResult.health, trainingResult.health],
+    sourceHealth: [
+      kpiResult.health,
+      alertsResult.health,
+      coachingResult.health,
+      trainingResult.health,
+    ],
   };
 }
 

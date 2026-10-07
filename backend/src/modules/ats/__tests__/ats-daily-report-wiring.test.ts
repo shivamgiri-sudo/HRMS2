@@ -27,7 +27,12 @@ const codeOnly = (src: string) =>
     .split(/\r?\n/)
     .filter((l) => {
       const t = l.trimStart();
-      return t !== "" && !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+      return (
+        t !== "" &&
+        !t.startsWith("//") &&
+        !t.startsWith("*") &&
+        !t.startsWith("/*")
+      );
     })
     .join("\n");
 
@@ -62,7 +67,9 @@ describe("the daily report is actually scheduled", () => {
   it("schedules with no hardcoded date, so it reports the day it runs", () => {
     // The manual routes pass an explicit date; a scheduled run must not, or every
     // day's report describes the same fixed day.
-    expect(cron).not.toMatch(/runDailyHiringReport\(\s*['"]\d{4}-\d{2}-\d{2}['"]/);
+    expect(cron).not.toMatch(
+      /runDailyHiringReport\(\s*['"]\d{4}-\d{2}-\d{2}['"]/,
+    );
   });
 });
 

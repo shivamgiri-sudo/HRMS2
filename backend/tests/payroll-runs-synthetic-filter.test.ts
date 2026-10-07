@@ -23,8 +23,13 @@ const exec = db.execute as ReturnType<typeof vi.fn>;
 
 /** Capture the SELECT (not the COUNT) that listRuns issues. */
 function captured() {
-  const call = exec.mock.calls.find(([sql]) => /SELECT \* FROM salary_prep_run/i.test(String(sql)));
-  return { sql: String(call?.[0] ?? ""), params: (call?.[1] ?? []) as unknown[] };
+  const call = exec.mock.calls.find(([sql]) =>
+    /SELECT \* FROM salary_prep_run/i.test(String(sql)),
+  );
+  return {
+    sql: String(call?.[0] ?? ""),
+    params: (call?.[1] ?? []) as unknown[],
+  };
 }
 
 beforeEach(() => {
@@ -48,7 +53,12 @@ describe("listRuns — synthetic run filter", () => {
   });
 
   it("still applies the caller's month and status filters", async () => {
-    await payrollService.listRuns({ page: 1, limit: 20, runMonth: "2026-07", status: "processing" } as any);
+    await payrollService.listRuns({
+      page: 1,
+      limit: 20,
+      runMonth: "2026-07",
+      status: "processing",
+    } as any);
     const { sql, params } = captured();
     expect(sql).toMatch(/run_month = \?/);
     expect(sql).toMatch(/status = \?/);
@@ -58,14 +68,18 @@ describe("listRuns — synthetic run filter", () => {
 
   it("applies the same filter to the COUNT, so pagination totals agree", async () => {
     await payrollService.listRuns({ page: 1, limit: 20 } as any);
-    const countCall = exec.mock.calls.find(([sql]) => /COUNT\(\*\)/i.test(String(sql)));
+    const countCall = exec.mock.calls.find(([sql]) =>
+      /COUNT\(\*\)/i.test(String(sql)),
+    );
     expect(String(countCall?.[0])).toMatch(/created_by NOT IN/i);
     expect(countCall?.[1]).toContain("test-auto-gen");
   });
 
   it("short-circuits before the filter when scope denies all access", async () => {
     const res = await payrollService.listRuns({
-      page: 1, limit: 20, scopeFilter: { sql: "1=0", params: [] },
+      page: 1,
+      limit: 20,
+      scopeFilter: { sql: "1=0", params: [] },
     } as any);
     expect(res).toEqual({ data: [], total: 0, page: 1, limit: 20 });
     expect(exec).not.toHaveBeenCalled();
@@ -73,7 +87,8 @@ describe("listRuns — synthetic run filter", () => {
 
   it("composes with a row-scope filter rather than replacing it", async () => {
     await payrollService.listRuns({
-      page: 1, limit: 20,
+      page: 1,
+      limit: 20,
       scopeFilter: { sql: "spr.branch_id = ?", params: ["branch-1"] },
     } as any);
     const { sql, params } = captured();

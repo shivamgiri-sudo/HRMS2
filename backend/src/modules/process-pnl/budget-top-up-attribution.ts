@@ -23,6 +23,7 @@ export async function focusBudgetTopUps(
   period: string,
   codes: string[],
 ): Promise<{ attributable: number; shared: number }> {
-  if (!/^\d{4}-\d{2}$/.test(period) || codes.length === 0) return { attributable: 0, shared: 0 };
+  if (!/^\d{4}-\d{2}$/.test(period) || codes.length === 0)
+    return { attributable: 0, shared: 0 };
   return topUpsForCodes(await readBudgetEntries(period), codes);
 }

@@ -132,7 +132,11 @@ function pageStyles(): string {
 function footer(d?: Record<string, string>): string {
   // The issuing branch, when the caller supplied one. Falls back to the central
   // contact so letters that predate branch resolution still render.
-  const addr = (d?.branch_address ?? "").split("\n").map((l) => l.trim()).filter(Boolean).join(", ");
+  const addr = (d?.branch_address ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(", ");
   const contact = (d?.branch_hr_contact ?? "").trim();
   return `<div class="footer">
     ${addr ? `<span>${addr}</span>` : ""}
@@ -143,7 +147,10 @@ function footer(d?: Record<string, string>): string {
 
 function letterHeader(logoUrl: string, d?: Record<string, string>): string {
   // Branch that issued the letter, not a hardcoded head office.
-  const lines = (d?.branch_address ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = (d?.branch_address ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
   const branch = (d?.branch_name ?? "").trim();
   return `<div class="header">
     <div class="header-left">
@@ -166,7 +173,17 @@ function expLetterHead(logoUrl: string, d?: Record<string, string>): string {
         Registered Office : 102/C-1, Kanchan House, Karampura Commercial Complex,<br>
         New Delhi-110015<br>
         Tel . : 011-91-61105550 &nbsp; E-mail : care@teammas.in &nbsp; Web : www.teammas.in
-        ${(d?.branch_address ?? "").trim() ? `<br><br><strong>Issuing Branch${(d?.branch_name ?? "").trim() ? ` : ${(d?.branch_name ?? "").trim()}` : ""}</strong><br>${(d?.branch_address ?? "").split("\n").map((l) => l.trim()).filter(Boolean).join("<br>")}` : ""}
+        ${
+          (d?.branch_address ?? "").trim()
+            ? `<br><br><strong>Issuing Branch${(d?.branch_name ?? "").trim() ? ` : ${(d?.branch_name ?? "").trim()}` : ""}</strong><br>${(
+                d?.branch_address ?? ""
+              )
+                .split("\n")
+                .map((l) => l.trim())
+                .filter(Boolean)
+                .join("<br>")}`
+            : ""
+        }
       </td>
       <td style="width:35%;text-align:right;vertical-align:top">
         <img src="${logoUrl}" alt="MAS Logo" style="width:60px;height:60px;object-fit:contain" />
@@ -180,30 +197,36 @@ function expLetterHead(logoUrl: string, d?: Record<string, string>): string {
 // 1. APPOINTMENT LETTER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderAppointmentLetter(d: Record<string, string>, logoUrl: string): string {
+export function renderAppointmentLetter(
+  d: Record<string, string>,
+  logoUrl: string,
+): string {
   const rows = [
-    ["Basic Salary",             d.basic         || "0.00"],
-    ["House Rent Allowance",     d.hra           || "0.00"],
-    ["Conveyance Allowance",     d.conveyance    || "0.00"],
-    ["Other Allowance",          d.other_allowance || "0.00"],
-    ["Special Allowance",        d.special_allowance || "0.00"],
-    ["Bonus",                    d.bonus         || "0.00"],
-    ["Medical Allowance",        d.medical_allowance || "0.00"],
-    ["Portfolio",                d.portfolio     || "0.00"],
-    ["PLI",                      d.pli           || ".00"],
-    ["<b>Gross Salary</b>",      `<b>${d.gross_salary || "0.00"}</b>`],
-    ["ESIC",                     d.esic          || "0.00"],
-    ["EPF",                      d.epf           || "0.00"],
-    ["<b>Net Salary</b>",        `<b>${d.net_salary || "0.00"}</b>`],
-    ["Employer Cont. - ESIC",    d.employer_esic || "0.00"],
-    ["Employer Cont. - EPF",     d.employer_epf  || "0.00"],
-    ["Admin Charges",            d.admin_charges || "0.00"],
-    ["<b>CTC</b>",               `<b>${d.ctc || "0.00"}</b>`],
+    ["Basic Salary", d.basic || "0.00"],
+    ["House Rent Allowance", d.hra || "0.00"],
+    ["Conveyance Allowance", d.conveyance || "0.00"],
+    ["Other Allowance", d.other_allowance || "0.00"],
+    ["Special Allowance", d.special_allowance || "0.00"],
+    ["Bonus", d.bonus || "0.00"],
+    ["Medical Allowance", d.medical_allowance || "0.00"],
+    ["Portfolio", d.portfolio || "0.00"],
+    ["PLI", d.pli || ".00"],
+    ["<b>Gross Salary</b>", `<b>${d.gross_salary || "0.00"}</b>`],
+    ["ESIC", d.esic || "0.00"],
+    ["EPF", d.epf || "0.00"],
+    ["<b>Net Salary</b>", `<b>${d.net_salary || "0.00"}</b>`],
+    ["Employer Cont. - ESIC", d.employer_esic || "0.00"],
+    ["Employer Cont. - EPF", d.employer_epf || "0.00"],
+    ["Admin Charges", d.admin_charges || "0.00"],
+    ["<b>CTC</b>", `<b>${d.ctc || "0.00"}</b>`],
   ];
 
-  const salaryRows = rows.map(([label, val]) =>
-    `<tr><td class="label-col">${label}</td><td>Rs. ${val}</td></tr>`
-  ).join("\n");
+  const salaryRows = rows
+    .map(
+      ([label, val]) =>
+        `<tr><td class="label-col">${label}</td><td>Rs. ${val}</td></tr>`,
+    )
+    .join("\n");
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
   <title>Appointment Letter – ${d.full_name}</title>
@@ -303,7 +326,10 @@ export function renderAppointmentLetter(d: Record<string, string>, logoUrl: stri
 // 2. SALARY SLIP
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderSalarySlip(d: Record<string, string>, logoUrl: string): string {
+export function renderSalarySlip(
+  d: Record<string, string>,
+  logoUrl: string,
+): string {
   const v = (key: string, def = "0") => d[key] || def;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
   <title>Salary Slip – ${d.full_name} – ${d.month_year}</title>
@@ -314,7 +340,7 @@ export function renderSalarySlip(d: Record<string, string>, logoUrl: string): st
       <img src="${logoUrl}" alt="MAS Logo" style="width:55px;height:55px;object-fit:contain;vertical-align:middle;margin-right:10px">
       <span style="font-size:16pt;font-weight:bold;vertical-align:middle">Mas Callnet India Pvt. Ltd</span>
     </div>
-    <div style="text-align:center;font-weight:bold;margin-bottom:4mm">Month For : ${v("month_year","")}</div>
+    <div style="text-align:center;font-weight:bold;margin-bottom:4mm">Month For : ${v("month_year", "")}</div>
 
     <table class="slip-header-table">
       <tr>
@@ -337,9 +363,9 @@ export function renderSalarySlip(d: Record<string, string>, logoUrl: string): st
         <td class="cell-label">ESI No</td>
         <td>${d.esi_no || ""}</td>
         <td class="cell-label">W Days</td>
-        <td>${v("working_days","31")}</td>
+        <td>${v("working_days", "31")}</td>
         <td class="cell-label">Earned Days</td>
-        <td>${v("earned_days","31")}</td>
+        <td>${v("earned_days", "31")}</td>
       </tr>
     </table>
 
@@ -359,7 +385,7 @@ export function renderSalarySlip(d: Record<string, string>, logoUrl: string): st
           <td>${v("conveyance")}</td><td>${v("pa")}</td><td>${v("ma")}</td>
           <td>${v("sa")}</td><td>${v("oa")}</td><td>${v("arrear")}</td>
           <td>${v("incentive")}</td>
-          <td class="bold right">${v("total_earnings","0.00")}</td>
+          <td class="bold right">${v("total_earnings", "0.00")}</td>
         </tr>
         <tr>
           <td class="bold" rowspan="2">Deductions</td>
@@ -372,7 +398,7 @@ export function renderSalarySlip(d: Record<string, string>, logoUrl: string): st
           <td>${v("pf")}</td><td>${v("esic")}</td><td>${v("loan")}</td>
           <td>${v("advance_deduction")}</td><td>${v("other_deduction")}</td>
           <td colspan="5"></td>
-          <td class="bold right">${v("total_deductions","0.00")}</td>
+          <td class="bold right">${v("total_deductions", "0.00")}</td>
         </tr>
         <tr>
           <td class="bold" colspan="2">Form 16 Summary</td>
@@ -399,7 +425,7 @@ export function renderSalarySlip(d: Record<string, string>, logoUrl: string): st
     <table class="slip-main-table" style="margin-top:3mm">
       <tr class="net-row">
         <td style="width:30%">Cheque No :</td>
-        <td colspan="10" class="right">Net Salary : ${v("net_salary","0.00")}</td>
+        <td colspan="10" class="right">Net Salary : ${v("net_salary", "0.00")}</td>
       </tr>
       <tr class="words-row">
         <td colspan="11" style="text-align:right;font-weight:bold;padding:4px 6px">${d.net_salary_words || ""}</td>
@@ -416,7 +442,10 @@ export function renderSalarySlip(d: Record<string, string>, logoUrl: string): st
 // 3. INCREMENT LETTER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderIncrementLetter(d: Record<string, string>, logoUrl: string): string {
+export function renderIncrementLetter(
+  d: Record<string, string>,
+  logoUrl: string,
+): string {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
   <title>Increment Letter – ${d.full_name}</title>
   ${pageStyles()}
@@ -470,7 +499,10 @@ export function renderIncrementLetter(d: Record<string, string>, logoUrl: string
 // 4. PROMOTION LETTER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderPromotionLetter(d: Record<string, string>, logoUrl: string): string {
+export function renderPromotionLetter(
+  d: Record<string, string>,
+  logoUrl: string,
+): string {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
   <title>Promotion Letter – ${d.full_name}</title>
   ${pageStyles()}
@@ -509,7 +541,10 @@ export function renderPromotionLetter(d: Record<string, string>, logoUrl: string
 // 5. EXPERIENCE / RELIEVING LETTER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderExperienceLetter(d: Record<string, string>, logoUrl: string): string {
+export function renderExperienceLetter(
+  d: Record<string, string>,
+  logoUrl: string,
+): string {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
   <title>Experience Letter – ${d.full_name}</title>
   ${pageStyles()}
@@ -539,7 +574,10 @@ export function renderExperienceLetter(d: Record<string, string>, logoUrl: strin
 // 6. NDA & JOINING KIT
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderNdaJoiningKit(d: Record<string, string>, logoUrl: string): string {
+export function renderNdaJoiningKit(
+  d: Record<string, string>,
+  logoUrl: string,
+): string {
   const name = d.full_name || "EMPLOYEE";
   const empCode = d.employee_code || "";
   const doj = d.date_of_joining || "";
@@ -760,15 +798,21 @@ export function renderNdaJoiningKit(d: Record<string, string>, logoUrl: string):
 export function renderLetterHtml(
   letterType: string,
   data: Record<string, string>,
-  logoUrl: string
+  logoUrl: string,
 ): string {
   switch (letterType) {
-    case "appointment":    return renderAppointmentLetter(data, logoUrl);
-    case "salary_slip":    return renderSalarySlip(data, logoUrl);
-    case "increment":      return renderIncrementLetter(data, logoUrl);
-    case "promotion":      return renderPromotionLetter(data, logoUrl);
-    case "experience":     return renderExperienceLetter(data, logoUrl);
-    case "nda":            return renderNdaJoiningKit(data, logoUrl);
+    case "appointment":
+      return renderAppointmentLetter(data, logoUrl);
+    case "salary_slip":
+      return renderSalarySlip(data, logoUrl);
+    case "increment":
+      return renderIncrementLetter(data, logoUrl);
+    case "promotion":
+      return renderPromotionLetter(data, logoUrl);
+    case "experience":
+      return renderExperienceLetter(data, logoUrl);
+    case "nda":
+      return renderNdaJoiningKit(data, logoUrl);
     default:
       return `<html><body><p>Unknown letter type: ${letterType}</p></body></html>`;
   }

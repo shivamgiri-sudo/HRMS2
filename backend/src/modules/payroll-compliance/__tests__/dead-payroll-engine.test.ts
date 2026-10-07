@@ -25,7 +25,8 @@ import { resolve, join } from "node:path";
  * code. These tests hold the quarantine in place.
  */
 
-const MODULE_PATH = "src/modules/payroll-compliance/payrollCalculate.service.ts";
+const MODULE_PATH =
+  "src/modules/payroll-compliance/payrollCalculate.service.ts";
 const SOURCE = readFileSync(resolve(process.cwd(), MODULE_PATH), "utf8");
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn() } }));
@@ -57,12 +58,16 @@ describe("the dead payroll engine refuses to run", () => {
   });
 
   it("guards before any query, not partway through", () => {
-    const fnStart = SOURCE.indexOf("export async function calculatePayrollRun(");
+    const fnStart = SOURCE.indexOf(
+      "export async function calculatePayrollRun(",
+    );
     const throwAt = SOURCE.indexOf("throw new Error(", fnStart);
     const firstQueryAt = SOURCE.indexOf("db.execute", fnStart);
     expect(throwAt).toBeGreaterThan(-1);
     expect(firstQueryAt).toBeGreaterThan(-1);
-    expect(throwAt, "the guard must precede the first query").toBeLessThan(firstQueryAt);
+    expect(throwAt, "the guard must precede the first query").toBeLessThan(
+      firstQueryAt,
+    );
   });
 });
 
@@ -75,12 +80,19 @@ describe("nothing imports it", () => {
       for (const entry of readdirSync(dir)) {
         if (entry === "node_modules" || entry === "dist") continue;
         const full = join(dir, entry);
-        if (statSync(full).isDirectory()) { walk(full); continue; }
+        if (statSync(full).isDirectory()) {
+          walk(full);
+          continue;
+        }
         if (!full.endsWith(".ts")) continue;
         if (full.includes("payroll-compliance")) continue; // itself, and its own tests
         const text = readFileSync(full, "utf8");
         // An import statement, not a mention in prose or a test reading it as text.
-        if (/from\s+["'][^"']*payroll-compliance\/payrollCalculate[^"']*["']/.test(text)) {
+        if (
+          /from\s+["'][^"']*payroll-compliance\/payrollCalculate[^"']*["']/.test(
+            text,
+          )
+        ) {
           offenders.push(full);
         }
       }

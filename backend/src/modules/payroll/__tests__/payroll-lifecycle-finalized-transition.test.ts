@@ -20,7 +20,9 @@ import {
 
 describe("validateTransition recognizes 'finalized', case-insensitively", () => {
   it("allows FINALIZED -> locked (uppercase, matches what the database actually stores)", () => {
-    expect(validateTransition("FINALIZED" as any, "locked")).toEqual({ valid: true });
+    expect(validateTransition("FINALIZED" as any, "locked")).toEqual({
+      valid: true,
+    });
   });
 
   it("allows finalized -> locked (lowercase, matches the RunStatus type)", () => {
@@ -76,9 +78,15 @@ describe("pre-existing transitions are unchanged (no regression)", () => {
 
   it("draft/calculating/calculated/under_review/cancelled transitions are untouched", () => {
     expect(validateTransition("draft", "calculating")).toEqual({ valid: true });
-    expect(validateTransition("calculating", "calculated")).toEqual({ valid: true });
-    expect(validateTransition("calculated", "under_review")).toEqual({ valid: true });
-    expect(validateTransition("under_review", "approved")).toEqual({ valid: true });
+    expect(validateTransition("calculating", "calculated")).toEqual({
+      valid: true,
+    });
+    expect(validateTransition("calculated", "under_review")).toEqual({
+      valid: true,
+    });
+    expect(validateTransition("under_review", "approved")).toEqual({
+      valid: true,
+    });
     expect(validateTransition("cancelled", "draft")).toEqual({ valid: true });
   });
 
@@ -89,7 +97,9 @@ describe("pre-existing transitions are unchanged (no regression)", () => {
   });
 
   it("a same-status transition is still rejected", () => {
-    expect(validateTransition("FINALIZED" as any, "FINALIZED" as any).valid).toBe(false);
+    expect(
+      validateTransition("FINALIZED" as any, "FINALIZED" as any).valid,
+    ).toBe(false);
     expect(validateTransition("approved", "approved").valid).toBe(false);
   });
 });

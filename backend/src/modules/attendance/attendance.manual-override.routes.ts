@@ -12,7 +12,10 @@
 import { Router, type NextFunction, type Response } from "express";
 import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -20,10 +23,14 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 export const attendanceManualOverrideRouter = Router();
 attendanceManualOverrideRouter.use(requireAuth);
 
-type RequiredAuthRequest = AuthenticatedRequest & { authUser: NonNullable<AuthenticatedRequest["authUser"]> };
+type RequiredAuthRequest = AuthenticatedRequest & {
+  authUser: NonNullable<AuthenticatedRequest["authUser"]>;
+};
 
-const h = (fn: (req: RequiredAuthRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req as RequiredAuthRequest, res).catch(next);
+const h =
+  (fn: (req: RequiredAuthRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) =>
+    fn(req as RequiredAuthRequest, res).catch(next);
 
 interface AttendanceStateRow extends RowDataPacket {
   id: string;
@@ -86,23 +93,36 @@ interface AuditRow extends RowDataPacket {
 }
 
 // ─── Role constants ───────────────────────────────────────────────────────────
-const PAYROLL_WRITE_ROLES = ["payroll_head", "payroll_admin", "admin", "super_admin"] as const;
-const PAYROLL_READ_ROLES  = [...PAYROLL_WRITE_ROLES] as const;
+const PAYROLL_WRITE_ROLES = [
+  "payroll_head",
+  "payroll_admin",
+  "admin",
+  "super_admin",
+] as const;
+const PAYROLL_READ_ROLES = [...PAYROLL_WRITE_ROLES] as const;
 
 // ─── Access guard helpers ─────────────────────────────────────────────────────
 
-async function assertPayrollAccess(userId: string): Promise<{ actorRole: string } | null> {
-  if (await hasAnyRole(userId, "super_admin"))   return { actorRole: "super_admin" };
-  if (await hasAnyRole(userId, "admin"))         return { actorRole: "admin" };
-  if (await hasAnyRole(userId, "payroll_head"))  return { actorRole: "payroll_head" };
-  if (await hasAnyRole(userId, "payroll_admin")) return { actorRole: "payroll_admin" };
+async function assertPayrollAccess(
+  userId: string,
+): Promise<{ actorRole: string } | null> {
+  if (await hasAnyRole(userId, "super_admin"))
+    return { actorRole: "super_admin" };
+  if (await hasAnyRole(userId, "admin")) return { actorRole: "admin" };
+  if (await hasAnyRole(userId, "payroll_head"))
+    return { actorRole: "payroll_head" };
+  if (await hasAnyRole(userId, "payroll_admin"))
+    return { actorRole: "payroll_admin" };
   return null;
 }
 
 // ─── Data helpers ─────────────────────────────────────────────────────────────
 
 /** Fetch the attendance_daily_record current state for a given employee+date. */
-async function getCurrentAttendance(employeeId: string, date: string): Promise<AttendanceStateRow | null> {
+async function getCurrentAttendance(
+  employeeId: string,
+  date: string,
+): Promise<AttendanceStateRow | null> {
   const [rows] = await db.execute<AttendanceStateRow[]>(
     // No shift_id: attendance_daily_record does not have one, and has no shift column
     // at all. Verified live 2026-08-15 against all 45 of its columns. Selecting it
@@ -165,7 +185,9 @@ async function getOverrideWithDetail(id: string): Promise<OverrideRow | null> {
  * A month is considered locked when salary_prep_run has status IN
  * ('published','disbursed','locked','finalized') for that run_month.
  */
-async function isPayrollMonthLocked(payrollMonth: string | null | undefined): Promise<boolean> {
+async function isPayrollMonthLocked(
+  payrollMonth: string | null | undefined,
+): Promise<boolean> {
   if (!payrollMonth) return false;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM salary_prep_run
@@ -186,65 +208,106 @@ async function isPayrollMonthLocked(payrollMonth: string | null | undefined): Pr
  * - Blocks duplicate pending override for same employee+date
  * - If payroll month is locked → is_payroll_month_locked=1, higher_approval_required=1
  */
-attendanceManualOverrideRouter.post("/manual-overrides", h(async (req, res) => {
-  const access = await assertPayrollAccess(req.authUser.id);
-  if (!access) {
-    return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Payroll Admin role required" });
-  }
+attendanceManualOverrideRouter.post(
+  "/manual-overrides",
+  h(async (req, res) => {
+    const access = await assertPayrollAccess(req.authUser.id);
+    if (!access) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "Forbidden: Payroll Head or Payroll Admin role required",
+        });
+    }
 
-  const {
-    employee_id, attendance_date, new_status,
-    new_payable_days, new_lwp, new_shift_id,
-    reason, supporting_doc_id,
-    payroll_month, payroll_run_id, payroll_impact_amount,
-  } = req.body;
+    const {
+      employee_id,
+      attendance_date,
+      new_status,
+      new_payable_days,
+      new_lwp,
+      new_shift_id,
+      reason,
+      supporting_doc_id,
+      payroll_month,
+      payroll_run_id,
+      payroll_impact_amount,
+    } = req.body;
 
-  // ── Validation ──────────────────────────────────────────────────────────────
-  if (!employee_id?.trim())    return res.status(400).json({ success: false, error: "employee_id is required" });
-  if (!attendance_date?.trim()) return res.status(400).json({ success: false, error: "attendance_date is required (YYYY-MM-DD)" });
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(attendance_date)) {
-    return res.status(400).json({ success: false, error: "attendance_date must be YYYY-MM-DD" });
-  }
-  if (!new_status?.trim())     return res.status(400).json({ success: false, error: "new_status is required" });
-  if (!reason?.trim() || reason.trim().length < 10) {
-    return res.status(400).json({ success: false, error: "reason is mandatory and must be at least 10 characters" });
-  }
+    // ── Validation ──────────────────────────────────────────────────────────────
+    if (!employee_id?.trim())
+      return res
+        .status(400)
+        .json({ success: false, error: "employee_id is required" });
+    if (!attendance_date?.trim())
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "attendance_date is required (YYYY-MM-DD)",
+        });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(attendance_date)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "attendance_date must be YYYY-MM-DD" });
+    }
+    if (!new_status?.trim())
+      return res
+        .status(400)
+        .json({ success: false, error: "new_status is required" });
+    if (!reason?.trim() || reason.trim().length < 10) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "reason is mandatory and must be at least 10 characters",
+        });
+    }
 
-  // Safety 1: employee must exist and be active (exited employees must not receive new attendance)
-  const employee = await getEmployee(employee_id);
-  if (!employee) return res.status(409).json({ success: false, error: "Employee not found or is inactive (exited). Attendance cannot be marked for an exited employee." });
+    // Safety 1: employee must exist and be active (exited employees must not receive new attendance)
+    const employee = await getEmployee(employee_id);
+    if (!employee)
+      return res
+        .status(409)
+        .json({
+          success: false,
+          error:
+            "Employee not found or is inactive (exited). Attendance cannot be marked for an exited employee.",
+        });
 
-  // Safety 2: attendance_daily_record must exist (we fetch old values from it)
-  const current = await getCurrentAttendance(employee_id, attendance_date);
-  if (!current) {
-    return res.status(404).json({
-      success: false,
-      error: `No attendance_daily_record found for employee ${employee.employee_code} on ${attendance_date}. Ensure attendance has been processed for this date.`,
-    });
-  }
+    // Safety 2: attendance_daily_record must exist (we fetch old values from it)
+    const current = await getCurrentAttendance(employee_id, attendance_date);
+    if (!current) {
+      return res.status(404).json({
+        success: false,
+        error: `No attendance_daily_record found for employee ${employee.employee_code} on ${attendance_date}. Ensure attendance has been processed for this date.`,
+      });
+    }
 
-  // Safety 4: block duplicate pending override for same employee + date
-  const [dupRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM attendance_manual_override
+    // Safety 4: block duplicate pending override for same employee + date
+    const [dupRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM attendance_manual_override
       WHERE employee_id = ? AND attendance_date = ? AND approval_status = 'pending'
       LIMIT 1`,
-    [employee_id, attendance_date],
-  );
-  if (dupRows.length > 0) {
-    return res.status(409).json({
-      success: false,
-      error: "A pending manual override already exists for this employee on this date. Approve or reject it first.",
-    });
-  }
+      [employee_id, attendance_date],
+    );
+    if (dupRows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error:
+          "A pending manual override already exists for this employee on this date. Approve or reject it first.",
+      });
+    }
 
-  // Safety 5: check payroll month lock
-  const monthLocked = await isPayrollMonthLocked(payroll_month);
-  const isLocked = monthLocked ? 1 : 0;
-  // (Trigger in migration 238 also sets higher_approval_required=1 for locked months)
+    // Safety 5: check payroll month lock
+    const monthLocked = await isPayrollMonthLocked(payroll_month);
+    const isLocked = monthLocked ? 1 : 0;
+    // (Trigger in migration 238 also sets higher_approval_required=1 for locked months)
 
-  const id = randomUUID();
-  await db.execute(
-    `INSERT INTO attendance_manual_override
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO attendance_manual_override
        (id, employee_id, attendance_date,
         old_status, old_payable_days, old_lwp, old_shift_id,
         new_status, new_payable_days, new_lwp, new_shift_id,
@@ -253,92 +316,120 @@ attendanceManualOverrideRouter.post("/manual-overrides", h(async (req, res) => {
         is_payroll_month_locked, higher_approval_required,
         approval_status, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
-    [
-      id, employee_id, attendance_date,
-      current.attendance_status,        // old_status — from live record
-      null,                             // old_payable_days (future: derive from payroll line)
-      current.lwp_value ?? null,        // old_lwp
-      null,                             // old_shift_id — attendance_daily_record has no shift column
-      new_status.trim(),
-      new_payable_days ?? null,
-      new_lwp ?? null,
-      new_shift_id ?? null,
-      reason.trim(),
-      supporting_doc_id ?? null,
-      payroll_month ?? null,
-      payroll_run_id ?? null,
-      payroll_impact_amount ?? null,
-      isLocked,
-      isLocked,                         // higher_approval_required = same as isLocked initially
-      req.authUser.id,
-    ],
-  );
+      [
+        id,
+        employee_id,
+        attendance_date,
+        current.attendance_status, // old_status — from live record
+        null, // old_payable_days (future: derive from payroll line)
+        current.lwp_value ?? null, // old_lwp
+        null, // old_shift_id — attendance_daily_record has no shift column
+        new_status.trim(),
+        new_payable_days ?? null,
+        new_lwp ?? null,
+        new_shift_id ?? null,
+        reason.trim(),
+        supporting_doc_id ?? null,
+        payroll_month ?? null,
+        payroll_run_id ?? null,
+        payroll_impact_amount ?? null,
+        isLocked,
+        isLocked, // higher_approval_required = same as isLocked initially
+        req.authUser.id,
+      ],
+    );
 
-  // Audit: override created
-  void logSensitiveAction({
-    actor_user_id: req.authUser.id,
-    actor_role:    access.actorRole,
-    action_type:   "MANUAL_ATTENDANCE_OVERRIDE_CREATED",
-    module_key:    "attendance",
-    entity_type:   "attendance_manual_override",
-    entity_id:     id,
-    employee_id,
-    reason:        reason.trim(),
-    old_value_json: {
-      attendance_status: current.attendance_status,
-      lwp_value:         current.lwp_value ?? null,
-    },
-    new_value_json: {
-      new_status:              new_status.trim(),
-      new_lwp:                 new_lwp ?? null,
-      new_shift_id:            new_shift_id ?? null,
-      payroll_month:           payroll_month ?? null,
-      is_payroll_month_locked: isLocked,
-      higher_approval_required: isLocked,
-      payroll_impact_amount:   payroll_impact_amount ?? null,
-    },
-    req,
-  });
+    // Audit: override created
+    void logSensitiveAction({
+      actor_user_id: req.authUser.id,
+      actor_role: access.actorRole,
+      action_type: "MANUAL_ATTENDANCE_OVERRIDE_CREATED",
+      module_key: "attendance",
+      entity_type: "attendance_manual_override",
+      entity_id: id,
+      employee_id,
+      reason: reason.trim(),
+      old_value_json: {
+        attendance_status: current.attendance_status,
+        lwp_value: current.lwp_value ?? null,
+      },
+      new_value_json: {
+        new_status: new_status.trim(),
+        new_lwp: new_lwp ?? null,
+        new_shift_id: new_shift_id ?? null,
+        payroll_month: payroll_month ?? null,
+        is_payroll_month_locked: isLocked,
+        higher_approval_required: isLocked,
+        payroll_impact_amount: payroll_impact_amount ?? null,
+      },
+      req,
+    });
 
-  const created = await getOverrideWithDetail(id);
-  return res.status(201).json({
-    success: true,
-    data: created,
-    message: monthLocked
-      ? "Override request created. Payroll month is locked — Super Admin approval required."
-      : "Override request created. Pending approval.",
-  });
-}));
+    const created = await getOverrideWithDetail(id);
+    return res.status(201).json({
+      success: true,
+      data: created,
+      message: monthLocked
+        ? "Override request created. Payroll month is locked — Super Admin approval required."
+        : "Override request created. Pending approval.",
+    });
+  }),
+);
 
 // ─── GET /api/attendance/manual-overrides ─────────────────────────────────────
 /**
  * List override requests with optional filters.
  * Access: payroll_head / payroll_admin / admin / super_admin only.
  */
-attendanceManualOverrideRouter.get("/manual-overrides", h(async (req, res) => {
-  if (!(await assertPayrollAccess(req.authUser.id))) {
-    return res.status(403).json({ success: false, error: "Forbidden: Payroll access required" });
-  }
+attendanceManualOverrideRouter.get(
+  "/manual-overrides",
+  h(async (req, res) => {
+    if (!(await assertPayrollAccess(req.authUser.id))) {
+      return res
+        .status(403)
+        .json({ success: false, error: "Forbidden: Payroll access required" });
+    }
 
-  const conds: string[] = [];
-  const params: unknown[] = [];
+    const conds: string[] = [];
+    const params: unknown[] = [];
 
-  if (req.query.employeeId)   { conds.push("amo.employee_id = ?");                params.push(String(req.query.employeeId)); }
-  if (req.query.status)       { conds.push("amo.approval_status = ?");             params.push(String(req.query.status)); }
-  if (req.query.fromDate)     { conds.push("amo.attendance_date >= ?");            params.push(String(req.query.fromDate)); }
-  if (req.query.toDate)       { conds.push("amo.attendance_date <= ?");            params.push(String(req.query.toDate)); }
-  if (req.query.payrollMonth) { conds.push("amo.payroll_month = ?");               params.push(String(req.query.payrollMonth)); }
-  if (req.query.payrollRunId) { conds.push("amo.payroll_run_id = ?");              params.push(String(req.query.payrollRunId)); }
-  if (req.query.createdBy)    { conds.push("amo.created_by = ?");                  params.push(String(req.query.createdBy)); }
-  if (req.query.higherApprovalRequired !== undefined) {
-    conds.push("amo.higher_approval_required = ?");
-    params.push(req.query.higherApprovalRequired === "1" ? 1 : 0);
-  }
+    if (req.query.employeeId) {
+      conds.push("amo.employee_id = ?");
+      params.push(String(req.query.employeeId));
+    }
+    if (req.query.status) {
+      conds.push("amo.approval_status = ?");
+      params.push(String(req.query.status));
+    }
+    if (req.query.fromDate) {
+      conds.push("amo.attendance_date >= ?");
+      params.push(String(req.query.fromDate));
+    }
+    if (req.query.toDate) {
+      conds.push("amo.attendance_date <= ?");
+      params.push(String(req.query.toDate));
+    }
+    if (req.query.payrollMonth) {
+      conds.push("amo.payroll_month = ?");
+      params.push(String(req.query.payrollMonth));
+    }
+    if (req.query.payrollRunId) {
+      conds.push("amo.payroll_run_id = ?");
+      params.push(String(req.query.payrollRunId));
+    }
+    if (req.query.createdBy) {
+      conds.push("amo.created_by = ?");
+      params.push(String(req.query.createdBy));
+    }
+    if (req.query.higherApprovalRequired !== undefined) {
+      conds.push("amo.higher_approval_required = ?");
+      params.push(req.query.higherApprovalRequired === "1" ? 1 : 0);
+    }
 
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT amo.id, amo.employee_id, amo.attendance_date,
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT amo.id, amo.employee_id, amo.attendance_date,
             amo.old_status, amo.new_status, amo.old_lwp, amo.new_lwp,
             amo.reason, amo.approval_status,
             amo.is_payroll_month_locked, amo.higher_approval_required,
@@ -356,41 +447,50 @@ attendanceManualOverrideRouter.get("/manual-overrides", h(async (req, res) => {
        ${where}
       ORDER BY amo.created_at DESC
       LIMIT 200`,
-    params,
-  );
+      params,
+    );
 
-  return res.json({ success: true, data: rows });
-}));
+    return res.json({ success: true, data: rows });
+  }),
+);
 
 // ─── GET /api/attendance/manual-overrides/:id ─────────────────────────────────
 /**
  * Return one override with full detail + audit timeline.
  */
-attendanceManualOverrideRouter.get("/manual-overrides/:id", h(async (req, res) => {
-  if (!(await assertPayrollAccess(req.authUser.id))) {
-    return res.status(403).json({ success: false, error: "Forbidden: Payroll access required" });
-  }
+attendanceManualOverrideRouter.get(
+  "/manual-overrides/:id",
+  h(async (req, res) => {
+    if (!(await assertPayrollAccess(req.authUser.id))) {
+      return res
+        .status(403)
+        .json({ success: false, error: "Forbidden: Payroll access required" });
+    }
 
-  const override = await getOverrideWithDetail(req.params.id);
-  if (!override) return res.status(404).json({ success: false, error: "Manual override not found" });
+    const override = await getOverrideWithDetail(req.params.id);
+    if (!override)
+      return res
+        .status(404)
+        .json({ success: false, error: "Manual override not found" });
 
-  // Audit timeline for this override
-  const [auditRows] = await db.execute<AuditRow[]>(
-    `SELECT id, actor_user_id, action_type, actor_role, reason,
+    // Audit timeline for this override
+    const [auditRows] = await db.execute<AuditRow[]>(
+      `SELECT id, actor_user_id, action_type, actor_role, reason,
             old_value_json, new_value_json, ip_address, acted_at
        FROM sensitive_action_log
       WHERE entity_type = 'attendance_manual_override'
         AND entity_id   = ?
       ORDER BY acted_at ASC
       LIMIT 50`,
-    [req.params.id],
-  );
+      [req.params.id],
+    );
 
-  return res.json({
-    success: true,
-    data: { ...override, audit_timeline: auditRows },
-  });
-}));
+    return res.json({
+      success: true,
+      data: { ...override, audit_timeline: auditRows },
+    });
+  }),
+);
 
 // ─── POST /api/attendance/manual-overrides/:id/approve ───────────────────────
 /**
@@ -401,67 +501,90 @@ attendanceManualOverrideRouter.get("/manual-overrides/:id", h(async (req, res) =
  * - Writes both MANUAL_ATTENDANCE_OVERRIDE_APPROVED and
  *   ATTENDANCE_RECORD_MANUALLY_OVERRIDDEN audit events.
  */
-attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (req, res) => {
-  const access = await assertPayrollAccess(req.authUser.id);
-  if (!access) {
-    return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Admin role required" });
-  }
+attendanceManualOverrideRouter.post(
+  "/manual-overrides/:id/approve",
+  h(async (req, res) => {
+    const access = await assertPayrollAccess(req.authUser.id);
+    if (!access) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "Forbidden: Payroll Head or Admin role required",
+        });
+    }
 
-  const override = await getOverrideWithDetail(req.params.id);
-  if (!override) return res.status(404).json({ success: false, error: "Manual override not found" });
+    const override = await getOverrideWithDetail(req.params.id);
+    if (!override)
+      return res
+        .status(404)
+        .json({ success: false, error: "Manual override not found" });
 
-  // Guard: must be pending
-  if (override.approval_status !== "pending") {
-    return res.status(409).json({
-      success: false,
-      error: `Cannot approve: override is already '${override.approval_status}'`,
-    });
-  }
+    // Guard: must be pending
+    if (override.approval_status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        error: `Cannot approve: override is already '${override.approval_status}'`,
+      });
+    }
 
-  // Safety 5: locked month → only super_admin can approve
-  if (override.higher_approval_required && access.actorRole !== "super_admin") {
-    return res.status(403).json({
-      success: false,
-      error: "This override is for a locked payroll month. Only Super Admin can approve.",
-    });
-  }
+    // Safety 5: locked month → only super_admin can approve
+    if (
+      override.higher_approval_required &&
+      access.actorRole !== "super_admin"
+    ) {
+      return res.status(403).json({
+        success: false,
+        error:
+          "This override is for a locked payroll month. Only Super Admin can approve.",
+      });
+    }
 
-  // Re-fetch current attendance state at approval time (may have changed since create)
-  const current = await getCurrentAttendance(override.employee_id, override.attendance_date);
+    // Re-fetch current attendance state at approval time (may have changed since create)
+    const current = await getCurrentAttendance(
+      override.employee_id,
+      override.attendance_date,
+    );
 
-  // Safety check: attendance_daily_record MUST exist at approval time
-  if (!current) {
-    return res.status(404).json({
-      success: false,
-      error: `Attendance record for employee ${override.employee_code} on ${override.attendance_date} no longer exists or was deleted. Manual override cannot be applied. Contact system administrator.`,
-    });
-  }
+    // Safety check: attendance_daily_record MUST exist at approval time
+    if (!current) {
+      return res.status(404).json({
+        success: false,
+        error: `Attendance record for employee ${override.employee_code} on ${override.attendance_date} no longer exists or was deleted. Manual override cannot be applied. Contact system administrator.`,
+      });
+    }
 
-  // Apply override to attendance_daily_record
-  // Loss of pay for the new status. Covers EVERY status attendance_daily_record allows,
-  // because lwp_value is NOT NULL: the old three-entry map returned undefined for
-  // leave_approved / holiday / week_off / week_off_worked / missing_punch, `?? null` turned
-  // that into NULL, and the UPDATE below died with ER_BAD_NULL_ERROR. The whole approve
-  // 500'd, the override stayed 'pending' and the day never changed — reported live on
-  // 2026-09-03 for MAS47905 changed to Leave, the first real use this API has ever had.
-  //
-  // Values are what production actually holds per status (last 120 days): present 0.00
-  // (67,497 rows), half_day 0.50 (17,473), absent 1.00 (18,412), leave_approved 0.00 (all
-  // 117), holiday 0.00 (497), week_off 0.00 (851), week_off_worked 0.00 (94).
-  //
-  // missing_punch is deliberately absent: it is genuinely split live — 19,716 rows at 0.00
-  // and 3,113 at 1.00 — because whether an unresolved punch is unpaid is a policy call, not
-  // a derivation. It therefore keeps whatever the day already carries.
-  const lwpMap: Record<string, number> = {
-    present: 0, half_day: 0.5, absent: 1.0,
-    leave_approved: 0, holiday: 0, week_off: 0, week_off_worked: 0,
-  };
-  const newLwp = override.new_lwp ?? lwpMap[override.new_status] ?? current.lwp_value ?? 0;
-  const appliedRecordId = current.id;
+    // Apply override to attendance_daily_record
+    // Loss of pay for the new status. Covers EVERY status attendance_daily_record allows,
+    // because lwp_value is NOT NULL: the old three-entry map returned undefined for
+    // leave_approved / holiday / week_off / week_off_worked / missing_punch, `?? null` turned
+    // that into NULL, and the UPDATE below died with ER_BAD_NULL_ERROR. The whole approve
+    // 500'd, the override stayed 'pending' and the day never changed — reported live on
+    // 2026-09-03 for MAS47905 changed to Leave, the first real use this API has ever had.
+    //
+    // Values are what production actually holds per status (last 120 days): present 0.00
+    // (67,497 rows), half_day 0.50 (17,473), absent 1.00 (18,412), leave_approved 0.00 (all
+    // 117), holiday 0.00 (497), week_off 0.00 (851), week_off_worked 0.00 (94).
+    //
+    // missing_punch is deliberately absent: it is genuinely split live — 19,716 rows at 0.00
+    // and 3,113 at 1.00 — because whether an unresolved punch is unpaid is a policy call, not
+    // a derivation. It therefore keeps whatever the day already carries.
+    const lwpMap: Record<string, number> = {
+      present: 0,
+      half_day: 0.5,
+      absent: 1.0,
+      leave_approved: 0,
+      holiday: 0,
+      week_off: 0,
+      week_off_worked: 0,
+    };
+    const newLwp =
+      override.new_lwp ?? lwpMap[override.new_status] ?? current.lwp_value ?? 0;
+    const appliedRecordId = current.id;
 
-  // Update existing record — preserve old state in the record's own audit columns
-  await db.execute(
-    `UPDATE attendance_daily_record
+    // Update existing record — preserve old state in the record's own audit columns
+    await db.execute(
+      `UPDATE attendance_daily_record
         SET attendance_status      = ?,
             lwp_value              = ?,
             override_by            = ?,
@@ -474,23 +597,23 @@ attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (re
             status_changed_by      = ?,
             status_changed_at      = NOW()
       WHERE employee_id = ? AND record_date = ?`,
-    [
-      override.new_status,
-      newLwp,
-      req.authUser.id,
-      `Manual override approved: ${override.reason}`,
-      current.attendance_status,
-      current.lwp_value ?? null,
-      `Manual override approved by ${access.actorRole}: ${override.reason}`,
-      req.authUser.id,
-      override.employee_id,
-      override.attendance_date,
-    ],
-  );
+      [
+        override.new_status,
+        newLwp,
+        req.authUser.id,
+        `Manual override approved: ${override.reason}`,
+        current.attendance_status,
+        current.lwp_value ?? null,
+        `Manual override approved by ${access.actorRole}: ${override.reason}`,
+        req.authUser.id,
+        override.employee_id,
+        override.attendance_date,
+      ],
+    );
 
-  // Stamp override as approved + applied
-  await db.execute(
-    `UPDATE attendance_manual_override
+    // Stamp override as approved + applied
+    await db.execute(
+      `UPDATE attendance_manual_override
         SET approval_status      = 'approved',
             approved_by          = ?,
             approved_at          = NOW(),
@@ -498,54 +621,59 @@ attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (re
             applied_at           = NOW(),
             applied_by           = ?
       WHERE id = ?`,
-    [req.authUser.id, appliedRecordId, req.authUser.id, req.params.id],
-  );
+      [req.authUser.id, appliedRecordId, req.authUser.id, req.params.id],
+    );
 
-  // Audit event 1: override approved
-  void logSensitiveAction({
-    actor_user_id: req.authUser.id,
-    actor_role:    access.actorRole,
-    action_type:   "MANUAL_ATTENDANCE_OVERRIDE_APPROVED",
-    module_key:    "attendance",
-    entity_type:   "attendance_manual_override",
-    entity_id:     req.params.id,
-    employee_id:   override.employee_id,
-    reason:        req.body.reason ?? override.reason,
-    old_value_json: { approval_status: "pending" },
-    new_value_json: {
-      approval_status: "approved",
-      approved_by: req.authUser.id,
-      applied_to_record_id: appliedRecordId,
-    },
-    req,
-  });
+    // Audit event 1: override approved
+    void logSensitiveAction({
+      actor_user_id: req.authUser.id,
+      actor_role: access.actorRole,
+      action_type: "MANUAL_ATTENDANCE_OVERRIDE_APPROVED",
+      module_key: "attendance",
+      entity_type: "attendance_manual_override",
+      entity_id: req.params.id,
+      employee_id: override.employee_id,
+      reason: req.body.reason ?? override.reason,
+      old_value_json: { approval_status: "pending" },
+      new_value_json: {
+        approval_status: "approved",
+        approved_by: req.authUser.id,
+        applied_to_record_id: appliedRecordId,
+      },
+      req,
+    });
 
-  // Audit event 2: attendance record changed
-  void logSensitiveAction({
-    actor_user_id: req.authUser.id,
-    actor_role:    access.actorRole,
-    action_type:   "ATTENDANCE_RECORD_MANUALLY_OVERRIDDEN",
-    module_key:    "attendance",
-    entity_type:   "attendance_daily_record",
-    entity_id:     `${override.employee_id}:${override.attendance_date}`,
-    employee_id:   override.employee_id,
-    reason:        override.reason,
-    old_value_json: {
-      attendance_status: current?.attendance_status ?? null,
-      lwp_value:         current?.lwp_value ?? null,
-    },
-    new_value_json: {
-      attendance_status: override.new_status,
-      lwp_value:         newLwp,
-      overridden_by:     req.authUser.id,
-      manual_override_id: req.params.id,
-    },
-    req,
-  });
+    // Audit event 2: attendance record changed
+    void logSensitiveAction({
+      actor_user_id: req.authUser.id,
+      actor_role: access.actorRole,
+      action_type: "ATTENDANCE_RECORD_MANUALLY_OVERRIDDEN",
+      module_key: "attendance",
+      entity_type: "attendance_daily_record",
+      entity_id: `${override.employee_id}:${override.attendance_date}`,
+      employee_id: override.employee_id,
+      reason: override.reason,
+      old_value_json: {
+        attendance_status: current?.attendance_status ?? null,
+        lwp_value: current?.lwp_value ?? null,
+      },
+      new_value_json: {
+        attendance_status: override.new_status,
+        lwp_value: newLwp,
+        overridden_by: req.authUser.id,
+        manual_override_id: req.params.id,
+      },
+      req,
+    });
 
-  const updated = await getOverrideWithDetail(req.params.id);
-  return res.json({ success: true, data: updated, message: "Override approved and attendance record updated" });
-}));
+    const updated = await getOverrideWithDetail(req.params.id);
+    return res.json({
+      success: true,
+      data: updated,
+      message: "Override approved and attendance record updated",
+    });
+  }),
+);
 
 // ─── POST /api/attendance/manual-overrides/:id/reject ────────────────────────
 /**
@@ -553,66 +681,82 @@ attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (re
  * Does NOT update attendance_daily_record.
  * Reason mandatory.
  */
-attendanceManualOverrideRouter.post("/manual-overrides/:id/reject", h(async (req, res) => {
-  const access = await assertPayrollAccess(req.authUser.id);
-  if (!access) {
-    return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Admin role required" });
-  }
+attendanceManualOverrideRouter.post(
+  "/manual-overrides/:id/reject",
+  h(async (req, res) => {
+    const access = await assertPayrollAccess(req.authUser.id);
+    if (!access) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "Forbidden: Payroll Head or Admin role required",
+        });
+    }
 
-  const { reason } = req.body as { reason?: string };
-  if (!reason?.trim() || reason.trim().length < 10) {
-    return res.status(400).json({ success: false, error: "reason is mandatory and must be at least 10 characters" });
-  }
+    const { reason } = req.body as { reason?: string };
+    if (!reason?.trim() || reason.trim().length < 10) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "reason is mandatory and must be at least 10 characters",
+        });
+    }
 
-  const override = await getOverrideWithDetail(req.params.id);
-  if (!override) return res.status(404).json({ success: false, error: "Manual override not found" });
+    const override = await getOverrideWithDetail(req.params.id);
+    if (!override)
+      return res
+        .status(404)
+        .json({ success: false, error: "Manual override not found" });
 
-  // Guard: must be pending
-  if (override.approval_status !== "pending") {
-    return res.status(409).json({
-      success: false,
-      error: `Cannot reject: override is already '${override.approval_status}'`,
-    });
-  }
+    // Guard: must be pending
+    if (override.approval_status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        error: `Cannot reject: override is already '${override.approval_status}'`,
+      });
+    }
 
-  await db.execute(
-    `UPDATE attendance_manual_override
+    await db.execute(
+      `UPDATE attendance_manual_override
         SET approval_status  = 'rejected',
             rejected_by      = ?,
             rejected_at      = NOW(),
             rejection_reason = ?
       WHERE id = ?`,
-    [req.authUser.id, reason.trim(), req.params.id],
-  );
+      [req.authUser.id, reason.trim(), req.params.id],
+    );
 
-  // Audit: override rejected — attendance_daily_record NOT changed
-  void logSensitiveAction({
-    actor_user_id: req.authUser.id,
-    actor_role:    access.actorRole,
-    action_type:   "MANUAL_ATTENDANCE_OVERRIDE_REJECTED",
-    module_key:    "attendance",
-    entity_type:   "attendance_manual_override",
-    entity_id:     req.params.id,
-    employee_id:   override.employee_id,
-    reason:        reason.trim(),
-    old_value_json: {
-      approval_status:  "pending",
-      requested_status: override.new_status,
-      requested_by:     override.created_by,
-    },
-    new_value_json: {
-      approval_status:  "rejected",
-      rejected_by:      req.authUser.id,
-      rejection_reason: reason.trim(),
-      attendance_record_unchanged: true,
-    },
-    req,
-  });
+    // Audit: override rejected — attendance_daily_record NOT changed
+    void logSensitiveAction({
+      actor_user_id: req.authUser.id,
+      actor_role: access.actorRole,
+      action_type: "MANUAL_ATTENDANCE_OVERRIDE_REJECTED",
+      module_key: "attendance",
+      entity_type: "attendance_manual_override",
+      entity_id: req.params.id,
+      employee_id: override.employee_id,
+      reason: reason.trim(),
+      old_value_json: {
+        approval_status: "pending",
+        requested_status: override.new_status,
+        requested_by: override.created_by,
+      },
+      new_value_json: {
+        approval_status: "rejected",
+        rejected_by: req.authUser.id,
+        rejection_reason: reason.trim(),
+        attendance_record_unchanged: true,
+      },
+      req,
+    });
 
-  const updated = await getOverrideWithDetail(req.params.id);
-  return res.json({
-    success: true,
-    data: updated,
-    message: "Override request rejected. Attendance record was not changed.",
-  });
-}));
+    const updated = await getOverrideWithDetail(req.params.id);
+    return res.json({
+      success: true,
+      data: updated,
+      message: "Override request rejected. Attendance record was not changed.",
+    });
+  }),
+);

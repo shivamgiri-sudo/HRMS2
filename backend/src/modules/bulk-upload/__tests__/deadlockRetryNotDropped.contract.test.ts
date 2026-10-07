@@ -31,7 +31,9 @@ const routes = fs.readFileSync(
 
 describe("bulk-upload row/batch staging keeps its deadlock-retry protection", () => {
   it("imports withDeadlockRetry", () => {
-    expect(routes).toMatch(/import\s*\{\s*withDeadlockRetry\s*\}\s*from\s*["']\.\.\/\.\.\/shared\/deadlockRetry\.js["']/);
+    expect(routes).toMatch(
+      /import\s*\{\s*withDeadlockRetry\s*\}\s*from\s*["']\.\.\/\.\.\/shared\/deadlockRetry\.js["']/,
+    );
   });
 
   it("wraps the /batches header INSERT in withDeadlockRetry", () => {
@@ -59,8 +61,10 @@ describe("bulk-upload row/batch staging keeps its deadlock-retry protection", ()
     // Require a longer backoff than the shared 100ms default so this specific call site
     // can't quietly regress back to a backoff too short for a real lock-wait-timeout.
     const afterInsert = routes.slice(insertAt, insertAt + 600);
-    expect(afterInsert, "row-staging retry must specify attempts/delayMs longer than the shared default")
-      .toMatch(/delayMs:\s*[2-9]\d{2,}/);
+    expect(
+      afterInsert,
+      "row-staging retry must specify attempts/delayMs longer than the shared default",
+    ).toMatch(/delayMs:\s*[2-9]\d{2,}/);
   });
 
   it("refuses to run Import on a batch that claims rows but has none actually staged", () => {

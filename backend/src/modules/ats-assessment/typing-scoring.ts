@@ -43,19 +43,29 @@ const round = (value: number, digits = 2) => {
   return Math.round(value * factor) / factor;
 };
 
-const safeSeconds = (value: number) => Math.max(1, Number.isFinite(value) ? value : 1);
+const safeSeconds = (value: number) =>
+  Math.max(1, Number.isFinite(value) ? value : 1);
 
-function buildEditMatrix<T>(expected: T[], actual: T[], equal: (a: T, b: T) => boolean) {
+function buildEditMatrix<T>(
+  expected: T[],
+  actual: T[],
+  equal: (a: T, b: T) => boolean,
+) {
   const rows = expected.length + 1;
   const columns = actual.length + 1;
-  const matrix = Array.from({ length: rows }, () => new Array<number>(columns).fill(0));
+  const matrix = Array.from({ length: rows }, () =>
+    new Array<number>(columns).fill(0),
+  );
 
   for (let row = 0; row < rows; row += 1) matrix[row][0] = row;
-  for (let column = 0; column < columns; column += 1) matrix[0][column] = column;
+  for (let column = 0; column < columns; column += 1)
+    matrix[0][column] = column;
 
   for (let row = 1; row < rows; row += 1) {
     for (let column = 1; column < columns; column += 1) {
-      const substitutionCost = equal(expected[row - 1], actual[column - 1]) ? 0 : 1;
+      const substitutionCost = equal(expected[row - 1], actual[column - 1])
+        ? 0
+        : 1;
       matrix[row][column] = Math.min(
         matrix[row - 1][column] + 1,
         matrix[row][column - 1] + 1,
@@ -73,41 +83,61 @@ function backtrackOperations<T>(
   matrix: number[][],
   equal: (a: T, b: T) => boolean,
 ): Array<{ operation: EditOperation; expected: T | null; actual: T | null }> {
-  const operations: Array<{ operation: EditOperation; expected: T | null; actual: T | null }> = [];
+  const operations: Array<{
+    operation: EditOperation;
+    expected: T | null;
+    actual: T | null;
+  }> = [];
   let row = expected.length;
   let column = actual.length;
 
   while (row > 0 || column > 0) {
     if (
-      row > 0
-      && column > 0
-      && equal(expected[row - 1], actual[column - 1])
-      && matrix[row][column] === matrix[row - 1][column - 1]
+      row > 0 &&
+      column > 0 &&
+      equal(expected[row - 1], actual[column - 1]) &&
+      matrix[row][column] === matrix[row - 1][column - 1]
     ) {
-      operations.push({ operation: "match", expected: expected[row - 1], actual: actual[column - 1] });
+      operations.push({
+        operation: "match",
+        expected: expected[row - 1],
+        actual: actual[column - 1],
+      });
       row -= 1;
       column -= 1;
       continue;
     }
 
     if (
-      row > 0
-      && column > 0
-      && matrix[row][column] === matrix[row - 1][column - 1] + 1
+      row > 0 &&
+      column > 0 &&
+      matrix[row][column] === matrix[row - 1][column - 1] + 1
     ) {
-      operations.push({ operation: "substitute", expected: expected[row - 1], actual: actual[column - 1] });
+      operations.push({
+        operation: "substitute",
+        expected: expected[row - 1],
+        actual: actual[column - 1],
+      });
       row -= 1;
       column -= 1;
       continue;
     }
 
     if (row > 0 && matrix[row][column] === matrix[row - 1][column] + 1) {
-      operations.push({ operation: "delete", expected: expected[row - 1], actual: null });
+      operations.push({
+        operation: "delete",
+        expected: expected[row - 1],
+        actual: null,
+      });
       row -= 1;
       continue;
     }
 
-    operations.push({ operation: "insert", expected: null, actual: actual[column - 1] });
+    operations.push({
+      operation: "insert",
+      expected: null,
+      actual: actual[column - 1],
+    });
     column -= 1;
   }
 
@@ -117,15 +147,34 @@ function backtrackOperations<T>(
 export function levenshteinDistance(a: string, b: string): number {
   const expected = Array.from(String(a ?? ""));
   const actual = Array.from(String(b ?? ""));
-  const matrix = buildEditMatrix(expected, actual, (left, right) => left === right);
+  const matrix = buildEditMatrix(
+    expected,
+    actual,
+    (left, right) => left === right,
+  );
   return matrix[expected.length][actual.length];
 }
 
 export function buildWordDiff(reference: string, typed: string) {
-  const expected = String(reference ?? "").trim().split(/\s+/).filter(Boolean);
-  const actual = String(typed ?? "").trim().split(/\s+/).filter(Boolean);
-  const matrix = buildEditMatrix(expected, actual, (left, right) => left === right);
-  const operations = backtrackOperations(expected, actual, matrix, (left, right) => left === right);
+  const expected = String(reference ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const actual = String(typed ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const matrix = buildEditMatrix(
+    expected,
+    actual,
+    (left, right) => left === right,
+  );
+  const operations = backtrackOperations(
+    expected,
+    actual,
+    matrix,
+    (left, right) => left === right,
+  );
 
   let correctWords = 0;
   let incorrectWords = 0;
@@ -159,8 +208,17 @@ export function buildWordDiff(reference: string, typed: string) {
 function analyzeCharacters(referenceText: string, typedText: string) {
   const expected = Array.from(referenceText);
   const actual = Array.from(typedText);
-  const matrix = buildEditMatrix(expected, actual, (left, right) => left === right);
-  const operations = backtrackOperations(expected, actual, matrix, (left, right) => left === right);
+  const matrix = buildEditMatrix(
+    expected,
+    actual,
+    (left, right) => left === right,
+  );
+  const operations = backtrackOperations(
+    expected,
+    actual,
+    matrix,
+    (left, right) => left === right,
+  );
 
   let correctCharacters = 0;
   let incorrectCharacters = 0;
@@ -198,10 +256,17 @@ export function calculateLiveTypingMetrics(input: {
   const elapsedSeconds = safeSeconds(input.elapsedSeconds);
   const minutes = elapsedSeconds / 60;
   // Gross WPM = typed characters / 5 / elapsed minutes
-  const grossWpm = (Array.from(typedText).length / 5) / minutes;
+  const grossWpm = Array.from(typedText).length / 5 / minutes;
   const editDistance = levenshteinDistance(referenceText, typedText);
-  const denominator = Math.max(Array.from(referenceText).length, Array.from(typedText).length, 1);
-  const estimatedAccuracy = Math.max(0, ((denominator - editDistance) / denominator) * 100);
+  const denominator = Math.max(
+    Array.from(referenceText).length,
+    Array.from(typedText).length,
+    1,
+  );
+  const estimatedAccuracy = Math.max(
+    0,
+    ((denominator - editDistance) / denominator) * 100,
+  );
 
   return {
     elapsedSeconds,
@@ -219,7 +284,10 @@ const MIN_TYPED_FOR_MANUAL_SUBMIT = 20;
  * reference — they reached the end of the passage (possibly with errors).
  * A completed passage may always be submitted early.
  */
-export function isPassageComplete(referenceText: string, typedText: string): boolean {
+export function isPassageComplete(
+  referenceText: string,
+  typedText: string,
+): boolean {
   const refLen = Array.from(String(referenceText ?? "")).length;
   const typedLen = Array.from(String(typedText ?? "")).length;
   return refLen > 0 && typedLen >= refLen;
@@ -231,7 +299,10 @@ export function isPassageComplete(referenceText: string, typedText: string): boo
  * - A genuinely completed passage is always accepted.
  * - Partial passages must meet the minimum-sample threshold.
  */
-export function canSubmitEarly(referenceText: string, typedText: string): boolean {
+export function canSubmitEarly(
+  referenceText: string,
+  typedText: string,
+): boolean {
   const typedLen = Array.from(String(typedText ?? "")).length;
   if (typedLen === 0) return false;
   if (isPassageComplete(referenceText, typedText)) return true;
@@ -254,7 +325,7 @@ export function calculateTypingScore(input: {
   const typedCharacterCount = Array.from(typedText).length;
 
   // Gross WPM = typed characters / 5 / elapsed minutes
-  const grossWpm = (typedCharacterCount / 5) / minutes;
+  const grossWpm = typedCharacterCount / 5 / minutes;
 
   // Net WPM = max(0, typed characters - errors) / 5 / elapsed minutes
   // Errors = characters typed incorrectly (substitutions + extras vs typed portion).
@@ -264,20 +335,28 @@ export function calculateTypingScore(input: {
 
   // Accuracy = Levenshtein accuracy over the portion actually attempted.
   // Untouched remainder is NOT counted as character errors — it reduces speed/completion instead.
-  const accuracy = typedCharacterCount === 0
-    ? 0
-    : Math.max(0, (charAnalysis.correctCharacters / typedCharacterCount) * 100);
+  const accuracy =
+    typedCharacterCount === 0
+      ? 0
+      : Math.max(
+          0,
+          (charAnalysis.correctCharacters / typedCharacterCount) * 100,
+        );
 
   const wordDiff = buildWordDiff(referenceText, typedText);
 
   // Speed score normalised against benchmark (capped at 100)
-  const speedScore = Math.min(100, (netWpm / Math.max(1, input.minNetWpm)) * 100);
+  const speedScore = Math.min(
+    100,
+    (netWpm / Math.max(1, input.minNetWpm)) * 100,
+  );
 
   // Score = 60% accuracy + 40% normalised speed
-  const score = round((accuracy * 0.6) + (speedScore * 0.4));
+  const score = round(accuracy * 0.6 + speedScore * 0.4);
 
   // Passing requires BOTH thresholds independently
-  const passedBenchmark = netWpm >= input.minNetWpm && accuracy >= input.minAccuracy;
+  const passedBenchmark =
+    netWpm >= input.minNetWpm && accuracy >= input.minAccuracy;
 
   return {
     scoreVersion: TYPING_SCORE_VERSION,
@@ -307,7 +386,11 @@ export function calculateTypingScore(input: {
  * Priority: 1) passed outranks failed, 2) higher score, 3) earlier attempt_no.
  */
 export function selectBestTypingAttempt<
-  T extends { passed_benchmark: number | null; score_percentage: number | null; attempt_no: number },
+  T extends {
+    passed_benchmark: number | null;
+    score_percentage: number | null;
+    attempt_no: number;
+  },
 >(attempts: T[]): T | undefined {
   if (!attempts.length) return undefined;
   return attempts.reduce((best, current) => {

@@ -3,15 +3,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const poolExecute = vi.fn();
 const dbExecute = vi.fn();
 
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => dbExecute(...a) } }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: (...a: unknown[]) => dbExecute(...a) },
+}));
 vi.mock("../src/modules/external-db/external-db.service.js", () => ({
-  getPoolForKey: async () => ({ execute: (...a: unknown[]) => poolExecute(...a) }),
+  getPoolForKey: async () => ({
+    execute: (...a: unknown[]) => poolExecute(...a),
+  }),
 }));
 vi.mock("../src/modules/kpi/mapping-exception.service.js", () => ({
   recordMappingException: vi.fn(async () => undefined),
 }));
 
-const { syncQualityMetricsForDate } = await import("../src/modules/kpi/kpi-data-connector.service.js");
+const { syncQualityMetricsForDate } =
+  await import("../src/modules/kpi/kpi-data-connector.service.js");
 
 /**
  * Quality ran once a month — on the 2nd, for the month before — while every
@@ -62,19 +67,29 @@ describe("daily quality sync", () => {
   it("still aggregates per agent within that day", async () => {
     poolExecute.mockResolvedValueOnce([[], []]);
     await syncQualityMetricsForDate("2026-07-15");
-    expect(poolExecute.mock.calls[0][0]).toMatch(/GROUP BY UPPER\(TRIM\(`User`\)\)/);
+    expect(poolExecute.mock.calls[0][0]).toMatch(
+      /GROUP BY UPPER\(TRIM\(`User`\)\)/,
+    );
   });
 
   it("reads the quality source, not some other connector", async () => {
     poolExecute.mockResolvedValueOnce([[], []]);
     await syncQualityMetricsForDate("2026-07-15");
-    expect(poolExecute.mock.calls[0][0]).toMatch(/FROM call_quality_assessment/);
+    expect(poolExecute.mock.calls[0][0]).toMatch(
+      /FROM call_quality_assessment/,
+    );
   });
 
   it("reports the source error instead of throwing, so one bad day does not kill the run", async () => {
-    poolExecute.mockImplementationOnce(() => Promise.reject(new Error("source unreachable")));
+    poolExecute.mockImplementationOnce(() =>
+      Promise.reject(new Error("source unreachable")),
+    );
     const result = await syncQualityMetricsForDate("2026-07-15");
-    expect(result).toEqual({ synced: 0, skipped: 0, errors: ["source unreachable"] });
+    expect(result).toEqual({
+      synced: 0,
+      skipped: 0,
+      errors: ["source unreachable"],
+    });
   });
 
   it("returns a zero result when no agent was audited that day", async () => {
@@ -110,7 +125,9 @@ describe("daily quality sync", () => {
     poolExecute.mockResolvedValueOnce([[], []]);
     await syncQualityMetricsForDate("2026-07-15");
     const sql = String(poolExecute.mock.calls[0][0]);
-    expect(sql).toMatch(/SUM\(quality_percentage IS NOT NULL\) AS scored_audits/);
+    expect(sql).toMatch(
+      /SUM\(quality_percentage IS NOT NULL\) AS scored_audits/,
+    );
   });
 });
 
@@ -119,7 +136,8 @@ describe("monthly quality sync carries the same fatal-rate correction", () => {
     // The month-close job had the identical defect. Leaving them disagreeing
     // would mean the monthly and daily numbers contradict each other for the
     // same agent and period.
-    const { syncQualityMetrics } = await import("../src/modules/kpi/kpi-data-connector.service.js");
+    const { syncQualityMetrics } =
+      await import("../src/modules/kpi/kpi-data-connector.service.js");
     poolExecute.mockResolvedValueOnce([[], []]);
     await syncQualityMetrics("2026-07");
     expect(String(poolExecute.mock.calls[0][0])).toMatch(

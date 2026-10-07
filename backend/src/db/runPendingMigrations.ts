@@ -130,12 +130,23 @@ export function isIndexOnlyMigrationSql(sql: string): boolean {
     .replace(/--[^\n]*/g, " ")
     .replace(/#[^\n]*/g, " ")
     .toLowerCase();
-  if (!/\b(add\s+(unique\s+)?(index|key)|create\s+(unique\s+)?index)\b/.test(stripped)) return false;
+  if (
+    !/\b(add\s+(unique\s+)?(index|key)|create\s+(unique\s+)?index)\b/.test(
+      stripped,
+    )
+  )
+    return false;
   // Anything that changes data, structure other than an index, or removes something disqualifies it.
   if (
-    /\b(drop|delete|update|insert|truncate|replace|rename|grant|revoke|modify|change|call)\b/.test(stripped) ||
-    /\badd\s+(column|constraint|foreign|primary|fulltext|spatial|check)\b/.test(stripped) ||
-    /\bcreate\s+(table|temporary|trigger|view|procedure|function|event|database|schema)\b/.test(stripped) ||
+    /\b(drop|delete|update|insert|truncate|replace|rename|grant|revoke|modify|change|call)\b/.test(
+      stripped,
+    ) ||
+    /\badd\s+(column|constraint|foreign|primary|fulltext|spatial|check)\b/.test(
+      stripped,
+    ) ||
+    /\bcreate\s+(table|temporary|trigger|view|procedure|function|event|database|schema)\b/.test(
+      stripped,
+    ) ||
     /\bforeign\s+key\b/.test(stripped)
   ) {
     return false;
@@ -148,7 +159,8 @@ export function isIndexOnlyMigrationSql(sql: string): boolean {
     for (const raw of clauses) {
       const c = raw.trim();
       if (!c) continue;
-      if (!/^(add\s+(unique\s+)?(index|key)\b|algorithm\s*=|lock\s*=)/.test(c)) return false;
+      if (!/^(add\s+(unique\s+)?(index|key)\b|algorithm\s*=|lock\s*=)/.test(c))
+        return false;
     }
   }
   return true;
@@ -1240,6 +1252,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1940_bla_bli_blu_abandon_upload_template.sql", // Registered 2026-09-30, at the owner's request. Bulk Upload Hub template for the BLA/BLI/BLU abandon-cart Received Data sheet (target bla_dash_received). Template row only, idempotent.
   "migrations/1921_capacity_mandate_editors.sql", // Registered 2026-09-30. Grants WFM_CAPACITY_DASHBOARD view to finance_head, finance, branch_admin, operations_manager. Additive INSERT IGNORE.
   "1931_bank_exception_email_template.sql", // Registered 2026-09-30. Adds branded HTML email template BANK_EXCEPTION_INVALID_ASSIGNED to communication_template and wires it into the bank_exception_invalid_assigned event_config (template_key was NULL since 1756, causing the fallback "no template configured" footer on every bank-exception notification).
+  "migrations/1932_satya_retracker_raw.sql", // Registered 2026-09-30. Creates db_masmis.satya_retracker_raw staging table (44-column daily field-sales dump) for the Satya Retail Retracker dashboard. Registers SATYA_RETRACKER_MASMIS upload type. Additive CREATE TABLE IF NOT EXISTS + INSERT IGNORE.
 ];
 
 export type MigrationHealth = {
@@ -2073,7 +2086,9 @@ export async function runPendingMigrations(
           let deferIndexOnly = false;
           if (isTransientMigrationError(error)) {
             try {
-              deferIndexOnly = isIndexOnlyMigrationSql(fs.readFileSync(filePath, "utf8"));
+              deferIndexOnly = isIndexOnlyMigrationSql(
+                fs.readFileSync(filePath, "utf8"),
+              );
             } catch {
               deferIndexOnly = false;
             }

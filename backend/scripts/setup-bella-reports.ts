@@ -16,25 +16,35 @@ import mysql from "mysql2/promise";
 import { db } from "../src/db/mysql.js";
 import { env } from "../src/config/env.js";
 import { getBellaPool } from "../src/db/bellaDb.js";
-import { BELLA_REPORT_CONFIGS, type BellaFieldExtract } from "../src/modules/bulk-upload/bella-report-configs.js";
+import {
+  BELLA_REPORT_CONFIGS,
+  type BellaFieldExtract,
+} from "../src/modules/bulk-upload/bella-report-configs.js";
 import { readFileSync } from "fs";
 
 function sqlTypeFor(extract: BellaFieldExtract): string {
   switch (extract.type) {
-    case "date": return "DATE NULL";
-    case "int": return "INT NULL";
-    case "float": return "DECIMAL(12,2) NULL";
-    case "bool_yes_no": return "TINYINT(1) NULL";
+    case "date":
+      return "DATE NULL";
+    case "int":
+      return "INT NULL";
+    case "float":
+      return "DECIMAL(12,2) NULL";
+    case "bool_yes_no":
+      return "TINYINT(1) NULL";
     default:
       // URL/UUID-shaped columns run long; everything else is a short label.
-      return /url|uuid/i.test(extract.column) ? "VARCHAR(512) NULL" : "VARCHAR(255) NULL";
+      return /url|uuid/i.test(extract.column)
+        ? "VARCHAR(512) NULL"
+        : "VARCHAR(255) NULL";
   }
 }
 
 /** bella_db is new on this host, so create the schema before the pool binds to it. */
 async function ensureDatabase(): Promise<void> {
   const name = env.BELLA_DB_NAME;
-  if (!/^[A-Za-z0-9_]+$/.test(name)) throw new Error(`Unsafe BELLA_DB_NAME: ${name}`);
+  if (!/^[A-Za-z0-9_]+$/.test(name))
+    throw new Error(`Unsafe BELLA_DB_NAME: ${name}`);
   const conn = await mysql.createConnection({
     host: env.BELLA_DB_HOST,
     port: env.BELLA_DB_PORT || 3306,
@@ -46,7 +56,7 @@ async function ensureDatabase(): Promise<void> {
     // utf8mb4_unicode_ci to match the rest of the estate - a new schema defaulting
     // to a different collation is how you end up with COLLATE casts that kill indexes.
     await conn.query(
-      `CREATE DATABASE IF NOT EXISTS \`${name}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+      `CREATE DATABASE IF NOT EXISTS \`${name}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
     );
     console.log(`[BELLA] ensured database ${name}`);
   } finally {
@@ -57,7 +67,10 @@ async function ensureDatabase(): Promise<void> {
 async function createTable(cfg: (typeof BELLA_REPORT_CONFIGS)[number]) {
   const pool = await getBellaPool();
   const dedup = cfg.extract.find((e) => e.column === cfg.dedupColumn);
-  if (!dedup) throw new Error(`${cfg.table}: dedupColumn ${cfg.dedupColumn} not in extract[]`);
+  if (!dedup)
+    throw new Error(
+      `${cfg.table}: dedupColumn ${cfg.dedupColumn} not in extract[]`,
+    );
 
   const otherCols = cfg.extract.filter((e) => e.column !== cfg.dedupColumn);
   const dedupIsLong = /url|uuid/i.test(dedup.column) || dedup.type === "string";
@@ -65,7 +78,8 @@ async function createTable(cfg: (typeof BELLA_REPORT_CONFIGS)[number]) {
     ? `${dedup.column} VARCHAR(512) NOT NULL`
     : `${dedup.column} VARCHAR(255) NOT NULL`;
 
-  const firstDate = otherCols.find((e) => e.type === "date")?.column ?? dedup.column;
+  const firstDate =
+    otherCols.find((e) => e.type === "date")?.column ?? dedup.column;
 
   const columnDefs = [
     // No UNIQUE KEY on the dedup column: for grouped exports it is shared by many rows
@@ -89,16 +103,20 @@ async function createTable(cfg: (typeof BELLA_REPORT_CONFIGS)[number]) {
   console.log(`[BELLA] ensured table ${cfg.table}`);
 }
 
-async function registerTemplate(cfg: (typeof BELLA_REPORT_CONFIGS)[number], sampleRow: Record<string, unknown>) {
+async function registerTemplate(
+  cfg: (typeof BELLA_REPORT_CONFIGS)[number],
+  sampleRow: Record<string, unknown>,
+) {
   const [existing] = await db.execute(
     "SELECT id FROM upload_template_master WHERE upload_type_code = ? LIMIT 1",
-    [cfg.uploadTypeCode]
+    [cfg.uploadTypeCode],
   );
   const rows = existing as Array<{ id: string }>;
 
   // The target plan is the one source with a column the raw sheet does not carry
   // (LOB - it is which sheet you opened), so it is genuinely required of the uploader.
-  const required = cfg.uploadTypeCode === "BELLA_TARGET_PLAN" ? ["Date", "LOB"] : [];
+  const required =
+    cfg.uploadTypeCode === "BELLA_TARGET_PLAN" ? ["Date", "LOB"] : [];
   const optional = cfg.headers.filter((h) => !required.includes(h));
 
   if (rows.length > 0) {
@@ -108,10 +126,14 @@ async function registerTemplate(cfg: (typeof BELLA_REPORT_CONFIGS)[number], samp
               required_columns = ?, optional_columns = ?, sample_row = ?, active_status = 1
         WHERE upload_type_code = ?`,
       [
-        cfg.uploadTypeName, cfg.table, cfg.description,
-        JSON.stringify(required), JSON.stringify(optional), JSON.stringify(sampleRow),
+        cfg.uploadTypeName,
+        cfg.table,
+        cfg.description,
+        JSON.stringify(required),
+        JSON.stringify(optional),
+        JSON.stringify(sampleRow),
         cfg.uploadTypeCode,
-      ]
+      ],
     );
     console.log(`[BELLA] updated template ${cfg.uploadTypeCode}`);
     return;
@@ -123,9 +145,15 @@ async function registerTemplate(cfg: (typeof BELLA_REPORT_CONFIGS)[number], samp
         required_columns, optional_columns, sample_row, active_status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
     [
-      randomUUID(), cfg.uploadTypeCode, cfg.uploadTypeName, cfg.table, cfg.description,
-      JSON.stringify(required), JSON.stringify(optional), JSON.stringify(sampleRow),
-    ]
+      randomUUID(),
+      cfg.uploadTypeCode,
+      cfg.uploadTypeName,
+      cfg.table,
+      cfg.description,
+      JSON.stringify(required),
+      JSON.stringify(optional),
+      JSON.stringify(sampleRow),
+    ],
   );
   console.log(`[BELLA] inserted template ${cfg.uploadTypeCode}`);
 }
@@ -133,7 +161,10 @@ async function registerTemplate(cfg: (typeof BELLA_REPORT_CONFIGS)[number], samp
 async function main() {
   const manifestPath = process.argv[2];
   const manifest = manifestPath
-    ? (JSON.parse(readFileSync(manifestPath, "utf8")) as Array<{ table: string; sampleRow: Record<string, unknown> }>)
+    ? (JSON.parse(readFileSync(manifestPath, "utf8")) as Array<{
+        table: string;
+        sampleRow: Record<string, unknown>;
+      }>)
     : [];
   const sampleByTable = new Map(manifest.map((m) => [m.table, m.sampleRow]));
 

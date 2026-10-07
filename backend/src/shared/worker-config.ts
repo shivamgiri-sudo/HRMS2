@@ -8,8 +8,8 @@
  * The point is that disabling a worker must not require a deploy. When an escalation
  * worker starts emailing the wrong people at 2am, the fix has to be one UPDATE.
  */
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../db/mysql.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../db/mysql.js";
 
 interface WorkerConfigRow extends RowDataPacket {
   worker_name: string;
@@ -37,7 +37,7 @@ export async function isWorkerEnabled(workerName: string): Promise<boolean> {
 
   try {
     const [rows] = await db.execute<WorkerConfigRow[]>(
-      'SELECT worker_name, enabled FROM worker_config WHERE worker_name = ? LIMIT 1',
+      "SELECT worker_name, enabled FROM worker_config WHERE worker_name = ? LIMIT 1",
       [workerName],
     );
     const enabled = rows.length ? Number(rows[0].enabled) === 1 : true;
@@ -53,8 +53,13 @@ export async function isWorkerEnabled(workerName: string): Promise<boolean> {
 /** Record a run. Best-effort: observability must never fail the work it observes. */
 export async function markWorkerRun(workerName: string): Promise<void> {
   try {
-    await db.execute('UPDATE worker_config SET last_run_at = NOW() WHERE worker_name = ?', [workerName]);
-  } catch { /* ignore */ }
+    await db.execute(
+      "UPDATE worker_config SET last_run_at = NOW() WHERE worker_name = ?",
+      [workerName],
+    );
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Drop the cache so a test — or an operator who just flipped a switch — sees it at once. */

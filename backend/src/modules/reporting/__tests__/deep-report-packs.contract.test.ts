@@ -21,7 +21,9 @@ describe("deep section report packs", () => {
   it("keeps the report centre limited to governed section packs", () => {
     expect(DEEP_REPORT_PACKS.length).toBeGreaterThanOrEqual(15);
     expect(DEEP_REPORT_PACKS.length).toBeLessThanOrEqual(24);
-    expect(new Set(DEEP_REPORT_PACKS.map((pack) => pack.code)).size).toBe(DEEP_REPORT_PACKS.length);
+    expect(new Set(DEEP_REPORT_PACKS.map((pack) => pack.code)).size).toBe(
+      DEEP_REPORT_PACKS.length,
+    );
   });
 
   it("provides every required analytical perspective exactly once", () => {
@@ -62,7 +64,9 @@ describe("deep section report packs", () => {
   it("does not duplicate detailed report codes inside one perspective", () => {
     for (const pack of DEEP_REPORT_PACKS) {
       for (const perspective of pack.perspectives) {
-        expect(new Set(perspective.reportCodes).size).toBe(perspective.reportCodes.length);
+        expect(new Set(perspective.reportCodes).size).toBe(
+          perspective.reportCodes.length,
+        );
       }
     }
   });
@@ -72,13 +76,21 @@ describe("deep section report packs", () => {
     const resolved = resolveAllDeepReportPacks();
     for (const pack of resolved) {
       for (const perspective of pack.perspectives) {
-        for (const report of perspective.reports) expect(knownCodes.has(report.code)).toBe(true);
-        for (const code of perspective.missingReportCodes) expect(knownCodes.has(code)).toBe(false);
+        for (const report of perspective.reports)
+          expect(knownCodes.has(report.code)).toBe(true);
+        for (const code of perspective.missingReportCodes)
+          expect(knownCodes.has(code)).toBe(false);
       }
       const resolvedCount = new Set(
-        pack.perspectives.flatMap((perspective) => perspective.reports.map((report) => report.code))
+        pack.perspectives.flatMap((perspective) =>
+          perspective.reports.map((report) => report.code),
+        ),
       ).size;
-      const missingCount = new Set(pack.perspectives.flatMap((perspective) => perspective.missingReportCodes)).size;
+      const missingCount = new Set(
+        pack.perspectives.flatMap(
+          (perspective) => perspective.missingReportCodes,
+        ),
+      ).size;
       expect(pack.reportCount).toBe(resolvedCount);
       expect(pack.missingReportCount).toBe(missingCount);
     }
@@ -107,6 +119,8 @@ describe("deep section report packs", () => {
       "integration-data-quality",
       "visitor-workplace",
     ];
-    expect(DEEP_REPORT_PACKS.map((pack) => pack.code).sort()).toEqual(requiredCodes.sort());
+    expect(DEEP_REPORT_PACKS.map((pack) => pack.code).sort()).toEqual(
+      requiredCodes.sort(),
+    );
   });
 });

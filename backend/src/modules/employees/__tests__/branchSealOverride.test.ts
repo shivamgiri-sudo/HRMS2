@@ -81,13 +81,19 @@ describe("mergeBranchSignatureIntoSeal", () => {
   it("is exactly the company seal when no branch signatory is configured", () => {
     // 45 branches, none configured yet — this is today's behaviour and must be
     // completely unchanged.
-    expect(mergeBranchSignatureIntoSeal(companySeal, null)).toEqual(companySeal);
+    expect(mergeBranchSignatureIntoSeal(companySeal, null)).toEqual(
+      companySeal,
+    );
   });
 
   it("does not mutate the company seal it was given", () => {
     const merged = mergeBranchSignatureIntoSeal(companySeal, {
-      branchId: "b1", hrName: "Anita Sharma", hrDesignation: null,
-      employeeId: null, signatureFile: "a.png", signature: Buffer.from("branch-signature"),
+      branchId: "b1",
+      hrName: "Anita Sharma",
+      hrDesignation: null,
+      employeeId: null,
+      signatureFile: "a.png",
+      signature: Buffer.from("branch-signature"),
     });
     expect(companySeal.signature.toString()).toBe("company-signature");
     expect(merged).not.toBe(companySeal);

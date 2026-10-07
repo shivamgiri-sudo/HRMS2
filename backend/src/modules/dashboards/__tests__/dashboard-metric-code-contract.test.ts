@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { getAllMetricCodes, getMetricCatalogEntries } from "../dashboard-definition.service.js";
+import {
+  getAllMetricCodes,
+  getMetricCatalogEntries,
+} from "../dashboard-definition.service.js";
 
 /**
  * The metric code a metric enriches under must equal the code the catalog publishes.
@@ -28,8 +31,11 @@ const serviceSource = readFileSync(
 
 /** Every string literal handed to wrapEnriched as its metric code. */
 function enrichmentCodes(): string[] {
-  return [...serviceSource.matchAll(/wrapEnriched\(\s*(?:\/\/[^\n]*\n\s*)*"([A-Z_]+)"/g)]
-    .map((match) => match[1]);
+  return [
+    ...serviceSource.matchAll(
+      /wrapEnriched\(\s*(?:\/\/[^\n]*\n\s*)*"([A-Z_]+)"/g,
+    ),
+  ].map((match) => match[1]);
 }
 
 describe("metric code contract", () => {
@@ -41,7 +47,9 @@ describe("metric code contract", () => {
 
   it("enriches only under codes the catalog publishes", () => {
     const published = new Set(getAllMetricCodes());
-    const unknown = [...new Set(enrichmentCodes())].filter((code) => !published.has(code));
+    const unknown = [...new Set(enrichmentCodes())].filter(
+      (code) => !published.has(code),
+    );
 
     expect(
       unknown,
@@ -54,7 +62,10 @@ describe("metric code contract", () => {
     // A duplicate code would make dashboard_metric_catalog.metric_code (UNIQUE) reject the
     // seed, and would make two metrics share one target.
     const codes = getAllMetricCodes();
-    expect(new Set(codes).size, `duplicate metric codes: ${codes.join(", ")}`).toBe(codes.length);
+    expect(
+      new Set(codes).size,
+      `duplicate metric codes: ${codes.join(", ")}`,
+    ).toBe(codes.length);
   });
 
   it("declares the same direction of goodness the metric enriches with", () => {
@@ -63,7 +74,10 @@ describe("metric code contract", () => {
     // drift, a rising backlog renders green. Parsed from source because the flag is an
     // inline argument, not something the module exports.
     const declared = new Map(
-      getMetricCatalogEntries().map((entry) => [entry.metricCode, entry.higherIsBetter]),
+      getMetricCatalogEntries().map((entry) => [
+        entry.metricCode,
+        entry.higherIsBetter,
+      ]),
     );
 
     const callSites = [
@@ -71,7 +85,10 @@ describe("metric code contract", () => {
         /wrapEnriched\(\s*(?:\/\/[^\n]*\n\s*)*"([A-Z_]+)"([\s\S]*?)\n\s*\);/g,
       ),
     ];
-    expect(callSites.length, "no wrapEnriched call sites parsed").toBeGreaterThanOrEqual(19);
+    expect(
+      callSites.length,
+      "no wrapEnriched call sites parsed",
+    ).toBeGreaterThanOrEqual(19);
 
     const drifted: string[] = [];
     for (const [, code, body] of callSites) {
@@ -82,16 +99,23 @@ describe("metric code contract", () => {
         drifted.push(`${code}: catalog=${declared.get(code)} enrich=${passed}`);
       }
     }
-    expect(drifted, `higher_is_better drifted from the enrichment call: ${drifted.join("; ")}`)
-      .toEqual([]);
+    expect(
+      drifted,
+      `higher_is_better drifted from the enrichment call: ${drifted.join("; ")}`,
+    ).toEqual([]);
   });
 
   it("uses codes that are safe as a stored key", () => {
     // metric_code is varchar(100) and joined on across three tables; whitespace or case
     // drift there is unrecoverable once rows exist.
     for (const code of getAllMetricCodes()) {
-      expect(code, `${code} must be upper snake case`).toMatch(/^[A-Z][A-Z0-9_]*$/);
-      expect(code.length, `${code} exceeds metric_code varchar(100)`).toBeLessThanOrEqual(100);
+      expect(code, `${code} must be upper snake case`).toMatch(
+        /^[A-Z][A-Z0-9_]*$/,
+      );
+      expect(
+        code.length,
+        `${code} exceeds metric_code varchar(100)`,
+      ).toBeLessThanOrEqual(100);
     }
   });
 });

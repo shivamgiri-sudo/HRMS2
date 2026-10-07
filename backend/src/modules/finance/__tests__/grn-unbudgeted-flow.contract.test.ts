@@ -35,10 +35,12 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     // The exact pre-fix expression. `.find(...)!` returned undefined for an unbudgeted GRN and
     // the next line read `.id` off it, throwing "Cannot read properties of undefined".
     expect(form).not.toContain(
-      "budgetLines.find((line) => line.id === costCentreSplits[0].budgetLineId)!"
+      "budgetLines.find((line) => line.id === costCentreSplits[0].budgetLineId)!",
     );
     expect(form).not.toContain("attemptedLineIdRef.current = firstLine.id;");
-    expect(form).toContain("attemptedLineIdRef.current = firstLine?.id ?? null;");
+    expect(form).toContain(
+      "attemptedLineIdRef.current = firstLine?.id ?? null;",
+    );
 
     // Unbudgeted skips the lookup entirely rather than relying on the optional chain.
     expect(form).toContain("isUnbudgetedExpense\n          ? undefined");
@@ -50,16 +52,20 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(form).toContain("The selected budget line is no longer available.");
 
     // The create payload carries what replaces the budget line.
-    expect(form).toContain("isUnbudgeted: isUnbudgetedFlow ? true : undefined,");
+    expect(form).toContain(
+      "isUnbudgeted: isUnbudgetedFlow ? true : undefined,",
+    );
     expect(form).toContain("head: isUnbudgetedFlow ? form.head : undefined,");
-    expect(form).toContain("subHead: isUnbudgetedFlow ? form.subHead : undefined,");
+    expect(form).toContain(
+      "subHead: isUnbudgetedFlow ? form.subHead : undefined,",
+    );
     expect(form).toContain("unbudgetedCostCentreId");
     // isUnbudgetedExpense is grn-type-agnostic now (Imprest moved onto the same costCentreSplits
     // architecture Vendor already used), so it alone covers the vendor case; the Imprest-only
     // OR clause is legacy (isImprestUnbudgeted requires form.costCentreKey, which the current
     // Imprest UI never sets) and never fires, but stays for the retired single-line cascade.
     expect(form).toContain(
-      "const isUnbudgetedFlow = isUnbudgetedExpense || (!isVendor && !splitMode && isImprestUnbudgeted);"
+      "const isUnbudgetedFlow = isUnbudgetedExpense || (!isVendor && !splitMode && isImprestUnbudgeted);",
     );
   });
 
@@ -68,29 +74,45 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
 
     // The unconditional reject is gone, but the requirement survives for every ordinary GRN.
     expect(service).not.toContain(
-      'if (!payload.budgetLineId) throw new Error("An approved budget line is required");'
+      'if (!payload.budgetLineId) throw new Error("An approved budget line is required");',
     );
     expect(service).toContain("if (!isUnbudgeted && !payload.budgetLineId) {");
-    expect(service).toContain('throw new Error("An approved budget line is required");');
+    expect(service).toContain(
+      'throw new Error("An approved budget line is required");',
+    );
 
     expect(service).toContain("async function createUnbudgetedDraft(");
     expect(service).toContain(
-      "return await createUnbudgetedDraft(payload, paymentTermsDays, actorUserId, actorRole);"
+      "return await createUnbudgetedDraft(payload, paymentTermsDays, actorUserId, actorRole);",
     );
 
     // head/sub_head must be real — saveComponentAllocations reads them back off this row to build
     // its synthetic lines, so a placeholder here would mis-classify the whole GRN.
-    expect(service).toContain('throw new Error("An expense head is required for an unbudgeted GRN")');
-    expect(service).toContain('throw new Error("An expense sub-head is required for an unbudgeted GRN")');
+    expect(service).toContain(
+      'throw new Error("An expense head is required for an unbudgeted GRN")',
+    );
+    expect(service).toContain(
+      'throw new Error("An expense sub-head is required for an unbudgeted GRN")',
+    );
 
     // The cost centre replaces the budget line as the branch tie, and gets the same scrutiny.
-    expect(service).toContain('throw new Error("A cost centre is required for an unbudgeted GRN")');
-    expect(service).toContain('throw new Error("Cost centre not found or inactive")');
-    expect(service).toContain('throw new Error("Cost centre does not belong to this branch")');
+    expect(service).toContain(
+      'throw new Error("A cost centre is required for an unbudgeted GRN")',
+    );
+    expect(service).toContain(
+      'throw new Error("Cost centre not found or inactive")',
+    );
+    expect(service).toContain(
+      'throw new Error("Cost centre does not belong to this branch")',
+    );
 
     // Period-lock and financial-year rules are NOT waived just because there is no budget line.
-    expect(service).toContain("is locked for P&L close. Raise this against the current open period.");
-    expect(service).toContain("const financialYear = financialYearFromPeriod(accountingPeriod);");
+    expect(service).toContain(
+      "is locked for P&L close. Raise this against the current open period.",
+    );
+    expect(service).toContain(
+      "const financialYear = financialYearFromPeriod(accountingPeriod);",
+    );
 
     // The row is flagged, and carries no budget linkage.
     expect(service).toContain("is_unbudgeted, created_by, created_at)");
@@ -110,7 +132,9 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     // Guarded, because migrations run at boot here: a second execution must be a no-op.
     expect(sql).toContain("information_schema.COLUMNS");
     expect(sql).toContain("IS_NULLABLE = 'NO'");
-    expect(sql).toContain("PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;");
+    expect(sql).toContain(
+      "PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;",
+    );
 
     // Nothing destructive.
     expect(sql).not.toMatch(/DROP\s+(TABLE|COLUMN|CONSTRAINT|FOREIGN\s+KEY)/i);
@@ -125,9 +149,15 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
 
     // The inner joins dropped every unbudgeted row, so review() reported "no saved cost
     // allocations" — the wrong problem entirely.
-    expect(service).not.toContain("JOIN finance_budget_line l ON l.id = a.budget_line_id\n       JOIN finance_budget_header h ON h.id = a.budget_id");
-    expect(service).toContain("LEFT JOIN finance_budget_line l ON l.id = a.budget_line_id");
-    expect(service).toContain("LEFT JOIN finance_budget_header h ON h.id = a.budget_id");
+    expect(service).not.toContain(
+      "JOIN finance_budget_line l ON l.id = a.budget_line_id\n       JOIN finance_budget_header h ON h.id = a.budget_id",
+    );
+    expect(service).toContain(
+      "LEFT JOIN finance_budget_line l ON l.id = a.budget_line_id",
+    );
+    expect(service).toContain(
+      "LEFT JOIN finance_budget_header h ON h.id = a.budget_id",
+    );
 
     // Locking intent is preserved on the table that is actually mutated.
     expect(service).toContain('forUpdate ? " FOR UPDATE OF a" : ""');
@@ -138,17 +168,20 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
 
     expect(service).toContain("function hasBudgetLine(allocation: any) {");
     expect(service).toContain(
-      "return allocation.budget_line_id != null && String(allocation.budget_line_id).length > 0;"
+      "return allocation.budget_line_id != null && String(allocation.budget_line_id).length > 0;",
     );
 
     // All four of reserve / consume / release / reverseConsumption skip an unlinked split.
-    const skips = service.match(/if \(!hasBudgetLine\(allocation\)\) continue;/g) ?? [];
+    const skips =
+      service.match(/if \(!hasBudgetLine\(allocation\)\) continue;/g) ?? [];
     expect(skips.length).toBe(4);
   });
 
   it("approval is NOT gated on linking a budget line", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
-    const queue = readRepo("src/components/finance/grn/SmartGrnApprovalQueue.tsx");
+    const queue = readRepo(
+      "src/components/finance/grn/SmartGrnApprovalQueue.tsx",
+    );
 
     /*
      * Deliberate product decision: an unbudgeted GRN approves without a budget line. Linking is
@@ -157,9 +190,11 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
      * This test exists because the opposite once shipped here, and because the blocker is the
      * kind of thing a later reader "restores" as an obvious missing control. It is not missing.
      */
-    expect(service).not.toContain("This is an unbudgeted GRN. Link an approved budget line to");
     expect(service).not.toContain(
-      "const unlinked = allocations.filter((allocation) => !hasBudgetLine(allocation));"
+      "This is an unbudgeted GRN. Link an approved budget line to",
+    );
+    expect(service).not.toContain(
+      "const unlinked = allocations.filter((allocation) => !hasBudgetLine(allocation));",
     );
     expect(queue).not.toContain("Link a budget line first");
 
@@ -171,7 +206,7 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
      */
     const consumeFn = service.slice(
       service.indexOf("async function consumeAllocations("),
-      service.indexOf("async function releaseAllocations(")
+      service.indexOf("async function releaseAllocations("),
     );
     expect(consumeFn).toContain("if (!hasBudgetLine(allocation)) continue;");
     expect(consumeFn).toContain("SET lifecycle_status = 'consumed'");
@@ -200,19 +235,23 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     // from another cost centre's line, and that is a row-level fact.
     expect(service).toContain("isRelinkable");
     expect(service).toContain(
-      "Every cost-centre split on this GRN is already funded by its own cost centre's budget line"
+      "Every cost-centre split on this GRN is already funded by its own cost centre's budget line",
     );
     // 3-stage GRN chain (owner ruling, 2026-09-12) added accounts_head_approved as a genuine
     // pre-Finance-Head status — linking must still be reachable there, since budget still has
     // not moved (Finance Head's consumeAllocations() is what finally commits it).
     expect(service).toContain(
-      'if (!["submitted", "branch_head_approved", "accounts_head_approved"].includes(String(grn.status)))'
+      'if (!["submitted", "branch_head_approved", "accounts_head_approved"].includes(String(grn.status)))',
     );
 
     // Same branch (via lockBudgetLine), same period, same cost centre, real capacity.
-    expect(service).toContain("await lockBudgetLine(connection, String(link.budgetLineId), String(grn.branch_id))");
+    expect(service).toContain(
+      "await lockBudgetLine(connection, String(link.budgetLineId), String(grn.branch_id))",
+    );
     expect(service).toContain("does not match the accounting month");
-    expect(service).toContain("that budget line belongs to a different cost centre");
+    expect(service).toContain(
+      "that budget line belongs to a different cost centre",
+    );
     expect(service).toContain("exceeds the line's available budget of");
 
     /*
@@ -225,28 +264,41 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
      * saveComponentAllocations() derives it: base / unit_rate.
      */
     expect(service).toContain(
-      "const linkedQuantity = roundQuantity(Number(allocation.amount_without_tax) / lineUnitRate);"
+      "const linkedQuantity = roundQuantity(Number(allocation.amount_without_tax) / lineUnitRate);",
     );
     // The re-derived quantity is STORED and reserved with, but it no longer decides whether the
     // link is allowed — the whole-unit count stopped being a spending control on 2026-08-27 (see
     // the banner atop budget-consumption.service.ts). The money check two assertions up
     // ("exceeds the line's available budget of") is the surviving gate.
     expect(service).not.toContain("remain approved on that line");
-    expect(service).toContain("has no approved unit rate to derive a consumed quantity from");
+    expect(service).toContain(
+      "has no approved unit rate to derive a consumed quantity from",
+    );
     expect(service).toContain("quantity = ?, unit = ?, unit_rate = ?");
 
     // The reservation that Branch Head approval could not make is made now — with the re-derived
     // quantity, never the synthetic one.
-    expect(service).toContain('if (String(allocation.lifecycle_status) === "reserved") {');
+    expect(service).toContain(
+      'if (String(allocation.lifecycle_status) === "reserved") {',
+    );
     expect(service).toContain("await budgetConsumptionService.reserve(");
-    const linkBody = service.slice(service.indexOf("async linkUnbudgetedBudgetLines("));
-    const reserveCall = linkBody.slice(linkBody.indexOf("await budgetConsumptionService.reserve("), linkBody.indexOf("linked.push({"));
+    const linkBody = service.slice(
+      service.indexOf("async linkUnbudgetedBudgetLines("),
+    );
+    const reserveCall = linkBody.slice(
+      linkBody.indexOf("await budgetConsumptionService.reserve("),
+      linkBody.indexOf("linked.push({"),
+    );
     expect(reserveCall).toContain("linkedQuantity,");
     expect(reserveCall).not.toContain("Number(allocation.quantity)");
 
     // The header only reads as budgeted once nothing is left unlinked.
-    expect(service).toContain("if (!stillUnlinked.length && remaining.length) {");
-    expect(service).toContain('writeAuditInTransaction(\n        connection,\n        "GRN_UNBUDGETED_BUDGET_LINKED"');
+    expect(service).toContain(
+      "if (!stillUnlinked.length && remaining.length) {",
+    );
+    expect(service).toContain(
+      'writeAuditInTransaction(\n        connection,\n        "GRN_UNBUDGETED_BUDGET_LINKED"',
+    );
 
     // Deciding which budget absorbs unbudgeted spend is Finance's authority, not a Branch Head's.
     expect(routes).toContain('"/:id/link-budget"');
@@ -255,14 +307,20 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
   });
 
   it("the approval queue exposes the linking step and mirrors the server gate", () => {
-    const queue = readRepo("src/components/finance/grn/SmartGrnApprovalQueue.tsx");
+    const queue = readRepo(
+      "src/components/finance/grn/SmartGrnApprovalQueue.tsx",
+    );
 
     expect(queue).toContain("/link-budget");
-    expect(queue).toContain("const canLinkBudget = Boolean(capabilities?.canReviewFinanceStage);");
+    expect(queue).toContain(
+      "const canLinkBudget = Boolean(capabilities?.canReviewFinanceStage);",
+    );
     expect(queue).toContain("const unlinkedAllocations = useMemo(");
 
     // Candidate lines are filtered to the split's own cost centre, matching the server rule.
-    expect(queue).toContain('String(line.cost_centre_id ?? "") === String(alloc.cost_centre_id ?? "")');
+    expect(queue).toContain(
+      'String(line.cost_centre_id ?? "") === String(alloc.cost_centre_id ?? "")',
+    );
 
     // No client-side approval gate either — the queue must not reintroduce one the server
     // deliberately dropped.

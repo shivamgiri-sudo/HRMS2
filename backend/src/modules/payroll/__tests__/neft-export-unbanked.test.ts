@@ -21,7 +21,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const RUN_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const AUTH_USER_ID = "33333333-3333-3333-3333-333333333333";
 
-const { execute, hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScopeWhereClause } = vi.hoisted(() => ({
+const {
+  execute,
+  hasOrgWideScope,
+  hasAnyRole,
+  getUserAssignmentScopes,
+  buildScopeWhereClause,
+} = vi.hoisted(() => ({
   execute: vi.fn(),
   hasOrgWideScope: vi.fn(),
   // Fixed 2026-08-17 (Section M RBAC audit): /neft-export now gates on a local
@@ -33,17 +39,40 @@ const { execute, hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScop
 }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../../shared/scopeAccess.js", () => ({ hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScopeWhereClause }));
-vi.mock("../../../shared/accessGuard.js", () => ({ hasRole: vi.fn(), getEmployeeForUser: vi.fn() }));
-vi.mock("../../../config/env.js", () => ({ env: { PAYROLL_BANK_KEY: "test-bank-key" } }));
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  hasOrgWideScope,
+  hasAnyRole,
+  getUserAssignmentScopes,
+  buildScopeWhereClause,
+}));
+vi.mock("../../../shared/accessGuard.js", () => ({
+  hasRole: vi.fn(),
+  getEmployeeForUser: vi.fn(),
+}));
+vi.mock("../../../config/env.js", () => ({
+  env: { PAYROLL_BANK_KEY: "test-bank-key" },
+}));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = { id: AUTH_USER_ID };
+  requireAuth: (
+    req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = {
+      id: AUTH_USER_ID,
+    };
     next();
   },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+  requireRole:
+    () =>
+    (
+      _req: express.Request,
+      _res: express.Response,
+      next: express.NextFunction,
+    ) =>
+      next(),
 }));
 
 import { payrollExtendedRouter } from "../payroll-extended.routes.js";
@@ -54,23 +83,57 @@ function buildApp() {
   return app;
 }
 
-const RUN_ROW: [Array<Record<string, unknown>>] = [[{ id: RUN_ID, run_month: "2026-07", status: "FINALIZED" }]];
+const RUN_ROW: [Array<Record<string, unknown>>] = [
+  [{ id: RUN_ID, run_month: "2026-07", status: "FINALIZED" }],
+];
 
 /** Two payable employees and two who cannot be paid. */
-const LINES: [Array<Record<string, unknown>>] = [[
-  { employee_id: "e1", net_salary: 25000, employee_code: "MAS001", full_name: "Paid One",
-    bank_name: "HDFC", ifsc_code: "HDFC0001", account_number: "1234567890" },
-  { employee_id: "e2", net_salary: 18000, employee_code: "MAS002", full_name: "No Account",
-    bank_name: "HDFC", ifsc_code: "HDFC0002", account_number: null },
-  { employee_id: "e3", net_salary: 12000, employee_code: "MAS003", full_name: "No Ifsc",
-    bank_name: null, ifsc_code: null, account_number: null },
-  { employee_id: "e4", net_salary: 30000, employee_code: "MAS004", full_name: "Paid Two",
-    bank_name: "ICICI", ifsc_code: "ICIC0004", account_number: "9876543210" },
-]];
+const LINES: [Array<Record<string, unknown>>] = [
+  [
+    {
+      employee_id: "e1",
+      net_salary: 25000,
+      employee_code: "MAS001",
+      full_name: "Paid One",
+      bank_name: "HDFC",
+      ifsc_code: "HDFC0001",
+      account_number: "1234567890",
+    },
+    {
+      employee_id: "e2",
+      net_salary: 18000,
+      employee_code: "MAS002",
+      full_name: "No Account",
+      bank_name: "HDFC",
+      ifsc_code: "HDFC0002",
+      account_number: null,
+    },
+    {
+      employee_id: "e3",
+      net_salary: 12000,
+      employee_code: "MAS003",
+      full_name: "No Ifsc",
+      bank_name: null,
+      ifsc_code: null,
+      account_number: null,
+    },
+    {
+      employee_id: "e4",
+      net_salary: 30000,
+      employee_code: "MAS004",
+      full_name: "Paid Two",
+      bank_name: "ICICI",
+      ifsc_code: "ICIC0004",
+      account_number: "9876543210",
+    },
+  ],
+];
 
 /** hasExportScope: holds a payroll-export role with an explicit scope_type='all' row. */
 function mockOrgWideCaller() {
-  hasAnyRole.mockImplementation(async (_userId, ...roles) => !roles.includes("super_admin"));
+  hasAnyRole.mockImplementation(
+    async (_userId, ...roles) => !roles.includes("super_admin"),
+  );
   getUserAssignmentScopes.mockResolvedValue([{ scope_type: "all" }]);
 }
 
@@ -138,9 +201,13 @@ describe("NEFT export excludes employees who cannot be paid", () => {
   it("emits no exclusion block when everyone is payable", async () => {
     execute.mockReset();
     mockOrgWideCaller();
-    execute.mockResolvedValueOnce(RUN_ROW).mockResolvedValueOnce([[LINES[0][0], LINES[0][3]]]);
+    execute
+      .mockResolvedValueOnce(RUN_ROW)
+      .mockResolvedValueOnce([[LINES[0][0], LINES[0][3]]]);
 
-    const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/neft-export`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/runs/${RUN_ID}/neft-export`,
+    );
 
     expect(res.text).not.toContain("EXCLUDED");
     expect(res.headers["x-neft-excluded-count"]).toBe("0");

@@ -16,18 +16,23 @@ describe("classifyLoginError", () => {
 
     expect(classifyLoginError(error)).toEqual({
       status: 503,
-      message: "Authentication service temporarily unavailable. Please try again shortly.",
+      message:
+        "Authentication service temporarily unavailable. Please try again shortly.",
     });
   });
 
   it("does not expose authentication schema errors", () => {
-    const error = Object.assign(new Error("Unknown column 'failed_login_attempts'"), {
-      code: "ER_BAD_FIELD_ERROR",
-    });
+    const error = Object.assign(
+      new Error("Unknown column 'failed_login_attempts'"),
+      {
+        code: "ER_BAD_FIELD_ERROR",
+      },
+    );
 
     expect(classifyLoginError(error)).toEqual({
       status: 503,
-      message: "Authentication service temporarily unavailable. Please try again shortly.",
+      message:
+        "Authentication service temporarily unavailable. Please try again shortly.",
     });
   });
 });

@@ -1,2 +1,9 @@
-{ "extends": "./tsconfig.json", "compilerOptions": { "noEmit": true },
-  "include": ["src/workers/mobility-transfer.worker.ts","src/modules/mobility/mobility.service.ts","src/workers/all-workers.ts"] }
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/workers/mobility-transfer.worker.ts",
+    "src/modules/mobility/mobility.service.ts",
+    "src/workers/all-workers.ts"
+  ]
+}

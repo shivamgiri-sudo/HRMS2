@@ -127,7 +127,7 @@ describe("PerformanceFeedbackService - Cycle Management", () => {
       expect(cycles.length).toBe(2);
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("SELECT * FROM performance_feedback_cycle"),
-        []
+        [],
       );
     });
 
@@ -147,7 +147,7 @@ describe("PerformanceFeedbackService - Cycle Management", () => {
       expect(Array.isArray(cycles)).toBe(true);
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("AND status = ?"),
-        ["draft"]
+        ["draft"],
       );
     });
 
@@ -167,7 +167,7 @@ describe("PerformanceFeedbackService - Cycle Management", () => {
       expect(Array.isArray(cycles)).toBe(true);
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("AND period LIKE ?"),
-        ["%2026-Q4%"]
+        ["%2026-Q4%"],
       );
     });
   });
@@ -188,7 +188,7 @@ describe("PerformanceFeedbackService - Cycle Management", () => {
       expect(cycle?.cycle_id).toBe("cycle-123");
       expect(mockDb.execute).toHaveBeenCalledWith(
         "SELECT * FROM performance_feedback_cycle WHERE cycle_id = ?",
-        ["cycle-123"]
+        ["cycle-123"],
       );
     });
 
@@ -211,7 +211,7 @@ describe("PerformanceFeedbackService - Cycle Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         "UPDATE performance_feedback_cycle SET cycle_name = ? WHERE cycle_id = ?",
-        ["Updated Cycle Name", "cycle-123"]
+        ["Updated Cycle Name", "cycle-123"],
       );
     });
 
@@ -226,7 +226,7 @@ describe("PerformanceFeedbackService - Cycle Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         "UPDATE performance_feedback_cycle SET start_date = ?, end_date = ?, deadline = ? WHERE cycle_id = ?",
-        ["2027-04-15", "2027-07-15", "2027-07-22", "cycle-123"]
+        ["2027-04-15", "2027-07-15", "2027-07-22", "cycle-123"],
       );
     });
 
@@ -245,7 +245,7 @@ describe("PerformanceFeedbackService - Cycle Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         "UPDATE performance_feedback_cycle SET status = 'closed' WHERE cycle_id = ?",
-        ["cycle-123"]
+        ["cycle-123"],
       );
     });
   });
@@ -291,8 +291,10 @@ describe("PerformanceFeedbackService - Request Management", () => {
       expect(result.skipped).toBe(0);
       expect(result.total).toBe(3);
       expect(mockDb.execute).toHaveBeenCalledWith(
-        expect.stringContaining("UPDATE performance_feedback_cycle SET status = 'active'"),
-        ["cycle-123"]
+        expect.stringContaining(
+          "UPDATE performance_feedback_cycle SET status = 'active'",
+        ),
+        ["cycle-123"],
       );
     });
 
@@ -302,7 +304,10 @@ describe("PerformanceFeedbackService - Request Management", () => {
       };
 
       mockDb.execute
-        .mockResolvedValueOnce([[{ emp_id: "emp-1", reporting_to: "mgr-1" }], []]) // emp-1 has manager
+        .mockResolvedValueOnce([
+          [{ emp_id: "emp-1", reporting_to: "mgr-1" }],
+          [],
+        ]) // emp-1 has manager
         .mockResolvedValueOnce([[], []]) // no existing request
         .mockResolvedValueOnce([{ insertId: "req-1" }, []]) // INSERT request
         .mockResolvedValueOnce([[], []]) // emp-2 has no manager (empty result)
@@ -321,7 +326,10 @@ describe("PerformanceFeedbackService - Request Management", () => {
       };
 
       mockDb.execute
-        .mockResolvedValueOnce([[{ emp_id: "emp-1", reporting_to: "mgr-1" }], []])
+        .mockResolvedValueOnce([
+          [{ emp_id: "emp-1", reporting_to: "mgr-1" }],
+          [],
+        ])
         .mockResolvedValueOnce([[{ request_id: "req-existing" }], []]) // existing request found
         .mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE cycle status
 
@@ -359,14 +367,12 @@ describe("PerformanceFeedbackService - Request Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("AND cycle_id = ?"),
-        ["cycle-123"]
+        ["cycle-123"],
       );
     });
 
     it("should filter requests by status", async () => {
-      const mockRequests = [
-        { request_id: "req-1", status: "submitted" },
-      ];
+      const mockRequests = [{ request_id: "req-1", status: "submitted" }];
 
       mockDb.execute.mockResolvedValueOnce([mockRequests, []]);
 
@@ -374,14 +380,12 @@ describe("PerformanceFeedbackService - Request Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("AND status = ?"),
-        ["submitted"]
+        ["submitted"],
       );
     });
 
     it("should filter requests by manager_id", async () => {
-      const mockRequests = [
-        { request_id: "req-1", manager_id: "mgr-1" },
-      ];
+      const mockRequests = [{ request_id: "req-1", manager_id: "mgr-1" }];
 
       mockDb.execute.mockResolvedValueOnce([mockRequests, []]);
 
@@ -389,14 +393,12 @@ describe("PerformanceFeedbackService - Request Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("AND manager_id = ?"),
-        ["mgr-1"]
+        ["mgr-1"],
       );
     });
 
     it("should filter requests by employee_id", async () => {
-      const mockRequests = [
-        { request_id: "req-1", employee_id: "emp-1" },
-      ];
+      const mockRequests = [{ request_id: "req-1", employee_id: "emp-1" }];
 
       mockDb.execute.mockResolvedValueOnce([mockRequests, []]);
 
@@ -404,7 +406,7 @@ describe("PerformanceFeedbackService - Request Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("AND employee_id = ?"),
-        ["emp-1"]
+        ["emp-1"],
       );
     });
   });
@@ -426,7 +428,7 @@ describe("PerformanceFeedbackService - Request Management", () => {
       expect(request?.request_id).toBe("req-123");
       expect(mockDb.execute).toHaveBeenCalledWith(
         "SELECT * FROM performance_feedback_request WHERE request_id = ?",
-        ["req-123"]
+        ["req-123"],
       );
     });
 
@@ -447,7 +449,7 @@ describe("PerformanceFeedbackService - Request Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         "DELETE FROM performance_feedback_request WHERE request_id = ?",
-        ["req-123"]
+        ["req-123"],
       );
     });
   });
@@ -488,7 +490,7 @@ describe("PerformanceFeedbackService - Competency Management", () => {
       expect(competencies.length).toBe(2);
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("SELECT * FROM competency_master"),
-        expect.any(Array)
+        expect.any(Array),
       );
     });
 
@@ -552,7 +554,7 @@ describe("PerformanceFeedbackService - Competency Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("UPDATE competency_master"),
-        expect.any(Array)
+        expect.any(Array),
       );
     });
   });
@@ -565,7 +567,7 @@ describe("PerformanceFeedbackService - Competency Management", () => {
 
       expect(mockDb.execute).toHaveBeenCalledWith(
         "UPDATE competency_master SET is_active = 0 WHERE competency_id = ?",
-        ["comp-123"]
+        ["comp-123"],
       );
     });
   });
@@ -646,7 +648,7 @@ describe("PerformanceFeedbackService - Feedback Form & Submission", () => {
       mockDb.execute.mockResolvedValueOnce([[], []]); // getRequestById returns empty
 
       await expect(service.getFormTemplate("non-existent")).rejects.toThrow(
-        "Request not found"
+        "Request not found",
       );
     });
 
@@ -664,7 +666,7 @@ describe("PerformanceFeedbackService - Feedback Form & Submission", () => {
         .mockResolvedValueOnce([[], []]); // employee not found
 
       await expect(service.getFormTemplate("req-123")).rejects.toThrow(
-        "Employee not found"
+        "Employee not found",
       );
     });
   });
@@ -709,16 +711,17 @@ describe("PerformanceFeedbackService - Feedback Form & Submission", () => {
       expect(result).toBeDefined();
       expect(result.competencies_recorded).toBe(1);
 
-      const responseInserts = (mockDb.execute as any).mock.calls.filter((call: any) =>
-        call[0]?.includes("INSERT INTO performance_feedback_response")
+      const responseInserts = (mockDb.execute as any).mock.calls.filter(
+        (call: any) =>
+          call[0]?.includes("INSERT INTO performance_feedback_response"),
       );
       expect(responseInserts).toHaveLength(1);
       expect(responseInserts[0][0]).toContain("competency_id");
       expect(responseInserts[0][0]).not.toContain("ratings_json");
 
       // 'submitted' is not in the status enum, and there is no submitted_at column
-      const statusUpdate = (mockDb.execute as any).mock.calls.find((call: any) =>
-        call[0]?.includes("UPDATE performance_feedback_request")
+      const statusUpdate = (mockDb.execute as any).mock.calls.find(
+        (call: any) => call[0]?.includes("UPDATE performance_feedback_request"),
       );
       expect(statusUpdate[0]).toContain("'completed'");
       expect(statusUpdate[0]).toContain("completed_at");
@@ -734,7 +737,7 @@ describe("PerformanceFeedbackService - Feedback Form & Submission", () => {
       mockDb.execute.mockResolvedValueOnce([[], []]); // getRequestById returns empty
 
       await expect(
-        service.submitFeedback(feedbackData, "mgr-111")
+        service.submitFeedback(feedbackData, "mgr-111"),
       ).rejects.toThrow("Request not found");
     });
 
@@ -756,7 +759,7 @@ describe("PerformanceFeedbackService - Feedback Form & Submission", () => {
       mockDb.execute.mockResolvedValueOnce([[mockRequest], []]); // getRequestById
 
       await expect(
-        service.submitFeedback(feedbackData, "wrong-manager")
+        service.submitFeedback(feedbackData, "wrong-manager"),
       ).rejects.toThrow("Unauthorized: not assigned manager");
     });
 
@@ -799,8 +802,9 @@ describe("PerformanceFeedbackService - Feedback Form & Submission", () => {
 
       // Re-submission is an upsert on unique_response (request_id, competency_id)
       // rather than a separate read-then-update.
-      const responseInserts = (mockDb.execute as any).mock.calls.filter((call: any) =>
-        call[0]?.includes("INSERT INTO performance_feedback_response")
+      const responseInserts = (mockDb.execute as any).mock.calls.filter(
+        (call: any) =>
+          call[0]?.includes("INSERT INTO performance_feedback_response"),
       );
       expect(responseInserts).toHaveLength(1);
       expect(responseInserts[0][0]).toMatch(/ON DUPLICATE KEY UPDATE/i);
@@ -832,12 +836,60 @@ describe("PerformanceFeedbackService - Report Generation", () => {
       // The real grain: one row per (reviewer, competency). Two reviewers here,
       // which is what makes the per-competency mean meaningful and total_reviewers 2.
       const mockRatingRows = [
-        { competency_id: 1, rating: 5, comments: "Excellent", competency_name: "Communication", reviewer_id: "mgr-111", reviewer_type: "manager", overall_comments: "Teamwork needs improvement" },
-        { competency_id: 1, rating: 4, comments: "Clear", competency_name: "Communication", reviewer_id: "peer-1", reviewer_type: "peer", overall_comments: null },
-        { competency_id: 2, rating: 2, comments: "Needs work", competency_name: "Teamwork", reviewer_id: "mgr-111", reviewer_type: "manager", overall_comments: "Teamwork needs improvement" },
-        { competency_id: 2, rating: 3, comments: "Improving", competency_name: "Teamwork", reviewer_id: "peer-1", reviewer_type: "peer", overall_comments: null },
-        { competency_id: 3, rating: 4, comments: "Good", competency_name: "Problem Solving", reviewer_id: "mgr-111", reviewer_type: "manager", overall_comments: "Teamwork needs improvement" },
-        { competency_id: 3, rating: 3, comments: "Fine", competency_name: "Problem Solving", reviewer_id: "peer-1", reviewer_type: "peer", overall_comments: null },
+        {
+          competency_id: 1,
+          rating: 5,
+          comments: "Excellent",
+          competency_name: "Communication",
+          reviewer_id: "mgr-111",
+          reviewer_type: "manager",
+          overall_comments: "Teamwork needs improvement",
+        },
+        {
+          competency_id: 1,
+          rating: 4,
+          comments: "Clear",
+          competency_name: "Communication",
+          reviewer_id: "peer-1",
+          reviewer_type: "peer",
+          overall_comments: null,
+        },
+        {
+          competency_id: 2,
+          rating: 2,
+          comments: "Needs work",
+          competency_name: "Teamwork",
+          reviewer_id: "mgr-111",
+          reviewer_type: "manager",
+          overall_comments: "Teamwork needs improvement",
+        },
+        {
+          competency_id: 2,
+          rating: 3,
+          comments: "Improving",
+          competency_name: "Teamwork",
+          reviewer_id: "peer-1",
+          reviewer_type: "peer",
+          overall_comments: null,
+        },
+        {
+          competency_id: 3,
+          rating: 4,
+          comments: "Good",
+          competency_name: "Problem Solving",
+          reviewer_id: "mgr-111",
+          reviewer_type: "manager",
+          overall_comments: "Teamwork needs improvement",
+        },
+        {
+          competency_id: 3,
+          rating: 3,
+          comments: "Fine",
+          competency_name: "Problem Solving",
+          reviewer_id: "peer-1",
+          reviewer_type: "peer",
+          overall_comments: null,
+        },
       ];
       // Communication 4.5, Teamwork 2.5 (low), Problem Solving 3.5; overall 3.5
 
@@ -863,11 +915,12 @@ describe("PerformanceFeedbackService - Report Generation", () => {
       expect(result.training_need_ids).toHaveLength(1);
       expect(result.training_need_ids[0]).toMatch(UUID_RE);
 
-      const reportInsert = (mockDb.execute as any).mock.calls.find((call: any) =>
-        call[0]?.includes("INSERT INTO performance_feedback_report")
+      const reportInsert = (mockDb.execute as any).mock.calls.find(
+        (call: any) =>
+          call[0]?.includes("INSERT INTO performance_feedback_report"),
       );
       expect(reportInsert[1]).toEqual(
-        expect.arrayContaining(["cycle-456", "emp-789", expect.any(Number)])
+        expect.arrayContaining(["cycle-456", "emp-789", expect.any(Number)]),
       );
       // total_reviewers is counted from the distinct reviewers, not hardcoded to 1
       expect(reportInsert[1][reportInsert[1].length - 1]).toBe(2);
@@ -876,7 +929,7 @@ describe("PerformanceFeedbackService - Report Generation", () => {
 
       // Verify training need INSERT was called for the low mean (2.5 < 3.0)
       const trainingNeedCalls = (mockDb.execute as any).mock.calls.filter(
-        (call: any) => call[0]?.includes("INSERT INTO training_need")
+        (call: any) => call[0]?.includes("INSERT INTO training_need"),
       );
       expect(trainingNeedCalls.length).toBe(1);
       expect(trainingNeedCalls[0][0]).not.toContain("identified_date");
@@ -895,7 +948,15 @@ describe("PerformanceFeedbackService - Report Generation", () => {
       };
 
       const mockRatingRows = [
-        { competency_id: 1, rating: 5, comments: "Perfect", competency_name: "Communication", reviewer_id: "mgr-111", reviewer_type: "manager", overall_comments: null },
+        {
+          competency_id: 1,
+          rating: 5,
+          comments: "Perfect",
+          competency_name: "Communication",
+          reviewer_id: "mgr-111",
+          reviewer_type: "manager",
+          overall_comments: null,
+        },
       ];
 
       const mockExistingReport = {
@@ -917,7 +978,7 @@ describe("PerformanceFeedbackService - Report Generation", () => {
       // Verify UPDATE was called
       expect(mockDb.execute).toHaveBeenCalledWith(
         expect.stringContaining("UPDATE performance_feedback_report"),
-        expect.any(Array)
+        expect.any(Array),
       );
     });
 
@@ -925,7 +986,7 @@ describe("PerformanceFeedbackService - Report Generation", () => {
       mockDb.execute.mockResolvedValueOnce([[], []]); // getRequestById returns empty
 
       await expect(service.generateReport("non-existent")).rejects.toThrow(
-        "Request not found"
+        "Request not found",
       );
     });
 
@@ -944,7 +1005,7 @@ describe("PerformanceFeedbackService - Report Generation", () => {
         .mockResolvedValueOnce([[], []]); // no ratings recorded
 
       await expect(service.generateReport("req-123")).rejects.toThrow(
-        "Response not found"
+        "Response not found",
       );
     });
 
@@ -959,13 +1020,45 @@ describe("PerformanceFeedbackService - Report Generation", () => {
       };
 
       const mockRatingRows = [
-        { competency_id: 1, rating: 2, comments: "Poor", competency_name: "Communication", reviewer_id: "mgr-111", reviewer_type: "manager", overall_comments: null },
-        { competency_id: 2, rating: 2, comments: "Below avg", competency_name: "Teamwork", reviewer_id: "mgr-111", reviewer_type: "manager", overall_comments: null },
-        { competency_id: 3, rating: 5, comments: "Great", competency_name: "Leadership", reviewer_id: "mgr-111", reviewer_type: "manager", overall_comments: null },
+        {
+          competency_id: 1,
+          rating: 2,
+          comments: "Poor",
+          competency_name: "Communication",
+          reviewer_id: "mgr-111",
+          reviewer_type: "manager",
+          overall_comments: null,
+        },
+        {
+          competency_id: 2,
+          rating: 2,
+          comments: "Below avg",
+          competency_name: "Teamwork",
+          reviewer_id: "mgr-111",
+          reviewer_type: "manager",
+          overall_comments: null,
+        },
+        {
+          competency_id: 3,
+          rating: 5,
+          comments: "Great",
+          competency_name: "Leadership",
+          reviewer_id: "mgr-111",
+          reviewer_type: "manager",
+          overall_comments: null,
+        },
       ];
 
-      const mockCompetency1 = { competency_id: 1, competency_name: "Communication", category: "core" };
-      const mockCompetency2 = { competency_id: 2, competency_name: "Teamwork", category: "core" };
+      const mockCompetency1 = {
+        competency_id: 1,
+        competency_name: "Communication",
+        category: "core",
+      };
+      const mockCompetency2 = {
+        competency_id: 2,
+        competency_name: "Teamwork",
+        category: "core",
+      };
 
       mockDb.execute
         .mockResolvedValueOnce([[mockRequest], []]) // getRequestById
@@ -995,8 +1088,24 @@ describe("PerformanceFeedbackService - Report Generation", () => {
       };
 
       const mockRatingRows = [
-        { competency_id: 1, rating: 4, comments: "Good", competency_name: "Communication", reviewer_id: "mgr-111", reviewer_type: "manager", overall_comments: null },
-        { competency_id: 2, rating: 4, comments: "Solid", competency_name: "Teamwork", reviewer_id: "mgr-111", reviewer_type: "manager", overall_comments: null },
+        {
+          competency_id: 1,
+          rating: 4,
+          comments: "Good",
+          competency_name: "Communication",
+          reviewer_id: "mgr-111",
+          reviewer_type: "manager",
+          overall_comments: null,
+        },
+        {
+          competency_id: 2,
+          rating: 4,
+          comments: "Solid",
+          competency_name: "Teamwork",
+          reviewer_id: "mgr-111",
+          reviewer_type: "manager",
+          overall_comments: null,
+        },
       ];
 
       mockDb.execute
@@ -1011,7 +1120,7 @@ describe("PerformanceFeedbackService - Report Generation", () => {
 
       // Verify training_need INSERT was NOT called
       const insertTrainingCalls = (mockDb.execute as any).mock.calls.filter(
-        (call: any) => call[0]?.includes("INSERT INTO training_need")
+        (call: any) => call[0]?.includes("INSERT INTO training_need"),
       );
       expect(insertTrainingCalls.length).toBe(0);
     });

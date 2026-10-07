@@ -18,7 +18,10 @@
 import { randomUUID } from "crypto";
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
@@ -30,8 +33,10 @@ import { leaveRequestSchema } from "../leave/leave.validation.js";
 export const teamAttendanceMonthRouter = Router();
 teamAttendanceMonthRouter.use(requireAuth);
 
-const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 const MONTH_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -72,7 +77,10 @@ function needsAttention(row: { attendance_status?: string | null }): boolean {
 }
 
 /** APR and biometric disagreed. Informational — not a blocker, not an action. */
-function hasSourceMismatch(row: { mismatch_flag?: number | null; mismatch_resolved_at?: unknown }): boolean {
+function hasSourceMismatch(row: {
+  mismatch_flag?: number | null;
+  mismatch_resolved_at?: unknown;
+}): boolean {
   return Number(row.mismatch_flag ?? 0) === 1 && !row.mismatch_resolved_at;
 }
 
@@ -85,13 +93,24 @@ function hasSourceMismatch(row: { mismatch_flag?: number | null; mismatch_resolv
 teamAttendanceMonthRouter.get(
   "/team-month",
   requireRole(
-    "manager", "assistant_manager", "tl", "team_leader", "process_manager",
-    "branch_head", "hr", "wfm", "admin", "super_admin", "ceo",
+    "manager",
+    "assistant_manager",
+    "tl",
+    "team_leader",
+    "process_manager",
+    "branch_head",
+    "hr",
+    "wfm",
+    "admin",
+    "super_admin",
+    "ceo",
   ),
   h(async (req, res) => {
     const month = String(req.query.month ?? "");
     if (!MONTH_REGEX.test(month)) {
-      return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
+      return res
+        .status(400)
+        .json({ success: false, message: "month must be YYYY-MM" });
     }
     const win = monthWindow(month);
 
@@ -124,17 +143,32 @@ teamAttendanceMonthRouter.get(
 
     if (!isWide) {
       if (!callerEmp?.id) {
-        return res.status(403).json({ success: false, message: "No employee record for this user" });
+        return res
+          .status(403)
+          .json({
+            success: false,
+            message: "No employee record for this user",
+          });
       }
-      where.push("(e.reporting_manager_id = ? OR e.manager_id = ? OR e.id = ?)");
+      where.push(
+        "(e.reporting_manager_id = ? OR e.manager_id = ? OR e.id = ?)",
+      );
       params.push(callerEmp.id, callerEmp.id, callerEmp.id);
     }
 
     // Optional narrowing, never widening.
-    if (req.query.branchId) { where.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
-    if (req.query.processId) { where.push("e.process_id = ?"); params.push(String(req.query.processId)); }
+    if (req.query.branchId) {
+      where.push("e.branch_id = ?");
+      params.push(String(req.query.branchId));
+    }
+    if (req.query.processId) {
+      where.push("e.process_id = ?");
+      params.push(String(req.query.processId));
+    }
     if (req.query.search) {
-      where.push("(e.employee_code LIKE ? OR COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) LIKE ?)");
+      where.push(
+        "(e.employee_code LIKE ? OR COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) LIKE ?)",
+      );
       const like = `%${String(req.query.search).trim()}%`;
       params.push(like, like);
     }
@@ -159,8 +193,17 @@ teamAttendanceMonthRouter.get(
 
     if (employees.length === 0) {
       return res.json({
-        success: true, month, days: win.days, employees: [],
-        summary: { employees: 0, needs_attention: 0, absent: 0, regularized: 0, missing: 0 },
+        success: true,
+        month,
+        days: win.days,
+        employees: [],
+        summary: {
+          employees: 0,
+          needs_attention: 0,
+          absent: 0,
+          regularized: 0,
+          missing: 0,
+        },
       });
     }
 
@@ -189,15 +232,20 @@ teamAttendanceMonthRouter.get(
       [...ids, win.start, win.end],
     );
     // Pending regularizations, so a cell can offer the right action.
-    const regRowsPromise = db.query<RowDataPacket[]>(
-      `SELECT id, employee_id, DATE_FORMAT(session_date, '%Y-%m-%d') AS d, status, reason
+    const regRowsPromise = db
+      .query<RowDataPacket[]>(
+        `SELECT id, employee_id, DATE_FORMAT(session_date, '%Y-%m-%d') AS d, status, reason
          FROM attendance_regularization
         WHERE employee_id IN (${idPlaceholders})
           AND session_date BETWEEN ? AND ?
           AND status IN ('pending','manager_approved')`,
-      [...ids, win.start, win.end],
-    ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
-    const [[cellRows], [regRows]] = await Promise.all([cellRowsPromise, regRowsPromise]);
+        [...ids, win.start, win.end],
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
+    const [[cellRows], [regRows]] = await Promise.all([
+      cellRowsPromise,
+      regRowsPromise,
+    ]);
 
     const byEmployee = new Map<string, Map<string, any>>();
     for (const r of cellRows as any[]) {
@@ -207,11 +255,17 @@ teamAttendanceMonthRouter.get(
     }
 
     const pendingByKey = new Map<string, any>();
-    for (const r of regRows as any[]) pendingByKey.set(`${r.employee_id}:${r.d}`, r);
+    for (const r of regRows as any[])
+      pendingByKey.set(`${r.employee_id}:${r.d}`, r);
 
     // ── Build one cell per calendar day, present or not ───────────────────────
-    const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    let totalAttention = 0, totalAbsent = 0, totalRegularized = 0, totalMissing = 0;
+    const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    let totalAttention = 0,
+      totalAbsent = 0,
+      totalRegularized = 0,
+      totalMissing = 0;
 
     const out = employees.map((emp) => {
       const cells = byEmployee.get(String(emp.id)) ?? new Map();
@@ -219,10 +273,17 @@ teamAttendanceMonthRouter.get(
       // Only days the employee was actually employed can be "missing" — counting a
       // day before joining or after exit as a gap would send managers chasing rows
       // that must never exist. Mirrors the governance blocker's own window.
-      const startsOn = String(emp.salary_start_date ?? emp.date_of_joining ?? win.start).slice(0, 10);
-      const endsOn = emp.exit_date ? String(emp.exit_date).slice(0, 10) : win.end;
+      const startsOn = String(
+        emp.salary_start_date ?? emp.date_of_joining ?? win.start,
+      ).slice(0, 10);
+      const endsOn = emp.exit_date
+        ? String(emp.exit_date).slice(0, 10)
+        : win.end;
 
-      let attention = 0, absent = 0, regularized = 0, missing = 0;
+      let attention = 0,
+        absent = 0,
+        regularized = 0,
+        missing = 0;
 
       const days = Array.from({ length: win.days }, (_, i) => {
         const date = win.dateFor(i + 1);
@@ -234,8 +295,15 @@ teamAttendanceMonthRouter.get(
           // Future days and days outside employment are simply not applicable — they
           // are not gaps and must not be counted as ones.
           if (!inWindow) return { d: date, applicable: false };
-          missing++; attention++;
-          return { d: date, applicable: true, hasRecord: false, needsAttention: true, pendingRegularizationId: pending?.id ?? null };
+          missing++;
+          attention++;
+          return {
+            d: date,
+            applicable: true,
+            hasRecord: false,
+            needsAttention: true,
+            pendingRegularizationId: pending?.id ?? null,
+          };
         }
 
         const attn = needsAttention(row);
@@ -267,8 +335,10 @@ teamAttendanceMonthRouter.get(
         };
       });
 
-      totalAttention += attention; totalAbsent += absent;
-      totalRegularized += regularized; totalMissing += missing;
+      totalAttention += attention;
+      totalAbsent += absent;
+      totalRegularized += regularized;
+      totalMissing += missing;
 
       return {
         employeeId: String(emp.id),
@@ -317,43 +387,77 @@ teamAttendanceMonthRouter.post(
   "/team-month/flag",
   requireWriteAccess,
   requireRole(
-    "manager", "assistant_manager", "tl", "team_leader", "process_manager",
-    "branch_head", "hr", "wfm", "admin", "super_admin",
+    "manager",
+    "assistant_manager",
+    "tl",
+    "team_leader",
+    "process_manager",
+    "branch_head",
+    "hr",
+    "wfm",
+    "admin",
+    "super_admin",
   ),
   h(async (req, res) => {
-    const items: Array<{ employeeId?: string; date?: string }> = Array.isArray(req.body?.items)
+    const items: Array<{ employeeId?: string; date?: string }> = Array.isArray(
+      req.body?.items,
+    )
       ? req.body.items
       : [];
     const note = String(req.body?.note ?? "").trim();
     if (items.length === 0) {
-      return res.status(400).json({ success: false, message: "Nothing selected to flag" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Nothing selected to flag" });
     }
     if (items.length > 200) {
-      return res.status(400).json({ success: false, message: "Flag at most 200 days at a time" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Flag at most 200 days at a time" });
     }
     if (!note) {
-      return res.status(400).json({ success: false, message: "A note is required — a flag with no reason is noise" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "A note is required — a flag with no reason is noise",
+        });
     }
 
     const userId = req.authUser!.id;
-    const isWide = await hasRole(userId, "admin", "hr", "wfm", "ceo", "super_admin");
+    const isWide = await hasRole(
+      userId,
+      "admin",
+      "hr",
+      "wfm",
+      "ceo",
+      "super_admin",
+    );
     const callerEmp = await getEmployeeForUser(userId);
     if (!isWide && !callerEmp?.id) {
-      return res.status(403).json({ success: false, message: "No employee record for this user" });
+      return res
+        .status(403)
+        .json({ success: false, message: "No employee record for this user" });
     }
 
     // Re-check the team on the way in. The grid already scoped what a manager could
     // see, but a request is not the page — nothing stops a caller posting any id, so
     // authorisation is decided here rather than trusted from the client.
-    const ids = [...new Set(items.map((i) => String(i.employeeId ?? "")).filter(Boolean))];
+    const ids = [
+      ...new Set(items.map((i) => String(i.employeeId ?? "")).filter(Boolean)),
+    ];
     if (ids.length === 0) {
-      return res.status(400).json({ success: false, message: "No employees in the request" });
+      return res
+        .status(400)
+        .json({ success: false, message: "No employees in the request" });
     }
     const ph = ids.map(() => "?").join(",");
     const scopeSql = isWide
       ? ""
       : " AND (e.reporting_manager_id = ? OR e.manager_id = ? OR e.id = ?)";
-    const scopeParams = isWide ? [] : [callerEmp!.id, callerEmp!.id, callerEmp!.id];
+    const scopeParams = isWide
+      ? []
+      : [callerEmp!.id, callerEmp!.id, callerEmp!.id];
 
     const [allowedRows] = await db.query<RowDataPacket[]>(
       `SELECT e.id, e.employee_code, e.auth_user_id,
@@ -363,7 +467,9 @@ teamAttendanceMonthRouter.post(
         WHERE e.id IN (${ph}) AND e.active_status = 1${scopeSql}`,
       [...ids, ...scopeParams],
     );
-    const allowed = new Map((allowedRows as any[]).map((r) => [String(r.id), r]));
+    const allowed = new Map(
+      (allowedRows as any[]).map((r) => [String(r.id), r]),
+    );
 
     let flagged = 0;
     let skippedOutOfScope = 0;
@@ -371,25 +477,39 @@ teamAttendanceMonthRouter.post(
 
     for (const item of items) {
       const emp = allowed.get(String(item.employeeId ?? ""));
-      if (!emp) { skippedOutOfScope++; continue; }
+      if (!emp) {
+        skippedOutOfScope++;
+        continue;
+      }
       const date = String(item.date ?? "");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { skippedOutOfScope++; continue; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        skippedOutOfScope++;
+        continue;
+      }
 
       // An employee with no login cannot be told anything by an inbox item. Counted
       // and returned rather than silently dropped, so the manager knows the message
       // did not land and can follow up another way.
-      if (!emp.auth_user_id) { skippedNoAccount++; continue; }
+      if (!emp.auth_user_id) {
+        skippedNoAccount++;
+        continue;
+      }
 
-      await inboxService.createItem({
-        user_id: String(emp.auth_user_id),
-        type: "attendance_flagged_by_manager",
-        title: `Attendance query for ${date}`,
-        description: `${note} — raised by your reporting manager. Open your attendance and raise a regularization if this day is wrong.`,
-        entity_type: "attendance_daily_record",
-        entity_id: `${emp.id}:${date}`.slice(0, 64),
-        action_url: `/attendance?date=${encodeURIComponent(date)}`,
-        priority: "high",
-      }, 24 * 60).catch(() => undefined);
+      await inboxService
+        .createItem(
+          {
+            user_id: String(emp.auth_user_id),
+            type: "attendance_flagged_by_manager",
+            title: `Attendance query for ${date}`,
+            description: `${note} — raised by your reporting manager. Open your attendance and raise a regularization if this day is wrong.`,
+            entity_type: "attendance_daily_record",
+            entity_id: `${emp.id}:${date}`.slice(0, 64),
+            action_url: `/attendance?date=${encodeURIComponent(date)}`,
+            priority: "high",
+          },
+          24 * 60,
+        )
+        .catch(() => undefined);
       flagged++;
     }
 
@@ -415,7 +535,12 @@ teamAttendanceMonthRouter.post(
  * intentionally independent — this one does not touch isLeavePrivileged or leave.routes.ts.
  */
 const RAISE_ON_BEHALF_ROLES = [
-  "manager", "process_manager", "tl", "team_leader", "assistant_manager", "branch_head",
+  "manager",
+  "process_manager",
+  "tl",
+  "team_leader",
+  "assistant_manager",
+  "branch_head",
 ] as const;
 
 teamAttendanceMonthRouter.post(
@@ -425,12 +550,16 @@ teamAttendanceMonthRouter.post(
   h(async (req, res) => {
     const raiserEmp = await getEmployeeForUser(req.authUser!.id);
     if (!raiserEmp?.id) {
-      return res.status(403).json({ success: false, message: "No employee record for this user" });
+      return res
+        .status(403)
+        .json({ success: false, message: "No employee record for this user" });
     }
 
     const employeeId = String(req.body?.employeeId ?? "");
     if (!employeeId) {
-      return res.status(400).json({ success: false, message: "employeeId is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "employeeId is required" });
     }
 
     // Direct reports only — the same scope predicate the grid itself is built on. A
@@ -449,7 +578,9 @@ teamAttendanceMonthRouter.post(
     );
     const targetEmp = (scopeRows as any[])[0];
     if (!targetEmp) {
-      return res.status(403).json({ success: false, message: "Not one of your direct reports" });
+      return res
+        .status(403)
+        .json({ success: false, message: "Not one of your direct reports" });
     }
     if (!targetEmp.auth_user_id) {
       return res.status(422).json({
@@ -470,34 +601,56 @@ teamAttendanceMonthRouter.post(
       reason: req.body?.reason ?? null,
     });
     if (!parsed.success) {
-      return res.status(400).json({ success: false, message: parsed.error.issues[0]?.message ?? "Invalid request" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: parsed.error.issues[0]?.message ?? "Invalid request",
+        });
     }
 
     const id = randomUUID();
-    const callerRoles = await Promise.all(RAISE_ON_BEHALF_ROLES.map((r) => hasRole(req.authUser!.id, r)));
-    const raisedByRole = RAISE_ON_BEHALF_ROLES[callerRoles.findIndex(Boolean)] ?? "manager";
+    const callerRoles = await Promise.all(
+      RAISE_ON_BEHALF_ROLES.map((r) => hasRole(req.authUser!.id, r)),
+    );
+    const raisedByRole =
+      RAISE_ON_BEHALF_ROLES[callerRoles.findIndex(Boolean)] ?? "manager";
 
     await db.execute(
       `INSERT INTO manager_raised_request
          (id, request_type, employee_id, raised_by_user_id, raised_by_employee_id, raised_by_role, payload, consent_status)
        VALUES (?, 'leave', ?, ?, ?, ?, CAST(? AS JSON), 'pending_employee_consent')`,
-      [id, employeeId, req.authUser!.id, raiserEmp.id, raisedByRole, JSON.stringify(parsed.data)],
+      [
+        id,
+        employeeId,
+        req.authUser!.id,
+        raiserEmp.id,
+        raisedByRole,
+        JSON.stringify(parsed.data),
+      ],
     );
 
-    await inboxService.createItem({
-      user_id: String(targetEmp.auth_user_id),
-      type: "leave_raised_by_manager",
-      title: "Leave requested on your behalf",
-      description:
-        `Your reporting manager asked for leave for you (${parsed.data.fromDate} to ${parsed.data.toDate}). ` +
-        `Nothing is submitted yet — open Leave Requests to approve or decline.`,
-      entity_type: "manager_raised_request",
-      entity_id: id,
-      action_url: "/leaves",
-      priority: "high",
-    }).catch(() => undefined);
+    await inboxService
+      .createItem({
+        user_id: String(targetEmp.auth_user_id),
+        type: "leave_raised_by_manager",
+        title: "Leave requested on your behalf",
+        description:
+          `Your reporting manager asked for leave for you (${parsed.data.fromDate} to ${parsed.data.toDate}). ` +
+          `Nothing is submitted yet — open Leave Requests to approve or decline.`,
+        entity_type: "manager_raised_request",
+        entity_id: id,
+        action_url: "/leaves",
+        priority: "high",
+      })
+      .catch(() => undefined);
 
-    return res.status(201).json({ success: true, data: { id, consentStatus: "pending_employee_consent" } });
+    return res
+      .status(201)
+      .json({
+        success: true,
+        data: { id, consentStatus: "pending_employee_consent" },
+      });
   }),
 );
 
@@ -558,12 +711,19 @@ teamAttendanceMonthRouter.patch(
   h(async (req, res) => {
     const decision = String(req.body?.decision ?? "");
     if (decision !== "approve" && decision !== "decline") {
-      return res.status(400).json({ success: false, message: "decision must be 'approve' or 'decline'" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "decision must be 'approve' or 'decline'",
+        });
     }
 
     const callerEmp = await getEmployeeForUser(req.authUser!.id);
     if (!callerEmp?.id) {
-      return res.status(403).json({ success: false, message: "No employee record for this user" });
+      return res
+        .status(403)
+        .json({ success: false, message: "No employee record for this user" });
     }
 
     const [rows] = await db.query<RowDataPacket[]>(
@@ -571,12 +731,20 @@ teamAttendanceMonthRouter.patch(
       [req.params.id],
     );
     const row = (rows as any[])[0];
-    if (!row) return res.status(404).json({ success: false, message: "Not found" });
+    if (!row)
+      return res.status(404).json({ success: false, message: "Not found" });
     if (String(row.employee_id) !== String(callerEmp.id)) {
-      return res.status(403).json({ success: false, message: "This request is not addressed to you" });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "This request is not addressed to you",
+        });
     }
     if (row.consent_status !== "pending_employee_consent") {
-      return res.status(409).json({ success: false, message: `Already ${row.consent_status}` });
+      return res
+        .status(409)
+        .json({ success: false, message: `Already ${row.consent_status}` });
     }
 
     if (decision === "decline") {
@@ -584,51 +752,73 @@ teamAttendanceMonthRouter.patch(
         `UPDATE manager_raised_request
             SET consent_status = 'declined', consent_decided_at = NOW(), decline_reason = ?
           WHERE id = ?`,
-        [req.body?.reason ? String(req.body.reason).slice(0, 500) : null, row.id],
+        [
+          req.body?.reason ? String(req.body.reason).slice(0, 500) : null,
+          row.id,
+        ],
       );
-      await inboxService.createItem({
-        user_id: row.raised_by_user_id,
-        type: "leave_on_behalf_declined",
-        title: "Leave request declined",
-        description: "The employee declined the leave you raised on their behalf.",
-        entity_type: "manager_raised_request",
-        entity_id: row.id,
-        action_url: "/wfm/team-attendance",
-        priority: "normal",
-      }).catch(() => undefined);
+      await inboxService
+        .createItem({
+          user_id: row.raised_by_user_id,
+          type: "leave_on_behalf_declined",
+          title: "Leave request declined",
+          description:
+            "The employee declined the leave you raised on their behalf.",
+          entity_type: "manager_raised_request",
+          entity_id: row.id,
+          action_url: "/wfm/team-attendance",
+          priority: "normal",
+        })
+        .catch(() => undefined);
       return res.json({ success: true, data: { consentStatus: "declined" } });
     }
 
     // Approve — materialize the real leave_request. The employee is the actor of record
     // (submitRequest's second argument), matching what actually happened: they, not the
     // manager, are the one who just said yes.
-    const payload = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+    const payload =
+      typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
     try {
-      const created = await leaveService.submitRequest(payload, req.authUser!.id);
+      const created = await leaveService.submitRequest(
+        payload,
+        req.authUser!.id,
+      );
       await db.execute(
         `UPDATE manager_raised_request
             SET consent_status = 'consented', consent_decided_at = NOW(), resulting_request_id = ?
           WHERE id = ?`,
         [(created as any).id, row.id],
       );
-      await inboxService.createItem({
-        user_id: row.raised_by_user_id,
-        type: "leave_on_behalf_consented",
-        title: "Leave request submitted",
-        description: "The employee approved the leave you raised on their behalf — it is now in the normal approval queue.",
-        entity_type: "leave_request",
-        entity_id: (created as any).id,
-        action_url: "/wfm/team-attendance",
-        priority: "normal",
-      }).catch(() => undefined);
-      return res.json({ success: true, data: { consentStatus: "consented", leaveRequestId: (created as any).id } });
+      await inboxService
+        .createItem({
+          user_id: row.raised_by_user_id,
+          type: "leave_on_behalf_consented",
+          title: "Leave request submitted",
+          description:
+            "The employee approved the leave you raised on their behalf — it is now in the normal approval queue.",
+          entity_type: "leave_request",
+          entity_id: (created as any).id,
+          action_url: "/wfm/team-attendance",
+          priority: "normal",
+        })
+        .catch(() => undefined);
+      return res.json({
+        success: true,
+        data: {
+          consentStatus: "consented",
+          leaveRequestId: (created as any).id,
+        },
+      });
     } catch (e) {
       // Balance/eligibility rejected it — the manager_raised_request row stays pending so
       // nothing is silently lost; the employee sees why and can raise it themself with
       // different dates if that resolves it.
       return res.status(422).json({
         success: false,
-        message: e instanceof Error ? e.message : "Could not submit this leave request",
+        message:
+          e instanceof Error
+            ? e.message
+            : "Could not submit this leave request",
       });
     }
   }),

@@ -161,7 +161,12 @@ export function buildSqlSchemaSnapshot(sqlDir: string): SqlSchemaSnapshot {
     while ((m = ALTER_ADD_RE.exec(sql)) !== null) {
       const [, table, column] = m;
       // "ADD INDEX/KEY/CONSTRAINT/..." are not columns.
-      if (/^(index|key|unique|primary|constraint|foreign|fulltext|spatial|check)$/i.test(column)) continue;
+      if (
+        /^(index|key|unique|primary|constraint|foreign|fulltext|spatial|check)$/i.test(
+          column,
+        )
+      )
+        continue;
       addColumn(table, column, file);
     }
 
@@ -203,8 +208,14 @@ export function buildSqlSchemaSnapshot(sqlDir: string): SqlSchemaSnapshot {
   return { tables, tableOrigin, columnOrigin, sourcedFiles, allFiles };
 }
 
-export function hasColumn(snapshot: SqlSchemaSnapshot, table: string, column: string): boolean {
-  return snapshot.tables.get(table.toLowerCase())?.has(column.toLowerCase()) ?? false;
+export function hasColumn(
+  snapshot: SqlSchemaSnapshot,
+  table: string,
+  column: string,
+): boolean {
+  return (
+    snapshot.tables.get(table.toLowerCase())?.has(column.toLowerCase()) ?? false
+  );
 }
 
 export function hasTable(snapshot: SqlSchemaSnapshot, table: string): boolean {
@@ -217,5 +228,9 @@ export function columnSource(
   table: string,
   column: string,
 ): string | null {
-  return snapshot.columnOrigin.get(`${table.toLowerCase()}.${column.toLowerCase()}`) ?? null;
+  return (
+    snapshot.columnOrigin.get(
+      `${table.toLowerCase()}.${column.toLowerCase()}`,
+    ) ?? null
+  );
 }

@@ -28,7 +28,9 @@ const { execute, tableExists, getSeatRevenueForecast } = vi.hoisted(() => ({
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists }));
-vi.mock("../pnl-seat-revenue-forecast.service.js", () => ({ getSeatRevenueForecast }));
+vi.mock("../pnl-seat-revenue-forecast.service.js", () => ({
+  getSeatRevenueForecast,
+}));
 
 import { getDailyTrend } from "../pnl-daily-trend.service.js";
 
@@ -39,20 +41,27 @@ function fixture(opts: { attendance?: boolean } = {}) {
   const attendance = opts.attendance ?? true;
   execute.mockImplementation(async (sql: unknown) => {
     const text = String(sql);
-    if (text.includes("FROM salary_prep_line")) return [[{ amount: "300000.00" }], []];
+    if (text.includes("FROM salary_prep_line"))
+      return [[{ amount: "300000.00" }], []];
     if (text.includes("FROM grn_request")) {
-      return [[
-        { d: "2026-09-02", amount: "50000.00" },
-        { d: "2026-09-17", amount: "25000.00" },
-      ], []];
+      return [
+        [
+          { d: "2026-09-02", amount: "50000.00" },
+          { d: "2026-09-17", amount: "25000.00" },
+        ],
+        [],
+      ];
     }
     if (text.includes("FROM attendance_daily_record")) {
       if (!attendance) return [[], []];
-      return [[
-        { d: "2026-09-01", headcount: 100, payable: "100" },
-        { d: "2026-09-02", headcount: 100, payable: "50" },  // half the floor out
-        { d: "2026-09-03", headcount: 100, payable: "50" },
-      ], []];
+      return [
+        [
+          { d: "2026-09-01", headcount: 100, payable: "100" },
+          { d: "2026-09-02", headcount: 100, payable: "50" }, // half the floor out
+          { d: "2026-09-03", headcount: 100, payable: "50" },
+        ],
+        [],
+      ];
     }
     return [[], []];
   });
@@ -86,7 +95,9 @@ describe("series labelling", () => {
     fixture();
     const trend = await getDailyTrend(PERIOD);
     expect(trend.grnCostDatedByBillDate).toBe(true);
-    expect(trend.series.find((s) => s.key === "grnCost")?.method).toMatch(/bill date/i);
+    expect(trend.series.find((s) => s.key === "grnCost")?.method).toMatch(
+      /bill date/i,
+    );
   });
 });
 
@@ -128,7 +139,8 @@ describe("people cost follows attendance, not the calendar", () => {
   it("falls back to a flat spread only when no attendance exists at all for the month", async () => {
     fixture({ attendance: false });
     const trend = await getDailyTrend(PERIOD);
-    for (const point of trend.points) expect(point.peopleCost).toBeCloseTo(10000, 6);
+    for (const point of trend.points)
+      expect(point.peopleCost).toBeCloseTo(10000, 6);
     expect(trend.daysObserved).toBe(0);
   });
 

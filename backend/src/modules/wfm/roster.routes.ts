@@ -25,22 +25,31 @@ export const rosterRouter = Router();
 rosterRouter.use(requireAuth);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 // Plans
-rosterRouter.post("/plans",
+rosterRouter.post(
+  "/plans",
   requireRole("admin", "wfm", "process_manager"),
   requireBodyScope(["wfm", "process_manager"], ["admin", "hr"]),
-  h(c.createPlan.bind(c))
+  h(c.createPlan.bind(c)),
 );
 
-rosterRouter.get("/plans",
+rosterRouter.get(
+  "/plans",
   requireRole("admin", "wfm", "process_manager", "branch_head", "hr", "ceo"),
-  requireQueryScope(["wfm", "process_manager", "branch_head"], ["admin", "hr", "ceo"]),
-  h(c.listPlans.bind(c))
+  requireQueryScope(
+    ["wfm", "process_manager", "branch_head"],
+    ["admin", "hr", "ceo"],
+  ),
+  h(c.listPlans.bind(c)),
 );
 
-rosterRouter.patch("/plans/:id/publish",
+rosterRouter.patch(
+  "/plans/:id/publish",
   requireRole("admin", "wfm", "process_manager"),
   requireRosterPlanScope({
     planIdSource: "param",
@@ -48,7 +57,7 @@ rosterRouter.patch("/plans/:id/publish",
     scopedRoles: ["process_manager"],
     globalRoles: ["admin"],
   }),
-  h(c.publishPlan.bind(c))
+  h(c.publishPlan.bind(c)),
 );
 
 // Assignments
@@ -62,7 +71,8 @@ rosterRouter.patch("/plans/:id/publish",
 // leave.secure.routes.ts and wfm.regularization.secure.routes.ts). Confirm any future
 // change to these two reads lands in roster.actual.secure.routes.ts.
 
-rosterRouter.post("/assignments",
+rosterRouter.post(
+  "/assignments",
   requireRole("admin", "wfm", "process_manager"),
   requireRosterPlanScope({
     planIdSource: "body",
@@ -72,10 +82,11 @@ rosterRouter.post("/assignments",
     requireDraft: true,
     publishedChangeRoles: ["process_manager"],
   }),
-  h(c.assignEmployee.bind(c))
+  h(c.assignEmployee.bind(c)),
 );
 
-rosterRouter.get("/assignments",
+rosterRouter.get(
+  "/assignments",
   requireRole("admin", "wfm", "process_manager", "branch_head", "hr", "ceo"),
   requireRosterPlanScope({
     planIdSource: "query",
@@ -83,11 +94,12 @@ rosterRouter.get("/assignments",
     scopedRoles: ["wfm", "process_manager", "branch_head"],
     globalRoles: ["admin", "hr", "ceo"],
   }),
-  h(c.listAssignments.bind(c))
+  h(c.listAssignments.bind(c)),
 );
 
 // CSV upload — multer runs before controller
-rosterRouter.post("/upload",
+rosterRouter.post(
+  "/upload",
   requireRole("admin", "wfm", "process_manager"),
   requireRosterPlanScope({
     planIdSource: "query",
@@ -97,5 +109,5 @@ rosterRouter.post("/upload",
     requireDraft: true,
   }),
   upload.single("file"),
-  h(c.uploadCsv.bind(c))
+  h(c.uploadCsv.bind(c)),
 );

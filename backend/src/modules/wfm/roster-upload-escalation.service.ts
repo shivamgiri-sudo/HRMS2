@@ -3,10 +3,10 @@
 // Recipients get a Work Inbox item. Each (branch, process, week, stage, recipient) is claimed in
 // wfm_roster_upload_alert before the item is created, so a re-run or a second worker cannot send
 // twice. While migration 1834 is not applied every claim fails, so nothing is delivered (and nothing can repeat).
-import type { ResultSetHeader } from 'mysql2';
-import { randomUUID } from 'crypto';
-import { db } from '../../db/mysql.js';
-import { logger } from '../../logger.js';
+import type { ResultSetHeader } from "mysql2";
+import { randomUUID } from "crypto";
+import { db } from "../../db/mysql.js";
+import { logger } from "../../logger.js";
 import {
   addDays,
   currentWeekStart,
@@ -14,7 +14,7 @@ import {
   STAGE_RECIPIENTS,
   type EscalationStage,
   type RecipientKind,
-} from './roster-upload-tracker.logic.js';
+} from "./roster-upload-tracker.logic.js";
 import {
   getCellDetail,
   loadGrid,
@@ -22,12 +22,12 @@ import {
   loadSkipLevel,
   type PersonRef,
   type TrackerProcessRow,
-} from './roster-upload-tracker.service.js';
+} from "./roster-upload-tracker.service.js";
 
-const INBOX_TYPE = 'roster_upload';
-const INBOX_ENTITY = 'roster_upload';
+const INBOX_TYPE = "roster_upload";
+const INBOX_ENTITY = "roster_upload";
 
-export type SweepStage = EscalationStage | 'manual';
+export type SweepStage = EscalationStage | "manual";
 
 export interface SweepAction {
   branchName: string;
@@ -47,25 +47,33 @@ export interface SweepResult {
   skippedAlreadySent: number;
 }
 
-const STAGE_TITLE: Record<SweepStage, (p: string, b: string, w: string) => string> = {
+const STAGE_TITLE: Record<
+  SweepStage,
+  (p: string, b: string, w: string) => string
+> = {
   reminder: (p, b, w) => `Roster for W/C ${w} not uploaded yet — ${p}, ${b}`,
   heads_up: (p, b, w) => `Roster for W/C ${w} due today by 18:00 — ${p}, ${b}`,
   missing: (p, b, w) => `Roster MISSING for W/C ${w} — ${p}, ${b}`,
-  escalated: (p, b, w) => `Roster still missing, week has started — ${p}, ${b} (W/C ${w})`,
+  escalated: (p, b, w) =>
+    `Roster still missing, week has started — ${p}, ${b} (W/C ${w})`,
   late_upload: (p, b, w) => `Roster uploaded late for W/C ${w} — ${p}, ${b}`,
   manual: (p, b, w) => `Reminder: upload the roster for W/C ${w} — ${p}, ${b}`,
 };
 
-const STAGE_PRIORITY: Record<SweepStage, 'normal' | 'high' | 'urgent'> = {
-  reminder: 'normal',
-  heads_up: 'high',
-  missing: 'urgent',
-  escalated: 'urgent',
-  late_upload: 'normal',
-  manual: 'high',
+const STAGE_PRIORITY: Record<SweepStage, "normal" | "high" | "urgent"> = {
+  reminder: "normal",
+  heads_up: "high",
+  missing: "urgent",
+  escalated: "urgent",
+  late_upload: "normal",
+  manual: "high",
 };
 
-const actionUrl = (branchId: string, processId: string, weekStart: string): string =>
+const actionUrl = (
+  branchId: string,
+  processId: string,
+  weekStart: string,
+): string =>
   `/wfm/roster-import?tab=tracker&branchId=${branchId}&processId=${processId}&week=${weekStart}`;
 
 interface Target {
@@ -73,7 +81,11 @@ interface Target {
   role: RecipientKind;
 }
 
-async function resolveTargets(row: TrackerProcessRow, wfm: PersonRef[], kinds: readonly RecipientKind[]): Promise<Target[]> {
+async function resolveTargets(
+  row: TrackerProcessRow,
+  wfm: PersonRef[],
+  kinds: readonly RecipientKind[],
+): Promise<Target[]> {
   const targets: Target[] = [];
   const seen = new Set<string>();
   const add = (people: PersonRef[], role: RecipientKind) => {
@@ -83,17 +95,31 @@ async function resolveTargets(row: TrackerProcessRow, wfm: PersonRef[], kinds: r
       targets.push({ user: person, role });
     }
   };
-  if (kinds.includes('wfm')) add(wfm, 'wfm');
-  if (kinds.includes('manager')) add(row.managers, 'manager');
-  if (kinds.includes('skip_level')) add(await loadSkipLevel(row.branchId, row.managers), 'skip_level');
+  if (kinds.includes("wfm")) add(wfm, "wfm");
+  if (kinds.includes("manager")) add(row.managers, "manager");
+  if (kinds.includes("skip_level"))
+    add(await loadSkipLevel(row.branchId, row.managers), "skip_level");
   return targets;
 }
 
 /** Claims the alert row; false when this recipient already got this stage. */
-async function claim(row: TrackerProcessRow, weekStart: string, stage: SweepStage, target: Target): Promise<boolean> {
-  const params = [randomUUID(), row.branchId, row.processId, weekStart, stage, target.user.userId, target.role];
+async function claim(
+  row: TrackerProcessRow,
+  weekStart: string,
+  stage: SweepStage,
+  target: Target,
+): Promise<boolean> {
+  const params = [
+    randomUUID(),
+    row.branchId,
+    row.processId,
+    weekStart,
+    stage,
+    target.user.userId,
+    target.role,
+  ];
   const columns = `(id, branch_id, process_id, week_start, stage, recipient_user_id, recipient_role, sent_at)`;
-  if (stage === 'manual') {
+  if (stage === "manual") {
     // Manual reminders may repeat: refresh the timestamp instead of blocking.
     await db.execute(
       `INSERT INTO wfm_roster_upload_alert ${columns} VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
@@ -110,8 +136,13 @@ async function claim(row: TrackerProcessRow, weekStart: string, stage: SweepStag
   return res.affectedRows === 1;
 }
 
-async function deliver(row: TrackerProcessRow, weekStart: string, stage: SweepStage, target: Target): Promise<void> {
-  const { inboxService } = await import('../inbox/inbox.service.js');
+async function deliver(
+  row: TrackerProcessRow,
+  weekStart: string,
+  stage: SweepStage,
+  target: Target,
+): Promise<void> {
+  const { inboxService } = await import("../inbox/inbox.service.js");
   await inboxService.createItem({
     user_id: target.user.userId as string,
     type: INBOX_TYPE,
@@ -140,8 +171,14 @@ async function sendToTargets(
       delivered += 1;
     } catch (err) {
       logger.warn(
-        { err: (err as Error).message, branchId: row.branchId, processId: row.processId, weekStart, stage },
-        '[roster-upload-escalation] delivery failed',
+        {
+          err: (err as Error).message,
+          branchId: row.branchId,
+          processId: row.processId,
+          weekStart,
+          stage,
+        },
+        "[roster-upload-escalation] delivery failed",
       );
     }
   }
@@ -163,33 +200,56 @@ const FIRST_WEEK_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
  */
 function alertableWeeks(candidates: string[]): string[] {
   const from = process.env.ROSTER_UPLOAD_ESCALATION_FROM_WEEK?.trim();
-  return from && FIRST_WEEK_PATTERN.test(from) ? candidates.filter((w) => w >= from) : candidates;
+  return from && FIRST_WEEK_PATTERN.test(from)
+    ? candidates.filter((w) => w >= from)
+    : candidates;
 }
 
 /** Current and next week are the only weeks with live deadlines. */
-export async function runRosterUploadEscalation(options: SweepOptions = {}): Promise<SweepResult> {
+export async function runRosterUploadEscalation(
+  options: SweepOptions = {},
+): Promise<SweepResult> {
   const nowMs = options.nowMs ?? Date.now();
   const dryRun = options.dryRun ?? false;
   const thisWeek = currentWeekStart(nowMs);
   const weeks = alertableWeeks([thisWeek, addDays(thisWeek, 7)]);
-  if (weeks.length === 0) return { dryRun, weeks, actions: [], delivered: 0, skippedAlreadySent: 0 };
+  if (weeks.length === 0)
+    return { dryRun, weeks, actions: [], delivered: 0, skippedAlreadySent: 0 };
 
   const sent = await loadSentStages(weeks);
   const { rows, directory } = await loadGrid(weeks, nowMs);
-  const index = new Map<string, { row: TrackerProcessRow; weekStart: string }>();
+  const index = new Map<
+    string,
+    { row: TrackerProcessRow; weekStart: string }
+  >();
   const candidates = rows.flatMap((row) =>
     row.cells.map((cell) => {
       const key = `${row.branchId}|${row.processId}|${cell.weekStart}`;
       index.set(key, { row, weekStart: cell.weekStart });
-      return { key, weekStart: cell.weekStart, status: cell.status, sentStages: sent.get(key) ?? new Set<EscalationStage>() };
+      return {
+        key,
+        weekStart: cell.weekStart,
+        status: cell.status,
+        sentStages: sent.get(key) ?? new Set<EscalationStage>(),
+      };
     }),
   );
 
-  const result: SweepResult = { dryRun, weeks, actions: [], delivered: 0, skippedAlreadySent: 0 };
+  const result: SweepResult = {
+    dryRun,
+    weeks,
+    actions: [],
+    delivered: 0,
+    skippedAlreadySent: 0,
+  };
   for (const action of planEscalations(candidates, nowMs)) {
     const entry = index.get(action.key);
     if (!entry) continue;
-    const targets = await resolveTargets(entry.row, directory.wfmByBranch.get(entry.row.branchId) ?? [], STAGE_RECIPIENTS[action.stage]);
+    const targets = await resolveTargets(
+      entry.row,
+      directory.wfmByBranch.get(entry.row.branchId) ?? [],
+      STAGE_RECIPIENTS[action.stage],
+    );
     result.actions.push({
       branchName: entry.row.branchName,
       processName: entry.row.processName,
@@ -200,18 +260,32 @@ export async function runRosterUploadEscalation(options: SweepOptions = {}): Pro
     });
     if (targets.length === 0) {
       logger.warn(
-        { branch: entry.row.branchName, process: entry.row.processName, week: entry.weekStart, stage: action.stage },
-        '[roster-upload-escalation] nobody to notify — map a branch WFM user / process manager',
+        {
+          branch: entry.row.branchName,
+          process: entry.row.processName,
+          week: entry.weekStart,
+          stage: action.stage,
+        },
+        "[roster-upload-escalation] nobody to notify — map a branch WFM user / process manager",
       );
       continue;
     }
-    if (!dryRun) result.delivered += await sendToTargets(entry.row, entry.weekStart, action.stage, targets);
+    if (!dryRun)
+      result.delivered += await sendToTargets(
+        entry.row,
+        entry.weekStart,
+        action.stage,
+        targets,
+      );
   }
   return result;
 }
 
 export class ReminderError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -224,9 +298,16 @@ export async function sendManualReminder(
   nowMs = Date.now(),
 ): Promise<{ notified: string[] }> {
   const detail = await getCellDetail(branchId, processId, weekStart, nowMs);
-  if (!detail) throw new ReminderError(404, 'That process has no active employees in this branch.');
-  if (detail.cell.status === 'uploaded' || detail.cell.status === 'delayed') {
-    throw new ReminderError(409, 'The roster for this week is already fully uploaded.');
+  if (!detail)
+    throw new ReminderError(
+      404,
+      "That process has no active employees in this branch.",
+    );
+  if (detail.cell.status === "uploaded" || detail.cell.status === "delayed") {
+    throw new ReminderError(
+      409,
+      "The roster for this week is already fully uploaded.",
+    );
   }
   const row: TrackerProcessRow = {
     branchId,
@@ -236,14 +317,20 @@ export async function sendManualReminder(
     managers: detail.managers,
     cells: [detail.cell],
   };
-  const targets = await resolveTargets(row, detail.wfm, ['wfm', 'manager']);
+  const targets = await resolveTargets(row, detail.wfm, ["wfm", "manager"]);
   if (targets.length === 0) {
-    throw new ReminderError(422, 'No branch WFM user or process manager is mapped for this process, so nobody can be notified.');
+    throw new ReminderError(
+      422,
+      "No branch WFM user or process manager is mapped for this process, so nobody can be notified.",
+    );
   }
-  const delivered = await sendToTargets(row, weekStart, 'manual', targets);
+  const delivered = await sendToTargets(row, weekStart, "manual", targets);
   if (delivered === 0) {
     // Every claim/delivery failed — most likely migration 1834 (the alert table) is not applied yet.
-    throw new ReminderError(503, 'Reminders are not enabled yet: the alert log table (migration 1834) is missing or delivery failed.');
+    throw new ReminderError(
+      503,
+      "Reminders are not enabled yet: the alert log table (migration 1834) is missing or delivery failed.",
+    );
   }
   return { notified: targets.map((t) => t.user.name) };
 }

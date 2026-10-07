@@ -29,7 +29,10 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: ACTOR }; next(); },
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.authUser = { id: ACTOR };
+    next();
+  },
 }));
 vi.mock("../../../shared/scopeAccess.js", () => ({
   hasAnyRole: vi.fn().mockResolvedValue(true),
@@ -51,8 +54,16 @@ const baseBatch = {
 };
 
 const {
-  getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
-  claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
+  getBatch,
+  assertCanApprove,
+  markDecided,
+  markStageDecided,
+  markStageRejected,
+  claimForDecision,
+  releaseClaim,
+  releaseStuckClaim,
+  auditBatchAction,
+  sendPartialApplyEmail,
 } = vi.hoisted(() => ({
   getBatch: vi.fn(),
   assertCanApprove: vi.fn(),
@@ -69,23 +80,39 @@ const {
 // The real stage machine, not a stub — the route reads STAGE_RULES[stage].from for both
 // its claim and its optimistic guard, so a hand-written stub would let a broken guard pass.
 const STAGE_RULES = {
-  branch: { from: "pending_branch_head", to: "pending_payroll_head", roles: ["branch_head"], label: "Branch Head", applies: false },
-  payroll: { from: "pending_payroll_head", to: "approved", roles: ["payroll_head"], label: "Payroll Head", applies: true },
+  branch: {
+    from: "pending_branch_head",
+    to: "pending_payroll_head",
+    roles: ["branch_head"],
+    label: "Branch Head",
+    applies: false,
+  },
+  payroll: {
+    from: "pending_payroll_head",
+    to: "approved",
+    roles: ["payroll_head"],
+    label: "Payroll Head",
+    applies: true,
+  },
 };
 const TWO_STAGE_TYPES = new Set(["INCENTIVE_BULK", "DEDUCTION_BULK"]);
 
 vi.mock("../bulk-approval.service.js", () => ({
   APPROVAL_GATED_TYPES: new Set([
-    "ATTENDANCE_REGULARIZATION_BULK", "LEAVE_APPLICATION_BULK",
-    "INCENTIVE_BULK", "DEDUCTION_BULK",
+    "ATTENDANCE_REGULARIZATION_BULK",
+    "LEAVE_APPLICATION_BULK",
+    "INCENTIVE_BULK",
+    "DEDUCTION_BULK",
   ]),
   APPROVER_ROLES: ["branch_head"],
   PAYROLL_APPROVER_ROLES: ["payroll_head"],
   TWO_STAGE_TYPES,
   STAGE_RULES,
   resolveStage: (b: { approval_status: string | null }) =>
-    b.approval_status === "pending_branch_head" ? "branch"
-      : b.approval_status === "pending_payroll_head" ? "payroll"
+    b.approval_status === "pending_branch_head"
+      ? "branch"
+      : b.approval_status === "pending_payroll_head"
+        ? "payroll"
         : null,
   stageOutcome: (stage: "branch" | "payroll", typeCode: string) =>
     stage === "branch" && !TWO_STAGE_TYPES.has(typeCode)
@@ -93,45 +120,79 @@ vi.mock("../bulk-approval.service.js", () => ({
       : { next: STAGE_RULES[stage].to, applies: STAGE_RULES[stage].applies },
   BulkUploadError: class BulkUploadError extends Error {
     statusCode: number;
-    constructor(message: string, statusCode = 400) { super(message); this.statusCode = statusCode; }
+    constructor(message: string, statusCode = 400) {
+      super(message);
+      this.statusCode = statusCode;
+    }
   },
-  getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
-  claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
+  getBatch,
+  assertCanApprove,
+  markDecided,
+  markStageDecided,
+  markStageRejected,
+  claimForDecision,
+  releaseClaim,
+  releaseStuckClaim,
+  auditBatchAction,
+  sendPartialApplyEmail,
   // Verifies apply*Batch's applied count against the real record — a no-op stub here
   // since these fixtures never diverge from what applyIncentiveBatch/applyDeductionBatch
   // report. Present only so the route's named import resolves under vi.mock.
-  verifyRowsActuallyApplied: vi.fn().mockResolvedValue({ checked: 0, confirmed: 0, mismatched: 0 }),
+  verifyRowsActuallyApplied: vi
+    .fn()
+    .mockResolvedValue({ checked: 0, confirmed: 0, mismatched: 0 }),
 }));
 
-const { applyIncentiveBatch, rejectIncentiveBatch, applyDeductionBatch } = vi.hoisted(() => ({
-  applyIncentiveBatch: vi.fn().mockResolvedValue({ applied: 40, failed: 0, errors: [] }),
-  rejectIncentiveBatch: vi.fn().mockResolvedValue({ applied: 40, failed: 0, errors: [] }),
-  applyDeductionBatch: vi.fn().mockResolvedValue({ applied: 40, failed: 0, errors: [] }),
+const { applyIncentiveBatch, rejectIncentiveBatch, applyDeductionBatch } =
+  vi.hoisted(() => ({
+    applyIncentiveBatch: vi
+      .fn()
+      .mockResolvedValue({ applied: 40, failed: 0, errors: [] }),
+    rejectIncentiveBatch: vi
+      .fn()
+      .mockResolvedValue({ applied: 40, failed: 0, errors: [] }),
+    applyDeductionBatch: vi
+      .fn()
+      .mockResolvedValue({ applied: 40, failed: 0, errors: [] }),
+  }));
+vi.mock("../incentive-bulk.service.js", () => ({
+  applyIncentiveBatch,
+  rejectIncentiveBatch,
 }));
-vi.mock("../incentive-bulk.service.js", () => ({ applyIncentiveBatch, rejectIncentiveBatch }));
-vi.mock("../deduction-bulk.service.js", () => ({ applyDeductionBatch, rejectDeductionBatch: vi.fn() }));
+vi.mock("../deduction-bulk.service.js", () => ({
+  applyDeductionBatch,
+  rejectDeductionBatch: vi.fn(),
+}));
 vi.mock("../attendance-regularization-bulk.service.js", () => ({
-  applyRegularizationBatch: vi.fn(), rejectRegularizationBatch: vi.fn(),
+  applyRegularizationBatch: vi.fn(),
+  rejectRegularizationBatch: vi.fn(),
 }));
 vi.mock("../leave-application-bulk.service.js", () => ({
-  applyLeaveBatch: vi.fn(), rejectLeaveBatch: vi.fn(),
+  applyLeaveBatch: vi.fn(),
+  rejectLeaveBatch: vi.fn(),
 }));
 
 vi.mock("../bulk-approval-review.service.js", () => ({
-  getBatchReview: vi.fn(), getBatchEmployees: vi.fn(), discardRows: vi.fn(),
+  getBatchReview: vi.fn(),
+  getBatchEmployees: vi.fn(),
+  discardRows: vi.fn(),
   isReviewable: (t: string) => t === "INCENTIVE_BULK" || t === "DEDUCTION_BULK",
   BATCH_ENTITY_TYPE: "bulk_upload_batch",
 }));
 
 const { notifyBatchCreator } = vi.hoisted(() => ({
-  notifyBatchCreator: vi.fn().mockResolvedValue({ email: true, inbox: true, sms: false }),
+  notifyBatchCreator: vi
+    .fn()
+    .mockResolvedValue({ email: true, inbox: true, sms: false }),
 }));
 vi.mock("../bulk-approval-notify.service.js", () => ({ notifyBatchCreator }));
 
 const { triggerBulkBatchApproval } = vi.hoisted(() => ({
   triggerBulkBatchApproval: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({ triggerBulkBatchApproval }));
+vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({
+  triggerBulkBatchApproval,
+}));
 
 const { recordFinanceApprovalEvent } = vi.hoisted(() => ({
   recordFinanceApprovalEvent: vi.fn().mockResolvedValue(undefined),
@@ -150,7 +211,8 @@ async function app() {
 }
 
 /** The decision runs detached from the request, so wait for its effect, not the response. */
-const settle = () => vi.waitFor(() => expect(markStageDecided).toHaveBeenCalled());
+const settle = () =>
+  vi.waitFor(() => expect(markStageDecided).toHaveBeenCalled());
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -196,7 +258,10 @@ describe("stage 1 — Branch Head", () => {
       .send({ remarks: "Checked against the branch incentive sheet" });
     await settle();
 
-    expect(claimForDecision).toHaveBeenCalledWith(BATCH_ID, "pending_branch_head");
+    expect(claimForDecision).toHaveBeenCalledWith(
+      BATCH_ID,
+      "pending_branch_head",
+    );
   });
 
   it("tells the Payroll Head there is something waiting", async () => {
@@ -234,16 +299,24 @@ describe("stage 2 — Payroll Head", () => {
       .send({ remarks: "Final approval for September payroll" });
 
     await vi.waitFor(() => expect(applyIncentiveBatch).toHaveBeenCalled());
-    expect(claimForDecision).toHaveBeenCalledWith(BATCH_ID, "pending_payroll_head");
+    expect(claimForDecision).toHaveBeenCalledWith(
+      BATCH_ID,
+      "pending_payroll_head",
+    );
   });
 });
 
 describe("single-stage types are unchanged", () => {
   it("a regularization batch still applies on the Branch Head's approval", async () => {
-    const { applyRegularizationBatch } = await import("../attendance-regularization-bulk.service.js");
-    (applyRegularizationBatch as unknown as ReturnType<typeof vi.fn>)
-      .mockResolvedValue({ applied: 5, failed: 0, errors: [] });
-    getBatch.mockResolvedValue({ ...baseBatch, upload_type_code: "ATTENDANCE_REGULARIZATION_BULK" });
+    const { applyRegularizationBatch } =
+      await import("../attendance-regularization-bulk.service.js");
+    (
+      applyRegularizationBatch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ applied: 5, failed: 0, errors: [] });
+    getBatch.mockResolvedValue({
+      ...baseBatch,
+      upload_type_code: "ATTENDANCE_REGULARIZATION_BULK",
+    });
 
     await request(await app())
       .post(`/api/bulk-upload/approvals/batches/${BATCH_ID}/approve`)
@@ -264,8 +337,9 @@ describe("rejection", () => {
     await vi.waitFor(() => expect(rejectIncentiveBatch).toHaveBeenCalled());
     await vi.waitFor(() => expect(notifyBatchCreator).toHaveBeenCalled());
     expect(notifyBatchCreator.mock.calls[0][0].event).toBe("rejected");
-    expect(notifyBatchCreator.mock.calls[0][0].reason)
-      .toContain("Amounts do not match");
+    expect(notifyBatchCreator.mock.calls[0][0].reason).toContain(
+      "Amounts do not match",
+    );
   });
 
   it("refuses a rejection with no usable reason", async () => {
@@ -280,54 +354,72 @@ describe("rejection", () => {
 
 describe("the state machine itself", () => {
   const DIR = path.resolve(__dirname, "..");
-  const src = fs.readFileSync(path.join(DIR, "bulk-approval.service.ts"), "utf8");
+  const src = fs.readFileSync(
+    path.join(DIR, "bulk-approval.service.ts"),
+    "utf8",
+  );
 
   it("only the two money types get a second stage", async () => {
     // Adding leave or regularization here would route every branch's daily corrections
     // through HO — a product decision, not a refactor.
-    const actual = await vi.importActual<typeof import("../bulk-approval.service.js")>(
-      "../bulk-approval.service.js",
-    );
-    expect([...actual.TWO_STAGE_TYPES].sort()).toEqual(["DEDUCTION_BULK", "INCENTIVE_BULK"]);
+    const actual = await vi.importActual<
+      typeof import("../bulk-approval.service.js")
+    >("../bulk-approval.service.js");
+    expect([...actual.TWO_STAGE_TYPES].sort()).toEqual([
+      "DEDUCTION_BULK",
+      "INCENTIVE_BULK",
+    ]);
   });
 
   it("the Payroll Head stage is the only one that applies", async () => {
-    const actual = await vi.importActual<typeof import("../bulk-approval.service.js")>(
-      "../bulk-approval.service.js",
-    );
+    const actual = await vi.importActual<
+      typeof import("../bulk-approval.service.js")
+    >("../bulk-approval.service.js");
     expect(actual.STAGE_RULES.branch.applies).toBe(false);
     expect(actual.STAGE_RULES.payroll.applies).toBe(true);
   });
 
   it("a single-stage type still applies at the branch stage", async () => {
-    const actual = await vi.importActual<typeof import("../bulk-approval.service.js")>(
-      "../bulk-approval.service.js",
-    );
-    expect(actual.stageOutcome("branch", "LEAVE_APPLICATION_BULK"))
-      .toEqual({ next: "approved", applies: true });
-    expect(actual.stageOutcome("branch", "INCENTIVE_BULK"))
-      .toEqual({ next: "pending_payroll_head", applies: false });
+    const actual = await vi.importActual<
+      typeof import("../bulk-approval.service.js")
+    >("../bulk-approval.service.js");
+    expect(actual.stageOutcome("branch", "LEAVE_APPLICATION_BULK")).toEqual({
+      next: "approved",
+      applies: true,
+    });
+    expect(actual.stageOutcome("branch", "INCENTIVE_BULK")).toEqual({
+      next: "pending_payroll_head",
+      applies: false,
+    });
   });
 
   it("no uploader role can approve at either stage", async () => {
-    const actual = await vi.importActual<typeof import("../bulk-approval.service.js")>(
-      "../bulk-approval.service.js",
+    const actual = await vi.importActual<
+      typeof import("../bulk-approval.service.js")
+    >("../bulk-approval.service.js");
+    const approvers = [
+      ...actual.APPROVER_ROLES,
+      ...actual.PAYROLL_APPROVER_ROLES,
+    ];
+    expect(actual.UPLOADER_ROLES.filter((r) => approvers.includes(r))).toEqual(
+      [],
     );
-    const approvers = [...actual.APPROVER_ROLES, ...actual.PAYROLL_APPROVER_ROLES];
-    expect(actual.UPLOADER_ROLES.filter((r) => approvers.includes(r))).toEqual([]);
   });
 
   it("payroll_hr can upload — it is named as an uploader in the design", async () => {
-    const actual = await vi.importActual<typeof import("../bulk-approval.service.js")>(
-      "../bulk-approval.service.js",
-    );
+    const actual = await vi.importActual<
+      typeof import("../bulk-approval.service.js")
+    >("../bulk-approval.service.js");
     expect(actual.UPLOADER_ROLES).toContain("payroll_hr");
   });
 
   it("the stage is derived from the batch, never taken from the request", () => {
     // A caller that could name its own stage could hand itself the Payroll Head step on
     // a batch no Branch Head had seen.
-    const routes = fs.readFileSync(path.join(DIR, "bulk-approval.routes.ts"), "utf8");
+    const routes = fs.readFileSync(
+      path.join(DIR, "bulk-approval.routes.ts"),
+      "utf8",
+    );
     expect(routes).toContain("const stage = resolveStage(batch)");
     expect(routes).not.toMatch(/req\.body[^\n]*\bstage\b/);
   });

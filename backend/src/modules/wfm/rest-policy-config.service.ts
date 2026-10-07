@@ -23,7 +23,8 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
  * actively-shared file while both are still moving.
  */
 
-export type RestPolicyScopeType = "organization" | "branch" | "process" | "employee";
+export type RestPolicyScopeType =
+  "organization" | "branch" | "process" | "employee";
 
 export interface RestPolicyRow extends RowDataPacket {
   id: string;
@@ -58,7 +59,10 @@ export interface UpdateRestPolicyInput {
   reason?: string | null;
 }
 
-const SCOPE_TABLE: Record<Exclude<RestPolicyScopeType, "organization">, string> = {
+const SCOPE_TABLE: Record<
+  Exclude<RestPolicyScopeType, "organization">,
+  string
+> = {
   branch: "branch_master",
   process: "process_master",
   employee: "employees",
@@ -67,64 +71,124 @@ const SCOPE_TABLE: Record<Exclude<RestPolicyScopeType, "organization">, string> 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function assertValidCreateInput(input: CreateRestPolicyInput) {
-  const validScopes: RestPolicyScopeType[] = ["organization", "branch", "process", "employee"];
+  const validScopes: RestPolicyScopeType[] = [
+    "organization",
+    "branch",
+    "process",
+    "employee",
+  ];
   if (!validScopes.includes(input.scope_type)) {
-    throw Object.assign(new Error(`scope_type must be one of ${validScopes.join(", ")}`), { statusCode: 400 });
+    throw Object.assign(
+      new Error(`scope_type must be one of ${validScopes.join(", ")}`),
+      { statusCode: 400 },
+    );
   }
   if (input.scope_type === "organization") {
     if (input.scope_id) {
-      throw Object.assign(new Error("scope_id must be omitted for scope_type=organization"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("scope_id must be omitted for scope_type=organization"),
+        { statusCode: 400 },
+      );
     }
   } else if (!input.scope_id) {
-    throw Object.assign(new Error(`scope_id is required for scope_type=${input.scope_type}`), { statusCode: 400 });
+    throw Object.assign(
+      new Error(`scope_id is required for scope_type=${input.scope_type}`),
+      { statusCode: 400 },
+    );
   }
-  if (!Number.isInteger(input.minimum_rest_minutes) || input.minimum_rest_minutes <= 0) {
-    throw Object.assign(new Error("minimum_rest_minutes must be a positive integer"), { statusCode: 400 });
+  if (
+    !Number.isInteger(input.minimum_rest_minutes) ||
+    input.minimum_rest_minutes <= 0
+  ) {
+    throw Object.assign(
+      new Error("minimum_rest_minutes must be a positive integer"),
+      { statusCode: 400 },
+    );
   }
   if (input.minimum_rest_minutes > 24 * 60) {
-    throw Object.assign(new Error("minimum_rest_minutes cannot exceed 1440 (24 hours)"), { statusCode: 400 });
+    throw Object.assign(
+      new Error("minimum_rest_minutes cannot exceed 1440 (24 hours)"),
+      { statusCode: 400 },
+    );
   }
   if (!input.effective_from || !DATE_RE.test(input.effective_from)) {
-    throw Object.assign(new Error("effective_from is required in YYYY-MM-DD format"), { statusCode: 400 });
+    throw Object.assign(
+      new Error("effective_from is required in YYYY-MM-DD format"),
+      { statusCode: 400 },
+    );
   }
   if (input.effective_to && !DATE_RE.test(input.effective_to)) {
-    throw Object.assign(new Error("effective_to must be in YYYY-MM-DD format"), { statusCode: 400 });
+    throw Object.assign(
+      new Error("effective_to must be in YYYY-MM-DD format"),
+      { statusCode: 400 },
+    );
   }
   if (input.effective_to && input.effective_to < input.effective_from) {
-    throw Object.assign(new Error("effective_to must be on or after effective_from"), { statusCode: 400 });
+    throw Object.assign(
+      new Error("effective_to must be on or after effective_from"),
+      { statusCode: 400 },
+    );
   }
 }
 
-async function assertScopeIdExists(scopeType: RestPolicyScopeType, scopeId: string | null | undefined) {
+async function assertScopeIdExists(
+  scopeType: RestPolicyScopeType,
+  scopeId: string | null | undefined,
+) {
   if (scopeType === "organization" || !scopeId) return;
   const table = SCOPE_TABLE[scopeType];
-  const [rows] = await db.execute<RowDataPacket[]>(`SELECT 1 FROM ${table} WHERE id = ? LIMIT 1`, [scopeId]);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM ${table} WHERE id = ? LIMIT 1`,
+    [scopeId],
+  );
   if (!rows[0]) {
-    throw Object.assign(new Error(`scope_id does not match any row in ${table}`), { statusCode: 400 });
+    throw Object.assign(
+      new Error(`scope_id does not match any row in ${table}`),
+      { statusCode: 400 },
+    );
   }
 }
 
 export const restPolicyConfigService = {
-  async list(filters: { scope_type?: string; active_status?: string }): Promise<RestPolicyRow[]> {
+  async list(filters: {
+    scope_type?: string;
+    active_status?: string;
+  }): Promise<RestPolicyRow[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.scope_type) { conds.push("scope_type = ?"); params.push(filters.scope_type); }
-    if (filters.active_status !== undefined) { conds.push("active_status = ?"); params.push(Number(filters.active_status)); }
+    if (filters.scope_type) {
+      conds.push("scope_type = ?");
+      params.push(filters.scope_type);
+    }
+    if (filters.active_status !== undefined) {
+      conds.push("active_status = ?");
+      params.push(Number(filters.active_status));
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RestPolicyRow[]>(
       `SELECT * FROM wfm_rest_policy ${where} ORDER BY scope_type ASC, effective_from DESC`,
-      params
+      params,
     );
     return rows;
   },
 
   async get(id: string): Promise<RestPolicyRow> {
-    const [rows] = await db.execute<RestPolicyRow[]>("SELECT * FROM wfm_rest_policy WHERE id = ? LIMIT 1", [id]);
-    if (!rows[0]) throw Object.assign(new Error("Rest policy not found"), { statusCode: 404 });
+    const [rows] = await db.execute<RestPolicyRow[]>(
+      "SELECT * FROM wfm_rest_policy WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (!rows[0])
+      throw Object.assign(new Error("Rest policy not found"), {
+        statusCode: 404,
+      });
     return rows[0];
   },
 
-  async create(input: CreateRestPolicyInput, userId: string, req?: Request): Promise<RestPolicyRow> {
+  async create(
+    input: CreateRestPolicyInput,
+    userId: string,
+    req?: Request,
+  ): Promise<RestPolicyRow> {
     assertValidCreateInput(input);
     await assertScopeIdExists(input.scope_type, input.scope_id);
 
@@ -146,14 +210,16 @@ export const restPolicyConfigService = {
           input.reason ?? null,
           userId,
           userId,
-        ]
+        ],
       );
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code;
       if (code === "ER_DUP_ENTRY") {
         throw Object.assign(
-          new Error("A policy for this exact scope and effective window already exists — adjust effective_from/effective_to or edit the existing row instead"),
-          { statusCode: 409 }
+          new Error(
+            "A policy for this exact scope and effective window already exists — adjust effective_from/effective_to or edit the existing row instead",
+          ),
+          { statusCode: 409 },
         );
       }
       throw err;
@@ -165,7 +231,11 @@ export const restPolicyConfigService = {
       module_key: "wfm_rest_policy",
       entity_type: "wfm_rest_policy",
       entity_id: id,
-      change_summary: { scope_type: input.scope_type, scope_id: input.scope_id ?? null, minimum_rest_minutes: input.minimum_rest_minutes },
+      change_summary: {
+        scope_type: input.scope_type,
+        scope_id: input.scope_id ?? null,
+        minimum_rest_minutes: input.minimum_rest_minutes,
+      },
       req,
     });
     return this.get(id);
@@ -177,36 +247,76 @@ export const restPolicyConfigService = {
    * resolver's own scope-window uniqueness model). Only the policy's own
    * terms can change.
    */
-  async update(id: string, input: UpdateRestPolicyInput, userId: string, req?: Request): Promise<RestPolicyRow> {
+  async update(
+    id: string,
+    input: UpdateRestPolicyInput,
+    userId: string,
+    req?: Request,
+  ): Promise<RestPolicyRow> {
     const existing = await this.get(id);
     if (input.minimum_rest_minutes !== undefined) {
-      if (!Number.isInteger(input.minimum_rest_minutes) || input.minimum_rest_minutes <= 0 || input.minimum_rest_minutes > 24 * 60) {
-        throw Object.assign(new Error("minimum_rest_minutes must be a positive integer, at most 1440"), { statusCode: 400 });
+      if (
+        !Number.isInteger(input.minimum_rest_minutes) ||
+        input.minimum_rest_minutes <= 0 ||
+        input.minimum_rest_minutes > 24 * 60
+      ) {
+        throw Object.assign(
+          new Error(
+            "minimum_rest_minutes must be a positive integer, at most 1440",
+          ),
+          { statusCode: 400 },
+        );
       }
     }
     if (input.effective_to && !DATE_RE.test(input.effective_to)) {
-      throw Object.assign(new Error("effective_to must be in YYYY-MM-DD format"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("effective_to must be in YYYY-MM-DD format"),
+        { statusCode: 400 },
+      );
     }
     if (input.effective_to && input.effective_to < existing.effective_from) {
-      throw Object.assign(new Error("effective_to must be on or after effective_from"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("effective_to must be on or after effective_from"),
+        { statusCode: 400 },
+      );
     }
 
     const sets: string[] = [];
     const params: unknown[] = [];
-    if (input.minimum_rest_minutes !== undefined) { sets.push("minimum_rest_minutes = ?"); params.push(input.minimum_rest_minutes); }
-    if (input.allows_emergency_override !== undefined) { sets.push("allows_emergency_override = ?"); params.push(input.allows_emergency_override ? 1 : 0); }
-    if (input.effective_to !== undefined) { sets.push("effective_to = ?"); params.push(input.effective_to); }
-    if (input.reason !== undefined) { sets.push("reason = ?"); params.push(input.reason); }
+    if (input.minimum_rest_minutes !== undefined) {
+      sets.push("minimum_rest_minutes = ?");
+      params.push(input.minimum_rest_minutes);
+    }
+    if (input.allows_emergency_override !== undefined) {
+      sets.push("allows_emergency_override = ?");
+      params.push(input.allows_emergency_override ? 1 : 0);
+    }
+    if (input.effective_to !== undefined) {
+      sets.push("effective_to = ?");
+      params.push(input.effective_to);
+    }
+    if (input.reason !== undefined) {
+      sets.push("reason = ?");
+      params.push(input.reason);
+    }
     if (!sets.length) return existing;
 
     params.push(id);
-    await db.execute(`UPDATE wfm_rest_policy SET ${sets.join(", ")} WHERE id = ?`, params);
+    await db.execute(
+      `UPDATE wfm_rest_policy SET ${sets.join(", ")} WHERE id = ?`,
+      params,
+    );
     await logSensitiveAction({
-      actor_user_id: userId, action_type: "REST_POLICY_UPDATED", module_key: "wfm_rest_policy",
+      actor_user_id: userId,
+      action_type: "REST_POLICY_UPDATED",
+      module_key: "wfm_rest_policy",
       // Same interface-has-no-index-signature rule as week-off-policy-config.service.ts's
       // update(): the `as Record<string, unknown>` assertion this replaced does not compile,
       // because UpdateRestPolicyInput is an interface. Spreading into an object literal does.
-      entity_type: "wfm_rest_policy", entity_id: id, change_summary: { ...input }, req,
+      entity_type: "wfm_rest_policy",
+      entity_id: id,
+      change_summary: { ...input },
+      req,
     });
     return this.get(id);
   },
@@ -219,14 +329,20 @@ export const restPolicyConfigService = {
     await this.get(id); // 404s if missing
     const [result] = await db.execute<ResultSetHeader>(
       "UPDATE wfm_rest_policy SET active_status = 0 WHERE id = ? AND active_status = 1",
-      [id]
+      [id],
     );
     if ((result as ResultSetHeader).affectedRows === 0) {
-      throw Object.assign(new Error("Policy not found or already inactive"), { statusCode: 409 });
+      throw Object.assign(new Error("Policy not found or already inactive"), {
+        statusCode: 409,
+      });
     }
     await logSensitiveAction({
-      actor_user_id: userId, action_type: "REST_POLICY_DEACTIVATED", module_key: "wfm_rest_policy",
-      entity_type: "wfm_rest_policy", entity_id: id, req,
+      actor_user_id: userId,
+      action_type: "REST_POLICY_DEACTIVATED",
+      module_key: "wfm_rest_policy",
+      entity_type: "wfm_rest_policy",
+      entity_id: id,
+      req,
     });
   },
 };

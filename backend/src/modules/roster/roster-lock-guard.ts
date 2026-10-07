@@ -15,23 +15,29 @@ import type { RowDataPacket } from "mysql2";
  * ordinary write path.
  */
 
-type Executor = { execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]> };
+type Executor = {
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[T, unknown]>;
+};
 
 /** True when attendance for this exact employee/date is already locked for payroll. */
 export async function isRosterDateLocked(
   dbConn: Executor,
   employeeId: string,
-  rosterDate: string
+  rosterDate: string,
 ): Promise<boolean> {
   const [rows] = await dbConn.execute<RowDataPacket[]>(
     `SELECT is_locked FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1`,
-    [employeeId, rosterDate]
+    [employeeId, rosterDate],
   );
   const row = rows[0];
   return !!row && Number(row.is_locked) === 1;
 }
 
-export type RosterLockCheckResult = { blocked: true; error: string } | { blocked: false };
+export type RosterLockCheckResult =
+  { blocked: true; error: string } | { blocked: false };
 
 /**
  * Same lookup as isRosterDateLocked, but resolved from a wfm_roster_assignment
@@ -43,7 +49,7 @@ export type RosterLockCheckResult = { blocked: true; error: string } | { blocked
  */
 export async function checkAssignmentDateNotLocked(
   dbConn: Executor,
-  assignmentId: string
+  assignmentId: string,
 ): Promise<RosterLockCheckResult> {
   const [rows] = await dbConn.execute<RowDataPacket[]>(
     `SELECT adr.is_locked
@@ -52,7 +58,7 @@ export async function checkAssignmentDateNotLocked(
          ON adr.employee_id = wra.employee_id AND adr.record_date = wra.roster_date
       WHERE wra.id = ?
       LIMIT 1`,
-    [assignmentId]
+    [assignmentId],
   );
   const row = rows[0];
   if (row && Number(row.is_locked) === 1) {
@@ -72,7 +78,7 @@ export async function checkEmployeeDateNotLocked(
   dbConn: Executor,
   employeeId: string,
   rosterDate: string,
-  label = "This roster date"
+  label = "This roster date",
 ): Promise<RosterLockCheckResult> {
   if (await isRosterDateLocked(dbConn, employeeId, rosterDate)) {
     return {

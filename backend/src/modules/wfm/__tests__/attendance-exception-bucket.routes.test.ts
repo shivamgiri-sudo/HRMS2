@@ -24,8 +24,14 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = { id: AUTH_USER_ID };
+  requireAuth: (
+    req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = {
+      id: AUTH_USER_ID,
+    };
     next();
   },
 }));
@@ -36,14 +42,19 @@ import { payableDaysOverrideRouter } from "../../payroll/payable-days-override.r
 function buildApp() {
   const app = express();
   app.use(express.json());
-  app.use("/api/wfm/attendance-exception-bucket", attendanceExceptionBucketRouter);
+  app.use(
+    "/api/wfm/attendance-exception-bucket",
+    attendanceExceptionBucketRouter,
+  );
   app.use("/api/payroll/payable-days-overrides", payableDaysOverrideRouter);
   return app;
 }
 
 /** Grant payroll_head: the guard checks super_admin, admin, payroll_head, payroll_admin in order. */
 function grantPayrollHead() {
-  hasAnyRole.mockImplementation(async (_u: string, role: string) => role === "payroll_head");
+  hasAnyRole.mockImplementation(
+    async (_u: string, role: string) => role === "payroll_head",
+  );
 }
 function grantNothing() {
   hasAnyRole.mockResolvedValue(false);
@@ -60,7 +71,9 @@ describe("attendance exception bucket routes", () => {
     grantPayrollHead();
     execute.mockResolvedValueOnce([[], []]);
 
-    const res = await request(buildApp()).get("/api/wfm/attendance-exception-bucket");
+    const res = await request(buildApp()).get(
+      "/api/wfm/attendance-exception-bucket",
+    );
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -70,7 +83,9 @@ describe("attendance exception bucket routes", () => {
 
   it("refuses a caller who holds none of the payroll roles", async () => {
     grantNothing();
-    const res = await request(buildApp()).get("/api/wfm/attendance-exception-bucket");
+    const res = await request(buildApp()).get(
+      "/api/wfm/attendance-exception-bucket",
+    );
     expect(res.status).toBe(403);
   });
 
@@ -106,7 +121,11 @@ describe("attendance exception bucket routes", () => {
     grantPayrollHead();
     const res = await request(buildApp())
       .post("/api/wfm/attendance-exception-bucket")
-      .send({ employee_id: EMPLOYEE_ID, single_punch_counts_as_present: true, reason: "short" });
+      .send({
+        employee_id: EMPLOYEE_ID,
+        single_punch_counts_as_present: true,
+        reason: "short",
+      });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/at least 10 characters/);
   });
@@ -122,15 +141,18 @@ describe("payable days override routes", () => {
   it("is mounted and answers the list route for a Payroll Head", async () => {
     grantPayrollHead();
     execute.mockResolvedValueOnce([[], []]);
-    const res = await request(buildApp())
-      .get("/api/payroll/payable-days-overrides?runMonth=2026-09");
+    const res = await request(buildApp()).get(
+      "/api/payroll/payable-days-overrides?runMonth=2026-09",
+    );
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
 
   it("refuses a caller who holds none of the payroll roles", async () => {
     grantNothing();
-    const res = await request(buildApp()).get("/api/payroll/payable-days-overrides");
+    const res = await request(buildApp()).get(
+      "/api/payroll/payable-days-overrides",
+    );
     expect(res.status).toBe(403);
   });
 
@@ -138,7 +160,12 @@ describe("payable days override routes", () => {
     grantPayrollHead();
     const res = await request(buildApp())
       .post("/api/payroll/payable-days-overrides")
-      .send({ employee_id: EMPLOYEE_ID, run_month: "September 2026", payable_days: 26, reason: "a long enough reason" });
+      .send({
+        employee_id: EMPLOYEE_ID,
+        run_month: "September 2026",
+        payable_days: 26,
+        reason: "a long enough reason",
+      });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/YYYY-MM/);
   });
@@ -147,7 +174,12 @@ describe("payable days override routes", () => {
     grantPayrollHead();
     const res = await request(buildApp())
       .post("/api/payroll/payable-days-overrides")
-      .send({ employee_id: EMPLOYEE_ID, run_month: "2026-09", payable_days: 45, reason: "a long enough reason" });
+      .send({
+        employee_id: EMPLOYEE_ID,
+        run_month: "2026-09",
+        payable_days: 45,
+        reason: "a long enough reason",
+      });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/cannot exceed 31/);
   });
@@ -156,7 +188,12 @@ describe("payable days override routes", () => {
     grantPayrollHead();
     const res = await request(buildApp())
       .post("/api/payroll/payable-days-overrides")
-      .send({ employee_id: EMPLOYEE_ID, run_month: "2026-09", payable_days: 25.25, reason: "a long enough reason" });
+      .send({
+        employee_id: EMPLOYEE_ID,
+        run_month: "2026-09",
+        payable_days: 25.25,
+        reason: "a long enough reason",
+      });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/whole or half day/);
   });
@@ -171,7 +208,12 @@ describe("payable days override routes", () => {
 
     const res = await request(buildApp())
       .post("/api/payroll/payable-days-overrides")
-      .send({ employee_id: EMPLOYEE_ID, run_month: "2026-09", payable_days: 26, reason: "a long enough reason" });
+      .send({
+        employee_id: EMPLOYEE_ID,
+        run_month: "2026-09",
+        payable_days: 26,
+        reason: "a long enough reason",
+      });
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/cannot be recalculated/);

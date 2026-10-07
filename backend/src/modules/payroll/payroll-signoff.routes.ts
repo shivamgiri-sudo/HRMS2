@@ -1,7 +1,10 @@
 import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -27,7 +30,11 @@ interface SignOffStatus {
 const router = Router();
 const h =
   (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void): void => {
+  (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: (err?: unknown) => void,
+  ): void => {
     fn(req, res).catch(next);
   };
 
@@ -78,7 +85,14 @@ async function buildStatus(
 // ─────────────────────────────────────────────────────────────────────────────
 router.get(
   "/runs/:runId/status",
-  requireRole("finance", "super_admin", "payroll_head", "payroll", "ceo", "admin"),
+  requireRole(
+    "finance",
+    "super_admin",
+    "payroll_head",
+    "payroll",
+    "ceo",
+    "admin",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 
@@ -94,7 +108,9 @@ router.get(
 
     const run = (runRows as RowDataPacket[])[0];
     if (!run) {
-      return res.status(404).json({ success: false, message: "Payroll run not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Payroll run not found" });
     }
 
     const threshold = await getCeoThreshold();
@@ -148,11 +164,23 @@ router.get(
 // headcount that understates by 179 people is not acceptable, and buildStatus()
 // below already derives net salary from the lines for exactly this reason.
 // ─────────────────────────────────────────────────────────────────────────────
-const SYNTHETIC_RUN_CREATORS = ["test-auto-gen", "codex-e2e", "smoke-test", "demo-seed"];
+const SYNTHETIC_RUN_CREATORS = [
+  "test-auto-gen",
+  "codex-e2e",
+  "smoke-test",
+  "demo-seed",
+];
 
 router.get(
   "/runs",
-  requireRole("finance", "super_admin", "payroll_head", "payroll", "ceo", "admin"),
+  requireRole(
+    "finance",
+    "super_admin",
+    "payroll_head",
+    "payroll",
+    "ceo",
+    "admin",
+  ),
   h(async (_req: AuthenticatedRequest, res: Response) => {
     const placeholders = SYNTHETIC_RUN_CREATORS.map(() => "?").join(", ");
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -189,7 +217,8 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
     const actorId = req.authUser!.id;
-    const remarks: string | null = (req.body as { remarks?: string })?.remarks?.trim() || null;
+    const remarks: string | null =
+      (req.body as { remarks?: string })?.remarks?.trim() || null;
 
     // Fetch run
     const [runRows] = await db.execute<RowDataPacket[]>(
@@ -198,10 +227,14 @@ router.post(
     );
     const run = (runRows as RowDataPacket[])[0];
     if (!run) {
-      return res.status(404).json({ success: false, message: "Payroll run not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Payroll run not found" });
     }
     if (run.finance_approved_at) {
-      return res.status(409).json({ success: false, message: "Run is already finance-approved" });
+      return res
+        .status(409)
+        .json({ success: false, message: "Run is already finance-approved" });
     }
 
     // This handler SELECTed status and then never looked at it, so finance sign-off could be
@@ -263,7 +296,10 @@ router.post(
       [runId],
     );
     const threshold = await getCeoThreshold();
-    const statusObj = await buildStatus((updated as RowDataPacket[])[0], threshold);
+    const statusObj = await buildStatus(
+      (updated as RowDataPacket[])[0],
+      threshold,
+    );
 
     return res.json({ success: true, data: statusObj });
   }),
@@ -279,7 +315,8 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
     const actorId = req.authUser!.id;
-    const remarks: string | null = (req.body as { remarks?: string })?.remarks?.trim() || null;
+    const remarks: string | null =
+      (req.body as { remarks?: string })?.remarks?.trim() || null;
 
     // Fetch run
     const [runRows] = await db.execute<RowDataPacket[]>(
@@ -288,10 +325,14 @@ router.post(
     );
     const run = (runRows as RowDataPacket[])[0];
     if (!run) {
-      return res.status(404).json({ success: false, message: "Payroll run not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Payroll run not found" });
     }
     if (run.ceo_acknowledged_at) {
-      return res.status(409).json({ success: false, message: "Run is already CEO-acknowledged" });
+      return res
+        .status(409)
+        .json({ success: false, message: "Run is already CEO-acknowledged" });
     }
 
     // Check whether CEO sign-off is actually required
@@ -304,7 +345,11 @@ router.post(
     if (totalNet <= threshold) {
       return res
         .status(400)
-        .json({ success: false, message: "CEO acknowledgement is not required for this run (total net salary is below threshold)" });
+        .json({
+          success: false,
+          message:
+            "CEO acknowledgement is not required for this run (total net salary is below threshold)",
+        });
     }
 
     await db.execute(
@@ -322,7 +367,12 @@ router.post(
       module_key: "payroll",
       entity_type: "salary_prep_run",
       entity_id: String(runId),
-      change_summary: { run_id: runId, run_month: run.run_month, total_net: totalNet, remarks },
+      change_summary: {
+        run_id: runId,
+        run_month: run.run_month,
+        total_net: totalNet,
+        remarks,
+      },
       req,
     });
 
@@ -334,7 +384,10 @@ router.post(
          FROM salary_prep_run WHERE id = ? LIMIT 1`,
       [runId],
     );
-    const statusObj = await buildStatus((updated as RowDataPacket[])[0], threshold);
+    const statusObj = await buildStatus(
+      (updated as RowDataPacket[])[0],
+      threshold,
+    );
 
     return res.json({ success: true, data: statusObj });
   }),
@@ -358,7 +411,9 @@ router.post(
     );
     const run = (runRows as RowDataPacket[])[0];
     if (!run) {
-      return res.status(404).json({ success: false, message: "Payroll run not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Payroll run not found" });
     }
 
     await db.execute(
@@ -394,7 +449,10 @@ router.post(
       [runId],
     );
     const threshold = await getCeoThreshold();
-    const statusObj = await buildStatus((updated as RowDataPacket[])[0], threshold);
+    const statusObj = await buildStatus(
+      (updated as RowDataPacket[])[0],
+      threshold,
+    );
 
     return res.json({ success: true, data: statusObj });
   }),
@@ -407,7 +465,14 @@ router.post(
 // ─────────────────────────────────────────────────────────────────────────────
 router.get(
   "/runs/:runId/tds-summary",
-  requireRole("finance", "super_admin", "payroll_head", "payroll", "ceo", "admin"),
+  requireRole(
+    "finance",
+    "super_admin",
+    "payroll_head",
+    "payroll",
+    "ceo",
+    "admin",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 
@@ -416,7 +481,9 @@ router.get(
       [runId],
     );
     if (!(runCheck as RowDataPacket[])[0]) {
-      return res.status(404).json({ success: false, message: "Payroll run not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Payroll run not found" });
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -446,9 +513,9 @@ router.get(
     return res.json({
       success: true,
       data: {
-        total_tds:               Number(row.total_tds ?? 0),
+        total_tds: Number(row.total_tds ?? 0),
         employee_count_with_tds: Number(row.employee_count_with_tds ?? 0),
-        avg_tds:                 Number(row.avg_tds ?? 0),
+        avg_tds: Number(row.avg_tds ?? 0),
         regime_breakdown: {
           new: Number(row.regime_new ?? 0),
           old: Number(row.regime_old ?? 0),

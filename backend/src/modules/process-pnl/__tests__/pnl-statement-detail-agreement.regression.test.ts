@@ -61,10 +61,17 @@ const branchOnlyActuals = (branchAmount: number) => ({
 
 function component(key: string, field: string, order: number) {
   return {
-    component_key: key, display_name: key, section_key: "profitability",
-    parent_component_key: null, display_order: order, component_type: "SOURCE_ACTUAL",
-    source_field: field, format_type: "CURRENCY", sign_convention: "+",
-    is_subtotal: 0, active_status: 1,
+    component_key: key,
+    display_name: key,
+    section_key: "profitability",
+    parent_component_key: null,
+    display_order: order,
+    component_type: "SOURCE_ACTUAL",
+    source_field: field,
+    format_type: "CURRENCY",
+    sign_convention: "+",
+    is_subtotal: 0,
+    active_status: 1,
   };
 }
 
@@ -76,7 +83,9 @@ function getStatementWithTotals() {
   ]);
 }
 
-async function buildStatement(extraComponents: ReturnType<typeof component>[] = []) {
+async function buildStatement(
+  extraComponents: ReturnType<typeof component>[] = [],
+) {
   const period = closedPeriod();
   return getStatement({ period, branchId: BRANCH_ID } as never, "process", {
     getComponents: async () => [
@@ -85,26 +94,51 @@ async function buildStatement(extraComponents: ReturnType<typeof component>[] = 
       ...extraComponents,
     ],
     getSummary: async () => ({
-      rows: [{
-        processId: PROCESS_ID, processName: "MNP REJECTION", branchId: BRANCH_ID, branchName: "B1",
-        processStatus: "at-risk",
-        // Canonical revenue: genuinely zero — no rule, no invoice attributable to THIS process.
-        recognizedRevenue: 0,
-        revenueDataStatus: "accounting_fallback",
-        // Canonical cost/profit — the sub-tab's own numbers.
-        agentSalary: 300_000, dscSalary: 0, bmcSalary: 0,
-        dscPeople: 0, bmcPeople: 0, dscNonPeople: 0, bmcNonPeople: 0,
-        ebit: CANONICAL_EBIT,
-        activeHc: 5,
-      }],
+      rows: [
+        {
+          processId: PROCESS_ID,
+          processName: "MNP REJECTION",
+          branchId: BRANCH_ID,
+          branchName: "B1",
+          processStatus: "at-risk",
+          // Canonical revenue: genuinely zero — no rule, no invoice attributable to THIS process.
+          recognizedRevenue: 0,
+          revenueDataStatus: "accounting_fallback",
+          // Canonical cost/profit — the sub-tab's own numbers.
+          agentSalary: 300_000,
+          dscSalary: 0,
+          bmcSalary: 0,
+          dscPeople: 0,
+          bmcPeople: 0,
+          dscNonPeople: 0,
+          bmcNonPeople: 0,
+          ebit: CANONICAL_EBIT,
+          activeHc: 5,
+        },
+      ],
       generatedAt: new Date().toISOString(),
     }),
     getIndirectCost: async () => emptyActuals(),
     // The live bug: nothing at process grain, the whole branch's total at branch grain.
     getDriverRevenue: async () => emptyActuals(),
-    getInvoicedRevenue: async () => branchOnlyActuals(BRANCH_WIDE_INVOICED_REVENUE),
-    getSeatRevenue: async () => ({ ...emptyActuals(), billableEmployees: 0, rateMissingEmployees: 0, unresolvedEmployees: 0, notSeatBilledEmployees: 0, rateMissingByKey: emptyActuals() }),
-    getPeopleCost: async () => ({ byBranch: new Map(), byProcess: new Map(), coverageByBranch: new Map(), coverageByProcess: new Map(), asOfDate: null }) as never,
+    getInvoicedRevenue: async () =>
+      branchOnlyActuals(BRANCH_WIDE_INVOICED_REVENUE),
+    getSeatRevenue: async () => ({
+      ...emptyActuals(),
+      billableEmployees: 0,
+      rateMissingEmployees: 0,
+      unresolvedEmployees: 0,
+      notSeatBilledEmployees: 0,
+      rateMissingByKey: emptyActuals(),
+    }),
+    getPeopleCost: async () =>
+      ({
+        byBranch: new Map(),
+        byProcess: new Map(),
+        coverageByBranch: new Map(),
+        coverageByProcess: new Map(),
+        asOfDate: null,
+      }) as never,
     getProcessSummary: async () => ({ rows: [] }),
   } as never);
 }
@@ -112,7 +146,9 @@ async function buildStatement(extraComponents: ReturnType<typeof component>[] = 
 describe("P&L Statement / Process Detail agreement (regression, 2026-09-01 sign-flip fix)", () => {
   it("does not broadcast the whole branch's invoiced revenue onto a process with no revenue rule (A3)", async () => {
     const statement = await buildStatement();
-    const revenue = statement.rows.find((r) => r.componentKey === "recognized_revenue")?.values[PROCESS_ID];
+    const revenue = statement.rows.find(
+      (r) => r.componentKey === "recognized_revenue",
+    )?.values[PROCESS_ID];
     expect(
       revenue,
       "a process with no per-process revenue rule/invoice must show its OWN revenue (0), never the whole branch's total",
@@ -128,8 +164,13 @@ describe("P&L Statement / Process Detail agreement (regression, 2026-09-01 sign-
    */
   it("prints Operating Profit = Revenue − Total Cost in a process column, and keeps canonical ebit alongside", async () => {
     const statement = await getStatementWithTotals();
-    const value = (key: string) => Number(statement.rows.find((r) => r.componentKey === key)?.values[PROCESS_ID]);
-    expect(value("operating_profit")).toBe(value("recognized_revenue") - value("total_cost"));
+    const value = (key: string) =>
+      Number(
+        statement.rows.find((r) => r.componentKey === key)?.values[PROCESS_ID],
+      );
+    expect(value("operating_profit")).toBe(
+      value("recognized_revenue") - value("total_cost"),
+    );
     expect(value("operating_profit")).toBe(-300_000); // 0 revenue − 3L agent salary − 0 IDC
     expect(value("canonical_ebit")).toBe(CANONICAL_EBIT);
     expect(value("operating_profit")).toBeLessThan(0);
@@ -142,8 +183,12 @@ describe("P&L Statement / Process Detail agreement (regression, 2026-09-01 sign-
     const detailOperatingProfit = CANONICAL_EBIT; // what ProcessPnlDetailPage's sub-tab shows
     const statement = await buildStatement();
     const statementOperatingProfit = Number(
-      statement.rows.find((r) => r.componentKey === "operating_profit")?.values[PROCESS_ID]
+      statement.rows.find((r) => r.componentKey === "operating_profit")?.values[
+        PROCESS_ID
+      ],
     );
-    expect(Math.sign(statementOperatingProfit)).toBe(Math.sign(detailOperatingProfit));
+    expect(Math.sign(statementOperatingProfit)).toBe(
+      Math.sign(detailOperatingProfit),
+    );
   });
 });

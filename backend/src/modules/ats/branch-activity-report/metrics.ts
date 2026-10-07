@@ -504,7 +504,9 @@ export function toFact(
     weekday: weekdayOf(row.arrival_date),
     pipelineStage: pipelineStageOf(
       outcome,
-      stage === "joined" || stage === "onboarded" || Number(row.is_employee) === 1,
+      stage === "joined" ||
+        stage === "onboarded" ||
+        Number(row.is_employee) === 1,
       String(row.cand_status ?? "").toLowerCase(),
       stage,
     ),
@@ -614,7 +616,11 @@ export function summarize(facts: TokenFact[]): Summary {
     open: c("open"),
     otherClosed: c("other_closed"),
     noFeedback: facts.filter(
-      (f) => f.tokenGenerated && !f.formFiled && f.outcome !== "no_show" && f.outcome !== "walkout",
+      (f) =>
+        f.tokenGenerated &&
+        !f.formFiled &&
+        f.outcome !== "no_show" &&
+        f.outcome !== "walkout",
     ).length,
     profileSubmitted: facts.filter((f) => f.profileSubmitted).length,
     openWaiting: open.filter((f) => !f.called && !f.queueCompletedNoOutcome)

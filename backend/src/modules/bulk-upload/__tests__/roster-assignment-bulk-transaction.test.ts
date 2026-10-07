@@ -25,7 +25,9 @@ const lockConn = { query: vi.fn(), release: vi.fn() };
 const { getConnection } = vi.hoisted(() => ({ getConnection: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { getConnection } }));
 
-const { logRosterChange } = vi.hoisted(() => ({ logRosterChange: vi.fn().mockResolvedValue(undefined) }));
+const { logRosterChange } = vi.hoisted(() => ({
+  logRosterChange: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("../../roster/roster-change-log.js", () => ({ logRosterChange }));
 
 import { importRosterAssignmentBatch } from "../roster-assignment-bulk.service.js";
@@ -56,7 +58,9 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     conn.rollback.mockReset();
     conn.release.mockReset();
     lockConn.query.mockReset();
-    lockConn.query.mockImplementation(async (sql: string) => (sql.includes("GET_LOCK") ? [[{ acquired: 1 }], []] : [[], []]));
+    lockConn.query.mockImplementation(async (sql: string) =>
+      sql.includes("GET_LOCK") ? [[{ acquired: 1 }], []] : [[], []],
+    );
     lockConn.release.mockReset();
     logRosterChange.mockClear();
     // Schema-probe caching is module-scope and would otherwise leak the first
@@ -85,10 +89,20 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // 9: UPDATE upload_batch_row
     // 10: UPDATE upload_batch
     queueRows(
-      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
-        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
-        shift_code: "GEN", is_week_off: "0", notes: null,
-      }) }],
+      [
+        {
+          id: "row-1",
+          row_no: 1,
+          normalized_data: JSON.stringify({
+            cycle_id: "cycle-1",
+            employee_code: "MAS001",
+            roster_date: "2026-08-17",
+            shift_code: "GEN",
+            is_week_off: "0",
+            notes: null,
+          }),
+        },
+      ],
       [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       [{ id: "shift-1" }],
       [],
@@ -114,7 +128,9 @@ describe("importRosterAssignmentBatch transaction handling", () => {
       throw new Error("connection lost");
     });
 
-    await expect(importRosterAssignmentBatch("batch-1", "user-1")).rejects.toThrow("connection lost");
+    await expect(
+      importRosterAssignmentBatch("batch-1", "user-1"),
+    ).rejects.toThrow("connection lost");
 
     expect(conn.beginTransaction).toHaveBeenCalledTimes(1);
     expect(conn.commit).not.toHaveBeenCalled();
@@ -134,10 +150,20 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // 11: findAdjacentShifts next -> none
     // 12: UPDATE upload_batch_row (error)   13: UPDATE upload_batch
     queueRows(
-      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
-        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
-        shift_code: "NGT", is_week_off: "0", notes: null,
-      }) }],
+      [
+        {
+          id: "row-1",
+          row_no: 1,
+          normalized_data: JSON.stringify({
+            cycle_id: "cycle-1",
+            employee_code: "MAS001",
+            roster_date: "2026-08-17",
+            shift_code: "NGT",
+            is_week_off: "0",
+            notes: null,
+          }),
+        },
+      ],
       [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       [{ id: "shift-1", start_time: "04:00:00", end_time: "13:00:00" }],
       [],
@@ -145,10 +171,24 @@ describe("importRosterAssignmentBatch transaction handling", () => {
       [],
       [],
       [],
-      [{ id: "policy-1", scope_type: "organization", scope_id: null, minimum_rest_minutes: 600, allows_emergency_override: 0 }],
+      [
+        {
+          id: "policy-1",
+          scope_type: "organization",
+          scope_id: null,
+          minimum_rest_minutes: 600,
+          allows_emergency_override: 0,
+        },
+      ],
       // start_time/end_time are the query's aliases now that findAdjacentShifts
       // COALESCEs the assignment snapshot with the shift template's own times.
-      [{ roster_date: "2026-08-16", start_time: "13:00:00", end_time: "22:00:00" }],
+      [
+        {
+          roster_date: "2026-08-16",
+          start_time: "13:00:00",
+          end_time: "22:00:00",
+        },
+      ],
       [],
       [],
       [],
@@ -160,9 +200,14 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     expect(result.errors[0]).toMatch(/only 360min rest/);
     expect(result.errors[0]).toMatch(/does not support emergency override/);
     const insertCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.startsWith("INSERT INTO wfm_roster_assignment"),
     );
-    expect(insertCall, "a row blocked on insufficient rest must never be inserted").toBeUndefined();
+    expect(
+      insertCall,
+      "a row blocked on insufficient rest must never be inserted",
+    ).toBeUndefined();
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.rollback).not.toHaveBeenCalled();
   });
@@ -185,10 +230,20 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // 15: INSERT wfm_roster_assignment    16: UPDATE upload_batch_row (imported)
     // 17: UPDATE upload_batch
     queueRows(
-      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
-        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
-        shift_code: "NGT", is_week_off: "0", notes: null,
-      }) }],
+      [
+        {
+          id: "row-1",
+          row_no: 1,
+          normalized_data: JSON.stringify({
+            cycle_id: "cycle-1",
+            employee_code: "MAS001",
+            roster_date: "2026-08-17",
+            shift_code: "NGT",
+            is_week_off: "0",
+            notes: null,
+          }),
+        },
+      ],
       [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       [{ id: "shift-1", start_time: "04:00:00", end_time: "13:00:00" }],
       [],
@@ -196,8 +251,23 @@ describe("importRosterAssignmentBatch transaction handling", () => {
       [],
       [],
       [],
-      [{ id: "policy-1", scope_type: "organization", scope_id: null, minimum_rest_minutes: 600, allows_emergency_override: 0, enforcement_mode: "warn" }],
-      [{ roster_date: "2026-08-16", start_time: "13:00:00", end_time: "22:00:00" }],
+      [
+        {
+          id: "policy-1",
+          scope_type: "organization",
+          scope_id: null,
+          minimum_rest_minutes: 600,
+          allows_emergency_override: 0,
+          enforcement_mode: "warn",
+        },
+      ],
+      [
+        {
+          roster_date: "2026-08-16",
+          start_time: "13:00:00",
+          end_time: "22:00:00",
+        },
+      ],
       [],
       [], // recordRestGapWarning's INSERT into wfm_roster_conflict_log
       [], // existing wfm_roster_assignment (before-value lookup) -> none
@@ -213,13 +283,24 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     expect(result.skipped).toBe(0);
     expect(result.imported).toBe(1);
     const warningInsert = conn.execute.mock.calls.find(
-      ([sql]: [string]) => typeof sql === "string" && sql.includes("wfm_roster_conflict_log") && sql.includes("REST_GAP_WARNING"),
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.includes("wfm_roster_conflict_log") &&
+        sql.includes("REST_GAP_WARNING"),
     );
-    expect(warningInsert, "a WARN-mode shortfall must persist a REST_GAP_WARNING, not disappear silently").toBeDefined();
+    expect(
+      warningInsert,
+      "a WARN-mode shortfall must persist a REST_GAP_WARNING, not disappear silently",
+    ).toBeDefined();
     const insertCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.startsWith("INSERT INTO wfm_roster_assignment"),
     );
-    expect(insertCall, "WARN mode must let the row through, not refuse it").toBeDefined();
+    expect(
+      insertCall,
+      "WARN mode must let the row through, not refuse it",
+    ).toBeDefined();
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.rollback).not.toHaveBeenCalled();
   });
@@ -229,10 +310,20 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // 4: attendance_daily_record -> is_locked=1
     // 5: UPDATE upload_batch_row (error)   6: UPDATE upload_batch
     queueRows(
-      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
-        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
-        shift_code: "GEN", is_week_off: "0", notes: null,
-      }) }],
+      [
+        {
+          id: "row-1",
+          row_no: 1,
+          normalized_data: JSON.stringify({
+            cycle_id: "cycle-1",
+            employee_code: "MAS001",
+            roster_date: "2026-08-17",
+            shift_code: "GEN",
+            is_week_off: "0",
+            notes: null,
+          }),
+        },
+      ],
       [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       [{ id: "shift-1" }],
       [{ is_locked: 1 }],
@@ -245,12 +336,18 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     expect(result.skipped).toBe(1);
     expect(result.errors[0]).toMatch(/already locked for payroll/);
     const insertCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.startsWith("INSERT INTO wfm_roster_assignment"),
     );
-    expect(insertCall, "a row blocked on a locked date must never be inserted").toBeUndefined();
+    expect(
+      insertCall,
+      "a row blocked on a locked date must never be inserted",
+    ).toBeUndefined();
     // Never reached the rest-policy feature-active probe either -- the lock check short-circuits first.
     const restProbeCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) => typeof sql === "string" && sql.includes("INFORMATION_SCHEMA.TABLES"),
+      ([sql]: [string]) =>
+        typeof sql === "string" && sql.includes("INFORMATION_SCHEMA.TABLES"),
     );
     expect(restProbeCall).toBeUndefined();
   });
@@ -265,10 +362,20 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // importRosterAssignmentBatch directly against the real DB, 0 successful imports
     // with a shift assigned.
     queueRows(
-      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
-        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
-        shift_code: "GEN", is_week_off: "0", notes: null,
-      }) }],
+      [
+        {
+          id: "row-1",
+          row_no: 1,
+          normalized_data: JSON.stringify({
+            cycle_id: "cycle-1",
+            employee_code: "MAS001",
+            roster_date: "2026-08-17",
+            shift_code: "GEN",
+            is_week_off: "0",
+            notes: null,
+          }),
+        },
+      ],
       [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       [{ id: "shift-1", start_time: "10:00:00", end_time: "19:00:00" }],
       [],
@@ -284,7 +391,9 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     expect(result.imported).toBe(1);
 
     const insertCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.startsWith("INSERT INTO wfm_roster_assignment"),
     );
     expect(insertCall).toBeDefined();
     const [, params] = insertCall as [string, unknown[]];
@@ -297,9 +406,17 @@ describe("importRosterAssignmentBatch transaction handling", () => {
   it("still collects a row-level validation failure without rolling back the transaction", async () => {
     // Row is missing employee_code — a validation failure, not an unexpected error.
     queueRows(
-      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
-        cycle_id: "cycle-1", employee_code: "", roster_date: "2026-08-17",
-      }) }],
+      [
+        {
+          id: "row-1",
+          row_no: 1,
+          normalized_data: JSON.stringify({
+            cycle_id: "cycle-1",
+            employee_code: "",
+            roster_date: "2026-08-17",
+          }),
+        },
+      ],
       [], // UPDATE upload_batch_row (error)
       [], // UPDATE upload_batch
     );
@@ -307,7 +424,9 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     const result = await importRosterAssignmentBatch("batch-1", "user-1");
 
     expect(result.skipped).toBe(1);
-    expect(result.errors[0]).toMatch(/missing cycle_id, employee_code or roster_date/);
+    expect(result.errors[0]).toMatch(
+      /missing cycle_id, employee_code or roster_date/,
+    );
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.rollback).not.toHaveBeenCalled();
   });

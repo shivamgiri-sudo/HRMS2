@@ -8,7 +8,11 @@ import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 // Same role set as BANK_ACCOUNT_WRITE_ROLES in company-bank-account.routes.ts, duplicated
 // (not imported) to avoid a service <-> routes import cycle — routes.ts already imports
 // companyBankAccountService from this file.
-const BALANCE_CHANGE_NOTIFY_ROLES = ["finance_head", "accounts_head", "super_admin"] as const;
+const BALANCE_CHANGE_NOTIFY_ROLES = [
+  "finance_head",
+  "accounts_head",
+  "super_admin",
+] as const;
 
 /**
  * Bell notification when the opening balance changes — same non-blocking, best-effort
@@ -28,7 +32,9 @@ async function notifyOpeningBalanceChanged(
   try {
     const { inboxService } = await import("../inbox/inbox.service.js");
     const roleHolders = await Promise.all(
-      BALANCE_CHANGE_NOTIFY_ROLES.map((role) => resolveRoleHolderUserIds(role, null)),
+      BALANCE_CHANGE_NOTIFY_ROLES.map((role) =>
+        resolveRoleHolderUserIds(role, null),
+      ),
     );
     const userIds = new Set(roleHolders.flat());
     userIds.delete(actorUserId);
@@ -93,7 +99,9 @@ function maskedRow(row: any) {
     bank_id: row.bank_id,
     bank_name: row.bank_name ?? null,
     account_name: row.account_name,
-    account_number_masked: row.account_number_last4 ? `XXXXXX${row.account_number_last4}` : null,
+    account_number_masked: row.account_number_last4
+      ? `XXXXXX${row.account_number_last4}`
+      : null,
     ifsc_code: row.ifsc_code,
     branch_id: row.branch_id,
     branch_name: row.branch_name ?? null,
@@ -108,23 +116,30 @@ function maskedRow(row: any) {
 }
 
 function normaliseInput(input: CompanyBankAccountInput) {
-  const ifscCode = String(input.ifscCode ?? "").trim().toUpperCase();
+  const ifscCode = String(input.ifscCode ?? "")
+    .trim()
+    .toUpperCase();
   if (!IFSC_RE.test(ifscCode)) {
     throw new CompanyBankAccountError(
       "IFSC must be 11 characters: 4 letters, then 0, then 6 letters or digits (e.g. HDFC0001234).",
     );
   }
-  if (!input.accountName?.trim()) throw new CompanyBankAccountError("Account name is required");
+  if (!input.accountName?.trim())
+    throw new CompanyBankAccountError("Account name is required");
   if (!input.bankId) throw new CompanyBankAccountError("Bank is required");
   if (!input.branchId) throw new CompanyBankAccountError("Branch is required");
   if (!input.tallyLedgerName?.trim()) {
-    throw new CompanyBankAccountError("Tally ledger name is required — every export writes this field, never the display name.");
+    throw new CompanyBankAccountError(
+      "Tally ledger name is required — every export writes this field, never the display name.",
+    );
   }
   let accountNumber: string | undefined;
   if (input.accountNumber != null && input.accountNumber !== "") {
     accountNumber = String(input.accountNumber).replace(/[\s-]/g, "");
     if (!ACCOUNT_RE.test(accountNumber)) {
-      throw new CompanyBankAccountError("Account number must be 9 to 18 digits.");
+      throw new CompanyBankAccountError(
+        "Account number must be 9 to 18 digits.",
+      );
     }
   }
   return { ifscCode, accountNumber };
@@ -175,7 +190,9 @@ export const companyBankAccountService = {
   async create(input: CompanyBankAccountInput, actorUserId: string) {
     const { ifscCode, accountNumber } = normaliseInput(input);
     if (!accountNumber) {
-      throw new CompanyBankAccountError("Account number is required when creating an account");
+      throw new CompanyBankAccountError(
+        "Account number is required when creating an account",
+      );
     }
     const id = randomUUID();
     await db.execute(
@@ -205,18 +222,27 @@ export const companyBankAccountService = {
       module_key: "FINANCE",
       entity_type: "company_bank_account",
       entity_id: id,
-      change_summary: { account_name: input.accountName, bank_id: input.bankId, branch_id: input.branchId },
+      change_summary: {
+        account_name: input.accountName,
+        bank_id: input.bankId,
+        branch_id: input.branchId,
+      },
     }).catch(() => undefined);
     return this.get(id);
   },
 
-  async update(id: string, input: Partial<CompanyBankAccountInput>, actorUserId: string) {
+  async update(
+    id: string,
+    input: Partial<CompanyBankAccountInput>,
+    actorUserId: string,
+  ) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM company_bank_account WHERE id = ? LIMIT 1`,
       [id],
     );
     const existing = rows[0];
-    if (!existing) throw new CompanyBankAccountError("Bank account not found", 404);
+    if (!existing)
+      throw new CompanyBankAccountError("Bank account not found", 404);
 
     const merged: CompanyBankAccountInput = {
       bankId: input.bankId ?? existing.bank_id,
@@ -225,13 +251,19 @@ export const companyBankAccountService = {
       ifscCode: input.ifscCode ?? existing.ifsc_code,
       branchId: input.branchId ?? existing.branch_id,
       tallyLedgerName: input.tallyLedgerName ?? existing.tally_ledger_name,
-      openingBalance: input.openingBalance !== undefined ? Number(input.openingBalance) : Number(existing.opening_balance ?? 0),
-      openingBalanceAsOf: input.openingBalanceAsOf ?? existing.opening_balance_as_of,
+      openingBalance:
+        input.openingBalance !== undefined
+          ? Number(input.openingBalance)
+          : Number(existing.opening_balance ?? 0),
+      openingBalanceAsOf:
+        input.openingBalanceAsOf ?? existing.opening_balance_as_of,
     };
     const { ifscCode, accountNumber } = normaliseInput(merged);
 
     const oldOpeningBalance = Number(existing.opening_balance ?? 0);
-    const newOpeningBalance = Number(merged.openingBalance ?? oldOpeningBalance);
+    const newOpeningBalance = Number(
+      merged.openingBalance ?? oldOpeningBalance,
+    );
     const openingBalanceChanged = newOpeningBalance !== oldOpeningBalance;
 
     const setAccountNumber = accountNumber !== undefined;
@@ -250,12 +282,18 @@ export const companyBankAccountService = {
         merged.tallyLedgerName.trim(),
         newOpeningBalance,
         merged.openingBalanceAsOf ?? null,
-        ...(setAccountNumber ? [encryptField(accountNumber as string), (accountNumber as string).slice(-4)] : []),
+        ...(setAccountNumber
+          ? [
+              encryptField(accountNumber as string),
+              (accountNumber as string).slice(-4),
+            ]
+          : []),
         actorUserId,
         id,
       ],
     );
-    if (result.affectedRows !== 1) throw new CompanyBankAccountError("Update did not affect a record");
+    if (result.affectedRows !== 1)
+      throw new CompanyBankAccountError("Update did not affect a record");
 
     // Opening balance is the base the Bank Ledger, the Payment Voucher chain and the Tally
     // export are all built on, so a change to it gets its own audit action type carrying the
@@ -264,17 +302,32 @@ export const companyBankAccountService = {
     // uses for GRN stage alerts.
     await logSensitiveAction({
       actor_user_id: actorUserId,
-      action_type: openingBalanceChanged ? "COMPANY_BANK_ACCOUNT_OPENING_BALANCE_CHANGED" : "COMPANY_BANK_ACCOUNT_UPDATED",
+      action_type: openingBalanceChanged
+        ? "COMPANY_BANK_ACCOUNT_OPENING_BALANCE_CHANGED"
+        : "COMPANY_BANK_ACCOUNT_UPDATED",
       module_key: "FINANCE",
       entity_type: "company_bank_account",
       entity_id: id,
       change_summary: openingBalanceChanged
-        ? { account_name: merged.accountName, old_opening_balance: oldOpeningBalance, new_opening_balance: newOpeningBalance }
-        : { account_name: merged.accountName, account_number_changed: setAccountNumber },
+        ? {
+            account_name: merged.accountName,
+            old_opening_balance: oldOpeningBalance,
+            new_opening_balance: newOpeningBalance,
+          }
+        : {
+            account_name: merged.accountName,
+            account_number_changed: setAccountNumber,
+          },
     }).catch(() => undefined);
 
     if (openingBalanceChanged) {
-      await notifyOpeningBalanceChanged(id, merged.accountName, oldOpeningBalance, newOpeningBalance, actorUserId);
+      await notifyOpeningBalanceChanged(
+        id,
+        merged.accountName,
+        oldOpeningBalance,
+        newOpeningBalance,
+        actorUserId,
+      );
     }
 
     return this.get(id);
@@ -294,17 +347,30 @@ export const companyBankAccountService = {
     return rows;
   },
 
-  async setActiveStatus(id: string, active: boolean, actorUserId: string, closedDate?: string | null) {
+  async setActiveStatus(
+    id: string,
+    active: boolean,
+    actorUserId: string,
+    closedDate?: string | null,
+  ) {
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE company_bank_account
           SET active_status = ?, closed_date = ?, updated_by = ?, updated_at = NOW()
         WHERE id = ?`,
-      [active ? 1 : 0, active ? null : (closedDate ?? new Date().toISOString().slice(0, 10)), actorUserId, id],
+      [
+        active ? 1 : 0,
+        active ? null : (closedDate ?? new Date().toISOString().slice(0, 10)),
+        actorUserId,
+        id,
+      ],
     );
-    if (result.affectedRows !== 1) throw new CompanyBankAccountError("Bank account not found", 404);
+    if (result.affectedRows !== 1)
+      throw new CompanyBankAccountError("Bank account not found", 404);
     await logSensitiveAction({
       actor_user_id: actorUserId,
-      action_type: active ? "COMPANY_BANK_ACCOUNT_REACTIVATED" : "COMPANY_BANK_ACCOUNT_CLOSED",
+      action_type: active
+        ? "COMPANY_BANK_ACCOUNT_REACTIVATED"
+        : "COMPANY_BANK_ACCOUNT_CLOSED",
       module_key: "FINANCE",
       entity_type: "company_bank_account",
       entity_id: id,

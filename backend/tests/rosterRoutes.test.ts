@@ -23,15 +23,22 @@ vi.mock("../src/modules/wfm/rosterCsvParser.js", () => ({
   parseRosterCsv: vi.fn(),
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
+  requireRole:
+    (..._roles: string[]) =>
+    (_req: any, _res: any, next: any) =>
+      next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
-  getRosterPlanScope: vi.fn().mockResolvedValue({ branchId: null, processId: null }),
-  getEmployeeForUser: vi.fn().mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
+  getRosterPlanScope: vi
+    .fn()
+    .mockResolvedValue({ branchId: null, processId: null }),
+  getEmployeeForUser: vi
+    .fn()
+    .mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
@@ -53,29 +60,51 @@ import { parseRosterCsv } from "../src/modules/wfm/rosterCsvParser.js";
 import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
-const svc = rosterService as { [K in keyof typeof rosterService]: ReturnType<typeof vi.fn> };
+const svc = rosterService as {
+  [K in keyof typeof rosterService]: ReturnType<typeof vi.fn>;
+};
 const mockParseCsv = parseRosterCsv as ReturnType<typeof vi.fn>;
 
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 const fakePlan = {
-  id: "plan-1", plan_name: "May Week 1", process_id: "proc-1", branch_id: null,
-  shift_id: "shift-1", from_date: "2026-05-20", to_date: "2026-05-26",
-  required_headcount: 10, assigned_headcount: 0, plan_status: "draft",
-  created_by: "user-1", created_at: "2026-05-01T00:00:00Z", updated_at: "2026-05-01T00:00:00Z",
+  id: "plan-1",
+  plan_name: "May Week 1",
+  process_id: "proc-1",
+  branch_id: null,
+  shift_id: "shift-1",
+  from_date: "2026-05-20",
+  to_date: "2026-05-26",
+  required_headcount: 10,
+  assigned_headcount: 0,
+  plan_status: "draft",
+  created_by: "user-1",
+  created_at: "2026-05-01T00:00:00Z",
+  updated_at: "2026-05-01T00:00:00Z",
 };
 
 const fakeAssignment = {
-  id: "asgn-1", employee_id: "emp-1", shift_id: "shift-1", plan_id: "plan-1",
-  roster_date: "2026-05-20", roster_status: "Rostered",
-  shift_start_time: "09:00", shift_end_time: "18:00",
-  branch_name: "Mumbai", process_name: "Inbound", publish_status: "draft",
-  created_at: "2026-05-01T00:00:00Z", updated_at: "2026-05-01T00:00:00Z",
+  id: "asgn-1",
+  employee_id: "emp-1",
+  shift_id: "shift-1",
+  plan_id: "plan-1",
+  roster_date: "2026-05-20",
+  roster_status: "Rostered",
+  shift_start_time: "09:00",
+  shift_end_time: "18:00",
+  branch_name: "Mumbai",
+  process_name: "Inbound",
+  publish_status: "draft",
+  created_at: "2026-05-01T00:00:00Z",
+  updated_at: "2026-05-01T00:00:00Z",
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetUser.mockResolvedValue({ data: { user: { id: "user-1", email: "mgr@mcn.com" } }, error: null });
+  mockGetUser.mockResolvedValue({
+    data: { user: { id: "user-1", email: "mgr@mcn.com" } },
+    error: null,
+  });
 });
 
 // ─── Plans ─────────────────────────────────────────────────────────────────
@@ -86,7 +115,12 @@ describe("POST /api/wfm/roster/plans", () => {
     const res = await request(app)
       .post("/api/wfm/roster/plans")
       .set(AUTH)
-      .send({ planName: "May Week 1", fromDate: "2026-05-20", toDate: "2026-05-26", requiredHeadcount: 10 });
+      .send({
+        planName: "May Week 1",
+        fromDate: "2026-05-20",
+        toDate: "2026-05-26",
+        requiredHeadcount: 10,
+      });
     expect(res.status).toBe(201);
     expect(res.body.data.plan_name).toBe("May Week 1");
   });
@@ -116,8 +150,13 @@ describe("GET /api/wfm/roster/plans", () => {
 
 describe("PATCH /api/wfm/roster/plans/:id/publish", () => {
   it("publishes plan", async () => {
-    svc.publishPlan.mockResolvedValueOnce({ ...fakePlan, plan_status: "published" });
-    const res = await request(app).patch("/api/wfm/roster/plans/plan-1/publish").set(AUTH);
+    svc.publishPlan.mockResolvedValueOnce({
+      ...fakePlan,
+      plan_status: "published",
+    });
+    const res = await request(app)
+      .patch("/api/wfm/roster/plans/plan-1/publish")
+      .set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.data.plan_status).toBe("published");
   });
@@ -131,7 +170,12 @@ describe("POST /api/wfm/roster/assignments", () => {
     const res = await request(app)
       .post("/api/wfm/roster/assignments")
       .set(AUTH)
-      .send({ employeeId: "550e8400-e29b-41d4-a716-446655440001", rosterDate: "2026-05-20", shiftStartTime: "09:00", shiftEndTime: "18:00" });
+      .send({
+        employeeId: "550e8400-e29b-41d4-a716-446655440001",
+        rosterDate: "2026-05-20",
+        shiftStartTime: "09:00",
+        shiftEndTime: "18:00",
+      });
     expect(res.status).toBe(201);
     expect(res.body.data.employee_id).toBe("emp-1");
   });
@@ -148,7 +192,11 @@ describe("POST /api/wfm/roster/assignments", () => {
 describe("GET /api/wfm/roster/assignments", () => {
   it("returns assignments", async () => {
     svc.listAssignments.mockResolvedValueOnce([fakeAssignment]);
-    const res = await request(app).get("/api/wfm/roster/assignments?planId=550e8400-e29b-41d4-a716-446655440001").set(AUTH);
+    const res = await request(app)
+      .get(
+        "/api/wfm/roster/assignments?planId=550e8400-e29b-41d4-a716-446655440001",
+      )
+      .set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
   });
@@ -175,16 +223,33 @@ describe("POST /api/wfm/roster/upload", () => {
   it("processes valid CSV and returns summary", async () => {
     mockParseCsv.mockReturnValueOnce({
       rows: [
-        { employee_code: "EMP001", roster_date: "2026-05-20", shift_start_time: "09:00", shift_end_time: "18:00", process_name: "Inbound", branch_name: "Mumbai" },
+        {
+          employee_code: "EMP001",
+          roster_date: "2026-05-20",
+          shift_start_time: "09:00",
+          shift_end_time: "18:00",
+          process_name: "Inbound",
+          branch_name: "Mumbai",
+        },
       ],
       errors: [],
     });
-    svc.bulkAssign.mockResolvedValueOnce({ assigned: 1, failed: 0, errors: [] });
+    svc.bulkAssign.mockResolvedValueOnce({
+      assigned: 1,
+      failed: 0,
+      errors: [],
+    });
 
     const res = await request(app)
       .post("/api/wfm/roster/upload?planId=plan-1")
       .set(AUTH)
-      .attach("file", Buffer.from("employee_code,roster_date,shift_start_time,shift_end_time\nEMP001,2026-05-20,09:00,18:00"), "roster.csv");
+      .attach(
+        "file",
+        Buffer.from(
+          "employee_code,roster_date,shift_start_time,shift_end_time\nEMP001,2026-05-20,09:00,18:00",
+        ),
+        "roster.csv",
+      );
 
     expect(res.status).toBe(200);
     expect(res.body.assigned).toBe(1);

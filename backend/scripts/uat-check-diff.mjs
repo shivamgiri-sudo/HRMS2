@@ -50,7 +50,7 @@ if (!base || !patchFile || !allowFile) {
   die(
     2,
     "usage: uat-check-diff.mjs --base <trusted-checkout> --patch <file> --allow <json>",
-    "--base must point at a checkout of origin/main that the patch has NOT been applied to."
+    "--base must point at a checkout of origin/main that the patch has NOT been applied to.",
   );
 }
 
@@ -72,17 +72,20 @@ if (path.resolve(base) === path.resolve(process.cwd())) {
     2,
     "--base is the current working directory.",
     "The guard must run from a separate, unpatched checkout of origin/main. Running it from " +
-      "the patched tree means a patch could modify the guard that judges it."
+      "the patched tree means a patch could modify the guard that judges it.",
   );
 }
 
 const protectedPaths = JSON.parse(
-  fs.readFileSync(path.join(base, "uat", "protected-paths.json"), "utf8")
+  fs.readFileSync(path.join(base, "uat", "protected-paths.json"), "utf8"),
 );
 const allowed = JSON.parse(fs.readFileSync(allowFile, "utf8"));
-const allowSet = new Set((Array.isArray(allowed) ? allowed : allowed.allowedPaths || []).map(String));
+const allowSet = new Set(
+  (Array.isArray(allowed) ? allowed : allowed.allowedPaths || []).map(String),
+);
 
-if (allowSet.size === 0) die(2, "The allowlist is empty. There is nothing this patch may edit.");
+if (allowSet.size === 0)
+  die(2, "The allowlist is empty. There is nothing this patch may edit.");
 
 const patch = fs.readFileSync(patchFile, "utf8");
 
@@ -103,7 +106,11 @@ function globToRegExp(glob) {
 
 const denyPatterns = protectedPaths.rules
   .filter((r) => r.tier === "deny")
-  .map((r) => ({ pattern: r.pattern, re: globToRegExp(r.pattern), reason: r.reason }));
+  .map((r) => ({
+    pattern: r.pattern,
+    re: globToRegExp(r.pattern),
+    reason: r.reason,
+  }));
 
 // ── Parse the diff ────────────────────────────────────────────────────────────
 
@@ -135,18 +142,21 @@ for (const line of patch.split(/\r?\n/)) {
   }
 }
 
-if (touched.size === 0) die(2, "The patch touches no files, or could not be parsed.");
+if (touched.size === 0)
+  die(2, "The patch touches no files, or could not be parsed.");
 
 // ── 1. Allowlist ──────────────────────────────────────────────────────────────
 
-const outside = [...touched].filter((p) => p !== "/dev/null" && !allowSet.has(p));
+const outside = [...touched].filter(
+  (p) => p !== "/dev/null" && !allowSet.has(p),
+);
 if (outside.length) {
   die(
     1,
     `${outside.length} path(s) outside the approved allowlist.`,
     outside.map((p) => `  - ${p}`).join("\n") +
       "\n\nApproved:\n" +
-      [...allowSet].map((p) => `  + ${p}`).join("\n")
+      [...allowSet].map((p) => `  + ${p}`).join("\n"),
   );
 }
 
@@ -157,7 +167,11 @@ if (outside.length) {
 for (const p of touched) {
   for (const d of denyPatterns) {
     if (d.re.test(p)) {
-      die(1, `Protected path in the diff: ${p}`, `  matches ${d.pattern}\n  ${d.reason}`);
+      die(
+        1,
+        `Protected path in the diff: ${p}`,
+        `  matches ${d.pattern}\n  ${d.reason}`,
+      );
     }
   }
 }
@@ -165,35 +179,61 @@ for (const p of touched) {
 // ── 3. Additive only ──────────────────────────────────────────────────────────
 
 if (deletedFiles.length) {
-  die(1, "The patch deletes or renames files.", deletedFiles.map((f) => `  - ${f}`).join("\n"));
+  die(
+    1,
+    "The patch deletes or renames files.",
+    deletedFiles.map((f) => `  - ${f}`).join("\n"),
+  );
 }
 
 // Removing an export, a route registration or a migration entry breaks callers that this
 // diff cannot see. Detected structurally rather than trusted to a promise in the prompt.
 const DESTRUCTIVE = [
-  { re: /^\s*export\s+(async\s+)?(function|const|class|interface|type|enum)\s/, what: "an export" },
-  { re: /^\s*(app|router)\.(use|get|post|put|patch|delete)\s*\(/, what: "a route registration" },
-  { re: /^\s*"[0-9]{3,4}_[a-z0-9_]+\.sql"/, what: "a migration manifest entry" },
+  {
+    re: /^\s*export\s+(async\s+)?(function|const|class|interface|type|enum)\s/,
+    what: "an export",
+  },
+  {
+    re: /^\s*(app|router)\.(use|get|post|put|patch|delete)\s*\(/,
+    what: "a route registration",
+  },
+  {
+    re: /^\s*"[0-9]{3,4}_[a-z0-9_]+\.sql"/,
+    what: "a migration manifest entry",
+  },
   { re: /^\s*(CREATE|ALTER|DROP)\s+TABLE/i, what: "a DDL statement" },
 ];
 
 const destructive = [];
 for (const { file, text } of removedLines) {
   for (const d of DESTRUCTIVE) {
-    if (d.re.test(text)) destructive.push(`  - ${file}: removes ${d.what}\n      ${text.trim().slice(0, 120)}`);
+    if (d.re.test(text))
+      destructive.push(
+        `  - ${file}: removes ${d.what}\n      ${text.trim().slice(0, 120)}`,
+      );
   }
 }
 if (destructive.length) {
-  die(1, "The patch removes something other code may depend on.", destructive.join("\n"));
+  die(
+    1,
+    "The patch removes something other code may depend on.",
+    destructive.join("\n"),
+  );
 }
 
 // ── 4. No new dependency ──────────────────────────────────────────────────────
 
 const depFiles = [...touched].filter((p) =>
-  /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml)$/.test(p)
+  /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml)$/.test(
+    p,
+  ),
 );
 if (depFiles.length) {
-  die(1, "The patch changes dependency manifests (BR-07).", depFiles.map((p) => `  - ${p}`).join("\n"));
+  die(
+    1,
+    "The patch changes dependency manifests (BR-07).",
+    depFiles.map((p) => `  - ${p}`).join("\n"),
+  );
 }
 
 // ── 5. No DDL introduced anywhere ─────────────────────────────────────────────
@@ -201,9 +241,18 @@ if (depFiles.length) {
 const addedDdl = patch
   .split(/\r?\n/)
   .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
-  .filter((l) => /\b(CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|TRUNCATE)\b/i.test(l));
+  .filter((l) =>
+    /\b(CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|TRUNCATE)\b/i.test(l),
+  );
 if (addedDdl.length) {
-  die(1, "The patch introduces DDL (DI-01/DI-02).", addedDdl.slice(0, 10).map((l) => `  ${l.trim().slice(0, 140)}`).join("\n"));
+  die(
+    1,
+    "The patch introduces DDL (DI-01/DI-02).",
+    addedDdl
+      .slice(0, 10)
+      .map((l) => `  ${l.trim().slice(0, 140)}`)
+      .join("\n"),
+  );
 }
 
 // ── 6. No unbounded write ─────────────────────────────────────────────────────
@@ -211,15 +260,22 @@ if (addedDdl.length) {
 const unbounded = patch
   .split(/\r?\n/)
   .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
-  .filter((l) => /\b(UPDATE|DELETE\s+FROM)\b/i.test(l) && !/\bWHERE\b/i.test(l));
+  .filter(
+    (l) => /\b(UPDATE|DELETE\s+FROM)\b/i.test(l) && !/\bWHERE\b/i.test(l),
+  );
 if (unbounded.length) {
   die(
     1,
     "The patch adds an UPDATE or DELETE with no WHERE clause (DI-05).",
-    unbounded.slice(0, 10).map((l) => `  ${l.trim().slice(0, 140)}`).join("\n")
+    unbounded
+      .slice(0, 10)
+      .map((l) => `  ${l.trim().slice(0, 140)}`)
+      .join("\n"),
   );
 }
 
-console.log(`[uat-guard] OK — ${touched.size} path(s), all within the approved allowlist.`);
+console.log(
+  `[uat-guard] OK — ${touched.size} path(s), all within the approved allowlist.`,
+);
 for (const p of [...touched].sort()) console.log(`[uat-guard]   ${p}`);
 process.exit(0);

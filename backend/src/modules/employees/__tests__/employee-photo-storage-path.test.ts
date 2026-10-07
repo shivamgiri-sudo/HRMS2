@@ -24,7 +24,9 @@ describe("upload storage paths", () => {
   const files = read("src/modules/files/files.routes.ts");
 
   it("resolves the photo directory from the working directory, not the module path", () => {
-    expect(writer).toContain('path.resolve(process.cwd(), "uploads", "employee-photos")');
+    expect(writer).toContain(
+      'path.resolve(process.cwd(), "uploads", "employee-photos")',
+    );
   });
 
   it("never resolves the photo directory relative to __dirname", () => {

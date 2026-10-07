@@ -9,10 +9,12 @@
 ## 🔥 **HIGH PRIORITY TABLES (Recently Updated)**
 
 ### 1. **leave_management** (31,235 rows)
+
 **Last Updated:** 2026-06-06 20:24:28  
 **Purpose:** Employee leave applications and balances
 
 **Key Fields:**
+
 - `EmpCode` - Employee code (link to masjclrentry)
 - `LeaveFrom`, `LeaveTo` - Leave dates
 - `LeaveType` - Type of leave
@@ -29,10 +31,12 @@
 ---
 
 ### 2. **LoanMaster** (258 rows)
+
 **Last Updated:** 2026-06-06 15:13:13  
 **Purpose:** Employee loans and advances
 
 **Key Fields:**
+
 - `EmpCode`, `EmpName` - Employee details
 - `Type` - Loan type
 - `Amount` - Loan amount
@@ -50,10 +54,12 @@
 ---
 
 ### 3. **BranchWiseAttandanceIssue** (136,211 rows)
+
 **Last Updated:** 2026-06-06 20:42:03  
 **Purpose:** Attendance issues/corrections
 
 **Sample Query:**
+
 ```sql
 DESCRIBE BranchWiseAttandanceIssue;
 ```
@@ -65,6 +71,7 @@ DESCRIBE BranchWiseAttandanceIssue;
 ---
 
 ### 4. **upload_incentive_breakup** (83,124 rows)
+
 **Last Updated:** 2026-06-06 15:40:09  
 **Purpose:** Incentive/bonus breakup data
 
@@ -75,6 +82,7 @@ DESCRIBE BranchWiseAttandanceIssue;
 ---
 
 ### 5. **upload_deduction** (12,650 rows)
+
 **Last Updated:** 2026-06-06 09:55:14  
 **Purpose:** Payroll deductions (loans, advances, penalties)
 
@@ -85,6 +93,7 @@ DESCRIBE BranchWiseAttandanceIssue;
 ---
 
 ### 6. **provision_master_month_deductions** (10,296 rows)
+
 **Last Updated:** 2026-06-05 13:30:21  
 **Purpose:** Monthly provision/deduction tracking
 
@@ -95,6 +104,7 @@ DESCRIBE BranchWiseAttandanceIssue;
 ---
 
 ### 7. **od_apply_master** (3,105 rows)
+
 **Last Updated:** 2026-06-04 18:42:20  
 **Purpose:** On-Duty (OD) applications
 
@@ -105,6 +115,7 @@ DESCRIBE BranchWiseAttandanceIssue;
 ---
 
 ### 8. **ProcessAttendanceMaster** (2,704 rows)
+
 **Last Updated:** 2026-06-06 16:59:25  
 **Purpose:** Process-wise attendance tracking
 
@@ -115,6 +126,7 @@ DESCRIBE BranchWiseAttandanceIssue;
 ---
 
 ### 9. **mas_docoments** (263,773 rows)
+
 **Last Updated:** 2026-06-06 19:33:53  
 **Purpose:** Employee document storage/tracking
 
@@ -125,6 +137,7 @@ DESCRIBE BranchWiseAttandanceIssue;
 ---
 
 ### 10. **user_log** (231,763 rows)
+
 **Last Updated:** 2026-06-07 09:39:46  
 **Purpose:** User activity logs
 
@@ -136,16 +149,16 @@ DESCRIBE BranchWiseAttandanceIssue;
 
 ## 📊 **Sync Priority Ranking**
 
-| Rank | Table | Rows | Impact | Urgency |
-|------|-------|------|--------|---------|
-| 1 | `leave_management` | 31,235 | 🔴 High | Immediate |
-| 2 | `LoanMaster` | 258 | 🔴 High | Immediate |
-| 3 | `upload_deduction` | 12,650 | 🔴 High | Immediate |
-| 4 | `BranchWiseAttandanceIssue` | 136,211 | 🟡 Medium | Soon |
-| 5 | `mas_docoments` | 263,773 | 🟡 Medium | Soon |
-| 6 | `upload_incentive_breakup` | 83,124 | 🟡 Medium | Later |
-| 7 | `od_apply_master` | 3,105 | 🟢 Low | Optional |
-| 8 | `provision_master_month_deductions` | 10,296 | 🟢 Low | Optional |
+| Rank | Table                               | Rows    | Impact    | Urgency   |
+| ---- | ----------------------------------- | ------- | --------- | --------- |
+| 1    | `leave_management`                  | 31,235  | 🔴 High   | Immediate |
+| 2    | `LoanMaster`                        | 258     | 🔴 High   | Immediate |
+| 3    | `upload_deduction`                  | 12,650  | 🔴 High   | Immediate |
+| 4    | `BranchWiseAttandanceIssue`         | 136,211 | 🟡 Medium | Soon      |
+| 5    | `mas_docoments`                     | 263,773 | 🟡 Medium | Soon      |
+| 6    | `upload_incentive_breakup`          | 83,124  | 🟡 Medium | Later     |
+| 7    | `od_apply_master`                   | 3,105   | 🟢 Low    | Optional  |
+| 8    | `provision_master_month_deductions` | 10,296  | 🟢 Low    | Optional  |
 
 ---
 
@@ -154,6 +167,7 @@ DESCRIBE BranchWiseAttandanceIssue;
 ### **Phase 1: Immediate (This Week)**
 
 **1. Leave Management Sync**
+
 ```sql
 -- Create sync map
 INSERT INTO legacy_sync_map (hrms_domain, legacy_source_table, active_status)
@@ -169,6 +183,7 @@ CL, ML, DL, EL → balance fields
 ```
 
 **2. Loan Master Sync**
+
 ```sql
 -- Create employee_loans table first
 CREATE TABLE employee_loans (
@@ -192,6 +207,7 @@ CREATE TABLE employee_loans (
 ```
 
 **3. Payroll Deductions Sync**
+
 ```sql
 -- Link upload_deduction to payroll runs
 -- Map to payroll_deduction_lines table
@@ -202,10 +218,12 @@ CREATE TABLE employee_loans (
 ### **Phase 2: Soon (Next Week)**
 
 **4. Attendance Issues**
+
 - Sync `BranchWiseAttandanceIssue` → `wfm_regularizations`
 - Map to attendance correction system
 
 **5. Document Tracking**
+
 - Sync `mas_docoments` → `employee_documents`
 - Track document types and status
 
@@ -214,9 +232,11 @@ CREATE TABLE employee_loans (
 ### **Phase 3: Later (As Needed)**
 
 **6. Incentives**
+
 - Sync `upload_incentive_breakup` when payroll module stabilizes
 
 **7. On-Duty**
+
 - Sync `od_apply_master` when WFM module needs it
 
 ---
@@ -224,6 +244,7 @@ CREATE TABLE employee_loans (
 ## 🛠️ **Implementation Steps**
 
 ### **Step 1: Analyze Table Schemas**
+
 ```bash
 # Run for each priority table
 mysql -h <db_bill host — see backend/.env> -u shivam_user -p db_bill -e "
@@ -233,6 +254,7 @@ mysql -h <db_bill host — see backend/.env> -u shivam_user -p db_bill -e "
 ```
 
 ### **Step 2: Create HRMS Target Tables**
+
 ```sql
 -- Example: employee_loans
 CREATE TABLE employee_loans (
@@ -246,17 +268,18 @@ CREATE TABLE employee_loans (
 ```
 
 ### **Step 3: Create Sync Handlers**
+
 ```typescript
 // backend/src/workers/domains/leave-sync-handler.ts
 export class LeaveSyncHandler {
   async fetchChanges(lastSync: Date) {
     // Fetch from leave_management WHERE CreateDate > lastSync
   }
-  
+
   async transform(legacyRecord) {
     // Map fields to HRMS schema
   }
-  
+
   async syncToHRMS(records) {
     // Upsert to leave_requests table
   }
@@ -264,10 +287,11 @@ export class LeaveSyncHandler {
 ```
 
 ### **Step 4: Add to Sync Worker**
+
 ```typescript
 // backend/src/workers/legacy-sync-worker.ts
-import { leaveSyncHandler } from './domains/leave-sync-handler.js';
-import { loanSyncHandler } from './domains/loan-sync-handler.js';
+import { leaveSyncHandler } from "./domains/leave-sync-handler.js";
+import { loanSyncHandler } from "./domains/loan-sync-handler.js";
 
 // Add to sync cycle
 await leaveSyncHandler.sync();
@@ -279,6 +303,7 @@ await loanSyncHandler.sync();
 ## 📋 **Data Quality Checks**
 
 ### **Leave Management**
+
 ```sql
 -- Check for orphaned records
 SELECT COUNT(*) FROM db_bill.leave_management
@@ -289,6 +314,7 @@ SELECT DISTINCT Status, COUNT(*) FROM db_bill.leave_management GROUP BY Status;
 ```
 
 ### **Loan Master**
+
 ```sql
 -- Check active loans
 SELECT COUNT(*) FROM db_bill.LoanMaster
@@ -335,6 +361,7 @@ WHERE TransationStatus = 'Active';
 5. ⏳ **Attendance issues sync** - Medium priority
 
 **Estimated Time:**
+
 - Leave sync: 2-3 days
 - Loan sync: 1-2 days
 - Deduction sync: 1-2 days

@@ -25,7 +25,12 @@
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
-import { withWorkerLock, recordWorkerRun, registerTimer, unregisterTimer } from "./worker-utils.js";
+import {
+  withWorkerLock,
+  recordWorkerRun,
+  registerTimer,
+  unregisterTimer,
+} from "./worker-utils.js";
 import { notifyLeaveApprovalOverdue } from "../modules/leave/leave.notifications.js";
 
 /** Must match the worker_config.worker_name row exactly — isWorkerEnabled() fails OPEN on a missing row. */
@@ -87,7 +92,10 @@ async function sweep(): Promise<void> {
       for (const row of overdue) {
         const reminderNo = Number(row.reminder_count) + 1;
         try {
-          const ok = await notifyLeaveApprovalOverdue(String(row.id), reminderNo);
+          const ok = await notifyLeaveApprovalOverdue(
+            String(row.id),
+            reminderNo,
+          );
 
           // Advances whether or not the send succeeded — the same reasoning as
           // noc-sla-reminder.worker.ts: only advancing on success would retry a request
@@ -101,20 +109,33 @@ async function sweep(): Promise<void> {
             [row.id],
           );
 
-          if (ok) sent++; else failed++;
+          if (ok) sent++;
+          else failed++;
         } catch (err) {
           failed++;
-          console.error(`[LeaveApprovalReminder] ${row.id}:`, err instanceof Error ? err.message : err);
+          console.error(
+            `[LeaveApprovalReminder] ${row.id}:`,
+            err instanceof Error ? err.message : err,
+          );
         }
       }
 
       if (overdue.length > 0) {
-        console.log(`[LeaveApprovalReminder] ${overdue.length} overdue request(s): ${sent} reminded, ${failed} failed`);
+        console.log(
+          `[LeaveApprovalReminder] ${overdue.length} overdue request(s): ${sent} reminded, ${failed} failed`,
+        );
       }
       await markWorkerRun(WORKER_NAME).catch(() => undefined);
-      await recordWorkerRun(WORKER_NAME, "completed", { overdue: overdue.length, sent, failed }).catch(() => undefined);
+      await recordWorkerRun(WORKER_NAME, "completed", {
+        overdue: overdue.length,
+        sent,
+        failed,
+      }).catch(() => undefined);
     } catch (err) {
-      console.error("[LeaveApprovalReminder] sweep failed:", err instanceof Error ? err.message : err);
+      console.error(
+        "[LeaveApprovalReminder] sweep failed:",
+        err instanceof Error ? err.message : err,
+      );
       await recordWorkerRun(WORKER_NAME, "failed", {
         error: err instanceof Error ? err.message : String(err),
       }).catch(() => undefined);
@@ -124,14 +145,23 @@ async function sweep(): Promise<void> {
 
 export function startLeaveApprovalReminderWorker(): void {
   if (intervalRef) return;
-  startupRef = setTimeout(() => { void sweep(); }, STARTUP_DELAY_MS);
-  intervalRef = setInterval(() => { void sweep(); }, CHECK_INTERVAL_MS);
+  startupRef = setTimeout(() => {
+    void sweep();
+  }, STARTUP_DELAY_MS);
+  intervalRef = setInterval(() => {
+    void sweep();
+  }, CHECK_INTERVAL_MS);
   registerTimer(WORKER_NAME, intervalRef);
-  console.log(`[LeaveApprovalReminder] started — sweeping hourly, first run in ${STARTUP_DELAY_MS / 60000}m`);
+  console.log(
+    `[LeaveApprovalReminder] started — sweeping hourly, first run in ${STARTUP_DELAY_MS / 60000}m`,
+  );
 }
 
 export function stopLeaveApprovalReminderWorker(): void {
-  if (startupRef) { clearTimeout(startupRef); startupRef = undefined; }
+  if (startupRef) {
+    clearTimeout(startupRef);
+    startupRef = undefined;
+  }
   if (intervalRef) {
     clearInterval(intervalRef);
     unregisterTimer(WORKER_NAME);

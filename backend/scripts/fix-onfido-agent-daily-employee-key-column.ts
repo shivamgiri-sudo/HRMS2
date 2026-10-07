@@ -24,21 +24,28 @@ import "dotenv/config";
 import { saveDataSource } from "../src/modules/kpi/kpi-studio.service.js";
 
 async function main() {
-  const result = await saveDataSource({
-    id: "696f5443-ab4c-11f1-8f5c-00155d0ab410",
-    source_code: "ONFIDO_AGENT_DAILY",
-    source_name: "Onfido agent daily (onfido_db)",
-    source_type: "named_pool",
-    integration_key: "onfido",
-    source_object: "onfido_agent_daily_raw",
-    employee_key_column: "emp_id",
-    employee_key_kind: "employee_code",
-    date_column: "work_date",
-    description: "Reads onfido_db through its existing pool. No credential copied anywhere.",
-    process_key_kind: "constant",
-    process_id: "04f20ddc-67ba-11f1-adb1-00155d0ab410",
-  } as never, "demo-super-admin-id");
+  const result = await saveDataSource(
+    {
+      id: "696f5443-ab4c-11f1-8f5c-00155d0ab410",
+      source_code: "ONFIDO_AGENT_DAILY",
+      source_name: "Onfido agent daily (onfido_db)",
+      source_type: "named_pool",
+      integration_key: "onfido",
+      source_object: "onfido_agent_daily_raw",
+      employee_key_column: "emp_id",
+      employee_key_kind: "employee_code",
+      date_column: "work_date",
+      description:
+        "Reads onfido_db through its existing pool. No credential copied anywhere.",
+      process_key_kind: "constant",
+      process_id: "04f20ddc-67ba-11f1-adb1-00155d0ab410",
+    } as never,
+    "demo-super-admin-id",
+  );
   console.log("fixed:", JSON.stringify(result));
   process.exit(0);
 }
-main().catch((e) => { console.error("FAILED", e); process.exit(1); });
+main().catch((e) => {
+  console.error("FAILED", e);
+  process.exit(1);
+});

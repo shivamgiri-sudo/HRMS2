@@ -15,7 +15,10 @@ export function normalizeHeaderKey(header: string): string {
   return header.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-export type RowReader = (header: string, aliases?: readonly string[]) => unknown;
+export type RowReader = (
+  header: string,
+  aliases?: readonly string[],
+) => unknown;
 
 export function makeRowReader(data: Record<string, unknown>): RowReader {
   let byNormalized: Map<string, unknown> | null = null;

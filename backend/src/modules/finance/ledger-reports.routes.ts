@@ -1,5 +1,8 @@
 import { Router } from "express";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { BANK_ACCOUNT_READ_ROLES } from "./company-bank-account.routes.js";
 import { ledgerReportsService } from "./ledger-reports.service.js";
@@ -35,10 +38,14 @@ ledgerReportsRouter.get(
   "/trial-balance",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
-    const asOfDate = req.query.asOfDate ? String(req.query.asOfDate) : undefined;
+    const asOfDate = req.query.asOfDate
+      ? String(req.query.asOfDate)
+      : undefined;
     const filters = {
       branchId: req.query.branchId ? String(req.query.branchId) : undefined,
-      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+      costCentreId: req.query.costCentreId
+        ? String(req.query.costCentreId)
+        : undefined,
       processId: req.query.processId ? String(req.query.processId) : undefined,
     };
     const result = await ledgerReportsService.trialBalance(asOfDate, filters);
@@ -52,7 +59,11 @@ ledgerReportsRouter.get(
   h(async (req, res) => {
     const from = req.query.from ? String(req.query.from) : undefined;
     const to = req.query.to ? String(req.query.to) : undefined;
-    const result = await ledgerReportsService.vendorLedger(String(req.params.vendorId), from, to);
+    const result = await ledgerReportsService.vendorLedger(
+      String(req.params.vendorId),
+      from,
+      to,
+    );
     res.json({ success: true, data: result });
   }),
 );
@@ -65,15 +76,26 @@ ledgerReportsRouter.get(
     const to = req.query.to ? String(req.query.to) : undefined;
     const filters = {
       branchId: req.query.branchId ? String(req.query.branchId) : undefined,
-      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+      costCentreId: req.query.costCentreId
+        ? String(req.query.costCentreId)
+        : undefined,
       processId: req.query.processId ? String(req.query.processId) : undefined,
     };
-    const result = await ledgerReportsService.headSubHeadLedger(from, to, filters);
+    const result = await ledgerReportsService.headSubHeadLedger(
+      from,
+      to,
+      filters,
+    );
     res.json({ success: true, data: result });
   }),
 );
 
-const ACCOUNT_TYPES = ["bank_account", "vendor", "expense_sub_head", "payable_account"] as const;
+const ACCOUNT_TYPES = [
+  "bank_account",
+  "vendor",
+  "expense_sub_head",
+  "payable_account",
+] as const;
 
 // Generic drill-down behind Trial Balance and Head/Subhead Ledger rows (the Drill-Down
 // Mandate) — same query vendor-ledger/:vendorId already ran, generalized to any account type
@@ -84,7 +106,12 @@ ledgerReportsRouter.get(
   h(async (req, res) => {
     const accountType = String(req.params.accountType);
     if (!(ACCOUNT_TYPES as readonly string[]).includes(accountType)) {
-      res.status(400).json({ success: false, message: `Unknown account type "${accountType}"` });
+      res
+        .status(400)
+        .json({
+          success: false,
+          message: `Unknown account type "${accountType}"`,
+        });
       return;
     }
     const from = req.query.from ? String(req.query.from) : undefined;

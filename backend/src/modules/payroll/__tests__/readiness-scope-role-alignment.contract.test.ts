@@ -57,9 +57,15 @@ describe("a role admitted by requireRole is scoped, not silently refused", () =>
      * Every other list must carry payroll_hr, or the role that runs this page is locked out of it.
      */
     const lists = scopeLists(readiness).filter((l) => l.length > 1);
-    expect(lists.length, "expected several multi-role scope lists").toBeGreaterThan(4);
+    expect(
+      lists.length,
+      "expected several multi-role scope lists",
+    ).toBeGreaterThan(4);
     for (const list of lists) {
-      expect(list, `payroll_hr missing from scope list [${list.join(", ")}]`).toContain("payroll_hr");
+      expect(
+        list,
+        `payroll_hr missing from scope list [${list.join(", ")}]`,
+      ).toContain("payroll_hr");
     }
   });
 
@@ -70,10 +76,14 @@ describe("a role admitted by requireRole is scoped, not silently refused", () =>
 
   it("gives Branch Payroll HR scope on the process readiness screen too", () => {
     // Same defect, same page family: requireRole admitted payroll_hr while one scope list omitted it.
-    const lists = scopeLists(processReadiness).filter((l) => l.includes("payroll_head"));
+    const lists = scopeLists(processReadiness).filter((l) =>
+      l.includes("payroll_head"),
+    );
     expect(lists.length).toBeGreaterThan(0);
     for (const list of lists) {
-      expect(list, `payroll_hr missing from [${list.join(", ")}]`).toContain("payroll_hr");
+      expect(list, `payroll_hr missing from [${list.join(", ")}]`).toContain(
+        "payroll_hr",
+      );
     }
   });
 
@@ -84,7 +94,9 @@ describe("a role admitted by requireRole is scoped, not silently refused", () =>
      * they are approving. The maker lists (finalize, branch-approve, request-unlock) are branch-side
      * and correctly exclude it.
      */
-    const readLists = scopeLists(ccAttendance).filter((l) => l.includes("process_manager"));
+    const readLists = scopeLists(ccAttendance).filter((l) =>
+      l.includes("process_manager"),
+    );
     expect(readLists.length, "expected the five read routes").toBe(5);
     for (const list of readLists) {
       expect(list).toContain("payroll_head");
@@ -107,9 +119,13 @@ describe("a missing scope row means no branches, not every branch", () => {
       ["process-readiness", processReadiness],
     ] as const;
     for (const [name, source] of files) {
-      expect(source, `${name} must not reopen the no-scope bypass`)
-        .not.toContain("requireScopeForNonAdmin: false");
-      expect(source, `${name} must fail closed`).toContain("requireScopeForNonAdmin: true");
+      expect(
+        source,
+        `${name} must not reopen the no-scope bypass`,
+      ).not.toContain("requireScopeForNonAdmin: false");
+      expect(source, `${name} must fail closed`).toContain(
+        "requireScopeForNonAdmin: true",
+      );
     }
   });
 });
@@ -118,7 +134,8 @@ describe("every branch-addressed route carries a scope guard", () => {
   /** Route registrations whose path names a :branchId. */
   function branchRoutes(source: string): Array<{ path: string; body: string }> {
     const out: Array<{ path: string; body: string }> = [];
-    const re = /Router\.(?:get|post|patch|put)\(\s*\n?\s*"(\/:branchId[^"]*)"([\s\S]*?)(?=\n\s*(?:async )?\(req|\n\s*h\()/g;
+    const re =
+      /Router\.(?:get|post|patch|put)\(\s*\n?\s*"(\/:branchId[^"]*)"([\s\S]*?)(?=\n\s*(?:async )?\(req|\n\s*h\()/g;
     for (const m of source.matchAll(re)) out.push({ path: m[1], body: m[2] });
     return out;
   }
@@ -130,7 +147,9 @@ describe("every branch-addressed route carries a scope guard", () => {
      * authorities share the route — an HO send-back must reach every branch like ho-approve, a
      * branch send-back must not — so it has a guard that branches on the stage.
      */
-    const sendBack = ccAttendance.slice(ccAttendance.indexOf('"/:branchId/:costCentreId/send-back"'));
+    const sendBack = ccAttendance.slice(
+      ccAttendance.indexOf('"/:branchId/:costCentreId/send-back"'),
+    );
     const handlerStart = sendBack.indexOf("async (req");
     expect(handlerStart).toBeGreaterThan(-1);
     expect(sendBack.slice(0, handlerStart)).toContain("scopeSendBackToBranch");
@@ -141,12 +160,22 @@ describe("every branch-addressed route carries a scope guard", () => {
      * ho-approve is the one deliberate exception, documented at its definition and in this file's
      * header. Anything else reaching this list is a new route that forgot its scope guard.
      */
-    const UNSCOPED_BY_DESIGN = ["/:branchId/:costCentreId/ho-approve", "/:branchId/ho-override"];
-    for (const [name, source] of [["readiness", readiness], ["cc-attendance", ccAttendance]] as const) {
+    const UNSCOPED_BY_DESIGN = [
+      "/:branchId/:costCentreId/ho-approve",
+      "/:branchId/ho-override",
+    ];
+    for (const [name, source] of [
+      ["readiness", readiness],
+      ["cc-attendance", ccAttendance],
+    ] as const) {
       for (const route of branchRoutes(source)) {
         if (UNSCOPED_BY_DESIGN.includes(route.path)) continue;
-        const guarded = /requireScopedRole|scopeSendBackToBranch/.test(route.body);
-        expect(guarded, `${name} ${route.path} has no branch scope guard`).toBe(true);
+        const guarded = /requireScopedRole|scopeSendBackToBranch/.test(
+          route.body,
+        );
+        expect(guarded, `${name} ${route.path} has no branch scope guard`).toBe(
+          true,
+        );
       }
     }
   });

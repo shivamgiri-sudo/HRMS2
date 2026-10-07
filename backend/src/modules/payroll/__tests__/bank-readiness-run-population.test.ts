@@ -25,8 +25,14 @@ import { describe, expect, it } from "vitest";
  * population SQL was separately PREPARE-validated against production and its row count proved
  * against a direct query (1,273 = 1,273, no fan-out) before shipping.
  */
-const SRC = readFileSync(resolve(__dirname, "../bank-payment-readiness.service.ts"), "utf8");
-const ROUTES = readFileSync(resolve(__dirname, "../bank-payment-readiness.routes.ts"), "utf8");
+const SRC = readFileSync(
+  resolve(__dirname, "../bank-payment-readiness.service.ts"),
+  "utf8",
+);
+const ROUTES = readFileSync(
+  resolve(__dirname, "../bank-payment-readiness.routes.ts"),
+  "utf8",
+);
 
 /** Just the run-scoped branch of the loader. */
 function runScopedBranch(): string {
@@ -39,14 +45,20 @@ function runScopedBranch(): string {
 
 describe("the population is scoped to a run when one is given", () => {
   it("takes an optional runId", () => {
-    expect(SRC).toMatch(/async function loadEmployeeBankRows\(runId\?: string \| null\)/);
-    expect(SRC).toMatch(/export async function buildBankReadinessReport\(runId\?: string \| null\)/);
+    expect(SRC).toMatch(
+      /async function loadEmployeeBankRows\(runId\?: string \| null\)/,
+    );
+    expect(SRC).toMatch(
+      /export async function buildBankReadinessReport\(runId\?: string \| null\)/,
+    );
   });
 
   it("sources the run population from payable salary_prep_line rows", () => {
     const branch = runScopedBranch();
     expect(branch).toMatch(/FROM salary_prep_line/);
-    expect(branch).toMatch(/WHERE run_id = \? AND COALESCE\(net_salary, 0\) > 0/);
+    expect(branch).toMatch(
+      /WHERE run_id = \? AND COALESCE\(net_salary, 0\) > 0/,
+    );
   });
 
   it("matches the run by id, never by run_month", () => {
@@ -75,11 +87,15 @@ describe("the population is scoped to a run when one is given", () => {
 
 describe("both the screen and the exporter consume that one resolver", () => {
   it("the payment file is judged on its own run", () => {
-    expect(ROUTES).toMatch(/const report = await buildBankReadinessReport\(runId\)/);
+    expect(ROUTES).toMatch(
+      /const report = await buildBankReadinessReport\(runId\)/,
+    );
   });
 
   it("the summary screen can be scoped to the same run", () => {
-    expect(ROUTES).toMatch(/const summaryRunId = String\(req\.query\.run_id \?\? ""\)\.trim\(\) \|\| null/);
+    expect(ROUTES).toMatch(
+      /const summaryRunId = String\(req\.query\.run_id \?\? ""\)\.trim\(\) \|\| null/,
+    );
     expect(ROUTES).toMatch(/buildBankReadinessReport\(summaryRunId\)/);
   });
 
@@ -87,7 +103,11 @@ describe("both the screen and the exporter consume that one resolver", () => {
     // The whole point of the ruling: one definition, not two that drift. Counted on the
     // payability predicate itself, not on `FROM salary_prep_line` - getPaymentSourceDivergence
     // legitimately reads that table too, to compare which account each exporter would pay.
-    const payablePredicate = (SRC.match(/COALESCE\(net_salary, 0\) > 0/g) ?? []).length;
-    expect(payablePredicate, "a second payable-population definition has appeared").toBe(1);
+    const payablePredicate = (SRC.match(/COALESCE\(net_salary, 0\) > 0/g) ?? [])
+      .length;
+    expect(
+      payablePredicate,
+      "a second payable-population definition has appeared",
+    ).toBe(1);
   });
 });

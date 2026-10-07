@@ -6,15 +6,20 @@ import { tableExists, scalar } from "../../shared/dbHelpers.js";
 
 const schemaColumnCache = new Map<string, Promise<boolean>>();
 
-async function columnExists(tableName: string, columnName: string): Promise<boolean> {
+async function columnExists(
+  tableName: string,
+  columnName: string,
+): Promise<boolean> {
   const cacheKey = `${tableName}.${columnName}`;
   const cached = schemaColumnCache.get(cacheKey);
   if (cached) return cached;
-  const lookup = db.execute<RowDataPacket[]>(
-    `SELECT 1 FROM information_schema.columns
+  const lookup = db
+    .execute<RowDataPacket[]>(
+      `SELECT 1 FROM information_schema.columns
       WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
-    [tableName, columnName]
-  ).then(([rows]) => rows.length > 0);
+      [tableName, columnName],
+    )
+    .then(([rows]) => rows.length > 0);
   schemaColumnCache.set(cacheKey, lookup);
   return lookup;
 }
@@ -23,7 +28,14 @@ function clamp(value: number, min = 0, max = 100): number {
   return Math.max(min, Math.min(max, Number.isFinite(value) ? value : 0));
 }
 
-function riskLabelFromScore(score: number): "highly_engaged" | "stable" | "watchlist" | "attrition_risk" | "critical_people_risk" {
+function riskLabelFromScore(
+  score: number,
+):
+  | "highly_engaged"
+  | "stable"
+  | "watchlist"
+  | "attrition_risk"
+  | "critical_people_risk" {
   if (score >= 80) return "highly_engaged";
   if (score >= 60) return "stable";
   if (score >= 40) return "watchlist";
@@ -34,24 +46,39 @@ function riskLabelFromScore(score: number): "highly_engaged" | "stable" | "watch
 // ── Performance score from real tables ───────────────────────────────────────
 async function computePerformanceScore(
   employeeId: string,
-  signals: Set<string>
+  signals: Set<string>,
 ): Promise<number> {
   let score = 0;
   let sources = 0;
 
   if (await tableExists("management_kpi_summary")) {
-    const colWeighted = await columnExists("management_kpi_summary", "weighted_score");
-    const colScore    = await columnExists("management_kpi_summary", "overall_score");
-    const colExpr     = colWeighted ? "weighted_score" : colScore ? "overall_score" : "NULL";
+    const colWeighted = await columnExists(
+      "management_kpi_summary",
+      "weighted_score",
+    );
+    const colScore = await columnExists(
+      "management_kpi_summary",
+      "overall_score",
+    );
+    const colExpr = colWeighted
+      ? "weighted_score"
+      : colScore
+        ? "overall_score"
+        : "NULL";
     if (colExpr !== "NULL") {
       const v = await scalar(
         `SELECT COALESCE(AVG(${colExpr}), -1) AS s
            FROM management_kpi_summary
           WHERE employee_id = ?
             AND period >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 3 MONTH), '%Y-%m')`,
-        [employeeId], -1
+        [employeeId],
+        -1,
       );
-      if (v >= 0) { score += v; sources++; signals.add("kpi"); }
+      if (v >= 0) {
+        score += v;
+        sources++;
+        signals.add("kpi");
+      }
     }
   }
 
@@ -61,9 +88,14 @@ async function computePerformanceScore(
          FROM employee_kpi_score
         WHERE employee_id = ?
           AND period >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 3 MONTH), '%Y-%m')`,
-      [employeeId], -1
+      [employeeId],
+      -1,
     );
-    if (v >= 0) { score += v; sources++; signals.add("kpi_score"); }
+    if (v >= 0) {
+      score += v;
+      sources++;
+      signals.add("kpi_score");
+    }
   }
 
   // Active PIP reduces score
@@ -71,9 +103,12 @@ async function computePerformanceScore(
   if (await tableExists("pip_record")) {
     const cnt = await scalar(
       `SELECT COUNT(*) AS cnt FROM pip_record WHERE employee_id = ? AND status = 'active'`,
-      [employeeId]
+      [employeeId],
     );
-    if (cnt > 0) { pipActive = true; signals.add("pip_active"); }
+    if (cnt > 0) {
+      pipActive = true;
+      signals.add("pip_active");
+    }
   }
 
   // Performance feedback recency.
@@ -88,9 +123,14 @@ async function computePerformanceScore(
          JOIN performance_feedback_request req ON req.request_id = resp.request_id
         WHERE req.employee_id = ?
           AND resp.submitted_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`,
-      [employeeId], -1
+      [employeeId],
+      -1,
     );
-    if (v >= 0) { score += (v / 5) * 100; sources++; signals.add("feedback_rating"); }
+    if (v >= 0) {
+      score += (v / 5) * 100;
+      sources++;
+      signals.add("feedback_rating");
+    }
   }
 
   if (sources === 0) return 65; // pure fallback — no signal counted
@@ -101,7 +141,7 @@ async function computePerformanceScore(
 // ── Career growth score ───────────────────────────────────────────────────────
 async function computeCareerGrowthScore(
   employeeId: string,
-  signals: Set<string>
+  signals: Set<string>,
 ): Promise<number> {
   let score = 50; // neutral baseline
   let boosts = 0;
@@ -112,13 +152,13 @@ async function computeCareerGrowthScore(
          FROM lms_learning_progress_snapshot
         WHERE employee_id = ? AND status = 'completed'
           AND synced_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`,
-      [employeeId]
+      [employeeId],
     );
     const inProgress = await scalar(
       `SELECT COUNT(*) AS cnt
          FROM lms_learning_progress_snapshot
         WHERE employee_id = ? AND status = 'in_progress'`,
-      [employeeId]
+      [employeeId],
     );
     if (completed > 0 || inProgress > 0) {
       score += Math.min(completed * 8, 24) + (inProgress > 0 ? 5 : 0);
@@ -132,9 +172,13 @@ async function computeCareerGrowthScore(
       `SELECT COUNT(*) AS cnt
          FROM development_plan
         WHERE employee_id = ? AND status IN ('active','in_progress')`,
-      [employeeId]
+      [employeeId],
     );
-    if (activePlans > 0) { score += 10; boosts++; signals.add("dev_plan"); }
+    if (activePlans > 0) {
+      score += 10;
+      boosts++;
+      signals.add("dev_plan");
+    }
   }
 
   if (await tableExists("development_plan_goal")) {
@@ -149,18 +193,25 @@ async function computeCareerGrowthScore(
          JOIN development_plan dp ON dp.plan_id = dpg.plan_id
         WHERE dp.employee_id = ? AND dpg.status = 'completed'
           AND dpg.completed_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`,
-      [employeeId]
+      [employeeId],
     );
-    if (completedGoals > 0) { score += Math.min(completedGoals * 5, 15); boosts++; signals.add("dev_goals"); }
+    if (completedGoals > 0) {
+      score += Math.min(completedGoals * 5, 15);
+      boosts++;
+      signals.add("dev_goals");
+    }
   }
 
   if (await tableExists("pip_record")) {
     // Long-term no-PIP is stable; active PIP was already penalised in perf
     const cnt = await scalar(
       `SELECT COUNT(*) AS cnt FROM pip_record WHERE employee_id = ? AND status = 'active'`,
-      [employeeId]
+      [employeeId],
     );
-    if (cnt > 0) { score -= 10; signals.add("pip_active"); }
+    if (cnt > 0) {
+      score -= 10;
+      signals.add("pip_active");
+    }
   }
 
   // Promotion / mobility signal
@@ -170,9 +221,13 @@ async function computeCareerGrowthScore(
          FROM employee_job_history
         WHERE employee_id = ? AND change_type IN ('promotion','lateral_transfer')
           AND effective_date >= DATE_SUB(CURDATE(), INTERVAL 18 MONTH)`,
-      [employeeId]
+      [employeeId],
     );
-    if (promotions > 0) { score += 15; boosts++; signals.add("promotion"); }
+    if (promotions > 0) {
+      score += 15;
+      boosts++;
+      signals.add("promotion");
+    }
   }
 
   // If no growth activity at all, slight downward drift
@@ -184,26 +239,27 @@ async function computeCareerGrowthScore(
 // ── Support friction score ────────────────────────────────────────────────────
 async function computeSupportFrictionScore(
   employeeId: string,
-  signals: Set<string>
+  signals: Set<string>,
 ): Promise<number> {
   const openTickets = await scalar(
     `SELECT COUNT(*) AS cnt FROM helpdesk_ticket WHERE employee_id = ? AND status NOT IN ('resolved','closed','cancelled')`,
-    [employeeId]
+    [employeeId],
   );
   const breached = await scalar(
     `SELECT COUNT(*) AS cnt FROM helpdesk_ticket
       WHERE employee_id = ? AND sla_breached = 1 AND status NOT IN ('resolved','closed','cancelled')`,
-    [employeeId]
+    [employeeId],
   ).catch(() => 0);
   const openGrievances = await scalar(
     `SELECT COUNT(*) AS cnt FROM grievance WHERE employee_id = ? AND status NOT IN ('resolved','closed')`,
-    [employeeId]
+    [employeeId],
   ).catch(() => 0);
 
   if (openTickets > 0 || openGrievances > 0) signals.add("support_friction");
 
   // friction = penalty: 0 friction = 100 score; more open/breached = lower
-  let penalty = openTickets * 10 + (breached as number) * 20 + openGrievances * 25;
+  let penalty =
+    openTickets * 10 + (breached as number) * 20 + openGrievances * 25;
   return clamp(100 - penalty);
 }
 
@@ -221,56 +277,119 @@ function buildRiskDrivers(params: {
   signals: Set<string>;
 }): string[] {
   const drivers: string[] = [];
-  if (params.pulseScore < 40)                             drivers.push("low_pulse_mood");
-  if (params.pulses90d === 0)                             drivers.push("no_pulse_response");
-  if (params.kudosReceived90d === 0)                      drivers.push("zero_recognition_90d");
-  if (params.attendanceScore < 70)                        drivers.push("attendance_instability");
-  if (params.performanceScore < 50)                       drivers.push("low_kpi_performance");
-  if (params.pipActive)                                   drivers.push("active_pip");
-  if (params.supportFrictionScore < 60)                   drivers.push("unresolved_support_tickets");
-  if (params.openGrievances > 0)                          drivers.push("open_grievance");
-  if (!params.signals.has("lms") && !params.signals.has("dev_plan") && !params.signals.has("promotion"))
-                                                          drivers.push("no_career_growth_signals");
+  if (params.pulseScore < 40) drivers.push("low_pulse_mood");
+  if (params.pulses90d === 0) drivers.push("no_pulse_response");
+  if (params.kudosReceived90d === 0) drivers.push("zero_recognition_90d");
+  if (params.attendanceScore < 70) drivers.push("attendance_instability");
+  if (params.performanceScore < 50) drivers.push("low_kpi_performance");
+  if (params.pipActive) drivers.push("active_pip");
+  if (params.supportFrictionScore < 60)
+    drivers.push("unresolved_support_tickets");
+  if (params.openGrievances > 0) drivers.push("open_grievance");
+  if (
+    !params.signals.has("lms") &&
+    !params.signals.has("dev_plan") &&
+    !params.signals.has("promotion")
+  )
+    drivers.push("no_career_growth_signals");
   return drivers;
 }
 
 // ── Recommended actions ───────────────────────────────────────────────────────
 function buildRecommendedActions(
   riskLabel: string,
-  riskDrivers: string[]
+  riskDrivers: string[],
 ): Array<{ action: string; priority: string; owner: string }> {
   switch (riskLabel) {
     case "critical_people_risk":
       return [
-        { action: "HR check-in within 24 hours", priority: "critical", owner: "hr" },
-        { action: "Manager 1:1 — today", priority: "critical", owner: "manager" },
-        { action: "Resolve support/ticket blockers immediately", priority: "high", owner: "hr" },
-        { action: "Review any open grievance with POSH sensitivity", priority: "high", owner: "hr" },
+        {
+          action: "HR check-in within 24 hours",
+          priority: "critical",
+          owner: "hr",
+        },
+        {
+          action: "Manager 1:1 — today",
+          priority: "critical",
+          owner: "manager",
+        },
+        {
+          action: "Resolve support/ticket blockers immediately",
+          priority: "high",
+          owner: "hr",
+        },
+        {
+          action: "Review any open grievance with POSH sensitivity",
+          priority: "high",
+          owner: "hr",
+        },
       ];
     case "attrition_risk":
       return [
-        { action: "Manager 1:1 within 3 days", priority: "high", owner: "manager" },
+        {
+          action: "Manager 1:1 within 3 days",
+          priority: "high",
+          owner: "manager",
+        },
         { action: "HR check-in this week", priority: "high", owner: "hr" },
         ...(riskDrivers.includes("unresolved_support_tickets")
-          ? [{ action: "Resolve open support tickets", priority: "high", owner: "hr" }]
+          ? [
+              {
+                action: "Resolve open support tickets",
+                priority: "high",
+                owner: "hr",
+              },
+            ]
           : []),
         ...(riskDrivers.includes("low_kpi_performance")
-          ? [{ action: "Performance coaching session", priority: "medium", owner: "manager" }]
+          ? [
+              {
+                action: "Performance coaching session",
+                priority: "medium",
+                owner: "manager",
+              },
+            ]
           : []),
       ];
     case "watchlist":
       return [
-        { action: "Manager 1:1 within 7 days", priority: "medium", owner: "manager" },
-        { action: "Recognition or appreciation touchpoint", priority: "low", owner: "manager" },
-        { action: "Pulse follow-up if not responded", priority: "low", owner: "hr" },
+        {
+          action: "Manager 1:1 within 7 days",
+          priority: "medium",
+          owner: "manager",
+        },
+        {
+          action: "Recognition or appreciation touchpoint",
+          priority: "low",
+          owner: "manager",
+        },
+        {
+          action: "Pulse follow-up if not responded",
+          priority: "low",
+          owner: "hr",
+        },
         ...(riskDrivers.includes("no_career_growth_signals")
-          ? [{ action: "Discuss career growth roadmap", priority: "medium", owner: "manager" }]
+          ? [
+              {
+                action: "Discuss career growth roadmap",
+                priority: "medium",
+                owner: "manager",
+              },
+            ]
           : []),
       ];
     case "highly_engaged":
       return [
-        { action: "Consider nomination for recognition/award", priority: "low", owner: "hr" },
-        { action: "Explore stretch assignment or mentorship role", priority: "low", owner: "manager" },
+        {
+          action: "Consider nomination for recognition/award",
+          priority: "low",
+          owner: "hr",
+        },
+        {
+          action: "Explore stretch assignment or mentorship role",
+          priority: "low",
+          owner: "manager",
+        },
       ];
     default:
       return [
@@ -303,27 +422,27 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
   ] = await Promise.all([
     scalar(
       `SELECT COUNT(*) AS cnt FROM kudos_transaction WHERE receiver_id = ? AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
-      [employeeId]
+      [employeeId],
     ),
     scalar(
       `SELECT COUNT(*) AS cnt FROM kudos_transaction WHERE sender_id = ? AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
-      [employeeId]
+      [employeeId],
     ),
     scalar(
       `SELECT COUNT(*) AS cnt FROM employee_badge_earned WHERE employee_id = ? AND earned_at >= DATE_SUB(NOW(), INTERVAL 180 DAY)`,
-      [employeeId]
+      [employeeId],
     ),
     scalar(
       // survey_response records the date as response_date; it has no submitted_at
       `SELECT COUNT(DISTINCT survey_id) AS cnt FROM survey_response WHERE employee_id = ? AND response_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
-      [employeeId]
+      [employeeId],
     ),
     // pulse_check is the question master - 8 rows, one per pulse question, with no
     // employee_id, no mood_score and no submitted_at. Employee answers live in
     // pulse_response, keyed by pulse_id, which is the table these two want.
     scalar(
       `SELECT COUNT(*) AS cnt FROM pulse_response WHERE employee_id = ? AND response_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
-      [employeeId]
+      [employeeId],
     ),
     scalar(
       // response_value is VARCHAR(50): a free-text answer would average as 0 and
@@ -333,7 +452,7 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
          FROM pulse_response
         WHERE employee_id = ? AND response_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
       [employeeId],
-      3
+      3,
     ),
   ]);
 
@@ -343,37 +462,39 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
   if (surveys90d > 0) signals.add("surveys");
   if (pulses90d > 0) signals.add("pulse");
 
-  const attendanceScorePromise = tableExists("attendance_daily_record").then(async (exists) => {
-    if (!exists) return 65;
-    // The date column is record_date and the status column is attendance_status;
-    // neither attendance_date nor status has ever existed here. Both scalars threw
-    // and were swallowed, so workedDays came back 0 and every employee scored the
-    // flat 65 below - across 125,125 rows of real attendance.
-    //
-    // attendance_status is an enum: present, half_day, absent, leave_approved,
-    // holiday, week_off, unreconciled, missing_punch, week_off_worked.
-    //
-    // 'absent' and 'missing_punch' both count as an absence, by decision on
-    // 2026-08-12. missing_punch is an unresolved punch rather than a confirmed
-    // absence, but payroll already treats it as unpaid, so an engagement score
-    // that ignored it would read more favourably than the employee's own payslip.
-    // It is the larger of the two populations - 12,704 rows against 15,335 in the
-    // last 90 days - so this materially lowers the attendance signal for anyone
-    // carrying unreconciled punches, which is the intent.
-    const [workedDays, absentDays] = await Promise.all([
-      scalar(
-        `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
-        [employeeId]
-      ),
-      scalar(
-        `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND attendance_status IN ('absent','missing_punch')`,
-        [employeeId]
-      ),
-    ]);
-    if (workedDays <= 0) return 65;
-    signals.add("attendance");
-    return clamp(100 - (absentDays / workedDays) * 100);
-  });
+  const attendanceScorePromise = tableExists("attendance_daily_record").then(
+    async (exists) => {
+      if (!exists) return 65;
+      // The date column is record_date and the status column is attendance_status;
+      // neither attendance_date nor status has ever existed here. Both scalars threw
+      // and were swallowed, so workedDays came back 0 and every employee scored the
+      // flat 65 below - across 125,125 rows of real attendance.
+      //
+      // attendance_status is an enum: present, half_day, absent, leave_approved,
+      // holiday, week_off, unreconciled, missing_punch, week_off_worked.
+      //
+      // 'absent' and 'missing_punch' both count as an absence, by decision on
+      // 2026-08-12. missing_punch is an unresolved punch rather than a confirmed
+      // absence, but payroll already treats it as unpaid, so an engagement score
+      // that ignored it would read more favourably than the employee's own payslip.
+      // It is the larger of the two populations - 12,704 rows against 15,335 in the
+      // last 90 days - so this materially lowers the attendance signal for anyone
+      // carrying unreconciled punches, which is the intent.
+      const [workedDays, absentDays] = await Promise.all([
+        scalar(
+          `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+          [employeeId],
+        ),
+        scalar(
+          `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND attendance_status IN ('absent','missing_punch')`,
+          [employeeId],
+        ),
+      ]);
+      if (workedDays <= 0) return 65;
+      signals.add("attendance");
+      return clamp(100 - (absentDays / workedDays) * 100);
+    },
+  );
 
   const [
     attendanceScore,
@@ -388,18 +509,20 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
   ]);
 
   const pulseScore = clamp((pulseAvg / 5) * 100);
-  const kudosScore = clamp((kudosReceived90d * 8) + (kudosGiven90d * 4) + (badges180d * 10));
-  const participationScore = clamp((surveys90d * 15) + (pulses90d * 10));
+  const kudosScore = clamp(
+    kudosReceived90d * 8 + kudosGiven90d * 4 + badges180d * 10,
+  );
+  const participationScore = clamp(surveys90d * 15 + pulses90d * 10);
 
   const engagementScore = clamp(
-    pulseScore            * 0.20 +
-    attendanceScore       * 0.15 +
-    kudosScore            * 0.12 +
-    participationScore    * 0.08 +
-    performanceScore      * 0.18 +
-    careerGrowthScore     * 0.12 +
-    supportFrictionScore  * 0.08 +
-    (signals.size > 0 ? 60 : 40) * 0.07
+    pulseScore * 0.2 +
+      attendanceScore * 0.15 +
+      kudosScore * 0.12 +
+      participationScore * 0.08 +
+      performanceScore * 0.18 +
+      careerGrowthScore * 0.12 +
+      supportFrictionScore * 0.08 +
+      (signals.size > 0 ? 60 : 40) * 0.07,
   );
 
   const dataConfidenceScore = computeDataConfidence(signals);
@@ -408,7 +531,7 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
   const pipActive = signals.has("pip_active");
   const openGrievances = await scalar(
     `SELECT COUNT(*) AS cnt FROM grievance WHERE employee_id = ? AND status NOT IN ('resolved','closed')`,
-    [employeeId]
+    [employeeId],
   ).catch(() => 0);
 
   const riskDrivers = buildRiskDrivers({
@@ -436,13 +559,14 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
     recommendedActions,
     dataConfidenceScore,
     signals: [...signals],
-    message: riskLabel === "critical_people_risk"
-      ? "Critical people risk detected. HR and manager intervention required immediately."
-      : riskLabel === "attrition_risk"
-        ? "Low engagement signals detected. HR/manager check-in recommended."
-        : riskLabel === "watchlist"
-          ? "Watchlist engagement trend. Manager should connect informally."
-          : "Engagement signals are acceptable.",
+    message:
+      riskLabel === "critical_people_risk"
+        ? "Critical people risk detected. HR and manager intervention required immediately."
+        : riskLabel === "attrition_risk"
+          ? "Low engagement signals detected. HR/manager check-in recommended."
+          : riskLabel === "watchlist"
+            ? "Watchlist engagement trend. Manager should connect informally."
+            : "Engagement signals are acceptable.",
   };
 
   // Save to people_experience_health_snapshot if table exists
@@ -470,7 +594,9 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
          recommended_actions_json = VALUES(recommended_actions_json),
          updated_at             = NOW()`,
       [
-        randomUUID(), employeeId, today,
+        randomUUID(),
+        employeeId,
+        today,
         Math.round(engagementScore * 100) / 100,
         dataConfidenceScore,
         riskLabel,
@@ -483,7 +609,7 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
         Math.round(careerGrowthScore * 100) / 100,
         JSON.stringify(riskDrivers),
         JSON.stringify(recommendedActions),
-      ]
+      ],
     );
   }
 
@@ -504,7 +630,9 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
        insight_json       = VALUES(insight_json),
        created_at         = NOW()`,
     [
-      randomUUID(), employeeId, today,
+      randomUUID(),
+      employeeId,
+      today,
       Math.round(engagementScore * 100) / 100,
       Math.round(pulseScore * 100) / 100,
       Math.round(kudosScore * 100) / 100,
@@ -513,26 +641,26 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
       Math.round(performanceScore * 100) / 100,
       riskLabel,
       JSON.stringify(insight),
-    ]
+    ],
   );
 
   return {
-    employee_id:            employeeId,
-    snapshot_date:          today,
-    engagement_score:       Math.round(engagementScore * 100) / 100,
-    data_confidence_score:  dataConfidenceScore,
-    risk_label:             riskLabel,
-    pulse_score:            Math.round(pulseScore * 100) / 100,
-    recognition_score:      Math.round(kudosScore * 100) / 100,
-    participation_score:    Math.round(participationScore * 100) / 100,
-    attendance_score:       Math.round(attendanceScore * 100) / 100,
-    performance_score:      Math.round(performanceScore * 100) / 100,
+    employee_id: employeeId,
+    snapshot_date: today,
+    engagement_score: Math.round(engagementScore * 100) / 100,
+    data_confidence_score: dataConfidenceScore,
+    risk_label: riskLabel,
+    pulse_score: Math.round(pulseScore * 100) / 100,
+    recognition_score: Math.round(kudosScore * 100) / 100,
+    participation_score: Math.round(participationScore * 100) / 100,
+    attendance_score: Math.round(attendanceScore * 100) / 100,
+    performance_score: Math.round(performanceScore * 100) / 100,
     support_friction_score: Math.round(supportFrictionScore * 100) / 100,
-    career_growth_score:    Math.round(careerGrowthScore * 100) / 100,
-    top_risk_drivers:       riskDrivers,
-    recommended_actions:    recommendedActions,
+    career_growth_score: Math.round(careerGrowthScore * 100) / 100,
+    top_risk_drivers: riskDrivers,
+    recommended_actions: recommendedActions,
     insight,
-    signals:                [...signals],
+    signals: [...signals],
   };
 }
 
@@ -544,20 +672,37 @@ export async function getEngagementCommandCenter(filters?: {
   risk_label?: string;
 }) {
   const conds: string[] = [
-    `hs.snapshot_date = (SELECT MAX(snapshot_date) FROM people_experience_health_snapshot)`
+    `hs.snapshot_date = (SELECT MAX(snapshot_date) FROM people_experience_health_snapshot)`,
   ];
   const params: unknown[] = [];
 
-  if (filters?.branch_id)     { conds.push("e.branch_id = ?");      params.push(filters.branch_id); }
-  if (filters?.process_id)    { conds.push("e.process_id = ?");      params.push(filters.process_id); }
-  if (filters?.department_id) { conds.push("e.department_id = ?");   params.push(filters.department_id); }
-  if (filters?.manager_id)    { conds.push("e.reporting_manager_id = ?"); params.push(filters.manager_id); }
-  if (filters?.risk_label)    { conds.push("hs.risk_label = ?");     params.push(filters.risk_label); }
+  if (filters?.branch_id) {
+    conds.push("e.branch_id = ?");
+    params.push(filters.branch_id);
+  }
+  if (filters?.process_id) {
+    conds.push("e.process_id = ?");
+    params.push(filters.process_id);
+  }
+  if (filters?.department_id) {
+    conds.push("e.department_id = ?");
+    params.push(filters.department_id);
+  }
+  if (filters?.manager_id) {
+    conds.push("e.reporting_manager_id = ?");
+    params.push(filters.manager_id);
+  }
+  if (filters?.risk_label) {
+    conds.push("hs.risk_label = ?");
+    params.push(filters.risk_label);
+  }
 
   const where = conds.join(" AND ");
 
   const peTableExists = await tableExists("people_experience_health_snapshot");
-  const snapshotTable = peTableExists ? "people_experience_health_snapshot" : "engagement_health_snapshot";
+  const snapshotTable = peTableExists
+    ? "people_experience_health_snapshot"
+    : "engagement_health_snapshot";
   const extraCols = peTableExists
     ? `, hs.data_confidence_score, hs.support_friction_score, hs.career_growth_score,
          hs.top_risk_drivers_json, hs.recommended_actions_json`
@@ -585,14 +730,14 @@ export async function getEngagementCommandCenter(filters?: {
       WHERE ${where}
       ORDER BY hs.engagement_score ASC
       LIMIT 200`,
-    params
+    params,
   );
 
   const [summaryRows] = await db.execute<RowDataPacket[]>(
     `SELECT risk_label, COUNT(*) AS count, ROUND(AVG(engagement_score), 2) AS avg_score
        FROM ${snapshotTable}
       WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM ${snapshotTable})
-      GROUP BY risk_label`
+      GROUP BY risk_label`,
   );
 
   const [kudosRows] = await db.execute<RowDataPacket[]>(
@@ -608,7 +753,7 @@ export async function getEngagementCommandCenter(filters?: {
        LEFT JOIN (SELECT kudos_id, COUNT(*) AS reaction_count FROM kudos_reaction GROUP BY kudos_id) reactions
          ON reactions.kudos_id = kt.kudos_id
       ORDER BY kt.sent_at DESC
-      LIMIT 30`
+      LIMIT 30`,
   );
 
   return { summary: summaryRows, watchlist: rows, kudos_feed: kudosRows };
@@ -619,23 +764,31 @@ export async function scanEngagementHealth(limit = 500) {
     // employment_status is NOT NULL and utf8mb4_unicode_ci: the bare comparison equals
     // LOWER(COALESCE(..)) = 'active' but can use idx_emp_empstatus (2.5s -> 0.2s on prod).
     `SELECT id FROM employees WHERE employment_status = 'active' ${sqlLimit(limit)}`,
-    []
+    [],
   );
 
   const employees = rows as Array<{ id: string }>;
-  const results: Awaited<ReturnType<typeof calculateEmployeeEngagementHealth>>[] = [];
+  const results: Awaited<
+    ReturnType<typeof calculateEmployeeEngagementHealth>
+  >[] = [];
   const concurrency = 10;
 
   for (let i = 0; i < employees.length; i += concurrency) {
     const batch = employees.slice(i, i + concurrency);
-    results.push(...await Promise.all(batch.map((row) => calculateEmployeeEngagementHealth(row.id))));
+    results.push(
+      ...(await Promise.all(
+        batch.map((row) => calculateEmployeeEngagementHealth(row.id)),
+      )),
+    );
   }
 
   return { scanned: results.length, results };
 }
 
 export async function getFilterOptions(userId: string, userRoles: string[]) {
-  const isGlobal = userRoles.some(r => ["admin", "hr", "super_admin", "ceo"].includes(r));
+  const isGlobal = userRoles.some((r) =>
+    ["admin", "hr", "super_admin", "ceo"].includes(r),
+  );
 
   const [branches] = await db.execute<RowDataPacket[]>(
     isGlobal
@@ -646,17 +799,17 @@ export async function getFilterOptions(userId: string, userRoles: string[]) {
           WHERE e.reporting_manager_id IN (
             SELECT id FROM employees WHERE user_id = ?
           ) AND bm.active_status = 1`,
-    isGlobal ? [] : [userId]
+    isGlobal ? [] : [userId],
   );
 
   const [processes] = await db.execute<RowDataPacket[]>(
-    `SELECT id, process_name AS name FROM process_master WHERE active_status = 1 ORDER BY process_name`
+    `SELECT id, process_name AS name FROM process_master WHERE active_status = 1 ORDER BY process_name`,
   );
 
   const [departments] = await db.execute<RowDataPacket[]>(
     // the column is dept_name; department_name has never existed. This one is not
     // wrapped in scalar(), so it took the whole endpoint down with a 500.
-    `SELECT id, dept_name AS name FROM department_master WHERE active_status = 1 ORDER BY dept_name`
+    `SELECT id, dept_name AS name FROM department_master WHERE active_status = 1 ORDER BY dept_name`,
   );
 
   const [managers] = await db.execute<RowDataPacket[]>(
@@ -668,7 +821,7 @@ export async function getFilterOptions(userId: string, userRoles: string[]) {
       : `SELECT e.id, e.full_name AS name, e.employee_code
            FROM employees e
           WHERE e.user_id = ? AND e.active_status = 1 LIMIT 5`,
-    isGlobal ? [] : [userId]
+    isGlobal ? [] : [userId],
   );
 
   return {
@@ -676,7 +829,20 @@ export async function getFilterOptions(userId: string, userRoles: string[]) {
     processes,
     departments,
     managers,
-    risk_labels: ["critical_people_risk", "attrition_risk", "watchlist", "stable", "highly_engaged"],
-    support_categories: ["hr", "payroll", "it", "general", "asset", "attendance"],
+    risk_labels: [
+      "critical_people_risk",
+      "attrition_risk",
+      "watchlist",
+      "stable",
+      "highly_engaged",
+    ],
+    support_categories: [
+      "hr",
+      "payroll",
+      "it",
+      "general",
+      "asset",
+      "attendance",
+    ],
   };
 }

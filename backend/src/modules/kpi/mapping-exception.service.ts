@@ -43,7 +43,9 @@ export type MappingExceptionInput = {
  * the reason a metric sync fails. A sync that dies because it could not record
  * a warning is strictly worse than one that missed a row.
  */
-export async function recordMappingException(input: MappingExceptionInput): Promise<void> {
+export async function recordMappingException(
+  input: MappingExceptionInput,
+): Promise<void> {
   const identifier = String(input.externalIdentifier ?? "").trim();
   if (!identifier) return;
 
@@ -71,7 +73,14 @@ export async function recordMappingException(input: MappingExceptionInput): Prom
          (id, source_system, source_entity, external_identifier, exception_type,
           exception_detail, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'open', NOW(), NOW())`,
-      [randomUUID(), input.sourceSystem, input.sourceEntity, identifier, input.exceptionType, input.detail ?? null],
+      [
+        randomUUID(),
+        input.sourceSystem,
+        input.sourceEntity,
+        identifier,
+        input.exceptionType,
+        input.detail ?? null,
+      ],
     );
   } catch (err) {
     logger.warn(
@@ -82,7 +91,9 @@ export async function recordMappingException(input: MappingExceptionInput): Prom
 }
 
 /** Count of open exceptions, for surfacing on an admin screen or a health check. */
-export async function countOpenMappingExceptions(sourceSystem?: string): Promise<number> {
+export async function countOpenMappingExceptions(
+  sourceSystem?: string,
+): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     sourceSystem
       ? `SELECT COUNT(*) AS n FROM integration_mapping_exception WHERE status = 'open' AND source_system = ?`

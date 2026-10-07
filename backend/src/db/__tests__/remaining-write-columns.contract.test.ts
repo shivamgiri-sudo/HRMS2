@@ -53,21 +53,33 @@ describe("lms_employee_mapping upsert", () => {
 
   it("names no column the table lacks", () => {
     const code = liveCode(FILE);
-    for (const col of ["hrms_mobile", "hrms_personal_email", "hrms_official_email"]) {
+    for (const col of [
+      "hrms_mobile",
+      "hrms_personal_email",
+      "hrms_official_email",
+    ]) {
       expect(code).not.toContain(col);
     }
     // final_hrms_employee_id is a real column on lms_mapping_audit, so this is
     // scoped to the mapping statement rather than matched as a substring
-    expect(code).not.toMatch(/INSERT INTO lms_employee_mapping[\s\S]{0,200}[^_]hrms_employee_id/);
+    expect(code).not.toMatch(
+      /INSERT INTO lms_employee_mapping[\s\S]{0,200}[^_]hrms_employee_id/,
+    );
     // lms_employee_id is a real column on lms_mapping_audit, so it is only wrong
     // in the mapping statement
-    expect(code).not.toMatch(/INSERT INTO lms_employee_mapping[\s\S]{0,200}lms_employee_id/);
+    expect(code).not.toMatch(
+      /INSERT INTO lms_employee_mapping[\s\S]{0,200}lms_employee_id/,
+    );
   });
 
   it("writes the columns that do exist", () => {
     const code = liveCode(FILE);
-    expect(code).toMatch(/INSERT INTO lms_employee_mapping[\s\S]{0,200}employee_id, lms_learner_id/);
-    expect(code).toMatch(/INSERT INTO lms_employee_mapping[\s\S]{0,200}\bemail\b/);
+    expect(code).toMatch(
+      /INSERT INTO lms_employee_mapping[\s\S]{0,200}employee_id, lms_learner_id/,
+    );
+    expect(code).toMatch(
+      /INSERT INTO lms_employee_mapping[\s\S]{0,200}\bemail\b/,
+    );
   });
 
   it("keeps the audit write, whose table and columns are real", () => {
@@ -81,20 +93,31 @@ describe("legacy joining checklist migration", () => {
   it("uses document_name and document_code on the template", () => {
     const code = liveCode(FILE);
     expect(code).not.toContain("template_name");
-    expect(code).not.toMatch(/INSERT INTO employee_joining_document_template[\s\S]{0,200}description/);
-    expect(code).toMatch(/INSERT INTO employee_joining_document_template[\s\S]{0,200}document_code, document_name, document_category/);
+    expect(code).not.toMatch(
+      /INSERT INTO employee_joining_document_template[\s\S]{0,200}description/,
+    );
+    expect(code).toMatch(
+      /INSERT INTO employee_joining_document_template[\s\S]{0,200}document_code, document_name, document_category/,
+    );
   });
 
   it("uses mandatory, verification_status and hr_remarks on the checklist", () => {
     const code = liveCode(FILE);
-    for (const col of ["verification_type", "is_required"]) expect(code).not.toContain(col);
-    expect(code).toMatch(/INSERT INTO employee_joining_document_checklist[\s\S]{0,320}mandatory/);
-    expect(code).toMatch(/INSERT INTO employee_joining_document_checklist[\s\S]{0,320}verification_status, hr_remarks/);
+    for (const col of ["verification_type", "is_required"])
+      expect(code).not.toContain(col);
+    expect(code).toMatch(
+      /INSERT INTO employee_joining_document_checklist[\s\S]{0,320}mandatory/,
+    );
+    expect(code).toMatch(
+      /INSERT INTO employee_joining_document_checklist[\s\S]{0,320}verification_status, hr_remarks/,
+    );
   });
 
   it("supplies the NOT NULL columns it used to omit", () => {
     const code = liveCode(FILE);
-    expect(code).toMatch(/INSERT INTO employee_joining_document_checklist[\s\S]{0,320}owner_type, action_type/);
+    expect(code).toMatch(
+      /INSERT INTO employee_joining_document_checklist[\s\S]{0,320}owner_type, action_type/,
+    );
   });
 });
 
@@ -104,8 +127,12 @@ describe("bulk upload writes", () => {
 
   it("roster assignments carry no created_by, updated_by or notes column", () => {
     const code = liveCode(ROSTER);
-    expect(code).not.toMatch(/INSERT INTO wfm_roster_assignment[\s\S]{0,400}created_by/);
-    expect(code).not.toMatch(/INSERT INTO wfm_roster_assignment[\s\S]{0,400}\bnotes\b/);
+    expect(code).not.toMatch(
+      /INSERT INTO wfm_roster_assignment[\s\S]{0,400}created_by/,
+    );
+    expect(code).not.toMatch(
+      /INSERT INTO wfm_roster_assignment[\s\S]{0,400}\bnotes\b/,
+    );
   });
 
   it("the uploader's note is kept in system_decision_reason rather than dropped", () => {
@@ -118,7 +145,7 @@ describe("bulk upload writes", () => {
     for (const f of [ROSTER, SHIFT]) {
       const code = liveCode(f);
       expect(code).toMatch(
-        /UPDATE upload_batch SET batch_status=\?, imported_rows=\?, imported_by=\?, imported_at=NOW\(\)/
+        /UPDATE upload_batch SET batch_status=\?, imported_rows=\?, imported_by=\?, imported_at=NOW\(\)/,
       );
     }
   });
@@ -126,7 +153,7 @@ describe("bulk upload writes", () => {
   it("migration 1134 adds both columns, guarded and nullable", () => {
     const sql = fs.readFileSync(
       path.join(ROOT, "..", "sql", "1134_upload_batch_import_audit.sql"),
-      "utf8"
+      "utf8",
     );
     expect(sql).toMatch(/ADD COLUMN imported_by CHAR\(36\) NULL/);
     expect(sql).toMatch(/ADD COLUMN imported_at DATETIME NULL/);

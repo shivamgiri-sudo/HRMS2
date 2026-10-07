@@ -13,7 +13,7 @@ let intervalRef: ReturnType<typeof setInterval> | undefined;
 async function isScheduleEnabled(): Promise<boolean> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT enabled FROM integration_schedule WHERE integration_key = 'lms_sync' LIMIT 1`
+      `SELECT enabled FROM integration_schedule WHERE integration_key = 'lms_sync' LIMIT 1`,
     );
     if (!(rows as any[]).length) return true; // default enabled if no row
     return Boolean((rows as any[])[0].enabled);
@@ -27,7 +27,7 @@ async function updateLastRun(): Promise<void> {
     await db.execute(
       `INSERT INTO integration_schedule (id, integration_key, cron_expression, enabled, last_run_at)
        VALUES (UUID(), 'lms_sync', '0 0 * * * *', 1, NOW())
-       ON DUPLICATE KEY UPDATE last_run_at = NOW()`
+       ON DUPLICATE KEY UPDATE last_run_at = NOW()`,
     );
   } catch (e) {
     console.warn("[lms-worker] failed to update last_run_at:", e);
@@ -49,7 +49,9 @@ async function tick(): Promise<void> {
 
     if (result.errors && result.errors.length > 0) {
       console.warn("[lms-worker] errors encountered:");
-      result.errors.slice(0, 5).forEach((err: string) => console.warn(`  - ${err}`));
+      result.errors
+        .slice(0, 5)
+        .forEach((err: string) => console.warn(`  - ${err}`));
       if (result.errors.length > 5) {
         console.warn(`  ... and ${result.errors.length - 5} more errors`);
       }
@@ -84,4 +86,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { startWorker as startLmsSyncWorker, stopWorker as stopLmsSyncWorker, tick as runLmsSync };
+export {
+  startWorker as startLmsSyncWorker,
+  stopWorker as stopLmsSyncWorker,
+  tick as runLmsSync,
+};

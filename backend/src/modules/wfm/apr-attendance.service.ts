@@ -11,9 +11,12 @@
  * what caused login/logout to render blank on the attendance lookup page.
  * TIME may legitimately exceed 24h on night shifts (e.g. "27:30:00").
  */
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { classifyOperationsNetLogin, resolveHalfDayFloorMinutes } from './attendance-engine.service.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import {
+  classifyOperationsNetLogin,
+  resolveHalfDayFloorMinutes,
+} from "./attendance-engine.service.js";
 
 /** Employee identity columns that may carry the ViciDial agent id (`apr.UserID`). */
 export interface AprEmployeeKeys {
@@ -23,12 +26,12 @@ export interface AprEmployeeKeys {
 }
 
 export interface AprDailyRecord {
-  record_date: string;          // YYYY-MM-DD
-  login_time: string | null;    // raw TIME "HH:MM:SS"
-  logout_time: string | null;   // raw TIME "HH:MM:SS"
-  login_at: string | null;      // IST-tagged datetime, safe for `new Date()`
-  logout_at: string | null;     // IST-tagged datetime, safe for `new Date()`
-  net_login: string | null;     // raw TIME duration
+  record_date: string; // YYYY-MM-DD
+  login_time: string | null; // raw TIME "HH:MM:SS"
+  logout_time: string | null; // raw TIME "HH:MM:SS"
+  login_at: string | null; // IST-tagged datetime, safe for `new Date()`
+  logout_at: string | null; // IST-tagged datetime, safe for `new Date()`
+  net_login: string | null; // raw TIME duration
   net_minutes: number;
   calls: number;
   break_bio: string | null;
@@ -37,10 +40,10 @@ export interface AprDailyRecord {
   break_training: string | null;
   break_dismx: string | null;
   campaigns: string | null;
-  attendance_status: 'present' | 'half_day' | 'absent';
+  attendance_status: "present" | "half_day" | "absent";
   lwp_value: number;
-  attendance_source: 'dialler';
-  source_system: 'apr';
+  attendance_source: "dialler";
+  source_system: "apr";
 }
 
 /**
@@ -65,7 +68,10 @@ export function isSqlTime(value: unknown): boolean {
  * parse it with `new Date()` without needing TIME-aware logic. TIME values >= 24h
  * roll the date forward, which is exactly the night-shift semantics we want.
  */
-export function composeIstDateTime(date: string | null, time: unknown): string | null {
+export function composeIstDateTime(
+  date: string | null,
+  time: unknown,
+): string | null {
   if (!date || !isSqlTime(time)) return null;
   const m = /^(\d{1,3}):([0-5]\d)(?::([0-5]\d))?$/.exec(String(time).trim())!;
   const hours = Number(m[1]);
@@ -81,10 +87,10 @@ export function composeIstDateTime(date: string | null, time: unknown): string |
   if (Number.isNaN(base.getTime())) return null;
   base.setUTCDate(base.getUTCDate() + dayOffset);
   const y = base.getUTCFullYear();
-  const mo = String(base.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(base.getUTCDate()).padStart(2, '0');
-  const hh = String(hours % 24).padStart(2, '0');
-  return `${y}-${mo}-${d}T${hh}:${m[2]}:${m[3] ?? '00'}+05:30`;
+  const mo = String(base.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(base.getUTCDate()).padStart(2, "0");
+  const hh = String(hours % 24).padStart(2, "0");
+  return `${y}-${mo}-${d}T${hh}:${m[2]}:${m[3] ?? "00"}+05:30`;
 }
 
 /**
@@ -98,10 +104,14 @@ export function composeIstDateTime(date: string | null, time: unknown): string |
  * rows keyed on call_centre_code, so that is tried first.
  */
 export function resolveAprUserIds(emp: AprEmployeeKeys): string[] {
-  const candidates = [emp.call_centre_code, emp.employee_code, emp.biometric_code];
+  const candidates = [
+    emp.call_centre_code,
+    emp.employee_code,
+    emp.biometric_code,
+  ];
   const seen = new Set<string>();
   for (const c of candidates) {
-    const v = String(c ?? '').trim();
+    const v = String(c ?? "").trim();
     if (v) seen.add(v);
   }
   return Array.from(seen);
@@ -118,11 +128,13 @@ export async function getAprMonthly(
 ): Promise<AprDailyRecord[]> {
   const userIds = resolveAprUserIds(emp);
   if (userIds.length === 0) {
-    console.warn(`[APR] No UserID candidates found for employee: call_centre_code=${emp.call_centre_code}, employee_code=${emp.employee_code}, biometric_code=${emp.biometric_code}`);
+    console.warn(
+      `[APR] No UserID candidates found for employee: call_centre_code=${emp.call_centre_code}, employee_code=${emp.employee_code}, biometric_code=${emp.biometric_code}`,
+    );
     return [];
   }
 
-  const placeholders = userIds.map(() => '?').join(', ');
+  const placeholders = userIds.map(() => "?").join(", ");
   // Sargable range predicate on ReportDate (leading column of the apr primary key).
   // Do NOT use DATE_FORMAT(ReportDate, '%Y-%m') — that defeats the index.
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -149,11 +161,16 @@ export async function getAprMonthly(
 
   // Resolved once, before the map — this is a database read, and the classifier
   // is synchronous precisely so it can run per row without a query each time.
-  const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes('netlogin_half_day_floor_minutes');
+  const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes(
+    "netlogin_half_day_floor_minutes",
+  );
 
   return (rows as any[]).map((r) => {
     const netMinutes = Math.round(Number(r.net_seconds ?? 0) / 60);
-    const { status, lwpValue } = classifyOperationsNetLogin(netMinutes, netLoginHalfDayFloor);
+    const { status, lwpValue } = classifyOperationsNetLogin(
+      netMinutes,
+      netLoginHalfDayFloor,
+    );
     return {
       record_date: String(r.record_date),
       login_time: r.login_time ?? null,
@@ -171,8 +188,8 @@ export async function getAprMonthly(
       campaigns: r.campaigns ?? null,
       attendance_status: status,
       lwp_value: lwpValue,
-      attendance_source: 'dialler' as const,
-      source_system: 'apr' as const,
+      attendance_source: "dialler" as const,
+      source_system: "apr" as const,
     };
   });
 }
@@ -184,7 +201,7 @@ export async function getAprDayCampaigns(
 ): Promise<Array<Record<string, unknown>>> {
   const userIds = resolveAprUserIds(emp);
   if (userIds.length === 0) return [];
-  const placeholders = userIds.map(() => '?').join(', ');
+  const placeholders = userIds.map(() => "?").join(", ");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.campaign_id, a.UserID AS user_id,
             a.Login_Time  AS login_time,

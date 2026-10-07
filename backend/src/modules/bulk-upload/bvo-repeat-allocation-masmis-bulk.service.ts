@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real "Repeat Allocation" export -- writes into the SAME
@@ -10,8 +13,15 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  */
 
 export const BVO_REPEAT_ALLOCATION_HEADERS = [
-  "unique_id", "mobile_no", "payment_mode", "email", "order_invoice_amount",
-  "order_id", "product_name", "shipping_customer_name", "previous_order_creation_date",
+  "unique_id",
+  "mobile_no",
+  "payment_mode",
+  "email",
+  "order_invoice_amount",
+  "order_id",
+  "product_name",
+  "shipping_customer_name",
+  "previous_order_creation_date",
 ] as const;
 
 /** Lowercase, strip everything but letters/digits -- same convention as every other importer
@@ -26,7 +36,8 @@ function get(data: Record<string, unknown>, ...keys: string[]): string {
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
     const v = normalized[normalizeKey(k)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
@@ -52,7 +63,8 @@ export async function importBvoRepeatAllocationMasmisBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
@@ -67,20 +79,26 @@ export async function importBvoRepeatAllocationMasmisBatch(
     const mobile = get(data, "mobile_no");
     if (!mobile) {
       const msg = `Row ${row.row_no}: "mobile_no" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        get(data, "unique_id") || null, mobile,
-        get(data, "payment_mode") || null, get(data, "email") || null,
+        get(data, "unique_id") || null,
+        mobile,
+        get(data, "payment_mode") || null,
+        get(data, "email") || null,
         parseNullableDecimal(get(data, "order_invoice_amount")),
-        get(data, "order_id") || null, get(data, "product_name") || null,
+        get(data, "order_id") || null,
+        get(data, "product_name") || null,
         get(data, "shipping_customer_name") || null,
         get(data, "previous_order_creation_date") || null,
-        null, batchId,
+        null,
+        batchId,
       ],
     });
   }
@@ -107,12 +125,17 @@ export async function importBvoRepeatAllocationMasmisBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 

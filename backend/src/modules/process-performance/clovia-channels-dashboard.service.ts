@@ -41,7 +41,10 @@ export function currentMonthRange(): { from: string; to: string } {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function resolveRange(fromInput: string, toInput: string): { from: string; to: string } {
+function resolveRange(
+  fromInput: string,
+  toInput: string,
+): { from: string; to: string } {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -143,7 +146,10 @@ export interface CloviaChannelsData {
 
 const DMY_SHORT = "%e-%b-%y";
 
-async function getEmailChannel(from: string, to: string): Promise<EmailChannel> {
+async function getEmailChannel(
+  from: string,
+  to: string,
+): Promise<EmailChannel> {
   const [[totals]] = await db.execute<any[]>(
     `SELECT
        COALESCE(SUM(CAST(total_mail_assigned AS UNSIGNED)),0) AS totalAssigned,
@@ -175,7 +181,11 @@ async function getEmailChannel(from: string, to: string): Promise<EmailChannel> 
     inProcess: num(totals?.inProcess),
     reOpen: num(totals?.reOpen),
     junk: num(totals?.junk),
-    trend: (trendRows as any[]).map((r) => ({ date: String(r.date), assigned: num(r.assigned), closed: num(r.closed) })),
+    trend: (trendRows as any[]).map((r) => ({
+      date: String(r.date),
+      assigned: num(r.assigned),
+      closed: num(r.closed),
+    })),
   };
 }
 
@@ -207,13 +217,22 @@ async function getChatChannel(from: string, to: string): Promise<ChatChannel> {
     respondedChats: num(totals?.respondedChats),
     resolvedYes,
     resolvedNo,
-    csatPct: resolvedTotal > 0 ? Math.round((resolvedYes / resolvedTotal) * 10000) / 100 : 0,
+    csatPct:
+      resolvedTotal > 0
+        ? Math.round((resolvedYes / resolvedTotal) * 10000) / 100
+        : 0,
     avgChatDurationSec: Math.round(num(totals?.avgDurationSec)),
-    trend: (trendRows as any[]).map((r) => ({ date: String(r.date), chats: num(r.chats) })),
+    trend: (trendRows as any[]).map((r) => ({
+      date: String(r.date),
+      chats: num(r.chats),
+    })),
   };
 }
 
-async function getFeedbackChannel(from: string, to: string): Promise<FeedbackChannel> {
+async function getFeedbackChannel(
+  from: string,
+  to: string,
+): Promise<FeedbackChannel> {
   const [[totals]] = await db.execute<any[]>(
     `SELECT
        COUNT(*) AS totalFeedback,
@@ -231,12 +250,21 @@ async function getFeedbackChannel(from: string, to: string): Promise<FeedbackCha
     totalFeedback,
     satisfiedCount,
     notSatisfiedCount,
-    csatPct: totalFeedback > 0 ? Math.round((satisfiedCount / totalFeedback) * 10000) / 100 : 0,
-    dsatPct: totalFeedback > 0 ? Math.round((notSatisfiedCount / totalFeedback) * 10000) / 100 : 0,
+    csatPct:
+      totalFeedback > 0
+        ? Math.round((satisfiedCount / totalFeedback) * 10000) / 100
+        : 0,
+    dsatPct:
+      totalFeedback > 0
+        ? Math.round((notSatisfiedCount / totalFeedback) * 10000) / 100
+        : 0,
   };
 }
 
-async function getQualityChannel(from: string, to: string): Promise<QualityChannel> {
+async function getQualityChannel(
+  from: string,
+  to: string,
+): Promise<QualityChannel> {
   const [[totals]] = await db.execute<any[]>(
     `SELECT
        COUNT(*) AS auditsCount,
@@ -254,7 +282,10 @@ async function getQualityChannel(from: string, to: string): Promise<QualityChann
   };
 }
 
-async function getProductivityChannel(from: string, to: string): Promise<ProductivityChannel> {
+async function getProductivityChannel(
+  from: string,
+  to: string,
+): Promise<ProductivityChannel> {
   const [[totals]] = await db.execute<any[]>(
     `SELECT
        COUNT(DISTINCT mas_id) AS agentCount,
@@ -276,7 +307,10 @@ async function getProductivityChannel(from: string, to: string): Promise<Product
   };
 }
 
-async function getRechurnChannel(from: string, to: string): Promise<RechurnChannel> {
+async function getRechurnChannel(
+  from: string,
+  to: string,
+): Promise<RechurnChannel> {
   const [[totals]] = await db.execute<any[]>(
     `SELECT COUNT(*) AS totalCalls,
        COALESCE(SUM(CASE WHEN abandoned_date IS NOT NULL AND abandoned_date != '' THEN 1 ELSE 0 END),0) AS abandonedCount
@@ -295,11 +329,17 @@ async function getRechurnChannel(from: string, to: string): Promise<RechurnChann
     available: true,
     totalCalls: num(totals?.totalCalls),
     abandonedCount: num(totals?.abandonedCount),
-    byStatus: (byStatus as any[]).map((r) => ({ status: String(r.status), count: num(r.count) })),
+    byStatus: (byStatus as any[]).map((r) => ({
+      status: String(r.status),
+      count: num(r.count),
+    })),
   };
 }
 
-async function getDispositionChannel(from: string, to: string): Promise<DispositionChannel> {
+async function getDispositionChannel(
+  from: string,
+  to: string,
+): Promise<DispositionChannel> {
   const [[totals]] = await db.execute<any[]>(
     `SELECT COUNT(*) AS totalTickets,
        COALESCE(SUM(CASE WHEN repeat_ftr = 'FTR' THEN 1 ELSE 0 END),0) AS ftrCount
@@ -320,12 +360,21 @@ async function getDispositionChannel(from: string, to: string): Promise<Disposit
     available: true,
     totalTickets,
     ftrCount,
-    ftrPct: totalTickets > 0 ? Math.round((ftrCount / totalTickets) * 10000) / 100 : 0,
-    topReasons: (topReasons as any[]).map((r) => ({ reason: String(r.reason), count: num(r.count) })),
+    ftrPct:
+      totalTickets > 0
+        ? Math.round((ftrCount / totalTickets) * 10000) / 100
+        : 0,
+    topReasons: (topReasons as any[]).map((r) => ({
+      reason: String(r.reason),
+      count: num(r.count),
+    })),
   };
 }
 
-async function getOutboundChannel(from: string, to: string): Promise<OutboundChannel> {
+async function getOutboundChannel(
+  from: string,
+  to: string,
+): Promise<OutboundChannel> {
   const [[totals]] = await db.execute<any[]>(
     `SELECT
        COUNT(*) AS totalCalls,
@@ -351,17 +400,36 @@ async function getOutboundChannel(from: string, to: string): Promise<OutboundCha
     available: true,
     totalCalls,
     connectedCalls,
-    connectedPct: totalCalls > 0 ? Math.round((connectedCalls / totalCalls) * 10000) / 100 : 0,
+    connectedPct:
+      totalCalls > 0
+        ? Math.round((connectedCalls / totalCalls) * 10000) / 100
+        : 0,
     avgTalkSec: Math.round(num(totals?.avgTalkSec)),
     agentCount: num(totals?.agentCount),
-    trend: (trendRows as any[]).map((r) => ({ date: String(r.date), calls: num(r.calls), connected: num(r.connected) })),
+    trend: (trendRows as any[]).map((r) => ({
+      date: String(r.date),
+      calls: num(r.calls),
+      connected: num(r.connected),
+    })),
   };
 }
 
-export async function getCloviaChannelsDashboard(fromInput: string, toInput: string): Promise<CloviaChannelsData> {
+export async function getCloviaChannelsDashboard(
+  fromInput: string,
+  toInput: string,
+): Promise<CloviaChannelsData> {
   const { from, to } = resolveRange(fromInput, toInput);
 
-  const [email, chat, feedback, quality, productivity, rechurn, disposition, outbound] = await Promise.all([
+  const [
+    email,
+    chat,
+    feedback,
+    quality,
+    productivity,
+    rechurn,
+    disposition,
+    outbound,
+  ] = await Promise.all([
     getEmailChannel(from, to),
     getChatChannel(from, to),
     getFeedbackChannel(from, to),
@@ -372,5 +440,16 @@ export async function getCloviaChannelsDashboard(fromInput: string, toInput: str
     getOutboundChannel(from, to),
   ]);
 
-  return { from, to, email, chat, feedback, quality, productivity, rechurn, disposition, outbound };
+  return {
+    from,
+    to,
+    email,
+    chat,
+    feedback,
+    quality,
+    productivity,
+    rechurn,
+    disposition,
+    outbound,
+  };
 }

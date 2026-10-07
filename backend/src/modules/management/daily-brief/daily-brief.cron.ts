@@ -69,13 +69,18 @@ export function isDryRun(): boolean {
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-export function parseRunTime(value: string | undefined): { hour: number; minute: number } {
+export function parseRunTime(value: string | undefined): {
+  hour: number;
+  minute: number;
+} {
   const raw = value && TIME_PATTERN.test(value) ? value : DEFAULT_TIME;
   const [hourStr, minuteStr] = raw.split(":");
   return { hour: Number(hourStr), minute: Number(minuteStr) };
 }
 
-export function millisecondsUntilNextManagerDailyBriefRun(now = new Date()): number {
+export function millisecondsUntilNextManagerDailyBriefRun(
+  now = new Date(),
+): number {
   const { hour, minute } = parseRunTime(process.env.MANAGER_DAILY_BRIEF_TIME);
   const next = new Date(now);
   next.setHours(hour, minute, 0, 0);
@@ -111,7 +116,9 @@ export async function runManagerDailyBrief(
 ): Promise<ManagerDailyBriefRunSummary> {
   const dryRun = isDryRun();
   const startedAt = Date.now();
-  console.log(`[${WORKER_NAME}] run start businessDate=${businessDate} dryRun=${dryRun}`);
+  console.log(
+    `[${WORKER_NAME}] run start businessDate=${businessDate} dryRun=${dryRun}`,
+  );
   await recordWorkerRun(WORKER_NAME, "started", { businessDate, dryRun });
 
   const summary: ManagerDailyBriefRunSummary = {
@@ -137,10 +144,15 @@ export async function runManagerDailyBrief(
       summary.blockedGlobally = true;
       console.warn(
         `[${WORKER_NAME}] outbound dispatch is globally blocked` +
-          (globalBlock.reason ? `: ${globalBlock.reason}` : " (no reason recorded)") +
+          (globalBlock.reason
+            ? `: ${globalBlock.reason}`
+            : " (no reason recorded)") +
           " — skipping this run entirely",
       );
-      await recordWorkerRun(WORKER_NAME, "completed", { ...summary, elapsedMs: Date.now() - startedAt });
+      await recordWorkerRun(WORKER_NAME, "completed", {
+        ...summary,
+        elapsedMs: Date.now() - startedAt,
+      });
       return summary;
     }
 
@@ -161,7 +173,9 @@ export async function runManagerDailyBrief(
     for (let i = 0; i < resolved.length; i += RECIPIENT_BATCH_SIZE) {
       const chunk = resolved.slice(i, i + RECIPIENT_BATCH_SIZE);
       const results = await Promise.allSettled(
-        chunk.map((recipient) => dispatchDailyBrief(recipient.employeeId, { businessDate, dryRun })),
+        chunk.map((recipient) =>
+          dispatchDailyBrief(recipient.employeeId, { businessDate, dryRun }),
+        ),
       );
 
       results.forEach((result, idx) => {
@@ -173,7 +187,9 @@ export async function runManagerDailyBrief(
           summary.failed += 1;
           console.error(
             `[${WORKER_NAME}] recipient employeeId=${recipient.employeeId} threw:`,
-            result.reason instanceof Error ? result.reason.message : String(result.reason),
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason),
           );
           return;
         }
@@ -211,7 +227,10 @@ export async function runManagerDailyBrief(
       });
     }
   } catch (error) {
-    console.error(`[${WORKER_NAME}] run failed`, error instanceof Error ? error.message : String(error));
+    console.error(
+      `[${WORKER_NAME}] run failed`,
+      error instanceof Error ? error.message : String(error),
+    );
     await recordWorkerRun(WORKER_NAME, "failed", {
       ...summary,
       error: error instanceof Error ? error.message : String(error),
@@ -234,7 +253,9 @@ export async function runManagerDailyBrief(
 
 export function startManagerDailyBriefScheduler(): void {
   if (!isEnabled()) {
-    console.log(`[${WORKER_NAME}] disabled (set MANAGER_DAILY_BRIEF_ENABLED=true to enable)`);
+    console.log(
+      `[${WORKER_NAME}] disabled (set MANAGER_DAILY_BRIEF_ENABLED=true to enable)`,
+    );
     return;
   }
   if (nextRun) return;
@@ -244,7 +265,10 @@ export function startManagerDailyBriefScheduler(): void {
       try {
         await runManagerDailyBrief();
       } catch (error) {
-        console.error(`[${WORKER_NAME}] scheduled run failed`, error instanceof Error ? error.message : String(error));
+        console.error(
+          `[${WORKER_NAME}] scheduled run failed`,
+          error instanceof Error ? error.message : String(error),
+        );
       } finally {
         nextRun = undefined;
         scheduleNext();

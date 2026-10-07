@@ -16,7 +16,9 @@ function toMySQLDatetime(d: Date): string {
 export const portalAuthService = {
   async purgeExpiredOtps(): Promise<void> {
     try {
-      await db.execute("DELETE FROM portal_otp WHERE expires_at < NOW() OR used = 1");
+      await db.execute(
+        "DELETE FROM portal_otp WHERE expires_at < NOW() OR used = 1",
+      );
     } catch {
       // purge failure must never break auth flows
     }
@@ -33,16 +35,20 @@ export const portalAuthService = {
    * The session INSERT is awaited before the token is returned. A failure propagates to the
    * caller so a valid token is never issued without a matching session record.
    */
-  async issueToken(payload: Omit<PortalTokenPayload, "role" | "jti">): Promise<{ token: string; jti: string }> {
+  async issueToken(
+    payload: Omit<PortalTokenPayload, "role" | "jti">,
+  ): Promise<{ token: string; jti: string }> {
     const jti = randomUUID();
     // impersonatedBy passes straight through into the signed payload when the caller
     // supplied one (portal-admin.routes.ts's /impersonate) -- undefined otherwise, so a
     // real client login's token never carries this key at all, not even as a false-y value.
-    const sessionLifetimeMs = payload.impersonatedBy ? 2 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+    const sessionLifetimeMs = payload.impersonatedBy
+      ? 2 * 60 * 60 * 1000
+      : 7 * 24 * 60 * 60 * 1000;
     const token = jwt.sign(
       { ...payload, role: "client", jti },
       env.PORTAL_JWT_SECRET,
-      { expiresIn: payload.impersonatedBy ? "2h" : "7d" }
+      { expiresIn: payload.impersonatedBy ? "2h" : "7d" },
     );
 
     // Must match the JWT's own expiresIn above -- an impersonation session recorded with
@@ -53,7 +59,7 @@ export const portalAuthService = {
     await db.execute(
       `INSERT INTO portal_user_sessions (id, client_user_id, jti, expires_at)
        VALUES (?, ?, ?, ?)`,
-      [randomUUID(), payload.clientUserId, jti, toMySQLDatetime(expiresAt)]
+      [randomUUID(), payload.clientUserId, jti, toMySQLDatetime(expiresAt)],
     );
 
     // jti is returned (not just embedded in the token) so a caller that needs to record
@@ -72,7 +78,7 @@ export const portalAuthService = {
   async revokeSession(jti: string): Promise<boolean> {
     const [result] = await db.execute(
       "UPDATE portal_user_sessions SET revoked_at = NOW() WHERE jti = ? AND revoked_at IS NULL",
-      [jti]
+      [jti],
     );
     return (result as { affectedRows?: number }).affectedRows ? true : false;
   },
@@ -81,7 +87,7 @@ export const portalAuthService = {
   async revokeAllSessionsForUser(clientUserId: string): Promise<number> {
     const [result] = await db.execute(
       "UPDATE portal_user_sessions SET revoked_at = NOW() WHERE client_user_id = ? AND revoked_at IS NULL",
-      [clientUserId]
+      [clientUserId],
     );
     return (result as { affectedRows?: number }).affectedRows ?? 0;
   },
@@ -93,22 +99,30 @@ export const portalAuthService = {
   async requestOtp(email: string): Promise<void> {
     await portalAuthService.purgeExpiredOtps();
     // Demo bypass only when explicitly enabled in non-production
-    if (email === "demo@mascallnet.com" && portalAuthService.isDemoBypassEnabled()) return;
-    if (email === "demo@mascallnet.com" && !portalAuthService.isDemoBypassEnabled()) {
+    if (
+      email === "demo@mascallnet.com" &&
+      portalAuthService.isDemoBypassEnabled()
+    )
+      return;
+    if (
+      email === "demo@mascallnet.com" &&
+      !portalAuthService.isDemoBypassEnabled()
+    ) {
       throw new Error("Demo bypass not available in this environment");
     }
     const [users] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM client_user WHERE email = ? AND is_active = 1 LIMIT 1",
-      [email]
+      [email],
     );
     if ((users as RowDataPacket[]).length === 0) return; // silent — don't reveal if email exists
 
     // Rate limit: max 3 OTPs per email per 15 minutes
     const [recent] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS cnt FROM portal_otp WHERE email = ? AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)",
-      [email]
+      [email],
     );
-    if ((recent as RowDataPacket[])[0].cnt >= 3) throw new Error("Too many OTP requests. Try again in 15 minutes.");
+    if ((recent as RowDataPacket[])[0].cnt >= 3)
+      throw new Error("Too many OTP requests. Try again in 15 minutes.");
 
     const otp = portalAuthService.generateOtp();
     const hash = await bcrypt.hash(otp, 10);
@@ -116,14 +130,16 @@ export const portalAuthService = {
 
     await db.execute(
       "INSERT INTO portal_otp (id, email, otp_hash, expires_at) VALUES (?, ?, ?, ?)",
-      [randomUUID(), email, hash, toMySQLDatetime(expiresAt)]
+      [randomUUID(), email, hash, toMySQLDatetime(expiresAt)],
     );
 
     try {
       await portalAuthService.sendOtpEmail(email, otp);
     } catch (err) {
       console.error("Failed to send OTP email:", err);
-      throw Object.assign(new Error("OTP email delivery failed"), { code: "DELIVERY_FAILED" });
+      throw Object.assign(new Error("OTP email delivery failed"), {
+        code: "DELIVERY_FAILED",
+      });
     }
   },
 
@@ -156,7 +172,7 @@ export const portalAuthService = {
       `SELECT id, otp_hash FROM portal_otp
        WHERE email = ? AND used = 0 AND expires_at > NOW()
        ORDER BY created_at DESC LIMIT 1`,
-      [email]
+      [email],
     );
     const record = (rows as RowDataPacket[])[0];
     if (!record) throw new Error("Invalid or expired OTP");
@@ -164,20 +180,24 @@ export const portalAuthService = {
     const valid = await bcrypt.compare(otp, record.otp_hash);
     if (!valid) throw new Error("Invalid or expired OTP");
 
-    await db.execute("UPDATE portal_otp SET used = 1 WHERE id = ?", [record.id]);
+    await db.execute("UPDATE portal_otp SET used = 1 WHERE id = ?", [
+      record.id,
+    ]);
 
     const [userRows] = await db.execute<RowDataPacket[]>(
       "SELECT id, client_id, process_ids FROM client_user WHERE email = ? AND is_active = 1 LIMIT 1",
-      [email]
+      [email],
     );
     const user = (userRows as RowDataPacket[])[0];
-    if (!user || !user.id || !user.client_id || !user.process_ids) throw new Error("User not found");
+    if (!user || !user.id || !user.client_id || !user.process_ids)
+      throw new Error("User not found");
 
     let processIds: string[];
     try {
-      processIds = typeof user.process_ids === "string"
-        ? JSON.parse(user.process_ids)
-        : (user.process_ids as string[]);
+      processIds =
+        typeof user.process_ids === "string"
+          ? JSON.parse(user.process_ids)
+          : (user.process_ids as string[]);
     } catch {
       throw new Error("Invalid process_ids data");
     }
@@ -198,22 +218,29 @@ export const portalAuthService = {
    * Returns mustChangePassword alongside the token so the frontend can route straight to a
    * forced change-password screen on first login, without needing a second round trip.
    */
-  async loginWithPassword(loginId: string, password: string): Promise<{ token: string; mustChangePassword: boolean }> {
+  async loginWithPassword(
+    loginId: string,
+    password: string,
+  ): Promise<{ token: string; mustChangePassword: boolean }> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, client_id, process_ids, password_hash, must_change_password FROM client_user WHERE login_id = ? AND is_active = 1 LIMIT 1",
-      [loginId]
+      [loginId],
     );
     const user = (rows as RowDataPacket[])[0];
     // Same message whether the login_id doesn't exist or the password is wrong -- this
     // must not tell an attacker which half of the pair was incorrect.
-    if (!user || !user.password_hash) throw new Error("Invalid login ID or password");
+    if (!user || !user.password_hash)
+      throw new Error("Invalid login ID or password");
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) throw new Error("Invalid login ID or password");
 
     let processIds: string[];
     try {
-      processIds = typeof user.process_ids === "string" ? JSON.parse(user.process_ids) : (user.process_ids as string[]);
+      processIds =
+        typeof user.process_ids === "string"
+          ? JSON.parse(user.process_ids)
+          : (user.process_ids as string[]);
     } catch {
       throw new Error("Invalid process_ids data");
     }
@@ -224,7 +251,10 @@ export const portalAuthService = {
       processIds,
     });
 
-    return { token, mustChangePassword: Number(user.must_change_password) === 1 };
+    return {
+      token,
+      mustChangePassword: Number(user.must_change_password) === 1,
+    };
   },
 
   /**
@@ -251,10 +281,13 @@ export const portalAuthService = {
    * createClientUser/generatePortalLogin do, retried once on collision with the same
    * disambiguator pattern.
    */
-  async resetPasswordAfterOtp(clientUserId: string, newPassword: string): Promise<{ loginId: string }> {
+  async resetPasswordAfterOtp(
+    clientUserId: string,
+    newPassword: string,
+  ): Promise<{ loginId: string }> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, login_id, process_ids, password_hash FROM client_user WHERE id = ? AND is_active = 1 LIMIT 1",
-      [clientUserId]
+      [clientUserId],
     );
     const user = (rows as RowDataPacket[])[0];
     if (!user) throw new Error("Account not found");
@@ -264,8 +297,13 @@ export const portalAuthService = {
     // (identity is proven by OTP, not by the old password), but the OLD hash is still
     // available right here whenever one already exists, so there's no reason to skip
     // this check just because the caller didn't have to supply the old value.
-    if (user.password_hash && (await bcrypt.compare(newPassword, user.password_hash))) {
-      throw new Error("New password must be different from your current password.");
+    if (
+      user.password_hash &&
+      (await bcrypt.compare(newPassword, user.password_hash))
+    ) {
+      throw new Error(
+        "New password must be different from your current password.",
+      );
     }
 
     const newHash = await bcrypt.hash(newPassword, 12);
@@ -273,7 +311,7 @@ export const portalAuthService = {
     if (user.login_id) {
       await db.execute(
         "UPDATE client_user SET password_hash = ?, must_change_password = 0 WHERE id = ?",
-        [newHash, clientUserId]
+        [newHash, clientUserId],
       );
       await portalAuthService.revokeAllSessionsForUser(clientUserId);
       return { loginId: user.login_id as string };
@@ -283,15 +321,25 @@ export const portalAuthService = {
     // does not import portal.auth.service.ts, so this is one-directional and safe, but
     // keeping the import local to this branch (the only one that needs it) avoids adding
     // a top-of-file dependency this file otherwise has no reason to carry.
-    const { ensureProcessSlug, generateCredentialsFromSlug, disambiguateLoginId } = await import("./portal-credentials.js");
+    const {
+      ensureProcessSlug,
+      generateCredentialsFromSlug,
+      disambiguateLoginId,
+    } = await import("./portal-credentials.js");
 
     let processIds: string[];
     try {
-      processIds = typeof user.process_ids === "string" ? JSON.parse(user.process_ids) : (user.process_ids ?? []);
+      processIds =
+        typeof user.process_ids === "string"
+          ? JSON.parse(user.process_ids)
+          : (user.process_ids ?? []);
     } catch {
       processIds = [];
     }
-    if (!processIds.length) throw new Error("This account has no assigned process — cannot derive a Login ID. Contact your account manager.");
+    if (!processIds.length)
+      throw new Error(
+        "This account has no assigned process — cannot derive a Login ID. Contact your account manager.",
+      );
 
     // ensureProcessSlug throws a raw "process_master row not found for id <uuid>" when
     // processIds[0] is stale/dangling (the process was deleted, or the JSON drifted from
@@ -303,7 +351,9 @@ export const portalAuthService = {
     try {
       slug = await ensureProcessSlug(processIds[0]);
     } catch {
-      throw new Error("Could not set up a Login ID for this account. Contact your account manager.");
+      throw new Error(
+        "Could not set up a Login ID for this account. Contact your account manager.",
+      );
     }
     let loginId = generateCredentialsFromSlug(slug).loginId;
 
@@ -312,11 +362,14 @@ export const portalAuthService = {
       try {
         await db.execute(
           "UPDATE client_user SET login_id = ?, password_hash = ?, must_change_password = 0 WHERE id = ?",
-          [loginId, newHash, clientUserId]
+          [loginId, newHash, clientUserId],
         );
         updated = true;
       } catch (err) {
-        if ((err as { code?: string }).code === "ER_DUP_ENTRY" && attempt === 0) {
+        if (
+          (err as { code?: string }).code === "ER_DUP_ENTRY" &&
+          attempt === 0
+        ) {
           loginId = disambiguateLoginId(loginId);
           continue;
         }
@@ -333,10 +386,14 @@ export const portalAuthService = {
    * same cost-factor distinction that file's own header comment documents: system-generated
    * passwords hash at 10, a user's deliberate choice hashes at 12.
    */
-  async changePassword(clientUserId: string, currentPassword: string, newPassword: string): Promise<void> {
+  async changePassword(
+    clientUserId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT password_hash FROM client_user WHERE id = ? LIMIT 1",
-      [clientUserId]
+      [clientUserId],
     );
     const user = (rows as RowDataPacket[])[0];
     if (!user || !user.password_hash) throw new Error("Account not found");
@@ -352,13 +409,15 @@ export const portalAuthService = {
     // entire point of forcing a change. Checked here (server-side, against the real hash)
     // rather than in the zod schema, since the schema has no access to the current value.
     if (await bcrypt.compare(newPassword, user.password_hash)) {
-      throw new Error("New password must be different from your current password.");
+      throw new Error(
+        "New password must be different from your current password.",
+      );
     }
 
     const newHash = await bcrypt.hash(newPassword, 12);
     await db.execute(
       "UPDATE client_user SET password_hash = ?, must_change_password = 0 WHERE id = ?",
-      [newHash, clientUserId]
+      [newHash, clientUserId],
     );
     // Revoke every other live session -- a password change should not leave an old,
     // possibly-compromised session usable elsewhere. Mirrors

@@ -23,7 +23,9 @@ describe("makeRowReader — header drift tolerance", () => {
   it("falls back to declared aliases (the source system's own 'Occopancy%' typo)", () => {
     const read = makeRowReader({ "Occupancy%": "90.40%" });
     expect(read("Occopancy%", ["Occupancy%"])).toBe("90.40%");
-    expect(makeRowReader({ "Occopancy%": "90.40%" })("Occopancy%", ["Occupancy%"])).toBe("90.40%");
+    expect(
+      makeRowReader({ "Occopancy%": "90.40%" })("Occopancy%", ["Occupancy%"]),
+    ).toBe("90.40%");
   });
 
   it("returns undefined for a genuinely absent header instead of guessing", () => {
@@ -31,7 +33,9 @@ describe("makeRowReader — header drift tolerance", () => {
   });
 
   it("normalizes whitespace runs and case for comparison", () => {
-    expect(normalizeHeaderKey("  Report   Completed  Date ")).toBe("report completed date");
+    expect(normalizeHeaderKey("  Report   Completed  Date ")).toBe(
+      "report completed date",
+    );
   });
 });
 
@@ -63,18 +67,33 @@ describe("parseRatio — percent text from an XLSX->CSV conversion", () => {
 });
 
 describe("Onfido configs whose template is served from config", () => {
-  const byCode = (code: string) => ONFIDO_REPORT_CONFIGS.find((c) => c.uploadTypeCode === code)!;
+  const byCode = (code: string) =>
+    ONFIDO_REPORT_CONFIGS.find((c) => c.uploadTypeCode === code)!;
 
   it("lists trimmed headers only — the Hub trims what it reads, so a spaced header can never match", () => {
-    for (const cfg of ONFIDO_REPORT_CONFIGS.filter((c) => c.templateFromConfig)) {
+    for (const cfg of ONFIDO_REPORT_CONFIGS.filter(
+      (c) => c.templateFromConfig,
+    )) {
       for (const header of cfg.headers) expect(header).toBe(header.trim());
     }
   });
 
   it("GD MCN SLA declares the 17-Sep-26 file's columns, including Doc AHT and POA AHT", () => {
     expect(byCode("ONFIDO_GD_MCN_SLA").headers).toEqual([
-      "GMT", "IST", "Date", "GD%", "MCN%", "Deficit", "SLA%", "Doc AHT", "POA AHT",
-      "Commitment", "FTE Delivered", "APS%", "Occopancy%", "Avail%",
+      "GMT",
+      "IST",
+      "Date",
+      "GD%",
+      "MCN%",
+      "Deficit",
+      "SLA%",
+      "Doc AHT",
+      "POA AHT",
+      "Commitment",
+      "FTE Delivered",
+      "APS%",
+      "Occopancy%",
+      "Avail%",
     ]);
   });
 
@@ -84,11 +103,15 @@ describe("Onfido configs whose template is served from config", () => {
   });
 
   it("every extract header of a config-served template exists in its headers list", () => {
-    for (const cfg of ONFIDO_REPORT_CONFIGS.filter((c) => c.templateFromConfig)) {
+    for (const cfg of ONFIDO_REPORT_CONFIGS.filter(
+      (c) => c.templateFromConfig,
+    )) {
       const known = new Set(cfg.headers);
       for (const e of cfg.extract) {
         if (e.header === "") continue; // synthetic dedup column
-        expect(known.has(e.header), `${cfg.uploadTypeCode}: ${e.header}`).toBe(true);
+        expect(known.has(e.header), `${cfg.uploadTypeCode}: ${e.header}`).toBe(
+          true,
+        );
       }
     }
   });

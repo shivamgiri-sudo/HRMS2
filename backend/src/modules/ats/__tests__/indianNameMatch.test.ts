@@ -19,7 +19,10 @@
  * share one of India's most common surnames.
  */
 import { describe, it, expect } from "vitest";
-import { classifyNameMatch, normalizeIndianName } from "../indian-name-match.js";
+import {
+  classifyNameMatch,
+  normalizeIndianName,
+} from "../indian-name-match.js";
 
 describe("normalizeIndianName", () => {
   it("strips honorifics", () => {
@@ -29,8 +32,12 @@ describe("normalizeIndianName", () => {
   });
 
   it("drops relational suffixes the bank sometimes carries", () => {
-    expect(normalizeIndianName("RAJESH KUMAR S/O RAMESH KUMAR")).toBe("rajesh kumar");
-    expect(normalizeIndianName("PRIYA SHARMA W/O ANIL SHARMA")).toBe("priya sharma");
+    expect(normalizeIndianName("RAJESH KUMAR S/O RAMESH KUMAR")).toBe(
+      "rajesh kumar",
+    );
+    expect(normalizeIndianName("PRIYA SHARMA W/O ANIL SHARMA")).toBe(
+      "priya sharma",
+    );
   });
 
   it("removes punctuation and collapses whitespace", () => {
@@ -43,7 +50,11 @@ describe("classifyNameMatch — the same person, written differently", () => {
     ["RAJESH KUMAR", "RAJESH KUMAR", "identical"],
     ["Mr Rajesh Kumar", "RAJESH KUMAR", "honorific on one side"],
     ["RAJESH KUMAR", "KUMAR RAJESH", "tokens reordered"],
-    ["RAJESH KUMAR S/O RAMESH", "RAJESH KUMAR", "S/O suffix on the bank record"],
+    [
+      "RAJESH KUMAR S/O RAMESH",
+      "RAJESH KUMAR",
+      "S/O suffix on the bank record",
+    ],
   ];
   for (const [a, b, why] of same) {
     it(`treats "${a}" and "${b}" as the same person (${why})`, () => {
@@ -74,10 +85,18 @@ describe("classifyNameMatch — Gujarati naming", () => {
   // Given name + father's name + surname, and the father's name is routinely
   // abbreviated to an initial on bank records.
   const cases: Array<[string, string, string]> = [
-    ["DHAVAL RAMESHBHAI PATEL", "DHAVAL R PATEL", "father's name abbreviated by the bank"],
+    [
+      "DHAVAL RAMESHBHAI PATEL",
+      "DHAVAL R PATEL",
+      "father's name abbreviated by the bank",
+    ],
     ["RAMESHBHAI PATEL", "RAMESH PATEL", "-bhai present on one side only"],
     ["KOKILABEN SHAH", "KOKILA SHAH", "-ben present on one side only"],
-    ["DHAVAL RAMESHBHAI PATEL", "PATEL DHAVAL RAMESHBHAI", "surname written first"],
+    [
+      "DHAVAL RAMESHBHAI PATEL",
+      "PATEL DHAVAL RAMESHBHAI",
+      "surname written first",
+    ],
   ];
   for (const [a, b, why] of cases) {
     it(`accepts "${a}" vs "${b}" (${why})`, () => {
@@ -92,11 +111,19 @@ describe("classifyNameMatch — South Indian naming", () => {
   // identifying word is the last token, not the first. Telugu names often put
   // the surname first. Tamil names frequently have no surname at all.
   const cases: Array<[string, string, string]> = [
-    ["S SRINIVASAN", "SRINIVASAN", "leading initial absent from the bank record"],
+    [
+      "S SRINIVASAN",
+      "SRINIVASAN",
+      "leading initial absent from the bank record",
+    ],
     ["SRINIVASAN", "S SRINIVASAN", "and the same the other way round"],
     ["K V RAMESH", "RAMESH", "two leading initials"],
     ["R KARTHIK", "KARTHIK RAJAN", "initial expanded to the father's name"],
-    ["SRINIVASA PRASAD BELLAPPU", "BELLAPPU SRINIVASA PRASAD", "Telugu surname-first ordering"],
+    [
+      "SRINIVASA PRASAD BELLAPPU",
+      "BELLAPPU SRINIVASA PRASAD",
+      "Telugu surname-first ordering",
+    ],
     ["VINOD KUMAR", "KALATHIL VINOD KUMAR", "Kerala house name prefixed"],
   ];
   for (const [a, b, why] of cases) {
@@ -107,7 +134,9 @@ describe("classifyNameMatch — South Indian naming", () => {
   }
 
   it("still separates two different South Indian names", () => {
-    expect(classifyNameMatch("S SRINIVASAN", "S RAMACHANDRAN").suspicious).toBe(true);
+    expect(classifyNameMatch("S SRINIVASAN", "S RAMACHANDRAN").suspicious).toBe(
+      true,
+    );
     expect(classifyNameMatch("K V RAMESH", "K V SURESH").suspicious).toBe(true);
   });
 });
@@ -139,7 +168,9 @@ describe("classifyNameMatch — genuinely different people", () => {
 
   it("a differing given name is suspicious even when the surname matches exactly", () => {
     // This is the fraud shape: X uses Y's account, and they are relatives.
-    expect(classifyNameMatch("RAJESH THAKUR", "HARSH THAKUR").suspicious).toBe(true);
+    expect(classifyNameMatch("RAJESH THAKUR", "HARSH THAKUR").suspicious).toBe(
+      true,
+    );
   });
 
   it("an initial must match the letter it stands for", () => {
@@ -149,7 +180,11 @@ describe("classifyNameMatch — genuinely different people", () => {
 
 describe("classifyNameMatch — missing data", () => {
   it("cannot conclude anything when either side is blank", () => {
-    for (const [a, b] of [["", "RAJESH KUMAR"], ["RAJESH KUMAR", ""], ["", ""]]) {
+    for (const [a, b] of [
+      ["", "RAJESH KUMAR"],
+      ["RAJESH KUMAR", ""],
+      ["", ""],
+    ]) {
       const result = classifyNameMatch(a, b);
       expect(result.tier).toBe("unknown");
       // Absent data is not evidence of fraud; it is a reason to ask a human.
@@ -174,29 +209,47 @@ describe("classifyNameMatch — missing data", () => {
  */
 describe("classifyNameMatch — transliterated spelling", () => {
   it("clears the live case: one trailing letter apart", () => {
-    const result = classifyNameMatch("RAHUL GAUTAM RAO CHHAPANEY", "Mr. RAHUL  CHHAPANE");
+    const result = classifyNameMatch(
+      "RAHUL GAUTAM RAO CHHAPANEY",
+      "Mr. RAHUL  CHHAPANE",
+    );
     expect(result.suspicious).toBe(false);
     expect(result.tier).toBe("variant");
   });
 
   it("forgives doubled letters, long vowels and a y written for i", () => {
-    expect(classifyNameMatch("PRAVEEN KUMAAR SHARMA", "PRAVIN KUMAR SHARMA").suspicious).toBe(false);
-    expect(classifyNameMatch("SANGEETA DEVI", "SANGITA DEVI").suspicious).toBe(false);
-    expect(classifyNameMatch("BHATT MEHUL", "BHAT MEHUL").suspicious).toBe(false);
+    expect(
+      classifyNameMatch("PRAVEEN KUMAAR SHARMA", "PRAVIN KUMAR SHARMA")
+        .suspicious,
+    ).toBe(false);
+    expect(classifyNameMatch("SANGEETA DEVI", "SANGITA DEVI").suspicious).toBe(
+      false,
+    );
+    expect(classifyNameMatch("BHATT MEHUL", "BHAT MEHUL").suspicious).toBe(
+      false,
+    );
   });
 
   it("forgives one vowel inside a long name", () => {
-    expect(classifyNameMatch("MOHAMMED ALI", "MOHAMMAD ALI").suspicious).toBe(false);
+    expect(classifyNameMatch("MOHAMMED ALI", "MOHAMMAD ALI").suspicious).toBe(
+      false,
+    );
   });
 
   it("still separates two people one CONSONANT apart", () => {
     // The pair that rules out a plain edit-distance tolerance.
-    expect(classifyNameMatch("RAMESH KUMAR", "RAKESH KUMAR").suspicious).toBe(true);
+    expect(classifyNameMatch("RAMESH KUMAR", "RAKESH KUMAR").suspicious).toBe(
+      true,
+    );
   });
 
   it("still separates short given names that differ only in their last vowel", () => {
-    expect(classifyNameMatch("RITA SHARMA", "RITU SHARMA").suspicious).toBe(true);
-    expect(classifyNameMatch("ANITA SINGH", "ANIL SINGH").suspicious).toBe(true);
+    expect(classifyNameMatch("RITA SHARMA", "RITU SHARMA").suspicious).toBe(
+      true,
+    );
+    expect(classifyNameMatch("ANITA SINGH", "ANIL SINGH").suspicious).toBe(
+      true,
+    );
   });
 
   it("never scores above 100 when one word matches under two spellings", () => {
@@ -207,6 +260,8 @@ describe("classifyNameMatch — transliterated spelling", () => {
   });
 
   it("a common surname spelled differently is still not distinctive on its own", () => {
-    expect(classifyNameMatch("RAJESH KUMAAR", "HARSH KUMAR").suspicious).toBe(true);
+    expect(classifyNameMatch("RAJESH KUMAAR", "HARSH KUMAR").suspicious).toBe(
+      true,
+    );
   });
 });

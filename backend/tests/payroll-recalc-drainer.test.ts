@@ -10,13 +10,18 @@ const { mockExecute, mockRecalc } = vi.hoisted(() => ({
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: mockExecute } }));
 
 // Mock recalculation
-vi.mock("../src/modules/payroll/payroll-targeted-recalculation.service.js", () => ({
-  recalculateOpenPayrollForEmployee: mockRecalc,
-}));
+vi.mock(
+  "../src/modules/payroll/payroll-targeted-recalculation.service.js",
+  () => ({
+    recalculateOpenPayrollForEmployee: mockRecalc,
+  }),
+);
 
 import { drainPayrollRecalcQueue } from "../src/modules/payroll/payroll-recalc-drainer.service.js";
 
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 /**
  * The drainer reclaims abandoned claims BEFORE it selects work, so that UPDATE is the first
@@ -37,14 +42,28 @@ describe("drainPayrollRecalcQueue", () => {
 
   it("processes pending entries and marks them completed", async () => {
     const rows = [
-      { id: "id-1", employee_id: "emp-1", payroll_month: "2026-07-01", reason: "cosec_sync" },
-      { id: "id-2", employee_id: "emp-2", payroll_month: "2026-07-01", reason: "cosec_sync" },
+      {
+        id: "id-1",
+        employee_id: "emp-1",
+        payroll_month: "2026-07-01",
+        reason: "cosec_sync",
+      },
+      {
+        id: "id-2",
+        employee_id: "emp-2",
+        payroll_month: "2026-07-01",
+        reason: "cosec_sync",
+      },
     ];
     expectReclaimSweep();
     mockExecute
-      .mockResolvedValueOnce([rows])  // SELECT pending
+      .mockResolvedValueOnce([rows]) // SELECT pending
       .mockResolvedValue([{ affectedRows: 1 }]); // UPDATE calls - the claim reads affectedRows
-    mockRecalc.mockResolvedValue({ status: "recalculated", runId: "run-1", message: "ok" });
+    mockRecalc.mockResolvedValue({
+      status: "recalculated",
+      runId: "run-1",
+      message: "ok",
+    });
 
     const result = await drainPayrollRecalcQueue("2026-07");
     expect(result.processed).toBe(2);
@@ -63,10 +82,17 @@ describe("drainPayrollRecalcQueue", () => {
    * the same salary_prep_line. This queue has already processed 3,164 entries in production.
    */
   it("skips an entry another drainer already claimed, and does not recalculate it", async () => {
-    const rows = [{ id: "id-9", employee_id: "emp-9", payroll_month: "2026-07-01", reason: "cosec_sync" }];
+    const rows = [
+      {
+        id: "id-9",
+        employee_id: "emp-9",
+        payroll_month: "2026-07-01",
+        reason: "cosec_sync",
+      },
+    ];
     expectReclaimSweep();
     mockExecute
-      .mockResolvedValueOnce([rows])              // SELECT pending
+      .mockResolvedValueOnce([rows]) // SELECT pending
       .mockResolvedValueOnce([{ affectedRows: 0 }]); // the claim loses the race
 
     const result = await drainPayrollRecalcQueue("2026-07");
@@ -77,12 +103,23 @@ describe("drainPayrollRecalcQueue", () => {
   });
 
   it("marks entry as skipped_locked when run is locked", async () => {
-    const rows = [{ id: "id-3", employee_id: "emp-3", payroll_month: "2026-07-01", reason: "cosec_sync" }];
+    const rows = [
+      {
+        id: "id-3",
+        employee_id: "emp-3",
+        payroll_month: "2026-07-01",
+        reason: "cosec_sync",
+      },
+    ];
     expectReclaimSweep();
     mockExecute
       .mockResolvedValueOnce([rows])
       .mockResolvedValue([{ affectedRows: 1 }]);
-    mockRecalc.mockResolvedValue({ status: "queued", runId: "run-1", message: "run is locked" });
+    mockRecalc.mockResolvedValue({
+      status: "queued",
+      runId: "run-1",
+      message: "run is locked",
+    });
 
     const result = await drainPayrollRecalcQueue("2026-07");
     expect(result.skipped_locked).toBe(1);
@@ -90,7 +127,14 @@ describe("drainPayrollRecalcQueue", () => {
   });
 
   it("marks entry as failed when recalc throws", async () => {
-    const rows = [{ id: "id-4", employee_id: "emp-4", payroll_month: "2026-07-01", reason: "cosec_sync" }];
+    const rows = [
+      {
+        id: "id-4",
+        employee_id: "emp-4",
+        payroll_month: "2026-07-01",
+        reason: "cosec_sync",
+      },
+    ];
     expectReclaimSweep();
     mockExecute
       .mockResolvedValueOnce([rows])
@@ -116,12 +160,23 @@ describe("drainPayrollRecalcQueue", () => {
    */
   describe("abandoned claims", () => {
     it("sweeps stale claims back to pending BEFORE selecting work, so they are picked up", async () => {
-      const reclaimedRow = [{ id: "id-5", employee_id: "emp-5", payroll_month: "2026-07-01", reason: "cosec_sync" }];
-      expectReclaimSweep(1);                                // one abandoned claim reclaimed
+      const reclaimedRow = [
+        {
+          id: "id-5",
+          employee_id: "emp-5",
+          payroll_month: "2026-07-01",
+          reason: "cosec_sync",
+        },
+      ];
+      expectReclaimSweep(1); // one abandoned claim reclaimed
       mockExecute
-        .mockResolvedValueOnce([reclaimedRow])              // SELECT now returns it
+        .mockResolvedValueOnce([reclaimedRow]) // SELECT now returns it
         .mockResolvedValue([{ affectedRows: 1 }]);
-      mockRecalc.mockResolvedValue({ status: "recalculated", runId: "run-1", message: "ok" });
+      mockRecalc.mockResolvedValue({
+        status: "recalculated",
+        runId: "run-1",
+        message: "ok",
+      });
 
       const result = await drainPayrollRecalcQueue("2026-07");
 
@@ -146,7 +201,9 @@ describe("drainPayrollRecalcQueue", () => {
       const sql = String(mockExecute.mock.calls[0][0]);
       expect(sql).toMatch(/status\s*=\s*'processing'/i);
       expect(sql).toMatch(/processed_at\s+IS\s+NULL/i);
-      expect(sql).toMatch(/requested_at\s*<\s*DATE_SUB\(NOW\(\),\s*INTERVAL\s*\d+\s*MINUTE\)/i);
+      expect(sql).toMatch(
+        /requested_at\s*<\s*DATE_SUB\(NOW\(\),\s*INTERVAL\s*\d+\s*MINUTE\)/i,
+      );
     });
 
     it("scopes the sweep to the month being drained", async () => {
@@ -156,7 +213,9 @@ describe("drainPayrollRecalcQueue", () => {
       await drainPayrollRecalcQueue("2026-07");
 
       // Unscoped, draining July would reclaim an in-flight June claim held by another drainer.
-      expect(String(mockExecute.mock.calls[0][0])).toMatch(/payroll_month\s*=\s*\?/i);
+      expect(String(mockExecute.mock.calls[0][0])).toMatch(
+        /payroll_month\s*=\s*\?/i,
+      );
       expect(mockExecute.mock.calls[0][1]).toEqual(["2026-07-01"]);
     });
   });

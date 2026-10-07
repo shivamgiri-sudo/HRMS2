@@ -12,32 +12,42 @@ import mysql from "mysql2/promise";
 import "dotenv/config";
 
 const conn = await mysql.createConnection({
-  host: process.env.DB_HOST, user: process.env.DB_USER, password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT || 3306, database: process.env.DB_NAME,
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT || 3306,
+  database: process.env.DB_NAME,
 });
 
 const LOW_QUALITY_GATE_CLIENT_IDS = new Set(["375", "409", "475"]);
 const CUSS_COLS = [
-  "agent_english_cuss_count", "agent_hindi_cuss_count",
-  "customer_english_cuss_count", "customer_hindi_cuss_count",
+  "agent_english_cuss_count",
+  "agent_hindi_cuss_count",
+  "customer_english_cuss_count",
+  "customer_hindi_cuss_count",
 ];
-const anyCussSql = CUSS_COLS.map((c) => `COALESCE(\`${c}\`,0)`).join(" + ") + " > 0";
+const anyCussSql =
+  CUSS_COLS.map((c) => `COALESCE(\`${c}\`,0)`).join(" + ") + " > 0";
 
 const [procs] = await conn.query(
   `SELECT DISTINCT d.process_id, p.process_name
      FROM kpi_studio_definition d
      JOIN kpi_metric_master m ON m.id = d.metric_id
      JOIN process_master p ON p.id = d.process_id
-    WHERE m.metric_code = 'AGENT_PROFANITY_PCT' AND d.active_status = 1`
+    WHERE m.metric_code = 'AGENT_PROFANITY_PCT' AND d.active_status = 1`,
 );
 
 const results = [];
 for (const proc of procs) {
   const [emps] = await conn.query(
-    "SELECT employee_code FROM employees WHERE process_id = ?", [proc.process_id]
+    "SELECT employee_code FROM employees WHERE process_id = ?",
+    [proc.process_id],
   );
   const codes = emps.map((e) => e.employee_code);
-  if (!codes.length) { results.push({ processName: proc.process_name, skipped: "no employees" }); continue; }
+  if (!codes.length) {
+    results.push({ processName: proc.process_name, skipped: "no employees" });
+    continue;
+  }
   const inList = codes.map(() => "?").join(",");
 
   const [latestRows] = await conn.query(
@@ -47,7 +57,13 @@ for (const proc of procs) {
     codes,
   );
   const dateIso = latestRows[0]?.latest;
-  if (!dateIso) { results.push({ processName: proc.process_name, skipped: "no audited calls in the last 7 days" }); continue; }
+  if (!dateIso) {
+    results.push({
+      processName: proc.process_name,
+      skipped: "no audited calls in the last 7 days",
+    });
+    continue;
+  }
 
   const [cidRows] = await conn.query(
     `SELECT ClientId, COUNT(*) n FROM db_audit.call_quality_assessment
@@ -55,7 +71,13 @@ for (const proc of procs) {
       GROUP BY ClientId ORDER BY n DESC LIMIT 1`,
     [...codes, dateIso, dateIso],
   );
-  if (!cidRows.length) { results.push({ processName: proc.process_name, skipped: "no audited calls that day (race)" }); continue; }
+  if (!cidRows.length) {
+    results.push({
+      processName: proc.process_name,
+      skipped: "no audited calls that day (race)",
+    });
+    continue;
+  }
   const clientId = String(cidRows[0].ClientId);
   const gateApplies = LOW_QUALITY_GATE_CLIENT_IDS.has(clientId);
   const gateClause = gateApplies ? "AND quality_percentage > 35" : "";
@@ -69,7 +91,14 @@ for (const proc of procs) {
   );
   const score = scoreRows[0].score;
   const n = scoreRows[0].n;
-  if (score === null || n === 0) { results.push({ processName: proc.process_name, clientId, skipped: "no scoreable calls after gate" }); continue; }
+  if (score === null || n === 0) {
+    results.push({
+      processName: proc.process_name,
+      clientId,
+      skipped: "no scoreable calls after gate",
+    });
+    continue;
+  }
 
   await conn.query(
     `INSERT INTO process_metric_actual (id, process_id, metric_key, score_date, actual_value, source, note, created_at, updated_at)
@@ -77,7 +106,14 @@ for (const proc of procs) {
      ON DUPLICATE KEY UPDATE actual_value = VALUES(actual_value), note = VALUES(note), updated_at = NOW()`,
     [proc.process_id, dateIso, score],
   );
-  results.push({ processName: proc.process_name, clientId, gateApplies, date: dateIso, n, score });
+  results.push({
+    processName: proc.process_name,
+    clientId,
+    gateApplies,
+    date: dateIso,
+    n,
+    score,
+  });
 }
 
 console.log(JSON.stringify(results, null, 2));

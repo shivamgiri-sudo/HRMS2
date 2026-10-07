@@ -20,7 +20,11 @@ import path from "path";
  * The files themselves are present on the server under this directory with the
  * expected names — only the recorded path is wrong.
  */
-export const TEMPLATE_STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "document-templates");
+export const TEMPLATE_STORAGE_ROOT = path.resolve(
+  process.cwd(),
+  "private-storage",
+  "document-templates",
+);
 
 /**
  * Resolve a stored template path to a file that actually exists here.
@@ -68,7 +72,10 @@ export function toStorableTemplatePath(absolutePath: string): string {
   // "C:\Users\...\NDA_CONFIDENTIALITY-v1.docx" — reintroducing on the very next upload the
   // breakage this module exists to prevent. It passes on a Windows dev box, which is why
   // it survived; the guarding test fails only on a POSIX runner.
-  const fileName = String(absolutePath ?? "").trim().split(/[\\/]/).pop();
+  const fileName = String(absolutePath ?? "")
+    .trim()
+    .split(/[\\/]/)
+    .pop();
   return fileName ?? "";
 }
 

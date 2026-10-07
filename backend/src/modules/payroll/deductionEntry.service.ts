@@ -83,21 +83,31 @@ export interface DeductionEntryFilters {
 
 // ── Deduction Types ───────────────────────────────────────────────────────────
 
-export async function listDeductionTypes(activeOnly = false): Promise<DeductionType[]> {
+export async function listDeductionTypes(
+  activeOnly = false,
+): Promise<DeductionType[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM payroll_deduction_type
      ${activeOnly ? "WHERE active_status = 1" : ""}
-     ORDER BY deduction_name`
+     ORDER BY deduction_name`,
   );
   return rows as DeductionType[];
 }
 
-export async function createDeductionType(dto: CreateDeductionTypeDto): Promise<DeductionType> {
+export async function createDeductionType(
+  dto: CreateDeductionTypeDto,
+): Promise<DeductionType> {
   if (!dto.deduction_code?.trim() || !dto.deduction_name?.trim()) {
-    throw Object.assign(new Error("deduction_code and deduction_name are required"), { statusCode: 400 });
+    throw Object.assign(
+      new Error("deduction_code and deduction_name are required"),
+      { statusCode: 400 },
+    );
   }
   if (dto.description && String(dto.description).trim().length < 5) {
-    throw Object.assign(new Error("description must be at least 5 characters"), { statusCode: 400 });
+    throw Object.assign(
+      new Error("description must be at least 5 characters"),
+      { statusCode: 400 },
+    );
   }
   const id = randomUUID();
   await db.execute<ResultSetHeader>(
@@ -110,18 +120,18 @@ export async function createDeductionType(dto: CreateDeductionTypeDto): Promise<
       dto.deduction_name.trim(),
       dto.description ?? null,
       dto.is_prorated ? 1 : 0,
-    ]
+    ],
   );
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM payroll_deduction_type WHERE id = ? LIMIT 1",
-    [id]
+    [id],
   );
   return (rows as DeductionType[])[0];
 }
 
 export async function updateDeductionType(
   id: string,
-  dto: Partial<CreateDeductionTypeDto>
+  dto: Partial<CreateDeductionTypeDto>,
 ): Promise<DeductionType> {
   const sets: string[] = [];
   const params: unknown[] = [];
@@ -132,7 +142,10 @@ export async function updateDeductionType(
   }
   if (dto.description !== undefined) {
     if (dto.description && String(dto.description).trim().length < 5) {
-      throw Object.assign(new Error("description must be at least 5 characters"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("description must be at least 5 characters"),
+        { statusCode: 400 },
+      );
     }
     sets.push("description = ?");
     params.push(dto.description ?? null);
@@ -143,24 +156,32 @@ export async function updateDeductionType(
   }
 
   if (sets.length === 0) {
-    throw Object.assign(new Error("No updatable fields provided"), { statusCode: 400 });
+    throw Object.assign(new Error("No updatable fields provided"), {
+      statusCode: 400,
+    });
   }
 
   params.push(id);
   await db.execute<ResultSetHeader>(
     `UPDATE payroll_deduction_type SET ${sets.join(", ")} WHERE id = ?`,
-    params
+    params,
   );
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM payroll_deduction_type WHERE id = ? LIMIT 1",
-    [id]
+    [id],
   );
   const row = (rows as DeductionType[])[0];
-  if (!row) throw Object.assign(new Error("Deduction type not found"), { statusCode: 404 });
+  if (!row)
+    throw Object.assign(new Error("Deduction type not found"), {
+      statusCode: 404,
+    });
   return row;
 }
 
-export async function toggleDeductionType(id: string, active: boolean): Promise<DeductionType> {
+export async function toggleDeductionType(
+  id: string,
+  active: boolean,
+): Promise<DeductionType> {
   // Block deactivation if active entries reference this type
   if (!active) {
     const [entryRows] = await db.execute<RowDataPacket[]>(
@@ -168,27 +189,32 @@ export async function toggleDeductionType(id: string, active: boolean): Promise<
          FROM employee_deduction_entries ede
          JOIN payroll_deduction_type pdt ON pdt.deduction_code = ede.deduction_type_code
         WHERE pdt.id = ? AND ede.status = 'active'`,
-      [id]
+      [id],
     );
     const cnt = Number((entryRows as RowDataPacket[])[0]?.cnt ?? 0);
     if (cnt > 0) {
       throw Object.assign(
-        new Error(`Cannot deactivate: ${cnt} active deduction entries reference this type`),
-        { statusCode: 400 }
+        new Error(
+          `Cannot deactivate: ${cnt} active deduction entries reference this type`,
+        ),
+        { statusCode: 400 },
       );
     }
   }
 
   await db.execute<ResultSetHeader>(
     "UPDATE payroll_deduction_type SET active_status = ? WHERE id = ?",
-    [active ? 1 : 0, id]
+    [active ? 1 : 0, id],
   );
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM payroll_deduction_type WHERE id = ? LIMIT 1",
-    [id]
+    [id],
   );
   const row = (rows as DeductionType[])[0];
-  if (!row) throw Object.assign(new Error("Deduction type not found"), { statusCode: 404 });
+  if (!row)
+    throw Object.assign(new Error("Deduction type not found"), {
+      statusCode: 404,
+    });
   return row;
 }
 
@@ -196,7 +222,7 @@ export async function toggleDeductionType(id: string, active: boolean): Promise<
 
 export async function listDeductionEntries(
   filters: DeductionEntryFilters,
-  scopedBranchId?: string | null
+  scopedBranchId?: string | null,
 ): Promise<{ entries: DeductionEntry[]; total: number }> {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -227,13 +253,14 @@ export async function listDeductionEntries(
   }
   if (filters.search?.trim()) {
     conditions.push(
-      "(e.employee_code LIKE ? OR CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ?)"
+      "(e.employee_code LIKE ? OR CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ?)",
     );
     const like = `%${filters.search.trim()}%`;
     params.push(like, like);
   }
 
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const where =
+    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total
@@ -241,7 +268,7 @@ export async function listDeductionEntries(
        JOIN employees e ON e.id = ede.employee_id
        JOIN payroll_deduction_type pdt ON pdt.deduction_code = ede.deduction_type_code
        ${where}`,
-    params
+    params,
   );
   const total = Number((countRows as RowDataPacket[])[0]?.total ?? 0);
 
@@ -274,7 +301,7 @@ export async function listDeductionEntries(
      ${where}
      ORDER BY ede.created_at DESC
      ${sqlLimitOffset(limit, offset)}`,
-    params
+    params,
   );
 
   return { entries: rows as DeductionEntry[], total };
@@ -282,36 +309,42 @@ export async function listDeductionEntries(
 
 export async function createDeductionEntry(
   dto: CreateDeductionEntryDto,
-  actorUserId: string
+  actorUserId: string,
 ): Promise<DeductionEntry> {
   // Validate employee active
   const [empRows] = await db.execute<RowDataPacket[]>(
     "SELECT id, employee_code FROM employees WHERE id = ? AND active_status = 1 LIMIT 1",
-    [dto.employee_id]
+    [dto.employee_id],
   );
   if (!(empRows as RowDataPacket[]).length) {
-    throw Object.assign(new Error("Employee not found or not active"), { statusCode: 400 });
+    throw Object.assign(new Error("Employee not found or not active"), {
+      statusCode: 400,
+    });
   }
 
   // Validate type active
   const [typeRows] = await db.execute<RowDataPacket[]>(
     "SELECT id, deduction_code FROM payroll_deduction_type WHERE deduction_code = ? AND active_status = 1 LIMIT 1",
-    [dto.deduction_type_code]
+    [dto.deduction_type_code],
   );
   if (!(typeRows as RowDataPacket[]).length) {
-    throw Object.assign(new Error("Deduction type not found or inactive"), { statusCode: 400 });
+    throw Object.assign(new Error("Deduction type not found or inactive"), {
+      statusCode: 400,
+    });
   }
 
   // Validate amount
   if (!dto.amount || Number(dto.amount) <= 0) {
-    throw Object.assign(new Error("amount must be greater than 0"), { statusCode: 400 });
+    throw Object.assign(new Error("amount must be greater than 0"), {
+      statusCode: 400,
+    });
   }
 
   // Validate description
   if (!dto.description || String(dto.description).trim().length < 5) {
     throw Object.assign(
       new Error("description must be at least 5 characters"),
-      { statusCode: 400 }
+      { statusCode: 400 },
     );
   }
 
@@ -329,7 +362,7 @@ export async function createDeductionEntry(
       dto.is_prorated ? 1 : 0,
       dto.recurring ? null : (dto.run_month ?? null),
       actorUserId,
-    ]
+    ],
   );
 
   void logSensitiveAction({
@@ -371,7 +404,7 @@ export async function createDeductionEntry(
      LEFT JOIN branch_master bm ON bm.id = e.branch_id
      LEFT JOIN process_master pm ON pm.id = e.process_id
      WHERE ede.id = ? LIMIT 1`,
-    [id]
+    [id],
   );
   return (newRows as DeductionEntry[])[0];
 }
@@ -379,26 +412,27 @@ export async function createDeductionEntry(
 export async function deactivateDeductionEntry(
   id: string,
   reason: string,
-  actorUserId: string
+  actorUserId: string,
 ): Promise<void> {
   if (!reason || String(reason).trim().length < 5) {
-    throw Object.assign(
-      new Error("reason must be at least 5 characters"),
-      { statusCode: 400 }
-    );
+    throw Object.assign(new Error("reason must be at least 5 characters"), {
+      statusCode: 400,
+    });
   }
 
   const [existing] = await db.execute<RowDataPacket[]>(
     "SELECT id, status FROM employee_deduction_entries WHERE id = ? LIMIT 1",
-    [id]
+    [id],
   );
   if (!(existing as RowDataPacket[]).length) {
-    throw Object.assign(new Error("Deduction entry not found"), { statusCode: 404 });
+    throw Object.assign(new Error("Deduction entry not found"), {
+      statusCode: 404,
+    });
   }
 
   await db.execute<ResultSetHeader>(
     "UPDATE employee_deduction_entries SET status = 'inactive', deactivate_reason = ? WHERE id = ?",
-    [reason.trim(), id]
+    [reason.trim(), id],
   );
 
   void logSensitiveAction({
@@ -413,29 +447,38 @@ export async function deactivateDeductionEntry(
 
 export async function bulkCreateDeductionEntries(
   rows: BulkDeductionRow[],
-  actorUserId: string
+  actorUserId: string,
 ): Promise<BulkDeductionResult> {
   if (!rows.length) return { inserted: 0, skipped: 0, errors: [] };
   if (rows.length > 500) {
-    throw Object.assign(new Error("Maximum 500 rows per bulk request"), { statusCode: 400 });
+    throw Object.assign(new Error("Maximum 500 rows per bulk request"), {
+      statusCode: 400,
+    });
   }
 
   // Load employees by code
-  const codes = [...new Set(rows.map((r) => String(r.employee_code ?? "").trim()).filter(Boolean))];
+  const codes = [
+    ...new Set(
+      rows.map((r) => String(r.employee_code ?? "").trim()).filter(Boolean),
+    ),
+  ];
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code FROM employees
       WHERE employee_code IN (${codes.map(() => "?").join(",")})
         AND active_status = 1`,
-    codes
+    codes,
   );
   const empMap = new Map<string, string>();
-  for (const e of empRows as RowDataPacket[]) empMap.set(String(e.employee_code), String(e.id));
+  for (const e of empRows as RowDataPacket[])
+    empMap.set(String(e.employee_code), String(e.id));
 
   // Load active deduction types
   const [typeRows] = await db.execute<RowDataPacket[]>(
-    "SELECT deduction_code FROM payroll_deduction_type WHERE active_status = 1"
+    "SELECT deduction_code FROM payroll_deduction_type WHERE active_status = 1",
   );
-  const activeTypes = new Set((typeRows as RowDataPacket[]).map((t) => String(t.deduction_code)));
+  const activeTypes = new Set(
+    (typeRows as RowDataPacket[]).map((t) => String(t.deduction_code)),
+  );
 
   let inserted = 0;
   let skipped = 0;
@@ -445,12 +488,16 @@ export async function bulkCreateDeductionEntries(
     const row = rows[i];
     const empId = empMap.get(String(row.employee_code ?? "").trim());
     if (!empId) {
-      errors.push(`Row ${i + 1}: employee_code "${row.employee_code}" not found or inactive`);
+      errors.push(
+        `Row ${i + 1}: employee_code "${row.employee_code}" not found or inactive`,
+      );
       skipped++;
       continue;
     }
     if (!activeTypes.has(String(row.deduction_type_code ?? ""))) {
-      errors.push(`Row ${i + 1}: deduction_type_code "${row.deduction_type_code}" not found or inactive`);
+      errors.push(
+        `Row ${i + 1}: deduction_type_code "${row.deduction_type_code}" not found or inactive`,
+      );
       skipped++;
       continue;
     }
@@ -478,7 +525,7 @@ export async function bulkCreateDeductionEntries(
         String(row.description).trim(),
         row.run_month ?? null,
         actorUserId,
-      ]
+      ],
     );
     inserted++;
   }

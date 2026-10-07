@@ -81,7 +81,9 @@ const PH_USER = "00000000-0000-4000-8000-0000000000aa";
 
 let seq = 0;
 // A per-run token keeps ids and employee codes unique, so the suite can be re-run against the same sandbox.
-const RUN = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0");
+const RUN = Math.floor(Math.random() * 0xffffff)
+  .toString(16)
+  .padStart(6, "0");
 const uuid = (n: number) =>
   `${RUN}00-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
@@ -139,10 +141,7 @@ async function row(sql: string, params: unknown[]) {
   return (rows as Array<Record<string, unknown>>)[0];
 }
 const employeeDates = (emp: string) =>
-  row(
-    `SELECT salary_start_date AS d FROM employees WHERE id = ?`,
-    [emp],
-  );
+  row(`SELECT salary_start_date AS d FROM employees WHERE id = ?`, [emp]);
 
 describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
   beforeAll(async () => {
@@ -165,7 +164,10 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
   describe("migration 1884: the database itself", () => {
     it("no longer refuses a salary start before joining at the database (the service enforces it)", async () => {
       const s = await seed({ doj: "2030-03-10", date: "2030-03-10" });
-      await db.execute(`UPDATE employees SET salary_start_date = '2030-03-01' WHERE id = ?`, [s.emp]);
+      await db.execute(
+        `UPDATE employees SET salary_start_date = '2030-03-01' WHERE id = ?`,
+        [s.emp],
+      );
       expect((await employeeDates(s.emp)).d).toBe("2030-03-01");
     });
 
@@ -255,7 +257,11 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
     });
 
     it("rolls back EVERY copy when one write is refused (standard authority, before joining)", async () => {
-      const s = await seed({ doj: "2030-03-10", date: "2030-03-10", review: "pending_review" });
+      const s = await seed({
+        doj: "2030-03-10",
+        date: "2030-03-10",
+        review: "pending_review",
+      });
       await expect(
         setSalaryStartDate({
           employeeId: s.emp,
@@ -332,37 +338,77 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
     it("an employee with a Salary Change Center change keeps its increment date on the assignment, is not reported, and is not called inconsistent", async () => {
       // Start date 10 Mar; a salary change moved the (single) assignment row to 1 Apr, as the Salary Change Center does.
       const s = await seed({ doj: "2030-03-10", date: "2030-03-10" });
-      await db.execute(`UPDATE employee_salary_assignment SET effective_from = '2030-04-01' WHERE id = ?`, [s.asg]);
+      await db.execute(
+        `UPDATE employee_salary_assignment SET effective_from = '2030-04-01' WHERE id = ?`,
+        [s.asg],
+      );
       await db.execute(
         `INSERT INTO employee_salary_change_log (id, employee_id, new_salary_component_assignment_id, requested_by_user_id, requested_by_name, actor_user_id, reason, new_ctc, effective_date)
          VALUES (UUID(), ?, UUID(), ?, 'Sandbox', ?, 'increment', 300000, '2030-04-01')`,
         [s.emp, PH_USER, PH_USER],
       );
 
-      expect(await findSalaryStartDateMismatches(db as never, "e.id = ?", [s.emp])).toHaveLength(0);
-      expect((await getSalaryStartDateConsistency(db, s.emp)).consistent).toBe(true);
+      expect(
+        await findSalaryStartDateMismatches(db as never, "e.id = ?", [s.emp]),
+      ).toHaveLength(0);
+      expect((await getSalaryStartDateConsistency(db, s.emp)).consistent).toBe(
+        true,
+      );
 
       // Re-saving the start date must not pull the increment back to it.
       await setSalaryStartDate({
-        employeeId: s.emp, newDate: "2030-03-14", actorUserId: PH_USER, source: "payroll_head_change_start_date",
-        authority: "payroll_head", allowBackdate: true, today: "2030-03-01",
+        employeeId: s.emp,
+        newDate: "2030-03-14",
+        actorUserId: PH_USER,
+        source: "payroll_head_change_start_date",
+        authority: "payroll_head",
+        allowBackdate: true,
+        today: "2030-03-01",
       });
-      expect((await row(`SELECT effective_from AS d FROM employee_salary_assignment WHERE id = ?`, [s.asg])).d).toBe("2030-04-01");
+      expect(
+        (
+          await row(
+            `SELECT effective_from AS d FROM employee_salary_assignment WHERE id = ?`,
+            [s.asg],
+          )
+        ).d,
+      ).toBe("2030-04-01");
       expect((await employeeDates(s.emp)).d).toBe("2030-03-14");
     });
 
     it("without a salary change on record, an unexplained assignment date is a stale start date that re-saving repairs", async () => {
       const s = await seed({ doj: "2030-03-10", date: "2030-03-10" });
-      await db.execute(`UPDATE employee_salary_assignment SET effective_from = '2030-03-25' WHERE id = ?`, [s.asg]);
-      const before = await findSalaryStartDateMismatches(db as never, "e.id = ?", [s.emp]);
+      await db.execute(
+        `UPDATE employee_salary_assignment SET effective_from = '2030-03-25' WHERE id = ?`,
+        [s.asg],
+      );
+      const before = await findSalaryStartDateMismatches(
+        db as never,
+        "e.id = ?",
+        [s.emp],
+      );
       expect(before[0]?.reasons).toContain("NO_ASSIGNMENT_ON_START_DATE");
 
       await setSalaryStartDate({
-        employeeId: s.emp, newDate: "2030-03-10", actorUserId: PH_USER, source: "repair",
-        authority: "payroll_head", allowBackdate: true, today: "2030-03-01",
+        employeeId: s.emp,
+        newDate: "2030-03-10",
+        actorUserId: PH_USER,
+        source: "repair",
+        authority: "payroll_head",
+        allowBackdate: true,
+        today: "2030-03-01",
       });
-      expect((await row(`SELECT effective_from AS d FROM employee_salary_assignment WHERE id = ?`, [s.asg])).d).toBe("2030-03-10");
-      expect(await findSalaryStartDateMismatches(db as never, "e.id = ?", [s.emp])).toHaveLength(0);
+      expect(
+        (
+          await row(
+            `SELECT effective_from AS d FROM employee_salary_assignment WHERE id = ?`,
+            [s.asg],
+          )
+        ).d,
+      ).toBe("2030-03-10");
+      expect(
+        await findSalaryStartDateMismatches(db as never, "e.id = ?", [s.emp]),
+      ).toHaveLength(0);
     });
   });
 
@@ -371,20 +417,40 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
       const s = await seed({ doj: "2030-03-10", date: "2030-03-10" });
       await expect(
         checkSalaryStartDate({
-          employeeId: s.emp, newDate: "2030-03-15", actorUserId: PH_USER, source: "payroll_head_create_and_assign_package",
-          authority: "payroll_head", allowBackdate: true, today: "2030-03-01",
+          employeeId: s.emp,
+          newDate: "2030-03-15",
+          actorUserId: PH_USER,
+          source: "payroll_head_create_and_assign_package",
+          authority: "payroll_head",
+          allowBackdate: true,
+          today: "2030-03-01",
         }),
       ).resolves.toBeUndefined();
       await expect(
         checkSalaryStartDate({
-          employeeId: s.emp, newDate: "2030-03-01", actorUserId: PH_USER, source: "payroll_head_create_and_assign_package",
-          authority: "payroll_head", allowBackdate: true, today: "2030-03-05",
+          employeeId: s.emp,
+          newDate: "2030-03-01",
+          actorUserId: PH_USER,
+          source: "payroll_head_create_and_assign_package",
+          authority: "payroll_head",
+          allowBackdate: true,
+          today: "2030-03-05",
         }),
       ).rejects.toMatchObject({ code: "REASON_REQUIRED" });
       expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-10" });
-      expect((await row(`SELECT COUNT(*) AS n FROM employee_salary_start_date_audit WHERE employee_id = ?`, [s.emp])).n).toBe(0);
+      expect(
+        (
+          await row(
+            `SELECT COUNT(*) AS n FROM employee_salary_start_date_audit WHERE employee_id = ?`,
+            [s.emp],
+          )
+        ).n,
+      ).toBe(0);
       // Row locks are released: a normal write goes straight through.
-      await db.execute(`UPDATE employees SET first_name = 'Lock free' WHERE id = ?`, [s.emp]);
+      await db.execute(
+        `UPDATE employees SET first_name = 'Lock free' WHERE id = ?`,
+        [s.emp],
+      );
     });
   });
 

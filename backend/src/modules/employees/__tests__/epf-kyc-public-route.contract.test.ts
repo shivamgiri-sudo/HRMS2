@@ -19,14 +19,16 @@ vi.mock("../employeeJoiningDocuments.service.js", async (importOriginal) => ({
   // importOriginal keeps the other exports real: this router imports a dozen of them, and a
   // hand-written stub drifts from the module it replaces.
   ...(await importOriginal<Record<string, unknown>>()),
-  getPublicJoiningDocumentEsignSession: (...args: unknown[]) => getSession(...args),
+  getPublicJoiningDocumentEsignSession: (...args: unknown[]) =>
+    getSession(...args),
 }));
 
 vi.mock("../epfKycCapture.service.js", () => ({
   applyEpfKycAndRegenerate: (...args: unknown[]) => applyKyc(...args),
 }));
 
-const { publicEmployeeDocumentRouter } = await import("../employee.compliance.routes.js");
+const { publicEmployeeDocumentRouter } =
+  await import("../employee.compliance.routes.js");
 
 function app() {
   const a = express();
@@ -57,7 +59,10 @@ describe("field mapping", () => {
     // The page posts snake_case and EpfKycInput is camelCase. A field missed in that mapping
     // does not fail — it arrives as null, the service treats it as "not supplied", and the
     // employee's PAN or Aadhaar quietly never reaches the form. Asserting all eight.
-    await request(app()).post("/api/public/employee-documents/esign/tok-1/epf-kyc").send(PAYLOAD).expect(200);
+    await request(app())
+      .post("/api/public/employee-documents/esign/tok-1/epf-kyc")
+      .send(PAYLOAD)
+      .expect(200);
 
     expect(applyKyc).toHaveBeenCalledTimes(1);
     expect(applyKyc.mock.calls[0][0].input).toEqual({
@@ -88,19 +93,34 @@ describe("identity", () => {
     // document by adding a field to the request.
     await request(app())
       .post("/api/public/employee-documents/esign/tok-1/epf-kyc")
-      .send({ ...PAYLOAD, employee_id: "someone-else", checklist_id: "their-checklist" })
+      .send({
+        ...PAYLOAD,
+        employee_id: "someone-else",
+        checklist_id: "their-checklist",
+      })
       .expect(200);
 
-    expect(applyKyc.mock.calls[0][0]).toMatchObject({ checklistId: "chk-1", employeeId: "emp-1" });
+    expect(applyKyc.mock.calls[0][0]).toMatchObject({
+      checklistId: "chk-1",
+      employeeId: "emp-1",
+    });
   });
 
   it("never reaches the service when the link is invalid or expired", async () => {
-    const expired = Object.assign(new Error("This document signing link has expired"), { statusCode: 410 });
+    const expired = Object.assign(
+      new Error("This document signing link has expired"),
+      { statusCode: 410 },
+    );
     getSession.mockRejectedValue(expired);
 
-    await request(app()).post("/api/public/employee-documents/esign/bad/epf-kyc").send(PAYLOAD);
+    await request(app())
+      .post("/api/public/employee-documents/esign/bad/epf-kyc")
+      .send(PAYLOAD);
 
-    expect(applyKyc, "an unresolved token must not reach the KYC service").not.toHaveBeenCalled();
+    expect(
+      applyKyc,
+      "an unresolved token must not reach the KYC service",
+    ).not.toHaveBeenCalled();
   });
 });
 
@@ -111,7 +131,9 @@ describe("validation errors", () => {
     // wrong.
     applyKyc.mockResolvedValue({
       regenerated: false,
-      errors: [{ field: "panNumber", message: "PAN must look like ABCDE1234F." }],
+      errors: [
+        { field: "panNumber", message: "PAN must look like ABCDE1234F." },
+      ],
     });
 
     const res = await request(app())
@@ -120,6 +142,9 @@ describe("validation errors", () => {
       .expect(400);
 
     expect(res.body.success).toBe(false);
-    expect(res.body.errors[0]).toMatchObject({ field: "panNumber", message: expect.any(String) });
+    expect(res.body.errors[0]).toMatchObject({
+      field: "panNumber",
+      message: expect.any(String),
+    });
   });
 });

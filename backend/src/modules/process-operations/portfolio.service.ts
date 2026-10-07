@@ -12,11 +12,30 @@ import { listProcesses } from "./process-operations.service.js";
  * kpi_studio_definition with a target_value for that process.
  */
 
-export interface PortfolioWorst { metricKey: string; label: string; unit: string | null; value: number; target: number; direction: string; gapRatio: number }
+export interface PortfolioWorst {
+  metricKey: string;
+  label: string;
+  unit: string | null;
+  value: number;
+  target: number;
+  direction: string;
+  gapRatio: number;
+}
 export interface PortfolioRow {
-  processId: string; processName: string; processCode: string | null; branchName: string | null; headcount: number;
-  metrics: number; pass: number; fail: number; none: number; score: number | null;
-  newestDate: string | null; staleDays: number | null; feedStopped: boolean; worst: PortfolioWorst | null;
+  processId: string;
+  processName: string;
+  processCode: string | null;
+  branchName: string | null;
+  headcount: number;
+  metrics: number;
+  pass: number;
+  fail: number;
+  none: number;
+  score: number | null;
+  newestDate: string | null;
+  staleDays: number | null;
+  feedStopped: boolean;
+  worst: PortfolioWorst | null;
 }
 
 const STALE_AFTER_DAYS = 3;
@@ -29,8 +48,13 @@ function isoDate(v: unknown): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function daysSince(dateStr: string): number {
-  const then = new Date(`${dateStr}T00:00:00`); const n = new Date();
-  return Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime() - then.getTime()) / 86_400_000);
+  const then = new Date(`${dateStr}T00:00:00`);
+  const n = new Date();
+  return Math.round(
+    (new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime() -
+      then.getTime()) /
+      86_400_000,
+  );
 }
 
 async function compute(userId: string): Promise<PortfolioRow[]> {
@@ -54,11 +78,25 @@ async function compute(userId: string): Promise<PortfolioRow[]> {
     [WINDOW_DAYS],
   );
 
-  type Acc = { pass: number; fail: number; none: number; metrics: number; newest: string | null; worst: PortfolioWorst | null };
+  type Acc = {
+    pass: number;
+    fail: number;
+    none: number;
+    metrics: number;
+    newest: string | null;
+    worst: PortfolioWorst | null;
+  };
   const acc = new Map<string, Acc>();
   for (const r of rows as any[]) {
     const pid = String(r.process_id);
-    const a = acc.get(pid) ?? { pass: 0, fail: 0, none: 0, metrics: 0, newest: null, worst: null };
+    const a = acc.get(pid) ?? {
+      pass: 0,
+      fail: 0,
+      none: 0,
+      metrics: 0,
+      newest: null,
+      worst: null,
+    };
     acc.set(pid, a);
     a.metrics++;
     const date = isoDate(r.score_date);
@@ -66,13 +104,32 @@ async function compute(userId: string): Promise<PortfolioRow[]> {
     const value = Number(r.actual_value);
     const target = r.target_value === null ? null : Number(r.target_value);
     const direction = r.direction ? String(r.direction) : null;
-    if (target === null || !direction) { a.none++; continue; }
-    const ok = direction === "higher_is_better" ? value >= target : value <= target;
-    if (ok) { a.pass++; continue; }
+    if (target === null || !direction) {
+      a.none++;
+      continue;
+    }
+    const ok =
+      direction === "higher_is_better" ? value >= target : value <= target;
+    if (ok) {
+      a.pass++;
+      continue;
+    }
     a.fail++;
-    const gap = target === 0 ? 0 : (direction === "higher_is_better" ? target - value : value - target) / Math.abs(target);
+    const gap =
+      target === 0
+        ? 0
+        : (direction === "higher_is_better" ? target - value : value - target) /
+          Math.abs(target);
     if (!a.worst || gap > a.worst.gapRatio) {
-      a.worst = { metricKey: String(r.metric_key), label: r.metric_name ? String(r.metric_name) : String(r.metric_key), unit: r.unit ? String(r.unit) : null, value, target, direction, gapRatio: gap };
+      a.worst = {
+        metricKey: String(r.metric_key),
+        label: r.metric_name ? String(r.metric_name) : String(r.metric_key),
+        unit: r.unit ? String(r.unit) : null,
+        value,
+        target,
+        direction,
+        gapRatio: gap,
+      };
     }
   }
 
@@ -82,10 +139,21 @@ async function compute(userId: string): Promise<PortfolioRow[]> {
     const newest = a?.newest ?? p.latestDate;
     const staleDays = newest ? daysSince(newest) : null;
     return {
-      processId: p.processId, processName: p.processName, processCode: p.processCode, branchName: p.branchName, headcount: p.headcount,
-      metrics: a?.metrics ?? p.metrics, pass: a?.pass ?? 0, fail: a?.fail ?? 0, none: a?.none ?? 0,
-      score: targeted > 0 ? Math.round((100 * (a as Acc).pass) / targeted) : null,
-      newestDate: newest, staleDays, feedStopped: staleDays !== null && staleDays > STALE_AFTER_DAYS, worst: a?.worst ?? null,
+      processId: p.processId,
+      processName: p.processName,
+      processCode: p.processCode,
+      branchName: p.branchName,
+      headcount: p.headcount,
+      metrics: a?.metrics ?? p.metrics,
+      pass: a?.pass ?? 0,
+      fail: a?.fail ?? 0,
+      none: a?.none ?? 0,
+      score:
+        targeted > 0 ? Math.round((100 * (a as Acc).pass) / targeted) : null,
+      newestDate: newest,
+      staleDays,
+      feedStopped: staleDays !== null && staleDays > STALE_AFTER_DAYS,
+      worst: a?.worst ?? null,
     };
   });
 }
@@ -96,7 +164,12 @@ export function getPortfolio(userId: string): Promise<PortfolioRow[]> {
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.p;
   const p = compute(userId);
   cache.set(userId, { at: Date.now(), p });
-  p.catch(() => { if (cache.get(userId)?.p === p) cache.delete(userId); });
-  if (cache.size > 200) { const k = cache.keys().next().value; if (k) cache.delete(k); }
+  p.catch(() => {
+    if (cache.get(userId)?.p === p) cache.delete(userId);
+  });
+  if (cache.size > 200) {
+    const k = cache.keys().next().value;
+    if (k) cache.delete(k);
+  }
   return p;
 }

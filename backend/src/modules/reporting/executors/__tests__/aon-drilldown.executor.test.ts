@@ -23,7 +23,13 @@ const SCOPE: ExecScope = {
   roles: ["super_admin"],
 };
 
-const OPTIONS: ExecOptions = { limit: 100, offset: 0, cursor: null, includeTotal: true, mode: "preview" };
+const OPTIONS: ExecOptions = {
+  limit: 100,
+  offset: 0,
+  cursor: null,
+  includeTotal: true,
+  mode: "preview",
+};
 
 describe("aonDrilldownEmployees", () => {
   beforeEach(() => {
@@ -32,7 +38,11 @@ describe("aonDrilldownEmployees", () => {
 
   it("headcount context queries active employees with risk fields and employee_id", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
-    await aonDrilldownEmployees({ metric: "headcount", costCentreId: "cc-1", aonBucket: "31-60" }, SCOPE, OPTIONS);
+    await aonDrilldownEmployees(
+      { metric: "headcount", costCentreId: "cc-1", aonBucket: "31-60" },
+      SCOPE,
+      OPTIONS,
+    );
     const sql = String(mockExecute.mock.calls[0][0]);
     expect(sql).toContain("e.active_status = 1");
     expect(sql).toContain("risk_score");
@@ -46,14 +56,22 @@ describe("aonDrilldownEmployees", () => {
   // drill mixes both populations in this exact response shape (see the cohortMonth test below).
   it("headcount context SELECTs is_active on every row", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
-    await aonDrilldownEmployees({ metric: "headcount", costCentreId: "cc-1" }, SCOPE, OPTIONS);
+    await aonDrilldownEmployees(
+      { metric: "headcount", costCentreId: "cc-1" },
+      SCOPE,
+      OPTIONS,
+    );
     const sql = String(mockExecute.mock.calls[0][0]);
     expect(sql).toMatch(/AS is_active/);
   });
 
   it("exits context queries exited employees with exit date, tenure, and employee_id", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
-    await aonDrilldownEmployees({ metric: "exits", costCentreId: "cc-1", aonBucket: "0-30" }, SCOPE, OPTIONS);
+    await aonDrilldownEmployees(
+      { metric: "exits", costCentreId: "cc-1", aonBucket: "0-30" },
+      SCOPE,
+      OPTIONS,
+    );
     const sql = String(mockExecute.mock.calls[0][0]);
     expect(sql).toContain("date_of_exit");
     expect(sql).not.toContain("active_status = 1");
@@ -74,7 +92,12 @@ describe("aonDrilldownEmployees", () => {
   it("exits context applies an explicit from/to date window to date_of_exit", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
     await aonDrilldownEmployees(
-      { metric: "exits", costCentreId: "cc-1", from: "2026-01-01", to: "2026-03-31" },
+      {
+        metric: "exits",
+        costCentreId: "cc-1",
+        from: "2026-01-01",
+        to: "2026-03-31",
+      },
       SCOPE,
       OPTIONS,
     );
@@ -87,12 +110,21 @@ describe("aonDrilldownEmployees", () => {
 
   it("exits context defaults to a twelve-month window when from/to are absent", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
-    await aonDrilldownEmployees({ metric: "exits", costCentreId: "cc-1" }, SCOPE, OPTIONS);
+    await aonDrilldownEmployees(
+      { metric: "exits", costCentreId: "cc-1" },
+      SCOPE,
+      OPTIONS,
+    );
     const sql = String(mockExecute.mock.calls[0][0]);
     const params = mockExecute.mock.calls[0][1] as unknown[];
     expect(sql).toContain("e.date_of_exit BETWEEN ? AND ?");
     // Both bounds must be real YYYY-MM-DD strings, not undefined/NaN, and to must not precede from.
-    const [from, to] = params.filter((p): p is string => typeof p === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p)).slice(-2);
+    const [from, to] = params
+      .filter(
+        (p): p is string =>
+          typeof p === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p),
+      )
+      .slice(-2);
     expect(from).toBeDefined();
     expect(to).toBeDefined();
     expect(new Date(from!).getTime()).toBeLessThan(new Date(to!).getTime());
@@ -100,7 +132,11 @@ describe("aonDrilldownEmployees", () => {
 
   it("filters by cohortMonth for a headcount-context call, matching join-date month", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
-    await aonDrilldownEmployees({ metric: "headcount", cohortMonth: "2026-03" }, SCOPE, OPTIONS);
+    await aonDrilldownEmployees(
+      { metric: "headcount", cohortMonth: "2026-03" },
+      SCOPE,
+      OPTIONS,
+    );
     const sql = String(mockExecute.mock.calls[0][0]);
     expect(sql).toContain("DATE_FORMAT");
     const params = mockExecute.mock.calls[0][1];
@@ -119,9 +155,16 @@ describe("aonDrilldownEmployees", () => {
   // against the WHERE clause specifically, not the SQL text as a whole.
   it("does NOT filter by active_status when cohortMonth is present (drilling from Cohort Survival)", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
-    await aonDrilldownEmployees({ metric: "headcount", cohortMonth: "2026-03" }, SCOPE, OPTIONS);
+    await aonDrilldownEmployees(
+      { metric: "headcount", cohortMonth: "2026-03" },
+      SCOPE,
+      OPTIONS,
+    );
     const sql = String(mockExecute.mock.calls[0][0]);
-    const whereClause = sql.slice(sql.indexOf("WHERE"), sql.indexOf(")\n    SELECT f.*"));
+    const whereClause = sql.slice(
+      sql.indexOf("WHERE"),
+      sql.indexOf(")\n    SELECT f.*"),
+    );
     expect(whereClause).not.toContain("active_status");
     // But the row shape must still carry is_active for the frontend to distinguish exited
     // employees from active ones in this same response.
@@ -133,7 +176,11 @@ describe("aonDrilldownEmployees", () => {
   // the cohortMonth fix above must not change this call's behaviour.
   it("still filters by active_status = 1 for a headcount call with aonBucket and no cohortMonth", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
-    await aonDrilldownEmployees({ metric: "headcount", aonBucket: "90+" }, SCOPE, OPTIONS);
+    await aonDrilldownEmployees(
+      { metric: "headcount", aonBucket: "90+" },
+      SCOPE,
+      OPTIONS,
+    );
     const sql = String(mockExecute.mock.calls[0][0]);
     expect(sql).toContain("e.active_status = 1");
   });
@@ -148,11 +195,17 @@ describe("aonDrilldownEmployees", () => {
   // alone. The drill-down must filter on reporting_manager_id ONLY, with no OR.
   it("filters by reporting_manager_id ALONE for managerId, never the manager_id OR-union", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
-    await aonDrilldownEmployees({ metric: "exits", managerId: "mgr-123" }, SCOPE, OPTIONS);
+    await aonDrilldownEmployees(
+      { metric: "exits", managerId: "mgr-123" },
+      SCOPE,
+      OPTIONS,
+    );
     const sql = String(mockExecute.mock.calls[0][0]);
     const params = mockExecute.mock.calls[0][1] as unknown[];
     expect(sql).toContain("e.reporting_manager_id = ?");
-    expect(sql).not.toMatch(/reporting_manager_id\s*=\s*\?\s*OR\s*.*manager_id\s*=\s*\?/);
+    expect(sql).not.toMatch(
+      /reporting_manager_id\s*=\s*\?\s*OR\s*.*manager_id\s*=\s*\?/,
+    );
     expect(sql).not.toContain("e.manager_id = ?");
     // managerId must be bound exactly once, not twice (the OR-union's shape).
     expect(params.filter((p) => p === "mgr-123")).toHaveLength(1);

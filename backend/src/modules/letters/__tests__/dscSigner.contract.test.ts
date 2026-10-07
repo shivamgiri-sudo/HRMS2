@@ -22,16 +22,23 @@ vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: vi.fn(async (sql: string) => {
       const s = String(sql);
-      if (s.includes("INSERT INTO company_signing_certificate_audit")) return [{}];
-      if (s.startsWith("SELECT id, p12_encrypted")) return [activeRow ? [activeRow] : []];
+      if (s.includes("INSERT INTO company_signing_certificate_audit"))
+        return [{}];
+      if (s.startsWith("SELECT id, p12_encrypted"))
+        return [activeRow ? [activeRow] : []];
       return [[]];
     }),
   },
 }));
 
-const { generateSelfSignedP12, inspectP12 } = await import("../dscConfig.service.js");
-const { signPdfAsCompany, hasCryptographicSignature, SELF_SIGNED_NOTICE, DscUnavailableError } =
-  await import("../dscSigner.service.js");
+const { generateSelfSignedP12, inspectP12 } =
+  await import("../dscConfig.service.js");
+const {
+  signPdfAsCompany,
+  hasCryptographicSignature,
+  SELF_SIGNED_NOTICE,
+  DscUnavailableError,
+} = await import("../dscSigner.service.js");
 const { encrypt } = await import("../../../utils/encryption.js");
 
 const PASS = "test-passphrase";
@@ -45,15 +52,24 @@ async function samplePdf(): Promise<Buffer> {
 }
 
 /** Widget rectangles, read from the object model rather than the raw bytes. */
-async function widgetRects(pdfBytes: Buffer): Promise<Array<[number, number, number, number]>> {
-  const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true, updateMetadata: false });
+async function widgetRects(
+  pdfBytes: Buffer,
+): Promise<Array<[number, number, number, number]>> {
+  const doc = await PDFDocument.load(pdfBytes, {
+    ignoreEncryption: true,
+    updateMetadata: false,
+  });
   const out: Array<[number, number, number, number]> = [];
   for (const page of doc.getPages()) {
     const annots = page.node.Annots();
     if (!annots) continue;
     for (let i = 0; i < annots.size(); i++) {
-      const dict = annots.lookup(i) as unknown as { get?: (k: unknown) => unknown; context?: { obj: (v: unknown) => unknown } };
-      const rect = dict?.get?.(dict.context!.obj("Rect")) as { asArray?: () => Array<{ toString(): string }> } | undefined;
+      const dict = annots.lookup(i) as unknown as {
+        get?: (k: unknown) => unknown;
+        context?: { obj: (v: unknown) => unknown };
+      };
+      const rect = dict?.get?.(dict.context!.obj("Rect")) as
+        { asArray?: () => Array<{ toString(): string }> } | undefined;
       const arr = rect?.asArray?.().map((n) => Number(n.toString()));
       if (arr && arr.length === 4 && arr.some((n) => n !== 0)) {
         out.push([arr[0], arr[1], arr[2], arr[3]]);
@@ -77,12 +93,16 @@ function makeActiveRow(p12: Buffer, over: Record<string, unknown> = {}) {
   };
 }
 
-beforeEach(() => { activeRow = undefined; });
+beforeEach(() => {
+  activeRow = undefined;
+});
 
 describe("generating a certificate so issuance is not blocked on procurement", () => {
   it("produces a usable PKCS#12 with a private key", () => {
     const p12 = generateSelfSignedP12({
-      organisation: "Mas Callnet India Pvt. Ltd.", signerName: "Authorised Signatory", passphrase: PASS,
+      organisation: "Mas Callnet India Pvt. Ltd.",
+      signerName: "Authorised Signatory",
+      passphrase: PASS,
     });
     expect(p12.length).toBeGreaterThan(1000);
     const info = inspectP12(p12, PASS);
@@ -92,26 +112,41 @@ describe("generating a certificate so issuance is not blocked on procurement", (
 
   it("classifies itself as self-signed and NOT CA-issued", () => {
     // Derived from issuer-vs-subject, never from what the uploader typed.
-    const info = inspectP12(generateSelfSignedP12({
-      organisation: "Mas Callnet India Pvt. Ltd.", signerName: "X", passphrase: PASS,
-    }), PASS);
+    const info = inspectP12(
+      generateSelfSignedP12({
+        organisation: "Mas Callnet India Pvt. Ltd.",
+        signerName: "X",
+        passphrase: PASS,
+      }),
+      PASS,
+    );
     expect(info.isSelfSigned).toBe(true);
     expect(info.isCaIssued).toBe(false);
     expect(info.issuerCn).toBe(info.subjectCn);
   });
 
   it("refuses a wrong passphrase rather than producing garbage", () => {
-    const p12 = generateSelfSignedP12({ organisation: "MAS", signerName: "X", passphrase: PASS });
+    const p12 = generateSelfSignedP12({
+      organisation: "MAS",
+      signerName: "X",
+      passphrase: PASS,
+    });
     expect(() => inspectP12(p12, "wrong")).toThrow(/password/i);
   });
 });
 
 describe("signing a real PDF", () => {
   it("emits a PKCS#7 signature with a ByteRange", async () => {
-    const p12 = generateSelfSignedP12({ organisation: "MAS", signerName: "Authorised Signatory", passphrase: PASS });
+    const p12 = generateSelfSignedP12({
+      organisation: "MAS",
+      signerName: "Authorised Signatory",
+      passphrase: PASS,
+    });
     activeRow = makeActiveRow(p12);
 
-    const out = await signPdfAsCompany(await samplePdf(), { reason: "Appointment Letter" });
+    const out = await signPdfAsCompany(await samplePdf(), {
+      reason: "Appointment Letter",
+    });
 
     expect(out.bytes.subarray(0, 5).toString("latin1")).toBe("%PDF-");
     expect(hasCryptographicSignature(out.bytes)).toBe(true);
@@ -123,17 +158,29 @@ describe("signing a real PDF", () => {
   });
 
   it("carries the signer identity from the certificate, not from the caller", async () => {
-    const p12 = generateSelfSignedP12({ organisation: "MAS", signerName: "Authorised Signatory", passphrase: PASS });
+    const p12 = generateSelfSignedP12({
+      organisation: "MAS",
+      signerName: "Authorised Signatory",
+      passphrase: PASS,
+    });
     activeRow = makeActiveRow(p12);
-    const out = await signPdfAsCompany(await samplePdf(), { reason: "Appointment Letter" });
+    const out = await signPdfAsCompany(await samplePdf(), {
+      reason: "Appointment Letter",
+    });
     expect(out.signerName).toBe("Authorised Signatory");
     expect(out.signerDesignation).toBe("HR Manager");
   });
 
   it("marks a self-signed result as not legally equivalent", async () => {
-    const p12 = generateSelfSignedP12({ organisation: "MAS", signerName: "X", passphrase: PASS });
+    const p12 = generateSelfSignedP12({
+      organisation: "MAS",
+      signerName: "X",
+      passphrase: PASS,
+    });
     activeRow = makeActiveRow(p12);
-    const out = await signPdfAsCompany(await samplePdf(), { reason: "Appointment Letter" });
+    const out = await signPdfAsCompany(await samplePdf(), {
+      reason: "Appointment Letter",
+    });
     expect(out.isSelfSigned).toBe(true);
     expect(out.isCaIssued).toBe(false);
     expect(out.notice).toBe(SELF_SIGNED_NOTICE);
@@ -141,9 +188,15 @@ describe("signing a real PDF", () => {
   });
 
   it("drops the notice once a CA-issued certificate is active", async () => {
-    const p12 = generateSelfSignedP12({ organisation: "MAS", signerName: "X", passphrase: PASS });
+    const p12 = generateSelfSignedP12({
+      organisation: "MAS",
+      signerName: "X",
+      passphrase: PASS,
+    });
     activeRow = makeActiveRow(p12, { is_ca_issued: 1, is_self_signed: 0 });
-    const out = await signPdfAsCompany(await samplePdf(), { reason: "Appointment Letter" });
+    const out = await signPdfAsCompany(await samplePdf(), {
+      reason: "Appointment Letter",
+    });
     expect(out.notice).toBeNull();
     expect(out.isCaIssued).toBe(true);
   });
@@ -154,16 +207,29 @@ describe("signing a real PDF", () => {
     //
     // Read through pdf-lib rather than regex: pdf-lib emits object streams, so
     // /Rect is compressed and invisible in the raw bytes.
-    const p12 = generateSelfSignedP12({ organisation: "MAS", signerName: "X", passphrase: PASS });
+    const p12 = generateSelfSignedP12({
+      organisation: "MAS",
+      signerName: "X",
+      passphrase: PASS,
+    });
     activeRow = makeActiveRow(p12);
-    const out = await signPdfAsCompany(await samplePdf(), { reason: "Appointment Letter" });
+    const out = await signPdfAsCompany(await samplePdf(), {
+      reason: "Appointment Letter",
+    });
 
     const rects = await widgetRects(out.bytes);
     expect(rects.length).toBeGreaterThan(0);
     const AADHAAR = { x1: 425, y1: 100, x2: 545, y2: 160 };
     for (const [x1, y1, x2, y2] of rects) {
-      const overlaps = x1 < AADHAAR.x2 && x2 > AADHAAR.x1 && y1 < AADHAAR.y2 && y2 > AADHAAR.y1;
-      expect(overlaps, `widget [${x1},${y1},${x2},${y2}] collides with the Aadhaar stamp`).toBe(false);
+      const overlaps =
+        x1 < AADHAAR.x2 &&
+        x2 > AADHAAR.x1 &&
+        y1 < AADHAAR.y2 &&
+        y2 > AADHAAR.y1;
+      expect(
+        overlaps,
+        `widget [${x1},${y1},${x2},${y2}] collides with the Aadhaar stamp`,
+      ).toBe(false);
     }
   });
 });
@@ -171,23 +237,35 @@ describe("signing a real PDF", () => {
 describe("refuses to fake a signature", () => {
   it("blocks when no certificate is active", async () => {
     activeRow = undefined;
-    await expect(signPdfAsCompany(await samplePdf(), { reason: "x" }))
-      .rejects.toMatchObject({ code: "no_signing_certificate" });
+    await expect(
+      signPdfAsCompany(await samplePdf(), { reason: "x" }),
+    ).rejects.toMatchObject({ code: "no_signing_certificate" });
   });
 
   it("blocks on an expired certificate", async () => {
     // Signing under a lapsed certificate invalidates every letter produced after
     // it expired, so this is a hard stop, not a warning.
-    const p12 = generateSelfSignedP12({ organisation: "MAS", signerName: "X", passphrase: PASS });
-    activeRow = makeActiveRow(p12, { valid_to: new Date(Date.now() - 24 * 3600 * 1000) });
-    await expect(signPdfAsCompany(await samplePdf(), { reason: "x" }))
-      .rejects.toBeInstanceOf(DscUnavailableError);
+    const p12 = generateSelfSignedP12({
+      organisation: "MAS",
+      signerName: "X",
+      passphrase: PASS,
+    });
+    activeRow = makeActiveRow(p12, {
+      valid_to: new Date(Date.now() - 24 * 3600 * 1000),
+    });
+    await expect(
+      signPdfAsCompany(await samplePdf(), { reason: "x" }),
+    ).rejects.toBeInstanceOf(DscUnavailableError);
   });
 });
 
 describe("key material never leaves the module", () => {
   it("the signed result exposes no private key or passphrase", async () => {
-    const p12 = generateSelfSignedP12({ organisation: "MAS", signerName: "X", passphrase: PASS });
+    const p12 = generateSelfSignedP12({
+      organisation: "MAS",
+      signerName: "X",
+      passphrase: PASS,
+    });
     activeRow = makeActiveRow(p12);
     const out = await signPdfAsCompany(await samplePdf(), { reason: "x" });
     const asJson = JSON.stringify({ ...out, bytes: undefined });

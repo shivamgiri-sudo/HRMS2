@@ -2,7 +2,11 @@ import { randomUUID } from "crypto";
 import { Router } from "express";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  requireWriteAccess,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 
 /**
@@ -13,7 +17,13 @@ import { requireRole } from "../../middleware/requireRole.js";
  * avoids ever having to move it later if that changes.
  */
 const WRITE_ROLES = ["finance_head", "accounts_head", "super_admin"] as const;
-const READ_ROLES = [...WRITE_ROLES, "ceo", "branch_head", "admin", "finance"] as const;
+const READ_ROLES = [
+  ...WRITE_ROLES,
+  "ceo",
+  "branch_head",
+  "admin",
+  "finance",
+] as const;
 
 export const payableAccountRouter = Router();
 
@@ -22,7 +32,14 @@ const h =
   (req: AuthenticatedRequest, res: any, next: any) =>
     fn(req, res).catch(next);
 
-const ACCOUNT_TYPES = new Set(["expense", "payable", "receivable", "income", "bank_charge", "other"]);
+const ACCOUNT_TYPES = new Set([
+  "expense",
+  "payable",
+  "receivable",
+  "income",
+  "bank_charge",
+  "other",
+]);
 
 payableAccountRouter.use(requireAuth);
 
@@ -30,7 +47,8 @@ payableAccountRouter.get(
   "/",
   requireRole(...READ_ROLES),
   h(async (req, res) => {
-    const where = req.query.includeInactive === "1" ? "" : "WHERE active_status = 1";
+    const where =
+      req.query.includeInactive === "1" ? "" : "WHERE active_status = 1";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM payable_account_master ${where} ORDER BY account_name`,
     );
@@ -44,9 +62,18 @@ payableAccountRouter.post(
   requireRole(...WRITE_ROLES),
   h(async (req, res) => {
     const { accountName, accountType, tallyLedgerName } = req.body ?? {};
-    if (!accountName?.trim()) return res.status(400).json({ success: false, error: "Account name is required" });
-    if (!ACCOUNT_TYPES.has(accountType)) return res.status(400).json({ success: false, error: "Invalid account type" });
-    if (!tallyLedgerName?.trim()) return res.status(400).json({ success: false, error: "Tally ledger name is required" });
+    if (!accountName?.trim())
+      return res
+        .status(400)
+        .json({ success: false, error: "Account name is required" });
+    if (!ACCOUNT_TYPES.has(accountType))
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid account type" });
+    if (!tallyLedgerName?.trim())
+      return res
+        .status(400)
+        .json({ success: false, error: "Tally ledger name is required" });
 
     const id = randomUUID();
     try {
@@ -57,7 +84,12 @@ payableAccountRouter.post(
       );
     } catch (error: any) {
       if (error?.code === "ER_DUP_ENTRY") {
-        return res.status(409).json({ success: false, error: "An account with this name already exists" });
+        return res
+          .status(409)
+          .json({
+            success: false,
+            error: "An account with this name already exists",
+          });
       }
       throw error;
     }
@@ -70,9 +102,12 @@ payableAccountRouter.put(
   requireWriteAccess,
   requireRole(...WRITE_ROLES),
   h(async (req, res) => {
-    const { accountName, accountType, tallyLedgerName, activeStatus } = req.body ?? {};
+    const { accountName, accountType, tallyLedgerName, activeStatus } =
+      req.body ?? {};
     if (accountType != null && !ACCOUNT_TYPES.has(accountType)) {
-      return res.status(400).json({ success: false, error: "Invalid account type" });
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid account type" });
     }
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE payable_account_master
@@ -85,11 +120,14 @@ payableAccountRouter.put(
         accountName?.trim() ?? null,
         accountType ?? null,
         tallyLedgerName?.trim() ?? null,
-        activeStatus == null ? null : (activeStatus ? 1 : 0),
+        activeStatus == null ? null : activeStatus ? 1 : 0,
         req.params.id,
       ],
     );
-    if (result.affectedRows !== 1) return res.status(404).json({ success: false, error: "Payable account not found" });
+    if (result.affectedRows !== 1)
+      return res
+        .status(404)
+        .json({ success: false, error: "Payable account not found" });
     res.json({ success: true });
   }),
 );

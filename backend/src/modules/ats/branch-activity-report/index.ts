@@ -96,7 +96,10 @@ export function getBranchActivityByBranch(
     for (const branch of new Set(facts.map((f) => f.branch)))
       out.set(
         branch.toLowerCase(),
-        buildReport({ facts: facts.filter((f) => f.branch === branch), reportDate }),
+        buildReport({
+          facts: facts.filter((f) => f.branch === branch),
+          reportDate,
+        }),
       );
     return out;
   });

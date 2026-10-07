@@ -15,5 +15,10 @@ export async function importAwMandateBatch(
   batchId: string,
   importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
-  return importViaSharedInsert(batchId, insertAwMandateRows, importedByUserId, "billingType");
+  return importViaSharedInsert(
+    batchId,
+    insertAwMandateRows,
+    importedByUserId,
+    "billingType",
+  );
 }

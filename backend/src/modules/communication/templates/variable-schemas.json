@@ -7,7 +7,14 @@
   },
   "payroll": {
     "employee": ["name", "id", "employee_code"],
-    "payslip": ["month", "year", "net_pay", "gross_pay", "deductions", "payslip_url"],
+    "payslip": [
+      "month",
+      "year",
+      "net_pay",
+      "gross_pay",
+      "deductions",
+      "payslip_url"
+    ],
     "company": ["name"]
   },
   "attendance": {

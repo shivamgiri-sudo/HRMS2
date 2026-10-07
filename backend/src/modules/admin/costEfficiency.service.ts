@@ -8,9 +8,9 @@
  *   const metrics = await CostEfficiencyService.getAgentCostEfficiency();
  */
 
-import { db } from '../../db/mysql.js';
-import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
-import { logger } from '../../logger.js';
+import { db } from "../../db/mysql.js";
+import { RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import { logger } from "../../logger.js";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Type Definitions
@@ -25,7 +25,8 @@ export interface AgentCostMetrics extends RowDataPacket {
   cost_per_call: number;
   cost_per_quality_point: number;
   payroll_investment: number;
-  efficiency_rating: 'HIGH_ROI' | 'GOOD_ROI' | 'MEDIUM_ROI' | 'LOW_ROI' | 'NO_CALL_DATA';
+  efficiency_rating:
+    "HIGH_ROI" | "GOOD_ROI" | "MEDIUM_ROI" | "LOW_ROI" | "NO_CALL_DATA";
   tenure_months: number;
   employment_status: string;
   run_timestamp: Date;
@@ -45,7 +46,8 @@ export interface ProcessROIMetrics extends RowDataPacket {
   calls_per_agent_per_day: number;
   quality_tier: number;
   cost_tier: number;
-  roi_classification: 'PREMIUM_ROI' | 'GOOD_ROI' | 'ACCEPTABLE_ROI' | 'POOR_ROI';
+  roi_classification:
+    "PREMIUM_ROI" | "GOOD_ROI" | "ACCEPTABLE_ROI" | "POOR_ROI";
   run_timestamp: Date;
 }
 
@@ -57,7 +59,7 @@ export interface SavingsOpportunity extends RowDataPacket {
   call_count: number;
   quality_score: number;
   cost_per_call: number;
-  intervention_priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  intervention_priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   potential_monthly_savings: number;
   recommended_action: string;
   run_timestamp: Date;
@@ -87,7 +89,10 @@ export interface AnnualForecast extends RowDataPacket {
   avg_quality_maintained: number;
   projected_annual_cost_per_call: number;
   projected_annual_cost_per_quality_point: number;
-  model_health: 'Sustainable Model - Scale Recommended' | 'Acceptable Model - Optimize Recommended' | 'At-Risk Model - Urgent Intervention';
+  model_health:
+    | "Sustainable Model - Scale Recommended"
+    | "Acceptable Model - Optimize Recommended"
+    | "At-Risk Model - Urgent Intervention";
   run_timestamp: Date;
 }
 
@@ -147,10 +152,13 @@ export class CostEfficiencyService {
         LIMIT ?
       `;
 
-      const [results] = await db.query<AgentCostMetrics[]>(query, [daysBack, limit]);
+      const [results] = await db.query<AgentCostMetrics[]>(query, [
+        daysBack,
+        limit,
+      ]);
       return results;
     } catch (error) {
-      logger.error('Error fetching agent cost efficiency:', error);
+      logger.error("Error fetching agent cost efficiency:", error);
       throw error;
     }
   }
@@ -210,10 +218,13 @@ export class CostEfficiencyService {
         LIMIT ?
       `;
 
-      const [results] = await db.query<ProcessROIMetrics[]>(query, [daysBack, limit]);
+      const [results] = await db.query<ProcessROIMetrics[]>(query, [
+        daysBack,
+        limit,
+      ]);
       return results;
     } catch (error) {
-      logger.error('Error fetching process ROI:', error);
+      logger.error("Error fetching process ROI:", error);
       throw error;
     }
   }
@@ -287,10 +298,13 @@ export class CostEfficiencyService {
         ORDER BY potential_monthly_savings DESC
       `;
 
-      const [results] = await db.query<SavingsOpportunity[]>(query, [daysBack, topN]);
+      const [results] = await db.query<SavingsOpportunity[]>(query, [
+        daysBack,
+        topN,
+      ]);
       return results;
     } catch (error) {
-      logger.error('Error fetching savings opportunities:', error);
+      logger.error("Error fetching savings opportunities:", error);
       throw error;
     }
   }
@@ -348,10 +362,12 @@ export class CostEfficiencyService {
         ORDER BY salary_quartile ASC
       `;
 
-      const [results] = await db.query<SalaryQualityCorrelation[]>(query, [daysBack]);
+      const [results] = await db.query<SalaryQualityCorrelation[]>(query, [
+        daysBack,
+      ]);
       return results;
     } catch (error) {
-      logger.error('Error fetching salary-quality correlation:', error);
+      logger.error("Error fetching salary-quality correlation:", error);
       throw error;
     }
   }
@@ -395,7 +411,7 @@ export class CostEfficiencyService {
       const [results] = await db.query<AnnualForecast[]>(query, [daysBack]);
       return results;
     } catch (error) {
-      logger.error('Error fetching annual forecast:', error);
+      logger.error("Error fetching annual forecast:", error);
       throw error;
     }
   }
@@ -405,7 +421,13 @@ export class CostEfficiencyService {
    */
   static async getDashboard(daysBack: number = this.DEFAULT_DAYS) {
     try {
-      const [agentMetrics, processROI, opportunities, salary_quality, forecast] = await Promise.all([
+      const [
+        agentMetrics,
+        processROI,
+        opportunities,
+        salary_quality,
+        forecast,
+      ] = await Promise.all([
         this.getAgentCostEfficiency(daysBack, 50),
         this.getProcessROI(daysBack, 30),
         this.getSavingsOpportunities(10, daysBack),
@@ -416,10 +438,19 @@ export class CostEfficiencyService {
       return {
         summary: {
           total_active_agents: agentMetrics.length,
-          high_roi_agents: agentMetrics.filter((a) => a.efficiency_rating === 'HIGH_ROI').length,
-          low_roi_agents: agentMetrics.filter((a) => a.efficiency_rating === 'LOW_ROI').length,
-          premium_roi_processes: processROI.filter((p) => p.roi_classification === 'PREMIUM_ROI').length,
-          total_monthly_savings_opportunity: opportunities.reduce((sum, o) => sum + (o.potential_monthly_savings || 0), 0),
+          high_roi_agents: agentMetrics.filter(
+            (a) => a.efficiency_rating === "HIGH_ROI",
+          ).length,
+          low_roi_agents: agentMetrics.filter(
+            (a) => a.efficiency_rating === "LOW_ROI",
+          ).length,
+          premium_roi_processes: processROI.filter(
+            (p) => p.roi_classification === "PREMIUM_ROI",
+          ).length,
+          total_monthly_savings_opportunity: opportunities.reduce(
+            (sum, o) => sum + (o.potential_monthly_savings || 0),
+            0,
+          ),
         },
         agentMetrics,
         processROI,
@@ -428,7 +459,7 @@ export class CostEfficiencyService {
         annualForecast: forecast[0] || null,
       };
     } catch (error) {
-      logger.error('Error building cost efficiency dashboard:', error);
+      logger.error("Error building cost efficiency dashboard:", error);
       throw error;
     }
   }

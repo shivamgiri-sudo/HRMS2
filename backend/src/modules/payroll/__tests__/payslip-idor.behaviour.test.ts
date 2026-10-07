@@ -30,8 +30,14 @@ const AUTH_USER = "33333333-3333-3333-3333-333333333333";
 const RUN_ID = "44444444-4444-4444-4444-444444444444";
 
 const {
-  execute, hasScopedAccess, buildScopeWhereClause, hasAnyRoleAsync, hasOrgWideScope,
-  getEmployeeForUser, hasRole, getPayslip,
+  execute,
+  hasScopedAccess,
+  buildScopeWhereClause,
+  hasAnyRoleAsync,
+  hasOrgWideScope,
+  getEmployeeForUser,
+  hasRole,
+  getPayslip,
 } = vi.hoisted(() => ({
   execute: vi.fn(),
   hasScopedAccess: vi.fn(),
@@ -43,38 +49,87 @@ const {
   getPayslip: vi.fn(),
 }));
 
-vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection: vi.fn() } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute, getConnection: vi.fn() },
+}));
 vi.mock("../../../shared/scopeAccess.js", () => ({
-  hasScopedAccess, buildScopeWhereClause, hasOrgWideScope, hasAnyRole: hasAnyRoleAsync,
+  hasScopedAccess,
+  buildScopeWhereClause,
+  hasOrgWideScope,
+  hasAnyRole: hasAnyRoleAsync,
 }));
-vi.mock("../../../shared/accessGuard.js", () => ({ getEmployeeForUser, hasRole }));
+vi.mock("../../../shared/accessGuard.js", () => ({
+  getEmployeeForUser,
+  hasRole,
+}));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn() }));
-vi.mock("../payslip.service.js", () => ({ payslipService: { getPayslip, generatePayslip: vi.fn() } }));
-vi.mock("../payroll.controller.js", () => ({
-  payrollController: new Proxy({}, { get: () => vi.fn((_r: unknown, res: express.Response) => res.json({ reached: true })) }),
+vi.mock("../payslip.service.js", () => ({
+  payslipService: { getPayslip, generatePayslip: vi.fn() },
 }));
-vi.mock("../payrollCalculate.service.js", () => ({ calculatePayrollRun: vi.fn(), calculatePayrollRunScoped: vi.fn() }));
-vi.mock("../payroll-governance.service.js", () => ({ payrollGovernanceService: { readiness: vi.fn() } }));
-vi.mock("../payroll-attendance-control.service.js", () => ({ payrollAttendanceControlService: {} }));
-vi.mock("../payroll-branch-readiness.service.js", () => ({ payrollBranchReadinessService: {} }));
+vi.mock("../payroll.controller.js", () => ({
+  payrollController: new Proxy(
+    {},
+    {
+      get: () =>
+        vi.fn((_r: unknown, res: express.Response) =>
+          res.json({ reached: true }),
+        ),
+    },
+  ),
+}));
+vi.mock("../payrollCalculate.service.js", () => ({
+  calculatePayrollRun: vi.fn(),
+  calculatePayrollRunScoped: vi.fn(),
+}));
+vi.mock("../payroll-governance.service.js", () => ({
+  payrollGovernanceService: { readiness: vi.fn() },
+}));
+vi.mock("../payroll-attendance-control.service.js", () => ({
+  payrollAttendanceControlService: {},
+}));
+vi.mock("../payroll-branch-readiness.service.js", () => ({
+  payrollBranchReadinessService: {},
+}));
 vi.mock("../taxDeclaration.service.js", () => ({ taxDeclarationService: {} }));
-vi.mock("../tds-certificate-part-a.service.js", () => ({ getPartAAvailability: vi.fn() }));
+vi.mock("../tds-certificate-part-a.service.js", () => ({
+  getPartAAvailability: vi.fn(),
+}));
 vi.mock("../payrollWindowGuard.js", () => ({ assertRunEditable: vi.fn() }));
-vi.mock("../statutory-config.loader.js", () => ({ loadFlatStatutoryConfig: vi.fn() }));
-vi.mock("../statutory-regime.js", () => ({ statutoryRegimeForFinancialYear: vi.fn(), missingTdsConfigKeys: vi.fn() }));
-vi.mock("../holiday-debug.routes.js", () => ({ holidayDebugRouter: express.Router() }));
-vi.mock("../../../middleware/rateLimiter.js", () => ({ payrollRunLimiter: (_q: unknown, _s: unknown, n: () => void) => n() }));
-vi.mock("../../../middleware/requireWFMAccess.js", () => ({ requireWFMAccess: () => (_q: unknown, _s: unknown, n: () => void) => n() }));
+vi.mock("../statutory-config.loader.js", () => ({
+  loadFlatStatutoryConfig: vi.fn(),
+}));
+vi.mock("../statutory-regime.js", () => ({
+  statutoryRegimeForFinancialYear: vi.fn(),
+  missingTdsConfigKeys: vi.fn(),
+}));
+vi.mock("../holiday-debug.routes.js", () => ({
+  holidayDebugRouter: express.Router(),
+}));
+vi.mock("../../../middleware/rateLimiter.js", () => ({
+  payrollRunLimiter: (_q: unknown, _s: unknown, n: () => void) => n(),
+}));
+vi.mock("../../../middleware/requireWFMAccess.js", () => ({
+  requireWFMAccess: () => (_q: unknown, _s: unknown, n: () => void) => n(),
+}));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    (req as express.Request & { authUser: { id: string; role: string } }).authUser = { id: AUTH_USER, role: "hr" };
+  requireAuth: (
+    req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    (
+      req as express.Request & { authUser: { id: string; role: string } }
+    ).authUser = { id: AUTH_USER, role: "hr" };
     next();
   },
 }));
 // The role gate is not what is under test — these callers legitimately hold a
 // payroll role. Whether they may see THIS employee is the question.
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole: () => (_q: express.Request, _s: express.Response, n: express.NextFunction) => n(),
+  requireRole:
+    () =>
+    (_q: express.Request, _s: express.Response, n: express.NextFunction) =>
+      n(),
 }));
 
 import { payrollRouter } from "../payroll.routes.js";
@@ -95,8 +150,16 @@ const SCOPED_ROUTES = [
 ];
 
 beforeEach(() => {
-  [execute, hasScopedAccess, buildScopeWhereClause, hasAnyRoleAsync, hasOrgWideScope,
-   getEmployeeForUser, hasRole, getPayslip].forEach((m) => m.mockReset());
+  [
+    execute,
+    hasScopedAccess,
+    buildScopeWhereClause,
+    hasAnyRoleAsync,
+    hasOrgWideScope,
+    getEmployeeForUser,
+    hasRole,
+    getPayslip,
+  ].forEach((m) => m.mockReset());
   // The caller holds a payroll role but is scoped to a different branch.
   hasRole.mockResolvedValue(true);
   hasAnyRoleAsync.mockResolvedValue(true);
@@ -120,22 +183,34 @@ describe("out-of-scope employee ids are refused", () => {
       // the salary tables themselves: withholding figures from the response body
       // while still fetching them is not the same as refusing access.
       const sql = execute.mock.calls.map((c) => String(c[0]));
-      for (const table of ["salary_prep_line", "employee_salary_assignment", "legacy_payslip_snapshot", "salary_payslip"]) {
-        expect(sql.join(" | "), `${table} was queried for an out-of-scope employee`).not.toContain(table);
+      for (const table of [
+        "salary_prep_line",
+        "employee_salary_assignment",
+        "legacy_payslip_snapshot",
+        "salary_payslip",
+      ]) {
+        expect(
+          sql.join(" | "),
+          `${table} was queried for an out-of-scope employee`,
+        ).not.toContain(table);
       }
       expect(JSON.stringify(res.body)).not.toContain("99999");
     });
   }
 
   it("403s on GET /payslip/:runId/:employeeId and never calls the payslip service", async () => {
-    const res = await request(buildApp()).get(`/api/payroll/payslip/${RUN_ID}/${OTHER}`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/payslip/${RUN_ID}/${OTHER}`,
+    );
 
     expect(res.status).toBe(403);
     expect(getPayslip).not.toHaveBeenCalled();
   });
 
   it("403s on GET /form16-data/:runId/:employeeId", async () => {
-    const res = await request(buildApp()).get(`/api/payroll/form16-data/${RUN_ID}/${OTHER}`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/form16-data/${RUN_ID}/${OTHER}`,
+    );
     expect(res.status).toBe(403);
   });
 });
@@ -147,7 +222,9 @@ describe("an in-scope caller is still served", () => {
     hasScopedAccess.mockResolvedValue(true);
     getPayslip.mockResolvedValue({ run_month: "2026-07", net_salary: 25000 });
 
-    const res = await request(buildApp()).get(`/api/payroll/payslip/${RUN_ID}/${OTHER}`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/payslip/${RUN_ID}/${OTHER}`,
+    );
 
     expect(res.status).not.toBe(403);
     expect(getPayslip).toHaveBeenCalled();
@@ -162,7 +239,9 @@ describe("self-service is unaffected by scope", () => {
     hasScopedAccess.mockResolvedValue(false);
     getPayslip.mockResolvedValue({ run_month: "2026-07", net_salary: 25000 });
 
-    const res = await request(buildApp()).get(`/api/payroll/payslip/${RUN_ID}/${SELF}`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/payslip/${RUN_ID}/${SELF}`,
+    );
 
     expect(res.status).not.toBe(403);
     expect(hasScopedAccess).not.toHaveBeenCalled();

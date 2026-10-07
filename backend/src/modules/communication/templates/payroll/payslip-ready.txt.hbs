@@ -1,9 +1,12 @@
-Hi {{employee.name}},
+Hi
+{{employee.name}}, Your payslip for
+{{payslip.month}}
+{{payslip.year}}
+is ready. Net Pay: ₹{{payslip.net_pay}}
 
-Your payslip for {{payslip.month}} {{payslip.year}} is ready.
-Net Pay: ₹{{payslip.net_pay}}
-
-View payslip: {{payslip.payslip_url}}
+View payslip:
+{{payslip.payslip_url}}
 
 Regards,
-{{company.name}} Payroll Team
+{{company.name}}
+Payroll Team

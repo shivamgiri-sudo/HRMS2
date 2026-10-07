@@ -24,7 +24,9 @@ const PAGE = readFileSync(
   "utf8",
 );
 const QUERY = (() => {
-  const fn = SERVICE.slice(SERVICE.indexOf("export async function listPendingApprovals"));
+  const fn = SERVICE.slice(
+    SERVICE.indexOf("export async function listPendingApprovals"),
+  );
   const open = fn.indexOf("`");
   return fn.slice(open + 1, fn.indexOf("`", open + 1));
 })();
@@ -39,7 +41,10 @@ describe("Offer approvals — Payroll HR joining dates", () => {
     // ats_employment_offer has its own date_of_joining/date_of_salary pair. They
     // are a different thing -- sourcing from those would just relabel the same
     // walk-in date twice.
-    const joining = QUERY.slice(QUERY.indexOf("AS payroll_joining_date") - 320, QUERY.indexOf("AS payroll_joining_date"));
+    const joining = QUERY.slice(
+      QUERY.indexOf("AS payroll_joining_date") - 320,
+      QUERY.indexOf("AS payroll_joining_date"),
+    );
     expect(joining).toContain("ats_payroll_hr_validation");
   });
 
@@ -47,7 +52,10 @@ describe("Offer approvals — Payroll HR joining dates", () => {
     // candidate_id carries only INDEX idx_candidate -- no unique constraint --
     // so a LEFT JOIN would list the candidate once per validation row.
     for (const alias of ["pv2", "pv3"]) {
-      const sub = QUERY.slice(QUERY.indexOf(`(SELECT ${alias}.`), QUERY.indexOf(`(SELECT ${alias}.`) + 260);
+      const sub = QUERY.slice(
+        QUERY.indexOf(`(SELECT ${alias}.`),
+        QUERY.indexOf(`(SELECT ${alias}.`) + 260,
+      );
       expect(sub).toContain("LIMIT 1");
       expect(sub).toContain("ORDER BY");
     }
@@ -70,7 +78,10 @@ describe("Offer approvals — Payroll HR joining dates", () => {
     const headers = headerBlock.match(/^\s*\['/gm)?.length ?? 0;
     const rowStart = PAGE.indexOf("function OfferRow");
     const rowEnd = PAGE.indexOf("\nfunction ", rowStart + 10);
-    const cells = PAGE.slice(rowStart, rowEnd === -1 ? undefined : rowEnd).split("<TableCell").length - 1;
+    const cells =
+      PAGE.slice(rowStart, rowEnd === -1 ? undefined : rowEnd).split(
+        "<TableCell",
+      ).length - 1;
     expect(headers).toBeGreaterThan(0);
     expect(cells).toBe(headers);
   });

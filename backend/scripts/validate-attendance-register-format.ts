@@ -35,7 +35,11 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { attendanceRegisterMonthly } from "../src/modules/reporting/executors/attendance.executor.js";
-import type { ExecFilters, ExecOptions, ExecScope } from "../src/modules/reporting/executors/types.js";
+import type {
+  ExecFilters,
+  ExecOptions,
+  ExecScope,
+} from "../src/modules/reporting/executors/types.js";
 
 // ---------------------------------------------------------------------------
 // Status mapping — MUST stay identical to the map inside attendanceRegisterMonthly()
@@ -52,7 +56,10 @@ const STATUS_CODE: Record<string, string> = {
   unreconciled: "A",
 };
 
-async function q(sql: string, params: unknown[] = []): Promise<RowDataPacket[]> {
+async function q(
+  sql: string,
+  params: unknown[] = [],
+): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
 }
@@ -77,7 +84,7 @@ export interface SampleEmployee {
  */
 export async function pickSampleEmployees(
   month: string,
-  sampleSize = 5
+  sampleSize = 5,
 ): Promise<SampleEmployee[]> {
   const [year, mon] = month.split("-").map(Number);
   const firstDay = `${month}-01`;
@@ -91,7 +98,7 @@ export async function pickSampleEmployees(
         AND adr.record_date BETWEEN ? AND ?
       ORDER BY e.department_id, e.branch_id, e.employee_code
       LIMIT ?`,
-    [firstDay, lastDay, sampleSize]
+    [firstDay, lastDay, sampleSize],
   );
 
   return (rows as Array<{ id: string; employee_code: string }>).map((r) => ({
@@ -119,7 +126,7 @@ export interface IndependentTally {
 export async function independentTally(
   employeeId: string,
   year: number,
-  month: number
+  month: number,
 ): Promise<IndependentTally> {
   const dim = daysInMonth(year, month);
   const monthStr = `${year}-${String(month).padStart(2, "0")}`;
@@ -132,21 +139,29 @@ export async function independentTally(
       WHERE employee_id = ?
         AND record_date BETWEEN ? AND ?
       ORDER BY record_date`,
-    [employeeId, firstDay, lastDay]
+    [employeeId, firstDay, lastDay],
   );
 
   const dayCodes: Record<number, string> = {};
   const counts: Record<string, number> = {};
 
-  for (const row of rows as Array<{ record_date: string; attendance_status: string }>) {
+  for (const row of rows as Array<{
+    record_date: string;
+    attendance_status: string;
+  }>) {
     const dayNum = Number(String(row.record_date).slice(-2));
-    const code = STATUS_CODE[row.attendance_status] ?? row.attendance_status ?? "";
+    const code =
+      STATUS_CODE[row.attendance_status] ?? row.attendance_status ?? "";
     dayCodes[dayNum] = code;
     counts[code] = (counts[code] ?? 0) + 1;
   }
 
   const salDays =
-    (counts.P ?? 0) + (counts.HD ?? 0) * 0.5 + (counts.OD ?? 0) + (counts.H ?? 0) + (counts.W ?? 0);
+    (counts.P ?? 0) +
+    (counts.HD ?? 0) * 0.5 +
+    (counts.OD ?? 0) +
+    (counts.H ?? 0) +
+    (counts.W ?? 0);
 
   const hasEmptyDay = Object.keys(dayCodes).length < dim;
 
@@ -186,7 +201,10 @@ interface Mismatch {
   actual: unknown;
 }
 
-const SUMMARY_FIELDS: Array<{ field: string; tallyKey: keyof IndependentTally["counts"] | "salDays" }> = [
+const SUMMARY_FIELDS: Array<{
+  field: string;
+  tallyKey: keyof IndependentTally["counts"] | "salDays";
+}> = [
   { field: "absent_count", tallyKey: "A" },
   { field: "present_count", tallyKey: "P" },
   { field: "od_count", tallyKey: "OD" },
@@ -198,7 +216,8 @@ const SUMMARY_FIELDS: Array<{ field: string; tallyKey: keyof IndependentTally["c
 
 async function main() {
   const monthArg = process.argv[2];
-  const month = monthArg && /^\d{4}-\d{2}$/.test(monthArg) ? monthArg : defaultMonth();
+  const month =
+    monthArg && /^\d{4}-\d{2}$/.test(monthArg) ? monthArg : defaultMonth();
   const [year, mon] = month.split("-").map(Number);
   const dim = daysInMonth(year, mon);
 
@@ -208,13 +227,23 @@ async function main() {
 
   const employees = await pickSampleEmployees(month, 5);
   if (employees.length === 0) {
-    console.log(`No active employees with attendance rows found for ${month}. Nothing to validate.`);
+    console.log(
+      `No active employees with attendance rows found for ${month}. Nothing to validate.`,
+    );
     process.exit(0);
   }
-  console.log(`Sampled ${employees.length} employee(s): ${employees.map((e) => e.employee_code).join(", ")}\n`);
+  console.log(
+    `Sampled ${employees.length} employee(s): ${employees.map((e) => e.employee_code).join(", ")}\n`,
+  );
 
   const scope = fullScope();
-  const options: ExecOptions = { limit: 10, offset: 0, cursor: null, includeTotal: false, mode: "preview" };
+  const options: ExecOptions = {
+    limit: 10,
+    offset: 0,
+    cursor: null,
+    includeTotal: false,
+    mode: "preview",
+  };
 
   const mismatches: Mismatch[] = [];
   let anyEmptyDayConfirmed = false;
@@ -228,7 +257,7 @@ async function main() {
     const filters: ExecFilters = { month, employeeCode: emp.employee_code };
     const result = await attendanceRegisterMonthly(filters, scope, options);
     const row = (result.rows as Array<Record<string, unknown>>).find(
-      (r) => String(r.emp_code) === emp.employee_code
+      (r) => String(r.emp_code) === emp.employee_code,
     );
 
     if (!row) {
@@ -277,7 +306,9 @@ async function main() {
     if (dayMismatchCount === 0) {
       console.log(`  PASS  day_1..day_${dim} codes match independent tally`);
     } else {
-      console.log(`  FAIL  ${dayMismatchCount} day_N code mismatch(es) (see summary below)`);
+      console.log(
+        `  FAIL  ${dayMismatchCount} day_N code mismatch(es) (see summary below)`,
+      );
     }
 
     // --- summary count diff ---------------------------------------------------
@@ -285,7 +316,13 @@ async function main() {
       const expected = tally.counts[tallyKey as string] ?? 0;
       const actual = Number(row[field] ?? 0);
       if (expected !== actual) {
-        mismatches.push({ employeeCode: emp.employee_code, month, field, expected, actual });
+        mismatches.push({
+          employeeCode: emp.employee_code,
+          month,
+          field,
+          expected,
+          actual,
+        });
         console.log(`  FAIL  ${field}: expected ${expected}, got ${actual}`);
       } else {
         console.log(`  PASS  ${field}: ${actual}`);
@@ -302,13 +339,17 @@ async function main() {
         expected: tally.salDays,
         actual: actualSalDays,
       });
-      console.log(`  FAIL  sal_days: expected ${tally.salDays}, got ${actualSalDays}`);
+      console.log(
+        `  FAIL  sal_days: expected ${tally.salDays}, got ${actualSalDays}`,
+      );
     } else {
       console.log(`  PASS  sal_days: ${actualSalDays}`);
     }
 
     if (tally.hasEmptyDay) {
-      console.log(`  INFO  this employee has at least one day with no attendance_daily_record row`);
+      console.log(
+        `  INFO  this employee has at least one day with no attendance_daily_record row`,
+      );
     }
 
     console.log("");
@@ -320,12 +361,16 @@ async function main() {
       `WARNING: none of the ${employees.length} sampled employee(s) had a day with no ` +
         `attendance_daily_record row this month — the empty-day-renders-as-empty check ` +
         `(Requirement 2.3) could not be exercised. Re-run against a different month or a ` +
-        `larger sample if this check must be confirmed.`
+        `larger sample if this check must be confirmed.`,
     );
   } else if (anyEmptyDayRenderedFabricated) {
-    console.log(`FAIL  at least one empty day rendered a fabricated code instead of "" — see mismatches above.`);
+    console.log(
+      `FAIL  at least one empty day rendered a fabricated code instead of "" — see mismatches above.`,
+    );
   } else {
-    console.log(`PASS  every day with no attendance_daily_record row rendered as "" in day_N.`);
+    console.log(
+      `PASS  every day with no attendance_daily_record row rendered as "" in day_N.`,
+    );
   }
 
   // --- Final summary -----------------------------------------------------------
@@ -338,8 +383,8 @@ async function main() {
     for (const m of mismatches) {
       console.log(
         `  employee=${m.employeeCode} month=${m.month} field=${m.field} expected=${JSON.stringify(
-          m.expected
-        )} actual=${JSON.stringify(m.actual)}`
+          m.expected,
+        )} actual=${JSON.stringify(m.actual)}`,
       );
     }
   }
@@ -351,7 +396,9 @@ async function main() {
 function defaultMonth(): string {
   const now = new Date();
   const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastDayOfPrevMonth = new Date(firstOfThisMonth.getTime() - 24 * 60 * 60 * 1000);
+  const lastDayOfPrevMonth = new Date(
+    firstOfThisMonth.getTime() - 24 * 60 * 60 * 1000,
+  );
   const y = lastDayOfPrevMonth.getFullYear();
   const m = lastDayOfPrevMonth.getMonth() + 1;
   return `${y}-${String(m).padStart(2, "0")}`;

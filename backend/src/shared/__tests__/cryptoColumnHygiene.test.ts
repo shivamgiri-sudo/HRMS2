@@ -123,7 +123,13 @@ describe("stripCryptoPlumbing", () => {
   });
 
   it("preserves falsy values rather than dropping them", () => {
-    const out = stripCryptoPlumbing({ a: 0, b: "", c: false, d: null, e_hash: "x" });
+    const out = stripCryptoPlumbing({
+      a: 0,
+      b: "",
+      c: false,
+      d: null,
+      e_hash: "x",
+    });
     expect(out).toEqual({ a: 0, b: "", c: false, d: null });
   });
 });

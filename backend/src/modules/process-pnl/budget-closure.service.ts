@@ -35,12 +35,15 @@ const REOPEN_APPROVE_ROLES = new Set(["finance_head", "super_admin"]);
 /** Mirrors MAKER_CHECKER_EXEMPT_ROLES in branch-budget.service.ts (owner decision, 2026-08-19):
  *  finance_head and super_admin may approve a reopen they raised themselves; every other role
  *  raising one is blocked from reviewing their own request. */
-const REOPEN_MAKER_CHECKER_EXEMPT_ROLES = new Set(["finance_head", "super_admin"]);
+const REOPEN_MAKER_CHECKER_EXEMPT_ROLES = new Set([
+  "finance_head",
+  "super_admin",
+]);
 
 async function getBudgetBranchOrThrow(budgetId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT id, branch_id, status FROM finance_budget_header WHERE id = ? LIMIT 1",
-    [budgetId]
+    [budgetId],
   );
   if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
   return rows[0] as any;
@@ -55,9 +58,10 @@ export const budgetClosureService = {
          FROM finance_budget_closure_reopen_request r
          JOIN finance_budget_header h ON h.id = r.budget_id
         WHERE r.id = ?`,
-      [requestId]
+      [requestId],
     );
-    if (!rows[0]) throw refuse(404, "REOPEN_REQUEST_NOT_FOUND", "Reopen request not found");
+    if (!rows[0])
+      throw refuse(404, "REOPEN_REQUEST_NOT_FOUND", "Reopen request not found");
     return String(rows[0].branch_id);
   },
 
@@ -86,7 +90,7 @@ export const budgetClosureService = {
          LEFT JOIN employees rb ON rb.user_id = r.requested_by
         WHERE l.budget_id = ?
         ORDER BY l.head, sub_head`,
-      [budgetId, budgetId]
+      [budgetId, budgetId],
     );
     return rows.map((row) => ({
       head: String(row.head),
@@ -101,7 +105,9 @@ export const budgetClosureService = {
         ? {
             id: String(row.reopen_request_id),
             reason: row.reopen_reason,
-            requestedBy: row.reopen_requested_by ? String(row.reopen_requested_by) : null,
+            requestedBy: row.reopen_requested_by
+              ? String(row.reopen_requested_by)
+              : null,
             requestedByName: row.reopen_requested_by_name ?? null,
             requestedAt: row.reopen_requested_at,
           }
@@ -112,10 +118,21 @@ export const budgetClosureService = {
   /** Close one (head, sub-head) directly — Branch Admin or Finance Head, no approval needed.
    *  Idempotent: closing an already-closed head/sub-head is a no-op success, not an error, so a
    *  bulk "select all and close" never fails partway through on a mix of open and closed rows. */
-  async close(budgetId: string, head: string, subHeadInput: string | null, reason: string | null, actorId: string, actorRole: string) {
+  async close(
+    budgetId: string,
+    head: string,
+    subHeadInput: string | null,
+    reason: string | null,
+    actorId: string,
+    actorRole: string,
+  ) {
     const role = actorRole.toLowerCase();
     if (!CLOSE_ROLES.has(role)) {
-      throw refuse(403, "CLOSURE_NO_CLOSE_ROLE", `Role ${actorRole} cannot close a budget head/sub-head`);
+      throw refuse(
+        403,
+        "CLOSURE_NO_CLOSE_ROLE",
+        `Role ${actorRole} cannot close a budget head/sub-head`,
+      );
     }
     await getBudgetBranchOrThrow(budgetId);
     const subHead = normSubHead(subHeadInput);
@@ -127,7 +144,7 @@ export const budgetClosureService = {
        ON DUPLICATE KEY UPDATE
          status = 'closed', closed_by = VALUES(closed_by), closed_at = NOW(),
          closed_reason = VALUES(closed_reason)`,
-      [id, budgetId, head, subHead, actorId, reason?.trim() || null]
+      [id, budgetId, head, subHead, actorId, reason?.trim() || null],
     );
   },
 
@@ -139,12 +156,24 @@ export const budgetClosureService = {
     items: { head: string; subHead: string | null }[],
     reason: string | null,
     actorId: string,
-    actorRole: string
+    actorRole: string,
   ) {
-    const results: { head: string; subHead: string | null; ok: boolean; error?: string }[] = [];
+    const results: {
+      head: string;
+      subHead: string | null;
+      ok: boolean;
+      error?: string;
+    }[] = [];
     for (const item of items) {
       try {
-        await this.close(budgetId, item.head, item.subHead, reason, actorId, actorRole);
+        await this.close(
+          budgetId,
+          item.head,
+          item.subHead,
+          reason,
+          actorId,
+          actorRole,
+        );
         results.push({ head: item.head, subHead: item.subHead, ok: true });
       } catch (error) {
         results.push({
@@ -163,27 +192,46 @@ export const budgetClosureService = {
    *  (the one real precedent for a finance approval notification in this module —
    *  vendor-payment.service.ts's notifyPaymentPending). Email is a deliberate fast-follow, not
    *  wired in this pass — no finance/budget workflow in this codebase sends email today. */
-  async requestReopen(budgetId: string, head: string, subHeadInput: string | null, reason: string, actorId: string, actorRole: string) {
+  async requestReopen(
+    budgetId: string,
+    head: string,
+    subHeadInput: string | null,
+    reason: string,
+    actorId: string,
+    actorRole: string,
+  ) {
     if (!reason?.trim()) {
-      throw refuse(400, "REOPEN_REASON_REQUIRED", "A reason is required to request a reopen");
+      throw refuse(
+        400,
+        "REOPEN_REASON_REQUIRED",
+        "A reason is required to request a reopen",
+      );
     }
     const budget = await getBudgetBranchOrThrow(budgetId);
     const subHead = normSubHead(subHeadInput);
     const [closureRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, status FROM finance_budget_subhead_closure
         WHERE budget_id = ? AND head = ? AND sub_head = ?`,
-      [budgetId, head, subHead]
+      [budgetId, head, subHead],
     );
     const closure = closureRows[0];
     if (!closure || String(closure.status) !== "closed") {
-      throw refuse(409, "CLOSURE_NOT_CLOSED", "This head/sub-head is not closed — there is nothing to reopen");
+      throw refuse(
+        409,
+        "CLOSURE_NOT_CLOSED",
+        "This head/sub-head is not closed — there is nothing to reopen",
+      );
     }
     const [pendingRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM finance_budget_closure_reopen_request WHERE closure_id = ? AND status = 'pending'`,
-      [closure.id]
+      [closure.id],
     );
     if (pendingRows[0]) {
-      throw refuse(409, "REOPEN_ALREADY_PENDING", "A reopen request for this head/sub-head is already pending Finance Head approval");
+      throw refuse(
+        409,
+        "REOPEN_ALREADY_PENDING",
+        "A reopen request for this head/sub-head is already pending Finance Head approval",
+      );
     }
 
     const id = randomUUID();
@@ -191,7 +239,7 @@ export const budgetClosureService = {
       `INSERT INTO finance_budget_closure_reopen_request
          (id, closure_id, budget_id, head, sub_head, reason, status, requested_by)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
-      [id, closure.id, budgetId, head, subHead, reason.trim(), actorId]
+      [id, closure.id, budgetId, head, subHead, reason.trim(), actorId],
     );
 
     // Notify every Finance Head (in-app inbox now; real email is a deliberate fast-follow).
@@ -202,7 +250,7 @@ export const budgetClosureService = {
         WHERE ur.role_key = 'finance_head'
           AND ur.active_status = 1
           AND (u.is_blocked IS NULL OR u.is_blocked = 0)
-        LIMIT 100`
+        LIMIT 100`,
     );
     for (const user of financeHeads) {
       await inboxService.createItem({
@@ -223,13 +271,27 @@ export const budgetClosureService = {
   /** Finance Head (or super_admin) approves or rejects a pending reopen request. Approve flips
    *  the closure row back to 'open' — GRN creation checks status via assertSubheadOpen() below,
    *  so approval takes effect the moment this commits, no separate "apply" step. */
-  async reviewReopen(requestId: string, decision: "approve" | "reject", actorId: string, actorRole: string, reviewNotes?: string) {
+  async reviewReopen(
+    requestId: string,
+    decision: "approve" | "reject",
+    actorId: string,
+    actorRole: string,
+    reviewNotes?: string,
+  ) {
     const role = actorRole.toLowerCase();
     if (!REOPEN_APPROVE_ROLES.has(role)) {
-      throw refuse(403, "CLOSURE_NO_REVIEW_ROLE", `Role ${actorRole} cannot review a reopen request`);
+      throw refuse(
+        403,
+        "CLOSURE_NO_REVIEW_ROLE",
+        `Role ${actorRole} cannot review a reopen request`,
+      );
     }
     if (decision === "reject" && !reviewNotes?.trim()) {
-      throw refuse(400, "REOPEN_REJECT_REASON_REQUIRED", "A reason is required to reject a reopen request");
+      throw refuse(
+        400,
+        "REOPEN_REJECT_REASON_REQUIRED",
+        "A reason is required to reject a reopen request",
+      );
     }
 
     const connection = await db.getConnection();
@@ -237,15 +299,31 @@ export const budgetClosureService = {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
         `SELECT * FROM finance_budget_closure_reopen_request WHERE id = ? FOR UPDATE`,
-        [requestId]
+        [requestId],
       );
       const request = rows[0];
-      if (!request) throw refuse(404, "REOPEN_REQUEST_NOT_FOUND", "Reopen request not found");
+      if (!request)
+        throw refuse(
+          404,
+          "REOPEN_REQUEST_NOT_FOUND",
+          "Reopen request not found",
+        );
       if (String(request.status) !== "pending") {
-        throw refuse(409, "REOPEN_WRONG_STAGE", `Reopen request is already ${request.status}`);
+        throw refuse(
+          409,
+          "REOPEN_WRONG_STAGE",
+          `Reopen request is already ${request.status}`,
+        );
       }
-      if (String(request.requested_by) === actorId && !REOPEN_MAKER_CHECKER_EXEMPT_ROLES.has(role)) {
-        throw refuse(409, "REOPEN_MAKER_CHECKER", "You raised this reopen request, so you cannot review it. A different Finance Head must approve or reject it.");
+      if (
+        String(request.requested_by) === actorId &&
+        !REOPEN_MAKER_CHECKER_EXEMPT_ROLES.has(role)
+      ) {
+        throw refuse(
+          409,
+          "REOPEN_MAKER_CHECKER",
+          "You raised this reopen request, so you cannot review it. A different Finance Head must approve or reject it.",
+        );
       }
 
       const nextStatus = decision === "approve" ? "approved" : "rejected";
@@ -253,12 +331,12 @@ export const budgetClosureService = {
         `UPDATE finance_budget_closure_reopen_request
             SET status = ?, reviewed_by = ?, reviewed_at = NOW(), review_notes = ?
           WHERE id = ?`,
-        [nextStatus, actorId, reviewNotes?.trim() || null, requestId]
+        [nextStatus, actorId, reviewNotes?.trim() || null, requestId],
       );
       if (decision === "approve") {
         await connection.execute(
           `UPDATE finance_budget_subhead_closure SET status = 'open' WHERE id = ?`,
-          [request.closure_id]
+          [request.closure_id],
         );
       }
       await connection.commit();
@@ -283,19 +361,19 @@ export const budgetClosureService = {
     connection: Pick<PoolConnection, "execute"> | Pick<typeof db, "execute">,
     budgetId: string,
     head: string,
-    subHeadInput: string | null
+    subHeadInput: string | null,
   ) {
     const subHead = normSubHead(subHeadInput);
     const [rows] = await connection.execute<RowDataPacket[]>(
       `SELECT status FROM finance_budget_subhead_closure WHERE budget_id = ? AND head = ? AND sub_head = ?`,
-      [budgetId, head, subHead]
+      [budgetId, head, subHead],
     );
     const row = rows[0];
     if (row && String(row.status) === "closed") {
       throw refuse(
         409,
         "BUDGET_SUBHEAD_CLOSED",
-        `${head}${subHead ? ` / ${subHead}` : ""} is closed for this month's business case. Request a reopen from the Variance tab before raising a new GRN against it.`
+        `${head}${subHead ? ` / ${subHead}` : ""} is closed for this month's business case. Request a reopen from the Variance tab before raising a new GRN against it.`,
       );
     }
   },

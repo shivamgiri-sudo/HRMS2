@@ -40,8 +40,11 @@ const { resolveRightsRequest } = vi.hoisted(() => ({
 vi.mock("../privacy.service.js", () => ({
   privacyService: {
     resolveRightsRequest,
-    getMyConsents: vi.fn(), getAllConsents: vi.fn(), getConsentCoverageStats: vi.fn(),
-    getMyRightsRequests: vi.fn(), getAllRightsRequests: vi.fn(),
+    getMyConsents: vi.fn(),
+    getAllConsents: vi.fn(),
+    getConsentCoverageStats: vi.fn(),
+    getMyRightsRequests: vi.fn(),
+    getAllRightsRequests: vi.fn(),
     listRetentionPolicies: vi.fn(),
   },
 }));
@@ -62,7 +65,10 @@ const { dbExecute } = vi.hoisted(() => ({
       return [[], []];
     }
     if (/SELECT \* FROM data_rights_request WHERE id = \?/i.test(sql)) {
-      return [[{ id: params[0], request_type: "erasure", status: "resolved" }], []];
+      return [
+        [{ id: params[0], request_type: "erasure", status: "resolved" }],
+        [],
+      ];
     }
     return [[], []];
   }),
@@ -71,14 +77,22 @@ vi.mock("../../../db/mysql.js", () => ({
   db: { execute: dbExecute, query: dbExecute, getConnection: vi.fn() },
 }));
 
-vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn(async () => undefined) }));
+vi.mock("../../../shared/auditLog.js", () => ({
+  logSensitiveAction: vi.fn(async () => undefined),
+}));
 
 const actor = { id: "u-caller-1", role: "hr" };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
+  const original =
+    await importOriginal<
+      typeof import("../../../middleware/authMiddleware.js")
+    >();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.authUser = actor;
+      next();
+    },
   };
 });
 vi.mock("../../../middleware/requireRole.js", () => ({
@@ -118,7 +132,10 @@ describe("PATCH /rights/requests/:id — erasure execution wiring", () => {
       .patch("/api/privacy/rights/requests/req-erasure-pending")
       .send({ status: "resolved" });
     expect(res.status).toBe(200);
-    expect(executeErasure).toHaveBeenCalledWith("req-erasure-pending", "u-caller-1");
+    expect(executeErasure).toHaveBeenCalledWith(
+      "req-erasure-pending",
+      "u-caller-1",
+    );
     expect(resolveRightsRequest).not.toHaveBeenCalled();
   });
 
@@ -139,7 +156,7 @@ describe("PATCH /rights/requests/:id — erasure execution wiring", () => {
     expect(executeErasure).not.toHaveBeenCalled();
     expect(resolveRightsRequest).toHaveBeenCalledWith(
       "req-access-pending",
-      expect.objectContaining({ status: "resolved" })
+      expect.objectContaining({ status: "resolved" }),
     );
     expect(hasRole).not.toHaveBeenCalled();
   });

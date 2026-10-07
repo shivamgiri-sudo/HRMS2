@@ -23,14 +23,17 @@ import { REPORT_CATALOG } from "../report-catalog.js";
  *    inverts naive assertions; reading the snapshot avoids that trap entirely.
  */
 
-const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
+const read = (path: string) =>
+  readFileSync(resolve(process.cwd(), path), "utf8");
 
 const LIVE_TABLES: ReadonlySet<string> = (() => {
   const snapshot = JSON.parse(read("sql/schema-snapshot.json")) as {
     generatedFrom: string;
     tables: Record<string, unknown>;
   };
-  expect(snapshot.generatedFrom, "snapshot must be of mas_hrms").toBe("mas_hrms");
+  expect(snapshot.generatedFrom, "snapshot must be of mas_hrms").toBe(
+    "mas_hrms",
+  );
   return new Set(Object.keys(snapshot.tables));
 })();
 
@@ -64,7 +67,9 @@ describe("cc_headcount counts only active employees", () => {
     // The rename ships as migration 1084 rather than an edit to 049, which is already
     // applied in production.
     if (/call_centre_code/.test(query)) {
-      const rename = read("sql/1084_cc_headcount_disambiguate_cost_vs_call_centre.sql");
+      const rename = read(
+        "sql/1084_cc_headcount_disambiguate_cost_vs_call_centre.sql",
+      );
       expect(
         /Call Centre \(Dialer\) Headcount/.test(rename),
         "report groups by call_centre_code, so its registered name must disambiguate it from cost centre",
@@ -113,12 +118,19 @@ describe("every declared source table exists in production", () => {
     const BLOCKED_BY_DESIGN = new Set(["asset_movement_log"]);
 
     const phantom = withSources
-      .flatMap(r => r.sourceTables.map(table => ({ code: r.code, table })))
-      .filter(({ table }) => !isCrossDatabase(table) && !BLOCKED_BY_DESIGN.has(table))
+      .flatMap((r) => r.sourceTables.map((table) => ({ code: r.code, table })))
+      .filter(
+        ({ table }) => !isCrossDatabase(table) && !BLOCKED_BY_DESIGN.has(table),
+      )
       .filter(({ table }) => !LIVE_TABLES.has(table));
 
-    const detail = [...new Set(phantom.map(p => `${p.table} (${p.code})`))].sort();
-    expect(detail, `sourceTables naming non-existent tables:\n${detail.join("\n")}`).toEqual([]);
+    const detail = [
+      ...new Set(phantom.map((p) => `${p.table} (${p.code})`)),
+    ].sort();
+    expect(
+      detail,
+      `sourceTables naming non-existent tables:\n${detail.join("\n")}`,
+    ).toEqual([]);
   });
 });
 
@@ -155,7 +167,7 @@ describe("no executor queries a table that does not exist", () => {
           // Drop single-quoted SQL string literals. They carry English — a CASE arm
           // reading 'Excluded from every report...' otherwise parses as a table named
           // "every". Literals are values, never schema.
-          .replace(/'(?:[^']|'')*'/g, "''")
+          .replace(/'(?:[^']|'')*'/g, "''"),
       )
       .join("\n");
 
@@ -180,12 +192,16 @@ describe("no executor queries a table that does not exist", () => {
     const offenders: string[] = [];
 
     for (const name of EXECUTOR_FILES) {
-      const source = sqlOnly(read(`src/modules/reporting/executors/${name}.executor.ts`));
+      const source = sqlOnly(
+        read(`src/modules/reporting/executors/${name}.executor.ts`),
+      );
       // Real table references only: FROM/JOIN followed by a bare snake_case identifier.
       // Subqueries "FROM (" and template interpolation "FROM ${" are skipped by the pattern.
       // A trailing "." means a cross-database reference (db_audit.call_quality_assessment),
       // which this snapshot of mas_hrms cannot and should not adjudicate.
-      const matches = source.matchAll(/\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)(\.)?/gi);
+      const matches = source.matchAll(
+        /\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)(\.)?/gi,
+      );
       for (const [, table, qualified] of matches) {
         if (qualified) continue;
         const t = table.toLowerCase();
@@ -196,6 +212,9 @@ describe("no executor queries a table that does not exist", () => {
     }
 
     const detail = [...new Set(offenders)].sort();
-    expect(detail, `executors querying non-existent tables:\n${detail.join("\n")}`).toEqual([]);
+    expect(
+      detail,
+      `executors querying non-existent tables:\n${detail.join("\n")}`,
+    ).toEqual([]);
   });
 });

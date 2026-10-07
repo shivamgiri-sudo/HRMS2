@@ -23,7 +23,10 @@ import { notificationGateway } from "../communication/notification.gateway.js";
 import type { RecipientSpec } from "../../shared/recipient-resolver.types.js";
 
 function frontendBaseUrl(): string {
-  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(/\/+$/, "");
+  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(
+    /\/+$/,
+    "",
+  );
 }
 
 /** Deep link to the GRN screen — there is no per-record route today, so this opens the queue. */
@@ -79,7 +82,9 @@ async function loadGrnContext(grnId: string): Promise<GrnContext | null> {
 }
 
 function formatAmount(amount: number | null): string {
-  return amount == null ? "—" : `₹${Number(amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+  return amount == null
+    ? "—"
+    : `₹${Number(amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
 }
 
 function formatDate(value: string | null): string {
@@ -116,7 +121,10 @@ export async function notifyGrnSubmittedEmail(grnId: string): Promise<void> {
       data: { ...baseData(ctx), raised_by: ctx.raised_by_name ?? "—" },
     });
   } catch (err) {
-    console.error(`[grn-notify-email] submitted ${grnId}:`, (err as Error).message);
+    console.error(
+      `[grn-notify-email] submitted ${grnId}:`,
+      (err as Error).message,
+    );
   }
 }
 
@@ -125,7 +133,9 @@ export async function notifyGrnSubmittedEmail(grnId: string): Promise<void> {
  * selector kind: Accounts Head has no per-branch scoping in this org (2 holders total,
  * confirmed live), so `scope: { type: 'all' }` is correct, not a branch-limited fallback.
  */
-export async function notifyGrnAccountsHeadPendingEmail(grnId: string): Promise<void> {
+export async function notifyGrnAccountsHeadPendingEmail(
+  grnId: string,
+): Promise<void> {
   try {
     const ctx = await loadGrnContext(grnId);
     if (!ctx) return;
@@ -139,7 +149,10 @@ export async function notifyGrnAccountsHeadPendingEmail(grnId: string): Promise<
       data: baseData(ctx),
     });
   } catch (err) {
-    console.error(`[grn-notify-email] accounts_head_pending ${grnId}:`, (err as Error).message);
+    console.error(
+      `[grn-notify-email] accounts_head_pending ${grnId}:`,
+      (err as Error).message,
+    );
   }
 }
 
@@ -171,8 +184,19 @@ export async function notifyGrnApprovalOverdue(
     if (!ctx) return false;
     const spec: RecipientSpec =
       stage === "branch_head"
-        ? { to: [{ kind: "branch_head", branchId: ctx.branch_id ?? undefined }] }
-        : { to: [{ kind: "role_scope", roleKeys: ["accounts_head"], scope: { type: "all" }, limit: 10 }] };
+        ? {
+            to: [{ kind: "branch_head", branchId: ctx.branch_id ?? undefined }],
+          }
+        : {
+            to: [
+              {
+                kind: "role_scope",
+                roleKeys: ["accounts_head"],
+                scope: { type: "all" },
+                limit: 10,
+              },
+            ],
+          };
 
     const outcome = await notificationGateway.notify({
       eventCode: "grn_approval_overdue",
@@ -184,11 +208,18 @@ export async function notifyGrnApprovalOverdue(
       entityId: grnId,
       correlationId: `grn:${grnId}`,
       specOverride: spec,
-      data: { ...baseData(ctx), pending_stage: STAGE_LABEL[stage], reminder_no: reminderNo },
+      data: {
+        ...baseData(ctx),
+        pending_stage: STAGE_LABEL[stage],
+        reminder_no: reminderNo,
+      },
     });
     return outcome.outcome === "sent" || outcome.outcome === "shadow";
   } catch (err) {
-    console.error(`[grn-notify-email] overdue ${grnId}:`, (err as Error).message);
+    console.error(
+      `[grn-notify-email] overdue ${grnId}:`,
+      (err as Error).message,
+    );
     return false;
   }
 }

@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * DU Digital's "6. DU Korea" / "6. DU Thailand" (per its own SOP: "Open DU
@@ -86,7 +89,9 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
+    const d = new Date(
+      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
+    );
     return d.toISOString().slice(0, 10);
   }
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
@@ -101,7 +106,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 async function importBatch(
   batchId: string,
@@ -114,7 +121,8 @@ async function importBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const [procRows] = await db.execute<Ref[]>(
     "SELECT id FROM process_master WHERE process_name = 'DU Digital' AND active_status = 1 LIMIT 1",
@@ -158,7 +166,10 @@ async function importBatch(
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, dashboardLabel, agentName,
+        randomUUID(),
+        processId,
+        dashboardLabel,
+        agentName,
         String(data["Agent_ID"] ?? "").trim() || null,
         callDate,
         parseCount(data["Calls"]),
@@ -183,7 +194,8 @@ async function importBatch(
         login_seconds, net_login_seconds, talk_seconds, idle_seconds, wrapup_seconds,
         break_seconds, dead_seconds, utilization_pct, week_label,
         data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
        agent_code = VALUES(agent_code),
        total_calls = VALUES(total_calls),
@@ -204,22 +216,33 @@ async function importBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   return { importedRows, errorRows, errors };
 }
 
-export async function importDuAprKoreaBatch(batchId: string, importedByUserId: string) {
+export async function importDuAprKoreaBatch(
+  batchId: string,
+  importedByUserId: string,
+) {
   return importBatch(batchId, importedByUserId, "KOREA");
 }
 
-export async function importDuAprThailandBatch(batchId: string, importedByUserId: string) {
+export async function importDuAprThailandBatch(
+  batchId: string,
+  importedByUserId: string,
+) {
   return importBatch(batchId, importedByUserId, "THAILAND");
 }

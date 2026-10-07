@@ -2,24 +2,44 @@ import type { Server } from "http";
 import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { db, setSessionMaxExecutionTime } from "./db/mysql.js";
-import { runPendingMigrations, verifySchemaVersion } from "./db/runPendingMigrations.js";
-import { checkRequiredTables, REQUIRED_TABLES } from "./db/schema-presence-check.js";
+import {
+  runPendingMigrations,
+  verifySchemaVersion,
+} from "./db/runPendingMigrations.js";
+import {
+  checkRequiredTables,
+  REQUIRED_TABLES,
+} from "./db/schema-presence-check.js";
 
 // API process only (hrms2-workers never loads server.ts): cap SELECTs at 5 min. 0 disables.
-setSessionMaxExecutionTime(Number(process.env.DB_API_MAX_EXECUTION_MS ?? 300_000));
+setSessionMaxExecutionTime(
+  Number(process.env.DB_API_MAX_EXECUTION_MS ?? 300_000),
+);
 
 // MIGRATION GOVERNANCE: When enabled, API startup only verifies schema version
 // instead of running migrations. Use `npm run migrate` to apply migrations separately.
 const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
-import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
-import { startMetaLeadSyncScheduler, stopMetaLeadSyncScheduler } from "./cron/metaLeadSync.cron.js";
+import {
+  startExitAutoAdvanceScheduler,
+  stopExitAutoAdvanceScheduler,
+} from "./cron/exitAutoAdvance.cron.js";
+import {
+  startMetaLeadSyncScheduler,
+  stopMetaLeadSyncScheduler,
+} from "./cron/metaLeadSync.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
-import { startDailyGamesScheduler, stopDailyGamesScheduler } from "./modules/engagement/daily-games.cron.js";
-import { startMcnmeetCron, stopMcnmeetCron } from "./modules/mcnmeet/mcnmeet.cron.js";
+import {
+  startDailyGamesScheduler,
+  stopDailyGamesScheduler,
+} from "./modules/engagement/daily-games.cron.js";
+import {
+  startMcnmeetCron,
+  stopMcnmeetCron,
+} from "./modules/mcnmeet/mcnmeet.cron.js";
 import { startSocialFeedCron } from "./modules/social-feed/social-feed.cron.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
@@ -27,7 +47,10 @@ import { startPortalSessionCleanupScheduler } from "./modules/portal/portal-sess
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
 import { startDashboardSnapshotScheduler } from "./modules/dashboards/dashboard-snapshot.cron.js";
 import { startPerformanceScorecardSnapshotScheduler } from "./modules/performance-scorecard/performance-scorecard-snapshot.cron.js";
-import { startPerformanceIngestionScheduler, stopPerformanceIngestionScheduler } from "./modules/performance-ingestion/performance-scheduler.service.js";
+import {
+  startPerformanceIngestionScheduler,
+  stopPerformanceIngestionScheduler,
+} from "./modules/performance-ingestion/performance-scheduler.service.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
 import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-reconciliation.worker.js";
 // D-1 Daily Manager Intelligence Briefing Engine — dual-registered here AND in
@@ -50,13 +73,22 @@ import { startAnnualLeaveWorker } from "./workers/leave-annual-el-credit.worker.
 import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
 import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
-import { startIntegrationScheduler, stopIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
+import {
+  startIntegrationScheduler,
+  stopIntegrationScheduler,
+} from "./workers/integration-scheduler.worker.js";
 import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.js";
 import { startMolecularEmailSyncWorker } from "./workers/molecular-email-sync.worker.js";
 import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
 import { startKpiStudioComputeWorker } from "./workers/kpi-studio-compute.worker.js";
-import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
-import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./workers/payroll-recalc-drainer.worker.js";
+import {
+  startPayrollNightlyRecalcWorker,
+  stopPayrollNightlyRecalcWorker,
+} from "./workers/payroll-nightly-recalc.worker.js";
+import {
+  startPayrollRecalcDrainerWorker,
+  stopPayrollRecalcDrainerWorker,
+} from "./workers/payroll-recalc-drainer.worker.js";
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
 import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
 // NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the
@@ -175,18 +207,34 @@ function startServer() {
     httpServer!.setTimeout(0);
     // The P&L Trend reads years of payroll; fill its cache shortly after boot so the first user
     // request doesn't wait 90+ seconds on the cold 130K-row salary scan.
-    setTimeout(() => { void import("./modules/process-pnl/pnl-trend.service.js").then((m) => m.warmPnlTrendCache()); }, 20_000).unref();
+    setTimeout(() => {
+      void import("./modules/process-pnl/pnl-trend.service.js").then((m) =>
+        m.warmPnlTrendCache(),
+      );
+    }, 20_000).unref();
     // Process Operations /feeds counts ~36 source tables; keep those counts warm so the page never waits on them.
-    setTimeout(() => { void import("./modules/process-operations/feed-health.service.js").then((m) => m.startFeedHealthCacheWarmer()); }, 200_000).unref();
+    setTimeout(() => {
+      void import("./modules/process-operations/feed-health.service.js").then(
+        (m) => m.startFeedHealthCacheWarmer(),
+      );
+    }, 200_000).unref();
     // The Onfido Overview and Analyst reports take 20-26s cold; keep them in the response cache so the dashboard's first load is instant.
-    setTimeout(() => { void import("./modules/onfido-process/onfido-cache-warmer.js").then((m) => m.startOnfidoCacheWarmer()); }, 240_000).unref();
+    setTimeout(() => {
+      void import("./modules/onfido-process/onfido-cache-warmer.js").then((m) =>
+        m.startOnfidoCacheWarmer(),
+      );
+    }, 240_000).unref();
     // ATS dashboards aggregate ~40k wide rows (15-20s cold); warm the cache after boot so the first visit is instant.
-    setTimeout(() => { void import("./modules/ats/dashboard.warm.js").then((m) => m.warmAtsDashboards()); }, 260_000).unref();
+    setTimeout(() => {
+      void import("./modules/ats/dashboard.warm.js").then((m) =>
+        m.warmAtsDashboards(),
+      );
+    }, 260_000).unref();
     // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to
     // avoid the race where nginx sends a request on a reused connection at the exact
     // moment Node is closing it (produces a spurious 502).
     httpServer!.keepAliveTimeout = 65000;
-    httpServer!.headersTimeout   = 66000;
+    httpServer!.headersTimeout = 66000;
     if (process.send) {
       process.send("ready");
     }
@@ -208,11 +256,16 @@ function startServer() {
             `[schema] ${missing.length} required table(s) MISSING — run the matching migration: ${missing.join(", ")}`,
           );
         } else {
-          console.log(`[schema] all ${REQUIRED_TABLES.length} required tables present`);
+          console.log(
+            `[schema] all ${REQUIRED_TABLES.length} required tables present`,
+          );
         }
       })
       .catch((err: unknown) => {
-        console.warn("[schema] presence check skipped:", (err as Error).message);
+        console.warn(
+          "[schema] presence check skipped:",
+          (err as Error).message,
+        );
       });
 
     // These three sat OUTSIDE both guards, so they ran in the API unconditionally
@@ -235,7 +288,9 @@ function startServer() {
       // ungoverned, unregistered and impossible to stop without a deploy.
       startSocialFeedCron();
       startMcnmeetCron();
-      console.log("[scheduler] official-email, integration, daily-games, social-feed and mcnmeet started");
+      console.log(
+        "[scheduler] official-email, integration, daily-games, social-feed and mcnmeet started",
+      );
     }
 
     if (env.ENABLE_SCHEDULERS) {
@@ -363,25 +418,43 @@ function startServer() {
 
         // Start heavy workers (with distributed lock protection)
         startAprVicidialSyncWorker().catch((error) =>
-          console.error("[apr-sync] startup error:", error instanceof Error ? error.message : String(error)),
+          console.error(
+            "[apr-sync] startup error:",
+            error instanceof Error ? error.message : String(error),
+          ),
         );
         startMolecularEmailSyncWorker().catch((error) =>
-          console.error("[molecular-email-sync] startup error:", error instanceof Error ? error.message : String(error)),
+          console.error(
+            "[molecular-email-sync] startup error:",
+            error instanceof Error ? error.message : String(error),
+          ),
         );
         startPayrollNightlyRecalcWorker().catch((error) =>
-          console.error("[payroll-nightly-recalc] startup error:", error instanceof Error ? error.message : String(error)),
+          console.error(
+            "[payroll-nightly-recalc] startup error:",
+            error instanceof Error ? error.message : String(error),
+          ),
         );
         startKpiDailySyncWorker().catch((error) =>
-          console.error("[kpi-sync] startup error:", error instanceof Error ? error.message : String(error)),
+          console.error(
+            "[kpi-sync] startup error:",
+            error instanceof Error ? error.message : String(error),
+          ),
         );
         // Registered here AND in all-workers.ts: that file's own note warns a job
         // present in only one of the two topologies silently never runs in the other.
         startKpiStudioComputeWorker();
         startSLABreachWorker().catch((error) =>
-          console.error("[sla-breach] startup error:", error instanceof Error ? error.message : String(error)),
+          console.error(
+            "[sla-breach] startup error:",
+            error instanceof Error ? error.message : String(error),
+          ),
         );
         startLmsSyncWorker().catch((error) =>
-          console.error("[lms-sync] startup error:", error instanceof Error ? error.message : String(error)),
+          console.error(
+            "[lms-sync] startup error:",
+            error instanceof Error ? error.message : String(error),
+          ),
         );
         // LMS due-date reminders (7d / 3d / 1d before batch end) are PARKED.
         //
@@ -433,7 +506,9 @@ function startServer() {
         startMetaLeadSyncScheduler();
       }
     } else {
-      console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
+      console.log(
+        "[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)",
+      );
     }
     console.log(`MCN HRMS backend running on http://localhost:${env.PORT}`);
   });
@@ -453,7 +528,7 @@ function startServer() {
     if (listenRetries > MAX_LISTEN_RETRIES) {
       console.error(
         `[startup] port ${env.PORT} is still in use after ${MAX_LISTEN_RETRIES} attempts. ` +
-        `Another process is bound to it — stop that process, or set PORT to something else.`,
+          `Another process is bound to it — stop that process, or set PORT to something else.`,
       );
       process.exit(1);
     }
@@ -483,7 +558,10 @@ async function withTimeout<T>(
       ),
     ),
   ]).catch((error) => {
-    console.warn(`[startup] ${label} skipped:`, error instanceof Error ? error.message : String(error));
+    console.warn(
+      `[startup] ${label} skipped:`,
+      error instanceof Error ? error.message : String(error),
+    );
     return null;
   });
 }
@@ -510,11 +588,18 @@ async function initializeRuntime() {
   // employee-creation-orchestrator.service.ts's Live Selfie promotion step for
   // the incident this is the other half of the fix for. Not awaited: must
   // never add to the boot window health checks are already timed against.
-  warmUpFaceDetectionModels().then((available) => {
-    console.log(`[face-match] model warm-up ${available ? "complete" : "unavailable (models not found on disk)"}`);
-  }).catch((err) => {
-    console.warn("[face-match] model warm-up failed (non-blocking):", err instanceof Error ? err.message : err);
-  });
+  warmUpFaceDetectionModels()
+    .then((available) => {
+      console.log(
+        `[face-match] model warm-up ${available ? "complete" : "unavailable (models not found on disk)"}`,
+      );
+    })
+    .catch((err) => {
+      console.warn(
+        "[face-match] model warm-up failed (non-blocking):",
+        err instanceof Error ? err.message : err,
+      );
+    });
 
   startServer();
 }
@@ -522,7 +607,9 @@ async function initializeRuntime() {
 async function handleMigrations(): Promise<void> {
   if (MIGRATIONS_VERIFY_ONLY) {
     // GOVERNANCE: Verify the startup-managed migration set without modifying schema.
-    console.log("[startup] MIGRATIONS_VERIFY_ONLY=true - verifying schema version...");
+    console.log(
+      "[startup] MIGRATIONS_VERIFY_ONLY=true - verifying schema version...",
+    );
     const schemaStatus = await verifySchemaVersion();
 
     if (!schemaStatus.valid) {
@@ -535,9 +622,13 @@ async function handleMigrations(): Promise<void> {
         throw new Error(message);
       }
       console.warn(`[startup] ${message}`);
-      console.warn("[startup] development mode: continuing with incomplete schema.");
+      console.warn(
+        "[startup] development mode: continuing with incomplete schema.",
+      );
     } else {
-      console.log(`[startup] schema verified: ${schemaStatus.appliedCount} migrations applied`);
+      console.log(
+        `[startup] schema verified: ${schemaStatus.appliedCount} migrations applied`,
+      );
     }
     return;
   }
@@ -560,8 +651,9 @@ handleMigrations()
     // Crashing the server here causes a PM2 restart loop that takes the whole service
     // down under heavy traffic. Warn and continue instead.
     const isLockContention =
-      /lock wait timeout|advisory lock|could not acquire migration lock/i.test(msg) ||
-      (error as NodeJS.ErrnoException)?.code === "ER_LOCK_WAIT_TIMEOUT";
+      /lock wait timeout|advisory lock|could not acquire migration lock/i.test(
+        msg,
+      ) || (error as NodeJS.ErrnoException)?.code === "ER_LOCK_WAIT_TIMEOUT";
 
     if (isLockContention) {
       console.warn(

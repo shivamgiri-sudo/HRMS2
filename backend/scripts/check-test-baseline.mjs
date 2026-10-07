@@ -29,7 +29,13 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
 import { resolve, relative, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -57,7 +63,11 @@ function runSuite(only = []) {
           "--reporter=json",
           `--outputFile=${out}`,
         ],
-        { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"], timeout: 45 * 60 * 1000 },
+        {
+          cwd: ROOT,
+          stdio: ["ignore", "ignore", "inherit"],
+          timeout: 45 * 60 * 1000,
+        },
       );
     } catch (error) {
       // A non-zero exit is expected whenever a test fails; the JSON is what
@@ -65,7 +75,9 @@ function runSuite(only = []) {
       spawnError = error;
     }
     if (!existsSync(out)) {
-      console.error("vitest produced no JSON report — the run itself failed to start.");
+      console.error(
+        "vitest produced no JSON report — the run itself failed to start.",
+      );
       if (spawnError) console.error(String(spawnError.message ?? spawnError));
       process.exit(2);
     }
@@ -91,7 +103,9 @@ function idsOfFailures(report) {
 
     for (const test of assertions) {
       if (test.status !== "failed") continue;
-      const name = test.fullName || [...(test.ancestorTitles ?? []), test.title].join(" > ");
+      const name =
+        test.fullName ||
+        [...(test.ancestorTitles ?? []), test.title].join(" > ");
       ids.push(`${file} :: ${name}`);
     }
   }
@@ -108,27 +122,36 @@ const optionalFailures = new Set(existingBaseline.optionalFailures ?? []);
 if (UPDATE) {
   writeFileSync(
     BASELINE,
-    `${JSON.stringify({
-      note:
-        "Tests known to be failing. Anything not listed here fails CI. When you fix one, delete its line — the checker also fails if a listed test starts passing, so this file cannot rot.",
-      recorded: failing.length,
-      failures: failing,
-      optionalFailures: [...optionalFailures].sort(),
-    }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        note: "Tests known to be failing. Anything not listed here fails CI. When you fix one, delete its line — the checker also fails if a listed test starts passing, so this file cannot rot.",
+        recorded: failing.length,
+        failures: failing,
+        optionalFailures: [...optionalFailures].sort(),
+      },
+      null,
+      2,
+    )}\n`,
   );
-  console.log(`Recorded ${failing.length} known failures to ${relative(ROOT, BASELINE)}`);
+  console.log(
+    `Recorded ${failing.length} known failures to ${relative(ROOT, BASELINE)}`,
+  );
   process.exit(0);
 }
 
 if (!existsSync(BASELINE)) {
-  console.error(`Missing ${relative(ROOT, BASELINE)}. Run with --update to create it.`);
+  console.error(
+    `Missing ${relative(ROOT, BASELINE)}. Run with --update to create it.`,
+  );
   process.exit(2);
 }
 
 const baseline = new Set(existingBaseline.failures ?? []);
 const nowFailing = new Set(failing);
 
-let newlyBroken = failing.filter((id) => !baseline.has(id) && !optionalFailures.has(id));
+let newlyBroken = failing.filter(
+  (id) => !baseline.has(id) && !optionalFailures.has(id),
+);
 let nowFixed = [...baseline].filter((id) => !nowFailing.has(id)).sort();
 
 // Confirm before accusing. This suite has timeout-prone tests, and a gate that
@@ -141,7 +164,9 @@ if (newlyBroken.length) {
   const flaky = newlyBroken.filter((id) => !confirmed.has(id));
   newlyBroken = newlyBroken.filter((id) => confirmed.has(id));
   if (flaky.length) {
-    console.log(`  ${flaky.length} passed on retry — treating as flake, not a regression:`);
+    console.log(
+      `  ${flaky.length} passed on retry — treating as flake, not a regression:`,
+    );
     for (const id of flaky) console.log(`    ${id}`);
   }
 }
@@ -154,29 +179,39 @@ if (newlyBroken.length) {
 let flakyFixed = [];
 if (nowFixed.length) {
   const files = [...new Set(nowFixed.map((id) => id.split(" :: ")[0]))];
-  console.log(`\nRe-running ${files.length} file(s) to confirm ${nowFixed.length} fix(es)...`);
+  console.log(
+    `\nRe-running ${files.length} file(s) to confirm ${nowFixed.length} fix(es)...`,
+  );
   const stillFailing = new Set(idsOfFailures(runSuite(files)));
   flakyFixed = nowFixed.filter((id) => stillFailing.has(id));
   nowFixed = nowFixed.filter((id) => !stillFailing.has(id));
   if (flakyFixed.length) {
-    console.log(`  ${flakyFixed.length} failed on retry — flaky, keeping in the baseline:`);
+    console.log(
+      `  ${flakyFixed.length} failed on retry — flaky, keeping in the baseline:`,
+    );
     for (const id of flakyFixed) console.log(`    ${id}`);
   }
 }
 
 console.log(
   `suite: ${report.numPassedTests ?? 0} passed, ${report.numFailedTests ?? 0} failed; ` +
-  `baseline: ${baseline.size} known, ${optionalFailures.size} optional`,
+    `baseline: ${baseline.size} known, ${optionalFailures.size} optional`,
 );
 
 if (newlyBroken.length) {
-  console.error(`\n${newlyBroken.length} test(s) newly failing — not in the baseline:\n`);
+  console.error(
+    `\n${newlyBroken.length} test(s) newly failing — not in the baseline:\n`,
+  );
   for (const id of newlyBroken) console.error(`  ${id}`);
-  console.error("\nFix them, or justify the regression and re-record with --update.\n");
+  console.error(
+    "\nFix them, or justify the regression and re-record with --update.\n",
+  );
 }
 
 if (nowFixed.length) {
-  console.error(`\n${nowFixed.length} baseline entr(y/ies) now pass — remove them:\n`);
+  console.error(
+    `\n${nowFixed.length} baseline entr(y/ies) now pass — remove them:\n`,
+  );
   for (const id of nowFixed) console.error(`  ${id}`);
   console.error("\nRun: npm run test:baseline:update\n");
 }

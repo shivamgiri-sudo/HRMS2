@@ -27,7 +27,7 @@ const statusOf = (fn: () => unknown) => {
     fn();
     return null;
   } catch (error) {
-    return (error as { statusCode?: number; code?: string; message: string });
+    return error as { statusCode?: number; code?: string; message: string };
   }
 };
 
@@ -42,7 +42,10 @@ describe("a role that owns no stage here", () => {
       }),
     );
     expect(error).not.toBeNull();
-    expect(error!.statusCode, "without a statusCode the message is replaced in production").toBe(403);
+    expect(
+      error!.statusCode,
+      "without a statusCode the message is replaced in production",
+    ).toBe(403);
     expect(error!.code).toBe("WORKFLOW_WRONG_STAGE_ROLE");
     expect(error!.message).toMatch(/requires the finance_head role/);
   });
@@ -50,12 +53,14 @@ describe("a role that owns no stage here", () => {
   it("on GRN, the same role/status pair now succeeds instead — accounts_head owns this stage there", () => {
     // The exact inverse of the case above, pinned side by side so the two workflows' divergence
     // (owner ruling, 2026-09-12) cannot silently re-collapse into one shared ternary again.
-    expect(resolveFinanceStageRole({
-      primaryRole: "accounts_head",
-      userRoles: ["accounts_head"],
-      currentStatus: "branch_head_approved",
-      workflow: "grn",
-    })).toBe("accounts_head");
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "accounts_head",
+        userRoles: ["accounts_head"],
+        currentStatus: "branch_head_approved",
+        workflow: "grn",
+      }),
+    ).toBe("accounts_head");
   });
 });
 
@@ -78,36 +83,54 @@ describe("a status that owns no stage at all", () => {
 
 describe("what still passes", () => {
   it("returns the stage owner for the role that owns it", () => {
-    expect(resolveFinanceStageRole({
-      primaryRole: "branch_head", userRoles: ["branch_head"],
-      currentStatus: "submitted", workflow: "grn",
-    })).toBe("branch_head");
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "branch_head",
+        userRoles: ["branch_head"],
+        currentStatus: "submitted",
+        workflow: "grn",
+      }),
+    ).toBe("branch_head");
   });
 
   it("still records a super_admin as the stage owner, not as super_admin", () => {
     // The audit question is "which stage was cleared", not "who was logged in". GRN's 3-stage
     // chain (owner ruling, 2026-09-12) means branch_head_approved now waits on accounts_head,
     // not finance_head — same status string as before, different next owner for this workflow.
-    expect(resolveFinanceStageRole({
-      primaryRole: "super_admin", userRoles: ["super_admin"],
-      currentStatus: "branch_head_approved", workflow: "grn",
-    })).toBe("accounts_head");
-    expect(resolveFinanceStageRole({
-      primaryRole: "super_admin", userRoles: ["super_admin"],
-      currentStatus: "accounts_head_approved", workflow: "grn",
-    })).toBe("finance_head");
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "super_admin",
+        userRoles: ["super_admin"],
+        currentStatus: "branch_head_approved",
+        workflow: "grn",
+      }),
+    ).toBe("accounts_head");
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "super_admin",
+        userRoles: ["super_admin"],
+        currentStatus: "accounts_head_approved",
+        workflow: "grn",
+      }),
+    ).toBe("finance_head");
     // BUDGET is unaffected by the GRN change — same status, still finance_head there.
-    expect(resolveFinanceStageRole({
-      primaryRole: "super_admin", userRoles: ["super_admin"],
-      currentStatus: "branch_head_approved", workflow: "budget",
-    })).toBe("finance_head");
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "super_admin",
+        userRoles: ["super_admin"],
+        currentStatus: "branch_head_approved",
+        workflow: "budget",
+      }),
+    ).toBe("finance_head");
   });
 
   it("refuses accounts_head on a budget at finance_head_approved — that stage was removed (owner decision, 2026-08-21)", () => {
     const error = statusOf(() =>
       resolveFinanceStageRole({
-        primaryRole: "accounts_head", userRoles: ["accounts_head"],
-        currentStatus: "finance_head_approved", workflow: "budget",
+        primaryRole: "accounts_head",
+        userRoles: ["accounts_head"],
+        currentStatus: "finance_head_approved",
+        workflow: "budget",
       }),
     );
     expect(error).not.toBeNull();

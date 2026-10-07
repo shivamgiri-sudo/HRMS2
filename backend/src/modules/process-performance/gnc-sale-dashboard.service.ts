@@ -102,11 +102,17 @@ export interface GncSaleDashboardData {
   campaigns: string[];
   dateWiseBreakdown: Array<{
     date: string;
-    byCampaign: Record<string, {
-      codSaleCount: number; codAmount: number;
-      paidSaleCount: number; paidAmount: number;
-      totalSaleCount: number; totalAmount: number;
-    }>;
+    byCampaign: Record<
+      string,
+      {
+        codSaleCount: number;
+        codAmount: number;
+        paidSaleCount: number;
+        paidAmount: number;
+        totalSaleCount: number;
+        totalAmount: number;
+      }
+    >;
     totalSaleCount: number;
     totalAmount: number;
   }>;
@@ -210,7 +216,8 @@ const num = (v: string | number | null | undefined): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
-const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
+const pct = (part: number, whole: number): number =>
+  whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
 
 /** Same ladder the reference Excel's own "Bucket" column uses (0-30 / 31-60
  * / 61-90 / 91-120 / 121-180 / 180 Above), applied to a REAL tenure figure
@@ -244,7 +251,10 @@ export function currentMonthRange(): { from: string; to: string } {
   return { from, to };
 }
 
-export async function getGncSaleDashboard(fromInput: string, toInput: string): Promise<GncSaleDashboardData> {
+export async function getGncSaleDashboard(
+  fromInput: string,
+  toInput: string,
+): Promise<GncSaleDashboardData> {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -268,33 +278,33 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
     [agentCampaignRows],
   ] = await Promise.all([
     db.execute<HeadlineRow[]>(
-    `SELECT
+      `SELECT
        SUM(gross_amount) AS turnover,
        COUNT(*) AS sale_count,
        SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS prepaid_count,
        SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count
      FROM db_masmis.gnc_sale
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY)`,
-    range,
-  ),
+      range,
+    ),
     db.execute<ActiveAgentsRow[]>(
-    `SELECT COUNT(DISTINCT emp_id) AS active_agents
+      `SELECT COUNT(DISTINCT emp_id) AS active_agents
      FROM db_masmis.gnc_apr
      WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY)`,
-    range,
-  ),
+      range,
+    ),
     db.execute<AllocationHeadlineRow[]>(
-    `SELECT
+      `SELECT
        COUNT(*) AS total_allocation,
        SUM(CASE WHEN same_day_connect = 'Connected' THEN 1 ELSE 0 END) AS connected_count,
        SUM(CASE WHEN calling_status != 'pending to call' THEN 1 ELSE 0 END) AS attempted_count,
        SUM(CASE WHEN calling_status = 'Connected' THEN 1 ELSE 0 END) AS dial_connected_count
      FROM db_masmis.gnc_allocation
      WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY)`,
-    range,
-  ),
+      range,
+    ),
     db.execute<TrendRow[]>(
-    `SELECT DATE(sale_date) AS d,
+      `SELECT DATE(sale_date) AS d,
        COUNT(*) AS sale_count,
        SUM(gross_amount) AS turnover,
        SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS prepaid_count,
@@ -303,10 +313,10 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY)
      GROUP BY DATE(sale_date)
      ORDER BY d ASC`,
-    range,
-  ),
+      range,
+    ),
     db.execute<CampaignRow[]>(
-    `SELECT campaign, COUNT(*) AS sale_count,
+      `SELECT campaign, COUNT(*) AS sale_count,
        SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count,
        SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS paid_count,
        SUM(gross_amount) AS turnover
@@ -314,18 +324,18 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY) AND campaign IS NOT NULL AND campaign != ''
      GROUP BY campaign
      ORDER BY turnover DESC`,
-    range,
-  ),
+      range,
+    ),
     db.execute<TlRow[]>(
-    `SELECT tl, COUNT(*) AS sale_count, SUM(gross_amount) AS turnover
+      `SELECT tl, COUNT(*) AS sale_count, SUM(gross_amount) AS turnover
      FROM db_masmis.gnc_sale
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY) AND tl IS NOT NULL AND tl != ''
      GROUP BY tl
      ORDER BY turnover DESC`,
-    range,
-  ),
+      range,
+    ),
     db.execute<PerformerRow[]>(
-    `SELECT emp_id, MAX(emp_name) AS emp_name, MAX(tl) AS tl, MAX(campaign) AS campaign,
+      `SELECT emp_id, MAX(emp_name) AS emp_name, MAX(tl) AS tl, MAX(campaign) AS campaign,
        COUNT(*) AS sale_count, SUM(gross_amount) AS turnover,
        SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS prepaid_count
      FROM db_masmis.gnc_sale
@@ -333,33 +343,33 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      GROUP BY emp_id
      ORDER BY turnover DESC
      LIMIT 5`,
-    range,
-  ),
+      range,
+    ),
     db.execute<RowDataPacket[]>(
-    `SELECT
+      `SELECT
        SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'connected' THEN 1 ELSE 0 END) AS connected,
        SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'not connected' THEN 1 ELSE 0 END) AS not_connected
      FROM db_masmis.gnc_allocation
      WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY)`,
-    range,
-  ),
+      range,
+    ),
     db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total_tickets
+      `SELECT COUNT(*) AS total_tickets
      FROM db_masmis.gnc_chat
      WHERE STR_TO_DATE(report_date, '%e-%b-%y') >= ?
        AND STR_TO_DATE(report_date, '%e-%b-%y') < DATE_ADD(?, INTERVAL 1 DAY)`,
-    range,
-  ),
+      range,
+    ),
     db.execute<AllocationStatusRow[]>(
-    `SELECT calling_status, COUNT(*) AS n
+      `SELECT calling_status, COUNT(*) AS n
      FROM db_masmis.gnc_allocation
      WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY) AND calling_status IS NOT NULL AND calling_status != ''
      GROUP BY calling_status
      ORDER BY n DESC`,
-    range,
-  ),
+      range,
+    ),
     db.execute<DateCampaignRow[]>(
-    `SELECT DATE(sale_date) AS d, campaign,
+      `SELECT DATE(sale_date) AS d, campaign,
        SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_sale_count,
        SUM(CASE WHEN payment_status = 'COD' THEN gross_amount ELSE 0 END) AS cod_amount,
        SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS paid_sale_count,
@@ -370,10 +380,10 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY) AND campaign IS NOT NULL AND campaign != ''
      GROUP BY DATE(sale_date), campaign
      ORDER BY d ASC`,
-    range,
-  ),
+      range,
+    ),
     db.execute<AgentSaleRow[]>(
-    `SELECT emp_id, MAX(emp_name) AS emp_name, MAX(tl) AS tl, MAX(campaign) AS campaign,
+      `SELECT emp_id, MAX(emp_name) AS emp_name, MAX(tl) AS tl, MAX(campaign) AS campaign,
        COUNT(*) AS sale_count,
        SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count,
        SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS paid_count,
@@ -382,16 +392,16 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY) AND emp_id IS NOT NULL AND emp_id != ''
      GROUP BY emp_id
      ORDER BY turnover DESC`,
-    range,
-  ),
+      range,
+    ),
     db.execute<RowDataPacket[]>(
-    `SELECT emp_id, campaign, COUNT(*) AS n
+      `SELECT emp_id, campaign, COUNT(*) AS n
      FROM db_masmis.gnc_sale
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY) AND emp_id IS NOT NULL AND emp_id != ''
        AND campaign IS NOT NULL AND campaign != ''
      GROUP BY emp_id, campaign`,
-    range,
-  ),
+      range,
+    ),
   ]);
 
   // Abandon Cart's own Connected + Not Connected allocation total (excludes
@@ -399,7 +409,8 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
   // denominator for Abandon Cart's Conversion %, per gnc_allocation being
   // cart-calling data only (no campaign split, so this can't be computed
   // for any other LOB).
-  const cartAllocationTotal = num(cartConnectRow?.connected) + num(cartConnectRow?.not_connected);
+  const cartAllocationTotal =
+    num(cartConnectRow?.connected) + num(cartConnectRow?.not_connected);
 
   // Chat's own denominator: total chat tickets handled in the range, from
   // db_masmis.gnc_chat (the GNC Chat uploader's destination table). Its
@@ -418,7 +429,11 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
   for (const r of agentCampaignRows) {
     const key = String(r.emp_id);
     const cur = topCampaignByAgent.get(key);
-    if (!cur || num(r.n) > cur.n) topCampaignByAgent.set(key, { campaign: String(r.campaign), n: num(r.n) });
+    if (!cur || num(r.n) > cur.n)
+      topCampaignByAgent.set(key, {
+        campaign: String(r.campaign),
+        n: num(r.n),
+      });
   }
   const primaryCampaign = (empId: string, fallback: string | null): string =>
     topCampaignByAgent.get(empId)?.campaign || fallback || "Unknown";
@@ -430,24 +445,26 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
     const placeholders = agentIds.map(() => "?").join(",");
     [[employeeRows], [attendanceRows]] = await Promise.all([
       db.execute<EmployeeRow[]>(
-      `SELECT employee_code, first_name, last_name, date_of_joining
+        `SELECT employee_code, first_name, last_name, date_of_joining
        FROM mas_hrms.employees WHERE employee_code IN (${placeholders})`,
-      agentIds,
+        agentIds,
       ),
       db.execute<AttendanceRow[]>(
-      // Distinct present DAYS: gnc_apr repeats an agent-day when the same APR
-      // file is uploaded more than once (1 Sep 2026: 6 agent-days x3), so
-      // SUM(atten) reported 13 days for agents who were present on 11.
-      `SELECT emp_id, COUNT(DISTINCT CASE WHEN atten > 0 THEN report_date END) AS attendance_days
+        // Distinct present DAYS: gnc_apr repeats an agent-day when the same APR
+        // file is uploaded more than once (1 Sep 2026: 6 agent-days x3), so
+        // SUM(atten) reported 13 days for agents who were present on 11.
+        `SELECT emp_id, COUNT(DISTINCT CASE WHEN atten > 0 THEN report_date END) AS attendance_days
        FROM db_masmis.gnc_apr
        WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY) AND emp_id IN (${placeholders})
        GROUP BY emp_id`,
-      [...range, ...agentIds],
+        [...range, ...agentIds],
       ),
     ]);
   }
   const employeeByCode = new Map(employeeRows.map((e) => [e.employee_code, e]));
-  const attendanceByEmpId = new Map(attendanceRows.map((a) => [a.emp_id, num(a.attendance_days)]));
+  const attendanceByEmpId = new Map(
+    attendanceRows.map((a) => [a.emp_id, num(a.attendance_days)]),
+  );
 
   const turnover = num(headlineRow?.turnover);
   const saleCount = num(headlineRow?.sale_count);
@@ -461,7 +478,9 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
   // final "Sale" stage must be Abandon Cart's own sale count, not the overall
   // `saleCount` (which also includes Chat/Inbound sales and would overstate
   // this funnel's true conversion rate).
-  const cartSaleCount = num(campaignRows.find((r) => r.campaign === "Abandon Cart")?.sale_count);
+  const cartSaleCount = num(
+    campaignRows.find((r) => r.campaign === "Abandon Cart")?.sale_count,
+  );
 
   return {
     headline: {
@@ -476,10 +495,26 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
     },
     funnel: [
       { stage: "Total Allocation", count: totalAllocation, pctOfBase: 100 },
-      { stage: "Attempted", count: attemptedCount, pctOfBase: pct(attemptedCount, totalAllocation) },
-      { stage: "Connected", count: dialConnectedCount, pctOfBase: pct(dialConnectedCount, totalAllocation) },
-      { stage: "Same Day Connected", count: connectedCount, pctOfBase: pct(connectedCount, totalAllocation) },
-      { stage: "Sale", count: cartSaleCount, pctOfBase: pct(cartSaleCount, totalAllocation) },
+      {
+        stage: "Attempted",
+        count: attemptedCount,
+        pctOfBase: pct(attemptedCount, totalAllocation),
+      },
+      {
+        stage: "Connected",
+        count: dialConnectedCount,
+        pctOfBase: pct(dialConnectedCount, totalAllocation),
+      },
+      {
+        stage: "Same Day Connected",
+        count: connectedCount,
+        pctOfBase: pct(connectedCount, totalAllocation),
+      },
+      {
+        stage: "Sale",
+        count: cartSaleCount,
+        pctOfBase: pct(cartSaleCount, totalAllocation),
+      },
     ],
     from,
     to,
@@ -498,11 +533,12 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
       codPct: pct(num(r.cod_count), num(r.sale_count)),
       paidPct: pct(num(r.paid_count), num(r.sale_count)),
       turnover: num(r.turnover),
-      conversionPct: (r.campaign === "Abandon Cart" && cartAllocationTotal > 0)
-        ? pct(num(r.sale_count), cartAllocationTotal)
-        : (r.campaign === "Chat" && chatTicketTotal > 0)
-          ? pct(num(r.sale_count), chatTicketTotal)
-          : null,
+      conversionPct:
+        r.campaign === "Abandon Cart" && cartAllocationTotal > 0
+          ? pct(num(r.sale_count), cartAllocationTotal)
+          : r.campaign === "Chat" && chatTicketTotal > 0
+            ? pct(num(r.sale_count), chatTicketTotal)
+            : null,
     })),
     tlRevenue: tlRows.map((r) => ({
       tl: r.tl || "Unknown",
@@ -527,9 +563,16 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
     dateWiseBreakdown: buildDateWiseBreakdown(dateCampaignRows),
     agentPerformance: agentSaleRows.map((r) => {
       const emp = employeeByCode.get(r.emp_id);
-      const empName = (emp && [emp.first_name, emp.last_name].filter(Boolean).join(" ")) || r.emp_name || r.emp_id;
-      const doj = emp?.date_of_joining ? String(emp.date_of_joining).slice(0, 10) : null;
-      const tenureDays = doj ? Math.floor((Date.now() - new Date(doj).getTime()) / 86400000) : null;
+      const empName =
+        (emp && [emp.first_name, emp.last_name].filter(Boolean).join(" ")) ||
+        r.emp_name ||
+        r.emp_id;
+      const doj = emp?.date_of_joining
+        ? String(emp.date_of_joining).slice(0, 10)
+        : null;
+      const tenureDays = doj
+        ? Math.floor((Date.now() - new Date(doj).getTime()) / 86400000)
+        : null;
       const saleCount = num(r.sale_count);
       const codCount = num(r.cod_count);
       const paidCount = num(r.paid_count);
@@ -563,9 +606,19 @@ export interface GncAgentDetail {
   bucket: string;
   from: string;
   to: string;
-  totals: { saleCount: number; codCount: number; paidCount: number; revenue: number; aov: number };
+  totals: {
+    saleCount: number;
+    codCount: number;
+    paidCount: number;
+    revenue: number;
+    aov: number;
+  };
   daily: Array<{
-    date: string; saleCount: number; codCount: number; paidCount: number; revenue: number;
+    date: string;
+    saleCount: number;
+    codCount: number;
+    paidCount: number;
+    revenue: number;
     present: boolean | null;
   }>;
 }
@@ -587,7 +640,11 @@ interface AgentAttendanceDayRow extends RowDataPacket {
  * behind a row click on Agent-wise Performance. Same tables and the same
  * DOJ/tenure/bucket logic getGncSaleDashboard already uses for that agent,
  * just scoped to one emp_id instead of every agent. */
-export async function getGncAgentDetail(empId: string, fromInput: string, toInput: string): Promise<GncAgentDetail | null> {
+export async function getGncAgentDetail(
+  empId: string,
+  fromInput: string,
+  toInput: string,
+): Promise<GncAgentDetail | null> {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -617,7 +674,9 @@ export async function getGncAgentDetail(empId: string, fromInput: string, toInpu
      GROUP BY report_date`,
     range,
   );
-  const presentByDate = new Map(attendanceRows.map((r) => [String(r.report_date), num(r.atten) > 0]));
+  const presentByDate = new Map(
+    attendanceRows.map((r) => [String(r.report_date), num(r.atten) > 0]),
+  );
 
   const [employeeRows] = await db.execute<EmployeeRow[]>(
     `SELECT employee_code, first_name, last_name, date_of_joining FROM mas_hrms.employees WHERE employee_code = ?`,
@@ -625,11 +684,17 @@ export async function getGncAgentDetail(empId: string, fromInput: string, toInpu
   );
   const employee = employeeRows[0] ?? null;
   const doj = employee?.date_of_joining ?? null;
-  const tenureDays = doj ? Math.floor((Date.now() - new Date(doj).getTime()) / 86400000) : null;
+  const tenureDays = doj
+    ? Math.floor((Date.now() - new Date(doj).getTime()) / 86400000)
+    : null;
 
   const daily = dayRows.map((r) => ({
-    date: String(r.d), saleCount: num(r.sale_count), codCount: num(r.cod_count), paidCount: num(r.paid_count),
-    revenue: num(r.turnover), present: presentByDate.get(String(r.d)) ?? null,
+    date: String(r.d),
+    saleCount: num(r.sale_count),
+    codCount: num(r.cod_count),
+    paidCount: num(r.paid_count),
+    revenue: num(r.turnover),
+    present: presentByDate.get(String(r.d)) ?? null,
   }));
   const saleCount = daily.reduce((s, d) => s + d.saleCount, 0);
   const codCount = daily.reduce((s, d) => s + d.codCount, 0);
@@ -641,9 +706,18 @@ export async function getGncAgentDetail(empId: string, fromInput: string, toInpu
     empName: String(identityRow.emp_name),
     tl: String(identityRow.tl ?? "Unassigned"),
     lob: String(identityRow.campaign ?? "Unknown"),
-    doj, tenureDays, bucket: tenureBucket(tenureDays),
-    from, to,
-    totals: { saleCount, codCount, paidCount, revenue, aov: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0 },
+    doj,
+    tenureDays,
+    bucket: tenureBucket(tenureDays),
+    from,
+    to,
+    totals: {
+      saleCount,
+      codCount,
+      paidCount,
+      revenue,
+      aov: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
+    },
     daily,
   };
 }
@@ -653,14 +727,23 @@ export interface GncCampaignDetail {
   from: string;
   to: string;
   totals: {
-    saleCount: number; codCount: number; paidCount: number; revenue: number; aov: number;
+    saleCount: number;
+    codCount: number;
+    paidCount: number;
+    revenue: number;
+    aov: number;
     /** Same Sale Count / addressable-contacts definition the LOB-wise Summary
      * table's headline conversionPct uses -- null when this LOB has no
      * addressable-contact source in this app (see that field's own comment). */
     conversionPct: number | null;
   };
   daily: Array<{
-    date: string; saleCount: number; codCount: number; paidCount: number; revenue: number; conversionPct: number | null;
+    date: string;
+    saleCount: number;
+    codCount: number;
+    paidCount: number;
+    revenue: number;
+    conversionPct: number | null;
   }>;
 }
 
@@ -676,7 +759,11 @@ interface CampaignDayRow extends RowDataPacket {
  * the drill-down behind a row click on the LOB-wise Summary table. Reuses
  * the same campaign===Abandon Cart/Chat denominator logic getGncSaleDashboard
  * uses for the aggregate conversionPct, just grouped by day too. */
-export async function getGncCampaignDetail(campaignInput: string, fromInput: string, toInput: string): Promise<GncCampaignDetail | null> {
+export async function getGncCampaignDetail(
+  campaignInput: string,
+  fromInput: string,
+  toInput: string,
+): Promise<GncCampaignDetail | null> {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -706,7 +793,8 @@ export async function getGncCampaignDetail(campaignInput: string, fromInput: str
        GROUP BY alloc_date`,
       [from, to],
     );
-    for (const r of cartRows) denomByDay.set(String(r.d), num(r.connected) + num(r.not_connected));
+    for (const r of cartRows)
+      denomByDay.set(String(r.d), num(r.connected) + num(r.not_connected));
   } else if (campaign === "Chat") {
     const [chatRows] = await db.execute<RowDataPacket[]>(
       `SELECT STR_TO_DATE(report_date, '%e-%b-%y') AS d, COUNT(*) AS n
@@ -723,7 +811,11 @@ export async function getGncCampaignDetail(campaignInput: string, fromInput: str
     const saleCount = num(r.sale_count);
     const denom = denomByDay.get(d) ?? 0;
     return {
-      date: d, saleCount, codCount: num(r.cod_count), paidCount: num(r.paid_count), revenue: num(r.turnover),
+      date: d,
+      saleCount,
+      codCount: num(r.cod_count),
+      paidCount: num(r.paid_count),
+      revenue: num(r.turnover),
       conversionPct: denom > 0 ? pct(saleCount, denom) : null,
     };
   });
@@ -734,9 +826,14 @@ export async function getGncCampaignDetail(campaignInput: string, fromInput: str
   const totalDenom = [...denomByDay.values()].reduce((s, v) => s + v, 0);
 
   return {
-    campaign, from, to,
+    campaign,
+    from,
+    to,
     totals: {
-      saleCount, codCount, paidCount, revenue,
+      saleCount,
+      codCount,
+      paidCount,
+      revenue,
       aov: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
       conversionPct: totalDenom > 0 ? pct(saleCount, totalDenom) : null,
     },
@@ -744,13 +841,23 @@ export async function getGncCampaignDetail(campaignInput: string, fromInput: str
   };
 }
 
-function buildDateWiseBreakdown(rows: DateCampaignRow[]): GncSaleDashboardData["dateWiseBreakdown"] {
-  const byDate = new Map<string, GncSaleDashboardData["dateWiseBreakdown"][number]>();
+function buildDateWiseBreakdown(
+  rows: DateCampaignRow[],
+): GncSaleDashboardData["dateWiseBreakdown"] {
+  const byDate = new Map<
+    string,
+    GncSaleDashboardData["dateWiseBreakdown"][number]
+  >();
   for (const r of rows) {
     const dateKey = String(r.d);
     let entry = byDate.get(dateKey);
     if (!entry) {
-      entry = { date: dateKey, byCampaign: {}, totalSaleCount: 0, totalAmount: 0 };
+      entry = {
+        date: dateKey,
+        byCampaign: {},
+        totalSaleCount: 0,
+        totalAmount: 0,
+      };
       byDate.set(dateKey, entry);
     }
     const codSaleCount = num(r.cod_sale_count);
@@ -759,9 +866,18 @@ function buildDateWiseBreakdown(rows: DateCampaignRow[]): GncSaleDashboardData["
     const paidAmount = num(r.paid_amount);
     const totalSaleCount = num(r.total_sale_count);
     const totalAmount = num(r.total_amount);
-    entry.byCampaign[r.campaign] = { codSaleCount, codAmount, paidSaleCount, paidAmount, totalSaleCount, totalAmount };
+    entry.byCampaign[r.campaign] = {
+      codSaleCount,
+      codAmount,
+      paidSaleCount,
+      paidAmount,
+      totalSaleCount,
+      totalAmount,
+    };
     entry.totalSaleCount += totalSaleCount;
     entry.totalAmount += totalAmount;
   }
-  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  return Array.from(byDate.values()).sort((a, b) =>
+    a.date.localeCompare(b.date),
+  );
 }

@@ -4,7 +4,11 @@ import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 
 import { blankToNull } from "../../shared/sql-values.js";
-import { notDialDeskProcessSql, ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
+import {
+  notDialDeskProcessSql,
+  ownCompanyBranchSql,
+  ownCompanyCostCentreSql,
+} from "../../shared/ownCompanyCostCentre.js";
 import { syncCostCentreRelatedTables } from "../../shared/cost-centre-sync.js";
 import { clearBranchLetterheadCache } from "./branchAddress.service.js";
 // ── Whitelisted master tables to prevent SQL injection ────────────────────────
@@ -71,7 +75,11 @@ const TABLES_WITH_BRANCH_ID = new Set([
   "location_master",
 ]);
 
-async function listActive(table: string, orderCol = "created_at", options: ListOptions = {}): Promise<RowDataPacket[]> {
+async function listActive(
+  table: string,
+  orderCol = "created_at",
+  options: ListOptions = {},
+): Promise<RowDataPacket[]> {
   assertMasterTable(table);
   // orderCol must be a valid MySQL identifier (letters, digits, underscore)
   if (!/^[A-Za-z0-9_]+$/.test(orderCol)) {
@@ -112,9 +120,13 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
   // DialDesk (IDC entity) branches and processes never surface in HRMS (owner rule 2026-09-24).
   if (table === "branch_master") whereClauses.push(ownCompanyBranchSql(""));
   if (table === "process_master") {
-    const processIdentity = "REPLACE(REPLACE(LOWER(CONCAT_WS(' ', process_name, process_code, client_name)), ' ', ''), '-', '')";
-    for (const marker of ["dialdesk", "ispark", "dataconnect"]) whereClauses.push(`${processIdentity} NOT LIKE '%${marker}%'`);
-    whereClauses.push(`(branch_id IS NULL OR branch_id IN (SELECT id FROM branch_master WHERE ${ownCompanyBranchSql("")}))`);
+    const processIdentity =
+      "REPLACE(REPLACE(LOWER(CONCAT_WS(' ', process_name, process_code, client_name)), ' ', ''), '-', '')";
+    for (const marker of ["dialdesk", "ispark", "dataconnect"])
+      whereClauses.push(`${processIdentity} NOT LIKE '%${marker}%'`);
+    whereClauses.push(
+      `(branch_id IS NULL OR branch_id IN (SELECT id FROM branch_master WHERE ${ownCompanyBranchSql("")}))`,
+    );
   }
 
   // Active status filter
@@ -150,19 +162,21 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
     params.push(options.branch_id);
   }
 
-  const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+  const whereClause =
+    whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
   // Pagination
   let limitClause = "";
   if (options.limit && options.limit > 0) {
     const limit = Math.min(options.limit, 500); // Cap at 500
-    const offset = options.page && options.page > 1 ? (options.page - 1) * limit : 0;
+    const offset =
+      options.page && options.page > 1 ? (options.page - 1) * limit : 0;
     limitClause = `LIMIT ${limit} OFFSET ${offset}`;
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT * FROM ${table} ${whereClause} ORDER BY ${orderCol} ${limitClause}`,
-    params
+    params,
   );
 
   let items: RowDataPacket[];
@@ -172,7 +186,9 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
     const seen = new Set<string>();
     items = (rows as RowDataPacket[]).filter((item) => {
       if (!nameCol) return true;
-      const normalized = String(item[nameCol] ?? "").trim().toLocaleLowerCase();
+      const normalized = String(item[nameCol] ?? "")
+        .trim()
+        .toLocaleLowerCase();
       if (!normalized || seen.has(normalized)) return false;
       seen.add(normalized);
       return true;
@@ -183,11 +199,19 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
   if (options.entityType && options.employeeId) {
     for (const item of items) {
       try {
-        const result = await getEffectiveConfig(options.employeeId, options.entityType, item.id, item);
+        const result = await getEffectiveConfig(
+          options.employeeId,
+          options.entityType,
+          item.id,
+          item,
+        );
         Object.assign(item, result.config);
       } catch (err) {
         // Skip customization on error
-        console.warn(`Customization error for ${options.entityType} ${item.id}:`, err);
+        console.warn(
+          `Customization error for ${options.entityType} ${item.id}:`,
+          err,
+        );
       }
     }
   }
@@ -195,11 +219,14 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
   return items;
 }
 
-async function getById(table: string, id: string): Promise<RowDataPacket | null> {
+async function getById(
+  table: string,
+  id: string,
+): Promise<RowDataPacket | null> {
   assertMasterTable(table);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM ${table} WHERE id = ? LIMIT 1`,
-    [id]
+    [id],
   );
   return (rows as RowDataPacket[])[0] ?? null;
 }
@@ -209,10 +236,16 @@ async function softDelete(table: string, id: string): Promise<void> {
   await db.execute(`UPDATE ${table} SET active_status = 0 WHERE id = ?`, [id]);
 }
 
-async function setStatus(table: string, id: string, status: number, actor?: OrgActor): Promise<void> {
+async function setStatus(
+  table: string,
+  id: string,
+  status: number,
+  actor?: OrgActor,
+): Promise<void> {
   assertMasterTable(table);
   const activeStatus = status === 1 ? 1 : 0;
-  const before = table === "cost_centre_master" ? await getById(table, id) : null;
+  const before =
+    table === "cost_centre_master" ? await getById(table, id) : null;
   // Reactivating a cost centre only flipped active_status, leaving behind whatever close_date
   // it carried from when it was actually closed. branch-budget-allocation.service.ts's
   // listActiveCostCentres additionally requires close_date IS NULL OR close_date > CURDATE(),
@@ -223,14 +256,29 @@ async function setStatus(table: string, id: string, status: number, actor?: OrgA
   if (table === "cost_centre_master" && activeStatus === 1) {
     await db.execute(
       `UPDATE ${table} SET active_status = ?, close_date = NULL, updated_at = NOW() WHERE id = ?`,
-      [activeStatus, id]
+      [activeStatus, id],
     );
-    await logCostCentreChange(id, "org_master_status", before, await getById(table, id), actor);
+    await logCostCentreChange(
+      id,
+      "org_master_status",
+      before,
+      await getById(table, id),
+      actor,
+    );
     return;
   }
-  await db.execute(`UPDATE ${table} SET active_status = ?, updated_at = NOW() WHERE id = ?`, [activeStatus, id]);
+  await db.execute(
+    `UPDATE ${table} SET active_status = ?, updated_at = NOW() WHERE id = ?`,
+    [activeStatus, id],
+  );
   if (table === "cost_centre_master") {
-    await logCostCentreChange(id, "org_master_status", before, await getById(table, id), actor);
+    await logCostCentreChange(
+      id,
+      "org_master_status",
+      before,
+      await getById(table, id),
+      actor,
+    );
   }
 }
 
@@ -238,7 +286,10 @@ async function setStatus(table: string, id: string, status: number, actor?: OrgA
 
 export const branchService = {
   async list(options?: ListOptions) {
-    const items = await listActive("branch_master", "branch_name", { entityType: "branch", ...options });
+    const items = await listActive("branch_master", "branch_name", {
+      entityType: "branch",
+      ...options,
+    });
     // Only when the caller explicitly asked to see duplicate-named rows (see includeDuplicates
     // doc on ListOptions): attach how many employees are actually linked to each row, so an
     // admin picking among same-named branches can tell which one is the real, in-use row rather
@@ -246,22 +297,39 @@ export const branchService = {
     // consumer needs it and it shouldn't change the shape of the common case.
     if (options?.includeDuplicates && items.length > 0) {
       const [counts] = await db.execute<RowDataPacket[]>(
-        `SELECT branch_id, COUNT(*) AS employee_count FROM employees WHERE branch_id IS NOT NULL GROUP BY branch_id`
+        `SELECT branch_id, COUNT(*) AS employee_count FROM employees WHERE branch_id IS NOT NULL GROUP BY branch_id`,
       );
-      const countMap = new Map<string, number>((counts as RowDataPacket[]).map((r) => [String(r.branch_id), Number(r.employee_count)]));
+      const countMap = new Map<string, number>(
+        (counts as RowDataPacket[]).map((r) => [
+          String(r.branch_id),
+          Number(r.employee_count),
+        ]),
+      );
       for (const item of items) {
-        (item as RowDataPacket).employee_count = countMap.get(String(item.id)) ?? 0;
+        (item as RowDataPacket).employee_count =
+          countMap.get(String(item.id)) ?? 0;
       }
     }
     return items;
   },
   getById: (id: string) => getById("branch_master", id),
-  setStatus: (id: string, status: number) => setStatus("branch_master", id, status),
+  setStatus: (id: string, status: number) =>
+    setStatus("branch_master", id, status),
   async create(data: {
-    branch_code: string; branch_name: string; sal_branch_code?: string; city?: string; state?: string;
-    address?: string; pincode?: string; hr_contact?: string; company_name?: string;
-    gstin?: string; gst_state_code?: string; close_date?: string;
-    latitude?: number | string; longitude?: number | string;
+    branch_code: string;
+    branch_name: string;
+    sal_branch_code?: string;
+    city?: string;
+    state?: string;
+    address?: string;
+    pincode?: string;
+    hr_contact?: string;
+    company_name?: string;
+    gstin?: string;
+    gst_state_code?: string;
+    close_date?: string;
+    latitude?: number | string;
+    longitude?: number | string;
   }) {
     const id = randomUUID();
     await db.execute(
@@ -270,21 +338,43 @@ export const branchService = {
           hr_contact, company_name, gstin, gst_state_code, close_date, latitude, longitude)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        id, data.branch_code, data.sal_branch_code ?? null, data.branch_name,
-        data.city ?? null, data.state ?? null, data.address ?? null, data.pincode ?? null,
-        data.hr_contact ?? null, data.company_name ?? null,
-        data.gstin ?? null, data.gst_state_code ?? null, data.close_date ?? null,
-        data.latitude ? Number(data.latitude) : null, data.longitude ? Number(data.longitude) : null,
-      ]
+        id,
+        data.branch_code,
+        data.sal_branch_code ?? null,
+        data.branch_name,
+        data.city ?? null,
+        data.state ?? null,
+        data.address ?? null,
+        data.pincode ?? null,
+        data.hr_contact ?? null,
+        data.company_name ?? null,
+        data.gstin ?? null,
+        data.gst_state_code ?? null,
+        data.close_date ?? null,
+        data.latitude ? Number(data.latitude) : null,
+        data.longitude ? Number(data.longitude) : null,
+      ],
     );
     return getById("branch_master", id);
   },
-  async update(id: string, data: {
-    branch_name?: string; sal_branch_code?: string; city?: string; state?: string;
-    address?: string; pincode?: string; hr_contact?: string; company_name?: string;
-    gstin?: string; gst_state_code?: string; close_date?: string;
-    latitude?: number | string; longitude?: number | string;
-  }) {
+  async update(
+    id: string,
+    data: {
+      branch_name?: string;
+      sal_branch_code?: string;
+      city?: string;
+      state?: string;
+      address?: string;
+      pincode?: string;
+      hr_contact?: string;
+      company_name?: string;
+      gstin?: string;
+      gst_state_code?: string;
+      close_date?: string;
+      latitude?: number | string;
+      longitude?: number | string;
+    },
+  ) {
     await db.execute(
       `UPDATE branch_master SET
          branch_name     = COALESCE(?, branch_name),
@@ -305,15 +395,19 @@ export const branchService = {
       [
         data.branch_name ?? null,
         data.sal_branch_code ?? null,
-        data.city ?? null, data.state ?? null, data.address ?? null,
+        data.city ?? null,
+        data.state ?? null,
+        data.address ?? null,
         data.pincode ?? null,
         data.hr_contact ?? null,
         data.company_name ?? null,
-        data.gstin ?? null, data.gst_state_code ?? null,
+        data.gstin ?? null,
+        data.gst_state_code ?? null,
         data.close_date ?? null,
-        data.latitude ? Number(data.latitude) : null, data.longitude ? Number(data.longitude) : null,
+        data.latitude ? Number(data.latitude) : null,
+        data.longitude ? Number(data.longitude) : null,
         id,
-      ]
+      ],
     );
     // branchAddress.service.ts caches resolved letterhead (incl. hr_contact) per branch id for
     // the life of the process and is never otherwise invalidated — without this, offer/appointment
@@ -326,11 +420,20 @@ export const branchService = {
   async updateCallCentreCode(id: string, ccCode: string): Promise<void> {
     await db.execute(
       "UPDATE branch_master SET call_centre_code = ?, updated_at = NOW() WHERE id = ?",
-      [ccCode, id]
+      [ccCode, id],
     );
   },
 
-  async getCallCentreCodeMap(): Promise<Array<{ id: string; branch_name: string; branch_code: string; call_centre_code: string | null; process_count: number; employee_count: number }>> {
+  async getCallCentreCodeMap(): Promise<
+    Array<{
+      id: string;
+      branch_name: string;
+      branch_code: string;
+      call_centre_code: string | null;
+      process_count: number;
+      employee_count: number;
+    }>
+  > {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT b.id, b.branch_name, b.branch_code, b.call_centre_code,
               COUNT(DISTINCT p.id) AS process_count,
@@ -340,7 +443,7 @@ export const branchService = {
          LEFT JOIN employees e ON e.branch_id = b.id AND e.active_status = 1
         WHERE b.active_status = 1
         GROUP BY b.id
-        ORDER BY b.branch_name`
+        ORDER BY b.branch_name`,
     );
     return rows as any[];
   },
@@ -369,7 +472,8 @@ export const departmentService = {
       params.push(`%${q.trim()}%`, `%${q.trim()}%`);
     }
 
-    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+    const whereClause =
+      whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
     // Pagination
     // The cap silently truncated. 439 of 928 cost centres are active today against a limit of
@@ -402,11 +506,13 @@ export const departmentService = {
         GROUP BY dm.id
         ORDER BY dm.dept_name
         ${limitClause}`,
-      params
+      params,
     );
     const seen = new Set<string>();
     const items = rows.filter((item) => {
-      const normalized = String(item.dept_name ?? "").trim().toLocaleLowerCase();
+      const normalized = String(item.dept_name ?? "")
+        .trim()
+        .toLocaleLowerCase();
       if (!normalized || seen.has(normalized)) return false;
       seen.add(normalized);
       return true;
@@ -414,7 +520,12 @@ export const departmentService = {
     if (employeeId) {
       for (const item of items) {
         try {
-          const result = await getEffectiveConfig(employeeId, "department", item.id, item);
+          const result = await getEffectiveConfig(
+            employeeId,
+            "department",
+            item.id,
+            item,
+          );
           Object.assign(item, result.config);
         } catch (err) {
           console.warn(`Customization error for department ${item.id}:`, err);
@@ -423,7 +534,8 @@ export const departmentService = {
     }
     return items;
   },
-  setStatus: (id: string, status: number) => setStatus("department_master", id, status),
+  setStatus: (id: string, status: number) =>
+    setStatus("department_master", id, status),
   getById: (id: string) => getById("department_master", id),
   async create(data: {
     dept_code?: string;
@@ -434,7 +546,10 @@ export const departmentService = {
     manager_id?: string | null;
   }) {
     const deptName = String(data.dept_name ?? data.name ?? "").trim();
-    if (!deptName) throw Object.assign(new Error("Department name is required"), { statusCode: 400 });
+    if (!deptName)
+      throw Object.assign(new Error("Department name is required"), {
+        statusCode: 400,
+      });
     const deptCode = String(data.dept_code ?? deptName)
       .trim()
       .toUpperCase()
@@ -446,23 +561,38 @@ export const departmentService = {
         `INSERT INTO department_master
            (id, dept_code, dept_name, branch_id, description, dept_head_employee_id)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        [id, deptCode, deptName, data.branch_id ?? null, data.description ?? null, data.manager_id ?? null]
+        [
+          id,
+          deptCode,
+          deptName,
+          data.branch_id ?? null,
+          data.description ?? null,
+          data.manager_id ?? null,
+        ],
       );
     } catch (err: any) {
-      if (err.code === 'ER_DUP_ENTRY' && err.message?.includes('dept_code')) {
-        throw Object.assign(new Error('A department with a similar name already exists. Please use a unique name or code.'), { statusCode: 400 });
+      if (err.code === "ER_DUP_ENTRY" && err.message?.includes("dept_code")) {
+        throw Object.assign(
+          new Error(
+            "A department with a similar name already exists. Please use a unique name or code.",
+          ),
+          { statusCode: 400 },
+        );
       }
       throw err;
     }
     return getById("department_master", id);
   },
-  async update(id: string, data: {
-    dept_name?: string;
-    name?: string;
-    branch_id?: string;
-    description?: string;
-    manager_id?: string | null;
-  }) {
+  async update(
+    id: string,
+    data: {
+      dept_name?: string;
+      name?: string;
+      branch_id?: string;
+      description?: string;
+      manager_id?: string | null;
+    },
+  ) {
     const deptName = data.dept_name ?? data.name ?? null;
     await db.execute(
       `UPDATE department_master
@@ -472,7 +602,13 @@ export const departmentService = {
               dept_head_employee_id = ?,
               updated_at = NOW()
         WHERE id = ?`,
-      [deptName, data.branch_id ?? null, data.description ?? null, data.manager_id ?? null, id]
+      [
+        deptName,
+        data.branch_id ?? null,
+        data.description ?? null,
+        data.manager_id ?? null,
+        id,
+      ],
     );
     return getById("department_master", id);
   },
@@ -482,21 +618,23 @@ export const departmentService = {
 // ── LOB ───────────────────────────────────────────────────────────────────────
 
 export const lobService = {
-  list: (options?: ListOptions) => listActive("lob_master", "lob_name", { entityType: "lob", ...options }),
+  list: (options?: ListOptions) =>
+    listActive("lob_master", "lob_name", { entityType: "lob", ...options }),
   getById: (id: string) => getById("lob_master", id),
-  setStatus: (id: string, status: number) => setStatus("lob_master", id, status),
+  setStatus: (id: string, status: number) =>
+    setStatus("lob_master", id, status),
   async create(data: { lob_code: string; lob_name: string }) {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO lob_master (id, lob_code, lob_name) VALUES (?, ?, ?)",
-      [id, data.lob_code, data.lob_name]
+      [id, data.lob_code, data.lob_name],
     );
     return getById("lob_master", id);
   },
   async update(id: string, data: { lob_name?: string }) {
     await db.execute(
       "UPDATE lob_master SET lob_name = COALESCE(?, lob_name), updated_at = NOW() WHERE id = ?",
-      [data.lob_name ?? null, id]
+      [data.lob_name ?? null, id],
     );
     return getById("lob_master", id);
   },
@@ -506,21 +644,45 @@ export const lobService = {
 // ── Designation ───────────────────────────────────────────────────────────────
 
 export const designationService = {
-  list: (options?: ListOptions) => listActive("designation_master", "designation_name", { entityType: "designation", ...options }),
+  list: (options?: ListOptions) =>
+    listActive("designation_master", "designation_name", {
+      entityType: "designation",
+      ...options,
+    }),
   getById: (id: string) => getById("designation_master", id),
-  setStatus: (id: string, status: number) => setStatus("designation_master", id, status),
-  async create(data: { designation_code: string; designation_name: string; grade?: string; grade_id?: string }) {
+  setStatus: (id: string, status: number) =>
+    setStatus("designation_master", id, status),
+  async create(data: {
+    designation_code: string;
+    designation_name: string;
+    grade?: string;
+    grade_id?: string;
+  }) {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO designation_master (id, designation_code, designation_name, grade, grade_id) VALUES (?, ?, ?, ?, ?)",
-      [id, data.designation_code, data.designation_name, data.grade ?? null, data.grade_id ?? null]
+      [
+        id,
+        data.designation_code,
+        data.designation_name,
+        data.grade ?? null,
+        data.grade_id ?? null,
+      ],
     );
     return getById("designation_master", id);
   },
-  async update(id: string, data: { designation_name?: string; grade?: string; grade_id?: string }) {
+  async update(
+    id: string,
+    data: { designation_name?: string; grade?: string; grade_id?: string },
+  ) {
     await db.execute(
       "UPDATE designation_master SET designation_name = COALESCE(?, designation_name), grade = COALESCE(?, grade), grade_id = COALESCE(?, grade_id), updated_at = NOW() WHERE id = ?",
-      [data.designation_name ?? null, data.grade ?? null, data.grade_id ?? null, id]
+      [
+        data.designation_name ?? null,
+        data.grade ?? null,
+        data.grade_id ?? null,
+        id,
+      ],
     );
     return getById("designation_master", id);
   },
@@ -530,21 +692,45 @@ export const designationService = {
 // ── Campaign ─────────────────────────────────────────────────────────────────
 
 export const campaignService = {
-  list: (options?: ListOptions) => listActive("campaign_master", "campaign_name", { entityType: "campaign", ...options }),
+  list: (options?: ListOptions) =>
+    listActive("campaign_master", "campaign_name", {
+      entityType: "campaign",
+      ...options,
+    }),
   getById: (id: string) => getById("campaign_master", id),
-  setStatus: (id: string, status: number) => setStatus("campaign_master", id, status),
-  async create(data: { campaign_code: string; campaign_name: string; process_id?: string; lob_id?: string }) {
+  setStatus: (id: string, status: number) =>
+    setStatus("campaign_master", id, status),
+  async create(data: {
+    campaign_code: string;
+    campaign_name: string;
+    process_id?: string;
+    lob_id?: string;
+  }) {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO campaign_master (id, campaign_code, campaign_name, process_id, lob_id) VALUES (?, ?, ?, ?, ?)",
-      [id, data.campaign_code, data.campaign_name, data.process_id ?? null, data.lob_id ?? null]
+      [
+        id,
+        data.campaign_code,
+        data.campaign_name,
+        data.process_id ?? null,
+        data.lob_id ?? null,
+      ],
     );
     return getById("campaign_master", id);
   },
-  async update(id: string, data: { campaign_name?: string; process_id?: string; lob_id?: string }) {
+  async update(
+    id: string,
+    data: { campaign_name?: string; process_id?: string; lob_id?: string },
+  ) {
     await db.execute(
       "UPDATE campaign_master SET campaign_name = COALESCE(?, campaign_name), process_id = COALESCE(?, process_id), lob_id = COALESCE(?, lob_id), updated_at = NOW() WHERE id = ?",
-      [data.campaign_name ?? null, data.process_id ?? null, data.lob_id ?? null, id]
+      [
+        data.campaign_name ?? null,
+        data.process_id ?? null,
+        data.lob_id ?? null,
+        id,
+      ],
     );
     return getById("campaign_master", id);
   },
@@ -553,7 +739,10 @@ export const campaignService = {
 
 /** Who performed an Org Masters write. Optional so existing callers keep compiling; when it is
  *  absent nothing is logged, which is the pre-existing behaviour rather than a silent fake actor. */
-export interface OrgActor { id: string; role: string }
+export interface OrgActor {
+  id: string;
+  role: string;
+}
 
 /**
  * Record a cost-centre change in cost_centre_approval_log.
@@ -573,11 +762,21 @@ async function logCostCentreChange(
   action: string,
   before: RowDataPacket | null,
   after: RowDataPacket | null,
-  actor?: OrgActor
+  actor?: OrgActor,
 ): Promise<void> {
   if (!actor?.id) return;
-  const WATCHED = ["cost_centre_code", "cost_centre_name", "branch_id", "client_id", "lob_id",
-                   "process_id", "department_id", "active_status", "close_date", "go_live_date"];
+  const WATCHED = [
+    "cost_centre_code",
+    "cost_centre_name",
+    "branch_id",
+    "client_id",
+    "lob_id",
+    "process_id",
+    "department_id",
+    "active_status",
+    "close_date",
+    "go_live_date",
+  ];
   const changes: Record<string, { from: unknown; to: unknown }> = {};
   for (const key of WATCHED) {
     const from = before?.[key] ?? null;
@@ -591,11 +790,22 @@ async function logCostCentreChange(
       `INSERT INTO cost_centre_approval_log
          (id, cost_centre_id, action, from_status, to_status, actor_user_id, actor_role, remarks)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), costCentreId, action, status, status, actor.id, actor.role || "unknown",
-       JSON.stringify(changes)]
+      [
+        randomUUID(),
+        costCentreId,
+        action,
+        status,
+        status,
+        actor.id,
+        actor.role || "unknown",
+        JSON.stringify(changes),
+      ],
     );
   } catch (error) {
-    console.warn(`cost_centre_approval_log write failed for ${costCentreId}:`, error);
+    console.warn(
+      `cost_centre_approval_log write failed for ${costCentreId}:`,
+      error,
+    );
   }
 }
 
@@ -603,7 +813,18 @@ async function logCostCentreChange(
 
 export const costCentreService = {
   async list(options: ListOptions = {}) {
-    const { q, active_status, page, limit, employeeId, branch_id, branchIds, client_id, lob_id, process_id } = options;
+    const {
+      q,
+      active_status,
+      page,
+      limit,
+      employeeId,
+      branch_id,
+      branchIds,
+      client_id,
+      lob_id,
+      process_id,
+    } = options;
     const whereClauses: string[] = [];
     const params: (string | number)[] = [];
 
@@ -648,8 +869,8 @@ export const costCentreService = {
     if (q && q.trim()) {
       whereClauses.push(
         "(cc.cost_centre_name LIKE ? OR cc.cost_centre_code LIKE ? OR cl.client_name LIKE ?" +
-        " OR cc.client_name LIKE ? OR cc.billing_client_name LIKE ?" +
-        " OR p.process_name LIKE ? OR cc.process_name_bill LIKE ?)"
+          " OR cc.client_name LIKE ? OR cc.billing_client_name LIKE ?" +
+          " OR p.process_name LIKE ? OR cc.process_name_bill LIKE ?)",
       );
       const term = `%${q.trim()}%`;
       params.push(term, term, term, term, term, term, term);
@@ -657,20 +878,35 @@ export const costCentreService = {
 
     // Relationship filters — same axes the Add/Edit form already requires (client, LOB,
     // branch, process), now usable to narrow the list too.
-    if (branch_id)  { whereClauses.push("cc.branch_id = ?");  params.push(branch_id); }
+    if (branch_id) {
+      whereClauses.push("cc.branch_id = ?");
+      params.push(branch_id);
+    }
     if (branchIds) {
       if (branchIds.length === 0) {
         whereClauses.push("1=0");
       } else {
-        whereClauses.push(`cc.branch_id IN (${branchIds.map(() => "?").join(",")})`);
+        whereClauses.push(
+          `cc.branch_id IN (${branchIds.map(() => "?").join(",")})`,
+        );
         params.push(...branchIds);
       }
     }
-    if (client_id)  { whereClauses.push("cc.client_id = ?");  params.push(client_id); }
-    if (lob_id)     { whereClauses.push("cc.lob_id = ?");     params.push(lob_id); }
-    if (process_id) { whereClauses.push("cc.process_id = ?"); params.push(process_id); }
+    if (client_id) {
+      whereClauses.push("cc.client_id = ?");
+      params.push(client_id);
+    }
+    if (lob_id) {
+      whereClauses.push("cc.lob_id = ?");
+      params.push(lob_id);
+    }
+    if (process_id) {
+      whereClauses.push("cc.process_id = ?");
+      params.push(process_id);
+    }
 
-    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+    const whereClause =
+      whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
     // Pagination
     let limitClause = "";
@@ -703,7 +939,7 @@ export const costCentreService = {
         ${whereClause}
         ORDER BY cc.cost_centre_code
         ${limitClause}`,
-      params
+      params,
     );
 
     // Drop the probe row and record that more exist, so the caller can say so instead of
@@ -717,7 +953,12 @@ export const costCentreService = {
     if (employeeId) {
       for (const item of rows) {
         try {
-          const result = await getEffectiveConfig(employeeId, "cost_centre", item.id, item);
+          const result = await getEffectiveConfig(
+            employeeId,
+            "cost_centre",
+            item.id,
+            item,
+          );
           Object.assign(item, result.config);
         } catch (err) {
           console.warn(`Customization error for cost_centre ${item.id}:`, err);
@@ -726,15 +967,16 @@ export const costCentreService = {
     }
     if (truncated) {
       console.warn(
-        `costCentreService.list truncated at ${limitVal} rows — the caller is seeing a partial `
-        + `cost-centre list. Raise the limit or paginate.`
+        `costCentreService.list truncated at ${limitVal} rows — the caller is seeing a partial ` +
+          `cost-centre list. Raise the limit or paginate.`,
       );
     }
     return Object.assign(rows, { truncated });
   },
 
   getById: (id: string) => getById("cost_centre_master", id),
-  setStatus: (id: string, status: number, actor?: OrgActor) => setStatus("cost_centre_master", id, status, actor),
+  setStatus: (id: string, status: number, actor?: OrgActor) =>
+    setStatus("cost_centre_master", id, status, actor),
 
   /**
    * How many active cost centres are missing a relationship, and WHICH one.
@@ -746,8 +988,12 @@ export const costCentreService = {
    * 406 records for a problem that is not there.
    */
   async countOrphanedRecords(): Promise<{
-    total: number; orphaned: number;
-    missingClient: number; missingLob: number; missingBranch: number; missingProcess: number;
+    total: number;
+    orphaned: number;
+    missingClient: number;
+    missingLob: number;
+    missingBranch: number;
+    missingProcess: number;
   }> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -758,7 +1004,7 @@ export const costCentreService = {
          SUM(branch_id  IS NULL) AS missing_branch,
          SUM(process_id IS NULL) AS missing_process
        FROM cost_centre_master
-       WHERE active_status = 1`
+       WHERE active_status = 1`,
     );
     const row = rows[0] ?? {};
     return {
@@ -807,16 +1053,24 @@ export const costCentreService = {
 
     // Validate all required fields
     if (!data.client_id?.trim()) {
-      throw Object.assign(new Error("Client is required for cost centre"), { statusCode: 400 });
+      throw Object.assign(new Error("Client is required for cost centre"), {
+        statusCode: 400,
+      });
     }
     if (!data.lob_id?.trim()) {
-      throw Object.assign(new Error("LOB is required for cost centre"), { statusCode: 400 });
+      throw Object.assign(new Error("LOB is required for cost centre"), {
+        statusCode: 400,
+      });
     }
     if (!data.branch_id?.trim()) {
-      throw Object.assign(new Error("Branch is required for cost centre"), { statusCode: 400 });
+      throw Object.assign(new Error("Branch is required for cost centre"), {
+        statusCode: 400,
+      });
     }
     if (!data.process_id?.trim()) {
-      throw Object.assign(new Error("Process is required for cost centre"), { statusCode: 400 });
+      throw Object.assign(new Error("Process is required for cost centre"), {
+        statusCode: 400,
+      });
     }
 
     /**
@@ -832,15 +1086,18 @@ export const costCentreService = {
      */
     const [[clientRow]] = await db.execute<RowDataPacket[]>(
       `SELECT client_name FROM client_master WHERE id = ? LIMIT 1`,
-      [data.client_id.trim()]
+      [data.client_id.trim()],
     );
-    const clientName = (clientRow as { client_name?: string } | undefined)?.client_name ?? null;
+    const clientName =
+      (clientRow as { client_name?: string } | undefined)?.client_name ?? null;
 
     const [[branchRow]] = await db.execute<RowDataPacket[]>(
       `SELECT company_name FROM branch_master WHERE id = ? LIMIT 1`,
-      [data.branch_id.trim()]
+      [data.branch_id.trim()],
     );
-    const companyName = (branchRow as { company_name?: string } | undefined)?.company_name ?? null;
+    const companyName =
+      (branchRow as { company_name?: string } | undefined)?.company_name ??
+      null;
 
     const id = randomUUID();
     await db.execute(
@@ -880,7 +1137,7 @@ export const costCentreService = {
         // far from its cause. Worth keeping intact for the sake of two constants.
         "active",
         1,
-      ]
+      ],
     );
     await syncCostCentreRelatedTables({
       cost_centre_code: data.cost_centre_code,
@@ -892,19 +1149,23 @@ export const costCentreService = {
     return getById("cost_centre_master", id);
   },
 
-  async update(id: string, data: {
-    cost_centre_name?: string;
-    client_id?: string;
-    lob_id?: string;
-    branch_id?: string;
-    process_id?: string;
-    department_id?: string;
-    current_mandate?: number;
-    working_days_per_week?: number;
-    billing_days_per_month?: number;
-    hours_per_fte_per_day?: number;
-    billing_type?: string;
-  }, actor?: OrgActor) {
+  async update(
+    id: string,
+    data: {
+      cost_centre_name?: string;
+      client_id?: string;
+      lob_id?: string;
+      branch_id?: string;
+      process_id?: string;
+      department_id?: string;
+      current_mandate?: number;
+      working_days_per_week?: number;
+      billing_days_per_month?: number;
+      hours_per_fte_per_day?: number;
+      billing_type?: string;
+    },
+    actor?: OrgActor,
+  ) {
     // Snapshot before the write so the audit row can record what actually changed. This is the
     // path that silently renamed four cost centres on 2026-08-19 with no trace of who or where.
     const before = await getById("cost_centre_master", id);
@@ -944,19 +1205,22 @@ export const costCentreService = {
         data.client_id ?? null,
         data.client_id ?? null,
         id,
-      ]
+      ],
     );
     const after = await getById("cost_centre_master", id);
     await logCostCentreChange(id, "org_master_update", before, after, actor);
     return after;
   },
 
-  async migrate(id: string, data: {
-    client_id: string;
-    lob_id: string;
-    branch_id: string;
-    process_id: string;
-  }) {
+  async migrate(
+    id: string,
+    data: {
+      client_id: string;
+      lob_id: string;
+      branch_id: string;
+      process_id: string;
+    },
+  ) {
     // Validate all required fields for migration
     if (!data.client_id?.trim()) {
       throw Object.assign(new Error("Client is required"), { statusCode: 400 });
@@ -968,7 +1232,9 @@ export const costCentreService = {
       throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     }
     if (!data.process_id?.trim()) {
-      throw Object.assign(new Error("Process is required"), { statusCode: 400 });
+      throw Object.assign(new Error("Process is required"), {
+        statusCode: 400,
+      });
     }
 
     await db.execute(
@@ -991,7 +1257,7 @@ export const costCentreService = {
         data.process_id.trim(),
         data.client_id.trim(),
         id,
-      ]
+      ],
     );
     return getById("cost_centre_master", id);
   },
@@ -1002,21 +1268,53 @@ export const costCentreService = {
 // ── Grade / Band ──────────────────────────────────────────────────────────────
 
 export const gradeBandService = {
-  list: (options?: ListOptions) => listActive("grade_band_master", "grade_name", { entityType: "grade_band", ...options }),
+  list: (options?: ListOptions) =>
+    listActive("grade_band_master", "grade_name", {
+      entityType: "grade_band",
+      ...options,
+    }),
   getById: (id: string) => getById("grade_band_master", id),
-  setStatus: (id: string, status: number) => setStatus("grade_band_master", id, status),
-  async create(data: { grade_code: string; grade_name: string; band?: string; min_ctc?: number; max_ctc?: number }) {
+  setStatus: (id: string, status: number) =>
+    setStatus("grade_band_master", id, status),
+  async create(data: {
+    grade_code: string;
+    grade_name: string;
+    band?: string;
+    min_ctc?: number;
+    max_ctc?: number;
+  }) {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO grade_band_master (id, grade_code, grade_name, band, min_ctc, max_ctc) VALUES (?, ?, ?, ?, ?, ?)",
-      [id, data.grade_code, data.grade_name, data.band ?? null, data.min_ctc ?? null, data.max_ctc ?? null]
+      [
+        id,
+        data.grade_code,
+        data.grade_name,
+        data.band ?? null,
+        data.min_ctc ?? null,
+        data.max_ctc ?? null,
+      ],
     );
     return getById("grade_band_master", id);
   },
-  async update(id: string, data: { grade_name?: string; band?: string; min_ctc?: number; max_ctc?: number }) {
+  async update(
+    id: string,
+    data: {
+      grade_name?: string;
+      band?: string;
+      min_ctc?: number;
+      max_ctc?: number;
+    },
+  ) {
     await db.execute(
       "UPDATE grade_band_master SET grade_name = COALESCE(?, grade_name), band = COALESCE(?, band), min_ctc = COALESCE(?, min_ctc), max_ctc = COALESCE(?, max_ctc), updated_at = NOW() WHERE id = ?",
-      [data.grade_name ?? null, data.band ?? null, data.min_ctc ?? null, data.max_ctc ?? null, id]
+      [
+        data.grade_name ?? null,
+        data.band ?? null,
+        data.min_ctc ?? null,
+        data.max_ctc ?? null,
+        id,
+      ],
     );
     return getById("grade_band_master", id);
   },
@@ -1026,21 +1324,35 @@ export const gradeBandService = {
 // ── Location ──────────────────────────────────────────────────────────────────
 
 export const locationService = {
-  list: (options?: ListOptions) => listActive("location_master", "location_name", { entityType: "location", ...options }),
+  list: (options?: ListOptions) =>
+    listActive("location_master", "location_name", {
+      entityType: "location",
+      ...options,
+    }),
   getById: (id: string) => getById("location_master", id),
-  setStatus: (id: string, status: number) => setStatus("location_master", id, status),
+  setStatus: (id: string, status: number) =>
+    setStatus("location_master", id, status),
   async create(data: Record<string, unknown>) {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO location_master (id, location_name, location_code, address, city, state, pincode, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, data.location_name, data.location_code ?? null, data.address ?? null, data.city ?? null, data.state ?? null, data.pincode ?? null, data.branch_id ?? null]
+      [
+        id,
+        data.location_name,
+        data.location_code ?? null,
+        data.address ?? null,
+        data.city ?? null,
+        data.state ?? null,
+        data.pincode ?? null,
+        data.branch_id ?? null,
+      ],
     );
     return getById("location_master", id);
   },
   async update(id: string, data: Record<string, unknown>) {
     await db.execute(
       "UPDATE location_master SET location_name = COALESCE(?, location_name), city = COALESCE(?, city), state = COALESCE(?, state), updated_at = NOW() WHERE id = ?",
-      [data.location_name ?? null, data.city ?? null, data.state ?? null, id]
+      [data.location_name ?? null, data.city ?? null, data.state ?? null, id],
     );
     return getById("location_master", id);
   },
@@ -1050,14 +1362,26 @@ export const locationService = {
 // ── Policy ────────────────────────────────────────────────────────────────────
 
 export const policyService = {
-  list: (options?: ListOptions) => listActive("policy_master", "policy_name", { entityType: "policy", ...options }),
+  list: (options?: ListOptions) =>
+    listActive("policy_master", "policy_name", {
+      entityType: "policy",
+      ...options,
+    }),
   getById: (id: string) => getById("policy_master", id),
-  setStatus: (id: string, status: number) => setStatus("policy_master", id, status),
+  setStatus: (id: string, status: number) =>
+    setStatus("policy_master", id, status),
   async create(data: Record<string, unknown>) {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO policy_master (id, policy_name, policy_code, description, effective_date, version) VALUES (?, ?, ?, ?, ?, ?)",
-      [id, data.policy_name, data.policy_code ?? null, data.description ?? null, data.effective_date ?? null, data.version ?? null]
+      [
+        id,
+        data.policy_name,
+        data.policy_code ?? null,
+        data.description ?? null,
+        data.effective_date ?? null,
+        data.version ?? null,
+      ],
     );
     return getById("policy_master", id);
   },
@@ -1066,7 +1390,14 @@ export const policyService = {
       "UPDATE policy_master SET policy_name = COALESCE(?, policy_name), policy_code = COALESCE(?, policy_code), description = COALESCE(?, description), effective_date = COALESCE(?, effective_date), version = COALESCE(?, version), updated_at = NOW() WHERE id = ?",
       // effective_date is a DATE column behind COALESCE; "" aborts the policy
       // update with ER_TRUNCATED_WRONG_VALUE instead of leaving the date alone.
-      [blankToNull(data.policy_name), blankToNull(data.policy_code), blankToNull(data.description), blankToNull(data.effective_date), blankToNull(data.version), id]
+      [
+        blankToNull(data.policy_name),
+        blankToNull(data.policy_code),
+        blankToNull(data.description),
+        blankToNull(data.effective_date),
+        blankToNull(data.version),
+        id,
+      ],
     );
     return getById("policy_master", id);
   },
@@ -1095,15 +1426,26 @@ export const processService = {
 
     // Search filter
     if (q && q.trim()) {
-      whereClauses.push("(pm.process_name LIKE ? OR pm.process_code LIKE ? OR cl.client_name LIKE ? OR bm.branch_name LIKE ?)");
-      params.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
+      whereClauses.push(
+        "(pm.process_name LIKE ? OR pm.process_code LIKE ? OR cl.client_name LIKE ? OR bm.branch_name LIKE ?)",
+      );
+      params.push(
+        `%${q.trim()}%`,
+        `%${q.trim()}%`,
+        `%${q.trim()}%`,
+        `%${q.trim()}%`,
+      );
     }
 
     // Branch filter — same axis costCentreService.list() already narrows on. The route layer
     // has forwarded branch_id here all along; nothing ever applied it.
-    if (branch_id) { whereClauses.push("pm.branch_id = ?"); params.push(branch_id); }
+    if (branch_id) {
+      whereClauses.push("pm.branch_id = ?");
+      params.push(branch_id);
+    }
 
-    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+    const whereClause =
+      whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
     // Pagination
     let limitClause = "";
@@ -1133,18 +1475,24 @@ export const processService = {
         ${whereClause}
         ORDER BY pm.process_name
         ${limitClause}`,
-      params
+      params,
     );
 
     // Map client_name: prefer joined FK value, fall back to legacy text field
     for (const row of rows) {
-      (row as any).client_name = (row as any).client_name_joined ?? (row as any).client_name ?? null;
+      (row as any).client_name =
+        (row as any).client_name_joined ?? (row as any).client_name ?? null;
     }
 
     if (employeeId) {
       for (const row of rows) {
         try {
-          const result = await getEffectiveConfig(employeeId, "process", row.id, row);
+          const result = await getEffectiveConfig(
+            employeeId,
+            "process",
+            row.id,
+            row,
+          );
           Object.assign(row, result.config);
         } catch (err) {
           console.warn(`Customization error for process ${row.id}:`, err);
@@ -1155,7 +1503,8 @@ export const processService = {
   },
 
   getById: (id: string) => getById("process_master", id),
-  setStatus: (id: string, status: number) => setStatus("process_master", id, status),
+  setStatus: (id: string, status: number) =>
+    setStatus("process_master", id, status),
 
   async create(data: {
     process_code: string;
@@ -1186,20 +1535,23 @@ export const processService = {
         data.client_id?.trim() || null,
         data.client_name?.trim() || null, // Keep for backward compatibility
         data.workload_type?.trim() || null,
-      ]
+      ],
     );
     return getById("process_master", id);
   },
 
-  async update(id: string, data: {
-    process_name?: string;
-    branch_id?: string;
-    department_id?: string;
-    business_lob?: string;
-    client_id?: string;
-    client_name?: string;
-    workload_type?: string;
-  }) {
+  async update(
+    id: string,
+    data: {
+      process_name?: string;
+      branch_id?: string;
+      department_id?: string;
+      business_lob?: string;
+      client_id?: string;
+      client_name?: string;
+      workload_type?: string;
+    },
+  ) {
     await db.execute(
       // department_id dropped here for the same reason as the insert above
       `UPDATE process_master SET
@@ -1219,7 +1571,7 @@ export const processService = {
         data.client_name?.trim() ?? null,
         data.workload_type?.trim() ?? null,
         id,
-      ]
+      ],
     );
     return getById("process_master", id);
   },

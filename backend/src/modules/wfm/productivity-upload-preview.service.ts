@@ -7,11 +7,11 @@
 import {
   checkMappingCoversMandatoryFields,
   parseUploadRow,
-} from './productivity-upload-parser.js';
+} from "./productivity-upload-parser.js";
 import {
   resolveEmployeeIdByCode,
   isDuplicateContribution,
-} from './productivity-upload-validation.service.js';
+} from "./productivity-upload-validation.service.js";
 
 export interface PreviewAcceptedRow {
   rowNumber: number;
@@ -46,7 +46,11 @@ export async function buildUploadPreview(
 ): Promise<UploadPreviewResult> {
   const mappingCheck = checkMappingCoversMandatoryFields(columnMappings);
   if (!mappingCheck.ok) {
-    return { accepted: [], rejected: [], mappingError: { missingFields: mappingCheck.missingFields } };
+    return {
+      accepted: [],
+      rejected: [],
+      mappingError: { missingFields: mappingCheck.missingFields },
+    };
   }
 
   const accepted: PreviewAcceptedRow[] = [];
@@ -70,9 +74,12 @@ export async function buildUploadPreview(
     if (!parsed.ok) {
       // employee_code may itself be the field that failed to parse (blank/whitespace) — best
       // effort to still name it in the rejection for the uploader's benefit, empty if unknown.
-      const employeeCode = data[Object.keys(columnMappings).find(
-        (h) => columnMappings[h] === 'employee_code',
-      ) ?? ''] ?? '';
+      const employeeCode =
+        data[
+          Object.keys(columnMappings).find(
+            (h) => columnMappings[h] === "employee_code",
+          ) ?? ""
+        ] ?? "";
       rejected.push({ rowNumber, employeeCode, reason: parsed.reason });
       continue;
     }
@@ -94,7 +101,11 @@ export async function buildUploadPreview(
     // that table is populated. Until then the operative duplicate protection is the batch-level
     // (dialler_source + branch + process + content_digest) guard in commitUploadBatch(), which is
     // deliberately not keyed on the caller-declared date window for exactly this reason.
-    const duplicate = await isDuplicateContribution(diallerSourceId, employeeId, parsed.row.report_date);
+    const duplicate = await isDuplicateContribution(
+      diallerSourceId,
+      employeeId,
+      parsed.row.report_date,
+    );
     if (duplicate.isDuplicate) {
       rejected.push({
         rowNumber,

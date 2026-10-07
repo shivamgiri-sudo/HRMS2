@@ -30,22 +30,38 @@ vi.mock("../../../db/mysql.js", () => ({
   db: { execute, query: execute, getConnection: vi.fn() },
 }));
 vi.mock("../finance-access-scope.js", () => ({
-  resolveFinanceBranchScopeSet: vi.fn(async () => ({ mode: "branches", branchIds: ["branch-A"] })),
+  resolveFinanceBranchScopeSet: vi.fn(async () => ({
+    mode: "branches",
+    branchIds: ["branch-A"],
+  })),
   assertFinanceRecordBranch: vi.fn(async () => {}),
 }));
-const createDraft = vi.fn(async () => ({ id: "grn-1", grnNumber: "GRN/2026/0001" }));
+const createDraft = vi.fn(async () => ({
+  id: "grn-1",
+  grnNumber: "GRN/2026/0001",
+}));
 vi.mock("../grn.service.js", () => ({
-  grnService: new Proxy({ createDraft }, {
-    get: (target: any, prop: string) => target[prop] ?? vi.fn(async () => ({})),
-  }),
+  grnService: new Proxy(
+    { createDraft },
+    {
+      get: (target: any, prop: string) =>
+        target[prop] ?? vi.fn(async () => ({})),
+    },
+  ),
 }));
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
+  const original =
+    await importOriginal<
+      typeof import("../../../middleware/authMiddleware.js")
+    >();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.authUser = actor;
+      next();
+    },
   };
 });
 
@@ -55,7 +71,10 @@ function appFor(roles: string[]) {
   actor = { id: `u-${roles.join("-")}`, role: roles[0], roles };
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => { req.authUser = actor; next(); });
+  app.use((req: any, _res, next) => {
+    req.authUser = actor;
+    next();
+  });
   app.use("/api/finance", grnRouter);
   return app;
 }
@@ -73,8 +92,10 @@ const CUTOFF_BOOKING = {
   paymentTermsDays: 30,
 };
 
-const createWith = (roles: string[], body: Record<string, unknown> = CUTOFF_BOOKING) =>
-  request(appFor(roles)).post("/api/finance/grns").send(body);
+const createWith = (
+  roles: string[],
+  body: Record<string, unknown> = CUTOFF_BOOKING,
+) => request(appFor(roles)).post("/api/finance/grns").send(body);
 
 beforeEach(() => {
   execute.mockReset().mockResolvedValue([[], []]);
@@ -89,7 +110,9 @@ describe("POST /api/finance/grns — accounting-period override", () => {
     const res = await createWith(["branch_admin"]);
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(createDraft).toHaveBeenCalledTimes(1);
-    expect((createDraft.mock.calls[0] as any[])[0]).toMatchObject({ accountingPeriod: "2026-02" });
+    expect((createDraft.mock.calls[0] as any[])[0]).toMatchObject({
+      accountingPeriod: "2026-02",
+    });
   });
 
   it("still lets a finance_head book into a different accounting month", async () => {
@@ -102,7 +125,10 @@ describe("POST /api/finance/grns — accounting-period override", () => {
     const res = await createWith(["branch_head"]);
     expect(res.status).toBe(403);
     expect(String(res.body.error)).toMatch(/different accounting month/);
-    expect(createDraft, "the refusal must happen before anything is written").not.toHaveBeenCalled();
+    expect(
+      createDraft,
+      "the refusal must happen before anything is written",
+    ).not.toHaveBeenCalled();
   });
 
   it("refuses a plain admin, which the client never offers the control to either", async () => {
@@ -112,7 +138,9 @@ describe("POST /api/finance/grns — accounting-period override", () => {
   it("does not gate a booking whose accounting month equals the bill month", async () => {
     // The overwhelmingly common case: no override asked for, so no role check applies.
     const res = await createWith(["branch_head"], {
-      ...CUTOFF_BOOKING, billDate: "2026-03-02", accountingPeriod: "2026-03",
+      ...CUTOFF_BOOKING,
+      billDate: "2026-03-02",
+      accountingPeriod: "2026-03",
     });
     expect(res.status).toBe(201);
   });
@@ -125,25 +153,38 @@ describe("POST /api/finance/grns — accounting-period override", () => {
 });
 
 describe("the three copies of the override rule stay in step", () => {
-  const read = (url: string) => readFileSync(new URL(url, import.meta.url), "utf8");
-  const ROLES = ["finance_head", "accounts_head", "super_admin", "branch_admin"];
+  const read = (url: string) =>
+    readFileSync(new URL(url, import.meta.url), "utf8");
+  const ROLES = [
+    "finance_head",
+    "accounts_head",
+    "super_admin",
+    "branch_admin",
+  ];
 
   it("the create route names all four roles", () => {
     const source = read("../grn.routes.ts");
     const list = source.match(/const periodOverrideRoles = \[([^\]]*)\]/);
-    expect(list, "periodOverrideRoles must stay greppable by that name").not.toBeNull();
+    expect(
+      list,
+      "periodOverrideRoles must stay greppable by that name",
+    ).not.toBeNull();
     for (const role of ROLES) expect(list![1]).toContain(`"${role}"`);
   });
 
   it("the invoice-components route names the same four", () => {
     const source = read("../grn-smart.routes.ts");
-    const list = source.match(/const canOverridePeriod = user\.roles\.some\([\s\S]{0,120}?\[([^\]]*)\]/);
+    const list = source.match(
+      /const canOverridePeriod = user\.roles\.some\([\s\S]{0,120}?\[([^\]]*)\]/,
+    );
     expect(list).not.toBeNull();
     for (const role of ROLES) expect(list![1]).toContain(`"${role}"`);
   });
 
   it("the form offers the control to the same four", () => {
-    const form = read("../../../../../src/components/finance/grn/BudgetLinkedGrnForm.tsx");
+    const form = read(
+      "../../../../../src/components/finance/grn/BudgetLinkedGrnForm.tsx",
+    );
     expect(form).toMatch(
       /const canOverridePeriod = useHasRole\("finance_head",\s*"accounts_head",\s*"super_admin",\s*"branch_admin"\)/,
     );
@@ -156,6 +197,8 @@ describe("the three copies of the override rule stay in step", () => {
     expect(smartService).toMatch(/isElevatedRole[\s\S]{0,200}/);
     expect(smartService).not.toMatch(/isElevatedRole[^\n]*branch_admin/);
     const smartRoutes = read("../grn-smart.routes.ts");
-    expect(smartRoutes).toMatch(/isRestrictedRole = \["branch_admin", "branch_head"\]/);
+    expect(smartRoutes).toMatch(
+      /isRestrictedRole = \["branch_admin", "branch_head"\]/,
+    );
   });
 });

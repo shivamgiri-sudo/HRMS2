@@ -8,13 +8,25 @@ import {
   type OrgChartScope,
   type UserOrgContext,
 } from "./org-chart.scope.js";
-import { buildOrgTree, buildEdgeList, searchOrgTree, flattenTree, type OrgTreeNode, type OrgTreeResponse } from "./org-chart.builder.js";
-import { validateOrgChartDataQuality, type DataQualitySummary } from "./org-chart.validation.js";
+import {
+  buildOrgTree,
+  buildEdgeList,
+  searchOrgTree,
+  flattenTree,
+  type OrgTreeNode,
+  type OrgTreeResponse,
+} from "./org-chart.builder.js";
+import {
+  validateOrgChartDataQuality,
+  type DataQualitySummary,
+} from "./org-chart.validation.js";
 
 /**
  * Get available scopes for the current user.
  */
-export async function getAvailableScopes(userId: string): Promise<UserOrgContext> {
+export async function getAvailableScopes(
+  userId: string,
+): Promise<UserOrgContext> {
   return resolveUserOrgContext(userId);
 }
 
@@ -30,7 +42,7 @@ export async function getOrgTree(
     departmentId?: string;
     designationId?: string;
     status?: string;
-  }
+  },
 ): Promise<OrgTreeResponse> {
   // Verify scope access
   const ctx = await assertScopeAccess(userId, requestedScope);
@@ -56,7 +68,7 @@ export async function getOrgTree(
        LEFT JOIN department_master dept ON dept.id = e.department_id
       WHERE ${sql}
       ORDER BY e.first_name, e.last_name`,
-    params
+    params,
   );
 
   // Build tree
@@ -65,12 +77,20 @@ export async function getOrgTree(
 
   // Quick data quality summary
   const flatNodes = flattenTree(nodes);
-  const missingManager = flatNodes.filter((n) => !n.manager_id && !isCLevelNode(n)).length;
-  const inactiveManager = flatNodes.filter((n) => n.warnings.includes("Reporting manager not in scope")).length;
-  const unmapped = flatNodes.filter((n) => !n.branch_id || !n.process_id || !n.department_id).length;
+  const missingManager = flatNodes.filter(
+    (n) => !n.manager_id && !isCLevelNode(n),
+  ).length;
+  const inactiveManager = flatNodes.filter((n) =>
+    n.warnings.includes("Reporting manager not in scope"),
+  ).length;
+  const unmapped = flatNodes.filter(
+    (n) => !n.branch_id || !n.process_id || !n.department_id,
+  ).length;
 
   // Scope metadata
-  const scopeResolution = ctx.availableScopes.find((s) => s.scopeType === requestedScope);
+  const scopeResolution = ctx.availableScopes.find(
+    (s) => s.scopeType === requestedScope,
+  );
 
   return {
     scope: {
@@ -81,10 +101,19 @@ export async function getOrgTree(
     nodes,
     edges,
     data_quality: {
-      confidence_score: flatNodes.length > 0 ? Math.round(((flatNodes.length - (missingManager + unmapped)) / flatNodes.length) * 100) : 100,
+      confidence_score:
+        flatNodes.length > 0
+          ? Math.round(
+              ((flatNodes.length - (missingManager + unmapped)) /
+                flatNodes.length) *
+                100,
+            )
+          : 100,
       missing_manager_count: missingManager,
       inactive_manager_count: inactiveManager,
-      circular_mapping_count: flatNodes.filter((n) => n.warnings.some((w) => w.includes("circular"))).length,
+      circular_mapping_count: flatNodes.filter((n) =>
+        n.warnings.some((w) => w.includes("circular")),
+      ).length,
       unmapped_count: unmapped,
     },
   };
@@ -93,10 +122,23 @@ export async function getOrgTree(
 /**
  * Get single node detail with reporting chain and direct reports.
  */
-export async function getNodeDetail(userId: string, targetEmployeeId: string): Promise<{
+export async function getNodeDetail(
+  userId: string,
+  targetEmployeeId: string,
+): Promise<{
   employee: Record<string, unknown>;
-  reporting_chain: Array<{ id: string; name: string; designation: string | null; employee_code: string }>;
-  direct_reports: Array<{ id: string; name: string; designation: string | null; employee_code: string }>;
+  reporting_chain: Array<{
+    id: string;
+    name: string;
+    designation: string | null;
+    employee_code: string;
+  }>;
+  direct_reports: Array<{
+    id: string;
+    name: string;
+    designation: string | null;
+    employee_code: string;
+  }>;
   data_quality_issues: string[];
 }> {
   // Verify access to this employee
@@ -105,7 +147,9 @@ export async function getNodeDetail(userId: string, targetEmployeeId: string): P
   // Check if user can see this employee
   const canSee = await canAccessEmployee(ctx, targetEmployeeId);
   if (!canSee) {
-    const err = new Error("Forbidden: employee is outside your assigned scope") as Error & { statusCode?: number };
+    const err = new Error(
+      "Forbidden: employee is outside your assigned scope",
+    ) as Error & { statusCode?: number };
     err.statusCode = 403;
     throw err;
   }
@@ -120,11 +164,13 @@ export async function getNodeDetail(userId: string, targetEmployeeId: string): P
        LEFT JOIN department_master dept ON dept.id = e.department_id
       WHERE e.id = ? AND e.active_status = 1
       LIMIT 1`,
-    [targetEmployeeId]
+    [targetEmployeeId],
   );
 
   if (empRows.length === 0) {
-    const err = new Error("Employee not found") as Error & { statusCode?: number };
+    const err = new Error("Employee not found") as Error & {
+      statusCode?: number;
+    };
     err.statusCode = 404;
     throw err;
   }
@@ -132,22 +178,24 @@ export async function getNodeDetail(userId: string, targetEmployeeId: string): P
   const employee = empRows[0] as any;
 
   // Get reporting chain
-  const reporting_chain = await getManagerChain(targetEmployeeId).then(async (ids) => {
-    if (ids.length === 0) return [];
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.id, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name, d.designation_name
+  const reporting_chain = await getManagerChain(targetEmployeeId).then(
+    async (ids) => {
+      if (ids.length === 0) return [];
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.id, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name, d.designation_name
          FROM employees e
          LEFT JOIN designation_master d ON d.id = e.designation_id
         WHERE e.id IN (${ids.map(() => "?").join(",")})`,
-      ids
-    );
-    return (rows as any[]).map((r) => ({
-      id: r.id,
-      name: r.full_name,
-      designation: r.designation_name,
-      employee_code: r.employee_code,
-    }));
-  });
+        ids,
+      );
+      return (rows as any[]).map((r) => ({
+        id: r.id,
+        name: r.full_name,
+        designation: r.designation_name,
+        employee_code: r.employee_code,
+      }));
+    },
+  );
 
   // Get direct reports
   const [directRows] = await db.execute<RowDataPacket[]>(
@@ -156,7 +204,7 @@ export async function getNodeDetail(userId: string, targetEmployeeId: string): P
        LEFT JOIN designation_master d ON d.id = e.designation_id
       WHERE e.reporting_manager_id = ? AND e.active_status = 1
       ORDER BY e.first_name, e.last_name`,
-    [targetEmployeeId]
+    [targetEmployeeId],
   );
 
   const direct_reports = (directRows as any[]).map((r: any) => ({
@@ -175,7 +223,9 @@ export async function getNodeDetail(userId: string, targetEmployeeId: string): P
     data_quality_issues.push("No designation assigned");
   }
   if (!employee.branch_id || !employee.process_id || !employee.department_id) {
-    data_quality_issues.push("Incomplete org mapping (missing branch/process/department)");
+    data_quality_issues.push(
+      "Incomplete org mapping (missing branch/process/department)",
+    );
   }
 
   return {
@@ -192,7 +242,7 @@ export async function getNodeDetail(userId: string, targetEmployeeId: string): P
 export async function searchOrgChart(
   userId: string,
   query: string,
-  requestedScope: OrgChartScope
+  requestedScope: OrgChartScope,
 ): Promise<{
   results: OrgTreeNode[];
   scope_applied: OrgChartScope;
@@ -216,12 +266,14 @@ export async function searchOrgChart(
  */
 export async function getDataQualityReport(
   userId: string,
-  scopeFilter?: { branchId?: string; processId?: string }
+  scopeFilter?: { branchId?: string; processId?: string },
 ): Promise<DataQualitySummary> {
   // Verify user has HR/Admin role
   const ctx = await resolveUserOrgContext(userId);
   if (!ctx.isAdmin && !ctx.isHr && !ctx.isSuperAdmin) {
-    const err = new Error("Forbidden: only HR/Admin can view data quality report") as Error & { statusCode?: number };
+    const err = new Error(
+      "Forbidden: only HR/Admin can view data quality report",
+    ) as Error & { statusCode?: number };
     err.statusCode = 403;
     throw err;
   }
@@ -232,7 +284,10 @@ export async function getDataQualityReport(
 /**
  * Check if user can access a specific employee.
  */
-async function canAccessEmployee(ctx: UserOrgContext, employeeId: string): Promise<boolean> {
+async function canAccessEmployee(
+  ctx: UserOrgContext,
+  employeeId: string,
+): Promise<boolean> {
   // Super admin / admin / HR / CEO can see all
   if (ctx.isSuperAdmin || ctx.isAdmin || ctx.isHr || ctx.isCeo) {
     return true;
@@ -246,7 +301,7 @@ async function canAccessEmployee(ctx: UserOrgContext, employeeId: string): Promi
   // Fetch employee
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT id, branch_id, process_id, department_id, reporting_manager_id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1",
-    [employeeId]
+    [employeeId],
   );
 
   if (rows.length === 0) return false;

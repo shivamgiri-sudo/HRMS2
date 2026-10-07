@@ -10,12 +10,18 @@ import { describe, expect, it } from "vitest";
 // outright, and the checklist-creation script keeps employees.joining_document_status
 // internally consistent by calling the canonical recalculation writer.
 const trackerService = readFileSync(
-  resolve(process.cwd(), "src/modules/ats/ats.joiningDocumentsTracker.service.ts"),
-  "utf8"
+  resolve(
+    process.cwd(),
+    "src/modules/ats/ats.joiningDocumentsTracker.service.ts",
+  ),
+  "utf8",
 );
 const legacyChecklistScript = readFileSync(
-  resolve(process.cwd(), "src/modules/migration/createLegacyJoiningChecklists.ts"),
-  "utf8"
+  resolve(
+    process.cwd(),
+    "src/modules/migration/createLegacyJoiningChecklists.ts",
+  ),
+  "utf8",
 );
 
 describe("Joining documents tracker — legacy employee exclusion", () => {

@@ -69,7 +69,8 @@ const IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // ─── Tokenizer ───────────────────────────────────────────────────────────────────────────
 
-type TokenType = "number" | "identifier" | "operator" | "lparen" | "rparen" | "comma";
+type TokenType =
+  "number" | "identifier" | "operator" | "lparen" | "rparen" | "comma";
 
 interface Token {
   type: TokenType;
@@ -82,10 +83,30 @@ interface Token {
  * Multi-character operators must be tested before their single-character prefixes, otherwise
  * `<=` tokenizes as `<` followed by a stray `=`.
  */
-const OPERATORS = ["<=", ">=", "==", "!=", "<>", "&&", "||", "+", "-", "*", "/", "%", "^", "<", ">", "="] as const;
+const OPERATORS = [
+  "<=",
+  ">=",
+  "==",
+  "!=",
+  "<>",
+  "&&",
+  "||",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "^",
+  "<",
+  ">",
+  "=",
+] as const;
 
 export class FormulaError extends Error {
-  constructor(message: string, readonly pos?: number) {
+  constructor(
+    message: string,
+    readonly pos?: number,
+  ) {
     super(message);
     this.name = "FormulaError";
   }
@@ -93,7 +114,9 @@ export class FormulaError extends Error {
 
 function tokenize(expression: string): Token[] {
   if (expression.length > MAX_EXPRESSION_LENGTH) {
-    throw new FormulaError(`Formula is longer than the ${MAX_EXPRESSION_LENGTH} character limit`);
+    throw new FormulaError(
+      `Formula is longer than the ${MAX_EXPRESSION_LENGTH} character limit`,
+    );
   }
 
   const tokens: Token[] = [];
@@ -109,11 +132,16 @@ function tokenize(expression: string): Token[] {
     }
 
     if (tokens.length >= MAX_TOKENS) {
-      throw new FormulaError(`Formula has more than the ${MAX_TOKENS} token limit`);
+      throw new FormulaError(
+        `Formula has more than the ${MAX_TOKENS} token limit`,
+      );
     }
 
     // Number. Leading digit or a decimal point (".5" is accepted, as spreadsheet users write it).
-    if (/[0-9]/.test(char) || (char === "." && /[0-9]/.test(expression[i + 1] ?? ""))) {
+    if (
+      /[0-9]/.test(char) ||
+      (char === "." && /[0-9]/.test(expression[i + 1] ?? ""))
+    ) {
       let raw = "";
       while (i < expression.length && /[0-9._]/.test(expression[i])) {
         // Underscores as digit separators (50_000) are stripped, matching how targets are
@@ -122,7 +150,10 @@ function tokenize(expression: string): Token[] {
         i += 1;
       }
       // Scientific notation, so a currency threshold can be written 1.5e6.
-      if (/[eE]/.test(expression[i] ?? "") && /[0-9+-]/.test(expression[i + 1] ?? "")) {
+      if (
+        /[eE]/.test(expression[i] ?? "") &&
+        /[0-9+-]/.test(expression[i + 1] ?? "")
+      ) {
         raw += expression[i];
         i += 1;
         if (/[+-]/.test(expression[i])) {
@@ -152,9 +183,12 @@ function tokenize(expression: string): Token[] {
       // AND / OR / NOT are spelled out by spreadsheet users; accept them as operator words
       // rather than treating them as variables that will then fail to resolve.
       const upper = raw.toUpperCase();
-      if (upper === "AND") tokens.push({ type: "operator", value: "&&", pos: start });
-      else if (upper === "OR") tokens.push({ type: "operator", value: "||", pos: start });
-      else if (upper === "NOT") tokens.push({ type: "operator", value: "!", pos: start });
+      if (upper === "AND")
+        tokens.push({ type: "operator", value: "&&", pos: start });
+      else if (upper === "OR")
+        tokens.push({ type: "operator", value: "||", pos: start });
+      else if (upper === "NOT")
+        tokens.push({ type: "operator", value: "!", pos: start });
       else tokens.push({ type: "identifier", value: raw, pos: start });
       continue;
     }
@@ -188,7 +222,10 @@ function tokenize(expression: string): Token[] {
       continue;
     }
 
-    throw new FormulaError(`Unexpected character "${char}" at position ${i + 1}`, i);
+    throw new FormulaError(
+      `Unexpected character "${char}" at position ${i + 1}`,
+      i,
+    );
   }
 
   if (!tokens.length) throw new FormulaError("Formula is empty");
@@ -234,14 +271,16 @@ export const FORMULA_FUNCTIONS: Record<string, FormulaFunction> = {
     maxArgs: 10,
     nullPolicy: "handles",
     apply: (args) => args.find((a) => a !== null) ?? null,
-    description: "First value that is present. COALESCE(bonus, 0) reads a missing bonus as zero.",
+    description:
+      "First value that is present. COALESCE(bonus, 0) reads a missing bonus as zero.",
   },
   IFNULL: {
     minArgs: 2,
     maxArgs: 2,
     nullPolicy: "handles",
     apply: ([value, fallback]) => (value === null ? fallback : value),
-    description: "IFNULL(value, fallback) — fallback is used only when value is missing.",
+    description:
+      "IFNULL(value, fallback) — fallback is used only when value is missing.",
   },
   /**
    * Deliberately "handles" rather than "propagate": a condition that is null is unknown, not
@@ -256,7 +295,8 @@ export const FORMULA_FUNCTIONS: Record<string, FormulaFunction> = {
       if (condition === null) return null;
       return condition !== 0 ? whenTrue : whenFalse;
     },
-    description: "IF(condition, then, else). A missing condition yields no result, not the else branch.",
+    description:
+      "IF(condition, then, else). A missing condition yields no result, not the else branch.",
   },
 
   // ── Division that says "no data" instead of dividing by zero. ──
@@ -275,7 +315,8 @@ export const FORMULA_FUNCTIONS: Record<string, FormulaFunction> = {
       if (denominator === 0) return fallback ?? null;
       return numerator / denominator;
     },
-    description: "SAFE_DIV(a, b) — a divided by b, or no result when b is zero. Optional third argument is used instead.",
+    description:
+      "SAFE_DIV(a, b) — a divided by b, or no result when b is zero. Optional third argument is used instead.",
   },
   /** Percentage, the shape most quality and conversion metrics want. */
   PCT: {
@@ -287,20 +328,43 @@ export const FORMULA_FUNCTIONS: Record<string, FormulaFunction> = {
       if (whole === 0) return null;
       return (part / whole) * 100;
     },
-    description: "PCT(part, whole) — part as a percentage of whole. No result when whole is zero.",
+    description:
+      "PCT(part, whole) — part as a percentage of whole. No result when whole is zero.",
   },
 
   // ── Arithmetic. ──
-  ABS: { minArgs: 1, maxArgs: 1, nullPolicy: "propagate", apply: ([v]) => Math.abs(v as number), description: "Absolute value." },
+  ABS: {
+    minArgs: 1,
+    maxArgs: 1,
+    nullPolicy: "propagate",
+    apply: ([v]) => Math.abs(v as number),
+    description: "Absolute value.",
+  },
   ROUND: {
     minArgs: 1,
     maxArgs: 2,
     nullPolicy: "propagate",
-    apply: ([v, places]) => round(v as number, places === null || places === undefined ? 0 : (places as number)),
+    apply: ([v, places]) =>
+      round(
+        v as number,
+        places === null || places === undefined ? 0 : (places as number),
+      ),
     description: "ROUND(value) or ROUND(value, decimals).",
   },
-  FLOOR: { minArgs: 1, maxArgs: 1, nullPolicy: "propagate", apply: ([v]) => Math.floor(v as number), description: "Round down." },
-  CEIL: { minArgs: 1, maxArgs: 1, nullPolicy: "propagate", apply: ([v]) => Math.ceil(v as number), description: "Round up." },
+  FLOOR: {
+    minArgs: 1,
+    maxArgs: 1,
+    nullPolicy: "propagate",
+    apply: ([v]) => Math.floor(v as number),
+    description: "Round down.",
+  },
+  CEIL: {
+    minArgs: 1,
+    maxArgs: 1,
+    nullPolicy: "propagate",
+    apply: ([v]) => Math.ceil(v as number),
+    description: "Round up.",
+  },
   SQRT: {
     minArgs: 1,
     maxArgs: 1,
@@ -333,9 +397,12 @@ export const FORMULA_FUNCTIONS: Record<string, FormulaFunction> = {
     // result when EVERY input is missing, so an all-empty sum is not reported as 0.
     apply: (args) => {
       const present = args.filter((a): a is number => a !== null);
-      return present.length ? present.reduce((total, value) => total + value, 0) : null;
+      return present.length
+        ? present.reduce((total, value) => total + value, 0)
+        : null;
     },
-    description: "Adds the values that are present. No result when all of them are missing.",
+    description:
+      "Adds the values that are present. No result when all of them are missing.",
   },
   AVG: {
     minArgs: 1,
@@ -343,7 +410,9 @@ export const FORMULA_FUNCTIONS: Record<string, FormulaFunction> = {
     nullPolicy: "handles",
     apply: (args) => {
       const present = args.filter((a): a is number => a !== null);
-      return present.length ? present.reduce((total, value) => total + value, 0) / present.length : null;
+      return present.length
+        ? present.reduce((total, value) => total + value, 0) / present.length
+        : null;
     },
     description: "Average of the values that are present.",
   },
@@ -352,8 +421,10 @@ export const FORMULA_FUNCTIONS: Record<string, FormulaFunction> = {
     minArgs: 3,
     maxArgs: 3,
     nullPolicy: "propagate",
-    apply: ([value, low, high]) => Math.min(Math.max(value as number, low as number), high as number),
-    description: "CLAMP(value, low, high) — value held within the low and high bounds.",
+    apply: ([value, low, high]) =>
+      Math.min(Math.max(value as number, low as number), high as number),
+    description:
+      "CLAMP(value, low, high) — value held within the low and high bounds.",
   },
 
   // ── Unit helpers, because operational sources store durations inconsistently. ──
@@ -424,7 +495,10 @@ class Parser {
     const node = this.parseExpression(0);
     if (this.index < this.tokens.length) {
       const token = this.tokens[this.index];
-      throw new FormulaError(`Unexpected "${token.value}" at position ${token.pos + 1}`, token.pos);
+      throw new FormulaError(
+        `Unexpected "${token.value}" at position ${token.pos + 1}`,
+        token.pos,
+      );
     }
     return node;
   }
@@ -443,7 +517,9 @@ class Parser {
   private parseExpression(minPrecedence: number): Node {
     this.depth += 1;
     if (this.depth > MAX_DEPTH) {
-      throw new FormulaError(`Formula nests deeper than the ${MAX_DEPTH} level limit`);
+      throw new FormulaError(
+        `Formula nests deeper than the ${MAX_DEPTH} level limit`,
+      );
     }
     try {
       let left = this.parseUnary();
@@ -455,7 +531,9 @@ class Parser {
         if (precedence === undefined || precedence < minPrecedence) break;
 
         this.next();
-        const nextMinimum = RIGHT_ASSOCIATIVE.has(token.value) ? precedence : precedence + 1;
+        const nextMinimum = RIGHT_ASSOCIATIVE.has(token.value)
+          ? precedence
+          : precedence + 1;
         const right = this.parseExpression(nextMinimum);
         left = { kind: "binary", op: token.value, left, right };
       }
@@ -468,7 +546,10 @@ class Parser {
 
   private parseUnary(): Node {
     const token = this.peek();
-    if (token?.type === "operator" && (token.value === "-" || token.value === "+" || token.value === "!")) {
+    if (
+      token?.type === "operator" &&
+      (token.value === "-" || token.value === "+" || token.value === "!")
+    ) {
       this.next();
       return { kind: "unary", op: token.value, operand: this.parseUnary() };
     }
@@ -486,7 +567,10 @@ class Parser {
       const node = this.parseExpression(0);
       const closing = this.peek();
       if (closing?.type !== "rparen") {
-        throw new FormulaError(`Missing closing bracket for the one at position ${token.pos + 1}`, token.pos);
+        throw new FormulaError(
+          `Missing closing bracket for the one at position ${token.pos + 1}`,
+          token.pos,
+        );
       }
       this.next();
       return node;
@@ -516,24 +600,39 @@ class Parser {
           }
         }
         if (this.peek()?.type !== "rparen") {
-          throw new FormulaError(`Missing closing bracket for ${name}(`, token.pos);
+          throw new FormulaError(
+            `Missing closing bracket for ${name}(`,
+            token.pos,
+          );
         }
         this.next(); // consume ")"
 
         if (args.length < fn.minArgs || args.length > fn.maxArgs) {
-          const expected = fn.minArgs === fn.maxArgs ? `${fn.minArgs}` : `${fn.minArgs} to ${fn.maxArgs}`;
-          throw new FormulaError(`${name} takes ${expected} values, got ${args.length}`, token.pos);
+          const expected =
+            fn.minArgs === fn.maxArgs
+              ? `${fn.minArgs}`
+              : `${fn.minArgs} to ${fn.maxArgs}`;
+          throw new FormulaError(
+            `${name} takes ${expected} values, got ${args.length}`,
+            token.pos,
+          );
         }
         return { kind: "call", name, args };
       }
 
       if (!IDENTIFIER_PATTERN.test(token.value)) {
-        throw new FormulaError(`"${token.value}" is not a valid field name`, token.pos);
+        throw new FormulaError(
+          `"${token.value}" is not a valid field name`,
+          token.pos,
+        );
       }
       return { kind: "variable", name: token.value };
     }
 
-    throw new FormulaError(`Unexpected "${token.value}" at position ${token.pos + 1}`, token.pos);
+    throw new FormulaError(
+      `Unexpected "${token.value}" at position ${token.pos + 1}`,
+      token.pos,
+    );
   }
 }
 
@@ -543,7 +642,11 @@ function parse(expression: string): Node {
 
 // ─── Evaluation ──────────────────────────────────────────────────────────────────────────
 
-function collect(node: Node, variables: Set<string>, functions: Set<string>): void {
+function collect(
+  node: Node,
+  variables: Set<string>,
+  functions: Set<string>,
+): void {
   switch (node.kind) {
     case "variable":
       variables.add(node.name);
@@ -573,9 +676,17 @@ function collect(node: Node, variables: Set<string>, functions: Set<string>): vo
  * chosen data source does not provide, which is otherwise a formula that silently evaluates
  * to null forever.
  */
-export function validateFormula(expression: string, allowedVariables?: readonly string[]): FormulaValidation {
+export function validateFormula(
+  expression: string,
+  allowedVariables?: readonly string[],
+): FormulaValidation {
   if (typeof expression !== "string" || !expression.trim()) {
-    return { ok: false, error: "Formula is empty", variables: [], functions: [] };
+    return {
+      ok: false,
+      error: "Formula is empty",
+      variables: [],
+      functions: [],
+    };
   }
 
   let ast: Node;
@@ -600,7 +711,9 @@ export function validateFormula(expression: string, allowedVariables?: readonly 
     // Case-insensitive, because an author typing TALK_SECONDS against a talk_seconds column is
     // making a typo, not choosing a different field.
     const allowed = new Set(allowedVariables.map((name) => name.toLowerCase()));
-    const unknown = variables.filter((name) => !allowed.has(name.toLowerCase()));
+    const unknown = variables.filter(
+      (name) => !allowed.has(name.toLowerCase()),
+    );
     if (unknown.length) {
       return {
         ok: false,
@@ -618,7 +731,8 @@ export function validateFormula(expression: string, allowedVariables?: readonly 
     // intended — it is the shape you get from half-finishing one.
     return {
       ok: false,
-      error: "Formula does not read any field, so every employee would score the same",
+      error:
+        "Formula does not read any field, so every employee would score the same",
       variables,
       functions,
     };
@@ -627,7 +741,11 @@ export function validateFormula(expression: string, allowedVariables?: readonly 
   return { ok: true, variables, functions };
 }
 
-function evaluateNode(node: Node, inputs: Map<string, number | null>, trace: { nullReason?: string }): number | null {
+function evaluateNode(
+  node: Node,
+  inputs: Map<string, number | null>,
+  trace: { nullReason?: string },
+): number | null {
   switch (node.kind) {
     case "number":
       return node.value;
@@ -670,7 +788,9 @@ function evaluateNode(node: Node, inputs: Map<string, number | null>, trace: { n
             // Not Infinity. An agent with zero calls has no average handle time; reporting one
             // as infinite would then be capped to the max-achievement ceiling and read as a
             // perfect score.
-            if (!trace.nullReason) trace.nullReason = "Division by zero — the denominator has no value for this period";
+            if (!trace.nullReason)
+              trace.nullReason =
+                "Division by zero — the denominator has no value for this period";
             return null;
           }
           return left / right;
@@ -684,7 +804,8 @@ function evaluateNode(node: Node, inputs: Map<string, number | null>, trace: { n
           const result = left ** right;
           // A fractional power of a negative is NaN, and NaN must never reach a score.
           if (!Number.isFinite(result)) {
-            if (!trace.nullReason) trace.nullReason = `${left} to the power of ${right} is not a usable number`;
+            if (!trace.nullReason)
+              trace.nullReason = `${left} to the power of ${right} is not a usable number`;
             return null;
           }
           return result;
@@ -716,11 +837,13 @@ function evaluateNode(node: Node, inputs: Map<string, number | null>, trace: { n
       const fn = FORMULA_FUNCTIONS[node.name];
       if (!fn) throw new FormulaError(`Unknown function "${node.name}"`);
       const args = node.args.map((arg) => evaluateNode(arg, inputs, trace));
-      if (fn.nullPolicy === "propagate" && args.some((arg) => arg === null)) return null;
+      if (fn.nullPolicy === "propagate" && args.some((arg) => arg === null))
+        return null;
       const result = fn.apply(args);
       if (result === null) return null;
       if (!Number.isFinite(result)) {
-        if (!trace.nullReason) trace.nullReason = `${node.name} did not produce a usable number`;
+        if (!trace.nullReason)
+          trace.nullReason = `${node.name} did not produce a usable number`;
         return null;
       }
       return result;
@@ -752,7 +875,10 @@ export function evaluateFormula(
   try {
     ast = parse(expression);
   } catch (error) {
-    return { value: null, error: error instanceof Error ? error.message : String(error) };
+    return {
+      value: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 
   const normalized = new Map<string, number | null>();
@@ -772,11 +898,18 @@ export function evaluateFormula(
   try {
     const value = evaluateNode(ast, normalized, trace);
     if (value === null) {
-      return { value: null, nullReason: trace.nullReason ?? "One or more inputs had no value for this period" };
+      return {
+        value: null,
+        nullReason:
+          trace.nullReason ?? "One or more inputs had no value for this period",
+      };
     }
     return { value };
   } catch (error) {
-    return { value: null, error: error instanceof Error ? error.message : String(error) };
+    return {
+      value: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -785,10 +918,17 @@ export function evaluateFormula(
  * than duplicated in the frontend so the two cannot drift — a function the UI offers but the
  * engine does not implement is a formula that validates in the browser and fails on save.
  */
-export function listFormulaFunctions(): Array<{ name: string; args: string; description: string }> {
+export function listFormulaFunctions(): Array<{
+  name: string;
+  args: string;
+  description: string;
+}> {
   return Object.entries(FORMULA_FUNCTIONS).map(([name, fn]) => ({
     name,
-    args: fn.minArgs === fn.maxArgs ? `${fn.minArgs}` : `${fn.minArgs}-${fn.maxArgs}`,
+    args:
+      fn.minArgs === fn.maxArgs
+        ? `${fn.minArgs}`
+        : `${fn.minArgs}-${fn.maxArgs}`,
     description: fn.description,
   }));
 }

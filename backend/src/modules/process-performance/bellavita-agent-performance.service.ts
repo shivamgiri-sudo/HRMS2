@@ -77,9 +77,14 @@ const num = (v: string | number | null | undefined): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
-const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
+const pct = (part: number, whole: number): number =>
+  whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
 
-export async function getBellavitaAgentPerformance(from: string, to: string, lobFilter?: string): Promise<BellavitaAgentPerformanceRow[]> {
+export async function getBellavitaAgentPerformance(
+  from: string,
+  to: string,
+  lobFilter?: string,
+): Promise<BellavitaAgentPerformanceRow[]> {
   const range = [from, to];
   const lob = lobFilter && lobFilter !== "All" ? lobFilter : undefined;
   const lobParam = lob ? [lob] : [];
@@ -164,7 +169,8 @@ export async function getBellavitaAgentPerformance(from: string, to: string, lob
       rtoCount,
       rtoPct: pct(rtoCount, saleCount),
       revenue,
-      avgSale: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
+      avgSale:
+        saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
     };
   });
 
@@ -201,7 +207,8 @@ export async function getBellavitaAgentPerformance(from: string, to: string, lob
       rtoCount,
       rtoPct: pct(rtoCount, saleCount),
       revenue,
-      avgSale: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
+      avgSale:
+        saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
     });
   }
 
@@ -216,13 +223,32 @@ export interface BellavitaAgentDetail {
   lob: string;
   tenureDays: number | null;
   overall: {
-    attendanceDays: number; loginHours: number; breakHours: number; talkHours: number; achtSeconds: number;
-    saleCount: number; codCount: number; paidCount: number; codPct: number; paidPct: number;
-    rtoCount: number; rtoPct: number; revenue: number; avgSale: number;
+    attendanceDays: number;
+    loginHours: number;
+    breakHours: number;
+    talkHours: number;
+    achtSeconds: number;
+    saleCount: number;
+    codCount: number;
+    paidCount: number;
+    codPct: number;
+    paidPct: number;
+    rtoCount: number;
+    rtoPct: number;
+    revenue: number;
+    avgSale: number;
   };
   daily: Array<{
-    date: string; saleCount: number; revenue: number; codCount: number; paidCount: number; rtoCount: number;
-    loginHours: number; breakHours: number; talkHours: number; attendanceDays: number;
+    date: string;
+    saleCount: number;
+    revenue: number;
+    codCount: number;
+    paidCount: number;
+    rtoCount: number;
+    loginHours: number;
+    breakHours: number;
+    talkHours: number;
+    attendanceDays: number;
   }>;
 }
 
@@ -248,7 +274,11 @@ interface SaleDayRow extends RowDataPacket {
  * exact same bb_apr de-dup (id IN (SELECT MIN(id) ... GROUP BY unique_id))
  * and bb_sale de-dup (dedupedSaleSql) getBellavitaAgentPerformance uses, so
  * this agent's totals here never disagree with that table's own row. */
-export async function getBellavitaAgentDetail(empId: string, from: string, to: string): Promise<BellavitaAgentDetail | null> {
+export async function getBellavitaAgentDetail(
+  empId: string,
+  from: string,
+  to: string,
+): Promise<BellavitaAgentDetail | null> {
   const range = [from, to];
 
   const [[identityRow]] = await db.execute<AprAggRow[]>(
@@ -354,9 +384,12 @@ export async function getBellavitaAgentDetail(empId: string, from: string, to: s
     tenureDays: identityRow?.tenure ?? null,
     overall: {
       attendanceDays: num(identityRow?.attendance_days),
-      loginHours: Math.round((num(identityRow?.login_seconds) / 3600) * 100) / 100,
-      breakHours: Math.round((num(identityRow?.break_seconds) / 3600) * 100) / 100,
-      talkHours: Math.round((num(identityRow?.talk_seconds) / 3600) * 100) / 100,
+      loginHours:
+        Math.round((num(identityRow?.login_seconds) / 3600) * 100) / 100,
+      breakHours:
+        Math.round((num(identityRow?.break_seconds) / 3600) * 100) / 100,
+      talkHours:
+        Math.round((num(identityRow?.talk_seconds) / 3600) * 100) / 100,
       achtSeconds: Math.round(num(identityRow?.acht_avg)),
       saleCount,
       codCount,
@@ -366,7 +399,8 @@ export async function getBellavitaAgentDetail(empId: string, from: string, to: s
       rtoCount,
       rtoPct: pct(rtoCount, saleCount),
       revenue,
-      avgSale: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
+      avgSale:
+        saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
     },
     daily,
   };

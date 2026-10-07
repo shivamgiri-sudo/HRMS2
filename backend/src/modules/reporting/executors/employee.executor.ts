@@ -12,7 +12,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -37,7 +42,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -51,10 +56,15 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  * changing its case here would only be safe if that join were case-insensitive by collation --
  * not worth the risk when every real employee_code in this dataset is already upper-case.
  */
-function uppercaseDisplayValues(row: Record<string, unknown>): Record<string, unknown> {
+function uppercaseDisplayValues(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) {
-    out[key] = key !== "employee_code" && typeof value === "string" ? value.toUpperCase() : value;
+    out[key] =
+      key !== "employee_code" && typeof value === "string"
+        ? value.toUpperCase()
+        : value;
   }
   return out;
 }
@@ -115,7 +125,9 @@ interface LegacyMasterRow extends RowDataPacket {
   NomineeDob: Date | string | null;
 }
 
-async function fetchLegacyMasterByCode(): Promise<Map<string, LegacyMasterRow>> {
+async function fetchLegacyMasterByCode(): Promise<
+  Map<string, LegacyMasterRow>
+> {
   const map = new Map<string, LegacyMasterRow>();
   const rows = await billQuery<LegacyMasterRow>(
     `SELECT EmpCode, Father, Husband, BloodGruop, Qualification, Qualification_Details,
@@ -125,7 +137,7 @@ async function fetchLegacyMasterByCode(): Promise<Map<string, LegacyMasterRow>> 
             NetInhand, CTC, PassportNo, dlNo, EPFNo, ESICNo, EntryDate, LeftReason, BoxFileNo,
             UpdatedBy, NomineeName, NomineeRelation, NomineeDob
        FROM masjclrentry
-      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`
+      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`,
   );
   for (const row of rows) {
     if (row.EmpCode) map.set(String(row.EmpCode).trim().toUpperCase(), row);
@@ -174,7 +186,9 @@ interface LegacyMasterRow2 extends RowDataPacket {
   UAN: string | null;
 }
 
-async function fetchEmployeeMasterByCode(): Promise<Map<string, LegacyMasterRow2>> {
+async function fetchEmployeeMasterByCode(): Promise<
+  Map<string, LegacyMasterRow2>
+> {
   const map = new Map<string, LegacyMasterRow2>();
   const rows = await billQuery<LegacyMasterRow2>(
     `SELECT EmpCode, Fname, Gender, Qualification, MaritalStatus, BloodG, TMobNo, TLandLine,
@@ -182,7 +196,7 @@ async function fetchEmployeeMasterByCode(): Promise<Map<string, LegacyMasterRow2
             EsiNo, EntryDate, LeftRmks, BoxFileNo, UpdatedBy, CostCenter, EmpFor, BiometricCode,
             SourceType, Source, UAN
        FROM employee_master
-      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`
+      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`,
   );
   for (const row of rows) {
     if (row.EmpCode) map.set(String(row.EmpCode).trim().toUpperCase(), row);
@@ -191,7 +205,9 @@ async function fetchEmployeeMasterByCode(): Promise<Map<string, LegacyMasterRow2
 }
 
 function blank(v: unknown): boolean {
-  return v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+  return (
+    v === null || v === undefined || (typeof v === "string" && v.trim() === "")
+  );
 }
 
 /** DD-MMM-YYYY, matching this file's DATE_FORMAT(..., '%d-%m-%Y') convention. */
@@ -199,7 +215,20 @@ function formatLegacyDate(value: unknown): string | null {
   if (!value) return null;
   const d = value instanceof Date ? value : new Date(String(value));
   if (Number.isNaN(d.getTime()) || d.getFullYear() < 1901) return null;
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const MONTHS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
   return `${String(d.getDate()).padStart(2, "0")}-${MONTHS[d.getMonth()]}-${d.getFullYear()}`;
 }
 
@@ -211,18 +240,23 @@ function formatLegacyDate(value: unknown): string | null {
 function enrichWithLegacyMaster(
   row: Record<string, unknown>,
   legacyByCode: Map<string, LegacyMasterRow>,
-  employeeMasterByCode: Map<string, LegacyMasterRow2>
+  employeeMasterByCode: Map<string, LegacyMasterRow2>,
 ): Record<string, unknown> {
   const fill = (key: string, value: unknown) => {
     if (blank(row[key]) && !blank(value)) row[key] = value;
   };
 
-  const code = row.employee_code ? String(row.employee_code).trim().toUpperCase() : null;
+  const code = row.employee_code
+    ? String(row.employee_code).trim().toUpperCase()
+    : null;
   const lg = code ? legacyByCode.get(code) : undefined;
 
   if (lg) {
     fill("father_husband_name", lg.Father || lg.Husband);
-    fill("father_husband_relation", !blank(lg.Father) ? "Father" : !blank(lg.Husband) ? "Husband" : null);
+    fill(
+      "father_husband_relation",
+      !blank(lg.Father) ? "Father" : !blank(lg.Husband) ? "Husband" : null,
+    );
     fill("nominee_name", lg.NomineeName);
     fill("nominee_relation", lg.NomineeRelation);
     fill("nominee_dob", formatLegacyDate(lg.NomineeDob));
@@ -308,7 +342,7 @@ function enrichWithLegacyMaster(
 export async function headcount(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -341,8 +375,12 @@ export async function headcount(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -351,22 +389,81 @@ export async function headcount(
 
 /** Columns of employee_master_snapshot (migration 1615), in report-catalog.ts column order. */
 const SNAPSHOT_DISPLAY_COLUMNS = [
-  "employee_code", "biometric_code", "employment_type", "employee_name", "father_husband_name",
-  "father_husband_relation", "gender", "nominee_name", "nominee_relation", "nominee_dob",
-  "date_of_birth", "date_of_joining", "joining_month", "designation_name", "billable_status",
-  "department_name", "emp_for", "profile_type", "branch_name", "cost_centre_name", "qualification",
-  "qualification_details", "passed_out_year", "passed_out_state", "passed_out_city",
-  "passed_out_percentage", "working_experience", "experience_years", "marital_status",
-  "family_annual_income", "count_of_dependents", "reporting_manager", "reporting_manager_mobile",
-  "blood_group", "permanent_address_line1", "permanent_city", "permanent_state",
-  "permanent_pincode", "current_address_line1", "current_city", "current_state",
-  "current_pincode", "contact_number", "permanent_landline", "temporary_mobile",
-  "temporary_landline", "email", "document_done", "gross", "ctc_offered", "net_in_hand",
+  "employee_code",
+  "biometric_code",
+  "employment_type",
+  "employee_name",
+  "father_husband_name",
+  "father_husband_relation",
+  "gender",
+  "nominee_name",
+  "nominee_relation",
+  "nominee_dob",
+  "date_of_birth",
+  "date_of_joining",
+  "joining_month",
+  "designation_name",
+  "billable_status",
+  "department_name",
+  "emp_for",
+  "profile_type",
+  "branch_name",
+  "cost_centre_name",
+  "qualification",
+  "qualification_details",
+  "passed_out_year",
+  "passed_out_state",
+  "passed_out_city",
+  "passed_out_percentage",
+  "working_experience",
+  "experience_years",
+  "marital_status",
+  "family_annual_income",
+  "count_of_dependents",
+  "reporting_manager",
+  "reporting_manager_mobile",
+  "blood_group",
+  "permanent_address_line1",
+  "permanent_city",
+  "permanent_state",
+  "permanent_pincode",
+  "current_address_line1",
+  "current_city",
+  "current_state",
+  "current_pincode",
+  "contact_number",
+  "permanent_landline",
+  "temporary_mobile",
+  "temporary_landline",
+  "email",
+  "document_done",
+  "gross",
+  "ctc_offered",
+  "net_in_hand",
   "salary_effective_date",
-  "bank_account_number", "ifsc_code", "bank_name", "bank_branch", "passport_no", "dl_no",
-  "uan_number", "epf_number", "pf_eligible", "esi_number", "esi_eligible", "entry_date",
-  "status", "date_of_leaving", "left_remarks", "source_type", "source", "box_file_no",
-  "aadhaar_number", "pan_number", "work_status", "manual_update_by", "manual_update_date",
+  "bank_account_number",
+  "ifsc_code",
+  "bank_name",
+  "bank_branch",
+  "passport_no",
+  "dl_no",
+  "uan_number",
+  "epf_number",
+  "pf_eligible",
+  "esi_number",
+  "esi_eligible",
+  "entry_date",
+  "status",
+  "date_of_leaving",
+  "left_remarks",
+  "source_type",
+  "source",
+  "box_file_no",
+  "aadhaar_number",
+  "pan_number",
+  "work_status",
+  "manual_update_by",
+  "manual_update_date",
 ] as const;
 
 /** Snapshot is refused as stale beyond this — falls back to the live computation instead of
@@ -387,11 +484,13 @@ const SNAPSHOT_MAX_STALENESS_MS = 3 * 60 * 60 * 1000;
 export async function employeeMaster(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const freshness = await checkSnapshotFreshness();
   if (!freshness.usable) {
-    console.warn(`[employee-master] snapshot not usable (${freshness.reason}) — falling back to live computation`);
+    console.warn(
+      `[employee-master] snapshot not usable (${freshness.reason}) — falling back to live computation`,
+    );
     return employeeMasterLive(filters, scope, options);
   }
 
@@ -403,22 +502,30 @@ export async function employeeMaster(
 
   if (filters.from || filters.to) {
     const from = dateParam(filters.from, "1900-01-01");
-    const to   = dateParam(filters.to, "9999-12-31");
+    const to = dateParam(filters.to, "9999-12-31");
     const inForce = employeeInForce.byTenure(from, to);
     clauses.push(inForce.clause);
     params.push(...inForce.params);
   }
 
   // DOJ date range — filter by date_of_joining only (clear, unambiguous to users)
-  if (filters.dojFrom) { clauses.push("e.date_of_joining >= ?"); params.push(dateParam(filters.dojFrom, "1900-01-01")); }
-  if (filters.dojTo)   { clauses.push("e.date_of_joining <= ?"); params.push(dateParam(filters.dojTo,   "9999-12-31")); }
+  if (filters.dojFrom) {
+    clauses.push("e.date_of_joining >= ?");
+    params.push(dateParam(filters.dojFrom, "1900-01-01"));
+  }
+  if (filters.dojTo) {
+    clauses.push("e.date_of_joining <= ?");
+    params.push(dateParam(filters.dojTo, "9999-12-31"));
+  }
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?");
     params.push(options.cursor);
   }
 
-  const selectList = SNAPSHOT_DISPLAY_COLUMNS.map((c) => `ems.${c}`).join(",\n           ");
+  const selectList = SNAPSHOT_DISPLAY_COLUMNS.map((c) => `ems.${c}`).join(
+    ",\n           ",
+  );
   const base = `
     SELECT e.id AS _cursor,
            ${selectList}
@@ -429,16 +536,19 @@ export async function employeeMaster(
 
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
 
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    isTruncated: options.includeTotal
+      ? total > out.length
+      : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -453,25 +563,34 @@ async function checkSnapshotFreshness(): Promise<SnapshotFreshness> {
     const rows = await query(
       `SELECT COUNT(*) AS row_count, MAX(snapshot_refreshed_at) AS last_refreshed
          FROM employee_master_snapshot`,
-      []
+      [],
     );
-    const row = rows[0] as { row_count?: number; last_refreshed?: string | Date } | undefined;
+    const row = rows[0] as
+      { row_count?: number; last_refreshed?: string | Date } | undefined;
     const rowCount = Number(row?.row_count ?? 0);
     if (rowCount === 0) return { usable: false, reason: "empty" };
 
-    const lastRefreshed = row?.last_refreshed ? new Date(row.last_refreshed) : null;
+    const lastRefreshed = row?.last_refreshed
+      ? new Date(row.last_refreshed)
+      : null;
     if (!lastRefreshed || Number.isNaN(lastRefreshed.getTime())) {
       return { usable: false, reason: "no refresh timestamp" };
     }
     const ageMs = Date.now() - lastRefreshed.getTime();
     if (ageMs > SNAPSHOT_MAX_STALENESS_MS) {
-      return { usable: false, reason: `stale (${Math.round(ageMs / 60000)} min old)` };
+      return {
+        usable: false,
+        reason: `stale (${Math.round(ageMs / 60000)} min old)`,
+      };
     }
     return { usable: true };
   } catch (err) {
     // Table doesn't exist yet (migration not applied in this environment) or some other
     // read failure — never let a snapshot-table problem take down the report itself.
-    return { usable: false, reason: `read error: ${err instanceof Error ? err.message : String(err)}` };
+    return {
+      usable: false,
+      reason: `read error: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
 
@@ -500,10 +619,10 @@ export async function employeeMasterLive(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions,
-  useDbBillFallback: boolean = false
+  useDbBillFallback: boolean = false,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -519,15 +638,21 @@ export async function employeeMasterLive(
   // the window and not gone before it started.
   if (filters.from || filters.to) {
     const from = dateParam(filters.from, "1900-01-01");
-    const to   = dateParam(filters.to, "9999-12-31");
+    const to = dateParam(filters.to, "9999-12-31");
     const inForce = employeeInForce.byTenure(from, to);
     clauses.push(inForce.clause);
     params.push(...inForce.params);
   }
 
   // DOJ date range — filter by date_of_joining only (clear, unambiguous to users)
-  if (filters.dojFrom) { clauses.push("e.date_of_joining >= ?"); params.push(dateParam(filters.dojFrom, "1900-01-01")); }
-  if (filters.dojTo)   { clauses.push("e.date_of_joining <= ?"); params.push(dateParam(filters.dojTo,   "9999-12-31")); }
+  if (filters.dojFrom) {
+    clauses.push("e.date_of_joining >= ?");
+    params.push(dateParam(filters.dojFrom, "1900-01-01"));
+  }
+  if (filters.dojTo) {
+    clauses.push("e.date_of_joining <= ?");
+    params.push(dateParam(filters.dojTo, "9999-12-31"));
+  }
 
   // Cursor-based pagination for worker mode
   if (options.mode === "worker" && options.cursor != null) {
@@ -791,37 +916,61 @@ export async function employeeMasterLive(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
+  const rows = paged.rows as Record<string, unknown>[];
 
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
 
   // Strip internal cursor field and resolve encrypted/multi-source PII in JS — the same
   // resolvePii/resolveAccountNumber helpers the employee-profile endpoint uses, so this
   // report never re-implements (and re-diverges from) that decryption logic.
-  const out = rows.map(({
-    _cursor: _,
-    _bank_account_number_enc, _bank_account_number_legacy,
-    _pan_number_enc, _pan_number_legacy, _pan_number_statutory,
-    _aadhaar_number_enc, _aadhaar_number_legacy, _aadhaar_last4, _aadhaar_id_statutory,
-    ...rest
-  }) => {
-    const pan = resolvePii(_pan_number_enc as string | null, _pan_number_legacy as string | null);
-    const panValue = (pan.value && pan.value.trim()) || (_pan_number_statutory as string | null) || null;
+  const out = rows.map(
+    ({
+      _cursor: _,
+      _bank_account_number_enc,
+      _bank_account_number_legacy,
+      _pan_number_enc,
+      _pan_number_legacy,
+      _pan_number_statutory,
+      _aadhaar_number_enc,
+      _aadhaar_number_legacy,
+      _aadhaar_last4,
+      _aadhaar_id_statutory,
+      ...rest
+    }) => {
+      const pan = resolvePii(
+        _pan_number_enc as string | null,
+        _pan_number_legacy as string | null,
+      );
+      const panValue =
+        (pan.value && pan.value.trim()) ||
+        (_pan_number_statutory as string | null) ||
+        null;
 
-    const aadhaar = resolvePii(_aadhaar_number_enc as string | null, _aadhaar_number_legacy as string | null);
-    const aadhaarValue = (aadhaar.value && aadhaar.value.trim())
-      || (_aadhaar_id_statutory as string | null)
-      || (_aadhaar_last4 ? `XXXXXXXX${_aadhaar_last4}` : null);
+      const aadhaar = resolvePii(
+        _aadhaar_number_enc as string | null,
+        _aadhaar_number_legacy as string | null,
+      );
+      const aadhaarValue =
+        (aadhaar.value && aadhaar.value.trim()) ||
+        (_aadhaar_id_statutory as string | null) ||
+        (_aadhaar_last4 ? `XXXXXXXX${_aadhaar_last4}` : null);
 
-    const accountNumber = resolveAccountNumber({
-      account_number_enc: _bank_account_number_enc as string | null,
-      account_number: _bank_account_number_legacy as Buffer | string | null,
-    });
+      const accountNumber = resolveAccountNumber({
+        account_number_enc: _bank_account_number_enc as string | null,
+        account_number: _bank_account_number_legacy as Buffer | string | null,
+      });
 
-    return { ...rest, pan_number: panValue, aadhaar_number: aadhaarValue, bank_account_number: accountNumber };
-  });
+      return {
+        ...rest,
+        pan_number: panValue,
+        aadhaar_number: aadhaarValue,
+        bank_account_number: accountNumber,
+      };
+    },
+  );
 
   // db_bill fallback: off by default (see this function's doc comment). Fill-blanks-only,
   // best-effort — if db_bill is unreachable, the report still returns with whatever mas_hrms
@@ -833,16 +982,23 @@ export async function employeeMasterLive(
         fetchLegacyMasterByCode(),
         fetchEmployeeMasterByCode(),
       ]);
-      enriched = out.map((row) => enrichWithLegacyMaster(row, legacyByCode, employeeMasterByCode));
+      enriched = out.map((row) =>
+        enrichWithLegacyMaster(row, legacyByCode, employeeMasterByCode),
+      );
     } catch (err) {
-      console.error("[employee-master] db_bill legacy-master enrichment skipped:", err);
+      console.error(
+        "[employee-master] db_bill legacy-master enrichment skipped:",
+        err,
+      );
     }
   }
 
   return {
     rows: enriched.map(uppercaseDisplayValues),
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > enriched.length : rows.length === options.limit,
+    isTruncated: options.includeTotal
+      ? total > enriched.length
+      : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -853,15 +1009,16 @@ export async function employeeMasterLive(
 export async function managerMapping(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?"); params.push(options.cursor);
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `
@@ -894,11 +1051,18 @@ export async function managerMapping(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -907,10 +1071,10 @@ export async function managerMapping(
 export async function orgStructureSnapshot(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -944,8 +1108,12 @@ export async function orgStructureSnapshot(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -954,10 +1122,10 @@ export async function orgStructureSnapshot(
 export async function costCentreHeadcount(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -999,8 +1167,12 @@ export async function costCentreHeadcount(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,23 +1181,26 @@ export async function costCentreHeadcount(
 export async function employeeMovement(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   // The SELECT CASE WHEN has two ? placeholders that appear before the WHERE in SQL text,
   // so they must lead the params array — push them before appendScopeConditions.
-  const params: unknown[]  = [from, to];  // for SELECT CASE WHEN ... BETWEEN ? AND ?
+  const params: unknown[] = [from, to]; // for SELECT CASE WHEN ... BETWEEN ? AND ?
   const clauses: string[] = ["e.id IS NOT NULL"];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("(e.date_of_joining BETWEEN ? AND ? OR COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?)");
+  clauses.push(
+    "(e.date_of_joining BETWEEN ? AND ? OR COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?)",
+  );
   params.push(from, to, from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?"); params.push(options.cursor);
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `
@@ -1051,11 +1226,18 @@ export async function employeeMovement(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1087,7 +1269,7 @@ export async function employeeMovement(
 export async function newJoinExport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   // Month/year are quick-filters over the same date_of_joining range the from/to
   // pickers use — whichever is set narrows the period; neither falls back to the
@@ -1095,7 +1277,10 @@ export async function newJoinExport(
   // are somehow set, since it's the more specific period.
   let from: string;
   let to: string;
-  if (typeof filters.month === "string" && /^\d{4}-\d{2}$/.test(filters.month)) {
+  if (
+    typeof filters.month === "string" &&
+    /^\d{4}-\d{2}$/.test(filters.month)
+  ) {
     const [y, m] = filters.month.split("-").map(Number);
     from = `${filters.month}-01`;
     to = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // last day of that month
@@ -1105,7 +1290,7 @@ export async function newJoinExport(
     to = `${y}-12-31`;
   } else {
     from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-    to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+    to = dateParam(filters.to, new Date().toISOString().slice(0, 10));
   }
 
   const clauses: string[] = ["e.id IS NOT NULL"];
@@ -1116,7 +1301,8 @@ export async function newJoinExport(
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?"); params.push(options.cursor);
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `
@@ -1165,11 +1351,18 @@ export async function newJoinExport(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 /**
@@ -1240,27 +1433,32 @@ const CONFIRMATION_DUE_JOIN = `
 export async function leftEmployeeExport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+  const to = dateParam(filters.to, new Date().toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   // Parentheses are load-bearing: this array is joined with AND, which binds tighter than OR.
-  clauses.push("(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))");
+  clauses.push(
+    "(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))",
+  );
   // Last working day, most-to-least authoritative: exit_request's confirmed LWD (the
   // employee's real signed-off last day), its proposed LWD (before confirmation),
   // then employees.date_of_leaving/date_of_exit for anyone exited outside the exit_request
   // workflow (e.g. bulk-migrated legacy records). Was employees-table-only, which could
   // disagree with the confirmed LWD shown on the exit module itself.
-  clauses.push("COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
+  clauses.push(
+    "COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?",
+  );
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?"); params.push(options.cursor);
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `
@@ -1318,11 +1516,18 @@ export async function leftEmployeeExport(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 /**
@@ -1340,7 +1545,7 @@ export async function leftEmployeeExport(
 export async function bankMissing(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1349,7 +1554,8 @@ export async function bankMissing(
   clauses.push("e.active_status = 1");
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?"); params.push(options.cursor);
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `    SELECT
@@ -1383,11 +1589,18 @@ export async function bankMissing(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 /**
@@ -1403,7 +1616,7 @@ export async function bankMissing(
 export async function incrementRequests(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1411,7 +1624,8 @@ export async function incrementRequests(
   appendFilterConditions(filters, clauses, params);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("sir.id > ?"); params.push(options.cursor);
+    clauses.push("sir.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `    SELECT
@@ -1436,23 +1650,30 @@ export async function incrementRequests(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 export async function confirmationDueList(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const to    = dateParam(filters.to, today);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "e.employment_status = 'probation'");
@@ -1460,7 +1681,8 @@ export async function confirmationDueList(
   params.push(to);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?"); params.push(options.cursor);
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `
@@ -1488,11 +1710,18 @@ export async function confirmationDueList(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1501,13 +1730,13 @@ export async function confirmationDueList(
 export async function contractExpiryList(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const to    = dateParam(filters.to, today);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "ec.contract_end_date IS NOT NULL");
@@ -1515,7 +1744,8 @@ export async function contractExpiryList(
   params.push(to);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?"); params.push(options.cursor);
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `
@@ -1552,11 +1782,18 @@ export async function contractExpiryList(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1565,14 +1802,14 @@ export async function contractExpiryList(
 export async function lifecycleEvents(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["el.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   // Scope filtering on employee dimension
   // Was branch-only, so a process-restricted viewer saw salary increments for
   // every process in their branch. This report exposes current_ctc and
@@ -1590,7 +1827,8 @@ export async function lifecycleEvents(
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("el.id > ?"); params.push(options.cursor);
+    clauses.push("el.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `
@@ -1618,11 +1856,18 @@ export async function lifecycleEvents(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 /**
@@ -1638,10 +1883,10 @@ export async function lifecycleEvents(
 export async function incrementPromotionHistory(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+  const to = dateParam(filters.to, new Date().toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1674,8 +1919,13 @@ export async function incrementPromotionHistory(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+    nextCursor: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1697,7 +1947,7 @@ export async function incrementPromotionHistory(
 export async function birthdayList(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1706,7 +1956,8 @@ export async function birthdayList(
   clauses.push("e.active_status = 1", "e.date_of_birth IS NOT NULL");
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?"); params.push(options.cursor);
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `    SELECT
@@ -1739,11 +1990,18 @@ export async function birthdayList(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1765,7 +2023,7 @@ export async function birthdayList(
 export async function anniversaryList(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1774,7 +2032,8 @@ export async function anniversaryList(
   clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?"); params.push(options.cursor);
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `    SELECT
@@ -1807,11 +2066,18 @@ export async function anniversaryList(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1836,7 +2102,7 @@ export async function anniversaryList(
 export async function orgMappingGaps(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1883,11 +2149,18 @@ export async function orgMappingGaps(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1906,7 +2179,7 @@ export async function orgMappingGaps(
 export async function employeeStatusConflicts(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1950,9 +2223,16 @@ export async function employeeStatusConflicts(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }

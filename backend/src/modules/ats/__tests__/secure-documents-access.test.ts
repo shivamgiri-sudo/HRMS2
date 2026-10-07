@@ -41,10 +41,16 @@ vi.mock("../secure-documents.service.js", () => ({
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
+  const original =
+    await importOriginal<
+      typeof import("../../../middleware/authMiddleware.js")
+    >();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.authUser = actor;
+      next();
+    },
   };
 });
 
@@ -59,7 +65,11 @@ function appFor(role: string) {
   actor = { id: `u-${role}`, role, roles: [role] };
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => { req.authUser = actor; req.userRoles = actor.roles; next(); });
+  app.use((req: any, _res, next) => {
+    req.authUser = actor;
+    req.userRoles = actor.roles;
+    next();
+  });
   app.use("/api/ats", secureDocumentsRouter);
   return app;
 }
@@ -72,28 +82,39 @@ beforeEach(() => {
 describe("candidate document access", () => {
   for (const role of PAGE_ROLES) {
     it(`allows ${role}, which the page itself grants`, async () => {
-      const res = await request(appFor(role)).get("/api/ats/candidates/c1/documents");
+      const res = await request(appFor(role)).get(
+        "/api/ats/candidates/c1/documents",
+      );
       expect(res.status).toBe(200);
     });
   }
 
   for (const role of REMOVED) {
     it(`refuses ${role}, which cannot open the page`, async () => {
-      const res = await request(appFor(role)).get("/api/ats/candidates/c1/documents");
+      const res = await request(appFor(role)).get(
+        "/api/ats/candidates/c1/documents",
+      );
       expect(res.status, `${role} must not read candidate documents`).toBe(403);
-      expect(listCandidateDocuments, "the service must not be reached").not.toHaveBeenCalled();
+      expect(
+        listCandidateDocuments,
+        "the service must not be reached",
+      ).not.toHaveBeenCalled();
     });
   }
 
   it("refuses the download of a document by id to a removed role", async () => {
     // The endpoint that actually returns the file bytes.
-    const res = await request(appFor("it")).get("/api/ats/documents/d1/download");
+    const res = await request(appFor("it")).get(
+      "/api/ats/documents/d1/download",
+    );
     expect(res.status).toBe(403);
   });
 
   it("refuses the access log to a removed role", async () => {
     // Who ELSE viewed a candidate's identity documents is itself sensitive.
-    const res = await request(appFor("finance")).get("/api/ats/documents/d1/audit");
+    const res = await request(appFor("finance")).get(
+      "/api/ats/documents/d1/audit",
+    );
     expect(res.status).toBe(403);
   });
 });

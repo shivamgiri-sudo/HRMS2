@@ -4,7 +4,12 @@ import type { RowDataPacket } from "mysql2";
 export interface WeekoffRule extends RowDataPacket {
   id: string;
   process_id: string;
-  rule_type: "min_gap_days" | "blackout_date" | "force_sunday_for_role" | "senior_priority" | "rotation_enforce";
+  rule_type:
+    | "min_gap_days"
+    | "blackout_date"
+    | "force_sunday_for_role"
+    | "senior_priority"
+    | "rotation_enforce";
   rule_params: string; // JSON stored as string
   priority: number;
   active_status: number;
@@ -15,7 +20,7 @@ export interface WeekoffRuleContext {
   designation: string | null;
   preferredDay: number | null;
   candidateDate: string; // YYYY-MM-DD
-  dow: number;           // 0=Sun
+  dow: number; // 0=Sun
   lastWeekoffDate: string | null; // YYYY-MM-DD or null
 }
 
@@ -25,22 +30,30 @@ export interface WeekoffRuling {
   override?: { day: number };
 }
 
-export async function loadWeekoffRules(processId: string): Promise<WeekoffRule[]> {
+export async function loadWeekoffRules(
+  processId: string,
+): Promise<WeekoffRule[]> {
   const [rows] = await db.execute<WeekoffRule[]>(
     `SELECT id, process_id, rule_type, rule_params, priority, active_status
        FROM process_weekoff_rule
       WHERE process_id = ? AND active_status = 1
       ORDER BY priority ASC`,
-    [processId]
+    [processId],
   );
   return rows;
 }
 
-export function applyWeekoffRules(rules: WeekoffRule[], ctx: WeekoffRuleContext): WeekoffRuling {
+export function applyWeekoffRules(
+  rules: WeekoffRule[],
+  ctx: WeekoffRuleContext,
+): WeekoffRuling {
   for (const rule of rules) {
     let params: Record<string, unknown>;
     try {
-      params = typeof rule.rule_params === "string" ? JSON.parse(rule.rule_params) : (rule.rule_params as Record<string, unknown>);
+      params =
+        typeof rule.rule_params === "string"
+          ? JSON.parse(rule.rule_params)
+          : (rule.rule_params as Record<string, unknown>);
     } catch {
       continue;
     }
@@ -56,9 +69,14 @@ export function applyWeekoffRules(rules: WeekoffRule[], ctx: WeekoffRuleContext)
       if (ctx.lastWeekoffDate) {
         const last = new Date(ctx.lastWeekoffDate + "T00:00:00");
         const candidate = new Date(ctx.candidateDate + "T00:00:00");
-        const diffDays = Math.floor((candidate.getTime() - last.getTime()) / 86_400_000);
+        const diffDays = Math.floor(
+          (candidate.getTime() - last.getTime()) / 86_400_000,
+        );
         if (diffDays < minGap) {
-          return { allow: false, reason: `min_gap_days:gap_${diffDays}_lt_${minGap}` };
+          return {
+            allow: false,
+            reason: `min_gap_days:gap_${diffDays}_lt_${minGap}`,
+          };
         }
       }
     }
@@ -68,7 +86,11 @@ export function applyWeekoffRules(rules: WeekoffRule[], ctx: WeekoffRuleContext)
       const empDesig = String(ctx.designation ?? "").toLowerCase();
       if (targetRole && empDesig.includes(targetRole) && ctx.dow !== 0) {
         // Redirect week-off to Sunday (dow=0) rather than blocking
-        return { allow: true, reason: `force_sunday_for_role:${ctx.designation}`, override: { day: 0 } };
+        return {
+          allow: true,
+          reason: `force_sunday_for_role:${ctx.designation}`,
+          override: { day: 0 },
+        };
       }
     }
 
@@ -81,14 +103,22 @@ export function applyWeekoffRules(rules: WeekoffRule[], ctx: WeekoffRuleContext)
 
 export function sortBySeniorPriority(
   rules: WeekoffRule[],
-  employees: Array<{ id: string; joining_date?: string | null; designation?: string | null }>
+  employees: Array<{
+    id: string;
+    joining_date?: string | null;
+    designation?: string | null;
+  }>,
 ): typeof employees {
   const seniorRule = rules.find((r) => r.rule_type === "senior_priority");
   if (!seniorRule) return employees;
 
   return [...employees].sort((a, b) => {
-    const dateA = a.joining_date ? new Date(a.joining_date).getTime() : Infinity;
-    const dateB = b.joining_date ? new Date(b.joining_date).getTime() : Infinity;
+    const dateA = a.joining_date
+      ? new Date(a.joining_date).getTime()
+      : Infinity;
+    const dateB = b.joining_date
+      ? new Date(b.joining_date).getTime()
+      : Infinity;
     return dateA - dateB; // Earlier joining_date = higher seniority = earlier in FCFS queue
   });
 }

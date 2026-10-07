@@ -64,7 +64,9 @@ export interface ActorContext {
 
 function normalise(input: BankInput) {
   const accountNumber = String(input.accountNumber ?? "").replace(/[\s-]/g, "");
-  const ifsc = String(input.ifsc ?? "").trim().toUpperCase();
+  const ifsc = String(input.ifsc ?? "")
+    .trim()
+    .toUpperCase();
 
   if (!ACCOUNT_RE.test(accountNumber)) {
     throw new VendorBankError(
@@ -275,10 +277,18 @@ export async function approveBankChange(
         SET status = 'approved', decided_by = ?, decided_by_role = ?, decided_at = NOW(),
             decision_reason = ?
       WHERE id = ? AND status = 'pending'`,
-    [actor.userId, actor.role ?? null, decisionReason?.trim() || null, requestId],
+    [
+      actor.userId,
+      actor.role ?? null,
+      decisionReason?.trim() || null,
+      requestId,
+    ],
   );
   if (!(claim as unknown as ResultSetHeader).affectedRows) {
-    throw new VendorBankError("Request was already decided by someone else", 409);
+    throw new VendorBankError(
+      "Request was already decided by someone else",
+      409,
+    );
   }
 
   // Supersede rather than update, so the log points at a real row on both sides.
@@ -344,7 +354,8 @@ export async function rejectBankChange(
     throw new VendorBankError(`Request is already ${(req as any).status}`, 409);
   }
 
-  const isRequester = String((req as any).requested_by) === String(actor.userId);
+  const isRequester =
+    String((req as any).requested_by) === String(actor.userId);
   const [res] = await db.execute(
     `UPDATE vendor_bank_change_request
         SET status = ?, decided_by = ?, decided_by_role = ?, decided_at = NOW(),
@@ -361,7 +372,10 @@ export async function rejectBankChange(
     ],
   );
   if (!(res as unknown as ResultSetHeader).affectedRows) {
-    throw new VendorBankError("Request was already decided by someone else", 409);
+    throw new VendorBankError(
+      "Request was already decided by someone else",
+      409,
+    );
   }
 
   await writeLog({
@@ -398,12 +412,17 @@ export async function listPendingRequests(vendorId?: string): Promise<any[]> {
   return (rows as any[]).map((r) => ({
     ...r,
     account_number_masked: `XXXXXX${r.account_number_last4}`,
-    previous_account_masked: r.previous_last4 ? `XXXXXX${r.previous_last4}` : null,
+    previous_account_masked: r.previous_last4
+      ? `XXXXXX${r.previous_last4}`
+      : null,
   }));
 }
 
 /** The change log for one vendor — the drill-down's audit section. */
-export async function getBankChangeLog(vendorId: string, limit = 50): Promise<any[]> {
+export async function getBankChangeLog(
+  vendorId: string,
+  limit = 50,
+): Promise<any[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.action, l.old_account_last4, l.old_ifsc, l.new_account_last4,
             l.new_ifsc, l.actor_user_id, l.actor_role, l.reason, l.ip_address,

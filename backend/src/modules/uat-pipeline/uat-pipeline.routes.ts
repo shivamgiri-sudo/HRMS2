@@ -74,8 +74,10 @@ import { enqueue } from "./uat-job-runner.js";
 const router = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) =>
-  fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 const APPROVER_ROLES = ["super_admin", "admin"] as const;
 const RELEASE_ROLES = ["super_admin", "admin", "hr"] as const;
@@ -88,13 +90,18 @@ async function actorOf(req: AuthenticatedRequest) {
   const employee = await getEmployeeForUser(userId);
   if (!employee) {
     const e = new Error(
-      "Your login is not linked to an employee record, so UAT feedback cannot be attributed to you."
+      "Your login is not linked to an employee record, so UAT feedback cannot be attributed to you.",
     ) as Error & { statusCode?: number };
     e.statusCode = 403;
     throw e;
   }
   const roles = await getUserRoleKeys(userId);
-  return { userId, employeeId: employee.id, employeeCode: employee.employee_code, roles };
+  return {
+    userId,
+    employeeId: employee.id,
+    employeeCode: employee.employee_code,
+    roles,
+  };
 }
 
 // ── Intake ────────────────────────────────────────────────────────────────────
@@ -134,7 +141,7 @@ router.post(
           : null,
       },
     });
-  })
+  }),
 );
 
 /**
@@ -149,9 +156,13 @@ router.get(
     const q = req.query as Record<string, string | undefined>;
     const title = (q.title ?? "").trim();
     if (title.length < 6) return res.json({ success: true, data: [] });
-    const data = await findSimilar(title, q.pageRoute ?? null, q.pageCode ?? null);
+    const data = await findSimilar(
+      title,
+      q.pageRoute ?? null,
+      q.pageCode ?? null,
+    );
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -160,7 +171,7 @@ router.post(
     const actor = await actorOf(req);
     const affectedUserCount = await recordMeToo(req.params.id, actor.userId);
     return res.json({ success: true, data: { affectedUserCount } });
-  })
+  }),
 );
 
 router.get(
@@ -180,49 +191,68 @@ router.get(
     const now = new Date();
     return res.json({
       success: true,
-      data: rows.map((r) => ({ ...r, aging: agingFor(r.created_at, r.due_at, now) })),
+      data: rows.map((r) => ({
+        ...r,
+        aging: agingFor(r.created_at, r.due_at, now),
+      })),
       total,
     });
-  })
+  }),
 );
 
 router.get(
   "/feedback/:id",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
-    const row = await getFeedback(req.params.id, actor.userId, actor.employeeId);
+    const row = await getFeedback(
+      req.params.id,
+      actor.userId,
+      actor.employeeId,
+    );
     // 404 rather than 403 for an out-of-scope item: telling a caller that an item exists but
     // belongs to another branch is itself a disclosure.
-    if (!row) return res.status(404).json({ success: false, error: "Not found" });
+    if (!row)
+      return res.status(404).json({ success: false, error: "Not found" });
     const isTriage = actor.roles.some((r) => UAT_TRIAGE_ROLES.includes(r));
     return res.json({
       success: true,
       data: {
         ...row,
         // body_raw is restricted: a triager sees it, a bystander does not.
-        body_raw: isTriage || row.submitted_by_employee_id === actor.employeeId ? row.body_raw : null,
+        body_raw:
+          isTriage || row.submitted_by_employee_id === actor.employeeId
+            ? row.body_raw
+            : null,
         aging: agingFor(row.created_at, row.due_at),
       },
     });
-  })
+  }),
 );
 
 router.get(
   "/feedback/:id/timeline",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
-    const row = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!row) return res.status(404).json({ success: false, error: "Not found" });
+    const row = await getFeedback(
+      req.params.id,
+      actor.userId,
+      actor.employeeId,
+    );
+    if (!row)
+      return res.status(404).json({ success: false, error: "Not found" });
     return res.json({ success: true, data: await getTimeline(req.params.id) });
-  })
+  }),
 );
 
 router.get(
   "/feedback/:id/scan",
   requireRole(...UAT_TRIAGE_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    return res.json({ success: true, data: await getLatestScan(req.params.id) });
-  })
+    return res.json({
+      success: true,
+      data: await getLatestScan(req.params.id),
+    });
+  }),
 );
 
 // ── Comments ──────────────────────────────────────────────────────────────────
@@ -231,27 +261,47 @@ router.get(
   "/feedback/:id/comments",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
-    const row = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!row) return res.status(404).json({ success: false, error: "Not found" });
+    const row = await getFeedback(
+      req.params.id,
+      actor.userId,
+      actor.employeeId,
+    );
+    if (!row)
+      return res.status(404).json({ success: false, error: "Not found" });
     const isTriage = actor.roles.some((r) => UAT_TRIAGE_ROLES.includes(r));
-    return res.json({ success: true, data: await listComments(req.params.id, isTriage) });
-  })
+    return res.json({
+      success: true,
+      data: await listComments(req.params.id, isTriage),
+    });
+  }),
 );
 
 router.post(
   "/feedback/:id/comments",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
-    const row = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!row) return res.status(404).json({ success: false, error: "Not found" });
+    const row = await getFeedback(
+      req.params.id,
+      actor.userId,
+      actor.employeeId,
+    );
+    if (!row)
+      return res.status(404).json({ success: false, error: "Not found" });
     const isTriage = actor.roles.some((r) => UAT_TRIAGE_ROLES.includes(r));
     // A reporter's own comment is visible to them by definition; only a triager may file an
     // internal note.
     const visibility =
-      isTriage && req.body?.visibility === "internal" ? "internal" : "reporter_visible";
-    await addComment(req.params.id, String(req.body?.body ?? ""), actor, visibility);
+      isTriage && req.body?.visibility === "internal"
+        ? "internal"
+        : "reporter_visible";
+    await addComment(
+      req.params.id,
+      String(req.body?.body ?? ""),
+      actor,
+      visibility,
+    );
     return res.status(201).json({ success: true });
-  })
+  }),
 );
 
 // ── Attachments ───────────────────────────────────────────────────────────────
@@ -272,32 +322,53 @@ const attachmentUpload = multer({
 router.post(
   "/feedback/:id/attachments",
   attachmentUpload.single("file"),
-  h(async (req: AuthenticatedRequest & { file?: Express.Multer.File }, res: Response) => {
-    const actor = await actorOf(req);
-    // Scope check first: the uploader must be able to see the item they are attaching to.
-    const row = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!row) return res.status(404).json({ success: false, error: "Not found" });
-    if (!req.file) return res.status(400).json({ success: false, error: "No file was uploaded" });
+  h(
+    async (
+      req: AuthenticatedRequest & { file?: Express.Multer.File },
+      res: Response,
+    ) => {
+      const actor = await actorOf(req);
+      // Scope check first: the uploader must be able to see the item they are attaching to.
+      const row = await getFeedback(
+        req.params.id,
+        actor.userId,
+        actor.employeeId,
+      );
+      if (!row)
+        return res.status(404).json({ success: false, error: "Not found" });
+      if (!req.file)
+        return res
+          .status(400)
+          .json({ success: false, error: "No file was uploaded" });
 
-    const stored = await storeAttachment({
-      feedbackId: req.params.id,
-      uploadedBy: actor.userId,
-      originalFilename: req.file.originalname,
-      declaredMime: req.file.mimetype,
-      buffer: req.file.buffer,
-    });
-    return res.status(201).json({ success: true, data: stored });
-  })
+      const stored = await storeAttachment({
+        feedbackId: req.params.id,
+        uploadedBy: actor.userId,
+        originalFilename: req.file.originalname,
+        declaredMime: req.file.mimetype,
+        buffer: req.file.buffer,
+      });
+      return res.status(201).json({ success: true, data: stored });
+    },
+  ),
 );
 
 router.get(
   "/feedback/:id/attachments",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
-    const row = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!row) return res.status(404).json({ success: false, error: "Not found" });
-    return res.json({ success: true, data: await listAttachments(req.params.id) });
-  })
+    const row = await getFeedback(
+      req.params.id,
+      actor.userId,
+      actor.employeeId,
+    );
+    if (!row)
+      return res.status(404).json({ success: false, error: "Not found" });
+    return res.json({
+      success: true,
+      data: await listAttachments(req.params.id),
+    });
+  }),
 );
 
 /**
@@ -322,10 +393,10 @@ router.get(
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${file.filename.replace(/[^A-Za-z0-9._-]/g, "_")}"`
+      `attachment; filename="${file.filename.replace(/[^A-Za-z0-9._-]/g, "_")}"`,
     );
     return res.send(file.buffer);
-  })
+  }),
 );
 
 router.delete(
@@ -339,7 +410,7 @@ router.delete(
       isTriage,
     });
     return res.json({ success: true });
-  })
+  }),
 );
 
 // ── Triage ────────────────────────────────────────────────────────────────────
@@ -349,9 +420,13 @@ router.post(
   requireRole(...UAT_TRIAGE_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
-    await assignFeedback(req.params.id, req.body?.assigneeEmployeeId ?? null, actor.userId);
+    await assignFeedback(
+      req.params.id,
+      req.body?.assigneeEmployeeId ?? null,
+      actor.userId,
+    );
     return res.json({ success: true });
-  })
+  }),
 );
 
 router.post(
@@ -359,9 +434,13 @@ router.post(
   requireRole(...UAT_TRIAGE_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
-    await markDuplicate(req.params.id, String(req.body?.canonicalId ?? ""), actor.userId);
+    await markDuplicate(
+      req.params.id,
+      String(req.body?.canonicalId ?? ""),
+      actor.userId,
+    );
     return res.json({ success: true });
-  })
+  }),
 );
 
 // ── Approvals ─────────────────────────────────────────────────────────────────
@@ -372,9 +451,12 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     return res.json({
       success: true,
-      data: { approvals: await listApprovals(req.params.id), gate: await gateStatus(req.params.id) },
+      data: {
+        approvals: await listApprovals(req.params.id),
+        gate: await gateStatus(req.params.id),
+      },
     });
-  })
+  }),
 );
 
 router.post(
@@ -395,7 +477,7 @@ router.post(
       ruleEditorUserIds: [],
     });
     return res.json({ success: true });
-  })
+  }),
 );
 
 router.post(
@@ -414,7 +496,7 @@ router.post(
       reason: req.body?.reason ?? null,
     });
     return res.status(201).json({ success: true, data: { id } });
-  })
+  }),
 );
 
 // ── Release lifecycle ─────────────────────────────────────────────────────────
@@ -425,7 +507,7 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     await createRelease(req.body);
     return res.status(201).json({ success: true });
-  })
+  }),
 );
 
 router.post(
@@ -435,11 +517,14 @@ router.post(
     const actor = await actorOf(req);
     await markDeployedToUat(
       req.params.id,
-      { releaseId: req.body?.releaseId ?? null, buildSha: req.body?.buildSha ?? null },
-      actor.userId
+      {
+        releaseId: req.body?.releaseId ?? null,
+        buildSha: req.body?.buildSha ?? null,
+      },
+      actor.userId,
     );
     return res.json({ success: true });
-  })
+  }),
 );
 
 /**
@@ -452,19 +537,27 @@ router.post(
   "/feedback/:id/retest",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
-    const out = await recordRetest({ ...req.body, feedbackId: req.params.id }, actor);
+    const out = await recordRetest(
+      { ...req.body, feedbackId: req.params.id },
+      actor,
+    );
     return res.status(201).json({ success: true, data: out });
-  })
+  }),
 );
 
 router.get(
   "/feedback/:id/retests",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
-    const row = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!row) return res.status(404).json({ success: false, error: "Not found" });
+    const row = await getFeedback(
+      req.params.id,
+      actor.userId,
+      actor.employeeId,
+    );
+    if (!row)
+      return res.status(404).json({ success: false, error: "Not found" });
     return res.json({ success: true, data: await listRetests(req.params.id) });
-  })
+  }),
 );
 
 router.post(
@@ -479,10 +572,10 @@ router.post(
         version: String(req.body?.version ?? ""),
         approvedReleaseVersion: String(req.body?.approvedReleaseVersion ?? ""),
       },
-      actor.userId
+      actor.userId,
     );
     return res.json({ success: true });
-  })
+  }),
 );
 
 /** Verification is restricted to the reporter or QA owner inside the service, not by role. */
@@ -493,10 +586,10 @@ router.post(
     await verifyInProduction(
       req.params.id,
       { checklist: req.body?.checklist ?? {}, note: req.body?.note ?? null },
-      actor
+      actor,
     );
     return res.json({ success: true });
-  })
+  }),
 );
 
 router.post(
@@ -506,11 +599,14 @@ router.post(
     const actor = await actorOf(req);
     await requireRollback(
       req.params.id,
-      { releaseId: String(req.body?.releaseId ?? ""), reason: String(req.body?.reason ?? "") },
-      actor.userId
+      {
+        releaseId: String(req.body?.releaseId ?? ""),
+        reason: String(req.body?.reason ?? ""),
+      },
+      actor.userId,
     );
     return res.json({ success: true });
-  })
+  }),
 );
 
 router.post(
@@ -525,10 +621,10 @@ router.post(
         restoredVersion: String(req.body?.restoredVersion ?? ""),
         verification: req.body?.verification ?? null,
       },
-      actor.userId
+      actor.userId,
     );
     return res.json({ success: true });
-  })
+  }),
 );
 
 // ── Governance transparency ───────────────────────────────────────────────────
@@ -566,7 +662,7 @@ router.get(
           "loosened from inside the application.",
       },
     });
-  })
+  }),
 );
 
 /**
@@ -582,19 +678,19 @@ router.get(
       `SELECT status, COUNT(*) AS n FROM uat_feedback
         WHERE status IN ('scanning','validating','prompt_writing','build_running')
           AND updated_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
-        GROUP BY status`
+        GROUP BY status`,
     );
     const [pending] = await db.execute(
-      `SELECT COUNT(*) AS n FROM uat_approval WHERE decision = 'pending'`
+      `SELECT COUNT(*) AS n FROM uat_approval WHERE decision = 'pending'`,
     );
     const [overdue] = await db.execute(
       `SELECT COUNT(*) AS n FROM uat_feedback
         WHERE due_at IS NOT NULL AND due_at < NOW()
-          AND status NOT IN ('closed','rejected','invalid')`
+          AND status NOT IN ('closed','rejected','invalid')`,
     );
     const [expiredDeleg] = await db.execute(
       `SELECT COUNT(*) AS n FROM uat_approver_delegation
-        WHERE revoked_at IS NULL AND valid_until < NOW()`
+        WHERE revoked_at IS NULL AND valid_until < NOW()`,
     );
     return res.json({
       success: true,
@@ -611,7 +707,7 @@ router.get(
         spendTodayUsd: (await spendTodayMicros()) / 1_000_000,
       },
     });
-  })
+  }),
 );
 
 // ── Checklist (Phase 2) ───────────────────────────────────────────────────────
@@ -640,7 +736,7 @@ router.get(
         })),
       },
     });
-  })
+  }),
 );
 
 /**
@@ -659,7 +755,10 @@ router.get(
     // its evaluation either. getFeedback applies the scope WHERE clause, so an out-of-scope
     // id comes back null and is indistinguishable from one that does not exist.
     const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    if (!fb)
+      return res
+        .status(404)
+        .json({ success: false, message: "Feedback item not found." });
     const { db } = await import("../../db/mysql.js");
     const [rows] = await db.execute(
       `SELECT item_key, verdict, source, evidence, confidence, rule_version,
@@ -667,15 +766,18 @@ router.get(
          FROM uat_checklist_evaluation
         WHERE feedback_id = ?
         ORDER BY item_key`,
-      [req.params.id]
+      [req.params.id],
     );
     const [hits] = await db.execute(
       `SELECT capability_key, capability_class, match_signal, matched_token
          FROM uat_capability_hit WHERE feedback_id = ? ORDER BY capability_key`,
-      [req.params.id]
+      [req.params.id],
     );
-    return res.json({ success: true, data: { evaluations: rows, capabilityHits: hits } });
-  })
+    return res.json({
+      success: true,
+      data: { evaluations: rows, capabilityHits: hits },
+    });
+  }),
 );
 
 /**
@@ -691,7 +793,10 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
     const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    if (!fb)
+      return res
+        .status(404)
+        .json({ success: false, message: "Feedback item not found." });
     const { db } = await import("../../db/mysql.js");
     const [rows] = await db.execute(
       `SELECT stage, provider_key, model_id, model_version, effort, attempt_no,
@@ -701,10 +806,10 @@ router.get(
          FROM uat_llm_call
         WHERE feedback_id = ?
         ORDER BY created_at`,
-      [req.params.id]
+      [req.params.id],
     );
     return res.json({ success: true, data: rows });
-  })
+  }),
 );
 
 /**
@@ -721,7 +826,10 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
     const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    if (!fb)
+      return res
+        .status(404)
+        .json({ success: false, message: "Feedback item not found." });
     const { queued } = await queueValidation(req.params.id, actor.userId);
     return res.json({
       success: true,
@@ -732,12 +840,17 @@ router.post(
           : "This item is already queued for evaluation.",
       },
     });
-  })
+  }),
 );
 
 // -- Change-type governance (Phase 3) -----------------------------------------
 
-const CHANGE_TYPES: ChangeType[] = ["bug", "enhancement", "policy_change", "unclear"];
+const CHANGE_TYPES: ChangeType[] = [
+  "bug",
+  "enhancement",
+  "policy_change",
+  "unclear",
+];
 
 /**
  * Confirm a change type. A HUMAN does this, not the model.
@@ -752,7 +865,10 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
     const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    if (!fb)
+      return res
+        .status(404)
+        .json({ success: false, message: "Feedback item not found." });
 
     const changeType = String(req.body?.changeType ?? "") as ChangeType;
     if (!CHANGE_TYPES.includes(changeType)) {
@@ -767,7 +883,7 @@ router.post(
       actorUserId: actor.userId,
     });
     return res.json({ success: true, data: gate });
-  })
+  }),
 );
 
 /** Where the change-type gate stands, and who is being waited on. */
@@ -777,13 +893,16 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
     const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    if (!fb)
+      return res
+        .status(404)
+        .json({ success: false, message: "Feedback item not found." });
     const gate = await changeTypeGate(
       req.params.id,
-      (fb as { change_type?: ChangeType | null }).change_type ?? null
+      (fb as { change_type?: ChangeType | null }).change_type ?? null,
     );
     return res.json({ success: true, data: gate });
-  })
+  }),
 );
 
 /** The governance policy itself, so the console can explain a requirement before it bites. */
@@ -794,7 +913,7 @@ router.get(
     const data: Record<string, unknown> = {};
     for (const ct of CHANGE_TYPES) data[ct] = await requirementsFor(ct);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // -- Build prompt (Phase 3) ---------------------------------------------------
@@ -812,10 +931,17 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
     const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    if (!fb)
+      return res
+        .status(404)
+        .json({ success: false, message: "Feedback item not found." });
 
-    const sw = await switchEnabled("prompt_writer_enabled", process.env.UAT_PROMPT_WRITER_ENABLED);
-    if (!sw.enabled) return res.status(409).json({ success: false, message: sw.reason });
+    const sw = await switchEnabled(
+      "prompt_writer_enabled",
+      process.env.UAT_PROMPT_WRITER_ENABLED,
+    );
+    if (!sw.enabled)
+      return res.status(409).json({ success: false, message: sw.reason });
 
     const status = (fb as { status?: string }).status;
     if (status !== "checklist_passed" && status !== "awaiting_approval") {
@@ -827,7 +953,7 @@ router.post(
 
     const gate = await changeTypeGate(
       req.params.id,
-      (fb as { change_type?: ChangeType | null }).change_type ?? null
+      (fb as { change_type?: ChangeType | null }).change_type ?? null,
     );
     if (!gate.satisfied) {
       return res.status(409).json({
@@ -852,7 +978,7 @@ router.post(
           : "A prompt is already queued for this item.",
       },
     });
-  })
+  }),
 );
 
 /**
@@ -867,7 +993,10 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
     const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    if (!fb)
+      return res
+        .status(404)
+        .json({ success: false, message: "Feedback item not found." });
 
     const row = await latestPrompt(req.params.id);
     if (!row) return res.json({ success: true, data: null });
@@ -893,7 +1022,7 @@ router.get(
         createdAt: row.created_at,
       },
     });
-  })
+  }),
 );
 
 /**
@@ -912,13 +1041,19 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const actor = await actorOf(req);
     const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
-    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    if (!fb)
+      return res
+        .status(404)
+        .json({ success: false, message: "Feedback item not found." });
 
     const decision = String(req.body?.decision ?? "");
     if (decision !== "approved" && decision !== "rejected") {
       return res
         .status(400)
-        .json({ success: false, message: "decision must be approved or rejected." });
+        .json({
+          success: false,
+          message: "decision must be approved or rejected.",
+        });
     }
     const promptId = String(req.body?.promptId ?? "");
     const expectedSha = String(req.body?.promptSha256 ?? "");
@@ -948,7 +1083,7 @@ router.post(
             : "Prompt rejected.",
       },
     });
-  })
+  }),
 );
 
 /** Kill switches and their current values, so an operator can see what is live. */
@@ -963,7 +1098,8 @@ router.get(
       ["builds_enabled", process.env.UAT_BUILDS_ENABLED],
     ] as const;
     const switches: Record<string, unknown> = {};
-    for (const [key, envValue] of keys) switches[key] = await switchEnabled(key, envValue);
+    for (const [key, envValue] of keys)
+      switches[key] = await switchEnabled(key, envValue);
     return res.json({
       success: true,
       data: {
@@ -973,7 +1109,7 @@ router.get(
         allowlistedModules: await readConfig("allowlisted_modules", ""),
       },
     });
-  })
+  }),
 );
 
 export const uatPipelineRouter = router;

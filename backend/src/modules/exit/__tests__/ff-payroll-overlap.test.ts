@@ -21,7 +21,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn() }));
-vi.mock("../../payroll/payrollCalculate.service.js", () => ({ calculateGratuity: vi.fn() }));
+vi.mock("../../payroll/payrollCalculate.service.js", () => ({
+  calculateGratuity: vi.fn(),
+}));
 vi.mock("../exit.notifications.js", () => ({ notifyFullFinalReady: vi.fn() }));
 
 import { ffService } from "../ff.service.js";
@@ -40,15 +42,29 @@ const FF_ROW = {
 };
 
 const PAID_LINES = [
-  { run_month: "2026-07", run_status: "processing", gross_salary: 62009.81, net_salary: 58786.07, paid_working_days: 15 },
-  { run_month: "2026-06", run_status: "processing", gross_salary: 80096.0, net_salary: 75932.0, paid_working_days: 30 },
+  {
+    run_month: "2026-07",
+    run_status: "processing",
+    gross_salary: 62009.81,
+    net_salary: 58786.07,
+    paid_working_days: 15,
+  },
+  {
+    run_month: "2026-06",
+    run_status: "processing",
+    gross_salary: 80096.0,
+    net_salary: 75932.0,
+    paid_working_days: 30,
+  },
 ];
 
 describe("getFF surfaces payroll already paid over the settlement window", () => {
   beforeEach(() => execute.mockReset());
 
   it("attaches the payroll lines already raised for the employee", async () => {
-    execute.mockResolvedValueOnce([[FF_ROW]]).mockResolvedValueOnce([PAID_LINES]);
+    execute
+      .mockResolvedValueOnce([[FF_ROW]])
+      .mockResolvedValueOnce([PAID_LINES]);
 
     const ff = await ffService.getFF(EXIT_REQUEST_ID);
 
@@ -58,7 +74,9 @@ describe("getFF surfaces payroll already paid over the settlement window", () =>
   });
 
   it("does not block or alter the settlement — overlap is informational", async () => {
-    execute.mockResolvedValueOnce([[FF_ROW]]).mockResolvedValueOnce([PAID_LINES]);
+    execute
+      .mockResolvedValueOnce([[FF_ROW]])
+      .mockResolvedValueOnce([PAID_LINES]);
 
     // A mid-month leaver legitimately appears in both. getFF must still return the
     // record rather than throwing, and must not silently adjust any figure.
@@ -89,7 +107,9 @@ describe("the overlap query only counts money actually paid", () => {
     // Nothing has been paid out of a draft or cancelled run, and an excluded or
     // blocked line is not a payment either — counting them would produce false
     // warnings on every settlement.
-    expect(sql).toMatch(/LOWER\(spl\.status\) NOT IN \('excluded', 'blocked'\)/);
+    expect(sql).toMatch(
+      /LOWER\(spl\.status\) NOT IN \('excluded', 'blocked'\)/,
+    );
     expect(sql).toMatch(/LOWER\(spr\.status\) NOT IN \('draft', 'cancelled'\)/);
     expect(sql).toMatch(/DATE_SUB\(\?, INTERVAL 2 MONTH\)/);
     expect(params).toEqual([EMPLOYEE_ID, "2026-07-28", "2026-07-28"]);

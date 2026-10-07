@@ -33,7 +33,9 @@ export async function resolveClientSearchProcessIds(input: {
   }
   if (search) {
     const like = `%${search}%`;
-    conds.push("(p.process_name LIKE ? OR p.process_code LIKE ? OR cm.client_name LIKE ? OR bm.branch_name LIKE ?)");
+    conds.push(
+      "(p.process_name LIKE ? OR p.process_code LIKE ? OR cm.client_name LIKE ? OR bm.branch_name LIKE ?)",
+    );
     params.push(like, like, like, like);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -53,7 +55,10 @@ export async function resolveClientSearchProcessIds(input: {
  * requested) with the client/search match. Never widens: with both present the result is their
  * intersection, and an empty intersection is NO_MATCHING_PROCESS rather than "all processes".
  */
-export function narrowProcessScope(base: string[], clientSearch: string[] | null): string[] {
+export function narrowProcessScope(
+  base: string[],
+  clientSearch: string[] | null,
+): string[] {
   if (clientSearch === null) return base;
   if (base.length === 0) return clientSearch;
   const allowed = new Set(clientSearch);

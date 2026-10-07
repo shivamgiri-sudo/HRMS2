@@ -66,7 +66,9 @@ describe("processService.getById", () => {
 
   it("throws 'Process not found' when repository returns null", async () => {
     mockRepo.getById.mockResolvedValueOnce(null);
-    await expect(processService.getById("missing-id")).rejects.toThrow("Process not found");
+    await expect(processService.getById("missing-id")).rejects.toThrow(
+      "Process not found",
+    );
   });
 });
 
@@ -82,7 +84,7 @@ describe("processService.create", () => {
 
     const result = await processService.create(
       { processCode: "IB", processName: "Inbound" },
-      "user-1"
+      "user-1",
     );
     expect(result).toEqual(fakeProcess);
     expect(mockRepo.create).toHaveBeenCalledOnce();
@@ -92,7 +94,10 @@ describe("processService.create", () => {
     mockRepo.list.mockResolvedValueOnce([fakeProcess]); // 'IB' already exists
 
     await expect(
-      processService.create({ processCode: "ib", processName: "Inbound 2" }, "user-1")
+      processService.create(
+        { processCode: "ib", processName: "Inbound 2" },
+        "user-1",
+      ),
     ).rejects.toThrow("Process code or process name already exists");
 
     expect(mockRepo.create).not.toHaveBeenCalled();
@@ -110,7 +115,11 @@ describe("processService.update", () => {
     const updated = { ...fakeProcess, process_name: "Inbound Updated" };
     mockRepo.update.mockResolvedValueOnce(updated);
 
-    const result = await processService.update("proc-1", { processName: "Inbound Updated" }, "user-1");
+    const result = await processService.update(
+      "proc-1",
+      { processName: "Inbound Updated" },
+      "user-1",
+    );
     expect(result.process_name).toBe("Inbound Updated");
   });
 
@@ -118,7 +127,7 @@ describe("processService.update", () => {
     mockRepo.getById.mockResolvedValueOnce(null);
 
     await expect(
-      processService.update("missing", { processName: "X" }, "user-1")
+      processService.update("missing", { processName: "X" }, "user-1"),
     ).rejects.toThrow("Process not found");
 
     expect(mockRepo.update).not.toHaveBeenCalled();
@@ -144,7 +153,7 @@ describe("processService.updateStatus", () => {
     mockRepo.getById.mockResolvedValueOnce(null);
 
     await expect(
-      processService.updateStatus("missing", true, "user-1")
+      processService.updateStatus("missing", true, "user-1"),
     ).rejects.toThrow("Process not found");
   });
 });

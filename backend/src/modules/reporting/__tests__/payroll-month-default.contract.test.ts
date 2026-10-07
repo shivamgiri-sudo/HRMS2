@@ -1,12 +1,16 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolvePayrollMonth, __resetPayrollMonthCache } from "../payroll-month.js";
+import {
+  resolvePayrollMonth,
+  __resetPayrollMonthCache,
+} from "../payroll-month.js";
 
 const ROOT = process.cwd();
 const R = "src/modules/reporting";
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
-const strip = (s: string) => s.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+const strip = (s: string) =>
+  s.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
 /**
  * Payroll is closed monthly and always in arrears, so for most of any month there is no run
@@ -36,14 +40,24 @@ const strip = (s: string) => s.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*
  * `FROM process_master` subquery fooled it.
  */
 const PAYROLL_TABLES = [
-  "salary_prep_line", "salary_prep_run", "legacy_payslip_snapshot", "salary_prep_line_component",
+  "salary_prep_line",
+  "salary_prep_run",
+  "legacy_payslip_snapshot",
+  "salary_prep_line_component",
 ];
 
-interface Block { name: string; body: string; file: string }
+interface Block {
+  name: string;
+  body: string;
+  file: string;
+}
 
 function blocks(): Block[] {
   const out: Block[] = [];
-  for (const file of ["report-suite.routes.ts", "report-suite-highrisk.routes.ts"]) {
+  for (const file of [
+    "report-suite.routes.ts",
+    "report-suite-highrisk.routes.ts",
+  ]) {
     const src = read(`${R}/${file}`);
     // The high-risk router is one handler per route, not a switch.
     if (file.includes("highrisk")) {
@@ -58,7 +72,9 @@ function blocks(): Block[] {
       if (m) out.push({ name: m[1], body: part, file });
     }
   }
-  for (const file of readdirSync(resolve(ROOT, `${R}/executors`)).filter(f => f.endsWith(".executor.ts"))) {
+  for (const file of readdirSync(resolve(ROOT, `${R}/executors`)).filter((f) =>
+    f.endsWith(".executor.ts"),
+  )) {
     const src = read(`${R}/executors/${file}`);
     for (const part of src.split(/(?=\nexport async function )/)) {
       const m = /^\nexport async function (\w+)\(/.exec(part);
@@ -93,11 +109,15 @@ const drivingTable = (body: string) => {
     const at = source.indexOf(`export const ${name}`);
     if (at !== -1) text += "\n" + strip(source.slice(at, at + 6000));
   }
-  return (/\bFROM\s+`?([a-z_][a-z0-9_]*)`?/i.exec(text)?.[1] ?? "").toLowerCase();
+  return (
+    /\bFROM\s+`?([a-z_][a-z0-9_]*)`?/i.exec(text)?.[1] ?? ""
+  ).toLowerCase();
 };
 
 describe("payroll month default", () => {
-  const all = blocks().filter(b => /monthParam\(|resolvePayrollMonth\(/.test(strip(b.body)));
+  const all = blocks().filter((b) =>
+    /monthParam\(|resolvePayrollMonth\(/.test(strip(b.body)),
+  );
 
   /**
    * arrear-payment-register reads legacy_payslip_snapshot, where the month filter is optional
@@ -109,14 +129,15 @@ describe("payroll month default", () => {
 
   it("every payroll-driven report resolves its month from payroll, not from today", () => {
     const offenders = all
-      .filter(b => PAYROLL_TABLES.includes(drivingTable(b.body)))
-      .filter(b => !EXEMPT.has(b.name))
-      .filter(b => !/resolvePayrollMonth\(/.test(strip(b.body)))
-      .map(b => `${b.name} (${b.file}, FROM ${drivingTable(b.body)})`);
+      .filter((b) => PAYROLL_TABLES.includes(drivingTable(b.body)))
+      .filter((b) => !EXEMPT.has(b.name))
+      .filter((b) => !/resolvePayrollMonth\(/.test(strip(b.body)))
+      .map((b) => `${b.name} (${b.file}, FROM ${drivingTable(b.body)})`);
     expect(
       offenders,
       "these read a payroll table but default their month to the current calendar month, " +
-        "so they render empty until that month's payroll run exists:\n" + offenders.join("\n"),
+        "so they render empty until that month's payroll run exists:\n" +
+        offenders.join("\n"),
     ).toEqual([]);
   });
 
@@ -125,12 +146,13 @@ describe("payroll month default", () => {
     // legacy_payslip_snapshot, whose month filter is optional, and its unfiltered view shows
     // all 20 arrear rows there have ever been — pinning it to one month would empty it.
     const wrong = all
-      .filter(b => !PAYROLL_TABLES.includes(drivingTable(b.body)))
-      .filter(b => /resolvePayrollMonth\(/.test(strip(b.body)))
-      .map(b => `${b.name} (${b.file}, FROM ${drivingTable(b.body)})`);
+      .filter((b) => !PAYROLL_TABLES.includes(drivingTable(b.body)))
+      .filter((b) => /resolvePayrollMonth\(/.test(strip(b.body)))
+      .map((b) => `${b.name} (${b.file}, FROM ${drivingTable(b.body)})`);
     expect(
       wrong,
-      "these do not read a payroll table, so a payroll month would rewind them:\n" + wrong.join("\n"),
+      "these do not read a payroll table, so a payroll month would rewind them:\n" +
+        wrong.join("\n"),
     ).toEqual([]);
   });
 
@@ -151,7 +173,9 @@ describe("payroll month default", () => {
     // Falls through to the lookup instead of binding "garbage" / "2026-13" as a run_month.
     for (const bad of ["garbage", "2026-1", "26-01", "", "2026-07-01"]) {
       const got = await resolvePayrollMonth(bad);
-      expect(got, `${JSON.stringify(bad)} must not be used as a month`).toMatch(/^\d{4}-\d{2}$/);
+      expect(got, `${JSON.stringify(bad)} must not be used as a month`).toMatch(
+        /^\d{4}-\d{2}$/,
+      );
       expect(got).not.toBe(bad);
     }
   });

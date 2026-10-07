@@ -58,7 +58,7 @@ describe("payroll sign-off — schema contract", () => {
       expect(routes, `route no longer references ${column}`).toContain(column);
       expect(
         migration,
-        `route uses ${column} but migration 1021 never adds it — the route will 500 with ER_BAD_FIELD_ERROR`
+        `route uses ${column} but migration 1021 never adds it — the route will 500 with ER_BAD_FIELD_ERROR`,
       ).toMatch(new RegExp(`ADD COLUMN ${column}\\b`));
     },
   );
@@ -72,8 +72,11 @@ describe("payroll sign-off — schema contract", () => {
   it("is idempotent — guards every ADD COLUMN through information_schema", () => {
     // Match the statement, not the phrase — the header comment mentions
     // "ADD COLUMN IF NOT EXISTS" and would otherwise be counted.
-    const addCount = (migration.match(/ALTER TABLE salary_prep_run ADD COLUMN/g) ?? []).length;
-    const guardCount = (migration.match(/information_schema\.COLUMNS/g) ?? []).length;
+    const addCount = (
+      migration.match(/ALTER TABLE salary_prep_run ADD COLUMN/g) ?? []
+    ).length;
+    const guardCount = (migration.match(/information_schema\.COLUMNS/g) ?? [])
+      .length;
     expect(addCount).toBe(REQUIRED_COLUMNS.length);
     expect(guardCount).toBeGreaterThanOrEqual(addCount);
   });
@@ -98,7 +101,7 @@ describe("payroll sign-off — pending-run queue predicate", () => {
     expect(
       queueQuery,
       "'calculated' is only written by the payroll-compliance calculator and " +
-        "'validated' goes to validation_status, not status — this matched 0 of 67 live runs"
+        "'validated' goes to validation_status, not status — this matched 0 of 67 live runs",
     ).not.toMatch(/status IN \('calculated', ?'validated'\)/);
   });
 
@@ -126,7 +129,9 @@ describe("payroll sign-off — pending-run queue predicate", () => {
     // ₹1.22 Cr across 1,288 payslip lines, rendering identically to the real
     // 'system' run beside it. Without this guard finance is offered a test run
     // as a signable option.
-    expect(routes).toMatch(/SYNTHETIC_RUN_CREATORS\s*=\s*\[[^\]]*"test-auto-gen"/);
+    expect(routes).toMatch(
+      /SYNTHETIC_RUN_CREATORS\s*=\s*\[[^\]]*"test-auto-gen"/,
+    );
     expect(queueQuery).toMatch(/created_by[^\n]*NOT IN/);
   });
 
@@ -147,12 +152,18 @@ describe("payroll sign-off — pending-run queue predicate", () => {
     // 16 of the 67 live runs. The Jul-2026 run finance signs off claims 1,288
     // against 1,467 real employees; the May-2026 draft claims 11 against 1,148;
     // two FINALIZED runs claim 0 against ~1,100.
-    expect(queueQuery).toMatch(/COUNT\(DISTINCT l\.employee_id\)\s+AS employee_count/);
-    expect(queueQuery).toMatch(/LEFT JOIN salary_prep_line l ON l\.run_id = r\.id/);
+    expect(queueQuery).toMatch(
+      /COUNT\(DISTINCT l\.employee_id\)\s+AS employee_count/,
+    );
+    expect(queueQuery).toMatch(
+      /LEFT JOIN salary_prep_line l ON l\.run_id = r\.id/,
+    );
   });
 
   it("derives net salary from the lines too", () => {
-    expect(queueQuery).toMatch(/SUM\(l\.net_salary\)[^)]*\)\s+AS total_net_salary/);
+    expect(queueQuery).toMatch(
+      /SUM\(l\.net_salary\)[^)]*\)\s+AS total_net_salary/,
+    );
   });
 
   it("still exposes the header count so the discrepancy stays visible", () => {
@@ -181,6 +192,8 @@ describe("segregation of duties — ceo grants", () => {
     expect(routes).toMatch(
       /"\/runs\/:runId\/finance-approve",\s*\n?\s*requireRole\((?:(?!ceo)[^)])*\)/,
     );
-    expect(routes).toMatch(/"\/runs\/:runId\/ceo-acknowledge",\s*\n?\s*requireRole\("ceo"/);
+    expect(routes).toMatch(
+      /"\/runs\/:runId\/ceo-acknowledge",\s*\n?\s*requireRole\("ceo"/,
+    );
   });
 });

@@ -2,7 +2,10 @@ import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * GS1 India — Email-based GTIN processing daily actuals.
@@ -27,9 +30,25 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  */
 
 export const GS1_EMAIL_DAILY_HEADERS = [
-  "Email Subject", "Sender Name", "Email Received Time", "Work Start Time", "Work End Time",
-  "Mail Date", "WORK Date", "Name of executive", "Type Of Query", "Status", "Ticket", "Type",
-  "Month", "Duration", "SLA", "GTIN", "Image", "Months", "Approval",
+  "Email Subject",
+  "Sender Name",
+  "Email Received Time",
+  "Work Start Time",
+  "Work End Time",
+  "Mail Date",
+  "WORK Date",
+  "Name of executive",
+  "Type Of Query",
+  "Status",
+  "Ticket",
+  "Type",
+  "Month",
+  "Duration",
+  "SLA",
+  "GTIN",
+  "Image",
+  "Months",
+  "Approval",
 ] as const;
 
 /** Handles "1-Sep-26" (real export's sheet_to_csv-rendered date) and common fallbacks. */
@@ -37,8 +56,18 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   const MONTHS: Record<string, number> = {
-    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+    jan: 1,
+    feb: 2,
+    mar: 3,
+    apr: 4,
+    may: 5,
+    jun: 6,
+    jul: 7,
+    aug: 8,
+    sep: 9,
+    oct: 10,
+    nov: 11,
+    dec: 12,
   };
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
@@ -56,7 +85,9 @@ export function parseDate(raw: unknown): string | null {
 }
 
 export function parseCount(raw: unknown): number {
-  const v = String(raw ?? "").trim().replace(/,/g, "");
+  const v = String(raw ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!v) return 0;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
@@ -74,7 +105,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 interface DailyGroup {
   mailDate: string;
@@ -138,7 +171,8 @@ export async function importGs1EmailDailyBatch(
           ? JSON.parse(row.normalized_data)
           : ((row.normalized_data ?? {}) as Record<string, unknown>);
 
-      const mailDate = parseDate(data["WORK Date"]) ?? parseDate(data["Mail Date"]);
+      const mailDate =
+        parseDate(data["WORK Date"]) ?? parseDate(data["Mail Date"]);
       const analystName = String(data["Name of executive"] ?? "").trim();
       if (!mailDate || !analystName) {
         const msg = `Row ${row.row_no}: "WORK Date" (or "Mail Date") and "Name of executive" are required`;
@@ -150,7 +184,13 @@ export async function importGs1EmailDailyBatch(
 
       const key = `${mailDate}|${analystName}`;
       const g = groups.get(key) ?? {
-        mailDate, analystName, ticketCount: 0, gtinTotal: 0, imageTotal: 0, slaHits: 0, rowNos: [],
+        mailDate,
+        analystName,
+        ticketCount: 0,
+        gtinTotal: 0,
+        imageTotal: 0,
+        slaHits: 0,
+        rowNos: [],
       };
       g.ticketCount += 1;
       g.gtinTotal += parseCount(data["GTIN"]);
@@ -165,14 +205,23 @@ export async function importGs1EmailDailyBatch(
   const toInsert: ChunkInsertRow[] = [];
   const groupKeys: string[] = [];
   for (const [key, g] of groups) {
-    const slaPct = g.ticketCount > 0 ? Math.round((g.slaHits / g.ticketCount) * 100) : 0;
+    const slaPct =
+      g.ticketCount > 0 ? Math.round((g.slaHits / g.ticketCount) * 100) : 0;
     toInsert.push({
       rowId: rowIdsByGroup.get(key)?.[0] ?? "",
       rowNo: 0,
       values: [
-        randomUUID(), processId, g.mailDate, g.analystName, g.mailDate,
-        g.ticketCount, g.gtinTotal, g.imageTotal, slaPct,
-        batchId, importedByUserId,
+        randomUUID(),
+        processId,
+        g.mailDate,
+        g.analystName,
+        g.mailDate,
+        g.ticketCount,
+        g.gtinTotal,
+        g.imageTotal,
+        slaPct,
+        batchId,
+        importedByUserId,
       ],
     });
     groupKeys.push(key);
@@ -201,7 +250,9 @@ export async function importGs1EmailDailyBatch(
       importedRows += groups.get(key)!.ticketCount;
       importedRowIds.push(...groupRowIds);
     } else {
-      const msg = inserted.errorUpdates.find((u) => u.rowId === toInsert[i].rowId)?.message ?? "insert failed";
+      const msg =
+        inserted.errorUpdates.find((u) => u.rowId === toInsert[i].rowId)
+          ?.message ?? "insert failed";
       for (const rowId of groupRowIds) {
         errors.push(`Row group ${key}: ${msg}`);
         errorUpdates.push({ rowId, message: msg.slice(0, 500) });
@@ -215,17 +266,26 @@ export async function importGs1EmailDailyBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

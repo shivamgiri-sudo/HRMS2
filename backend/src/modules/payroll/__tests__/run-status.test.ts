@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { CLOSED_RUN_STATUSES, isRunClosed, CLOSED_RUN_STATUSES_SQL } from "../run-status.js";
+import {
+  CLOSED_RUN_STATUSES,
+  isRunClosed,
+  CLOSED_RUN_STATUSES_SQL,
+} from "../run-status.js";
 
 /**
  * These tests exist because the guards they back were inert for the whole life
@@ -25,7 +29,14 @@ describe("closed payroll run statuses", () => {
   it("matches regardless of casing, because the lifecycle is written both ways", () => {
     // 'FINALIZED' comes from the payroll UI, 'locked' from older code. A guard
     // that only holds for one casing does not hold.
-    for (const s of ["FINALIZED", "finalized", "Finalized", "LOCKED", "locked", "Disbursed"]) {
+    for (const s of [
+      "FINALIZED",
+      "finalized",
+      "Finalized",
+      "LOCKED",
+      "locked",
+      "Disbursed",
+    ]) {
       expect(isRunClosed(s), `expected ${s} to be closed`).toBe(true);
     }
   });
@@ -37,7 +48,13 @@ describe("closed payroll run statuses", () => {
   it("leaves genuinely in-flight runs editable", () => {
     // 16 production runs are in these states and must stay recalculable —
     // closing them would break normal payroll work.
-    for (const s of ["draft", "processing", "approved", "reviewed", "calculated"]) {
+    for (const s of [
+      "draft",
+      "processing",
+      "approved",
+      "reviewed",
+      "calculated",
+    ]) {
       expect(isRunClosed(s), `expected ${s} to be open`).toBe(false);
     }
   });

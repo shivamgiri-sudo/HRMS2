@@ -113,7 +113,9 @@ async function reportHeldBack(conn) {
   for (const r of held) {
     console.log(`  ${r.ifsc_code}  employee_id=${r.employee_id}`);
   }
-  console.log(`\n  ${held.length} employees remain unpayable by NEFT after this repair.`);
+  console.log(
+    `\n  ${held.length} employees remain unpayable by NEFT after this repair.`,
+  );
 }
 
 async function main() {
@@ -127,7 +129,9 @@ async function main() {
   });
 
   const [rows] = await conn.execute(CANDIDATE_SQL);
-  console.log(`\nMode        : ${APPLY ? "APPLY (WRITES)" : "DRY RUN (no writes)"}`);
+  console.log(
+    `\nMode        : ${APPLY ? "APPLY (WRITES)" : "DRY RUN (no writes)"}`,
+  );
   console.log(`Host        : ${HOST}`);
   console.log(`Candidates  : ${rows.length}\n`);
 
@@ -156,14 +160,21 @@ async function main() {
 
   console.log("\nRollback statements for everything this would change:");
   for (const r of rows.slice(0, 5)) {
-    console.log(`  UPDATE employee_bank_detail SET ifsc_code='${r.ifsc_code}' WHERE id='${r.id}';`);
+    console.log(
+      `  UPDATE employee_bank_detail SET ifsc_code='${r.ifsc_code}' WHERE id='${r.id}';`,
+    );
   }
-  if (rows.length > 5) console.log(`  ... and ${rows.length - 5} more (full set written below on --apply)`);
+  if (rows.length > 5)
+    console.log(
+      `  ... and ${rows.length - 5} more (full set written below on --apply)`,
+    );
 
   await reportHeldBack(conn);
 
   if (!APPLY) {
-    console.log("\nDRY RUN — nothing was written. Re-run with --apply only after owner approval.\n");
+    console.log(
+      "\nDRY RUN — nothing was written. Re-run with --apply only after owner approval.\n",
+    );
     await conn.end();
     return;
   }
@@ -189,7 +200,9 @@ async function main() {
       `SELECT COUNT(*) AS remaining FROM (${CANDIDATE_SQL}) c`,
     );
     if (Number(remaining) !== 0) {
-      throw new Error(`Post-check failed: ${remaining} candidates still match after update`);
+      throw new Error(
+        `Post-check failed: ${remaining} candidates still match after update`,
+      );
     }
 
     await conn.commit();

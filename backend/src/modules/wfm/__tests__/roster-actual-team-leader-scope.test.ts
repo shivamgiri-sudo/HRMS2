@@ -15,7 +15,10 @@ import { describe, expect, it } from "vitest";
  */
 describe("roster.actual.secure.routes.ts ROSTER_SCOPE_ROLES includes team_leader", () => {
   it("lists team_leader alongside tl", () => {
-    const source = readFileSync(resolve(__dirname, "../roster.actual.secure.routes.ts"), "utf-8");
+    const source = readFileSync(
+      resolve(__dirname, "../roster.actual.secure.routes.ts"),
+      "utf-8",
+    );
     const match = source.match(/const ROSTER_SCOPE_ROLES = \[([^\]]*)\];/);
     expect(match, "ROSTER_SCOPE_ROLES declaration not found").not.toBeNull();
     const roles = match![1];
@@ -33,8 +36,15 @@ describe("roster.actual.secure.routes.ts ROSTER_SCOPE_ROLES includes team_leader
  */
 describe("wfm.routes.ts GET /week-off-preference recognizes team_leader (not the 'team_lead' typo)", () => {
   it("checkRole call uses the canonical spelling", () => {
-    const source = readFileSync(resolve(__dirname, "../wfm.routes.ts"), "utf-8");
-    expect(source).toContain("checkRole(req.authUser.id, 'manager', 'tl', 'team_leader')");
-    expect(source).not.toContain("checkRole(req.authUser.id, 'manager', 'tl', 'team_lead')");
+    const source = readFileSync(
+      resolve(__dirname, "../wfm.routes.ts"),
+      "utf-8",
+    );
+    expect(source).toContain(
+      "checkRole(req.authUser.id, 'manager', 'tl', 'team_leader')",
+    );
+    expect(source).not.toContain(
+      "checkRole(req.authUser.id, 'manager', 'tl', 'team_lead')",
+    );
   });
 });

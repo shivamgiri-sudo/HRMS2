@@ -8,22 +8,51 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../../db/mysql.js";
-import { changeTypeGate, requirementsFor, switchEnabled, readConfig } from "../uat-governance.service.js";
+import {
+  changeTypeGate,
+  requirementsFor,
+  switchEnabled,
+  readConfig,
+} from "../uat-governance.service.js";
 
 const mockQuery = db.query as unknown as ReturnType<typeof vi.fn>;
 
 const POLICY = {
-  bug: [{ change_type: "bug", required_role: "uat_tech_reviewer", rationale: "r" }],
+  bug: [
+    { change_type: "bug", required_role: "uat_tech_reviewer", rationale: "r" },
+  ],
   enhancement: [
-    { change_type: "enhancement", required_role: "uat_product_owner", rationale: "r" },
-    { change_type: "enhancement", required_role: "uat_tech_reviewer", rationale: "r" },
+    {
+      change_type: "enhancement",
+      required_role: "uat_product_owner",
+      rationale: "r",
+    },
+    {
+      change_type: "enhancement",
+      required_role: "uat_tech_reviewer",
+      rationale: "r",
+    },
   ],
   policy_change: [
-    { change_type: "policy_change", required_role: "uat_domain_owner", rationale: "r" },
-    { change_type: "policy_change", required_role: "uat_product_owner", rationale: "r" },
-    { change_type: "policy_change", required_role: "uat_tech_reviewer", rationale: "r" },
+    {
+      change_type: "policy_change",
+      required_role: "uat_domain_owner",
+      rationale: "r",
+    },
+    {
+      change_type: "policy_change",
+      required_role: "uat_product_owner",
+      rationale: "r",
+    },
+    {
+      change_type: "policy_change",
+      required_role: "uat_tech_reviewer",
+      rationale: "r",
+    },
   ],
-  unclear: [{ change_type: "unclear", required_role: "uat_triage", rationale: "r" }],
+  unclear: [
+    { change_type: "unclear", required_role: "uat_triage", rationale: "r" },
+  ],
 } as const;
 
 beforeEach(() => {
@@ -36,7 +65,7 @@ describe("requirementsFor", () => {
     // An empty table is the most permissive possible answer arrived at by accident.
     mockQuery.mockResolvedValueOnce([[], []]);
     await expect(requirementsFor("enhancement")).rejects.toThrow(
-      /refusing to treat an empty policy/i
+      /refusing to treat an empty policy/i,
     );
   });
 
@@ -161,14 +190,20 @@ describe("kill switches", () => {
   it("is off when an operator switched the row off, even with the env var on", async () => {
     // The DB row is the instant control: the moment you most want to stop the pipeline is
     // the moment you least want to deploy.
-    mockQuery.mockResolvedValueOnce([[{ config_key: "builds_enabled", config_value: "false" }], []]);
+    mockQuery.mockResolvedValueOnce([
+      [{ config_key: "builds_enabled", config_value: "false" }],
+      [],
+    ]);
     const r = await switchEnabled("builds_enabled", "true");
     expect(r.enabled).toBe(false);
     expect(r.reason).toMatch(/operator/i);
   });
 
   it("is on only when BOTH agree", async () => {
-    mockQuery.mockResolvedValueOnce([[{ config_key: "builds_enabled", config_value: "true" }], []]);
+    mockQuery.mockResolvedValueOnce([
+      [{ config_key: "builds_enabled", config_value: "true" }],
+      [],
+    ]);
     const r = await switchEnabled("builds_enabled", "true");
     expect(r.enabled).toBe(true);
     expect(r.reason).toBeNull();

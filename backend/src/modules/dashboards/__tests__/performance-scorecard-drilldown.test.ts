@@ -11,7 +11,10 @@ import type { DashboardScope } from "../../../shared/dashboardScope.js";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-import { drillAttendanceStatus, drillPipStatus } from "../performance-scorecard-drilldown.js";
+import {
+  drillAttendanceStatus,
+  drillPipStatus,
+} from "../performance-scorecard-drilldown.js";
 
 describe("drillAttendanceStatus", () => {
   it("returns one record per snapshot day with attendanceStatus and lateByMinutes", async () => {
@@ -29,10 +32,11 @@ describe("drillAttendanceStatus", () => {
       [],
     ]);
 
-    const result = await drillAttendanceStatus(
-      {} as any,
-      { employeeId: "emp-1", dateFrom: "2026-08-01", dateTo: "2026-08-24" },
-    );
+    const result = await drillAttendanceStatus({} as any, {
+      employeeId: "emp-1",
+      dateFrom: "2026-08-01",
+      dateTo: "2026-08-24",
+    });
 
     expect(result.metricCode).toBe("ATTENDANCE_STATUS");
     expect(result.records).toHaveLength(1);
@@ -74,7 +78,8 @@ describe("performance-scorecard-drilldown authorization", () => {
     return async (sql: string, params: unknown[]) => {
       const [employeeId, , , ...scopeParams] = params as string[];
       if (sql.includes("1=0")) return [[], []];
-      if (sql.includes("e.id IN") && !scopeParams.includes(employeeId)) return [[], []];
+      if (sql.includes("e.id IN") && !scopeParams.includes(employeeId))
+        return [[], []];
       if (row.employeeId !== employeeId) return [[], []];
       return [[row], []];
     };
@@ -125,7 +130,9 @@ describe("performance-scorecard-drilldown authorization", () => {
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain("e.id IN");
     expect(params).toContain("emp-in-team");
-    expect(params).not.toContain("emp-other-team-should-not-appear-in-scope-params");
+    expect(params).not.toContain(
+      "emp-other-team-should-not-appear-in-scope-params",
+    );
   });
 
   it("drillPipStatus (a differently-shaped query with no employees join previously) also enforces scope", async () => {
@@ -133,7 +140,8 @@ describe("performance-scorecard-drilldown authorization", () => {
     execute.mockImplementation(async (sql: string, params: unknown[]) => {
       const [employeeId, ...scopeParams] = params as string[];
       if (sql.includes("1=0")) return [[], []];
-      if (sql.includes("e.id IN") && !scopeParams.includes(employeeId)) return [[], []];
+      if (sql.includes("e.id IN") && !scopeParams.includes(employeeId))
+        return [[], []];
       return [[{ status: "active", start_date: "2026-01-01" }], []];
     });
 
@@ -148,7 +156,8 @@ describe("performance-scorecard-drilldown authorization", () => {
     execute.mockImplementation(async (sql: string, params: unknown[]) => {
       const [employeeId, ...scopeParams] = params as string[];
       if (sql.includes("1=0")) return [[], []];
-      if (sql.includes("e.id IN") && !scopeParams.includes(employeeId)) return [[], []];
+      if (sql.includes("e.id IN") && !scopeParams.includes(employeeId))
+        return [[], []];
       return [[{ status: "active", start_date: "2026-01-01" }], []];
     });
     const allowed = await drillPipStatus(teamScope, {

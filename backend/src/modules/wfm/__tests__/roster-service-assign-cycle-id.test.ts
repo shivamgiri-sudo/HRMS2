@@ -32,8 +32,10 @@ vi.mock("../../roster/roster-lock-guard.js", () => ({
 // already proven in roster-service-audit-log.test.ts.
 vi.mock("../rest-policy.service.js", () => ({
   isRestPolicyFeatureActive: vi.fn().mockResolvedValue(false),
-  withEmployeeRosterLock: (_employeeId: string, fn: (conn: unknown) => unknown) =>
-    fn({ execute: executeMock }),
+  withEmployeeRosterLock: (
+    _employeeId: string,
+    fn: (conn: unknown) => unknown,
+  ) => fn({ execute: executeMock }),
 }));
 
 import { __resetSchemaCachesForTests } from "../shift-scheduling.util.js";
@@ -47,17 +49,25 @@ describe("assignEmployee — additive cycleId", () => {
     // actually gets consumed, rather than a stale cache from a prior test.
     __resetSchemaCachesForTests();
     // rosterAssignmentColumns() probe: include cycle_id, exclude versioning cols for simplicity
-    executeMock.mockResolvedValueOnce([[{ COLUMN_NAME: "cycle_id" }, { COLUMN_NAME: "id" }], undefined]);
+    executeMock.mockResolvedValueOnce([
+      [{ COLUMN_NAME: "cycle_id" }, { COLUMN_NAME: "id" }],
+      undefined,
+    ]);
     executeMock.mockResolvedValueOnce([{ affectedRows: 1 }, undefined]); // INSERT
-    executeMock.mockResolvedValueOnce([[{ id: "assignment-1", cycle_id: "cycle-1" }], undefined]); // SELECT back
+    executeMock.mockResolvedValueOnce([
+      [{ id: "assignment-1", cycle_id: "cycle-1" }],
+      undefined,
+    ]); // SELECT back
   });
 
   it("writes cycle_id when provided", async () => {
     await rosterService.assignEmployee(
       { employeeId: "emp-1", rosterDate: "2026-08-24", cycleId: "cycle-1" },
-      "user-1"
+      "user-1",
     );
-    const insertCall = executeMock.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO wfm_roster_assignment"));
+    const insertCall = executeMock.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO wfm_roster_assignment"),
+    );
     expect(insertCall).toBeTruthy();
     expect(String(insertCall![0])).toContain("cycle_id");
     expect(insertCall![1]).toContain("cycle-1");
@@ -66,9 +76,11 @@ describe("assignEmployee — additive cycleId", () => {
   it("omits cycle_id entirely when not provided (existing-caller regression guard)", async () => {
     await rosterService.assignEmployee(
       { employeeId: "emp-1", rosterDate: "2026-08-24" },
-      "user-1"
+      "user-1",
     );
-    const insertCall = executeMock.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO wfm_roster_assignment"));
+    const insertCall = executeMock.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO wfm_roster_assignment"),
+    );
     expect(String(insertCall![0])).not.toContain("cycle_id");
   });
 });

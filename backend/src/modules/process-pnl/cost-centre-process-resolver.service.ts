@@ -86,8 +86,19 @@ export const EXCLUDED_BRANCH_IDS = new Set<string>([
 const DIALDESK_NAME_RE = /DIALDESK/i;
 
 const LEGAL_BOILERPLATE = new Set([
-  "LTD", "LIMITED", "PVT", "PRIVATE", "LLP", "INC", "CO", "COMPANY",
-  "INDIA", "THE", "AND", "SERVICES", "SERVICE",
+  "LTD",
+  "LIMITED",
+  "PVT",
+  "PRIVATE",
+  "LLP",
+  "INC",
+  "CO",
+  "COMPANY",
+  "INDIA",
+  "THE",
+  "AND",
+  "SERVICES",
+  "SERVICE",
 ]);
 
 /**
@@ -104,19 +115,61 @@ const LEGAL_BOILERPLATE = new Set([
  * which is correct: it is an internal bucket, not a client account.
  */
 const GENERIC_WORDS = new Set([
-  "SYSTEM", "SYSTEMS", "DIGITAL", "WEALTH", "WEALTHY", "ACQUISITION", "CUSTOMER", "PREPAID",
-  "POSTPAID", "POST", "PAID", "BILL", "DELIVERY", "HEALTH", "CHECK",
-  "CORPORATE", "CORP", "OFFICE", "BACK", "OTHERS", "OTHER", "RETENTION", "UPSELLING",
-  "COLLECTION", "MANAGEMENT", "FINANCE", "GENERAL", "ADMIN", "SUPPORT", "OPERATIONS", "TEAM",
-  "DESK", "OUTSOURCE", "PROJECT", "GROUP", "HOLDINGS", "ENTERPRISES", "VENTURES", "SOLUTIONS",
-  "TECHNOLOGIES", "TECHNOLOGY", "GLOBAL", "NETWORK", "NETWORKS",
+  "SYSTEM",
+  "SYSTEMS",
+  "DIGITAL",
+  "WEALTH",
+  "WEALTHY",
+  "ACQUISITION",
+  "CUSTOMER",
+  "PREPAID",
+  "POSTPAID",
+  "POST",
+  "PAID",
+  "BILL",
+  "DELIVERY",
+  "HEALTH",
+  "CHECK",
+  "CORPORATE",
+  "CORP",
+  "OFFICE",
+  "BACK",
+  "OTHERS",
+  "OTHER",
+  "RETENTION",
+  "UPSELLING",
+  "COLLECTION",
+  "MANAGEMENT",
+  "FINANCE",
+  "GENERAL",
+  "ADMIN",
+  "SUPPORT",
+  "OPERATIONS",
+  "TEAM",
+  "DESK",
+  "OUTSOURCE",
+  "PROJECT",
+  "GROUP",
+  "HOLDINGS",
+  "ENTERPRISES",
+  "VENTURES",
+  "SOLUTIONS",
+  "TECHNOLOGIES",
+  "TECHNOLOGY",
+  "GLOBAL",
+  "NETWORK",
+  "NETWORKS",
   // Telecom/BPO process-CATEGORY jargon — describes what kind of work a process does, not who
   // the client is. Found live 2026-09-11: "MNP Collection", "MNP POSTPAID" and "MNP Postpaid"
   // (three different clients/cost centres) all matched process "MNP REJECTION" on the shared
   // acronym alone — different business processes, coincidentally sharing a category tag, not
   // the same client account. Likewise "Cloud walker Inbound Process" and "Ecom Express ...
   // Inbound" matched "INBOUND CUSTOMER SERVICES" purely on "Inbound".
-  "MNP", "INBOUND", "OUTBOUND", "PROCESS", "REJECTION",
+  "MNP",
+  "INBOUND",
+  "OUTBOUND",
+  "PROCESS",
+  "REJECTION",
 ]);
 
 function tokenize(name: string | null | undefined): string[] {
@@ -136,14 +189,17 @@ function meaningfulTokens(tokens: string[]): string[] {
 /** Small Levenshtein distance, used only to tolerate a spelling slip on one already-matched
  *  token (e.g. "PHILLIPS" vs "PHILIPS"), never to invent a match between different words. */
 function levenshtein(a: string, b: string): number {
-  const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () =>
+    new Array(b.length + 1).fill(0),
+  );
   for (let i = 0; i <= a.length; i++) dp[i][0] = i;
   for (let j = 0; j <= b.length; j++) dp[0][j] = j;
   for (let i = 1; i <= a.length; i++) {
     for (let j = 1; j <= b.length; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
     }
   }
   return dp[a.length][b.length];
@@ -158,7 +214,10 @@ function tokensEqual(a: string, b: string): boolean {
 
 /** True when every token on the shorter side has a (possibly fuzzy) match on the longer side —
  *  i.e. one name's distinguishing words are fully contained in the other's. */
-function tokenSetContained(shortTokens: string[], longTokens: string[]): boolean {
+function tokenSetContained(
+  shortTokens: string[],
+  longTokens: string[],
+): boolean {
   if (shortTokens.length === 0) return false;
   return shortTokens.every((s) => longTokens.some((l) => tokensEqual(s, l)));
 }
@@ -215,7 +274,9 @@ export function matchClientToProcess(
   // literally "Acquisition") — nothing distinctive left to match on. Refuse.
   if (clientTokens.length === 0) return null;
 
-  const eligible = processes.filter((p) => !DIALDESK_NAME_RE.test(p.process_name)); // hard rule, see DIALDESK_NAME_RE
+  const eligible = processes.filter(
+    (p) => !DIALDESK_NAME_RE.test(p.process_name),
+  ); // hard rule, see DIALDESK_NAME_RE
 
   const hits = eligible.filter((p) => {
     if (p.tokens.length === 0) return false;
@@ -224,7 +285,8 @@ export function matchClientToProcess(
     // never a valid match target.
     if (processTokens.length === 0) return false;
     return (
-      tokenSetContained(processTokens, clientTokens) || tokenSetContained(clientTokens, processTokens)
+      tokenSetContained(processTokens, clientTokens) ||
+      tokenSetContained(clientTokens, processTokens)
     );
   });
   if (hits.length !== 1) return null; // 0 = no match; >1 = ambiguous, refuse rather than guess
@@ -273,8 +335,11 @@ export async function resolveCostCentreProcesses(
     const clientName = cc.client_name || cc.billing_client_name || null;
     if (!clientName) {
       unresolved.push({
-        costCentreId: String(cc.id), costCentreCode: cc.cost_centre_code, branchId,
-        clientName: cc.client_name, billingClientName: cc.billing_client_name,
+        costCentreId: String(cc.id),
+        costCentreCode: cc.cost_centre_code,
+        branchId,
+        clientName: cc.client_name,
+        billingClientName: cc.billing_client_name,
         reason: "no_client_name",
       });
       continue;
@@ -283,16 +348,23 @@ export async function resolveCostCentreProcesses(
     const match = matchClientToProcess(clientName, processes);
     if (!match) {
       unresolved.push({
-        costCentreId: String(cc.id), costCentreCode: cc.cost_centre_code, branchId,
-        clientName: cc.client_name, billingClientName: cc.billing_client_name,
+        costCentreId: String(cc.id),
+        costCentreCode: cc.cost_centre_code,
+        branchId,
+        clientName: cc.client_name,
+        billingClientName: cc.billing_client_name,
         reason: "no_process_match",
       });
       continue;
     }
 
     resolved.push({
-      costCentreId: String(cc.id), costCentreCode: cc.cost_centre_code, branchId,
-      clientNameUsed: clientName, matchedProcessId: match.id, matchedProcessName: match.process_name,
+      costCentreId: String(cc.id),
+      costCentreCode: cc.cost_centre_code,
+      branchId,
+      clientNameUsed: clientName,
+      matchedProcessId: match.id,
+      matchedProcessName: match.process_name,
       confidence: "high",
     });
   }
@@ -308,7 +380,12 @@ export async function resolveCostCentreProcesses(
       );
     }
     logger.info(
-      { module: "cost-centre-process-resolver", written: resolved.length, unresolved: unresolved.length, excludedCount },
+      {
+        module: "cost-centre-process-resolver",
+        written: resolved.length,
+        unresolved: unresolved.length,
+        excludedCount,
+      },
       `[cost-centre-process-resolver] wrote process_id for ${resolved.length} cost centre(s)`,
     );
   }

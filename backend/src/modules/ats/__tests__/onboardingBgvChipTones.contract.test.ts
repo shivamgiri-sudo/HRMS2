@@ -13,17 +13,34 @@ import { describe, expect, it } from "vitest";
  * disagree about what green means are worse than no colour at all.
  */
 const PAGE = readFileSync(
-  resolve(process.cwd(), "..", "src", "pages", "NativeHROnboardingRequests.tsx"),
+  resolve(
+    process.cwd(),
+    "..",
+    "src",
+    "pages",
+    "NativeHROnboardingRequests.tsx",
+  ),
   "utf8",
 );
 
 describe("Onboarding detail — BGV chip colour semantics", () => {
   it("agrees with the BGV Review tab's statusCls on every shared status", () => {
     const tone = (status: string): string | null => {
-      const fn = PAGE.slice(PAGE.indexOf("function toneForStatus"), PAGE.indexOf("function prettyStatus"));
-      const rows = [...fn.matchAll(/if \(\[([^\]]+)\]\.includes\(v\)\) return '(\w+)'/g)];
+      const fn = PAGE.slice(
+        PAGE.indexOf("function toneForStatus"),
+        PAGE.indexOf("function prettyStatus"),
+      );
+      const rows = [
+        ...fn.matchAll(/if \(\[([^\]]+)\]\.includes\(v\)\) return '(\w+)'/g),
+      ];
       for (const [, list, t] of rows) {
-        if (list.split(",").map((x) => x.trim().replace(/'/g, "")).includes(status)) return t;
+        if (
+          list
+            .split(",")
+            .map((x) => x.trim().replace(/'/g, ""))
+            .includes(status)
+        )
+          return t;
       }
       return null;
     };
@@ -37,7 +54,10 @@ describe("Onboarding detail — BGV chip colour semantics", () => {
   });
 
   it("maps good to emerald, bad to red, warn to amber and waived to purple", () => {
-    const tones = PAGE.slice(PAGE.indexOf("const CHIP_TONES"), PAGE.indexOf("type ChipTone"));
+    const tones = PAGE.slice(
+      PAGE.indexOf("const CHIP_TONES"),
+      PAGE.indexOf("type ChipTone"),
+    );
     expect(tones).toMatch(/good:\s*'bg-emerald-/);
     expect(tones).toMatch(/bad:\s*'bg-red-/);
     expect(tones).toMatch(/warn:\s*'bg-amber-/);
@@ -45,7 +65,10 @@ describe("Onboarding detail — BGV chip colour semantics", () => {
   });
 
   it("leaves an unknown status neutral rather than guessing a verdict", () => {
-    const fn = PAGE.slice(PAGE.indexOf("function toneForStatus"), PAGE.indexOf("function prettyStatus"));
+    const fn = PAGE.slice(
+      PAGE.indexOf("function toneForStatus"),
+      PAGE.indexOf("function prettyStatus"),
+    );
     // The final statement, after every known-status branch, must be the neutral
     // fallback -- not a guess at good or bad.
     const returns = [...fn.matchAll(/return '(\w+)'/g)].map((m) => m[1]);

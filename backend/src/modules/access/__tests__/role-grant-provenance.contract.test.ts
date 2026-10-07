@@ -25,18 +25,24 @@ const captured: Array<{ sql: string; params: unknown[] }> = [];
 
 const dbExecute = vi.fn(async (sql: string, params: unknown[] = []) => {
   captured.push({ sql: String(sql), params });
-  if (String(sql).includes("workforce_role_catalog")) return [[{ role_key: "finance_head" }]];
+  if (String(sql).includes("workforce_role_catalog"))
+    return [[{ role_key: "finance_head" }]];
   return [{ affectedRows: 1 }];
 });
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
-vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn(async () => {}) }));
+vi.mock("../../../shared/auditLog.js", () => ({
+  logSensitiveAction: vi.fn(async () => {}),
+}));
 
 const { assignRole } = await import("../access.service.js");
 
 const grantInsert = () =>
   captured.find((c) => /INSERT INTO user_roles/i.test(c.sql));
 
-beforeEach(() => { captured.length = 0; dbExecute.mockClear(); });
+beforeEach(() => {
+  captured.length = 0;
+  dbExecute.mockClear();
+});
 
 describe("user_roles grant provenance", () => {
   it("records the acting user on the grant row, not only in the audit stream", async () => {
@@ -62,12 +68,14 @@ describe("user_roles grant provenance", () => {
 
     const sql = grantInsert()!.sql;
     const onDuplicate = sql.slice(sql.search(/ON DUPLICATE KEY UPDATE/i));
-    expect(onDuplicate, "reactivation branch does not refresh granted_by").toMatch(
-      /granted_by\s*=\s*VALUES\(granted_by\)/i,
-    );
-    expect(onDuplicate, "reactivation branch does not refresh granted_at").toMatch(
-      /granted_at\s*=\s*VALUES\(granted_at\)/i,
-    );
+    expect(
+      onDuplicate,
+      "reactivation branch does not refresh granted_by",
+    ).toMatch(/granted_by\s*=\s*VALUES\(granted_by\)/i);
+    expect(
+      onDuplicate,
+      "reactivation branch does not refresh granted_at",
+    ).toMatch(/granted_at\s*=\s*VALUES\(granted_at\)/i);
   });
 
   it("leaves created_at alone — it still means first insert, not current access", async () => {
@@ -124,10 +132,17 @@ describe("system-path grant sites", () => {
     it(`${rel} supplies provenance on its INSERT IGNORE`, () => {
       const sql = readFileSync(resolve(HERE, "modules", rel), "utf8");
       const at = sql.search(/INSERT IGNORE INTO user_roles/);
-      expect(at, "no INSERT IGNORE INTO user_roles in this file").toBeGreaterThan(-1);
+      expect(
+        at,
+        "no INSERT IGNORE INTO user_roles in this file",
+      ).toBeGreaterThan(-1);
       const stmt = sql.slice(at, at + 400);
-      expect(stmt, "grant lands with no provenance at all").toMatch(/granted_by/);
-      expect(stmt, "grant lands with no provenance at all").toMatch(/granted_at/);
+      expect(stmt, "grant lands with no provenance at all").toMatch(
+        /granted_by/,
+      );
+      expect(stmt, "grant lands with no provenance at all").toMatch(
+        /granted_at/,
+      );
     });
   }
 
@@ -136,10 +151,16 @@ describe("system-path grant sites", () => {
 
     it(`${rel} only re-stamps on reactivation — it ${why}`, () => {
       const sql = src();
-      expect(sql, "system site lost its active_status = 0 guard on granted_at").toMatch(
+      expect(
+        sql,
+        "system site lost its active_status = 0 guard on granted_at",
+      ).toMatch(
         /granted_at\s*=\s*IF\(active_status\s*=\s*0,\s*NOW\(\),\s*granted_at\)/,
       );
-      expect(sql, "system site lost its active_status = 0 guard on granted_by").toMatch(
+      expect(
+        sql,
+        "system site lost its active_status = 0 guard on granted_by",
+      ).toMatch(
         /granted_by\s*=\s*IF\(active_status\s*=\s*0,\s*NULL,\s*granted_by\)/,
       );
     });
@@ -149,7 +170,10 @@ describe("system-path grant sites", () => {
       // Scope to the user_roles INSERT — these files carry other upserts, and the
       // first ON DUPLICATE KEY in the file is not necessarily this one.
       const insertAt = sql.search(/INSERT INTO user_roles/);
-      expect(insertAt, "no INSERT INTO user_roles in this file").toBeGreaterThan(-1);
+      expect(
+        insertAt,
+        "no INSERT INTO user_roles in this file",
+      ).toBeGreaterThan(-1);
       const stmt = sql.slice(insertAt, insertAt + 800);
       const clause = stmt.slice(stmt.search(/ON DUPLICATE KEY UPDATE/));
       const guardEnd = Math.max(
@@ -158,7 +182,10 @@ describe("system-path grant sites", () => {
       );
       const statusAssign = clause.search(/active_status\s*=\s*1/);
       expect(guardEnd, "no guarded assignment found").toBeGreaterThan(-1);
-      expect(statusAssign, "no active_status = 1 assignment found").toBeGreaterThan(-1);
+      expect(
+        statusAssign,
+        "no active_status = 1 assignment found",
+      ).toBeGreaterThan(-1);
       expect(
         statusAssign,
         "active_status = 1 is assigned BEFORE the IF() guards, so they read the new " +

@@ -24,7 +24,12 @@ const n = (v: unknown): number => {
 };
 
 export type AgeingBucketId = "0-30" | "31-60" | "61-90" | "90+";
-export const AGEING_BUCKETS: AgeingBucketId[] = ["0-30", "31-60", "61-90", "90+"];
+export const AGEING_BUCKETS: AgeingBucketId[] = [
+  "0-30",
+  "31-60",
+  "61-90",
+  "90+",
+];
 
 export interface AgeingBucketAmounts {
   "0-30": number;
@@ -50,7 +55,12 @@ export interface PnlReceivablesAgeingResult {
   caveat: string;
 }
 
-const emptyBuckets = (): AgeingBucketAmounts => ({ "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 });
+const emptyBuckets = (): AgeingBucketAmounts => ({
+  "0-30": 0,
+  "31-60": 0,
+  "61-90": 0,
+  "90+": 0,
+});
 
 function bucketFor(days: number): AgeingBucketId {
   if (days <= 30) return "0-30";
@@ -59,7 +69,9 @@ function bucketFor(days: number): AgeingBucketId {
   return "90+";
 }
 
-export async function getReceivablesAgeing(filters: { branchId?: string; processId?: string } = {}): Promise<PnlReceivablesAgeingResult> {
+export async function getReceivablesAgeing(
+  filters: { branchId?: string; processId?: string } = {},
+): Promise<PnlReceivablesAgeingResult> {
   const branchClause = filters.branchId ? "AND ccm.branch_id = ?" : "";
   const processClause = filters.processId ? "AND pm.id = ?" : "";
   const params: unknown[] = [];
@@ -75,7 +87,7 @@ export async function getReceivablesAgeing(filters: { branchId?: string; process
               ON ccm.cost_centre_code = bis.cost_centre_code COLLATE utf8mb4_unicode_ci
        LEFT JOIN process_master pm ON pm.id = ccm.process_id
       WHERE bis.payment_status = '0' AND bis.invoice_date IS NOT NULL ${branchClause} ${processClause}`,
-    params
+    params,
   );
 
   const totals = emptyBuckets();
@@ -95,7 +107,10 @@ export async function getReceivablesAgeing(filters: { branchId?: string; process
     if (!entry) {
       entry = {
         processId,
-        processName: processId != null ? String(row.processName ?? "Unnamed process") : "Not mapped to a process",
+        processName:
+          processId != null
+            ? String(row.processName ?? "Unnamed process")
+            : "Not mapped to a process",
         buckets: emptyBuckets(),
         total: 0,
         invoiceCount: 0,
@@ -107,7 +122,9 @@ export async function getReceivablesAgeing(filters: { branchId?: string; process
     entry.invoiceCount += 1;
   }
 
-  const byProcess = Array.from(byProcessMap.values()).sort((a, b) => b.total - a.total);
+  const byProcess = Array.from(byProcessMap.values()).sort(
+    (a, b) => b.total - a.total,
+  );
 
   return {
     asOfDate: new Date().toISOString().slice(0, 10),

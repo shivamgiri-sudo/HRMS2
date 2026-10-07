@@ -30,7 +30,10 @@ const router = Router();
  */
 async function resolveOperationsScope(userId: string): Promise<{
   names: OperationsScopeFilter;
-  ids: { branchIds: readonly string[] | null; processIds: readonly string[] | null };
+  ids: {
+    branchIds: readonly string[] | null;
+    processIds: readonly string[] | null;
+  };
 }> {
   const ctx = await getUserRoleContext(userId);
   let scope;
@@ -38,7 +41,10 @@ async function resolveOperationsScope(userId: string): Promise<{
     scope = await resolveDashboardScope(userId, ctx.primaryRole);
   } catch {
     // Fail closed: an unresolvable scope yields nothing, never everything.
-    return { names: { branchNames: [], processNames: null }, ids: { branchIds: [], processIds: null } };
+    return {
+      names: { branchNames: [], processNames: null },
+      ids: { branchIds: [], processIds: null },
+    };
   }
   if (scope.level === "ORG_ALL") {
     return { names: null, ids: { branchIds: null, processIds: null } };
@@ -47,7 +53,11 @@ async function resolveOperationsScope(userId: string): Promise<{
   const branchIds = scope.branchIds.length ? scope.branchIds : null;
   const processIds = scope.processIds.length ? scope.processIds : null;
 
-  const nameFor = async (table: string, col: string, ids: readonly string[] | null) => {
+  const nameFor = async (
+    table: string,
+    col: string,
+    ids: readonly string[] | null,
+  ) => {
     if (!ids) return null;
     if (ids.length === 0) return [];
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -75,17 +85,27 @@ async function resolveOperationsScope(userId: string): Promise<{
 router.get(
   "/live-status",
   requireAuth,
-  requireRole("operations", "admin", "process_manager", "manager", "branch_head"),
+  requireRole(
+    "operations",
+    "admin",
+    "process_manager",
+    "manager",
+    "branch_head",
+  ),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { processName, branchName } = req.query as Record<string, string | undefined>;
+      const { processName, branchName } = req.query as Record<
+        string,
+        string | undefined
+      >;
 
       const { names } = await resolveOperationsScope((req as any).authUser!.id);
-      const result: LiveStatusResponse = await operationsLiveService.getLiveStatus(
-        processName,
-        branchName,
-        names
-      );
+      const result: LiveStatusResponse =
+        await operationsLiveService.getLiveStatus(
+          processName,
+          branchName,
+          names,
+        );
 
       return res.status(200).json({
         success: true,
@@ -99,7 +119,7 @@ router.get(
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
-  }
+  },
 );
 
 /**
@@ -110,11 +130,18 @@ router.get(
 router.get(
   "/roster-vs-actual",
   requireAuth,
-  requireRole("operations", "admin", "process_manager", "manager", "branch_head"),
+  requireRole(
+    "operations",
+    "admin",
+    "process_manager",
+    "manager",
+    "branch_head",
+  ),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { names } = await resolveOperationsScope((req as any).authUser!.id);
-      const result: RosterVsActualResponse = await operationsLiveService.getRosterVsActual(names);
+      const result: RosterVsActualResponse =
+        await operationsLiveService.getRosterVsActual(names);
 
       return res.status(200).json({
         success: true,
@@ -128,7 +155,7 @@ router.get(
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
-  }
+  },
 );
 
 /**
@@ -146,10 +173,8 @@ router.get(
       const minRiskScore = parseInt(req.query.minRiskScore as string) || 0;
 
       const { ids } = await resolveOperationsScope((req as any).authUser!.id);
-      const result: AttritionRiskResponse = await operationsLiveService.getAttritionRiskScores(
-        minRiskScore,
-        ids
-      );
+      const result: AttritionRiskResponse =
+        await operationsLiveService.getAttritionRiskScores(minRiskScore, ids);
 
       return res.status(200).json({
         success: true,
@@ -163,7 +188,7 @@ router.get(
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
-  }
+  },
 );
 
 export default router;

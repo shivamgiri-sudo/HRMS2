@@ -27,13 +27,27 @@
 export type ColumnRef = { table: string; column: string };
 
 const RESERVED = new Set([
-  "this", "db", "res", "req", "err", "e2", "json", "d", "s", "o", "p2", "fs", "path", "new", "con",
+  "this",
+  "db",
+  "res",
+  "req",
+  "err",
+  "e2",
+  "json",
+  "d",
+  "s",
+  "o",
+  "p2",
+  "fs",
+  "path",
+  "new",
+  "con",
 ]);
 
-const TABLE_RE = /\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)\s+(?:AS\s+)?([a-z][a-z0-9_]{0,4})\b/gi;
+const TABLE_RE =
+  /\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)\s+(?:AS\s+)?([a-z][a-z0-9_]{0,4})\b/gi;
 const REF_RE = /\b([a-z][a-z0-9_]{0,4})\.([a-z_][a-z0-9_]*)\b(?!\s*\()/g;
 const SQL_VERB_RE = /\b(SELECT|INSERT|UPDATE|DELETE)\b/i;
-
 
 /**
  * Remove JS comments before looking for SQL.
@@ -70,12 +84,13 @@ export function columnRefsIn(source: string): ColumnRef[] {
 
     for (const statement of literal.split(/(?=\bSELECT\b)/i)) {
       const found = [...statement.matchAll(TABLE_RE)].map(
-        (m) => [m[1].toLowerCase(), m[2].toLowerCase()] as const
+        (m) => [m[1].toLowerCase(), m[2].toLowerCase()] as const,
       );
       if (found.length === 0) continue;
 
       const occurrences = new Map<string, number>();
-      for (const [, alias] of found) occurrences.set(alias, (occurrences.get(alias) ?? 0) + 1);
+      for (const [, alias] of found)
+        occurrences.set(alias, (occurrences.get(alias) ?? 0) + 1);
 
       const aliasToTable = new Map<string, string>();
       for (const [table, alias] of found) {
@@ -102,7 +117,7 @@ export function columnRefsIn(source: string): ColumnRef[] {
 /** Keep only references whose table is known but whose column is not. */
 export function brokenRefs(
   refs: ColumnRef[],
-  schema: Record<string, string[]>
+  schema: Record<string, string[]>,
 ): ColumnRef[] {
   return refs.filter((r) => {
     const columns = schema[r.table];
@@ -154,7 +169,7 @@ export function writeTargetsIn(source: string): string[] {
  */
 export function unknownWriteTargets(
   source: string,
-  schema: Record<string, string[]>
+  schema: Record<string, string[]>,
 ): string[] {
   return writeTargetsIn(source).filter((t) => schema[t] === undefined);
 }
@@ -178,8 +193,10 @@ export function unknownWriteTargets(
  *   - a qualified assignment such as `SET a.col = ?`, for the same reason;
  *   - ON DUPLICATE KEY UPDATE, which is a separate clause shape.
  */
-const INSERT_COLS_RE = /INSERT\s+(?:IGNORE\s+)?INTO\s+([a-z_][a-z0-9_]*)\s*\(([^)]*)\)/gi;
-const UPDATE_SET_RE = /UPDATE\s+([a-z_][a-z0-9_]*)\s+SET\s+([\s\S]*?)(?:\bWHERE\b|\bON\s+DUPLICATE\b|$)/gi;
+const INSERT_COLS_RE =
+  /INSERT\s+(?:IGNORE\s+)?INTO\s+([a-z_][a-z0-9_]*)\s*\(([^)]*)\)/gi;
+const UPDATE_SET_RE =
+  /UPDATE\s+([a-z_][a-z0-9_]*)\s+SET\s+([\s\S]*?)(?:\bWHERE\b|\bON\s+DUPLICATE\b|$)/gi;
 const ASSIGNED_COL_RE = /(?:^|,)\s*`?([a-z_][a-z0-9_]*)`?\s*=/gi;
 
 export function writeColumnRefs(source: string): ColumnRef[] {

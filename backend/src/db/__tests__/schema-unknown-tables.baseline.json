@@ -1,53 +1,29 @@
 {
-  "db/__tests__/schema-column-refs.test.ts": [
-    "leave_requests"
-  ],
-  "modules/ats/mock-digilocker.routes.ts": [
-    "ats_bgv_check"
-  ],
-  "modules/bulk-upload/batch-auto-recovery.service.ts": [
-    "bulk_import_queue"
-  ],
-  "modules/bulk-upload/bulk-upload.routes.ts": [
-    "bulk_import_queue"
-  ],
+  "db/__tests__/schema-column-refs.test.ts": ["leave_requests"],
+  "modules/ats/mock-digilocker.routes.ts": ["ats_bgv_check"],
+  "modules/bulk-upload/batch-auto-recovery.service.ts": ["bulk_import_queue"],
+  "modules/bulk-upload/bulk-upload.routes.ts": ["bulk_import_queue"],
   "modules/finance/client-payment-tracking.service.ts": [
     "client_invoice_payment_log",
     "client_invoice_payment_status"
   ],
-  "modules/integrations/cosec/cosec-registration.service.ts": [
-    "mx_usermst"
-  ],
-  "modules/lms/lms-provisioning.service.ts": [
-    "trainee_master"
-  ],
-  "modules/mcnmeet/mcnmeet.cron.ts": [
-    "mcnmeet_meeting"
-  ],
+  "modules/integrations/cosec/cosec-registration.service.ts": ["mx_usermst"],
+  "modules/lms/lms-provisioning.service.ts": ["trainee_master"],
+  "modules/mcnmeet/mcnmeet.cron.ts": ["mcnmeet_meeting"],
   "modules/mcnmeet/mcnmeet.service.ts": [
     "mcnmeet_meeting",
     "mcnmeet_meeting_audience",
     "mcnmeet_meeting_event",
     "mcnmeet_meeting_invitee"
   ],
-  "modules/org-chart/org-chart.validation.ts": [
-    "org_chart_data_issue"
-  ],
-  "modules/performance-feedback/quality-upload.service.ts": [
-    "quality_audit"
-  ],
-  "modules/process-performance/process-targets.service.ts": [
-    "db_masmis"
-  ],
+  "modules/org-chart/org-chart.validation.ts": ["org_chart_data_issue"],
+  "modules/performance-feedback/quality-upload.service.ts": ["quality_audit"],
+  "modules/process-performance/process-targets.service.ts": ["db_masmis"],
   "modules/quality-dashboard/onfido-utilization.routes.ts": [
     "onfido_utilization_upload"
   ],
-  "modules/salary-dispute/salary-dispute.service.ts": [
-    "email_queue"
-  ],
-  "modules/sales-upload/sales-upload.service.ts": [
-    "db_masmis"
-  ],
+  "modules/salary-dispute/salary-dispute.service.ts": ["email_queue"],
+  "modules/sales-upload/sales-upload.service.ts": ["db_masmis"],
   "modules/skill-roadmap/skill-roadmap.service.ts": [
     "employee_roadmap_assignments",
     "employee_skill_states",
@@ -57,7 +33,5 @@
   "modules/wfm/mismatch-escalation.service.ts": [
     "attendance_mismatch_escalation"
   ],
-  "workers/bulk-import.worker.ts": [
-    "bulk_import_queue"
-  ]
+  "workers/bulk-import.worker.ts": ["bulk_import_queue"]
 }

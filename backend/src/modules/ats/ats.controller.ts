@@ -24,8 +24,14 @@ import {
  * An id with no matching master row yields nothing rather than a wildcard: a scope that
  * cannot be resolved must narrow to zero, never widen to everything.
  */
-async function resolveNames(table: "branch_master" | "process_master", column: string, ids: readonly string[]): Promise<string[]> {
-  const wanted = [...new Set(ids.map((id) => String(id ?? "").trim()).filter(Boolean))];
+async function resolveNames(
+  table: "branch_master" | "process_master",
+  column: string,
+  ids: readonly string[],
+): Promise<string[]> {
+  const wanted = [
+    ...new Set(ids.map((id) => String(id ?? "").trim()).filter(Boolean)),
+  ];
   if (wanted.length === 0) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${column} AS name FROM ${table} WHERE id IN (${wanted.map(() => "?").join(", ")})`,
@@ -36,24 +42,30 @@ async function resolveNames(table: "branch_master" | "process_master", column: s
     .filter(Boolean);
 }
 
-const resolveBranchNames = (ids: readonly string[]) => resolveNames("branch_master", "branch_name", ids);
-const resolveProcessNames = (ids: readonly string[]) => resolveNames("process_master", "process_name", ids);
+const resolveBranchNames = (ids: readonly string[]) =>
+  resolveNames("branch_master", "branch_name", ids);
+const resolveProcessNames = (ids: readonly string[]) =>
+  resolveNames("process_master", "process_name", ids);
 
 // /api/ats/stats is read by five dashboard layouts and takes several seconds cold. The payload
 // depends only on the date window and the resolved branch/process NAMES (never on the user),
 // so viewers with the same filters share one computation per 30s window, and concurrent
 // requests share the in-flight one instead of each running the whole query batch.
 const ATS_STATS_TTL_MS = 30_000;
-export const atsStatsCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: ATS_STATS_TTL_MS });
+export const atsStatsCache = new TtlCache<unknown>({
+  maxEntries: 100,
+  defaultTtlMs: ATS_STATS_TTL_MS,
+});
 
 export const atsController = {
   async listCandidates(req: AuthenticatedRequest, res: Response) {
     const filters = candidateFiltersSchema.parse(req.query);
     const filtersWithScope = {
       ...filters,
-      scopeFilter: (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter,
+      scopeFilter: (req as AuthenticatedRequest & { scopeFilter?: unknown })
+        .scopeFilter,
     };
-    const result  = await atsService.listCandidates(filtersWithScope);
+    const result = await atsService.listCandidates(filtersWithScope);
     return res.json({ success: true, ...result });
   },
 
@@ -62,7 +74,8 @@ export const atsController = {
     // SELECT behind it returns mobile, email, date_of_birth and gender. Same canonical rule
     // as the list route, so a recruiter cannot read a candidate outside their branches.
     const { assertCandidateInScope } = await import("./candidate-access.js");
-    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res)))
+      return;
 
     const data = await atsService.getCandidate(req.params.id);
     return res.json({ success: true, data });
@@ -73,36 +86,82 @@ export const atsController = {
     // Convert numeric boolean fields to strings for CreateCandidateInput type compatibility
     const normalizedInput = {
       ...input,
-      rotationalShift: input.rotationalShift != null ? String(input.rotationalShift) : input.rotationalShift,
-      nightShiftOk: input.nightShiftOk != null ? String(input.nightShiftOk) : input.nightShiftOk,
-      leavesIn3months: input.leavesIn3months != null ? String(input.leavesIn3months) : input.leavesIn3months,
-      ownsTwoWheeler: input.ownsTwoWheeler != null ? String(input.ownsTwoWheeler) : input.ownsTwoWheeler,
-      idProofAvailable: input.idProofAvailable != null ? String(input.idProofAvailable) : input.idProofAvailable,
-      educationProofAvailable: input.educationProofAvailable != null ? String(input.educationProofAvailable) : input.educationProofAvailable,
+      rotationalShift:
+        input.rotationalShift != null
+          ? String(input.rotationalShift)
+          : input.rotationalShift,
+      nightShiftOk:
+        input.nightShiftOk != null
+          ? String(input.nightShiftOk)
+          : input.nightShiftOk,
+      leavesIn3months:
+        input.leavesIn3months != null
+          ? String(input.leavesIn3months)
+          : input.leavesIn3months,
+      ownsTwoWheeler:
+        input.ownsTwoWheeler != null
+          ? String(input.ownsTwoWheeler)
+          : input.ownsTwoWheeler,
+      idProofAvailable:
+        input.idProofAvailable != null
+          ? String(input.idProofAvailable)
+          : input.idProofAvailable,
+      educationProofAvailable:
+        input.educationProofAvailable != null
+          ? String(input.educationProofAvailable)
+          : input.educationProofAvailable,
     };
     // Normalization handled inside atsService.createCandidate
-    const data  = await atsService.createCandidate(normalizedInput, req.authUser?.id ?? null);
-    return res.status(201).json({ success: true, data, message: "Candidate registered" });
+    const data = await atsService.createCandidate(
+      normalizedInput,
+      req.authUser?.id ?? null,
+    );
+    return res
+      .status(201)
+      .json({ success: true, data, message: "Candidate registered" });
   },
 
   async updateCandidate(req: AuthenticatedRequest, res: Response) {
     // Scope BEFORE parsing the body: an out-of-scope caller must get the same 404 whether
     // their payload is valid or not, or the validation error itself confirms the candidate.
     const { assertCandidateInScope } = await import("./candidate-access.js");
-    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res)))
+      return;
 
     const input = updateCandidateSchema.parse(req.body);
     // Convert numeric boolean fields to strings for CreateCandidateInput type compatibility
     const normalizedInput = {
       ...input,
-      rotationalShift: input.rotationalShift != null ? String(input.rotationalShift) : input.rotationalShift,
-      nightShiftOk: input.nightShiftOk != null ? String(input.nightShiftOk) : input.nightShiftOk,
-      leavesIn3months: input.leavesIn3months != null ? String(input.leavesIn3months) : input.leavesIn3months,
-      ownsTwoWheeler: input.ownsTwoWheeler != null ? String(input.ownsTwoWheeler) : input.ownsTwoWheeler,
-      idProofAvailable: input.idProofAvailable != null ? String(input.idProofAvailable) : input.idProofAvailable,
-      educationProofAvailable: input.educationProofAvailable != null ? String(input.educationProofAvailable) : input.educationProofAvailable,
+      rotationalShift:
+        input.rotationalShift != null
+          ? String(input.rotationalShift)
+          : input.rotationalShift,
+      nightShiftOk:
+        input.nightShiftOk != null
+          ? String(input.nightShiftOk)
+          : input.nightShiftOk,
+      leavesIn3months:
+        input.leavesIn3months != null
+          ? String(input.leavesIn3months)
+          : input.leavesIn3months,
+      ownsTwoWheeler:
+        input.ownsTwoWheeler != null
+          ? String(input.ownsTwoWheeler)
+          : input.ownsTwoWheeler,
+      idProofAvailable:
+        input.idProofAvailable != null
+          ? String(input.idProofAvailable)
+          : input.idProofAvailable,
+      educationProofAvailable:
+        input.educationProofAvailable != null
+          ? String(input.educationProofAvailable)
+          : input.educationProofAvailable,
     };
-    const data  = await atsService.updateCandidate(req.params.id, normalizedInput, req.authUser!.id);
+    const data = await atsService.updateCandidate(
+      req.params.id,
+      normalizedInput,
+      req.authUser!.id,
+    );
     return res.json({ success: true, data, message: "Candidate updated" });
   },
 
@@ -110,20 +169,29 @@ export const atsController = {
     // The most consequential of these: move-stage MUTATES a candidate's pipeline position,
     // so without scope a recruiter could advance or reject someone else's candidate.
     const { assertCandidateInScope } = await import("./candidate-access.js");
-    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res)))
+      return;
 
     const input = moveStagingSchema.parse(req.body);
-    const data  = await atsService.moveStage(
-      req.params.id, input.toStage, req.authUser!.id, input.remarks ?? undefined
+    const data = await atsService.moveStage(
+      req.params.id,
+      input.toStage,
+      req.authUser!.id,
+      input.remarks ?? undefined,
     );
-    return res.json({ success: true, data, message: `Moved to ${input.toStage}` });
+    return res.json({
+      success: true,
+      data,
+      message: `Moved to ${input.toStage}`,
+    });
   },
 
   async listStageLogs(req: AuthenticatedRequest, res: Response) {
     // Stage history names the candidate's process/branch movement and the actors involved,
     // so it discloses as much as the record itself.
     const { assertCandidateInScope } = await import("./candidate-access.js");
-    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res)))
+      return;
 
     const data = await atsService.listStageLogs(req.params.id);
     return res.json({ success: true, data });
@@ -137,7 +205,7 @@ export const atsController = {
         branchId: "COALESCE(br.id, c.applied_for_branch)",
         processId: "c.applied_for_process",
       },
-      { allowAdminBypass: true }
+      { allowAdminBypass: true },
     );
     const data = await atsService.listOnboardingBridges(scopeFilter);
     return res.json({ success: true, data });
@@ -145,14 +213,27 @@ export const atsController = {
 
   async createOnboardingBridge(req: AuthenticatedRequest, res: Response) {
     const input = createOnboardingBridgeSchema.parse(req.body);
-    const data  = await atsService.createOnboardingBridge(input, req.authUser!.id);
-    return res.status(201).json({ success: true, data, message: "Onboarding bridge created" });
+    const data = await atsService.createOnboardingBridge(
+      input,
+      req.authUser!.id,
+    );
+    return res
+      .status(201)
+      .json({ success: true, data, message: "Onboarding bridge created" });
   },
 
   async updateOnboardingBridge(req: AuthenticatedRequest, res: Response) {
     const input = updateOnboardingBridgeSchema.parse(req.body);
-    const data  = await atsService.updateOnboardingBridge(req.params.id, input, req.authUser!.id);
-    return res.json({ success: true, data, message: "Onboarding bridge updated" });
+    const data = await atsService.updateOnboardingBridge(
+      req.params.id,
+      input,
+      req.authUser!.id,
+    );
+    return res.json({
+      success: true,
+      data,
+      message: "Onboarding bridge updated",
+    });
   },
 
   async listSourcingChannels(_req: AuthenticatedRequest, res: Response) {
@@ -177,12 +258,18 @@ export const atsController = {
       req.query as Record<string, string | undefined>;
 
     const ctx = await getUserRoleContext(req.authUser!.id);
-    const scope = await resolveDashboardScopeForRequest(req.authUser!, ctx.primaryRole);
+    const scope = await resolveDashboardScopeForRequest(
+      req.authUser!,
+      ctx.primaryRole,
+    );
 
-    const narrow = (asked: string | undefined, entitled: readonly string[]): string[] => {
+    const narrow = (
+      asked: string | undefined,
+      entitled: readonly string[],
+    ): string[] => {
       const value = String(asked ?? "").trim();
       if (!value) return [...entitled];
-      if (entitled.length === 0) return [value];         // ORG_ALL — nothing to narrow against
+      if (entitled.length === 0) return [value]; // ORG_ALL — nothing to narrow against
       return entitled.includes(value) ? [value] : [...entitled];
     };
     const branchIds = narrow(branchId, scope.branchIds);

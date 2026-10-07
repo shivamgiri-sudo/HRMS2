@@ -1,12 +1,17 @@
 // backend/scripts/migrate-legacy.employees.ts
-import type { Connection, RowDataPacket } from 'mysql2/promise';
-import type { MasterMaps } from './migrate-legacy.masters.js';
-import type { LegacyEmployeeRow } from './migrate-legacy.transforms.js';
+import type { Connection, RowDataPacket } from "mysql2/promise";
+import type { MasterMaps } from "./migrate-legacy.masters.js";
+import type { LegacyEmployeeRow } from "./migrate-legacy.transforms.js";
 import {
-  parseLegacyDate, splitName, normalizeGender,
-  toDecimal, boolFlag, buildAddress, parseUAN,
-} from './migrate-legacy.transforms.js';
-import { provisionLmsIdentityForEmployee } from '../src/modules/lms/lms-provisioning.service.js';
+  parseLegacyDate,
+  splitName,
+  normalizeGender,
+  toDecimal,
+  boolFlag,
+  buildAddress,
+  parseUAN,
+} from "./migrate-legacy.transforms.js";
+import { provisionLmsIdentityForEmployee } from "../src/modules/lms/lms-provisioning.service.js";
 
 export interface EmployeeMigrationResult {
   inserted: number;
@@ -20,19 +25,29 @@ export async function migrateEmployees(
   srcTable: string,
   masters: MasterMaps,
 ): Promise<EmployeeMigrationResult> {
-  console.log('  [Phase 2] Migrating employees (missing only)…');
+  console.log("  [Phase 2] Migrating employees (missing only)…");
 
   // Build set of codes already in mas_hrms so we only insert genuinely new rows
   const [existingRows] = await dst.execute<RowDataPacket[]>(
     `SELECT employee_code FROM employees`,
   );
   const existing = new Set<string>(
-    (existingRows as any[]).map((r) => String(r.employee_code).trim().toUpperCase()),
+    (existingRows as any[]).map((r) =>
+      String(r.employee_code).trim().toUpperCase(),
+    ),
   );
-  console.log(`  [Phase 2] ${existing.size} employees already in mas_hrms — will skip these`);
+  console.log(
+    `  [Phase 2] ${existing.size} employees already in mas_hrms — will skip these`,
+  );
 
-  const [rows] = await src.execute<RowDataPacket[]>(`SELECT * FROM ${srcTable}`);
-  const result: EmployeeMigrationResult = { inserted: 0, skipped: 0, errors: [] };
+  const [rows] = await src.execute<RowDataPacket[]>(
+    `SELECT * FROM ${srcTable}`,
+  );
+  const result: EmployeeMigrationResult = {
+    inserted: 0,
+    skipped: 0,
+    errors: [],
+  };
 
   for (const raw of rows) {
     const row = raw as LegacyEmployeeRow;
@@ -48,7 +63,9 @@ export async function migrateEmployees(
     }
   }
 
-  console.log(`  [Phase 2] Done. inserted:${result.inserted} skipped:${result.skipped} errors:${result.errors.length}`);
+  console.log(
+    `  [Phase 2] Done. inserted:${result.inserted} skipped:${result.skipped} errors:${result.errors.length}`,
+  );
   return result;
 }
 
@@ -73,22 +90,33 @@ async function migrateOneEmployee(
   }
   const { firstName, lastName } = splitName(row.EmpName);
 
-  const isLeft = row.Status === 'L';
-  const empStatus = isLeft ? 'Resigned' : 'Active';
+  const isLeft = row.Status === "L";
+  const empStatus = isLeft ? "Resigned" : "Active";
   const activeStatus = isLeft ? 0 : 1;
 
   const doj = parseLegacyDate(row.DOJ);
   if (!doj) {
-    result.errors.push({ empCode: row.EmpCode, error: 'Missing or invalid date_of_joining (DOJ)' });
+    result.errors.push({
+      empCode: row.EmpCode,
+      error: "Missing or invalid date_of_joining (DOJ)",
+    });
     return;
   }
   const dob = parseLegacyDate(row.DOB);
   const exitDate = isLeft ? parseLegacyDate(row.LeftDate) : null;
 
-  const branchId = row.Location ? (masters.branch.get(row.Location.trim()) ?? null) : null;
-  const departmentId = row.Depart ? (masters.department.get(row.Depart.trim()) ?? null) : null;
-  const processId = row.Process ? (masters.process.get(row.Process.trim()) ?? null) : null;
-  const designationId = row.Desig ? (masters.designation.get(row.Desig.trim()) ?? null) : null;
+  const branchId = row.Location
+    ? (masters.branch.get(row.Location.trim()) ?? null)
+    : null;
+  const departmentId = row.Depart
+    ? (masters.department.get(row.Depart.trim()) ?? null)
+    : null;
+  const processId = row.Process
+    ? (masters.process.get(row.Process.trim()) ?? null)
+    : null;
+  const designationId = row.Desig
+    ? (masters.designation.get(row.Desig.trim()) ?? null)
+    : null;
 
   await dst.execute(
     `INSERT INTO employees
@@ -111,15 +139,28 @@ async function migrateOneEmployee(
        source_type = VALUES(source_type), source = VALUES(source),
        legacy_emp_id = VALUES(legacy_emp_id)`,
     [
-      row.EmpCode, firstName, lastName,
-      row.EmailId ?? null, row.PMobNo ?? null,
+      row.EmpCode,
+      firstName,
+      lastName,
+      row.EmailId ?? null,
+      row.PMobNo ?? null,
       normalizeGender(row.Gender),
-      dob, doj, exitDate,
-      row.EmpType ?? 'OnRoll', empStatus, activeStatus,
-      branchId, departmentId, processId, designationId,
-      row.BiometricCode ?? null, row.Band ?? null,
-      row.Stream ?? null, row.Profile ?? null,
-      row.SourceType ?? null, row.Source ?? null,
+      dob,
+      doj,
+      exitDate,
+      row.EmpType ?? "OnRoll",
+      empStatus,
+      activeStatus,
+      branchId,
+      departmentId,
+      processId,
+      designationId,
+      row.BiometricCode ?? null,
+      row.Band ?? null,
+      row.Stream ?? null,
+      row.Profile ?? null,
+      row.SourceType ?? null,
+      row.Source ?? null,
       row.Id,
     ],
   );
@@ -135,9 +176,13 @@ async function migrateOneEmployee(
   }
 
   try {
-    const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: String(row.EmpCode).trim() });
+    const lmsResult = await provisionLmsIdentityForEmployee({
+      employeeCode: String(row.EmpCode).trim(),
+    });
     if (lmsResult.message) {
-      console.info(`[Legacy Migration] LMS provisioning for ${row.EmpCode}: ${lmsResult.message}`);
+      console.info(
+        `[Legacy Migration] LMS provisioning for ${row.EmpCode}: ${lmsResult.message}`,
+      );
     }
   } catch (err) {
     console.warn(
@@ -157,10 +202,11 @@ async function migrateOneEmployee(
          ifsc_code = VALUES(ifsc_code),
          account_type = VALUES(account_type)`,
       [
-        employeeId, row.AcBank ?? null,
-        Buffer.from(row.AcNo, 'utf8'),
+        employeeId,
+        row.AcBank ?? null,
+        Buffer.from(row.AcNo, "utf8"),
         row.IFSCCode ?? null,
-        row.AccType ?? 'Savings',
+        row.AccType ?? "Savings",
       ],
     );
   }
@@ -213,16 +259,31 @@ async function migrateOneEmployee(
        pay_mode = VALUES(pay_mode), salary_payment_mode = VALUES(salary_payment_mode)`,
     [
       employeeId,
-      toDecimal(row.bs), toDecimal(row.hra), toDecimal(row.conv), toDecimal(row.da),
-      toDecimal(row.portf), toDecimal(row.ma), toDecimal(row.lta), toDecimal(row.mob),
-      toDecimal(row.sa), toDecimal(row.oa),
-      toDecimal(row.Bonus), toDecimal(row.Gross), toDecimal(row.NetInHand),
-      toDecimal(row.CTCOffered), toDecimal(row.package),
-      toDecimal(row.EPF), toDecimal(row.ESIC),
-      toDecimal(row.EPFCO), toDecimal(row.ESICCO),
-      toDecimal(row.ProfessionalTax), toDecimal(row.Gratuity),
-      toDecimal(row.AdminCharges), toDecimal(row.PLI),
-      row.PayMode ?? null, row.SalaryPaymentMode ?? null,
+      toDecimal(row.bs),
+      toDecimal(row.hra),
+      toDecimal(row.conv),
+      toDecimal(row.da),
+      toDecimal(row.portf),
+      toDecimal(row.ma),
+      toDecimal(row.lta),
+      toDecimal(row.mob),
+      toDecimal(row.sa),
+      toDecimal(row.oa),
+      toDecimal(row.Bonus),
+      toDecimal(row.Gross),
+      toDecimal(row.NetInHand),
+      toDecimal(row.CTCOffered),
+      toDecimal(row.package),
+      toDecimal(row.EPF),
+      toDecimal(row.ESIC),
+      toDecimal(row.EPFCO),
+      toDecimal(row.ESICCO),
+      toDecimal(row.ProfessionalTax),
+      toDecimal(row.Gratuity),
+      toDecimal(row.AdminCharges),
+      toDecimal(row.PLI),
+      row.PayMode ?? null,
+      row.SalaryPaymentMode ?? null,
     ],
   );
 
@@ -235,8 +296,10 @@ async function migrateOneEmployee(
          client_name = VALUES(client_name), cost_center = VALUES(cost_center)`,
       [
         employeeId,
-        row.ClientName ?? null, row.CostCenter ?? null,
-        row.EmpFor ?? null, doj ?? null,
+        row.ClientName ?? null,
+        row.CostCenter ?? null,
+        row.EmpFor ?? null,
+        doj ?? null,
       ],
     );
   }
@@ -263,18 +326,28 @@ async function migrateOneEmployee(
        qualification = VALUES(qualification), official_email = VALUES(official_email)`,
     [
       employeeId,
-      row.Fname ?? null, row.RType ?? null, row.AccHolder ?? null,
-      row.BloodG ?? null, row.Qualification ?? null, row.MaritalStatus ?? null,
+      row.Fname ?? null,
+      row.RType ?? null,
+      row.AccHolder ?? null,
+      row.BloodG ?? null,
+      row.Qualification ?? null,
+      row.MaritalStatus ?? null,
       buildAddress(row.PAddress, row.PCity, row.PState, row.PpinCode),
       buildAddress(row.TAddress, row.TCity, row.TState, row.TPinCode),
-      row.PLandLine ?? null, row.TLandLine ?? null,
-      row.PassPortNo ?? null, row.dlNo ?? null,
-      row.OfferNo ?? null, row.BoxFileNo ?? null,
+      row.PLandLine ?? null,
+      row.TLandLine ?? null,
+      row.PassPortNo ?? null,
+      row.dlNo ?? null,
+      row.OfferNo ?? null,
+      row.BoxFileNo ?? null,
       parseLegacyDate(row.AppointPrintDate),
-      row.documentDone ?? null, row.AccountFlag ?? null,
+      row.documentDone ?? null,
+      row.AccountFlag ?? null,
       parseLegacyDate(row.AcValidationDate),
-      row.AcValidatedBy ?? null, row.AcRejectionRemarks ?? null,
-      row.UpdatedBy ?? null, row.OfficialEmailID ?? null,
+      row.AcValidatedBy ?? null,
+      row.AcRejectionRemarks ?? null,
+      row.UpdatedBy ?? null,
+      row.OfficialEmailID ?? null,
     ],
   );
 

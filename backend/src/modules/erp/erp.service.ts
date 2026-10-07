@@ -22,11 +22,20 @@ export interface VendorListFilters {
  * client-billing.routes.ts's buildInvoiceListQuery. A count computed from a different
  * predicate than the list is worse than no count at all: it looks authoritative and is wrong.
  */
-function buildVendorWhere(filters: VendorListFilters): { where: string; params: unknown[] } {
+function buildVendorWhere(filters: VendorListFilters): {
+  where: string;
+  params: unknown[];
+} {
   const conds: string[] = [];
   const params: unknown[] = [];
-  if (filters.is_active !== undefined) { conds.push("is_active = ?"); params.push(filters.is_active); }
-  if (filters.vendor_type)             { conds.push("vendor_type = ?"); params.push(filters.vendor_type); }
+  if (filters.is_active !== undefined) {
+    conds.push("is_active = ?");
+    params.push(filters.is_active);
+  }
+  if (filters.vendor_type) {
+    conds.push("vendor_type = ?");
+    params.push(filters.vendor_type);
+  }
 
   /*
    * Vendor applicability, ENFORCED — legal entity and branch (Vendor Master, three concepts).
@@ -57,7 +66,9 @@ function buildVendorWhere(filters: VendorListFilters): { where: string; params: 
   // caller has to filter client-side.
   const term = String(filters.q ?? "").trim();
   if (term) {
-    conds.push("(vendor_name LIKE ? OR vendor_code LIKE ? OR gst_number LIKE ?)");
+    conds.push(
+      "(vendor_name LIKE ? OR vendor_code LIKE ? OR gst_number LIKE ?)",
+    );
     const like = `%${term.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
     params.push(like, like, like);
   }
@@ -76,7 +87,10 @@ export const vendorService = {
     // reject placeholders in these positions. Both are coerced to integers first.
     let paging = "";
     if (filters.limit !== undefined && String(filters.limit).trim() !== "") {
-      const limit = Math.min(Math.max(Math.trunc(Number(filters.limit)) || 0, 1), 500);
+      const limit = Math.min(
+        Math.max(Math.trunc(Number(filters.limit)) || 0, 1),
+        500,
+      );
       const offset = Math.max(Math.trunc(Number(filters.offset)) || 0, 0);
       paging = ` LIMIT ${limit} OFFSET ${offset}`;
     }
@@ -97,7 +111,7 @@ export const vendorService = {
        ) ranked
        WHERE rn = 1
        ORDER BY vendor_name${paging}`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },
@@ -128,7 +142,7 @@ export const vendorService = {
          ${where}
        ) ranked
        WHERE rn = 1`,
-      params
+      params,
     );
     return Number(rows[0]?.total ?? 0);
   },
@@ -136,7 +150,7 @@ export const vendorService = {
   async getById(id: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM vendor_master WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -144,9 +158,20 @@ export const vendorService = {
   async create(data: Record<string, unknown>) {
     const id = randomUUID();
     const enriched = withDerivedGstStateCode(data);
-    const columns = ["id", "vendor_code", "vendor_name", "vendor_type", "contact_name",
-      "contact_email", "contact_phone", "address", "gst_number", "pan_number",
-      "payment_terms", "is_active"];
+    const columns = [
+      "id",
+      "vendor_code",
+      "vendor_name",
+      "vendor_type",
+      "contact_name",
+      "contact_email",
+      "contact_phone",
+      "address",
+      "gst_number",
+      "pan_number",
+      "payment_terms",
+      "is_active",
+    ];
     const values: unknown[] = [
       id,
       data.vendor_code,
@@ -172,7 +197,7 @@ export const vendorService = {
     await db.execute(
       `INSERT INTO vendor_master (${columns.join(", ")})
        VALUES (${columns.map(() => "?").join(", ")})`,
-      values
+      values,
     );
     return this.getById(id);
   },
@@ -181,25 +206,30 @@ export const vendorService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CAST(SUBSTRING(vendor_code, 2) AS UNSIGNED)) AS max_seq
          FROM vendor_master
-        WHERE vendor_code REGEXP '^V[0-9]+$'`
+        WHERE vendor_code REGEXP '^V[0-9]+$'`,
     );
     const seq = (Number(rows[0]?.max_seq ?? 0) || 0) + 1;
     return `V${String(seq).padStart(5, "0")}`;
   },
 
-  async findByName(name: string, excludeId?: string): Promise<{ id: string; vendor_code: string } | null> {
+  async findByName(
+    name: string,
+    excludeId?: string,
+  ): Promise<{ id: string; vendor_code: string } | null> {
     const trimmed = name?.trim();
     if (!trimmed) return null;
     if (excludeId) {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT id, vendor_code FROM vendor_master WHERE LOWER(vendor_name) = LOWER(?) AND id <> ? LIMIT 1`,
-        [trimmed, excludeId]
+        [trimmed, excludeId],
       );
-      return (rows[0] as { id: string; vendor_code: string } | undefined) ?? null;
+      return (
+        (rows[0] as { id: string; vendor_code: string } | undefined) ?? null
+      );
     }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, vendor_code FROM vendor_master WHERE LOWER(vendor_name) = LOWER(?) LIMIT 1`,
-      [trimmed]
+      [trimmed],
     );
     return (rows[0] as { id: string; vendor_code: string } | undefined) ?? null;
   },
@@ -248,7 +278,10 @@ export const vendorService = {
 
     sets.push("updated_at = NOW()");
     params.push(id);
-    await db.execute(`UPDATE vendor_master SET ${sets.join(", ")} WHERE id = ?`, params);
+    await db.execute(
+      `UPDATE vendor_master SET ${sets.join(", ")} WHERE id = ?`,
+      params,
+    );
     return this.getById(id);
   },
 };
@@ -256,9 +289,17 @@ export const vendorService = {
 /** Columns added by migration 1086. Written only when the caller mentions them. */
 const VENDOR_ENRICHMENT_COLUMNS = [
   "tally_name",
-  "address_line1", "address_line2", "address_line3", "city", "state", "pin_code",
-  "gst_enabled", "gst_state_code",
-  "tds_enabled", "tds_section", "tds_rate",
+  "address_line1",
+  "address_line2",
+  "address_line3",
+  "city",
+  "state",
+  "pin_code",
+  "gst_enabled",
+  "gst_state_code",
+  "tds_enabled",
+  "tds_section",
+  "tds_rate",
 ] as const;
 
 const BOOLEAN_COLUMNS = new Set(["gst_enabled", "tds_enabled"]);
@@ -268,7 +309,8 @@ function normaliseEnrichmentValue(column: string, value: unknown) {
     // NOT NULL DEFAULT 0 on the two flags, so an empty value means "off", not NULL.
     return BOOLEAN_COLUMNS.has(column) ? 0 : null;
   }
-  if (BOOLEAN_COLUMNS.has(column)) return value === true || value === 1 || value === "1" ? 1 : 0;
+  if (BOOLEAN_COLUMNS.has(column))
+    return value === true || value === 1 || value === "1" ? 1 : 0;
   if (column === "tds_rate") {
     const rate = Number(value);
     return Number.isFinite(rate) ? rate : null;
@@ -284,9 +326,12 @@ function normaliseEnrichmentValue(column: string, value: unknown) {
  * and a malformed GSTIN derives nothing rather than producing a bogus state. Same rule the
  * 1086 backfill applied to existing rows, so new rows match migrated ones.
  */
-function withDerivedGstStateCode(data: Record<string, unknown>): Record<string, unknown> {
+function withDerivedGstStateCode(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
   const supplied = data.gst_state_code;
-  if (supplied !== undefined && String(supplied ?? "").trim() !== "") return data;
+  if (supplied !== undefined && String(supplied ?? "").trim() !== "")
+    return data;
   const gstin = String(data.gst_number ?? "").trim();
   if (gstin.length !== 15 || !/^\d{2}/.test(gstin)) return data;
   return { ...data, gst_state_code: gstin.slice(0, 2) };
@@ -298,8 +343,14 @@ export const contractService = {
   async list(filters: { status?: string; vendor_id?: string }) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.status)    { conds.push("c.status = ?");    params.push(filters.status); }
-    if (filters.vendor_id) { conds.push("c.vendor_id = ?"); params.push(filters.vendor_id); }
+    if (filters.status) {
+      conds.push("c.status = ?");
+      params.push(filters.status);
+    }
+    if (filters.vendor_id) {
+      conds.push("c.vendor_id = ?");
+      params.push(filters.vendor_id);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT c.*, v.vendor_name
@@ -307,7 +358,7 @@ export const contractService = {
        LEFT JOIN vendor_master v ON v.id = c.vendor_id
        ${where}
        ORDER BY c.start_date DESC`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },
@@ -318,7 +369,7 @@ export const contractService = {
        FROM contract_master c
        LEFT JOIN vendor_master v ON v.id = c.vendor_id
        WHERE c.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -343,7 +394,7 @@ export const contractService = {
         data.status ?? "draft",
         data.notes ?? null,
         createdBy,
-      ]
+      ],
     );
     return this.getById(id);
   },
@@ -351,7 +402,7 @@ export const contractService = {
   async updateStatus(id: string, status: string, notes?: string) {
     await db.execute(
       "UPDATE contract_master SET status = ?, notes = COALESCE(?, notes), updated_at = NOW() WHERE id = ?",
-      [status, notes ?? null, id]
+      [status, notes ?? null, id],
     );
     return this.getById(id);
   },
@@ -374,23 +425,45 @@ export const expenseService = {
    * expense_type is therefore explicit. Callers wanting the vendor/imprest ledger
    * must ask for it; the default is the employee-claim view the UI presents.
    */
-  async list(filters: { employee_id?: string; status?: string; expense_type?: string | string[] }) {
+  async list(filters: {
+    employee_id?: string;
+    status?: string;
+    expense_type?: string | string[];
+  }) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.employee_id) { conds.push("e.employee_id = ?"); params.push(filters.employee_id); }
-    if (filters.status)      { conds.push("e.status = ?");      params.push(filters.status); }
+    if (filters.employee_id) {
+      conds.push("e.employee_id = ?");
+      params.push(filters.employee_id);
+    }
+    if (filters.status) {
+      conds.push("e.status = ?");
+      params.push(filters.status);
+    }
 
     // expense_type reaches here straight off req.query on the privileged path, so
     // validate against the ENUM rather than trusting the caller — qs can hand us
     // arrays or objects, and an unrecognised value must not silently widen the
     // result set back to the whole ledger.
-    const VALID_EXPENSE_TYPES = ["employee_claim", "vendor_bill", "imprest", "salary_advance"];
+    const VALID_EXPENSE_TYPES = [
+      "employee_claim",
+      "vendor_bill",
+      "imprest",
+      "salary_advance",
+    ];
     const requested = filters.expense_type
-      ? (Array.isArray(filters.expense_type) ? filters.expense_type : [filters.expense_type])
+      ? Array.isArray(filters.expense_type)
+        ? filters.expense_type
+        : [filters.expense_type]
       : [];
-    const types = requested.filter((t): t is string => typeof t === "string" && VALID_EXPENSE_TYPES.includes(t));
+    const types = requested.filter(
+      (t): t is string =>
+        typeof t === "string" && VALID_EXPENSE_TYPES.includes(t),
+    );
     const effectiveTypes = types.length > 0 ? types : ["employee_claim"];
-    conds.push(`e.expense_type IN (${effectiveTypes.map(() => "?").join(", ")})`);
+    conds.push(
+      `e.expense_type IN (${effectiveTypes.map(() => "?").join(", ")})`,
+    );
     params.push(...effectiveTypes);
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
@@ -403,7 +476,7 @@ export const expenseService = {
        ${where}
        ORDER BY e.expense_date DESC
        LIMIT 500`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },
@@ -415,7 +488,7 @@ export const expenseService = {
        FROM expense_claim e
        LEFT JOIN employees emp ON emp.id = e.employee_id
        WHERE e.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -438,12 +511,17 @@ export const expenseService = {
         data.receipt_ref ?? null,
         data.project_code ?? null,
         data.cost_centre_id ?? null,
-      ]
+      ],
     );
     return this.getById(id);
   },
 
-  async review(id: string, action: "approved" | "rejected", reviewedBy: string, remarks?: string) {
+  async review(
+    id: string,
+    action: "approved" | "rejected",
+    reviewedBy: string,
+    remarks?: string,
+  ) {
     // Load expense to check category for policy validation
     const claim = await this.getById(id);
     if (!claim) return null;
@@ -458,7 +536,7 @@ export const expenseService = {
       throw Object.assign(
         new Error(
           `Expense ${id} is a ${claim.expense_type} and cannot be reviewed here. ` +
-          `Vendor bills and imprest are settled through the GRN and vendor payment flow.`,
+            `Vendor bills and imprest are settled through the GRN and vendor payment flow.`,
         ),
         { statusCode: 409 },
       );
@@ -466,7 +544,7 @@ export const expenseService = {
 
     const [policyRows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM expense_policy WHERE category = ? AND is_active = 1 LIMIT 1",
-      [claim.category]
+      [claim.category],
     );
     const policy = (policyRows as RowDataPacket[])[0] ?? null;
 
@@ -478,9 +556,13 @@ export const expenseService = {
       if (amount > Number(policy.max_amount)) {
         finalAction = "rejected";
         autoRemarks = `Exceeds policy limit of ₹${Number(policy.max_amount).toLocaleString("en-IN")}`;
-      } else if (amount > Number(policy.requires_receipt_above) && !claim.receipt_ref) {
+      } else if (
+        amount > Number(policy.requires_receipt_above) &&
+        !claim.receipt_ref
+      ) {
         // Flag for HR: add note but do not block the review
-        autoRemarks = (remarks ? remarks + " | " : "") +
+        autoRemarks =
+          (remarks ? remarks + " | " : "") +
           `Receipt required for amounts above ₹${Number(policy.requires_receipt_above).toLocaleString("en-IN")}`;
       }
     }
@@ -491,7 +573,7 @@ export const expenseService = {
        SET status = ?, reviewed_by = ?, reviewed_at = NOW(),
            remarks = ?, updated_at = NOW()
        WHERE id = ?`,
-      [status, reviewedBy, autoRemarks, id]
+      [status, reviewedBy, autoRemarks, id],
     );
     return this.getById(id);
   },
@@ -502,7 +584,7 @@ export const expenseService = {
 export const expensePolicyService = {
   async list() {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM expense_policy ORDER BY category"
+      "SELECT * FROM expense_policy ORDER BY category",
     );
     return rows as RowDataPacket[];
   },
@@ -521,11 +603,11 @@ export const expensePolicyService = {
         data.approval_required ?? null,
         data.notes ?? null,
         category,
-      ]
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM expense_policy WHERE category = ? LIMIT 1",
-      [category]
+      [category],
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -537,7 +619,10 @@ export const billingUnitService = {
   async list(filters: { process_id?: string }) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.process_id) { conds.push("bu.process_id = ?"); params.push(filters.process_id); }
+    if (filters.process_id) {
+      conds.push("bu.process_id = ?");
+      params.push(filters.process_id);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       /*
@@ -555,7 +640,7 @@ export const billingUnitService = {
        LEFT JOIN process_master pm ON pm.id = bu.process_id COLLATE utf8mb4_unicode_ci
        ${where}
        ORDER BY bu.effective_from DESC`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },
@@ -578,10 +663,11 @@ export const billingUnitService = {
         data.effective_from,
         data.effective_to ?? null,
         data.is_active !== undefined ? data.is_active : 1,
-      ]
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM billing_unit WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM billing_unit WHERE id = ? LIMIT 1",
+      [id],
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -593,8 +679,14 @@ export const billingInvoiceService = {
   async list(filters: { process_id?: string; status?: string }) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.process_id) { conds.push("i.process_id = ?"); params.push(filters.process_id); }
-    if (filters.status)     { conds.push("i.status = ?");     params.push(filters.status); }
+    if (filters.process_id) {
+      conds.push("i.process_id = ?");
+      params.push(filters.process_id);
+    }
+    if (filters.status) {
+      conds.push("i.status = ?");
+      params.push(filters.status);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       // Same collation boundary as billing_unit above: billing_invoice is utf8mb4_0900_ai_ci,
@@ -604,12 +696,15 @@ export const billingInvoiceService = {
        LEFT JOIN process_master pm ON pm.id = i.process_id COLLATE utf8mb4_unicode_ci
        ${where}
        ORDER BY i.created_at DESC`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },
 
-  async generate(data: { process_id: string; period_from: string; period_to: string }, preparedBy: string) {
+  async generate(
+    data: { process_id: string; period_from: string; period_to: string },
+    preparedBy: string,
+  ) {
     // Resolve active billing unit for process
     const [buRows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM billing_unit
@@ -617,7 +712,7 @@ export const billingInvoiceService = {
          AND effective_from <= ?
          AND (effective_to IS NULL OR effective_to >= ?)
        ORDER BY effective_from DESC LIMIT 1`,
-      [data.process_id, data.period_to, data.period_from]
+      [data.process_id, data.period_to, data.period_from],
     );
     const bu = (buRows as RowDataPacket[])[0] ?? null;
     const rate = bu ? Number(bu.rate) : 0;
@@ -628,19 +723,19 @@ export const billingInvoiceService = {
        WHERE process_id = ?
          AND (date_of_leaving IS NULL OR date_of_leaving >= ?)
          AND (date_of_joining IS NULL OR date_of_joining <= ?)`,
-      [data.process_id, data.period_from, data.period_to]
+      [data.process_id, data.period_from, data.period_to],
     );
     const billableUnits = Number((empRows as RowDataPacket[])[0]?.cnt ?? 0);
 
-    const grossAmount  = billableUnits * rate;
-    const gstAmount    = +(grossAmount * 0.18).toFixed(2);
-    const netAmount    = grossAmount; // adjustments applied on PATCH
-    const totalAmount  = +(grossAmount + gstAmount).toFixed(2);
+    const grossAmount = billableUnits * rate;
+    const gstAmount = +(grossAmount * 0.18).toFixed(2);
+    const netAmount = grossAmount; // adjustments applied on PATCH
+    const totalAmount = +(grossAmount + gstAmount).toFixed(2);
 
     // Build invoice_ref: INV-YYYYMM-PROCESSCODE-NNN
     const [pmRows] = await db.execute<RowDataPacket[]>(
       "SELECT process_code FROM process_master WHERE id = ? LIMIT 1",
-      [data.process_id]
+      [data.process_id],
     );
     const processCode = (pmRows as RowDataPacket[])[0]?.process_code ?? "UNK";
     const yyyymm = data.period_from.slice(0, 7).replace("-", "");
@@ -648,9 +743,11 @@ export const billingInvoiceService = {
     const [seqRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM billing_invoice
        WHERE process_id = ? AND invoice_ref LIKE ?`,
-      [data.process_id, `INV-${yyyymm}-${processCode}-%`]
+      [data.process_id, `INV-${yyyymm}-${processCode}-%`],
     );
-    const seq = String(Number((seqRows as RowDataPacket[])[0]?.cnt ?? 0) + 1).padStart(3, "0");
+    const seq = String(
+      Number((seqRows as RowDataPacket[])[0]?.cnt ?? 0) + 1,
+    ).padStart(3, "0");
     const invoiceRef = `INV-${yyyymm}-${processCode}-${seq}`;
 
     const id = randomUUID();
@@ -661,17 +758,27 @@ export const billingInvoiceService = {
           gst_amount, total_amount, status, prepared_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'draft', ?)`,
       [
-        id, invoiceRef, data.process_id, bu?.id ?? null,
-        data.period_from, data.period_to,
-        billableUnits, rate, grossAmount, netAmount, gstAmount, totalAmount, preparedBy,
-      ]
+        id,
+        invoiceRef,
+        data.process_id,
+        bu?.id ?? null,
+        data.period_from,
+        data.period_to,
+        billableUnits,
+        rate,
+        grossAmount,
+        netAmount,
+        gstAmount,
+        totalAmount,
+        preparedBy,
+      ],
     );
     const [inv] = await db.execute<RowDataPacket[]>(
       `SELECT i.*, pm.process_code, pm.process_name
        FROM billing_invoice i
        LEFT JOIN process_master pm ON pm.id = i.process_id
        WHERE i.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     return (inv as RowDataPacket[])[0] ?? null;
   },
@@ -679,16 +786,20 @@ export const billingInvoiceService = {
   async update(id: string, data: Record<string, unknown>) {
     // Recalculate net/total if adjustments change
     const [existing] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM billing_invoice WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM billing_invoice WHERE id = ? LIMIT 1",
+      [id],
     );
     const inv = (existing as RowDataPacket[])[0];
     if (!inv) return null;
 
-    const adjustments = data.adjustments !== undefined ? Number(data.adjustments) : Number(inv.adjustments);
-    const grossAmount  = Number(inv.gross_amount);
-    const netAmount    = +(grossAmount - adjustments).toFixed(2);
-    const gstAmount    = +(netAmount * 0.18).toFixed(2);
-    const totalAmount  = +(netAmount + gstAmount).toFixed(2);
+    const adjustments =
+      data.adjustments !== undefined
+        ? Number(data.adjustments)
+        : Number(inv.adjustments);
+    const grossAmount = Number(inv.gross_amount);
+    const netAmount = +(grossAmount - adjustments).toFixed(2);
+    const gstAmount = +(netAmount * 0.18).toFixed(2);
+    const totalAmount = +(netAmount + gstAmount).toFixed(2);
 
     await db.execute(
       `UPDATE billing_invoice
@@ -703,19 +814,22 @@ export const billingInvoiceService = {
        WHERE id = ?`,
       [
         data.status ?? null,
-        adjustments, netAmount, gstAmount, totalAmount,
+        adjustments,
+        netAmount,
+        gstAmount,
+        totalAmount,
         data.notes ?? null,
         data.sent_at ?? null,
         data.paid_at ?? null,
         id,
-      ]
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT i.*, pm.process_code, pm.process_name
        FROM billing_invoice i
        LEFT JOIN process_master pm ON pm.id = i.process_id
        WHERE i.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -724,12 +838,25 @@ export const billingInvoiceService = {
 // ─── Procurement ─────────────────────────────────────────────────────────────
 
 export const procurementService = {
-  async list(filters: { requested_by?: string; status?: string; department_id?: string }) {
+  async list(filters: {
+    requested_by?: string;
+    status?: string;
+    department_id?: string;
+  }) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.requested_by)  { conds.push("p.requested_by = ?");  params.push(filters.requested_by); }
-    if (filters.status)        { conds.push("p.status = ?");        params.push(filters.status); }
-    if (filters.department_id) { conds.push("p.department_id = ?"); params.push(filters.department_id); }
+    if (filters.requested_by) {
+      conds.push("p.requested_by = ?");
+      params.push(filters.requested_by);
+    }
+    if (filters.status) {
+      conds.push("p.status = ?");
+      params.push(filters.status);
+    }
+    if (filters.department_id) {
+      conds.push("p.department_id = ?");
+      params.push(filters.department_id);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT p.*,
@@ -742,7 +869,7 @@ export const procurementService = {
        LEFT JOIN department_master d ON d.id = p.department_id
        ${where}
        ORDER BY p.created_at DESC`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },
@@ -750,7 +877,7 @@ export const procurementService = {
   async getById(id: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM procurement_request WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -774,19 +901,24 @@ export const procurementService = {
         data.department_id ?? null,
         data.required_by ?? null,
         data.justification ?? null,
-      ]
+      ],
     );
     return this.getById(id);
   },
 
-  async approve(id: string, action: "approved" | "rejected", approvedBy: string, remarks?: string) {
+  async approve(
+    id: string,
+    action: "approved" | "rejected",
+    approvedBy: string,
+    remarks?: string,
+  ) {
     const status = action === "approved" ? "approved" : "rejected";
     await db.execute(
       `UPDATE procurement_request
        SET status = ?, approved_by = ?, approved_at = NOW(),
            remarks = COALESCE(?, remarks), updated_at = NOW()
        WHERE id = ?`,
-      [status, approvedBy, remarks ?? null, id]
+      [status, approvedBy, remarks ?? null, id],
     );
     return this.getById(id);
   },

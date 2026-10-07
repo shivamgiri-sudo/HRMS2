@@ -26,7 +26,8 @@ export type { BgvDbConfig };
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
-export type VerificationStatus = "verified" | "mismatch" | "failed" | "manual_review" | "queued";
+export type VerificationStatus =
+  "verified" | "mismatch" | "failed" | "manual_review" | "queued";
 
 export interface PanVerificationInput {
   candidateName?: string | null;
@@ -77,7 +78,7 @@ export interface VerificationResult {
 }
 
 export interface AddressDocInput {
-  docType: 'driving_license' | 'voter_id';
+  docType: "driving_license" | "voter_id";
   documentNumber: string;
   candidateName?: string | null;
   dateOfBirth?: string | null;
@@ -85,7 +86,7 @@ export interface AddressDocInput {
 }
 
 export interface EducationVerificationInput {
-  boardType: 'cbse_10' | 'cbse_12' | 'university' | 'other';
+  boardType: "cbse_10" | "cbse_12" | "university" | "other";
   rollNumber?: string | null;
   certificateNumber?: string | null;
   yearOfPassing: number;
@@ -137,13 +138,23 @@ export interface BgvProviderAdapter {
   verifyPan(input: PanVerificationInput): Promise<VerificationResult>;
   verifyBank(input: BankVerificationInput): Promise<VerificationResult>;
   verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult>;
-  verifyUan?(input: { candidateName?: string | null; uanNumber: string }): Promise<VerificationResult & { employmentHistory?: unknown[] }>;
+  verifyUan?(input: {
+    candidateName?: string | null;
+    uanNumber: string;
+  }): Promise<VerificationResult & { employmentHistory?: unknown[] }>;
   verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult>;
-  verifyEducation(input: EducationVerificationInput): Promise<VerificationResult>;
+  verifyEducation(
+    input: EducationVerificationInput,
+  ): Promise<VerificationResult>;
   verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult>;
-  startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession>;
+  startDigilocker(
+    candidateId: string,
+    requestedDocuments: string[],
+  ): Promise<DigilockerSession>;
   initiateESign?(input: ESignInput): Promise<ESignSession>;
-  initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult>;
+  initiateCandidateBgv(
+    input: BgvCandidatePortalInput,
+  ): Promise<BgvPortalInitiationResult>;
 }
 
 export interface ESignInput {
@@ -165,7 +176,11 @@ export interface ESignSession {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const normalizeName = (name?: string | null) =>
-  String(name ?? "").trim().toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, " ");
+  String(name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z ]/g, "")
+    .replace(/\s+/g, " ");
 
 /**
  * What a penny-drop result actually means, judged against the candidate's
@@ -193,11 +208,26 @@ export function resolveBankVerificationOutcome(input: {
   candidateName?: string | null;
   typedAccountHolderName?: string | null;
   bankRegisteredName?: string | null;
-}): { status: VerificationStatus; matchScore: number; riskFlags: string[]; reason: string } {
-  const { providerStatus, candidateName, typedAccountHolderName, bankRegisteredName } = input;
+}): {
+  status: VerificationStatus;
+  matchScore: number;
+  riskFlags: string[];
+  reason: string;
+} {
+  const {
+    providerStatus,
+    candidateName,
+    typedAccountHolderName,
+    bankRegisteredName,
+  } = input;
 
   if (providerStatus !== "verified") {
-    return { status: providerStatus, matchScore: 0, riskFlags: [], reason: `provider returned ${providerStatus}` };
+    return {
+      status: providerStatus,
+      matchScore: 0,
+      riskFlags: [],
+      reason: `provider returned ${providerStatus}`,
+    };
   }
 
   if (!safeName(bankRegisteredName)) {
@@ -205,7 +235,8 @@ export function resolveBankVerificationOutcome(input: {
       status: "manual_review",
       matchScore: 0,
       riskFlags: ["BANK_NAME_NOT_RETURNED"],
-      reason: "the bank confirmed the account but returned no registered name, so ownership cannot be checked",
+      reason:
+        "the bank confirmed the account but returned no registered name, so ownership cannot be checked",
     };
   }
 
@@ -221,7 +252,10 @@ export function resolveBankVerificationOutcome(input: {
 
   // Worth recording separately: a candidate who typed the true owner's name knew
   // whose account it was, which reads differently from a typo.
-  const typedMatchesBank = !classifyNameMatch(typedAccountHolderName, bankRegisteredName).suspicious;
+  const typedMatchesBank = !classifyNameMatch(
+    typedAccountHolderName,
+    bankRegisteredName,
+  ).suspicious;
   return {
     status: "manual_review",
     matchScore: identity.score,
@@ -234,7 +268,10 @@ export function resolveBankVerificationOutcome(input: {
 
 const safeName = (value?: string | null) => String(value ?? "").trim();
 
-export function roughNameMatchScore(a?: string | null, b?: string | null): number {
+export function roughNameMatchScore(
+  a?: string | null,
+  b?: string | null,
+): number {
   const left = normalizeName(a);
   const right = normalizeName(b);
   if (!left || !right) return 0;
@@ -275,11 +312,16 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
     const ifsc = input.ifscCode.trim().toUpperCase();
     const validIfsc = /^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc);
     const validAccount = account.length >= 6;
-    const returnedName = input.accountHolderName || input.candidateName || "Mock Account Holder";
+    const returnedName =
+      input.accountHolderName || input.candidateName || "Mock Account Holder";
     const score = roughNameMatchScore(input.candidateName, returnedName);
     const ok = validIfsc && validAccount && score >= 60;
     return {
-      status: ok ? "verified" : validIfsc && validAccount ? "mismatch" : "failed",
+      status: ok
+        ? "verified"
+        : validIfsc && validAccount
+          ? "mismatch"
+          : "failed",
       providerKey: "mock_bgv",
       providerRequestId: randomUUID(),
       providerReferenceId: `MOCK-BANK-${Date.now()}`,
@@ -297,7 +339,10 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
     };
   }
 
-  async verifyUan(input: { candidateName?: string | null; uanNumber: string }): Promise<VerificationResult & { employmentHistory?: unknown[] }> {
+  async verifyUan(input: {
+    candidateName?: string | null;
+    uanNumber: string;
+  }): Promise<VerificationResult & { employmentHistory?: unknown[] }> {
     const valid = /^\d{12}$/.test(input.uanNumber.trim());
     return {
       status: valid ? "verified" : "failed",
@@ -306,14 +351,18 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
       providerReferenceId: `MOCK-UAN-${Date.now()}`,
       matchScore: valid ? 80 : 0,
       matchedName: input.candidateName ?? null,
-      resultSummary: valid ? "UAN format passed mock verification. Switch provider for live checks." : "Invalid UAN format.",
+      resultSummary: valid
+        ? "UAN format passed mock verification. Switch provider for live checks."
+        : "Invalid UAN format.",
       riskFlags: valid ? [] : ["UAN_FORMAT_INVALID"],
       raw: { mode: "mock", valid },
       employmentHistory: [],
     };
   }
 
-  async verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult> {
+  async verifyAadhaarOffline(
+    input: AadhaarOfflineInput,
+  ): Promise<VerificationResult> {
     return {
       status: input.documentId ? "manual_review" : "failed",
       providerKey: "mock_bgv",
@@ -324,7 +373,9 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
       resultSummary: input.documentId
         ? "Aadhaar uploaded. Configure BGV_PROVIDER=infinity_ai or digio for auto-clear."
         : "Aadhaar document missing.",
-      riskFlags: input.documentId ? ["AADHAAR_MANUAL_REVIEW_REQUIRED"] : ["AADHAAR_DOCUMENT_MISSING"],
+      riskFlags: input.documentId
+        ? ["AADHAAR_MANUAL_REVIEW_REQUIRED"]
+        : ["AADHAAR_DOCUMENT_MISSING"],
       raw: { mode: "mock" },
     };
   }
@@ -343,7 +394,9 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
     };
   }
 
-  async verifyEducation(input: EducationVerificationInput): Promise<VerificationResult> {
+  async verifyEducation(
+    input: EducationVerificationInput,
+  ): Promise<VerificationResult> {
     return {
       status: "manual_review",
       providerKey: "mock_bgv",
@@ -357,7 +410,9 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
     };
   }
 
-  async verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult> {
+  async verifyCourt(
+    input: CourtVerificationInput,
+  ): Promise<CourtVerificationResult> {
     return {
       status: "queued",
       providerKey: "mock_bgv",
@@ -365,31 +420,42 @@ export class MockBgvProviderAdapter implements BgvProviderAdapter {
       providerReferenceId: `MOCK-COURT-${Date.now()}`,
       matchScore: null,
       matchedName: input.candidateName,
-      resultSummary: "Court check queued. Configure BGV_PROVIDER=infinity_ai for live court record checks.",
+      resultSummary:
+        "Court check queued. Configure BGV_PROVIDER=infinity_ai for live court record checks.",
       riskFlags: [],
       courtCases: null,
       raw: { mode: "mock" },
     };
   }
 
-  async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
+  async startDigilocker(
+    candidateId: string,
+    requestedDocuments: string[],
+  ): Promise<DigilockerSession> {
     const state = randomUUID();
     return {
       state,
-      authUrl: `${env.BACKEND_URL || 'http://localhost:5056'}/api/mock-digilocker/authorize?state=${state}&candidateId=${candidateId}&docs=${encodeURIComponent(requestedDocuments.join(","))}`,
+      authUrl: `${env.BACKEND_URL || "http://localhost:5056"}/api/mock-digilocker/authorize?state=${state}&candidateId=${candidateId}&docs=${encodeURIComponent(requestedDocuments.join(","))}`,
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     };
   }
 
-  async initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult> {
-    const mockToken = Buffer.from(`MOCK-${input.candidateId}`).toString("base64");
+  async initiateCandidateBgv(
+    input: BgvCandidatePortalInput,
+  ): Promise<BgvPortalInitiationResult> {
+    const mockToken = Buffer.from(`MOCK-${input.candidateId}`).toString(
+      "base64",
+    );
     return {
       providerKey: "mock_bgv",
       caseId: `MOCK-CASE-${randomUUID()}`,
       portalLoginUrl: `http://localhost:5173/mock-bgv-portal/login/${mockToken}`,
       candidateEmail: input.email,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      raw: { mode: "mock", note: "Set BGV_PROVIDER=infinity_ai for live InfinitiAI portal initiation." },
+      raw: {
+        mode: "mock",
+        note: "Set BGV_PROVIDER=infinity_ai for live InfinitiAI portal initiation.",
+      },
     };
   }
 }
@@ -403,12 +469,15 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
   private readonly http;
 
   constructor() {
-    if (!env.INFINITY_AI_API_KEY) throw new Error("INFINITY_AI_API_KEY is not configured");
+    if (!env.INFINITY_AI_API_KEY)
+      throw new Error("INFINITY_AI_API_KEY is not configured");
     this.http = axios.create({
       baseURL: env.INFINITY_AI_API_URL,
       headers: {
         "x-api-key": env.INFINITY_AI_API_KEY,
-        ...(env.INFINITY_AI_CLIENT_ID ? { "x-client-id": env.INFINITY_AI_CLIENT_ID } : {}),
+        ...(env.INFINITY_AI_CLIENT_ID
+          ? { "x-client-id": env.INFINITY_AI_CLIENT_ID }
+          : {}),
         "Content-Type": "application/json",
       },
       timeout: 30_000,
@@ -426,20 +495,30 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
     const d = res.data?.data ?? res.data ?? {};
     const apiStatus: string = String(d.status ?? "").toLowerCase();
     const status: VerificationStatus =
-      apiStatus === "valid" || apiStatus === "verified" ? "verified"
-      : apiStatus === "name_mismatch" || apiStatus === "mismatch" ? "mismatch"
-      : "failed";
-    const score = roughNameMatchScore(input.candidateName, d.pan_name ?? d.name);
+      apiStatus === "valid" || apiStatus === "verified"
+        ? "verified"
+        : apiStatus === "name_mismatch" || apiStatus === "mismatch"
+          ? "mismatch"
+          : "failed";
+    const score = roughNameMatchScore(
+      input.candidateName,
+      d.pan_name ?? d.name,
+    );
     return {
       status,
       providerKey: "infinity_ai",
       providerRequestId: requestId,
-      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      providerReferenceId: String(
+        d.reference_id ?? d.transaction_id ?? requestId,
+      ),
       matchScore: score,
       matchedName: d.pan_name ?? d.name ?? null,
       matchedDob: d.dob ?? null,
       resultSummary: d.message ?? d.result_message ?? `PAN check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "PAN_CHECK_FAILED").toUpperCase()],
+      riskFlags:
+        status === "verified"
+          ? []
+          : [String(d.failure_reason ?? "PAN_CHECK_FAILED").toUpperCase()],
       raw: d,
     };
   }
@@ -455,9 +534,13 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
     const d = res.data?.data ?? res.data ?? {};
     const apiStatus: string = String(d.status ?? "").toLowerCase();
     const status: VerificationStatus =
-      apiStatus === "valid" || apiStatus === "verified" || apiStatus === "active" ? "verified"
-      : apiStatus === "name_mismatch" || apiStatus === "mismatch" ? "mismatch"
-      : "failed";
+      apiStatus === "valid" ||
+      apiStatus === "verified" ||
+      apiStatus === "active"
+        ? "verified"
+        : apiStatus === "name_mismatch" || apiStatus === "mismatch"
+          ? "mismatch"
+          : "failed";
     const matchedName = d.registered_name ?? d.account_holder_name ?? null;
     const outcome = resolveBankVerificationOutcome({
       providerStatus: status,
@@ -472,15 +555,21 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
       providerReferenceId: String(d.reference_id ?? d.utr ?? requestId),
       matchScore: outcome.matchScore,
       matchedName,
-      resultSummary: outcome.riskFlags.length ? outcome.reason : (d.message ?? `Bank check: ${outcome.status}`),
+      resultSummary: outcome.riskFlags.length
+        ? outcome.reason
+        : (d.message ?? `Bank check: ${outcome.status}`),
       riskFlags: outcome.riskFlags.length
         ? outcome.riskFlags
-        : status === "verified" ? [] : [String(d.failure_reason ?? "BANK_CHECK_FAILED").toUpperCase()],
+        : status === "verified"
+          ? []
+          : [String(d.failure_reason ?? "BANK_CHECK_FAILED").toUpperCase()],
       raw: d,
     };
   }
 
-  async verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult> {
+  async verifyAadhaarOffline(
+    input: AadhaarOfflineInput,
+  ): Promise<VerificationResult> {
     const requestId = randomUUID();
     const res = await this.http.post("/v1/bgv/aadhaar/offline-verify", {
       request_id: requestId,
@@ -491,10 +580,15 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
     const d = res.data?.data ?? res.data ?? {};
     const apiStatus: string = String(d.status ?? "").toLowerCase();
     const status: VerificationStatus =
-      apiStatus === "verified" || apiStatus === "valid" ? "verified"
-      : apiStatus === "manual_review" || apiStatus === "pending" ? "manual_review"
-      : "failed";
-    const score = roughNameMatchScore(input.candidateName, d.name ?? d.matched_name);
+      apiStatus === "verified" || apiStatus === "valid"
+        ? "verified"
+        : apiStatus === "manual_review" || apiStatus === "pending"
+          ? "manual_review"
+          : "failed";
+    const score = roughNameMatchScore(
+      input.candidateName,
+      d.name ?? d.matched_name,
+    );
     return {
       status,
       providerKey: "infinity_ai",
@@ -503,44 +597,68 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
       matchScore: score,
       matchedName: d.name ?? d.matched_name ?? null,
       resultSummary: d.message ?? `Aadhaar offline: ${status}`,
-      riskFlags: status === "verified" ? [] : ["AADHAAR_OFFLINE_" + (d.failure_reason ?? "FAILED").toUpperCase()],
+      riskFlags:
+        status === "verified"
+          ? []
+          : ["AADHAAR_OFFLINE_" + (d.failure_reason ?? "FAILED").toUpperCase()],
       raw: d,
     };
   }
 
   async verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult> {
     const requestId = randomUUID();
-    const endpoint = input.docType === 'driving_license'
-      ? '/v1/bgv/dl/verify'
-      : '/v1/bgv/voter/verify';
-    const payload = input.docType === 'driving_license'
-      ? { request_id: requestId, dl_number: input.documentNumber, dob: input.dateOfBirth ?? undefined, name: input.candidateName ?? undefined, state: input.state ?? undefined }
-      : { request_id: requestId, epic_number: input.documentNumber, name: input.candidateName ?? undefined };
+    const endpoint =
+      input.docType === "driving_license"
+        ? "/v1/bgv/dl/verify"
+        : "/v1/bgv/voter/verify";
+    const payload =
+      input.docType === "driving_license"
+        ? {
+            request_id: requestId,
+            dl_number: input.documentNumber,
+            dob: input.dateOfBirth ?? undefined,
+            name: input.candidateName ?? undefined,
+            state: input.state ?? undefined,
+          }
+        : {
+            request_id: requestId,
+            epic_number: input.documentNumber,
+            name: input.candidateName ?? undefined,
+          };
     const res = await this.http.post(endpoint, payload);
     const d = res.data?.data ?? res.data ?? {};
-    const apiStatus = String(d.status ?? '').toLowerCase();
+    const apiStatus = String(d.status ?? "").toLowerCase();
     const status: VerificationStatus =
-      apiStatus === 'valid' || apiStatus === 'verified' ? 'verified'
-      : apiStatus === 'name_mismatch' || apiStatus === 'mismatch' ? 'mismatch'
-      : 'failed';
+      apiStatus === "valid" || apiStatus === "verified"
+        ? "verified"
+        : apiStatus === "name_mismatch" || apiStatus === "mismatch"
+          ? "mismatch"
+          : "failed";
     const matchedName = d.name ?? d.holder_name ?? d.voter_name ?? null;
     return {
       status,
-      providerKey: 'infinity_ai',
+      providerKey: "infinity_ai",
       providerRequestId: requestId,
-      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      providerReferenceId: String(
+        d.reference_id ?? d.transaction_id ?? requestId,
+      ),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
       matchedDob: d.dob ?? null,
       resultSummary: d.message ?? `${input.docType} check: ${status}`,
-      riskFlags: status === 'verified' ? [] : [String(d.failure_reason ?? 'ADDRESS_DOC_FAILED').toUpperCase()],
+      riskFlags:
+        status === "verified"
+          ? []
+          : [String(d.failure_reason ?? "ADDRESS_DOC_FAILED").toUpperCase()],
       raw: d,
     };
   }
 
-  async verifyEducation(input: EducationVerificationInput): Promise<VerificationResult> {
+  async verifyEducation(
+    input: EducationVerificationInput,
+  ): Promise<VerificationResult> {
     const requestId = randomUUID();
-    const res = await this.http.post('/v1/bgv/education/verify', {
+    const res = await this.http.post("/v1/bgv/education/verify", {
       request_id: requestId,
       board_type: input.boardType,
       roll_number: input.rollNumber ?? undefined,
@@ -550,37 +668,46 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
       institution_name: input.institutionName ?? undefined,
     });
     const d = res.data?.data ?? res.data ?? {};
-    const apiStatus = String(d.status ?? '').toLowerCase();
+    const apiStatus = String(d.status ?? "").toLowerCase();
     const status: VerificationStatus =
-      apiStatus === 'valid' || apiStatus === 'verified' ? 'verified'
-      : apiStatus === 'manual_review' || apiStatus === 'pending' ? 'manual_review'
-      : apiStatus === 'name_mismatch' || apiStatus === 'mismatch' ? 'mismatch'
-      : 'failed';
+      apiStatus === "valid" || apiStatus === "verified"
+        ? "verified"
+        : apiStatus === "manual_review" || apiStatus === "pending"
+          ? "manual_review"
+          : apiStatus === "name_mismatch" || apiStatus === "mismatch"
+            ? "mismatch"
+            : "failed";
     const matchedName = d.candidate_name ?? d.name ?? null;
     return {
       status,
-      providerKey: 'infinity_ai',
+      providerKey: "infinity_ai",
       providerRequestId: requestId,
       providerReferenceId: String(d.reference_id ?? requestId),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
-      resultSummary: d.message ?? `Education (${input.boardType}) check: ${status}`,
-      riskFlags: status === 'verified' ? [] : [String(d.failure_reason ?? 'EDUCATION_FAILED').toUpperCase()],
+      resultSummary:
+        d.message ?? `Education (${input.boardType}) check: ${status}`,
+      riskFlags:
+        status === "verified"
+          ? []
+          : [String(d.failure_reason ?? "EDUCATION_FAILED").toUpperCase()],
       raw: d,
     };
   }
 
-  async verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult> {
+  async verifyCourt(
+    input: CourtVerificationInput,
+  ): Promise<CourtVerificationResult> {
     const requestId = randomUUID();
     const courtHttp = axios.create({
       baseURL: env.COURT_CHECK_API_URL,
       headers: {
-        'x-api-key': env.COURT_CHECK_API_KEY ?? env.INFINITY_AI_API_KEY ?? '',
-        'Content-Type': 'application/json',
+        "x-api-key": env.COURT_CHECK_API_KEY ?? env.INFINITY_AI_API_KEY ?? "",
+        "Content-Type": "application/json",
       },
       timeout: 30_000,
     });
-    const res = await courtHttp.post('/v1/bgv/court/verify', {
+    const res = await courtHttp.post("/v1/bgv/court/verify", {
       request_id: requestId,
       name: input.candidateName,
       dob: input.dateOfBirth,
@@ -590,34 +717,44 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
       pincode: input.pincode ?? undefined,
     });
     const d = res.data?.data ?? res.data ?? {};
-    const apiStatus = String(d.status ?? '').toLowerCase();
+    const apiStatus = String(d.status ?? "").toLowerCase();
     const status: VerificationStatus =
-      apiStatus === 'clear' || apiStatus === 'no_records' ? 'verified'
-      : apiStatus === 'positive' || apiStatus === 'records_found' ? 'failed'
-      : apiStatus === 'manual_review' || apiStatus === 'pending' ? 'manual_review'
-      : 'queued';
-    const cases = Array.isArray(d.court_cases) ? d.court_cases.map((c: Record<string, unknown>) => ({
-      caseType: String(c.case_type ?? ''),
-      caseNumber: String(c.case_number ?? ''),
-      court: String(c.court_name ?? c.court ?? ''),
-      year: Number(c.year ?? 0),
-      status: String(c.status ?? ''),
-    })) : null;
+      apiStatus === "clear" || apiStatus === "no_records"
+        ? "verified"
+        : apiStatus === "positive" || apiStatus === "records_found"
+          ? "failed"
+          : apiStatus === "manual_review" || apiStatus === "pending"
+            ? "manual_review"
+            : "queued";
+    const cases = Array.isArray(d.court_cases)
+      ? d.court_cases.map((c: Record<string, unknown>) => ({
+          caseType: String(c.case_type ?? ""),
+          caseNumber: String(c.case_number ?? ""),
+          court: String(c.court_name ?? c.court ?? ""),
+          year: Number(c.year ?? 0),
+          status: String(c.status ?? ""),
+        }))
+      : null;
     return {
       status,
-      providerKey: 'infinity_ai',
+      providerKey: "infinity_ai",
       providerRequestId: requestId,
-      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      providerReferenceId: String(
+        d.reference_id ?? d.transaction_id ?? requestId,
+      ),
       matchScore: null,
       matchedName: input.candidateName,
       resultSummary: d.message ?? `Court check: ${status}`,
-      riskFlags: cases?.length ? ['COURT_RECORDS_FOUND'] : [],
+      riskFlags: cases?.length ? ["COURT_RECORDS_FOUND"] : [],
       courtCases: cases,
       raw: d,
     };
   }
 
-  async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
+  async startDigilocker(
+    candidateId: string,
+    requestedDocuments: string[],
+  ): Promise<DigilockerSession> {
     const state = randomUUID();
     const res = await this.http.post("/v1/digilocker/session/create", {
       state,
@@ -629,11 +766,15 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
     return {
       state: String(d.state ?? state),
       authUrl: String(d.auth_url ?? d.redirect_url ?? ""),
-      expiresAt: d.expires_at ? new Date(d.expires_at) : new Date(Date.now() + 30 * 60 * 1000),
+      expiresAt: d.expires_at
+        ? new Date(d.expires_at)
+        : new Date(Date.now() + 30 * 60 * 1000),
     };
   }
 
-  async initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult> {
+  async initiateCandidateBgv(
+    input: BgvCandidatePortalInput,
+  ): Promise<BgvPortalInitiationResult> {
     // InfinitiAI candidate portal initiation.
     // Creates the candidate on their portal; they receive a login email with URL http://candidates.theinfiniti.ai/login/{token}
     // Endpoint confirmed from InfinitiAI support email (support@theinfiniti.ai) — Mas Callnet India Pvt Ltd integration.
@@ -659,7 +800,9 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
       caseId,
       portalLoginUrl,
       candidateEmail: input.email,
-      expiresAt: d.expires_at ? new Date(d.expires_at) : new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000),
+      expiresAt: d.expires_at
+        ? new Date(d.expires_at)
+        : new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000),
       raw: d,
     };
   }
@@ -674,9 +817,13 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
 
   constructor() {
     if (!env.DIGIO_CLIENT_ID || !env.DIGIO_CLIENT_SECRET) {
-      throw new Error("DIGIO_CLIENT_ID and DIGIO_CLIENT_SECRET are not configured");
+      throw new Error(
+        "DIGIO_CLIENT_ID and DIGIO_CLIENT_SECRET are not configured",
+      );
     }
-    const token = Buffer.from(`${env.DIGIO_CLIENT_ID}:${env.DIGIO_CLIENT_SECRET}`).toString("base64");
+    const token = Buffer.from(
+      `${env.DIGIO_CLIENT_ID}:${env.DIGIO_CLIENT_SECRET}`,
+    ).toString("base64");
     this.http = axios.create({
       baseURL: env.DIGIO_API_URL,
       headers: {
@@ -698,10 +845,15 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
     const d = res.data ?? {};
     const code: string = String(d.response_code ?? d.code ?? "").toUpperCase();
     const status: VerificationStatus =
-      code === "200" || d.status === "VALID" ? "verified"
-      : d.status === "NAME_MISMATCH" ? "mismatch"
-      : "failed";
-    const score = roughNameMatchScore(input.candidateName, d.pan_holder_name ?? d.name);
+      code === "200" || d.status === "VALID"
+        ? "verified"
+        : d.status === "NAME_MISMATCH"
+          ? "mismatch"
+          : "failed";
+    const score = roughNameMatchScore(
+      input.candidateName,
+      d.pan_holder_name ?? d.name,
+    );
     return {
       status,
       providerKey: "digio",
@@ -722,14 +874,17 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
     const res = await this.http.post("/v2/client/verify/bank_account", {
       account_number: input.accountNo.replace(/\s/g, ""),
       ifsc: input.ifscCode.trim().toUpperCase(),
-      account_holder_name: input.accountHolderName ?? input.candidateName ?? undefined,
+      account_holder_name:
+        input.accountHolderName ?? input.candidateName ?? undefined,
     });
     const d = res.data ?? {};
     const code: string = String(d.response_code ?? d.code ?? "").toUpperCase();
     const status: VerificationStatus =
-      code === "200" || d.bank_account_exists === true ? "verified"
-      : d.name_match === false ? "mismatch"
-      : "failed";
+      code === "200" || d.bank_account_exists === true
+        ? "verified"
+        : d.name_match === false
+          ? "mismatch"
+          : "failed";
     const matchedName = d.registered_name ?? d.account_holder_name ?? null;
     const outcome = resolveBankVerificationOutcome({
       providerStatus: status,
@@ -744,13 +899,21 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
       providerReferenceId: String(d.id ?? requestId),
       matchScore: outcome.matchScore,
       matchedName,
-      resultSummary: outcome.riskFlags.length ? outcome.reason : (d.message ?? `Bank check: ${outcome.status}`),
-      riskFlags: outcome.riskFlags.length ? outcome.riskFlags : status === "verified" ? [] : [code || "BANK_FAILED"],
+      resultSummary: outcome.riskFlags.length
+        ? outcome.reason
+        : (d.message ?? `Bank check: ${outcome.status}`),
+      riskFlags: outcome.riskFlags.length
+        ? outcome.riskFlags
+        : status === "verified"
+          ? []
+          : [code || "BANK_FAILED"],
       raw: d,
     };
   }
 
-  async verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult> {
+  async verifyAadhaarOffline(
+    input: AadhaarOfflineInput,
+  ): Promise<VerificationResult> {
     const requestId = randomUUID();
     // Digio Aadhaar offline XML: POST /v2/client/verify/aadhaar
     const res = await this.http.post("/v2/client/verify/aadhaar", {
@@ -761,10 +924,15 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
     const d = res.data ?? {};
     const code: string = String(d.response_code ?? d.code ?? "").toUpperCase();
     const status: VerificationStatus =
-      code === "200" || d.status === "VALID" ? "verified"
-      : d.status === "MANUAL_REVIEW" ? "manual_review"
-      : "failed";
-    const score = roughNameMatchScore(input.candidateName, d.name ?? d.aadhaar_name);
+      code === "200" || d.status === "VALID"
+        ? "verified"
+        : d.status === "MANUAL_REVIEW"
+          ? "manual_review"
+          : "failed";
+    const score = roughNameMatchScore(
+      input.candidateName,
+      d.name ?? d.aadhaar_name,
+    );
     return {
       status,
       providerKey: "digio",
@@ -780,37 +948,50 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
 
   async verifyAddressDoc(input: AddressDocInput): Promise<VerificationResult> {
     const requestId = randomUUID();
-    const endpoint = input.docType === 'driving_license'
-      ? '/v2/client/verify/driving_license'
-      : '/v2/client/verify/voter_id';
-    const payload = input.docType === 'driving_license'
-      ? { dl_number: input.documentNumber, dob: input.dateOfBirth ?? undefined, name: input.candidateName ?? undefined }
-      : { voter_id: input.documentNumber, name: input.candidateName ?? undefined };
+    const endpoint =
+      input.docType === "driving_license"
+        ? "/v2/client/verify/driving_license"
+        : "/v2/client/verify/voter_id";
+    const payload =
+      input.docType === "driving_license"
+        ? {
+            dl_number: input.documentNumber,
+            dob: input.dateOfBirth ?? undefined,
+            name: input.candidateName ?? undefined,
+          }
+        : {
+            voter_id: input.documentNumber,
+            name: input.candidateName ?? undefined,
+          };
     const res = await this.http.post(endpoint, payload);
     const d = res.data ?? {};
-    const code = String(d.response_code ?? d.code ?? '').toUpperCase();
+    const code = String(d.response_code ?? d.code ?? "").toUpperCase();
     const status: VerificationStatus =
-      code === '200' || d.status === 'VALID' ? 'verified'
-      : d.status === 'NAME_MISMATCH' ? 'mismatch'
-      : 'failed';
+      code === "200" || d.status === "VALID"
+        ? "verified"
+        : d.status === "NAME_MISMATCH"
+          ? "mismatch"
+          : "failed";
     const matchedName = d.name ?? d.holder_name ?? null;
     return {
       status,
-      providerKey: 'digio',
+      providerKey: "digio",
       providerRequestId: requestId,
       providerReferenceId: String(d.id ?? requestId),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
       matchedDob: d.dob ?? null,
       resultSummary: d.message ?? `${input.docType} check: ${status}`,
-      riskFlags: status === 'verified' ? [] : [code || 'ADDRESS_DOC_FAILED'],
+      riskFlags: status === "verified" ? [] : [code || "ADDRESS_DOC_FAILED"],
       raw: d,
     };
   }
 
-  async verifyEducation(input: EducationVerificationInput): Promise<VerificationResult> {
+  async verifyEducation(
+    input: EducationVerificationInput,
+  ): Promise<VerificationResult> {
     const requestId = randomUUID();
-    const res = await this.http.post('/v2/client/verify/education', {
+    const res = await this.http.post("/v2/client/verify/education", {
       board_type: input.boardType,
       roll_number: input.rollNumber ?? undefined,
       certificate_number: input.certificateNumber ?? undefined,
@@ -818,33 +999,46 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
       name: input.candidateName ?? undefined,
     });
     const d = res.data ?? {};
-    const code = String(d.response_code ?? d.code ?? '').toUpperCase();
+    const code = String(d.response_code ?? d.code ?? "").toUpperCase();
     const status: VerificationStatus =
-      code === '200' || d.status === 'VALID' ? 'verified'
-      : d.status === 'MANUAL_REVIEW' ? 'manual_review'
-      : d.status === 'NAME_MISMATCH' ? 'mismatch'
-      : 'failed';
+      code === "200" || d.status === "VALID"
+        ? "verified"
+        : d.status === "MANUAL_REVIEW"
+          ? "manual_review"
+          : d.status === "NAME_MISMATCH"
+            ? "mismatch"
+            : "failed";
     return {
       status,
-      providerKey: 'digio',
+      providerKey: "digio",
       providerRequestId: requestId,
       providerReferenceId: String(d.id ?? requestId),
-      matchScore: roughNameMatchScore(input.candidateName, d.candidate_name ?? d.name),
+      matchScore: roughNameMatchScore(
+        input.candidateName,
+        d.candidate_name ?? d.name,
+      ),
       matchedName: d.candidate_name ?? d.name ?? null,
       resultSummary: d.message ?? `Education check: ${status}`,
-      riskFlags: status === 'verified' ? [] : [code || 'EDUCATION_FAILED'],
+      riskFlags: status === "verified" ? [] : [code || "EDUCATION_FAILED"],
       raw: d,
     };
   }
 
-  async verifyCourt(_input: CourtVerificationInput): Promise<CourtVerificationResult> {
+  async verifyCourt(
+    _input: CourtVerificationInput,
+  ): Promise<CourtVerificationResult> {
     throw Object.assign(
-      new Error("Court check is not supported by the Digio adapter. Switch BGV_PROVIDER=infinity_ai."),
+      new Error(
+        "Court check is not supported by the Digio adapter. Switch BGV_PROVIDER=infinity_ai.",
+      ),
       { statusCode: 501 },
     );
   }
 
-  async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
+  async startDigilocker(
+    candidateId: string,
+    requestedDocuments: string[],
+  ): Promise<DigilockerSession> {
     // Digio DigiLocker: POST /v2/client/digilocker/create_request
     const res = await this.http.post("/v2/client/digilocker/create_request", {
       customer_identifier: candidateId,
@@ -856,14 +1050,20 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
     return {
       state: String(d.id ?? randomUUID()),
       authUrl: String(d.access_link ?? d.digilocker_url ?? ""),
-      expiresAt: d.expire_on ? new Date(d.expire_on) : new Date(Date.now() + 30 * 60 * 1000),
+      expiresAt: d.expire_on
+        ? new Date(d.expire_on)
+        : new Date(Date.now() + 30 * 60 * 1000),
     };
   }
 
-  async initiateCandidateBgv(input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult> {
+  async initiateCandidateBgv(
+    input: BgvCandidatePortalInput,
+  ): Promise<BgvPortalInitiationResult> {
     // Digio does not provide a hosted candidate BGV portal; use InfinitiAI for this flow.
     throw Object.assign(
-      new Error("Candidate BGV portal initiation is not supported by the Digio adapter. Switch BGV_PROVIDER=infinity_ai."),
+      new Error(
+        "Candidate BGV portal initiation is not supported by the Digio adapter. Switch BGV_PROVIDER=infinity_ai.",
+      ),
       { statusCode: 501 },
     );
   }
@@ -887,14 +1087,19 @@ export function getBgvProviderAdapter(): BgvProviderAdapter {
         bgv_provider: "befisc_luckpay",
         // Honour LUCKPAY_ENV — previously this always used the staging-capable
         // LUCKPAY_BASE_URL, so LUCKPAY_ENV=production had no effect here.
-        luckpay_api_url:     env.LUCKPAY_ENV === "production" ? env.LUCKPAY_PROD_BASE_URL : env.LUCKPAY_BASE_URL,
+        luckpay_api_url:
+          env.LUCKPAY_ENV === "production"
+            ? env.LUCKPAY_PROD_BASE_URL
+            : env.LUCKPAY_BASE_URL,
         luckpay_basic_token: env.LUCKPAY_BASIC_TOKEN,
-        luckpay_client_id:   env.LUCKPAY_CLIENT_ID,
+        luckpay_client_id: env.LUCKPAY_CLIENT_ID,
       } as BgvDbConfig);
       break;
     default:
       if (env.NODE_ENV === "production") {
-        console.warn("[BGV] BGV_PROVIDER=mock in production — set BGV_PROVIDER=befisc_luckpay, infinity_ai or digio for live verification.");
+        console.warn(
+          "[BGV] BGV_PROVIDER=mock in production — set BGV_PROVIDER=befisc_luckpay, infinity_ai or digio for live verification.",
+        );
       }
       _adapterCache = new MockBgvProviderAdapter();
   }
@@ -923,16 +1128,20 @@ export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
   const provider = cfg.bgv_provider ?? "mock";
   const mutableEnv = env as typeof env & Record<string, string | undefined>;
   if (provider === "infinity_ai") {
-    if (!cfg.infinity_ai_api_key) throw new Error("Infinity AI API Key not configured in BGV settings.");
+    if (!cfg.infinity_ai_api_key)
+      throw new Error("Infinity AI API Key not configured in BGV settings.");
     // Override env temporarily for this adapter instance
     const savedKey = env.INFINITY_AI_API_KEY;
     const savedUrl = env.INFINITY_AI_API_URL;
     const savedClientId = env.INFINITY_AI_CLIENT_ID;
     const savedPortalUrl = env.INFINITY_AI_PORTAL_URL;
     mutableEnv.INFINITY_AI_API_KEY = cfg.infinity_ai_api_key;
-    mutableEnv.INFINITY_AI_API_URL = cfg.infinity_ai_api_url ?? env.INFINITY_AI_API_URL;
-    mutableEnv.INFINITY_AI_CLIENT_ID = cfg.infinity_ai_client_id ?? env.INFINITY_AI_CLIENT_ID;
-    mutableEnv.INFINITY_AI_PORTAL_URL = cfg.infinity_ai_portal_url ?? env.INFINITY_AI_PORTAL_URL;
+    mutableEnv.INFINITY_AI_API_URL =
+      cfg.infinity_ai_api_url ?? env.INFINITY_AI_API_URL;
+    mutableEnv.INFINITY_AI_CLIENT_ID =
+      cfg.infinity_ai_client_id ?? env.INFINITY_AI_CLIENT_ID;
+    mutableEnv.INFINITY_AI_PORTAL_URL =
+      cfg.infinity_ai_portal_url ?? env.INFINITY_AI_PORTAL_URL;
     const adapter = new InfinityAiBgvAdapter();
     mutableEnv.INFINITY_AI_API_KEY = savedKey;
     mutableEnv.INFINITY_AI_API_URL = savedUrl;
@@ -941,7 +1150,10 @@ export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
     return adapter;
   }
   if (provider === "digio") {
-    if (!cfg.digio_client_id || !cfg.digio_client_secret) throw new Error("Digio Client ID and Secret not configured in BGV settings.");
+    if (!cfg.digio_client_id || !cfg.digio_client_secret)
+      throw new Error(
+        "Digio Client ID and Secret not configured in BGV settings.",
+      );
     const savedId = env.DIGIO_CLIENT_ID;
     const savedSecret = env.DIGIO_CLIENT_SECRET;
     const savedUrl = env.DIGIO_API_URL;
@@ -965,9 +1177,14 @@ export async function getConfiguredBgvProviderAdapter(): Promise<BgvProviderAdap
   if (cfg?.bgv_provider && cfg.bgv_provider !== "mock") {
     return buildAdapterFromDbConfig(cfg);
   }
-  if (env.NODE_ENV === "production" || process.env.DISABLE_MOCK_BGV === "true") {
+  if (
+    env.NODE_ENV === "production" ||
+    process.env.DISABLE_MOCK_BGV === "true"
+  ) {
     throw Object.assign(
-      new Error("Live BGV provider is not configured. Configure DigiLocker/Aadhaar/PAN/Criminal APIs from Super Admin > Settings > BGV Config."),
+      new Error(
+        "Live BGV provider is not configured. Configure DigiLocker/Aadhaar/PAN/Criminal APIs from Super Admin > Settings > BGV Config.",
+      ),
       { statusCode: 503 },
     );
   }
@@ -992,29 +1209,49 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     return resolveLuckpayConfigFrom(this.cfg, "digilocker");
   }
 
-  private async post(baseOrUrl: string | undefined, path: string, payload: Record<string, unknown>, auth: Record<string, string> = {}) {
-    if (!baseOrUrl) throw new Error(`${path} endpoint is not configured in BGV settings`);
-    const url = /^https?:\/\//i.test(baseOrUrl) && !baseOrUrl.endsWith("/") && baseOrUrl.includes(path)
-      ? baseOrUrl
-      : `${baseOrUrl.replace(/\/$/, "")}${path}`;
-    const res = await axios.post(url, payload, { headers: { "Content-Type": "application/json", ...auth }, timeout: 30_000 });
+  private async post(
+    baseOrUrl: string | undefined,
+    path: string,
+    payload: Record<string, unknown>,
+    auth: Record<string, string> = {},
+  ) {
+    if (!baseOrUrl)
+      throw new Error(`${path} endpoint is not configured in BGV settings`);
+    const url =
+      /^https?:\/\//i.test(baseOrUrl) &&
+      !baseOrUrl.endsWith("/") &&
+      baseOrUrl.includes(path)
+        ? baseOrUrl
+        : `${baseOrUrl.replace(/\/$/, "")}${path}`;
+    const res = await axios.post(url, payload, {
+      headers: { "Content-Type": "application/json", ...auth },
+      timeout: 30_000,
+    });
     return res.data?.data ?? res.data ?? {};
   }
 
   private apiKeyHeaders(key?: string): Record<string, string> {
-    const clean = String(key ?? "").replace(/\s+/g, "").trim();
+    const clean = String(key ?? "")
+      .replace(/\s+/g, "")
+      .trim();
     return clean ? { "x-api-key": clean } : {};
   }
 
   // Befisc uses "authkey" header, not "x-api-key"
   private befiscHeaders(key?: string): Record<string, string> {
-    const clean = String(key ?? "").replace(/\s+/g, "").trim();
-    return clean ? { authkey: clean, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+    const clean = String(key ?? "")
+      .replace(/\s+/g, "")
+      .trim();
+    return clean
+      ? { authkey: clean, "Content-Type": "application/json" }
+      : { "Content-Type": "application/json" };
   }
 
   // Crimescan uses Bearer token
   private crimescanHeaders(key?: string): Record<string, string> {
-    const clean = String(key ?? "").replace(/\s+/g, "").trim();
+    const clean = String(key ?? "")
+      .replace(/\s+/g, "")
+      .trim();
     return clean
       ? { Authorization: `Bearer ${clean}`, "Content-Type": "application/json" }
       : { "Content-Type": "application/json" };
@@ -1024,7 +1261,10 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
    * JSON call against the core (PAN/UAN/Penny-Drop) credentials.
    * Returns the unwrapped `data` node, matching what every caller below expects.
    */
-  private async postLuckpay(path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async postLuckpay(
+    path: string,
+    payload: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     try {
       const response = await luckpayPostJson(this.coreCfg(), path, payload);
       return response.data;
@@ -1033,7 +1273,9 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     }
   }
 
-  private async getCandidateContact(candidateId: string): Promise<{ fullName: string; mobile: string }> {
+  private async getCandidateContact(
+    candidateId: string,
+  ): Promise<{ fullName: string; mobile: string }> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT full_name, mobile FROM ats_candidate WHERE id = ? LIMIT 1`,
       [candidateId],
@@ -1042,7 +1284,9 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     const fullName = String(row?.full_name ?? "").trim();
     const mobile = String(row?.mobile ?? "").replace(/\D/g, "");
     if (!fullName || !mobile) {
-      throw new Error("Candidate name/mobile is required before starting Luckpay DigiLocker.");
+      throw new Error(
+        "Candidate name/mobile is required before starting Luckpay DigiLocker.",
+      );
     }
     return { fullName, mobile };
   }
@@ -1054,7 +1298,8 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
   private providerString(value: unknown): string | null {
     if (value === null || value === undefined) return null;
     if (typeof value === "string") return value;
-    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (typeof value === "number" || typeof value === "boolean")
+      return String(value);
     return null;
   }
 
@@ -1067,26 +1312,43 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     }
 
     const errorCode = (error as { code?: string })?.code;
-    const status = Number((error as { response?: { status?: number } })?.response?.status ?? 502);
-    const responseData = (error as { response?: { data?: unknown } })?.response?.data;
-    const sanitized = sanitizeProviderPayload(responseData) as Record<string, unknown> | null;
-    const providerMessage = sanitized && typeof sanitized === "object"
-      ? String(sanitized.message ?? sanitized.error ?? sanitized.status ?? "")
-      : "";
+    const status = Number(
+      (error as { response?: { status?: number } })?.response?.status ?? 502,
+    );
+    const responseData = (error as { response?: { data?: unknown } })?.response
+      ?.data;
+    const sanitized = sanitizeProviderPayload(responseData) as Record<
+      string,
+      unknown
+    > | null;
+    const providerMessage =
+      sanitized && typeof sanitized === "object"
+        ? String(sanitized.message ?? sanitized.error ?? sanitized.status ?? "")
+        : "";
 
     // Check for IP whitelist errors
     const isIpWhitelistError =
-      (providerMessage && (providerMessage.toLowerCase().includes('ip') && providerMessage.toLowerCase().includes('whitelist'))) ||
-      (providerMessage && providerMessage.toLowerCase().includes('not authorized')) ||
-      errorCode === 'ECONNREFUSED';
+      (providerMessage &&
+        providerMessage.toLowerCase().includes("ip") &&
+        providerMessage.toLowerCase().includes("whitelist")) ||
+      (providerMessage &&
+        providerMessage.toLowerCase().includes("not authorized")) ||
+      errorCode === "ECONNREFUSED";
 
     const message = providerMessage || "Luckpay provider request failed";
 
-    return Object.assign(new Error(`Luckpay provider request failed: ${message}`), {
-      statusCode: isIpWhitelistError ? 503 : (status >= 400 && status < 600 ? status : 502),
-      providerPayload: sanitized,
-      isIpWhitelistError,
-    });
+    return Object.assign(
+      new Error(`Luckpay provider request failed: ${message}`),
+      {
+        statusCode: isIpWhitelistError
+          ? 503
+          : status >= 400 && status < 600
+            ? status
+            : 502,
+        providerPayload: sanitized,
+        isIpWhitelistError,
+      },
+    );
   }
 
   async verifyPan(input: PanVerificationInput): Promise<VerificationResult> {
@@ -1094,13 +1356,23 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     const d = await this.postLuckpay("/verifyPan", {
       clientTransactionId: requestId,
       idNumber: input.panNumber.trim().toUpperCase(),
-      mobileNumber: String(input.mobileNumber ?? "").replace(/\D/g, "") || "9999999999",
+      mobileNumber:
+        String(input.mobileNumber ?? "").replace(/\D/g, "") || "9999999999",
     });
     const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
-    const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
+    const status: VerificationStatus = [
+      "valid",
+      "verified",
+      "success",
+      "active",
+    ].includes(apiStatus)
       ? "verified"
-      : apiStatus.includes("mismatch") ? "mismatch" : "failed";
-    const matchedName = this.providerString(d.pan_name ?? d.name ?? d.full_name);
+      : apiStatus.includes("mismatch")
+        ? "mismatch"
+        : "failed";
+    const matchedName = this.providerString(
+      d.pan_name ?? d.name ?? d.full_name,
+    );
     const matchedDob = this.providerString(d.dob);
     const message = this.providerString(d.message);
     const failureReason = this.providerString(d.failure_reason);
@@ -1108,12 +1380,17 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       status,
       providerKey: this.providerKey,
       providerRequestId: requestId,
-      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      providerReferenceId: String(
+        d.reference_id ?? d.transaction_id ?? requestId,
+      ),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
       matchedDob,
       resultSummary: message ?? `PAN check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(failureReason ?? "PAN_CHECK_FAILED").toUpperCase()],
+      riskFlags:
+        status === "verified"
+          ? []
+          : [String(failureReason ?? "PAN_CHECK_FAILED").toUpperCase()],
       raw: this.sanitizedRaw(d),
     };
   }
@@ -1134,12 +1411,17 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       verificationMode: "PENNY_DROP",
     });
     // Luckpay penny-drop wraps name in data.details.beneficiaryNameWithBank
-    const details = (d.details && typeof d.details === "object" ? d.details : {}) as Record<string, unknown>;
+    const details = (
+      d.details && typeof d.details === "object" ? d.details : {}
+    ) as Record<string, unknown>;
     const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
     const detailsVerified = Boolean(details.verified ?? details.status);
     const matchedName = this.providerString(
-      details.beneficiaryNameWithBank ?? details.beneficiaryName ??
-      d.registered_name ?? d.account_holder_name ?? d.name
+      details.beneficiaryNameWithBank ??
+        details.beneficiaryName ??
+        d.registered_name ??
+        d.account_holder_name ??
+        d.name,
     );
     // The provider's own fuzzyMatchScore grades the name WE sent it, which is
     // the candidate-supplied holder name — so it cannot be used to decide
@@ -1147,9 +1429,13 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     const providerFuzzyScore = Number(details.fuzzyMatchScore ?? 0);
     const message = this.providerString(d.message);
     const failureReason = this.providerString(d.failure_reason);
-    const providerStatus: VerificationStatus = (detailsVerified || ["valid", "verified", "success", "active"].includes(apiStatus))
-      ? "verified"
-      : apiStatus.includes("mismatch") || providerFuzzyScore < 60 ? "mismatch" : "failed";
+    const providerStatus: VerificationStatus =
+      detailsVerified ||
+      ["valid", "verified", "success", "active"].includes(apiStatus)
+        ? "verified"
+        : apiStatus.includes("mismatch") || providerFuzzyScore < 60
+          ? "mismatch"
+          : "failed";
     const outcome = resolveBankVerificationOutcome({
       providerStatus,
       candidateName: input.candidateName,
@@ -1160,46 +1446,75 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       status: outcome.status,
       providerKey: this.providerKey,
       providerRequestId: requestId,
-      providerReferenceId: String(d.reference_id ?? d.utr ?? d.transaction_id ?? requestId),
+      providerReferenceId: String(
+        d.reference_id ?? d.utr ?? d.transaction_id ?? requestId,
+      ),
       matchScore: outcome.matchScore,
       matchedName,
-      resultSummary: outcome.riskFlags.length ? outcome.reason : (message ?? `Bank check: ${outcome.status}`),
+      resultSummary: outcome.riskFlags.length
+        ? outcome.reason
+        : (message ?? `Bank check: ${outcome.status}`),
       riskFlags: outcome.riskFlags.length
         ? outcome.riskFlags
-        : providerStatus === "verified" ? [] : [String(failureReason ?? "BANK_CHECK_FAILED").toUpperCase()],
+        : providerStatus === "verified"
+          ? []
+          : [String(failureReason ?? "BANK_CHECK_FAILED").toUpperCase()],
       raw: this.sanitizedRaw(d),
     };
   }
 
-  async verifyUan(input: { candidateName?: string | null; uanNumber: string }): Promise<VerificationResult & { employmentHistory?: unknown[] }> {
+  async verifyUan(input: {
+    candidateName?: string | null;
+    uanNumber: string;
+  }): Promise<VerificationResult & { employmentHistory?: unknown[] }> {
     const requestId = randomUUID();
     const d = await this.postLuckpay("/verifyUanByUan", {
       clientTransactionId: requestId,
       identifier: input.uanNumber.trim(),
     });
     const apiStatus = String(d.status ?? d.result ?? "").toLowerCase();
-    const status: VerificationStatus = ["valid", "verified", "success", "active"].includes(apiStatus)
+    const status: VerificationStatus = [
+      "valid",
+      "verified",
+      "success",
+      "active",
+    ].includes(apiStatus)
       ? "verified"
-      : apiStatus.includes("mismatch") ? "mismatch" : "failed";
-    const matchedName = this.providerString(d.name ?? d.member_name ?? d.full_name);
-    const history = Array.isArray(d.employment_history) ? d.employment_history : Array.isArray(d.establishments) ? d.establishments : [];
+      : apiStatus.includes("mismatch")
+        ? "mismatch"
+        : "failed";
+    const matchedName = this.providerString(
+      d.name ?? d.member_name ?? d.full_name,
+    );
+    const history = Array.isArray(d.employment_history)
+      ? d.employment_history
+      : Array.isArray(d.establishments)
+        ? d.establishments
+        : [];
     const message = this.providerString(d.message);
     const failureReason = this.providerString(d.failure_reason);
     return {
       status,
       providerKey: this.providerKey,
       providerRequestId: requestId,
-      providerReferenceId: String(d.reference_id ?? d.transaction_id ?? requestId),
+      providerReferenceId: String(
+        d.reference_id ?? d.transaction_id ?? requestId,
+      ),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
       resultSummary: message ?? `UAN/employment check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(failureReason ?? "UAN_CHECK_FAILED").toUpperCase()],
+      riskFlags:
+        status === "verified"
+          ? []
+          : [String(failureReason ?? "UAN_CHECK_FAILED").toUpperCase()],
       raw: this.sanitizedRaw(d),
       employmentHistory: history,
     };
   }
 
-  async verifyAadhaarOffline(input: AadhaarOfflineInput): Promise<VerificationResult> {
+  async verifyAadhaarOffline(
+    input: AadhaarOfflineInput,
+  ): Promise<VerificationResult> {
     const requestId = randomUUID();
     if (!this.cfg.befisc_api_url || !this.cfg.befisc_api_key) {
       return {
@@ -1209,7 +1524,8 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
         providerReferenceId: requestId,
         matchScore: null,
         matchedName: input.candidateName ?? null,
-        resultSummary: "Aadhaar verification queued for manual review — Befisc API not configured. HR will verify the uploaded Aadhaar document.",
+        resultSummary:
+          "Aadhaar verification queued for manual review — Befisc API not configured. HR will verify the uploaded Aadhaar document.",
         riskFlags: [],
         raw: { mode: "manual_fallback" },
       };
@@ -1232,11 +1548,21 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
         },
       );
     } catch (error: any) {
-      const msg = error?.response?.data?.message ?? error?.message ?? "Befisc Aadhaar check failed";
+      const msg =
+        error?.response?.data?.message ??
+        error?.message ??
+        "Befisc Aadhaar check failed";
 
       // Handle network/DNS errors gracefully — fall back to manual review instead of blocking
-      if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ECONNRESET') {
-        console.error(`[BGV] Befisc provider unavailable (${error.code}): ${msg}`);
+      if (
+        error.code === "ENOTFOUND" ||
+        error.code === "ECONNREFUSED" ||
+        error.code === "ETIMEDOUT" ||
+        error.code === "ECONNRESET"
+      ) {
+        console.error(
+          `[BGV] Befisc provider unavailable (${error.code}): ${msg}`,
+        );
         return {
           status: "manual_review",
           providerKey: this.providerKey,
@@ -1244,9 +1570,14 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
           providerReferenceId: requestId,
           matchScore: null,
           matchedName: input.candidateName ?? null,
-          resultSummary: "Aadhaar verification service temporarily unavailable. HR will verify manually after submission.",
-          riskFlags: ['PROVIDER_UNAVAILABLE'],
-          raw: { mode: "provider_error_fallback", error_code: error.code, error_message: msg },
+          resultSummary:
+            "Aadhaar verification service temporarily unavailable. HR will verify manually after submission.",
+          riskFlags: ["PROVIDER_UNAVAILABLE"],
+          raw: {
+            mode: "provider_error_fallback",
+            error_code: error.code,
+            error_message: msg,
+          },
         };
       }
 
@@ -1254,19 +1585,36 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     }
     const raw = res.data?.data ?? res.data ?? {};
     const apiStatus = String(raw.status ?? raw.result ?? "").toLowerCase();
-    const status: VerificationStatus = ["valid", "verified", "success"].includes(apiStatus)
+    const status: VerificationStatus = [
+      "valid",
+      "verified",
+      "success",
+    ].includes(apiStatus)
       ? "verified"
-      : ["pending", "manual_review", "review"].includes(apiStatus) ? "manual_review" : "failed";
-    const matchedName = this.providerString(raw.name ?? raw.matched_name) ?? null;
+      : ["pending", "manual_review", "review"].includes(apiStatus)
+        ? "manual_review"
+        : "failed";
+    const matchedName =
+      this.providerString(raw.name ?? raw.matched_name) ?? null;
     return {
       status,
       providerKey: this.providerKey,
       providerRequestId: requestId,
-      providerReferenceId: String(raw.reference_id ?? raw.transaction_id ?? requestId),
+      providerReferenceId: String(
+        raw.reference_id ?? raw.transaction_id ?? requestId,
+      ),
       matchScore: roughNameMatchScore(input.candidateName, matchedName),
       matchedName,
-      resultSummary: this.providerString(raw.message) ?? `Aadhaar check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(raw.failure_reason ?? "AADHAAR_CHECK_FAILED").toUpperCase()],
+      resultSummary:
+        this.providerString(raw.message) ?? `Aadhaar check: ${status}`,
+      riskFlags:
+        status === "verified"
+          ? []
+          : [
+              String(
+                raw.failure_reason ?? "AADHAAR_CHECK_FAILED",
+              ).toUpperCase(),
+            ],
       raw: raw,
     };
   }
@@ -1285,7 +1633,9 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     };
   }
 
-  async verifyEducation(input: EducationVerificationInput): Promise<VerificationResult> {
+  async verifyEducation(
+    input: EducationVerificationInput,
+  ): Promise<VerificationResult> {
     return {
       status: "manual_review",
       providerKey: this.providerKey,
@@ -1299,7 +1649,9 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     };
   }
 
-  async verifyCourt(input: CourtVerificationInput): Promise<CourtVerificationResult> {
+  async verifyCourt(
+    input: CourtVerificationInput,
+  ): Promise<CourtVerificationResult> {
     const requestId = randomUUID();
     // Crimescan uses exact search URL + poll pattern with Bearer auth (NOT x-api-key)
     // Step 1: exact search → get cs_id
@@ -1313,7 +1665,8 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
         providerReferenceId: requestId,
         matchScore: null,
         matchedName: input.candidateName,
-        resultSummary: "Criminal/court check queued for manual HR review — Crimescan API not configured.",
+        resultSummary:
+          "Criminal/court check queued for manual HR review — Crimescan API not configured.",
         riskFlags: [],
         courtCases: null,
         raw: { mode: "manual_fallback" },
@@ -1330,33 +1683,53 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
 
     let csId: string;
     try {
-      const searchRes = await axios.post(searchUrl, searchPayload, { headers: crimescanHeaders, timeout: 120_000 });
+      const searchRes = await axios.post(searchUrl, searchPayload, {
+        headers: crimescanHeaders,
+        timeout: 120_000,
+      });
       const searchData = searchRes.data ?? {};
       csId = String(searchData.cs_id ?? searchData?.data?.cs_id ?? "");
       if (!csId) {
         return {
-          status: "manual_review", providerKey: this.providerKey,
-          providerRequestId: requestId, providerReferenceId: requestId,
-          matchScore: null, matchedName: input.candidateName,
-          resultSummary: "Crimescan search returned no cs_id — manual review required.",
-          riskFlags: [], courtCases: [], raw: searchData,
+          status: "manual_review",
+          providerKey: this.providerKey,
+          providerRequestId: requestId,
+          providerReferenceId: requestId,
+          matchScore: null,
+          matchedName: input.candidateName,
+          resultSummary:
+            "Crimescan search returned no cs_id — manual review required.",
+          riskFlags: [],
+          courtCases: [],
+          raw: searchData,
         };
       }
     } catch (error: any) {
-      const msg = error?.response?.data?.message ?? error?.message ?? "Crimescan search failed";
+      const msg =
+        error?.response?.data?.message ??
+        error?.message ??
+        "Crimescan search failed";
       throw new Error(`Court check failed: ${msg}`);
     }
 
     // Step 2: derive results URL from search URL (replace /exact/search with /results)
-    const historyUrl = searchUrl.replace(/\/exact\/search\/?$/, "/results").replace(/\/exact\/search\//, "/results/");
+    const historyUrl = searchUrl
+      .replace(/\/exact\/search\/?$/, "/results")
+      .replace(/\/exact\/search\//, "/results/");
     let d: Record<string, unknown> = { status: 0, message: "Processing" };
     for (let attempt = 0; attempt < 6; attempt++) {
       await new Promise((r) => setTimeout(r, 10_000));
       try {
-        const histRes = await axios.post(historyUrl, { cs_id: csId }, { headers: crimescanHeaders, timeout: 120_000 });
+        const histRes = await axios.post(
+          historyUrl,
+          { cs_id: csId },
+          { headers: crimescanHeaders, timeout: 120_000 },
+        );
         d = histRes.data ?? {};
         if (Number(d.status) === 1) break;
-      } catch { /* keep polling */ }
+      } catch {
+        /* keep polling */
+      }
     }
 
     const rawCases = d.court_cases ?? d.cases;
@@ -1373,7 +1746,8 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
         })
       : null;
 
-    const resultStatus: VerificationStatus = cases && cases.length > 0 ? "failed" : "verified";
+    const resultStatus: VerificationStatus =
+      cases && cases.length > 0 ? "failed" : "verified";
     return {
       status: resultStatus,
       providerKey: this.providerKey,
@@ -1381,41 +1755,67 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       providerReferenceId: csId,
       matchScore: null,
       matchedName: input.candidateName,
-      resultSummary: this.providerString(d.message) ?? `Criminal/court check: ${resultStatus}`,
+      resultSummary:
+        this.providerString(d.message) ??
+        `Criminal/court check: ${resultStatus}`,
       riskFlags: cases?.length ? ["COURT_RECORDS_FOUND"] : [],
       courtCases: cases,
       raw: d,
     };
   }
 
-  async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
+  async startDigilocker(
+    candidateId: string,
+    requestedDocuments: string[],
+  ): Promise<DigilockerSession> {
     const state = randomUUID();
     const candidate = await this.getCandidateContact(candidateId);
     let response;
     try {
-      response = await luckpayPostJson(this.dlCfg(), "/verifyDigilockerWithURL", {
-        clientTransactionId: state,
-        customerName: candidate.fullName,
-        mobileNumber: candidate.mobile,
-      });
-    } catch (error) { throw this.toLuckpayError(error); }
+      response = await luckpayPostJson(
+        this.dlCfg(),
+        "/verifyDigilockerWithURL",
+        {
+          clientTransactionId: state,
+          customerName: candidate.fullName,
+          mobileNumber: candidate.mobile,
+        },
+      );
+    } catch (error) {
+      throw this.toLuckpayError(error);
+    }
     const expiresAt = pickLuckpayField(response, ["expires_at"]);
     return {
       state: pickLuckpayField(response, ["state"]) ?? state,
       // Production returns the candidate link at data.details.authorizationUrl
       // (verified against a live response; the published samples omit it).
-      authUrl: pickLuckpayField(response, [
-        "details.authorizationUrl", "details.authorization_url", "authorizationUrl",
-        "auth_url", "redirect_url", "access_link", "redirectUrl", "verificationUrl", "verification_url",
-      ]) ?? "",
-      expiresAt: expiresAt ? new Date(expiresAt) : new Date(Date.now() + 30 * 60 * 1000),
+      authUrl:
+        pickLuckpayField(response, [
+          "details.authorizationUrl",
+          "details.authorization_url",
+          "authorizationUrl",
+          "auth_url",
+          "redirect_url",
+          "access_link",
+          "redirectUrl",
+          "verificationUrl",
+          "verification_url",
+        ]) ?? "",
+      expiresAt: expiresAt
+        ? new Date(expiresAt)
+        : new Date(Date.now() + 30 * 60 * 1000),
       // Luckpay's transaction id, returned as `gatewayId`. Every status and
       // download call expects it back as `transactionId`; dropping it is why no
       // DigiLocker session has ever advanced past 'created'. The same field
       // list luckpay.client.ts already uses, rather than a second extractor.
-      providerReferenceId: pickLuckpayField(response, [
-        "gatewayId", "referenceId", "reference_id", "transactionId", "transaction_id",
-      ]) ?? null,
+      providerReferenceId:
+        pickLuckpayField(response, [
+          "gatewayId",
+          "referenceId",
+          "reference_id",
+          "transactionId",
+          "transaction_id",
+        ]) ?? null,
     };
   }
 
@@ -1443,16 +1843,33 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     const expiresAt = pickLuckpayField(response, ["expires_at"]);
     return {
       state,
-      authUrl: pickLuckpayField(response, [
-        "redirect_url", "redirectUrl", "sign_url", "signUrl", "auth_url",
-        "esignDetails.redirect_url", "details.authorizationUrl",
-      ]) ?? "",
-      expiresAt: expiresAt ? new Date(expiresAt) : new Date(Date.now() + 30 * 60 * 1000),
-      requestId: pickLuckpayField(response, ["gatewayId", "request_id", "requestId"]) ?? state,
+      authUrl:
+        pickLuckpayField(response, [
+          "redirect_url",
+          "redirectUrl",
+          "sign_url",
+          "signUrl",
+          "auth_url",
+          "esignDetails.redirect_url",
+          "details.authorizationUrl",
+        ]) ?? "",
+      expiresAt: expiresAt
+        ? new Date(expiresAt)
+        : new Date(Date.now() + 30 * 60 * 1000),
+      requestId:
+        pickLuckpayField(response, ["gatewayId", "request_id", "requestId"]) ??
+        state,
     };
   }
 
-  async initiateCandidateBgv(_input: BgvCandidatePortalInput): Promise<BgvPortalInitiationResult> {
-    throw Object.assign(new Error("Hosted BGV portal is not configured for Befisc/Luckpay/Crimescan. Use individual onboarding checks."), { statusCode: 501 });
+  async initiateCandidateBgv(
+    _input: BgvCandidatePortalInput,
+  ): Promise<BgvPortalInitiationResult> {
+    throw Object.assign(
+      new Error(
+        "Hosted BGV portal is not configured for Befisc/Luckpay/Crimescan. Use individual onboarding checks.",
+      ),
+      { statusCode: 501 },
+    );
   }
 }

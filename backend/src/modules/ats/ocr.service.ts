@@ -11,11 +11,14 @@ const AADHAAR_REGEX = /\b(\d{4}\s?\d{4}\s?\d{4})\b/;
 const PAN_REGEX = /\b([A-Z]{3}[PCHFATBLJG][A-Z]\d{4}[A-Z])\b/;
 const ACCOUNT_REGEX = /\b(\d{9,18})\b/g;
 const IFSC_REGEX = /\b([A-Z]{4}0[A-Z0-9]{6})\b/;
-const ACCOUNT_LABEL_LINE_REGEX = /A\/?C\.?\s*(NO|NUM|NUMBER)\b|ACCOUNT\s*(NO|NUM|NUMBER)\b|ACC\.?\s*NO\b/i;
-const ACCOUNT_LABEL_WORD_REGEX = /^(A\/?C\.?|ACCOUNT|ACC\.?|NO\.?:?|NUM\.?:?|NUMBER:?)$/i;
+const ACCOUNT_LABEL_LINE_REGEX =
+  /A\/?C\.?\s*(NO|NUM|NUMBER)\b|ACCOUNT\s*(NO|NUM|NUMBER)\b|ACC\.?\s*NO\b/i;
+const ACCOUNT_LABEL_WORD_REGEX =
+  /^(A\/?C\.?|ACCOUNT|ACC\.?|NO\.?:?|NUM\.?:?|NUMBER:?)$/i;
 // A line naming any of these is a different field than the account number, even
 // when it also happens to contain label-shaped text — never treat it as the anchor.
-const EXCLUDE_LABEL_LINE_REGEX = /MICR|IFSC|CHEQUE\s*NO|MOBILE|PHONE|CUSTOMER\s*ID/i;
+const EXCLUDE_LABEL_LINE_REGEX =
+  /MICR|IFSC|CHEQUE\s*NO|MOBILE|PHONE|CUSTOMER\s*ID/i;
 
 export interface OcrExtractionResult {
   rawText: string;
@@ -34,14 +37,27 @@ export interface OcrExtractionResult {
   documentType: "aadhaar" | "pan" | "cheque" | "other";
 }
 
-export async function extractFromDocument(filePath: string, docType: string): Promise<OcrExtractionResult> {
+export async function extractFromDocument(
+  filePath: string,
+  docType: string,
+): Promise<OcrExtractionResult> {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".pdf") {
-    return { rawText: "", extractedNumber: null, extractedName: null, extractedDob: null, confidence: 0, documentType: "other" };
+    return {
+      rawText: "",
+      extractedNumber: null,
+      extractedName: null,
+      extractedDob: null,
+      confidence: 0,
+      documentType: "other",
+    };
   }
 
   const normalizedDocType = docType.toLowerCase();
-  const isCheque = normalizedDocType.includes("cheque") || normalizedDocType.includes("passbook") || normalizedDocType.includes("bank");
+  const isCheque =
+    normalizedDocType.includes("cheque") ||
+    normalizedDocType.includes("passbook") ||
+    normalizedDocType.includes("bank");
 
   // errorHandler is mandatory here, not cosmetic. When tesseract.js cannot decode
   // an image its worker callback rejects the promise AND, when no errorHandler was
@@ -62,7 +78,11 @@ export async function extractFromDocument(filePath: string, docType: string): Pr
   });
   let data: Tesseract.Page;
   try {
-    ({ data } = await worker.recognize(filePath, {}, { text: true, blocks: isCheque }));
+    ({ data } = await worker.recognize(
+      filePath,
+      {},
+      { text: true, blocks: isCheque },
+    ));
   } finally {
     await worker.terminate();
   }
@@ -70,7 +90,10 @@ export async function extractFromDocument(filePath: string, docType: string): Pr
   const text = data.text;
   const confidence = data.confidence;
 
-  if (normalizedDocType.includes("aadhaar") || normalizedDocType.includes("aadhar")) {
+  if (
+    normalizedDocType.includes("aadhaar") ||
+    normalizedDocType.includes("aadhar")
+  ) {
     return extractAadhaarDetails(text, confidence);
   } else if (normalizedDocType.includes("pan")) {
     return extractPanDetails(text, confidence);
@@ -78,31 +101,60 @@ export async function extractFromDocument(filePath: string, docType: string): Pr
     return extractChequeDetails(text, confidence, data.blocks);
   }
 
-  return { rawText: text, extractedNumber: null, extractedName: null, extractedDob: extractDobFromText(text), confidence, documentType: "other" };
+  return {
+    rawText: text,
+    extractedNumber: null,
+    extractedName: null,
+    extractedDob: extractDobFromText(text),
+    confidence,
+    documentType: "other",
+  };
 }
 
-function extractAadhaarDetails(text: string, confidence: number): OcrExtractionResult {
+function extractAadhaarDetails(
+  text: string,
+  confidence: number,
+): OcrExtractionResult {
   const match = text.replace(/\n/g, " ").match(AADHAAR_REGEX);
   const number = match ? match[1].replace(/\s/g, "") : null;
 
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
   let name: string | null = null;
   for (const line of lines) {
-    if (/^[A-Z][a-z]+ [A-Z][a-z]+/.test(line) && !line.match(/government|india|aadhaar|uid/i)) {
+    if (
+      /^[A-Z][a-z]+ [A-Z][a-z]+/.test(line) &&
+      !line.match(/government|india|aadhaar|uid/i)
+    ) {
       name = line.split(/\s{2,}/)[0].trim();
       break;
     }
   }
 
-  return { rawText: text, extractedNumber: number, extractedName: name, extractedDob: extractDobFromText(text), confidence, documentType: "aadhaar" };
+  return {
+    rawText: text,
+    extractedNumber: number,
+    extractedName: name,
+    extractedDob: extractDobFromText(text),
+    confidence,
+    documentType: "aadhaar",
+  };
 }
 
-function extractPanDetails(text: string, confidence: number): OcrExtractionResult {
+function extractPanDetails(
+  text: string,
+  confidence: number,
+): OcrExtractionResult {
   const upperText = text.toUpperCase().replace(/\n/g, " ");
   const match = upperText.match(PAN_REGEX);
   const number = match ? match[1] : null;
 
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
   let name: string | null = null;
   for (let i = 0; i < lines.length; i++) {
     if (/name/i.test(lines[i]) && lines[i + 1]) {
@@ -111,7 +163,14 @@ function extractPanDetails(text: string, confidence: number): OcrExtractionResul
     }
   }
 
-  return { rawText: text, extractedNumber: number, extractedName: name, extractedDob: extractDobFromText(text), confidence, documentType: "pan" };
+  return {
+    rawText: text,
+    extractedNumber: number,
+    extractedName: name,
+    extractedDob: extractDobFromText(text),
+    confidence,
+    documentType: "pan",
+  };
 }
 
 /** Word-level OCR data flattened out of tesseract's block/paragraph/line hierarchy. */
@@ -122,7 +181,10 @@ function flattenLines(blocks: Tesseract.Block[] | null | undefined): OcrLine[] {
   for (const block of blocks ?? []) {
     for (const paragraph of block.paragraphs ?? []) {
       for (const line of paragraph.lines ?? []) {
-        lines.push({ text: line.text ?? "", words: (line.words ?? []).map(w => ({ text: w.text ?? "" })) });
+        lines.push({
+          text: line.text ?? "",
+          words: (line.words ?? []).map((w) => ({ text: w.text ?? "" })),
+        });
       }
     }
   }
@@ -149,10 +211,18 @@ function findLabeledAccountNumber(lines: OcrLine[]): string | null {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (!ACCOUNT_LABEL_LINE_REGEX.test(line.text) || EXCLUDE_LABEL_LINE_REGEX.test(line.text)) continue;
+    if (
+      !ACCOUNT_LABEL_LINE_REGEX.test(line.text) ||
+      EXCLUDE_LABEL_LINE_REGEX.test(line.text)
+    )
+      continue;
 
-    const labelWordIndex = line.words.findIndex(w => ACCOUNT_LABEL_WORD_REGEX.test(w.text.trim()));
-    const sameLineHit = firstDigitWord(line.words.slice(labelWordIndex >= 0 ? labelWordIndex + 1 : 0));
+    const labelWordIndex = line.words.findIndex((w) =>
+      ACCOUNT_LABEL_WORD_REGEX.test(w.text.trim()),
+    );
+    const sameLineHit = firstDigitWord(
+      line.words.slice(labelWordIndex >= 0 ? labelWordIndex + 1 : 0),
+    );
     if (sameLineHit) return sameLineHit;
 
     const nextLine = lines[i + 1];
@@ -164,15 +234,23 @@ function findLabeledAccountNumber(lines: OcrLine[]): string | null {
   return null;
 }
 
-function extractChequeDetails(text: string, confidence: number, blocks?: Tesseract.Block[] | null): OcrExtractionResult {
+function extractChequeDetails(
+  text: string,
+  confidence: number,
+  blocks?: Tesseract.Block[] | null,
+): OcrExtractionResult {
   const ifscMatch = text.toUpperCase().match(IFSC_REGEX);
 
-  let accountNumber: string | null = blocks ? findLabeledAccountNumber(flattenLines(blocks)) : null;
+  let accountNumber: string | null = blocks
+    ? findLabeledAccountNumber(flattenLines(blocks))
+    : null;
 
   if (!accountNumber) {
     const accountMatches = text.match(ACCOUNT_REGEX);
     if (accountMatches) {
-      const candidates = accountMatches.filter(m => m.length >= 9 && m.length <= 18);
+      const candidates = accountMatches.filter(
+        (m) => m.length >= 9 && m.length <= 18,
+      );
       // Indian MICR codes are always exactly 9 digits; account numbers are almost
       // never that short (typically 10-18). The old rule ("first 9-18 digit run
       // found anywhere on the page") grabbed the MICR line far more often than the
@@ -183,18 +261,28 @@ function extractChequeDetails(text: string, confidence: number, blocks?: Tessera
       // fallback for when the label-anchored lookup above finds nothing — prefer
       // a longer, non-MICR-shaped candidate; fall back to whatever was found if
       // nothing longer exists.
-      const nonMicrShaped = candidates.filter(m => m.length !== 9);
+      const nonMicrShaped = candidates.filter((m) => m.length !== 9);
       const pool = nonMicrShaped.length > 0 ? nonMicrShaped : candidates;
-      accountNumber = pool.length > 0
-        ? pool.reduce((longest, m) => (m.length > longest.length ? m : longest), pool[0])
-        : null;
+      accountNumber =
+        pool.length > 0
+          ? pool.reduce(
+              (longest, m) => (m.length > longest.length ? m : longest),
+              pool[0],
+            )
+          : null;
     }
   }
 
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
   let name: string | null = null;
   for (const line of lines) {
-    if (/^[A-Z\s]{5,}$/.test(line) && !/bank|branch|ifsc|cheque|account/i.test(line)) {
+    if (
+      /^[A-Z\s]{5,}$/.test(line) &&
+      !/bank|branch|ifsc|cheque|account/i.test(line)
+    ) {
       name = line.trim();
       break;
     }
@@ -214,18 +302,20 @@ export async function crossValidateDocument(
   candidateId: string,
   documentId: string,
   docType: string,
-  ocrResult: OcrExtractionResult
+  ocrResult: OcrExtractionResult,
 ): Promise<{ matched: boolean; alertId?: string }> {
   if (!ocrResult.extractedNumber) {
     await db.execute(
       `UPDATE candidate_onboarding_document SET ocr_extraction_status = 'success', ocr_number_match = 'no_number_found', ocr_raw_text = ? WHERE id = ?`,
-      [ocrResult.rawText.substring(0, 5000), documentId]
+      [ocrResult.rawText.substring(0, 5000), documentId],
     );
     return { matched: true };
   }
 
   const normalizedDocType = docType.toLowerCase();
-  const isAadhaarDoc = normalizedDocType.includes("aadhaar") || normalizedDocType.includes("aadhar");
+  const isAadhaarDoc =
+    normalizedDocType.includes("aadhaar") ||
+    normalizedDocType.includes("aadhar");
 
   // A genuine 12-digit Aadhaar always satisfies the Verhoeff checksum (see
   // shared/aadhaarChecksum.ts), so an extraction that fails it is not a real
@@ -236,7 +326,7 @@ export async function crossValidateDocument(
   if (isAadhaarDoc && !isValidAadhaarChecksum(ocrResult.extractedNumber)) {
     await db.execute(
       `UPDATE candidate_onboarding_document SET ocr_extraction_status = 'success', ocr_number_match = 'no_number_found', ocr_raw_text = ? WHERE id = ?`,
-      [ocrResult.rawText.substring(0, 5000), documentId]
+      [ocrResult.rawText.substring(0, 5000), documentId],
     );
     return { matched: true };
   }
@@ -249,21 +339,25 @@ export async function crossValidateDocument(
   if (isAadhaarDoc) {
     const [rows] = await db.execute<any[]>(
       `SELECT aadhaar_number_hash FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
     storedHash = rows[0]?.aadhaar_number_hash ?? null;
     alertType = "DOCUMENT_NUMBER_MISMATCH";
   } else if (normalizedDocType.includes("pan")) {
     const [rows] = await db.execute<any[]>(
       `SELECT pan_number_hash FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
     storedHash = rows[0]?.pan_number_hash ?? null;
     alertType = "DOCUMENT_NUMBER_MISMATCH";
-  } else if (normalizedDocType.includes("cheque") || normalizedDocType.includes("bank") || normalizedDocType.includes("passbook")) {
+  } else if (
+    normalizedDocType.includes("cheque") ||
+    normalizedDocType.includes("bank") ||
+    normalizedDocType.includes("passbook")
+  ) {
     const [rows] = await db.execute<any[]>(
       `SELECT account_no_hash FROM candidate_onboarding_bank_detail WHERE candidate_id = ? ORDER BY updated_at DESC LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
     storedHash = rows[0]?.account_no_hash ?? null;
     alertType = "CHEQUE_ACCOUNT_MISMATCH";
@@ -282,7 +376,7 @@ export async function crossValidateDocument(
       matched ? "matched" : "mismatch",
       ocrResult.rawText.substring(0, 5000),
       documentId,
-    ]
+    ],
   );
 
   if (!matched && alertType) {
@@ -311,7 +405,7 @@ export async function crossValidateDocument(
           extracted_number_last4: ocrResult.extractedNumber.slice(-4),
           message: `OCR extracted number from ${docType} does not match entered number`,
         }),
-      ]
+      ],
     );
     return { matched: false, alertId };
   }
@@ -339,7 +433,7 @@ export async function crossValidateDocument(
 export async function checkDuplicates(
   candidateId: string,
   type: "aadhaar" | "pan" | "bank",
-  hash: string
+  hash: string,
 ): Promise<{ isDuplicate: boolean; matchedCandidateId?: string }> {
   if (!hash) return { isDuplicate: false };
   try {
@@ -347,14 +441,21 @@ export async function checkDuplicates(
   } catch (error) {
     await recordCheckFailure(candidateId, type, error).catch(() => {
       // Recording the failure failed too; the console is all that is left.
-      console.error("[Fraud] could not record duplicate-check failure for", candidateId);
+      console.error(
+        "[Fraud] could not record duplicate-check failure for",
+        candidateId,
+      );
     });
     return { isDuplicate: false };
   }
 }
 
 /** A fraud check that could not complete is itself worth a reviewer's attention. */
-async function recordCheckFailure(candidateId: string, type: string, error: unknown) {
+async function recordCheckFailure(
+  candidateId: string,
+  type: string,
+  error: unknown,
+) {
   // ON DUPLICATE KEY UPDATE against uq_candidate_alert_type — see
   // 442_candidate_fraud_alert_unique_constraint.sql. Same guard as the OCR
   // mismatch alert above: a repeat failure refreshes this row instead of
@@ -382,9 +483,8 @@ async function recordCheckFailure(candidateId: string, type: string, error: unkn
 async function runDuplicateCheck(
   candidateId: string,
   type: "aadhaar" | "pan" | "bank",
-  hash: string
+  hash: string,
 ): Promise<{ isDuplicate: boolean; matchedCandidateId?: string }> {
-
   let query: string;
   if (type === "aadhaar") {
     query = `SELECT candidate_id FROM candidate_onboarding_profile WHERE aadhaar_number_hash = ? AND candidate_id != ? LIMIT 1`;
@@ -411,13 +511,21 @@ async function runDuplicateCheck(
     `SELECT id, full_name, date_of_birth FROM ats_candidate WHERE id IN (?, ?)`,
     [candidateId, matchedCandidateId],
   );
-  const partyFor = (id: string) => (parties as any[]).find((row) => String(row.id) === String(id));
+  const partyFor = (id: string) =>
+    (parties as any[]).find((row) => String(row.id) === String(id));
   const verdict = classifyDuplicateIdentity(
-    { fullName: partyFor(candidateId)?.full_name, dateOfBirth: partyFor(candidateId)?.date_of_birth },
-    { fullName: partyFor(matchedCandidateId)?.full_name, dateOfBirth: partyFor(matchedCandidateId)?.date_of_birth },
+    {
+      fullName: partyFor(candidateId)?.full_name,
+      dateOfBirth: partyFor(candidateId)?.date_of_birth,
+    },
+    {
+      fullName: partyFor(matchedCandidateId)?.full_name,
+      dateOfBirth: partyFor(matchedCandidateId)?.date_of_birth,
+    },
   );
 
-  const scope = type === "aadhaar" ? "Aadhaar" : type === "pan" ? "PAN" : "bank account";
+  const scope =
+    type === "aadhaar" ? "Aadhaar" : type === "pan" ? "PAN" : "bank account";
   // ON DUPLICATE KEY UPDATE against uq_candidate_alert_type — see
   // 442_candidate_fraud_alert_unique_constraint.sql. Same guard as the other
   // call sites: a repeat duplicate-check hit refreshes severity/details/
@@ -439,7 +547,11 @@ async function runDuplicateCheck(
       // that does not block the hire. Different people: the original signal.
       verdict.samePerson
         ? "REPEAT_APPLICANT"
-        : type === "aadhaar" ? "DUPLICATE_AADHAAR" : type === "pan" ? "DUPLICATE_PAN" : "DUPLICATE_BANK_ACCOUNT",
+        : type === "aadhaar"
+          ? "DUPLICATE_AADHAAR"
+          : type === "pan"
+            ? "DUPLICATE_PAN"
+            : "DUPLICATE_BANK_ACCOUNT",
       verdict.severity,
       matchedCandidateId,
       JSON.stringify({
@@ -449,7 +561,7 @@ async function runDuplicateCheck(
         scope,
         samePerson: verdict.samePerson,
       }),
-    ]
+    ],
   );
 
   return { isDuplicate: !verdict.samePerson, matchedCandidateId };

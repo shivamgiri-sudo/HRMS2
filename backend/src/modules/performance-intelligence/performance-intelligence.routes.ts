@@ -1,4 +1,9 @@
-import { Router, type NextFunction, type RequestHandler, type Response } from "express";
+import {
+  Router,
+  type NextFunction,
+  type RequestHandler,
+  type Response,
+} from "express";
 import {
   requireAuth,
   type AuthenticatedRequest,
@@ -33,7 +38,9 @@ function asyncHandler(handler: AsyncHandler): RequestHandler {
 function auth(req: AuthenticatedRequest): { userId: string } {
   const userId = req.authUser?.id;
   if (!userId) {
-    throw Object.assign(new Error("Authentication required"), { statusCode: 401 });
+    throw Object.assign(new Error("Authentication required"), {
+      statusCode: 401,
+    });
   }
   return { userId };
 }
@@ -58,9 +65,11 @@ export function createPerformanceIntelligenceRouter(
   dependencies: RouterDependencies = {},
 ) {
   const router = Router();
-  const service = dependencies.service ?? createPerformanceIntelligenceService({
-    repository: performanceIntelligenceRepository,
-  });
+  const service =
+    dependencies.service ??
+    createPerformanceIntelligenceService({
+      repository: performanceIntelligenceRepository,
+    });
 
   router.use(dependencies.authMiddleware ?? requireAuth);
 
@@ -71,38 +80,48 @@ export function createPerformanceIntelligenceRouter(
   router.use("/ingestion", performanceSchedulerRouter);
   router.use("/ingestion", performanceGovernanceAuditRouter);
 
-  router.get("/context", asyncHandler(async (req, res) => {
-    return sendData(res, await service.context(auth(req)));
-  }));
+  router.get(
+    "/context",
+    asyncHandler(async (req, res) => {
+      return sendData(res, await service.context(auth(req)));
+    }),
+  );
 
-  router.get("/scorecard", asyncHandler(async (req, res) => {
-    const query = parsePerformanceQuery(req.query);
-    return sendData(
-      res,
-      await service.scorecard(auth(req), query),
-      { from: query.from, to: query.to },
-    );
-  }));
+  router.get(
+    "/scorecard",
+    asyncHandler(async (req, res) => {
+      const query = parsePerformanceQuery(req.query);
+      return sendData(res, await service.scorecard(auth(req), query), {
+        from: query.from,
+        to: query.to,
+      });
+    }),
+  );
 
-  router.get("/trends", asyncHandler(async (req, res) => {
-    const query = parsePerformanceQuery(req.query);
-    return sendData(
-      res,
-      await service.trends(auth(req), query),
-      { from: query.from, to: query.to },
-    );
-  }));
+  router.get(
+    "/trends",
+    asyncHandler(async (req, res) => {
+      const query = parsePerformanceQuery(req.query);
+      return sendData(res, await service.trends(auth(req), query), {
+        from: query.from,
+        to: query.to,
+      });
+    }),
+  );
 
-  router.get("/people", asyncHandler(async (req, res) => {
-    const query = parsePerformanceQuery(req.query);
-    return sendData(
-      res,
-      await service.people(auth(req), query),
-      { from: query.from, to: query.to },
-    );
-  }));
+  router.get(
+    "/people",
+    asyncHandler(async (req, res) => {
+      const query = parsePerformanceQuery(req.query);
+      return sendData(res, await service.people(auth(req), query), {
+        from: query.from,
+        to: query.to,
+      });
+    }),
+  );
 
   return router;
 }
 
-export const performanceIntelligenceRouter = createPerformanceIntelligenceRouter();
+export const performanceIntelligenceRouter =
+  createPerformanceIntelligenceRouter();

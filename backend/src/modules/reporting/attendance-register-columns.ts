@@ -12,8 +12,18 @@
 
 /** Fixed English 3-letter month names — never locale-dependent. */
 const SHORT_MONTHS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ] as const;
 
 /**
@@ -40,7 +50,7 @@ export function daysInMonth(year: number, month: number): number {
  */
 export function withDayColumnLabels<T extends { key: string; label: string }>(
   columns: T[],
-  monthStr: string | undefined
+  monthStr: string | undefined,
 ): T[] {
   if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) return columns;
   const [year, month] = monthStr.split("-").map(Number);
@@ -49,7 +59,10 @@ export function withDayColumnLabels<T extends { key: string; label: string }>(
 
   return columns.reduce<T[]>((out, col) => {
     const m = dayKeyRe.exec(col.key);
-    if (!m) { out.push(col); return out; }
+    if (!m) {
+      out.push(col);
+      return out;
+    }
     const dayNum = Number(m[1]);
     if (dayNum > dim) return out; // drop day columns past the month's actual length
     out.push({ ...col, label: buildDayColumnLabel(month, dayNum) });

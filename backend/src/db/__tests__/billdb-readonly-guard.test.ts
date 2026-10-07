@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const SRC = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), "..", "billDb.ts"),
-  "utf8"
+  "utf8",
 );
 
 /**
@@ -30,7 +30,9 @@ function supportsReadOnlyTransactions(versionString: string): boolean {
 
 describe("billDb read-only guard", () => {
   it("does not claim read-only transaction support on the live 5.5 server", () => {
-    expect(supportsReadOnlyTransactions("5.5.44-0ubuntu0.14.04.1-log")).toBe(false);
+    expect(supportsReadOnlyTransactions("5.5.44-0ubuntu0.14.04.1-log")).toBe(
+      false,
+    );
   });
 
   it("uses it on 5.6 and later", () => {
@@ -48,10 +50,14 @@ describe("billDb read-only guard", () => {
     // Assert the code context, not the bare phrase — the phrase also appears in the
     // comment above explaining the bug, so a plain indexOf matches that instead.
     expect(SRC).toMatch(
-      /if \(supportsReadOnlyTransactions\(version\)\) \{\s*await conn\.query\('SET SESSION TRANSACTION READ ONLY'\);/
+      /if \(supportsReadOnlyTransactions\(version\)\) \{\s*await conn\.query\('SET SESSION TRANSACTION READ ONLY'\);/,
     );
     // and it must not be issued outside that guard
-    const statements = [...SRC.matchAll(/await conn\.query\('SET SESSION TRANSACTION READ ONLY'\)/g)];
+    const statements = [
+      ...SRC.matchAll(
+        /await conn\.query\('SET SESSION TRANSACTION READ ONLY'\)/g,
+      ),
+    ];
     expect(statements, "exactly one guarded SET expected").toHaveLength(1);
   });
 
@@ -61,14 +67,17 @@ describe("billDb read-only guard", () => {
     expect(SRC).toMatch(/const candidate = mysql\.createPool\(config\)/);
     expect(SRC).toMatch(/pool = candidate;/);
     expect(SRC, "a failed init must tear the candidate pool down").toMatch(
-      /candidate\.end\(\)/
+      /candidate\.end\(\)/,
     );
-    expect(SRC, "pool must not be assigned straight from createPool").not.toMatch(
-      /pool = mysql\.createPool\(config\)/
-    );
+    expect(
+      SRC,
+      "pool must not be assigned straight from createPool",
+    ).not.toMatch(/pool = mysql\.createPool\(config\)/);
   });
 
   it("still blocks writes through billQuery regardless of session state", () => {
-    expect(SRC).toMatch(/allowedStarts\s*=\s*\['SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN'\]/);
+    expect(SRC).toMatch(
+      /allowedStarts\s*=\s*\['SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN'\]/,
+    );
   });
 });

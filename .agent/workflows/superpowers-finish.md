@@ -7,16 +7,21 @@ description: Finalize work: verification, summary, follow-ups, manual validation
 Read and apply the `superpowers-finish` skill.
 
 Output:
+
 ## Verification (commands + results if possible)
+
 ## Summary of changes
+
 ## Follow-ups (if needed)
+
 ## Manual validation steps (if applicable)
 
 ## Persist (mandatory)
+
 After generating the finish content above, you MUST write it to disk:
 
-1) Copy the full finish markdown output.
-2) Run:
+1. Copy the full finish markdown output.
+2. Run:
 
 ```bash
 python .agent/skills/superpowers-workflow/scripts/write_artifact.py --path artifacts/superpowers/finish.md

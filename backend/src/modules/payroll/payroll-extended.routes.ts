@@ -1,23 +1,46 @@
 import { Router } from "express";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
 import { isRunClosed } from "./run-status.js";
-import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
+import {
+  buildScopeWhereClause,
+  hasAnyRole as hasAnyRoleAsync,
+  getUserAssignmentScopes,
+} from "../../shared/scopeAccess.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import * as XLSX from "xlsx";
-import { resolveAccountNumber, resolveAccountNumberWithConflict } from "../../shared/fieldEncryption.js";
+import {
+  resolveAccountNumber,
+  resolveAccountNumberWithConflict,
+} from "../../shared/fieldEncryption.js";
 
 /**
  * Roles whose payroll authority can be org-wide. Used with hasExportScope (below) for
  * the bank-file endpoints below, which refuse a branch-scoped caller rather than
  * emit a partial payment instruction.
  */
-const PAYROLL_EXPORT_ROLES = ["finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
+const PAYROLL_EXPORT_ROLES = [
+  "finance",
+  "payroll",
+  "finance_head",
+  "payroll_head",
+  "payroll_admin",
+];
 /** Report-style exports row-filter to these roles' assigned scope instead of denying. */
-const PAYROLL_REPORT_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
+const PAYROLL_REPORT_SCOPE_ROLES = [
+  "hr",
+  "finance",
+  "payroll",
+  "finance_head",
+  "payroll_head",
+  "payroll_admin",
+];
 
 /**
  * Convert a "YYYY-MM-DD" calendar date into the Excel/Lotus 1900-date-system serial
@@ -29,7 +52,9 @@ const PAYROLL_REPORT_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", 
  */
 function excelDateSerial(isoDate: string): number {
   const [y, m, d] = isoDate.split("-").map(Number);
-  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000);
+  return Math.round(
+    (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000,
+  );
 }
 const ORG_WIDE_REQUIRED_MSG =
   "This export requires org-wide payroll scope. A branch-scoped export would produce a partial payment file, which is indistinguishable from a complete one once downloaded.";
@@ -78,92 +103,216 @@ async function hasExportScope(userId: string): Promise<boolean> {
 }
 
 export const payrollExtendedRouter = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 payrollExtendedRouter.use(requireAuth);
 
-payrollExtendedRouter.get("/uan/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
-  const { employeeId } = req.params;
-  const isPrivileged = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
-  if (!isPrivileged) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp || callerEmp.id !== employeeId) return res.status(403).json({ success: false, message: "Forbidden" });
-  }
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM employee_uan WHERE employee_id = ? LIMIT 1", [employeeId]);
-  return res.json({ success: true, data: rows[0] ?? null });
-}));
+payrollExtendedRouter.get(
+  "/uan/:employeeId",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { employeeId } = req.params;
+    const isPrivileged = await hasRole(
+      req.authUser!.id,
+      "admin",
+      "hr",
+      "finance",
+      "payroll",
+    );
+    if (!isPrivileged) {
+      const callerEmp = await getEmployeeForUser(req.authUser!.id);
+      if (!callerEmp || callerEmp.id !== employeeId)
+        return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employee_uan WHERE employee_id = ? LIMIT 1",
+      [employeeId],
+    );
+    return res.json({ success: true, data: rows[0] ?? null });
+  }),
+);
 
-payrollExtendedRouter.post("/uan/:employeeId", requireRole("admin", "hr", "finance"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { employeeId } = req.params;
-  const { uan, member_id, epf_join_date } = req.body as { uan: string; member_id?: string; epf_join_date?: string };
-  if (!uan) return res.status(400).json({ success: false, message: "uan is required" });
-  await db.execute(
-    `INSERT INTO employee_uan (id, employee_id, uan, member_id, epf_join_date)
+payrollExtendedRouter.post(
+  "/uan/:employeeId",
+  requireRole("admin", "hr", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { employeeId } = req.params;
+    const { uan, member_id, epf_join_date } = req.body as {
+      uan: string;
+      member_id?: string;
+      epf_join_date?: string;
+    };
+    if (!uan)
+      return res
+        .status(400)
+        .json({ success: false, message: "uan is required" });
+    await db.execute(
+      `INSERT INTO employee_uan (id, employee_id, uan, member_id, epf_join_date)
      VALUES (UUID(), ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE uan = VALUES(uan), member_id = VALUES(member_id), epf_join_date = VALUES(epf_join_date), updated_at = NOW()`,
-    [employeeId, uan, member_id ?? null, epf_join_date ?? null],
-  );
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM employee_uan WHERE employee_id = ? LIMIT 1", [employeeId]);
-  return res.status(201).json({ success: true, data: rows[0] });
-}));
+      [employeeId, uan, member_id ?? null, epf_join_date ?? null],
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employee_uan WHERE employee_id = ? LIMIT 1",
+      [employeeId],
+    );
+    return res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
 
-payrollExtendedRouter.post("/disbursements", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { run_id, bank_ref, total_amount, employee_count } = req.body as { run_id: string; bank_ref?: string; total_amount: number; employee_count: number };
-  if (!run_id || total_amount === undefined || employee_count === undefined) return res.status(400).json({ success: false, message: "run_id, total_amount, employee_count are required" });
-  const [runCheck] = await db.execute<RowDataPacket[]>("SELECT id FROM salary_prep_run WHERE id = ? LIMIT 1", [run_id]);
-  if (!runCheck.length) return res.status(404).json({ success: false, message: "Payroll run not found" });
-  const id = (await import("crypto")).randomUUID();
-  await db.execute(
-    `INSERT INTO payroll_disbursement (id, run_id, bank_ref, total_amount, employee_count, disbursed_by) VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, run_id, bank_ref ?? null, total_amount, employee_count, req.authUser?.id ?? null],
-  );
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM payroll_disbursement WHERE id = ? LIMIT 1", [id]);
-  return res.status(201).json({ success: true, data: rows[0] });
-}));
+payrollExtendedRouter.post(
+  "/disbursements",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { run_id, bank_ref, total_amount, employee_count } = req.body as {
+      run_id: string;
+      bank_ref?: string;
+      total_amount: number;
+      employee_count: number;
+    };
+    if (!run_id || total_amount === undefined || employee_count === undefined)
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "run_id, total_amount, employee_count are required",
+        });
+    const [runCheck] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM salary_prep_run WHERE id = ? LIMIT 1",
+      [run_id],
+    );
+    if (!runCheck.length)
+      return res
+        .status(404)
+        .json({ success: false, message: "Payroll run not found" });
+    const id = (await import("crypto")).randomUUID();
+    await db.execute(
+      `INSERT INTO payroll_disbursement (id, run_id, bank_ref, total_amount, employee_count, disbursed_by) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        run_id,
+        bank_ref ?? null,
+        total_amount,
+        employee_count,
+        req.authUser?.id ?? null,
+      ],
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM payroll_disbursement WHERE id = ? LIMIT 1",
+      [id],
+    );
+    return res.status(201).json({ success: true, data: rows[0] });
+  }),
+);
 
-payrollExtendedRouter.get("/disbursements/:runId", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM payroll_disbursement WHERE run_id = ? ORDER BY created_at DESC", [req.params.runId]);
-  return res.json({ success: true, data: rows });
-}));
+payrollExtendedRouter.get(
+  "/disbursements/:runId",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM payroll_disbursement WHERE run_id = ? ORDER BY created_at DESC",
+      [req.params.runId],
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
 
-payrollExtendedRouter.patch("/disbursements/:id", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { status, disbursed_at } = req.body as { status?: "completed" | "failed"; disbursed_at?: string };
-  if (status && !new Set(["completed", "failed"]).has(status)) return res.status(400).json({ success: false, message: "status must be 'completed' or 'failed'" });
-  const sets: string[] = [];
-  const params: unknown[] = [];
-  if (status) { sets.push("status = ?"); params.push(status); }
-  if (disbursed_at) { sets.push("disbursed_at = ?"); params.push(disbursed_at); }
-  if (!sets.length) return res.status(400).json({ success: false, message: "No fields to update" });
-  params.push(req.params.id);
-  const [result] = await db.execute<any>(`UPDATE payroll_disbursement SET ${sets.join(", ")} WHERE id = ?`, params);
-  if (result.affectedRows === 0) return res.status(404).json({ success: false, message: "Disbursement not found" });
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM payroll_disbursement WHERE id = ? LIMIT 1", [req.params.id]);
-  return res.json({ success: true, data: rows[0] });
-}));
+payrollExtendedRouter.patch(
+  "/disbursements/:id",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { status, disbursed_at } = req.body as {
+      status?: "completed" | "failed";
+      disbursed_at?: string;
+    };
+    if (status && !new Set(["completed", "failed"]).has(status))
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "status must be 'completed' or 'failed'",
+        });
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (status) {
+      sets.push("status = ?");
+      params.push(status);
+    }
+    if (disbursed_at) {
+      sets.push("disbursed_at = ?");
+      params.push(disbursed_at);
+    }
+    if (!sets.length)
+      return res
+        .status(400)
+        .json({ success: false, message: "No fields to update" });
+    params.push(req.params.id);
+    const [result] = await db.execute<any>(
+      `UPDATE payroll_disbursement SET ${sets.join(", ")} WHERE id = ?`,
+      params,
+    );
+    if (result.affectedRows === 0)
+      return res
+        .status(404)
+        .json({ success: false, message: "Disbursement not found" });
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM payroll_disbursement WHERE id = ? LIMIT 1",
+      [req.params.id],
+    );
+    return res.json({ success: true, data: rows[0] });
+  }),
+);
 
-payrollExtendedRouter.get("/pt-slabs", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const params: unknown[] = [];
-  let where = "WHERE is_active = 1";
-  if (req.query.state_code) { where += " AND state_code = ?"; params.push(String(req.query.state_code)); }
-  const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM pt_slab_master ${where} ORDER BY state_code, income_from`, params);
-  return res.json({ success: true, data: rows });
-}));
+payrollExtendedRouter.get(
+  "/pt-slabs",
+  requireRole("admin", "hr", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const params: unknown[] = [];
+    let where = "WHERE is_active = 1";
+    if (req.query.state_code) {
+      where += " AND state_code = ?";
+      params.push(String(req.query.state_code));
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM pt_slab_master ${where} ORDER BY state_code, income_from`,
+      params,
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
 
-payrollExtendedRouter.get("/minimum-wages", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const params: unknown[] = [];
-  let where = "WHERE is_active = 1";
-  if (req.query.state_code) { where += " AND state_code = ?"; params.push(String(req.query.state_code)); }
-  const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM minimum_wage_master ${where} ORDER BY state_code, category`, params);
-  return res.json({ success: true, data: rows });
-}));
+payrollExtendedRouter.get(
+  "/minimum-wages",
+  requireRole("admin", "hr", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const params: unknown[] = [];
+    let where = "WHERE is_active = 1";
+    if (req.query.state_code) {
+      where += " AND state_code = ?";
+      params.push(String(req.query.state_code));
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM minimum_wage_master ${where} ORDER BY state_code, category`,
+      params,
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
 
-payrollExtendedRouter.get("/runs/:id/neft-summary", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  // Gated the same way as the export it precedes: these totals are org-wide payroll
-  // figures, and showing them to a caller who cannot produce the file is incoherent.
-  if (!(await hasExportScope(req.authUser!.id))) {
-    return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
-  }
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total,
+payrollExtendedRouter.get(
+  "/runs/:id/neft-summary",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    // Gated the same way as the export it precedes: these totals are org-wide payroll
+    // figures, and showing them to a caller who cannot produce the file is incoherent.
+    if (!(await hasExportScope(req.authUser!.id))) {
+      return res
+        .status(403)
+        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total,
             SUM(CASE WHEN ebd.id IS NOT NULL AND ebd.ifsc_code IS NOT NULL THEN 1 ELSE 0 END) AS with_bank,
             SUM(CASE WHEN ebd.id IS NULL OR ebd.ifsc_code IS NULL THEN 1 ELSE 0 END) AS missing_bank,
             SUM(spl.net_salary) AS total_net
@@ -171,95 +320,129 @@ payrollExtendedRouter.get("/runs/:id/neft-summary", requireRole("admin", "financ
        JOIN employees e ON e.id = spl.employee_id
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
       WHERE spl.run_id = ? AND spl.net_salary > 0`,
-    [req.params.id],
-  );
-  return res.json({ success: true, data: rows[0] });
-}));
+      [req.params.id],
+    );
+    return res.json({ success: true, data: rows[0] });
+  }),
+);
 
-payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const runId = req.params.id;
-  // requireRole alone let a branch-scoped payroll user download decrypted bank account
-  // numbers for the entire organisation. Denying rather than row-filtering is deliberate:
-  // a silently branch-filtered bank file would be uploaded as if it paid everyone.
-  if (!(await hasExportScope(req.authUser!.id))) {
-    return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
-  }
-  const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
-  const run = runRows[0];
-  if (!run) return res.status(404).json({ error: "Run not found" });
-  // isRunClosed (locked/disbursed/finalized, case-insensitive) — a literal ["locked","disbursed"]
-  // list here previously blocked NEFT export for every FINALIZED production run.
-  if (!isRunClosed(run.status)) return res.status(400).json({ error: "Run must be locked, finalized, or disbursed to generate NEFT export" });
-  const [lines] = await db.execute<RowDataPacket[]>(
-    `SELECT spl.employee_id, spl.net_salary, e.employee_code, e.full_name, ebd.bank_name, ebd.ifsc_code, ebd.account_number_enc, ebd.account_number
+payrollExtendedRouter.get(
+  "/runs/:id/neft-export",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const runId = req.params.id;
+    // requireRole alone let a branch-scoped payroll user download decrypted bank account
+    // numbers for the entire organisation. Denying rather than row-filtering is deliberate:
+    // a silently branch-filtered bank file would be uploaded as if it paid everyone.
+    if (!(await hasExportScope(req.authUser!.id))) {
+      return res
+        .status(403)
+        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1",
+      [runId],
+    );
+    const run = runRows[0];
+    if (!run) return res.status(404).json({ error: "Run not found" });
+    // isRunClosed (locked/disbursed/finalized, case-insensitive) — a literal ["locked","disbursed"]
+    // list here previously blocked NEFT export for every FINALIZED production run.
+    if (!isRunClosed(run.status))
+      return res
+        .status(400)
+        .json({
+          error:
+            "Run must be locked, finalized, or disbursed to generate NEFT export",
+        });
+    const [lines] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.employee_id, spl.net_salary, e.employee_code, e.full_name, ebd.bank_name, ebd.ifsc_code, ebd.account_number_enc, ebd.account_number
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
       WHERE spl.run_id = ? AND spl.net_salary > 0
       ORDER BY e.employee_code`,
-    [runId],
-  );
-  // An employee with no bank account cannot be paid by NEFT, so they must not appear
-  // as a payment instruction.
-  //
-  // Previously every line was emitted, with the literal "NOT_LINKED" standing in for
-  // the IFSC and account number, and — worse — their net pay was still added to the
-  // TOTAL. The file therefore declared a disbursement total the bank could not
-  // actually pay out, and the unpayable rows were indistinguishable from real ones to
-  // anything consuming the file positionally.
-  //
-  // They are excluded from the payment rows and reported underneath instead. Dropping
-  // them silently would be its own defect: an employee who is simply missing bank
-  // details would vanish from payroll with nothing to say so. The sibling exporter in
-  // disbursal.routes.ts filters them with an INNER JOIN and says nothing, which is why
-  // the two exporters disagreed about who was payable.
-  // Resolve encrypted account numbers before filtering
-  (lines as RowDataPacket[]).forEach((l: any) => { l.account_number = resolveAccountNumber(l) ?? ""; });
-  const isPayable = (l: RowDataPacket) =>
-    Boolean(String((l as any).ifsc_code ?? "").trim()) && Boolean(String((l as any).account_number ?? "").trim());
-  const payable = (lines as RowDataPacket[]).filter(isPayable);
-  const unpayable = (lines as RowDataPacket[]).filter((l) => !isPayable(l));
-
-  const csvRows = ["Sr No,Employee Code,Employee Name,Bank Name,IFSC Code,Account Number,Net Amount,Remarks"];
-  let srNo = 1;
-  let totalAmount = 0;
-  for (const line of payable) {
-    const amount = Number(line.net_salary).toFixed(2);
-    csvRows.push(`${srNo},${line.employee_code},${String(line.full_name ?? "").replace(/,/g, " ")},${String(line.bank_name ?? "").replace(/,/g, " ")},${line.ifsc_code},${String(line.account_number)},${amount},SALARY ${run.run_month}`);
-    srNo++;
-    totalAmount += Number(line.net_salary);
-  }
-  csvRows.push(`TOTAL,,,,,,${totalAmount.toFixed(2)},`);
-
-  // Reported after TOTAL, following the same convention that row already sets: a
-  // non-numeric first column marking a summary line rather than a payment.
-  if (unpayable.length > 0) {
-    const withheld = unpayable.reduce((sum, l) => sum + Number(l.net_salary), 0);
-    csvRows.push(
-      `EXCLUDED,,,,,,${withheld.toFixed(2)},${unpayable.length} employee(s) have no bank account and are NOT in this file`,
+      [runId],
     );
-    for (const line of unpayable) {
-      csvRows.push(
-        `,${line.employee_code},${String(line.full_name ?? "").replace(/,/g, " ")},,,,${Number(line.net_salary).toFixed(2)},NOT PAID - bank account missing`,
-      );
-    }
-  }
-  res.setHeader("X-Neft-Excluded-Count", String(unpayable.length));
-  res.setHeader("Content-Type", "text/csv");
-  res.setHeader("Content-Disposition", `attachment; filename="NEFT_${run.run_month}_${runId.slice(0, 8)}.csv"`);
-  return res.send(csvRows.join("\n"));
-}));
+    // An employee with no bank account cannot be paid by NEFT, so they must not appear
+    // as a payment instruction.
+    //
+    // Previously every line was emitted, with the literal "NOT_LINKED" standing in for
+    // the IFSC and account number, and — worse — their net pay was still added to the
+    // TOTAL. The file therefore declared a disbursement total the bank could not
+    // actually pay out, and the unpayable rows were indistinguishable from real ones to
+    // anything consuming the file positionally.
+    //
+    // They are excluded from the payment rows and reported underneath instead. Dropping
+    // them silently would be its own defect: an employee who is simply missing bank
+    // details would vanish from payroll with nothing to say so. The sibling exporter in
+    // disbursal.routes.ts filters them with an INNER JOIN and says nothing, which is why
+    // the two exporters disagreed about who was payable.
+    // Resolve encrypted account numbers before filtering
+    (lines as RowDataPacket[]).forEach((l: any) => {
+      l.account_number = resolveAccountNumber(l) ?? "";
+    });
+    const isPayable = (l: RowDataPacket) =>
+      Boolean(String((l as any).ifsc_code ?? "").trim()) &&
+      Boolean(String((l as any).account_number ?? "").trim());
+    const payable = (lines as RowDataPacket[]).filter(isPayable);
+    const unpayable = (lines as RowDataPacket[]).filter((l) => !isPayable(l));
 
-payrollExtendedRouter.get("/runs/:id/ecr", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  // ECR carries PF wage/UAN data for every employee on the run — same sensitivity as
-  // neft-export/bank-exception-report above, but this endpoint had no scope check at
-  // all, only the role list. A branch-scoped finance/payroll user could pull ECR data
-  // for any runId regardless of branch. Same hasExportScope gate as its siblings.
-  if (!(await hasExportScope(req.authUser!.id))) {
-    return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
-  }
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT eu.uan, eu.member_id, CONCAT_WS(' ', e.first_name, e.last_name) AS member_name,
+    const csvRows = [
+      "Sr No,Employee Code,Employee Name,Bank Name,IFSC Code,Account Number,Net Amount,Remarks",
+    ];
+    let srNo = 1;
+    let totalAmount = 0;
+    for (const line of payable) {
+      const amount = Number(line.net_salary).toFixed(2);
+      csvRows.push(
+        `${srNo},${line.employee_code},${String(line.full_name ?? "").replace(/,/g, " ")},${String(line.bank_name ?? "").replace(/,/g, " ")},${line.ifsc_code},${String(line.account_number)},${amount},SALARY ${run.run_month}`,
+      );
+      srNo++;
+      totalAmount += Number(line.net_salary);
+    }
+    csvRows.push(`TOTAL,,,,,,${totalAmount.toFixed(2)},`);
+
+    // Reported after TOTAL, following the same convention that row already sets: a
+    // non-numeric first column marking a summary line rather than a payment.
+    if (unpayable.length > 0) {
+      const withheld = unpayable.reduce(
+        (sum, l) => sum + Number(l.net_salary),
+        0,
+      );
+      csvRows.push(
+        `EXCLUDED,,,,,,${withheld.toFixed(2)},${unpayable.length} employee(s) have no bank account and are NOT in this file`,
+      );
+      for (const line of unpayable) {
+        csvRows.push(
+          `,${line.employee_code},${String(line.full_name ?? "").replace(/,/g, " ")},,,,${Number(line.net_salary).toFixed(2)},NOT PAID - bank account missing`,
+        );
+      }
+    }
+    res.setHeader("X-Neft-Excluded-Count", String(unpayable.length));
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="NEFT_${run.run_month}_${runId.slice(0, 8)}.csv"`,
+    );
+    return res.send(csvRows.join("\n"));
+  }),
+);
+
+payrollExtendedRouter.get(
+  "/runs/:id/ecr",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    // ECR carries PF wage/UAN data for every employee on the run — same sensitivity as
+    // neft-export/bank-exception-report above, but this endpoint had no scope check at
+    // all, only the role list. A branch-scoped finance/payroll user could pull ECR data
+    // for any runId regardless of branch. Same hasExportScope gate as its siblings.
+    if (!(await hasExportScope(req.authUser!.id))) {
+      return res
+        .status(403)
+        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT eu.uan, eu.member_id, CONCAT_WS(' ', e.first_name, e.last_name) AS member_name,
             spl.gross_salary AS wages, spl.pf_employee AS epf_contribution,
             (spl.pf_employer - ROUND(spl.pf_employer * 3.67 / 12, 2)) AS eps_contribution
        FROM salary_prep_line spl
@@ -267,63 +450,108 @@ payrollExtendedRouter.get("/runs/:id/ecr", requireRole("admin", "finance", "payr
        LEFT JOIN employee_uan eu ON eu.employee_id = spl.employee_id
       WHERE spl.run_id = ? AND spl.status != 'cancelled'
       ORDER BY e.employee_code`,
-    [req.params.id],
-  );
-  return res.json({ success: true, run_id: req.params.id, data: rows });
-}));
+      [req.params.id],
+    );
+    return res.json({ success: true, run_id: req.params.id, data: rows });
+  }),
+);
 
 // ESIC challan: handled by payroll.routes.ts /runs/:id/esic-challan (mounted first)
 
 // ── Salary Sheet XLSX export (mirrors Onfido Noida sheet format) ──────────────
 // Accepts either /runs/:id/salary-sheet-export OR /salary-sheet-export?month=YYYY-MM&branchId=X
-payrollExtendedRouter.get("/salary-sheet-export", requireRole("admin", "finance", "payroll", "hr", "payroll_head", "finance_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { month, branchId } = req.query as { month?: string; branchId?: string };
-  if (!month) return res.status(400).json({ success: false, message: "month query param required (YYYY-MM)" });
+payrollExtendedRouter.get(
+  "/salary-sheet-export",
+  requireRole(
+    "admin",
+    "finance",
+    "payroll",
+    "hr",
+    "payroll_head",
+    "finance_head",
+    "payroll_admin",
+  ),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { month, branchId } = req.query as {
+      month?: string;
+      branchId?: string;
+    };
+    if (!month)
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "month query param required (YYYY-MM)",
+        });
 
-  // Find the most recent run for this month (optionally filtered by branch)
-  let runQuery = "SELECT id, run_month FROM salary_prep_run WHERE run_month = ?";
-  const params: (string | number)[] = [month];
-  if (branchId) {
-    runQuery += " AND branch_id = ?";
-    params.push(branchId);
-  }
-  runQuery += " ORDER BY created_at DESC LIMIT 1";
-  const [runRows] = await db.execute<RowDataPacket[]>(runQuery, params);
-  const foundRun = runRows[0];
-  if (!foundRun) return res.status(404).json({ success: false, message: `No payroll run found for ${month}${branchId ? ` (branch ${branchId})` : ""}` });
+    // Find the most recent run for this month (optionally filtered by branch)
+    let runQuery =
+      "SELECT id, run_month FROM salary_prep_run WHERE run_month = ?";
+    const params: (string | number)[] = [month];
+    if (branchId) {
+      runQuery += " AND branch_id = ?";
+      params.push(branchId);
+    }
+    runQuery += " ORDER BY created_at DESC LIMIT 1";
+    const [runRows] = await db.execute<RowDataPacket[]>(runQuery, params);
+    const foundRun = runRows[0];
+    if (!foundRun)
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: `No payroll run found for ${month}${branchId ? ` (branch ${branchId})` : ""}`,
+        });
 
-  // Redirect to the ID-based endpoint
-  return res.redirect(`/api/payroll/runs/${foundRun.id}/salary-sheet-export`);
-}));
+    // Redirect to the ID-based endpoint
+    return res.redirect(`/api/payroll/runs/${foundRun.id}/salary-sheet-export`);
+  }),
+);
 
-payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", "finance", "payroll", "hr", "payroll_head", "finance_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const runId = req.params.id;
-  const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
-  const run = runRows[0];
-  if (!run) return res.status(404).json({ success: false, message: "Run not found" });
+payrollExtendedRouter.get(
+  "/runs/:id/salary-sheet-export",
+  requireRole(
+    "admin",
+    "finance",
+    "payroll",
+    "hr",
+    "payroll_head",
+    "finance_head",
+    "payroll_admin",
+  ),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const runId = req.params.id;
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1",
+      [runId],
+    );
+    const run = runRows[0];
+    if (!run)
+      return res.status(404).json({ success: false, message: "Run not found" });
 
-  // Unlike the bank file above this is a report, so it row-filters to the caller's
-  // branch/process the way /runs and /records already do, rather than denying
-  // outright. Previously requireRole alone let any hr/finance/payroll user export
-  // the whole organisation's salary register, including decrypted account numbers.
-  const scoped = await buildScopeWhereClause(
-    req.authUser!.id,
-    PAYROLL_REPORT_SCOPE_ROLES,
-    { branchId: "e.branch_id", processId: "e.process_id" },
-    { allowAdminBypass: true },
-  );
-  // buildScopeWhereClause returns 1=0 for a caller with no assigned scope. Letting that
-  // through would download an empty workbook, which reads as "this run has no payroll"
-  // rather than "you have no access" — so say so instead.
-  if (scoped.sql === "1=0") {
-    return res.status(403).json({
-      success: false,
-      message: "No branch or process scope is assigned to your account, so there is nothing you are authorised to export.",
-    });
-  }
+    // Unlike the bank file above this is a report, so it row-filters to the caller's
+    // branch/process the way /runs and /records already do, rather than denying
+    // outright. Previously requireRole alone let any hr/finance/payroll user export
+    // the whole organisation's salary register, including decrypted account numbers.
+    const scoped = await buildScopeWhereClause(
+      req.authUser!.id,
+      PAYROLL_REPORT_SCOPE_ROLES,
+      { branchId: "e.branch_id", processId: "e.process_id" },
+      { allowAdminBypass: true },
+    );
+    // buildScopeWhereClause returns 1=0 for a caller with no assigned scope. Letting that
+    // through would download an empty workbook, which reads as "this run has no payroll"
+    // rather than "you have no access" — so say so instead.
+    if (scoped.sql === "1=0") {
+      return res.status(403).json({
+        success: false,
+        message:
+          "No branch or process scope is assigned to your account, so there is nothing you are authorised to export.",
+      });
+    }
 
-  const [lines] = await db.execute<RowDataPacket[]>(
-    `SELECT
+    const [lines] = await db.execute<RowDataPacket[]>(
+      `SELECT
         e.employee_code                                    AS EmpCode,
         CONCAT_WS(' ', e.first_name, e.last_name)         AS EmpName,
         -- The cost centre this line was PAID under, from the stamp written at calculation, with
@@ -481,126 +709,136 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
       WHERE spl.run_id = ? AND spl.status != 'cancelled'
         AND (${scoped.sql})
       ORDER BY e.employee_code`,
-    [runId, ...scoped.params],
-  );
+      [runId, ...scoped.params],
+    );
 
-  // Build sheet data — map each row to a plain object in column order
-  const sheetData = (lines as RowDataPacket[]).map((row: any) => ({
-    EmpCode: row.EmpCode,
-    EmpName: row.EmpName,
-    CostCenter: row.CostCenter,
-    Department: row.Department,
-    Designation: row.Designation,
-    Profile: row.Profile,
-    "Employee For": row.EmployeeFor,
-    Billable: row.Billable,
-    Branch: row.Branch,
-    Basic: Number(row.Basic),
-    HRA: Number(row.HRA),
-    Bonus: Number(row.Bonus),
-    Conv: Number(row.Conv),
-    Portfolio: Number(row.Portfolio),
-    MedicalAllowance: Number(row.MedicalAllowance),
-    LTA: Number(row.LTA),
-    SpecialAllowance: Number(row.SpecialAllowance),
-    OtherAllowance: Number(row.OtherAllowance),
-    PLI1: Number(row.PLI1),
-    Gross: Number(row.Gross),
-    WorkingDays: Number(row.WorkingDays),
-    CTCOffered: Number(row.CTCOffered),
-    CurrentCTC: Number(row.CurrentCTC),
-    ActualDays: Number(row.ActualDays),
-    EarnedDays: Number(row.EarnedDays),
-    ExtraDay: Number(row.ExtraDay),
-    Leave: Number(row.Leave),
-    Basic1: Number(row.Basic1),
-    HRA1: Number(row.HRA1),
-    Bonus1: Number(row.Bonus1),
-    Conv1: Number(row.Conv1),
-    Portfolio1: Number(row.Portfolio1),
-    SpecialAllowance1: Number(row.SpecialAllowance1),
-    OtherAllowance1: Number(row.OtherAllowance1),
-    MedicalAllowance1: Number(row.MedicalAllowance1),
-    Gross1: Number(row.Gross1),
-    ESIElig: row.ESIElig,
-    PFELig: row.PFELig,
-    ESIC: Number(row.ESIC),
-    EPF: Number(row.EPF),
-    IncomeTax: Number(row.IncomeTax),
-    AdvTaken: Number(row.AdvTaken),
-    AdvPaid: Number(row.AdvPaid),
-    LoanTaken: Number(row.LoanTaken),
-    LoanDed: Number(row.LoanDed),
-    Incentive: Number(row.Incentive),
-    ExtraDayIncentive: Number(row.ExtraDayIncentive),
-    Arrear: Number(row.Arrear),
-    PLI: Number(row.PLI),
-    NetSalary: Number(row.NetSalary),
-    ESICCompany: Number(row.ESICCompany),
-    EPFCompany: Number(row.EPFCompany),
-    AdminChrg: Number(row.AdminChrg),
-    CTC: Number(row.CTC),
-    SHSH: Number(row.SHSH),
-    MobileDeduction: Number(row.MobileDeduction),
-    ShortCollection: Number(row.ShortCollection),
-    AssetRecovery: Number(row.AssetRecovery),
-    Insurance: Number(row.Insurance),
-    ProTaxDeduction: Number(row.ProTaxDeduction),
-    LeaveDeduction: Number(row.LeaveDeduction),
-    OtherDeduction: Number(row.OtherDeduction),
-    OtherDeductionRemarks: row.OtherDeductionRemarks,
-    TotalDeduction: Number(row.TotalDeduction),
-    SalDate: excelDateSerial(row.SalDate),
-    UAN: row.UAN,
-    EPFNo: row.EPFNo,
-    ESICNo: row.ESICNo,
-    ChequeNumber: row.ChequeNumber,
-    ChequeDate: row.ChequeDate,
-    PrintDate: row.PrintDate,
-    LeftStatus: row.LeftStatus,
-    TaxTotalGross: row.TaxTotalGross ?? "",
-    TaxSection10: row.TaxSection10 ?? "",
-    TaxBalance: row.TaxBalance ?? "",
-    TaxUnderHd: row.TaxUnderHd ?? "",
-    DeductionUnder24: row.DeductionUnder24 ?? "",
-    TaxGrossTotal: row.TaxGrossTotal ?? "",
-    TaxAggofChapter6: row.TaxAggofChapter6 ?? "",
-    TotalIncome: row.TotalIncome ?? "",
-    TaxOnTotalIncome: row.TaxOnTotalIncome ?? "",
-    EduCess: row.EduCess ?? "",
-    TaxPayEduCess: row.TaxPayEduCess ?? "",
-    TaxDeductedTillPreviousMonth: row.TaxDeductedTillPreviousMonth ?? "",
-    BalanceTax: row.BalanceTax ?? "",
-    SalaryPaymentMode: row.SalaryPaymentMode,
-    AcNo: resolveAccountNumber({ account_number_enc: row.AcNo_enc, account_number: row.AcNo_legacy }) ?? "",
-    IFSCCode: row.IFSCCode,
-    AcBank: row.AcBank,
-    AcBranch: row.AcBranch,
-  }));
+    // Build sheet data — map each row to a plain object in column order
+    const sheetData = (lines as RowDataPacket[]).map((row: any) => ({
+      EmpCode: row.EmpCode,
+      EmpName: row.EmpName,
+      CostCenter: row.CostCenter,
+      Department: row.Department,
+      Designation: row.Designation,
+      Profile: row.Profile,
+      "Employee For": row.EmployeeFor,
+      Billable: row.Billable,
+      Branch: row.Branch,
+      Basic: Number(row.Basic),
+      HRA: Number(row.HRA),
+      Bonus: Number(row.Bonus),
+      Conv: Number(row.Conv),
+      Portfolio: Number(row.Portfolio),
+      MedicalAllowance: Number(row.MedicalAllowance),
+      LTA: Number(row.LTA),
+      SpecialAllowance: Number(row.SpecialAllowance),
+      OtherAllowance: Number(row.OtherAllowance),
+      PLI1: Number(row.PLI1),
+      Gross: Number(row.Gross),
+      WorkingDays: Number(row.WorkingDays),
+      CTCOffered: Number(row.CTCOffered),
+      CurrentCTC: Number(row.CurrentCTC),
+      ActualDays: Number(row.ActualDays),
+      EarnedDays: Number(row.EarnedDays),
+      ExtraDay: Number(row.ExtraDay),
+      Leave: Number(row.Leave),
+      Basic1: Number(row.Basic1),
+      HRA1: Number(row.HRA1),
+      Bonus1: Number(row.Bonus1),
+      Conv1: Number(row.Conv1),
+      Portfolio1: Number(row.Portfolio1),
+      SpecialAllowance1: Number(row.SpecialAllowance1),
+      OtherAllowance1: Number(row.OtherAllowance1),
+      MedicalAllowance1: Number(row.MedicalAllowance1),
+      Gross1: Number(row.Gross1),
+      ESIElig: row.ESIElig,
+      PFELig: row.PFELig,
+      ESIC: Number(row.ESIC),
+      EPF: Number(row.EPF),
+      IncomeTax: Number(row.IncomeTax),
+      AdvTaken: Number(row.AdvTaken),
+      AdvPaid: Number(row.AdvPaid),
+      LoanTaken: Number(row.LoanTaken),
+      LoanDed: Number(row.LoanDed),
+      Incentive: Number(row.Incentive),
+      ExtraDayIncentive: Number(row.ExtraDayIncentive),
+      Arrear: Number(row.Arrear),
+      PLI: Number(row.PLI),
+      NetSalary: Number(row.NetSalary),
+      ESICCompany: Number(row.ESICCompany),
+      EPFCompany: Number(row.EPFCompany),
+      AdminChrg: Number(row.AdminChrg),
+      CTC: Number(row.CTC),
+      SHSH: Number(row.SHSH),
+      MobileDeduction: Number(row.MobileDeduction),
+      ShortCollection: Number(row.ShortCollection),
+      AssetRecovery: Number(row.AssetRecovery),
+      Insurance: Number(row.Insurance),
+      ProTaxDeduction: Number(row.ProTaxDeduction),
+      LeaveDeduction: Number(row.LeaveDeduction),
+      OtherDeduction: Number(row.OtherDeduction),
+      OtherDeductionRemarks: row.OtherDeductionRemarks,
+      TotalDeduction: Number(row.TotalDeduction),
+      SalDate: excelDateSerial(row.SalDate),
+      UAN: row.UAN,
+      EPFNo: row.EPFNo,
+      ESICNo: row.ESICNo,
+      ChequeNumber: row.ChequeNumber,
+      ChequeDate: row.ChequeDate,
+      PrintDate: row.PrintDate,
+      LeftStatus: row.LeftStatus,
+      TaxTotalGross: row.TaxTotalGross ?? "",
+      TaxSection10: row.TaxSection10 ?? "",
+      TaxBalance: row.TaxBalance ?? "",
+      TaxUnderHd: row.TaxUnderHd ?? "",
+      DeductionUnder24: row.DeductionUnder24 ?? "",
+      TaxGrossTotal: row.TaxGrossTotal ?? "",
+      TaxAggofChapter6: row.TaxAggofChapter6 ?? "",
+      TotalIncome: row.TotalIncome ?? "",
+      TaxOnTotalIncome: row.TaxOnTotalIncome ?? "",
+      EduCess: row.EduCess ?? "",
+      TaxPayEduCess: row.TaxPayEduCess ?? "",
+      TaxDeductedTillPreviousMonth: row.TaxDeductedTillPreviousMonth ?? "",
+      BalanceTax: row.BalanceTax ?? "",
+      SalaryPaymentMode: row.SalaryPaymentMode,
+      AcNo:
+        resolveAccountNumber({
+          account_number_enc: row.AcNo_enc,
+          account_number: row.AcNo_legacy,
+        }) ?? "",
+      IFSCCode: row.IFSCCode,
+      AcBank: row.AcBank,
+      AcBranch: row.AcBranch,
+    }));
 
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.json_to_sheet(sheetData);
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(sheetData);
 
-  // SalDate carries an Excel serial number (see excelDateSerial above) so it survives
-  // any server timezone unscathed; stamp the legacy sheet's own display format on that
-  // column so it still reads as a date in Excel/Tally, not a bare integer.
-  if (sheetData.length > 0) {
-    const salDateCol = XLSX.utils.encode_col(Object.keys(sheetData[0]).indexOf("SalDate"));
-    for (let i = 0; i < sheetData.length; i++) {
-      const cell = ws[`${salDateCol}${i + 2}`]; // +2: row 1 is the header
-      if (cell) cell.z = "m/d/yy";
+    // SalDate carries an Excel serial number (see excelDateSerial above) so it survives
+    // any server timezone unscathed; stamp the legacy sheet's own display format on that
+    // column so it still reads as a date in Excel/Tally, not a bare integer.
+    if (sheetData.length > 0) {
+      const salDateCol = XLSX.utils.encode_col(
+        Object.keys(sheetData[0]).indexOf("SalDate"),
+      );
+      for (let i = 0; i < sheetData.length; i++) {
+        const cell = ws[`${salDateCol}${i + 2}`]; // +2: row 1 is the header
+        if (cell) cell.z = "m/d/yy";
+      }
     }
-  }
 
-  XLSX.utils.book_append_sheet(wb, ws, "Salary Sheet");
+    XLSX.utils.book_append_sheet(wb, ws, "Salary Sheet");
 
-  const runMonthLabel = String(run.run_month).replace("-", " ");
-  const filename = `Salary Sheet ${runMonthLabel}.xlsx`;
-  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-  return res.send(buf);
-}));
+    const runMonthLabel = String(run.run_month).replace("-", " ");
+    const filename = `Salary Sheet ${runMonthLabel}.xlsx`;
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(buf);
+  }),
+);
 
 // ─── P0: Bank exception report ────────────────────────────────────────────────
 //
@@ -612,12 +850,21 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
 // Org-wide scope required (same gate as the NEFT export endpoints).
 payrollExtendedRouter.get(
   "/runs/:runId/bank-exception-report",
-  requireRole("super_admin", "admin", "finance", "payroll_head", "finance_head", "payroll_admin"),
+  requireRole(
+    "super_admin",
+    "admin",
+    "finance",
+    "payroll_head",
+    "finance_head",
+    "payroll_admin",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 
     if (!(await hasExportScope(req.authUser!.id))) {
-      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+      return res
+        .status(403)
+        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
 
     const [runRows] = await db.execute<RowDataPacket[]>(
@@ -625,7 +872,10 @@ payrollExtendedRouter.get(
       [runId],
     );
     const run = (runRows as any[])[0];
-    if (!run) return res.status(404).json({ success: false, message: "Payroll run not found" });
+    if (!run)
+      return res
+        .status(404)
+        .json({ success: false, message: "Payroll run not found" });
 
     // Fetch all payable lines joined to bank detail for conflict detection
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -699,7 +949,8 @@ payrollExtendedRouter.get(
           legacy_account_masked: resolution.legacyValue
             ? `XXXX${resolution.legacyValue.slice(-4)}`
             : null,
-          conflict_detail: "encrypted and legacy columns disagree — HR must verify and re-upload",
+          conflict_detail:
+            "encrypted and legacy columns disagree — HR must verify and re-upload",
         });
       } else {
         resolved_ok.push(r.employee_id);
@@ -739,12 +990,20 @@ payrollExtendedRouter.get(
 // tolerance_rupees the caller supplies) before the run is considered golden.
 payrollExtendedRouter.post(
   "/runs/:runId/golden-month-reconcile",
-  requireRole("super_admin", "admin", "finance_head", "payroll_head", "payroll_admin"),
+  requireRole(
+    "super_admin",
+    "admin",
+    "finance_head",
+    "payroll_head",
+    "payroll_admin",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 
     if (!(await hasExportScope(req.authUser!.id))) {
-      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+      return res
+        .status(403)
+        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
 
     const [runRows] = await db.execute<RowDataPacket[]>(
@@ -753,7 +1012,10 @@ payrollExtendedRouter.post(
       [runId],
     );
     const run = (runRows as any[])[0];
-    if (!run) return res.status(404).json({ success: false, message: "Payroll run not found" });
+    if (!run)
+      return res
+        .status(404)
+        .json({ success: false, message: "Payroll run not found" });
 
     // Recompute from prep lines rather than trusting the run totals column —
     // the totals column is updated on each calculation but could lag a manual edit.
@@ -784,9 +1046,15 @@ payrollExtendedRouter.post(
     let bank_advice_total = 0;
     let bank_payable_count = 0;
     for (const b of bankRows as any[]) {
-      const acct = resolveAccountNumber({ account_number_enc: b.account_number_enc, account_number: b.account_number_legacy });
+      const acct = resolveAccountNumber({
+        account_number_enc: b.account_number_enc,
+        account_number: b.account_number_legacy,
+      });
       const ok = acct && !SCIENTIFIC_RE.test(acct) && VALID_ACCT_RE.test(acct);
-      if (ok) { bank_advice_total += Number(b.net_salary ?? 0); bank_payable_count++; }
+      if (ok) {
+        bank_advice_total += Number(b.net_salary ?? 0);
+        bank_payable_count++;
+      }
     }
     bank_advice_total = Math.round(bank_advice_total * 100) / 100;
 
@@ -799,10 +1067,10 @@ payrollExtendedRouter.post(
     const payslip_count = Number((payslipRows as any[])[0]?.cnt ?? 0);
 
     const system: Record<string, number> = {
-      headcount:         Number(agg.headcount),
-      gross:             Math.round(Number(agg.gross) * 100) / 100,
-      deductions:        Math.round(Number(agg.deductions) * 100) / 100,
-      net:               Math.round(Number(agg.net) * 100) / 100,
+      headcount: Number(agg.headcount),
+      gross: Math.round(Number(agg.gross) * 100) / 100,
+      deductions: Math.round(Number(agg.deductions) * 100) / 100,
+      net: Math.round(Number(agg.net) * 100) / 100,
       bank_advice_total,
       bank_payable_count,
       payslip_count,
@@ -822,13 +1090,24 @@ payrollExtendedRouter.post(
         control: null,
         variances: null,
         golden: null,
-        message: "System figures returned. POST with { control: { headcount, gross, deductions, net, bank_advice_total, payslip_count }, tolerance_rupees } to reconcile.",
+        message:
+          "System figures returned. POST with { control: { headcount, gross, deductions, net, bank_advice_total, payslip_count }, tolerance_rupees } to reconcile.",
       });
     }
 
-    const variances: Record<string, { system: number; control: number; diff: number; pass: boolean }> = {};
+    const variances: Record<
+      string,
+      { system: number; control: number; diff: number; pass: boolean }
+    > = {};
     let golden = true;
-    for (const key of ["headcount", "gross", "deductions", "net", "bank_advice_total", "payslip_count"] as const) {
+    for (const key of [
+      "headcount",
+      "gross",
+      "deductions",
+      "net",
+      "bank_advice_total",
+      "payslip_count",
+    ] as const) {
       const sys = system[key] ?? 0;
       const ctrl = control[key] ?? 0;
       const diff = Math.round((sys - ctrl) * 100) / 100;
@@ -845,7 +1124,12 @@ payrollExtendedRouter.post(
       module_key: "payroll",
       entity_type: "salary_prep_run",
       entity_id: runId,
-      change_summary: { run_month: run.run_month, golden, variances, tolerance },
+      change_summary: {
+        run_month: run.run_month,
+        golden,
+        variances,
+        tolerance,
+      },
     });
 
     return res.json({

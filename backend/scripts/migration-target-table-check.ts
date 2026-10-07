@@ -60,13 +60,16 @@ function loadEnv(): Record<string, string> {
  * Backtick-quoted and bare identifiers both match; comments are stripped
  * first so a commented-out statement is never mistaken for a real one.
  */
-export function parseTargetTables(sql: string): { created: Set<string>; written: Set<string> } {
-  const stripped = sql
-    .replace(/--.*$/gm, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
+export function parseTargetTables(sql: string): {
+  created: Set<string>;
+  written: Set<string>;
+} {
+  const stripped = sql.replace(/--.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
   const created = new Set<string>();
-  for (const m of stripped.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?/gi)) {
+  for (const m of stripped.matchAll(
+    /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?/gi,
+  )) {
     created.add(m[1].toLowerCase());
   }
 
@@ -90,27 +93,37 @@ export function parseTargetTables(sql: string): { created: Set<string>; written:
 async function main() {
   const env = loadEnv();
   const conn = await mysql.createConnection({
-    host: env.DB_HOST, port: Number(env.DB_PORT || 3306),
-    user: env.DB_USER, password: env.DB_PASSWORD, database: env.DB_NAME,
+    host: env.DB_HOST,
+    port: Number(env.DB_PORT || 3306),
+    user: env.DB_USER,
+    password: env.DB_PASSWORD,
+    database: env.DB_NAME,
   });
 
   try {
-    const { MIGRATION_MANIFEST, buildSchemaMigrationsAppliedQuery } = await import(
-      "../src/db/runPendingMigrations.js"
-    );
+    const { MIGRATION_MANIFEST, buildSchemaMigrationsAppliedQuery } =
+      await import("../src/db/runPendingMigrations.js");
 
     const [colRows] = (await conn.query(
       `SELECT COLUMN_NAME FROM information_schema.COLUMNS
        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations' AND COLUMN_NAME = 'success'`,
-      [env.DB_NAME]
+      [env.DB_NAME],
     )) as any;
     const hasSuccessColumn = colRows.length > 0;
 
-    const [appliedRows] = (await conn.query(buildSchemaMigrationsAppliedQuery(hasSuccessColumn))) as any;
-    const appliedSet = new Set((appliedRows as Array<{ filename: string }>).map((r) => r.filename));
+    const [appliedRows] = (await conn.query(
+      buildSchemaMigrationsAppliedQuery(hasSuccessColumn),
+    )) as any;
+    const appliedSet = new Set(
+      (appliedRows as Array<{ filename: string }>).map((r) => r.filename),
+    );
 
-    const pending = (MIGRATION_MANIFEST as string[]).filter((f) => !appliedSet.has(f));
-    console.log(`[table-check] ${pending.length} pending migration(s) of ${MIGRATION_MANIFEST.length} total`);
+    const pending = (MIGRATION_MANIFEST as string[]).filter(
+      (f) => !appliedSet.has(f),
+    );
+    console.log(
+      `[table-check] ${pending.length} pending migration(s) of ${MIGRATION_MANIFEST.length} total`,
+    );
 
     if (pending.length === 0) {
       console.log("[table-check] nothing pending. PASS.");
@@ -120,17 +133,21 @@ async function main() {
 
     const [existingTableRows] = (await conn.query(
       `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?`,
-      [env.DB_NAME]
+      [env.DB_NAME],
     )) as any;
     const existingTables = new Set(
-      (existingTableRows as Array<{ TABLE_NAME: string }>).map((r) => r.TABLE_NAME.toLowerCase())
+      (existingTableRows as Array<{ TABLE_NAME: string }>).map((r) =>
+        r.TABLE_NAME.toLowerCase(),
+      ),
     );
 
     let anyFailure = false;
     for (const filename of pending) {
       const filePath = path.join(BACKEND_DIR, "sql", filename);
       if (!existsSync(filePath)) {
-        console.error(`[table-check] ${filename}: listed in MIGRATION_MANIFEST but the file does not exist on disk`);
+        console.error(
+          `[table-check] ${filename}: listed in MIGRATION_MANIFEST but the file does not exist on disk`,
+        );
         anyFailure = true;
         continue;
       }
@@ -140,11 +157,13 @@ async function main() {
 
       if (missing.length > 0) {
         console.error(
-          `[table-check] FAIL ${filename}: writes to table(s) that do not exist and this file does not create: ${missing.join(", ")}`
+          `[table-check] FAIL ${filename}: writes to table(s) that do not exist and this file does not create: ${missing.join(", ")}`,
         );
         anyFailure = true;
       } else {
-        console.log(`[table-check] ${filename}: PASS (${written.size} target table(s) all present or self-created)`);
+        console.log(
+          `[table-check] ${filename}: PASS (${written.size} target table(s) all present or self-created)`,
+        );
       }
 
       // Pending migrations apply in manifest order in one run, not independently against
@@ -158,10 +177,14 @@ async function main() {
     }
 
     if (anyFailure) {
-      console.error("\n[table-check] FAILED — at least one pending migration would raise ER_NO_SUCH_TABLE on restart. Do not deploy.");
+      console.error(
+        "\n[table-check] FAILED — at least one pending migration would raise ER_NO_SUCH_TABLE on restart. Do not deploy.",
+      );
       process.exitCode = 1;
     } else {
-      console.log(`\n[table-check] PASS — all ${pending.length} pending migration(s) target tables that exist or are self-created.`);
+      console.log(
+        `\n[table-check] PASS — all ${pending.length} pending migration(s) target tables that exist or are self-created.`,
+      );
       process.exitCode = 0;
     }
   } finally {

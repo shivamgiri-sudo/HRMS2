@@ -67,16 +67,21 @@ describe("loading statutory config in force for a period", () => {
   it("rejects a malformed period rather than quietly widening the query", async () => {
     // Falling back to "no filter" on bad input would reintroduce exactly the
     // behaviour this module exists to remove.
-    await expect(loadFlatStatutoryConfig("July 2026")).rejects.toThrow(/YYYY-MM/);
+    await expect(loadFlatStatutoryConfig("July 2026")).rejects.toThrow(
+      /YYYY-MM/,
+    );
     await expect(loadFlatStatutoryConfig("2026")).rejects.toThrow(/YYYY-MM/);
     expect(execute).not.toHaveBeenCalled();
   });
 
   it("lower-cases keys, because every caller looks them up that way", async () => {
-    execute.mockResolvedValue([[
-      { config_key: "PF_EMPLOYEE_PCT", config_value: "12.0000" },
-      { config_key: "tds_cess_pct", config_value: "4.0000" },
-    ], []]);
+    execute.mockResolvedValue([
+      [
+        { config_key: "PF_EMPLOYEE_PCT", config_value: "12.0000" },
+        { config_key: "tds_cess_pct", config_value: "4.0000" },
+      ],
+      [],
+    ]);
 
     const config = await loadFlatStatutoryConfig("2026-07");
 
@@ -84,10 +89,13 @@ describe("loading statutory config in force for a period", () => {
   });
 
   it("drops a malformed value instead of letting NaN reach net pay", async () => {
-    execute.mockResolvedValue([[
-      { config_key: "tds_cess_pct", config_value: "not-a-number" },
-      { config_key: "pf_employee_pct", config_value: "12.0000" },
-    ], []]);
+    execute.mockResolvedValue([
+      [
+        { config_key: "tds_cess_pct", config_value: "not-a-number" },
+        { config_key: "pf_employee_pct", config_value: "12.0000" },
+      ],
+      [],
+    ]);
 
     const config = await loadFlatStatutoryConfig("2026-07");
 

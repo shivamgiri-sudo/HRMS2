@@ -39,7 +39,10 @@
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
-import { blindIndex, isUsingDevBlindIndexKey } from "../src/shared/fieldEncryption.js";
+import {
+  blindIndex,
+  isUsingDevBlindIndexKey,
+} from "../src/shared/fieldEncryption.js";
 import { withDeadlockRetry } from "../src/shared/deadlockRetry.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
@@ -70,7 +73,9 @@ async function columnExists(column: string): Promise<boolean> {
   return Number(r.n ?? r.N) > 0;
 }
 
-async function backfill(target: Target): Promise<{ written: number; pending: number }> {
+async function backfill(
+  target: Target,
+): Promise<{ written: number; pending: number }> {
   const { column, indexColumn } = target;
 
   const [pendingRows] = await db.query<RowDataPacket[]>(
@@ -115,14 +120,17 @@ async function backfill(target: Target): Promise<{ written: number; pending: num
       // retry cannot double-write; see the scope warning in shared/deadlockRetry.ts for why
       // this must not be applied to statements inside a transaction.
       const [res] = await withDeadlockRetry(
-        () => db.execute<ResultSetHeader>(
-          `UPDATE employees SET ${indexColumn} = ?, updated_at = updated_at
+        () =>
+          db.execute<ResultSetHeader>(
+            `UPDATE employees SET ${indexColumn} = ?, updated_at = updated_at
             WHERE id = ? AND ${indexColumn} IS NULL`,
-          [blindIndex(value), row.id],
-        ),
+            [blindIndex(value), row.id],
+          ),
         {
           onRetry: (attempt) =>
-            console.warn(`\n[blind-index] deadlock on ${indexColumn} row ${row.id}, retry ${attempt}`),
+            console.warn(
+              `\n[blind-index] deadlock on ${indexColumn} row ${row.id}, retry ${attempt}`,
+            ),
         },
       );
       written += res.affectedRows;
@@ -158,20 +166,22 @@ async function verify(target: Target): Promise<void> {
       WHERE ${target.column} IS NOT NULL AND TRIM(${target.column}) <> ''`,
   );
   const r = rows[0] as Record<string, unknown>;
-  const ok = Number(r.distinct_plain) === Number(r.distinct_index) && Number(r.still_null) === 0;
+  const ok =
+    Number(r.distinct_plain) === Number(r.distinct_index) &&
+    Number(r.still_null) === 0;
   const caseVariants = Number(r.distinct_plain) - Number(r.distinct_plain_ci);
 
   console.log(
     `[blind-index] verify ${target.indexColumn}: distinct_plain=${r.distinct_plain} ` +
-    `distinct_index=${r.distinct_index} still_null=${r.still_null} ` +
-    `case_variants=${caseVariants} ${ok ? "OK" : "MISMATCH"}`,
+      `distinct_index=${r.distinct_index} still_null=${r.still_null} ` +
+      `case_variants=${caseVariants} ${ok ? "OK" : "MISMATCH"}`,
   );
 
   if (!ok) {
     console.log(
       "  Index count differs from BINARY-distinct plaintext, or rows were left unindexed. " +
-      "That is a genuine collision or a missed batch. " +
-      "Do NOT migrate the duplicate guard onto this index until it reconciles.",
+        "That is a genuine collision or a missed batch. " +
+        "Do NOT migrate the duplicate guard onto this index until it reconciles.",
     );
   }
 
@@ -179,9 +189,9 @@ async function verify(target: Target): Promise<void> {
   if (caseVariants > 0) {
     console.log(
       `  NOTE: ${caseVariants} value(s) differ only by case. The duplicate guard matches ` +
-      `plaintext by equality under a case-insensitive collation, so it currently catches ` +
-      `those; this index is case-sensitive and would NOT. Normalise case on both the index ` +
-      `and the lookup before migrating the guard, or duplicate detection regresses for them.`,
+        `plaintext by equality under a case-insensitive collation, so it currently catches ` +
+        `those; this index is case-sensitive and would NOT. Normalise case on both the index ` +
+        `and the lookup before migrating the guard, or duplicate detection regresses for them.`,
     );
   }
 }
@@ -192,19 +202,23 @@ async function run(): Promise<void> {
   if (isUsingDevBlindIndexKey()) {
     throw new Error(
       "FIELD_BLIND_INDEX_KEY is unset, so the built-in development key is in use. An index built " +
-      "with it matches nothing at lookup time, and nothing would report an error — the duplicate " +
-      "guard would simply stop finding duplicates. Run this on the production host. Refusing to write.",
+        "with it matches nothing at lookup time, and nothing would report an error — the duplicate " +
+        "guard would simply stop finding duplicates. Run this on the production host. Refusing to write.",
     );
   }
 
   if (!(await columnExists("aadhaar_blind_index"))) {
-    throw new Error("employees.aadhaar_blind_index does not exist — apply migration 1121 first.");
+    throw new Error(
+      "employees.aadhaar_blind_index does not exist — apply migration 1121 first.",
+    );
   }
 
   for (const target of TARGETS) {
     const { written, pending } = await backfill(target);
     if (!DRY_RUN) {
-      console.log(`[blind-index] ${target.indexColumn}: wrote ${written} of ${pending}`);
+      console.log(
+        `[blind-index] ${target.indexColumn}: wrote ${written} of ${pending}`,
+      );
       await verify(target);
     }
   }
@@ -212,14 +226,18 @@ async function run(): Promise<void> {
   if (DRY_RUN) console.log("\n  [DRY RUN — no rows were updated]");
   console.log(
     "\n  Reminder: the duplicate guard still reads plaintext. Migrating it, and flipping the " +
-    "assertion in conversion-duplicate-identity.contract.test.ts, is a separate change that " +
-    "should only happen once the verify above reconciles.",
+      "assertion in conversion-duplicate-identity.contract.test.ts, is a separate change that " +
+      "should only happen once the verify above reconciles.",
   );
   await db.end();
 }
 
 run().catch(async (e) => {
   console.error("[blind-index] FATAL", e?.message ?? e);
-  try { await db.end(); } catch { /* already closed */ }
+  try {
+    await db.end();
+  } catch {
+    /* already closed */
+  }
   process.exit(1);
 });

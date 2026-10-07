@@ -25,8 +25,9 @@ const ALLOWED_IMAGE_TYPES = new Map<string, string>([
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, PHOTOS_DIR),
   filename: (_req, file, cb) => {
-    const ext = ALLOWED_IMAGE_TYPES.get(file.mimetype)
-      ?? (path.extname(file.originalname).toLowerCase() || ".jpg");
+    const ext =
+      ALLOWED_IMAGE_TYPES.get(file.mimetype) ??
+      (path.extname(file.originalname).toLowerCase() || ".jpg");
     cb(null, `${randomUUID()}${ext}`);
   },
 });
@@ -43,12 +44,18 @@ const upload = multer({
 export const employeePhotoCompatRouter = Router();
 employeePhotoCompatRouter.use(requireAuth);
 
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 function photoMiddleware(req: any, res: any, next: any) {
   upload.single("photo")(req, res, (err: any) => {
     if (err instanceof multer.MulterError) {
-      const message = err.code === "LIMIT_FILE_SIZE" ? "Image file is too large. Maximum allowed size is 15MB." : err.message;
+      const message =
+        err.code === "LIMIT_FILE_SIZE"
+          ? "Image file is too large. Maximum allowed size is 15MB."
+          : err.message;
       return res.status(400).json({ success: false, error: message });
     }
     if (err) {
@@ -64,12 +71,17 @@ function removeUploadedFile(file?: Express.Multer.File) {
   }
 }
 
-async function savePhotoForEmployee(employeeId: string, uploadedFile: Express.Multer.File) {
+async function savePhotoForEmployee(
+  employeeId: string,
+  uploadedFile: Express.Multer.File,
+) {
   const ext = path.extname(uploadedFile.filename).toLowerCase() || ".jpg";
   const finalName = `${employeeId}${ext}`;
   const finalPath = path.join(PHOTOS_DIR, finalName);
 
-  console.log(`[Photo Upload] Saving photo for employee ${employeeId}: ${finalName}`);
+  console.log(
+    `[Photo Upload] Saving photo for employee ${employeeId}: ${finalName}`,
+  );
 
   if (uploadedFile.path !== finalPath) {
     for (const existingExt of [".jpg", ".jpeg", ".png", ".webp"]) {
@@ -90,7 +102,10 @@ async function savePhotoForEmployee(employeeId: string, uploadedFile: Express.Mu
     [fileUrl, fileUrl, employeeId],
   );
 
-  console.log(`[Photo Upload] Database updated for employee ${employeeId}: ${fileUrl}`, result);
+  console.log(
+    `[Photo Upload] Database updated for employee ${employeeId}: ${fileUrl}`,
+    result,
+  );
 
   return fileUrl;
 }
@@ -131,14 +146,17 @@ export async function writeEmployeePhotoBuffer(
   return fileUrl;
 }
 
-employeePhotoCompatRouter.get("/directory-masters", requireRole("admin", "hr", "manager"), h(async (_req: any, res: any) => {
-  const activeEmployeeJoin = `
+employeePhotoCompatRouter.get(
+  "/directory-masters",
+  requireRole("admin", "hr", "manager"),
+  h(async (_req: any, res: any) => {
+    const activeEmployeeJoin = `
     AND e.active_status = 1
     AND LOWER(COALESCE(e.employment_status, 'active')) NOT IN ('inactive', 'terminated', 'offboarded', 'absconded')
   `;
 
-  const [processes] = await db.execute<RowDataPacket[]>(
-    `SELECT MIN(p.id) AS id,
+    const [processes] = await db.execute<RowDataPacket[]>(
+      `SELECT MIN(p.id) AS id,
             MIN(TRIM(p.process_name)) AS process_name,
             COUNT(e.id) AS employee_count
        FROM process_master p
@@ -146,11 +164,11 @@ employeePhotoCompatRouter.get("/directory-masters", requireRole("admin", "hr", "
       WHERE p.active_status = 1
         AND TRIM(COALESCE(p.process_name, '')) <> ''
       GROUP BY LOWER(TRIM(p.process_name))
-      ORDER BY process_name ASC`
-  );
+      ORDER BY process_name ASC`,
+    );
 
-  const [branches] = await db.execute<RowDataPacket[]>(
-    `SELECT MIN(b.id) AS id,
+    const [branches] = await db.execute<RowDataPacket[]>(
+      `SELECT MIN(b.id) AS id,
             MIN(TRIM(b.branch_name)) AS branch_name,
             COUNT(e.id) AS employee_count
        FROM branch_master b
@@ -158,18 +176,21 @@ employeePhotoCompatRouter.get("/directory-masters", requireRole("admin", "hr", "
       WHERE b.active_status = 1
         AND TRIM(COALESCE(b.branch_name, '')) <> ''
       GROUP BY LOWER(TRIM(b.branch_name))
-      ORDER BY branch_name ASC`
-  );
+      ORDER BY branch_name ASC`,
+    );
 
-  return res.json({ success: true, data: { processes, branches } });
-}));
+    return res.json({ success: true, data: { processes, branches } });
+  }),
+);
 
-employeePhotoCompatRouter.get("/my-team", h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser.id);
-  if (!emp?.id) return res.json({ success: true, data: [] });
+employeePhotoCompatRouter.get(
+  "/my-team",
+  h(async (req: any, res: any) => {
+    const emp = await getEmployeeForUser(req.authUser.id);
+    if (!emp?.id) return res.json({ success: true, data: [] });
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id,
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id,
             e.employee_code,
             COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name,
             e.department_id,
@@ -186,56 +207,90 @@ employeePhotoCompatRouter.get("/my-team", h(async (req: any, res: any) => {
       WHERE e.active_status = 1
         AND (e.reporting_manager_id = ? OR e.manager_id = ?)
       ORDER BY full_name`,
-    [emp.id, emp.id],
-  );
+      [emp.id, emp.id],
+    );
 
-  return res.json({ success: true, data: rows });
-}));
+    return res.json({ success: true, data: rows });
+  }),
+);
 
-employeePhotoCompatRouter.post("/me/photo", photoMiddleware, h(async (req: any, res: any) => {
-  if (!req.file) return res.status(400).json({ success: false, error: "No image uploaded" });
-  const emp = await getEmployeeForUser(req.authUser.id);
-  if (!emp?.id) {
-    removeUploadedFile(req.file);
-    return res.status(403).json({ success: false, error: "No employee record" });
-  }
+employeePhotoCompatRouter.post(
+  "/me/photo",
+  photoMiddleware,
+  h(async (req: any, res: any) => {
+    if (!req.file)
+      return res
+        .status(400)
+        .json({ success: false, error: "No image uploaded" });
+    const emp = await getEmployeeForUser(req.authUser.id);
+    if (!emp?.id) {
+      removeUploadedFile(req.file);
+      return res
+        .status(403)
+        .json({ success: false, error: "No employee record" });
+    }
 
-  const fileUrl = await savePhotoForEmployee(String(emp.id), req.file);
-  return res.json({ success: true, avatarUrl: fileUrl, photoUrl: fileUrl, url: fileUrl });
-}));
+    const fileUrl = await savePhotoForEmployee(String(emp.id), req.file);
+    return res.json({
+      success: true,
+      avatarUrl: fileUrl,
+      photoUrl: fileUrl,
+      url: fileUrl,
+    });
+  }),
+);
 
-employeePhotoCompatRouter.post("/:id/photo", requireRole("admin", "hr"), photoMiddleware, h(async (req: any, res: any) => {
-  if (!req.file) return res.status(400).json({ success: false, error: "No image uploaded" });
-  const employeeId = String(req.params.id ?? "").trim();
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId],
-  );
-  if (!rows.length) {
-    removeUploadedFile(req.file);
-    return res.status(404).json({ success: false, error: "Employee not found" });
-  }
+employeePhotoCompatRouter.post(
+  "/:id/photo",
+  requireRole("admin", "hr"),
+  photoMiddleware,
+  h(async (req: any, res: any) => {
+    if (!req.file)
+      return res
+        .status(400)
+        .json({ success: false, error: "No image uploaded" });
+    const employeeId = String(req.params.id ?? "").trim();
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId],
+    );
+    if (!rows.length) {
+      removeUploadedFile(req.file);
+      return res
+        .status(404)
+        .json({ success: false, error: "Employee not found" });
+    }
 
-  const fileUrl = await savePhotoForEmployee(employeeId, req.file);
-  return res.json({ success: true, avatarUrl: fileUrl, photoUrl: fileUrl, url: fileUrl });
-}));
+    const fileUrl = await savePhotoForEmployee(employeeId, req.file);
+    return res.json({
+      success: true,
+      avatarUrl: fileUrl,
+      photoUrl: fileUrl,
+      url: fileUrl,
+    });
+  }),
+);
 
-employeePhotoCompatRouter.delete("/:id/photo", requireRole("admin", "hr"), h(async (req: any, res: any) => {
-  const employeeId = String(req.params.id ?? "").trim();
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(avatar_url, ''), photo_url) AS photo_url FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId],
-  );
+employeePhotoCompatRouter.delete(
+  "/:id/photo",
+  requireRole("admin", "hr"),
+  h(async (req: any, res: any) => {
+    const employeeId = String(req.params.id ?? "").trim();
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(avatar_url, ''), photo_url) AS photo_url FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId],
+    );
 
-  const photoUrl = String(rows[0]?.photo_url ?? "");
-  if (photoUrl) {
-    const filePath = path.join(PHOTOS_DIR, path.basename(photoUrl));
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  }
+    const photoUrl = String(rows[0]?.photo_url ?? "");
+    if (photoUrl) {
+      const filePath = path.join(PHOTOS_DIR, path.basename(photoUrl));
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
 
-  await db.execute(
-    `UPDATE employees SET avatar_url = NULL, photo_url = NULL WHERE id = ?`,
-    [employeeId],
-  );
-  return res.json({ success: true });
-}));
+    await db.execute(
+      `UPDATE employees SET avatar_url = NULL, photo_url = NULL WHERE id = ?`,
+      [employeeId],
+    );
+    return res.json({ success: true });
+  }),
+);

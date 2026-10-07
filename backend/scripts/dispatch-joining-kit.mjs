@@ -30,60 +30,91 @@ const CODE = arg("--employee-code");
 const ACTOR = arg("--actor-user-id") ?? null;
 
 if (!CODE) {
-  console.error("usage: node scripts/dispatch-joining-kit.mjs --employee-code <CODE> [--actor-user-id <ID>] [--confirm]");
+  console.error(
+    "usage: node scripts/dispatch-joining-kit.mjs --employee-code <CODE> [--actor-user-id <ID>] [--confirm]",
+  );
   process.exit(2);
 }
 
 const { db } = await import("../dist/src/db/mysql.js");
-const { queueJoiningKit, dispatchJoiningKit } = await import("../dist/src/modules/employees/joiningKitDispatch.service.js");
+const { queueJoiningKit, dispatchJoiningKit } =
+  await import("../dist/src/modules/employees/joiningKitDispatch.service.js");
 
 const [[emp]] = await db.execute(
   `SELECT id, employee_code, full_name, personal_email, official_email, candidate_id
-     FROM employees WHERE employee_code = ? LIMIT 1`, [CODE]);
-if (!emp) { console.error(`No employee with code ${CODE}`); process.exit(1); }
+     FROM employees WHERE employee_code = ? LIMIT 1`,
+  [CODE],
+);
+if (!emp) {
+  console.error(`No employee with code ${CODE}`);
+  process.exit(1);
+}
 
-const to = [emp.personal_email, emp.official_email].filter((e) => e && String(e).includes("@"));
+const to = [emp.personal_email, emp.official_email].filter(
+  (e) => e && String(e).includes("@"),
+);
 const [[blockers]] = await db.execute(
   `SELECT COUNT(*) n FROM employee_joining_document_field_value fv
      JOIN employee_joining_document_checklist cl ON cl.id = fv.checklist_id
      LEFT JOIN document_template_field_map m
             ON m.document_code = cl.document_code AND m.field_key = fv.field_key
     WHERE cl.employee_id = ? AND fv.fill_status = 'hr_fill_required'
-      AND fv.field_key NOT REGEXP '(^|_)signature$' AND COALESCE(m.required, 1) = 1`, [emp.id]);
+      AND fv.field_key NOT REGEXP '(^|_)signature$' AND COALESCE(m.required, 1) = 1`,
+  [emp.id],
+);
 const [perDoc] = await db.execute(
   `SELECT document_code FROM employee_joining_document_public_token
-    WHERE employee_id = ? AND kit_id IS NULL AND token_status = 'active' AND expires_at > NOW()`, [emp.id]);
+    WHERE employee_id = ? AND kit_id IS NULL AND token_status = 'active' AND expires_at > NOW()`,
+  [emp.id],
+);
 
 console.log(`employee            : ${emp.full_name} (${emp.employee_code})`);
-console.log(`will email          : ${to.join(", ") || "(no address on record — dispatch would not mail)"}`);
+console.log(
+  `will email          : ${to.join(", ") || "(no address on record — dispatch would not mail)"}`,
+);
 console.log(`remaining blockers  : ${blockers.n}`);
-console.log(`links to supersede  : ${perDoc.map((r) => r.document_code).join(", ") || "(none)"}`);
-console.log(`FRONTEND_URL        : ${process.env.FRONTEND_URL ?? "(unset — falls back to the public address)"}`);
+console.log(
+  `links to supersede  : ${perDoc.map((r) => r.document_code).join(", ") || "(none)"}`,
+);
+console.log(
+  `FRONTEND_URL        : ${process.env.FRONTEND_URL ?? "(unset — falls back to the public address)"}`,
+);
 
 if (!CONFIRM) {
   console.log("\nDRY RUN — nothing sent. Re-run with --confirm to dispatch.");
   process.exit(0);
 }
 if (Number(blockers.n) > 0) {
-  console.error(`\nRefusing: ${blockers.n} required field(s) still unfilled. Resync the checklist first.`);
+  console.error(
+    `\nRefusing: ${blockers.n} required field(s) still unfilled. Resync the checklist first.`,
+  );
   process.exit(1);
 }
 if (to.length === 0) {
-  console.error("\nRefusing: no email address on record, so the kit would be built but never delivered.");
+  console.error(
+    "\nRefusing: no email address on record, so the kit would be built but never delivered.",
+  );
   process.exit(1);
 }
 
 if (perDoc.length) {
   const [r] = await db.execute(
     `UPDATE employee_joining_document_public_token SET token_status = 'revoked'
-      WHERE employee_id = ? AND kit_id IS NULL AND token_status = 'active'`, [emp.id]);
+      WHERE employee_id = ? AND kit_id IS NULL AND token_status = 'active'`,
+    [emp.id],
+  );
   console.log(`superseded ${r.affectedRows} per-document link(s)`);
 }
-await db.execute(`DELETE FROM employee_joining_esign_kit WHERE employee_id = ? AND status IN ('blocked','failed')`, [emp.id]);
+await db.execute(
+  `DELETE FROM employee_joining_esign_kit WHERE employee_id = ? AND status IN ('blocked','failed')`,
+  [emp.id],
+);
 
 const q = await queueJoiningKit({
-  employeeId: emp.id, candidateId: emp.candidate_id ?? null,
-  actorUserId: ACTOR, triggerSource: "manual_hr_script",
+  employeeId: emp.id,
+  candidateId: emp.candidate_id ?? null,
+  actorUserId: ACTOR,
+  triggerSource: "manual_hr_script",
 });
 const out = await dispatchJoiningKit(q.kitId, ACTOR);
 console.log("\noutcome:", JSON.stringify(out, null, 1).slice(0, 900));
@@ -93,7 +124,11 @@ console.log("\noutcome:", JSON.stringify(out, null, 1).slice(0, 900));
 if (out.status !== "sent" && perDoc.length) {
   const [back] = await db.execute(
     `UPDATE employee_joining_document_public_token SET token_status = 'active'
-      WHERE employee_id = ? AND kit_id IS NULL AND token_status = 'revoked'`, [emp.id]);
-  console.log(`dispatch did not send — restored ${back.affectedRows} per-document link(s)`);
+      WHERE employee_id = ? AND kit_id IS NULL AND token_status = 'revoked'`,
+    [emp.id],
+  );
+  console.log(
+    `dispatch did not send — restored ${back.affectedRows} per-document link(s)`,
+  );
 }
 process.exit(out.status === "sent" ? 0 : 1);

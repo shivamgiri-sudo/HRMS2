@@ -32,25 +32,37 @@ export type BranchLetterhead = {
 };
 
 export const EMPTY_LETTERHEAD: BranchLetterhead = {
-  branchId: null, branchName: "", addressLines: [], city: "", state: "", hrContact: "", hasAddress: false,
+  branchId: null,
+  branchName: "",
+  addressLines: [],
+  city: "",
+  state: "",
+  hrContact: "",
+  hasAddress: false,
 };
 
 /** Per-process cache: branch addresses change at most a few times a year. */
 const cache = new Map<string, BranchLetterhead>();
 
-export function clearBranchLetterheadCache() { cache.clear(); }
+export function clearBranchLetterheadCache() {
+  cache.clear();
+}
 
-export async function resolveBranchLetterhead(branchId: string | null | undefined): Promise<BranchLetterhead> {
+export async function resolveBranchLetterhead(
+  branchId: string | null | undefined,
+): Promise<BranchLetterhead> {
   if (!branchId) return EMPTY_LETTERHEAD;
   const hit = cache.get(branchId);
   if (hit) return hit;
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, branch_name, COALESCE(address, '') AS address, COALESCE(city, '') AS city,
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id, branch_name, COALESCE(address, '') AS address, COALESCE(city, '') AS city,
             COALESCE(state, '') AS state, COALESCE(hr_contact, '') AS hr_contact
        FROM branch_master WHERE id = ? LIMIT 1`,
-    [branchId],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      [branchId],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
   const b = (rows as RowDataPacket[])[0];
   if (!b) return EMPTY_LETTERHEAD;
 
@@ -58,9 +70,16 @@ export async function resolveBranchLetterhead(branchId: string | null | undefine
   // Same chain the ID card uses: prefer the full postal address, which already
   // carries city/state/pincode; otherwise fall back to name + city/state.
   const addressLines = raw
-    ? raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    ? raw
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
     : [String(b.city ?? ""), String(b.state ?? "")].filter(Boolean).join(", ")
-      ? [[String(b.city ?? ""), String(b.state ?? "")].filter(Boolean).join(", ")]
+      ? [
+          [String(b.city ?? ""), String(b.state ?? "")]
+            .filter(Boolean)
+            .join(", "),
+        ]
       : [];
 
   const out: BranchLetterhead = {
@@ -77,12 +96,18 @@ export async function resolveBranchLetterhead(branchId: string | null | undefine
 }
 
 /** Resolve straight from an employee, which is what every renderer actually has. */
-export async function resolveEmployeeLetterhead(employeeId: string): Promise<BranchLetterhead> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-  return resolveBranchLetterhead((rows as RowDataPacket[])[0]?.branch_id ?? null);
+export async function resolveEmployeeLetterhead(
+  employeeId: string,
+): Promise<BranchLetterhead> {
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+  return resolveBranchLetterhead(
+    (rows as RowDataPacket[])[0]?.branch_id ?? null,
+  );
 }
 
 /**
@@ -94,16 +119,22 @@ export async function resolveEmployeeLetterhead(employeeId: string): Promise<Bra
  * have no address, silently printing an empty letterhead is a real outcome —
  * so make it a visible blocker instead.
  */
-export function assertPrintableLetterhead(lh: BranchLetterhead): BranchLetterhead {
+export function assertPrintableLetterhead(
+  lh: BranchLetterhead,
+): BranchLetterhead {
   if (!lh.branchId) {
     throw Object.assign(
-      new Error("This employee has no branch assigned, so the issuing office cannot be printed on the letter."),
+      new Error(
+        "This employee has no branch assigned, so the issuing office cannot be printed on the letter.",
+      ),
       { statusCode: 409, code: "branch_not_assigned" },
     );
   }
   if (!lh.hasAddress) {
     throw Object.assign(
-      new Error(`Branch "${lh.branchName}" has no address on record. Add its Full Address in Organisation Masters before issuing letters from it.`),
+      new Error(
+        `Branch "${lh.branchName}" has no address on record. Add its Full Address in Organisation Masters before issuing letters from it.`,
+      ),
       { statusCode: 409, code: "branch_address_missing" },
     );
   }

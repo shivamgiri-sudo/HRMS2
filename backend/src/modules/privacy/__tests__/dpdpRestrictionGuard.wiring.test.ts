@@ -27,12 +27,18 @@ const RESTRICTED = "11111111-2222-3333-4444-555555555555";
 function app() {
   const a = express();
   a.use("/api/employees/:employeeId", checkDpdpRestriction);
-  a.get("/api/employees/:employeeId", (_req, res) => { res.json({ success: true, reached: true }); });
-  a.get("/api/employees/:employeeId/joining-documents", (_req, res) => { res.json({ success: true, reached: true }); });
+  a.get("/api/employees/:employeeId", (_req, res) => {
+    res.json({ success: true, reached: true });
+  });
+  a.get("/api/employees/:employeeId/joining-documents", (_req, res) => {
+    res.json({ success: true, reached: true });
+  });
   return a;
 }
 
-beforeEach(() => { execute.mockReset(); });
+beforeEach(() => {
+  execute.mockReset();
+});
 
 describe("checkDpdpRestriction", () => {
   it("blocks a read for an employee under an approved restriction order", async () => {
@@ -44,7 +50,9 @@ describe("checkDpdpRestriction", () => {
 
   it("blocks the nested document routes under the same prefix", async () => {
     execute.mockResolvedValue([[{ id: "withdrawal-1" }]]);
-    const res = await request(app()).get(`/api/employees/${RESTRICTED}/joining-documents`);
+    const res = await request(app()).get(
+      `/api/employees/${RESTRICTED}/joining-documents`,
+    );
     expect(res.status).toBe(403);
   });
 
@@ -74,20 +82,24 @@ describe("the guard is actually mounted", () => {
 
   it("app.ts mounts checkDpdpRestriction on the employee id prefix", () => {
     expect(APP).toMatch(
-      /app\.use\("\/api\/employees\/:employeeId",\s*\w+,\s*checkDpdpRestriction\)/
+      /app\.use\("\/api\/employees\/:employeeId",\s*\w+,\s*checkDpdpRestriction\)/,
     );
   });
 
   it("mounts it above the employee routers, so it runs before they answer", () => {
     const guard = APP.indexOf("checkDpdpRestriction)");
-    const firstRouter = APP.indexOf('app.use("/api/employees", listEndpointLimiter');
+    const firstRouter = APP.indexOf(
+      'app.use("/api/employees", listEndpointLimiter',
+    );
     expect(guard).toBeGreaterThan(-1);
     expect(firstRouter).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(firstRouter);
   });
 
   it("runs behind requireAuth, so an anonymous probe cannot test for an order", () => {
-    const line = APP.split("\n").find((l) => l.includes('app.use("/api/employees/:employeeId"'));
+    const line = APP.split("\n").find((l) =>
+      l.includes('app.use("/api/employees/:employeeId"'),
+    );
     expect(line).toMatch(/requireAuth/i);
   });
 });

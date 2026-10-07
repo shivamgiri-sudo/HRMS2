@@ -79,7 +79,9 @@ describe("saveOnboardingProfile bindings", () => {
     // normalizedDob is computed ~100 lines earlier ("convert empty strings to
     // null") and was simply not reused here.
     expect(mirror).toContain("normalizedDob");
-    expect(mirror).not.toMatch(/input\.dateOfBirth \?\? tokenData\.date_of_birth \?\? null/);
+    expect(mirror).not.toMatch(
+      /input\.dateOfBirth \?\? tokenData\.date_of_birth \?\? null/,
+    );
   });
 
   it("wraps every user-supplied string binding in a null-safe helper", () => {
@@ -96,7 +98,10 @@ describe("saveOnboardingProfile bindings", () => {
     ] as const) {
       const at = mirror.indexOf(field);
       expect(at, `${field} not bound in the mirror`).toBeGreaterThan(-1);
-      const line = mirror.slice(mirror.lastIndexOf("\n", at), mirror.indexOf("\n", at));
+      const line = mirror.slice(
+        mirror.lastIndexOf("\n", at),
+        mirror.indexOf("\n", at),
+      );
       expect(line, `${field} still binds a raw value`).toContain(wrapper);
     }
   });
@@ -106,13 +111,21 @@ describe("saveOnboardingProfile bindings", () => {
   });
 
   it("the guarded columns are still COALESCE, so NULL means 'leave alone'", () => {
-    for (const col of ["father_name", "gender", "date_of_birth", "mobile", "email"]) {
+    for (const col of [
+      "father_name",
+      "gender",
+      "date_of_birth",
+      "mobile",
+      "email",
+    ]) {
       expect(mirror).toContain(`${col} = COALESCE(?, ${col})`);
     }
   });
 
   it("the UAN mirror is normalised too", () => {
-    const uan = source.slice(source.indexOf("uan_number = COALESCE(?, uan_number)"));
+    const uan = source.slice(
+      source.indexOf("uan_number = COALESCE(?, uan_number)"),
+    );
     expect(uan.slice(0, 600)).toContain("nonEmptyString(input.uanNumber)");
   });
 });

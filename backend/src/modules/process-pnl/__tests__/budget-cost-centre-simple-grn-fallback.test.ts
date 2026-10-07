@@ -19,7 +19,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute } }));
 
-const { budgetCostCentreUtilizationService } = await import("../budget-cost-centre-utilization.service.js");
+const { budgetCostCentreUtilizationService } =
+  await import("../budget-cost-centre-utilization.service.js");
 
 type Line = {
   id: string;
@@ -32,7 +33,10 @@ type Line = {
 };
 /** Which statuses already have a real grn_cost_allocation row for a given line, so the fake
  *  router's NOT EXISTS checks can answer truthfully per status. */
-type AllocatedStatuses = { lineId: string; statuses: Array<"reserved" | "consumed"> };
+type AllocatedStatuses = {
+  lineId: string;
+  statuses: Array<"reserved" | "consumed">;
+};
 
 function makeExecute(opts: { lines: Line[]; allocated?: AllocatedStatuses[] }) {
   const lines = opts.lines;
@@ -43,25 +47,41 @@ function makeExecute(opts: { lines: Line[]; allocated?: AllocatedStatuses[] }) {
   return vi.fn(async (sql: string) => {
     const s = String(sql).replace(/\s+/g, " ").trim();
 
-    if (s.includes("FROM finance_budget_header")) return [[{ branch_id: "br-1" }], []];
+    if (s.includes("FROM finance_budget_header"))
+      return [[{ branch_id: "br-1" }], []];
 
     if (s.includes("SELECT cost_centre_id, head, sub_head, line_id")) {
       const direct = lines
         .filter((l) => l.cost_centre_id != null)
-        .map((l) => ({ cost_centre_id: l.cost_centre_id, head: l.head, sub_head: l.sub_head, line_id: l.id, budgeted: l.gross_amount }));
+        .map((l) => ({
+          cost_centre_id: l.cost_centre_id,
+          head: l.head,
+          sub_head: l.sub_head,
+          line_id: l.id,
+          budgeted: l.gross_amount,
+        }));
       return [direct, []];
     }
 
     // spendRows — real grn_cost_allocation rows. Deliberately empty: this test is only about
     // lines with NO (or partial) allocation rows; the measured half is covered elsewhere.
-    if (s.includes("GROUP BY g.cost_centre_id, l.head, l.sub_head")) return [[], []];
+    if (s.includes("GROUP BY g.cost_centre_id, l.head, l.sub_head"))
+      return [[], []];
     if (s.includes("AS funding_cost_centre_id")) return [[], []];
 
     // simpleGrnRows — the fallback under test.
     if (s.includes("CASE WHEN NOT EXISTS")) {
       const rows = lines
-        .filter((l) => l.cost_centre_id != null && (l.reserved_amount > 0 || l.consumed_amount > 0))
-        .filter((l) => !hasAllocation(l.id, "reserved") || !hasAllocation(l.id, "consumed"))
+        .filter(
+          (l) =>
+            l.cost_centre_id != null &&
+            (l.reserved_amount > 0 || l.consumed_amount > 0),
+        )
+        .filter(
+          (l) =>
+            !hasAllocation(l.id, "reserved") ||
+            !hasAllocation(l.id, "consumed"),
+        )
         .map((l) => ({
           cost_centre_id: l.cost_centre_id,
           head: l.head,
@@ -72,8 +92,13 @@ function makeExecute(opts: { lines: Line[]; allocated?: AllocatedStatuses[] }) {
       return [rows, []];
     }
 
-    if (s.includes("AS cnt, COALESCE(SUM(")) return [[{ cnt: 0, total_budget: 0 }], []];
-    if (s.includes("FROM cost_centre_master")) return [[{ id: "cc-A", cost_centre_code: "A", cost_centre_name: "CC A" }], []];
+    if (s.includes("AS cnt, COALESCE(SUM("))
+      return [[{ cnt: 0, total_budget: 0 }], []];
+    if (s.includes("FROM cost_centre_master"))
+      return [
+        [{ id: "cc-A", cost_centre_code: "A", cost_centre_name: "CC A" }],
+        [],
+      ];
 
     throw new Error(`Unhandled SQL in fake DB router: ${s.slice(0, 160)}`);
   });
@@ -86,13 +111,22 @@ describe("simple-GRN fallback is evaluated per lifecycle status, not per line", 
     // A settled GRN (consumed, has its own allocation row) sits alongside a newer GRN whose
     // reservation was never written to grn_cost_allocation. The old line-level gate saw "this
     // line has an allocation row" and skipped the reserved fallback entirely.
-    execute.mockImplementation(makeExecute({
-      lines: [{
-        id: "line-A", cost_centre_id: "cc-A", head: "Rent", sub_head: null,
-        gross_amount: 50000, reserved_amount: 811.86, consumed_amount: 18298,
-      }],
-      allocated: [{ lineId: "line-A", statuses: ["consumed"] }],
-    }));
+    execute.mockImplementation(
+      makeExecute({
+        lines: [
+          {
+            id: "line-A",
+            cost_centre_id: "cc-A",
+            head: "Rent",
+            sub_head: null,
+            gross_amount: 50000,
+            reserved_amount: 811.86,
+            consumed_amount: 18298,
+          },
+        ],
+        allocated: [{ lineId: "line-A", statuses: ["consumed"] }],
+      }),
+    );
     const { rows } = await budgetCostCentreUtilizationService.get("budget-1");
     const ccA = rows.find((r) => r.costCentreId === "cc-A")!;
     // Reserved comes from the fallback (no allocation row for 'reserved').
@@ -103,13 +137,22 @@ describe("simple-GRN fallback is evaluated per lifecycle status, not per line", 
   });
 
   it("credits nothing when both statuses already have a real allocation row", async () => {
-    execute.mockImplementation(makeExecute({
-      lines: [{
-        id: "line-B", cost_centre_id: "cc-A", head: "Rent", sub_head: null,
-        gross_amount: 50000, reserved_amount: 500, consumed_amount: 1000,
-      }],
-      allocated: [{ lineId: "line-B", statuses: ["reserved", "consumed"] }],
-    }));
+    execute.mockImplementation(
+      makeExecute({
+        lines: [
+          {
+            id: "line-B",
+            cost_centre_id: "cc-A",
+            head: "Rent",
+            sub_head: null,
+            gross_amount: 50000,
+            reserved_amount: 500,
+            consumed_amount: 1000,
+          },
+        ],
+        allocated: [{ lineId: "line-B", statuses: ["reserved", "consumed"] }],
+      }),
+    );
     const { rows } = await budgetCostCentreUtilizationService.get("budget-1");
     const ccA = rows.find((r) => r.costCentreId === "cc-A")!;
     expect(ccA.reserved).toBe(0);
@@ -117,13 +160,22 @@ describe("simple-GRN fallback is evaluated per lifecycle status, not per line", 
   });
 
   it("credits both when neither status has an allocation row (the original simple-GRN case)", async () => {
-    execute.mockImplementation(makeExecute({
-      lines: [{
-        id: "line-C", cost_centre_id: "cc-A", head: "Rent", sub_head: null,
-        gross_amount: 50000, reserved_amount: 200, consumed_amount: 300,
-      }],
-      allocated: [],
-    }));
+    execute.mockImplementation(
+      makeExecute({
+        lines: [
+          {
+            id: "line-C",
+            cost_centre_id: "cc-A",
+            head: "Rent",
+            sub_head: null,
+            gross_amount: 50000,
+            reserved_amount: 200,
+            consumed_amount: 300,
+          },
+        ],
+        allocated: [],
+      }),
+    );
     const { rows } = await budgetCostCentreUtilizationService.get("budget-1");
     const ccA = rows.find((r) => r.costCentreId === "cc-A")!;
     expect(ccA.reserved).toBe(200);

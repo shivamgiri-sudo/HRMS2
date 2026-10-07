@@ -27,9 +27,15 @@ import { Router } from "express";
 import type { Response } from "express";
 import { createHash } from "crypto";
 import multer from "multer";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { hasAnyRole, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
+import {
+  hasAnyRole,
+  getUserAssignmentScopes,
+} from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   getEligibleFnfTransferRows,
@@ -41,25 +47,52 @@ import {
   commitFnfTransferNumberImport,
   type FnfTransferImportPreviewRow,
 } from "./fnf-transfer.service.js";
-import { rejectionReasonLabel, REJECTION_REASONS } from "./salary-transfer.service.js";
+import {
+  rejectionReasonLabel,
+  REJECTION_REASONS,
+} from "./salary-transfer.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
 export const fnfTransferRouter = Router();
 
-const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 fnfTransferRouter.use(requireAuth);
 
 /** Same list bank-payment-readiness.routes.ts gates the salary-transfer export on. */
-const PAYROLL_EXPORT_ROLES = ["finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
+const PAYROLL_EXPORT_ROLES = [
+  "finance",
+  "payroll",
+  "finance_head",
+  "payroll_head",
+  "payroll_admin",
+];
 /** Same list bank-payment-readiness.routes.ts gates rejection/correction/import on. */
-const MANAGE_ROLES = ["super_admin", "admin", "payroll_head", "payroll", "payroll_admin", "finance_head", "hr"];
+const MANAGE_ROLES = [
+  "super_admin",
+  "admin",
+  "payroll_head",
+  "payroll",
+  "payroll_admin",
+  "finance_head",
+  "hr",
+];
 /** Read-only queue access — the same wider list the salary-transfer items queue admits. */
 const READ_ROLES = [
-  "super_admin", "admin", "payroll_head", "payroll", "payroll_admin", "payroll_branch",
-  "payroll_hr", "finance", "finance_head", "hr",
+  "super_admin",
+  "admin",
+  "payroll_head",
+  "payroll",
+  "payroll_admin",
+  "payroll_branch",
+  "payroll_hr",
+  "finance",
+  "finance_head",
+  "hr",
 ];
 
 const ORG_WIDE_REQUIRED_MSG =
@@ -74,7 +107,10 @@ async function hasExportScope(userId: string): Promise<boolean> {
   return scopes.some((s) => s.scope_type === "all");
 }
 
-const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
 /**
  * GET /eligible — the settlement-selection grid: approved + non-provisional + NOC cleared +
@@ -87,7 +123,9 @@ fnfTransferRouter.get(
   requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
   h(async (req, res) => {
     if (!(await hasExportScope(req.authUser!.id))) {
-      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+      return res
+        .status(403)
+        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
     const { rows, ineligible } = await getEligibleFnfTransferRows();
     return res.json({
@@ -118,13 +156,18 @@ fnfTransferRouter.get(
  * query string; POST exists for the same reason the salary-transfer export has a POST
  * counterpart (a large selection can exceed a GET URL length limit).
  */
-function readFnfExportParams(req: any): { fullFinalCalculationIds: string[] | null } {
+function readFnfExportParams(req: any): {
+  fullFinalCalculationIds: string[] | null;
+} {
   const raw = req.query.ids ?? req.body?.ids;
   let ids: string[] | null = null;
   if (Array.isArray(raw)) {
     ids = raw.map((s: unknown) => String(s).trim()).filter(Boolean);
   } else if (typeof raw === "string" && raw.trim()) {
-    ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    ids = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
   return { fullFinalCalculationIds: ids };
 }
@@ -132,16 +175,26 @@ function readFnfExportParams(req: any): { fullFinalCalculationIds: string[] | nu
 function handleFnfTransferExport() {
   return h(async (req: AuthenticatedRequest, res: Response) => {
     if (!(await hasExportScope(req.authUser!.id))) {
-      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+      return res
+        .status(403)
+        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
     const { fullFinalCalculationIds } = readFnfExportParams(req);
 
     let result;
     try {
-      result = await generateFnfTransferBatch({ userId: req.authUser!.id, fullFinalCalculationIds });
+      result = await generateFnfTransferBatch({
+        userId: req.authUser!.id,
+        fullFinalCalculationIds,
+      });
     } catch (err: any) {
       if (err?.code === "NO_ELIGIBLE_ROWS") {
-        return res.status(409).json({ success: false, message: "No eligible F&F settlements to export." });
+        return res
+          .status(409)
+          .json({
+            success: false,
+            message: "No eligible F&F settlements to export.",
+          });
       }
       throw err;
     }
@@ -152,12 +205,19 @@ function handleFnfTransferExport() {
       module_key: "payroll",
       entity_type: "fnf_transfer_batch",
       entity_id: result.batch_id,
-      change_summary: { row_count: result.row_count, total_amount: result.total_amount, excluded: result.excluded },
+      change_summary: {
+        row_count: result.row_count,
+        total_amount: result.total_amount,
+        excluded: result.excluded,
+      },
       req: req as never,
     });
 
     res.setHeader("Content-Type", "application/vnd.ms-excel");
-    res.setHeader("Content-Disposition", `attachment; filename="${result.file_name}"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.file_name}"`,
+    );
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Batch-Number", result.batch_number);
@@ -166,8 +226,16 @@ function handleFnfTransferExport() {
   });
 }
 
-fnfTransferRouter.get("/export", requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"), handleFnfTransferExport());
-fnfTransferRouter.post("/export", requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"), handleFnfTransferExport());
+fnfTransferRouter.get(
+  "/export",
+  requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
+  handleFnfTransferExport(),
+);
+fnfTransferRouter.post(
+  "/export",
+  requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
+  handleFnfTransferExport(),
+);
 
 /** GET /items — the workflow queue, same bucket derivation as the salary-transfer queue. */
 fnfTransferRouter.get(
@@ -186,17 +254,28 @@ fnfTransferRouter.get(
          LEFT JOIN employees e ON e.id = i.employee_id
         ORDER BY i.created_at DESC`,
     );
-    const bucketOf = (status: string): "ready_for_disbursal" | "disbursed" | "rejected" =>
-      status === "confirmed" ? "disbursed" : status === "rejected" ? "rejected" : "ready_for_disbursal";
+    const bucketOf = (
+      status: string,
+    ): "ready_for_disbursal" | "disbursed" | "rejected" =>
+      status === "confirmed"
+        ? "disbursed"
+        : status === "rejected"
+          ? "rejected"
+          : "ready_for_disbursal";
 
     return res.json({
       success: true,
       data: (rows as any[]).map((r) => ({
         ...r,
         bucket: bucketOf(r.status),
-        rejection_reason_label: r.rejection_reason ? rejectionReasonLabel(r.rejection_reason) : null,
+        rejection_reason_label: r.rejection_reason
+          ? rejectionReasonLabel(r.rejection_reason)
+          : null,
       })),
-      rejection_reasons: REJECTION_REASONS.map((r) => ({ value: r, label: rejectionReasonLabel(r) })),
+      rejection_reasons: REJECTION_REASONS.map((r) => ({
+        value: r,
+        label: rejectionReasonLabel(r),
+      })),
     });
   }),
 );
@@ -206,14 +285,33 @@ fnfTransferRouter.patch(
   "/items/reject",
   requireRole(...MANAGE_ROLES),
   h(async (req, res) => {
-    const { item_ids, reason, note } = req.body as { item_ids?: string[]; reason?: string; note?: string | null };
+    const { item_ids, reason, note } = req.body as {
+      item_ids?: string[];
+      reason?: string;
+      note?: string | null;
+    };
     if (!Array.isArray(item_ids) || item_ids.length === 0) {
-      return res.status(400).json({ success: false, message: "item_ids must be a non-empty array" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "item_ids must be a non-empty array",
+        });
     }
     if (!REJECTION_REASONS.includes(reason as any)) {
-      return res.status(400).json({ success: false, message: `reason must be one of ${REJECTION_REASONS.join(", ")}` });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: `reason must be one of ${REJECTION_REASONS.join(", ")}`,
+        });
     }
-    const result = await rejectFnfTransferItems({ itemIds: item_ids, reason: reason as string, note: note ?? null, userId: req.authUser!.id });
+    const result = await rejectFnfTransferItems({
+      itemIds: item_ids,
+      reason: reason as string,
+      note: note ?? null,
+      userId: req.authUser!.id,
+    });
 
     void logSensitiveAction({
       actor_user_id: req.authUser!.id,
@@ -225,7 +323,11 @@ fnfTransferRouter.patch(
       req: req as never,
     });
 
-    return res.json({ success: true, message: `${result.updated} item(s) marked rejected`, data: result });
+    return res.json({
+      success: true,
+      message: `${result.updated} item(s) marked rejected`,
+      data: result,
+    });
   }),
 );
 
@@ -244,7 +346,10 @@ fnfTransferRouter.patch(
       change_summary: {},
       req: req as never,
     });
-    return res.json({ success: true, message: "Item marked ready for re-export" });
+    return res.json({
+      success: true,
+      message: "Item marked ready for re-export",
+    });
   }),
 );
 
@@ -254,16 +359,28 @@ fnfTransferRouter.post(
   requireRole(...MANAGE_ROLES),
   csvUpload.single("file"),
   h(async (req: any, res) => {
-    const file = req.file as { buffer: Buffer; originalname: string } | undefined;
-    if (!file) return res.status(400).json({ success: false, message: "file is required" });
+    const file = req.file as
+      { buffer: Buffer; originalname: string } | undefined;
+    if (!file)
+      return res
+        .status(400)
+        .json({ success: false, message: "file is required" });
     const text = file.buffer.toString("utf8");
     let rows;
     try {
       rows = parseTransferNumberCsv(text);
     } catch (err: any) {
-      return res.status(400).json({ success: false, message: err?.message ?? "Could not parse CSV" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: err?.message ?? "Could not parse CSV",
+        });
     }
-    if (rows.length === 0) return res.status(400).json({ success: false, message: "No data rows found" });
+    if (rows.length === 0)
+      return res
+        .status(400)
+        .json({ success: false, message: "No data rows found" });
 
     const preview = await previewFnfTransferNumberImport(rows);
     const sha256 = createHash("sha256").update(file.buffer).digest("hex");
@@ -271,10 +388,18 @@ fnfTransferRouter.post(
       total: preview.length,
       will_confirm: preview.filter((r) => r.outcome === "will_confirm").length,
       unmatched: preview.filter((r) => r.outcome === "unmatched").length,
-      already_confirmed: preview.filter((r) => r.outcome === "already_confirmed").length,
+      already_confirmed: preview.filter(
+        (r) => r.outcome === "already_confirmed",
+      ).length,
       invalid: preview.filter((r) => r.outcome === "invalid").length,
     };
-    return res.json({ success: true, file_name: file.originalname, file_sha256: sha256, summary, data: preview });
+    return res.json({
+      success: true,
+      file_name: file.originalname,
+      file_sha256: sha256,
+      summary,
+      data: preview,
+    });
   }),
 );
 
@@ -294,7 +419,12 @@ fnfTransferRouter.post(
       preview?: FnfTransferImportPreviewRow[];
     };
     if (!file_sha256 || !Array.isArray(preview) || preview.length === 0) {
-      return res.status(400).json({ success: false, message: "file_sha256 and preview are required" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "file_sha256 and preview are required",
+        });
     }
     const result = await commitFnfTransferNumberImport({
       preview,
@@ -315,12 +445,13 @@ fnfTransferRouter.post(
 
     return res.json({
       success: true,
-      message: result.skipped > 0 && result.confirmed === 0
-        ? "This file was already imported — no changes made (idempotent re-upload)."
-        : `${result.confirmed} transfer number(s) recorded, ${result.ff_marked_paid} settlement(s) marked paid` +
-          (result.ff_mark_paid_failures.length
-            ? `, ${result.ff_mark_paid_failures.length} settlement(s) confirmed on the bank side but could NOT be marked paid (see ff_mark_paid_failures)`
-            : ""),
+      message:
+        result.skipped > 0 && result.confirmed === 0
+          ? "This file was already imported — no changes made (idempotent re-upload)."
+          : `${result.confirmed} transfer number(s) recorded, ${result.ff_marked_paid} settlement(s) marked paid` +
+            (result.ff_mark_paid_failures.length
+              ? `, ${result.ff_mark_paid_failures.length} settlement(s) confirmed on the bank side but could NOT be marked paid (see ff_mark_paid_failures)`
+              : ""),
       data: result,
     });
   }),

@@ -17,10 +17,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { VOID_RUN_STATUSES, VOID_RUN_STATUSES_SQL, CLOSED_RUN_STATUSES, isRunClosed } from "../run-status.js";
+import {
+  VOID_RUN_STATUSES,
+  VOID_RUN_STATUSES_SQL,
+  CLOSED_RUN_STATUSES,
+  isRunClosed,
+} from "../run-status.js";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const service = fs.readFileSync(path.resolve(DIR, "..", "payroll.service.ts"), "utf8");
+const service = fs.readFileSync(
+  path.resolve(DIR, "..", "payroll.service.ts"),
+  "utf8",
+);
 
 /** The company-run duplicate check. */
 function duplicateCheck(): string {
@@ -58,7 +66,9 @@ describe("what counts as voided", () => {
 
   it("keeps the SQL form in step with the set", () => {
     // Two spellings of one rule is how they drift apart; assert they agree rather than trusting it.
-    const fromSql = VOID_RUN_STATUSES_SQL.split(",").map((s) => s.trim().replace(/'/g, "")).sort();
+    const fromSql = VOID_RUN_STATUSES_SQL.split(",")
+      .map((s) => s.trim().replace(/'/g, ""))
+      .sort();
     expect(fromSql).toEqual([...VOID_RUN_STATUSES].sort());
   });
 
@@ -69,14 +79,25 @@ describe("what counts as voided", () => {
      * cancelled one still blocking its month.
      */
     for (const s of VOID_RUN_STATUSES) {
-      expect(CLOSED_RUN_STATUSES.has(s), `${s} must not be both void and closed`).toBe(false);
+      expect(
+        CLOSED_RUN_STATUSES.has(s),
+        `${s} must not be both void and closed`,
+      ).toBe(false);
     }
   });
 
   it("leaves a live run blocking, in every casing the table actually stores", () => {
-    for (const live of ["finalized", "FINALIZED", "locked", "disbursed", " Finalized "]) {
+    for (const live of [
+      "finalized",
+      "FINALIZED",
+      "locked",
+      "disbursed",
+      " Finalized ",
+    ]) {
       expect(VOID_RUN_STATUSES.has(live.trim().toLowerCase())).toBe(false);
-      expect(isRunClosed(live), `${live} should still read as closed`).toBe(true);
+      expect(isRunClosed(live), `${live} should still read as closed`).toBe(
+        true,
+      );
     }
   });
 

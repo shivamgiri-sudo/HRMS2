@@ -17,7 +17,15 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
  * approvers both succeeded: employee moved twice, two audits, two journey entries.
  */
 
-const { execute, connExecute, connBegin, connCommit, connRollback, connRelease, getConnection } = vi.hoisted(() => {
+const {
+  execute,
+  connExecute,
+  connBegin,
+  connCommit,
+  connRollback,
+  connRelease,
+  getConnection,
+} = vi.hoisted(() => {
   const connExecute = vi.fn();
   return {
     execute: vi.fn(),
@@ -36,9 +44,13 @@ const { execute, connExecute, connBegin, connCommit, connRollback, connRelease, 
   };
 });
 
-vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConnection } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute, query: execute, getConnection },
+}));
 
-const { logSensitiveAction } = vi.hoisted(() => ({ logSensitiveAction: vi.fn(async () => undefined) }));
+const { logSensitiveAction } = vi.hoisted(() => ({
+  logSensitiveAction: vi.fn(async () => undefined),
+}));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 
 const { mobilityService } = await import("../mobility.service.js");
@@ -69,7 +81,7 @@ function wire(
     statusAffectedRows?: number;
     claimAffectedRows?: number;
     masterFound?: boolean;
-  } = {}
+  } = {},
 ) {
   const commit = vi.fn(async () => undefined);
   const rollback = vi.fn(async () => undefined);
@@ -85,14 +97,19 @@ function wire(
     if (/UPDATE transfer_record SET status/.test(s)) {
       return [{ affectedRows: opts.statusAffectedRows ?? 1 }, []];
     }
-    if (/UPDATE transfer_record SET applied_at = NOW\(\) WHERE id = \? AND applied_at IS NULL/.test(s)) {
+    if (
+      /UPDATE transfer_record SET applied_at = NOW\(\) WHERE id = \? AND applied_at IS NULL/.test(
+        s,
+      )
+    ) {
       return [{ affectedRows: opts.claimAffectedRows ?? 1 }, []];
     }
     if (/_master WHERE id = \?/.test(s)) {
       return [(opts.masterFound ?? true) ? [{ id: "branch-uuid" }] : [], []];
     }
     if (/UPDATE employees SET/.test(s)) return [{ affectedRows: 1 }, []];
-    if (/INSERT INTO employee_journey_log/.test(s)) return [{ affectedRows: 1 }, []];
+    if (/INSERT INTO employee_journey_log/.test(s))
+      return [{ affectedRows: 1 }, []];
     return [[], []];
   });
 
@@ -123,7 +140,10 @@ describe("immediate transfer approval is atomic", () => {
     const { commit, rollback } = wire(transferRow(), { masterFound: false });
 
     await expect(
-      mobilityService.updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never)
+      mobilityService.updateTransfer(TRANSFER_ID, {
+        action: "approved",
+        approved_by: APPROVER,
+      } as never),
     ).rejects.toThrow(/not found in branch_master/);
 
     expect(rollback).toHaveBeenCalled();
@@ -133,25 +153,36 @@ describe("immediate transfer approval is atomic", () => {
   it("writes no TRANSFER_APPROVED audit for a transfer that rolled back", async () => {
     wire(transferRow(), { masterFound: false });
     await mobilityService
-      .updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never)
+      .updateTransfer(TRANSFER_ID, {
+        action: "approved",
+        approved_by: APPROVER,
+      } as never)
       .catch(() => undefined);
     expect(logSensitiveAction).not.toHaveBeenCalled();
   });
 
   it("commits once and audits when the move succeeds", async () => {
     const { commit, rollback } = wire(transferRow());
-    await mobilityService.updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never);
+    await mobilityService.updateTransfer(TRANSFER_ID, {
+      action: "approved",
+      approved_by: APPROVER,
+    } as never);
 
     expect(commit).toHaveBeenCalledTimes(1);
     expect(rollback).not.toHaveBeenCalled();
     expect(logSensitiveAction).toHaveBeenCalledTimes(1);
-    expect(logSensitiveAction.mock.calls[0][0]).toMatchObject({ action_type: "TRANSFER_APPROVED" });
+    expect(logSensitiveAction.mock.calls[0][0]).toMatchObject({
+      action_type: "TRANSFER_APPROVED",
+    });
   });
 
   it("always returns the pooled connection", async () => {
     const { release } = wire(transferRow(), { masterFound: false });
     await mobilityService
-      .updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never)
+      .updateTransfer(TRANSFER_ID, {
+        action: "approved",
+        approved_by: APPROVER,
+      } as never)
       .catch(() => undefined);
     expect(release).toHaveBeenCalled();
   });
@@ -161,31 +192,49 @@ describe("a transfer cannot be actioned twice", () => {
   it("refuses one that is already completed", async () => {
     wire(transferRow({ status: "completed" }));
     await expect(
-      mobilityService.updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never)
+      mobilityService.updateTransfer(TRANSFER_ID, {
+        action: "approved",
+        approved_by: APPROVER,
+      } as never),
     ).rejects.toMatchObject({ statusCode: 409 });
   });
 
   it("guards the status UPDATE on the state the decision was made on", async () => {
     wire(transferRow());
-    await mobilityService.updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never);
-    const statusSql = sqlIssued().find((s) => /UPDATE transfer_record SET status/.test(s));
+    await mobilityService.updateTransfer(TRANSFER_ID, {
+      action: "approved",
+      approved_by: APPROVER,
+    } as never);
+    const statusSql = sqlIssued().find((s) =>
+      /UPDATE transfer_record SET status/.test(s),
+    );
     expect(statusSql).toMatch(/AND status = \?/);
   });
 
   it("refuses when another approver won the race", async () => {
     wire(transferRow(), { statusAffectedRows: 0 });
     await expect(
-      mobilityService.updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never)
+      mobilityService.updateTransfer(TRANSFER_ID, {
+        action: "approved",
+        approved_by: APPROVER,
+      } as never),
     ).rejects.toMatchObject({ statusCode: 409 });
   });
 
   it("claims applied_at before moving the employee, so the worker cannot double-apply", async () => {
     wire(transferRow());
-    await mobilityService.updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never);
+    await mobilityService.updateTransfer(TRANSFER_ID, {
+      action: "approved",
+      approved_by: APPROVER,
+    } as never);
 
     const issued = sqlIssued();
-    const claimIdx = issued.findIndex((s) => /applied_at = NOW\(\) WHERE id = \? AND applied_at IS NULL/.test(s));
-    const moveIdx = issued.findIndex((s) => /UPDATE employees SET branch_id/.test(s));
+    const claimIdx = issued.findIndex((s) =>
+      /applied_at = NOW\(\) WHERE id = \? AND applied_at IS NULL/.test(s),
+    );
+    const moveIdx = issued.findIndex((s) =>
+      /UPDATE employees SET branch_id/.test(s),
+    );
     expect(claimIdx).toBeGreaterThan(-1);
     expect(moveIdx).toBeGreaterThan(claimIdx);
   });
@@ -193,7 +242,10 @@ describe("a transfer cannot be actioned twice", () => {
   it("refuses when the row was already applied", async () => {
     wire(transferRow(), { claimAffectedRows: 0 });
     await expect(
-      mobilityService.updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never)
+      mobilityService.updateTransfer(TRANSFER_ID, {
+        action: "approved",
+        approved_by: APPROVER,
+      } as never),
     ).rejects.toMatchObject({ statusCode: 409 });
   });
 });
@@ -201,22 +253,32 @@ describe("a transfer cannot be actioned twice", () => {
 describe("the future-dated rule is unchanged", () => {
   it("approves but does not move the employee before effective_date", async () => {
     const { commit } = wire(transferRow({ effective_date: TOMORROW }));
-    await mobilityService.updateTransfer(TRANSFER_ID, { action: "approved", approved_by: APPROVER } as never);
+    await mobilityService.updateTransfer(TRANSFER_ID, {
+      action: "approved",
+      approved_by: APPROVER,
+    } as never);
 
     const issued = sqlIssued();
     expect(issued.some((s) => /UPDATE employees SET/.test(s))).toBe(false);
     expect(issued.some((s) => /applied_at IS NULL/.test(s))).toBe(false);
     // Still recorded and still committed — held, not dropped.
-    expect(issued.some((s) => /INSERT INTO employee_journey_log/.test(s))).toBe(true);
+    expect(issued.some((s) => /INSERT INTO employee_journey_log/.test(s))).toBe(
+      true,
+    );
     expect(commit).toHaveBeenCalledTimes(1);
-    expect(logSensitiveAction.mock.calls[0][0]).toMatchObject({ change_summary: { applied: false } });
+    expect(logSensitiveAction.mock.calls[0][0]).toMatchObject({
+      change_summary: { applied: false },
+    });
   });
 });
 
 describe("rejection path", () => {
   it("records the rejection without touching the employee", async () => {
     const { commit } = wire(transferRow());
-    await mobilityService.updateTransfer(TRANSFER_ID, { action: "rejected", approved_by: APPROVER } as never);
+    await mobilityService.updateTransfer(TRANSFER_ID, {
+      action: "rejected",
+      approved_by: APPROVER,
+    } as never);
 
     expect(sqlIssued().some((s) => /UPDATE employees SET/.test(s))).toBe(false);
     expect(logSensitiveAction).not.toHaveBeenCalled();

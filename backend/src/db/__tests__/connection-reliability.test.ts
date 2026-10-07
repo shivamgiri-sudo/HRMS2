@@ -31,7 +31,9 @@ describe("Database Connection Reliability", () => {
     });
 
     it("should classify ER_ACCESS_DENIED_ERROR as non-retryable", () => {
-      expect(NON_RETRYABLE_ERROR_CODES.has("ER_ACCESS_DENIED_ERROR")).toBe(true);
+      expect(NON_RETRYABLE_ERROR_CODES.has("ER_ACCESS_DENIED_ERROR")).toBe(
+        true,
+      );
     });
 
     it("should not retry connection exhaustion errors", () => {
@@ -109,8 +111,8 @@ describe("Database Connection Reliability", () => {
   describe("Retry Strategy", () => {
     it("should use exponential backoff", () => {
       const RETRY_BASE_DELAY_MS = 250;
-      const delays = [0, 1, 2].map((attempt) =>
-        RETRY_BASE_DELAY_MS * Math.pow(2, attempt)
+      const delays = [0, 1, 2].map(
+        (attempt) => RETRY_BASE_DELAY_MS * Math.pow(2, attempt),
       );
 
       expect(delays[0]).toBe(250);

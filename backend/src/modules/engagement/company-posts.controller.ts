@@ -28,7 +28,10 @@ import {
 import { z } from "zod";
 
 function validationErrorMessage(error: z.ZodError): string {
-  return Object.values(error.flatten().fieldErrors).flat().join("; ") || error.message;
+  return (
+    Object.values(error.flatten().fieldErrors).flat().join("; ") ||
+    error.message
+  );
 }
 
 function getActorUserId(req: AuthenticatedRequest): string {
@@ -53,7 +56,9 @@ function parsePage(raw: unknown): number | undefined {
 
 function parseLimit(raw: unknown): number | undefined {
   const n = Number(raw);
-  return Number.isFinite(n) && n >= 1 ? Math.min(100, Math.floor(n)) : undefined;
+  return Number.isFinite(n) && n >= 1
+    ? Math.min(100, Math.floor(n))
+    : undefined;
 }
 
 function requestString(value: unknown): string | undefined {
@@ -72,7 +77,9 @@ export const companyPostsController = {
       return res.json({ success: true, ...result });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -83,7 +90,9 @@ export const companyPostsController = {
       return res.json({ success: true, ...result });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -92,13 +101,23 @@ export const companyPostsController = {
       const ctx = getActorContext(req);
       const parsed = CreateCompanyPostSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ success: false, error: validationErrorMessage(parsed.error) });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: validationErrorMessage(parsed.error),
+          });
       }
-      const data = await createCompanyPost({ ...parsed.data, actorUserId: ctx.actorUserId });
+      const data = await createCompanyPost({
+        ...parsed.data,
+        actorUserId: ctx.actorUserId,
+      });
       return res.status(201).json({ success: true, data });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -113,7 +132,9 @@ export const companyPostsController = {
       return res.json({ success: true, ...result });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -128,7 +149,9 @@ export const companyPostsController = {
       return res.json({ success: true, ...result });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -143,7 +166,9 @@ export const companyPostsController = {
       return res.json({ success: true, ...result });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -157,7 +182,12 @@ export const companyPostsController = {
         review_notes: req.body.review_notes,
       });
       if (!parsed.success) {
-        return res.status(400).json({ success: false, error: validationErrorMessage(parsed.error) });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: validationErrorMessage(parsed.error),
+          });
       }
       const data = await approveCompanyPost({
         ...parsed.data,
@@ -167,7 +197,9 @@ export const companyPostsController = {
       return res.json({ success: true, data });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -182,7 +214,12 @@ export const companyPostsController = {
         review_notes: req.body.review_notes,
       });
       if (!parsed.success) {
-        return res.status(400).json({ success: false, error: validationErrorMessage(parsed.error) });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: validationErrorMessage(parsed.error),
+          });
       }
       const data = await rejectCompanyPost({
         ...parsed.data,
@@ -192,7 +229,9 @@ export const companyPostsController = {
       return res.json({ success: true, data });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -204,7 +243,12 @@ export const companyPostsController = {
         reason: requestString(req.body?.reason),
       });
       if (!parsed.success) {
-        return res.status(400).json({ success: false, error: validationErrorMessage(parsed.error) });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: validationErrorMessage(parsed.error),
+          });
       }
       await deleteCompanyPost({
         postId: parsed.data.post_id,
@@ -216,7 +260,9 @@ export const companyPostsController = {
       return res.json({ success: true });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -227,7 +273,9 @@ export const companyPostsController = {
       return res.json({ success: true, data });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -239,13 +287,23 @@ export const companyPostsController = {
         user_id: req.body.user_id,
       });
       if (!parsed.success) {
-        return res.status(400).json({ success: false, error: validationErrorMessage(parsed.error) });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: validationErrorMessage(parsed.error),
+          });
       }
-      const data = await grantCompanyPostCreator({ ...parsed.data, actorUserId });
+      const data = await grantCompanyPostCreator({
+        ...parsed.data,
+        actorUserId,
+      });
       return res.json({ success: true, data });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -256,13 +314,23 @@ export const companyPostsController = {
         employee_id: req.params.employeeId,
       });
       if (!parsed.success) {
-        return res.status(400).json({ success: false, error: validationErrorMessage(parsed.error) });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: validationErrorMessage(parsed.error),
+          });
       }
-      const data = await revokeCompanyPostCreator({ ...parsed.data, actorUserId });
+      const data = await revokeCompanyPostCreator({
+        ...parsed.data,
+        actorUserId,
+      });
       return res.json({ success: true, data });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -272,13 +340,20 @@ export const companyPostsController = {
       const postId = req.params.id;
       const reaction = req.body?.reaction as unknown;
       if (reaction !== "like" && reaction !== "dislike") {
-        return res.status(400).json({ success: false, error: "reaction must be 'like' or 'dislike'" });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: "reaction must be 'like' or 'dislike'",
+          });
       }
       await reactToPost({ postId, actorUserId, reaction });
       return res.json({ success: true });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -290,7 +365,9 @@ export const companyPostsController = {
       return res.json({ success: true, ...result });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -300,13 +377,17 @@ export const companyPostsController = {
       const postId = req.params.id;
       const body = typeof req.body?.body === "string" ? req.body.body : "";
       if (!body.trim()) {
-        return res.status(400).json({ success: false, error: "body is required" });
+        return res
+          .status(400)
+          .json({ success: false, error: "body is required" });
       }
       const comment = await createComment({ postId, actorUserId, body });
       return res.status(201).json({ success: true, data: comment });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 
@@ -318,7 +399,9 @@ export const companyPostsController = {
       return res.json({ success: true });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
-      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+      return res
+        .status(e.statusCode ?? 500)
+        .json({ success: false, error: e.message ?? "Server error" });
     }
   },
 };

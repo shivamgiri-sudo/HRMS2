@@ -50,8 +50,18 @@ export function getGeneratedAtIST(now: Date = new Date()): string {
   const datePart = formatISTWallClock(shifted);
   const [year, month, day] = datePart.split("-");
   const monthNames = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
   ];
   let hours = shifted.getUTCHours();
   const minutes = String(shifted.getUTCMinutes()).padStart(2, "0");

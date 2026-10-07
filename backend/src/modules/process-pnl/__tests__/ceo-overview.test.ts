@@ -85,7 +85,10 @@ function mockDb(f: Fixture) {
     // fixture's `spend` is served as those HRMS-raised consumed rows (the mock bypasses SQL).
     // Its committed leg ('reserved') is answered by withReservedGrn or is empty.
     if (q.includes("FROM grn_cost_allocation a")) {
-      return [q.includes("lifecycle_status = 'reserved'") ? [] : (f.spend ?? []), []];
+      return [
+        q.includes("lifecycle_status = 'reserved'") ? [] : (f.spend ?? []),
+        [],
+      ];
     }
     // The db_bill mirror is a TRAP: nothing may query it any more. If a query ever reaches it,
     // hand back `mirrorSpend` so a regression shows up as an inflated figure instead of a silent 0.

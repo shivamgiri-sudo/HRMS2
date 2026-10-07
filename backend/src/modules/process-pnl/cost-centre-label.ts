@@ -24,7 +24,10 @@ export const ccProcessNameSql = (cc = "ccm", pm = "ccpm") =>
   `COALESCE(NULLIF(TRIM(${pm}.process_name), ''), NULLIF(TRIM(${cc}.process_name_bill), ''), NULLIF(TRIM(${cc}.billing_client_name), ''))`;
 
 /** "BSS/OB/Noida/647 · Vodafone CS" — or the code alone when no process is known. */
-export function costCentreLabel(code: string, processName?: string | null): string {
+export function costCentreLabel(
+  code: string,
+  processName?: string | null,
+): string {
   const p = processName?.trim();
   return p ? `${code} · ${p}` : code;
 }

@@ -32,7 +32,9 @@ const PRODUCTION_BUCKETS = [
 
 describe("canonicalStage", () => {
   it("maps every stage value observed in production", () => {
-    const unmapped = PRODUCTION_BUCKETS.filter((b) => canonicalStage(b.stage) === null);
+    const unmapped = PRODUCTION_BUCKETS.filter(
+      (b) => canonicalStage(b.stage) === null,
+    );
     expect(unmapped.map((b) => b.stage)).toEqual([]);
   });
 
@@ -121,6 +123,8 @@ describe("buildCanonicalFunnel", () => {
   it("orders the steps by pipeline position, not by volume", () => {
     // The defect this replaces: getStageWise walked rows ordered by COUNT(*) DESC, so the
     // stage pairs it reported changed as the data moved.
-    expect(funnel.steps.map((s) => s.stage)).toEqual([...CANONICAL_STAGE_ORDER]);
+    expect(funnel.steps.map((s) => s.stage)).toEqual([
+      ...CANONICAL_STAGE_ORDER,
+    ]);
   });
 });

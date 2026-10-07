@@ -11,28 +11,51 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * /documents/chunk; these tests pin that the pieces are joined byte-exact and registered once.
  */
 
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(), query: vi.fn(), getConnection: vi.fn() } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: vi.fn(), query: vi.fn(), getConnection: vi.fn() },
+}));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireWriteAccess: (_req: any, _res: any, next: any) => next(),
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: any, _res: any, next: any) => next(),
 }));
-vi.mock("../finance-access-scope.js", () => ({ assertFinanceRecordBranch: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("../finance-workflow-role.js", () => ({ resolveFinanceStageRole: vi.fn() }));
-vi.mock("../grn-validation-control.service.js", () => ({ grnValidationControlService: {} }));
+vi.mock("../finance-access-scope.js", () => ({
+  assertFinanceRecordBranch: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../finance-workflow-role.js", () => ({
+  resolveFinanceStageRole: vi.fn(),
+}));
+vi.mock("../grn-validation-control.service.js", () => ({
+  grnValidationControlService: {},
+}));
 vi.mock("../grn.service.js", () => ({
-  grnService: { getGrn: vi.fn().mockResolvedValue({ id: "grn-1", branch_id: "b1" }) },
+  grnService: {
+    getGrn: vi.fn().mockResolvedValue({ id: "grn-1", branch_id: "b1" }),
+  },
 }));
 
-const registered: Array<{ storedPath: string; content: Buffer; originalName: string; mimeType: string; fileSizeBytes: number; isPrimary: boolean }> = [];
+const registered: Array<{
+  storedPath: string;
+  content: Buffer;
+  originalName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  isPrimary: boolean;
+}> = [];
 vi.mock("../grn-smart.service.js", () => ({
   grnSmartService: {
     registerDocuments: vi.fn(async (_grnId: string, files: any[]) => {
       for (const file of files) {
-        registered.push({ ...file, content: await fsp.readFile(file.storedPath) });
+        registered.push({
+          ...file,
+          content: await fsp.readFile(file.storedPath),
+        });
       }
-      return files.map((file) => ({ id: "doc-1", original_name: file.originalName }));
+      return files.map((file) => ({
+        id: "doc-1",
+        original_name: file.originalName,
+      }));
     }),
   },
 }));
@@ -50,7 +73,13 @@ function app() {
   return server;
 }
 
-function sendPart(uploadId: string, index: number, total: number, part: Buffer, fileName = "invoice.pdf") {
+function sendPart(
+  uploadId: string,
+  index: number,
+  total: number,
+  part: Buffer,
+  fileName = "invoice.pdf",
+) {
   return request(app())
     .post("/api/finance/grns/grn-1/documents/chunk")
     .field("uploadId", uploadId)
@@ -73,7 +102,11 @@ afterEach(async () => {
 describe("POST /:id/documents/chunk", () => {
   it("joins the parts in order and registers one document", async () => {
     const uploadId = randomUUID();
-    const parts = [Buffer.from("%PDF-1.7 part-zero "), Buffer.from("part-one "), Buffer.from("part-two %%EOF")];
+    const parts = [
+      Buffer.from("%PDF-1.7 part-zero "),
+      Buffer.from("part-one "),
+      Buffer.from("part-two %%EOF"),
+    ];
 
     const first = await sendPart(uploadId, 0, 3, parts[0]);
     expect(first.status).toBe(202);
@@ -100,7 +133,13 @@ describe("POST /:id/documents/chunk", () => {
   });
 
   it("refuses a file type the direct upload would also refuse", async () => {
-    const res = await sendPart(randomUUID(), 0, 1, Buffer.from("MZ"), "payload.exe");
+    const res = await sendPart(
+      randomUUID(),
+      0,
+      1,
+      Buffer.from("MZ"),
+      "payload.exe",
+    );
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("payload.exe");
     expect(registered).toHaveLength(0);

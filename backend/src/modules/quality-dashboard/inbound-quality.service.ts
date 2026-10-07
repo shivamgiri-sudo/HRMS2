@@ -78,9 +78,13 @@ async function ensureNegKeywordsTable(): Promise<void> {
        category VARCHAR(50)  NOT NULL COMMENT 'Frustration|Threat|Abuse|Slang|Sarcasm',
        enabled  TINYINT(1)   NOT NULL DEFAULT 1,
        INDEX idx_enabled (enabled)
-     )`, []
+     )`,
+    [],
   );
-  const [cnt] = await querySource<{ c: number }>(`SELECT COUNT(*) AS c FROM db_audit.neg_category_keywords`, []);
+  const [cnt] = await querySource<{ c: number }>(
+    `SELECT COUNT(*) AS c FROM db_audit.neg_category_keywords`,
+    [],
+  );
   if (!cnt || cnt.c === 0) {
     await querySource(
       `INSERT INTO db_audit.neg_category_keywords (pattern, category) VALUES
@@ -90,7 +94,8 @@ async function ensureNegKeywordsTable(): Promise<void> {
        ('baar baar','Frustration'),('pareshaan','Frustration'),('nuksan','Threat'),
        ('haani','Threat'),('badnaam','Threat'),('galat','Frustration'),
        ('jhooth','Threat'),('bewakoof','Abuse'),('gaali','Abuse'),
-       ('band karo','Frustration'),('waste','Frustration')`, []
+       ('band karo','Frustration'),('waste','Frustration')`,
+      [],
     );
   }
 }
@@ -99,15 +104,22 @@ async function refreshNegCatExpr(): Promise<void> {
   try {
     await ensureNegKeywordsTable();
     const rules = await querySource<{ pattern: string; category: string }>(
-      `SELECT pattern, category FROM db_audit.neg_category_keywords WHERE enabled=1 ORDER BY id ASC`, []
+      `SELECT pattern, category FROM db_audit.neg_category_keywords WHERE enabled=1 ORDER BY id ASC`,
+      [],
     );
     if (rules.length === 0) return;
     const dynamicWhens = rules
-      .map((r) => `  WHEN LOWER(q.top_negative_words) LIKE ${querySource.toString().includes("execute") ? "'%" + r.pattern.replace(/'/g, "''") + "%'" : "'%' || ? || '%'"} THEN '${r.category}'`)
+      .map(
+        (r) =>
+          `  WHEN LOWER(q.top_negative_words) LIKE ${querySource.toString().includes("execute") ? "'%" + r.pattern.replace(/'/g, "''") + "%'" : "'%' || ? || '%'"} THEN '${r.category}'`,
+      )
       .join("\n");
     // Build dynamic CASE properly
     const whenClauses = rules
-      .map((r) => `  WHEN LOWER(q.top_negative_words) LIKE '%${r.pattern.replace(/'/g, "''")}%' THEN '${r.category}'`)
+      .map(
+        (r) =>
+          `  WHEN LOWER(q.top_negative_words) LIKE '%${r.pattern.replace(/'/g, "''")}%' THEN '${r.category}'`,
+      )
       .join("\n");
     NEG_CAT_EXPR = `CASE\n${whenClauses}\n  ELSE 'No'\nEND`;
   } catch {
@@ -116,8 +128,12 @@ async function refreshNegCatExpr(): Promise<void> {
 }
 
 refreshNegCatExpr().catch(() => {});
-const _timer = setInterval(() => refreshNegCatExpr().catch(() => {}), 60 * 60 * 1000);
-if (typeof (_timer as NodeJS.Timeout).unref === "function") (_timer as NodeJS.Timeout).unref();
+const _timer = setInterval(
+  () => refreshNegCatExpr().catch(() => {}),
+  60 * 60 * 1000,
+);
+if (typeof (_timer as NodeJS.Timeout).unref === "function")
+  (_timer as NodeJS.Timeout).unref();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function clientFilter(alias: string, clientId?: string | number) {
@@ -128,18 +144,30 @@ function clientFilter(alias: string, clientId?: string | number) {
 // ── Neg Keywords CRUD ─────────────────────────────────────────────────────────
 export async function getNegKeywords() {
   await ensureNegKeywordsTable().catch(() => {});
-  return querySource<{ id: number; pattern: string; category: string; enabled: number }>(
-    `SELECT id, pattern, category, enabled FROM db_audit.neg_category_keywords ORDER BY category, id`, []
+  return querySource<{
+    id: number;
+    pattern: string;
+    category: string;
+    enabled: number;
+  }>(
+    `SELECT id, pattern, category, enabled FROM db_audit.neg_category_keywords ORDER BY category, id`,
+    [],
   );
 }
 
 export async function addNegKeyword(pattern: string, category: string) {
-  await querySource(`INSERT INTO db_audit.neg_category_keywords (pattern, category) VALUES (?, ?)`, [pattern, category]);
+  await querySource(
+    `INSERT INTO db_audit.neg_category_keywords (pattern, category) VALUES (?, ?)`,
+    [pattern, category],
+  );
   await refreshNegCatExpr().catch(() => {});
 }
 
 export async function updateNegKeyword(id: number, enabled: boolean) {
-  await querySource(`UPDATE db_audit.neg_category_keywords SET enabled=? WHERE id=?`, [enabled ? 1 : 0, id]);
+  await querySource(
+    `UPDATE db_audit.neg_category_keywords SET enabled=? WHERE id=?`,
+    [enabled ? 1 : 0, id],
+  );
   await refreshNegCatExpr().catch(() => {});
 }
 
@@ -152,9 +180,16 @@ export async function getInboundClients(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = clientFilter("q", clientId);
   return querySource<{
-    client_id: string; client_name: string; audit_count: number;
-    cq_score: number; cq_score_no_fatal: number;
-    excellent: number; good: number; average_count: number; below_average: number; fatal_count: number;
+    client_id: string;
+    client_name: string;
+    audit_count: number;
+    cq_score: number;
+    cq_score_no_fatal: number;
+    excellent: number;
+    good: number;
+    average_count: number;
+    below_average: number;
+    fatal_count: number;
   }>(
     `SELECT q.ClientId AS client_id,
       COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client_name,
@@ -170,7 +205,7 @@ export async function getInboundClients(filters: InboundQualityFilters) {
      LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
      GROUP BY q.ClientId, c.display_name ORDER BY client_name ASC`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
@@ -181,10 +216,18 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters) {
 
   const [kpis, achtBands, negCats] = await Promise.all([
     querySource<{
-      audit_count: number; cq_score: number; cq_score_no_fatal: number;
-      fatal_count: number; fatal_pct: number;
-      avg_opening: number; avg_soft: number; avg_hold: number; avg_resolution: number; avg_closing: number;
-      social_threat: number; potential_scam: number;
+      audit_count: number;
+      cq_score: number;
+      cq_score_no_fatal: number;
+      fatal_count: number;
+      fatal_pct: number;
+      avg_opening: number;
+      avg_soft: number;
+      avg_hold: number;
+      avg_resolution: number;
+      avg_closing: number;
+      social_threat: number;
+      potential_scam: number;
     }>(
       `SELECT COUNT(*) AS audit_count,
         ROUND(AVG(q.quality_percentage),1) AS cq_score,
@@ -200,9 +243,15 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters) {
         SUM(CASE WHEN (${ALERT_FIELD})='Scam Leads' THEN 1 ELSE 0 END) AS potential_scam
        FROM db_audit.call_quality_assessment q
        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}`,
-      [startDate, endDate, ...cf.params]
+      [startDate, endDate, ...cf.params],
     ),
-    querySource<{ category: string; audit_count: number; score_pct: number; fatal_count: number; fatal_pct: number }>(
+    querySource<{
+      category: string;
+      audit_count: number;
+      score_pct: number;
+      fatal_count: number;
+      fatal_pct: number;
+    }>(
       `SELECT
         CASE
           WHEN CAST(q.length_in_sec AS UNSIGNED) < 60   THEN 'Short(<1min)'
@@ -218,14 +267,14 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters) {
        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
          AND q.length_in_sec IS NOT NULL AND TRIM(q.length_in_sec) != ''${cf.clause}
        GROUP BY category`,
-      [startDate, endDate, ...cf.params]
+      [startDate, endDate, ...cf.params],
     ),
     querySource<{ neg_cat: string; cnt: number }>(
       `SELECT (${NEG_CAT_EXPR}) AS neg_cat, COUNT(*) AS cnt
        FROM db_audit.call_quality_assessment q
        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
        GROUP BY neg_cat`,
-      [startDate, endDate, ...cf.params]
+      [startDate, endDate, ...cf.params],
     ),
   ]);
 
@@ -244,7 +293,7 @@ export async function getTopPerformers(filters: InboundQualityFilters) {
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
        AND q.User IS NOT NULL AND TRIM(q.User) != ''${cf.clause}
      GROUP BY q.User ORDER BY avg_score DESC LIMIT 5`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
@@ -252,7 +301,11 @@ export async function getTopPerformers(filters: InboundQualityFilters) {
 export async function getDailyScores(filters: InboundQualityFilters) {
   const { endDate, clientId } = filters;
   const cf = clientFilter("q", clientId);
-  return querySource<{ call_date: string; avg_score: number; audit_count: number }>(
+  return querySource<{
+    call_date: string;
+    avg_score: number;
+    audit_count: number;
+  }>(
     `SELECT DATE_FORMAT(q.CallDate,'%Y-%m-%d') AS call_date,
       ROUND(AVG(q.quality_percentage),1) AS avg_score, COUNT(*) AS audit_count
      FROM db_audit.call_quality_assessment q
@@ -260,7 +313,7 @@ export async function getDailyScores(filters: InboundQualityFilters) {
        AND q.CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
        AND q.quality_percentage IS NOT NULL${cf.clause}
      GROUP BY DATE_FORMAT(q.CallDate,'%Y-%m-%d') ORDER BY call_date ASC`,
-    [endDate, endDate, ...cf.params]
+    [endDate, endDate, ...cf.params],
   );
 }
 
@@ -276,7 +329,7 @@ export async function getScenarios(filters: InboundQualityFilters) {
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
      GROUP BY scenario, scenario1 ORDER BY scenario, cnt DESC`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
@@ -293,7 +346,7 @@ export async function getSocialMediaThreats(filters: InboundQualityFilters) {
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
        AND (${ALERT_FIELD}) = 'Social Media and Consumer Court Threat'
      GROUP BY scenario, scenario1 ORDER BY cnt DESC`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
@@ -301,8 +354,12 @@ export async function getSocialThreatDetail(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = clientFilter("q", clientId);
   const rows = await querySource<{
-    lead_id: string; agent_id: string; threat_word: string; threat_type: string;
-    scenario: string; call_date: string;
+    lead_id: string;
+    agent_id: string;
+    threat_word: string;
+    threat_type: string;
+    scenario: string;
+    call_date: string;
   }>(
     `SELECT
       COALESCE(q.lead_id,'') AS lead_id,
@@ -317,7 +374,7 @@ export async function getSocialThreatDetail(filters: InboundQualityFilters) {
             OR LOWER(q.sensetive_word) LIKE '%consumer%' OR LOWER(q.sensetive_word) LIKE '%legal%'
             OR LOWER(q.sensetive_word) LIKE '%fir%')
      ORDER BY q.CallDate DESC LIMIT 500`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
   return { total: rows.length, rows };
 }
@@ -327,37 +384,43 @@ export async function getTopPositiveSignals(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = clientFilter("q", clientId);
   const keywords = [
-    { keyword: "Thank You",   pattern: "thank"    },
-    { keyword: "Satisfied",   pattern: "satisf"   },
-    { keyword: "Helpful",     pattern: "helpful"  },
-    { keyword: "Resolved",    pattern: "resolv"   },
-    { keyword: "Happy",       pattern: "happy"    },
-    { keyword: "Excellent",   pattern: "excellen" },
-    { keyword: "Quick",       pattern: "quick"    },
-    { keyword: "Appreciated", pattern: "appreciat"},
+    { keyword: "Thank You", pattern: "thank" },
+    { keyword: "Satisfied", pattern: "satisf" },
+    { keyword: "Helpful", pattern: "helpful" },
+    { keyword: "Resolved", pattern: "resolv" },
+    { keyword: "Happy", pattern: "happy" },
+    { keyword: "Excellent", pattern: "excellen" },
+    { keyword: "Quick", pattern: "quick" },
+    { keyword: "Appreciated", pattern: "appreciat" },
   ];
 
   const [row] = await querySource<Record<string, number>>(
-    `SELECT ${keywords.map((k) =>
-      `SUM(CASE WHEN LOWER(q.top_positive_words) LIKE '%${k.pattern}%' THEN 1 ELSE 0 END) AS cust_${k.pattern},
-       SUM(CASE WHEN LOWER(q.top_positive_words_agent) LIKE '%${k.pattern}%' THEN 1 ELSE 0 END) AS agent_${k.pattern}`
-    ).join(",")}
+    `SELECT ${keywords
+      .map(
+        (k) =>
+          `SUM(CASE WHEN LOWER(q.top_positive_words) LIKE '%${k.pattern}%' THEN 1 ELSE 0 END) AS cust_${k.pattern},
+       SUM(CASE WHEN LOWER(q.top_positive_words_agent) LIKE '%${k.pattern}%' THEN 1 ELSE 0 END) AS agent_${k.pattern}`,
+      )
+      .join(",")}
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 
   return keywords.map((k) => ({
     keyword: k.keyword,
     customer_count: row?.[`cust_${k.pattern}`] ?? 0,
-    agent_count:    row?.[`agent_${k.pattern}`] ?? 0,
+    agent_count: row?.[`agent_${k.pattern}`] ?? 0,
   }));
 }
 
 // ── Transcripts ───────────────────────────────────────────────────────────────
 export async function getTranscript(leadId: string) {
   const [row] = await querySource<{
-    lead_id: string; agent_id: string; date: string; transcript: string;
+    lead_id: string;
+    agent_id: string;
+    date: string;
+    transcript: string;
   }>(
     `SELECT COALESCE(lead_id,'') AS lead_id,
       COALESCE(NULLIF(TRIM(User),''),'Unknown') AS agent_id,
@@ -365,7 +428,7 @@ export async function getTranscript(leadId: string) {
       COALESCE(Transcribe_Text,'') AS transcript
      FROM db_audit.call_quality_assessment
      WHERE lead_id = ? LIMIT 1`,
-    [leadId]
+    [leadId],
   );
   return row ?? null;
 }
@@ -415,16 +478,23 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters) {
       NULL AS first_call_resolution
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}`,
-    params
+    params,
   );
   return row ?? {};
 }
 
 // ── Top negative signal details ───────────────────────────────────────────────
-export async function getTopNegativeSignalDetails(filters: InboundQualityFilters) {
+export async function getTopNegativeSignalDetails(
+  filters: InboundQualityFilters,
+) {
   const { startDate, endDate, clientId } = filters;
   const cf = clientFilter("q", clientId);
-  return querySource<{ scenario: string; scenario1: string; neg_signal: string; cnt: number }>(
+  return querySource<{
+    scenario: string;
+    scenario1: string;
+    neg_signal: string;
+    cnt: number;
+  }>(
     `SELECT
       CASE WHEN TRIM(q.scenario)='' OR q.scenario IS NULL THEN 'Unknown' ELSE TRIM(q.scenario) END AS scenario,
       CASE WHEN TRIM(q.scenario1)='' OR q.scenario1 IS NULL THEN 'Unknown' ELSE TRIM(q.scenario1) END AS scenario1,
@@ -435,7 +505,7 @@ export async function getTopNegativeSignalDetails(filters: InboundQualityFilters
        AND (${ALERT_FIELD}) = 'Top Negative Signals'
      GROUP BY scenario, scenario1, neg_signal HAVING neg_signal != 'No'
      ORDER BY cnt DESC LIMIT 50`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
@@ -452,25 +522,32 @@ export async function getPotentialScams(filters: InboundQualityFilters) {
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
        AND (${ALERT_FIELD}) = 'Scam Leads'
      GROUP BY scenario, scenario1 ORDER BY cnt DESC`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
 export async function getPotentialScamsDetail(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = clientFilter("q", clientId);
-  const [counts] = await querySource<{ financial_fraud: number; scam_words: number }>(
+  const [counts] = await querySource<{
+    financial_fraud: number;
+    scam_words: number;
+  }>(
     `SELECT
       SUM(CASE WHEN LOWER(TRIM(q.financial_fraud))='yes' THEN 1 ELSE 0 END) AS financial_fraud,
       SUM(CASE WHEN LOWER(TRIM(q.financial_fraud))!='yes' AND (${ALERT_FIELD})='Scam Leads' THEN 1 ELSE 0 END) AS scam_words
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
        AND (${ALERT_FIELD}) = 'Scam Leads'`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
   const rows = await querySource<{
-    lead_id: string; agent_id: string; word: string;
-    scenario: string; call_date: string; flag: string;
+    lead_id: string;
+    agent_id: string;
+    word: string;
+    scenario: string;
+    call_date: string;
+    flag: string;
   }>(
     `SELECT
       COALESCE(q.lead_id,'') AS lead_id,
@@ -483,7 +560,7 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters) {
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
        AND (${ALERT_FIELD}) = 'Scam Leads'
      ORDER BY q.CallDate DESC LIMIT 300`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
   return { counts: counts ?? { financial_fraud: 0, scam_words: 0 }, rows };
 }
@@ -502,9 +579,13 @@ export async function getSensitiveWordAnalysis(filters: InboundQualityFilters) {
        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
          AND ${SCAM_EXCL} AND ${HAS_SW}
        GROUP BY TRIM(q.sensetive_word) ORDER BY cnt DESC LIMIT 20`,
-      [startDate, endDate, ...cf.params]
+      [startDate, endDate, ...cf.params],
     ),
-    querySource<{ akash_count: number; social_count: number; court_count: number }>(
+    querySource<{
+      akash_count: number;
+      social_count: number;
+      court_count: number;
+    }>(
       `SELECT
         SUM(CASE WHEN LOWER(q.sensetive_word) LIKE '%akash%' THEN 1 ELSE 0 END) AS akash_count,
         SUM(CASE WHEN LOWER(q.sensetive_word) LIKE '%social%' THEN 1 ELSE 0 END) AS social_count,
@@ -513,11 +594,14 @@ export async function getSensitiveWordAnalysis(filters: InboundQualityFilters) {
        FROM db_audit.call_quality_assessment q
        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
          AND ${SCAM_EXCL} AND ${HAS_SW}`,
-      [startDate, endDate, ...cf.params]
+      [startDate, endDate, ...cf.params],
     ),
   ]);
 
-  return { distribution, dims: dims ?? { akash_count: 0, social_count: 0, court_count: 0 } };
+  return {
+    distribution,
+    dims: dims ?? { akash_count: 0, social_count: 0, court_count: 0 },
+  };
 }
 
 // ── Fatal analysis ────────────────────────────────────────────────────────────
@@ -529,15 +613,23 @@ export async function getFatalAnalysis(filters: InboundQualityFilters) {
 
   const [kpis, topContributors, dayWise] = await Promise.all([
     querySource<{
-      audit_count: number; cq_score: number; fatal_count: number; fatal_pct: number;
+      audit_count: number;
+      cq_score: number;
+      fatal_count: number;
+      fatal_pct: number;
     }>(
       `SELECT COUNT(*) AS audit_count, ROUND(AVG(q.quality_percentage),1) AS cq_score,
         SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) AS fatal_pct
        FROM db_audit.call_quality_assessment q WHERE ${WHERE}`,
-      baseParams
+      baseParams,
     ),
-    querySource<{ agent: string; audit_count: number; fatal_count: number; fatal_pct: number }>(
+    querySource<{
+      agent: string;
+      audit_count: number;
+      fatal_count: number;
+      fatal_pct: number;
+    }>(
       `SELECT ANY_VALUE(COALESCE(am.AgentName, q.User)) AS agent,
         COUNT(*) AS audit_count,
         SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
@@ -546,20 +638,29 @@ export async function getFatalAnalysis(filters: InboundQualityFilters) {
        LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
        WHERE ${WHERE}
        GROUP BY q.User HAVING fatal_count > 0 ORDER BY fatal_count DESC LIMIT 10`,
-      baseParams
+      baseParams,
     ),
-    querySource<{ call_date: string; total_audits: number; total_fatal: number; fatal_pct: number }>(
+    querySource<{
+      call_date: string;
+      total_audits: number;
+      total_fatal: number;
+      fatal_pct: number;
+    }>(
       `SELECT DATE_FORMAT(q.CallDate,'%Y-%m-%d') AS call_date,
         COUNT(*) AS total_audits,
         SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS total_fatal,
         ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) AS fatal_pct
        FROM db_audit.call_quality_assessment q WHERE ${WHERE}
        GROUP BY DATE_FORMAT(q.CallDate,'%Y-%m-%d') HAVING total_fatal > 0 ORDER BY call_date ASC`,
-      baseParams
+      baseParams,
     ),
   ]);
 
-  return { kpis: kpis[0] ?? null, top_contributors: topContributors, day_wise: dayWise };
+  return {
+    kpis: kpis[0] ?? null,
+    top_contributors: topContributors,
+    day_wise: dayWise,
+  };
 }
 
 // ── Fatal calls list ──────────────────────────────────────────────────────────
@@ -567,8 +668,12 @@ export async function getFatalCallsList(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = clientFilter("q", clientId);
   return querySource<{
-    lead_id: string; agent_id: string; agent_name: string;
-    call_date: string; scenario: string; client: string;
+    lead_id: string;
+    agent_id: string;
+    agent_name: string;
+    call_date: string;
+    scenario: string;
+    client: string;
   }>(
     `SELECT
       COALESCE(q.lead_id,'') AS lead_id,
@@ -582,13 +687,13 @@ export async function getFatalCallsList(filters: InboundQualityFilters) {
      LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage = 0${cf.clause}
      ORDER BY q.CallDate DESC LIMIT 500`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
 // ── Agent parameter-wise ──────────────────────────────────────────────────────
 export async function getAgentParameterWise(
-  filters: InboundQualityFilters & { scenario?: string }
+  filters: InboundQualityFilters & { scenario?: string },
 ) {
   const { startDate, endDate, clientId, scenario } = filters;
   const cf = clientFilter("q", clientId);
@@ -596,9 +701,16 @@ export async function getAgentParameterWise(
   const extraParams: (string | number)[] = scenario ? [scenario] : [];
 
   return querySource<{
-    agent: string; campaign: string; audit_count: number;
-    opening_pct: number; soft_pct: number; hold_pct: number; resolution_pct: number; closing_pct: number;
-    cq_score: number; fatal_count: number;
+    agent: string;
+    campaign: string;
+    audit_count: number;
+    opening_pct: number;
+    soft_pct: number;
+    hold_pct: number;
+    resolution_pct: number;
+    closing_pct: number;
+    cq_score: number;
+    fatal_count: number;
   }>(
     `SELECT
       ANY_VALUE(COALESCE(am.AgentName, q.User)) AS agent,
@@ -615,7 +727,7 @@ export async function getAgentParameterWise(
      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}${scenarioClause}
      GROUP BY q.User, q.Campaign ORDER BY cq_score DESC`,
-    [startDate, endDate, ...cf.params, ...extraParams]
+    [startDate, endDate, ...cf.params, ...extraParams],
   );
 }
 
@@ -624,7 +736,10 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = clientFilter("q", clientId);
   return querySource<{
-    scenario: string; total_calls: number; repeat_calls: number; repeat_pct: number;
+    scenario: string;
+    total_calls: number;
+    repeat_calls: number;
+    repeat_pct: number;
   }>(
     `SELECT
       CASE WHEN TRIM(q.scenario)='' OR q.scenario IS NULL THEN 'Unknown' ELSE TRIM(q.scenario) END AS scenario,
@@ -634,7 +749,7 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters) {
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
      GROUP BY scenario ORDER BY repeat_calls DESC`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
@@ -643,8 +758,14 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = clientFilter("q", clientId);
   return querySource<{
-    agent: string; audit_count: number; cq_score: number;
-    excellent: number; good: number; average_count: number; below_average: number; fatal_count: number;
+    agent: string;
+    audit_count: number;
+    cq_score: number;
+    excellent: number;
+    good: number;
+    average_count: number;
+    below_average: number;
+    fatal_count: number;
   }>(
     `SELECT ANY_VALUE(COALESCE(am.AgentName, q.User)) AS agent,
       COUNT(*) AS audit_count,
@@ -658,7 +779,7 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters) {
      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
      GROUP BY q.User ORDER BY cq_score DESC`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
@@ -684,14 +805,14 @@ export async function getRawData(filters: InboundQualityFilters, limit = 500) {
      LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
      ORDER BY q.CallDate DESC LIMIT ?`,
-    [startDate, endDate, ...cf.params, String(limit)]
+    [startDate, endDate, ...cf.params, String(limit)],
   );
 }
 
 // ── Agent master ──────────────────────────────────────────────────────────────
 export async function getAgentMaster() {
   return querySource<{ MasId: string; AgentName: string }>(
-    `SELECT MasId, AgentName FROM Shivamgiri.AgentMaster ORDER BY AgentName`
+    `SELECT MasId, AgentName FROM Shivamgiri.AgentMaster ORDER BY AgentName`,
   );
 }
 
@@ -706,14 +827,14 @@ export async function getMissingAgents(filters: InboundQualityFilters) {
        AND am.MasId IS NULL
        AND q.User IS NOT NULL AND TRIM(q.User) != ''
      GROUP BY q.User ORDER BY audit_count DESC`,
-    [startDate, endDate, ...cf.params]
+    [startDate, endDate, ...cf.params],
   );
 }
 
 export async function insertAgentMaster(masId: string, agentName: string) {
   await querySource(
     `INSERT IGNORE INTO Shivamgiri.AgentMaster (MasId, AgentName) VALUES (?, ?)`,
-    [masId, agentName]
+    [masId, agentName],
   );
 }
 
@@ -737,10 +858,16 @@ const CLAP_BRANCHES = ["logistic", "agent", "product"] as const;
 type ClapBranch = (typeof CLAP_BRANCHES)[number];
 
 export function isClapBranch(value: unknown): value is ClapBranch {
-  return typeof value === "string" && (CLAP_BRANCHES as readonly string[]).includes(value);
+  return (
+    typeof value === "string" &&
+    (CLAP_BRANCHES as readonly string[]).includes(value)
+  );
 }
 
-function buildClientFilter2(id?: string | number): { clause: string; params: (string | number)[] } {
+function buildClientFilter2(id?: string | number): {
+  clause: string;
+  params: (string | number)[];
+} {
   if (!id) return { clause: "", params: [] };
   return { clause: " AND q.ClientId = ?", params: [id] };
 }
@@ -749,7 +876,8 @@ export async function getClapVocQuotes(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = buildClientFilter2(clientId);
   const VOC_DATE_CUTOFF = "2026-07-17";
-  const effectiveStart = startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
+  const effectiveStart =
+    startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
 
   const rows: Record<string, unknown>[] = [];
   for (const branch of CLAP_BRANCHES) {
@@ -770,9 +898,9 @@ export async function getClapVocQuotes(filters: InboundQualityFilters) {
          AND (q.\`${pos}\` IS NOT NULL OR q.\`${neg}\` IS NOT NULL)
          ${cf.clause ? cf.clause : ""}
        ORDER BY q.CallDate DESC LIMIT 200`,
-      [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params]
+      [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params],
     );
-    rows.push(...result.map(r => ({ ...r, branch })));
+    rows.push(...result.map((r) => ({ ...r, branch })));
   }
   return rows;
 }
@@ -781,10 +909,14 @@ export async function getClapProductVocSummary(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = buildClientFilter2(clientId);
   const VOC_DATE_CUTOFF = "2026-07-17";
-  const effectiveStart = startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
+  const effectiveStart =
+    startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
 
   return querySource<{
-    branch: string; positive_count: number; negative_count: number; total_calls: number;
+    branch: string;
+    positive_count: number;
+    negative_count: number;
+    total_calls: number;
   }>(
     `SELECT
       'logistic' AS branch,
@@ -810,15 +942,23 @@ export async function getClapProductVocSummary(filters: InboundQualityFilters) {
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}`,
     // One parameter set per UNION arm, so this list tracks CLAP_BRANCHES.
-    CLAP_BRANCHES.flatMap(() => [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params])
+    CLAP_BRANCHES.flatMap(() => [
+      effectiveStart,
+      endDate,
+      VOC_DATE_CUTOFF,
+      ...cf.params,
+    ]),
   );
 }
 
-export async function getClapProductVocQuotes(filters: InboundQualityFilters & { branch?: unknown }) {
+export async function getClapProductVocQuotes(
+  filters: InboundQualityFilters & { branch?: unknown },
+) {
   const { startDate, endDate, clientId } = filters;
   const cf = buildClientFilter2(clientId);
   const VOC_DATE_CUTOFF = "2026-07-17";
-  const effectiveStart = startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
+  const effectiveStart =
+    startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
 
   /*
    * branch is interpolated into a column name below, so it must be checked at runtime and not
@@ -827,12 +967,18 @@ export async function getClapProductVocQuotes(filters: InboundQualityFilters & {
    * identifier, which a backtick in the value escapes. Validating here rather than only at the
    * route keeps the guarantee attached to the code that builds the identifier.
    */
-  const branch: ClapBranch = isClapBranch(filters.branch) ? filters.branch : "product";
+  const branch: ClapBranch = isClapBranch(filters.branch)
+    ? filters.branch
+    : "product";
   const posCol = `customer_voc_${branch}_positive`;
   const negCol = `customer_voc_${branch}_negative`;
 
   return querySource<{
-    call_date: string; agent_name: string; client: string; sentiment: string; quote: string;
+    call_date: string;
+    agent_name: string;
+    client: string;
+    sentiment: string;
+    quote: string;
   }>(
     `SELECT
       q.CallDate AS call_date,
@@ -848,7 +994,7 @@ export async function getClapProductVocQuotes(filters: InboundQualityFilters & {
        AND (q.\`${posCol}\` IS NOT NULL OR q.\`${negCol}\` IS NOT NULL)
        ${cf.clause ? cf.clause : ""}
      ORDER BY q.CallDate DESC LIMIT 300`,
-    [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params]
+    [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params],
   );
 }
 
@@ -856,10 +1002,14 @@ export async function getClapIntelligence(filters: InboundQualityFilters) {
   const { startDate, endDate, clientId } = filters;
   const cf = buildClientFilter2(clientId);
   const VOC_DATE_CUTOFF = "2026-07-17";
-  const effectiveStart = startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
+  const effectiveStart =
+    startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
 
   const [summary] = await querySource<{
-    total_audits: number; avg_cq_score: number; positive_voc_count: number; negative_voc_count: number;
+    total_audits: number;
+    avg_cq_score: number;
+    positive_voc_count: number;
+    negative_voc_count: number;
   }>(
     `SELECT
       COUNT(*) AS total_audits,
@@ -876,25 +1026,36 @@ export async function getClapIntelligence(filters: InboundQualityFilters) {
       THEN 1 ELSE 0 END) AS negative_voc_count
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}`,
-    [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params]
+    [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params],
   );
 
   const branchSummary = await getClapProductVocSummary(filters);
 
   const insights: string[] = [];
   if (summary) {
-    const posRate = summary.total_audits > 0
-      ? Math.round((summary.positive_voc_count / summary.total_audits) * 100)
-      : 0;
-    const negRate = summary.total_audits > 0
-      ? Math.round((summary.negative_voc_count / summary.total_audits) * 100)
-      : 0;
-    if (posRate >= 50) insights.push(`Strong positive VOC coverage at ${posRate}% of audits`);
-    if (negRate >= 20) insights.push(`Elevated negative VOC at ${negRate}% — review product/logistic branches`);
+    const posRate =
+      summary.total_audits > 0
+        ? Math.round((summary.positive_voc_count / summary.total_audits) * 100)
+        : 0;
+    const negRate =
+      summary.total_audits > 0
+        ? Math.round((summary.negative_voc_count / summary.total_audits) * 100)
+        : 0;
+    if (posRate >= 50)
+      insights.push(`Strong positive VOC coverage at ${posRate}% of audits`);
+    if (negRate >= 20)
+      insights.push(
+        `Elevated negative VOC at ${negRate}% — review product/logistic branches`,
+      );
     // Copy before sorting: branchSummary is also returned as branch_summary, and Array.sort is
     // in place, so ranking the insight here silently reordered the caller's bar chart categories.
-    const topNeg = [...branchSummary].sort((a, b) => b.negative_count - a.negative_count)[0];
-    if (topNeg) insights.push(`Highest negative volume in '${topNeg.branch}' branch (${topNeg.negative_count} quotes)`);
+    const topNeg = [...branchSummary].sort(
+      (a, b) => b.negative_count - a.negative_count,
+    )[0];
+    if (topNeg)
+      insights.push(
+        `Highest negative volume in '${topNeg.branch}' branch (${topNeg.negative_count} quotes)`,
+      );
   }
 
   return { summary, branch_summary: branchSummary, insights };

@@ -5,11 +5,19 @@ describe("Worker Distributed Safety", () => {
   describe("workerLockName", () => {
     it("should generate deterministic lock names", () => {
       const workerName = "payroll-nightly-recalc";
-      const digest = crypto.createHash("sha256").update(workerName).digest("hex").slice(0, 40);
+      const digest = crypto
+        .createHash("sha256")
+        .update(workerName)
+        .digest("hex")
+        .slice(0, 40);
       const lockName = `hrms:worker:${digest}`;
 
       // Verify determinism
-      const digest2 = crypto.createHash("sha256").update(workerName).digest("hex").slice(0, 40);
+      const digest2 = crypto
+        .createHash("sha256")
+        .update(workerName)
+        .digest("hex")
+        .slice(0, 40);
       expect(digest).toBe(digest2);
 
       // Verify format
@@ -20,8 +28,16 @@ describe("Worker Distributed Safety", () => {
       const worker1 = "payroll-nightly-recalc";
       const worker2 = "leave-monthly-credit";
 
-      const digest1 = crypto.createHash("sha256").update(worker1).digest("hex").slice(0, 40);
-      const digest2 = crypto.createHash("sha256").update(worker2).digest("hex").slice(0, 40);
+      const digest1 = crypto
+        .createHash("sha256")
+        .update(worker1)
+        .digest("hex")
+        .slice(0, 40);
+      const digest2 = crypto
+        .createHash("sha256")
+        .update(worker2)
+        .digest("hex")
+        .slice(0, 40);
 
       expect(digest1).not.toBe(digest2);
     });
@@ -29,7 +45,12 @@ describe("Worker Distributed Safety", () => {
 
   describe("Timer Registration", () => {
     it("should track registered timers", async () => {
-      const { registerTimer, unregisterTimer, getActiveTimerCount, clearAllTimers } = await import("../worker-utils.js");
+      const {
+        registerTimer,
+        unregisterTimer,
+        getActiveTimerCount,
+        clearAllTimers,
+      } = await import("../worker-utils.js");
 
       const initialCount = getActiveTimerCount();
 

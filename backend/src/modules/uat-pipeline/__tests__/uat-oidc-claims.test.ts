@@ -60,7 +60,10 @@ function expectRejected(claims: GithubOidcClaims, claim: string) {
   } catch (e) {
     error = e;
   }
-  expect(error, `claims should have been rejected on "${claim}"`).toBeInstanceOf(OidcError);
+  expect(
+    error,
+    `claims should have been rejected on "${claim}"`,
+  ).toBeInstanceOf(OidcError);
   expect((error as OidcError).claim).toBe(claim);
 }
 
@@ -81,7 +84,10 @@ describe("the attacks each claim closes", () => {
   });
 
   it("rejects an expired token", () => {
-    expectRejected(goodClaims({ exp: Math.floor(NOW.getTime() / 1000) - 1 }), "exp");
+    expectRejected(
+      goodClaims({ exp: Math.floor(NOW.getTime() / 1000) - 1 }),
+      "exp",
+    );
   });
 
   it("rejects a token with no expiry at all", () => {
@@ -98,13 +104,19 @@ describe("the attacks each claim closes", () => {
     // repository and repository_owner are checked separately so this cannot pass by
     // coincidence of naming.
     expectRejected(
-      goodClaims({ repository: "shivamgiri-sudo/HRMS2", repository_owner: "attacker" }),
-      "repository_owner"
+      goodClaims({
+        repository: "shivamgiri-sudo/HRMS2",
+        repository_owner: "attacker",
+      }),
+      "repository_owner",
     );
   });
 
   it("rejects a token from a PUBLIC repository — G2, enforced not remembered", () => {
-    expectRejected(goodClaims({ repository_visibility: "public" }), "repository_visibility");
+    expectRejected(
+      goodClaims({ repository_visibility: "public" }),
+      "repository_visibility",
+    );
   });
 
   it("rejects a DIFFERENT workflow in the same repository", () => {
@@ -114,7 +126,7 @@ describe("the attacks each claim closes", () => {
       goodClaims({
         job_workflow_ref: `${EXPECT.repository}/.github/workflows/deploy.yml@refs/heads/main`,
       }),
-      "job_workflow_ref"
+      "job_workflow_ref",
     );
   });
 
@@ -125,14 +137,16 @@ describe("the attacks each claim closes", () => {
         workflow_ref: `${EXPECT.repository}/${EXPECT.workflowPath}@refs/heads/attacker`,
         ref: "refs/heads/attacker",
       }),
-      "job_workflow_ref"
+      "job_workflow_ref",
     );
   });
 
   it("rejects a workflow_ref that disagrees with job_workflow_ref", () => {
     expectRejected(
-      goodClaims({ workflow_ref: `${EXPECT.repository}/.github/workflows/other.yml@refs/heads/main` }),
-      "workflow_ref"
+      goodClaims({
+        workflow_ref: `${EXPECT.repository}/.github/workflows/other.yml@refs/heads/main`,
+      }),
+      "workflow_ref",
     );
   });
 
@@ -164,7 +178,10 @@ describe("the attacks each claim closes", () => {
   });
 
   it("rejects a token from the future beyond the skew allowance", () => {
-    expectRejected(goodClaims({ nbf: Math.floor(NOW.getTime() / 1000) + 3600 }), "nbf");
+    expectRejected(
+      goodClaims({ nbf: Math.floor(NOW.getTime() / 1000) + 3600 }),
+      "nbf",
+    );
   });
 });
 
@@ -188,11 +205,15 @@ describe("absent claims are rejections, not omissions", () => {
 describe("configuration cannot fail open", () => {
   it("refuses to verify when no audience is configured", () => {
     // An empty expectation must not become a wildcard.
-    expect(() => assertClaims(goodClaims(), { ...EXPECT, audience: "" }, NOW)).toThrow(OidcError);
+    expect(() =>
+      assertClaims(goodClaims(), { ...EXPECT, audience: "" }, NOW),
+    ).toThrow(OidcError);
   });
 
   it("throws rather than defaulting when an expectation env var is unset", () => {
-    expect(() => expectationsFromEnv({} as NodeJS.ProcessEnv)).toThrow(OidcError);
+    expect(() => expectationsFromEnv({} as NodeJS.ProcessEnv)).toThrow(
+      OidcError,
+    );
   });
 
   it("requires a private repository unless someone explicitly says otherwise", () => {

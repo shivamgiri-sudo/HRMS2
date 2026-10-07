@@ -38,7 +38,9 @@ export interface ListFilters {
   toDate?: string;
 }
 
-export async function appendJourneyEvent(input: AppendEventInput): Promise<JourneyEvent> {
+export async function appendJourneyEvent(
+  input: AppendEventInput,
+): Promise<JourneyEvent> {
   const id = randomUUID();
   await db.execute(
     `INSERT INTO employee_journey_log
@@ -56,11 +58,12 @@ export async function appendJourneyEvent(input: AppendEventInput): Promise<Journ
       input.module ?? null,
       input.triggeredBy ?? null,
       input.metadata ? JSON.stringify(input.metadata) : null,
-    ]
+    ],
   );
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM employee_journey_log WHERE id = ? LIMIT 1", [id]
+    "SELECT * FROM employee_journey_log WHERE id = ? LIMIT 1",
+    [id],
   );
   return (rows as JourneyEvent[])[0];
 }
@@ -69,9 +72,11 @@ export async function appendJourneyEvent(input: AppendEventInput): Promise<Journ
  * Batch-insert multiple journey events in a single round-trip.
  * Use this instead of calling appendJourneyEvent in a loop.
  */
-export async function appendJourneyEvents(inputs: AppendEventInput[]): Promise<void> {
+export async function appendJourneyEvents(
+  inputs: AppendEventInput[],
+): Promise<void> {
   if (inputs.length === 0) return;
-  const rows = inputs.map(input => [
+  const rows = inputs.map((input) => [
     randomUUID(),
     input.employeeId,
     input.eventType,
@@ -89,31 +94,46 @@ export async function appendJourneyEvents(inputs: AppendEventInput[]): Promise<v
        (id, employee_id, event_type, event_date, description,
         old_value, new_value, module, triggered_by, metadata)
      VALUES ${ph}`,
-    rows.flat()
+    rows.flat(),
   );
 }
 
 export async function listJourneyEvents(
   employeeId: string,
-  filters?: ListFilters
+  filters?: ListFilters,
 ): Promise<JourneyEvent[]> {
   const conds: string[] = ["employee_id = ?"];
   const params: unknown[] = [employeeId];
 
-  if (filters?.module)    { conds.push("module = ?");     params.push(filters.module); }
-  if (filters?.eventType) { conds.push("event_type = ?"); params.push(filters.eventType); }
-  if (filters?.fromDate)  { conds.push("event_date >= ?"); params.push(filters.fromDate); }
-  if (filters?.toDate)    { conds.push("event_date <= ?"); params.push(filters.toDate); }
+  if (filters?.module) {
+    conds.push("module = ?");
+    params.push(filters.module);
+  }
+  if (filters?.eventType) {
+    conds.push("event_type = ?");
+    params.push(filters.eventType);
+  }
+  if (filters?.fromDate) {
+    conds.push("event_date >= ?");
+    params.push(filters.fromDate);
+  }
+  if (filters?.toDate) {
+    conds.push("event_date <= ?");
+    params.push(filters.toDate);
+  }
 
   const where = conds.join(" AND ");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM employee_journey_log WHERE ${where} ORDER BY event_date DESC, created_at DESC`,
-    params
+    params,
   );
   return rows as JourneyEvent[];
 }
 
-async function safeRows(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
+async function safeRows(
+  sql: string,
+  params: unknown[],
+): Promise<RowDataPacket[]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return rows;
@@ -153,7 +173,7 @@ function currency(value: unknown): string {
 
 export async function listComprehensiveJourney(
   employeeId: string,
-  options: { includeCompensation?: boolean; filters?: ListFilters } = {}
+  options: { includeCompensation?: boolean; filters?: ListFilters } = {},
 ): Promise<JourneyEvent[]> {
   const events: Array<JourneyEvent & { source_key?: string }> = [];
 
@@ -168,7 +188,7 @@ export async function listComprehensiveJourney(
        LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN employees m ON m.id = e.reporting_manager_id
       WHERE e.id = ? LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
   const employee = baseRows[0];
 
@@ -183,7 +203,7 @@ export async function listComprehensiveJourney(
        LEFT JOIN employees actor ON actor.user_id = jl.triggered_by
       WHERE jl.employee_id = ?
       ORDER BY jl.event_date DESC, jl.created_at DESC`,
-    [employeeId]
+    [employeeId],
   );
 
   const represented = new Set<string>();
@@ -209,15 +229,22 @@ export async function listComprehensiveJourney(
     });
   }
 
-  if (employee?.date_of_joining && !events.some((event) =>
-    ["hire", "hired", "hiring", "joining"].includes(event.event_type.toLowerCase())
-  )) {
+  if (
+    employee?.date_of_joining &&
+    !events.some((event) =>
+      ["hire", "hired", "hiring", "joining"].includes(
+        event.event_type.toLowerCase(),
+      ),
+    )
+  ) {
     const workContext = [
       employee.designation_name,
       employee.dept_name,
       employee.branch_name,
       employee.process_name,
-    ].filter(Boolean).join(" · ");
+    ]
+      .filter(Boolean)
+      .join(" · ");
     events.push({
       id: `joining-${employeeId}`,
       employee_id: employeeId,
@@ -250,7 +277,7 @@ export async function listComprehensiveJourney(
        LEFT JOIN employees actor ON actor.user_id = sl.updated_by
       WHERE bridge.employee_id = ?
       ORDER BY sl.stage_date`,
-    [employeeId]
+    [employeeId],
   );
   for (const row of atsRows) {
     events.push({
@@ -258,7 +285,9 @@ export async function listComprehensiveJourney(
       employee_id: employeeId,
       event_type: "hiring_stage",
       event_date: dateOnly(row.stage_date),
-      description: row.remarks || `Hiring moved from ${row.from_stage || "application"} to ${row.to_stage}`,
+      description:
+        row.remarks ||
+        `Hiring moved from ${row.from_stage || "application"} to ${row.to_stage}`,
       old_value: row.from_stage ?? null,
       new_value: row.to_stage,
       module: "ATS",
@@ -281,7 +310,7 @@ export async function listComprehensiveJourney(
        LEFT JOIN auth_user au ON au.id = le.initiated_by
        LEFT JOIN employees actor ON actor.user_id = le.initiated_by
       WHERE le.employee_id = ?`,
-    [employeeId]
+    [employeeId],
   );
   for (const row of lifecycleRows) {
     if (represented.has(`lifecycle:${row.id}`)) continue;
@@ -291,8 +320,12 @@ export async function listComprehensiveJourney(
       event_type: row.event_type,
       event_date: dateOnly(row.effective_date),
       description: row.remarks ?? String(row.event_type).replace(/_/g, " "),
-      old_value: row.old_value_json ? JSON.stringify(parseMetadata(row.old_value_json)) : null,
-      new_value: row.new_value_json ? JSON.stringify(parseMetadata(row.new_value_json)) : null,
+      old_value: row.old_value_json
+        ? JSON.stringify(parseMetadata(row.old_value_json))
+        : null,
+      new_value: row.new_value_json
+        ? JSON.stringify(parseMetadata(row.new_value_json))
+        : null,
       module: "LIFECYCLE",
       triggered_by: row.initiated_by,
       metadata: { lifecycle_event_id: row.id, approved_by: row.approved_by },
@@ -313,13 +346,14 @@ export async function listComprehensiveJourney(
        LEFT JOIN auth_user au ON au.id = pr.initiated_by
        LEFT JOIN employees actor ON actor.user_id = pr.initiated_by
       WHERE pr.employee_id = ?`,
-    [employeeId]
+    [employeeId],
   );
   for (const row of promotionRows) {
     if (represented.has(`promotion:${row.id}`)) continue;
-    const salaryText = options.includeCompensation && row.salary_revision
-      ? ` with revised annual CTC ${currency(row.salary_revision)}`
-      : "";
+    const salaryText =
+      options.includeCompensation && row.salary_revision
+        ? ` with revised annual CTC ${currency(row.salary_revision)}`
+        : "";
     events.push({
       id: `promotion-${row.id}`,
       employee_id: employeeId,
@@ -330,7 +364,12 @@ export async function listComprehensiveJourney(
       new_value: row.to_designation ?? row.to_grade,
       module: "MOBILITY",
       triggered_by: row.initiated_by,
-      metadata: { promotion_id: row.id, salary_revision: options.includeCompensation ? row.salary_revision : undefined },
+      metadata: {
+        promotion_id: row.id,
+        salary_revision: options.includeCompensation
+          ? row.salary_revision
+          : undefined,
+      },
       created_at: String(row.created_at),
       actor_name: row.actor_name ?? "HR Team",
       source: "promotion",
@@ -349,7 +388,7 @@ export async function listComprehensiveJourney(
        LEFT JOIN auth_user au ON au.id = tr.initiated_by
        LEFT JOIN employees actor ON actor.user_id = tr.initiated_by
       WHERE tr.employee_id = ?`,
-    [employeeId]
+    [employeeId],
   );
   for (const row of transferRows) {
     if (represented.has(`transfer:${row.id}`)) continue;
@@ -358,7 +397,9 @@ export async function listComprehensiveJourney(
       employee_id: employeeId,
       event_type: `${row.transfer_type}_change`,
       event_date: dateOnly(row.effective_date),
-      description: row.reason || `${String(row.transfer_type).replace(/_/g, " ")} transfer ${row.status}`,
+      description:
+        row.reason ||
+        `${String(row.transfer_type).replace(/_/g, " ")} transfer ${row.status}`,
       old_value: row.from_value,
       new_value: row.to_value,
       module: "MOBILITY",
@@ -385,7 +426,7 @@ export async function listComprehensiveJourney(
        LEFT JOIN employees actor ON actor.user_id = COALESCE(pc.recorded_by, pr.initiated_by)
       WHERE pr.employee_id = ?
       ORDER BY pr.start_date, pc.checkpoint_date`,
-    [employeeId]
+    [employeeId],
   );
   const pipStarted = new Set<string>();
   for (const row of pipRows) {
@@ -414,7 +455,9 @@ export async function listComprehensiveJourney(
           employee_id: employeeId,
           event_type: "pip_outcome",
           event_date: dateOnly(row.closed_at),
-          description: row.review_notes || `PIP closed with outcome: ${row.outcome || row.status}`,
+          description:
+            row.review_notes ||
+            `PIP closed with outcome: ${row.outcome || row.status}`,
           old_value: "active",
           new_value: row.outcome ?? row.status,
           module: "PERFORMANCE",
@@ -434,7 +477,8 @@ export async function listComprehensiveJourney(
         employee_id: employeeId,
         event_type: "pip_checkpoint",
         event_date: dateOnly(row.checkpoint_date),
-        description: row.checkpoint_notes || `PIP checkpoint rated ${row.rating}`,
+        description:
+          row.checkpoint_notes || `PIP checkpoint rated ${row.rating}`,
         old_value: null,
         new_value: row.rating,
         module: "PERFORMANCE",
@@ -459,7 +503,7 @@ export async function listComprehensiveJourney(
        LEFT JOIN kudos_master km ON km.kudos_template_id = kt.kudos_template_id
        LEFT JOIN employees sender ON sender.id = kt.sender_id
       WHERE kt.receiver_id = ?`,
-    [employeeId]
+    [employeeId],
   );
   for (const row of kudosRows) {
     events.push({
@@ -467,7 +511,8 @@ export async function listComprehensiveJourney(
       employee_id: employeeId,
       event_type: "appreciation",
       event_date: dateOnly(row.sent_at),
-      description: row.custom_message || row.kudos_title || "Received appreciation",
+      description:
+        row.custom_message || row.kudos_title || "Received appreciation",
       old_value: null,
       new_value: row.kudos_title ?? `${row.points_awarded} recognition points`,
       module: "ENGAGEMENT",
@@ -488,7 +533,7 @@ export async function listComprehensiveJourney(
          LEFT JOIN salary_structure_master ssm ON ssm.id = esa.structure_id
         WHERE esa.employee_id = ?
         ORDER BY esa.effective_from, esa.created_at`,
-      [employeeId]
+      [employeeId],
     );
     let previousCtc: number | null = null;
     for (const row of salaryRows) {
@@ -502,14 +547,18 @@ export async function listComprehensiveJourney(
         employee_id: employeeId,
         event_type: previousCtc == null ? "salary_setup" : "increment",
         event_date: dateOnly(row.effective_from),
-        description: previousCtc == null
-          ? `Initial annual CTC assigned${row.structure_name ? ` under ${row.structure_name}` : ""}`
-          : "Annual compensation revised",
+        description:
+          previousCtc == null
+            ? `Initial annual CTC assigned${row.structure_name ? ` under ${row.structure_name}` : ""}`
+            : "Annual compensation revised",
         old_value: previousCtc == null ? null : currency(previousCtc),
         new_value: currency(currentCtc),
         module: "PAYROLL",
         triggered_by: null,
-        metadata: { salary_assignment_id: row.id, active: Boolean(row.active_status) },
+        metadata: {
+          salary_assignment_id: row.id,
+          active: Boolean(row.active_status),
+        },
         created_at: String(row.created_at),
         actor_name: "HR / Payroll",
         source: "salary",
@@ -535,7 +584,7 @@ export async function listComprehensiveJourney(
        LEFT JOIN employees actor ON actor.user_id = COALESCE(eal.action_by, er.initiated_by_user_id)
       WHERE er.employee_id = ?
       ORDER BY er.created_at, eal.created_at`,
-    [employeeId]
+    [employeeId],
   );
   const exitStarted = new Set<string>();
   for (const row of exitRows) {
@@ -546,14 +595,20 @@ export async function listComprehensiveJourney(
         employee_id: employeeId,
         event_type: "exit_initiated",
         event_date: dateOnly(row.created_at),
-        description: row.resignation_reason || `${row.exit_type} ${row.exit_sub_type || "exit"} initiated`,
+        description:
+          row.resignation_reason ||
+          `${row.exit_type} ${row.exit_sub_type || "exit"} initiated`,
         old_value: null,
-        new_value: row.last_working_day_confirmed || row.last_working_day_proposed
-          ? `Proposed last day: ${dateOnly(row.last_working_day_confirmed || row.last_working_day_proposed)}`
-          : row.status,
+        new_value:
+          row.last_working_day_confirmed || row.last_working_day_proposed
+            ? `Proposed last day: ${dateOnly(row.last_working_day_confirmed || row.last_working_day_proposed)}`
+            : row.status,
         module: "EXIT",
         triggered_by: row.initiated_by_user_id,
-        metadata: { exit_request_id: row.id, reason_category: row.exit_reason_category },
+        metadata: {
+          exit_request_id: row.id,
+          reason_category: row.exit_reason_category,
+        },
         created_at: String(row.created_at),
         actor_name: row.actor_name ?? "Employee",
         source: "exit",
@@ -582,7 +637,10 @@ export async function listComprehensiveJourney(
     }
   }
 
-  if (employee?.date_of_exit && !events.some((event) => event.event_type === "exit")) {
+  if (
+    employee?.date_of_exit &&
+    !events.some((event) => event.event_type === "exit")
+  ) {
     events.push({
       id: `employee-exit-${employeeId}`,
       employee_id: employeeId,
@@ -603,16 +661,25 @@ export async function listComprehensiveJourney(
 
   const deduplicated = new Map<string, JourneyEvent>();
   for (const event of events) {
-    const key = event.source_key
-      ?? `${event.event_type}:${event.event_date}:${event.old_value ?? ""}:${event.new_value ?? ""}:${event.description ?? ""}`;
+    const key =
+      event.source_key ??
+      `${event.event_type}:${event.event_date}:${event.old_value ?? ""}:${event.new_value ?? ""}:${event.description ?? ""}`;
     if (!deduplicated.has(key)) deduplicated.set(key, event);
   }
 
   const filters = options.filters;
   return [...deduplicated.values()]
-    .filter((event) => !filters?.module || event.module?.toLowerCase() === filters.module.toLowerCase())
-    .filter((event) => !filters?.eventType || event.event_type === filters.eventType)
-    .filter((event) => !filters?.fromDate || event.event_date >= filters.fromDate)
+    .filter(
+      (event) =>
+        !filters?.module ||
+        event.module?.toLowerCase() === filters.module.toLowerCase(),
+    )
+    .filter(
+      (event) => !filters?.eventType || event.event_type === filters.eventType,
+    )
+    .filter(
+      (event) => !filters?.fromDate || event.event_date >= filters.fromDate,
+    )
     .filter((event) => !filters?.toDate || event.event_date <= filters.toDate)
     .sort((a, b) => {
       const byDate = b.event_date.localeCompare(a.event_date);

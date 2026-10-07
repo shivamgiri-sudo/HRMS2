@@ -15,7 +15,10 @@ const LOCK_TIMEOUT_SECONDS = 0; // Non-blocking lock acquisition
  * Uses SHA-256 hash to ensure lock name stays within MySQL limits.
  */
 export function workerLockName(workerName: string): string {
-  const digest = createHash("sha256").update(workerName).digest("hex").slice(0, 40);
+  const digest = createHash("sha256")
+    .update(workerName)
+    .digest("hex")
+    .slice(0, 40);
   return `hrms:worker:${digest}`;
 }
 
@@ -25,13 +28,13 @@ export function workerLockName(workerName: string): string {
  */
 export async function acquireWorkerLock(
   connection: PoolConnection,
-  workerName: string
+  workerName: string,
 ): Promise<boolean> {
   const lockName = workerLockName(workerName);
   try {
     const [rows] = await connection.execute<RowDataPacket[]>(
       "SELECT GET_LOCK(?, ?) AS acquired",
-      [lockName, LOCK_TIMEOUT_SECONDS]
+      [lockName, LOCK_TIMEOUT_SECONDS],
     );
     const acquired = Number(rows[0]?.acquired ?? 0) === 1;
     if (acquired) {
@@ -49,7 +52,7 @@ export async function acquireWorkerLock(
  */
 export async function releaseWorkerLock(
   connection: PoolConnection,
-  workerName: string
+  workerName: string,
 ): Promise<void> {
   const lockName = workerLockName(workerName);
   try {
@@ -70,7 +73,7 @@ export async function releaseWorkerLock(
  */
 export async function withWorkerLock(
   workerName: string,
-  fn: () => Promise<void>
+  fn: () => Promise<void>,
 ): Promise<boolean> {
   const connection = await db.getConnection();
   try {
@@ -97,7 +100,7 @@ export async function withWorkerLock(
 export async function recordWorkerRun(
   workerName: string,
   status: "started" | "completed" | "failed",
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown>,
 ): Promise<void> {
   try {
     await db.execute(
@@ -112,7 +115,7 @@ export async function recordWorkerRun(
         status,
         status === "started" ? null : new Date(),
         metadata ? JSON.stringify(metadata) : null,
-      ]
+      ],
     );
   } catch (error) {
     // Non-fatal - don't fail worker if audit logging fails

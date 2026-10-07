@@ -32,11 +32,20 @@ describe("importMetricRows", () => {
 
   it("imports the good rows and reports the bad ones by row number", async () => {
     const out = await svc.importMetricRows({
-      userId: "u1", processId: "p1",
+      userId: "u1",
+      processId: "p1",
       rows: [
-        { metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-01", value: "3200" },
+        {
+          metricKey: "gs1_email_tat_sec",
+          scoreDate: "2026-08-01",
+          value: "3200",
+        },
         { metricKey: "nope", scoreDate: "2026-08-01", value: "1" },
-        { metricKey: "gs1_approval_tat_sec", scoreDate: "not-a-date", value: "1" },
+        {
+          metricKey: "gs1_approval_tat_sec",
+          scoreDate: "not-a-date",
+          value: "1",
+        },
       ],
     });
     expect(out.imported).toBe(1);
@@ -47,21 +56,34 @@ describe("importMetricRows", () => {
 
   it("treats an empty value cell as no reading, not as zero", async () => {
     await svc.importMetricRows({
-      userId: "u1", processId: "p1",
-      rows: [{ metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-01", value: "" }],
+      userId: "u1",
+      processId: "p1",
+      rows: [
+        { metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-01", value: "" },
+      ],
     });
     const insert = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("INSERT INTO process_metric_actual"));
+      String(sql).includes("INSERT INTO process_metric_actual"),
+    );
     expect(insert![1]).toContain(null);
   });
 
   it("keeps going after a bad row rather than aborting the batch", async () => {
     const out = await svc.importMetricRows({
-      userId: "u1", processId: "p1",
+      userId: "u1",
+      processId: "p1",
       rows: [
         { metricKey: "bad", scoreDate: "2026-08-01", value: "1" },
-        { metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-02", value: "10" },
-        { metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-03", value: "20" },
+        {
+          metricKey: "gs1_email_tat_sec",
+          scoreDate: "2026-08-02",
+          value: "10",
+        },
+        {
+          metricKey: "gs1_email_tat_sec",
+          scoreDate: "2026-08-03",
+          value: "20",
+        },
       ],
     });
     expect(out.imported).toBe(2);

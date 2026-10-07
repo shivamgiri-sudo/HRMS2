@@ -11,31 +11,73 @@ import { db } from "../../db/mysql.js";
  */
 
 type Fmt = "auto" | "dmy" | "mdy";
-interface Source { table: string; col: string; kind: "date" | "text"; fmt?: Fmt }
+interface Source {
+  table: string;
+  col: string;
+  kind: "date" | "text";
+  fmt?: Fmt;
+}
 
-const M = (table: string, col: string, kind: "date" | "text" = "text", fmt: Fmt = "auto"): Source => ({ table: `db_masmis.${table}`, col, kind, fmt });
-const H = (table: string, col = "report_date"): Source => ({ table: `mas_hrms.${table}`, col, kind: "date" });
+const M = (
+  table: string,
+  col: string,
+  kind: "date" | "text" = "text",
+  fmt: Fmt = "auto",
+): Source => ({ table: `db_masmis.${table}`, col, kind, fmt });
+const H = (table: string, col = "report_date"): Source => ({
+  table: `mas_hrms.${table}`,
+  col,
+  kind: "date",
+});
 
 /** upload_type_code -> where its data lands and which column carries the data date. null = no data date. */
 export const COVERAGE_SOURCES: Record<string, Source | null> = {
-  AW_BILLING_MASMIS: M("aw_billing", "call_date"), AW_INBOUND_MASMIS: M("aw_inbound", "call_date"), AW_MANDATE_MASMIS: null,
-  AW_NEW_CDR_MASMIS: M("aw_new_cdr", "call_date"), AW_OUT_MASMIS: M("aw_out", "call_date"), AW_CHAT_MASMIS: null,
-  BB_APR_MASMIS: M("bb_apr", "report_date", "date"), BB_CART_MASMIS: M("bb_cart", "call_date"), BB_CHAT_MASMIS: M("new_bb_chat", "chat_date", "date"),
+  AW_BILLING_MASMIS: M("aw_billing", "call_date"),
+  AW_INBOUND_MASMIS: M("aw_inbound", "call_date"),
+  AW_MANDATE_MASMIS: null,
+  AW_NEW_CDR_MASMIS: M("aw_new_cdr", "call_date"),
+  AW_OUT_MASMIS: M("aw_out", "call_date"),
+  AW_CHAT_MASMIS: null,
+  BB_APR_MASMIS: M("bb_apr", "report_date", "date"),
+  BB_CART_MASMIS: M("bb_cart", "call_date"),
+  BB_CHAT_MASMIS: M("new_bb_chat", "chat_date", "date"),
   BB_SALE_MASMIS: M("bb_sale", "Date", "date"),
-  BIRLANU_APR_MASMIS: M("birlanu_apr", "report_date"), BIRLANU_SALE_MASMIS: M("birlanu_sale", "report_date"),
-  CL_APR_MASMIS: M("cl_apr", "report_date"), CL_CHAT_MASMIS: M("cl_chat", "report_date"), CL_DISPO_MASMIS: M("cl_dispo", "report_date", "text", "dmy"),
-  CL_EMAIL_RAW_MASMIS: M("cl_email_raw", "report_date"), CL_FEEDBACK_MASMIS: M("cl_feedback", "report_date"), CL_IB_CDR_MASMIS: M("cl_ib_cdr", "call_date"),
-  CL_OUTBOUND_MASMIS: M("cl_outbound", "call_date", "text", "mdy"), CL_QUALITY_MASMIS: M("cl_quality", "audit_date"), CL_RECHURN_CALL_MASMIS: M("cl_rechurn_call", "report_date"),
-  GNC_ALLOCATION_MASMIS: M("gnc_allocation", "alloc_date", "date"), GNC_APR: H("gnc_apr_daily_actual"), GNC_CHAT_MASMIS: M("gnc_chat", "report_date"),
+  BIRLANU_APR_MASMIS: M("birlanu_apr", "report_date"),
+  BIRLANU_SALE_MASMIS: M("birlanu_sale", "report_date"),
+  CL_APR_MASMIS: M("cl_apr", "report_date"),
+  CL_CHAT_MASMIS: M("cl_chat", "report_date"),
+  CL_DISPO_MASMIS: M("cl_dispo", "report_date", "text", "dmy"),
+  CL_EMAIL_RAW_MASMIS: M("cl_email_raw", "report_date"),
+  CL_FEEDBACK_MASMIS: M("cl_feedback", "report_date"),
+  CL_IB_CDR_MASMIS: M("cl_ib_cdr", "call_date"),
+  CL_OUTBOUND_MASMIS: M("cl_outbound", "call_date", "text", "mdy"),
+  CL_QUALITY_MASMIS: M("cl_quality", "audit_date"),
+  CL_RECHURN_CALL_MASMIS: M("cl_rechurn_call", "report_date"),
+  GNC_ALLOCATION_MASMIS: M("gnc_allocation", "alloc_date", "date"),
+  GNC_APR: H("gnc_apr_daily_actual"),
+  GNC_CHAT_MASMIS: M("gnc_chat", "report_date"),
   GNC_SALE_MASMIS: M("gnc_sale", "sale_date", "date"),
-  LP_FEEDBACK_APR_MASMIS: M("lp_feedback_apr", "report_date"), LP_FEEDBACK_CDR_MASMIS: M("lp_feedback_cdr", "report_date"),
-  LP_ONBOARDING_APR_MASMIS: M("lp_onboarding_apr", "report_date"), LP_ONBOARDING_CDR_MASMIS: M("lp_onboarding_cdr", "report_date"),
-  NEEMANS_AGENT_DETAILS_MASMIS: null, NEEMANS_ALLOCATION_MASMIS: M("neemans_allocation", "date"), NEEMANS_APR_MASMIS: M("neemans_apr", "date"),
-  NEEMANS_CHAT_MASMIS: M("neemans_chat", "report_date"), NEEMANS_MONTH_TARGET_MASMIS: null, NEEMANS_SALE_RAW_MASMIS: M("neemans_sale_raw", "date"),
-  OWNER_AGENT_DETAILS_MASMIS: null, OWNER_CDR_MASMIS: M("Owner_cdr", "report_date"), OWNER_SALE_MASMIS: M("owner_sale", "report_date"),
-  PRE_AGENT_DETAILS_MASMIS: null, PRE_CDR_MASMIS: M("Pre_cdr", "report_date", "text", "mdy"), PRE_SALE_MASMIS: M("pre_sale", "report_date"),
-  SATYA_ALLOCATION_MASMIS: M("satya_allocation", "report_date"), SATYA_CDR_MASMIS: M("satya_cdr", "report_date"),
-  DALMIA_DD_RAW: H("dalmia_dd_raw"), DALMIA_OUTBOUND_RAW: H("dalmia_outbound_raw"), DALMIA_AFTER_HOUR: H("dalmia_after_hour_raw"),
+  LP_FEEDBACK_APR_MASMIS: M("lp_feedback_apr", "report_date"),
+  LP_FEEDBACK_CDR_MASMIS: M("lp_feedback_cdr", "report_date"),
+  LP_ONBOARDING_APR_MASMIS: M("lp_onboarding_apr", "report_date"),
+  LP_ONBOARDING_CDR_MASMIS: M("lp_onboarding_cdr", "report_date"),
+  NEEMANS_AGENT_DETAILS_MASMIS: null,
+  NEEMANS_ALLOCATION_MASMIS: M("neemans_allocation", "date"),
+  NEEMANS_APR_MASMIS: M("neemans_apr", "date"),
+  NEEMANS_CHAT_MASMIS: M("neemans_chat", "report_date"),
+  NEEMANS_MONTH_TARGET_MASMIS: null,
+  NEEMANS_SALE_RAW_MASMIS: M("neemans_sale_raw", "date"),
+  OWNER_AGENT_DETAILS_MASMIS: null,
+  OWNER_CDR_MASMIS: M("Owner_cdr", "report_date"),
+  OWNER_SALE_MASMIS: M("owner_sale", "report_date"),
+  PRE_AGENT_DETAILS_MASMIS: null,
+  PRE_CDR_MASMIS: M("Pre_cdr", "report_date", "text", "mdy"),
+  PRE_SALE_MASMIS: M("pre_sale", "report_date"),
+  SATYA_ALLOCATION_MASMIS: M("satya_allocation", "report_date"),
+  SATYA_CDR_MASMIS: M("satya_cdr", "report_date"),
+  DALMIA_DD_RAW: H("dalmia_dd_raw"),
+  DALMIA_OUTBOUND_RAW: H("dalmia_outbound_raw"),
+  DALMIA_AFTER_HOUR: H("dalmia_after_hour_raw"),
   DALMIA_APR: M("dalmia_apr_raw", "report_date", "date"),
 };
 
@@ -53,7 +95,20 @@ export interface UploadCoverage {
 }
 
 const pad = (n: number): string => String(n).padStart(2, "0");
-const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const MONTHS: Record<string, number> = {
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
+};
 const validYmd = (y: number, m: number, d: number): string | null => {
   if (y < 2000 || m < 1 || m > 12 || d < 1 || d > 31) return null;
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -61,8 +116,13 @@ const validYmd = (y: number, m: number, d: number): string | null => {
 };
 
 /** Text dates as they were stored: "22-Aug-26", "2026-09-01", "15/09/2026", "9/15/26", Excel serials ("46215"). Time parts are ignored. */
-export function parseCoverageDate(raw: unknown, fmt: Fmt = "auto"): string | null {
-  const s = String(raw ?? "").trim().split(/[ T]/)[0];
+export function parseCoverageDate(
+  raw: unknown,
+  fmt: Fmt = "auto",
+): string | null {
+  const s = String(raw ?? "")
+    .trim()
+    .split(/[ T]/)[0];
   if (!s) return null;
   let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
   if (m) return validYmd(Number(m[1]), Number(m[2]), Number(m[3]));
@@ -74,14 +134,27 @@ export function parseCoverageDate(raw: unknown, fmt: Fmt = "auto"): string | nul
   }
   m = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
   if (m) {
-    const a = Number(m[1]); const b = Number(m[2]);
+    const a = Number(m[1]);
+    const b = Number(m[2]);
     const y = Number(m[3]) < 100 ? 2000 + Number(m[3]) : Number(m[3]);
-    let day: number; let month: number;
-    if (fmt === "mdy") { month = a; day = b; }
-    else if (fmt === "dmy") { day = a; month = b; }
-    else if (a > 12) { day = a; month = b; }
-    else if (b > 12) { month = a; day = b; }
-    else { day = a; month = b; } // ambiguous and no hint: day first, as the rest of the platform reads Indian dates
+    let day: number;
+    let month: number;
+    if (fmt === "mdy") {
+      month = a;
+      day = b;
+    } else if (fmt === "dmy") {
+      day = a;
+      month = b;
+    } else if (a > 12) {
+      day = a;
+      month = b;
+    } else if (b > 12) {
+      month = a;
+      day = b;
+    } else {
+      day = a;
+      month = b;
+    } // ambiguous and no hint: day first, as the rest of the platform reads Indian dates
     return validYmd(y, month, day);
   }
   m = /^(\d{5})(?:\.\d+)?$/.exec(s);
@@ -99,10 +172,16 @@ const todayPlus = (days: number): string => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-const quoteTable = (t: string): string => t.split(".").map((p) => `\`${p.replace(/`/g, "")}\``).join(".");
+const quoteTable = (t: string): string =>
+  t
+    .split(".")
+    .map((p) => `\`${p.replace(/`/g, "")}\``)
+    .join(".");
 const quoteCol = (c: string): string => `\`${c.replace(/`/g, "")}\``;
 
-async function dataCoverage(src: Source): Promise<Pick<UploadCoverage, "latestDate" | "firstDate" | "days"> | null> {
+async function dataCoverage(
+  src: Source,
+): Promise<Pick<UploadCoverage, "latestDate" | "firstDate" | "days"> | null> {
   const table = quoteTable(src.table);
   const col = quoteCol(src.col);
   const limit = todayPlus(2); // a typo'd future date must not read as "covered till 2030"
@@ -114,7 +193,13 @@ async function dataCoverage(src: Source): Promise<Pick<UploadCoverage, "latestDa
         [limit],
       );
       const r = rows[0];
-      return r?.l ? { latestDate: String(r.l), firstDate: String(r.f), days: Number(r.d ?? 0) } : { latestDate: null, firstDate: null, days: 0 };
+      return r?.l
+        ? {
+            latestDate: String(r.l),
+            firstDate: String(r.f),
+            days: Number(r.d ?? 0),
+          }
+        : { latestDate: null, firstDate: null, days: 0 };
     }
     // Text columns hold many spellings, so the distinct day strings are read (a few hundred at most) and parsed here.
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -127,22 +212,37 @@ async function dataCoverage(src: Source): Promise<Pick<UploadCoverage, "latestDa
     }
     if (dates.size === 0) return { latestDate: null, firstDate: null, days: 0 };
     const sorted = [...dates].sort();
-    return { latestDate: sorted[sorted.length - 1], firstDate: sorted[0], days: sorted.length };
+    return {
+      latestDate: sorted[sorted.length - 1],
+      firstDate: sorted[0],
+      days: sorted.length,
+    };
   } catch (err) {
     const code = String((err as { code?: unknown })?.code ?? "");
-    if (code === "ER_NO_SUCH_TABLE" || code === "ER_BAD_FIELD_ERROR") return null; // table / column not there (yet): fall back to upload history
+    if (code === "ER_NO_SUCH_TABLE" || code === "ER_BAD_FIELD_ERROR")
+      return null; // table / column not there (yet): fall back to upload history
     throw err;
   }
 }
 
 const TTL_MS = 10 * 60 * 1000;
-const cache = new Map<string, { at: number; value: Pick<UploadCoverage, "latestDate" | "firstDate" | "days"> | null }>();
+const cache = new Map<
+  string,
+  {
+    at: number;
+    value: Pick<UploadCoverage, "latestDate" | "firstDate" | "days"> | null;
+  }
+>();
 
 export function invalidateUploadCoverage(code?: string): void {
-  if (code) cache.delete(code); else cache.clear();
+  if (code) cache.delete(code);
+  else cache.clear();
 }
 
-export async function getUploadCoverage(codes: string[], refresh = false): Promise<Record<string, UploadCoverage>> {
+export async function getUploadCoverage(
+  codes: string[],
+  refresh = false,
+): Promise<Record<string, UploadCoverage>> {
   const known = [...new Set(codes)].filter((c) => c in COVERAGE_SOURCES);
   const out: Record<string, UploadCoverage> = {};
   if (known.length === 0) return out;
@@ -156,8 +256,14 @@ export async function getUploadCoverage(codes: string[], refresh = false): Promi
         GROUP BY upload_type_code`,
       known,
     );
-    for (const r of rows) history.set(String(r.c), { at: r.at ? new Date(r.at).toISOString() : null, n: Number(r.n ?? 0) });
-  } catch { /* history is optional */ }
+    for (const r of rows)
+      history.set(String(r.c), {
+        at: r.at ? new Date(r.at).toISOString() : null,
+        n: Number(r.n ?? 0),
+      });
+  } catch {
+    /* history is optional */
+  }
 
   const compute = async (code: string) => {
     const src = COVERAGE_SOURCES[code];
@@ -165,22 +271,35 @@ export async function getUploadCoverage(codes: string[], refresh = false): Promi
     const hit = cache.get(code);
     if (!refresh && hit && Date.now() - hit.at < TTL_MS) return hit.value;
     let value: Awaited<ReturnType<typeof dataCoverage>> = null;
-    try { value = await dataCoverage(src); } catch (err) { console.error(`[upload-coverage] ${code}:`, err instanceof Error ? err.message : String(err)); }
+    try {
+      value = await dataCoverage(src);
+    } catch (err) {
+      console.error(
+        `[upload-coverage] ${code}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
     if (value) cache.set(code, { at: Date.now(), value });
     return value;
   };
 
   // A few at a time -- each is one indexed/aggregate read, but a company can list a dozen types.
   const queue = [...known];
-  await Promise.all(Array.from({ length: Math.min(5, queue.length) }, async () => {
-    for (let code = queue.shift(); code; code = queue.shift()) {
-      const data = await compute(code);
-      const h = history.get(code);
-      out[code] = {
-        latestDate: data?.latestDate ?? null, firstDate: data?.firstDate ?? null, days: data?.days ?? 0,
-        lastUploadedAt: h?.at ?? null, uploads: h?.n ?? 0, basis: data ? "data" : "uploads-only",
-      };
-    }
-  }));
+  await Promise.all(
+    Array.from({ length: Math.min(5, queue.length) }, async () => {
+      for (let code = queue.shift(); code; code = queue.shift()) {
+        const data = await compute(code);
+        const h = history.get(code);
+        out[code] = {
+          latestDate: data?.latestDate ?? null,
+          firstDate: data?.firstDate ?? null,
+          days: data?.days ?? 0,
+          lastUploadedAt: h?.at ?? null,
+          uploads: h?.n ?? 0,
+          basis: data ? "data" : "uploads-only",
+        };
+      }
+    }),
+  );
   return out;
 }

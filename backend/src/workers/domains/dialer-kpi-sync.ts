@@ -1,5 +1,5 @@
-import { dialerQuery } from '../../db/dialerDb.js';
-import { db } from '../../db/mysql.js';
+import { dialerQuery } from "../../db/dialerDb.js";
+import { db } from "../../db/mysql.js";
 
 /**
  * Dialer KPI Sync Worker
@@ -18,14 +18,14 @@ export interface DialerKpiMetrics {
   outbound_calls: number;
 
   // Time metrics (seconds)
-  aht: number;           // Average Handle Time
-  acw: number;           // After Call Work
+  aht: number; // Average Handle Time
+  acw: number; // After Call Work
   talk_time: number;
   hold_time: number;
   wait_time: number;
 
   // Quality metrics
-  fcr_count: number;     // First Call Resolution
+  fcr_count: number; // First Call Resolution
   callbacks: number;
 }
 
@@ -41,9 +41,13 @@ export class DialerKpiSync {
   /**
    * Get call center metrics for employee on specific date
    */
-  async getEmployeeMetrics(employeeCode: string, date: string): Promise<DialerKpiMetrics | null> {
+  async getEmployeeMetrics(
+    employeeCode: string,
+    date: string,
+  ): Promise<DialerKpiMetrics | null> {
     // Get inbound call summary
-    const [inboundSummary] = await dialerQuery(`
+    const [inboundSummary] = await dialerQuery(
+      `
       SELECT
         COUNT(*) as inbound_calls,
         SUM(CAST(COALESCE(CallDurationSecond, 0) AS UNSIGNED)) as total_duration,
@@ -57,10 +61,13 @@ export class DialerKpiSync {
       WHERE AgentId = ?
         AND CallDate = DATE(?)
         AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
-    `, [employeeCode, date]);
+    `,
+      [employeeCode, date],
+    );
 
     // Get outbound call summary
-    const [outboundSummary] = await dialerQuery(`
+    const [outboundSummary] = await dialerQuery(
+      `
       SELECT
         COUNT(*) as outbound_calls,
         SUM(CAST(COALESCE(CallDuration, 0) AS UNSIGNED)) as total_duration,
@@ -71,20 +78,31 @@ export class DialerKpiSync {
       WHERE Agent = ?
         AND CallDate = DATE(?)
         AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
-    `, [employeeCode, date]);
+    `,
+      [employeeCode, date],
+    );
 
     const inbound = inboundSummary || {
-      inbound_calls: 0, total_duration: 0, total_talk: 0,
-      total_acw: 0, total_hold: 0, total_wait: 0,
-      fcr_count: 0, callbacks: 0
+      inbound_calls: 0,
+      total_duration: 0,
+      total_talk: 0,
+      total_acw: 0,
+      total_hold: 0,
+      total_wait: 0,
+      fcr_count: 0,
+      callbacks: 0,
     };
 
     const outbound = outboundSummary || {
-      outbound_calls: 0, total_duration: 0, total_talk: 0,
-      total_dispo: 0, total_wait: 0
+      outbound_calls: 0,
+      total_duration: 0,
+      total_talk: 0,
+      total_dispo: 0,
+      total_wait: 0,
     };
 
-    const totalCalls = Number(inbound.inbound_calls) + Number(outbound.outbound_calls);
+    const totalCalls =
+      Number(inbound.inbound_calls) + Number(outbound.outbound_calls);
 
     if (totalCalls === 0) {
       return null; // No activity
@@ -96,7 +114,10 @@ export class DialerKpiSync {
     const totalWait = Number(inbound.total_wait) + Number(outbound.total_wait);
 
     // Calculate AHT = (Talk Time + Hold Time + ACW) / Total Calls
-    const aht = totalCalls > 0 ? Math.round((totalTalk + totalHold + totalAcw) / totalCalls) : 0;
+    const aht =
+      totalCalls > 0
+        ? Math.round((totalTalk + totalHold + totalAcw) / totalCalls)
+        : 0;
 
     return {
       employee_code: employeeCode,
@@ -117,11 +138,14 @@ export class DialerKpiSync {
   /**
    * Get process-wise KPI metrics aggregation
    */
-  async getProcessMetrics(processId: string, date: string): Promise<DialerKpiMetrics[]> {
+  async getProcessMetrics(
+    processId: string,
+    date: string,
+  ): Promise<DialerKpiMetrics[]> {
     // Get all employees in this process
     const [employees] = await db.execute<any[]>(
       `SELECT employee_code FROM employees WHERE process_id = ? AND active_status = 1`,
-      [processId]
+      [processId],
     );
 
     if (!employees.length) {
@@ -149,7 +173,7 @@ export class DialerKpiSync {
     // Get employee ID from employee_code
     const [empRows] = await db.execute<any[]>(
       `SELECT id, process_id FROM employees WHERE employee_code = ? LIMIT 1`,
-      [employeeCode]
+      [employeeCode],
     );
 
     if (!empRows.length) {
@@ -161,17 +185,19 @@ export class DialerKpiSync {
     const metrics = await this.getEmployeeMetrics(employeeCode, date);
 
     if (!metrics) {
-      console.log(`[DialerKpiSync] No dialer data for ${employeeCode} on ${date}`);
+      console.log(
+        `[DialerKpiSync] No dialer data for ${employeeCode} on ${date}`,
+      );
       return 0;
     }
 
     // Map metrics to KPI codes
     const metricMapping: Record<string, number> = {
-      'AHT': metrics.aht,
-      'ACW': metrics.acw,
-      'TALK_TIME': metrics.talk_time,
-      'HOLD_TIME': metrics.hold_time,
-      'CALLS_HANDLED': metrics.total_calls,
+      AHT: metrics.aht,
+      ACW: metrics.acw,
+      TALK_TIME: metrics.talk_time,
+      HOLD_TIME: metrics.hold_time,
+      CALLS_HANDLED: metrics.total_calls,
     };
 
     let synced = 0;
@@ -181,7 +207,7 @@ export class DialerKpiSync {
       // Get metric_id from metric_code
       const [metricRows] = await db.execute<any[]>(
         `SELECT id FROM kpi_metric WHERE metric_code = ? LIMIT 1`,
-        [metricCode]
+        [metricCode],
       );
 
       if (!metricRows.length) {
@@ -198,20 +224,25 @@ export class DialerKpiSync {
            actual_value = VALUES(actual_value),
            source = 'dialer',
            updated_at = NOW()`,
-        [employee.id, metricId, date, actualValue]
+        [employee.id, metricId, date, actualValue],
       );
 
       synced++;
     }
 
-    console.log(`[DialerKpiSync] Synced ${synced} metrics for ${employeeCode} on ${date}`);
+    console.log(
+      `[DialerKpiSync] Synced ${synced} metrics for ${employeeCode} on ${date}`,
+    );
     return synced;
   }
 
   /**
    * Bulk sync for entire process
    */
-  async syncProcessKpis(processId: string, date: string): Promise<{ synced: number; skipped: number }> {
+  async syncProcessKpis(
+    processId: string,
+    date: string,
+  ): Promise<{ synced: number; skipped: number }> {
     const metrics = await this.getProcessMetrics(processId, date);
 
     let synced = 0;
@@ -226,7 +257,9 @@ export class DialerKpiSync {
       }
     }
 
-    console.log(`[DialerKpiSync] Process ${processId} on ${date}: ${synced} synced, ${skipped} skipped`);
+    console.log(
+      `[DialerKpiSync] Process ${processId} on ${date}: ${synced} synced, ${skipped} skipped`,
+    );
     return { synced, skipped };
   }
 
@@ -247,7 +280,7 @@ export class DialerKpiSync {
        WHERE pc.process_id = ?
          AND km.metric_code IN ('AHT', 'ACW', 'TALK_TIME', 'HOLD_TIME', 'CALLS_HANDLED')
        ORDER BY km.metric_code`,
-      [processId]
+      [processId],
     );
 
     return configs.map((row: any) => ({
@@ -267,11 +300,13 @@ export class DialerKpiSync {
 
     // Calculate scores based on targets
     const configs = await this.getProcessKpiConfig(processId);
-    const targetMap = new Map(configs.map(c => [c.metric_code, c.target_value]));
+    const targetMap = new Map(
+      configs.map((c) => [c.metric_code, c.target_value]),
+    );
 
-    const scored = metrics.map(m => {
-      const ahtTarget = targetMap.get('AHT') || 300; // Default 5 min
-      const acwTarget = targetMap.get('ACW') || 60;  // Default 1 min
+    const scored = metrics.map((m) => {
+      const ahtTarget = targetMap.get("AHT") || 300; // Default 5 min
+      const acwTarget = targetMap.get("ACW") || 60; // Default 1 min
 
       // Lower is better for time metrics
       const ahtScore = m.aht > 0 ? Math.min(100, (ahtTarget / m.aht) * 100) : 0;

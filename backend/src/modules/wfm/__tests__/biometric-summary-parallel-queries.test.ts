@@ -27,15 +27,20 @@ describe("adherence-summary runs its six aggregates concurrently, not sequential
 
   /** The body of the /adherence-summary handler specifically. */
   const handler = (() => {
-    const start = source.indexOf('biometricSummaryRouter.get("/adherence-summary"');
+    const start = source.indexOf(
+      'biometricSummaryRouter.get("/adherence-summary"',
+    );
     expect(start, "/adherence-summary handler not found").toBeGreaterThan(-1);
-    const next = source.indexOf('biometricSummaryRouter.get(', start + 10);
+    const next = source.indexOf("biometricSummaryRouter.get(", start + 10);
     return source.slice(start, next === -1 ? source.length : next);
   })();
 
   it("collects the six aggregates into a single Promise.all", () => {
     const promiseAllAt = handler.indexOf("await Promise.all([");
-    expect(promiseAllAt, "Promise.all([...]) not found in the handler").toBeGreaterThan(-1);
+    expect(
+      promiseAllAt,
+      "Promise.all([...]) not found in the handler",
+    ).toBeGreaterThan(-1);
   });
 
   it("destructures all six result variables from that one Promise.all call", () => {
@@ -49,8 +54,12 @@ describe("adherence-summary runs its six aggregates concurrently, not sequential
     // trip) is exactly the shape that regressed to sequential before. Inside the
     // Promise.all array, none of the six start with `await` — each is a bare promise
     // chain (`db.execute(...).then(...)`) that Promise.all itself awaits collectively.
-    const sequentialAwaits = handler.match(/const \[\w+Rows?\] = await db\.execute/g) ?? [];
-    expect(sequentialAwaits, `found sequential awaits: ${sequentialAwaits.join(", ")}`).toHaveLength(0);
+    const sequentialAwaits =
+      handler.match(/const \[\w+Rows?\] = await db\.execute/g) ?? [];
+    expect(
+      sequentialAwaits,
+      `found sequential awaits: ${sequentialAwaits.join(", ")}`,
+    ).toHaveLength(0);
   });
 
   it("preserves every existing .catch() fallback — same failure semantics, different ordering", () => {
@@ -58,6 +67,8 @@ describe("adherence-summary runs its six aggregates concurrently, not sequential
     // fallback was dropped, not just reordered.
     expect(handler).toContain("live on-leave/remote counts failed");
     expect(handler).toContain("on_leave: null, working_remotely: null");
-    expect(handler).toContain("fully_covered: null, partially_covered: null, understaffed: null");
+    expect(handler).toContain(
+      "fully_covered: null, partially_covered: null, understaffed: null",
+    );
   });
 });

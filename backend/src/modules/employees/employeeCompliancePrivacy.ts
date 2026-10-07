@@ -56,7 +56,9 @@ function sanitizeRecord(value: unknown): unknown {
 
 export function hashIdentifier(value: unknown) {
   const normalized = normalizeString(value).toUpperCase();
-  return normalized ? createHash("sha256").update(normalized).digest("hex") : null;
+  return normalized
+    ? createHash("sha256").update(normalized).digest("hex")
+    : null;
 }
 
 export function maskAadhaar(value: unknown) {
@@ -81,10 +83,12 @@ export function maskUan(value: unknown) {
 
 export function sanitizeEpfAuditRecord(value: Record<string, unknown>) {
   const sanitized = sanitizeRecord(value) as Record<string, unknown>;
-  const aadhaarValue = sanitized.aadhaar_number ?? sanitized.aadhaar_masked ?? null;
+  const aadhaarValue =
+    sanitized.aadhaar_number ?? sanitized.aadhaar_masked ?? null;
   const panValue = sanitized.pan_number ?? sanitized.pan_masked ?? null;
   const uanValue = sanitized.uan_number ?? sanitized.uan_masked ?? null;
-  const publicTokenValue = sanitized.publicToken ?? sanitized.public_token ?? null;
+  const publicTokenValue =
+    sanitized.publicToken ?? sanitized.public_token ?? null;
   const consentTokenValue = sanitized.consent_token ?? null;
 
   return {
@@ -150,6 +154,9 @@ export function classifyLuckpayWebhookAuth(
   return { ok: true, reason: "accepted" };
 }
 
-export function verifyLuckpayWebhookSecret(providedSecret: string | null | undefined, configuredSecret: string | null | undefined) {
+export function verifyLuckpayWebhookSecret(
+  providedSecret: string | null | undefined,
+  configuredSecret: string | null | undefined,
+) {
   return classifyLuckpayWebhookAuth(providedSecret, configuredSecret).ok;
 }

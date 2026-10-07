@@ -12,7 +12,10 @@ import type { Response } from "express";
 import { randomUUID } from "crypto";
 import * as XLSX from "xlsx";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { computeRunningSalary } from "./running-salary.service.js";
@@ -21,7 +24,8 @@ import { createWorkItemIfNotExists } from "../work-inbox/work-inbox.service.js";
 export const salaryVerificationRouter = Router();
 
 function resolveMonth(raw: unknown): string {
-  if (typeof raw === "string" && /^\d{4}-\d{2}$/.test(raw.trim())) return raw.trim();
+  if (typeof raw === "string" && /^\d{4}-\d{2}$/.test(raw.trim()))
+    return raw.trim();
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
@@ -29,10 +33,12 @@ function resolveMonth(raw: unknown): string {
 // ---------------------------------------------------------------------------
 // Helper: find the salary_prep_run for a given month
 // ---------------------------------------------------------------------------
-async function getRunForMonth(month: string): Promise<{ id: string; status: string } | null> {
+async function getRunForMonth(
+  month: string,
+): Promise<{ id: string; status: string } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, status FROM salary_prep_run WHERE run_month = ? ORDER BY created_at DESC LIMIT 1`,
-    [month]
+    [month],
   );
   return (rows as any[])[0] ?? null;
 }
@@ -43,11 +49,11 @@ async function getRunForMonth(month: string): Promise<{ id: string; status: stri
 // uses to decide "org-wide vs scoped to my own record".
 // ---------------------------------------------------------------------------
 async function resolveActorOwnScope(
-  userId: string
+  userId: string,
 ): Promise<{ branchId: string | null; processId: string | null } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, process_id FROM employees WHERE user_id = ? LIMIT 1`,
-    [userId]
+    [userId],
   );
   const row = (rows as any[])[0];
   if (!row) return null;
@@ -63,14 +69,25 @@ salaryVerificationRouter.get(
   // admin/payroll_branch added 2026-08-25: the frontend page (ProcessSalaryVerify.tsx)
   // grants both roles but this list excluded them, so an admin/payroll_branch user could
   // open the page and every query would 403 — rendering identically to "nothing pending."
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"),
+  requireRole(
+    "wfm",
+    "process_manager",
+    "branch_head",
+    "payroll_head",
+    "super_admin",
+    "payroll",
+    "admin",
+    "payroll_branch",
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
       const userId = req.authUser!.id;
       const roleKeys: string[] = (req.authUser as any)?.roleKeys ?? [];
 
-      const isAdmin = roleKeys.some((r) => ["super_admin", "payroll_head", "payroll"].includes(r));
+      const isAdmin = roleKeys.some((r) =>
+        ["super_admin", "payroll_head", "payroll"].includes(r),
+      );
 
       let rows: RowDataPacket[];
       if (isAdmin) {
@@ -81,7 +98,7 @@ salaryVerificationRouter.get(
              JOIN branch_master b ON b.id = pm.branch_id
             -- process_master has active_status, not is_active.
             WHERE pm.active_status = 1
-            ORDER BY b.branch_name, pm.process_name`
+            ORDER BY b.branch_name, pm.process_name`,
         );
       } else {
         [rows] = await db.execute<RowDataPacket[]>(
@@ -101,7 +118,7 @@ salaryVerificationRouter.get(
             -- user column on process_master.
             WHERE e.user_id = ?
             ORDER BY b.branch_name, pm.process_name`,
-          [userId]
+          [userId],
         );
       }
 
@@ -109,9 +126,11 @@ salaryVerificationRouter.get(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] GET /processes error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to fetch processes" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to fetch processes" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -123,7 +142,16 @@ salaryVerificationRouter.get(
   // admin/payroll_branch added 2026-08-25: the frontend page (ProcessSalaryVerify.tsx)
   // grants both roles but this list excluded them, so an admin/payroll_branch user could
   // open the page and every query would 403 — rendering identically to "nothing pending."
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"),
+  requireRole(
+    "wfm",
+    "process_manager",
+    "branch_head",
+    "payroll_head",
+    "super_admin",
+    "payroll",
+    "admin",
+    "payroll_branch",
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
@@ -139,16 +167,25 @@ salaryVerificationRouter.get(
 
       const whereClauses: string[] = ["e.active_status = 1"];
       const whereParams: unknown[] = [];
-      if (processId) { whereClauses.push("e.process_id = ?"); whereParams.push(processId); }
-      if (branchId)  { whereClauses.push("e.branch_id = ?");  whereParams.push(branchId); }
-      if (search)    { whereClauses.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)"); whereParams.push(`%${search}%`, `%${search}%`); }
+      if (processId) {
+        whereClauses.push("e.process_id = ?");
+        whereParams.push(processId);
+      }
+      if (branchId) {
+        whereClauses.push("e.branch_id = ?");
+        whereParams.push(branchId);
+      }
+      if (search) {
+        whereClauses.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)");
+        whereParams.push(`%${search}%`, `%${search}%`);
+      }
 
       const whereStr = whereClauses.join(" AND ");
 
-      const [[{ total }]] = await db.execute<RowDataPacket[]>(
+      const [[{ total }]] = (await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total FROM employees e WHERE ${whereStr}`,
-        whereParams
-      ) as any;
+        whereParams,
+      )) as any;
 
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT e.id AS employee_id, e.employee_code, e.full_name,
@@ -162,7 +199,7 @@ salaryVerificationRouter.get(
           WHERE ${whereStr}
           ORDER BY e.full_name
           ${sqlLimitOffset(limit, offset)}`,
-        whereParams
+        whereParams,
       );
 
       const employees = empRows as Array<{
@@ -200,7 +237,7 @@ salaryVerificationRouter.get(
                  FROM salary_prep_line spl
                 WHERE spl.run_id = ? AND spl.employee_id = ?
                 LIMIT 1`,
-              [run.id, emp.employee_id]
+              [run.id, emp.employee_id],
             );
             const line = (lineRows as any[])[0];
 
@@ -211,9 +248,11 @@ salaryVerificationRouter.get(
                    FROM salary_prep_line_component slc
                   WHERE slc.run_id = ? AND slc.employee_id = ?
                     AND slc.source IN ('incentive_upload', 'incentive')`,
-                [run.id, emp.employee_id]
+                [run.id, emp.employee_id],
               );
-              incentiveTotal = Number((compRows as any[])[0]?.incentive_total ?? 0);
+              incentiveTotal = Number(
+                (compRows as any[])[0]?.incentive_total ?? 0,
+              );
             }
 
             salaryData = line
@@ -231,13 +270,24 @@ salaryVerificationRouter.get(
                   is_estimate: false,
                 }
               : {
-                  working_days: 0, present_days: 0, leave_days: 0, lwp_days: 0,
-                  late_marks: 0, ot_hours: 0, gross_salary: 0, incentive_total: 0,
-                  total_deductions: 0, net_salary: 0, is_estimate: false,
+                  working_days: 0,
+                  present_days: 0,
+                  leave_days: 0,
+                  lwp_days: 0,
+                  late_marks: 0,
+                  ot_hours: 0,
+                  gross_salary: 0,
+                  incentive_total: 0,
+                  total_deductions: 0,
+                  net_salary: 0,
+                  is_estimate: false,
                 };
           } else {
             try {
-              const est = await computeRunningSalary(emp.employee_id, `${month}-01`);
+              const est = await computeRunningSalary(
+                emp.employee_id,
+                `${month}-01`,
+              );
               salaryData = {
                 working_days: 0,
                 present_days: est.earned_payable_days,
@@ -250,39 +300,48 @@ salaryVerificationRouter.get(
                 // est.professional_tax is always 0 — PT removed 2026-09-11 per user
                 // decision (see running-salary.service.ts). Kept in the sum for shape
                 // stability; it contributes nothing.
-                total_deductions: est.pf_employee + est.esic_employee + est.professional_tax,
+                total_deductions:
+                  est.pf_employee + est.esic_employee + est.professional_tax,
                 net_salary: est.earned_net_till_date,
                 is_estimate: true,
               };
             } catch {
               salaryData = {
-                working_days: 0, present_days: 0, leave_days: 0, lwp_days: 0,
-                late_marks: 0, ot_hours: 0, gross_salary: 0, incentive_total: 0,
-                total_deductions: 0, net_salary: 0, is_estimate: true,
+                working_days: 0,
+                present_days: 0,
+                leave_days: 0,
+                lwp_days: 0,
+                late_marks: 0,
+                ot_hours: 0,
+                gross_salary: 0,
+                incentive_total: 0,
+                total_deductions: 0,
+                net_salary: 0,
+                is_estimate: true,
               };
             }
           }
 
-          const [[verRow]] = await db.execute<RowDataPacket[]>(
+          const [[verRow]] = (await db.execute<RowDataPacket[]>(
             `SELECT id FROM salary_employee_verification
               WHERE employee_id = ? AND run_month = ? AND COALESCE(process_id, '') = COALESCE(?, '')
               LIMIT 1`,
-            [emp.employee_id, month, processId ?? null]
-          ) as any;
+            [emp.employee_id, month, processId ?? null],
+          )) as any;
 
           const [flagRows] = await db.execute<RowDataPacket[]>(
             `SELECT status, category FROM salary_verification_flag
               WHERE employee_id = ? AND run_month = ? AND status = 'open'
               ORDER BY raised_at DESC LIMIT 1`,
-            [emp.employee_id, month]
+            [emp.employee_id, month],
           );
           const openFlag = (flagRows as any[])[0];
 
           const verificationStatus = openFlag
             ? "flagged"
             : verRow
-            ? "verified"
-            : "pending";
+              ? "verified"
+              : "pending";
 
           return {
             ...emp,
@@ -291,12 +350,13 @@ salaryVerificationRouter.get(
             flag_count: openFlag ? 1 : 0,
             flag_category: openFlag?.category ?? null,
           };
-        })
+        }),
       );
 
-      const filtered = statusFilter === "all"
-        ? rows
-        : rows.filter((r) => r.verification_status === statusFilter);
+      const filtered =
+        statusFilter === "all"
+          ? rows
+          : rows.filter((r) => r.verification_status === statusFilter);
 
       return res.json({
         success: true,
@@ -311,9 +371,14 @@ salaryVerificationRouter.get(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] GET /employees error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to fetch employee salary data" });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message: "Failed to fetch employee salary data",
+        });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -325,7 +390,16 @@ salaryVerificationRouter.get(
   // admin/payroll_branch added 2026-08-25: the frontend page (ProcessSalaryVerify.tsx)
   // grants both roles but this list excluded them, so an admin/payroll_branch user could
   // open the page and every query would 403 — rendering identically to "nothing pending."
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"),
+  requireRole(
+    "wfm",
+    "process_manager",
+    "branch_head",
+    "payroll_head",
+    "super_admin",
+    "payroll",
+    "admin",
+    "payroll_branch",
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { employeeId } = req.params;
@@ -341,19 +415,28 @@ salaryVerificationRouter.get(
            LEFT JOIN branch_master b ON b.id = e.branch_id
            LEFT JOIN process_master pm ON pm.id = e.process_id
           WHERE e.id = ? LIMIT 1`,
-        [employeeId]
+        [employeeId],
       );
       const emp = (empRows as any[])[0];
-      if (!emp) return res.status(404).json({ success: false, message: "Employee not found" });
+      if (!emp)
+        return res
+          .status(404)
+          .json({ success: false, message: "Employee not found" });
 
-      const run = runIdParam
-        ? { id: runIdParam }
-        : await getRunForMonth(month);
+      const run = runIdParam ? { id: runIdParam } : await getRunForMonth(month);
 
       let attendance: Record<string, number> = {};
-      let earnings: Array<{ code: string; name: string; amount: number; source: string; type: string }> = [];
-      let deductions: Array<{ code: string; name: string; amount: number }> = [];
-      let employerCosts: Array<{ code: string; name: string; amount: number }> = [];
+      let earnings: Array<{
+        code: string;
+        name: string;
+        amount: number;
+        source: string;
+        type: string;
+      }> = [];
+      let deductions: Array<{ code: string; name: string; amount: number }> =
+        [];
+      let employerCosts: Array<{ code: string; name: string; amount: number }> =
+        [];
       let gross = 0;
       let totalDeductions = 0;
       let net = 0;
@@ -363,7 +446,7 @@ salaryVerificationRouter.get(
         const [lineRows] = await db.execute<RowDataPacket[]>(
           `SELECT spl.* FROM salary_prep_line spl
             WHERE spl.run_id = ? AND spl.employee_id = ? LIMIT 1`,
-          [run.id, employeeId]
+          [run.id, employeeId],
         );
         const line = (lineRows as any[])[0];
 
@@ -388,9 +471,15 @@ salaryVerificationRouter.get(
                FROM salary_prep_line_component slc
               WHERE slc.run_id = ? AND slc.employee_id = ?
               ORDER BY slc.component_type DESC, slc.amount DESC`,
-            [run.id, employeeId]
+            [run.id, employeeId],
           );
-          const comps = compRows as Array<{ code: string; name: string; amount: number; source: string; type: string }>;
+          const comps = compRows as Array<{
+            code: string;
+            name: string;
+            amount: number;
+            source: string;
+            type: string;
+          }>;
 
           earnings = comps
             .filter((c) => c.type === "earning")
@@ -398,7 +487,11 @@ salaryVerificationRouter.get(
 
           deductions = comps
             .filter((c) => c.type === "deduction")
-            .map((c) => ({ code: c.code, name: c.name, amount: Number(c.amount) }));
+            .map((c) => ({
+              code: c.code,
+              name: c.name,
+              amount: Number(c.amount),
+            }));
 
           // component_type is enum('earning','deduction','employer_cost'). The
           // third member was read from the DB and then silently dropped here —
@@ -408,26 +501,56 @@ salaryVerificationRouter.get(
           // already do for the same underlying rows.
           employerCosts = comps
             .filter((c) => c.type === "employer_cost")
-            .map((c) => ({ code: c.code, name: c.name, amount: Number(c.amount) }));
+            .map((c) => ({
+              code: c.code,
+              name: c.name,
+              amount: Number(c.amount),
+            }));
 
           const statDeductions = [
-            { code: "LWP",    name: `LWP Deduction (${line.lwp_days} days)`, amount: Number(line.lwp_deduction ?? 0) },
-            { code: "PF_EMP", name: "PF — Employee (12%)",                    amount: Number(line.pf_employee ?? 0) },
-            { code: "ESIC",   name: "ESIC (0.75%)",                           amount: Number(line.esic_employee ?? 0) },
+            {
+              code: "LWP",
+              name: `LWP Deduction (${line.lwp_days} days)`,
+              amount: Number(line.lwp_deduction ?? 0),
+            },
+            {
+              code: "PF_EMP",
+              name: "PF — Employee (12%)",
+              amount: Number(line.pf_employee ?? 0),
+            },
+            {
+              code: "ESIC",
+              name: "ESIC (0.75%)",
+              amount: Number(line.esic_employee ?? 0),
+            },
             // PT removed 2026-09-11 per user decision — line.professional_tax is always 0
             // for runs calculated after the removal, so this entry drops out via the
             // amount > 0 filter below on its own; kept here for older/historical runs
             // that still carry a real stored value.
-            { code: "PT",     name: "Professional Tax",                        amount: Number(line.professional_tax ?? 0) },
-            { code: "TDS",    name: "TDS",                                     amount: Number(line.tds ?? 0) },
-            { code: "LOAN",   name: "Loan EMI",                                amount: Number(line.loan_emi ?? 0) },
-          ].filter((d) => d.amount > 0 && !deductions.some((x) => x.code === d.code));
+            {
+              code: "PT",
+              name: "Professional Tax",
+              amount: Number(line.professional_tax ?? 0),
+            },
+            { code: "TDS", name: "TDS", amount: Number(line.tds ?? 0) },
+            {
+              code: "LOAN",
+              name: "Loan EMI",
+              amount: Number(line.loan_emi ?? 0),
+            },
+          ].filter(
+            (d) => d.amount > 0 && !deductions.some((x) => x.code === d.code),
+          );
 
-          deductions = [...deductions, ...statDeductions].filter((d) => d.amount > 0);
+          deductions = [...deductions, ...statDeductions].filter(
+            (d) => d.amount > 0,
+          );
         }
       } else {
         isEstimate = true;
-        const est = await computeRunningSalary(employeeId, `${month}-01`).catch(() => null);
+        const est = await computeRunningSalary(employeeId, `${month}-01`).catch(
+          () => null,
+        );
         if (est) {
           attendance = {
             working_days: 0,
@@ -441,9 +564,17 @@ salaryVerificationRouter.get(
           };
           gross = est.earned_salary_till_date;
           deductions = [
-            { code: "PF_EMP", name: "PF — Employee (12%)", amount: est.pf_employee },
-            { code: "ESIC",   name: "ESIC (0.75%)",         amount: est.esic_employee },
-            { code: "PT",     name: "Professional Tax",      amount: est.professional_tax },
+            {
+              code: "PF_EMP",
+              name: "PF — Employee (12%)",
+              amount: est.pf_employee,
+            },
+            { code: "ESIC", name: "ESIC (0.75%)", amount: est.esic_employee },
+            {
+              code: "PT",
+              name: "Professional Tax",
+              amount: est.professional_tax,
+            },
           ].filter((d) => d.amount > 0);
           totalDeductions = deductions.reduce((s, d) => s + d.amount, 0);
           net = est.earned_net_till_date;
@@ -455,14 +586,14 @@ salaryVerificationRouter.get(
            FROM salary_verification_flag
           WHERE employee_id = ? AND run_month = ?
           ORDER BY raised_at DESC`,
-        [employeeId, month]
+        [employeeId, month],
       );
 
-      const [[verRow]] = await db.execute<RowDataPacket[]>(
+      const [[verRow]] = (await db.execute<RowDataPacket[]>(
         `SELECT id FROM salary_employee_verification
           WHERE employee_id = ? AND run_month = ? LIMIT 1`,
-        [employeeId, month]
-      ) as any;
+        [employeeId, month],
+      )) as any;
 
       return res.json({
         success: true,
@@ -483,18 +614,22 @@ salaryVerificationRouter.get(
         net_salary: net,
         is_estimate: isEstimate,
         flags: flagRows,
-        verification_status: (flagRows as any[]).some((f) => f.status === "open")
+        verification_status: (flagRows as any[]).some(
+          (f) => f.status === "open",
+        )
           ? "flagged"
           : verRow
-          ? "verified"
-          : "pending",
+            ? "verified"
+            : "pending",
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] GET /employee/:id error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to fetch employee detail" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to fetch employee detail" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -506,7 +641,16 @@ salaryVerificationRouter.get(
   // admin/payroll_branch added 2026-08-25: the frontend page (ProcessSalaryVerify.tsx)
   // grants both roles but this list excluded them, so an admin/payroll_branch user could
   // open the page and every query would 403 — rendering identically to "nothing pending."
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"),
+  requireRole(
+    "wfm",
+    "process_manager",
+    "branch_head",
+    "payroll_head",
+    "super_admin",
+    "payroll",
+    "admin",
+    "payroll_branch",
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
@@ -515,37 +659,37 @@ salaryVerificationRouter.get(
       const empWhere = processId ? "e.process_id = ?" : "1=1";
       const empParams = processId ? [processId] : [];
 
-      const [[{ total }]] = await db.execute<RowDataPacket[]>(
+      const [[{ total }]] = (await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total FROM employees e WHERE ${empWhere} AND e.active_status = 1`,
-        empParams
-      ) as any;
+        empParams,
+      )) as any;
 
-      const [[{ verified }]] = await db.execute<RowDataPacket[]>(
+      const [[{ verified }]] = (await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS verified
            FROM salary_employee_verification sev
            JOIN employees e ON e.id = sev.employee_id
           WHERE sev.run_month = ?
             AND ${processId ? "sev.process_id = ?" : "1=1"}`,
-        processId ? [month, processId] : [month]
-      ) as any;
+        processId ? [month, processId] : [month],
+      )) as any;
 
-      const [[{ open_flags }]] = await db.execute<RowDataPacket[]>(
+      const [[{ open_flags }]] = (await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS open_flags
            FROM salary_verification_flag svf
           WHERE svf.run_month = ?
             AND svf.status = 'open'
             AND ${processId ? "svf.process_id = ?" : "1=1"}`,
-        processId ? [month, processId] : [month]
-      ) as any;
+        processId ? [month, processId] : [month],
+      )) as any;
 
-      const [[{ flagged }]] = await db.execute<RowDataPacket[]>(
+      const [[{ flagged }]] = (await db.execute<RowDataPacket[]>(
         `SELECT COUNT(DISTINCT svf.employee_id) AS flagged
            FROM salary_verification_flag svf
           WHERE svf.run_month = ?
             AND svf.status = 'open'
             AND ${processId ? "svf.process_id = ?" : "1=1"}`,
-        processId ? [month, processId] : [month]
-      ) as any;
+        processId ? [month, processId] : [month],
+      )) as any;
 
       const totalN = Number(total);
       const verifiedN = Number(verified);
@@ -565,9 +709,11 @@ salaryVerificationRouter.get(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] GET /summary error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to fetch summary" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to fetch summary" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -581,8 +727,15 @@ salaryVerificationRouter.post(
     try {
       const userId = req.authUser!.id;
       const {
-        runMonth, runId, employeeId, employeeCode, processId, branchId,
-        category, description, expectedValue,
+        runMonth,
+        runId,
+        employeeId,
+        employeeCode,
+        processId,
+        branchId,
+        category,
+        description,
+        expectedValue,
       } = req.body as {
         runMonth: string;
         runId?: string;
@@ -590,13 +743,20 @@ salaryVerificationRouter.post(
         employeeCode?: string;
         processId?: string;
         branchId?: string;
-        category: "attendance" | "incentive" | "deduction" | "net_pay" | "other";
+        category:
+          "attendance" | "incentive" | "deduction" | "net_pay" | "other";
         description: string;
         expectedValue?: number;
       };
 
       if (!runMonth || !employeeId || !category || !description?.trim()) {
-        return res.status(400).json({ success: false, message: "runMonth, employeeId, category, and description are required" });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "runMonth, employeeId, category, and description are required",
+          });
       }
 
       const id = randomUUID();
@@ -605,9 +765,19 @@ salaryVerificationRouter.post(
            (id, run_id, run_month, employee_id, employee_code, process_id, branch_id,
             category, description, expected_value, raised_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, runId ?? null, runMonth, employeeId, employeeCode ?? null,
-         processId ?? null, branchId ?? null, category, description.trim(),
-         expectedValue ?? null, userId]
+        [
+          id,
+          runId ?? null,
+          runMonth,
+          employeeId,
+          employeeCode ?? null,
+          processId ?? null,
+          branchId ?? null,
+          category,
+          description.trim(),
+          expectedValue ?? null,
+          userId,
+        ],
       );
 
       await createWorkItemIfNotExists({
@@ -625,13 +795,19 @@ salaryVerificationRouter.post(
         dueAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
       });
 
-      return res.json({ success: true, flag_id: id, message: "Flag raised and Payroll Head notified" });
+      return res.json({
+        success: true,
+        flag_id: id,
+        message: "Flag raised and Payroll Head notified",
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] POST /flags error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to raise flag" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to raise flag" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -651,13 +827,18 @@ salaryVerificationRouter.patch(
       };
 
       if (!["resolved", "rejected", "acknowledged"].includes(status)) {
-        return res.status(400).json({ success: false, message: "status must be resolved, rejected, or acknowledged" });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "status must be resolved, rejected, or acknowledged",
+          });
       }
 
       // Read the flag's run_month, process_id, branch_id before updating (needed for readiness check).
       const [flagRows] = await db.execute<RowDataPacket[]>(
         "SELECT run_month, process_id, branch_id FROM salary_verification_flag WHERE id = ? LIMIT 1",
-        [flagId]
+        [flagId],
       );
       const flagMeta = (flagRows as any[])[0];
 
@@ -665,13 +846,16 @@ salaryVerificationRouter.patch(
         `UPDATE salary_verification_flag
             SET status = ?, resolved_by = ?, resolved_at = NOW(), resolution_note = ?
           WHERE id = ?`,
-        [status, userId, resolutionNote ?? null, flagId]
+        [status, userId, resolutionNote ?? null, flagId],
       );
 
       // When the last open flag for a process is resolved, auto-complete the readiness row.
       if (flagMeta) {
         await markReadinessDoneIfComplete(
-          flagMeta.run_month, flagMeta.branch_id, flagMeta.process_id, userId
+          flagMeta.run_month,
+          flagMeta.branch_id,
+          flagMeta.process_id,
+          userId,
         );
       }
 
@@ -679,9 +863,11 @@ salaryVerificationRouter.patch(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] PATCH /flags/:id error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to update flag" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to update flag" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -702,20 +888,32 @@ salaryVerificationRouter.post(
       };
 
       if (!runMonth || !employeeId) {
-        return res.status(400).json({ success: false, message: "runMonth and employeeId required" });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "runMonth and employeeId required",
+          });
       }
 
       await db.execute(
         `INSERT INTO salary_employee_verification (id, run_month, run_id, employee_id, process_id, verified_by)
          VALUES (?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE verified_by = VALUES(verified_by), verified_at = NOW()`,
-        [randomUUID(), runMonth, runId ?? null, employeeId, processId ?? null, userId]
+        [
+          randomUUID(),
+          runMonth,
+          runId ?? null,
+          employeeId,
+          processId ?? null,
+          userId,
+        ],
       );
 
       // Resolve branch_id from the employee record so the readiness check can run.
       const [empRows] = await db.execute<RowDataPacket[]>(
         "SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1",
-        [employeeId]
+        [employeeId],
       );
       const emp = (empRows as any[])[0];
       if (emp) {
@@ -723,17 +921,22 @@ salaryVerificationRouter.post(
           runMonth,
           String(emp.branch_id),
           processId ?? String(emp.process_id ?? ""),
-          userId
+          userId,
         );
       }
 
-      return res.json({ success: true, message: "Employee marked as verified" });
+      return res.json({
+        success: true,
+        message: "Employee marked as verified",
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] POST /verify-employee error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to verify employee" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to verify employee" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -747,7 +950,7 @@ async function markReadinessDoneIfComplete(
   runMonth: string,
   branchId: string | undefined | null,
   processId: string | undefined | null,
-  userId: string
+  userId: string,
 ): Promise<void> {
   if (!branchId) return;
   try {
@@ -755,24 +958,24 @@ async function markReadinessDoneIfComplete(
     const baseParams: unknown[] = [branchId];
     if (processId) baseParams.push(processId);
 
-    const [[totRow]] = await db.execute<RowDataPacket[]>(
+    const [[totRow]] = (await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM employees e WHERE e.active_status = 1 AND e.branch_id = ? ${processClause}`,
-      baseParams
-    ) as any;
-    const [[verRow]] = await db.execute<RowDataPacket[]>(
+      baseParams,
+    )) as any;
+    const [[verRow]] = (await db.execute<RowDataPacket[]>(
       `SELECT COUNT(DISTINCT sev.employee_id) AS cnt
          FROM salary_employee_verification sev
          JOIN employees e ON e.id = sev.employee_id
         WHERE sev.run_month = ? AND e.branch_id = ? ${processClause}`,
-      [runMonth, ...baseParams]
-    ) as any;
-    const [[flagRow]] = await db.execute<RowDataPacket[]>(
+      [runMonth, ...baseParams],
+    )) as any;
+    const [[flagRow]] = (await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt
          FROM salary_verification_flag svf
          JOIN employees e ON e.id = svf.employee_id
         WHERE svf.run_month = ? AND svf.status = 'open' AND e.branch_id = ? ${processClause}`,
-      [runMonth, ...baseParams]
-    ) as any;
+      [runMonth, ...baseParams],
+    )) as any;
 
     const total = Number(totRow.cnt ?? 0);
     const verified = Number(verRow.cnt ?? 0);
@@ -787,7 +990,7 @@ async function markReadinessDoneIfComplete(
           WHERE process_month = ?
             AND branch_id = ?
             AND COALESCE(process_id, '') = COALESCE(?, '')`,
-        [userId, runMonth, branchId, processId ?? null]
+        [userId, runMonth, branchId, processId ?? null],
       );
     }
   } catch {
@@ -802,7 +1005,13 @@ salaryVerificationRouter.post(
   requireAuth,
   // payroll_head/super_admin added 2026-08-25: the frontend's canBulkVerify shows "Verify All
   // Non-Flagged" to those roles too, but this list excluded them.
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin"),
+  requireRole(
+    "wfm",
+    "process_manager",
+    "branch_head",
+    "payroll_head",
+    "super_admin",
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.authUser!.id;
@@ -813,13 +1022,16 @@ salaryVerificationRouter.post(
         branchId?: string;
       };
 
-      if (!runMonth) return res.status(400).json({ success: false, message: "runMonth required" });
+      if (!runMonth)
+        return res
+          .status(400)
+          .json({ success: false, message: "runMonth required" });
 
       const whereProcess = processId ? "AND e.process_id = ?" : "";
-      const whereBranch  = branchId  ? "AND e.branch_id = ?"  : "";
+      const whereBranch = branchId ? "AND e.branch_id = ?" : "";
       const params: unknown[] = [runMonth];
       if (processId) params.push(processId);
-      if (branchId)  params.push(branchId);
+      if (branchId) params.push(branchId);
 
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT e.id
@@ -836,34 +1048,51 @@ salaryVerificationRouter.post(
                 FROM salary_employee_verification sev
                WHERE sev.run_month = ?
             )`,
-        [...params, runMonth, runMonth]
+        [...params, runMonth, runMonth],
       );
 
       const ids = (empRows as any[]).map((r) => r.id);
       if (!ids.length) {
-        return res.json({ success: true, verified_count: 0, message: "No employees to verify" });
+        return res.json({
+          success: true,
+          verified_count: 0,
+          message: "No employees to verify",
+        });
       }
 
       const values = ids.map(() => `(UUID(), ?, ?, ?, ?, ?)`).join(",");
-      const insertParams = ids.flatMap((id) => [runMonth, runId ?? null, id, processId ?? null, userId]);
+      const insertParams = ids.flatMap((id) => [
+        runMonth,
+        runId ?? null,
+        id,
+        processId ?? null,
+        userId,
+      ]);
 
       await db.execute(
         `INSERT IGNORE INTO salary_employee_verification (id, run_month, run_id, employee_id, process_id, verified_by)
          VALUES ${values}`,
-        insertParams
+        insertParams,
       );
 
       // Auto-flip salary_verification_done on payroll_branch_readiness when the process is
       // now fully verified (all employees verified, zero open flags).
-      await markReadinessDoneIfComplete(runMonth, branchId ?? null, processId ?? null, userId);
+      await markReadinessDoneIfComplete(
+        runMonth,
+        branchId ?? null,
+        processId ?? null,
+        userId,
+      );
 
       return res.json({ success: true, verified_count: ids.length });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] POST /verify-bulk error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to bulk verify" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to bulk verify" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -881,8 +1110,14 @@ salaryVerificationRouter.get(
 
       const where = ["svf.status = 'open'", "svf.run_month = ?"];
       const params: unknown[] = [month];
-      if (processId) { where.push("svf.process_id = ?"); params.push(processId); }
-      if (branchId)  { where.push("svf.branch_id = ?");  params.push(branchId); }
+      if (processId) {
+        where.push("svf.process_id = ?");
+        params.push(processId);
+      }
+      if (branchId) {
+        where.push("svf.branch_id = ?");
+        params.push(branchId);
+      }
 
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT svf.id, svf.run_month, svf.employee_id, svf.employee_code,
@@ -898,16 +1133,18 @@ salaryVerificationRouter.get(
            LEFT JOIN auth_user u ON u.id = svf.raised_by
           WHERE ${where.join(" AND ")}
           ORDER BY svf.raised_at DESC`,
-        params
+        params,
       );
 
       return res.json({ success: true, data: rows });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] GET /open-flags error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to fetch open flags" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to fetch open flags" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -918,7 +1155,15 @@ salaryVerificationRouter.get(
   requireAuth,
   // admin/payroll_branch added 2026-08-25: same page-vs-backend gap as the other endpoints
   // in this file, on the register's own export.
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "admin", "payroll_branch"),
+  requireRole(
+    "wfm",
+    "process_manager",
+    "branch_head",
+    "payroll_head",
+    "super_admin",
+    "admin",
+    "payroll_branch",
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
@@ -933,16 +1178,21 @@ salaryVerificationRouter.get(
       // ever applied when present, so omitting both returned up to 10,000 employees'
       // salary register org-wide to any caller holding one of these roles.
       const roleKeys: string[] = (req.authUser as any)?.roleKeys ?? [];
-      const isOrgWide = roleKeys.some((r) => ["super_admin", "payroll_head", "payroll"].includes(r));
+      const isOrgWide = roleKeys.some((r) =>
+        ["super_admin", "payroll_head", "payroll"].includes(r),
+      );
 
       if (!isOrgWide) {
         const ownScope = await resolveActorOwnScope(req.authUser!.id);
         const isBranchHead = roleKeys.includes("branch_head");
-        const scopedValue = isBranchHead ? ownScope?.branchId : ownScope?.processId;
+        const scopedValue = isBranchHead
+          ? ownScope?.branchId
+          : ownScope?.processId;
         if (!scopedValue) {
           return res.status(403).json({
             success: false,
-            message: "No branch or process is assigned to your account, so there is nothing you are authorised to export.",
+            message:
+              "No branch or process is assigned to your account, so there is nothing you are authorised to export.",
           });
         }
         if (isBranchHead) {
@@ -956,8 +1206,14 @@ salaryVerificationRouter.get(
 
       const whereClauses: string[] = ["e.active_status = 1"];
       const whereParams: unknown[] = [];
-      if (processId) { whereClauses.push("e.process_id = ?"); whereParams.push(processId); }
-      if (branchId)  { whereClauses.push("e.branch_id = ?");  whereParams.push(branchId); }
+      if (processId) {
+        whereClauses.push("e.process_id = ?");
+        whereParams.push(processId);
+      }
+      if (branchId) {
+        whereClauses.push("e.branch_id = ?");
+        whereParams.push(branchId);
+      }
 
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT e.id AS employee_id, e.employee_code, e.full_name,
@@ -967,19 +1223,34 @@ salaryVerificationRouter.get(
           WHERE ${whereClauses.join(" AND ")}
           ORDER BY e.full_name
           LIMIT 10000`,
-        whereParams
+        whereParams,
       );
 
       const register: unknown[][] = [];
       const headers = [
-        "Code", "Name", "Designation",
-        "Working Days", "Present", "Leave", "LWP", "Late", "OT Hrs",
-        "Gross (₹)", "Incentive (₹)", "Deductions (₹)", "Net Pay (₹)",
-        "Status", "Flag Note",
+        "Code",
+        "Name",
+        "Designation",
+        "Working Days",
+        "Present",
+        "Leave",
+        "LWP",
+        "Late",
+        "OT Hrs",
+        "Gross (₹)",
+        "Incentive (₹)",
+        "Deductions (₹)",
+        "Net Pay (₹)",
+        "Status",
+        "Flag Note",
       ];
 
       for (const emp of empRows as any[]) {
-        let row: unknown[] = [emp.employee_code, emp.full_name, emp.designation_name ?? ""];
+        let row: unknown[] = [
+          emp.employee_code,
+          emp.full_name,
+          emp.designation_name ?? "",
+        ];
 
         if (run) {
           const [lineRows] = await db.execute<RowDataPacket[]>(
@@ -987,7 +1258,7 @@ salaryVerificationRouter.get(
                     spl.late_marks, spl.dialer_hours, spl.gross_salary,
                     spl.total_deductions, spl.net_salary
                FROM salary_prep_line spl WHERE spl.run_id = ? AND spl.employee_id = ? LIMIT 1`,
-            [run.id, emp.employee_id]
+            [run.id, emp.employee_id],
           );
           const line = (lineRows as any[])[0] ?? {};
           let incentive = 0;
@@ -995,15 +1266,22 @@ salaryVerificationRouter.get(
             const [ic] = await db.execute<RowDataPacket[]>(
               `SELECT SUM(slc.amount) AS total FROM salary_prep_line_component slc
                 WHERE slc.run_id = ? AND slc.employee_id = ? AND slc.source IN ('incentive_upload','incentive')`,
-              [run.id, emp.employee_id]
+              [run.id, emp.employee_id],
             );
             incentive = Number((ic as any[])[0]?.total ?? 0);
           }
           row = [
             ...row,
-            line.working_days ?? 0, line.present_days ?? 0, line.leave_days ?? 0,
-            line.lwp_days ?? 0, line.late_marks ?? 0, line.dialer_hours ?? 0,
-            line.gross_salary ?? 0, incentive, line.total_deductions ?? 0, line.net_salary ?? 0,
+            line.working_days ?? 0,
+            line.present_days ?? 0,
+            line.leave_days ?? 0,
+            line.lwp_days ?? 0,
+            line.late_marks ?? 0,
+            line.dialer_hours ?? 0,
+            line.gross_salary ?? 0,
+            incentive,
+            line.total_deductions ?? 0,
+            line.net_salary ?? 0,
           ];
         } else {
           row = [...row, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -1012,14 +1290,14 @@ salaryVerificationRouter.get(
         const [flagRow] = await db.execute<RowDataPacket[]>(
           `SELECT status, description FROM salary_verification_flag
             WHERE employee_id = ? AND run_month = ? AND status = 'open' LIMIT 1`,
-          [emp.employee_id, month]
+          [emp.employee_id, month],
         );
         const flag = (flagRow as any[])[0];
 
-        const [[verRow]] = await db.execute<RowDataPacket[]>(
+        const [[verRow]] = (await db.execute<RowDataPacket[]>(
           `SELECT id FROM salary_employee_verification WHERE employee_id = ? AND run_month = ? LIMIT 1`,
-          [emp.employee_id, month]
-        ) as any;
+          [emp.employee_id, month],
+        )) as any;
 
         const verStatus = flag ? "Flagged" : verRow ? "Verified" : "Pending";
         row.push(verStatus, flag?.description ?? "");
@@ -1027,11 +1305,17 @@ salaryVerificationRouter.get(
       }
 
       if (format === "csv") {
-        const csvLines = [headers.join(","), ...register.map((r) =>
-          r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")
-        )];
+        const csvLines = [
+          headers.join(","),
+          ...register.map((r) =>
+            r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","),
+          ),
+        ];
         res.setHeader("Content-Type", "text/csv");
-        res.setHeader("Content-Disposition", `attachment; filename="salary-register-${month}.csv"`);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="salary-register-${month}.csv"`,
+        );
         return res.send(csvLines.join("\n"));
       }
 
@@ -1043,17 +1327,27 @@ salaryVerificationRouter.get(
         ["Month", month],
         ["Total Employees", empRows.length],
         ["Total Gross", register.reduce((s, r) => s + Number(r[9] ?? 0), 0)],
-        ["Total Net",   register.reduce((s, r) => s + Number(r[12] ?? 0), 0)],
-        ["Verified",  register.filter((r) => r[13] === "Verified").length],
-        ["Flagged",   register.filter((r) => r[13] === "Flagged").length],
-        ["Pending",   register.filter((r) => r[13] === "Pending").length],
+        ["Total Net", register.reduce((s, r) => s + Number(r[12] ?? 0), 0)],
+        ["Verified", register.filter((r) => r[13] === "Verified").length],
+        ["Flagged", register.filter((r) => r[13] === "Flagged").length],
+        ["Pending", register.filter((r) => r[13] === "Pending").length],
       ];
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryData), "Summary");
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.aoa_to_sheet(summaryData),
+        "Summary",
+      );
 
       const flagWhere = ["svf.run_month = ?"];
       const flagParams: unknown[] = [month];
-      if (processId) { flagWhere.push("svf.process_id = ?"); flagParams.push(processId); }
-      if (branchId)  { flagWhere.push("svf.branch_id = ?");  flagParams.push(branchId); }
+      if (processId) {
+        flagWhere.push("svf.process_id = ?");
+        flagParams.push(processId);
+      }
+      if (branchId) {
+        flagWhere.push("svf.branch_id = ?");
+        flagParams.push(branchId);
+      }
 
       const [allFlagRows] = await db.execute<RowDataPacket[]>(
         `SELECT svf.employee_code, e.full_name, svf.category, svf.description,
@@ -1062,23 +1356,50 @@ salaryVerificationRouter.get(
            LEFT JOIN employees e ON e.id = svf.employee_id
           WHERE ${flagWhere.join(" AND ")}
           ORDER BY svf.raised_at DESC`,
-        flagParams
+        flagParams,
       );
-      const flagHeaders = ["Code", "Name", "Category", "Description", "Expected Value", "Status", "Raised At", "Resolution"];
+      const flagHeaders = [
+        "Code",
+        "Name",
+        "Category",
+        "Description",
+        "Expected Value",
+        "Status",
+        "Raised At",
+        "Resolution",
+      ];
       const flagData = (allFlagRows as any[]).map((f) => [
-        f.employee_code, f.full_name, f.category, f.description,
-        f.expected_value ?? "", f.status, f.raised_at, f.resolution_note ?? "",
+        f.employee_code,
+        f.full_name,
+        f.category,
+        f.description,
+        f.expected_value ?? "",
+        f.status,
+        f.raised_at,
+        f.resolution_note ?? "",
       ]);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([flagHeaders, ...flagData]), "Flags");
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.aoa_to_sheet([flagHeaders, ...flagData]),
+        "Flags",
+      );
 
       const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", `attachment; filename="salary-register-${month}.xlsx"`);
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="salary-register-${month}.xlsx"`,
+      );
       return res.send(buf);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SalaryVerification] GET /export error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to generate export" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to generate export" });
     }
-  }
+  },
 );

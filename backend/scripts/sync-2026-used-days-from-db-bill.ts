@@ -4,9 +4,9 @@
  * Run from backend/: npx tsx scripts/sync-2026-used-days-from-db-bill.ts
  */
 
-import { db } from '../src/db/mysql.js';
-import { getLegacyPool, closeLegacyPool } from '../src/db/legacyDb.js';
-import type { RowDataPacket } from 'mysql2';
+import { db } from "../src/db/mysql.js";
+import { getLegacyPool, closeLegacyPool } from "../src/db/legacyDb.js";
+import type { RowDataPacket } from "mysql2";
 
 const YEAR = 2026;
 
@@ -16,7 +16,8 @@ async function main() {
   console.log(`Syncing ${YEAR} used leave days from db_bill → mas_hrms...\n`);
 
   // Aggregate approved leave per employee per leave type from db_bill
-  const [dbBillRows] = await legacy.execute<RowDataPacket[]>(`
+  const [dbBillRows] = await legacy.execute<RowDataPacket[]>(
+    `
     SELECT
       EmpCode,
       COALESCE(SUM(CL), 0)   AS cl_used,
@@ -27,30 +28,34 @@ async function main() {
     FROM leave_management
     WHERE YEAR(LeaveFrom) = ? AND Status = 'Approved'
     GROUP BY EmpCode
-  `, [YEAR]);
+  `,
+    [YEAR],
+  );
 
-  console.log(`Found ${dbBillRows.length} employees with approved leaves in ${YEAR} from db_bill.\n`);
+  console.log(
+    `Found ${dbBillRows.length} employees with approved leaves in ${YEAR} from db_bill.\n`,
+  );
 
   // Load leave_type_master codes → ids from mas_hrms
   const [ltRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, leave_code FROM leave_type_master WHERE active_status = 1`
+    `SELECT id, leave_code FROM leave_type_master WHERE active_status = 1`,
   );
   const ltMap: Record<string, string> = {};
   for (const lt of ltRows) ltMap[lt.leave_code] = lt.id;
 
   // Load employee_code → id from mas_hrms
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_code FROM employees WHERE active_status = 1`
+    `SELECT id, employee_code FROM employees WHERE active_status = 1`,
   );
   const empMap: Record<string, string> = {};
   for (const e of empRows) empMap[e.employee_code] = e.id;
 
   const leaveTypeColumns: Array<{ col: string; code: string }> = [
-    { col: 'cl_used',   code: 'CL' },
-    { col: 'el_used',   code: 'EL' },
-    { col: 'ml_used',   code: 'ML' },
-    { col: 'ptrl_used', code: 'PTRL' },
-    { col: 'mtrl_used', code: 'MTRL' },
+    { col: "cl_used", code: "CL" },
+    { col: "el_used", code: "EL" },
+    { col: "ml_used", code: "ML" },
+    { col: "ptrl_used", code: "PTRL" },
+    { col: "mtrl_used", code: "MTRL" },
   ];
 
   let updated = 0;
@@ -75,7 +80,7 @@ async function main() {
       const [existing] = await db.execute<RowDataPacket[]>(
         `SELECT id, used_days FROM leave_balance_ledger
          WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-        [empId, ltId, YEAR]
+        [empId, ltId, YEAR],
       );
 
       if (!existing.length) {
@@ -93,10 +98,12 @@ async function main() {
         `UPDATE leave_balance_ledger
          SET used_days = ?
          WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-        [usedDays, empId, ltId, YEAR]
+        [usedDays, empId, ltId, YEAR],
       );
       updated++;
-      console.log(`  ✓ ${row.EmpCode} ${code}: ${currentUsed} → ${usedDays} days`);
+      console.log(
+        `  ✓ ${row.EmpCode} ${code}: ${currentUsed} → ${usedDays} days`,
+      );
     }
   }
 
@@ -107,17 +114,20 @@ async function main() {
 
   // Verify MAS47814
   const [verifyEmp] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM employees WHERE employee_code = 'MAS47814'`
+    `SELECT id FROM employees WHERE employee_code = 'MAS47814'`,
   );
   if (verifyEmp.length) {
-    const [verify] = await db.execute<RowDataPacket[]>(`
+    const [verify] = await db.execute<RowDataPacket[]>(
+      `
       SELECT lt.leave_code, lbl.allocated_days, lbl.used_days
       FROM leave_balance_ledger lbl
       JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
       WHERE lbl.employee_id = ? AND lbl.balance_year = ?
       ORDER BY lt.leave_code
-    `, [verifyEmp[0].id, YEAR]);
-    console.log('\nVerification — MAS47814 balances:');
+    `,
+      [verifyEmp[0].id, YEAR],
+    );
+    console.log("\nVerification — MAS47814 balances:");
     console.table(verify);
   }
 
@@ -126,6 +136,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Sync failed:', err);
+  console.error("Sync failed:", err);
   process.exit(1);
 });

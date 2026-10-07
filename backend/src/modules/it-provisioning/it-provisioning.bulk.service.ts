@@ -1,7 +1,7 @@
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
-import { logSensitiveAction } from '../../shared/auditLog.js';
-import { OFFICIAL_EMAIL_REGEX } from './it-provisioning.service.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { OFFICIAL_EMAIL_REGEX } from "./it-provisioning.service.js";
 
 interface BatchRow extends RowDataPacket {
   id: string;
@@ -45,28 +45,36 @@ export async function importOfficialEmailBatch(
   const employeeCodes = new Set<string>();
 
   for (const row of batchRows) {
-    const data = typeof row.normalized_data === 'string'
-      ? JSON.parse(row.normalized_data)
-      : (row.normalized_data ?? {});
+    const data =
+      typeof row.normalized_data === "string"
+        ? JSON.parse(row.normalized_data)
+        : (row.normalized_data ?? {});
 
-    const employeeCode: string = String(data.employee_code ?? '').trim();
-    const officialEmail: string = String(data.official_email ?? '').trim();
+    const employeeCode: string = String(data.employee_code ?? "").trim();
+    const officialEmail: string = String(data.official_email ?? "").trim();
 
     const rowErrors: string[] = [];
-    if (!employeeCode) rowErrors.push('employee_code is required');
-    if (!officialEmail) rowErrors.push('official_email is required');
+    if (!employeeCode) rowErrors.push("employee_code is required");
+    if (!officialEmail) rowErrors.push("official_email is required");
     else if (!OFFICIAL_EMAIL_REGEX.test(officialEmail)) {
-      rowErrors.push(`official_email "${officialEmail}" must be @teammas.in or @teammas.co.in`);
+      rowErrors.push(
+        `official_email "${officialEmail}" must be @teammas.in or @teammas.co.in`,
+      );
     }
 
     if (rowErrors.length > 0) {
       errorRows++;
-      errors.push(`Row ${row.row_no}: ${rowErrors.join('; ')}`);
+      errors.push(`Row ${row.row_no}: ${rowErrors.join("; ")}`);
       errorUpdates.push({ rowId: row.id, messages: rowErrors });
       continue;
     }
 
-    parsed.push({ rowId: row.id, rowNo: row.row_no, employeeCode, officialEmail });
+    parsed.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      employeeCode,
+      officialEmail,
+    });
     employeeCodes.add(employeeCode);
   }
 
@@ -77,7 +85,7 @@ export async function importOfficialEmailBatch(
   if (codes.length > 0) {
     const [empRows] = await db.execute<EmployeeRow[]>(
       `SELECT id, employee_code, official_email
-       FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')}) AND active_status = 1`,
+       FROM employees WHERE employee_code IN (${codes.map(() => "?").join(",")}) AND active_status = 1`,
       codes,
     );
     for (const emp of empRows) employeeMap.set(emp.employee_code, emp);
@@ -86,7 +94,12 @@ export async function importOfficialEmailBatch(
   let importedRows = 0;
   const importedRowIds: string[] = [];
   const emailUpdates: Array<{ empId: string; email: string }> = [];
-  const auditEntries: Array<{ employeeCode: string; empId: string; previousEmail: string | null; newEmail: string }> = [];
+  const auditEntries: Array<{
+    employeeCode: string;
+    empId: string;
+    previousEmail: string | null;
+    newEmail: string;
+  }> = [];
 
   for (const row of parsed) {
     const emp = employeeMap.get(row.employeeCode);
@@ -117,12 +130,12 @@ export async function importOfficialEmailBatch(
     const lastByEmployee = new Map<string, string>();
     for (const u of emailUpdates) lastByEmployee.set(u.empId, u.email);
     const deduped = Array.from(lastByEmployee.entries());
-    const cases = deduped.map(() => 'WHEN ? THEN ?').join(' ');
+    const cases = deduped.map(() => "WHEN ? THEN ?").join(" ");
     const caseParams = deduped.flatMap(([empId, email]) => [empId, email]);
     const ids = deduped.map(([empId]) => empId);
     await db.execute(
       `UPDATE employees SET official_email = CASE id ${cases} END, updated_at = NOW()
-       WHERE id IN (${ids.map(() => '?').join(',')})`,
+       WHERE id IN (${ids.map(() => "?").join(",")})`,
       [...caseParams, ...ids],
     );
   }
@@ -132,9 +145,9 @@ export async function importOfficialEmailBatch(
   for (const entry of auditEntries) {
     await logSensitiveAction({
       actor_user_id: importedByUserId,
-      action_type: 'official_email_bulk_update',
-      module_key: 'employees',
-      entity_type: 'employee',
+      action_type: "official_email_bulk_update",
+      module_key: "employees",
+      entity_type: "employee",
       entity_id: entry.empId,
       change_summary: {
         employee_code: entry.employeeCode,
@@ -147,25 +160,31 @@ export async function importOfficialEmailBatch(
   if (importedRowIds.length > 0) {
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'imported', error_messages = NULL
-       WHERE id IN (${importedRowIds.map(() => '?').join(',')})`,
+       WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
       importedRowIds,
     );
   }
   if (errorUpdates.length > 0) {
-    const cases = errorUpdates.map(() => 'WHEN ? THEN ?').join(' ');
-    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify(u.messages)]);
+    const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
+    const caseParams = errorUpdates.flatMap((u) => [
+      u.rowId,
+      JSON.stringify(u.messages),
+    ]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
-       WHERE id IN (${ids.map(() => '?').join(',')})`,
+       WHERE id IN (${ids.map(() => "?").join(",")})`,
       [...caseParams, ...ids],
     );
   }
 
   // Update batch status
-  const finalStatus = errorRows === 0
-    ? 'imported'
-    : importedRows === 0 ? 'validation_failed' : 'imported_with_errors';
+  const finalStatus =
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch

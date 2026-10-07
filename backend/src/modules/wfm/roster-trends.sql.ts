@@ -14,9 +14,11 @@ import { lobCondition, type LobFilter } from "../../shared/lobFilter.js";
 export const REAL_ROSTER =
   "NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)";
 
-const OFF = "(UPPER(COALESCE(ra.assignment_type,'')) IN ('WEEK_OFF','HOLIDAY') OR COALESCE(ra.is_week_off,0) = 1)";
+const OFF =
+  "(UPPER(COALESCE(ra.assignment_type,'')) IN ('WEEK_OFF','HOLIDAY') OR COALESCE(ra.is_week_off,0) = 1)";
 const RLEAVE = "UPPER(COALESCE(ra.assignment_type,'')) = 'LEAVE'";
-const PUNCH = "(att.clock_in_time IS NOT NULL OR bal.first_punch_in IS NOT NULL)";
+const PUNCH =
+  "(att.clock_in_time IS NOT NULL OR bal.first_punch_in IS NOT NULL)";
 const ALEAVE = `(NOT ${PUNCH} AND COALESCE(att.attendance_status,'') = 'leave_approved')`;
 const WORK = `(NOT ${OFF} AND NOT (${RLEAVE}))`;
 
@@ -51,9 +53,18 @@ export interface ScopeFilters {
 export function scopeSql(f: ScopeFilters): { sql: string; params: unknown[] } {
   let sql = "";
   const params: unknown[] = [];
-  if (f.branchId) { sql += " AND e.branch_id = ?"; params.push(f.branchId); }
-  if (f.processId) { sql += " AND e.process_id = ?"; params.push(f.processId); }
+  if (f.branchId) {
+    sql += " AND e.branch_id = ?";
+    params.push(f.branchId);
+  }
+  if (f.processId) {
+    sql += " AND e.process_id = ?";
+    params.push(f.processId);
+  }
   const lobC = f.lob ? lobCondition(f.lob) : null;
-  if (lobC) { sql += ` AND ${lobC.sql}`; params.push(...lobC.params); }
+  if (lobC) {
+    sql += ` AND ${lobC.sql}`;
+    params.push(...lobC.params);
+  }
   return { sql, params };
 }

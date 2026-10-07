@@ -8,9 +8,9 @@
  * Each section returns null on empty result or query error — never crashes the request.
  */
 
-import { Request, Response } from 'express';
-import type { RowDataPacket } from 'mysql2';
-import { db as pool } from '../../db/mysql.js';
+import { Request, Response } from "express";
+import type { RowDataPacket } from "mysql2";
+import { db as pool } from "../../db/mysql.js";
 
 // ---------------------------------------------------------------------------
 // Risk scoring fragments — inlined verbatim from predictive-attrition.service.ts
@@ -120,26 +120,32 @@ const SCORE_EXPR = `
 
 async function safeOne<T extends RowDataPacket>(
   sql: string,
-  params: unknown[]
+  params: unknown[],
 ): Promise<T | null> {
   try {
     const [[row]] = await pool.execute<T[]>(sql, params);
     return row ?? null;
   } catch (err) {
-    console.error('[employee-360] safeOne query error:', (err as Error).message);
+    console.error(
+      "[employee-360] safeOne query error:",
+      (err as Error).message,
+    );
     return null;
   }
 }
 
 async function safeMany<T extends RowDataPacket>(
   sql: string,
-  params: unknown[]
+  params: unknown[],
 ): Promise<T[]> {
   try {
     const [rows] = await pool.execute<T[]>(sql, params);
     return rows;
   } catch (err) {
-    console.error('[employee-360] safeMany query error:', (err as Error).message);
+    console.error(
+      "[employee-360] safeMany query error:",
+      (err as Error).message,
+    );
     return [];
   }
 }
@@ -151,10 +157,11 @@ async function safeMany<T extends RowDataPacket>(
 async function fetchWfmMetrics(
   employeeId: string,
   periodStart: string,
-  periodEnd: string
+  periodEnd: string,
 ): Promise<RowDataPacket | null> {
   try {
-    const empSubquery = 'SELECT id FROM mas_hrms.employees WHERE id = ? OR employee_code = ? LIMIT 1';
+    const empSubquery =
+      "SELECT id FROM mas_hrms.employees WHERE id = ? OR employee_code = ? LIMIT 1";
 
     const sessionSql = `
       SELECT COUNT(*) AS session_count,
@@ -179,29 +186,40 @@ async function fetchWfmMetrics(
       ) break_agg
     `;
 
-    const [[sessionRow]] = await pool.execute<RowDataPacket[]>(
-      sessionSql,
-      [employeeId, employeeId, periodStart, periodEnd]
-    );
-    const [[breakRow]] = await pool.execute<RowDataPacket[]>(
-      breakSql,
-      [employeeId, employeeId, periodStart, periodEnd]
-    );
+    const [[sessionRow]] = await pool.execute<RowDataPacket[]>(sessionSql, [
+      employeeId,
+      employeeId,
+      periodStart,
+      periodEnd,
+    ]);
+    const [[breakRow]] = await pool.execute<RowDataPacket[]>(breakSql, [
+      employeeId,
+      employeeId,
+      periodStart,
+      periodEnd,
+    ]);
 
     const sessionsWithBreaks = Number(breakRow?.sessions_with_breaks ?? 0);
     const overBudget = Number(breakRow?.over_budget_sessions ?? 0);
     const breakCompliancePct =
       sessionsWithBreaks > 0
-        ? Math.round(((sessionsWithBreaks - overBudget) / sessionsWithBreaks) * 100 * 100) / 100
+        ? Math.round(
+            ((sessionsWithBreaks - overBudget) / sessionsWithBreaks) *
+              100 *
+              100,
+          ) / 100
         : null;
 
     return {
       ...(sessionRow ?? {}),
       ...(breakRow ?? {}),
-      break_compliance_pct: breakCompliancePct
+      break_compliance_pct: breakCompliancePct,
     } as RowDataPacket;
   } catch (err) {
-    console.error('[employee-360] fetchWfmMetrics error:', (err as Error).message);
+    console.error(
+      "[employee-360] fetchWfmMetrics error:",
+      (err as Error).message,
+    );
     return null;
   }
 }
@@ -212,8 +230,12 @@ async function fetchWfmMetrics(
 
 async function fetchKpiMetrics(
   employeeId: string,
-  period: string
-): Promise<{ metrics: RowDataPacket[]; on_target_count: number; below_threshold_count: number } | null> {
+  period: string,
+): Promise<{
+  metrics: RowDataPacket[];
+  on_target_count: number;
+  below_threshold_count: number;
+} | null> {
   try {
     const sql = `
       SELECT ks.metric_id, km.metric_code, km.metric_name, km.unit,
@@ -244,21 +266,27 @@ async function fetchKpiMetrics(
         AND ks.period = ?
     `;
 
-    const [rows] = await pool.execute<RowDataPacket[]>(
-      sql,
-      [employeeId, employeeId, employeeId, employeeId, period]
-    );
+    const [rows] = await pool.execute<RowDataPacket[]>(sql, [
+      employeeId,
+      employeeId,
+      employeeId,
+      employeeId,
+      period,
+    ]);
 
     const on_target_count = rows.filter(
-      (r) => r.achievement_pct !== null && Number(r.achievement_pct) >= 100
+      (r) => r.achievement_pct !== null && Number(r.achievement_pct) >= 100,
     ).length;
     const below_threshold_count = rows.filter(
-      (r) => r.achievement_pct !== null && Number(r.achievement_pct) < 60
+      (r) => r.achievement_pct !== null && Number(r.achievement_pct) < 60,
     ).length;
 
     return { metrics: rows, on_target_count, below_threshold_count };
   } catch (err) {
-    console.error('[employee-360] fetchKpiMetrics error:', (err as Error).message);
+    console.error(
+      "[employee-360] fetchKpiMetrics error:",
+      (err as Error).message,
+    );
     return null;
   }
 }
@@ -279,9 +307,11 @@ export async function getEmployee360Profile(req: Request, res: Response) {
     const rawPeriod = req.query.period as string | undefined;
 
     // Determine if the caller is a payroll/admin role who may see CTC
-    const callerRoles: string[] = (req as any).authUser?.roles ?? [(req as any).authUser?.role ?? ''];
-    const canSeeSalary = callerRoles.some(r =>
-      ['super_admin', 'admin', 'hr', 'payroll'].includes(r)
+    const callerRoles: string[] = (req as any).authUser?.roles ?? [
+      (req as any).authUser?.role ?? "",
+    ];
+    const canSeeSalary = callerRoles.some((r) =>
+      ["super_admin", "admin", "hr", "payroll"].includes(r),
     );
 
     // Default period to current month
@@ -289,10 +319,10 @@ export async function getEmployee360Profile(req: Request, res: Response) {
     const period =
       rawPeriod && /^\d{4}-\d{2}$/.test(rawPeriod)
         ? rawPeriod
-        : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
     // Derive period window for WFM queries
-    const [periodYear, periodMonth] = period.split('-').map(Number);
+    const [periodYear, periodMonth] = period.split("-").map(Number);
     const periodStart = `${period}-01`;
     const periodEnd = new Date(periodYear, periodMonth, 1) // 1st of next month
       .toISOString()
@@ -300,9 +330,9 @@ export async function getEmployee360Profile(req: Request, res: Response) {
 
     // Subquery snippet reused across multiple queries to resolve id from either format
     const EMP_ID_SUB =
-      'SELECT id FROM mas_hrms.employees WHERE id = ? OR employee_code = ? LIMIT 1';
+      "SELECT id FROM mas_hrms.employees WHERE id = ? OR employee_code = ? LIMIT 1";
     const EMP_CODE_SUB =
-      'SELECT employee_code FROM mas_hrms.employees WHERE id = ? OR employee_code = ? LIMIT 1';
+      "SELECT employee_code FROM mas_hrms.employees WHERE id = ? OR employee_code = ? LIMIT 1";
 
     // -----------------------------------------------------------------------
     // Fire all sections in parallel
@@ -318,15 +348,14 @@ export async function getEmployee360Profile(req: Request, res: Response) {
       riskMetrics,
       pipStatus,
       openAlerts,
-      managerContext
+      managerContext,
     ] = await Promise.all([
-
       // 1. Employee core profile
       safeOne<RowDataPacket>(
         `SELECT e.id, e.employee_code, e.first_name, e.last_name, e.designation_id,
            e.date_of_joining, e.date_of_exit, e.active_status, e.employment_status,
            e.branch_id, e.process_id, e.cost_centre_id,
-           ${canSeeSalary ? 'e.ctc' : 'NULL AS ctc'},
+           ${canSeeSalary ? "e.ctc" : "NULL AS ctc"},
            e.source, e.reporting_manager_id,
            DATEDIFF(NOW(), e.date_of_joining) AS aon_days,
            CASE WHEN DATEDIFF(NOW(), e.date_of_joining) <= 30  THEN '0-30'
@@ -351,7 +380,7 @@ export async function getEmployee360Profile(req: Request, res: Response) {
          LEFT JOIN mas_hrms.employees mgr          ON mgr.id = e.reporting_manager_id
          WHERE (e.id = ? OR e.employee_code = ?)
          LIMIT 1`,
-        [employeeId, employeeId]
+        [employeeId, employeeId],
       ),
 
       // 2. Attendance metrics — last 60 days
@@ -372,7 +401,7 @@ export async function getEmployee360Profile(req: Request, res: Response) {
          FROM mas_hrms.attendance_daily_record
          WHERE employee_id = (${EMP_ID_SUB})
            AND record_date >= DATE_SUB(NOW(), INTERVAL 60 DAY)`,
-        [employeeId, employeeId]
+        [employeeId, employeeId],
       ),
 
       // 3. WFM metrics — combined session + break compliance (current period)
@@ -390,7 +419,7 @@ export async function getEmployee360Profile(req: Request, res: Response) {
          FROM db_audit.call_quality_assessment
          WHERE User = (${EMP_CODE_SUB})
            AND CallDate >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
-        [employeeId, employeeId]
+        [employeeId, employeeId],
       ),
 
       // 5. KPI metrics — for the requested period (handles multi-row + summary)
@@ -409,7 +438,7 @@ export async function getEmployee360Profile(req: Request, res: Response) {
          FROM mas_hrms.dialer_session_log
          WHERE employee_id = (${EMP_ID_SUB})
            AND session_date >= DATE_SUB(NOW(), INTERVAL 60 DAY)`,
-        [employeeId, employeeId]
+        [employeeId, employeeId],
       ),
 
       // 7. Risk metrics — inlined predictive-attrition scoring for this single employee
@@ -460,7 +489,7 @@ export async function getEmployee360Profile(req: Request, res: Response) {
          LEFT JOIN late_marks_cte lm  ON e.id = lm.employee_id
          WHERE (e.id = ? OR e.employee_code = ?)
          LIMIT 1`,
-        [employeeId, employeeId]
+        [employeeId, employeeId],
       ),
 
       // 8. Active PIP status (most recent non-closed/cancelled record)
@@ -474,7 +503,7 @@ export async function getEmployee360Profile(req: Request, res: Response) {
            AND status NOT IN ('closed','cancelled')
          ORDER BY start_date DESC
          LIMIT 1`,
-        [employeeId, employeeId]
+        [employeeId, employeeId],
       ),
 
       // 9. Open (unacknowledged) performance alerts
@@ -485,7 +514,7 @@ export async function getEmployee360Profile(req: Request, res: Response) {
            AND acknowledged = 0
          ORDER BY created_at DESC
          LIMIT 10`,
-        [employeeId, employeeId]
+        [employeeId, employeeId],
       ),
 
       // 10. Manager context — team size + 30-day attrition rate for the same manager
@@ -505,8 +534,8 @@ export async function getEmployee360Profile(req: Request, res: Response) {
            WHERE id = ? OR employee_code = ?
            LIMIT 1
          )`,
-        [employeeId, employeeId]
-      )
+        [employeeId, employeeId],
+      ),
     ]);
 
     // -----------------------------------------------------------------------
@@ -517,19 +546,19 @@ export async function getEmployee360Profile(req: Request, res: Response) {
     let qualityMetrics: RowDataPacket | null = null;
     if (qualityMetricsRaw) {
       const recent = Number(qualityMetricsRaw.recent_30d_quality ?? 0);
-      const prior  = Number(qualityMetricsRaw.prior_30d_quality  ?? 0);
+      const prior = Number(qualityMetricsRaw.prior_30d_quality ?? 0);
       const velocity = recent - prior;
 
       let trend_pattern: string;
-      if (velocity < -15)      trend_pattern = 'RAPID_DECLINE';
-      else if (velocity < -8)  trend_pattern = 'SUSTAINED_DECLINE';
-      else if (velocity < -3)  trend_pattern = 'RECENT_DECLINE';
-      else                     trend_pattern = 'STABLE';
+      if (velocity < -15) trend_pattern = "RAPID_DECLINE";
+      else if (velocity < -8) trend_pattern = "SUSTAINED_DECLINE";
+      else if (velocity < -3) trend_pattern = "RECENT_DECLINE";
+      else trend_pattern = "STABLE";
 
       qualityMetrics = {
         ...qualityMetricsRaw,
         quality_velocity: Math.round(velocity * 100) / 100,
-        trend_pattern
+        trend_pattern,
       } as RowDataPacket;
     }
 
@@ -537,7 +566,7 @@ export async function getEmployee360Profile(req: Request, res: Response) {
     let dialerMetrics: RowDataPacket | null = null;
     if (dialerMetricsRaw) {
       const recent = Number(dialerMetricsRaw.recent_avg_minutes ?? 0);
-      const prior  = Number(dialerMetricsRaw.prior_avg_minutes  ?? 0);
+      const prior = Number(dialerMetricsRaw.prior_avg_minutes ?? 0);
       const dialer_drop_pct =
         prior > 0
           ? Math.round(((prior - recent) / prior) * 100 * 100) / 100
@@ -545,7 +574,7 @@ export async function getEmployee360Profile(req: Request, res: Response) {
 
       dialerMetrics = {
         ...dialerMetricsRaw,
-        dialer_drop_pct
+        dialer_drop_pct,
       } as RowDataPacket;
     }
 
@@ -567,15 +596,15 @@ export async function getEmployee360Profile(req: Request, res: Response) {
         risk: riskMetrics,
         pip: pipStatus,
         alerts: openAlerts,
-        manager_context: managerContext
+        manager_context: managerContext,
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error in getEmployee360Profile:', error);
+    console.error("Error in getEmployee360Profile:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch employee 360 profile'
+      error: "Failed to fetch employee 360 profile",
     });
   }
 }

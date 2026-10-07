@@ -54,19 +54,25 @@ export const dashboardSummarySchema = z.object({
   // work-inbox.service.ts#getUnifiedInboxSummary). `overdue_count` counts only rows
   // that carry a real due date; `aged_count` is the age-based signal for the rows that
   // have none, kept separate so an age is never presented as a missed deadline.
-  workItems: z.object({
-    pending_count: z.coerce.number(),
-    overdue_count: z.coerce.number(),
-    aged_count: z.coerce.number().optional(),
-    unread_count: z.coerce.number().optional(),
-    by_source: z.record(z.string(), z.coerce.number()).optional(),
-    by_type: z.array(z.object({
-      type: z.string(),
-      priority: z.string(),
-      count: z.coerce.number(),
-      actionUrl: z.string().nullable().optional(),
-    })).optional(),
-  }).optional(),
+  workItems: z
+    .object({
+      pending_count: z.coerce.number(),
+      overdue_count: z.coerce.number(),
+      aged_count: z.coerce.number().optional(),
+      unread_count: z.coerce.number().optional(),
+      by_source: z.record(z.string(), z.coerce.number()).optional(),
+      by_type: z
+        .array(
+          z.object({
+            type: z.string(),
+            priority: z.string(),
+            count: z.coerce.number(),
+            actionUrl: z.string().nullable().optional(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
   // "unavailable" means the inbox aggregation failed and `workItems` is absent.
   // It is deliberately not zeroed — an empty inbox and an unknown inbox must
   // stay distinguishable. The metrics below are unaffected and still valid: the

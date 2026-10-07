@@ -40,8 +40,10 @@ function callSiteSource(): string {
 const DEFERRED: Record<string, string> = {
   uat_build_failed: "Phase 4 — no automated build exists yet",
   uat_pr_ready: "Phase 4 — the pipeline does not open PRs yet",
-  uat_feedback_needs_info: "Phase 2 — clarification requests arrive with the validator",
-  uat_approval_decided: "wired through the approvals route once reviewer UX lands",
+  uat_feedback_needs_info:
+    "Phase 2 — clarification requests arrive with the validator",
+  uat_approval_decided:
+    "wired through the approvals route once reviewer UX lands",
 };
 
 describe("uat notifications — registration", () => {
@@ -51,23 +53,33 @@ describe("uat notifications — registration", () => {
     .join("\n");
 
   it("ships a migration that registers the events", () => {
-    expect(sql.length, "1100_uat_notification_events.sql not found").toBeGreaterThan(0);
+    expect(
+      sql.length,
+      "1100_uat_notification_events.sql not found",
+    ).toBeGreaterThan(0);
   });
 
   it("every event the code can emit is seeded, or the gateway silently drops it", () => {
     // notificationGateway.notify() fails closed: an event_code with no row in
     // notification_event_config returns `disabled` and sends nothing at all.
-    const missing = UAT_NOTIFICATION_EVENTS.filter((e) => !sql.includes(`'${e}'`));
+    const missing = UAT_NOTIFICATION_EVENTS.filter(
+      (e) => !sql.includes(`'${e}'`),
+    );
     expect(
       missing,
-      `these events are emitted by code but never registered, so they can never send:\n  ${missing.join("\n  ")}`
+      `these events are emitted by code but never registered, so they can never send:\n  ${missing.join("\n  ")}`,
     ).toEqual([]);
   });
 
   it("does not seed events the code cannot emit", () => {
     const seeded = [...sql.matchAll(/\('(uat_[a-z_]+)'/g)].map((m) => m[1]);
-    const orphans = seeded.filter((e) => !UAT_NOTIFICATION_EVENTS.includes(e as never));
-    expect(orphans, `seeded but unreachable from code: ${orphans.join(", ")}`).toEqual([]);
+    const orphans = seeded.filter(
+      (e) => !UAT_NOTIFICATION_EVENTS.includes(e as never),
+    );
+    expect(
+      orphans,
+      `seeded but unreachable from code: ${orphans.join(", ")}`,
+    ).toEqual([]);
   });
 });
 
@@ -86,12 +98,13 @@ describe("uat notifications — call sites", () => {
           .split("_")
           .map((p) => p[0].toUpperCase() + p.slice(1))
           .join("");
-      if (!source.includes(`${fn}(`)) dead.push(`${event} (expected ${fn}() to be called)`);
+      if (!source.includes(`${fn}(`))
+        dead.push(`${event} (expected ${fn}() to be called)`);
     }
     expect(
       dead,
       `these notifications are registered and wired to nothing — the exact regression this ` +
-        `test exists to catch:\n  ${dead.join("\n  ")}`
+        `test exists to catch:\n  ${dead.join("\n  ")}`,
     ).toEqual([]);
   });
 
@@ -99,9 +112,12 @@ describe("uat notifications — call sites", () => {
     for (const [event, reason] of Object.entries(DEFERRED)) {
       expect(
         UAT_NOTIFICATION_EVENTS.includes(event as never),
-        `${event} is deferred but is not a registered event`
+        `${event} is deferred but is not a registered event`,
       ).toBe(true);
-      expect(reason.trim().length, `${event} is deferred without a reason`).toBeGreaterThan(10);
+      expect(
+        reason.trim().length,
+        `${event} is deferred without a reason`,
+      ).toBeGreaterThan(10);
     }
   });
 
@@ -121,20 +137,25 @@ describe("uat notifications — call sites", () => {
 
   it("notifications are sent after commit, never inside the transaction", () => {
     // A mail provider timeout must not roll back a deployment that actually happened.
-    const release = readFileSync(join(MODULE_DIR, "uat-release.service.ts"), "utf8");
-    for (const m of release.matchAll(/await conn\.commit\(\);([\s\S]{0,400}?)\n  \} catch/g)) {
+    const release = readFileSync(
+      join(MODULE_DIR, "uat-release.service.ts"),
+      "utf8",
+    );
+    for (const m of release.matchAll(
+      /await conn\.commit\(\);([\s\S]{0,400}?)\n  \} catch/g,
+    )) {
       const afterCommit = m[1];
       if (!afterCommit.includes("notify")) continue;
       expect(
         afterCommit.indexOf("notify"),
-        "a notify() call appears before commit in uat-release.service.ts"
+        "a notify() call appears before commit in uat-release.service.ts",
       ).toBeGreaterThan(-1);
     }
     // And none appear before a commit inside the same try block.
     const beforeCommit = release.split("await conn.commit();")[0];
     expect(
       /await notify[A-Z]/.test(beforeCommit),
-      "a notify() call runs before the first commit — it would be rolled back or block the write"
+      "a notify() call runs before the first commit — it would be rolled back or block the write",
     ).toBe(false);
   });
 });

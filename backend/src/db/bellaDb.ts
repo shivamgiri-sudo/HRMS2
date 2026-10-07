@@ -1,5 +1,5 @@
-import mysql from 'mysql2/promise';
-import { env } from '../config/env.js';
+import mysql from "mysql2/promise";
+import { env } from "../config/env.js";
 
 /**
  * Pool for bella_db — the Bella Vita process raw-data warehouse (sales, lead
@@ -26,7 +26,7 @@ const config: mysql.PoolOptions = {
   keepAliveInitialDelay: 0,
   connectTimeout: 15000,
   connectAttributes: {
-    program_name: 'HRMS_BellaVita_Process',
+    program_name: "HRMS_BellaVita_Process",
   },
 };
 
@@ -39,9 +39,13 @@ export async function getBellaPool(): Promise<mysql.Pool> {
   try {
     const conn = await candidate.getConnection();
     try {
-      const [rows] = await conn.query('SELECT VERSION() AS version, DATABASE() AS db_name');
+      const [rows] = await conn.query(
+        "SELECT VERSION() AS version, DATABASE() AS db_name",
+      );
       const row = (rows as Array<{ version: string; db_name: string }>)[0];
-      console.log(`[BELLA] Connected to ${config.host}:${config.port}/${row?.db_name} (MySQL ${row?.version})`);
+      console.log(
+        `[BELLA] Connected to ${config.host}:${config.port}/${row?.db_name} (MySQL ${row?.version})`,
+      );
     } finally {
       conn.release();
     }
@@ -49,7 +53,7 @@ export async function getBellaPool(): Promise<mysql.Pool> {
     // Never leave a half-initialised pool behind — see billDb.ts for why this matters.
     await candidate.end().catch(() => {});
     const message = error instanceof Error ? error.message : String(error);
-    console.error('[BELLA] Connection failed:', message);
+    console.error("[BELLA] Connection failed:", message);
     throw error;
   }
 
@@ -61,14 +65,17 @@ export async function closeBellaPool(): Promise<void> {
   if (pool) {
     await pool.end();
     pool = null;
-    console.log('[BELLA] Connection pool closed');
+    console.log("[BELLA] Connection pool closed");
   }
 }
 
-export async function testBellaConnection(): Promise<{ ok: boolean; error?: string }> {
+export async function testBellaConnection(): Promise<{
+  ok: boolean;
+  error?: string;
+}> {
   try {
     const p = await getBellaPool();
-    await p.execute('SELECT 1 AS ok');
+    await p.execute("SELECT 1 AS ok");
     return { ok: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

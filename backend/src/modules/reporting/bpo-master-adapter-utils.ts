@@ -3,7 +3,11 @@ import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from "../../db/mysql.js";
 import type { BranchScope } from "./reporting.scope.js";
 import { getBpoMasterReport } from "./bpo-master-report-registry.js";
-import { sourceColumnReference, type SourceColumn, type SourceFieldLineage } from "./bpo-master-source-registry.js";
+import {
+  sourceColumnReference,
+  type SourceColumn,
+  type SourceFieldLineage,
+} from "./bpo-master-source-registry.js";
 
 export interface VerifiedAdapterFilters {
   month?: string;
@@ -92,7 +96,7 @@ export function directField(
   tableRef: string,
   columns: Map<string, SourceColumn>,
   candidates: string[],
-  transformation = "DIRECT"
+  transformation = "DIRECT",
 ): FieldSpec | null {
   for (const candidate of candidates) {
     const column = columns.get(candidate.toLowerCase());
@@ -116,7 +120,7 @@ export function derivedField(
   sourceTable: string,
   sourceColumn: string | null,
   expression: string,
-  transformation: string
+  transformation: string,
 ): FieldSpec {
   return {
     expression,
@@ -130,18 +134,35 @@ export function derivedField(
   };
 }
 
-export function constantField(expression: string, transformation: string): FieldSpec {
-  return derivedField("SYSTEM", "REPORT_ENGINE", null, expression, transformation);
+export function constantField(
+  expression: string,
+  transformation: string,
+): FieldSpec {
+  return derivedField(
+    "SYSTEM",
+    "REPORT_ENGINE",
+    null,
+    expression,
+    transformation,
+  );
 }
 
-export function addField(fields: Map<string, FieldSpec>, key: string, spec: FieldSpec | null | undefined) {
+export function addField(
+  fields: Map<string, FieldSpec>,
+  key: string,
+  spec: FieldSpec | null | undefined,
+) {
   if (spec) fields.set(key, spec);
 }
 
 export function branchScopeWhere(
   scope: BranchScope,
   filters: VerifiedAdapterFilters,
-  expressions: { branch?: string | null; process?: string | null; employeeCode?: string | null }
+  expressions: {
+    branch?: string | null;
+    process?: string | null;
+    employeeCode?: string | null;
+  },
 ) {
   const clauses: string[] = [];
   const params: unknown[] = [];
@@ -153,7 +174,9 @@ export function branchScopeWhere(
       clauses.push(`${expressions.branch} = ?`);
       params.push(filters.branchId);
     } else {
-      clauses.push(`${expressions.branch} IN (${scope.branchIds.map(() => "?").join(",")})`);
+      clauses.push(
+        `${expressions.branch} IN (${scope.branchIds.map(() => "?").join(",")})`,
+      );
       params.push(...scope.branchIds);
     }
   } else if (filters.branchId && expressions.branch) {
@@ -175,9 +198,11 @@ export function branchScopeWhere(
 function normalize(code: string, rows: RowDataPacket[]) {
   const definition = getBpoMasterReport(code);
   if (!definition) return rows as Record<string, unknown>[];
-  return rows.map((row) => Object.fromEntries(
-    definition.columns.map((column) => [column.key, row[column.key] ?? null])
-  ));
+  return rows.map((row) =>
+    Object.fromEntries(
+      definition.columns.map((column) => [column.key, row[column.key] ?? null]),
+    ),
+  );
 }
 
 function distinctExpression(keys: string[]) {
@@ -200,7 +225,9 @@ export async function executeVerifiedReport(options: {
   const selectSql = [...options.fields.entries()]
     .map(([key, spec]) => `${spec.expression} AS ${quote(key)}`)
     .join(",\n       ");
-  const whereSql = options.where?.length ? `WHERE ${options.where.join(" AND ")}` : "";
+  const whereSql = options.where?.length
+    ? `WHERE ${options.where.join(" AND ")}`
+    : "";
   const baseSql = `SELECT ${selectSql}
                      FROM ${options.fromSql}
                      ${(options.joins ?? []).join("\n")}
@@ -208,17 +235,32 @@ export async function executeVerifiedReport(options: {
   const summarySql = `SELECT COUNT(*) AS total,
                              COUNT(DISTINCT ${distinctExpression(options.grainKeys)}) AS distinct_grain
                         FROM (${baseSql}) verified_source`;
-  const [summaryRows] = await db.execute<RowDataPacket[]>(summarySql, options.params ?? []);
+  const [summaryRows] = await db.execute<RowDataPacket[]>(
+    summarySql,
+    options.params ?? [],
+  );
   const totalCount = Number(summaryRows[0]?.total ?? 0);
   const distinctGrainCount = Number(summaryRows[0]?.distinct_grain ?? 0);
   const duplicateGrainCount = Math.max(0, totalCount - distinctGrainCount);
   const paginatedSql = `${baseSql} ${options.orderBy ? `ORDER BY ${options.orderBy}` : ""} ${sqlLimitOffset(options.filters.limit, options.filters.offset)}`;
-  const [rows] = await db.execute<RowDataPacket[]>(paginatedSql, options.params ?? []);
-  const lineage = Object.fromEntries([...options.fields.entries()].map(([key, spec]) => [key, spec.lineage]));
-  const exactMappedFieldCount = Object.values(lineage).filter((item) => item.confidence === "EXACT").length;
-  const derivedMappedFieldCount = Object.values(lineage).filter((item) => item.confidence === "DERIVED").length;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    paginatedSql,
+    options.params ?? [],
+  );
+  const lineage = Object.fromEntries(
+    [...options.fields.entries()].map(([key, spec]) => [key, spec.lineage]),
+  );
+  const exactMappedFieldCount = Object.values(lineage).filter(
+    (item) => item.confidence === "EXACT",
+  ).length;
+  const derivedMappedFieldCount = Object.values(lineage).filter(
+    (item) => item.confidence === "DERIVED",
+  ).length;
   const definition = getBpoMasterReport(options.code);
-  const unavailableFieldCount = Math.max(0, (definition?.columns.length ?? options.fields.size) - options.fields.size);
+  const unavailableFieldCount = Math.max(
+    0,
+    (definition?.columns.length ?? options.fields.size) - options.fields.size,
+  );
 
   return {
     rows: normalize(options.code, rows),
@@ -234,7 +276,8 @@ export async function executeVerifiedReport(options: {
       duplicateGrainCount,
       sourceRowCount: totalCount,
       distinctGrainCount,
-      accuracyStatus: duplicateGrainCount > 0 ? "DUPLICATE_GRAIN_FOUND" : "SCHEMA_VERIFIED",
+      accuracyStatus:
+        duplicateGrainCount > 0 ? "DUPLICATE_GRAIN_FOUND" : "SCHEMA_VERIFIED",
     },
   };
 }

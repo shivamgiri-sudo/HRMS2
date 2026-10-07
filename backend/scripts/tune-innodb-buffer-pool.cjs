@@ -42,56 +42,77 @@
  *   node scripts/tune-innodb-buffer-pool.cjs            # report only, changes nothing
  *   node scripts/tune-innodb-buffer-pool.cjs --apply
  */
-const mysql = require('mysql2/promise');
-const fs = require('fs');
-const path = require('path');
+const mysql = require("mysql2/promise");
+const fs = require("fs");
+const path = require("path");
 
-const APPLY = process.argv.includes('--apply');
+const APPLY = process.argv.includes("--apply");
 const TARGET_BYTES = Number(process.env.TARGET_BYTES || 1073741824); // 1 GB
 
 function envFile() {
-  const p = path.resolve(__dirname, '..', '.env');
+  const p = path.resolve(__dirname, "..", ".env");
   const out = {};
   if (!fs.existsSync(p)) return out;
-  for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
+  for (const line of fs.readFileSync(p, "utf8").split(/\r?\n/)) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
-    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
+    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
   }
   return out;
 }
 const E = envFile();
 const pick = (k, d) => process.env[k] || E[k] || d;
-const mb = (n) => (Number(n) / 1024 / 1024).toFixed(0) + ' MB';
+const mb = (n) => (Number(n) / 1024 / 1024).toFixed(0) + " MB";
 
 (async () => {
-  console.log(APPLY ? '=== APPLY ===' : '=== REPORT ONLY (pass --apply to change) ===');
+  console.log(
+    APPLY ? "=== APPLY ===" : "=== REPORT ONLY (pass --apply to change) ===",
+  );
   let c;
-  for (const host of [pick('DB_HOST', '192.168.10.6'), '122.184.128.90']) {
+  for (const host of [pick("DB_HOST", "192.168.10.6"), "122.184.128.90"]) {
     try {
-      c = await mysql.createConnection({ host, user: pick('DB_USER'), password: pick('DB_PASSWORD'), database: 'mas_hrms', connectTimeout: 20000 });
+      c = await mysql.createConnection({
+        host,
+        user: pick("DB_USER"),
+        password: pick("DB_PASSWORD"),
+        database: "mas_hrms",
+        connectTimeout: 20000,
+      });
       console.log(`connected via ${host}`);
       break;
-    } catch (e) { console.log(`${host} -> ${e.code}`); }
+    } catch (e) {
+      console.log(`${host} -> ${e.code}`);
+    }
   }
-  if (!c) throw new Error('mas_hrms unreachable');
+  if (!c) throw new Error("mas_hrms unreachable");
 
-  const v = async (n) => { const [r] = await c.query('SHOW VARIABLES LIKE ?', [n]); return r[0] ? r[0].Value : null; };
-  const s = async (n) => { const [r] = await c.query('SHOW GLOBAL STATUS LIKE ?', [n]); return r[0] ? r[0].Value : null; };
+  const v = async (n) => {
+    const [r] = await c.query("SHOW VARIABLES LIKE ?", [n]);
+    return r[0] ? r[0].Value : null;
+  };
+  const s = async (n) => {
+    const [r] = await c.query("SHOW GLOBAL STATUS LIKE ?", [n]);
+    return r[0] ? r[0].Value : null;
+  };
 
-  const before = Number(await v('innodb_buffer_pool_size'));
-  const chunk = Number(await v('innodb_buffer_pool_chunk_size'));
-  const inst = Number(await v('innodb_buffer_pool_instances'));
+  const before = Number(await v("innodb_buffer_pool_size"));
+  const chunk = Number(await v("innodb_buffer_pool_chunk_size"));
+  const inst = Number(await v("innodb_buffer_pool_instances"));
   console.log(`  current pool      ${mb(before)}`);
   console.log(`  chunk x instances ${mb(chunk)} x ${inst}`);
   console.log(`  target            ${mb(TARGET_BYTES)}`);
 
   const unit = chunk * inst;
   if (TARGET_BYTES % unit !== 0) {
-    throw new Error(`target ${TARGET_BYTES} is not a multiple of chunk x instances (${unit}) — MySQL would silently round it`);
+    throw new Error(
+      `target ${TARGET_BYTES} is not a multiple of chunk x instances (${unit}) — MySQL would silently round it`,
+    );
   }
   if (TARGET_BYTES <= before) {
-    console.log('  target is not larger than the current value; nothing to do.');
-    await c.end(); return;
+    console.log(
+      "  target is not larger than the current value; nothing to do.",
+    );
+    await c.end();
+    return;
   }
 
   // Timing probe: the same shape of aggregate that has been timing out.
@@ -104,31 +125,42 @@ const mb = (n) => (Number(n) / 1024 / 1024).toFixed(0) + ' MB';
        WHERE adr.record_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`);
     console.log(`  ${label}: ${Date.now() - t}ms`);
   };
-  await probe('probe before');
+  await probe("probe before");
 
-  if (!APPLY) { console.log('\nReport only. Re-run with --apply.'); await c.end(); return; }
+  if (!APPLY) {
+    console.log("\nReport only. Re-run with --apply.");
+    await c.end();
+    return;
+  }
 
-  console.log('\n  resizing (online, no restart)...');
+  console.log("\n  resizing (online, no restart)...");
   await c.query(`SET GLOBAL innodb_buffer_pool_size = ${TARGET_BYTES}`);
 
   // The resize is asynchronous; wait for MySQL to report it complete.
   for (let i = 0; i < 60; i++) {
-    const st = await s('Innodb_buffer_pool_resize_status');
-    const now = Number(await v('innodb_buffer_pool_size'));
-    if (now >= TARGET_BYTES && (!st || /completed/i.test(st) || st === '')) {
+    const st = await s("Innodb_buffer_pool_resize_status");
+    const now = Number(await v("innodb_buffer_pool_size"));
+    if (now >= TARGET_BYTES && (!st || /completed/i.test(st) || st === "")) {
       console.log(`  resize complete: ${mb(now)}`);
       break;
     }
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000));
   }
 
-  const after = Number(await v('innodb_buffer_pool_size'));
+  const after = Number(await v("innodb_buffer_pool_size"));
   console.log(`\n  pool ${mb(before)} -> ${mb(after)}`);
-  console.log(`  pages free now: ${await s('Innodb_buffer_pool_pages_free')}`);
-  console.log(`  threads running: ${await s('Threads_running')}`);
-  await probe('probe after ');
+  console.log(`  pages free now: ${await s("Innodb_buffer_pool_pages_free")}`);
+  console.log(`  threads running: ${await s("Threads_running")}`);
+  await probe("probe after ");
 
-  console.log('\n  NOTE: this is a runtime value. Add to my.cnf under [mysqld] to survive a restart:');
-  console.log(`        innodb_buffer_pool_size = ${Math.round(TARGET_BYTES / 1024 / 1024)}M`);
+  console.log(
+    "\n  NOTE: this is a runtime value. Add to my.cnf under [mysqld] to survive a restart:",
+  );
+  console.log(
+    `        innodb_buffer_pool_size = ${Math.round(TARGET_BYTES / 1024 / 1024)}M`,
+  );
   await c.end();
-})().catch(e => { console.error('FAILED: ' + e.message); process.exit(1); });
+})().catch((e) => {
+  console.error("FAILED: " + e.message);
+  process.exit(1);
+});

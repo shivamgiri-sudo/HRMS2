@@ -13,7 +13,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../../db/mysql.js";
-import { resetRunnerState, startUatJobRunner, stopUatJobRunner } from "../uat-job-runner.js";
+import {
+  resetRunnerState,
+  startUatJobRunner,
+  stopUatJobRunner,
+} from "../uat-job-runner.js";
 
 const mockQuery = db.query as unknown as ReturnType<typeof vi.fn>;
 
@@ -50,7 +54,9 @@ describe("when uat_job does not exist", () => {
       await vi.advanceTimersByTimeAsync(POLL_MS);
     }
 
-    const complaints = err.mock.calls.filter((c) => String(c[0]).includes("uat_job is missing"));
+    const complaints = err.mock.calls.filter((c) =>
+      String(c[0]).includes("uat_job is missing"),
+    );
     expect(complaints).toHaveLength(1);
   });
 
@@ -97,7 +103,9 @@ describe("recovery", () => {
     for (let i = 0; i < 21; i++) await vi.advanceTimersByTimeAsync(POLL_MS);
 
     expect(mockQuery.mock.calls.length).toBeGreaterThan(0);
-    expect(log.mock.calls.some((c) => String(c[0]).includes("present again"))).toBe(true);
+    expect(
+      log.mock.calls.some((c) => String(c[0]).includes("present again")),
+    ).toBe(true);
   });
 });
 
@@ -113,8 +121,12 @@ describe("every other failure still reports normally", () => {
     startUatJobRunner();
     for (let i = 0; i < 3; i++) await vi.advanceTimersByTimeAsync(POLL_MS);
 
-    const ticks = err.mock.calls.filter((c) => String(c[0]).includes("runner tick failed"));
+    const ticks = err.mock.calls.filter((c) =>
+      String(c[0]).includes("runner tick failed"),
+    );
     expect(ticks.length).toBeGreaterThan(1);
-    expect(err.mock.calls.some((c) => String(c[0]).includes("uat_job is missing"))).toBe(false);
+    expect(
+      err.mock.calls.some((c) => String(c[0]).includes("uat_job is missing")),
+    ).toBe(false);
   });
 });

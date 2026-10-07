@@ -1,11 +1,17 @@
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { logSensitiveAction } from '../../shared/auditLog.js';
-import { getIstDateString } from '../../utils/dateUtils.js';
-import { leaveService } from '../leave/leave.service.js';
-import { CLOSED_RUN_STATUSES_SQL, LOCK_TERMINAL_STATUSES_SQL } from './run-status.js';
-import { notifyPayrollWindowClosing } from './payroll.notifications.js';
-import { triggerPayrollBranchReadinessIncomplete, triggerPayrollSignOffPending } from '../work-inbox/work-inbox.triggers.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { getIstDateString } from "../../utils/dateUtils.js";
+import { leaveService } from "../leave/leave.service.js";
+import {
+  CLOSED_RUN_STATUSES_SQL,
+  LOCK_TERMINAL_STATUSES_SQL,
+} from "./run-status.js";
+import { notifyPayrollWindowClosing } from "./payroll.notifications.js";
+import {
+  triggerPayrollBranchReadinessIncomplete,
+  triggerPayrollSignOffPending,
+} from "../work-inbox/work-inbox.triggers.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
 
 let _timer: ReturnType<typeof setInterval> | null = null;
@@ -30,19 +36,23 @@ export async function runPayrollWindowClosure(): Promise<void> {
         AND window_close_date <= ?
         AND status NOT IN (${LOCK_TERMINAL_STATUSES_SQL})
         AND auto_closed_at IS NULL`,
-    [today]
+    [today],
   );
 
   for (const row of rows as Array<{
-    id: string; run_month: string; status: string;
-    approved_by: string | null; finance_approved_by: string | null;
-    ceo_acknowledged_by: string | null; validated_by: string | null;
+    id: string;
+    run_month: string;
+    status: string;
+    approved_by: string | null;
+    finance_approved_by: string | null;
+    ceo_acknowledged_by: string | null;
+    validated_by: string | null;
   }>) {
     await db.execute(
       `UPDATE salary_prep_run
           SET status = 'locked', auto_closed_at = NOW(), closed_by = 'system'
         WHERE id = ?`,
-      [row.id]
+      [row.id],
     );
 
     // Root-caused 2026-08-14: this cron does not check approved_by /
@@ -57,38 +67,55 @@ export async function runPayrollWindowClosure(): Promise<void> {
     // it. Recorded, not blocked: the action_type and a boolean now make the
     // distinction visible in the audit trail without changing what happens.
     const hadNoApproval =
-      !row.approved_by && !row.finance_approved_by && !row.ceo_acknowledged_by && !row.validated_by;
+      !row.approved_by &&
+      !row.finance_approved_by &&
+      !row.ceo_acknowledged_by &&
+      !row.validated_by;
 
     await logSensitiveAction({
-      actor_user_id: 'system',
-      action_type: hadNoApproval ? 'payroll_window_auto_closed_without_approval' : 'payroll_window_auto_closed',
-      module_key: 'payroll',
-      entity_type: 'salary_prep_run',
+      actor_user_id: "system",
+      action_type: hadNoApproval
+        ? "payroll_window_auto_closed_without_approval"
+        : "payroll_window_auto_closed",
+      module_key: "payroll",
+      entity_type: "salary_prep_run",
       entity_id: row.id,
       change_summary: {
         run_month: row.run_month,
-        reason: 'window_close_date reached',
+        reason: "window_close_date reached",
         status_before_lock: row.status,
         had_no_approval: hadNoApproval,
       },
-    }).catch((e: unknown) => console.error('[payroll-window-cron] audit log error:', e));
+    }).catch((e: unknown) =>
+      console.error("[payroll-window-cron] audit log error:", e),
+    );
 
     // Lapse pending leave requests for all employees in this run
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT employee_id FROM salary_prep_line WHERE run_id = ?`,
       [row.id],
     );
-    const employeeIds = (lineRows as any[]).map((r: any) => String(r.employee_id));
+    const employeeIds = (lineRows as any[]).map((r: any) =>
+      String(r.employee_id),
+    );
     if (employeeIds.length > 0) {
-      await leaveService.lapseUnresolvedLeaves(row.id, row.run_month, employeeIds)
-        .catch((e: unknown) => console.error('[payroll-window-cron] lapseUnresolvedLeaves error:', e));
+      await leaveService
+        .lapseUnresolvedLeaves(row.id, row.run_month, employeeIds)
+        .catch((e: unknown) =>
+          console.error(
+            "[payroll-window-cron] lapseUnresolvedLeaves error:",
+            e,
+          ),
+        );
     }
 
-    console.log(`[payroll-window-cron] Auto-locked run ${row.id} (${row.run_month})`);
+    console.log(
+      `[payroll-window-cron] Auto-locked run ${row.id} (${row.run_month})`,
+    );
   }
 
   if (rows.length === 0) {
-    console.log('[payroll-window-cron] No runs to auto-close today.');
+    console.log("[payroll-window-cron] No runs to auto-close today.");
   }
 }
 
@@ -110,12 +137,19 @@ export async function runPayrollWindowClosingWarning(): Promise<void> {
        AND window_close_date <= DATE_ADD(?, INTERVAL ${WINDOW_CLOSING_LEAD_DAYS} DAY)
        AND status NOT IN (${CLOSED_RUN_STATUSES_SQL},'cancelled')
        AND auto_closed_at IS NULL`,
-    [today, today]
+    [today, today],
   );
 
-  for (const row of rows as Array<{ id: string; run_month: string; window_close_date: string }>) {
-    await notifyPayrollWindowClosing(row.id, String(row.window_close_date)).catch((e: unknown) =>
-      console.error('[payroll-window-cron] closing-warning notify error:', e)
+  for (const row of rows as Array<{
+    id: string;
+    run_month: string;
+    window_close_date: string;
+  }>) {
+    await notifyPayrollWindowClosing(
+      row.id,
+      String(row.window_close_date),
+    ).catch((e: unknown) =>
+      console.error("[payroll-window-cron] closing-warning notify error:", e),
     );
   }
 }
@@ -145,7 +179,10 @@ export async function runPayrollBranchReadinessReminders(): Promise<void> {
   try {
     await payrollBranchReadinessService.ensureMonthGrid(month);
   } catch (err) {
-    console.warn(`[payroll-window-cron] ensureMonthGrid(${month}) failed — reminders will only cover existing rows:`, err);
+    console.warn(
+      `[payroll-window-cron] ensureMonthGrid(${month}) failed — reminders will only cover existing rows:`,
+      err,
+    );
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -154,19 +191,32 @@ export async function runPayrollBranchReadinessReminders(): Promise<void> {
        LEFT JOIN branch_master b ON b.id = r.branch_id
       WHERE r.process_month = DATE_FORMAT(NOW(), '%Y-%m')
         AND r.readiness_status IN ('not_started','in_progress','blocked')
-        AND DATEDIFF(NOW(), r.created_at) >= 3`
+        AND DATEDIFF(NOW(), r.created_at) >= 3`,
   );
 
-  for (const row of rows as Array<{ branch_id: string; branch_name: string; process_month: string }>) {
+  for (const row of rows as Array<{
+    branch_id: string;
+    branch_name: string;
+    process_month: string;
+  }>) {
     try {
-      await triggerPayrollBranchReadinessIncomplete(row.branch_id, row.branch_name, row.process_month);
+      await triggerPayrollBranchReadinessIncomplete(
+        row.branch_id,
+        row.branch_name,
+        row.process_month,
+      );
     } catch (err) {
-      console.warn(`[payroll-window-cron] readiness reminder failed for branch ${row.branch_id}:`, err);
+      console.warn(
+        `[payroll-window-cron] readiness reminder failed for branch ${row.branch_id}:`,
+        err,
+      );
     }
   }
 
   if (rows.length > 0) {
-    console.log(`[payroll-window-cron] branch readiness incomplete: notified ${rows.length} branch(es)`);
+    console.log(
+      `[payroll-window-cron] branch readiness incomplete: notified ${rows.length} branch(es)`,
+    );
   }
 }
 
@@ -176,7 +226,12 @@ export async function runPayrollBranchReadinessReminders(): Promise<void> {
  * list, same reasoning: a v1-UUID test run rendering identically to a real one in the UI
  * must not be offered as something for payroll_head to sign off.
  */
-const SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF = ["test-auto-gen", "codex-e2e", "smoke-test", "demo-seed"];
+const SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF = [
+  "test-auto-gen",
+  "codex-e2e",
+  "smoke-test",
+  "demo-seed",
+];
 
 /**
  * Daily cron: nudge payroll_head that a run has finished calculation and is waiting on
@@ -189,26 +244,33 @@ const SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF = ["test-auto-gen", "codex-e2e", "smoke
  * run that endpoint would not actually list.
  */
 export async function runPayrollSignOffReminders(): Promise<void> {
-  const placeholders = SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF.map(() => '?').join(', ');
+  const placeholders = SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF.map(() => "?").join(
+    ", ",
+  );
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, run_month
        FROM salary_prep_run
       WHERE LOWER(COALESCE(status, '')) = 'processing'
         AND finance_approved_at IS NULL
         AND LOWER(COALESCE(created_by, '')) NOT IN (${placeholders})`,
-    SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF
+    SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF,
   );
 
   for (const row of rows as Array<{ id: string; run_month: string }>) {
     try {
       await triggerPayrollSignOffPending(row.id, row.run_month);
     } catch (err) {
-      console.warn(`[payroll-window-cron] sign-off reminder failed for run ${row.id}:`, err);
+      console.warn(
+        `[payroll-window-cron] sign-off reminder failed for run ${row.id}:`,
+        err,
+      );
     }
   }
 
   if (rows.length > 0) {
-    console.log(`[payroll-window-cron] payroll sign-off pending: notified for ${rows.length} run(s)`);
+    console.log(
+      `[payroll-window-cron] payroll sign-off pending: notified for ${rows.length} run(s)`,
+    );
   }
 }
 
@@ -221,21 +283,22 @@ export function startPayrollWindowClosureScheduler(): void {
     .then(() => runPayrollBranchReadinessReminders())
     .then(() => runPayrollSignOffReminders())
     .catch((e: unknown) =>
-      console.error('[payroll-window-cron] startup run failed:', e)
+      console.error("[payroll-window-cron] startup run failed:", e),
     );
 
   _timer = setInterval(
-    () => runPayrollWindowClosure()
-      .then(() => runPayrollWindowClosingWarning())
-      .then(() => runPayrollBranchReadinessReminders())
-      .then(() => runPayrollSignOffReminders())
-      .catch((e: unknown) =>
-        console.error('[payroll-window-cron] scheduled run failed:', e)
-      ),
-    24 * 60 * 60 * 1000
+    () =>
+      runPayrollWindowClosure()
+        .then(() => runPayrollWindowClosingWarning())
+        .then(() => runPayrollBranchReadinessReminders())
+        .then(() => runPayrollSignOffReminders())
+        .catch((e: unknown) =>
+          console.error("[payroll-window-cron] scheduled run failed:", e),
+        ),
+    24 * 60 * 60 * 1000,
   );
 
-  console.log('[payroll-window-cron] scheduler started (daily)');
+  console.log("[payroll-window-cron] scheduler started (daily)");
 }
 
 export function stopPayrollWindowClosureScheduler(): void {
@@ -243,5 +306,5 @@ export function stopPayrollWindowClosureScheduler(): void {
     clearInterval(_timer);
     _timer = null;
   }
-  console.log('[payroll-window-cron] Stopped');
+  console.log("[payroll-window-cron] Stopped");
 }

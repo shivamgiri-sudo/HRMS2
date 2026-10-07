@@ -30,8 +30,10 @@ import { db } from "../../db/mysql.js";
  * automating.
  */
 
-export type TniCategory = "PROCESS_KNOWLEDGE" | "SOFT_SKILLS" | "CALL_HANDLING" | "CONDUCT";
-export type CoachingType = "ONE_ON_ONE" | "GROUP_SESSION" | "CONTENT_GAP_REVIEW";
+export type TniCategory =
+  "PROCESS_KNOWLEDGE" | "SOFT_SKILLS" | "CALL_HANDLING" | "CONDUCT";
+export type CoachingType =
+  "ONE_ON_ONE" | "GROUP_SESSION" | "CONTENT_GAP_REVIEW";
 export type Severity = "MEDIUM" | "HIGH" | "EXTREME_REVIEW";
 
 export interface SkillParameterRule {
@@ -76,26 +78,75 @@ export type ParameterRule = SkillParameterRule | EventParameterRule;
  * customer, and neither is the same gap as closing a call properly.
  */
 export const PARAMETER_RULES: ParameterRule[] = [
-  { kind: "skill", key: "accuracy",  column: "correct_and_complete_information", category: "PROCESS_KNOWLEDGE", minSample: 5, marginAboveBaseline: 0.15 },
-  { kind: "skill", key: "probing",   column: "accurate_issue_probing",           category: "PROCESS_KNOWLEDGE", minSample: 5, marginAboveBaseline: 0.15 },
-  { kind: "skill", key: "concern",   column: "customer_concern_acknowledged",    category: "SOFT_SKILLS",       minSample: 5, marginAboveBaseline: 0.15 },
-  { kind: "skill", key: "empathy",   column: "express_empathy",                  category: "SOFT_SKILLS",       minSample: 5, marginAboveBaseline: 0.15 },
-  { kind: "skill", key: "listening", column: "active_listening",                 category: "SOFT_SKILLS",       minSample: 5, marginAboveBaseline: 0.15 },
-  { kind: "skill", key: "closure",   column: "proper_call_closure",              category: "CALL_HANDLING",     minSample: 5, marginAboveBaseline: 0.15 },
-  { kind: "event", key: "profanity", column: "agent_english_cuss_count",         category: "CONDUCT", coachingType: "ONE_ON_ONE", minOccurrences: 2 },
+  {
+    kind: "skill",
+    key: "accuracy",
+    column: "correct_and_complete_information",
+    category: "PROCESS_KNOWLEDGE",
+    minSample: 5,
+    marginAboveBaseline: 0.15,
+  },
+  {
+    kind: "skill",
+    key: "probing",
+    column: "accurate_issue_probing",
+    category: "PROCESS_KNOWLEDGE",
+    minSample: 5,
+    marginAboveBaseline: 0.15,
+  },
+  {
+    kind: "skill",
+    key: "concern",
+    column: "customer_concern_acknowledged",
+    category: "SOFT_SKILLS",
+    minSample: 5,
+    marginAboveBaseline: 0.15,
+  },
+  {
+    kind: "skill",
+    key: "empathy",
+    column: "express_empathy",
+    category: "SOFT_SKILLS",
+    minSample: 5,
+    marginAboveBaseline: 0.15,
+  },
+  {
+    kind: "skill",
+    key: "listening",
+    column: "active_listening",
+    category: "SOFT_SKILLS",
+    minSample: 5,
+    marginAboveBaseline: 0.15,
+  },
+  {
+    kind: "skill",
+    key: "closure",
+    column: "proper_call_closure",
+    category: "CALL_HANDLING",
+    minSample: 5,
+    marginAboveBaseline: 0.15,
+  },
+  {
+    kind: "event",
+    key: "profanity",
+    column: "agent_english_cuss_count",
+    category: "CONDUCT",
+    coachingType: "ONE_ON_ONE",
+    minOccurrences: 2,
+  },
 ];
 
 /** A floor under the effective threshold: even on a parameter with a very low
  *  org baseline (say 5%), a margin-only bar of 20% would flag agents on trivial
  *  evidence. No skill finding raises below this rate regardless of baseline. */
-const MIN_EFFECTIVE_THRESHOLD = 0.30;
+const MIN_EFFECTIVE_THRESHOLD = 0.3;
 
 /** A fail rate this extreme on this much evidence is as likely to be a scoring/calibration problem as a real one. */
-const EXTREME_FAIL_RATE = 0.90;
+const EXTREME_FAIL_RATE = 0.9;
 const EXTREME_MIN_SAMPLE = 20;
 
 /** Above this share of a process's audited agents failing the SAME parameter, the finding is a content gap, not one person's coaching. */
-const SYSTEMIC_SHARE = 0.30;
+const SYSTEMIC_SHARE = 0.3;
 const SYSTEMIC_MIN_AGENTS = 3;
 
 /**
@@ -115,15 +166,26 @@ export function classifySkillFinding(
   const failRate = fails / scored;
   if (failRate <= threshold) return null;
   const severity: Severity =
-    failRate >= EXTREME_FAIL_RATE && scored >= EXTREME_MIN_SAMPLE ? "EXTREME_REVIEW" : "MEDIUM";
+    failRate >= EXTREME_FAIL_RATE && scored >= EXTREME_MIN_SAMPLE
+      ? "EXTREME_REVIEW"
+      : "MEDIUM";
   return { severity, coachingType: "ONE_ON_ONE" };
 }
 
-export function effectiveThreshold(rule: SkillParameterRule, orgBaselineFailRate: number): number {
-  return Math.max(orgBaselineFailRate + rule.marginAboveBaseline, MIN_EFFECTIVE_THRESHOLD);
+export function effectiveThreshold(
+  rule: SkillParameterRule,
+  orgBaselineFailRate: number,
+): number {
+  return Math.max(
+    orgBaselineFailRate + rule.marginAboveBaseline,
+    MIN_EFFECTIVE_THRESHOLD,
+  );
 }
 
-export function isSystemic(flaggedAgents: number, totalAudited: number): boolean {
+export function isSystemic(
+  flaggedAgents: number,
+  totalAudited: number,
+): boolean {
   if (totalAudited <= 0 || flaggedAgents < SYSTEMIC_MIN_AGENTS) return false;
   return flaggedAgents / totalAudited >= SYSTEMIC_SHARE;
 }
@@ -239,13 +301,24 @@ export async function deriveFindingsForParameter(
       [windowFrom, windowTo, rule.minSample],
     );
 
-    const flaggedByProcess = new Map<string, { count: number; name: string | null }>();
+    const flaggedByProcess = new Map<
+      string,
+      { count: number; name: string | null }
+    >();
     const auditedByProcess = new Map<string, number>();
 
     for (const row of rows) {
       if (!row.process_id) continue; // an audited User with no resolvable employee/process is not attributable
-      auditedByProcess.set(row.process_id, (auditedByProcess.get(row.process_id) ?? 0) + 1);
-      const cls = classifySkillFinding(rule, Number(row.scored), Number(row.fails), threshold);
+      auditedByProcess.set(
+        row.process_id,
+        (auditedByProcess.get(row.process_id) ?? 0) + 1,
+      );
+      const cls = classifySkillFinding(
+        rule,
+        Number(row.scored),
+        Number(row.fails),
+        threshold,
+      );
       if (!cls) continue;
 
       findings.push({
@@ -259,13 +332,24 @@ export async function deriveFindingsForParameter(
         category: rule.category,
         coachingType: cls.coachingType,
         severity: cls.severity,
-        windowFrom, windowTo,
+        windowFrom,
+        windowTo,
         sample: Number(row.scored),
         fails: Number(row.fails),
-        evidenceNote: evidenceNote(rule, Number(row.scored), Number(row.fails), windowFrom, windowTo, baseline),
+        evidenceNote: evidenceNote(
+          rule,
+          Number(row.scored),
+          Number(row.fails),
+          windowFrom,
+          windowTo,
+          baseline,
+        ),
       });
 
-      const bucket = flaggedByProcess.get(row.process_id) ?? { count: 0, name: row.process_name };
+      const bucket = flaggedByProcess.get(row.process_id) ?? {
+        count: 0,
+        name: row.process_name,
+      };
       bucket.count++;
       flaggedByProcess.set(row.process_id, bucket);
     }
@@ -275,14 +359,19 @@ export async function deriveFindingsForParameter(
       if (!isSystemic(bucket.count, totalAudited)) continue;
       findings.push({
         subjectType: "process",
-        employeeId: null, employeeCode: null, employeeName: null,
-        processId, processName: bucket.name,
+        employeeId: null,
+        employeeCode: null,
+        employeeName: null,
+        processId,
+        processName: bucket.name,
         parameterKey: rule.key,
         category: rule.category,
         coachingType: "CONTENT_GAP_REVIEW",
         severity: "HIGH",
-        windowFrom, windowTo,
-        sample: totalAudited, fails: bucket.count,
+        windowFrom,
+        windowTo,
+        sample: totalAudited,
+        fails: bucket.count,
         evidenceNote: `${bucket.count} of ${totalAudited} audited agents (${Math.round((bucket.count / totalAudited) * 100)}%) are failing "${rule.key}" between ${windowFrom} and ${windowTo} — a training content gap, not one person's coaching`,
       });
     }
@@ -318,9 +407,17 @@ export async function deriveFindingsForParameter(
       category: rule.category,
       coachingType: rule.coachingType,
       severity: "HIGH",
-      windowFrom, windowTo,
-      sample: Number(row.occurrences), fails: Number(row.occurrences),
-      evidenceNote: evidenceNote(rule, Number(row.occurrences), Number(row.occurrences), windowFrom, windowTo),
+      windowFrom,
+      windowTo,
+      sample: Number(row.occurrences),
+      fails: Number(row.occurrences),
+      evidenceNote: evidenceNote(
+        rule,
+        Number(row.occurrences),
+        Number(row.occurrences),
+        windowFrom,
+        windowTo,
+      ),
     });
   }
   return findings;
@@ -341,8 +438,10 @@ export async function persistFindings(
 
   for (const f of findings) {
     const failRate = f.sample > 0 ? f.fails / f.sample : null;
-    const subjectCol = f.subjectType === "employee" ? "employee_id" : "process_id";
-    const subjectVal = f.subjectType === "employee" ? f.employeeId : f.processId;
+    const subjectCol =
+      f.subjectType === "employee" ? "employee_id" : "process_id";
+    const subjectVal =
+      f.subjectType === "employee" ? f.employeeId : f.processId;
 
     const [existing] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM tni_finding
@@ -358,7 +457,16 @@ export async function persistFindings(
             SET window_from = ?, window_to = ?, sample_count = ?, fail_count = ?,
                 fail_rate = ?, evidence_note = ?, severity = ?, updated_at = NOW()
           WHERE id = ?`,
-        [f.windowFrom, f.windowTo, f.sample, f.fails, failRate, f.evidenceNote, f.severity, existing[0].id],
+        [
+          f.windowFrom,
+          f.windowTo,
+          f.sample,
+          f.fails,
+          failRate,
+          f.evidenceNote,
+          f.severity,
+          existing[0].id,
+        ],
       );
       updated++;
       continue;
@@ -372,9 +480,23 @@ export async function persistFindings(
           status, target_completion_date, created_by)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'OPEN', DATE_ADD(CURDATE(), INTERVAL 14 DAY), ?)`,
       [
-        randomUUID(), f.subjectType, f.employeeId, f.employeeCode, f.employeeName, f.processId, f.processName,
-        f.parameterKey, f.category, f.coachingType, f.severity,
-        f.windowFrom, f.windowTo, f.sample, f.fails, failRate, f.evidenceNote,
+        randomUUID(),
+        f.subjectType,
+        f.employeeId,
+        f.employeeCode,
+        f.employeeName,
+        f.processId,
+        f.processName,
+        f.parameterKey,
+        f.category,
+        f.coachingType,
+        f.severity,
+        f.windowFrom,
+        f.windowTo,
+        f.sample,
+        f.fails,
+        failRate,
+        f.evidenceNote,
         createdBy,
       ],
     );
@@ -407,9 +529,12 @@ export async function runTniScan(
  * columns that page tracks (grammar, dead air, hold procedure, etc.) have no
  * corresponding tni_finding rule and correctly return no match below.
  */
-export const RAW_COLUMN_TO_PARAMETER_KEY: Partial<Record<string, string>> = Object.fromEntries(
-  PARAMETER_RULES.filter((r): r is SkillParameterRule => r.kind === "skill").map((r) => [r.column, r.key]),
-);
+export const RAW_COLUMN_TO_PARAMETER_KEY: Partial<Record<string, string>> =
+  Object.fromEntries(
+    PARAMETER_RULES.filter(
+      (r): r is SkillParameterRule => r.kind === "skill",
+    ).map((r) => [r.column, r.key]),
+  );
 
 export interface OpenFindingSummary {
   id: string;

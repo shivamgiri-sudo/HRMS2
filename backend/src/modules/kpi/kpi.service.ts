@@ -3,27 +3,41 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queueAutoAwards } from "../engagement/badge.service.js";
 import type {
-  FamilySummary, KpiAssignment, KpiFamily, KpiMetric, KpiScore, KpiSummary,
-  KpiTemplate, KpiTemplateMetric, LeaderboardEntry,
+  FamilySummary,
+  KpiAssignment,
+  KpiFamily,
+  KpiMetric,
+  KpiScore,
+  KpiSummary,
+  KpiTemplate,
+  KpiTemplateMetric,
+  LeaderboardEntry,
 } from "./kpi.types.js";
 import type {
-  AddTemplateMetricInput, AssignTemplateInput, BulkScoreInput,
-  CreateMetricInput, CreateTemplateInput, LeaderboardFilters,
-  MetricsFilters, RecordScoreInput,
+  AddTemplateMetricInput,
+  AssignTemplateInput,
+  BulkScoreInput,
+  CreateMetricInput,
+  CreateTemplateInput,
+  LeaderboardFilters,
+  MetricsFilters,
+  RecordScoreInput,
 } from "./kpi.validation.js";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-const RATING_THRESHOLDS: Array<{ min: number; rating: KpiSummary["rating"] }> = [
-  { min: 100, rating: "S" },
-  { min: 90,  rating: "A" },
-  { min: 75,  rating: "B" },
-  { min: 60,  rating: "C" },
-  { min: 0,   rating: "D" },
-];
+const RATING_THRESHOLDS: Array<{ min: number; rating: KpiSummary["rating"] }> =
+  [
+    { min: 100, rating: "S" },
+    { min: 90, rating: "A" },
+    { min: 75, rating: "B" },
+    { min: 60, rating: "C" },
+    { min: 0, rating: "D" },
+  ];
 
 function toRating(score: number): KpiSummary["rating"] {
-  return (RATING_THRESHOLDS.find(t => score >= t.min) ?? RATING_THRESHOLDS[4]).rating;
+  return (RATING_THRESHOLDS.find((t) => score >= t.min) ?? RATING_THRESHOLDS[4])
+    .rating;
 }
 
 export const kpiService = {
@@ -38,24 +52,37 @@ export const kpiService = {
     }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM kpi_metric_master WHERE ${conds.join(" AND ")} ORDER BY family, category, metric_name`,
-      params
+      params,
     );
     return rows as KpiMetric[];
   },
 
-  async createMetric(input: CreateMetricInput, _userId: string): Promise<KpiMetric> {
+  async createMetric(
+    input: CreateMetricInput,
+    _userId: string,
+  ): Promise<KpiMetric> {
     const [dup] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM kpi_metric_master WHERE metric_code = ? LIMIT 1", [input.metricCode]
+      "SELECT id FROM kpi_metric_master WHERE metric_code = ? LIMIT 1",
+      [input.metricCode],
     );
-    if ((dup as RowDataPacket[]).length > 0) throw new Error("Metric code already exists");
+    if ((dup as RowDataPacket[]).length > 0)
+      throw new Error("Metric code already exists");
 
     const id = randomUUID();
     await db.execute(
       "INSERT INTO kpi_metric_master (id, metric_code, metric_name, category, unit, direction) VALUES (?, ?, ?, ?, ?, ?)",
-      [id, input.metricCode, input.metricName, input.category, input.unit, input.direction]
+      [
+        id,
+        input.metricCode,
+        input.metricName,
+        input.category,
+        input.unit,
+        input.direction,
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM kpi_metric_master WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM kpi_metric_master WHERE id = ? LIMIT 1",
+      [id],
     );
     return (rows as KpiMetric[])[0];
   },
@@ -64,19 +91,23 @@ export const kpiService = {
 
   async listTemplates(): Promise<KpiTemplate[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM kpi_template WHERE active_status = 1 ORDER BY template_name"
+      "SELECT * FROM kpi_template WHERE active_status = 1 ORDER BY template_name",
     );
     return rows as KpiTemplate[];
   },
 
-  async createTemplate(input: CreateTemplateInput, _userId: string): Promise<KpiTemplate> {
+  async createTemplate(
+    input: CreateTemplateInput,
+    _userId: string,
+  ): Promise<KpiTemplate> {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO kpi_template (id, template_name, description) VALUES (?, ?, ?)",
-      [id, input.templateName, input.description ?? null]
+      [id, input.templateName, input.description ?? null],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM kpi_template WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM kpi_template WHERE id = ? LIMIT 1",
+      [id],
     );
     return (rows as KpiTemplate[])[0];
   },
@@ -90,32 +121,41 @@ export const kpiService = {
        JOIN kpi_metric_master m ON m.id = tm.metric_id
        WHERE tm.template_id = ?
        ORDER BY tm.weight_pct DESC`,
-      [templateId]
+      [templateId],
     );
     return rows as KpiTemplateMetric[];
   },
 
   async addTemplateMetric(
     input: AddTemplateMetricInput & { templateId: string },
-    _userId: string
+    _userId: string,
   ): Promise<KpiTemplateMetric> {
     const id = randomUUID();
     await db.execute(
       `INSERT INTO kpi_template_metric (id, template_id, metric_id, target_value, weight_pct)
        VALUES (?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE target_value = VALUES(target_value), weight_pct = VALUES(weight_pct)`,
-      [id, input.templateId, input.metricId, input.targetValue, input.weightPct]
+      [
+        id,
+        input.templateId,
+        input.metricId,
+        input.targetValue,
+        input.weightPct,
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM kpi_template_metric WHERE template_id = ? AND metric_id = ? LIMIT 1",
-      [input.templateId, input.metricId]
+      [input.templateId, input.metricId],
     );
     return (rows as KpiTemplateMetric[])[0];
   },
 
   // ─── Assignments ──────────────────────────────────────────────────────────
 
-  async assignTemplate(input: AssignTemplateInput, _userId: string): Promise<KpiAssignment> {
+  async assignTemplate(
+    input: AssignTemplateInput,
+    _userId: string,
+  ): Promise<KpiAssignment> {
     if (!input.designationId && !input.departmentId && !input.employeeId) {
       throw new Error("Must specify at least one assignment target");
     }
@@ -123,10 +163,17 @@ export const kpiService = {
     await db.execute(
       `INSERT INTO kpi_assignment (id, template_id, designation_id, department_id, employee_id)
        VALUES (?, ?, ?, ?, ?)`,
-      [id, input.templateId, input.designationId ?? null, input.departmentId ?? null, input.employeeId ?? null]
+      [
+        id,
+        input.templateId,
+        input.designationId ?? null,
+        input.departmentId ?? null,
+        input.employeeId ?? null,
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM kpi_assignment WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM kpi_assignment WHERE id = ? LIMIT 1",
+      [id],
     );
     return (rows as KpiAssignment[])[0];
   },
@@ -147,44 +194,67 @@ export const kpiService = {
          (ka.designation_id IS NOT NULL) DESC,
          (ka.department_id IS NOT NULL) DESC
        LIMIT 1`,
-      [employeeId, employeeId]
+      [employeeId, employeeId],
     );
     return (rows as KpiAssignment[])[0] ?? null;
   },
 
   // ─── Scores ───────────────────────────────────────────────────────────────
 
-  async recordScore(input: RecordScoreInput, _userId: string): Promise<KpiScore> {
+  async recordScore(
+    input: RecordScoreInput,
+    _userId: string,
+  ): Promise<KpiScore> {
     const id = randomUUID();
     await db.execute(
       `INSERT INTO kpi_score (id, employee_id, metric_id, period, actual_value, source)
        VALUES (?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE actual_value = VALUES(actual_value), source = VALUES(source)`,
-      [id, input.employeeId, input.metricId, input.period, input.actualValue, input.source ?? "manual"]
+      [
+        id,
+        input.employeeId,
+        input.metricId,
+        input.period,
+        input.actualValue,
+        input.source ?? "manual",
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM kpi_score WHERE employee_id = ? AND metric_id = ? AND period = ? LIMIT 1",
-      [input.employeeId, input.metricId, input.period]
+      [input.employeeId, input.metricId, input.period],
     );
     const score = (rows as KpiScore[])[0];
     queueAutoAwards(input.employeeId, "kpi_score_recorded");
     return score;
   },
 
-  async bulkRecordScores(input: BulkScoreInput, _userId: string): Promise<{ recorded: number }> {
+  async bulkRecordScores(
+    input: BulkScoreInput,
+    _userId: string,
+  ): Promise<{ recorded: number }> {
     if (input.scores.length === 0) return { recorded: 0 };
-    const valuePlaceholders = input.scores.map(() => "(UUID(), ?, ?, ?, ?, ?)").join(", ");
+    const valuePlaceholders = input.scores
+      .map(() => "(UUID(), ?, ?, ?, ?, ?)")
+      .join(", ");
     const params: unknown[] = [];
     for (const s of input.scores) {
-      params.push(s.employeeId, s.metricId, input.period, s.actualValue, s.source ?? "manual");
+      params.push(
+        s.employeeId,
+        s.metricId,
+        input.period,
+        s.actualValue,
+        s.source ?? "manual",
+      );
     }
     const [result] = await db.execute(
       `INSERT INTO kpi_score (id, employee_id, metric_id, period, actual_value, source)
        VALUES ${valuePlaceholders}
        ON DUPLICATE KEY UPDATE actual_value = VALUES(actual_value), source = VALUES(source)`,
-      params
+      params,
     );
-    for (const employeeId of new Set(input.scores.map((score) => score.employeeId))) {
+    for (const employeeId of new Set(
+      input.scores.map((score) => score.employeeId),
+    )) {
       queueAutoAwards(employeeId, "kpi_score_recorded");
     }
     return { recorded: (result as any).affectedRows ?? input.scores.length };
@@ -193,54 +263,81 @@ export const kpiService = {
   // ─── Summary ──────────────────────────────────────────────────────────────
 
   async getEmployeeSummary(
-    employeeId: string, templateId: string, period: string
+    employeeId: string,
+    templateId: string,
+    period: string,
   ): Promise<KpiSummary> {
     const [tplRows] = await db.execute<RowDataPacket[]>(
       `SELECT tm.metric_id, m.metric_code, tm.target_value, tm.weight_pct, m.direction
        FROM kpi_template_metric tm
        JOIN kpi_metric_master m ON m.id = tm.metric_id
        WHERE tm.template_id = ?`,
-      [templateId]
+      [templateId],
     );
     const templateMetrics = tplRows as Array<{
-      metric_id: string; metric_code: string; target_value: number; weight_pct: number; direction: string;
+      metric_id: string;
+      metric_code: string;
+      target_value: number;
+      weight_pct: number;
+      direction: string;
     }>;
 
-    const metricIds = templateMetrics.map(m => m.metric_id);
+    const metricIds = templateMetrics.map((m) => m.metric_id);
     let actuals: Array<{ metric_id: string; actual_value: number }> = [];
     if (metricIds.length > 0) {
       const placeholders = metricIds.map(() => "?").join(", ");
       const [scoreRows] = await db.execute<RowDataPacket[]>(
         `SELECT metric_id, actual_value FROM kpi_score
          WHERE employee_id = ? AND period = ? AND metric_id IN (${placeholders})`,
-        [employeeId, period, ...metricIds]
+        [employeeId, period, ...metricIds],
       );
       actuals = scoreRows as typeof actuals;
     }
 
-    const actualMap = new Map(actuals.map(a => [a.metric_id, a.actual_value]));
+    const actualMap = new Map(
+      actuals.map((a) => [a.metric_id, a.actual_value]),
+    );
     const MAX_ACHIEVEMENT = 1.2; // cap overachievement at 120%
 
     let weightedSum = 0;
     let totalWeight = 0;
-    const metrics = templateMetrics.map(tm => {
+    const metrics = templateMetrics.map((tm) => {
       const actual = actualMap.get(tm.metric_id) ?? null;
       // When actual is null (not yet submitted), exclude this metric from the
       // weighted denominator rather than scoring it as zero — zeroing would
       // falsely penalise employees who simply haven't entered data yet.
       if (actual === null) {
-        return { metric_id: tm.metric_id, metric_code: tm.metric_code, target_value: tm.target_value, actual_value: null, weight_pct: tm.weight_pct, achievement_pct: null, direction: tm.direction, status: "pending" as const };
+        return {
+          metric_id: tm.metric_id,
+          metric_code: tm.metric_code,
+          target_value: tm.target_value,
+          actual_value: null,
+          weight_pct: tm.weight_pct,
+          achievement_pct: null,
+          direction: tm.direction,
+          status: "pending" as const,
+        };
       }
       let achievementPct = 0;
       if (tm.target_value > 0) {
-        const raw = tm.direction === "lower_is_better"
-          ? tm.target_value / actual
-          : actual / tm.target_value;
+        const raw =
+          tm.direction === "lower_is_better"
+            ? tm.target_value / actual
+            : actual / tm.target_value;
         achievementPct = r2(Math.min(raw, MAX_ACHIEVEMENT) * 100);
       }
       weightedSum += achievementPct * tm.weight_pct;
       totalWeight += tm.weight_pct;
-      return { metric_id: tm.metric_id, metric_code: tm.metric_code, target_value: tm.target_value, actual_value: actual, weight_pct: tm.weight_pct, achievement_pct: achievementPct, direction: tm.direction, status: "submitted" as const };
+      return {
+        metric_id: tm.metric_id,
+        metric_code: tm.metric_code,
+        target_value: tm.target_value,
+        actual_value: actual,
+        weight_pct: tm.weight_pct,
+        achievement_pct: achievementPct,
+        direction: tm.direction,
+        status: "submitted" as const,
+      };
     });
 
     const weightedScore = totalWeight > 0 ? r2(weightedSum / totalWeight) : 0;
@@ -257,18 +354,31 @@ export const kpiService = {
 
   // ─── Leaderboard ──────────────────────────────────────────────────────────
 
-  async getLeaderboard(filters: LeaderboardFilters): Promise<LeaderboardEntry[]> {
+  async getLeaderboard(
+    filters: LeaderboardFilters,
+  ): Promise<LeaderboardEntry[]> {
     // score_date is compared as a half-open range rather than through
     // DATE_FORMAT(...) = ?. Wrapping the column in a function makes the predicate
     // non-sargable, so no index on score_date can be used and this window-function
     // query full-scans kpi_daily_actual — a large part of why the Operations
     // dashboard took ~30s to paint.
-    const conds: string[] = ["kda.score_date >= ? AND kda.score_date < DATE_ADD(?, INTERVAL 1 MONTH)"];
+    const conds: string[] = [
+      "kda.score_date >= ? AND kda.score_date < DATE_ADD(?, INTERVAL 1 MONTH)",
+    ];
     const monthStart = `${filters.period}-01`;
     const params: unknown[] = [monthStart, monthStart];
-    if (filters.branchId)  { conds.push("e.branch_id = ?");  params.push(filters.branchId); }
-    if (filters.processId) { conds.push("e.process_id = ?"); params.push(filters.processId); }
-    if (filters.family)    { conds.push("m.family = ?");     params.push(filters.family); }
+    if (filters.branchId) {
+      conds.push("e.branch_id = ?");
+      params.push(filters.branchId);
+    }
+    if (filters.processId) {
+      conds.push("e.process_id = ?");
+      params.push(filters.processId);
+    }
+    if (filters.family) {
+      conds.push("m.family = ?");
+      params.push(filters.family);
+    }
 
     // Automated test records rank alongside real staff otherwise. The CEO UAT found
     // "Codex E2E Candidate CODEX_E2E_1783176395010 / MAS62917" at rank 8; there are
@@ -299,10 +409,10 @@ export const kpiService = {
        GROUP BY e.id, e.employee_code, e.full_name
        ORDER BY weighted_score_pct DESC
        LIMIT ${limit}`,
-      params
+      params,
     );
 
-    return (rows as any[]).map(row => ({
+    return (rows as any[]).map((row) => ({
       ...row,
       rating: toRating(Number(row.weighted_score_pct)),
     }));
@@ -310,7 +420,10 @@ export const kpiService = {
 
   // ─── Family Summary ───────────────────────────────────────────────────────
 
-  async getFamilySummary(processId: string, period: string): Promise<FamilySummary> {
+  async getFamilySummary(
+    processId: string,
+    period: string,
+  ): Promise<FamilySummary> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          m.family,
@@ -329,18 +442,22 @@ export const kpiService = {
        JOIN kpi_metric_master m ON m.id = ks.metric_id
        WHERE ks.period = ? AND e.process_id = ?
        GROUP BY m.family`,
-      [period, processId]
+      [period, processId],
     );
 
     const defaultEntry = { avg_score: 0, employees_scored: 0 };
     const result: FamilySummary = {
-      operations:  { ...defaultEntry },
-      quality:     { ...defaultEntry },
+      operations: { ...defaultEntry },
+      quality: { ...defaultEntry },
       performance: { ...defaultEntry },
-      custom:      { ...defaultEntry },
+      custom: { ...defaultEntry },
     };
 
-    for (const row of rows as Array<{ family: KpiFamily; avg_score: number; employees_scored: number }>) {
+    for (const row of rows as Array<{
+      family: KpiFamily;
+      avg_score: number;
+      employees_scored: number;
+    }>) {
       if (row.family in result) {
         result[row.family] = {
           avg_score: Number(row.avg_score),

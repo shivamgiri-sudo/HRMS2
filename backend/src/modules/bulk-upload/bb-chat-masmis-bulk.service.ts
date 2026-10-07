@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's Chat export -- writes into db_masmis.new_bb_chat (created by
@@ -35,7 +38,8 @@ function normalizeKey(k: string): string {
 function pick(normalized: Record<string, unknown>, ...names: string[]): string {
   for (const name of names) {
     const v = normalized[normalizeKey(name)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
@@ -51,8 +55,18 @@ function parseNullableDecimal(v: string): number | null {
 }
 
 const MONTHS: Record<string, string> = {
-  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
-  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+  jan: "01",
+  feb: "02",
+  mar: "03",
+  apr: "04",
+  may: "05",
+  jun: "06",
+  jul: "07",
+  aug: "08",
+  sep: "09",
+  oct: "10",
+  nov: "11",
+  dec: "12",
 };
 const p2 = (n: number | string) => String(n).padStart(2, "0");
 
@@ -84,9 +98,29 @@ export function parseChatDate(raw: string): string | null {
 
 /** The columns written for every row, in insert order (sheet order). */
 export const NEW_BB_CHAT_COLUMNS = [
-  "repeat_status", "repeat_status_on_assign_time", "frt", "resolution_time_in_min", "frt_tat", "resolution_tat",
-  "phone_number1", "current_agent", "email", "chat_date", "emp_id", "lob", "week", "count_1", "time_slot",
-  "hour", "tl_name", "disposition", "day_shift_night_shift", "unique_id", "fraud", "frt_2", "user_type",
+  "repeat_status",
+  "repeat_status_on_assign_time",
+  "frt",
+  "resolution_time_in_min",
+  "frt_tat",
+  "resolution_tat",
+  "phone_number1",
+  "current_agent",
+  "email",
+  "chat_date",
+  "emp_id",
+  "lob",
+  "week",
+  "count_1",
+  "time_slot",
+  "hour",
+  "tl_name",
+  "disposition",
+  "day_shift_night_shift",
+  "unique_id",
+  "fraud",
+  "frt_2",
+  "user_type",
   "repeat_chat",
 ] as const;
 
@@ -95,27 +129,39 @@ export type BbChatRowResult =
   | { ok: false; error: string };
 
 /** Maps one uploaded row to the values for NEW_BB_CHAT_COLUMNS (pure, no DB access). */
-export function mapBbChatRow(data: Record<string, unknown>, rowNo: number): BbChatRowResult {
+export function mapBbChatRow(
+  data: Record<string, unknown>,
+  rowNo: number,
+): BbChatRowResult {
   const h: Record<string, unknown> = {};
   for (const k of Object.keys(data)) h[normalizeKey(k)] = data[k];
 
   const uniqueId = pick(h, "Unique ID");
-  if (!uniqueId) return { ok: false, error: `Row ${rowNo}: "Unique ID" is required` };
+  if (!uniqueId)
+    return { ok: false, error: `Row ${rowNo}: "Unique ID" is required` };
 
   const dateRaw = pick(h, "Date", "Chat Date");
   let chatDate: string | null = null;
   if (dateRaw) {
     chatDate = parseChatDate(dateRaw);
-    if (!chatDate) return { ok: false, error: `Row ${rowNo}: "Date" value "${dateRaw}" is not a recognised date` };
+    if (!chatDate)
+      return {
+        ok: false,
+        error: `Row ${rowNo}: "Date" value "${dateRaw}" is not a recognised date`,
+      };
   }
 
   return {
     ok: true,
     values: [
       orNull(pick(h, "Repeat Status")),
-      orNull(pick(h, "Repeat Status on Assign Time", "Repeat Status On Assign")),
+      orNull(
+        pick(h, "Repeat Status on Assign Time", "Repeat Status On Assign"),
+      ),
       parseNullableDecimal(pick(h, "FRT")),
-      parseNullableDecimal(pick(h, "Resolution Time (In Min)", "Resolution Time In Minutes")),
+      parseNullableDecimal(
+        pick(h, "Resolution Time (In Min)", "Resolution Time In Minutes"),
+      ),
       orNull(pick(h, "FRT TAT")),
       orNull(pick(h, "Resolution TAT")),
       orNull(pick(h, "Phone Number1", "Phone Number 1")),
@@ -167,10 +213,13 @@ export async function importBbChatMasmisBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   await assertTableExists();
-  const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+  const uploadedByInt = /^\d+$/.test(importedByUserId)
+    ? Number(importedByUserId)
+    : null;
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
@@ -184,7 +233,9 @@ export async function importBbChatMasmisBatch(
 
     const mapped = mapBbChatRow(data, row.row_no);
     if (!mapped.ok) {
-      errors.push(mapped.error); errorUpdates.push({ rowId: row.id, message: mapped.error }); continue;
+      errors.push(mapped.error);
+      errorUpdates.push({ rowId: row.id, message: mapped.error });
+      continue;
     }
     insertRows.push({
       rowId: row.id,
@@ -213,17 +264,26 @@ export async function importBbChatMasmisBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

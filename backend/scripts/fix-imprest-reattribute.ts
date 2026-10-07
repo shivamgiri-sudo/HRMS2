@@ -59,7 +59,7 @@ async function run() {
   if (REATTRIBUTION_TARGETS.length === 0) {
     console.log(
       "No re-attribution targets configured. " +
-      "Populate REATTRIBUTION_TARGETS before running."
+        "Populate REATTRIBUTION_TARGETS before running.",
     );
     return;
   }
@@ -82,12 +82,12 @@ async function run() {
           WHERE imprest_manager_id = ?
             AND created_by = ?
           ORDER BY transaction_date, created_at`,
-        [target.wrongManagerId, MIGRATION_USER]
+        [target.wrongManagerId, MIGRATION_USER],
       );
 
       console.log(
         `[${target.note}] Found ${rows.length} migration-origin entries ` +
-        `on wrong manager ${target.wrongManagerId}`
+          `on wrong manager ${target.wrongManagerId}`,
       );
 
       if (rows.length === 0) continue;
@@ -104,7 +104,7 @@ async function run() {
           `DELETE FROM imprest_transaction_ledger
             WHERE imprest_manager_id = ?
               AND created_by = ?`,
-          [target.wrongManagerId, MIGRATION_USER]
+          [target.wrongManagerId, MIGRATION_USER],
         );
         totalDeleted += delResult.affectedRows;
         console.log(`  Deleted ${delResult.affectedRows} wrong-manager rows.`);
@@ -129,7 +129,7 @@ async function run() {
               row.created_by,
               row.created_at,
               row.updated_at,
-            ]
+            ],
           );
           totalInserted++;
         }
@@ -147,12 +147,12 @@ async function run() {
               rowCount: rows.length,
               note: target.note,
             }),
-          ]
+          ],
         );
 
         await conn.commit();
         console.log(
-          `  Re-attributed ${rows.length} entries to correct manager ${target.correctManagerId}.`
+          `  Re-attributed ${rows.length} entries to correct manager ${target.correctManagerId}.`,
         );
       } catch (err) {
         await conn.rollback();
@@ -162,7 +162,7 @@ async function run() {
 
     console.log(
       `\nDone. Deleted: ${totalDeleted}, Re-inserted: ${totalInserted}` +
-      (APPLY ? "" : " (DRY-RUN — pass --apply to write)")
+        (APPLY ? "" : " (DRY-RUN — pass --apply to write)"),
     );
   } finally {
     await conn.end();

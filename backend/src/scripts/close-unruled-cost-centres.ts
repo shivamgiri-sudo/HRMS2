@@ -27,65 +27,107 @@ function arg(name: string, fallback = ""): string {
 }
 
 async function main() {
-  const codes = arg("codes").split(",").map((s) => s.trim()).filter(Boolean);
+  const codes = arg("codes")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (!codes.length) throw new Error("--codes=CODE1,CODE2 is required");
 
   const hrms = await mysql.createConnection({
-    host: env.DB_HOST, port: env.DB_PORT, user: env.DB_USER,
-    password: env.DB_PASSWORD, database: env.DB_NAME,
-    connectTimeout: 30_000, dateStrings: true,
+    host: env.DB_HOST,
+    port: env.DB_PORT,
+    user: env.DB_USER,
+    password: env.DB_PASSWORD,
+    database: env.DB_NAME,
+    connectTimeout: 30_000,
+    dateStrings: true,
   });
 
   // Last invoice date per code, read-only from the upstream billing DB when available.
   const lastInvoice = new Map<string, string | null>();
   if (process.env.BILL_HOST) {
     const bill = await mysql.createConnection({
-      host: process.env.BILL_HOST, user: process.env.BILL_USER,
-      password: process.env.BILL_PASS, database: process.env.BILL_DB,
-      connectTimeout: 30_000, dateStrings: true,
+      host: process.env.BILL_HOST,
+      user: process.env.BILL_USER,
+      password: process.env.BILL_PASS,
+      database: process.env.BILL_DB,
+      connectTimeout: 30_000,
+      dateStrings: true,
     });
     try {
       const [rows] = await bill.query<any[]>(
         `SELECT m.cost_center cc,
                 (SELECT MAX(i.createdate) FROM inv_particulars i WHERE i.cost_center_id = m.id) li
-           FROM cost_master m WHERE m.cost_center IN (?)`, [codes]);
+           FROM cost_master m WHERE m.cost_center IN (?)`,
+        [codes],
+      );
       for (const r of rows) {
         const d = r.li ? new Date(r.li) : null;
-        lastInvoice.set(String(r.cc).trim(),
-          d && !Number.isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null);
+        lastInvoice.set(
+          String(r.cc).trim(),
+          d && !Number.isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null,
+        );
       }
-    } finally { await bill.end(); }
+    } finally {
+      await bill.end();
+    }
   }
 
   try {
     const [rows] = await hrms.query<any[]>(
       `SELECT id, cost_centre_code, active_status, close_date
-         FROM cost_centre_master WHERE cost_centre_code IN (?)`, [codes]);
+         FROM cost_centre_master WHERE cost_centre_code IN (?)`,
+      [codes],
+    );
 
     const found = new Set(rows.map((r) => String(r.cost_centre_code).trim()));
-    codes.filter((c) => !found.has(c)).forEach((c) => console.log(`  NOT FOUND: ${c}`));
+    codes
+      .filter((c) => !found.has(c))
+      .forEach((c) => console.log(`  NOT FOUND: ${c}`));
 
-    const changes: { id: string; code: string; field: string; oldValue: string | null; newValue: string | null }[] = [];
+    const changes: {
+      id: string;
+      code: string;
+      field: string;
+      oldValue: string | null;
+      newValue: string | null;
+    }[] = [];
     for (const r of rows) {
       const code = String(r.cost_centre_code).trim();
       const closeDate = lastInvoice.get(code) ?? null;
       if (Number(r.active_status) !== 0) {
-        changes.push({ id: String(r.id), code, field: "active_status",
-          oldValue: String(r.active_status), newValue: "0" });
+        changes.push({
+          id: String(r.id),
+          code,
+          field: "active_status",
+          oldValue: String(r.active_status),
+          newValue: "0",
+        });
       }
-      const currentClose = r.close_date ? String(r.close_date).slice(0, 10) : null;
+      const currentClose = r.close_date
+        ? String(r.close_date).slice(0, 10)
+        : null;
       if (closeDate && currentClose !== closeDate) {
-        changes.push({ id: String(r.id), code, field: "close_date",
-          oldValue: currentClose, newValue: closeDate });
+        changes.push({
+          id: String(r.id),
+          code,
+          field: "close_date",
+          oldValue: currentClose,
+          newValue: closeDate,
+        });
       }
     }
 
-    console.log(APPLY ? "MODE: APPLY" : "MODE: DRY RUN (pass --apply to write)");
+    console.log(
+      APPLY ? "MODE: APPLY" : "MODE: DRY RUN (pass --apply to write)",
+    );
     console.log(`\ncost centres targeted: ${rows.length}`);
     for (const r of rows) {
       const code = String(r.cost_centre_code).trim();
       const cd = lastInvoice.get(code) ?? null;
-      console.log(`   ${code.padEnd(24)} -> inactive, close_date=${cd ?? "(none — no evidence to date it)"}`);
+      console.log(
+        `   ${code.padEnd(24)} -> inactive, close_date=${cd ?? "(none — no evidence to date it)"}`,
+      );
     }
     console.log(`\nchanges to write: ${changes.length}`);
     if (!changes.length || !APPLY) {
@@ -99,7 +141,8 @@ async function main() {
          table_name VARCHAR(64) NOT NULL, record_id CHAR(36) NOT NULL,
          field_name VARCHAR(64) NOT NULL, old_value VARCHAR(64) NULL, new_value VARCHAR(64) NULL,
          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_batch (batch)
-       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    );
 
     const batch = `ruling-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     await hrms.beginTransaction();
@@ -108,15 +151,24 @@ async function main() {
         await hrms.query(
           `INSERT INTO ${BACKUP_TABLE} (batch, table_name, record_id, field_name, old_value, new_value)
            VALUES (?,?,?,?,?,?)`,
-          [batch, "cost_centre_master", c.id, c.field, c.oldValue, c.newValue]);
+          [batch, "cost_centre_master", c.id, c.field, c.oldValue, c.newValue],
+        );
         await hrms.query(
-          `UPDATE cost_centre_master SET ${c.field} = ? WHERE id = ?`, [c.newValue, c.id]);
+          `UPDATE cost_centre_master SET ${c.field} = ? WHERE id = ?`,
+          [c.newValue, c.id],
+        );
       }
       await hrms.commit();
       console.log(`\nApplied ${changes.length} change(s). Batch: ${batch}`);
-      console.log(`Rollback: UPDATE cost_centre_master t JOIN ${BACKUP_TABLE} b`);
-      console.log(`            ON b.record_id = t.id AND b.table_name = 'cost_centre_master'`);
-      console.log(`          SET t.active_status = b.old_value WHERE b.batch = '${batch}';`);
+      console.log(
+        `Rollback: UPDATE cost_centre_master t JOIN ${BACKUP_TABLE} b`,
+      );
+      console.log(
+        `            ON b.record_id = t.id AND b.table_name = 'cost_centre_master'`,
+      );
+      console.log(
+        `          SET t.active_status = b.old_value WHERE b.batch = '${batch}';`,
+      );
     } catch (e) {
       await hrms.rollback();
       throw e;

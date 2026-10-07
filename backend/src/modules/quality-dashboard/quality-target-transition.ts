@@ -49,7 +49,9 @@ export type TargetStatus =
  * separate from the SQL so the transition rules can be tested without a
  * database, in the same spirit as coaching-trigger.ts.
  */
-export const ALLOWED_TRANSITIONS: Readonly<Record<TargetStatus, readonly TargetStatus[]>> = {
+export const ALLOWED_TRANSITIONS: Readonly<
+  Record<TargetStatus, readonly TargetStatus[]>
+> = {
   draft: ["simulation_reviewed"],
   // An edit at any pre-approval stage lands back in draft; that is the
   // invalidation rule, expressed as a transition rather than a side effect.
@@ -69,11 +71,14 @@ export function canTransition(from: TargetStatus, to: TargetStatus): boolean {
   return ALLOWED_TRANSITIONS[from]?.includes(to) ?? false;
 }
 
-export function assertTransitionAllowed(from: TargetStatus, to: TargetStatus): void {
+export function assertTransitionAllowed(
+  from: TargetStatus,
+  to: TargetStatus,
+): void {
   if (!canTransition(from, to)) {
     throw new QualityTargetError(
-      `A ${from} target cannot become ${to}`
-        + (ALLOWED_TRANSITIONS[from]?.length
+      `A ${from} target cannot become ${to}` +
+        (ALLOWED_TRANSITIONS[from]?.length
           ? ` (allowed: ${ALLOWED_TRANSITIONS[from].join(", ")})`
           : " — it is a final state"),
       409,
@@ -111,10 +116,23 @@ async function loadForUpdate(
 async function audit(
   conn: { execute: (sql: string, params: unknown[]) => Promise<unknown> },
   input: {
-    targetId: string; processId: string;
-    action: "created" | "updated" | "simulated" | "submitted" | "approved"
-      | "rejected" | "activated" | "deactivated" | "superseded" | "retired";
-    before?: unknown; after?: unknown; reason?: string | null; actorUserId?: string | null;
+    targetId: string;
+    processId: string;
+    action:
+      | "created"
+      | "updated"
+      | "simulated"
+      | "submitted"
+      | "approved"
+      | "rejected"
+      | "activated"
+      | "deactivated"
+      | "superseded"
+      | "retired";
+    before?: unknown;
+    after?: unknown;
+    reason?: string | null;
+    actorUserId?: string | null;
   },
 ): Promise<void> {
   await conn.execute(
@@ -122,10 +140,13 @@ async function audit(
        (target_id, process_id, action, before_json, after_json, reason, actor_user_id)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
-      input.targetId, input.processId, input.action,
+      input.targetId,
+      input.processId,
+      input.action,
       input.before ? JSON.stringify(input.before) : null,
       input.after ? JSON.stringify(input.after) : null,
-      input.reason ?? null, input.actorUserId ?? null,
+      input.reason ?? null,
+      input.actorUserId ?? null,
     ],
   );
 }
@@ -138,7 +159,9 @@ async function inTransaction<T>(fn: (conn: never) => Promise<T>): Promise<T> {
     await conn.commit();
     return result;
   } catch (err) {
-    await (conn as { rollback: () => Promise<void> }).rollback().catch(() => {});
+    await (conn as { rollback: () => Promise<void> })
+      .rollback()
+      .catch(() => {});
     throw err;
   } finally {
     (conn as { release: () => void }).release();
@@ -160,7 +183,11 @@ export async function recordSimulationReview(input: {
     const row = await loadForUpdate(conn, input.targetId);
     assertTransitionAllowed(row.status, "simulation_reviewed");
 
-    await (conn as unknown as { execute: (s: string, p: unknown[]) => Promise<unknown> }).execute(
+    await (
+      conn as unknown as {
+        execute: (s: string, p: unknown[]) => Promise<unknown>;
+      }
+    ).execute(
       `UPDATE process_quality_target
           SET status = 'simulation_reviewed',
               simulated_config_fingerprint = config_fingerprint,
@@ -168,11 +195,18 @@ export async function recordSimulationReview(input: {
               simulated_by = ?,
               simulation_summary_json = ?
         WHERE id = ?`,
-      [input.actorUserId, JSON.stringify(input.summary ?? null), input.targetId],
+      [
+        input.actorUserId,
+        JSON.stringify(input.summary ?? null),
+        input.targetId,
+      ],
     );
     await audit(conn, {
-      targetId: input.targetId, processId: row.process_id, action: "simulated",
-      before: { status: row.status }, after: { status: "simulation_reviewed" },
+      targetId: input.targetId,
+      processId: row.process_id,
+      action: "simulated",
+      before: { status: row.status },
+      after: { status: "simulation_reviewed" },
       actorUserId: input.actorUserId,
     });
     return { status: "simulation_reviewed" as const };
@@ -181,15 +215,19 @@ export async function recordSimulationReview(input: {
 
 /** Send a simulated draft for approval. Refuses if the config moved since. */
 export async function submitForApproval(input: {
-  targetId: string; actorUserId: string; note?: string | null;
+  targetId: string;
+  actorUserId: string;
+  note?: string | null;
 }): Promise<{ status: TargetStatus }> {
   return inTransaction(async (conn) => {
     const row = await loadForUpdate(conn, input.targetId);
     assertTransitionAllowed(row.status, "pending_approval");
 
-    const [res] = (await (conn as unknown as {
-      execute: (s: string, p: unknown[]) => Promise<unknown>;
-    }).execute(
+    const [res] = (await (
+      conn as unknown as {
+        execute: (s: string, p: unknown[]) => Promise<unknown>;
+      }
+    ).execute(
       `UPDATE process_quality_target
           SET status = 'pending_approval', submitted_by = ?, submitted_at = NOW()
         WHERE id = ?
@@ -200,9 +238,13 @@ export async function submitForApproval(input: {
     if (res.affectedRows === 0) throw staleSimulation();
 
     await audit(conn, {
-      targetId: input.targetId, processId: row.process_id, action: "submitted",
-      before: { status: row.status }, after: { status: "pending_approval" },
-      reason: input.note ?? null, actorUserId: input.actorUserId,
+      targetId: input.targetId,
+      processId: row.process_id,
+      action: "submitted",
+      before: { status: row.status },
+      after: { status: "pending_approval" },
+      reason: input.note ?? null,
+      actorUserId: input.actorUserId,
     });
     return { status: "pending_approval" as const };
   });
@@ -210,8 +252,8 @@ export async function submitForApproval(input: {
 
 function staleSimulation(): QualityTargetError {
   return new QualityTargetError(
-    "The configuration changed after it was simulated. Re-run the simulation before continuing — "
-      + "an approval applies to the numbers that were simulated, not to whatever they became.",
+    "The configuration changed after it was simulated. Re-run the simulation before continuing — " +
+      "an approval applies to the numbers that were simulated, not to whatever they became.",
     409,
   );
 }
@@ -231,27 +273,32 @@ export async function approveTarget(input: {
     const row = await loadForUpdate(conn, input.targetId);
     assertTransitionAllowed(row.status, "approved");
 
-    const isSelf = row.created_by != null && row.created_by === input.approverUserId;
+    const isSelf =
+      row.created_by != null && row.created_by === input.approverUserId;
     const exceptionReason = input.selfApprovalException?.reason?.trim();
     if (isSelf && !exceptionReason) {
       throw new QualityTargetError(
-        "You cannot approve a target you created. Ask another approver, or record an explicit "
-          + "self-approval exception with a reason.",
+        "You cannot approve a target you created. Ask another approver, or record an explicit " +
+          "self-approval exception with a reason.",
         403,
       );
     }
 
-    const [res] = (await (conn as unknown as {
-      execute: (s: string, p: unknown[]) => Promise<unknown>;
-    }).execute(
+    const [res] = (await (
+      conn as unknown as {
+        execute: (s: string, p: unknown[]) => Promise<unknown>;
+      }
+    ).execute(
       `UPDATE process_quality_target
           SET status = 'approved', approved_by = ?, approved_at = NOW(), approval_note = ?,
               self_approval_exception = ?, self_approval_exception_reason = ?
         WHERE id = ?
           AND simulated_config_fingerprint = config_fingerprint`,
       [
-        input.approverUserId, input.note ?? null,
-        isSelf ? 1 : 0, isSelf ? exceptionReason : null,
+        input.approverUserId,
+        input.note ?? null,
+        isSelf ? 1 : 0,
+        isSelf ? exceptionReason : null,
         input.targetId,
       ],
     )) as [ResultSetHeader, unknown];
@@ -259,10 +306,18 @@ export async function approveTarget(input: {
     if (res.affectedRows === 0) throw staleSimulation();
 
     await audit(conn, {
-      targetId: input.targetId, processId: row.process_id, action: "approved",
+      targetId: input.targetId,
+      processId: row.process_id,
+      action: "approved",
       before: { status: row.status },
-      after: { status: "approved", approvedBy: input.approverUserId, selfApproval: isSelf },
-      reason: isSelf ? `Self-approval exception: ${exceptionReason}` : (input.note ?? null),
+      after: {
+        status: "approved",
+        approvedBy: input.approverUserId,
+        selfApproval: isSelf,
+      },
+      reason: isSelf
+        ? `Self-approval exception: ${exceptionReason}`
+        : (input.note ?? null),
       actorUserId: input.approverUserId,
     });
     return { status: "approved" as const };
@@ -271,7 +326,9 @@ export async function approveTarget(input: {
 
 /** Reject. The reason is required — a rejection nobody can argue with is not review. */
 export async function rejectTarget(input: {
-  targetId: string; actorUserId: string; reason: string;
+  targetId: string;
+  actorUserId: string;
+  reason: string;
 }): Promise<{ status: TargetStatus }> {
   const reason = input.reason?.trim();
   if (!reason) throw new QualityTargetError("A rejection must say why", 400);
@@ -280,16 +337,24 @@ export async function rejectTarget(input: {
     const row = await loadForUpdate(conn, input.targetId);
     assertTransitionAllowed(row.status, "rejected");
 
-    await (conn as unknown as { execute: (s: string, p: unknown[]) => Promise<unknown> }).execute(
+    await (
+      conn as unknown as {
+        execute: (s: string, p: unknown[]) => Promise<unknown>;
+      }
+    ).execute(
       `UPDATE process_quality_target
           SET status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
         WHERE id = ?`,
       [input.actorUserId, reason, input.targetId],
     );
     await audit(conn, {
-      targetId: input.targetId, processId: row.process_id, action: "rejected",
-      before: { status: row.status }, after: { status: "rejected" },
-      reason, actorUserId: input.actorUserId,
+      targetId: input.targetId,
+      processId: row.process_id,
+      action: "rejected",
+      before: { status: row.status },
+      after: { status: "rejected" },
+      reason,
+      actorUserId: input.actorUserId,
     });
     return { status: "rejected" as const };
   });
@@ -303,10 +368,13 @@ export async function rejectTarget(input: {
  * started in.
  */
 export async function activateTarget(input: {
-  targetId: string; actorUserId: string;
+  targetId: string;
+  actorUserId: string;
 }): Promise<{ status: TargetStatus; supersededId: string | null }> {
   return inTransaction(async (conn) => {
-    const exec = conn as unknown as { execute: (s: string, p: unknown[]) => Promise<unknown> };
+    const exec = conn as unknown as {
+      execute: (s: string, p: unknown[]) => Promise<unknown>;
+    };
     const row = await loadForUpdate(conn, input.targetId);
     assertTransitionAllowed(row.status, "active");
 
@@ -320,8 +388,12 @@ export async function activateTarget(input: {
           AND (? IS NULL OR effective_from <= ?)
         FOR UPDATE`,
       [
-        row.process_id, row.metric_code, row.id,
-        row.effective_from, row.effective_to, row.effective_to,
+        row.process_id,
+        row.metric_code,
+        row.id,
+        row.effective_from,
+        row.effective_to,
+        row.effective_to,
       ],
     )) as [RowDataPacket[], unknown];
 
@@ -332,8 +404,8 @@ export async function activateTarget(input: {
         // The incumbent starts on or after the newcomer, so closing it the day
         // before would give it a negative window.
         throw new QualityTargetError(
-          "An active target already covers this period starting on or after the new one. "
-            + "Choose a later effective date.",
+          "An active target already covers this period starting on or after the new one. " +
+            "Choose a later effective date.",
           409,
         );
       }
@@ -345,8 +417,11 @@ export async function activateTarget(input: {
         [row.effective_from, supersededId],
       );
       await audit(conn, {
-        targetId: supersededId, processId: row.process_id, action: "superseded",
-        reason: `Superseded by ${row.id}`, actorUserId: input.actorUserId,
+        targetId: supersededId,
+        processId: row.process_id,
+        action: "superseded",
+        reason: `Superseded by ${row.id}`,
+        actorUserId: input.actorUserId,
       });
     }
 
@@ -364,8 +439,11 @@ export async function activateTarget(input: {
     if (res.affectedRows === 0) throw staleSimulation();
 
     await audit(conn, {
-      targetId: input.targetId, processId: row.process_id, action: "activated",
-      before: { status: row.status }, after: { status: "active" },
+      targetId: input.targetId,
+      processId: row.process_id,
+      action: "activated",
+      before: { status: row.status },
+      after: { status: "active" },
       actorUserId: input.actorUserId,
     });
     return { status: "active" as const, supersededId };
@@ -379,16 +457,26 @@ export async function activateTarget(input: {
  * pointing at a policy that still explains them.
  */
 export async function deactivateTarget(input: {
-  targetId: string; actorUserId: string; reason: string;
+  targetId: string;
+  actorUserId: string;
+  reason: string;
 }): Promise<{ status: TargetStatus }> {
   const reason = input.reason?.trim();
-  if (!reason) throw new QualityTargetError("Say why this target is being deactivated", 400);
+  if (!reason)
+    throw new QualityTargetError(
+      "Say why this target is being deactivated",
+      400,
+    );
 
   return inTransaction(async (conn) => {
     const row = await loadForUpdate(conn, input.targetId);
     assertTransitionAllowed(row.status, "inactive");
 
-    await (conn as unknown as { execute: (s: string, p: unknown[]) => Promise<unknown> }).execute(
+    await (
+      conn as unknown as {
+        execute: (s: string, p: unknown[]) => Promise<unknown>;
+      }
+    ).execute(
       `UPDATE process_quality_target
           SET status = 'inactive', active_status = 0,
               deactivated_by = ?, deactivated_at = NOW(), deactivation_reason = ?
@@ -396,9 +484,13 @@ export async function deactivateTarget(input: {
       [input.actorUserId, reason, input.targetId],
     );
     await audit(conn, {
-      targetId: input.targetId, processId: row.process_id, action: "deactivated",
-      before: { status: row.status }, after: { status: "inactive" },
-      reason, actorUserId: input.actorUserId,
+      targetId: input.targetId,
+      processId: row.process_id,
+      action: "deactivated",
+      before: { status: row.status },
+      after: { status: "inactive" },
+      reason,
+      actorUserId: input.actorUserId,
     });
     return { status: "inactive" as const };
   });
@@ -426,7 +518,11 @@ export async function editTarget(input: {
 }): Promise<{ status: TargetStatus }> {
   return inTransaction(async (conn) => {
     const row = await loadForUpdate(conn, input.targetId);
-    if (row.status === "active" || row.status === "superseded" || row.status === "inactive") {
+    if (
+      row.status === "active" ||
+      row.status === "superseded" ||
+      row.status === "inactive"
+    ) {
       throw new QualityTargetError(
         `A ${row.status} target is a historical record and cannot be edited — clone it instead`,
         409,
@@ -436,23 +532,36 @@ export async function editTarget(input: {
     const columns: Record<string, unknown> = {};
     const c = input.changes;
     if (c.targetScore !== undefined) columns.target_score = c.targetScore;
-    if (c.warningThresholdPct !== undefined) columns.warning_threshold_pct = c.warningThresholdPct;
-    if (c.criticalThresholdPct !== undefined) columns.critical_threshold_pct = c.criticalThresholdPct;
-    if (c.minAuditCount !== undefined) columns.min_audit_count = c.minAuditCount;
-    if (c.evaluationPeriod !== undefined) columns.evaluation_period = c.evaluationPeriod;
+    if (c.warningThresholdPct !== undefined)
+      columns.warning_threshold_pct = c.warningThresholdPct;
+    if (c.criticalThresholdPct !== undefined)
+      columns.critical_threshold_pct = c.criticalThresholdPct;
+    if (c.minAuditCount !== undefined)
+      columns.min_audit_count = c.minAuditCount;
+    if (c.evaluationPeriod !== undefined)
+      columns.evaluation_period = c.evaluationPeriod;
     if (c.effectiveFrom !== undefined) columns.effective_from = c.effectiveFrom;
     if (c.effectiveTo !== undefined) columns.effective_to = c.effectiveTo;
 
     const keys = Object.keys(columns);
     if (!keys.length) throw new QualityTargetError("Nothing to change", 400);
 
-    const warning = (c.warningThresholdPct ?? Number((row as never)["warning_threshold_pct"]));
-    const critical = (c.criticalThresholdPct ?? Number((row as never)["critical_threshold_pct"]));
+    const warning =
+      c.warningThresholdPct ?? Number((row as never)["warning_threshold_pct"]);
+    const critical =
+      c.criticalThresholdPct ??
+      Number((row as never)["critical_threshold_pct"]);
     if (!(warning > critical)) {
-      throw new QualityTargetError("The warning threshold must sit above the critical threshold");
+      throw new QualityTargetError(
+        "The warning threshold must sit above the critical threshold",
+      );
     }
 
-    await (conn as unknown as { execute: (s: string, p: unknown[]) => Promise<unknown> }).execute(
+    await (
+      conn as unknown as {
+        execute: (s: string, p: unknown[]) => Promise<unknown>;
+      }
+    ).execute(
       `UPDATE process_quality_target
           SET ${keys.map((k) => `${k} = ?`).join(", ")},
               status = 'draft',
@@ -465,9 +574,13 @@ export async function editTarget(input: {
       [...keys.map((k) => columns[k]), input.targetId],
     );
     await audit(conn, {
-      targetId: input.targetId, processId: row.process_id, action: "updated",
-      before: { status: row.status }, after: { status: "draft", ...input.changes },
-      reason: "Edited — simulation and approval cleared", actorUserId: input.actorUserId,
+      targetId: input.targetId,
+      processId: row.process_id,
+      action: "updated",
+      before: { status: row.status },
+      after: { status: "draft", ...input.changes },
+      reason: "Edited — simulation and approval cleared",
+      actorUserId: input.actorUserId,
     });
     return { status: "draft" as const };
   });

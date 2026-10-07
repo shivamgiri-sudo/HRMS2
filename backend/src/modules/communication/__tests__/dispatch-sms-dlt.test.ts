@@ -40,10 +40,15 @@ vi.mock("../template.service.js", () => ({
 }));
 vi.mock("../notification-preferences.service.js", () => ({
   notificationPreferencesService: {
-    getDeliveryPreference: vi.fn(async () => ({ enabled: true, channel: "email" })),
+    getDeliveryPreference: vi.fn(async () => ({
+      enabled: true,
+      channel: "email",
+    })),
   },
 }));
-vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem: vi.fn() } }));
+vi.mock("../../inbox/inbox.service.js", () => ({
+  inboxService: { createItem: vi.fn() },
+}));
 
 const { dispatchService } = await import("../dispatch.service.js");
 
@@ -59,13 +64,37 @@ function stubEmployeeAndInsert() {
   mockExecute.mockReset();
   mockExecute.mockImplementation(async (sql: unknown) => {
     const s = String(sql ?? "");
-    if (/SELECT id, user_id, full_name, email, official_email, mobile AS phone FROM employees/i.test(s)) {
-      return [[{ id: "emp-1", user_id: null, full_name: "Priya Sharma", email: "priya@teammas.in", official_email: null, phone: "9876543210" }], []];
+    if (
+      /SELECT id, user_id, full_name, email, official_email, mobile AS phone FROM employees/i.test(
+        s,
+      )
+    ) {
+      return [
+        [
+          {
+            id: "emp-1",
+            user_id: null,
+            full_name: "Priya Sharma",
+            email: "priya@teammas.in",
+            official_email: null,
+            phone: "9876543210",
+          },
+        ],
+        [],
+      ];
     }
     // Non-SMS channels re-read the rendered subject back from the row _deliver just inserted —
     // matches the real subject renderTemplate's mock resolves above.
     if (/SELECT subject FROM dispatch_log WHERE id/i.test(s)) {
-      return [[{ subject: "A human-readable subject line — never valid as an SMS DLT id" }], []];
+      return [
+        [
+          {
+            subject:
+              "A human-readable subject line — never valid as an SMS DLT id",
+          },
+        ],
+        [],
+      ];
     }
     // INSERT into dispatch_log, and every UPDATE dispatch_log call — just acknowledge.
     return [{ affectedRows: 1 }, []];
@@ -120,7 +149,9 @@ describe("dispatch.service.ts SMS delivery — DLT template resolution", () => {
     await flush();
 
     expect(fakeSend).not.toHaveBeenCalled();
-    const skipUpdate = mockExecute.mock.calls.find(([s]) => /UPDATE dispatch_log SET status = 'skipped'/i.test(String(s)));
+    const skipUpdate = mockExecute.mock.calls.find(([s]) =>
+      /UPDATE dispatch_log SET status = 'skipped'/i.test(String(s)),
+    );
     expect(skipUpdate).toBeTruthy();
     expect(String(skipUpdate?.[1]?.[0])).toMatch(/no registered dlt template/i);
   });
@@ -136,7 +167,9 @@ describe("dispatch.service.ts SMS delivery — DLT template resolution", () => {
     await flush();
 
     expect(fakeSend).not.toHaveBeenCalled();
-    const skipUpdate = mockExecute.mock.calls.find(([s]) => /UPDATE dispatch_log SET status = 'skipped'/i.test(String(s)));
+    const skipUpdate = mockExecute.mock.calls.find(([s]) =>
+      /UPDATE dispatch_log SET status = 'skipped'/i.test(String(s)),
+    );
     expect(skipUpdate).toBeTruthy();
   });
 
@@ -150,7 +183,9 @@ describe("dispatch.service.ts SMS delivery — DLT template resolution", () => {
     await flush();
 
     expect(fakeSend).not.toHaveBeenCalled();
-    const skipUpdate = mockExecute.mock.calls.find(([s]) => /UPDATE dispatch_log SET status = 'skipped'/i.test(String(s)));
+    const skipUpdate = mockExecute.mock.calls.find(([s]) =>
+      /UPDATE dispatch_log SET status = 'skipped'/i.test(String(s)),
+    );
     expect(skipUpdate).toBeTruthy();
     expect(String(skipUpdate?.[1]?.[0])).toMatch(/no event_code/i);
   });
@@ -165,13 +200,17 @@ describe("dispatch.service.ts SMS delivery — DLT template resolution", () => {
     });
     await flush();
 
-    const insert = mockExecute.mock.calls.find(([s]) => /INSERT INTO dispatch_log/i.test(String(s)));
+    const insert = mockExecute.mock.calls.find(([s]) =>
+      /INSERT INTO dispatch_log/i.test(String(s)),
+    );
     expect(insert).toBeTruthy();
     const [sql, params] = insert as [string, unknown[]];
-    const eventCodeIdx = /event_code/i.test(sql) ? sql
-      .slice(sql.indexOf("("), sql.indexOf(")"))
-      .split(",")
-      .findIndex(col => /event_code/i.test(col)) : -1;
+    const eventCodeIdx = /event_code/i.test(sql)
+      ? sql
+          .slice(sql.indexOf("("), sql.indexOf(")"))
+          .split(",")
+          .findIndex((col) => /event_code/i.test(col))
+      : -1;
     expect(eventCodeIdx).toBeGreaterThanOrEqual(0);
     expect(params[eventCodeIdx]).toBe("leave_submitted");
   });
@@ -188,6 +227,8 @@ describe("dispatch.service.ts SMS delivery — DLT template resolution", () => {
 
     expect(fakeSend).toHaveBeenCalledTimes(1);
     const [, subjectSlot] = fakeSend.mock.calls[0];
-    expect(subjectSlot).toBe("A human-readable subject line — never valid as an SMS DLT id");
+    expect(subjectSlot).toBe(
+      "A human-readable subject line — never valid as an SMS DLT id",
+    );
   });
 });

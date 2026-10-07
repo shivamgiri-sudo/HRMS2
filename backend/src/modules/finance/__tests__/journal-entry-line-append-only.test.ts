@@ -33,7 +33,10 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe("journal_entry_line has exactly one writer (Journal Task 6)", () => {
   const backendSrc = fileURLToPath(new URL("../../../", import.meta.url)); // backend/src
-  const journalServicePath = path.join(backendSrc, "modules/finance/journal.service.ts");
+  const journalServicePath = path.join(
+    backendSrc,
+    "modules/finance/journal.service.ts",
+  );
 
   it("only journal.service.ts contains INSERT INTO journal_entry_line", () => {
     const offenders: string[] = [];
@@ -51,8 +54,10 @@ describe("journal_entry_line has exactly one writer (Journal Task 6)", () => {
     const offenders: string[] = [];
     for (const file of walk(backendSrc)) {
       const src = readFileSync(file, "utf8");
-      if (/UPDATE\s+journal_entry_line/i.test(src)) offenders.push(`UPDATE in ${path.relative(backendSrc, file)}`);
-      if (/DELETE\s+FROM\s+journal_entry_line/i.test(src)) offenders.push(`DELETE in ${path.relative(backendSrc, file)}`);
+      if (/UPDATE\s+journal_entry_line/i.test(src))
+        offenders.push(`UPDATE in ${path.relative(backendSrc, file)}`);
+      if (/DELETE\s+FROM\s+journal_entry_line/i.test(src))
+        offenders.push(`DELETE in ${path.relative(backendSrc, file)}`);
     }
     expect(offenders).toEqual([]);
   });

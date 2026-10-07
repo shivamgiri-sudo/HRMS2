@@ -2,7 +2,10 @@ import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * GS1 India — DataKart task processing daily actuals.
@@ -28,9 +31,26 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  */
 
 export const GS1_DATAKART_DAILY_HEADERS = [
-  "Date", "GCP", "GTIN Count", "Time", "Complete time", "Type", "Move", "Category",
-  "Sub category", "Remark", "Date of completion", "Date of exported", "Datakart type",
-  "Name", "Duration", "SLA", "Month's", "Month", "Data Type", "TAT",
+  "Date",
+  "GCP",
+  "GTIN Count",
+  "Time",
+  "Complete time",
+  "Type",
+  "Move",
+  "Category",
+  "Sub category",
+  "Remark",
+  "Date of completion",
+  "Date of exported",
+  "Datakart type",
+  "Name",
+  "Duration",
+  "SLA",
+  "Month's",
+  "Month",
+  "Data Type",
+  "TAT",
 ] as const;
 
 /** Handles "2-Sep-26" (real export's sheet_to_csv-rendered date) and common fallbacks. */
@@ -38,8 +58,18 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   const MONTHS: Record<string, number> = {
-    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+    jan: 1,
+    feb: 2,
+    mar: 3,
+    apr: 4,
+    may: 5,
+    jun: 6,
+    jul: 7,
+    aug: 8,
+    sep: 9,
+    oct: 10,
+    nov: 11,
+    dec: 12,
   };
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
@@ -57,7 +87,9 @@ export function parseDate(raw: unknown): string | null {
 }
 
 export function parseCount(raw: unknown): number {
-  const v = String(raw ?? "").trim().replace(/,/g, "");
+  const v = String(raw ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!v) return 0;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
@@ -67,9 +99,17 @@ export function parseCount(raw: unknown): number {
  * (the whole real file, currently) means "no signal" and is excluded from the percentage
  * rather than counted as a miss. */
 export function isWithinTat(raw: unknown): boolean | null {
-  const v = String(raw ?? "").trim().toLowerCase();
+  const v = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   if (!v) return null;
-  return v === "within tat" || v === "in tat" || v === "yes" || v === "1" || v === "true";
+  return (
+    v === "within tat" ||
+    v === "in tat" ||
+    v === "yes" ||
+    v === "1" ||
+    v === "true"
+  );
 }
 
 interface BatchRow extends RowDataPacket {
@@ -77,7 +117,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 interface DailyGroup {
   taskDate: string;
@@ -153,7 +195,13 @@ export async function importGs1DatakartDailyBatch(
 
       const key = `${taskDate}|${analystName}`;
       const g = groups.get(key) ?? {
-        taskDate, analystName, taskCount: 0, gtinTotal: 0, tatKnown: 0, tatHits: 0, rowNos: [],
+        taskDate,
+        analystName,
+        taskCount: 0,
+        gtinTotal: 0,
+        tatKnown: 0,
+        tatHits: 0,
+        rowNos: [],
       };
       g.taskCount += 1;
       g.gtinTotal += parseCount(data["GTIN Count"]);
@@ -173,15 +221,23 @@ export async function importGs1DatakartDailyBatch(
   const toInsert: ChunkInsertRow[] = [];
   const groupKeys: string[] = [];
   for (const [key, g] of groups) {
-    const tatPct = g.tatKnown > 0 ? Math.round((g.tatHits / g.tatKnown) * 100) : 0;
+    const tatPct =
+      g.tatKnown > 0 ? Math.round((g.tatHits / g.tatKnown) * 100) : 0;
     // rowId is the first raw row of the group — used by chunkedMasmisInsert for error attribution
     toInsert.push({
       rowId: rowIdsByGroup.get(key)?.[0] ?? "",
       rowNo: g.rowNos[0] ?? 0,
       values: [
-        randomUUID(), processId, g.taskDate, g.analystName, g.taskDate,
-        g.taskCount, g.gtinTotal, tatPct,
-        batchId, importedByUserId,
+        randomUUID(),
+        processId,
+        g.taskDate,
+        g.analystName,
+        g.taskDate,
+        g.taskCount,
+        g.gtinTotal,
+        tatPct,
+        batchId,
+        importedByUserId,
       ],
     });
     groupKeys.push(key);
@@ -210,7 +266,9 @@ export async function importGs1DatakartDailyBatch(
       importedRows += groups.get(key)!.taskCount;
       importedRowIds.push(...groupRowIds);
     } else {
-      const msg = inserted.errorUpdates.find((u) => u.rowId === toInsert[i].rowId)?.message ?? "insert failed";
+      const msg =
+        inserted.errorUpdates.find((u) => u.rowId === toInsert[i].rowId)
+          ?.message ?? "insert failed";
       for (const rowId of groupRowIds) {
         errors.push(`Row group ${key}: ${msg}`);
         errorUpdates.push({ rowId, message: msg.slice(0, 500) });
@@ -224,17 +282,26 @@ export async function importGs1DatakartDailyBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

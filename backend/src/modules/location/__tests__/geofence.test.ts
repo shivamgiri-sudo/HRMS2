@@ -3,7 +3,12 @@ import { describe, it, expect } from "vitest";
 // Pure helpers defined locally — they mirror the implementation in location.routes.ts
 // but are kept here so the test does not depend on the route module.
 
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+function haversineKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLng = ((lng2 - lng1) * Math.PI) / 180;
@@ -53,14 +58,32 @@ describe("geofence — haversine & isOutsideGeofence", () => {
     // ~0.67 km offset — inside 1 km but outside 0.5 km
     const empLat = branchLat + 0.006; // ≈ 0.67 km north
     const empLng = branchLng;
-    const withinOneKm = isOutsideGeofence(empLat, empLng, branchLat, branchLng, 1.0);
-    const outsideHalfKm = isOutsideGeofence(empLat, empLng, branchLat, branchLng, 0.5);
+    const withinOneKm = isOutsideGeofence(
+      empLat,
+      empLng,
+      branchLat,
+      branchLng,
+      1.0,
+    );
+    const outsideHalfKm = isOutsideGeofence(
+      empLat,
+      empLng,
+      branchLat,
+      branchLng,
+      0.5,
+    );
     expect(withinOneKm.outside).toBe(false);
     expect(outsideHalfKm.outside).toBe(true);
   });
 
   it("returns distanceKm of 0 and outside:false when coordinates are identical", () => {
-    const result = isOutsideGeofence(branchLat, branchLng, branchLat, branchLng, 1.0);
+    const result = isOutsideGeofence(
+      branchLat,
+      branchLng,
+      branchLat,
+      branchLng,
+      1.0,
+    );
     expect(result.distanceKm).toBe(0);
     expect(result.outside).toBe(false);
   });

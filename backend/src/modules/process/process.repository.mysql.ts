@@ -31,8 +31,10 @@ function mapRow(row: RowDataPacket): ProcessMaster {
     process_type: (row.process_type as string | null) ?? null,
     branch_name: (row.branch_name as string | null) ?? null,
     location_name: (row.location_name as string | null) ?? null,
-    process_owner_employee_id: (row.process_owner_employee_id as string | null) ?? null,
-    process_manager_employee_id: (row.process_manager_employee_id as string | null) ?? null,
+    process_owner_employee_id:
+      (row.process_owner_employee_id as string | null) ?? null,
+    process_manager_employee_id:
+      (row.process_manager_employee_id as string | null) ?? null,
     active_status: row.active_status === 1 || row.active_status === true,
     description: (row.description as string | null) ?? null,
     metadata: parseMetadata(row.metadata),
@@ -77,7 +79,7 @@ const UNSTORABLE_FIELDS = [
 async function resolveBranchId(branchName: string): Promise<string> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT id FROM branch_master WHERE branch_name = ? LIMIT 1",
-    [branchName.trim()]
+    [branchName.trim()],
   );
   if (rows.length === 0) {
     throw Object.assign(new Error(`No branch named '${branchName}' exists.`), {
@@ -92,28 +94,35 @@ async function resolveBranchId(branchName: string): Promise<string> {
 async function resolveOwnerName(employeeId: string): Promise<string> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT full_name FROM employees WHERE id = ? LIMIT 1",
-    [employeeId]
+    [employeeId],
   );
   if (rows.length === 0) {
-    throw Object.assign(new Error(`No employee with id '${employeeId}' exists.`), {
-      statusCode: 400,
-      code: "PROCESS_OWNER_NOT_FOUND",
-    });
+    throw Object.assign(
+      new Error(`No employee with id '${employeeId}' exists.`),
+      {
+        statusCode: 400,
+        code: "PROCESS_OWNER_NOT_FOUND",
+      },
+    );
   }
   return (rows[0] as { full_name: string }).full_name;
 }
 
-function rejectUnstorableFields(input: CreateProcessInput | UpdateProcessInput): void {
+function rejectUnstorableFields(
+  input: CreateProcessInput | UpdateProcessInput,
+): void {
   const bag = input as Record<string, unknown>;
-  const supplied = UNSTORABLE_FIELDS.filter((f) => bag[f] !== undefined && bag[f] !== null);
+  const supplied = UNSTORABLE_FIELDS.filter(
+    (f) => bag[f] !== undefined && bag[f] !== null,
+  );
   if (supplied.length > 0) {
     throw Object.assign(
       new Error(
         `process_master cannot store: ${supplied.join(", ")}. The table holds ` +
           `process_code, process_name, process_type, business_lob, branch_id, ` +
-          `client_id, client_name and the SLA/escalation fields.`
+          `client_id, client_name and the SLA/escalation fields.`,
       ),
-      { statusCode: 400, code: "PROCESS_FIELDS_UNSUPPORTED" }
+      { statusCode: 400, code: "PROCESS_FIELDS_UNSUPPORTED" },
     );
   }
 }
@@ -137,7 +146,7 @@ export const processRepositoryMySQL: ProcessRepository = {
     if (filters.search?.trim()) {
       const term = `%${filters.search.trim()}%`;
       conditions.push(
-        "(process_code LIKE ? OR process_name LIKE ? OR process_type LIKE ? OR branch_name LIKE ? OR location_name LIKE ?)"
+        "(process_code LIKE ? OR process_name LIKE ? OR process_type LIKE ? OR branch_name LIKE ? OR location_name LIKE ?)",
       );
       params.push(term, term, term, term, term);
     }
@@ -177,7 +186,9 @@ export const processRepositoryMySQL: ProcessRepository = {
    *    whereas omitting them leaves the page's own "Contact your HR admin to map you to a
    *    process" message, which is the truthful description of an incomplete mapping.
    */
-  async listAssignedToUser(userId: string): Promise<Array<{ id: string; branch_id: string; process_name: string }>> {
+  async listAssignedToUser(
+    userId: string,
+  ): Promise<Array<{ id: string; branch_id: string; process_name: string }>> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT p.id, p.branch_id, p.process_name
          FROM user_assignment_scope uas
@@ -188,7 +199,7 @@ export const processRepositoryMySQL: ProcessRepository = {
           AND p.active_status = 1
           AND p.branch_id IS NOT NULL
         ORDER BY p.process_name ASC`,
-      [userId]
+      [userId],
     );
     return (rows as RowDataPacket[]).map((r) => ({
       id: String(r.id),
@@ -200,7 +211,7 @@ export const processRepositoryMySQL: ProcessRepository = {
   async getById(id: string): Promise<ProcessMaster | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM process_master WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     const row = (rows as RowDataPacket[])[0];
     return row ? mapRow(row) : null;
@@ -208,7 +219,7 @@ export const processRepositoryMySQL: ProcessRepository = {
 
   async create(
     input: CreateProcessInput,
-    userId: string
+    userId: string,
   ): Promise<ProcessMaster> {
     rejectUnstorableFields(input);
 
@@ -217,7 +228,9 @@ export const processRepositoryMySQL: ProcessRepository = {
     // Nine of the fourteen columns this used to name do not exist on
     // process_master - see UNSTORABLE_FIELDS. userId has nowhere to go either:
     // the table has created_at/updated_at but no created_by/updated_by.
-    const branchId = input.branchName ? await resolveBranchId(input.branchName) : null;
+    const branchId = input.branchName
+      ? await resolveBranchId(input.branchName)
+      : null;
     const ownerName = input.processOwnerEmployeeId
       ? await resolveOwnerName(input.processOwnerEmployeeId)
       : null;
@@ -233,7 +246,7 @@ export const processRepositoryMySQL: ProcessRepository = {
         input.processType ?? null,
         branchId,
         ownerName,
-      ]
+      ],
     );
 
     const created = await this.getById(id);
@@ -246,7 +259,7 @@ export const processRepositoryMySQL: ProcessRepository = {
   async update(
     id: string,
     input: UpdateProcessInput,
-    userId: string
+    userId: string,
   ): Promise<ProcessMaster> {
     // without this, an update naming description or branchName would now be
     // accepted and quietly store nothing - worse than the error it used to throw
@@ -269,12 +282,16 @@ export const processRepositoryMySQL: ProcessRepository = {
     }
     if (input.branchName !== undefined) {
       setClauses.push("branch_id = ?");
-      params.push(input.branchName ? await resolveBranchId(input.branchName) : null);
+      params.push(
+        input.branchName ? await resolveBranchId(input.branchName) : null,
+      );
     }
     if (input.processOwnerEmployeeId !== undefined) {
       setClauses.push("process_owner_name = ?");
       params.push(
-        input.processOwnerEmployeeId ? await resolveOwnerName(input.processOwnerEmployeeId) : null
+        input.processOwnerEmployeeId
+          ? await resolveOwnerName(input.processOwnerEmployeeId)
+          : null,
       );
     }
 
@@ -294,7 +311,7 @@ export const processRepositoryMySQL: ProcessRepository = {
 
     await db.execute(
       `UPDATE process_master SET ${setClauses.join(", ")} WHERE id = ?`,
-      params
+      params,
     );
 
     const updated = await this.getById(id);
@@ -307,13 +324,13 @@ export const processRepositoryMySQL: ProcessRepository = {
   async updateStatus(
     id: string,
     activeStatus: boolean,
-    userId: string
+    userId: string,
   ): Promise<ProcessMaster> {
     // updated_by does not exist on process_master, so activating or deactivating
     // a process failed on the column rather than on anything to do with status.
     await db.execute(
       "UPDATE process_master SET active_status = ? WHERE id = ?",
-      [activeStatus ? 1 : 0, id]
+      [activeStatus ? 1 : 0, id],
     );
 
     const updated = await this.getById(id);

@@ -18,7 +18,9 @@ export interface ObjectionPattern {
   SALES_CLOSE_RATE_AFTER_OBJECTION_PCT: number | null;
 }
 
-export async function getTopObjectionPatterns(limit = 50): Promise<ObjectionPattern[]> {
+export async function getTopObjectionPatterns(
+  limit = 50,
+): Promise<ObjectionPattern[]> {
   const pool = getCiPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
@@ -51,7 +53,7 @@ export async function getTopObjectionPatterns(limit = 50): Promise<ObjectionPatt
     GROUP BY CustomerObjectionCategory
     ORDER BY CALL_COUNT DESC
     ${sqlLimit(limit)}`,
-    []
+    [],
   );
 
   return rows as ObjectionPattern[];
@@ -69,7 +71,9 @@ export interface TopHandler {
   SALES_CLOSED_COUNT: number;
 }
 
-export async function getTopObjectionHandlers(limit = 50): Promise<TopHandler[]> {
+export async function getTopObjectionHandlers(
+  limit = 50,
+): Promise<TopHandler[]> {
   const pool = getCiPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
@@ -102,7 +106,7 @@ export async function getTopObjectionHandlers(limit = 50): Promise<TopHandler[]>
     HAVING COUNT(*) >= 5
     ORDER BY SALES_CLOSE_RATE_AFTER_OBJ_PCT DESC
     ${sqlLimit(limit)}`,
-    []
+    [],
   );
 
   return rows as TopHandler[];
@@ -119,7 +123,9 @@ export interface ObjectionSalesMetric {
   CONVERSION_RATE_AFTER_HANDLING_PCT: number | null;
 }
 
-export async function getSalesClosedAfterObjection(limit = 50): Promise<ObjectionSalesMetric[]> {
+export async function getSalesClosedAfterObjection(
+  limit = 50,
+): Promise<ObjectionSalesMetric[]> {
   const pool = getCiPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
@@ -147,7 +153,7 @@ export async function getSalesClosedAfterObjection(limit = 50): Promise<Objectio
     GROUP BY cd.CustomerObjectionCategory
     ORDER BY SALES_CLOSED_AFTER_HANDLING DESC
     ${sqlLimit(limit)}`,
-    []
+    [],
   );
 
   return rows as ObjectionSalesMetric[];
@@ -166,7 +172,9 @@ export interface ProcessObjectionMetric {
   SALES_AFTER_OBJECTION: number;
 }
 
-export async function getObjectionsByProcess(limit = 100): Promise<ProcessObjectionMetric[]> {
+export async function getObjectionsByProcess(
+  limit = 100,
+): Promise<ProcessObjectionMetric[]> {
   const pool = getCiPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
@@ -195,7 +203,7 @@ export async function getObjectionsByProcess(limit = 100): Promise<ProcessObject
     GROUP BY cd.campaign_id, pm.process_name, cd.CustomerObjectionCategory
     ORDER BY PROCESS_CODE, OBJECTION_COUNT DESC
     ${sqlLimit(limit)}`,
-    []
+    [],
   );
 
   return rows as ProcessObjectionMetric[];
@@ -210,7 +218,9 @@ export interface ObjectionRebuttal {
   FREQUENCY: number;
 }
 
-export async function getObjectionRebuttalMatrix(limit = 100): Promise<ObjectionRebuttal[]> {
+export async function getObjectionRebuttalMatrix(
+  limit = 100,
+): Promise<ObjectionRebuttal[]> {
   const pool = getCiPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
@@ -224,7 +234,7 @@ export async function getObjectionRebuttalMatrix(limit = 100): Promise<Objection
     GROUP BY obj.Objection, obj.Rebutal
     ORDER BY FREQUENCY DESC
     ${sqlLimit(limit)}`,
-    []
+    [],
   );
 
   return rows as ObjectionRebuttal[];
@@ -267,12 +277,14 @@ export interface ObjectionHealthDashboard {
  * of scanning the table.
  */
 export async function getObjectionHealthDashboard(
-  filters: { startDate?: string; endDate?: string } = {}
+  filters: { startDate?: string; endDate?: string } = {},
 ): Promise<ObjectionHealthDashboard> {
   const pool = getCiPool();
   const bounded = Boolean(filters.startDate && filters.endDate);
   const dateClause = bounded ? " AND CallDate BETWEEN ? AND ?" : "";
-  const dateParams = bounded ? [filters.startDate as string, filters.endDate as string] : [];
+  const dateParams = bounded
+    ? [filters.startDate as string, filters.endDate as string]
+    : [];
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       COUNT(*) as TOTAL_OBJECTIONS_RAISED,
@@ -303,7 +315,7 @@ export async function getObjectionHealthDashboard(
       AND CustomerObjectionCategory != ''
       AND CustomerObjectionCategory != 'null'
       AND CustomerObjectionCategory != 'None'${dateClause}`,
-    dateParams
+    dateParams,
   );
 
   if (rows.length === 0) {
@@ -339,17 +351,23 @@ export async function generateComprehensiveObjectionReport(
   patternLimit = 50,
   handlerLimit = 50,
   processLimit = 100,
-  rebuttalLimit = 100
+  rebuttalLimit = 100,
 ): Promise<ObjectionAnalysisReport> {
-  const [dashboard, topPatterns, topHandlers, salesMetrics, processList, rebuttalMatrix] =
-    await Promise.all([
-      getObjectionHealthDashboard(),
-      getTopObjectionPatterns(patternLimit),
-      getTopObjectionHandlers(handlerLimit),
-      getSalesClosedAfterObjection(patternLimit),
-      getObjectionsByProcess(processLimit),
-      getObjectionRebuttalMatrix(rebuttalLimit),
-    ]);
+  const [
+    dashboard,
+    topPatterns,
+    topHandlers,
+    salesMetrics,
+    processList,
+    rebuttalMatrix,
+  ] = await Promise.all([
+    getObjectionHealthDashboard(),
+    getTopObjectionPatterns(patternLimit),
+    getTopObjectionHandlers(handlerLimit),
+    getSalesClosedAfterObjection(patternLimit),
+    getObjectionsByProcess(processLimit),
+    getObjectionRebuttalMatrix(rebuttalLimit),
+  ]);
 
   return {
     dashboard,

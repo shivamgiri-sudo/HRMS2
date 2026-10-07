@@ -1,15 +1,15 @@
-import { randomUUID } from 'crypto';
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { rosterCapacityService } from './roster-capacity.service.js';
-import { checkEmployeeDateNotLocked } from './roster-lock-guard.js';
+import { randomUUID } from "crypto";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { rosterCapacityService } from "./roster-capacity.service.js";
+import { checkEmployeeDateNotLocked } from "./roster-lock-guard.js";
 
 // ========== Types ==========
 export interface RosterTemplate {
   id: string;
   template_name: string;
   process_id: string;
-  pattern_type: 'fixed' | 'rotation' | 'custom';
+  pattern_type: "fixed" | "rotation" | "custom";
   cycle_days: number; // 7 for weekly, 14 for bi-weekly, etc.
   pattern_json: RosterPattern;
   support_ratio_min: number | null;
@@ -62,7 +62,7 @@ class RosterMasterService {
   async createTemplate(data: {
     template_name: string;
     process_id: string;
-    pattern_type: 'fixed' | 'rotation' | 'custom';
+    pattern_type: "fixed" | "rotation" | "custom";
     cycle_days: number;
     pattern_json: RosterPattern;
     support_ratio_min?: number;
@@ -86,33 +86,36 @@ class RosterMasterService {
         data.support_ratio_min ?? null,
         data.support_ratio_max ?? null,
         data.created_by,
-      ]
+      ],
     );
 
     const template = await this.getTemplateById(id);
-    if (!template) throw new Error('Template creation failed');
+    if (!template) throw new Error("Template creation failed");
     return template;
   }
 
-  async listTemplates(filters?: { process_id?: string | string[]; is_active?: boolean }): Promise<RosterTemplate[]> {
-    let sql = 'SELECT * FROM roster_template WHERE 1=1';
+  async listTemplates(filters?: {
+    process_id?: string | string[];
+    is_active?: boolean;
+  }): Promise<RosterTemplate[]> {
+    let sql = "SELECT * FROM roster_template WHERE 1=1";
     const params: unknown[] = [];
 
     if (Array.isArray(filters?.process_id)) {
       if (filters.process_id.length === 0) return [];
-      sql += ` AND process_id IN (${filters.process_id.map(() => '?').join(',')})`;
+      sql += ` AND process_id IN (${filters.process_id.map(() => "?").join(",")})`;
       params.push(...filters.process_id);
     } else if (filters?.process_id) {
-      sql += ' AND process_id = ?';
+      sql += " AND process_id = ?";
       params.push(filters.process_id);
     }
 
     if (filters?.is_active !== undefined) {
-      sql += ' AND is_active = ?';
+      sql += " AND is_active = ?";
       params.push(filters.is_active ? 1 : 0);
     }
 
-    sql += ' ORDER BY created_at DESC';
+    sql += " ORDER BY created_at DESC";
 
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return (rows as any[]).map(this.parseTemplate);
@@ -120,8 +123,8 @@ class RosterMasterService {
 
   async getTemplateById(id: string): Promise<RosterTemplate | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT * FROM roster_template WHERE id = ?',
-      [id]
+      "SELECT * FROM roster_template WHERE id = ?",
+      [id],
     );
 
     if (rows.length === 0) return null;
@@ -136,54 +139,54 @@ class RosterMasterService {
       support_ratio_min?: number;
       support_ratio_max?: number;
       is_active?: boolean;
-    }
+    },
   ): Promise<RosterTemplate> {
     const updates: string[] = [];
     const params: unknown[] = [];
 
     if (data.template_name) {
-      updates.push('template_name = ?');
+      updates.push("template_name = ?");
       params.push(data.template_name);
     }
 
     if (data.pattern_json) {
-      updates.push('pattern_json = ?');
+      updates.push("pattern_json = ?");
       params.push(JSON.stringify(data.pattern_json));
     }
 
     if (data.support_ratio_min !== undefined) {
-      updates.push('support_ratio_min = ?');
+      updates.push("support_ratio_min = ?");
       params.push(data.support_ratio_min);
     }
 
     if (data.support_ratio_max !== undefined) {
-      updates.push('support_ratio_max = ?');
+      updates.push("support_ratio_max = ?");
       params.push(data.support_ratio_max);
     }
 
     if (data.is_active !== undefined) {
-      updates.push('is_active = ?');
+      updates.push("is_active = ?");
       params.push(data.is_active ? 1 : 0);
     }
 
     if (updates.length === 0) {
-      throw new Error('No fields to update');
+      throw new Error("No fields to update");
     }
 
     params.push(id);
 
     await db.execute(
-      `UPDATE roster_template SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
-      params
+      `UPDATE roster_template SET ${updates.join(", ")}, updated_at = NOW() WHERE id = ?`,
+      params,
     );
 
     const template = await this.getTemplateById(id);
-    if (!template) throw new Error('Template not found');
+    if (!template) throw new Error("Template not found");
     return template;
   }
 
   async deleteTemplate(id: string): Promise<void> {
-    await db.execute('DELETE FROM roster_template WHERE id = ?', [id]);
+    await db.execute("DELETE FROM roster_template WHERE id = ?", [id]);
   }
 
   // ========== Week-Off Preferences ==========
@@ -198,18 +201,20 @@ class RosterMasterService {
       `INSERT INTO week_off_preference
        (id, employee_id, preferred_day, alternate_day, approved)
        VALUES (?, ?, ?, ?, 0)`,
-      [id, data.employee_id, data.preferred_day, data.alternate_day ?? null]
+      [id, data.employee_id, data.preferred_day, data.alternate_day ?? null],
     );
 
     const pref = await this.getWeekOffPreference(data.employee_id);
-    if (!pref) throw new Error('Preference creation failed');
+    if (!pref) throw new Error("Preference creation failed");
     return pref;
   }
 
-  async getWeekOffPreference(employee_id: string): Promise<WeekOffPreference | null> {
+  async getWeekOffPreference(
+    employee_id: string,
+  ): Promise<WeekOffPreference | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT * FROM week_off_preference WHERE employee_id = ? ORDER BY created_at DESC LIMIT 1',
-      [employee_id]
+      "SELECT * FROM week_off_preference WHERE employee_id = ? ORDER BY created_at DESC LIMIT 1",
+      [employee_id],
     );
 
     if (rows.length === 0) return null;
@@ -220,26 +225,27 @@ class RosterMasterService {
     approved?: boolean;
     process_id?: string | string[];
   }): Promise<WeekOffPreference[]> {
-    let sql = 'SELECT wp.* FROM week_off_preference wp';
+    let sql = "SELECT wp.* FROM week_off_preference wp";
     const params: unknown[] = [];
 
     if (Array.isArray(filters?.process_id)) {
       if (filters.process_id.length === 0) return [];
-      sql += ` JOIN employees e ON wp.employee_id = e.id WHERE e.process_id IN (${filters.process_id.map(() => '?').join(',')})`;
+      sql += ` JOIN employees e ON wp.employee_id = e.id WHERE e.process_id IN (${filters.process_id.map(() => "?").join(",")})`;
       params.push(...filters.process_id);
     } else if (filters?.process_id) {
-      sql += ' JOIN employees e ON wp.employee_id = e.id WHERE e.process_id = ?';
+      sql +=
+        " JOIN employees e ON wp.employee_id = e.id WHERE e.process_id = ?";
       params.push(filters.process_id);
     } else {
-      sql += ' WHERE 1=1';
+      sql += " WHERE 1=1";
     }
 
     if (filters?.approved !== undefined) {
-      sql += ' AND wp.approved = ?';
+      sql += " AND wp.approved = ?";
       params.push(filters.approved ? 1 : 0);
     }
 
-    sql += ' ORDER BY wp.created_at DESC';
+    sql += " ORDER BY wp.created_at DESC";
 
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return rows as WeekOffPreference[];
@@ -247,17 +253,17 @@ class RosterMasterService {
 
   async approveWeekOffPreference(
     employee_id: string,
-    approved_by: string
+    approved_by: string,
   ): Promise<WeekOffPreference> {
     await db.execute(
       `UPDATE week_off_preference
        SET approved = 1, approved_by = ?, approved_at = NOW()
        WHERE employee_id = ?`,
-      [approved_by, employee_id]
+      [approved_by, employee_id],
     );
 
     const pref = await this.getWeekOffPreference(employee_id);
-    if (!pref) throw new Error('Preference not found');
+    if (!pref) throw new Error("Preference not found");
     return pref;
   }
 
@@ -268,11 +274,12 @@ class RosterMasterService {
     errors: string[];
   }> {
     const template = await this.getTemplateById(batch.template_id);
-    if (!template) throw new Error('Template not found');
+    if (!template) throw new Error("Template not found");
 
     const start = new Date(batch.start_date);
     const end = new Date(batch.end_date);
-    const totalDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const totalDays =
+      Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
     let created = 0;
     let skipped = 0;
@@ -298,7 +305,9 @@ class RosterMasterService {
           const dayOfWeek = currentDate.getDay(); // 0=Sunday, 6=Saturday
           const cycleDay = (dayOffset % template.cycle_days) + 1;
 
-          const patternDay = template.pattern_json.days.find((d) => d.day_number === cycleDay);
+          const patternDay = template.pattern_json.days.find(
+            (d) => d.day_number === cycleDay,
+          );
           if (!patternDay) continue;
 
           let is_week_off = patternDay.is_week_off;
@@ -315,12 +324,15 @@ class RosterMasterService {
             const capacityCheck = await rosterCapacityService.checkCapacity(
               batch.process_id,
               dateStr,
-              dayOfWeek
+              dayOfWeek,
             );
 
             if (!capacityCheck.can_allocate) {
               // Capacity full - try alternate day if preference exists
-              if (preference?.alternate_day !== null && preference?.alternate_day !== undefined) {
+              if (
+                preference?.alternate_day !== null &&
+                preference?.alternate_day !== undefined
+              ) {
                 const alternateDayOfWeek = preference.alternate_day;
                 if (alternateDayOfWeek === dayOfWeek) {
                   // Alternate same as preferred, assign work day
@@ -331,7 +343,7 @@ class RosterMasterService {
                   await rosterCapacityService.createNotification({
                     employee_id,
                     preference_id: preference.id,
-                    notification_type: 'capacity_full',
+                    notification_type: "capacity_full",
                     message: `Week-off preference for ${dateStr} could not be fulfilled due to capacity limits. Assigned work day instead.`,
                     roster_date: dateStr,
                   });
@@ -347,7 +359,7 @@ class RosterMasterService {
                   await rosterCapacityService.createNotification({
                     employee_id,
                     preference_id: preference.id,
-                    notification_type: 'capacity_full',
+                    notification_type: "capacity_full",
                     message: `Week-off preference for ${dateStr} could not be fulfilled due to capacity limits.`,
                     roster_date: dateStr,
                   });
@@ -370,7 +382,7 @@ class RosterMasterService {
           const [existing] = await db.execute<RowDataPacket[]>(
             `SELECT id FROM wfm_roster_assignment
              WHERE employee_id = ? AND roster_date = ?`,
-            [employee_id, dateStr]
+            [employee_id, dateStr],
           );
 
           if (existing.length > 0) {
@@ -391,9 +403,15 @@ class RosterMasterService {
           // writes to `wfm_roster_assignment`, the single roster source, so
           // the lock check below is now guarding the same table payroll and
           // compliance actually read — not a lower-traffic sidecar.
-          const lockResult = await checkEmployeeDateNotLocked(db, employee_id, dateStr);
+          const lockResult = await checkEmployeeDateNotLocked(
+            db,
+            employee_id,
+            dateStr,
+          );
           if (lockResult.blocked) {
-            errors.push(`Employee ${employee_id} on ${dateStr}: ${lockResult.error}`);
+            errors.push(
+              `Employee ${employee_id} on ${dateStr}: ${lockResult.error}`,
+            );
             skipped++;
             continue;
           }
@@ -424,8 +442,8 @@ class RosterMasterService {
               dateStr,
               shift_template_id,
               is_week_off ? 1 : 0,
-              is_week_off ? 'WEEK_OFF' : 'SHIFT',
-            ]
+              is_week_off ? "WEEK_OFF" : "SHIFT",
+            ],
           );
 
           created++;
@@ -441,12 +459,17 @@ class RosterMasterService {
   // ========== Validation ==========
   async validateSupportRatio(
     process_id: string,
-    date: string
-  ): Promise<{ actual: number; min: number | null; max: number | null; valid: boolean }> {
+    date: string,
+  ): Promise<{
+    actual: number;
+    min: number | null;
+    max: number | null;
+    valid: boolean;
+  }> {
     // Get active template for process
     const [templates] = await db.execute<RowDataPacket[]>(
-      'SELECT support_ratio_min, support_ratio_max FROM roster_template WHERE process_id = ? AND is_active = 1 LIMIT 1',
-      [process_id]
+      "SELECT support_ratio_min, support_ratio_max FROM roster_template WHERE process_id = ? AND is_active = 1 LIMIT 1",
+      [process_id],
     );
 
     if (templates.length === 0) {
@@ -465,7 +488,7 @@ class RosterMasterService {
        WHERE e.process_id = ? AND ra.roster_date = ?
          AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL
                   AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)`,
-      [process_id, date]
+      [process_id, date],
     );
 
     const row = (counts as any)[0];
@@ -489,9 +512,10 @@ class RosterMasterService {
   private parseTemplate(row: any): RosterTemplate {
     return {
       ...row,
-      pattern_json: typeof row.pattern_json === 'string'
-        ? JSON.parse(row.pattern_json)
-        : row.pattern_json,
+      pattern_json:
+        typeof row.pattern_json === "string"
+          ? JSON.parse(row.pattern_json)
+          : row.pattern_json,
     };
   }
 }

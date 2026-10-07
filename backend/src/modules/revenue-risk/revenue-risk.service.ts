@@ -10,7 +10,11 @@ function riskLevel(amount: number, shortageHc: number) {
   return "none";
 }
 
-function confidence(parts: { contract: boolean; mandate: boolean; attendance: boolean }) {
+function confidence(parts: {
+  contract: boolean;
+  mandate: boolean;
+  attendance: boolean;
+}) {
   let score = 25;
   if (parts.contract) score += 30;
   if (parts.mandate) score += 25;
@@ -28,7 +32,7 @@ async function getProcessRows() {
        LEFT JOIN client_master cm ON cm.id = p.client_id
       WHERE COALESCE(p.active_status, 1) = 1
       ORDER BY cm.client_name, p.process_name
-      LIMIT 500`
+      LIMIT 500`,
   );
   return rows as any[];
 }
@@ -42,7 +46,7 @@ async function getAllContracts(date: string): Promise<Map<string, any>> {
         AND effective_from <= ?
         AND (effective_to IS NULL OR effective_to >= ?)
       ORDER BY CASE WHEN process_id IS NOT NULL THEN 0 ELSE 1 END, effective_from DESC`,
-    [date, date]
+    [date, date],
   );
   // Map: process_id → contract (process-specific wins over client-level)
   const map = new Map<string, any>();
@@ -71,7 +75,7 @@ async function getAllMandates(date: string): Promise<Map<string, number>> {
         AND (effective_from IS NULL OR effective_from <= ?)
         AND (effective_to IS NULL OR effective_to >= ?)
       GROUP BY process_id`,
-    [date, date]
+    [date, date],
   );
   const map = new Map<string, number>();
   for (const row of rows as any[]) {
@@ -80,7 +84,9 @@ async function getAllMandates(date: string): Promise<Map<string, number>> {
   return map;
 }
 
-async function getAllAttendance(date: string): Promise<{ byDate: Map<string, number>; byLatest: Map<string, number> }> {
+async function getAllAttendance(
+  date: string,
+): Promise<{ byDate: Map<string, number>; byLatest: Map<string, number> }> {
   if (!(await tableExists("attendance_daily_record"))) {
     return { byDate: new Map(), byLatest: new Map() };
   }
@@ -93,11 +99,12 @@ async function getAllAttendance(date: string): Promise<{ byDate: Map<string, num
       WHERE adr.record_date = ?
         AND adr.attendance_status IN ('present','half_day')
       GROUP BY e.process_id`,
-    [date]
+    [date],
   );
   const byDate = new Map<string, number>();
   for (const row of dateRows as any[]) {
-    if (row.process_id) byDate.set(String(row.process_id), Number(row.cnt ?? 0));
+    if (row.process_id)
+      byDate.set(String(row.process_id), Number(row.cnt ?? 0));
   }
 
   // Fetch for latest date (COSEC lags 1-2 days)
@@ -107,11 +114,12 @@ async function getAllAttendance(date: string): Promise<{ byDate: Map<string, num
        JOIN employees e ON e.id = adr.employee_id
       WHERE adr.record_date = (SELECT MAX(record_date) FROM attendance_daily_record)
         AND adr.attendance_status IN ('present','half_day')
-      GROUP BY e.process_id`
+      GROUP BY e.process_id`,
   );
   const byLatest = new Map<string, number>();
   for (const row of latestRows as any[]) {
-    if (row.process_id) byLatest.set(String(row.process_id), Number(row.cnt ?? 0));
+    if (row.process_id)
+      byLatest.set(String(row.process_id), Number(row.cnt ?? 0));
   }
 
   return { byDate, byLatest };
@@ -141,7 +149,7 @@ async function getAllPlannedHc(date: string): Promise<Map<string, number>> {
                  WHERE roster_date <= ? AND publish_status = 'published'
               )
         GROUP BY e.process_id`,
-      [date]
+      [date],
     );
     for (const row of rows as any[]) {
       if (row.process_id) map.set(String(row.process_id), Number(row.cnt ?? 0));
@@ -170,7 +178,7 @@ async function getAllPlannedHc(date: string): Promise<Map<string, number>> {
          FROM employees
         WHERE active_status = 1
           AND LOWER(COALESCE(employment_status, 'active')) = 'active'
-        GROUP BY process_id`
+        GROUP BY process_id`,
     );
     for (const row of rows as any[]) {
       if (row.process_id) map.set(String(row.process_id), Number(row.cnt ?? 0));
@@ -194,7 +202,8 @@ function calculateRevenue(contract: any, required: number, available: number) {
     actual = available * 8 * rate;
   } else if (billingType === "fixed_monthly") {
     expected = monthlyMin / 30;
-    actual = required > 0 ? expected * Math.min(1, available / required) : expected;
+    actual =
+      required > 0 ? expected * Math.min(1, available / required) : expected;
   } else {
     expected = required * rate;
     actual = available * rate;
@@ -219,16 +228,24 @@ export const revenueRiskService = {
          LEFT JOIN client_master cm ON cm.id = ccm.client_id
          LEFT JOIN process_master pm ON pm.id = ccm.process_id
         ORDER BY ccm.status, ccm.effective_from DESC
-        LIMIT 500`
+        LIMIT 500`,
     );
     return rows;
   },
 
   async createContract(input: any, actorUserId: string) {
     if (!(await tableExists("client_contract_master"))) {
-      throw Object.assign(new Error("client_contract_master table missing. Run revenue risk migration first."), { statusCode: 500 });
+      throw Object.assign(
+        new Error(
+          "client_contract_master table missing. Run revenue risk migration first.",
+        ),
+        { statusCode: 500 },
+      );
     }
-    if (!input.contract_name) throw Object.assign(new Error("contract_name is required"), { statusCode: 400 });
+    if (!input.contract_name)
+      throw Object.assign(new Error("contract_name is required"), {
+        statusCode: 400,
+      });
     const id = randomUUID();
     await db.execute(
       `INSERT INTO client_contract_master
@@ -243,22 +260,35 @@ export const revenueRiskService = {
         Number(input.billing_rate ?? 0),
         Number(input.monthly_minimum_commitment ?? 0),
         input.sla_target_percentage ?? null,
-        input.penalty_rule_json ? JSON.stringify(input.penalty_rule_json) : null,
+        input.penalty_rule_json
+          ? JSON.stringify(input.penalty_rule_json)
+          : null,
         input.effective_from ?? new Date().toISOString().slice(0, 10),
         input.effective_to ?? null,
         input.status ?? "active",
         actorUserId,
-      ]
+      ],
     );
     return { id };
   },
 
-  async calculate(date = new Date().toISOString().slice(0, 10), persist = false) {
+  async calculate(
+    date = new Date().toISOString().slice(0, 10),
+    persist = false,
+  ) {
     const processes = await getProcessRows();
 
     // Check table availability and batch-fetch all lookups in parallel — O(8 queries) total regardless of process count
-    const [mandateAvailable, attendanceAvailable, contractAvailable, persistAvailable,
-           contractMap, mandateMap, attendance, plannedMap] = await Promise.all([
+    const [
+      mandateAvailable,
+      attendanceAvailable,
+      contractAvailable,
+      persistAvailable,
+      contractMap,
+      mandateMap,
+      attendance,
+      plannedMap,
+    ] = await Promise.all([
       tableExists("workforce_mandate"),
       tableExists("attendance_daily_record"),
       tableExists("client_contract_master"),
@@ -269,24 +299,57 @@ export const revenueRiskService = {
       getAllPlannedHc(date),
     ]);
 
-    const rows: Array<{ revenue_date: string; client_id: unknown; client_name: unknown; process_id: unknown; process_name: unknown; contract_id: unknown; billing_type: unknown; billing_rate: number; required_hc: number; planned_hc: number; available_hc: number; shortage_hc: number; productive_hours: number; billable_hours: number; expected_revenue: number; actual_revenue_estimate: number; revenue_at_risk: number; risk_level: string; reason_json: string[]; data_confidence_score: number }> = [];
+    const rows: Array<{
+      revenue_date: string;
+      client_id: unknown;
+      client_name: unknown;
+      process_id: unknown;
+      process_name: unknown;
+      contract_id: unknown;
+      billing_type: unknown;
+      billing_rate: number;
+      required_hc: number;
+      planned_hc: number;
+      available_hc: number;
+      shortage_hc: number;
+      productive_hours: number;
+      billable_hours: number;
+      expected_revenue: number;
+      actual_revenue_estimate: number;
+      revenue_at_risk: number;
+      risk_level: string;
+      reason_json: string[];
+      data_confidence_score: number;
+    }> = [];
     for (const process of processes) {
       const pid = String(process.process_id);
       const clientKey = `client:${process.client_id}`;
-      const contract = contractMap.get(pid) ?? contractMap.get(clientKey) ?? null;
+      const contract =
+        contractMap.get(pid) ?? contractMap.get(clientKey) ?? null;
       const required = mandateMap.get(pid) ?? 0;
       const planned = plannedMap.get(pid) ?? 0;
-      const available = (attendance.byDate.get(pid) ?? 0) > 0
-        ? attendance.byDate.get(pid)!
-        : (attendance.byLatest.get(pid) ?? plannedMap.get(pid) ?? 0);
+      const available =
+        (attendance.byDate.get(pid) ?? 0) > 0
+          ? attendance.byDate.get(pid)!
+          : (attendance.byLatest.get(pid) ?? plannedMap.get(pid) ?? 0);
       const finalRequired = required || planned;
       const calc = calculateRevenue(contract, finalRequired, available);
-      const conf = confidence({ contract: !!contract && contractAvailable, mandate: mandateAvailable && required > 0, attendance: attendanceAvailable });
+      const conf = confidence({
+        contract: !!contract && contractAvailable,
+        mandate: mandateAvailable && required > 0,
+        attendance: attendanceAvailable,
+      });
       const reasons: string[] = [];
       if (!contract) reasons.push("No active client contract/rate configured");
-      if (!required) reasons.push("No workforce mandate found; using planned HC as fallback");
+      if (!required)
+        reasons.push(
+          "No workforce mandate found; using planned HC as fallback",
+        );
       if (calc.shortageHc > 0) reasons.push(`Short by ${calc.shortageHc} HC`);
-      if (!attendanceAvailable) reasons.push("Attendance table unavailable; available HC estimated from planned HC");
+      if (!attendanceAvailable)
+        reasons.push(
+          "Attendance table unavailable; available HC estimated from planned HC",
+        );
 
       const row = {
         revenue_date: date,
@@ -325,24 +388,51 @@ export const revenueRiskService = {
              revenue_at_risk = VALUES(revenue_at_risk), risk_level = VALUES(risk_level), reason_json = VALUES(reason_json),
              data_confidence_score = VALUES(data_confidence_score), generated_at = NOW(), updated_at = NOW()`,
           [
-            randomUUID(), row.revenue_date, row.client_id, row.process_id, row.contract_id, row.required_hc, row.planned_hc,
-            row.available_hc, row.shortage_hc, row.productive_hours, row.billable_hours, row.expected_revenue,
-            row.actual_revenue_estimate, row.revenue_at_risk, row.risk_level, JSON.stringify(row.reason_json), row.data_confidence_score,
-          ]
+            randomUUID(),
+            row.revenue_date,
+            row.client_id,
+            row.process_id,
+            row.contract_id,
+            row.required_hc,
+            row.planned_hc,
+            row.available_hc,
+            row.shortage_hc,
+            row.productive_hours,
+            row.billable_hours,
+            row.expected_revenue,
+            row.actual_revenue_estimate,
+            row.revenue_at_risk,
+            row.risk_level,
+            JSON.stringify(row.reason_json),
+            row.data_confidence_score,
+          ],
         );
       }
     }
 
-    rows.sort((a, b) => b.revenue_at_risk - a.revenue_at_risk || b.shortage_hc - a.shortage_hc);
+    rows.sort(
+      (a, b) =>
+        b.revenue_at_risk - a.revenue_at_risk || b.shortage_hc - a.shortage_hc,
+    );
     return {
       generated_at: new Date().toISOString(),
       date,
       totals: {
-        expected_revenue: rows.reduce((sum, row) => sum + row.expected_revenue, 0),
-        actual_revenue_estimate: rows.reduce((sum, row) => sum + row.actual_revenue_estimate, 0),
-        revenue_at_risk: rows.reduce((sum, row) => sum + row.revenue_at_risk, 0),
+        expected_revenue: rows.reduce(
+          (sum, row) => sum + row.expected_revenue,
+          0,
+        ),
+        actual_revenue_estimate: rows.reduce(
+          (sum, row) => sum + row.actual_revenue_estimate,
+          0,
+        ),
+        revenue_at_risk: rows.reduce(
+          (sum, row) => sum + row.revenue_at_risk,
+          0,
+        ),
         shortage_hc: rows.reduce((sum, row) => sum + row.shortage_hc, 0),
-        critical_processes: rows.filter((row) => row.risk_level === "critical").length,
+        critical_processes: rows.filter((row) => row.risk_level === "critical")
+          .length,
         high_processes: rows.filter((row) => row.risk_level === "high").length,
       },
       rows: rows.slice(0, 250),
@@ -350,7 +440,8 @@ export const revenueRiskService = {
   },
 
   async snapshot(date = new Date().toISOString().slice(0, 10)) {
-    if (!(await tableExists("process_revenue_daily"))) return this.calculate(date, false);
+    if (!(await tableExists("process_revenue_daily")))
+      return this.calculate(date, false);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT prd.*, cm.client_name, pm.process_name, ccm.billing_type, ccm.billing_rate
          FROM process_revenue_daily prd
@@ -360,20 +451,41 @@ export const revenueRiskService = {
         WHERE prd.revenue_date = ?
         ORDER BY prd.revenue_at_risk DESC, prd.shortage_hc DESC
         LIMIT 250`,
-      [date]
+      [date],
     );
     if (rows.length === 0) return this.calculate(date, false);
-    const mapped = rows.map((row: any) => ({ ...row, reason_json: typeof row.reason_json === "string" ? JSON.parse(row.reason_json || "[]") : row.reason_json }));
+    const mapped = rows.map((row: any) => ({
+      ...row,
+      reason_json:
+        typeof row.reason_json === "string"
+          ? JSON.parse(row.reason_json || "[]")
+          : row.reason_json,
+    }));
     return {
       generated_at: new Date().toISOString(),
       date,
       totals: {
-        expected_revenue: mapped.reduce((sum, row) => sum + Number(row.expected_revenue ?? 0), 0),
-        actual_revenue_estimate: mapped.reduce((sum, row) => sum + Number(row.actual_revenue_estimate ?? 0), 0),
-        revenue_at_risk: mapped.reduce((sum, row) => sum + Number(row.revenue_at_risk ?? 0), 0),
-        shortage_hc: mapped.reduce((sum, row) => sum + Number(row.shortage_hc ?? 0), 0),
-        critical_processes: mapped.filter((row) => row.risk_level === "critical").length,
-        high_processes: mapped.filter((row) => row.risk_level === "high").length,
+        expected_revenue: mapped.reduce(
+          (sum, row) => sum + Number(row.expected_revenue ?? 0),
+          0,
+        ),
+        actual_revenue_estimate: mapped.reduce(
+          (sum, row) => sum + Number(row.actual_revenue_estimate ?? 0),
+          0,
+        ),
+        revenue_at_risk: mapped.reduce(
+          (sum, row) => sum + Number(row.revenue_at_risk ?? 0),
+          0,
+        ),
+        shortage_hc: mapped.reduce(
+          (sum, row) => sum + Number(row.shortage_hc ?? 0),
+          0,
+        ),
+        critical_processes: mapped.filter(
+          (row) => row.risk_level === "critical",
+        ).length,
+        high_processes: mapped.filter((row) => row.risk_level === "high")
+          .length,
       },
       rows: mapped,
     };

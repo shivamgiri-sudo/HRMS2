@@ -18,16 +18,23 @@ for (const line of readFileSync(envPath, "utf8").split("\n")) {
   if (eq < 0) continue;
   const key = raw.slice(0, eq).trim();
   let val = raw.slice(eq + 1).trim();
-  if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+  if (
+    (val.startsWith('"') && val.endsWith('"')) ||
+    (val.startsWith("'") && val.endsWith("'"))
+  ) {
     val = val.slice(1, -1);
   }
   env[key] = val;
 }
 
 const pool = await mysql.createPool({
-  host: env.DB_HOST, port: Number(env.DB_PORT) || 3306,
-  user: env.DB_USER, password: env.DB_PASSWORD, database: env.DB_NAME,
-  waitForConnections: true, connectionLimit: 1,
+  host: env.DB_HOST,
+  port: Number(env.DB_PORT) || 3306,
+  user: env.DB_USER,
+  password: env.DB_PASSWORD,
+  database: env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 1,
 });
 
 const SYSTEM_UUID = "00000000-0000-0000-0000-000000000001";
@@ -107,8 +114,10 @@ for (const step of STEPS) {
       break;
     } catch (err) {
       if (err.code === "ER_LOCK_WAIT_TIMEOUT" && attempt < MAX_RETRIES) {
-        console.log(`  [${step.label}] lock timeout — retry ${attempt}/${MAX_RETRIES} in ${RETRY_DELAY_MS/1000}s`);
-        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+        console.log(
+          `  [${step.label}] lock timeout — retry ${attempt}/${MAX_RETRIES} in ${RETRY_DELAY_MS / 1000}s`,
+        );
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
       } else {
         console.error(`✗ ${step.label}: ${err.message}`);
         process.exit(1);
@@ -117,7 +126,10 @@ for (const step of STEPS) {
       conn.release();
     }
   }
-  if (!done) { console.error(`✗ ${step.label}: exhausted retries`); process.exit(1); }
+  if (!done) {
+    console.error(`✗ ${step.label}: exhausted retries`);
+    process.exit(1);
+  }
 }
 
 await pool.end();

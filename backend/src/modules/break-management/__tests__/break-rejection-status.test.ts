@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const SERVICE = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
-  "break-management.service.ts"
+  "break-management.service.ts",
 );
 
 /**
@@ -39,7 +39,9 @@ export function bareThrows(src: string): string[] {
 }
 
 export function rejectStatuses(src: string): number[] {
-  return [...codeOnly(src).matchAll(/throw reject\((\d{3}),/g)].map((m) => Number(m[1]));
+  return [...codeOnly(src).matchAll(/throw reject\((\d{3}),/g)].map((m) =>
+    Number(m[1]),
+  );
 }
 
 describe("break-management rejections carry an HTTP status", () => {

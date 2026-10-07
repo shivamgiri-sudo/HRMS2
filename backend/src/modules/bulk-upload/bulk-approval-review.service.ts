@@ -42,7 +42,11 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
-import { BulkUploadError, type ApprovalStage, type BatchRecord } from "./bulk-approval.service.js";
+import {
+  BulkUploadError,
+  type ApprovalStage,
+  type BatchRecord,
+} from "./bulk-approval.service.js";
 import type { DiscardedLine } from "./bulk-approval-notify.service.js";
 
 /** entity_type values used on finance_approval_event by this module. */
@@ -101,7 +105,9 @@ export interface BatchReview {
 }
 
 export function isReviewable(uploadTypeCode: string): boolean {
-  return uploadTypeCode === "INCENTIVE_BULK" || uploadTypeCode === "DEDUCTION_BULK";
+  return (
+    uploadTypeCode === "INCENTIVE_BULK" || uploadTypeCode === "DEDUCTION_BULK"
+  );
 }
 
 function kindOf(uploadTypeCode: string): "incentive" | "deduction" {
@@ -118,7 +124,9 @@ function kindOf(uploadTypeCode: string): "incentive" | "deduction" {
  * to use two of them. Ordered by name, matching GET /api/incentives/upload-template, so
  * the columns an approver sees line up with the columns the uploader filled in.
  */
-export async function listTypes(kind: "incentive" | "deduction"): Promise<ReviewType[]> {
+export async function listTypes(
+  kind: "incentive" | "deduction",
+): Promise<ReviewType[]> {
   const sql =
     kind === "incentive"
       ? `SELECT incentive_code AS code, incentive_name AS name
@@ -126,7 +134,10 @@ export async function listTypes(kind: "incentive" | "deduction"): Promise<Review
       : `SELECT deduction_code AS code, deduction_name AS name
            FROM payroll_deduction_type WHERE active_status = 1 ORDER BY deduction_name`;
   const [rows] = await db.execute<RowDataPacket[]>(sql);
-  return (rows as RowDataPacket[]).map((r) => ({ code: String(r.code), name: String(r.name) }));
+  return (rows as RowDataPacket[]).map((r) => ({
+    code: String(r.code),
+    name: String(r.name),
+  }));
 }
 
 /**
@@ -219,8 +230,12 @@ async function loadLines(batch: BatchRecord): Promise<ReviewEmployeeRow[]> {
 
     // A discarded incentive line is gone from incentive_upload_line, so fall back to the
     // spreadsheet the uploader actually sent.
-    const employeeCode = String(r.employee_code ?? raw.employee_code ?? "").trim();
-    const typeCode = String(r.type_code ?? raw.incentive_code ?? raw.deduction_type_code ?? "")
+    const employeeCode = String(
+      r.employee_code ?? raw.employee_code ?? "",
+    ).trim();
+    const typeCode = String(
+      r.type_code ?? raw.incentive_code ?? raw.deduction_type_code ?? "",
+    )
       .trim()
       .toUpperCase();
     const amount = Number(r.amount ?? raw.amount ?? 0) || 0;
@@ -241,10 +256,14 @@ async function loadLines(batch: BatchRecord): Promise<ReviewEmployeeRow[]> {
         employee_code: employeeCode,
         employee_name: String(r.employee_name ?? "").trim(),
         cost_centre_id: r.cost_centre_id ? String(r.cost_centre_id) : null,
-        cost_centre_code: r.cost_centre_code ? String(r.cost_centre_code) : null,
+        cost_centre_code: r.cost_centre_code
+          ? String(r.cost_centre_code)
+          : null,
         cost_centre_name: String(r.cost_centre_name ?? UNASSIGNED_LABEL),
         process_name: r.process_name ? String(r.process_name) : null,
-        reporting_manager_name: r.reporting_manager_name ? String(r.reporting_manager_name) : null,
+        reporting_manager_name: r.reporting_manager_name
+          ? String(r.reporting_manager_name)
+          : null,
         amounts: {},
         total: 0,
         discarded,
@@ -268,7 +287,10 @@ async function loadLines(batch: BatchRecord): Promise<ReviewEmployeeRow[]> {
  * inactive code's money is still in the total, so hiding its column would leave a grid
  * whose rows do not add up to their own total.
  */
-function columnsFor(allTypes: ReviewType[], lines: ReviewEmployeeRow[]): ReviewType[] {
+function columnsFor(
+  allTypes: ReviewType[],
+  lines: ReviewEmployeeRow[],
+): ReviewType[] {
   const present = new Set<string>();
   for (const l of lines) for (const c of Object.keys(l.amounts)) present.add(c);
   const types = allTypes.filter((t) => present.has(t.code));
@@ -281,7 +303,10 @@ function columnsFor(allTypes: ReviewType[], lines: ReviewEmployeeRow[]): ReviewT
 /** Cost-centre summary — what the Branch Head and Payroll Head see first. */
 export async function getBatchReview(batch: BatchRecord): Promise<BatchReview> {
   const kind = kindOf(batch.upload_type_code);
-  const [allTypes, lines] = await Promise.all([listTypes(kind), loadLines(batch)]);
+  const [allTypes, lines] = await Promise.all([
+    listTypes(kind),
+    loadLines(batch),
+  ]);
 
   const byCostCentre = new Map<string, ReviewCostCentre>();
   let grandTotal = 0;
@@ -326,7 +351,10 @@ export async function getBatchReview(batch: BatchRecord): Promise<BatchReview> {
     batch_id: batch.id,
     upload_type_code: batch.upload_type_code,
     kind,
-    types: columnsFor(allTypes, lines.filter((l) => !l.discarded)),
+    types: columnsFor(
+      allTypes,
+      lines.filter((l) => !l.discarded),
+    ),
     cost_centres: costCentres,
     grand_total: grandTotal,
     employee_count: lines.filter((l) => !l.discarded).length,
@@ -340,14 +368,19 @@ export async function getBatchEmployees(
   costCentreId?: string | null,
 ): Promise<{ types: ReviewType[]; rows: ReviewEmployeeRow[] }> {
   const kind = kindOf(batch.upload_type_code);
-  const [allTypes, lines] = await Promise.all([listTypes(kind), loadLines(batch)]);
+  const [allTypes, lines] = await Promise.all([
+    listTypes(kind),
+    loadLines(batch),
+  ]);
 
   const wanted = costCentreId ?? "";
   const filtered =
     wanted === ""
       ? lines
       : lines.filter((l) =>
-          wanted === UNASSIGNED_LABEL ? l.cost_centre_id === null : l.cost_centre_id === wanted,
+          wanted === UNASSIGNED_LABEL
+            ? l.cost_centre_id === null
+            : l.cost_centre_id === wanted,
         );
 
   return { types: columnsFor(allTypes, filtered), rows: filtered };
@@ -562,7 +595,9 @@ export async function discardRows(params: {
   const discardedEmployeeIds = [
     ...new Set(
       discarded
-        .map((d) => (d as DiscardedLine & { __employeeId?: string }).__employeeId)
+        .map(
+          (d) => (d as DiscardedLine & { __employeeId?: string }).__employeeId,
+        )
         .filter((id): id is string => Boolean(id)),
     ),
   ];
@@ -577,8 +612,12 @@ export async function discardRows(params: {
         WHERE e.id IN (${discardedEmployeeIds.map(() => "?").join(",")})`,
       discardedEmployeeIds,
     );
-    const identityById = new Map(identityRows.map((r: any) => [String(r.id), r]));
-    for (const d of discarded as Array<DiscardedLine & { __employeeId?: string }>) {
+    const identityById = new Map(
+      identityRows.map((r: any) => [String(r.id), r]),
+    );
+    for (const d of discarded as Array<
+      DiscardedLine & { __employeeId?: string }
+    >) {
       const identity = d.__employeeId ? identityById.get(d.__employeeId) : null;
       d.processName = identity?.process_name ?? null;
       d.reportingManagerName = identity?.reporting_manager_name ?? null;

@@ -17,18 +17,24 @@ describe("smart GRN validation override control", () => {
     const runner = read("src/db/runPendingMigrations.ts");
     const manual = read("sql/000_finance_supplemental.sql");
     expect(sql418).toContain("vw_process_pnl_grn_allocation");
-    expect(sql419).toContain("CREATE TABLE IF NOT EXISTS grn_validation_override");
+    expect(sql419).toContain(
+      "CREATE TABLE IF NOT EXISTS grn_validation_override",
+    );
     expect(sql419).toContain("override_reason");
     expect(sql419).toContain("active_status");
     expect(sql419).not.toMatch(/DROP\s+TABLE/i);
-    expect(runner.indexOf('"418_grn_allocation_pnl_attribution.sql"')).toBeLessThan(
-      runner.indexOf('"419_grn_validation_override_control.sql"')
+    expect(
+      runner.indexOf('"418_grn_allocation_pnl_attribution.sql"'),
+    ).toBeLessThan(runner.indexOf('"419_grn_validation_override_control.sql"'));
+    expect(manual).toContain(
+      "SOURCE sql/419_grn_validation_override_control.sql;",
     );
-    expect(manual).toContain("SOURCE sql/419_grn_validation_override_control.sql;");
   });
 
   it("persists, applies and revokes a specific validation exception", () => {
-    const service = read("src/modules/finance/grn-validation-control.service.ts");
+    const service = read(
+      "src/modules/finance/grn-validation-control.service.ts",
+    );
     expect(service).toContain("overrideValidation");
     expect(service).toContain("revokeOverride");
     expect(service).toContain("GRN_VALIDATION_OVERRIDE_APPROVED");
@@ -39,7 +45,9 @@ describe("smart GRN validation override control", () => {
   });
 
   it("revalidates before smart GRN submission and approval", () => {
-    const service = read("src/modules/finance/grn-validation-control.service.ts");
+    const service = read(
+      "src/modules/finance/grn-validation-control.service.ts",
+    );
     const routes = read("src/modules/finance/grn-smart.routes.ts");
     expect(service).toContain("effectiveValidation(grnId)");
     expect(service).toContain("Resolve or obtain Finance override");

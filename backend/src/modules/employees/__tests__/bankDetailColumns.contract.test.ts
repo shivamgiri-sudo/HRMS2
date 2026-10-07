@@ -16,7 +16,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const rawSource = readFileSync(resolve(process.cwd(), "src/modules/employees/employee.routes.ts"), "utf8");
+const rawSource = readFileSync(
+  resolve(process.cwd(), "src/modules/employees/employee.routes.ts"),
+  "utf8",
+);
 
 /** Strip comments so a call site that is only MENTIONED in prose does not count. */
 const stripComments = (s: string): string =>
@@ -27,7 +30,9 @@ const source = stripComments(rawSource);
 /** Isolate a route handler body so a match elsewhere in the file doesn't count. */
 function routeBody(routeLiteral: string): string {
   const idx = source.indexOf(routeLiteral);
-  expect(idx, `route registration "${routeLiteral}" not found`).toBeGreaterThan(-1);
+  expect(idx, `route registration "${routeLiteral}" not found`).toBeGreaterThan(
+    -1,
+  );
   // Handlers here are well under 2000 chars; generous enough to include the whole
   // function body without spilling far into the next route.
   return source.slice(idx, idx + 2000);
@@ -45,7 +50,7 @@ function selectColumnsFor(body: string, table: string): string {
 }
 
 describe("employee_bank_detail write/read paths do not reference nonexistent columns", () => {
-  it('POST /me/bank-change-request does not select masked_account_number from employee_bank_detail', () => {
+  it("POST /me/bank-change-request does not select masked_account_number from employee_bank_detail", () => {
     const body = routeBody('router.post("/me/bank-change-request"');
     expect(
       selectColumnsFor(body, "employee_bank_detail"),
@@ -53,13 +58,13 @@ describe("employee_bank_detail write/read paths do not reference nonexistent col
     ).not.toContain("masked_account_number");
   });
 
-  it('PUT /me/bank-details does not write verification_status or masked_account_number', () => {
+  it("PUT /me/bank-details does not write verification_status or masked_account_number", () => {
     const body = routeBody('router.put("/me/bank-details"');
     expect(body).not.toContain("verification_status");
     expect(body).not.toContain("masked_account_number");
   });
 
-  it('PUT /:employeeId/bank-details (HR entry) does not write verification_status or masked_account_number', () => {
+  it("PUT /:employeeId/bank-details (HR entry) does not write verification_status or masked_account_number", () => {
     const body = routeBody('router.put("/:employeeId/bank-details"');
     expect(body).not.toContain("verification_status");
     expect(body).not.toContain("masked_account_number");

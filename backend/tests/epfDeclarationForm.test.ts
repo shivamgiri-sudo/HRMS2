@@ -18,7 +18,11 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { PDFDocument } from "pdf-lib";
-import { buildEpfDeclarationPdf, EPF_FORM_FIELD_NAMES, EPF_FORM_EMPLOYER_ONLY_FIELDS } from "../src/modules/employees/epfDeclarationForm.js";
+import {
+  buildEpfDeclarationPdf,
+  EPF_FORM_FIELD_NAMES,
+  EPF_FORM_EMPLOYER_ONLY_FIELDS,
+} from "../src/modules/employees/epfDeclarationForm.js";
 import { fillAcroFormPdf } from "../src/modules/employees/pdfAcroFormFill.service.js";
 
 /**
@@ -26,15 +30,35 @@ import { fillAcroFormPdf } from "../src/modules/employees/pdfAcroFormFill.servic
  * checkbox map carrying `checked_when` must keep its raw value, because that
  * value is the discriminant selecting one box out of a group.
  */
-function storedValue(raw: unknown, fieldType: string, checkedWhen?: string | null) {
+function storedValue(
+  raw: unknown,
+  fieldType: string,
+  checkedWhen?: string | null,
+) {
   if (raw == null) return "";
-  if (fieldType === "checkbox") return checkedWhen ? String(raw) : raw ? "Yes" : "";
+  if (fieldType === "checkbox")
+    return checkedWhen ? String(raw) : raw ? "Yes" : "";
   return String(raw);
 }
 
-type Map_ = { field_key: string; pdf_field_name: string; field_type: string; transform_rule?: string; checked_when?: string; mapping_mode: string };
-const m = (pdf_field_name: string, field_type: string, extra: Partial<Map_> = {}): Map_ => ({
-  field_key: pdf_field_name, pdf_field_name, field_type, mapping_mode: "acroform", ...extra,
+type Map_ = {
+  field_key: string;
+  pdf_field_name: string;
+  field_type: string;
+  transform_rule?: string;
+  checked_when?: string;
+  mapping_mode: string;
+};
+const m = (
+  pdf_field_name: string,
+  field_type: string,
+  extra: Partial<Map_> = {},
+): Map_ => ({
+  field_key: pdf_field_name,
+  pdf_field_name,
+  field_type,
+  mapping_mode: "acroform",
+  ...extra,
 });
 
 async function buildToDisk(dir: string) {
@@ -45,25 +69,40 @@ async function buildToDisk(dir: string) {
 
 describe("EPF declaration form (Form 11)", () => {
   it("TC-EPF-01: exposes every field name the maps reference, and nothing stray", async () => {
-    const form = (await PDFDocument.load(await buildEpfDeclarationPdf())).getForm();
+    const form = (
+      await PDFDocument.load(await buildEpfDeclarationPdf())
+    ).getForm();
     const inPdf = form.getFields().map((f) => f.getName());
 
     const missing = EPF_FORM_FIELD_NAMES.filter((n) => !inPdf.includes(n));
-    expect(missing, `maps would point at nothing: ${missing.join(", ")}`).toEqual([]);
+    expect(
+      missing,
+      `maps would point at nothing: ${missing.join(", ")}`,
+    ).toEqual([]);
 
     // The form also carries the employer-declaration boxes Payroll HR completes
     // after EPFO allots the member ID. Anything outside both lists is a mistake.
-    const known = new Set<string>([...EPF_FORM_FIELD_NAMES, ...EPF_FORM_EMPLOYER_ONLY_FIELDS]);
+    const known = new Set<string>([
+      ...EPF_FORM_FIELD_NAMES,
+      ...EPF_FORM_EMPLOYER_ONLY_FIELDS,
+    ]);
     const stray = inPdf.filter((n) => !known.has(n));
-    expect(stray, `fields nothing fills and nobody declared: ${stray.join(", ")}`).toEqual([]);
+    expect(
+      stray,
+      `fields nothing fills and nobody declared: ${stray.join(", ")}`,
+    ).toEqual([]);
     expect(inPdf).toHaveLength(known.size);
     // No duplicates — a repeated name silently overwrites the earlier field.
     expect(new Set(inPdf).size).toBe(inPdf.length);
   });
 
   it("TC-EPF-02: character boxes are comb fields, so a space occupies its own box", async () => {
-    const form = (await PDFDocument.load(await buildEpfDeclarationPdf())).getForm();
-    const combed = form.getFields().filter((f) => (f as { isCombed?: () => boolean }).isCombed?.());
+    const form = (
+      await PDFDocument.load(await buildEpfDeclarationPdf())
+    ).getForm();
+    const combed = form
+      .getFields()
+      .filter((f) => (f as { isCombed?: () => boolean }).isCombed?.());
     // Name, father's name, the date rows, mobile and UAN.
     expect(combed.length).toBeGreaterThanOrEqual(25);
     const name = form.getTextField("employee_name");
@@ -102,10 +141,16 @@ describe("EPF declaration form (Form 11)", () => {
         { field_key: "uan", value_text: "100987654321" },
         { field_key: "kyc_bank_ifsc", value_text: "HDFC0001234" },
       ];
-      const out = await fillAcroFormPdf({ templatePath: await buildToDisk(dir), fieldMaps: maps, values });
+      const out = await fillAcroFormPdf({
+        templatePath: await buildToDisk(dir),
+        fieldMaps: maps,
+        values,
+      });
       const form = (await PDFDocument.load(out)).getForm();
 
-      expect(form.getTextField("employee_name").getText()).toBe("KAMAL SINGH RAWAT");
+      expect(form.getTextField("employee_name").getText()).toBe(
+        "KAMAL SINGH RAWAT",
+      );
       expect(form.getTextField("dob_day").getText()).toBe("07");
       expect(form.getTextField("dob_month").getText()).toBe("03");
       expect(form.getTextField("dob_year_1").getText()).toBe("1");
@@ -124,34 +169,62 @@ describe("EPF declaration form (Form 11)", () => {
     try {
       // Each group: [pdf field, checked_when, the value actually stored].
       const groups: Array<[string, string, unknown]>[] = [
-        [["gender_male", "Male", "Male"], ["gender_female", "Female", "Male"], ["gender_other", "Other", "Male"]],
-        [["relationship_father", "father", "father"], ["relationship_husband", "husband", "father"]],
-        [["marital_status_married", "Married", "Married"], ["marital_status_unmarried", "Unmarried", "Married"]],
-        [["education_graduate", "graduate", "graduate"], ["education_matric", "matric", "graduate"]],
-        [["previous_pf_member_yes", "true", true], ["previous_pf_member_no", "true", false]],
+        [
+          ["gender_male", "Male", "Male"],
+          ["gender_female", "Female", "Male"],
+          ["gender_other", "Other", "Male"],
+        ],
+        [
+          ["relationship_father", "father", "father"],
+          ["relationship_husband", "husband", "father"],
+        ],
+        [
+          ["marital_status_married", "Married", "Married"],
+          ["marital_status_unmarried", "Unmarried", "Married"],
+        ],
+        [
+          ["education_graduate", "graduate", "graduate"],
+          ["education_matric", "matric", "graduate"],
+        ],
+        [
+          ["previous_pf_member_yes", "true", true],
+          ["previous_pf_member_no", "true", false],
+        ],
       ];
       const maps: Map_[] = [];
       const values: Array<{ field_key: string; value_text: string }> = [];
       for (const group of groups) {
         for (const [name, checkedWhen, raw] of group) {
           maps.push(m(name, "checkbox", { checked_when: checkedWhen }));
-          values.push({ field_key: name, value_text: storedValue(raw, "checkbox", checkedWhen) });
+          values.push({
+            field_key: name,
+            value_text: storedValue(raw, "checkbox", checkedWhen),
+          });
         }
       }
-      const out = await fillAcroFormPdf({ templatePath: await buildToDisk(dir), fieldMaps: maps, values });
+      const out = await fillAcroFormPdf({
+        templatePath: await buildToDisk(dir),
+        fieldMaps: maps,
+        values,
+      });
       const form = (await PDFDocument.load(out)).getForm();
 
-      const ticked = maps.filter((map) => form.getCheckBox(map.pdf_field_name).isChecked()).map((map) => map.pdf_field_name);
+      const ticked = maps
+        .filter((map) => form.getCheckBox(map.pdf_field_name).isChecked())
+        .map((map) => map.pdf_field_name);
       expect(ticked.sort()).toEqual([
-        "education_graduate", "gender_male", "marital_status_married",
-        "previous_pf_member_yes", "relationship_father",
+        "education_graduate",
+        "gender_male",
+        "marital_status_married",
+        "previous_pf_member_yes",
+        "relationship_father",
       ]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("TC-EPF-05: collapsing a checkbox value to \"Yes\" leaves the whole group blank", async () => {
+  it('TC-EPF-05: collapsing a checkbox value to "Yes" leaves the whole group blank', async () => {
     // This is the defect the storedValue mirror above guards against: the old
     // behaviour returned "Yes" for any truthy checkbox, so "Male" never matched
     // checked_when and every gender box came out empty on the filed form.
@@ -164,7 +237,10 @@ describe("EPF declaration form (Form 11)", () => {
       const out = await fillAcroFormPdf({
         templatePath: await buildToDisk(dir),
         fieldMaps: maps,
-        values: maps.map((map) => ({ field_key: map.field_key, value_text: "Yes" })),
+        values: maps.map((map) => ({
+          field_key: map.field_key,
+          value_text: "Yes",
+        })),
       });
       const form = (await PDFDocument.load(out)).getForm();
       expect(form.getCheckBox("gender_male").isChecked()).toBe(false);

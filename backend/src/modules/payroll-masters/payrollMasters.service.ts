@@ -1,7 +1,7 @@
-import { db } from '../../db/mysql.js';
-import { RowDataPacket } from 'mysql2/promise';
-import { randomUUID } from 'crypto';
-import { evaluateMinimumWageForBranchName } from './minimum-wage-gate.service.js';
+import { db } from "../../db/mysql.js";
+import { RowDataPacket } from "mysql2/promise";
+import { randomUUID } from "crypto";
+import { evaluateMinimumWageForBranchName } from "./minimum-wage-gate.service.js";
 
 // ── SLABS ─────────────────────────────────────────────────────────────────────
 
@@ -10,7 +10,7 @@ export async function listSlabs() {
     `SELECT *, label AS name, CASE WHEN active_status = 1 THEN 'active' ELSE 'inactive' END AS status
        FROM salary_slab_master
       WHERE active_status = 1
-      ORDER BY seq_order ASC`
+      ORDER BY seq_order ASC`,
   );
   return rows;
 }
@@ -18,36 +18,61 @@ export async function listSlabs() {
 export async function getSlabById(id: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT *, label AS name, CASE WHEN active_status = 1 THEN 'active' ELSE 'inactive' END AS status
-       FROM salary_slab_master WHERE id = ?`, [id]
+       FROM salary_slab_master WHERE id = ?`,
+    [id],
   );
   return rows[0] ?? null;
 }
 
 export async function createSlab(data: {
-  slab_code: string; range_from: number; range_to: number;
-  label: string; seq_order: number; active_status: number;
+  slab_code: string;
+  range_from: number;
+  range_to: number;
+  label: string;
+  seq_order: number;
+  active_status: number;
 }) {
   const id = randomUUID();
   await db.execute(
     `INSERT INTO salary_slab_master (id, slab_code, range_from, range_to, label, seq_order, active_status)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, data.slab_code, data.range_from, data.range_to, data.label, data.seq_order, data.active_status]
+    [
+      id,
+      data.slab_code,
+      data.range_from,
+      data.range_to,
+      data.label,
+      data.seq_order,
+      data.active_status,
+    ],
   );
   return getSlabById(id);
 }
 
-export async function updateSlab(id: string, data: Partial<{
-  slab_code: string; range_from: number; range_to: number;
-  label: string; seq_order: number; active_status: number;
-}>) {
-  const fields = Object.keys(data).map(k => `${k} = ?`).join(', ');
+export async function updateSlab(
+  id: string,
+  data: Partial<{
+    slab_code: string;
+    range_from: number;
+    range_to: number;
+    label: string;
+    seq_order: number;
+    active_status: number;
+  }>,
+) {
+  const fields = Object.keys(data)
+    .map((k) => `${k} = ?`)
+    .join(", ");
   if (!fields) return getSlabById(id);
-  await db.execute(`UPDATE salary_slab_master SET ${fields} WHERE id = ?`, [...Object.values(data), id]);
+  await db.execute(`UPDATE salary_slab_master SET ${fields} WHERE id = ?`, [
+    ...Object.values(data),
+    id,
+  ]);
   return getSlabById(id);
 }
 
 export async function deleteSlab(id: string) {
-  await db.execute('DELETE FROM salary_slab_master WHERE id = ?', [id]);
+  await db.execute("DELETE FROM salary_slab_master WHERE id = ?", [id]);
 }
 
 // ── SALARY BANDS ──────────────────────────────────────────────────────────────
@@ -56,8 +81,8 @@ export async function listBands(includeInactive = false) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, band_code, band_name, slab_from, slab_to, active_status, created_at, updated_at
        FROM salary_band_master
-      ${includeInactive ? '' : 'WHERE active_status = 1'}
-      ORDER BY slab_from ASC, band_code ASC`
+      ${includeInactive ? "" : "WHERE active_status = 1"}
+      ORDER BY slab_from ASC, band_code ASC`,
   );
   return rows;
 }
@@ -67,29 +92,52 @@ export async function getBandById(id: string) {
     `SELECT id, band_code, band_name, slab_from, slab_to, active_status, created_at, updated_at
        FROM salary_band_master
       WHERE id = ?`,
-    [id]
+    [id],
   );
   return rows[0] ?? null;
 }
 
 export async function createBand(data: {
-  band_code: string; band_name: string; slab_from: number; slab_to: number; active_status: number;
+  band_code: string;
+  band_name: string;
+  slab_from: number;
+  slab_to: number;
+  active_status: number;
 }) {
   const id = randomUUID();
   await db.execute(
     `INSERT INTO salary_band_master (id, band_code, band_name, slab_from, slab_to, active_status)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, data.band_code, data.band_name, data.slab_from, data.slab_to, data.active_status]
+    [
+      id,
+      data.band_code,
+      data.band_name,
+      data.slab_from,
+      data.slab_to,
+      data.active_status,
+    ],
   );
   return getBandById(id);
 }
 
-export async function updateBand(id: string, data: Partial<{
-  band_code: string; band_name: string; slab_from: number; slab_to: number; active_status: number;
-}>) {
-  const fields = Object.keys(data).map(k => `${k} = ?`).join(', ');
+export async function updateBand(
+  id: string,
+  data: Partial<{
+    band_code: string;
+    band_name: string;
+    slab_from: number;
+    slab_to: number;
+    active_status: number;
+  }>,
+) {
+  const fields = Object.keys(data)
+    .map((k) => `${k} = ?`)
+    .join(", ");
   if (!fields) return getBandById(id);
-  await db.execute(`UPDATE salary_band_master SET ${fields}, updated_at = NOW() WHERE id = ?`, [...Object.values(data), id]);
+  await db.execute(
+    `UPDATE salary_band_master SET ${fields}, updated_at = NOW() WHERE id = ?`,
+    [...Object.values(data), id],
+  );
   return getBandById(id);
 }
 
@@ -108,27 +156,62 @@ export async function deleteBand(id: string) {
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function calcGrossAndCtc(data: {
-  basic_amt: number; conveyance_amt: number; conveyance_type: string;
-  medical_amt: number; medical_type: string;
-  other_allowance_amt: number; other_allowance_type: string;
-  bonus_amt: number; bonus_type: string;
-  portfolio_amt: number; special_allowance_amt: number; pli_amt: number;
+  basic_amt: number;
+  conveyance_amt: number;
+  conveyance_type: string;
+  medical_amt: number;
+  medical_type: string;
+  other_allowance_amt: number;
+  other_allowance_type: string;
+  bonus_amt: number;
+  bonus_type: string;
+  portfolio_amt: number;
+  special_allowance_amt: number;
+  pli_amt: number;
 }) {
-  const conv   = data.conveyance_type   === 'pct' ? data.basic_amt * data.conveyance_amt   / 100 : data.conveyance_amt;
-  const med    = data.medical_type      === 'pct' ? data.basic_amt * data.medical_amt      / 100 : data.medical_amt;
-  const other  = data.other_allowance_type === 'pct' ? data.basic_amt * data.other_allowance_amt / 100 : data.other_allowance_amt;
-  const bonus  = data.bonus_type        === 'pct' ? data.basic_amt * data.bonus_amt        / 100 : data.bonus_amt;
-  const gross  = data.basic_amt + conv + med + other + bonus + data.portfolio_amt + data.special_allowance_amt + data.pli_amt;
-  const pfBase   = Math.min(data.basic_amt, 15000);
-  const pfEr     = pfBase * 0.12;
-  const esicEr   = gross <= 21000 ? gross * 0.0325 : 0; // 3.25% — kept as constant; CTC preview only
-  const ctc      = gross + pfEr + esicEr;
-  return { gross_monthly: Math.round(gross * 100) / 100, ctc_monthly: Math.round(ctc * 100) / 100 };
+  const conv =
+    data.conveyance_type === "pct"
+      ? (data.basic_amt * data.conveyance_amt) / 100
+      : data.conveyance_amt;
+  const med =
+    data.medical_type === "pct"
+      ? (data.basic_amt * data.medical_amt) / 100
+      : data.medical_amt;
+  const other =
+    data.other_allowance_type === "pct"
+      ? (data.basic_amt * data.other_allowance_amt) / 100
+      : data.other_allowance_amt;
+  const bonus =
+    data.bonus_type === "pct"
+      ? (data.basic_amt * data.bonus_amt) / 100
+      : data.bonus_amt;
+  const gross =
+    data.basic_amt +
+    conv +
+    med +
+    other +
+    bonus +
+    data.portfolio_amt +
+    data.special_allowance_amt +
+    data.pli_amt;
+  const pfBase = Math.min(data.basic_amt, 15000);
+  const pfEr = pfBase * 0.12;
+  const esicEr = gross <= 21000 ? gross * 0.0325 : 0; // 3.25% — kept as constant; CTC preview only
+  const ctc = gross + pfEr + esicEr;
+  return {
+    gross_monthly: Math.round(gross * 100) / 100,
+    ctc_monthly: Math.round(ctc * 100) / 100,
+  };
 }
 
-export async function listPackages(filters: {
-  band?: string; branch?: string; costCentre?: string; includeInactive?: boolean;
-} = {}) {
+export async function listPackages(
+  filters: {
+    band?: string;
+    branch?: string;
+    costCentre?: string;
+    includeInactive?: boolean;
+  } = {},
+) {
   let sql = `
     SELECT spm.*,
            sbm.slab_from, sbm.slab_to, sbm.band_name
@@ -153,19 +236,25 @@ export async function listPackages(filters: {
   // retired rows in order to reactivate them. getPackageById is deliberately NOT
   // filtered: employees already assigned to a package keep resolving it, so
   // retiring one stops new selections without rewriting anyone's salary.
-  if (!filters.includeInactive) sql += ' AND spm.active_status = 1';
+  if (!filters.includeInactive) sql += " AND spm.active_status = 1";
   // salary_package_master's own table comment: "Lookup: branch + CC + band →
   // available packages" — these are the three columns it's actually keyed by
   // (band_code/branch_name/cost_centre_code), not the grade_id/slab_id/
   // location_id this function used to accept and silently ignore.
-  if (filters.band) { sql += ' AND spm.band_code = ?'; params.push(filters.band); }
-  if (filters.branch) { sql += ' AND spm.branch_name = ?'; params.push(filters.branch); }
+  if (filters.band) {
+    sql += " AND spm.band_code = ?";
+    params.push(filters.band);
+  }
+  if (filters.branch) {
+    sql += " AND spm.branch_name = ?";
+    params.push(filters.branch);
+  }
   if (filters.costCentre) {
     // Include branch-wide packages (cost_centre_code IS NULL) alongside CC-specific ones
-    sql += ' AND (spm.cost_centre_code = ? OR spm.cost_centre_code IS NULL)';
+    sql += " AND (spm.cost_centre_code = ? OR spm.cost_centre_code IS NULL)";
     params.push(filters.costCentre);
   }
-  sql += ' ORDER BY spm.created_at DESC';
+  sql += " ORDER BY spm.created_at DESC";
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
 }
@@ -190,7 +279,8 @@ export async function getPackageById(id: string) {
     `SELECT spm.*, gbm.grade_name, gbm.band, NULL AS slab_label
      FROM salary_package_master spm
      LEFT JOIN grade_band_master gbm ON gbm.band = CONCAT('Band ', spm.band_code)
-     WHERE spm.id = ?`, [id]
+     WHERE spm.id = ?`,
+    [id],
   );
   return rows[0] ?? null;
 }
@@ -222,20 +312,35 @@ function amtColumn(column: string, v: unknown): number {
  * no default, so they are required; every other money column defaults to 0.00.
  */
 const PACKAGE_MONEY_COLUMNS = [
-  "basic", "hra", "lta", "conveyance", "portfolio", "medical", "special_allowance",
-  "other_allowance", "bonus", "pli", "gross", "epf_employee", "esic_employee",
-  "professional_tax", "net_in_hand", "epf_employer", "esic_employer",
-  "admin_charges", "ctc",
+  "basic",
+  "hra",
+  "lta",
+  "conveyance",
+  "portfolio",
+  "medical",
+  "special_allowance",
+  "other_allowance",
+  "bonus",
+  "pli",
+  "gross",
+  "epf_employee",
+  "esic_employee",
+  "professional_tax",
+  "net_in_hand",
+  "epf_employer",
+  "esic_employer",
+  "admin_charges",
+  "ctc",
 ] as const;
 
 function requirePackageKeys(data: Record<string, unknown>): void {
   const missing = ["branch_name", "band_code", "package_amount"].filter(
-    (k) => data[k] === undefined || data[k] === null || data[k] === ""
+    (k) => data[k] === undefined || data[k] === null || data[k] === "",
   );
   if (missing.length) {
     throw Object.assign(
       new Error(`Missing required field(s): ${missing.join(", ")}`),
-      { statusCode: 400, code: "PACKAGE_FIELDS_REQUIRED" }
+      { statusCode: 400, code: "PACKAGE_FIELDS_REQUIRED" },
     );
   }
 }
@@ -270,12 +375,18 @@ function requirePackageKeys(data: Record<string, unknown>): void {
  * provisional (status !== 'ok'), same as a genuine below-floor amount — none of the
  * three is "silently allowed".
  */
-async function checkPackageMinimumWage(branchName: unknown, packageAmount: number) {
+async function checkPackageMinimumWage(
+  branchName: unknown,
+  packageAmount: number,
+) {
   const result = await evaluateMinimumWageForBranchName(
-    typeof branchName === 'string' ? branchName : null,
+    typeof branchName === "string" ? branchName : null,
     packageAmount,
   );
-  return { min_wage_provisional: result.provisional ? 1 : 0, min_wage_check_note: result.note };
+  return {
+    min_wage_provisional: result.provisional ? 1 : 0,
+    min_wage_check_note: result.note,
+  };
 }
 
 export async function createPackage(data: any, createdBy: string) {
@@ -283,7 +394,10 @@ export async function createPackage(data: any, createdBy: string) {
   const id = randomUUID();
   const money = PACKAGE_MONEY_COLUMNS.map((c) => amtColumn(c, data[c]));
   const packageAmount = amt(data.package_amount);
-  const minWage = await checkPackageMinimumWage(data.branch_name, packageAmount);
+  const minWage = await checkPackageMinimumWage(
+    data.branch_name,
+    packageAmount,
+  );
 
   await db.execute(
     `INSERT INTO salary_package_master
@@ -302,11 +416,11 @@ export async function createPackage(data: any, createdBy: string) {
       // source_db defaults to 'db_bill'. Every one of the 295 existing rows came
       // from that import, and a package typed into the admin screen must not
       // claim the same provenance - the column exists to tell them apart.
-      'hrms',
+      "hrms",
       createdBy || null,
       minWage.min_wage_provisional,
       minWage.min_wage_check_note,
-    ]
+    ],
   );
   return getPackageById(id);
 }
@@ -317,7 +431,12 @@ export async function createPackage(data: any, createdBy: string) {
  * so repeated submissions are safe. Returns a summary of created vs skipped counts.
  */
 export async function bulkCreatePackages(
-  data: { branch_names: string[]; cost_centre_codes?: string[]; band_code: string; [key: string]: unknown },
+  data: {
+    branch_names: string[];
+    cost_centre_codes?: string[];
+    band_code: string;
+    [key: string]: unknown;
+  },
   createdBy: string,
 ): Promise<{ created: number; skipped: number; packages: unknown[] }> {
   const { branch_names, cost_centre_codes = [], ...packageFields } = data;
@@ -329,12 +448,15 @@ export async function bulkCreatePackages(
     const ccList = cost_centre_codes.length > 0 ? cost_centre_codes : [null];
     for (const cost_centre_code of ccList) {
       try {
-        const pkg = await createPackage({ ...packageFields, branch_name, cost_centre_code }, createdBy);
+        const pkg = await createPackage(
+          { ...packageFields, branch_name, cost_centre_code },
+          createdBy,
+        );
         results.push(pkg);
         created++;
       } catch (err: unknown) {
         const code = (err as any)?.code ?? (err as any)?.sqlState;
-        if (code === 'ER_DUP_ENTRY' || code === '23000') {
+        if (code === "ER_DUP_ENTRY" || code === "23000") {
           skipped++;
         } else {
           throw err;
@@ -360,7 +482,10 @@ export async function updatePackage(id: string, data: any) {
   // Re-checked on every edit, not just create: a branch_name or package_amount change
   // is exactly the case this gate exists for, and the previous check's provisional
   // flag must not survive a change to either input it was computed from.
-  const minWage = await checkPackageMinimumWage(merged.branch_name, packageAmount);
+  const minWage = await checkPackageMinimumWage(
+    merged.branch_name,
+    packageAmount,
+  );
 
   await db.execute(
     `UPDATE salary_package_master SET
@@ -378,13 +503,13 @@ export async function updatePackage(id: string, data: any) {
       minWage.min_wage_provisional,
       minWage.min_wage_check_note,
       id,
-    ]
+    ],
   );
   return getPackageById(id);
 }
 
 export async function deletePackage(id: string) {
-  await db.execute('DELETE FROM salary_package_master WHERE id = ?', [id]);
+  await db.execute("DELETE FROM salary_package_master WHERE id = ?", [id]);
 }
 
 // ── DESIGNATION-BAND MATRIX ───────────────────────────────────────────────────
@@ -403,8 +528,11 @@ export async function listMatrix(departmentId?: string) {
     LEFT JOIN salary_slab_master ssm ON ssm.id = dbm.min_slab_id
     WHERE dbm.active_status = 1`;
   const params: unknown[] = [];
-  if (departmentId) { sql += ' AND dbm.department_id = ?'; params.push(departmentId); }
-  sql += ' ORDER BY dm.dept_name, desm.designation_name';
+  if (departmentId) {
+    sql += " AND dbm.department_id = ?";
+    params.push(departmentId);
+  }
+  sql += " ORDER BY dm.dept_name, desm.designation_name";
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
 }
@@ -418,45 +546,75 @@ export async function getMatrixEntryById(id: string) {
      JOIN designation_master desm ON desm.id = dbm.designation_id
      JOIN grade_band_master gbm ON gbm.id = dbm.grade_id
      LEFT JOIN salary_slab_master ssm ON ssm.id = dbm.min_slab_id
-     WHERE dbm.id = ?`, [id]
+     WHERE dbm.id = ?`,
+    [id],
   );
   return rows[0] ?? null;
 }
 
-export async function createMatrixEntry(data: {
-  department_id: string; designation_id: string;
-  grade_id: string; min_slab_id?: string | null;
-}, createdBy: string) {
+export async function createMatrixEntry(
+  data: {
+    department_id: string;
+    designation_id: string;
+    grade_id: string;
+    min_slab_id?: string | null;
+  },
+  createdBy: string,
+) {
   const id = randomUUID();
   await db.execute(
     `INSERT INTO designation_band_matrix (id, department_id, designation_id, grade_id, min_slab_id, created_by)
      VALUES (?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE grade_id=VALUES(grade_id), min_slab_id=VALUES(min_slab_id), active_status=1`,
-    [id, data.department_id, data.designation_id, data.grade_id, data.min_slab_id ?? null, createdBy]
+    [
+      id,
+      data.department_id,
+      data.designation_id,
+      data.grade_id,
+      data.min_slab_id ?? null,
+      createdBy,
+    ],
   );
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT id FROM designation_band_matrix WHERE department_id=? AND designation_id=?',
-    [data.department_id, data.designation_id]
+    "SELECT id FROM designation_band_matrix WHERE department_id=? AND designation_id=?",
+    [data.department_id, data.designation_id],
   );
   return getMatrixEntryById((rows[0] as any).id);
 }
 
-export async function updateMatrixEntry(id: string, data: Partial<{
-  grade_id: string; min_slab_id: string | null;
-}>) {
-  const fields = Object.keys(data).map(k => `${k} = ?`).join(', ');
+export async function updateMatrixEntry(
+  id: string,
+  data: Partial<{
+    grade_id: string;
+    min_slab_id: string | null;
+  }>,
+) {
+  const fields = Object.keys(data)
+    .map((k) => `${k} = ?`)
+    .join(", ");
   if (!fields) return getMatrixEntryById(id);
-  await db.execute(`UPDATE designation_band_matrix SET ${fields} WHERE id = ?`, [...Object.values(data), id]);
+  await db.execute(
+    `UPDATE designation_band_matrix SET ${fields} WHERE id = ?`,
+    [...Object.values(data), id],
+  );
   return getMatrixEntryById(id);
 }
 
 export async function deleteMatrixEntry(id: string) {
-  await db.execute('UPDATE designation_band_matrix SET active_status=0 WHERE id=?', [id]);
+  await db.execute(
+    "UPDATE designation_band_matrix SET active_status=0 WHERE id=?",
+    [id],
+  );
 }
 
 export async function bulkUpsertMatrix(
-  rows: Array<{ department_id: string; designation_id: string; grade_id: string; min_slab_id?: string | null }>,
-  createdBy: string
+  rows: Array<{
+    department_id: string;
+    designation_id: string;
+    grade_id: string;
+    min_slab_id?: string | null;
+  }>,
+  createdBy: string,
 ) {
   let inserted = 0;
   for (const row of rows) {
@@ -466,7 +624,10 @@ export async function bulkUpsertMatrix(
   return { inserted };
 }
 
-export async function lookupBandForDesignation(departmentId: string, designationId: string) {
+export async function lookupBandForDesignation(
+  departmentId: string,
+  designationId: string,
+) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT dbm.grade_id, dbm.min_slab_id,
             gbm.grade_name, gbm.band, gbm.min_ctc, gbm.max_ctc,
@@ -476,17 +637,19 @@ export async function lookupBandForDesignation(departmentId: string, designation
      LEFT JOIN salary_slab_master ssm ON ssm.id = dbm.min_slab_id
      WHERE dbm.department_id=? AND dbm.designation_id=? AND dbm.active_status=1
      LIMIT 1`,
-    [departmentId, designationId]
+    [departmentId, designationId],
   );
   if (!rows.length) return null;
   const entry = rows[0] as any;
   let suggestedPackage: RowDataPacket | null = null;
   if (entry.band) {
     // Look up by band_code (strip the 'Band ' prefix grade_band_master stores).
-    const bandCode = String(entry.band).replace(/^Band\s+/i, '').trim();
+    const bandCode = String(entry.band)
+      .replace(/^Band\s+/i, "")
+      .trim();
     const [pkgs] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM salary_package_master WHERE band_code=? AND active_status=1 ORDER BY package_amount ASC LIMIT 1`,
-      [bandCode]
+      [bandCode],
     );
     suggestedPackage = (pkgs as RowDataPacket[])[0] ?? null;
   }
@@ -497,36 +660,68 @@ export async function lookupBandForDesignation(departmentId: string, designation
 
 export async function listMinWages() {
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT * FROM minimum_wage_master WHERE is_active=1 ORDER BY state_code, category'
+    "SELECT * FROM minimum_wage_master WHERE is_active=1 ORDER BY state_code, category",
   );
   return rows;
 }
 
 export async function createMinWage(data: {
-  state_code: string; state_name: string; category: string;
-  daily_rate: number; monthly_rate: number; effective_from: string;
+  state_code: string;
+  state_name: string;
+  category: string;
+  daily_rate: number;
+  monthly_rate: number;
+  effective_from: string;
 }) {
   const id = randomUUID();
   await db.execute(
     `INSERT INTO minimum_wage_master (id, state_code, state_name, category, daily_rate, monthly_rate, effective_from, is_active)
      VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-    [id, data.state_code, data.state_name, data.category, data.daily_rate, data.monthly_rate, data.effective_from]
+    [
+      id,
+      data.state_code,
+      data.state_name,
+      data.category,
+      data.daily_rate,
+      data.monthly_rate,
+      data.effective_from,
+    ],
   );
-  const [rows] = await db.execute<RowDataPacket[]>('SELECT * FROM minimum_wage_master WHERE id=?', [id]);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM minimum_wage_master WHERE id=?",
+    [id],
+  );
   return rows[0];
 }
 
-export async function updateMinWage(id: string, data: Partial<{
-  state_code: string; state_name: string; category: string; daily_rate: number;
-  monthly_rate: number; effective_from: string;
-}>) {
-  const fields = Object.keys(data).map(k => `${k} = ?`).join(', ');
+export async function updateMinWage(
+  id: string,
+  data: Partial<{
+    state_code: string;
+    state_name: string;
+    category: string;
+    daily_rate: number;
+    monthly_rate: number;
+    effective_from: string;
+  }>,
+) {
+  const fields = Object.keys(data)
+    .map((k) => `${k} = ?`)
+    .join(", ");
   if (!fields) return;
-  await db.execute(`UPDATE minimum_wage_master SET ${fields} WHERE id=?`, [...Object.values(data), id]);
-  const [rows] = await db.execute<RowDataPacket[]>('SELECT * FROM minimum_wage_master WHERE id=?', [id]);
+  await db.execute(`UPDATE minimum_wage_master SET ${fields} WHERE id=?`, [
+    ...Object.values(data),
+    id,
+  ]);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM minimum_wage_master WHERE id=?",
+    [id],
+  );
   return rows[0];
 }
 
 export async function deleteMinWage(id: string) {
-  await db.execute('UPDATE minimum_wage_master SET is_active=0 WHERE id=?', [id]);
+  await db.execute("UPDATE minimum_wage_master SET is_active=0 WHERE id=?", [
+    id,
+  ]);
 }

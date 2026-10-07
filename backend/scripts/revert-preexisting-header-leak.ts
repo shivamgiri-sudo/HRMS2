@@ -29,8 +29,11 @@ const REMEDIATION_USER = "00000000-0000-0000-0000-budgetfix001";
 
 async function main() {
   const conn = await mysql.createConnection({
-    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
   });
 
   try {
@@ -40,7 +43,8 @@ async function main() {
     // already-existing August budgets correctly getting new lines for real August spend — and
     // must not be touched. Only future-month additions are the leak.
     const CUTOFF_PERIOD = "2026-08";
-    const [leakLines] = await conn.query<any[]>(`
+    const [leakLines] = await conn.query<any[]>(
+      `
       SELECT l.id AS line_id, l.budget_id, l.base_amount, l.tax_amount, l.gross_amount,
              l.recoverable_tax_amount, l.pnl_cost_amount, l.cgst_amount, l.sgst_amount, l.igst_amount,
              h.period_code, h.created_by AS header_owner
@@ -49,24 +53,38 @@ async function main() {
        WHERE h.created_by <> ? AND h.period_code > ?
          AND EXISTS (SELECT 1 FROM grn_cost_allocation gca WHERE gca.budget_line_id = l.id AND gca.created_by = ?)
          AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation gca WHERE gca.budget_line_id = l.id AND gca.created_by <> ?)
-    `, [REMEDIATION_USER, CUTOFF_PERIOD, REMEDIATION_USER, REMEDIATION_USER]);
-    console.log(`Lines fully owned by this remediation but living in someone else's header: ${leakLines.length}`);
+    `,
+      [REMEDIATION_USER, CUTOFF_PERIOD, REMEDIATION_USER, REMEDIATION_USER],
+    );
+    console.log(
+      `Lines fully owned by this remediation but living in someone else's header: ${leakLines.length}`,
+    );
     console.table(leakLines);
 
-    if (!leakLines.length) { console.log("Nothing to revert."); return; }
+    if (!leakLines.length) {
+      console.log("Nothing to revert.");
+      return;
+    }
 
     const lineIds = leakLines.map((l) => l.line_id);
     const [allocRows] = await conn.query<any[]>(
       `SELECT id, amount_with_tax FROM grn_cost_allocation WHERE budget_line_id IN (?) AND created_by = ?`,
-      [lineIds, REMEDIATION_USER]
+      [lineIds, REMEDIATION_USER],
     );
-    console.log(`Allocation rows to delete: ${allocRows.length}, total ${allocRows.reduce((s, r) => s + Number(r.amount_with_tax), 0).toFixed(2)}`);
+    console.log(
+      `Allocation rows to delete: ${allocRows.length}, total ${allocRows.reduce((s, r) => s + Number(r.amount_with_tax), 0).toFixed(2)}`,
+    );
 
-    if (!APPLY) { console.log("\nDRY RUN — nothing written. Pass --apply to write."); return; }
+    if (!APPLY) {
+      console.log("\nDRY RUN — nothing written. Pass --apply to write.");
+      return;
+    }
 
     await conn.beginTransaction();
     try {
-      await conn.query(`DELETE FROM grn_cost_allocation WHERE id IN (?)`, [allocRows.map((r) => r.id)]);
+      await conn.query(`DELETE FROM grn_cost_allocation WHERE id IN (?)`, [
+        allocRows.map((r) => r.id),
+      ]);
       for (const l of leakLines) {
         await conn.execute(
           `UPDATE finance_budget_header
@@ -75,10 +93,18 @@ async function main() {
                   gross_budget_amount = gross_budget_amount - ?,
                   pnl_budget_amount = pnl_budget_amount - ?
             WHERE id = ?`,
-          [l.base_amount, l.tax_amount, l.gross_amount, l.pnl_cost_amount, l.budget_id]
+          [
+            l.base_amount,
+            l.tax_amount,
+            l.gross_amount,
+            l.pnl_cost_amount,
+            l.budget_id,
+          ],
         );
       }
-      await conn.query(`DELETE FROM finance_budget_line WHERE id IN (?)`, [lineIds]);
+      await conn.query(`DELETE FROM finance_budget_line WHERE id IN (?)`, [
+        lineIds,
+      ]);
       await conn.commit();
       console.log("\nREVERTED.");
     } catch (error) {
@@ -90,4 +116,7 @@ async function main() {
   }
 }
 
-main().catch((e) => { console.error("FATAL", e); process.exit(1); });
+main().catch((e) => {
+  console.error("FATAL", e);
+  process.exit(1);
+});

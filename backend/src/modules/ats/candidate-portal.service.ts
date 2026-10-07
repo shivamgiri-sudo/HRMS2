@@ -1,8 +1,8 @@
-import { db } from '../../db/mysql.js';
-import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { env } from '../../config/env.js';
+import { db } from "../../db/mysql.js";
+import { RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { env } from "../../config/env.js";
 
 /**
  * Candidate Portal Service
@@ -20,9 +20,9 @@ import { env } from '../../config/env.js';
 // real; until then this is unchanged from before except for the loud warning below.
 if (!env.CANDIDATE_PORTAL_JWT_SECRET) {
   console.warn(
-    '[SECURITY] CANDIDATE_PORTAL_JWT_SECRET is not set — ATS candidate-portal tokens are ' +
-    'still signed with the shared JWT_SECRET (same secret as employee sessions). Set ' +
-    'CANDIDATE_PORTAL_JWT_SECRET in the environment and restart to use a fully separate secret.'
+    "[SECURITY] CANDIDATE_PORTAL_JWT_SECRET is not set — ATS candidate-portal tokens are " +
+      "still signed with the shared JWT_SECRET (same secret as employee sessions). Set " +
+      "CANDIDATE_PORTAL_JWT_SECRET in the environment and restart to use a fully separate secret.",
   );
 }
 const JWT_SECRET = env.CANDIDATE_PORTAL_JWT_SECRET || env.JWT_SECRET;
@@ -60,7 +60,7 @@ export interface DocumentUpload {
   file_name: string;
   file_url: string;
   uploaded_at: string;
-  verification_status: 'pending' | 'verified' | 'rejected';
+  verification_status: "pending" | "verified" | "rejected";
 }
 
 /**
@@ -93,25 +93,28 @@ export async function candidateLogin(input: CandidateLoginInput): Promise<{
     LEFT JOIN ats_payroll_hr_validation phv ON phv.candidate_id = c.id
     WHERE c.candidate_code = ? AND c.active_status = 1 AND pa.is_active = 1
     LIMIT 1`,
-    [candidate_id]
+    [candidate_id],
   );
 
   if (candidates.length === 0) {
     return {
       success: false,
-      message: 'Invalid credentials or portal access not granted',
+      message: "Invalid credentials or portal access not granted",
     };
   }
 
   const candidate = candidates[0];
 
   // Verify password
-  const isPasswordValid = await bcrypt.compare(password, candidate.password_hash);
+  const isPasswordValid = await bcrypt.compare(
+    password,
+    candidate.password_hash,
+  );
 
   if (!isPasswordValid) {
     return {
       success: false,
-      message: 'Invalid credentials',
+      message: "Invalid credentials",
     };
   }
 
@@ -122,7 +125,7 @@ export async function candidateLogin(input: CandidateLoginInput): Promise<{
       candidate_code: candidate.candidate_code,
     },
     JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: "7d" },
   );
 
   // Return success with token and profile
@@ -147,7 +150,9 @@ export async function candidateLogin(input: CandidateLoginInput): Promise<{
 /**
  * Get candidate profile
  */
-export async function getCandidateProfile(candidateId: string): Promise<CandidateProfile | null> {
+export async function getCandidateProfile(
+  candidateId: string,
+): Promise<CandidateProfile | null> {
   const [candidates] = await db.execute<RowDataPacket[]>(
     `SELECT
       c.id,
@@ -164,7 +169,7 @@ export async function getCandidateProfile(candidateId: string): Promise<Candidat
     LEFT JOIN ats_payroll_hr_validation phv ON phv.candidate_id = c.id
     WHERE c.id = ? AND c.active_status = 1
     LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
 
   if (candidates.length === 0) {
@@ -177,7 +182,9 @@ export async function getCandidateProfile(candidateId: string): Promise<Candidat
 /**
  * Get candidate onboarding tasks
  */
-export async function getCandidateTasks(candidateId: string): Promise<OnboardingTask[]> {
+export async function getCandidateTasks(
+  candidateId: string,
+): Promise<OnboardingTask[]> {
   const [tasks] = await db.execute<RowDataPacket[]>(
     `SELECT
       id,
@@ -189,7 +196,7 @@ export async function getCandidateTasks(candidateId: string): Promise<Onboarding
     FROM ats_onboarding_tasks
     WHERE candidate_id = ?
     ORDER BY task_order ASC, created_at ASC`,
-    [candidateId]
+    [candidateId],
   );
 
   return tasks as OnboardingTask[];
@@ -198,7 +205,9 @@ export async function getCandidateTasks(candidateId: string): Promise<Onboarding
 /**
  * Get candidate uploaded documents
  */
-export async function getCandidateDocuments(candidateId: string): Promise<DocumentUpload[]> {
+export async function getCandidateDocuments(
+  candidateId: string,
+): Promise<DocumentUpload[]> {
   const [documents] = await db.execute<RowDataPacket[]>(
     `SELECT
       id,
@@ -210,7 +219,7 @@ export async function getCandidateDocuments(candidateId: string): Promise<Docume
     FROM ats_candidate_documents
     WHERE candidate_id = ?
     ORDER BY uploaded_at DESC`,
-    [candidateId]
+    [candidateId],
   );
 
   return documents as DocumentUpload[];
@@ -223,13 +232,13 @@ export async function uploadCandidateDocument(
   candidateId: string,
   documentType: string,
   fileName: string,
-  fileUrl: string
+  fileUrl: string,
 ): Promise<{ id: string }> {
   const [result] = await db.execute(
     `INSERT INTO ats_candidate_documents
       (candidate_id, document_type, file_name, file_url, verification_status, uploaded_at)
     VALUES (?, ?, ?, ?, 'pending', NOW())`,
-    [candidateId, documentType, fileName, fileUrl]
+    [candidateId, documentType, fileName, fileUrl],
   );
 
   const insertResult = result as unknown as ResultSetHeader;
@@ -241,13 +250,13 @@ export async function uploadCandidateDocument(
  */
 export async function markTaskCompleted(
   candidateId: string,
-  taskId: string
+  taskId: string,
 ): Promise<void> {
   await db.execute(
     `UPDATE ats_onboarding_tasks
     SET is_completed = TRUE, completed_at = NOW()
     WHERE id = ? AND candidate_id = ?`,
-    [taskId, candidateId]
+    [taskId, candidateId],
   );
 }
 
@@ -257,7 +266,7 @@ export async function markTaskCompleted(
  */
 export async function createPortalAccess(
   candidateId: string,
-  tempPassword: string
+  tempPassword: string,
 ): Promise<void> {
   // Hash password
   const passwordHash = await bcrypt.hash(tempPassword, 10);
@@ -270,14 +279,16 @@ export async function createPortalAccess(
     ON DUPLICATE KEY UPDATE
       password_hash = VALUES(password_hash),
       is_active = TRUE`,
-    [candidateId, passwordHash]
+    [candidateId, passwordHash],
   );
 }
 
 /**
  * Verify JWT token
  */
-export function verifyToken(token: string): { candidate_id: string; candidate_code: string } | null {
+export function verifyToken(
+  token: string,
+): { candidate_id: string; candidate_code: string } | null {
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as {
       candidate_id: string;

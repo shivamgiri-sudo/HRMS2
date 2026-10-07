@@ -17,26 +17,28 @@
  *   → mark candidate walk-in confirmed in ATS
  */
 
-import axios from 'axios';
+import axios from "axios";
 
-const WASSENGER_BASE = 'https://api.wassenger.com/v1';
+const WASSENGER_BASE = "https://api.wassenger.com/v1";
 
 export function isWassengerConfigured(): boolean {
-  return Boolean(process.env.WASSENGER_API_TOKEN && process.env.WASSENGER_DEVICE_ID);
+  return Boolean(
+    process.env.WASSENGER_API_TOKEN && process.env.WASSENGER_DEVICE_ID,
+  );
 }
 
 function headers() {
   return {
-    'Content-Type': 'application/json',
-    Token: process.env.WASSENGER_API_TOKEN ?? '',
+    "Content-Type": "application/json",
+    Token: process.env.WASSENGER_API_TOKEN ?? "",
   };
 }
 
 /** Format Indian mobile to WhatsApp ID: 919876543210 */
 function toWaPhone(phone: string): string {
-  let p = phone.replace(/\D/g, '');
+  let p = phone.replace(/\D/g, "");
   if (p.length === 10) p = `91${p}`;
-  else if (p.startsWith('0')) p = `91${p.slice(1)}`;
+  else if (p.startsWith("0")) p = `91${p.slice(1)}`;
   return p;
 }
 
@@ -57,14 +59,17 @@ export async function sendShortlistMessage(
   name: string,
   designation: string | null,
   branch: string | null,
-  referenceId: string
+  referenceId: string,
 ): Promise<WassengerSendResult> {
   if (!isWassengerConfigured()) {
-    return { success: false, error: 'WASSENGER_API_TOKEN or WASSENGER_DEVICE_ID not set' };
+    return {
+      success: false,
+      error: "WASSENGER_API_TOKEN or WASSENGER_DEVICE_ID not set",
+    };
   }
 
-  const role = designation ?? 'Customer Service Executive';
-  const place = branch ? ` - ${branch}` : '';
+  const role = designation ?? "Customer Service Executive";
+  const place = branch ? ` - ${branch}` : "";
   const waPhone = toWaPhone(phone);
 
   const message =
@@ -93,17 +98,21 @@ export async function sendShortlistMessage(
         message,
         device: process.env.WASSENGER_DEVICE_ID,
       },
-      { headers: headers(), timeout: 15000 }
+      { headers: headers(), timeout: 15000 },
     );
 
     return {
       success: true,
-      messageId: data?.id ?? data?.data?.id ?? 'sent',
+      messageId: data?.id ?? data?.data?.id ?? "sent",
     };
   } catch (err) {
     const msg = axios.isAxiosError(err)
-      ? err.response?.data?.message ?? err.response?.data?.error ?? err.message
-      : err instanceof Error ? err.message : String(err);
+      ? (err.response?.data?.message ??
+        err.response?.data?.error ??
+        err.message)
+      : err instanceof Error
+        ? err.message
+        : String(err);
     return { success: false, error: msg };
   }
 }
@@ -114,39 +123,52 @@ export async function sendShortlistMessage(
  */
 export async function sendCustomMessage(
   phone: string,
-  message: string
+  message: string,
 ): Promise<WassengerSendResult> {
   if (!isWassengerConfigured()) {
-    return { success: false, error: 'WASSENGER_API_TOKEN or WASSENGER_DEVICE_ID not set' };
+    return {
+      success: false,
+      error: "WASSENGER_API_TOKEN or WASSENGER_DEVICE_ID not set",
+    };
   }
   const waPhone = toWaPhone(phone);
   try {
     const { data } = await axios.post(
       `${WASSENGER_BASE}/messages`,
       { phone: waPhone, message, device: process.env.WASSENGER_DEVICE_ID },
-      { headers: headers(), timeout: 15000 }
+      { headers: headers(), timeout: 15000 },
     );
-    return { success: true, messageId: data?.id ?? data?.data?.id ?? 'sent' };
+    return { success: true, messageId: data?.id ?? data?.data?.id ?? "sent" };
   } catch (err) {
     const msg = axios.isAxiosError(err)
-      ? err.response?.data?.message ?? err.response?.data?.error ?? err.message
-      : err instanceof Error ? err.message : String(err);
+      ? (err.response?.data?.message ??
+        err.response?.data?.error ??
+        err.message)
+      : err instanceof Error
+        ? err.message
+        : String(err);
     return { success: false, error: msg };
   }
 }
 
 /** Upload a base64 file to Wassenger and return the stored file id. */
-async function uploadFile(base64: string, mimeType?: string, filename?: string): Promise<string> {
+async function uploadFile(
+  base64: string,
+  mimeType?: string,
+  filename?: string,
+): Promise<string> {
   const form = new FormData();
-  const blob = new Blob([Buffer.from(base64, 'base64')], { type: mimeType ?? 'application/octet-stream' });
-  form.append('file', blob, filename ?? 'attachment');
+  const blob = new Blob([Buffer.from(base64, "base64")], {
+    type: mimeType ?? "application/octet-stream",
+  });
+  form.append("file", blob, filename ?? "attachment");
   const { data } = await axios.post(`${WASSENGER_BASE}/files`, form, {
-    headers: { Token: process.env.WASSENGER_API_TOKEN ?? '' },
+    headers: { Token: process.env.WASSENGER_API_TOKEN ?? "" },
     timeout: 30000,
     maxBodyLength: Infinity,
   });
   const id = Array.isArray(data) ? data[0]?.id : data?.id;
-  if (!id) throw new Error('Wassenger file upload returned no file id');
+  if (!id) throw new Error("Wassenger file upload returned no file id");
   return String(id);
 }
 
@@ -164,13 +186,16 @@ export async function sendMediaMessage(
     mimeType?: string;
     filename?: string;
     caption?: string;
-  }
+  },
 ): Promise<WassengerSendResult> {
   if (!isWassengerConfigured()) {
-    return { success: false, error: 'WASSENGER_API_TOKEN or WASSENGER_DEVICE_ID not set' };
+    return {
+      success: false,
+      error: "WASSENGER_API_TOKEN or WASSENGER_DEVICE_ID not set",
+    };
   }
   if (!opts.base64 && !opts.url) {
-    return { success: false, error: 'Either base64 or url must be provided' };
+    return { success: false, error: "Either base64 or url must be provided" };
   }
   const waPhone = toWaPhone(phone);
   try {
@@ -178,9 +203,13 @@ export async function sendMediaMessage(
     // (multipart, field `file`) and then referenced by its id; a public URL is passed as-is.
     const mediaPayload: Record<string, string> = {};
     if (opts.base64) {
-      mediaPayload['file'] = await uploadFile(opts.base64, opts.mimeType, opts.filename);
+      mediaPayload["file"] = await uploadFile(
+        opts.base64,
+        opts.mimeType,
+        opts.filename,
+      );
     } else if (opts.url) {
-      mediaPayload['url'] = opts.url;
+      mediaPayload["url"] = opts.url;
     }
 
     const { data } = await axios.post(
@@ -189,15 +218,19 @@ export async function sendMediaMessage(
         phone: waPhone,
         device: process.env.WASSENGER_DEVICE_ID,
         media: mediaPayload,
-        message: opts.caption ?? '',
+        message: opts.caption ?? "",
       },
-      { headers: headers(), timeout: 30000 }
+      { headers: headers(), timeout: 30000 },
     );
-    return { success: true, messageId: data?.id ?? data?.data?.id ?? 'sent' };
+    return { success: true, messageId: data?.id ?? data?.data?.id ?? "sent" };
   } catch (err) {
     const msg = axios.isAxiosError(err)
-      ? err.response?.data?.message ?? err.response?.data?.error ?? err.message
-      : err instanceof Error ? err.message : String(err);
+      ? (err.response?.data?.message ??
+        err.response?.data?.error ??
+        err.message)
+      : err instanceof Error
+        ? err.message
+        : String(err);
     return { success: false, error: msg };
   }
 }
@@ -221,9 +254,10 @@ export interface WassengerWebhookPayload {
   };
 }
 
-const MEDIA_TYPES = ['image', 'video', 'audio', 'ptt', 'document', 'sticker'];
+const MEDIA_TYPES = ["image", "video", "audio", "ptt", "document", "sticker"];
 
-export type WalkInReply = 'confirmed' | 'reschedule' | 'not_interested' | 'unknown';
+export type WalkInReply =
+  "confirmed" | "reschedule" | "not_interested" | "unknown";
 
 export function parseWassengerWebhook(payload: WassengerWebhookPayload): {
   isIncoming: boolean;
@@ -232,32 +266,51 @@ export function parseWassengerWebhook(payload: WassengerWebhookPayload): {
   rawBody: string | null;
 } {
   // Only process incoming (not fromMe) message events
-  if (payload.event !== 'message:in:new' && payload.event !== 'message:received') {
-    return { isIncoming: false, phone: null, reply: 'unknown', rawBody: null };
+  if (
+    payload.event !== "message:in:new" &&
+    payload.event !== "message:received"
+  ) {
+    return { isIncoming: false, phone: null, reply: "unknown", rawBody: null };
   }
 
   const msg = payload.data;
   if (!msg || msg.fromMe) {
-    return { isIncoming: false, phone: null, reply: 'unknown', rawBody: null };
+    return { isIncoming: false, phone: null, reply: "unknown", rawBody: null };
   }
-  const isMedia = typeof msg.type === 'string' && MEDIA_TYPES.includes(msg.type);
-  if (msg.type !== 'chat' && !isMedia) {
-    return { isIncoming: false, phone: null, reply: 'unknown', rawBody: null };
+  const isMedia =
+    typeof msg.type === "string" && MEDIA_TYPES.includes(msg.type);
+  if (msg.type !== "chat" && !isMedia) {
+    return { isIncoming: false, phone: null, reply: "unknown", rawBody: null };
   }
 
   // A media message has no text of its own; record that an attachment arrived (with its caption)
   // so HR sees it in the thread instead of the message being dropped silently.
-  const caption = (msg.body ?? '').trim();
-  const body = isMedia ? `📎 [${msg.type}]${caption ? ` ${caption}` : ''}` : caption;
+  const caption = (msg.body ?? "").trim();
+  const body = isMedia
+    ? `📎 [${msg.type}]${caption ? ` ${caption}` : ""}`
+    : caption;
   const phone = msg.phone ?? null;
 
-  let reply: WalkInReply = 'unknown';
-  if (body === '1' || body.toLowerCase().startsWith('haan') || body.toLowerCase().includes('aaunga') || body.toLowerCase().includes('aaungi')) {
-    reply = 'confirmed';
-  } else if (body === '2' || body.toLowerCase().includes('reschedule') || body.toLowerCase().includes('baad')) {
-    reply = 'reschedule';
-  } else if (body === '3' || body.toLowerCase().includes('nahi') || body.toLowerCase().includes('interested nahi')) {
-    reply = 'not_interested';
+  let reply: WalkInReply = "unknown";
+  if (
+    body === "1" ||
+    body.toLowerCase().startsWith("haan") ||
+    body.toLowerCase().includes("aaunga") ||
+    body.toLowerCase().includes("aaungi")
+  ) {
+    reply = "confirmed";
+  } else if (
+    body === "2" ||
+    body.toLowerCase().includes("reschedule") ||
+    body.toLowerCase().includes("baad")
+  ) {
+    reply = "reschedule";
+  } else if (
+    body === "3" ||
+    body.toLowerCase().includes("nahi") ||
+    body.toLowerCase().includes("interested nahi")
+  ) {
+    reply = "not_interested";
   }
 
   return { isIncoming: true, phone, reply, rawBody: body };
@@ -269,25 +322,25 @@ export function parseWassengerWebhook(payload: WassengerWebhookPayload): {
 export async function sendConfirmationAck(
   phone: string,
   reply: WalkInReply,
-  name: string
+  name: string,
 ): Promise<void> {
   if (!isWassengerConfigured()) return;
 
   const waPhone = toWaPhone(phone);
-  let message = '';
+  let message = "";
 
-  if (reply === 'confirmed') {
+  if (reply === "confirmed") {
     message =
       `✅ *Confirmed!*\n\n` +
       `${name} ji, aapka walk-in *confirm* ho gaya hai.\n` +
       `Appointment number note kar lijiye aur documents ready rakhein.\n\n` +
       `All the best! 🍀 MAS Callnet Team`;
-  } else if (reply === 'reschedule') {
+  } else if (reply === "reschedule") {
     message =
       `🔄 Noted!\n\n` +
       `${name} ji, hamare recruiter aapko jald hi call karenge reschedule ke liye.\n\n` +
       `MAS Callnet Team`;
-  } else if (reply === 'not_interested') {
+  } else if (reply === "not_interested") {
     message =
       `Understood, ${name} ji.\n\n` +
       `Koi baat nahi. Agar future mein interest ho toh dobara apply karein.\n` +
@@ -300,16 +353,20 @@ export async function sendConfirmationAck(
     .post(
       `${WASSENGER_BASE}/messages`,
       { phone: waPhone, message, device: process.env.WASSENGER_DEVICE_ID },
-      { headers: headers(), timeout: 10000 }
+      { headers: headers(), timeout: 10000 },
     )
     .catch((e: unknown) =>
-      console.warn('[wassenger] ack send failed:', e instanceof Error ? e.message : e)
+      console.warn(
+        "[wassenger] ack send failed:",
+        e instanceof Error ? e.message : e,
+      ),
     );
 }
 
 // ─────────────────────────── delivery status ───────────────────────────
 
-export type DeliveryStatus = 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
+export type DeliveryStatus =
+  "queued" | "sent" | "delivered" | "read" | "failed";
 
 /**
  * Collapse Wassenger's two status fields into one of five values. `deliveryStatus` is the finer
@@ -317,23 +374,26 @@ export type DeliveryStatus = 'queued' | 'sent' | 'delivered' | 'read' | 'failed'
  * "failed") is the fallback. Unknown values return null so a new Wassenger state never
  * overwrites a known one with garbage.
  */
-export function normaliseDeliveryStatus(status?: string | null, deliveryStatus?: string | null): DeliveryStatus | null {
+export function normaliseDeliveryStatus(
+  status?: string | null,
+  deliveryStatus?: string | null,
+): DeliveryStatus | null {
   const pick = (v?: string | null): DeliveryStatus | null => {
-    switch ((v ?? '').toLowerCase()) {
-      case 'queued':
-      case 'waiting':
-      case 'pending':
-        return 'queued';
-      case 'sent':
-      case 'processed':
-        return 'sent';
-      case 'delivered':
-        return 'delivered';
-      case 'read':
-        return 'read';
-      case 'failed':
-      case 'error':
-        return 'failed';
+    switch ((v ?? "").toLowerCase()) {
+      case "queued":
+      case "waiting":
+      case "pending":
+        return "queued";
+      case "sent":
+      case "processed":
+        return "sent";
+      case "delivered":
+        return "delivered";
+      case "read":
+        return "read";
+      case "failed":
+      case "error":
+        return "failed";
       default:
         return null;
     }
@@ -343,20 +403,27 @@ export function normaliseDeliveryStatus(status?: string | null, deliveryStatus?:
 
 /** Extract {messageId,status} from a message:update / message:out:new webhook body, else null. */
 export function parseWassengerStatusUpdate(
-  payload: WassengerWebhookPayload
+  payload: WassengerWebhookPayload,
 ): { messageId: string; status: DeliveryStatus } | null {
-  if (payload.event !== 'message:update' && payload.event !== 'message:out:new') return null;
-  const data = payload.data as { id?: string; status?: string; deliveryStatus?: string } | undefined;
+  if (payload.event !== "message:update" && payload.event !== "message:out:new")
+    return null;
+  const data = payload.data as
+    { id?: string; status?: string; deliveryStatus?: string } | undefined;
   if (!data?.id) return null;
   const status = normaliseDeliveryStatus(data.status, data.deliveryStatus);
   return status ? { messageId: String(data.id), status } : null;
 }
 
 /** Ask Wassenger for one message's current delivery state (used to reconcile missed webhooks). */
-export async function fetchMessageDeliveryStatus(messageId: string): Promise<DeliveryStatus | null> {
-  const { data } = await axios.get(`${WASSENGER_BASE}/messages/${encodeURIComponent(messageId)}`, {
-    headers: headers(),
-    timeout: 15000,
-  });
+export async function fetchMessageDeliveryStatus(
+  messageId: string,
+): Promise<DeliveryStatus | null> {
+  const { data } = await axios.get(
+    `${WASSENGER_BASE}/messages/${encodeURIComponent(messageId)}`,
+    {
+      headers: headers(),
+      timeout: 15000,
+    },
+  );
   return normaliseDeliveryStatus(data?.status, data?.deliveryStatus);
 }

@@ -32,8 +32,16 @@
  */
 
 export const DALMIA_CAMPAIGNS = [
-  "Dalmia_Assamese", "Dalmia_Bengoli", "Dalmia_English", "Dalmia_Hindi", "Dalmia_Kannada",
-  "Dalmia_Malayalam", "Dalmia_Marathi", "Dalmia_Odiya", "Dalmia_Tamil", "Dalmia_Telugu",
+  "Dalmia_Assamese",
+  "Dalmia_Bengoli",
+  "Dalmia_English",
+  "Dalmia_Hindi",
+  "Dalmia_Kannada",
+  "Dalmia_Malayalam",
+  "Dalmia_Marathi",
+  "Dalmia_Odiya",
+  "Dalmia_Tamil",
+  "Dalmia_Telugu",
 ] as const;
 
 /** Display name for a campaign ("Dalmia_Bengoli" is the dialer's own spelling of Bengali). */
@@ -45,18 +53,45 @@ export const languageName = (campaign: string): string => {
 export const THRESHOLD_SECONDS = 20;
 
 export interface IbCall {
-  date: string; agentId: string; campaign: string; phone: string; disconnBy: string;
-  callDurSec: number; queueSec: number; acwSec: number; call20: number;
+  date: string;
+  agentId: string;
+  campaign: string;
+  phone: string;
+  disconnBy: string;
+  callDurSec: number;
+  queueSec: number;
+  acwSec: number;
+  call20: number;
 }
 export interface DdRow {
-  date: string; sourceOfLead: string | null; scenario: string | null; sub1: string | null; sub2: string | null;
-  sub3: string | null; status: string | null; typeOfLeads: string | null; leads: string | null; mt: number; converted: number;
+  date: string;
+  sourceOfLead: string | null;
+  scenario: string | null;
+  sub1: string | null;
+  sub2: string | null;
+  sub3: string | null;
+  status: string | null;
+  typeOfLeads: string | null;
+  leads: string | null;
+  mt: number;
+  converted: number;
 }
-export interface ObRow { date: string; mobile: string | null; status: string | null; remarks: string | null }
+export interface ObRow {
+  date: string;
+  mobile: string | null;
+  status: string | null;
+  remarks: string | null;
+}
 
 /** The workbook's hidden "Leads" sheet: SUB SCENARIO 3 -> Type Of Leads + Qualified flag. */
-export const LEADS_MAP: Record<string, { type: string; leads: "Qualified Leads" | "Not Qualified Leads" }> = {
-  "account settlement complain": { type: "Complaint", leads: "Qualified Leads" },
+export const LEADS_MAP: Record<
+  string,
+  { type: string; leads: "Qualified Leads" | "Not Qualified Leads" }
+> = {
+  "account settlement complain": {
+    type: "Complaint",
+    leads: "Qualified Leads",
+  },
   "cement lead": { type: "Retail", leads: "Qualified Leads" },
   "cement quality complain": { type: "Complaint", leads: "Qualified Leads" },
   "cement quality issue": { type: "Complaint", leads: "Qualified Leads" },
@@ -66,60 +101,132 @@ export const LEADS_MAP: Record<string, { type: string; leads: "Qualified Leads" 
   "dealership request": { type: "Dealership", leads: "Qualified Leads" },
   "logistic related complain": { type: "Complaint", leads: "Qualified Leads" },
   "logistic related query": { type: "Query", leads: "Qualified Leads" },
-  "other": { type: "Query", leads: "Not Qualified Leads" },
+  other: { type: "Query", leads: "Not Qualified Leads" },
   "quotation requested": { type: "Query", leads: "Qualified Leads" },
   "tech visit request": { type: "Complaint", leads: "Qualified Leads" },
   "request for aso number": { type: "Request", leads: "Qualified Leads" },
-  "points and gifts related issue": { type: "Complaint", leads: "Qualified Leads" },
+  "points and gifts related issue": {
+    type: "Complaint",
+    leads: "Qualified Leads",
+  },
   "vehicle empanelment": { type: "Query", leads: "Not Qualified Leads" },
-  "points & gifts related issue": { type: "Complaint", leads: "Qualified Leads" },
+  "points & gifts related issue": {
+    type: "Complaint",
+    leads: "Qualified Leads",
+  },
   "institutional sales": { type: "Request", leads: "Qualified Leads" },
   "request for tse number": { type: "Request", leads: "Qualified Leads" },
   "dealer code cancellation": { type: "Complaint", leads: "Qualified Leads" },
   "general enquiry": { type: "Query", leads: "Not Qualified Leads" },
-  "marketing": { type: "Request", leads: "Qualified Leads" },
+  marketing: { type: "Request", leads: "Qualified Leads" },
   "career query": { type: "Query", leads: "Not Qualified Leads" },
   "not related dalmia": { type: "Query", leads: "Not Qualified Leads" },
 };
 
 export const OUTBOUND_DISPOSITIONS = [
-  "Assigned call back", "Call Disconnected after Opening", "Career Query Portal", "Ringing not answering",
-  "Customer asked to Call Back later", "Irrelevant Query", "Transportation Tender Request",
-  "Already Assigned call back", "Service Not Available", "Langauge barrier Assami",
+  "Assigned call back",
+  "Call Disconnected after Opening",
+  "Career Query Portal",
+  "Ringing not answering",
+  "Customer asked to Call Back later",
+  "Irrelevant Query",
+  "Transportation Tender Request",
+  "Already Assigned call back",
+  "Service Not Available",
+  "Langauge barrier Assami",
 ] as const;
 
-export const LEAD_SOURCES = ["Inbound", "Inbound After Hours", "Inbound Call Back", "Website", "WhatsApp"] as const;
-export const LEAD_TYPES = ["Retail", "Dealership", "IS", "Query", "Complaint"] as const;
+export const LEAD_SOURCES = [
+  "Inbound",
+  "Inbound After Hours",
+  "Inbound Call Back",
+  "Website",
+  "WhatsApp",
+] as const;
+export const LEAD_TYPES = [
+  "Retail",
+  "Dealership",
+  "IS",
+  "Query",
+  "Complaint",
+] as const;
 
-const norm = (v: string | null | undefined): string => (v ?? "").trim().toLowerCase();
+const norm = (v: string | null | undefined): string =>
+  (v ?? "").trim().toLowerCase();
 const ratio = (num: number, den: number): number => (den > 0 ? num / den : 0);
 const round1 = (v: number): number => Math.round(v * 10) / 10;
 
 /* ------------------------------ buckets (MTD, W-1..W-5) ------------------------------ */
 
 export type BucketKey = "MTD" | "W-1" | "W-2" | "W-3" | "W-4" | "W-5";
-export const BUCKET_KEYS: BucketKey[] = ["MTD", "W-1", "W-2", "W-3", "W-4", "W-5"];
+export const BUCKET_KEYS: BucketKey[] = [
+  "MTD",
+  "W-1",
+  "W-2",
+  "W-3",
+  "W-4",
+  "W-5",
+];
 
 export function weekOfDate(iso: string): BucketKey {
   const day = Number(iso.slice(8, 10));
-  return (day <= 7 ? "W-1" : day <= 14 ? "W-2" : day <= 21 ? "W-3" : day <= 28 ? "W-4" : "W-5") as BucketKey;
+  return (
+    day <= 7
+      ? "W-1"
+      : day <= 14
+        ? "W-2"
+        : day <= 21
+          ? "W-3"
+          : day <= 28
+            ? "W-4"
+            : "W-5"
+  ) as BucketKey;
 }
-const inBucket = (date: string, key: BucketKey): boolean => key === "MTD" || weekOfDate(date) === key;
+const inBucket = (date: string, key: BucketKey): boolean =>
+  key === "MTD" || weekOfDate(date) === key;
 
 /* ---------------------------------- inbound ---------------------------------- */
 
 export interface InboundTotals {
-  offered: number; answered: number; unique: number; repeat: number; abandoned: number;
-  ansInThreshold: number; abnInThreshold: number; talkSec: number; dispoSec: number; tagged: number;
-  repeatPct: number; alPct: number; abnPct: number; slPct: number; achtSec: number; taggingPct: number;
+  offered: number;
+  answered: number;
+  unique: number;
+  repeat: number;
+  abandoned: number;
+  ansInThreshold: number;
+  abnInThreshold: number;
+  talkSec: number;
+  dispoSec: number;
+  tagged: number;
+  repeatPct: number;
+  alPct: number;
+  abnPct: number;
+  slPct: number;
+  achtSec: number;
+  taggingPct: number;
 }
 
 interface InboundAcc {
-  offered: number; answered: number; unique: number; ansInThreshold: number; abnInThreshold: number; talkSec: number; dispoSec: number;
+  offered: number;
+  answered: number;
+  unique: number;
+  ansInThreshold: number;
+  abnInThreshold: number;
+  talkSec: number;
+  dispoSec: number;
 }
-const emptyAcc = (): InboundAcc => ({ offered: 0, answered: 0, unique: 0, ansInThreshold: 0, abnInThreshold: 0, talkSec: 0, dispoSec: 0 });
+const emptyAcc = (): InboundAcc => ({
+  offered: 0,
+  answered: 0,
+  unique: 0,
+  ansInThreshold: 0,
+  abnInThreshold: 0,
+  talkSec: 0,
+  dispoSec: 0,
+});
 
-export const isAnswered = (c: IbCall): boolean => ["CALLER", "AGENT", "NONE"].includes(c.disconnBy.trim().toUpperCase());
+export const isAnswered = (c: IbCall): boolean =>
+  ["CALLER", "AGENT", "NONE"].includes(c.disconnBy.trim().toUpperCase());
 const isVdcl = (c: IbCall): boolean => c.agentId.trim() === "VDCL";
 
 /** Per-date inbound accumulators. Unique = distinct phones that date; Repeat = the remaining calls. */
@@ -132,24 +239,40 @@ export function inboundByDate(calls: IbCall[]): Map<string, InboundAcc> {
     const answered = isAnswered(c);
     if (answered) a.answered++;
     const seen = phones.get(c.date) ?? new Set<string>();
-    if (!seen.has(c.phone)) { seen.add(c.phone); a.unique++; }
+    if (!seen.has(c.phone)) {
+      seen.add(c.phone);
+      a.unique++;
+    }
     phones.set(c.date, seen);
     if (answered && !isVdcl(c)) a.ansInThreshold += c.call20;
     if (!answered && c.queueSec <= THRESHOLD_SECONDS) a.abnInThreshold++;
-    if (answered) { a.talkSec += c.callDurSec; a.dispoSec += c.acwSec; }
+    if (answered) {
+      a.talkSec += c.callDurSec;
+      a.dispoSec += c.acwSec;
+    }
     byDate.set(c.date, a);
   }
   return byDate;
 }
 
-export interface DayInbound extends InboundTotals { date: string }
+export interface DayInbound extends InboundTotals {
+  date: string;
+}
 
 export function finishInbound(a: InboundAcc, tagged: number): InboundTotals {
   const repeat = a.offered - a.unique;
   const abandoned = a.offered - a.answered;
   return {
-    offered: a.offered, answered: a.answered, unique: a.unique, repeat, abandoned,
-    ansInThreshold: a.ansInThreshold, abnInThreshold: a.abnInThreshold, talkSec: a.talkSec, dispoSec: a.dispoSec, tagged,
+    offered: a.offered,
+    answered: a.answered,
+    unique: a.unique,
+    repeat,
+    abandoned,
+    ansInThreshold: a.ansInThreshold,
+    abnInThreshold: a.abnInThreshold,
+    talkSec: a.talkSec,
+    dispoSec: a.dispoSec,
+    tagged,
     repeatPct: ratio(repeat, a.unique + repeat),
     alPct: ratio(a.answered, a.offered),
     abnPct: ratio(abandoned, a.offered),
@@ -160,14 +283,23 @@ export function finishInbound(a: InboundAcc, tagged: number): InboundTotals {
 }
 
 /** Days with calls, oldest first, each with its own derived metrics. */
-export function inboundDaily(calls: IbCall[], taggedByDate: Map<string, number>): DayInbound[] {
+export function inboundDaily(
+  calls: IbCall[],
+  taggedByDate: Map<string, number>,
+): DayInbound[] {
   return [...inboundByDate(calls).entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, acc]) => ({ date, ...finishInbound(acc, taggedByDate.get(date) ?? 0) }));
+    .map(([date, acc]) => ({
+      date,
+      ...finishInbound(acc, taggedByDate.get(date) ?? 0),
+    }));
 }
 
 /** MTD / W-1..W-5 totals: raw sums first, ratios derived from the sums (never averaged across days). */
-export function inboundBuckets(calls: IbCall[], taggedByDate: Map<string, number>): Record<BucketKey, InboundTotals> {
+export function inboundBuckets(
+  calls: IbCall[],
+  taggedByDate: Map<string, number>,
+): Record<BucketKey, InboundTotals> {
   const perDate = inboundByDate(calls);
   const out = {} as Record<BucketKey, InboundTotals>;
   for (const key of BUCKET_KEYS) {
@@ -175,8 +307,13 @@ export function inboundBuckets(calls: IbCall[], taggedByDate: Map<string, number
     let tagged = 0;
     for (const [date, a] of perDate) {
       if (!inBucket(date, key)) continue;
-      acc.offered += a.offered; acc.answered += a.answered; acc.unique += a.unique; acc.ansInThreshold += a.ansInThreshold;
-      acc.abnInThreshold += a.abnInThreshold; acc.talkSec += a.talkSec; acc.dispoSec += a.dispoSec;
+      acc.offered += a.offered;
+      acc.answered += a.answered;
+      acc.unique += a.unique;
+      acc.ansInThreshold += a.ansInThreshold;
+      acc.abnInThreshold += a.abnInThreshold;
+      acc.talkSec += a.talkSec;
+      acc.dispoSec += a.dispoSec;
     }
     for (const [date, n] of taggedByDate) if (inBucket(date, key)) tagged += n;
     out[key] = finishInbound(acc, tagged);
@@ -185,14 +322,31 @@ export function inboundBuckets(calls: IbCall[], taggedByDate: Map<string, number
 }
 
 export interface LanguageRow {
-  campaign: string; language: string; abandon: number; caller: number; total: number;
-  answered: number; threshold: number; alPct: number; abnPct: number;
+  campaign: string;
+  language: string;
+  abandon: number;
+  caller: number;
+  total: number;
+  answered: number;
+  threshold: number;
+  alPct: number;
+  abnPct: number;
 }
 
 export function languageTable(calls: IbCall[], key: BucketKey): LanguageRow[] {
   const rows = new Map<string, LanguageRow>();
   for (const c of DALMIA_CAMPAIGNS) {
-    rows.set(c, { campaign: c, language: languageName(c), abandon: 0, caller: 0, total: 0, answered: 0, threshold: 0, alPct: 0, abnPct: 0 });
+    rows.set(c, {
+      campaign: c,
+      language: languageName(c),
+      abandon: 0,
+      caller: 0,
+      total: 0,
+      answered: 0,
+      threshold: 0,
+      alPct: 0,
+      abnPct: 0,
+    });
   }
   for (const c of calls) {
     if (!inBucket(c.date, key)) continue;
@@ -205,18 +359,31 @@ export function languageTable(calls: IbCall[], key: BucketKey): LanguageRow[] {
     if (!isVdcl(c)) r.answered++;
     if (c.queueSec <= THRESHOLD_SECONDS) r.threshold++;
   }
-  return [...rows.values()].map((r) => ({ ...r, alPct: ratio(r.answered, r.total), abnPct: ratio(r.abandon, r.total) }));
+  return [...rows.values()].map((r) => ({
+    ...r,
+    alPct: ratio(r.answered, r.total),
+    abnPct: ratio(r.abandon, r.total),
+  }));
 }
 
 /* ---------------------------------- outbound ---------------------------------- */
 
-export interface OutboundTotals { overall: number; unique: number; connected: number; conPct: number; uniquePct: number }
+export interface OutboundTotals {
+  overall: number;
+  unique: number;
+  connected: number;
+  conPct: number;
+  uniquePct: number;
+}
 
-export function outboundBuckets(rows: ObRow[]): Record<BucketKey, OutboundTotals> {
+export function outboundBuckets(
+  rows: ObRow[],
+): Record<BucketKey, OutboundTotals> {
   const out = {} as Record<BucketKey, OutboundTotals>;
   for (const key of BUCKET_KEYS) {
     const mobiles = new Map<string, Set<string>>();
-    let overall = 0, connected = 0;
+    let overall = 0,
+      connected = 0;
     for (const r of rows) {
       if (!inBucket(r.date, key)) continue;
       overall++;
@@ -226,24 +393,44 @@ export function outboundBuckets(rows: ObRow[]): Record<BucketKey, OutboundTotals
       mobiles.set(r.date, set);
     }
     const unique = [...mobiles.values()].reduce((n, s) => n + s.size, 0);
-    out[key] = { overall, unique, connected, conPct: ratio(connected, overall), uniquePct: ratio(unique, overall) };
+    out[key] = {
+      overall,
+      unique,
+      connected,
+      conPct: ratio(connected, overall),
+      uniquePct: ratio(unique, overall),
+    };
   }
   return out;
 }
 
-export interface DispositionRow { name: string; count: number }
+export interface DispositionRow {
+  name: string;
+  count: number;
+}
 
 /** Remarks of the "Contact" rows; anything outside the workbook's ten named dispositions is grouped as "Other" so the total is the connected count. */
-export function outboundDispositions(rows: ObRow[], key: BucketKey): DispositionRow[] {
-  const counts = new Map<string, number>(OUTBOUND_DISPOSITIONS.map((d) => [norm(d), 0]));
+export function outboundDispositions(
+  rows: ObRow[],
+  key: BucketKey,
+): DispositionRow[] {
+  const counts = new Map<string, number>(
+    OUTBOUND_DISPOSITIONS.map((d) => [norm(d), 0]),
+  );
   let other = 0;
   for (const r of rows) {
     if (!inBucket(r.date, key) || norm(r.status) !== "contact") continue;
     const k = norm(r.remarks);
-    if (counts.has(k)) counts.set(k, (counts.get(k) ?? 0) + 1); else other++;
+    if (counts.has(k)) counts.set(k, (counts.get(k) ?? 0) + 1);
+    else other++;
   }
-  const named = OUTBOUND_DISPOSITIONS.map((name) => ({ name, count: counts.get(norm(name)) ?? 0 }));
-  return other > 0 ? [...named, { name: "Other remarks", count: other }] : named;
+  const named = OUTBOUND_DISPOSITIONS.map((name) => ({
+    name,
+    count: counts.get(norm(name)) ?? 0,
+  }));
+  return other > 0
+    ? [...named, { name: "Other remarks", count: other }]
+    : named;
 }
 
 /* ------------------------------------- QRC ------------------------------------- */
@@ -251,7 +438,9 @@ export function outboundDispositions(rows: ObRow[], key: BucketKey): Disposition
 export type QrcKey = "Query" | "Complain" | "Request";
 export const QRC_KEYS: QrcKey[] = ["Query", "Complain", "Request"];
 
-export function qrcDaily(rows: DdRow[]): Array<{ date: string } & Record<QrcKey, number>> {
+export function qrcDaily(
+  rows: DdRow[],
+): Array<{ date: string } & Record<QrcKey, number>> {
   const by = new Map<string, Record<QrcKey, number>>();
   for (const r of rows) {
     const k = QRC_KEYS.find((q) => norm(r.sub1) === norm(q));
@@ -260,17 +449,27 @@ export function qrcDaily(rows: DdRow[]): Array<{ date: string } & Record<QrcKey,
     cur[k]++;
     by.set(r.date, cur);
   }
-  return [...by.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, ...v }));
+  return [...by.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, v]) => ({ date, ...v }));
 }
 
-export function qrcBuckets(rows: DdRow[]): Record<BucketKey, Record<QrcKey, number> & { total: number }> {
-  const out = {} as Record<BucketKey, Record<QrcKey, number> & { total: number }>;
+export function qrcBuckets(
+  rows: DdRow[],
+): Record<BucketKey, Record<QrcKey, number> & { total: number }> {
+  const out = {} as Record<
+    BucketKey,
+    Record<QrcKey, number> & { total: number }
+  >;
   for (const key of BUCKET_KEYS) {
     const v = { Query: 0, Complain: 0, Request: 0, total: 0 };
     for (const r of rows) {
       if (!inBucket(r.date, key)) continue;
       const k = QRC_KEYS.find((q) => norm(r.sub1) === norm(q));
-      if (k) { v[k]++; v.total++; }
+      if (k) {
+        v[k]++;
+        v.total++;
+      }
     }
     out[key] = v;
   }
@@ -280,14 +479,22 @@ export function qrcBuckets(rows: DdRow[]): Record<BucketKey, Record<QrcKey, numb
 /* ------------------------------------ leads ------------------------------------ */
 
 /** Type Of Leads + Qualified flag for a DD row: the row's own values if the sheet carried them, else the Leads mapping of SUB SCENARIO 3. */
-export function leadInfo(r: DdRow): { type: string | null; qualified: boolean } {
+export function leadInfo(r: DdRow): {
+  type: string | null;
+  qualified: boolean;
+} {
   const mapped = LEADS_MAP[norm(r.sub3)];
   const type = (r.typeOfLeads ?? "").trim() || mapped?.type || null;
   const leads = (r.leads ?? "").trim() || mapped?.leads || "";
   return { type, qualified: norm(leads) === "qualified leads" };
 }
 
-export interface LeadSourceRow { source: string; dataReceived: number; connected: number; qualified: number }
+export interface LeadSourceRow {
+  source: string;
+  dataReceived: number;
+  connected: number;
+  qualified: number;
+}
 export interface LeadsSummary {
   sources: LeadSourceRow[];
   total: { dataReceived: number; connected: number; qualified: number };
@@ -296,7 +503,12 @@ export interface LeadsSummary {
 }
 
 export function leadsSummary(rows: DdRow[], key: BucketKey): LeadsSummary {
-  const sources = new Map<string, LeadSourceRow>(LEAD_SOURCES.map((s) => [norm(s), { source: s, dataReceived: 0, connected: 0, qualified: 0 }]));
+  const sources = new Map<string, LeadSourceRow>(
+    LEAD_SOURCES.map((s) => [
+      norm(s),
+      { source: s, dataReceived: 0, connected: 0, qualified: 0 },
+    ]),
+  );
   const types = new Map<string, number>(LEAD_TYPES.map((t) => [t, 0]));
   const status = { open: 0, closed: 0, converted: 0, mt: 0 };
   for (const r of rows) {
@@ -335,20 +547,36 @@ export function leadsSummary(rows: DdRow[], key: BucketKey): LeadsSummary {
 /** DD rows whose Source of Lead is "Inbound", per call date -- the workbook's Tagging row. */
 export function taggedInboundByDate(rows: DdRow[]): Map<string, number> {
   const m = new Map<string, number>();
-  for (const r of rows) if (norm(r.sourceOfLead) === "inbound") m.set(r.date, (m.get(r.date) ?? 0) + 1);
+  for (const r of rows)
+    if (norm(r.sourceOfLead) === "inbound")
+      m.set(r.date, (m.get(r.date) ?? 0) + 1);
   return m;
 }
 
 /* ------------------- per-date detail sets (feed the dashboard's row drill-downs) ------------------- */
 
-export interface LanguageDay { date: string; campaign: string; total: number; answered: number; abandon: number; caller: number }
+export interface LanguageDay {
+  date: string;
+  campaign: string;
+  total: number;
+  answered: number;
+  abandon: number;
+  caller: number;
+}
 
 /** Per date x campaign: the language table's own counts, so a language row can show its date-wise / week-wise detail. */
 export function languageDaily(calls: IbCall[]): LanguageDay[] {
   const m = new Map<string, LanguageDay>();
   for (const c of calls) {
     const key = `${c.date}|${c.campaign}`;
-    const r = m.get(key) ?? { date: c.date, campaign: c.campaign, total: 0, answered: 0, abandon: 0, caller: 0 };
+    const r = m.get(key) ?? {
+      date: c.date,
+      campaign: c.campaign,
+      total: 0,
+      answered: 0,
+      abandon: 0,
+      caller: 0,
+    };
     r.total++;
     const d = c.disconnBy.trim().toUpperCase();
     if (d === "ABANDON") r.abandon++;
@@ -356,25 +584,53 @@ export function languageDaily(calls: IbCall[]): LanguageDay[] {
     if (!isVdcl(c)) r.answered++;
     m.set(key, r);
   }
-  return [...m.values()].sort((a, b) => a.date.localeCompare(b.date) || a.campaign.localeCompare(b.campaign));
+  return [...m.values()].sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) || a.campaign.localeCompare(b.campaign),
+  );
 }
 
-export interface OutboundDay { date: string; overall: number; unique: number; connected: number }
+export interface OutboundDay {
+  date: string;
+  overall: number;
+  unique: number;
+  connected: number;
+}
 
 export function outboundDaily(rows: ObRow[]): OutboundDay[] {
-  const by = new Map<string, { overall: number; connected: number; mobiles: Set<string> }>();
+  const by = new Map<
+    string,
+    { overall: number; connected: number; mobiles: Set<string> }
+  >();
   let seq = 0;
   for (const r of rows) {
-    const cur = by.get(r.date) ?? { overall: 0, connected: 0, mobiles: new Set<string>() };
+    const cur = by.get(r.date) ?? {
+      overall: 0,
+      connected: 0,
+      mobiles: new Set<string>(),
+    };
     cur.overall++;
     if (norm(r.status) === "contact") cur.connected++;
     cur.mobiles.add(r.mobile ?? `__row${seq++}`);
     by.set(r.date, cur);
   }
-  return [...by.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, overall: v.overall, unique: v.mobiles.size, connected: v.connected }));
+  return [...by.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, v]) => ({
+      date,
+      overall: v.overall,
+      unique: v.mobiles.size,
+      connected: v.connected,
+    }));
 }
 
-export interface LeadDay { date: string; source: string; dataReceived: number; connected: number; qualified: number }
+export interface LeadDay {
+  date: string;
+  source: string;
+  dataReceived: number;
+  connected: number;
+  qualified: number;
+}
 
 export function leadsDaily(rows: DdRow[]): LeadDay[] {
   const m = new Map<string, LeadDay>();
@@ -382,11 +638,19 @@ export function leadsDaily(rows: DdRow[]): LeadDay[] {
     const src = LEAD_SOURCES.find((s) => norm(s) === norm(r.sourceOfLead));
     if (!src) continue;
     const key = `${r.date}|${src}`;
-    const cur = m.get(key) ?? { date: r.date, source: src, dataReceived: 0, connected: 0, qualified: 0 };
+    const cur = m.get(key) ?? {
+      date: r.date,
+      source: src,
+      dataReceived: 0,
+      connected: 0,
+      qualified: 0,
+    };
     cur.dataReceived++;
     if (norm(r.scenario) === "connected") cur.connected++;
     if (leadInfo(r).qualified) cur.qualified++;
     m.set(key, cur);
   }
-  return [...m.values()].sort((a, b) => a.date.localeCompare(b.date) || a.source.localeCompare(b.source));
+  return [...m.values()].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.source.localeCompare(b.source),
+  );
 }

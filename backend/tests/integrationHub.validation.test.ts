@@ -19,21 +19,29 @@ describe("createIntegrationSchema", () => {
   });
 
   it("rejects missing integrationKey", () => {
-    expect(() => createIntegrationSchema.parse({ ...valid, integrationKey: undefined })).toThrow();
+    expect(() =>
+      createIntegrationSchema.parse({ ...valid, integrationKey: undefined }),
+    ).toThrow();
   });
 
   it("rejects integrationKey shorter than 2 chars", () => {
-    expect(() => createIntegrationSchema.parse({ ...valid, integrationKey: "x" })).toThrow();
+    expect(() =>
+      createIntegrationSchema.parse({ ...valid, integrationKey: "x" }),
+    ).toThrow();
   });
 
   it("rejects invalid integrationType", () => {
-    expect(() => createIntegrationSchema.parse({ ...valid, integrationType: "ftp" })).toThrow();
+    expect(() =>
+      createIntegrationSchema.parse({ ...valid, integrationType: "ftp" }),
+    ).toThrow();
   });
 
   it("accepts all valid integrationType values", () => {
     const types = ["rest_pull", "rest_push", "database", "sftp", "file_upload"];
     for (const t of types) {
-      expect(() => createIntegrationSchema.parse({ ...valid, integrationType: t })).not.toThrow();
+      expect(() =>
+        createIntegrationSchema.parse({ ...valid, integrationType: t }),
+      ).not.toThrow();
     }
   });
 
@@ -72,7 +80,9 @@ describe("updateIntegrationSchema", () => {
   });
 
   it("rejects invalid integrationType when provided", () => {
-    expect(() => updateIntegrationSchema.parse({ integrationType: "bad" })).toThrow();
+    expect(() =>
+      updateIntegrationSchema.parse({ integrationType: "bad" }),
+    ).toThrow();
   });
 });
 
@@ -85,7 +95,7 @@ describe("confirmFieldMapSchema", () => {
         sourceField: "emp_id",
         targetTable: "employees",
         targetColumn: "employee_code",
-      })
+      }),
     ).not.toThrow();
   });
 

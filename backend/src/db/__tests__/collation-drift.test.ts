@@ -3,7 +3,13 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SQL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "sql");
+const SQL_DIR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "sql",
+);
 
 /**
  * MySQL 8 applies the SERVER default collation (utf8mb4_0900_ai_ci) when DDL names a charset
@@ -31,7 +37,8 @@ export function offendingCreateTables(sql: string): string[] {
 
 describe("collation drift", () => {
   it("detects DDL that sets a charset but no collation", () => {
-    const bad = "CREATE TABLE x (id INT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+    const bad =
+      "CREATE TABLE x (id INT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
     expect(offendingCreateTables(bad)).toEqual(["x"]);
   });
 
@@ -49,12 +56,16 @@ describe("collation drift", () => {
 
   it("no migration numbered 1039 or higher creates a table without COLLATE", () => {
     const offenders: string[] = [];
-    for (const f of readdirSync(SQL_DIR).filter((n) => /^\d{4}_.*\.sql$/.test(n))) {
+    for (const f of readdirSync(SQL_DIR).filter((n) =>
+      /^\d{4}_.*\.sql$/.test(n),
+    )) {
       // Below 1039 is pre-existing debt: 44 tables already carry the wrong collation and are
       // converted individually when a real failure points at one (1038 did exactly that).
       // Rewriting them wholesale would take a metadata lock on each for no observed benefit.
       if (Number(f.slice(0, 4)) < 1039) continue;
-      const found = offendingCreateTables(readFileSync(resolve(SQL_DIR, f), "utf8"));
+      const found = offendingCreateTables(
+        readFileSync(resolve(SQL_DIR, f), "utf8"),
+      );
       if (found.length) offenders.push(`${f}: ${found.join(", ")}`);
     }
     expect(

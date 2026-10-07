@@ -44,7 +44,11 @@ const mysql = require("mysql2/promise");
 const here = path.dirname(fileURLToPath(import.meta.url));
 // pathToFileURL, not a bare path: a dynamic import() specifier resolves as a URL, so an
 // absolute POSIX path works while a Windows path throws ERR_UNSUPPORTED_ESM_URL_SCHEME.
-const fe = await import(pathToFileURL(path.join(here, "..", "dist", "src", "shared", "fieldEncryption.js")).href);
+const fe = await import(
+  pathToFileURL(
+    path.join(here, "..", "dist", "src", "shared", "fieldEncryption.js"),
+  ).href
+);
 
 const APPLY = process.argv.includes("--apply");
 const BATCH = 500;
@@ -60,21 +64,32 @@ const VER = "account_enc_key_version";
 // isUsingDevEncryptionKey() was added leaves this undefined and throws a bare TypeError,
 // which aborts but reads as a broken script rather than a refused unsafe operation.
 if (typeof fe.isUsingDevEncryptionKey !== "function") {
-  console.error("REFUSING: this dist/ build predates isUsingDevEncryptionKey().");
-  console.error("Without that guard the script cannot prove it is not writing dev-key ciphertext.");
+  console.error(
+    "REFUSING: this dist/ build predates isUsingDevEncryptionKey().",
+  );
+  console.error(
+    "Without that guard the script cannot prove it is not writing dev-key ciphertext.",
+  );
   process.exit(1);
 }
 if (fe.isUsingDevEncryptionKey()) {
   console.error("REFUSING: running on the all-zeros DEV encryption key.");
   console.error("Ciphertext written now would be undecryptable by production.");
-  console.error("Verify the key with scripts/field-key-fingerprint.mjs, then re-run.");
+  console.error(
+    "Verify the key with scripts/field-key-fingerprint.mjs, then re-run.",
+  );
   process.exit(1);
 }
-console.log(`mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  dev_key=false  node_env=${process.env.NODE_ENV}`);
+console.log(
+  `mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  dev_key=false  node_env=${process.env.NODE_ENV}`,
+);
 
 // backend/.env wraps values in double quotes; a naive parse passes the quotes as part of the
 // password and fails with a message identical to a host-grant error.
-const strip = (v) => String(v ?? "").trim().replace(/^["']|["']$/g, "");
+const strip = (v) =>
+  String(v ?? "")
+    .trim()
+    .replace(/^["']|["']$/g, "");
 const conn = await mysql.createConnection({
   host: process.env.DB_HOST_OVERRIDE || strip(process.env.DB_HOST),
   port: Number(strip(process.env.DB_PORT) || 3306),
@@ -86,13 +101,19 @@ const conn = await mysql.createConnection({
 
 const [colRows] = await conn.query(
   `SELECT COLUMN_NAME FROM information_schema.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`, [TABLE]);
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+  [TABLE],
+);
 // mysql2 returns information_schema keys in either case depending on server config.
-const present = new Set(colRows.map((r) => String(r.COLUMN_NAME ?? r.column_name)));
+const present = new Set(
+  colRows.map((r) => String(r.COLUMN_NAME ?? r.column_name)),
+);
 const missing = [SRC, DST, VER].filter((c) => !present.has(c));
 if (missing.length) {
   console.error(`REFUSING: missing columns -> ${missing.join(", ")}`);
-  console.error("Run migration 1125_legacy_payslip_snapshot_account_encryption.sql first.");
+  console.error(
+    "Run migration 1125_legacy_payslip_snapshot_account_encryption.sql first.",
+  );
   await conn.end();
   process.exit(1);
 }
@@ -102,8 +123,11 @@ const [[shape]] = await conn.query(
           SUM(${SRC} IS NOT NULL AND TRIM(${SRC}) <> '')                      AS has_plaintext,
           SUM(${DST} IS NOT NULL)                                             AS already_encrypted,
           SUM(${SRC} IS NOT NULL AND TRIM(${SRC}) <> '' AND ${DST} IS NULL)   AS pending
-     FROM ${TABLE}`);
-console.log(`rows=${shape.total_rows}  with_plaintext=${shape.has_plaintext}  already_encrypted=${shape.already_encrypted}  pending=${shape.pending}`);
+     FROM ${TABLE}`,
+);
+console.log(
+  `rows=${shape.total_rows}  with_plaintext=${shape.has_plaintext}  already_encrypted=${shape.already_encrypted}  pending=${shape.pending}`,
+);
 
 const pending = Number(shape.pending || 0);
 if (pending === 0) {
@@ -112,18 +136,25 @@ if (pending === 0) {
   process.exit(0);
 }
 if (!APPLY) {
-  console.log(`DRY-RUN: would encrypt ${pending} value(s). No write performed.`);
+  console.log(
+    `DRY-RUN: would encrypt ${pending} value(s). No write performed.`,
+  );
   await conn.end();
   process.exit(0);
 }
 
-let done = 0, failed = 0;
+let done = 0,
+  failed = 0;
 for (;;) {
-  if (done >= MAX) { console.log(`  reached --max=${MAX}, stopping.`); break; }
+  if (done >= MAX) {
+    console.log(`  reached --max=${MAX}, stopping.`);
+    break;
+  }
   const [rows] = await conn.query(
     `SELECT id, ${SRC} AS val FROM ${TABLE}
       WHERE ${SRC} IS NOT NULL AND TRIM(${SRC}) <> '' AND ${DST} IS NULL
-      LIMIT ${Math.min(BATCH, MAX - done)}`);
+      LIMIT ${Math.min(BATCH, MAX - done)}`,
+  );
   if (rows.length === 0) break;
 
   await conn.beginTransaction();
@@ -132,7 +163,8 @@ for (;;) {
       const ct = fe.encryptField(String(r.val).trim(), 1);
       await conn.execute(
         `UPDATE ${TABLE} SET ${DST} = ?, ${VER} = 1 WHERE id = ? AND ${DST} IS NULL`,
-        [ct, r.id]);
+        [ct, r.id],
+      );
     }
     await conn.commit();
     done += rows.length;
@@ -142,7 +174,9 @@ for (;;) {
   } catch (e) {
     await conn.rollback();
     failed += rows.length;
-    console.error(`  BATCH FAILED (rolled back, no partial write): ${e.message}`);
+    console.error(
+      `  BATCH FAILED (rolled back, no partial write): ${e.message}`,
+    );
     break;
   }
 }
@@ -150,17 +184,30 @@ console.log(`encrypted=${done} failed=${failed}`);
 
 // Verify against the untouched plaintext source.
 const [sample] = await conn.query(
-  `SELECT ${SRC} AS val, ${DST} AS ct FROM ${TABLE} WHERE ${DST} IS NOT NULL ORDER BY RAND() LIMIT 300`);
-let ok = 0, bad = 0;
+  `SELECT ${SRC} AS val, ${DST} AS ct FROM ${TABLE} WHERE ${DST} IS NOT NULL ORDER BY RAND() LIMIT 300`,
+);
+let ok = 0,
+  bad = 0;
 for (const s of sample) {
-  try { if (fe.decryptField(s.ct) === String(s.val).trim()) ok++; else bad++; } catch { bad++; }
+  try {
+    if (fe.decryptField(s.ct) === String(s.val).trim()) ok++;
+    else bad++;
+  } catch {
+    bad++;
+  }
 }
-console.log(`VERIFY: sampled=${sample.length} matched=${ok} mismatched=${bad}` + (bad === 0 ? "  OK" : "  <-- PROBLEM"));
+console.log(
+  `VERIFY: sampled=${sample.length} matched=${ok} mismatched=${bad}` +
+    (bad === 0 ? "  OK" : "  <-- PROBLEM"),
+);
 
 const [[left]] = await conn.query(
-  `SELECT SUM(${SRC} IS NOT NULL AND TRIM(${SRC}) <> '' AND ${DST} IS NULL) AS still_pending FROM ${TABLE}`);
+  `SELECT SUM(${SRC} IS NOT NULL AND TRIM(${SRC}) <> '' AND ${DST} IS NULL) AS still_pending FROM ${TABLE}`,
+);
 console.log(`remaining pending=${left.still_pending}`);
-console.log("plaintext column untouched — clearing it is a separate step (and needs no reader migration).");
+console.log(
+  "plaintext column untouched — clearing it is a separate step (and needs no reader migration).",
+);
 
 await conn.end();
 process.exit(0);

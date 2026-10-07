@@ -1,10 +1,14 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { reconciliationService, shrinkageService, alertService } from "./rta.service.js";
+import {
+  reconciliationService,
+  shrinkageService,
+  alertService,
+} from "./rta.service.js";
 import { nowIST } from "../../shared/timezone.js";
 import { logger } from "../../lib/logger.js";
 
-const RUN_HOUR   = 23;
+const RUN_HOUR = 23;
 const RUN_MINUTE = 15; // 15 min after attendance-engine sweep (23:00)
 const SYSTEM_USER = "system-rta-nightly";
 
@@ -17,12 +21,24 @@ function yesterdayIST(): string {
   return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-${String(prev.getDate()).padStart(2, "0")}`;
 }
 
-export async function runRtaNightly(): Promise<{ date: string; reconciled: number; alerts: number }> {
+export async function runRtaNightly(): Promise<{
+  date: string;
+  reconciled: number;
+  alerts: number;
+}> {
   const date = yesterdayIST();
-  logger.info({ date }, "[RTA Nightly] Starting reconciliation + shrinkage + alerts");
+  logger.info(
+    { date },
+    "[RTA Nightly] Starting reconciliation + shrinkage + alerts",
+  );
 
-  const reconResult = await reconciliationService.reconcileDate(date, { userId: SYSTEM_USER });
-  logger.info({ date, ...reconResult }, "[RTA Nightly] Reconciliation complete");
+  const reconResult = await reconciliationService.reconcileDate(date, {
+    userId: SYSTEM_USER,
+  });
+  logger.info(
+    { date, ...reconResult },
+    "[RTA Nightly] Reconciliation complete",
+  );
 
   await shrinkageService.calculateSnapshot(date, { userId: SYSTEM_USER });
   logger.info({ date }, "[RTA Nightly] Shrinkage snapshot written");
@@ -40,22 +56,36 @@ export async function runRtaNightly(): Promise<{ date: string; reconciled: numbe
   // others or the org-wide call above.
   try {
     const [branchRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM branch_master WHERE active_status = 1"
+      "SELECT id FROM branch_master WHERE active_status = 1",
     );
     for (const row of branchRows as RowDataPacket[]) {
       const branchId = row.id as string;
       try {
-        await shrinkageService.calculateSnapshot(date, { branchId, userId: SYSTEM_USER });
+        await shrinkageService.calculateSnapshot(date, {
+          branchId,
+          userId: SYSTEM_USER,
+        });
       } catch (err) {
-        logger.error({ err, date, branchId }, "[RTA Nightly] Branch shrinkage snapshot failed");
+        logger.error(
+          { err, date, branchId },
+          "[RTA Nightly] Branch shrinkage snapshot failed",
+        );
       }
     }
-    logger.info({ date, branches: (branchRows as RowDataPacket[]).length }, "[RTA Nightly] Branch shrinkage snapshots complete");
+    logger.info(
+      { date, branches: (branchRows as RowDataPacket[]).length },
+      "[RTA Nightly] Branch shrinkage snapshots complete",
+    );
   } catch (err) {
-    logger.error({ err, date }, "[RTA Nightly] Failed to load active branches for shrinkage snapshots");
+    logger.error(
+      { err, date },
+      "[RTA Nightly] Failed to load active branches for shrinkage snapshots",
+    );
   }
 
-  const alertsFired = await alertService.fireAlertsForDate(date, { userId: SYSTEM_USER });
+  const alertsFired = await alertService.fireAlertsForDate(date, {
+    userId: SYSTEM_USER,
+  });
   logger.info({ date, alertsFired }, "[RTA Nightly] Alerts fired");
 
   return { date, reconciled: reconResult.reconciled, alerts: alertsFired };
@@ -84,5 +114,8 @@ export function startRtaNightlyCron(): void {
 }
 
 export function stopRtaNightlyCron(): void {
-  if (nextRun) { clearTimeout(nextRun); nextRun = undefined; }
+  if (nextRun) {
+    clearTimeout(nextRun);
+    nextRun = undefined;
+  }
 }

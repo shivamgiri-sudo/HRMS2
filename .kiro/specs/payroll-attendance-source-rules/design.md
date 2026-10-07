@@ -31,7 +31,7 @@ repository:
 3. **Payroll reads a month-level sum, not a per-day figure.** `payrollCalculate.service.ts`
    Step 2 sums `attendance_daily_record.attendance_status` over the month into `paidBase`;
    Step 6 computes `finalPayableDays = Math.min(effectivePaidBase + finalWeekoffs + finalHolidays,
-   activeCals)`; gross is `monthlyGrossBase * (finalPayableDays / daysInMonth)` and
+activeCals)`; gross is `monthlyGrossBase * (finalPayableDays / daysInMonth)` and
    `lwpDeduction = 0` because absent days already reduce the numerator. Payroll never sees minutes.
    That is why the canonical figure must be materialised per employee-date on the write path and not
    computed inside a payroll query.
@@ -120,12 +120,12 @@ change: the two existing queries are non-deterministic precisely because they pu
    or having no constraint rows).
 2. Filters to `max(specificity_count)`.
 3. Walks `DIMENSION_PRIORITY_ORDER = ['cost_centre','process','branch','department','designation','employment_profile']`
-   and at the first dimension constrained by *some but not all* survivors, keeps only those
+   and at the first dimension constrained by _some but not all_ survivors, keeps only those
    constraining it (criterion 2.4).
 4. Falls to the deterministic tail: latest `effective_from`, then latest `created_at`, then lowest
    `id` in ascending byte order (criterion 2.5).
 5. Returns `{ attendanceSource, decidingRuleId, candidates: [{ ruleId, eliminatedAtStep }],
-   unresolvedDimensions: [...] }`.
+unresolvedDimensions: [...] }`.
 
 A missing employee attribute makes every rule constraining that dimension a non-candidate and is
 recorded in `unresolvedDimensions` (criterion 2.8) — it does not match by accident. Because the
@@ -150,10 +150,10 @@ dialler on the strength of `diallerMinutes >= 240`. In their place:
 ```ts
 const resolved = await sourceRuleResolver.resolve(empAttrs, date);
 const thresholds = await dayThresholdResolver.resolve(empAttrs, date);
-const source = resolved.attendanceSource;           // 'biometric' | 'dialler'
+const source = resolved.attendanceSource; // 'biometric' | 'dialler'
 ```
 
-`isEnrolledInAprFeed()` survives but changes meaning: it no longer decides *whether* an employee is
+`isEnrolledInAprFeed()` survives but changes meaning: it no longer decides _whether_ an employee is
 judged on dialler, only whether a dialler-resolved employee with no record is an absence or a
 review item (criterion 4.7), and it queries the registered Productivity_Feeds through the canonical
 layer rather than `apr` directly.
@@ -178,18 +178,18 @@ consequence and why criterion 15.9 exists: the biometric half-day floor actually
 `resolveHalfDayFloorMinutes('biometric_half_day_floor_minutes')` = 270, while the 28
 designation-scoped `attendance_rule_config` rows carry 240 in their unused `half_day_minutes`
 column. Migrating those columns verbatim would move the half-day boundary for 977 Operations
-Executives. The reconciliation of 15.9 must therefore be produced from what the engine *applies*,
-not from what the rows *say*.
+Executives. The reconciliation of 15.9 must therefore be produced from what the engine _applies_,
+not from what the rows _say_.
 
 ### 3. Dialler_Source registry
 
 New table `dialler_source`. Resolution of an ingested row to a registry row, per criterion 16.4:
 
-| Feed | Key | Resolution |
-| --- | --- | --- |
+| Feed                 | Key                                                           | Resolution                                                                                                                                                          |
+| -------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dialer_session_log` | `dialer_name` (NULL on all 1,365 rows) then `integration_key` | `dialler_source.integration_key = 'dialer_1'` seeds the single ViciDial row; ingestion writes `dialer_name` = the registry identifier from then on (criterion 16.6) |
-| `apr` source=`sync` | `campaign_id` | `campaign_master.campaign_code` -> `campaign_master.dialler_source_id` |
-| `apr_manual_upload` | `campaign_id` + `Upload_Batch.dialler_source_id` | Upload_Batch is authoritative; `campaign_id` must still resolve |
+| `apr` source=`sync`  | `campaign_id`                                                 | `campaign_master.campaign_code` -> `campaign_master.dialler_source_id`                                                                                              |
+| `apr_manual_upload`  | `campaign_id` + `Upload_Batch.dialler_source_id`              | Upload_Batch is authoritative; `campaign_id` must still resolve                                                                                                     |
 
 `campaign_master` exists (`backend/sql/015_platform_foundation.sql`) with `campaign_code`,
 `campaign_name`, `process_id`, `lob_id` and holds 0 rows. It gains `dialler_source_id` and an
@@ -308,7 +308,7 @@ deriveCanonical(contributions: Contribution[]):
   overlaps, sum merged lengths. Any instant covered twice counts once.
 - **Usable interval (18.5).** Both `Login_Time` and `Logout_Time` present and
   `Logout_Time > Login_Time`. Anything else records an `exclusionReason`.
-- **Secondary rule (18.6).** If *any* contribution lacks a usable interval, the whole employee-date
+- **Secondary rule (18.6).** If _any_ contribution lacks a usable interval, the whole employee-date
   falls to `max(magnitudeMinutes)` and records `rule = 'max_contribution'`. Not configurable.
 - **Absent, not zero (18.10).** Empty contribution list returns `minutes: null`.
 - **Bound (18.2, 18.11).** `Math.min(minutes, 1440)`.
@@ -374,9 +374,9 @@ through the review-queue service. Criterion 6.5's idempotence is an upsert on
 ranking is a sort on an indexed column rather than a computed expression.
 
 **Resolved source with no data at all** (criterion 4.6). This is distinct from ordinary
-corroboration: it fires when the *resolved* source has no evidence for the date — no biometric
+corroboration: it fires when the _resolved_ source has no evidence for the date — no biometric
 punches at all where biometric is resolved, or `ProductivityEvidence` is `absent` where dialler is
-resolved — while the *other*, non-resolved feed does report minutes for that date. Ordinary
+resolved — while the _other_, non-resolved feed does report minutes for that date. Ordinary
 Variance_Records (6.1, 6.4) compare two present figures; this case has nothing from the resolved
 source to compare against, so it is not routed through `assignQueueState()`. Instead
 `processEmployee()` sets `attendance_status = 'unreconciled'` (the existing enum value already
@@ -397,7 +397,7 @@ resolved Floor_Absence_Pattern_Ceiling while Biometric_Minutes reach the resolve
 `backend/sql/070_attendance_clock_columns.sql`) and the raw `biometric_attendance_log` first/last
 punch, matching the fallback chain `calculateLateArrival()` already uses.
 
-**Always-queue.** The queue-state assignment is deliberately *not* part of detection. Detection
+**Always-queue.** The queue-state assignment is deliberately _not_ part of detection. Detection
 writes `is_floor_absence = 1` on the Variance_Record; a separate per-branch per-Pay_Month
 `assignQueueState(branchId, payMonth, ceiling)` pass sets every `is_floor_absence = 1` record to
 `queued` unconditionally, ranks the remainder by `variance_risk_score DESC`, queues up to the
@@ -428,18 +428,18 @@ control tower already reads it through `attachReviewState()` and the
 
 Added columns:
 
-| Column | Purpose |
-| --- | --- |
-| `wfm_reviewer_user_id`, `wfm_reviewed_at`, `wfm_outcome`, `wfm_comment` | first reviewer slot |
-| `manager_reviewer_user_id`, `manager_reviewed_at`, `manager_outcome`, `manager_comment` | second reviewer slot |
-| `manager_substituted_for_user_id` | criterion 7.6's branch-WFM substitution for the 1 employee with no `reporting_manager_id` |
-| `queue_state` `enum('queued','recorded_not_queued')` | criteria 6.9, 6.11 |
-| `variance_risk_score` INT | ranking |
-| `is_floor_absence` TINYINT | always-queue |
-| `contested` TINYINT, `contested_at`, `override_approver_user_id` | criterion 7.10 |
-| `presented_at`, `escalation_age_days`, `escalation_interval_days`, `last_escalated_at` | SLA (7.8, 7.9) |
-| `biometric_minutes`, `canonical_productive_minutes`, `applied_corroboration_threshold`, `applied_variance_tolerance`, `resolved_attendance_source`, `deciding_rule_id` | the evidence snapshot criterion 6.3 requires, on the record rather than re-derived |
-| `pay_month`, `carried_forward_from_pay_month` | criteria 9.3, 13.2 |
+| Column                                                                                                                                                                 | Purpose                                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `wfm_reviewer_user_id`, `wfm_reviewed_at`, `wfm_outcome`, `wfm_comment`                                                                                                | first reviewer slot                                                                       |
+| `manager_reviewer_user_id`, `manager_reviewed_at`, `manager_outcome`, `manager_comment`                                                                                | second reviewer slot                                                                      |
+| `manager_substituted_for_user_id`                                                                                                                                      | criterion 7.6's branch-WFM substitution for the 1 employee with no `reporting_manager_id` |
+| `queue_state` `enum('queued','recorded_not_queued')`                                                                                                                   | criteria 6.9, 6.11                                                                        |
+| `variance_risk_score` INT                                                                                                                                              | ranking                                                                                   |
+| `is_floor_absence` TINYINT                                                                                                                                             | always-queue                                                                              |
+| `contested` TINYINT, `contested_at`, `override_approver_user_id`                                                                                                       | criterion 7.10                                                                            |
+| `presented_at`, `escalation_age_days`, `escalation_interval_days`, `last_escalated_at`                                                                                 | SLA (7.8, 7.9)                                                                            |
+| `biometric_minutes`, `canonical_productive_minutes`, `applied_corroboration_threshold`, `applied_variance_tolerance`, `resolved_attendance_source`, `deciding_rule_id` | the evidence snapshot criterion 6.3 requires, on the record rather than re-derived        |
+| `pay_month`, `carried_forward_from_pay_month`                                                                                                                          | criteria 9.3, 13.2                                                                        |
 
 The existing `status` enum is kept and mapped rather than widened: `open`/`notified` stay as
 presentation state, `reviewed` is set only when both slots hold an outcome (criterion 7.5). The
@@ -518,11 +518,11 @@ A read surface over `attendance_productive_contribution` (per-source metrics),
 The three-way distinction of criteria 19.6 and 19.7 is resolved server-side, not in the component,
 because only the server holds the Dialler_Source's declared Metric_Availability:
 
-| Case | Payload | Screen |
-| --- | --- | --- |
-| metric absent from `dialler_source.metric_availability` | `{ availability: 'unavailable' }` | greyed "n/a", no number |
-| metric declared, no value stored for that date | `{ availability: 'not_reported' }` | em dash |
-| metric declared, value stored as 0 | `{ availability: 'reported', value: 0 }` | `0` |
+| Case                                                    | Payload                                  | Screen                  |
+| ------------------------------------------------------- | ---------------------------------------- | ----------------------- |
+| metric absent from `dialler_source.metric_availability` | `{ availability: 'unavailable' }`        | greyed "n/a", no number |
+| metric declared, no value stored for that date          | `{ availability: 'not_reported' }`       | em dash                 |
+| metric declared, value stored as 0                      | `{ availability: 'reported', value: 0 }` | `0`                     |
 
 Criterion 19.13's containment property then holds by construction: the serialiser iterates the
 declared metric list, so it cannot emit a metric the source did not declare.
@@ -775,29 +775,29 @@ the campaign dispositions in a staging state; `attendance_source_rule` is writte
 approval action, which is refused while `department_merge_confirmed = 0` (15.6) or any
 `attendance_source_rule_proposal_employee_decision` row remains `'deferred'` (15.5).
 
-| Item | Handling |
-| --- | --- |
-| 30 `attendance_rule_config` + 61 active `apr_eligibility_config` rows | one proposed rule each, dimensions and window preserved (15.1) |
-| 65 undated `apr_eligibility_config` rows | `effective_from` = first day of the migration's Pay_Month, every row listed (15.2) |
-| `arc-global-001` (biometric) vs `arc-apr-ops-exec` (dialler) | resolved to one System_Default_Rule carrying `biometric`, with every employee whose resolution changes listed (15.3). Biometric because it is the wider, older rule and because promoting 1,123 employees to dialler by default is the failure mode migration 1127 measured at 1,577.5 paid days removed |
-| `apr-elig-ops-executive`, process-NULL, reactivated 2026-08-28 | disposition stated explicitly against the 60 process-scoped 1127 rows (15.4). The proposal keeps the 1127 process scoping and proposes the process-NULL row for deactivation; the reconciliation report is what makes that a decision rather than a side effect |
-| 445 never-in-feed employees of 832 matched | listed, explicit per-employee decision required before any `dialler` rule is proposed for them (15.5) |
-| `'OPERATIONS'` (897) / `'Operations'` (148) | **hard gate.** The approval action of 15.11 is refused while both rows are active (15.6). Set-valued constraints stay permanently as the standing defence (15.7) |
-| 3,810 unattributed manual `apr` rows | attributed where a Dialler_Source, branch and process can be determined, quarantined otherwise, with the disposition stated per row (15.17). Given 0 distinct `process_name` and `branch_name` and one `uploaded_by`, quarantine is the expected outcome for most |
-| 78 free-text `apr.campaign_id` values | seeded into `campaign_master`; those with no determinable owner seeded inactive and listed (15.19) |
-| 56 unresolvable `apr.UserID` values | listed with the disposition of the productivity data held against them (15.20) |
-| Missing dimension values | 34 no cost centre, 75 no process, 196 no profile, 1 each no department / designation / manager — all listed so master data can be corrected first (15.15) |
-| Feature flags | `mismatch_workflow_enabled` -> 1, `payroll_lock_on_unresolved_mismatch` -> 0 (15.21) |
-| Reprocessing | every employee and open-Pay_Month date listed, never reprocessed automatically (15.14, 3.4, 18.15) |
+| Item                                                                  | Handling                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 30 `attendance_rule_config` + 61 active `apr_eligibility_config` rows | one proposed rule each, dimensions and window preserved (15.1)                                                                                                                                                                                                                                           |
+| 65 undated `apr_eligibility_config` rows                              | `effective_from` = first day of the migration's Pay_Month, every row listed (15.2)                                                                                                                                                                                                                       |
+| `arc-global-001` (biometric) vs `arc-apr-ops-exec` (dialler)          | resolved to one System_Default_Rule carrying `biometric`, with every employee whose resolution changes listed (15.3). Biometric because it is the wider, older rule and because promoting 1,123 employees to dialler by default is the failure mode migration 1127 measured at 1,577.5 paid days removed |
+| `apr-elig-ops-executive`, process-NULL, reactivated 2026-08-28        | disposition stated explicitly against the 60 process-scoped 1127 rows (15.4). The proposal keeps the 1127 process scoping and proposes the process-NULL row for deactivation; the reconciliation report is what makes that a decision rather than a side effect                                          |
+| 445 never-in-feed employees of 832 matched                            | listed, explicit per-employee decision required before any `dialler` rule is proposed for them (15.5)                                                                                                                                                                                                    |
+| `'OPERATIONS'` (897) / `'Operations'` (148)                           | **hard gate.** The approval action of 15.11 is refused while both rows are active (15.6). Set-valued constraints stay permanently as the standing defence (15.7)                                                                                                                                         |
+| 3,810 unattributed manual `apr` rows                                  | attributed where a Dialler_Source, branch and process can be determined, quarantined otherwise, with the disposition stated per row (15.17). Given 0 distinct `process_name` and `branch_name` and one `uploaded_by`, quarantine is the expected outcome for most                                        |
+| 78 free-text `apr.campaign_id` values                                 | seeded into `campaign_master`; those with no determinable owner seeded inactive and listed (15.19)                                                                                                                                                                                                       |
+| 56 unresolvable `apr.UserID` values                                   | listed with the disposition of the productivity data held against them (15.20)                                                                                                                                                                                                                           |
+| Missing dimension values                                              | 34 no cost centre, 75 no process, 196 no profile, 1 each no department / designation / manager — all listed so master data can be corrected first (15.15)                                                                                                                                                |
+| Feature flags                                                         | `mismatch_workflow_enabled` -> 1, `payroll_lock_on_unresolved_mismatch` -> 0 (15.21)                                                                                                                                                                                                                     |
+| Reprocessing                                                          | every employee and open-Pay_Month date listed, never reprocessed automatically (15.14, 3.4, 18.15)                                                                                                                                                                                                       |
 
 **No-silent-change guarantee (15.13).** The reconciliation report is generated by running both
 resolvers over all 1,123 active employees: the legacy path
 (`isAprEligible() || hasScopedDiallerRule`, including the regex fallback and the
 `diallerMinutes >= 240` promotion) and the new resolver. Because the legacy path is
 non-deterministic for the two unconstrained rows, the report must record the legacy result as
-*either* value where the tie exists rather than pick one — a report that silently picked would be
+_either_ value where the tie exists rather than pick one — a report that silently picked would be
 asserting a determinism the current system does not have. Day thresholds get their own comparison
-(15.9), generated from what the engine *applies* today, not from the unused
+(15.9), generated from what the engine _applies_ today, not from the unused
 `attendance_rule_config` columns.
 
 ## Performance considerations
@@ -835,9 +835,9 @@ total, 1,365 `dialer_session_log` rows, 126,044 `attendance_daily_record` rows, 
 
 ## Correctness Properties
 
-*A property is a characteristic or behavior that should hold true across all valid executions of a
+_A property is a characteristic or behavior that should hold true across all valid executions of a
 system — essentially, a formal statement about what the system should do. Properties serve as the
-bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+bridge between human-readable specifications and machine-verifiable correctness guarantees._
 
 Property-based testing applies here because the three highest-risk pieces of this design are pure
 functions over generatable inputs: the rule resolver, the canonical aggregation, and the
@@ -846,7 +846,7 @@ property-tested — those get example-based and integration tests, per the Testi
 
 ### Property 1: Resolution totality
 
-*For any* combination of employee dimension values (including any subset unset) and any date,
+_For any_ combination of employee dimension values (including any subset unset) and any date,
 resolution returns exactly one Attendance_Source and exactly one deciding rule identifier, provided
 the rule store contains its mandatory System_Default_Rule.
 
@@ -854,14 +854,14 @@ the rule store contains its mandatory System_Default_Rule.
 
 ### Property 2: Resolution determinism
 
-*For any* rule store and *any* employee and date, two consecutive resolutions over an unchanged
+_For any_ rule store and _any_ employee and date, two consecutive resolutions over an unchanged
 store return the same Attendance_Source and the same deciding rule identifier.
 
 **Validates: Requirements 2.7**
 
 ### Property 3: Specificity and priority ordering govern selection
 
-*For any* candidate set, the selected rule has the maximum Specificity_Count in that set, and where
+_For any_ candidate set, the selected rule has the maximum Specificity_Count in that set, and where
 two or more share it, the selected rule constrains the first Rule_Dimension in
 Dimension_Priority_Order that is constrained by some but not all of them.
 
@@ -869,14 +869,14 @@ Dimension_Priority_Order that is constrained by some but not all of them.
 
 ### Property 4: A missing dimension value never matches a rule constraining it
 
-*For any* employee with no value recorded for a Rule_Dimension, no rule constraining that dimension
+_For any_ employee with no value recorded for a Rule_Dimension, no rule constraining that dimension
 is selected, and the dimension is reported as unresolved.
 
 **Validates: Requirements 2.8**
 
 ### Property 5: Historical invariance of a rule amendment
 
-*For any* rule store and *any* amendment with an effective-from date D, resolution for every date
+_For any_ rule store and _any_ amendment with an effective-from date D, resolution for every date
 before D returns the same Attendance_Source and deciding rule identifier before and after the
 amendment.
 
@@ -884,14 +884,14 @@ amendment.
 
 ### Property 6: Payable days stay within their bounds
 
-*For any* employee and Pay_Month, Payable_Days is greater than or equal to zero and less than or
+_For any_ employee and Pay_Month, Payable_Days is greater than or equal to zero and less than or
 equal to the count of days the employee was active in that Pay_Month.
 
 **Validates: Requirements 4.8**
 
 ### Property 7: Corroboration is source-neutral
 
-*For any* employee and date, the corroboration decision depends only on
+_For any_ employee and date, the corroboration decision depends only on
 Canonical_Productive_Minutes and Biometric_Minutes and is unchanged by permuting which
 Dialler_Source supplied the productivity evidence.
 
@@ -899,8 +899,8 @@ Dialler_Source supplied the productivity evidence.
 
 ### Property 8: Absence is never a zero
 
-*For any* employee and date with no attributed contribution, every data-access boundary reports
-productivity evidence as absent and no boundary yields a numeric zero for it; and *for any*
+_For any_ employee and date with no attributed contribution, every data-access boundary reports
+productivity evidence as absent and no boundary yields a numeric zero for it; and _for any_
 `attendance_daily_record` row, a stored `dialler_minutes` of 0 never becomes a measured zero in a
 corroboration or detection decision.
 
@@ -908,28 +908,28 @@ corroboration or detection decision.
 
 ### Property 9: No false-positive variance inside tolerance
 
-*For any* employee and date where both feeds report minutes within the Variance_Tolerance of each
+_For any_ employee and date where both feeds report minutes within the Variance_Tolerance of each
 other, no Variance_Record is raised.
 
 **Validates: Requirements 6.6**
 
 ### Property 10: Variance detection is idempotent
 
-*For any* employee and date, reprocessing attendance while an unreviewed Variance_Record exists
+_For any_ employee and date, reprocessing attendance while an unreviewed Variance_Record exists
 updates that record and leaves the Variance_Record count for that employee and date unchanged.
 
 **Validates: Requirements 6.5**
 
 ### Property 11: The ceiling discards nothing
 
-*For any* branch, Pay_Month and Dual_Review_Ceiling, the count of raised Variance_Records equals the
+_For any_ branch, Pay_Month and Dual_Review_Ceiling, the count of raised Variance_Records equals the
 count Queued_For_Dual_Review plus the count Recorded_Not_Queued.
 
 **Validates: Requirements 6.13, 6.11**
 
 ### Property 12: Ranking monotonicity, and Floor_Absence_Pattern always queues
 
-*For any* branch and Pay_Month, every queued Variance_Record carrying no Floor_Absence_Pattern
+_For any_ branch and Pay_Month, every queued Variance_Record carrying no Floor_Absence_Pattern
 occurrence holds a Variance_Risk_Score greater than or equal to that of every Recorded_Not_Queued
 record for that branch and Pay_Month; and every Variance_Record carrying a Floor_Absence_Pattern
 occurrence is queued irrespective of the ceiling and of the count already queued.
@@ -938,49 +938,49 @@ occurrence is queued irrespective of the ceiling and of the count already queued
 
 ### Property 13: Reversibility of an approved adjustment
 
-*For any* approved adjustment, the recorded superseded classification equals the classification that
+_For any_ approved adjustment, the recorded superseded classification equals the classification that
 resolution and daily processing produced immediately before the adjustment was applied.
 
 **Validates: Requirements 8.7**
 
 ### Property 14: No evidence, no finding
 
-*For any* employee and date where productivity evidence is absent, no Floor_Absence_Pattern
+_For any_ employee and date where productivity evidence is absent, no Floor_Absence_Pattern
 occurrence is recorded.
 
 **Validates: Requirements 10.11, 10.10**
 
 ### Property 15: Provenance completeness
 
-*For any* employee and Pay_Month, the count of dates carrying an Attendance_Provenance_Record equals
+_For any_ employee and Pay_Month, the count of dates carrying an Attendance_Provenance_Record equals
 the count of dates contributing to that employee's Payable_Days for that Pay_Month.
 
 **Validates: Requirements 11.6**
 
 ### Property 16: Aggregation traceability
 
-*For any* Attendance_Provenance_Record, re-deriving Canonical_Productive_Minutes from the retained
+_For any_ Attendance_Provenance_Record, re-deriving Canonical_Productive_Minutes from the retained
 per-Dialler_Source contributions under the rule of Requirement 18 reproduces the recorded figure.
 
 **Validates: Requirements 11.7, 19.12**
 
 ### Property 17: Source attribution totality
 
-*For any* contribution to Canonical_Productive_Minutes on any date, the attributed Dialler_Source
+_For any_ contribution to Canonical_Productive_Minutes on any date, the attributed Dialler_Source
 resolves to exactly one active registry row.
 
 **Validates: Requirements 16.10, 16.4**
 
 ### Property 18: Upload accounting
 
-*For any* Upload_Batch, the accepted row count plus the rejected row count equals the submitted row
+_For any_ Upload_Batch, the accepted row count plus the rejected row count equals the submitted row
 count, and every rejected row carries exactly one stated reason.
 
 **Validates: Requirements 17.11, 17.2**
 
 ### Property 19: Upload provenance survives supersession
 
-*For any* accepted row, the Upload_Batch, Dialler_Source, branch, process and uploading user remain
+_For any_ accepted row, the Upload_Batch, Dialler_Source, branch, process and uploading user remain
 retrievable after that Upload_Batch is superseded, and superseded rows contribute nothing to
 Canonical_Productive_Minutes.
 
@@ -988,14 +988,14 @@ Canonical_Productive_Minutes.
 
 ### Property 20: The daily bound holds
 
-*For any* employee, date and set of contributions, Canonical_Productive_Minutes is at most 1,440
+_For any_ employee, date and set of contributions, Canonical_Productive_Minutes is at most 1,440
 minutes.
 
 **Validates: Requirements 18.2, 18.11**
 
 ### Property 21: Neither shrinkage nor inflation
 
-*For any* employee and date holding at least one contribution, Canonical_Productive_Minutes is
+_For any_ employee and date holding at least one contribution, Canonical_Productive_Minutes is
 greater than or equal to the largest single contribution and less than or equal to the sum of all
 contributions for that employee and date.
 
@@ -1003,7 +1003,7 @@ contributions for that employee and date.
 
 ### Property 22: Recomputation stability, and the producing rule is recorded
 
-*For any* employee and date, two consecutive derivations over an unchanged contribution set return
+_For any_ employee and date, two consecutive derivations over an unchanged contribution set return
 the same Canonical_Productive_Minutes and the same recorded producing rule; and the recorded rule is
 `max_contribution` exactly when at least one contribution supplies no usable ordered interval.
 
@@ -1011,14 +1011,14 @@ the same Canonical_Productive_Minutes and the same recorded producing rule; and 
 
 ### Property 23: Midnight apportionment conserves and does not double-count
 
-*For any* contribution spanning midnight, the minutes attributed to the two calendar dates sum to
+_For any_ contribution spanning midnight, the minutes attributed to the two calendar dates sum to
 the session's duration, and neither date receives the whole session.
 
 **Validates: Requirements 18.8**
 
 ### Property 24: Declared-metric containment
 
-*For any* employee and date range, the metrics the Consolidated_Productivity_View presents for a
+_For any_ employee and date range, the metrics the Consolidated_Productivity_View presents for a
 Dialler_Source are a subset of that Dialler_Source's declared Metric_Availability, and every metric
 is rendered as exactly one of unavailable, not reported, or a value.
 
@@ -1026,14 +1026,14 @@ is rendered as exactly one of unavailable, not reported, or a value.
 
 ### Property 25: Scope containment on every list
 
-*For any* user and *any* Variance_Record, Consolidated_Productivity_View or Upload_Batch list
+_For any_ user and _any_ Variance_Record, Consolidated_Productivity_View or Upload_Batch list
 request, every returned row belongs to an employee inside that user's resolved business scope.
 
 **Validates: Requirements 14.4, 19.10**
 
 ### Property 26: No silent change at migration
 
-*For any* currently active employee whose proposed resolution matches their existing resolution, the
+_For any_ currently active employee whose proposed resolution matches their existing resolution, the
 applied migration leaves the resolved Attendance_Source unchanged.
 
 **Validates: Requirements 15.13**
@@ -1041,7 +1041,7 @@ applied migration leaves the resolved Attendance_Source unchanged.
 ## Error Handling
 
 Rejections are stated, recorded, and never silent. The pattern already established in this codebase
-is followed: a refused privileged action is written to `sensitive_action_log` *before* the response,
+is followed: a refused privileged action is written to `sensitive_action_log` _before_ the response,
 and a validation failure names the offending value rather than returning a reference number.
 
 **Rule store validation** (all 4xx with the offending value named): effective-to before

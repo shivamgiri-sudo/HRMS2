@@ -1,14 +1,15 @@
-import { db } from '../../db/mysql.js';
-import { getLmsConnection } from './lms-external-db.js';
-import { randomUUID } from 'crypto';
-import type { RowDataPacket } from 'mysql2';
+import { db } from "../../db/mysql.js";
+import { getLmsConnection } from "./lms-external-db.js";
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
 
 interface MappingResult {
   lmsEmployeeId: string;
   hrmsEmployeeId?: string;
   hrmsEmployeeCode?: string;
-  mappingSource: 'mobile' | 'personal_email' | 'official_email' | 'employee_code' | 'none';
-  confidence: 'high' | 'medium' | 'low';
+  mappingSource:
+    "mobile" | "personal_email" | "official_email" | "employee_code" | "none";
+  confidence: "high" | "medium" | "low";
   success: boolean;
   errorReason?: string | null;
 }
@@ -33,7 +34,12 @@ export const lmsEmployeeMapper = {
       emailPersonalMatchFound: false,
       emailOfficialMatchFound: false,
       employeeCodeMatchFound: false,
-      finalMatchSource: 'none' as 'mobile' | 'personal_email' | 'official_email' | 'employee_code' | 'none',
+      finalMatchSource: "none" as
+        | "mobile"
+        | "personal_email"
+        | "official_email"
+        | "employee_code"
+        | "none",
       finalHrmsEmployeeId: null as string | null,
     };
 
@@ -51,7 +57,7 @@ export const lmsEmployeeMapper = {
       try {
         [traineeRows] = await lms.execute<RowDataPacket[]>(
           `SELECT employee_id, lms_id, trainee_name, email, mobile FROM trainee_master WHERE lms_id = ? LIMIT 1`,
-          [lmsId]
+          [lmsId],
         );
       } finally {
         lms.release();
@@ -60,10 +66,10 @@ export const lmsEmployeeMapper = {
       if (!traineeRows.length) {
         return {
           lmsEmployeeId: lmsId,
-          mappingSource: 'none',
-          confidence: 'low',
+          mappingSource: "none",
+          confidence: "low",
           success: false,
-          errorReason: 'LMS trainee not found',
+          errorReason: "LMS trainee not found",
         };
       }
 
@@ -77,22 +83,29 @@ export const lmsEmployeeMapper = {
            FROM employees
            WHERE (mobile = ? OR alternate_mobile = ?) AND active_status = 1
            LIMIT 1`,
-          [trainee.mobile, trainee.mobile]
+          [trainee.mobile, trainee.mobile],
         );
 
         if (hrmsRows.length > 0) {
           const hrmsEmployee = hrmsRows[0] as any;
           auditLog.mobileMatchFound = true;
-          auditLog.finalMatchSource = 'mobile';
+          auditLog.finalMatchSource = "mobile";
           auditLog.finalHrmsEmployeeId = hrmsEmployee.id;
 
-          await this.saveMappingAndAudit(auditId, lmsId, hrmsEmployee, 'mobile', 'high', auditLog);
+          await this.saveMappingAndAudit(
+            auditId,
+            lmsId,
+            hrmsEmployee,
+            "mobile",
+            "high",
+            auditLog,
+          );
           return {
             lmsEmployeeId: lmsId,
             hrmsEmployeeId: hrmsEmployee.id,
             hrmsEmployeeCode: hrmsEmployee.employee_code,
-            mappingSource: 'mobile',
-            confidence: 'high',
+            mappingSource: "mobile",
+            confidence: "high",
             success: true,
           };
         }
@@ -106,51 +119,65 @@ export const lmsEmployeeMapper = {
            FROM employees
            WHERE (personal_email = ? OR email = ?) AND active_status = 1
            LIMIT 1`,
-          [trainee.email, trainee.email]
+          [trainee.email, trainee.email],
         );
 
         if (hrmsRows.length > 0) {
           const hrmsEmployee = hrmsRows[0] as any;
           auditLog.emailPersonalMatchFound = true;
-          auditLog.finalMatchSource = 'personal_email';
+          auditLog.finalMatchSource = "personal_email";
           auditLog.finalHrmsEmployeeId = hrmsEmployee.id;
 
-          await this.saveMappingAndAudit(auditId, lmsId, hrmsEmployee, 'personal_email', 'medium', auditLog);
+          await this.saveMappingAndAudit(
+            auditId,
+            lmsId,
+            hrmsEmployee,
+            "personal_email",
+            "medium",
+            auditLog,
+          );
           return {
             lmsEmployeeId: lmsId,
             hrmsEmployeeId: hrmsEmployee.id,
             hrmsEmployeeCode: hrmsEmployee.employee_code,
-            mappingSource: 'personal_email',
-            confidence: 'medium',
+            mappingSource: "personal_email",
+            confidence: "medium",
             success: true,
           };
         }
       }
 
       // PRIORITY 3: Match by official email (@teammas.co.in / @teammas.in)
-      if (trainee.email && trainee.email.includes('@')) {
+      if (trainee.email && trainee.email.includes("@")) {
         auditLog.triedOfficialEmail = trainee.email;
         const [hrmsRows] = await db.execute<RowDataPacket[]>(
           `SELECT id, employee_code, mobile, personal_email, email
            FROM employees
            WHERE (office_email = ? OR office_email LIKE CONCAT('%', ?, '%')) AND active_status = 1
            LIMIT 1`,
-          [trainee.email, trainee.email.split('@')[0]]
+          [trainee.email, trainee.email.split("@")[0]],
         );
 
         if (hrmsRows.length > 0) {
           const hrmsEmployee = hrmsRows[0] as any;
           auditLog.emailOfficialMatchFound = true;
-          auditLog.finalMatchSource = 'official_email';
+          auditLog.finalMatchSource = "official_email";
           auditLog.finalHrmsEmployeeId = hrmsEmployee.id;
 
-          await this.saveMappingAndAudit(auditId, lmsId, hrmsEmployee, 'official_email', 'medium', auditLog);
+          await this.saveMappingAndAudit(
+            auditId,
+            lmsId,
+            hrmsEmployee,
+            "official_email",
+            "medium",
+            auditLog,
+          );
           return {
             lmsEmployeeId: lmsId,
             hrmsEmployeeId: hrmsEmployee.id,
             hrmsEmployeeCode: hrmsEmployee.employee_code,
-            mappingSource: 'official_email',
-            confidence: 'medium',
+            mappingSource: "official_email",
+            confidence: "medium",
             success: true,
           };
         }
@@ -164,42 +191,53 @@ export const lmsEmployeeMapper = {
            FROM employees
            WHERE UPPER(employee_code) = UPPER(?) AND active_status = 1
            LIMIT 1`,
-          [trainee.employee_id]
+          [trainee.employee_id],
         );
 
         if (hrmsRows.length > 0) {
           const hrmsEmployee = hrmsRows[0] as any;
           auditLog.employeeCodeMatchFound = true;
-          auditLog.finalMatchSource = 'employee_code';
+          auditLog.finalMatchSource = "employee_code";
           auditLog.finalHrmsEmployeeId = hrmsEmployee.id;
 
-          await this.saveMappingAndAudit(auditId, lmsId, hrmsEmployee, 'employee_code', 'low', auditLog);
+          await this.saveMappingAndAudit(
+            auditId,
+            lmsId,
+            hrmsEmployee,
+            "employee_code",
+            "low",
+            auditLog,
+          );
           return {
             lmsEmployeeId: lmsId,
             hrmsEmployeeId: hrmsEmployee.id,
             hrmsEmployeeCode: hrmsEmployee.employee_code,
-            mappingSource: 'employee_code',
-            confidence: 'low',
+            mappingSource: "employee_code",
+            confidence: "low",
             success: true,
           };
         }
       }
 
       // No match found on any priority
-      await this.logMappingFailure(auditId, auditLog, 'No matching HRMS employee found');
+      await this.logMappingFailure(
+        auditId,
+        auditLog,
+        "No matching HRMS employee found",
+      );
       return {
         lmsEmployeeId: lmsId,
-        mappingSource: 'none',
-        confidence: 'low',
+        mappingSource: "none",
+        confidence: "low",
         success: false,
-        errorReason: 'No matching HRMS employee found via any priority',
+        errorReason: "No matching HRMS employee found via any priority",
       };
     } catch (e) {
       await this.logMappingFailure(auditId, auditLog, String(e));
       return {
         lmsEmployeeId: lmsId,
-        mappingSource: 'none',
-        confidence: 'low',
+        mappingSource: "none",
+        confidence: "low",
         success: false,
         errorReason: `Mapping error: ${String(e).substring(0, 100)}`,
       };
@@ -210,14 +248,19 @@ export const lmsEmployeeMapper = {
     auditId: string,
     lmsEmployeeId: string,
     hrmsEmployee: any,
-    source: 'mobile' | 'personal_email' | 'official_email' | 'email' | 'employee_code',
-    confidence: 'high' | 'medium' | 'low',
-    auditLog: any
+    source:
+      | "mobile"
+      | "personal_email"
+      | "official_email"
+      | "email"
+      | "employee_code",
+    confidence: "high" | "medium" | "low",
+    auditLog: any,
   ) {
     const mappingId = randomUUID();
 
     // Normalize source name
-    const normalizedSource = source === 'email' ? 'official_email' : source;
+    const normalizedSource = source === "email" ? "official_email" : source;
 
     // Save mapping.
     //
@@ -251,7 +294,7 @@ export const lmsEmployeeMapper = {
         hrmsEmployee.email || hrmsEmployee.personal_email || null,
         normalizedSource,
         confidence,
-      ]
+      ],
     );
 
     // Save audit
@@ -274,7 +317,7 @@ export const lmsEmployeeMapper = {
         auditLog.employeeCodeMatchFound ? 1 : 0,
         normalizedSource,
         hrmsEmployee.id,
-      ]
+      ],
     );
   },
 
@@ -297,7 +340,7 @@ export const lmsEmployeeMapper = {
         auditLog.emailOfficialMatchFound ? 1 : 0,
         auditLog.employeeCodeMatchFound ? 1 : 0,
         errorReason,
-      ]
+      ],
     );
   },
 
@@ -325,7 +368,7 @@ export const lmsEmployeeMapper = {
     // change restores exactly the behaviour production has today.
     const [existing] = await db.execute<RowDataPacket[]>(
       `SELECT employee_id FROM lms_employee_mapping WHERE lms_learner_id = ? LIMIT 1`,
-      [lmsId]
+      [lmsId],
     );
 
     if (existing.length > 0) {

@@ -27,7 +27,12 @@
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
-import { withWorkerLock, recordWorkerRun, registerTimer, unregisterTimer } from "./worker-utils.js";
+import {
+  withWorkerLock,
+  recordWorkerRun,
+  registerTimer,
+  unregisterTimer,
+} from "./worker-utils.js";
 import { notifySignatoryReminder } from "../modules/payroll/noc.notifications.js";
 
 /**
@@ -147,7 +152,8 @@ async function sweep(): Promise<void> {
             [reminderNo, ESCALATE_FROM_REMINDER, row.signatory_id],
           );
 
-          if (ok) sent++; else failed++;
+          if (ok) sent++;
+          else failed++;
         } catch (err) {
           failed++;
           // One stage failing must not stop the rest of the sweep.
@@ -159,12 +165,21 @@ async function sweep(): Promise<void> {
       }
 
       if (overdue.length > 0) {
-        console.log(`[NocSlaReminder] ${overdue.length} overdue stage(s): ${sent} reminded, ${failed} failed`);
+        console.log(
+          `[NocSlaReminder] ${overdue.length} overdue stage(s): ${sent} reminded, ${failed} failed`,
+        );
       }
       await markWorkerRun(WORKER_NAME).catch(() => undefined);
-      await recordWorkerRun(WORKER_NAME, "completed", { overdue: overdue.length, sent, failed }).catch(() => undefined);
+      await recordWorkerRun(WORKER_NAME, "completed", {
+        overdue: overdue.length,
+        sent,
+        failed,
+      }).catch(() => undefined);
     } catch (err) {
-      console.error("[NocSlaReminder] sweep failed:", err instanceof Error ? err.message : err);
+      console.error(
+        "[NocSlaReminder] sweep failed:",
+        err instanceof Error ? err.message : err,
+      );
       await recordWorkerRun(WORKER_NAME, "failed", {
         error: err instanceof Error ? err.message : String(err),
       }).catch(() => undefined);
@@ -174,14 +189,23 @@ async function sweep(): Promise<void> {
 
 export function startNocSlaReminderWorker(): void {
   if (intervalRef) return;
-  startupRef = setTimeout(() => { void sweep(); }, STARTUP_DELAY_MS);
-  intervalRef = setInterval(() => { void sweep(); }, CHECK_INTERVAL_MS);
+  startupRef = setTimeout(() => {
+    void sweep();
+  }, STARTUP_DELAY_MS);
+  intervalRef = setInterval(() => {
+    void sweep();
+  }, CHECK_INTERVAL_MS);
   registerTimer(WORKER_NAME, intervalRef);
-  console.log(`[NocSlaReminder] started — sweeping hourly, first run in ${STARTUP_DELAY_MS / 60000}m`);
+  console.log(
+    `[NocSlaReminder] started — sweeping hourly, first run in ${STARTUP_DELAY_MS / 60000}m`,
+  );
 }
 
 export function stopNocSlaReminderWorker(): void {
-  if (startupRef) { clearTimeout(startupRef); startupRef = undefined; }
+  if (startupRef) {
+    clearTimeout(startupRef);
+    startupRef = undefined;
+  }
   if (intervalRef) {
     clearInterval(intervalRef);
     unregisterTimer(WORKER_NAME);

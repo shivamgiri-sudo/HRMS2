@@ -19,19 +19,25 @@ import { ifObjectExists } from "../schema-object-cache.js";
 describe("ifObjectExists", () => {
   it("runs the query when the object is present", async () => {
     const run = vi.fn().mockResolvedValue("real result");
-    await expect(ifObjectExists(true, run, "fallback")).resolves.toBe("real result");
+    await expect(ifObjectExists(true, run, "fallback")).resolves.toBe(
+      "real result",
+    );
     expect(run).toHaveBeenCalledOnce();
   });
 
   it("does NOT run the query when the object is absent", async () => {
     const run = vi.fn().mockResolvedValue("real result");
-    await expect(ifObjectExists(false, run, "fallback")).resolves.toBe("fallback");
+    await expect(ifObjectExists(false, run, "fallback")).resolves.toBe(
+      "fallback",
+    );
     expect(run, "a doomed query was still issued").not.toHaveBeenCalled();
   });
 
   it("accepts a promised presence check", async () => {
     const run = vi.fn().mockResolvedValue("real result");
-    await expect(ifObjectExists(Promise.resolve(false), run, "fallback")).resolves.toBe("fallback");
+    await expect(
+      ifObjectExists(Promise.resolve(false), run, "fallback"),
+    ).resolves.toBe("fallback");
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -39,7 +45,11 @@ describe("ifObjectExists", () => {
     // The management tiles destructure [[{ count }]]. Returning 0 here instead
     // of null would turn "unavailable" into a false all-clear.
     const absent = [[{ count: null }]];
-    const result = await ifObjectExists<any>(false, async () => [[{ count: 5 }]], absent);
+    const result = await ifObjectExists<any>(
+      false,
+      async () => [[{ count: 5 }]],
+      absent,
+    );
     expect(result[0][0].count).toBeNull();
     expect(result[0][0].count).not.toBe(0);
   });
@@ -70,7 +80,9 @@ describe("management.service call sites", () => {
       const block = src.slice(at, at + 900);
       expect(block, `${guard} lost its null fallback`).toContain(shape);
       expect(block, `${guard} lost its .catch safety net`).toContain(".catch(");
-      expect(block, `${guard} must not report 0`).not.toMatch(/count: 0|completion_pct: 0/);
+      expect(block, `${guard} must not report 0`).not.toMatch(
+        /count: 0|completion_pct: 0/,
+      );
     }
   });
 });

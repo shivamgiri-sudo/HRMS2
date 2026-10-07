@@ -6005,7 +6005,10 @@ export async function getStackRanking(
         extErrPct: pct1(extErr, extAud),
         crePct: pct1(cre, totalTasks),
         attritionPct: ar
-          ? pct1(Number(ar.attrition), Number(ar.avg_hc) > 0 ? Number(ar.avg_hc) : 1)
+          ? pct1(
+              Number(ar.attrition),
+              Number(ar.avg_hc) > 0 ? Number(ar.avg_hc) : 1,
+            )
           : null,
         shrinkagePct:
           ar && scheduled > 0 ? pct1(Number(ar.ul), scheduled) : null,

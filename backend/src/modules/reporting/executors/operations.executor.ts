@@ -12,7 +12,12 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
 import { querySource } from "../../../db/sourceDb.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -36,7 +41,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-      params
+      params,
     );
     return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
   } catch (err: unknown) {
@@ -57,12 +62,17 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 export async function agentPerformanceSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const scoreMonth = monthParam(filters.month);
   const from = `${scoreMonth}-01`;
-  const to   = new Date(new Date(from).getFullYear(),
-    new Date(from).getMonth() + 1, 0).toISOString().slice(0, 10);
+  const to = new Date(
+    new Date(from).getFullYear(),
+    new Date(from).getMonth() + 1,
+    0,
+  )
+    .toISOString()
+    .slice(0, 10);
 
   // Resolve scoped employee codes from mas_hrms
   // active_status = 1 is load-bearing here, not cosmetic. Without it this resolved all 58,627
@@ -71,7 +81,7 @@ export async function agentPerformanceSummary(
   // ~248s. Both this report and team-performance-summary simply died at the client timeout.
   // Scoped to the 1,125 active employees the same query returns in milliseconds.
   const eClauses: string[] = ["e.active_status = 1"];
-  const eParams: unknown[]  = [];
+  const eParams: unknown[] = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
@@ -86,15 +96,21 @@ export async function agentPerformanceSummary(
     LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
     LEFT JOIN mas_hrms.cost_centre_master cc ON cc.id = e.cost_centre_id
    WHERE ${eClauses.join(" AND ")}`;
-  const empRows = await querySource<{ employee_code: string; employee_name: string; branch_name: string; process_name: string; cost_centre_code: string; cost_centre_name: string }>(
-    empSql, eParams as (string|number|null)[]
-  );
-  if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
+  const empRows = await querySource<{
+    employee_code: string;
+    employee_name: string;
+    branch_name: string;
+    process_name: string;
+    cost_centre_code: string;
+    cost_centre_name: string;
+  }>(empSql, eParams as (string | number | null)[]);
+  if (empRows.length === 0)
+    return { rows: [], rowCount: 0, isTruncated: false };
 
-  const empMap = new Map(empRows.map(r => [r.employee_code, r]));
-  const codes = empRows.map(r => r.employee_code);
+  const empMap = new Map(empRows.map((r) => [r.employee_code, r]));
+  const codes = empRows.map((r) => r.employee_code);
   const placeholders = codes.map(() => "?").join(",");
-  const qParams: (string|number|null)[] = [...codes, from, to];
+  const qParams: (string | number | null)[] = [...codes, from, to];
 
   let cursorClause = "";
   if (options.mode === "worker" && options.cursor != null) {
@@ -129,17 +145,29 @@ export async function agentPerformanceSummary(
      ORDER BY kpi.agent_employee_code ASC
      LIMIT ${options.limit} OFFSET ${options.mode === "worker" ? 0 : options.offset}`;
 
-  const rows = await querySource<Record<string,unknown>>(sql, qParams);
+  const rows = await querySource<Record<string, unknown>>(sql, qParams);
   // Enrich with employee name / branch / process from mas_hrms lookup
-  const enriched = rows.map(r => {
+  const enriched = rows.map((r) => {
     const info = empMap.get(r.employee_code as string);
-    return { ...r, employee_name: info?.employee_name, branch_name: info?.branch_name,
-            process_name: info?.process_name,
-            cost_centre_code: info?.cost_centre_code, cost_centre_name: info?.cost_centre_name };
+    return {
+      ...r,
+      employee_name: info?.employee_name,
+      branch_name: info?.branch_name,
+      process_name: info?.process_name,
+      cost_centre_code: info?.cost_centre_code,
+      cost_centre_name: info?.cost_centre_name,
+    };
   });
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? String(rows[rows.length - 1].employee_code ?? "") : null;
-  return { rows: enriched, rowCount: enriched.length, isTruncated: enriched.length === options.limit, nextCursor };
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? String(rows[rows.length - 1].employee_code ?? "")
+      : null;
+  return {
+    rows: enriched,
+    rowCount: enriched.length,
+    isTruncated: enriched.length === options.limit,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -149,12 +177,17 @@ export async function agentPerformanceSummary(
 export async function teamPerformanceSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const scoreMonth = monthParam(filters.month);
   const from = `${scoreMonth}-01`;
-  const to   = new Date(new Date(from).getFullYear(),
-    new Date(from).getMonth() + 1, 0).toISOString().slice(0, 10);
+  const to = new Date(
+    new Date(from).getFullYear(),
+    new Date(from).getMonth() + 1,
+    0,
+  )
+    .toISOString()
+    .slice(0, 10);
 
   // Resolve scoped employees with manager info
   // active_status = 1 is load-bearing here, not cosmetic. Without it this resolved all 58,627
@@ -163,7 +196,7 @@ export async function teamPerformanceSummary(
   // ~248s. Both this report and team-performance-summary simply died at the client timeout.
   // Scoped to the 1,125 active employees the same query returns in milliseconds.
   const eClauses: string[] = ["e.active_status = 1"];
-  const eParams: unknown[]  = [];
+  const eParams: unknown[] = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
@@ -179,17 +212,37 @@ export async function teamPerformanceSummary(
     LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
     LEFT JOIN mas_hrms.cost_centre_master cc ON cc.id = e.cost_centre_id
    WHERE ${eClauses.join(" AND ")}`;
-  const empRows = await querySource<{ employee_code: string; team_lead_name: string; branch_name: string; process_name: string; cost_centre_code: string; cost_centre_name: string }>(
-    empSql, eParams as (string|number|null)[]
-  );
-  if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
+  const empRows = await querySource<{
+    employee_code: string;
+    team_lead_name: string;
+    branch_name: string;
+    process_name: string;
+    cost_centre_code: string;
+    cost_centre_name: string;
+  }>(empSql, eParams as (string | number | null)[]);
+  if (empRows.length === 0)
+    return { rows: [], rowCount: 0, isTruncated: false };
 
-  const codes = empRows.map(r => r.employee_code);
+  const codes = empRows.map((r) => r.employee_code);
   // Group by team lead using application-side grouping (avoids cross-DB GROUP BY complexity)
-  const teamMap = new Map<string, { team_lead_name: string; branch_name: string; process_name: string; codes: string[] }>();
+  const teamMap = new Map<
+    string,
+    {
+      team_lead_name: string;
+      branch_name: string;
+      process_name: string;
+      codes: string[];
+    }
+  >();
   for (const r of empRows) {
     const key = `${r.team_lead_name}||${r.branch_name}||${r.process_name}`;
-    if (!teamMap.has(key)) teamMap.set(key, { team_lead_name: r.team_lead_name, branch_name: r.branch_name, process_name: r.process_name, codes: [] });
+    if (!teamMap.has(key))
+      teamMap.set(key, {
+        team_lead_name: r.team_lead_name,
+        branch_name: r.branch_name,
+        process_name: r.process_name,
+        codes: [],
+      });
     teamMap.get(key)!.codes.push(r.employee_code);
   }
 
@@ -201,27 +254,41 @@ export async function teamPerformanceSummary(
      WHERE kpi.agent_employee_code IN (${placeholders})
        AND kpi.call_date BETWEEN ? AND ?
      GROUP BY kpi.agent_employee_code`;
-  const kpiRows = await querySource<{ employee_code: string; avg_score: number }>(
-    kpiSql, [...codes, from, to] as (string|number|null)[]
-  );
-  const kpiMap = new Map(kpiRows.map(r => [r.employee_code, r.avg_score]));
+  const kpiRows = await querySource<{
+    employee_code: string;
+    avg_score: number;
+  }>(kpiSql, [...codes, from, to] as (string | number | null)[]);
+  const kpiMap = new Map(kpiRows.map((r) => [r.employee_code, r.avg_score]));
 
-  const aggregated = Array.from(teamMap.values()).map(team => {
-    const scores = team.codes.map(c => kpiMap.get(c) ?? null).filter((s): s is number => s !== null);
+  const aggregated = Array.from(teamMap.values()).map((team) => {
+    const scores = team.codes
+      .map((c) => kpiMap.get(c) ?? null)
+      .filter((s): s is number => s !== null);
     return {
       score_month: scoreMonth,
       team_lead_name: team.team_lead_name,
       branch_name: team.branch_name,
       process_name: team.process_name,
       team_size: team.codes.length,
-      avg_score: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 100) / 100 : null,
+      avg_score: scores.length
+        ? Math.round(
+            (scores.reduce((a, b) => a + b, 0) / scores.length) * 100,
+          ) / 100
+        : null,
       max_score: scores.length ? Math.max(...scores) : null,
       min_score: scores.length ? Math.min(...scores) : null,
     };
   });
 
-  const paged = aggregated.slice(options.offset, options.offset + options.limit);
-  return { rows: paged, rowCount: aggregated.length, isTruncated: aggregated.length > paged.length };
+  const paged = aggregated.slice(
+    options.offset,
+    options.offset + options.limit,
+  );
+  return {
+    rows: paged,
+    rowCount: aggregated.length,
+    isTruncated: aggregated.length > paged.length,
+  };
 }
 
 /**
@@ -241,14 +308,15 @@ export async function teamPerformanceSummary(
 function formatAuditDate(v: unknown): string {
   if (v instanceof Date) {
     const p = (n: number) => String(n).padStart(2, "0");
-    return `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())} ` +
-           `${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`;
+    return (
+      `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())} ` +
+      `${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`
+    );
   }
   return String(v ?? "");
 }
 
-const FATAL_ERROR_PREDICATE =
-  ` AND cqa.quality_percentage < 50
+const FATAL_ERROR_PREDICATE = ` AND cqa.quality_percentage < 50
        AND (cqa.professionalism_maintained = 0 OR cqa.active_listening = 0)`;
 
 /**
@@ -261,7 +329,7 @@ const FATAL_ERROR_PREDICATE =
 async function countAudits(
   placeholders: string,
   qParams: (string | number | null)[],
-  filterClause: string
+  filterClause: string,
 ): Promise<number> {
   const sql = `
     SELECT COUNT(*) AS total
@@ -273,7 +341,6 @@ async function countAudits(
   return Number(rows[0]?.total ?? 0);
 }
 
-
 // ---------------------------------------------------------------------------
 // quality-audit-log
 // Source: db_audit.call_quality_assessment (cross-DB via sourceDb / qualified refs)
@@ -282,11 +349,11 @@ async function countAudits(
 export async function qualityAuditLog(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   // active_status = 1 is load-bearing here, not cosmetic. Without it this resolved all 58,627
   // employee rows ever created and then sent an IN list of 58,627 placeholders to
@@ -294,7 +361,7 @@ export async function qualityAuditLog(
   // ~248s. Both this report and team-performance-summary simply died at the client timeout.
   // Scoped to the 1,125 active employees the same query returns in milliseconds.
   const eClauses: string[] = ["e.active_status = 1"];
-  const eParams: unknown[]  = [];
+  const eParams: unknown[] = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
@@ -311,12 +378,17 @@ export async function qualityAuditLog(
     LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
     LEFT JOIN mas_hrms.cost_centre_master cc ON cc.id = e.cost_centre_id
    WHERE ${eClauses.join(" AND ")}`;
-  const empRows = await querySource<{ employee_code: string; cost_centre_code: string; cost_centre_name: string }>(empSql, eParams as (string|number|null)[]);
-  if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
+  const empRows = await querySource<{
+    employee_code: string;
+    cost_centre_code: string;
+    cost_centre_name: string;
+  }>(empSql, eParams as (string | number | null)[]);
+  if (empRows.length === 0)
+    return { rows: [], rowCount: 0, isTruncated: false };
 
-  const codes = empRows.map(r => r.employee_code);
+  const codes = empRows.map((r) => r.employee_code);
   const placeholders = codes.map(() => "?").join(",");
-  const qParams: (string|number|null)[] = [...codes, from, to];
+  const qParams: (string | number | null)[] = [...codes, from, to];
   const cursor = options.cursor;
   let cursorClause = "";
   if (options.mode === "worker" && cursor != null) {
@@ -364,22 +436,30 @@ export async function qualityAuditLog(
   // the cursor clause. Named the same as its sibling's so the two stay visibly parallel.
   const countClause = cursorClause;
 
-  const ccByCode = new Map(empRows.map(r => [r.employee_code, r]));
-  const rawRows = await querySource<Record<string,unknown>>(sql, qParams);
-  const rows: Record<string, unknown>[] = rawRows.map(r => ({
+  const ccByCode = new Map(empRows.map((r) => [r.employee_code, r]));
+  const rawRows = await querySource<Record<string, unknown>>(sql, qParams);
+  const rows: Record<string, unknown>[] = rawRows.map((r) => ({
     ...r,
-    cost_centre_code: ccByCode.get(r.employee_code as string)?.cost_centre_code ?? 'UNASSIGNED',
-    cost_centre_name: ccByCode.get(r.employee_code as string)?.cost_centre_name ?? 'UNASSIGNED',
+    cost_centre_code:
+      ccByCode.get(r.employee_code as string)?.cost_centre_code ?? "UNASSIGNED",
+    cost_centre_name:
+      ccByCode.get(r.employee_code as string)?.cost_centre_name ?? "UNASSIGNED",
   }));
   // Composite, to match the (CallDate DESC, id DESC) keyset above. mysql2 hands datetimes back
   // as Date objects, so format explicitly rather than relying on toString().
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? `${formatAuditDate(rows[rows.length - 1].audit_date)}|${rows[rows.length - 1].call_id}`
-    : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? `${formatAuditDate(rows[rows.length - 1].audit_date)}|${rows[rows.length - 1].call_id}`
+      : null;
 
   // Worker mode keysets and takes what it asked for; preview slices its page out of the probe.
   if (options.mode === "worker") {
-    return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+    return {
+      rows,
+      rowCount: rows.length,
+      isTruncated: rows.length === options.limit,
+      nextCursor,
+    };
   }
 
   const page = rows.slice(0, options.limit);
@@ -395,7 +475,10 @@ export async function qualityAuditLog(
   if (rows.length > 0 && rows.length < probeLimit) {
     total = options.offset + rows.length;
   } else if (rows.length === 0) {
-    total = options.offset === 0 ? 0 : await countAudits(placeholders, qParams, countClause);
+    total =
+      options.offset === 0
+        ? 0
+        : await countAudits(placeholders, qParams, countClause);
   } else {
     total = await countAudits(placeholders, qParams, countClause);
   }
@@ -419,8 +502,11 @@ export async function qualityAuditLog(
 // new-kpi-compute.ts for how those rows were computed.
 // ---------------------------------------------------------------------------
 const REGINALD_ABC_METRIC_KEYS = [
-  "REGINALD_ABCD_SALES_COUNT", "REGINALD_ABCD_REVENUE", "REGINALD_ABCD_AOV",
-  "REGINALD_REPT_SALES_COUNT", "REGINALD_REPT_REVENUE",
+  "REGINALD_ABCD_SALES_COUNT",
+  "REGINALD_ABCD_REVENUE",
+  "REGINALD_ABCD_AOV",
+  "REGINALD_REPT_SALES_COUNT",
+  "REGINALD_REPT_REVENUE",
 ] as const;
 
 export async function reginaldAbandonedCartSalesReport(
@@ -453,16 +539,21 @@ export async function reginaldAbandonedCartSalesReport(
   // (undefined) rather than defaulting to a guessed 0.
   const byDate = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
-    const dateKey = r.score_date instanceof Date
-      ? r.score_date.toISOString().slice(0, 10)
-      : String(r.score_date);
-    const entry = byDate.get(dateKey) ?? { report_date: dateKey, process_name: process.process_name };
+    const dateKey =
+      r.score_date instanceof Date
+        ? r.score_date.toISOString().slice(0, 10)
+        : String(r.score_date);
+    const entry = byDate.get(dateKey) ?? {
+      report_date: dateKey,
+      process_name: process.process_name,
+    };
     entry[String(r.metric_key).toLowerCase()] = r.actual_value;
     byDate.set(dateKey, entry);
   }
 
   const pivoted = Array.from(byDate.values()).sort((a, b) =>
-    String(a.report_date).localeCompare(String(b.report_date)));
+    String(a.report_date).localeCompare(String(b.report_date)),
+  );
 
   const page = pivoted.slice(options.offset, options.offset + options.limit);
   return {
@@ -479,11 +570,11 @@ export async function reginaldAbandonedCartSalesReport(
 export async function fatalErrorRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   // active_status = 1 is load-bearing here, not cosmetic. Without it this resolved all 58,627
   // employee rows ever created and then sent an IN list of 58,627 placeholders to
@@ -491,7 +582,7 @@ export async function fatalErrorRegister(
   // ~248s. Both this report and team-performance-summary simply died at the client timeout.
   // Scoped to the 1,125 active employees the same query returns in milliseconds.
   const eClauses: string[] = ["e.active_status = 1"];
-  const eParams: unknown[]  = [];
+  const eParams: unknown[] = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
@@ -507,12 +598,17 @@ export async function fatalErrorRegister(
     LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
     LEFT JOIN mas_hrms.cost_centre_master cc ON cc.id = e.cost_centre_id
    WHERE ${eClauses.join(" AND ")}`;
-  const empRows = await querySource<{ employee_code: string; cost_centre_code: string; cost_centre_name: string }>(empSql, eParams as (string|number|null)[]);
-  if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
+  const empRows = await querySource<{
+    employee_code: string;
+    cost_centre_code: string;
+    cost_centre_name: string;
+  }>(empSql, eParams as (string | number | null)[]);
+  if (empRows.length === 0)
+    return { rows: [], rowCount: 0, isTruncated: false };
 
-  const codes = empRows.map(r => r.employee_code);
+  const codes = empRows.map((r) => r.employee_code);
   const placeholders = codes.map(() => "?").join(",");
-  const qParams: (string|number|null)[] = [...codes, from, to];
+  const qParams: (string | number | null)[] = [...codes, from, to];
   const cursor = options.cursor;
   let cursorClause = "";
   if (options.mode === "worker" && cursor != null) {
@@ -558,22 +654,30 @@ export async function fatalErrorRegister(
   // in the window. Omitting the fatal predicate here is what reported 28,982 rows as 77,433.
   const countClause = `${FATAL_ERROR_PREDICATE} ${cursorClause}`;
 
-  const ccByCode = new Map(empRows.map(r => [r.employee_code, r]));
-  const rawRows = await querySource<Record<string,unknown>>(sql, qParams);
-  const rows: Record<string, unknown>[] = rawRows.map(r => ({
+  const ccByCode = new Map(empRows.map((r) => [r.employee_code, r]));
+  const rawRows = await querySource<Record<string, unknown>>(sql, qParams);
+  const rows: Record<string, unknown>[] = rawRows.map((r) => ({
     ...r,
-    cost_centre_code: ccByCode.get(r.employee_code as string)?.cost_centre_code ?? 'UNASSIGNED',
-    cost_centre_name: ccByCode.get(r.employee_code as string)?.cost_centre_name ?? 'UNASSIGNED',
+    cost_centre_code:
+      ccByCode.get(r.employee_code as string)?.cost_centre_code ?? "UNASSIGNED",
+    cost_centre_name:
+      ccByCode.get(r.employee_code as string)?.cost_centre_name ?? "UNASSIGNED",
   }));
   // Composite, to match the (CallDate DESC, id DESC) keyset above. mysql2 hands datetimes back
   // as Date objects, so format explicitly rather than relying on toString().
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? `${formatAuditDate(rows[rows.length - 1].audit_date)}|${rows[rows.length - 1].call_id}`
-    : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? `${formatAuditDate(rows[rows.length - 1].audit_date)}|${rows[rows.length - 1].call_id}`
+      : null;
 
   // Worker mode keysets and takes what it asked for; preview slices its page out of the probe.
   if (options.mode === "worker") {
-    return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+    return {
+      rows,
+      rowCount: rows.length,
+      isTruncated: rows.length === options.limit,
+      nextCursor,
+    };
   }
 
   const page = rows.slice(0, options.limit);
@@ -589,7 +693,10 @@ export async function fatalErrorRegister(
   if (rows.length > 0 && rows.length < probeLimit) {
     total = options.offset + rows.length;
   } else if (rows.length === 0) {
-    total = options.offset === 0 ? 0 : await countAudits(placeholders, qParams, countClause);
+    total =
+      options.offset === 0
+        ? 0
+        : await countAudits(placeholders, qParams, countClause);
   } else {
     total = await countAudits(placeholders, qParams, countClause);
   }

@@ -1,6 +1,6 @@
-import { randomUUID } from 'crypto';
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { randomUUID } from "crypto";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
 // ========== Types ==========
 export interface ProcessWeekOffCapacity {
@@ -23,7 +23,7 @@ export interface WeekOffAllocation {
   employee_id: string;
   preference_id: string | null;
   allocation_sequence: number; // FCFS sequence
-  allocation_status: 'allocated' | 'waitlisted' | 'denied';
+  allocation_status: "allocated" | "waitlisted" | "denied";
   auto_approved: number;
   allocated_at: string;
 }
@@ -32,7 +32,7 @@ export interface WeekOffNotification {
   id: string;
   employee_id: string;
   preference_id: string;
-  notification_type: 'approved' | 'denied' | 'waitlisted' | 'capacity_full';
+  notification_type: "approved" | "denied" | "waitlisted" | "capacity_full";
   message: string;
   roster_date: string | null;
   is_read: number;
@@ -52,10 +52,13 @@ export interface CapacityCheckResult {
 // ========== Service ==========
 class RosterCapacityService {
   // ========== Capacity Config CRUD ==========
-  async getCapacityConfig(processId: string, dayOfWeek: number): Promise<ProcessWeekOffCapacity | null> {
+  async getCapacityConfig(
+    processId: string,
+    dayOfWeek: number,
+  ): Promise<ProcessWeekOffCapacity | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT * FROM process_weekoff_capacity WHERE process_id = ? AND day_of_week = ?',
-      [processId, dayOfWeek]
+      "SELECT * FROM process_weekoff_capacity WHERE process_id = ? AND day_of_week = ?",
+      [processId, dayOfWeek],
     );
 
     return rows.length > 0 ? (rows[0] as ProcessWeekOffCapacity) : null;
@@ -69,42 +72,42 @@ class RosterCapacityService {
       max_weekoff_percentage?: number | null;
       auto_approve_enabled?: boolean;
       auto_approve_threshold?: number | null;
-    }
+    },
   ): Promise<ProcessWeekOffCapacity> {
     const sets: string[] = [];
     const params: unknown[] = [];
 
     if (updates.max_weekoff_count !== undefined) {
-      sets.push('max_weekoff_count = ?');
+      sets.push("max_weekoff_count = ?");
       params.push(updates.max_weekoff_count);
     }
     if (updates.max_weekoff_percentage !== undefined) {
-      sets.push('max_weekoff_percentage = ?');
+      sets.push("max_weekoff_percentage = ?");
       params.push(updates.max_weekoff_percentage);
     }
     if (updates.auto_approve_enabled !== undefined) {
-      sets.push('auto_approve_enabled = ?');
+      sets.push("auto_approve_enabled = ?");
       params.push(updates.auto_approve_enabled ? 1 : 0);
     }
     if (updates.auto_approve_threshold !== undefined) {
-      sets.push('auto_approve_threshold = ?');
+      sets.push("auto_approve_threshold = ?");
       params.push(updates.auto_approve_threshold);
     }
 
     if (sets.length === 0) {
-      throw new Error('No updates provided');
+      throw new Error("No updates provided");
     }
 
     params.push(processId, dayOfWeek);
 
     await db.execute(
-      `UPDATE process_weekoff_capacity SET ${sets.join(', ')}, updated_at = NOW()
+      `UPDATE process_weekoff_capacity SET ${sets.join(", ")}, updated_at = NOW()
        WHERE process_id = ? AND day_of_week = ?`,
-      params
+      params,
     );
 
     const config = await this.getCapacityConfig(processId, dayOfWeek);
-    if (!config) throw new Error('Capacity config not found after update');
+    if (!config) throw new Error("Capacity config not found after update");
     return config;
   }
 
@@ -112,7 +115,7 @@ class RosterCapacityService {
   async checkCapacity(
     processId: string,
     allocationDate: string,
-    dayOfWeek: number
+    dayOfWeek: number,
   ): Promise<CapacityCheckResult> {
     // Get capacity config
     const config = await this.getCapacityConfig(processId, dayOfWeek);
@@ -124,7 +127,7 @@ class RosterCapacityService {
         max_percentage: null,
         process_strength: 0,
         allocation_sequence: null,
-        reason: 'No capacity config found for this process and day',
+        reason: "No capacity config found for this process and day",
       };
     }
 
@@ -132,14 +135,14 @@ class RosterCapacityService {
     const [allocations] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM weekoff_allocation_log
        WHERE process_id = ? AND allocation_date = ? AND allocation_status = 'allocated'`,
-      [processId, allocationDate]
+      [processId, allocationDate],
     );
     const currentCount = (allocations[0] as any).count;
 
     // Get process strength (total active employees in process)
     const [employees] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM employees WHERE process_id = ? AND active_status = 1`,
-      [processId]
+      [processId],
     );
     const processStrength = (employees[0] as any).count;
 
@@ -180,7 +183,7 @@ class RosterCapacityService {
         `SELECT COALESCE(SUM(required_planned_hc), 0) AS hc_floor
            FROM wfm_slot_requirement
           WHERE process_id = ? AND requirement_date = ? AND required_planned_hc IS NOT NULL`,
-        [processId, allocationDate]
+        [processId, allocationDate],
       );
       const hcFloor = Number((floorRows[0] as any).hc_floor ?? 0);
 
@@ -192,7 +195,7 @@ class RosterCapacityService {
              JOIN employees e ON e.id = lr.employee_id
             WHERE e.process_id = ? AND lr.status = 'approved'
               AND lr.start_date <= ? AND lr.end_date >= ?`,
-          [processId, allocationDate, allocationDate]
+          [processId, allocationDate, allocationDate],
         );
         const onLeave = Number((leaveRows[0] as any).on_leave ?? 0);
 
@@ -203,7 +206,7 @@ class RosterCapacityService {
         const availableForWork = processStrength - onLeave - alreadyWeekoff;
 
         // If granting one more week-off would drop available below floor → deny
-        if ((availableForWork - 1) < hcFloor) {
+        if (availableForWork - 1 < hcFloor) {
           return {
             can_allocate: false,
             current_count: currentCount,
@@ -223,7 +226,7 @@ class RosterCapacityService {
     const [maxSeq] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(MAX(allocation_sequence), 0) as max_seq FROM weekoff_allocation_log
        WHERE process_id = ? AND day_of_week = ?`,
-      [processId, dayOfWeek]
+      [processId, dayOfWeek],
     );
     const nextSequence = ((maxSeq[0] as any).max_seq || 0) + 1;
 
@@ -238,7 +241,11 @@ class RosterCapacityService {
   }
 
   // ========== Auto-Approval Logic ==========
-  async shouldAutoApprove(processId: string, dayOfWeek: number, currentAllocations: number): Promise<boolean> {
+  async shouldAutoApprove(
+    processId: string,
+    dayOfWeek: number,
+    currentAllocations: number,
+  ): Promise<boolean> {
     const config = await this.getCapacityConfig(processId, dayOfWeek);
     if (!config || !config.auto_approve_enabled) {
       return false;
@@ -266,15 +273,15 @@ class RosterCapacityService {
     const capacityCheck = await this.checkCapacity(
       data.process_id,
       data.allocation_date,
-      data.day_of_week
+      data.day_of_week,
     );
 
     if (!capacityCheck.can_allocate) {
-      throw new Error(capacityCheck.reason || 'Capacity limit reached');
+      throw new Error(capacityCheck.reason || "Capacity limit reached");
     }
 
     const id = randomUUID();
-    const allocationStatus = 'allocated';
+    const allocationStatus = "allocated";
 
     await db.execute(
       `INSERT INTO weekoff_allocation_log
@@ -291,12 +298,12 @@ class RosterCapacityService {
         capacityCheck.allocation_sequence,
         allocationStatus,
         data.auto_approved ? 1 : 0,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT * FROM weekoff_allocation_log WHERE id = ?',
-      [id]
+      "SELECT * FROM weekoff_allocation_log WHERE id = ?",
+      [id],
     );
 
     return rows[0] as WeekOffAllocation;
@@ -308,31 +315,31 @@ class RosterCapacityService {
     employee_id?: string;
     day_of_week?: number;
   }): Promise<WeekOffAllocation[]> {
-    let sql = 'SELECT * FROM weekoff_allocation_log WHERE 1=1';
+    let sql = "SELECT * FROM weekoff_allocation_log WHERE 1=1";
     const params: unknown[] = [];
 
     if (Array.isArray(filters.process_id)) {
       if (filters.process_id.length === 0) return [];
-      sql += ` AND process_id IN (${filters.process_id.map(() => '?').join(',')})`;
+      sql += ` AND process_id IN (${filters.process_id.map(() => "?").join(",")})`;
       params.push(...filters.process_id);
     } else if (filters.process_id) {
-      sql += ' AND process_id = ?';
+      sql += " AND process_id = ?";
       params.push(filters.process_id);
     }
     if (filters.allocation_date) {
-      sql += ' AND allocation_date = ?';
+      sql += " AND allocation_date = ?";
       params.push(filters.allocation_date);
     }
     if (filters.employee_id) {
-      sql += ' AND employee_id = ?';
+      sql += " AND employee_id = ?";
       params.push(filters.employee_id);
     }
     if (filters.day_of_week !== undefined) {
-      sql += ' AND day_of_week = ?';
+      sql += " AND day_of_week = ?";
       params.push(filters.day_of_week);
     }
 
-    sql += ' ORDER BY allocation_sequence ASC';
+    sql += " ORDER BY allocation_sequence ASC";
 
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return rows as WeekOffAllocation[];
@@ -342,7 +349,7 @@ class RosterCapacityService {
   async createNotification(data: {
     employee_id: string;
     preference_id: string;
-    notification_type: 'approved' | 'denied' | 'waitlisted' | 'capacity_full';
+    notification_type: "approved" | "denied" | "waitlisted" | "capacity_full";
     message: string;
     roster_date?: string;
   }): Promise<WeekOffNotification> {
@@ -359,26 +366,30 @@ class RosterCapacityService {
         data.notification_type,
         data.message,
         data.roster_date || null,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT * FROM weekoff_preference_notification WHERE id = ?',
-      [id]
+      "SELECT * FROM weekoff_preference_notification WHERE id = ?",
+      [id],
     );
 
     return rows[0] as WeekOffNotification;
   }
 
-  async getNotifications(employeeId: string, unreadOnly = false): Promise<WeekOffNotification[]> {
-    let sql = 'SELECT * FROM weekoff_preference_notification WHERE employee_id = ?';
+  async getNotifications(
+    employeeId: string,
+    unreadOnly = false,
+  ): Promise<WeekOffNotification[]> {
+    let sql =
+      "SELECT * FROM weekoff_preference_notification WHERE employee_id = ?";
     const params: unknown[] = [employeeId];
 
     if (unreadOnly) {
-      sql += ' AND is_read = 0';
+      sql += " AND is_read = 0";
     }
 
-    sql += ' ORDER BY created_at DESC';
+    sql += " ORDER BY created_at DESC";
 
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return rows as WeekOffNotification[];
@@ -386,8 +397,8 @@ class RosterCapacityService {
 
   async markNotificationRead(notificationId: string): Promise<void> {
     await db.execute(
-      'UPDATE weekoff_preference_notification SET is_read = 1 WHERE id = ?',
-      [notificationId]
+      "UPDATE weekoff_preference_notification SET is_read = 1 WHERE id = ?",
+      [notificationId],
     );
   }
 
@@ -397,14 +408,18 @@ class RosterCapacityService {
     process_id: string;
     preferred_day: number;
     alternate_day: number | null;
-  }): Promise<{ preference_id: string; auto_approved: boolean; notification: string }> {
+  }): Promise<{
+    preference_id: string;
+    auto_approved: boolean;
+    notification: string;
+  }> {
     const preferenceId = randomUUID();
 
     // Get current submission count for FCFS ordering
     const [submissionCount] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM week_off_preference
        WHERE employee_id IN (SELECT id FROM employees WHERE process_id = ?)`,
-      [data.process_id]
+      [data.process_id],
     );
     const submissionOrder = ((submissionCount[0] as any).count || 0) + 1;
 
@@ -413,11 +428,15 @@ class RosterCapacityService {
     const [currentAllocs] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM weekoff_allocation_log
        WHERE process_id = ? AND day_of_week = ? AND allocation_status = 'allocated'`,
-      [data.process_id, dayOfWeek]
+      [data.process_id, dayOfWeek],
     );
     const currentCount = (currentAllocs[0] as any).count;
 
-    const shouldAutoApprove = await this.shouldAutoApprove(data.process_id, dayOfWeek, currentCount);
+    const shouldAutoApprove = await this.shouldAutoApprove(
+      data.process_id,
+      dayOfWeek,
+      currentCount,
+    );
 
     // Insert preference
     await db.execute(
@@ -432,7 +451,7 @@ class RosterCapacityService {
         shouldAutoApprove ? 1 : 0,
         shouldAutoApprove ? 1 : 0,
         submissionOrder,
-      ]
+      ],
     );
 
     // Create notification
@@ -443,7 +462,7 @@ class RosterCapacityService {
     await this.createNotification({
       employee_id: data.employee_id,
       preference_id: preferenceId,
-      notification_type: shouldAutoApprove ? 'approved' : 'waitlisted',
+      notification_type: shouldAutoApprove ? "approved" : "waitlisted",
       message: notificationMessage,
     });
 
@@ -455,8 +474,16 @@ class RosterCapacityService {
   }
 
   private getDayName(day: number): string {
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    return days[day] || 'Unknown';
+    const days = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ];
+    return days[day] || "Unknown";
   }
 }
 

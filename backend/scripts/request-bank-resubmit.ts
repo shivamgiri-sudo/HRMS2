@@ -46,11 +46,19 @@ function csvField(value: string): string {
 }
 
 function toCsv(entries: ReportEntry[]): string {
-  const columns: (keyof ReportEntry)[] = ["candidate_id", "name", "email_sent", "sent_to", "message"];
+  const columns: (keyof ReportEntry)[] = [
+    "candidate_id",
+    "name",
+    "email_sent",
+    "sent_to",
+    "message",
+  ];
   return (
     [
       columns.join(","),
-      ...entries.map((e) => columns.map((c) => csvField(String(e[c] ?? ""))).join(",")),
+      ...entries.map((e) =>
+        columns.map((c) => csvField(String(e[c] ?? ""))).join(","),
+      ),
     ].join("\n") + "\n"
   );
 }
@@ -100,7 +108,8 @@ async function main(): Promise<void> {
   }
 
   const { db } = await import("../src/db/mysql.js");
-  const { sendBankResubmitRequest } = await import("../src/modules/ats/ats.onboarding.service.js");
+  const { sendBankResubmitRequest } =
+    await import("../src/modules/ats/ats.onboarding.service.js");
 
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -113,15 +122,24 @@ async function main(): Promise<void> {
             WHERE b.verification_status='verified' AND b.account_no_encrypted IS NULL`,
       args.candidateId ? [args.candidateId] : [],
     );
-    const targets = (rows as RowDataPacket[]).map((r) => ({ id: String(r.id), name: String(r.full_name ?? "") }));
+    const targets = (rows as RowDataPacket[]).map((r) => ({
+      id: String(r.id),
+      name: String(r.full_name ?? ""),
+    }));
 
-    console.log(args.confirm ? "MODE: CONFIRMED (will send)" : "MODE: LIST ONLY (nothing will be sent)");
+    console.log(
+      args.confirm
+        ? "MODE: CONFIRMED (will send)"
+        : "MODE: LIST ONLY (nothing will be sent)",
+    );
     console.log(`Actor: ${args.actorUserId}`);
     console.log(`Eligible: ${targets.length}`);
 
     if (!args.confirm) {
       targets.forEach((t) => console.log(`  ${t.name}  ${t.id}`));
-      console.log("\nLIST ONLY — nothing was sent. Re-run with --confirm to actually send.");
+      console.log(
+        "\nLIST ONLY — nothing was sent. Re-run with --confirm to actually send.",
+      );
       return;
     }
 
@@ -130,8 +148,12 @@ async function main(): Promise<void> {
     let failed = 0;
     for (const target of targets) {
       try {
-        const result = await sendBankResubmitRequest(target.id, args.actorUserId.trim());
-        if (result.emailSent) sent++; else failed++;
+        const result = await sendBankResubmitRequest(
+          target.id,
+          args.actorUserId.trim(),
+        );
+        if (result.emailSent) sent++;
+        else failed++;
         entries.push({
           candidate_id: target.id,
           name: target.name,
@@ -151,8 +173,14 @@ async function main(): Promise<void> {
       }
     }
 
-    console.log(`\nDone: ${sent} sent, ${failed} not sent, out of ${targets.length}.\n`);
-    entries.forEach((e) => console.log(`  ${e.email_sent ? "SENT " : "SKIP "} ${e.name}  ${e.message}`));
+    console.log(
+      `\nDone: ${sent} sent, ${failed} not sent, out of ${targets.length}.\n`,
+    );
+    entries.forEach((e) =>
+      console.log(
+        `  ${e.email_sent ? "SENT " : "SKIP "} ${e.name}  ${e.message}`,
+      ),
+    );
 
     if (args.reportPath) {
       const resolved = path.resolve(args.reportPath);
@@ -167,7 +195,10 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && /request-bank-resubmit\.(ts|js)$/.test(process.argv[1])) {
+if (
+  process.argv[1] &&
+  /request-bank-resubmit\.(ts|js)$/.test(process.argv[1])
+) {
   main().catch((e) => {
     console.error(e);
     process.exit(1);

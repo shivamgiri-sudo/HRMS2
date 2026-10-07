@@ -53,11 +53,11 @@
 // pure function at all; their two exact config keys and their release values are exported below as
 // constants so the migration and the readers agree on the spelling.
 
-import type { VarianceDecision } from './attendance-variance.js';
+import type { VarianceDecision } from "./attendance-variance.js";
 import type {
   DayClassification as PayableDayClassification,
   PayableDayResult,
-} from './payable-days.js';
+} from "./payable-days.js";
 
 // ---------------------------------------------------------------------------------------------
 // Compile-time assertions. `Assert<false>` is an error because false does not extend true; the
@@ -73,26 +73,27 @@ type Assert<T extends true> = T;
 // ---------------------------------------------------------------------------------------------
 
 /** criterion 7.11. */
-export type ReviewOutcome = 'apr_accepted' | 'apr_disputed' | 'adjustment_requested';
+export type ReviewOutcome =
+  "apr_accepted" | "apr_disputed" | "adjustment_requested";
 
 /** criterion 7.11: Queued_For_Dual_Review or Recorded_Not_Queued. */
-export type QueueState = 'queued_for_dual_review' | 'recorded_not_queued';
+export type QueueState = "queued_for_dual_review" | "recorded_not_queued";
 
 /** `payroll_attendance_conflict_review.status` plus criterion 7.10's contested state. */
 export type VarianceRecordStatus =
-  | 'open'
-  | 'notified'
-  | 'reviewed'
-  | 'contested'
-  | 'no_issue'
-  | 'regularization_required';
+  | "open"
+  | "notified"
+  | "reviewed"
+  | "contested"
+  | "no_issue"
+  | "regularization_required";
 
 /**
  * UNREVIEWED, precisely: no reviewer has recorded a Review_Outcome yet. 'open' is a record nobody
  * has been notified about; 'notified' is a record a reviewer has been told about and has not acted
  * on. These are the two statuses criterion 9.6 blocks on and criterion 9.3 carries forward.
  */
-export type UnreviewedStatus = 'open' | 'notified';
+export type UnreviewedStatus = "open" | "notified";
 
 /**
  * REVIEWED, precisely: the complement. 'reviewed', 'no_issue' and 'regularization_required' are
@@ -121,11 +122,16 @@ type _StatusPartitionIsDisjoint = Assert<
  * automatically accepted here and a not-raised decision remains unrepresentable. Today:
  * 'raised_biometric_shortfall' (criterion 6.1) and 'raised_dialler_underclassified' (6.4).
  */
-export type RaisedVarianceDecision = Extract<VarianceDecision, `raised_${string}`>;
+export type RaisedVarianceDecision = Extract<
+  VarianceDecision,
+  `raised_${string}`
+>;
 
 // Sanity: the extraction must actually match something, or every record below would be
 // unconstructable.
-type _RaisedDecisionsExist = Assert<[RaisedVarianceDecision] extends [never] ? false : true>;
+type _RaisedDecisionsExist = Assert<
+  [RaisedVarianceDecision] extends [never] ? false : true
+>;
 
 /**
  * What a day contributes to Payable_Days, reusing payable-days.ts's own field type rather than
@@ -133,18 +139,19 @@ type _RaisedDecisionsExist = Assert<[RaisedVarianceDecision] extends [never] ? f
  * this day alone", the day being in review — which is why criterion 9.4's difference is not always
  * computable and is reported as such instead of being invented as 0.
  */
-export type PayableDayValue = PayableDayResult['payableDayValue'];
+export type PayableDayValue = PayableDayResult["payableDayValue"];
 
 // ---------------------------------------------------------------------------------------------
 // attendance_feature_config. The two keys of criteria 9.7 and 9.8, spelled once.
 // ---------------------------------------------------------------------------------------------
 
 /** criterion 9.7. Migration sets this to 1 on release so the queue is active. */
-export const FEATURE_FLAG_MISMATCH_WORKFLOW_ENABLED = 'mismatch_workflow_enabled';
+export const FEATURE_FLAG_MISMATCH_WORKFLOW_ENABLED =
+  "mismatch_workflow_enabled";
 
 /** criterion 9.8. Migration sets this to 0 on release; a branch may opt in to 9.6's blocking. */
 export const FEATURE_FLAG_PAYROLL_LOCK_ON_UNRESOLVED_MISMATCH =
-  'payroll_lock_on_unresolved_mismatch';
+  "payroll_lock_on_unresolved_mismatch";
 
 /** criterion 9.7's released value. */
 export const RELEASE_DEFAULT_MISMATCH_WORKFLOW_ENABLED = 1 as const;
@@ -182,14 +189,26 @@ export function resolveFeatureFlag(
   releaseDefault: 0 | 1,
 ): ResolvedFeatureFlag {
   if (raw === null || raw === undefined) {
-    return { value: releaseDefault, wasAbsent: true, rejectedValue: null, warning: null };
+    return {
+      value: releaseDefault,
+      wasAbsent: true,
+      rejectedValue: null,
+      warning: null,
+    };
   }
-  if (typeof raw === 'boolean') {
-    return { value: raw ? 1 : 0, wasAbsent: false, rejectedValue: null, warning: null };
+  if (typeof raw === "boolean") {
+    return {
+      value: raw ? 1 : 0,
+      wasAbsent: false,
+      rejectedValue: null,
+      warning: null,
+    };
   }
-  if (typeof raw === 'number') {
-    if (raw === 0) return { value: 0, wasAbsent: false, rejectedValue: null, warning: null };
-    if (raw === 1) return { value: 1, wasAbsent: false, rejectedValue: null, warning: null };
+  if (typeof raw === "number") {
+    if (raw === 0)
+      return { value: 0, wasAbsent: false, rejectedValue: null, warning: null };
+    if (raw === 1)
+      return { value: 1, wasAbsent: false, rejectedValue: null, warning: null };
     return {
       value: releaseDefault,
       wasAbsent: false,
@@ -198,13 +217,18 @@ export function resolveFeatureFlag(
     };
   }
   const text = raw.trim().toLowerCase();
-  if (text === '') {
-    return { value: releaseDefault, wasAbsent: true, rejectedValue: null, warning: null };
+  if (text === "") {
+    return {
+      value: releaseDefault,
+      wasAbsent: true,
+      rejectedValue: null,
+      warning: null,
+    };
   }
-  if (text === '1' || text === 'true' || text === 'yes' || text === 'on') {
+  if (text === "1" || text === "true" || text === "yes" || text === "on") {
     return { value: 1, wasAbsent: false, rejectedValue: null, warning: null };
   }
-  if (text === '0' || text === 'false' || text === 'no' || text === 'off') {
+  if (text === "0" || text === "false" || text === "no" || text === "off") {
     return { value: 0, wasAbsent: false, rejectedValue: null, warning: null };
   }
   return {
@@ -215,7 +239,11 @@ export function resolveFeatureFlag(
   };
 }
 
-function unreadableFlagWarning(key: string, raw: FeatureFlagValue, applied: 0 | 1): string {
+function unreadableFlagWarning(
+  key: string,
+  raw: FeatureFlagValue,
+  applied: 0 | 1,
+): string {
   return (
     `attendance_feature_config.${key} holds ${JSON.stringify(raw)}, which is not a readable ` +
     `0/1 flag value; applied the release default of ${applied}.`
@@ -237,7 +265,7 @@ const PAY_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
  *   an empty record set, an absent flag and an empty openPayMonths list all return defined results.
  */
 function assertPayMonth(label: string, value: string): void {
-  if (typeof value !== 'string' || !PAY_MONTH_PATTERN.test(value)) {
+  if (typeof value !== "string" || !PAY_MONTH_PATTERN.test(value)) {
     throw new Error(
       `variance-payroll-cutoff: ${label} must be a Pay_Month of the form 'YYYY-MM' ` +
         `(received ${JSON.stringify(value)}).`,
@@ -260,8 +288,8 @@ function assertPayMonth(label: string, value: string): void {
  * @throws when either value is not 'YYYY-MM' (programmer error, see assertPayMonth).
  */
 export function comparePayMonths(a: string, b: string): number {
-  assertPayMonth('payMonth', a);
-  assertPayMonth('payMonth', b);
+  assertPayMonth("payMonth", a);
+  assertPayMonth("payMonth", b);
   return payMonthOrdinal(a) - payMonthOrdinal(b);
 }
 
@@ -281,11 +309,14 @@ function payMonthOrdinal(payMonth: string): number {
  *
  * @throws when any entry is not 'YYYY-MM' (programmer error, see assertPayMonth).
  */
-export function earliestOpenPayMonth(openPayMonths: readonly string[]): string | null {
+export function earliestOpenPayMonth(
+  openPayMonths: readonly string[],
+): string | null {
   let earliest: string | null = null;
   for (const candidate of openPayMonths) {
-    assertPayMonth('openPayMonths entry', candidate);
-    if (earliest === null || comparePayMonths(candidate, earliest) < 0) earliest = candidate;
+    assertPayMonth("openPayMonths entry", candidate);
+    if (earliest === null || comparePayMonths(candidate, earliest) < 0)
+      earliest = candidate;
   }
   return earliest;
 }
@@ -330,24 +361,30 @@ export interface EffectiveVarianceRecord extends PayrollVarianceRecord {
 
 /** Structurally guaranteed to be presented for Dual_Review. See guarantee 2 in the file header. */
 type QueuedRecord = EffectiveVarianceRecord & {
-  readonly effectiveQueueState: 'queued_for_dual_review';
+  readonly effectiveQueueState: "queued_for_dual_review";
 };
 
 /** Structurally guaranteed to be both presented and not yet reviewed: the only thing 9.6 blocks on. */
-type UnreviewedQueuedRecord = QueuedRecord & { readonly status: UnreviewedStatus };
+type UnreviewedQueuedRecord = QueuedRecord & {
+  readonly status: UnreviewedStatus;
+};
 
-function isUnreviewedStatus(status: VarianceRecordStatus): status is UnreviewedStatus {
+function isUnreviewedStatus(
+  status: VarianceRecordStatus,
+): status is UnreviewedStatus {
   // Written as explicit disjuncts rather than an array lookup so the compiler checks the return
   // type against the union; the partition assertions above force this to be revisited if the
   // status enum grows.
-  return status === 'open' || status === 'notified';
+  return status === "open" || status === "notified";
 }
 
 function isQueued(record: EffectiveVarianceRecord): record is QueuedRecord {
-  return record.effectiveQueueState === 'queued_for_dual_review';
+  return record.effectiveQueueState === "queued_for_dual_review";
 }
 
-function isUnreviewedQueued(record: EffectiveVarianceRecord): record is UnreviewedQueuedRecord {
+function isUnreviewedQueued(
+  record: EffectiveVarianceRecord,
+): record is UnreviewedQueuedRecord {
   return isQueued(record) && isUnreviewedStatus(record.status);
 }
 
@@ -357,9 +394,14 @@ function isUnreviewedQueued(record: EffectiveVarianceRecord): record is Unreview
  * is total rather than merely deterministic-if-lucky. Plain string comparison, not localeCompare:
  * the result must not depend on the process locale.
  */
-function compareRecords(a: PayrollVarianceRecord, b: PayrollVarianceRecord): number {
-  if (a.attendanceDate !== b.attendanceDate) return a.attendanceDate < b.attendanceDate ? -1 : 1;
-  if (a.employeeId !== b.employeeId) return a.employeeId < b.employeeId ? -1 : 1;
+function compareRecords(
+  a: PayrollVarianceRecord,
+  b: PayrollVarianceRecord,
+): number {
+  if (a.attendanceDate !== b.attendanceDate)
+    return a.attendanceDate < b.attendanceDate ? -1 : 1;
+  if (a.employeeId !== b.employeeId)
+    return a.employeeId < b.employeeId ? -1 : 1;
   if (a.recordId === b.recordId) return 0;
   return a.recordId < b.recordId ? -1 : 1;
 }
@@ -397,8 +439,13 @@ function recordIdentity(record: PayrollVarianceRecord): string {
  *   picking one of the two would make the answer depend on input order — the exact property this
  *   module promises not to have.
  */
-function dedupeRecords(records: readonly PayrollVarianceRecord[]): PayrollVarianceRecord[] {
-  const byId = new Map<string, { record: PayrollVarianceRecord; identity: string }>();
+function dedupeRecords(
+  records: readonly PayrollVarianceRecord[],
+): PayrollVarianceRecord[] {
+  const byId = new Map<
+    string,
+    { record: PayrollVarianceRecord; identity: string }
+  >();
   for (const record of records) {
     const identity = recordIdentity(record);
     const seen = byId.get(record.recordId);
@@ -447,10 +494,11 @@ function applyPresentationGate(
 ): EffectiveVarianceRecord[] {
   return records.map((record) => {
     const demoted =
-      mismatchWorkflowEnabled === 0 && record.queueState === 'queued_for_dual_review';
+      mismatchWorkflowEnabled === 0 &&
+      record.queueState === "queued_for_dual_review";
     return {
       ...record,
-      effectiveQueueState: demoted ? 'recorded_not_queued' : record.queueState,
+      effectiveQueueState: demoted ? "recorded_not_queued" : record.queueState,
       demotedByPresentationGate: demoted,
     };
   });
@@ -490,7 +538,9 @@ export interface PresentationResult {
  *
  * Total: an empty record set and an absent flag both return defined results.
  */
-export function splitDetectionFromPresentation(input: PresentationInput): PresentationResult {
+export function splitDetectionFromPresentation(
+  input: PresentationInput,
+): PresentationResult {
   const flag = resolveFeatureFlag(
     FEATURE_FLAG_MISMATCH_WORKFLOW_ENABLED,
     input.mismatchWorkflowEnabled,
@@ -498,7 +548,9 @@ export function splitDetectionFromPresentation(input: PresentationInput): Presen
   );
   const records = dedupeRecords(input.records);
   const counts = countRaisedAndRecorded(records);
-  const effective = applyPresentationGate(records, flag.value).sort(compareRecords);
+  const effective = applyPresentationGate(records, flag.value).sort(
+    compareRecords,
+  );
 
   const presented = effective.filter(isQueued);
   const notPresented = effective.filter((record) => !isQueued(record));
@@ -509,7 +561,9 @@ export function splitDetectionFromPresentation(input: PresentationInput): Presen
     recordedCount: counts.recorded,
     presentedForDualReview: Object.freeze(presented),
     notPresented: Object.freeze(notPresented),
-    demotedByPresentationGate: effective.filter((r) => r.demotedByPresentationGate).length,
+    demotedByPresentationGate: effective.filter(
+      (r) => r.demotedByPresentationGate,
+    ).length,
     backfillRequiredOnEnable: false,
     configurationWarnings: Object.freeze(
       [flag.warning].filter((w): w is string => w !== null),
@@ -597,7 +651,7 @@ export interface PreCloseReconciliation {
 export function buildPreCloseReconciliation(
   input: PreCloseReconciliationInput,
 ): PreCloseReconciliation {
-  assertPayMonth('payMonth', input.payMonth);
+  assertPayMonth("payMonth", input.payMonth);
 
   const flag = resolveFeatureFlag(
     FEATURE_FLAG_MISMATCH_WORKFLOW_ENABLED,
@@ -606,12 +660,16 @@ export function buildPreCloseReconciliation(
   );
 
   const deduped = dedupeRecords(input.records);
-  for (const record of deduped) assertPayMonth('record.payMonth', record.payMonth);
+  for (const record of deduped)
+    assertPayMonth("record.payMonth", record.payMonth);
 
   const inScope = deduped.filter(
-    (record) => record.branchId === input.branchId && record.payMonth === input.payMonth,
+    (record) =>
+      record.branchId === input.branchId && record.payMonth === input.payMonth,
   );
-  const effective = applyPresentationGate(inScope, flag.value).sort(compareRecords);
+  const effective = applyPresentationGate(inScope, flag.value).sort(
+    compareRecords,
+  );
 
   const queued = effective.filter(isQueued);
   const unreviewedQueued = queued.filter(isUnreviewedQueued);
@@ -627,17 +685,23 @@ export function buildPreCloseReconciliation(
     // might disagree.
     reviewed: queued.length - unreviewedQueued.length,
     unreviewed: unreviewedQueued.length,
-    contested: effective.filter((record) => record.status === 'contested').length,
-    contestedQueued: queued.filter((record) => record.status === 'contested').length,
+    contested: effective.filter((record) => record.status === "contested")
+      .length,
+    contestedQueued: queued.filter((record) => record.status === "contested")
+      .length,
     unreviewedRecordIds: Object.freeze(
       unreviewedQueued.map((record) => record.recordId).sort(compareStrings),
     ),
     unreviewedEmployeeIds: Object.freeze(
-      [...new Set(unreviewedQueued.map((record) => record.employeeId))].sort(compareStrings),
+      [...new Set(unreviewedQueued.map((record) => record.employeeId))].sort(
+        compareStrings,
+      ),
     ),
     outOfScopeRecordCount: deduped.length - inScope.length,
     mismatchWorkflowEnabled: flag.value,
-    demotedByPresentationGate: effective.filter((r) => r.demotedByPresentationGate).length,
+    demotedByPresentationGate: effective.filter(
+      (r) => r.demotedByPresentationGate,
+    ).length,
     configurationWarnings: Object.freeze(
       [flag.warning].filter((w): w is string => w !== null),
     ),
@@ -673,9 +737,9 @@ export interface UnreviewedVarianceMark {
 
 export type CutOffDisposition =
   /** criteria 9.1, 9.2. The default, and the case with no unreviewed record at all. */
-  | 'proceeds'
+  | "proceeds"
   /** criterion 9.6, and only reachable with the branch's lock flag resolved to 1. */
-  | 'refused_unreviewed_queued_variances';
+  | "refused_unreviewed_queued_variances";
 
 interface CutOffDecisionCommon {
   readonly payMonth: string;
@@ -689,7 +753,7 @@ interface CutOffDecisionCommon {
 }
 
 export interface CutOffProceeds extends CutOffDecisionCommon {
-  readonly disposition: 'proceeds';
+  readonly disposition: "proceeds";
   /** Literal true. No caller can read a false out of the default arm. */
   readonly mayProceed: true;
   /**
@@ -697,7 +761,7 @@ export interface CutOffProceeds extends CutOffDecisionCommon {
    * completes. This module states the basis; payable-days.ts classifies each day and the payroll
    * writer sums them.
    */
-  readonly payableDaysBasis: 'resolved_attendance_source';
+  readonly payableDaysBasis: "resolved_attendance_source";
   /** criterion 9.2. One entry per affected salary line, sorted by employeeId. Possibly empty. */
   readonly salaryLineMarks: readonly UnreviewedVarianceMark[];
   /** Convenience: the number of unreviewed queued records the run is proceeding past. */
@@ -705,7 +769,7 @@ export interface CutOffProceeds extends CutOffDecisionCommon {
 }
 
 export interface CutOffRefused extends CutOffDecisionCommon {
-  readonly disposition: 'refused_unreviewed_queued_variances';
+  readonly disposition: "refused_unreviewed_queued_variances";
   readonly mayProceed: false;
   /** Literal 1: refusal is unreachable unless the branch opted in (criteria 9.6, 9.8). */
   readonly payrollLockOnUnresolvedMismatch: 1;
@@ -748,7 +812,9 @@ export interface PayrollCutOffDecisionInput {
  *
  * @throws only for programmer errors — a malformed payMonth or a conflicting duplicate recordId.
  */
-export function decidePayrollCutOff(input: PayrollCutOffDecisionInput): PayrollCutOffDecision {
+export function decidePayrollCutOff(
+  input: PayrollCutOffDecisionInput,
+): PayrollCutOffDecision {
   const reconciliation = buildPreCloseReconciliation({
     payMonth: input.payMonth,
     branchId: input.branchId,
@@ -770,7 +836,8 @@ export function decidePayrollCutOff(input: PayrollCutOffDecisionInput): PayrollC
   // accepts.
   const workflowFlagValue = reconciliation.mismatchWorkflowEnabled;
   const inScope = dedupeRecords(input.records).filter(
-    (record) => record.branchId === input.branchId && record.payMonth === input.payMonth,
+    (record) =>
+      record.branchId === input.branchId && record.payMonth === input.payMonth,
   );
   const blocking = applyPresentationGate(inScope, workflowFlagValue)
     .filter(isUnreviewedQueued)
@@ -781,15 +848,36 @@ export function decidePayrollCutOff(input: PayrollCutOffDecisionInput): PayrollC
   // return the compiler has narrowed lock.value to 1, which is the only value refuseCutOff()
   // accepts, so no edit can make this path refuse without a type error.
   if (lock.value === 0) {
-    return proceed(input, reconciliation, 0, lock.wasAbsent, blocking, warnings);
+    return proceed(
+      input,
+      reconciliation,
+      0,
+      lock.wasAbsent,
+      blocking,
+      warnings,
+    );
   }
 
   const nonEmptyBlocking = asNonEmpty(blocking);
   if (nonEmptyBlocking === null) {
     // Flag is on, nothing is outstanding: cut-off proceeds, with no marks to make.
-    return proceed(input, reconciliation, 1, lock.wasAbsent, blocking, warnings);
+    return proceed(
+      input,
+      reconciliation,
+      1,
+      lock.wasAbsent,
+      blocking,
+      warnings,
+    );
   }
-  return refuseCutOff(lock.value, input, reconciliation, lock.wasAbsent, nonEmptyBlocking, warnings);
+  return refuseCutOff(
+    lock.value,
+    input,
+    reconciliation,
+    lock.wasAbsent,
+    nonEmptyBlocking,
+    warnings,
+  );
 }
 
 function proceed(
@@ -800,13 +888,17 @@ function proceed(
   unreviewedQueued: readonly UnreviewedQueuedRecord[],
   warnings: readonly string[],
 ): CutOffProceeds {
-  const marks = buildUnreviewedVarianceMarks(input.payMonth, input.branchId, unreviewedQueued);
+  const marks = buildUnreviewedVarianceMarks(
+    input.payMonth,
+    input.branchId,
+    unreviewedQueued,
+  );
   return {
     payMonth: input.payMonth,
     branchId: input.branchId,
-    disposition: 'proceeds',
+    disposition: "proceeds",
     mayProceed: true,
-    payableDaysBasis: 'resolved_attendance_source',
+    payableDaysBasis: "resolved_attendance_source",
     payrollLockOnUnresolvedMismatch: lockValue,
     lockFlagWasAbsent,
     salaryLineMarks: marks,
@@ -846,12 +938,14 @@ function refuseCutOff(
   return {
     payMonth: input.payMonth,
     branchId: input.branchId,
-    disposition: 'refused_unreviewed_queued_variances',
+    disposition: "refused_unreviewed_queued_variances",
     mayProceed: false,
     payrollLockOnUnresolvedMismatch: lock,
     lockFlagWasAbsent,
     unreviewedQueuedCount: count,
-    blockingRecordIds: Object.freeze(blocking.map((r) => r.recordId).sort(compareStrings)),
+    blockingRecordIds: Object.freeze(
+      blocking.map((r) => r.recordId).sort(compareStrings),
+    ),
     blockingEmployeeIds: Object.freeze(
       [...new Set(blocking.map((r) => r.employeeId))].sort(compareStrings),
     ),
@@ -890,7 +984,9 @@ function buildUnreviewedVarianceMarks(
   }
 
   const marks = [...byEmployee.entries()].map(([employeeId, records]) => {
-    const dates = [...new Set(records.map((r) => r.attendanceDate))].sort(compareStrings);
+    const dates = [...new Set(records.map((r) => r.attendanceDate))].sort(
+      compareStrings,
+    );
     // If two records for one employee disagree about salaryLineId the mark cannot pick one, so it
     // reports null rather than whichever arrived first — an ordering-dependent answer would be
     // worse than an absent one, and the writer already knows the line.
@@ -904,11 +1000,15 @@ function buildUnreviewedVarianceMarks(
       paidWithUnreviewedVariance: true as const,
       unreviewedDateCount: dates.length,
       unreviewedDates: Object.freeze(dates),
-      varianceRecordIds: Object.freeze(records.map((r) => r.recordId).sort(compareStrings)),
+      varianceRecordIds: Object.freeze(
+        records.map((r) => r.recordId).sort(compareStrings),
+      ),
     };
   });
 
-  return Object.freeze(marks.sort((a, b) => compareStrings(a.employeeId, b.employeeId)));
+  return Object.freeze(
+    marks.sort((a, b) => compareStrings(a.employeeId, b.employeeId)),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -957,8 +1057,10 @@ export interface CarryForwardInput {
  *
  * Total and ordering-independent. Throws only for the two programmer errors named above.
  */
-export function deriveCarryForward(input: CarryForwardInput): CarryForwardResult {
-  assertPayMonth('payMonth', input.payMonth);
+export function deriveCarryForward(
+  input: CarryForwardInput,
+): CarryForwardResult {
+  assertPayMonth("payMonth", input.payMonth);
 
   const flag = resolveFeatureFlag(
     FEATURE_FLAG_MISMATCH_WORKFLOW_ENABLED,
@@ -967,12 +1069,16 @@ export function deriveCarryForward(input: CarryForwardInput): CarryForwardResult
   );
 
   const deduped = dedupeRecords(input.records);
-  for (const record of deduped) assertPayMonth('record.payMonth', record.payMonth);
+  for (const record of deduped)
+    assertPayMonth("record.payMonth", record.payMonth);
 
   const inScope = deduped.filter(
-    (record) => record.branchId === input.branchId && record.payMonth === input.payMonth,
+    (record) =>
+      record.branchId === input.branchId && record.payMonth === input.payMonth,
   );
-  const effective = applyPresentationGate(inScope, flag.value).sort(compareRecords);
+  const effective = applyPresentationGate(inScope, flag.value).sort(
+    compareRecords,
+  );
 
   const carriedForward = effective.filter(isUnreviewedQueued).map((record) => ({
     record,
@@ -1008,37 +1114,37 @@ export function deriveCarryForward(input: CarryForwardInput): CarryForwardResult
  */
 export type ClosedMonthReviewOutcome =
   | {
-      readonly kind: 'adjustment_approved';
+      readonly kind: "adjustment_approved";
       /** What the approved classification pays for that date. */
       readonly adjustedPayableDayValue: PayableDayValue;
       readonly adjustedClassification?: PayableDayClassification | null;
     }
   | {
-      readonly kind: 'no_adjustment_approved';
+      readonly kind: "no_adjustment_approved";
       /** criteria 8.1, 9.10. 'adjustment_requested' appears here when the approval was refused. */
       readonly reviewOutcome: ReviewOutcome;
     };
 
 export type ClosedMonthReviewDisposition =
   /** criterion 9.4: adjusted value exceeds what was paid. */
-  | 'arrear_raised'
+  | "arrear_raised"
   /** criterion 9.4: adjusted value falls short of what was paid. */
-  | 'recovery_raised'
+  | "recovery_raised"
   /** The approved adjustment does not move Payable_Days, so there is nothing to pay or recover. */
-  | 'no_entry_no_difference'
+  | "no_entry_no_difference"
   /** criterion 9.4 with no open Pay_Month to target. The difference is returned as pending. */
-  | 'no_entry_no_open_pay_month'
+  | "no_entry_no_open_pay_month"
   /** criteria 8.1, 9.10: no adjustment was approved. */
-  | 'no_entry_no_adjustment_approved'
+  | "no_entry_no_adjustment_approved"
   /**
    * One of the two Payable_Days values is null — payable-days.ts's "not determined by this day
    * alone", i.e. the day is itself in review. A difference is not computable and none is invented.
    */
-  | 'no_entry_difference_not_determinable';
+  | "no_entry_difference_not_determinable";
 
 export interface ArrearEntry {
   /** Sign of the difference: positive raises an arrear, negative a recovery. */
-  readonly kind: 'arrear' | 'recovery';
+  readonly kind: "arrear" | "recovery";
   /** criterion 9.4: the earliest open Pay_Month. */
   readonly targetPayMonth: string;
   /** The closed Pay_Month the difference arose in. */
@@ -1058,7 +1164,7 @@ export interface ArrearEntry {
  * raise it when a month opens; nothing is faked into a closed month.
  */
 export interface PendingArrearIntent {
-  readonly kind: 'arrear' | 'recovery';
+  readonly kind: "arrear" | "recovery";
   readonly sourcePayMonth: string;
   readonly employeeId: string;
   readonly varianceRecordId: string;
@@ -1142,18 +1248,22 @@ export interface ClosedMonthReviewResult {
  * @throws only for programmer errors — a malformed record.payMonth or a malformed entry in
  *   openPayMonths (see assertPayMonth).
  */
-export function reviewClosedMonthRecord(input: ClosedMonthReviewInput): ClosedMonthReviewResult {
+export function reviewClosedMonthRecord(
+  input: ClosedMonthReviewInput,
+): ClosedMonthReviewResult {
   const closedPayMonth = input.record.payMonth;
-  assertPayMonth('record.payMonth', closedPayMonth);
+  assertPayMonth("record.payMonth", closedPayMonth);
 
   const warnings: string[] = [];
   const supplied = input.openPayMonths ?? [];
-  for (const month of supplied) assertPayMonth('openPayMonths entry', month);
+  for (const month of supplied) assertPayMonth("openPayMonths entry", month);
 
   // A Pay_Month that has reached cut-off is not open. If the caller lists it anyway that is a
   // contradiction in the inputs, not a reason to fail: the month is excluded from the candidates
   // and the caller is warned, which keeps the function total.
-  const candidates = [...new Set(supplied)].filter((month) => month !== closedPayMonth);
+  const candidates = [...new Set(supplied)].filter(
+    (month) => month !== closedPayMonth,
+  );
   if (candidates.length !== new Set(supplied).size) {
     warnings.push(
       `openPayMonths listed ${closedPayMonth}, the Pay_Month that has reached Payroll_Cut_Off; ` +
@@ -1191,10 +1301,10 @@ export function reviewClosedMonthRecord(input: ClosedMonthReviewInput): ClosedMo
   };
 
   // criteria 8.1, 9.10: no adjustment approved. Payable_Days stand and the mark stands.
-  if (input.outcome.kind === 'no_adjustment_approved') {
+  if (input.outcome.kind === "no_adjustment_approved") {
     return {
       ...base,
-      disposition: 'no_entry_no_adjustment_approved',
+      disposition: "no_entry_no_adjustment_approved",
       payableDayDifference: null,
       entry: null,
       pendingEntry: null,
@@ -1212,10 +1322,15 @@ export function reviewClosedMonthRecord(input: ClosedMonthReviewInput): ClosedMo
 
   // payable-days.ts returns null for a day in review ("not determined by this day alone"), so a
   // difference against it is not computable. Reported as such; no zero is invented.
-  if (paid === null || adjusted === null || !Number.isFinite(paid) || !Number.isFinite(adjusted)) {
+  if (
+    paid === null ||
+    adjusted === null ||
+    !Number.isFinite(paid) ||
+    !Number.isFinite(adjusted)
+  ) {
     return {
       ...base,
-      disposition: 'no_entry_difference_not_determinable',
+      disposition: "no_entry_difference_not_determinable",
       payableDayDifference: null,
       entry: null,
       pendingEntry: null,
@@ -1232,7 +1347,7 @@ export function reviewClosedMonthRecord(input: ClosedMonthReviewInput): ClosedMo
   if (difference === 0) {
     return {
       ...base,
-      disposition: 'no_entry_no_difference',
+      disposition: "no_entry_no_difference",
       payableDayDifference: 0,
       entry: null,
       pendingEntry: null,
@@ -1243,12 +1358,12 @@ export function reviewClosedMonthRecord(input: ClosedMonthReviewInput): ClosedMo
     };
   }
 
-  const kind: 'arrear' | 'recovery' = difference > 0 ? 'arrear' : 'recovery';
+  const kind: "arrear" | "recovery" = difference > 0 ? "arrear" : "recovery";
 
   if (target === null) {
     return {
       ...base,
-      disposition: 'no_entry_no_open_pay_month',
+      disposition: "no_entry_no_open_pay_month",
       payableDayDifference: difference,
       entry: null,
       pendingEntry: {
@@ -1271,7 +1386,7 @@ export function reviewClosedMonthRecord(input: ClosedMonthReviewInput): ClosedMo
 
   return {
     ...base,
-    disposition: kind === 'arrear' ? 'arrear_raised' : 'recovery_raised',
+    disposition: kind === "arrear" ? "arrear_raised" : "recovery_raised",
     payableDayDifference: difference,
     entry: {
       kind,

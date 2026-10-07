@@ -12,8 +12,10 @@ import { clientBillingPdfService } from "./client-billing-pdf.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) =>
-  fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -63,12 +65,33 @@ router.post(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const body = req.body as {
-      costCentreId?: string; category?: string; financeYear?: string; monthLabel?: string;
-      invoiceDate?: string; description?: string; applyGst?: boolean;
-      lines?: Array<{ particulars: string; qty: number; rate: number; lineType?: "charge" | "deduction" }>;
+      costCentreId?: string;
+      category?: string;
+      financeYear?: string;
+      monthLabel?: string;
+      invoiceDate?: string;
+      description?: string;
+      applyGst?: boolean;
+      lines?: Array<{
+        particulars: string;
+        qty: number;
+        rate: number;
+        lineType?: "charge" | "deduction";
+      }>;
     };
-    if (!body.costCentreId || !body.category || !body.financeYear || !body.monthLabel || !body.invoiceDate) {
-      return res.status(400).json({ error: "costCentreId, category, financeYear, monthLabel, and invoiceDate are required" });
+    if (
+      !body.costCentreId ||
+      !body.category ||
+      !body.financeYear ||
+      !body.monthLabel ||
+      !body.invoiceDate
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "costCentreId, category, financeYear, monthLabel, and invoiceDate are required",
+        });
     }
     const data = await clientBillingService.createProforma({
       costCentreId: body.costCentreId,
@@ -82,7 +105,7 @@ router.post(
       createdBy: req.authUser!.id,
     });
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 /**
@@ -113,7 +136,7 @@ function buildInvoiceListQuery(query: Record<string, unknown>) {
   }
   if (typeof query.search === "string" && query.search.trim()) {
     conditions.push(
-      "(ci.proforma_no LIKE ? OR ci.bill_no LIKE ? OR cc.billing_client_name LIKE ? OR cc.company_name LIKE ?)"
+      "(ci.proforma_no LIKE ? OR ci.bill_no LIKE ? OR cc.billing_client_name LIKE ? OR cc.company_name LIKE ?)",
     );
     const like = `%${query.search.trim()}%`;
     params.push(like, like, like, like);
@@ -149,7 +172,9 @@ router.get(
     //
     // The export below uses the identical ordering — see buildInvoiceListQuery's note on
     // why the two must never drift.
-    const { where, params } = buildInvoiceListQuery(req.query as Record<string, unknown>);
+    const { where, params } = buildInvoiceListQuery(
+      req.query as Record<string, unknown>,
+    );
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
     const offset = (page - 1) * limit;
@@ -166,11 +191,11 @@ router.get(
        ${where}
        ORDER BY ci.invoice_date DESC, ci.created_at DESC, ci.id DESC
        LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [...params, limit, offset],
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id ${where}`,
-      params
+      params,
     );
     res.json({
       success: true,
@@ -179,7 +204,7 @@ router.get(
       page,
       limit,
     });
-  })
+  }),
 );
 
 router.get(
@@ -189,7 +214,9 @@ router.get(
     // Registered before /proformas/:id — Express matches by registration order and
     // :id would otherwise swallow "export" as an id, 404ing this route (the exact trap
     // already documented next to the GRN aging route in vendor-payment.routes.ts).
-    const { where, params } = buildInvoiceListQuery(req.query as Record<string, unknown>);
+    const { where, params } = buildInvoiceListQuery(
+      req.query as Record<string, unknown>,
+    );
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT ci.proforma_no, ci.bill_no, ci.invoice_status, ci.category, ci.finance_year, ci.month_label,
               ci.invoice_date, ci.gst_type, ci.total_amount, ci.igst_amount, ci.cgst_amount, ci.sgst_amount,
@@ -200,28 +227,59 @@ router.get(
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
        ${where}
        ORDER BY ci.invoice_date DESC, ci.created_at DESC, ci.id DESC`,
-      params
+      params,
     );
 
     const columns = [
-      "Proforma No", "Bill No", "Status", "Category", "Finance Year", "Month", "Invoice Date",
-      "Cost Centre Code", "Cost Centre", "GST Type", "Taxable Value", "IGST", "CGST", "SGST",
-      "Grand Total", "Created At",
+      "Proforma No",
+      "Bill No",
+      "Status",
+      "Category",
+      "Finance Year",
+      "Month",
+      "Invoice Date",
+      "Cost Centre Code",
+      "Cost Centre",
+      "GST Type",
+      "Taxable Value",
+      "IGST",
+      "CGST",
+      "SGST",
+      "Grand Total",
+      "Created At",
     ];
     const csvRows = [
       columns.map(escape).join(","),
       ...rows.map((r) =>
         [
-          r.proforma_no, r.bill_no, r.invoice_status, r.category, r.finance_year, r.month_label,
-          r.invoice_date, r.cost_centre_code, r.cost_centre_display_name, r.gst_type, r.total_amount,
-          r.igst_amount, r.cgst_amount, r.sgst_amount, r.grand_total, r.created_at,
-        ].map(escape).join(",")
+          r.proforma_no,
+          r.bill_no,
+          r.invoice_status,
+          r.category,
+          r.finance_year,
+          r.month_label,
+          r.invoice_date,
+          r.cost_centre_code,
+          r.cost_centre_display_name,
+          r.gst_type,
+          r.total_amount,
+          r.igst_amount,
+          r.cgst_amount,
+          r.sgst_amount,
+          r.grand_total,
+          r.created_at,
+        ]
+          .map(escape)
+          .join(","),
       ),
     ];
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", 'attachment; filename="client-billing-invoices-export.csv"');
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="client-billing-invoices-export.csv"',
+    );
     res.send(csvRows.join("\n"));
-  })
+  }),
 );
 
 router.get(
@@ -232,20 +290,25 @@ router.get(
     // are paginated (limit clamped to 200), so summing a page silently under-reports on
     // any dataset larger than that, same reasoning as grn.service.ts's getGrnSummary.
     // The four aggregates are independent read-only queries, so they run concurrently.
-    const [[invoiceRows], [creditNoteRows], [[thisMonth]], [[pendingActionable]]] = await Promise.all([
+    const [
+      [invoiceRows],
+      [creditNoteRows],
+      [[thisMonth]],
+      [[pendingActionable]],
+    ] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT invoice_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
-       FROM client_invoice GROUP BY invoice_status`
+       FROM client_invoice GROUP BY invoice_status`,
       ),
       db.execute<RowDataPacket[]>(
         `SELECT credit_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
-       FROM client_credit_note GROUP BY credit_status`
+       FROM client_credit_note GROUP BY credit_status`,
       ),
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
        FROM client_invoice
        WHERE invoice_status = 'approved'
-         AND DATE_FORMAT(invoice_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`
+         AND DATE_FORMAT(invoice_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`,
       ),
       // "Pending approval" must count only proformas somebody can ACT on. Both
       // approveInvoice and rejectInvoice refuse any row with is_migrated = 1 (design §3 —
@@ -256,21 +319,30 @@ router.get(
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS count
        FROM client_invoice
-       WHERE invoice_status = 'proforma' AND is_migrated = 0`
+       WHERE invoice_status = 'proforma' AND is_migrated = 0`,
       ),
     ]);
 
     const invoices: Record<string, { count: number; total: number }> = {
-      proforma: { count: 0, total: 0 }, approved: { count: 0, total: 0 }, rejected: { count: 0, total: 0 },
+      proforma: { count: 0, total: 0 },
+      approved: { count: 0, total: 0 },
+      rejected: { count: 0, total: 0 },
     };
     for (const row of invoiceRows) {
-      invoices[String(row.invoice_status)] = { count: Number(row.count), total: Number(row.total) };
+      invoices[String(row.invoice_status)] = {
+        count: Number(row.count),
+        total: Number(row.total),
+      };
     }
     const creditNotes: Record<string, { count: number; total: number }> = {
-      draft: { count: 0, total: 0 }, approved: { count: 0, total: 0 },
+      draft: { count: 0, total: 0 },
+      approved: { count: 0, total: 0 },
     };
     for (const row of creditNoteRows) {
-      creditNotes[String(row.credit_status)] = { count: Number(row.count), total: Number(row.total) };
+      creditNotes[String(row.credit_status)] = {
+        count: Number(row.count),
+        total: Number(row.total),
+      };
     }
 
     res.json({
@@ -278,11 +350,14 @@ router.get(
       data: {
         invoices,
         creditNotes,
-        thisMonthBilled: { count: Number(thisMonth?.count ?? 0), total: Number(thisMonth?.total ?? 0) },
+        thisMonthBilled: {
+          count: Number(thisMonth?.count ?? 0),
+          total: Number(thisMonth?.total ?? 0),
+        },
         pendingApprovalCount: Number(pendingActionable?.count ?? 0),
       },
     });
-  })
+  }),
 );
 
 router.get(
@@ -291,17 +366,17 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const [invoiceRows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM client_invoice WHERE id = ? LIMIT 1`,
-      [req.params.id]
+      [req.params.id],
     );
     const invoice = invoiceRows[0];
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });
 
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM client_invoice_line WHERE invoice_id = ?`,
-      [req.params.id]
+      [req.params.id],
     );
     res.json({ success: true, data: { ...invoice, lines: lineRows } });
-  })
+  }),
 );
 
 router.get(
@@ -309,10 +384,13 @@ router.get(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const withLetterhead = req.query.letterhead !== "false";
-    const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id, withLetterhead);
+    const pdf = await clientBillingPdfService.generateInvoicePdf(
+      req.params.id,
+      withLetterhead,
+    );
     res.setHeader("Content-Type", "application/pdf");
     res.send(pdf);
-  })
+  }),
 );
 
 router.post(
@@ -326,7 +404,7 @@ router.post(
       userId: req.authUser!.id,
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -343,7 +421,7 @@ router.post(
       userId: req.authUser!.id,
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -352,10 +430,10 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM client_invoice_audit_log WHERE invoice_id = ? ORDER BY created_at ASC`,
-      [req.params.id]
+      [req.params.id],
     );
     res.json({ success: true, data: rows });
-  })
+  }),
 );
 
 router.get(
@@ -363,10 +441,13 @@ router.get(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const withLetterhead = req.query.letterhead !== "false";
-    const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id, withLetterhead);
+    const pdf = await clientBillingPdfService.generateInvoicePdf(
+      req.params.id,
+      withLetterhead,
+    );
     res.setHeader("Content-Type", "application/pdf");
     res.send(pdf);
-  })
+  }),
 );
 
 router.post(
@@ -374,20 +455,42 @@ router.post(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const body = req.body as {
-      invoiceId?: string; category?: string; financeYear?: string; monthLabel?: string;
-      creditDate?: string; description?: string; applyGst?: boolean;
+      invoiceId?: string;
+      category?: string;
+      financeYear?: string;
+      monthLabel?: string;
+      creditDate?: string;
+      description?: string;
+      applyGst?: boolean;
       lines?: Array<{ particulars: string; qty: number; rate: number }>;
     };
-    if (!body.invoiceId || !body.category || !body.financeYear || !body.monthLabel || !body.creditDate) {
-      return res.status(400).json({ error: "invoiceId, category, financeYear, monthLabel, and creditDate are required" });
+    if (
+      !body.invoiceId ||
+      !body.category ||
+      !body.financeYear ||
+      !body.monthLabel ||
+      !body.creditDate
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "invoiceId, category, financeYear, monthLabel, and creditDate are required",
+        });
     }
     const data = await clientBillingCreditNoteService.createCreditNote({
-      invoiceId: body.invoiceId, category: body.category, financeYear: body.financeYear,
-      monthLabel: body.monthLabel, creditDate: body.creditDate, description: body.description,
-      applyGst: body.applyGst, lines: body.lines ?? [], userId: req.authUser!.id,
+      invoiceId: body.invoiceId,
+      category: body.category,
+      financeYear: body.financeYear,
+      monthLabel: body.monthLabel,
+      creditDate: body.creditDate,
+      description: body.description,
+      applyGst: body.applyGst,
+      lines: body.lines ?? [],
+      userId: req.authUser!.id,
     });
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -395,10 +498,11 @@ router.post(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await clientBillingCreditNoteService.approveCreditNote({
-      creditNoteId: req.params.id, userId: req.authUser!.id,
+      creditNoteId: req.params.id,
+      userId: req.authUser!.id,
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 /** Shared WHERE-builder for the credit-notes list + its CSV export — same reasoning as
@@ -425,7 +529,7 @@ function buildCreditNoteListQuery(query: Record<string, unknown>) {
   }
   if (typeof query.search === "string" && query.search.trim()) {
     conditions.push(
-      "(ccn.credit_no LIKE ? OR cc.billing_client_name LIKE ? OR cc.company_name LIKE ? OR ci.bill_no LIKE ?)"
+      "(ccn.credit_no LIKE ? OR cc.billing_client_name LIKE ? OR cc.company_name LIKE ? OR ci.bill_no LIKE ?)",
     );
     const like = `%${query.search.trim()}%`;
     params.push(like, like, like, like);
@@ -441,7 +545,9 @@ router.get(
     // Same display-name join as /proformas, plus the referenced invoice's own printable
     // number so the table can show "against 09-100/26-27" instead of a raw invoice UUID.
     // Server-side filter + pagination added 2026-08-21 (Phase 2), same shape as /proformas.
-    const { where, params } = buildCreditNoteListQuery(req.query as Record<string, unknown>);
+    const { where, params } = buildCreditNoteListQuery(
+      req.query as Record<string, unknown>,
+    );
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
     const offset = (page - 1) * limit;
@@ -455,13 +561,13 @@ router.get(
        ${where}
        ORDER BY ccn.credit_date DESC, ccn.created_at DESC, ccn.id DESC
        LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [...params, limit, offset],
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM client_credit_note ccn
        LEFT JOIN cost_centre_master cc ON cc.id = ccn.cost_centre_id
        LEFT JOIN client_invoice ci ON ci.id = ccn.invoice_id ${where}`,
-      params
+      params,
     );
     res.json({
       success: true,
@@ -470,7 +576,7 @@ router.get(
       page,
       limit,
     });
-  })
+  }),
 );
 
 router.get(
@@ -478,7 +584,9 @@ router.get(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     // Registered before /credit-notes/:id — same route-ordering reason as /proformas/export.
-    const { where, params } = buildCreditNoteListQuery(req.query as Record<string, unknown>);
+    const { where, params } = buildCreditNoteListQuery(
+      req.query as Record<string, unknown>,
+    );
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT ccn.credit_no, COALESCE(ci.bill_no, ci.proforma_no) AS against_invoice_number,
               ccn.credit_status, ccn.category, ccn.finance_year, ccn.month_label, ccn.credit_date,
@@ -491,40 +599,78 @@ router.get(
        LEFT JOIN client_invoice ci ON ci.id = ccn.invoice_id
        ${where}
        ORDER BY ccn.credit_date DESC, ccn.created_at DESC, ccn.id DESC`,
-      params
+      params,
     );
 
     const columns = [
-      "Credit Note No", "Against Invoice", "Status", "Category", "Finance Year", "Month",
-      "Credit Date", "Cost Centre Code", "Cost Centre", "GST Type", "Taxable Value", "IGST",
-      "CGST", "SGST", "Grand Total", "Created At",
+      "Credit Note No",
+      "Against Invoice",
+      "Status",
+      "Category",
+      "Finance Year",
+      "Month",
+      "Credit Date",
+      "Cost Centre Code",
+      "Cost Centre",
+      "GST Type",
+      "Taxable Value",
+      "IGST",
+      "CGST",
+      "SGST",
+      "Grand Total",
+      "Created At",
     ];
     const csvRows = [
       columns.map(escape).join(","),
       ...rows.map((r) =>
         [
-          r.credit_no, r.against_invoice_number, r.credit_status, r.category, r.finance_year,
-          r.month_label, r.credit_date, r.cost_centre_code, r.cost_centre_display_name, r.gst_type,
-          r.total_amount, r.igst_amount, r.cgst_amount, r.sgst_amount, r.grand_total, r.created_at,
-        ].map(escape).join(",")
+          r.credit_no,
+          r.against_invoice_number,
+          r.credit_status,
+          r.category,
+          r.finance_year,
+          r.month_label,
+          r.credit_date,
+          r.cost_centre_code,
+          r.cost_centre_display_name,
+          r.gst_type,
+          r.total_amount,
+          r.igst_amount,
+          r.cgst_amount,
+          r.sgst_amount,
+          r.grand_total,
+          r.created_at,
+        ]
+          .map(escape)
+          .join(","),
       ),
     ];
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", 'attachment; filename="client-billing-credit-notes-export.csv"');
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="client-billing-credit-notes-export.csv"',
+    );
     res.send(csvRows.join("\n"));
-  })
+  }),
 );
 
 router.get(
   "/credit-notes/:id",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM client_credit_note WHERE id = ? LIMIT 1`, [req.params.id]);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM client_credit_note WHERE id = ? LIMIT 1`,
+      [req.params.id],
+    );
     const creditNote = rows[0];
-    if (!creditNote) return res.status(404).json({ error: "Credit note not found" });
-    const [lineRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM client_credit_note_line WHERE credit_note_id = ?`, [req.params.id]);
+    if (!creditNote)
+      return res.status(404).json({ error: "Credit note not found" });
+    const [lineRows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM client_credit_note_line WHERE credit_note_id = ?`,
+      [req.params.id],
+    );
     res.json({ success: true, data: { ...creditNote, lines: lineRows } });
-  })
+  }),
 );
 
 router.get(
@@ -532,10 +678,13 @@ router.get(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const withLetterhead = req.query.letterhead !== "false";
-    const pdf = await clientBillingPdfService.generateCreditNotePdf(req.params.id, withLetterhead);
+    const pdf = await clientBillingPdfService.generateCreditNotePdf(
+      req.params.id,
+      withLetterhead,
+    );
     res.setHeader("Content-Type", "application/pdf");
     res.send(pdf);
-  })
+  }),
 );
 
 export { router as clientBillingRouter };

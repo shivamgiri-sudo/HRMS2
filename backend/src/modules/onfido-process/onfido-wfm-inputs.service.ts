@@ -117,7 +117,9 @@ export async function listUtilizationInputs(
     fixedUtilizationWithAdhoc: numOrNull(r.fixed_utilization_with_adhoc),
     fixedUtilizationWithoutAdhoc: numOrNull(r.fixed_utilization_without_adhoc),
     fixedUtilizationWithAdhocPct: numOrNull(r.fixed_utilization_with_adhoc_pct),
-    fixedUtilizationWithoutAdhocPct: numOrNull(r.fixed_utilization_without_adhoc_pct),
+    fixedUtilizationWithoutAdhocPct: numOrNull(
+      r.fixed_utilization_without_adhoc_pct,
+    ),
     fixedPoaAnsweringPct: numOrNull(r.fixed_poa_answering_pct),
     fixedEscalatedPct: numOrNull(r.fixed_escalated_pct),
     remarks: r.remarks ?? null,

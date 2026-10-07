@@ -1,16 +1,15 @@
 // @ts-nocheck
-import { getLegacyPool } from '../../db/legacyDb.js';
+import { getLegacyPool } from "../../db/legacyDb.js";
 import { sqlLimit } from "../../db/pagination.js";
-import { db as mysqlDb } from '../../db/mysql.js';
-import type { ScanResult, TableProfile, RelevanceFactors } from './types.js';
-import { randomUUID } from 'crypto';
+import { db as mysqlDb } from "../../db/mysql.js";
+import type { ScanResult, TableProfile, RelevanceFactors } from "./types.js";
+import { randomUUID } from "crypto";
 
 /**
  * Legacy Database Metadata Analyzer
  * Scans db_bill (MySQL 5.5.44) for relevant tables without full table scans
  */
 export class LegacyAnalyzerService {
-
   /**
    * Scan legacy database schema for candidate tables
    * Uses INFORMATION_SCHEMA (metadata-only, no data scans)
@@ -44,15 +43,16 @@ export class LegacyAnalyzerService {
       const factors = await this.analyzeTableRelevance(
         row.schema_name,
         row.table_name,
-        row.row_count
+        row.row_count,
       );
-      
+
       const score = this.calculateRelevanceScore(factors);
-      
-      if (score >= 30) { // Only keep tables with 30+ relevance score
+
+      if (score >= 30) {
+        // Only keep tables with 30+ relevance score
         const profile: TableProfile = {
           id: randomUUID(),
-          source_db: 'db_bill',
+          source_db: "db_bill",
           schema_name: row.schema_name,
           table_name: row.table_name,
           row_count: row.row_count || 0,
@@ -61,24 +61,24 @@ export class LegacyAnalyzerService {
           max_candidate_date: null,
           relevance_score: score,
           relevance_reason: this.explainScore(factors),
-          scan_status: 'pending',
+          scan_status: "pending",
           scanned_at: new Date(),
           created_at: new Date(),
         };
-        
+
         candidateTables.push(profile);
       }
     }
-    
+
     const scanDuration = Date.now() - startTime;
-    
+
     return {
       tablesFound: result.recordset.length,
       candidateTables,
       scanDuration,
     };
   }
-  
+
   /**
    * Analyze table structure for relevance signals
    * Uses INFORMATION_SCHEMA.COLUMNS (metadata-only)
@@ -86,7 +86,7 @@ export class LegacyAnalyzerService {
   private async analyzeTableRelevance(
     schema: string,
     table: string,
-    rowCount: number
+    rowCount: number,
   ): Promise<RelevanceFactors> {
     const pool = await getLegacyPool();
 
@@ -97,38 +97,42 @@ export class LegacyAnalyzerService {
       `SELECT COLUMN_NAME, DATA_TYPE
          FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
-      [schema, table]
+      [schema, table],
     );
 
-    const columns = (rows as any[]).map(r => ({
+    const columns = (rows as any[]).map((r) => ({
       name: r.COLUMN_NAME.toLowerCase(),
-      type: r.DATA_TYPE.toLowerCase()
+      type: r.DATA_TYPE.toLowerCase(),
     }));
-    
-    const columnNames = columns.map(c => c.name);
-    
+
+    const columnNames = columns.map((c) => c.name);
+
     // Relevance signals
-    const hasEmployeeColumn = columnNames.some(c => 
-      c.includes('emp') || c.includes('employee') || c.includes('staff')
+    const hasEmployeeColumn = columnNames.some(
+      (c) => c.includes("emp") || c.includes("employee") || c.includes("staff"),
     );
-    
-    const hasDateColumns = columns.some(c => 
-      c.type.includes('date') || c.type.includes('time')
+
+    const hasDateColumns = columns.some(
+      (c) => c.type.includes("date") || c.type.includes("time"),
     );
-    
-    const hasOrgColumns = columnNames.some(c =>
-      c.includes('branch') || c.includes('dept') || c.includes('process')
+
+    const hasOrgColumns = columnNames.some(
+      (c) =>
+        c.includes("branch") || c.includes("dept") || c.includes("process"),
     );
-    
-    const hasWatermarkColumn = columnNames.some(c =>
-      c.includes('modified') || c.includes('updated') || c.includes('created')
+
+    const hasWatermarkColumn = columnNames.some(
+      (c) =>
+        c.includes("modified") ||
+        c.includes("updated") ||
+        c.includes("created"),
     );
-    
+
     const rowCountReasonable = rowCount > 0 && rowCount < 10_000_000;
-    
+
     // Recently updated check would require querying max date - skip for metadata-only approach
     const recentlyUpdated = false; // Conservative default
-    
+
     return {
       hasEmployeeColumn,
       hasDateColumns,
@@ -138,38 +142,38 @@ export class LegacyAnalyzerService {
       rowCountReasonable,
     };
   }
-  
+
   /**
    * Calculate relevance score (0-100)
    */
   private calculateRelevanceScore(factors: RelevanceFactors): number {
     let score = 0;
-    
+
     if (factors.hasEmployeeColumn) score += 30;
     if (factors.hasDateColumns) score += 15;
     if (factors.hasOrgColumns) score += 15;
     if (factors.recentlyUpdated) score += 20;
     if (factors.hasWatermarkColumn) score += 10;
     if (factors.rowCountReasonable) score += 10;
-    
+
     return score;
   }
-  
+
   /**
    * Generate human-readable explanation
    */
   private explainScore(factors: RelevanceFactors): string {
     const reasons: string[] = [];
-    
-    if (factors.hasEmployeeColumn) reasons.push('employee-related');
-    if (factors.hasDateColumns) reasons.push('has dates');
-    if (factors.hasOrgColumns) reasons.push('org-related');
-    if (factors.hasWatermarkColumn) reasons.push('has watermark');
-    if (factors.rowCountReasonable) reasons.push('reasonable size');
-    
-    return reasons.join(', ') || 'no strong signals';
+
+    if (factors.hasEmployeeColumn) reasons.push("employee-related");
+    if (factors.hasDateColumns) reasons.push("has dates");
+    if (factors.hasOrgColumns) reasons.push("org-related");
+    if (factors.hasWatermarkColumn) reasons.push("has watermark");
+    if (factors.rowCountReasonable) reasons.push("reasonable size");
+
+    return reasons.join(", ") || "no strong signals";
   }
-  
+
   /**
    * Store scan results in HRMS database
    */
@@ -197,11 +201,11 @@ export class LegacyAnalyzerService {
           table.scan_status,
           table.scanned_at,
           table.created_at,
-        ]
+        ],
       );
     }
   }
-  
+
   /**
    * Get top N candidate tables by relevance score
    */
@@ -211,9 +215,9 @@ export class LegacyAnalyzerService {
        WHERE relevance_score >= 30
        ORDER BY relevance_score DESC, row_count DESC
        ${sqlLimit(limit)}`,
-      []
+      [],
     );
-    
+
     return rows;
   }
 }

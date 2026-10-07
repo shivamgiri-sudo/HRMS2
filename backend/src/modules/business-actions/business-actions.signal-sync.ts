@@ -103,17 +103,20 @@ function clamp(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-async function ensureAction(input: {
-  source_module: string;
-  source_id: string;
-  risk_type: string;
-  severity: "critical" | "high" | "medium" | "low";
-  title: string;
-  description?: string | null;
-  owner_user_id?: string | null;
-  owner_role?: string | null;
-  due_date?: string | null;
-}, actorUserId: string) {
+async function ensureAction(
+  input: {
+    source_module: string;
+    source_id: string;
+    risk_type: string;
+    severity: "critical" | "high" | "medium" | "low";
+    title: string;
+    description?: string | null;
+    owner_user_id?: string | null;
+    owner_role?: string | null;
+    due_date?: string | null;
+  },
+  actorUserId: string,
+) {
   // Clamp once, up front, so the dedup lookup below and the INSERT agree on
   // the same value — clamping only at INSERT time would look up the
   // unclamped source_id, never find the (clamped) row a prior run wrote, and
@@ -128,7 +131,7 @@ async function ensureAction(input: {
         AND risk_type = ?
         AND status NOT IN ('completed','cancelled')
       LIMIT 1`,
-    [input.source_module, sourceId, input.risk_type]
+    [input.source_module, sourceId, input.risk_type],
   );
   if (existing.length > 0) return { id: existing[0].id, created: false };
 
@@ -147,14 +150,17 @@ async function ensureAction(input: {
       input.description ?? null,
       input.owner_user_id ?? null,
       input.owner_role ?? null,
-      input.due_date ?? dueDate(input.severity === "critical" ? 1 : input.severity === "high" ? 2 : 5),
+      input.due_date ??
+        dueDate(
+          input.severity === "critical" ? 1 : input.severity === "high" ? 2 : 5,
+        ),
       actorUserId,
-    ]
+    ],
   );
   await db.execute(
     `INSERT INTO business_action_activity_log (id, action_id, actor_user_id, activity_type, payload_json)
      VALUES (?, ?, ?, 'AUTO_CREATED_FROM_SIGNAL', ?)`,
-    [randomUUID(), id, actorUserId, JSON.stringify(input)]
+    [randomUUID(), id, actorUserId, JSON.stringify(input)],
   );
   return { id, created: true };
 }
@@ -176,7 +182,13 @@ export const businessActionSignalSync = {
   },
 
   async syncPeopleExperience(actorUserId: string) {
-    if (!(await tableExists("people_experience_health_snapshot"))) return { scanned: 0, created: 0, skipped: 0, reason: "people_experience_health_snapshot missing" };
+    if (!(await tableExists("people_experience_health_snapshot")))
+      return {
+        scanned: 0,
+        created: 0,
+        skipped: 0,
+        reason: "people_experience_health_snapshot missing",
+      };
     const [rows] = await db.execute<PeopleRiskRow[]>(
       `SELECT px.employee_id,
               px.engagement_score,
@@ -205,29 +217,39 @@ export const businessActionSignalSync = {
          LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
         WHERE px.risk_label IN ('attrition_risk','critical_people_risk')
         ORDER BY px.engagement_score ASC
-        LIMIT 200`
+        LIMIT 200`,
     );
 
     let created = 0;
     for (const row of rows) {
-      const result = await ensureAction({
-        source_module: "people_experience",
-        source_id: String(row.employee_id),
-        risk_type: "people_risk",
-        severity: row.risk_label === "critical_people_risk" ? "critical" : "high",
-        title: `${row.full_name ?? "Employee"} is in ${String(row.risk_label).replace(/_/g, " ")}`,
-        description: `Engagement score ${row.engagement_score}. Drivers: ${row.top_risk_drivers_json ?? "[]"}`,
-        owner_user_id: row.reporting_manager_user_id ?? null,
-        owner_role: row.reporting_manager_user_id ? null : "hr",
-        due_date: dueDate(row.risk_label === "critical_people_risk" ? 1 : 2),
-      }, actorUserId);
+      const result = await ensureAction(
+        {
+          source_module: "people_experience",
+          source_id: String(row.employee_id),
+          risk_type: "people_risk",
+          severity:
+            row.risk_label === "critical_people_risk" ? "critical" : "high",
+          title: `${row.full_name ?? "Employee"} is in ${String(row.risk_label).replace(/_/g, " ")}`,
+          description: `Engagement score ${row.engagement_score}. Drivers: ${row.top_risk_drivers_json ?? "[]"}`,
+          owner_user_id: row.reporting_manager_user_id ?? null,
+          owner_role: row.reporting_manager_user_id ? null : "hr",
+          due_date: dueDate(row.risk_label === "critical_people_risk" ? 1 : 2),
+        },
+        actorUserId,
+      );
       if (result.created) created += 1;
     }
     return { scanned: rows.length, created, skipped: rows.length - created };
   },
 
   async syncSupportSla(actorUserId: string) {
-    if (!(await tableExists("helpdesk_ticket"))) return { scanned: 0, created: 0, skipped: 0, reason: "helpdesk_ticket missing" };
+    if (!(await tableExists("helpdesk_ticket")))
+      return {
+        scanned: 0,
+        created: 0,
+        skipped: 0,
+        reason: "helpdesk_ticket missing",
+      };
     const [rows] = await db.execute<SupportSlaRow[]>(
       `SELECT t.id,
               t.ticket_code,
@@ -251,29 +273,43 @@ export const businessActionSignalSync = {
             ))
           )
         ORDER BY FIELD(t.priority, 'urgent','high','medium','low'), t.created_at ASC
-        LIMIT 250`
+        LIMIT 250`,
     );
 
     let created = 0;
     for (const row of rows) {
-      const result = await ensureAction({
-        source_module: "support",
-        source_id: String(row.id),
-        risk_type: "sla_breach",
-        severity: row.priority === "urgent" ? "critical" : row.priority === "high" ? "high" : "medium",
-        title: `Support SLA breached: ${row.ticket_code ?? row.subject ?? row.id}`,
-        description: `Category ${row.category ?? "unknown"}; employee ${row.employee_code ?? "unknown"} ${row.full_name ?? ""}`,
-        owner_user_id: row.assigned_to ?? null,
-        owner_role: row.assigned_to ? null : "hr",
-        due_date: dueDate(row.priority === "urgent" ? 1 : 2),
-      }, actorUserId);
+      const result = await ensureAction(
+        {
+          source_module: "support",
+          source_id: String(row.id),
+          risk_type: "sla_breach",
+          severity:
+            row.priority === "urgent"
+              ? "critical"
+              : row.priority === "high"
+                ? "high"
+                : "medium",
+          title: `Support SLA breached: ${row.ticket_code ?? row.subject ?? row.id}`,
+          description: `Category ${row.category ?? "unknown"}; employee ${row.employee_code ?? "unknown"} ${row.full_name ?? ""}`,
+          owner_user_id: row.assigned_to ?? null,
+          owner_role: row.assigned_to ? null : "hr",
+          due_date: dueDate(row.priority === "urgent" ? 1 : 2),
+        },
+        actorUserId,
+      );
       if (result.created) created += 1;
     }
     return { scanned: rows.length, created, skipped: rows.length - created };
   },
 
   async syncGrievances(actorUserId: string) {
-    if (!(await tableExists("grievance"))) return { scanned: 0, created: 0, skipped: 0, reason: "grievance missing" };
+    if (!(await tableExists("grievance")))
+      return {
+        scanned: 0,
+        created: 0,
+        skipped: 0,
+        reason: "grievance missing",
+      };
     const [rows] = await db.execute<GrievanceRow[]>(
       `SELECT g.id,
               g.grievance_code,
@@ -286,23 +322,30 @@ export const businessActionSignalSync = {
         WHERE g.status NOT IN ('resolved','closed')
           AND (g.severity IN ('critical','high') OR g.category IN ('harassment','safety','security','discrimination') OR g.status = 'escalated')
         ORDER BY FIELD(COALESCE(g.severity, 'medium'), 'critical','high','medium','low'), g.created_at ASC
-        LIMIT 200`
+        LIMIT 200`,
     );
 
     let created = 0;
     for (const row of rows) {
-      const critical = row.severity === "critical" || ["harassment", "safety", "security", "discrimination"].includes(String(row.category));
-      const result = await ensureAction({
-        source_module: "grievance",
-        source_id: String(row.id),
-        risk_type: "grievance_risk",
-        severity: critical ? "critical" : "high",
-        title: `Grievance requires action: ${row.grievance_code ?? row.id}`,
-        description: `Category ${row.category ?? "unknown"}; status ${row.status}; anonymous ${row.is_anonymous ? "yes" : "no"}`,
-        owner_user_id: row.assigned_to ?? null,
-        owner_role: row.assigned_to ? null : "hr",
-        due_date: dueDate(critical ? 1 : 2),
-      }, actorUserId);
+      const critical =
+        row.severity === "critical" ||
+        ["harassment", "safety", "security", "discrimination"].includes(
+          String(row.category),
+        );
+      const result = await ensureAction(
+        {
+          source_module: "grievance",
+          source_id: String(row.id),
+          risk_type: "grievance_risk",
+          severity: critical ? "critical" : "high",
+          title: `Grievance requires action: ${row.grievance_code ?? row.id}`,
+          description: `Category ${row.category ?? "unknown"}; status ${row.status}; anonymous ${row.is_anonymous ? "yes" : "no"}`,
+          owner_user_id: row.assigned_to ?? null,
+          owner_role: row.assigned_to ? null : "hr",
+          due_date: dueDate(critical ? 1 : 2),
+        },
+        actorUserId,
+      );
       if (result.created) created += 1;
     }
     return { scanned: rows.length, created, skipped: rows.length - created };
@@ -310,24 +353,45 @@ export const businessActionSignalSync = {
 
   async syncRevenueRisk(actorUserId: string) {
     const snapshot = await revenueRiskService.snapshot();
-    const rows = Array.isArray(snapshot.rows) ? snapshot.rows as RevenueRiskRow[] : [];
-    const riskRows = rows.filter((row) => ["critical", "high"].includes(String(row.risk_level)) || Number(row.revenue_at_risk ?? 0) > 0 || Number(row.shortage_hc ?? 0) > 0).slice(0, 100);
+    const rows = Array.isArray(snapshot.rows)
+      ? (snapshot.rows as RevenueRiskRow[])
+      : [];
+    const riskRows = rows
+      .filter(
+        (row) =>
+          ["critical", "high"].includes(String(row.risk_level)) ||
+          Number(row.revenue_at_risk ?? 0) > 0 ||
+          Number(row.shortage_hc ?? 0) > 0,
+      )
+      .slice(0, 100);
     let created = 0;
     for (const row of riskRows) {
-      const severity = row.risk_level === "critical" ? "critical" : row.risk_level === "high" ? "high" : "medium";
-      const result = await ensureAction({
-        source_module: "revenue",
-        source_id: `${row.revenue_date ?? snapshot.date}:${row.process_id ?? row.process_name ?? "unknown"}`,
-        risk_type: "revenue_leakage",
-        severity,
-        title: `Revenue at risk in ${row.process_name ?? "process"}: ₹${Math.round(Number(row.revenue_at_risk ?? 0)).toLocaleString("en-IN")}`,
-        description: `Client ${row.client_name ?? "unknown"}; shortage HC ${row.shortage_hc ?? 0}; confidence ${row.data_confidence_score ?? 0}%; reasons ${(row.reason_json ?? []).join(" | ")}`,
-        owner_role: "operations",
-        due_date: dueDate(severity === "critical" ? 1 : 2),
-      }, actorUserId);
+      const severity =
+        row.risk_level === "critical"
+          ? "critical"
+          : row.risk_level === "high"
+            ? "high"
+            : "medium";
+      const result = await ensureAction(
+        {
+          source_module: "revenue",
+          source_id: `${row.revenue_date ?? snapshot.date}:${row.process_id ?? row.process_name ?? "unknown"}`,
+          risk_type: "revenue_leakage",
+          severity,
+          title: `Revenue at risk in ${row.process_name ?? "process"}: ₹${Math.round(Number(row.revenue_at_risk ?? 0)).toLocaleString("en-IN")}`,
+          description: `Client ${row.client_name ?? "unknown"}; shortage HC ${row.shortage_hc ?? 0}; confidence ${row.data_confidence_score ?? 0}%; reasons ${(row.reason_json ?? []).join(" | ")}`,
+          owner_role: "operations",
+          due_date: dueDate(severity === "critical" ? 1 : 2),
+        },
+        actorUserId,
+      );
       if (result.created) created += 1;
     }
-    return { scanned: riskRows.length, created, skipped: riskRows.length - created };
+    return {
+      scanned: riskRows.length,
+      created,
+      skipped: riskRows.length - created,
+    };
   },
 
   async syncPayrollReadiness(actorUserId: string) {
@@ -341,7 +405,13 @@ export const businessActionSignalSync = {
     // status is 'FINALIZED'/'locked'/'disbursed' when a run is settled and
     // should not be re-flagged; anything else (draft/processing/approved) is
     // still a candidate for a readiness check.
-    if (!(await tableExists("salary_prep_run"))) return { scanned: 0, created: 0, skipped: 0, reason: "salary_prep_run missing" };
+    if (!(await tableExists("salary_prep_run")))
+      return {
+        scanned: 0,
+        created: 0,
+        skipped: 0,
+        reason: "salary_prep_run missing",
+      };
 
     // Query open (not-yet-closed) payroll runs
     const [runs] = await db.execute<PayrollRunRow[]>(
@@ -349,7 +419,7 @@ export const businessActionSignalSync = {
        FROM salary_prep_run
        WHERE LOWER(status) NOT IN (${CLOSED_RUN_STATUSES_SQL})
        ORDER BY created_at DESC
-       LIMIT 10`
+       LIMIT 10`,
     );
 
     let created = 0;
@@ -358,38 +428,52 @@ export const businessActionSignalSync = {
     for (const run of runs) {
       try {
         // Call existing payroll governance service
-        const readinessResult = await payrollGovernanceService.readiness(run.id);
+        const readinessResult = await payrollGovernanceService.readiness(
+          run.id,
+        );
 
         if (readinessResult.issues && Array.isArray(readinessResult.issues)) {
           for (const issue of readinessResult.issues) {
             scanned += 1;
-            const severity = issue.severity === 'blocker' ? 'critical' : 'high';
-            const sampleCodes = issue.sample?.slice(0, 3).map((s: any) => s.employee_code).join(', ') ?? '';
+            const severity = issue.severity === "blocker" ? "critical" : "high";
+            const sampleCodes =
+              issue.sample
+                ?.slice(0, 3)
+                .map((s: any) => s.employee_code)
+                .join(", ") ?? "";
 
-            const result = await ensureAction({
-              source_module: 'payroll',
-              // business_action_queue.source_id is char(36) and run.id alone is
-              // already a 36-char UUID, so appending "_<issue code>" always
-              // overflowed and every INSERT here failed with ER_DATA_TOO_LONG
-              // (proven live: 10/10 scanned issues, 0 created, error caught and
-              // only console.error'd by the per-run try/catch below — the same
-              // silent-failure shape as elsewhere in this codebase). Hash the
-              // composite key down to 32 hex chars instead; still deterministic
-              // per run+issue so the existing-row dedup in ensureAction still works.
-              source_id: createHash('md5').update(`${run.id}_${issue.code}`).digest('hex'),
-              risk_type: 'payroll_readiness',
-              severity,
-              title: `${issue.message} (${issue.count} employees)`,
-              description: `Period: ${run.run_month ?? 'N/A'}\nSample: ${sampleCodes}`,
-              owner_role: 'payroll_hr',
-              due_date: dueDate(severity === 'critical' ? 1 : 2),
-            }, actorUserId);
+            const result = await ensureAction(
+              {
+                source_module: "payroll",
+                // business_action_queue.source_id is char(36) and run.id alone is
+                // already a 36-char UUID, so appending "_<issue code>" always
+                // overflowed and every INSERT here failed with ER_DATA_TOO_LONG
+                // (proven live: 10/10 scanned issues, 0 created, error caught and
+                // only console.error'd by the per-run try/catch below — the same
+                // silent-failure shape as elsewhere in this codebase). Hash the
+                // composite key down to 32 hex chars instead; still deterministic
+                // per run+issue so the existing-row dedup in ensureAction still works.
+                source_id: createHash("md5")
+                  .update(`${run.id}_${issue.code}`)
+                  .digest("hex"),
+                risk_type: "payroll_readiness",
+                severity,
+                title: `${issue.message} (${issue.count} employees)`,
+                description: `Period: ${run.run_month ?? "N/A"}\nSample: ${sampleCodes}`,
+                owner_role: "payroll_hr",
+                due_date: dueDate(severity === "critical" ? 1 : 2),
+              },
+              actorUserId,
+            );
 
             if (result.created) created += 1;
           }
         }
       } catch (error) {
-        console.error(`[PayrollReadiness] Error processing run ${run.id}:`, error);
+        console.error(
+          `[PayrollReadiness] Error processing run ${run.id}:`,
+          error,
+        );
       }
     }
 
@@ -397,7 +481,13 @@ export const businessActionSignalSync = {
   },
 
   async syncAttendanceGaps(actorUserId: string) {
-    if (!(await tableExists("attendance_daily_record"))) return { scanned: 0, created: 0, skipped: 0, reason: "attendance_daily_record missing" };
+    if (!(await tableExists("attendance_daily_record")))
+      return {
+        scanned: 0,
+        created: 0,
+        skipped: 0,
+        reason: "attendance_daily_record missing",
+      };
 
     // Query unreconciled attendance > 3 days old
     const [gaps] = await db.execute<AttendanceGapRow[]>(
@@ -427,23 +517,26 @@ export const businessActionSignalSync = {
          AND e.active_status = 1
        GROUP BY adr.employee_id, e.employee_code, e.full_name, mgr.user_id
        ORDER BY max_age DESC
-       LIMIT 200`
+       LIMIT 200`,
     );
 
     let created = 0;
     for (const gap of gaps) {
-      const severity = gap.max_age > 7 ? 'high' : 'medium';
-      const result = await ensureAction({
-        source_module: 'attendance',
-        source_id: String(gap.employee_id),
-        risk_type: 'attendance_gap',
-        severity,
-        title: `Unreconciled attendance: ${gap.employee_code ?? 'Unknown'} (${gap.unreconciled_count} days)`,
-        description: `Employee: ${gap.full_name ?? 'Unknown'}\nOldest gap: ${gap.max_age} days`,
-        owner_user_id: gap.reporting_manager_user_id ?? null,
-        owner_role: gap.reporting_manager_user_id ? null : 'hr',
-        due_date: dueDate(severity === 'high' ? 2 : 3),
-      }, actorUserId);
+      const severity = gap.max_age > 7 ? "high" : "medium";
+      const result = await ensureAction(
+        {
+          source_module: "attendance",
+          source_id: String(gap.employee_id),
+          risk_type: "attendance_gap",
+          severity,
+          title: `Unreconciled attendance: ${gap.employee_code ?? "Unknown"} (${gap.unreconciled_count} days)`,
+          description: `Employee: ${gap.full_name ?? "Unknown"}\nOldest gap: ${gap.max_age} days`,
+          owner_user_id: gap.reporting_manager_user_id ?? null,
+          owner_role: gap.reporting_manager_user_id ? null : "hr",
+          due_date: dueDate(severity === "high" ? 2 : 3),
+        },
+        actorUserId,
+      );
 
       if (result.created) created += 1;
     }
@@ -452,7 +545,13 @@ export const businessActionSignalSync = {
   },
 
   async syncOnboardingStuck(actorUserId: string) {
-    if (!(await tableExists("ats_candidate"))) return { scanned: 0, created: 0, skipped: 0, reason: "ats_candidate missing" };
+    if (!(await tableExists("ats_candidate")))
+      return {
+        scanned: 0,
+        created: 0,
+        skipped: 0,
+        reason: "ats_candidate missing",
+      };
 
     // Query candidates stuck > 48 hours
     const [stuck] = await db.execute<OnboardingStuckRow[]>(
@@ -466,24 +565,27 @@ export const businessActionSignalSync = {
          AND c.active_status = 1
          AND TIMESTAMPDIFF(HOUR, c.created_at, NOW()) > 48
        ORDER BY age_hours DESC
-       LIMIT 150`
+       LIMIT 150`,
     );
 
     let created = 0;
     for (const candidate of stuck) {
       const ageDays = Math.floor(candidate.age_hours / 24);
-      const severity = candidate.age_hours > 168 ? 'high' : 'medium'; // 168h = 7 days
+      const severity = candidate.age_hours > 168 ? "high" : "medium"; // 168h = 7 days
 
-      const result = await ensureAction({
-        source_module: 'onboarding',
-        source_id: String(candidate.id),
-        risk_type: 'manual_follow_up',
-        severity,
-        title: `Onboarding stuck: ${candidate.candidate_code ?? 'Unknown'} at ${candidate.current_stage ?? 'unknown stage'}`,
-        description: `Candidate: ${candidate.full_name ?? 'Unknown'}\nAge: ${ageDays} days (${candidate.age_hours}h)`,
-        owner_role: 'hr',
-        due_date: dueDate(severity === 'high' ? 1 : 2),
-      }, actorUserId);
+      const result = await ensureAction(
+        {
+          source_module: "onboarding",
+          source_id: String(candidate.id),
+          risk_type: "manual_follow_up",
+          severity,
+          title: `Onboarding stuck: ${candidate.candidate_code ?? "Unknown"} at ${candidate.current_stage ?? "unknown stage"}`,
+          description: `Candidate: ${candidate.full_name ?? "Unknown"}\nAge: ${ageDays} days (${candidate.age_hours}h)`,
+          owner_role: "hr",
+          due_date: dueDate(severity === "high" ? 1 : 2),
+        },
+        actorUserId,
+      );
 
       if (result.created) created += 1;
     }
@@ -492,7 +594,13 @@ export const businessActionSignalSync = {
   },
 
   async syncRosterShortages(actorUserId: string) {
-    if (!(await tableExists("wfm_slot_requirement"))) return { scanned: 0, created: 0, skipped: 0, reason: "wfm_slot_requirement missing" };
+    if (!(await tableExists("wfm_slot_requirement")))
+      return {
+        scanned: 0,
+        created: 0,
+        skipped: 0,
+        reason: "wfm_slot_requirement missing",
+      };
 
     // Query roster shortages in next 7 days
     const [shortages] = await db.execute<RosterShortageRow[]>(
@@ -526,27 +634,39 @@ export const businessActionSignalSync = {
          AND wsr.is_active = 1
        HAVING shortage > 0
        ORDER BY shortage DESC, wsr.requirement_date ASC
-       LIMIT 100`
+       LIMIT 100`,
     );
 
     let created = 0;
     for (const shortage of shortages) {
-      const severity = shortage.shortage > 10 ? 'critical' : shortage.shortage > 5 ? 'high' : 'medium';
+      const severity =
+        shortage.shortage > 10
+          ? "critical"
+          : shortage.shortage > 5
+            ? "high"
+            : "medium";
 
-      const result = await ensureAction({
-        source_module: 'roster',
-        source_id: `${shortage.requirement_date}_${shortage.process_id}`,
-        risk_type: 'roster_shortage',
-        severity,
-        title: `Roster shortage: ${shortage.process_name ?? 'Unknown'} on ${shortage.requirement_date} (${shortage.shortage} HC)`,
-        description: `Required: ${shortage.required_hc}, Planned: ${shortage.planned_hc}, Shortage: ${shortage.shortage}`,
-        owner_role: 'operations',
-        due_date: shortage.requirement_date,
-      }, actorUserId);
+      const result = await ensureAction(
+        {
+          source_module: "roster",
+          source_id: `${shortage.requirement_date}_${shortage.process_id}`,
+          risk_type: "roster_shortage",
+          severity,
+          title: `Roster shortage: ${shortage.process_name ?? "Unknown"} on ${shortage.requirement_date} (${shortage.shortage} HC)`,
+          description: `Required: ${shortage.required_hc}, Planned: ${shortage.planned_hc}, Shortage: ${shortage.shortage}`,
+          owner_role: "operations",
+          due_date: shortage.requirement_date,
+        },
+        actorUserId,
+      );
 
       if (result.created) created += 1;
     }
 
-    return { scanned: shortages.length, created, skipped: shortages.length - created };
+    return {
+      scanned: shortages.length,
+      created,
+      skipped: shortages.length - created,
+    };
   },
 };

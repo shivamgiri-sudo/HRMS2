@@ -95,7 +95,10 @@ function placeholders(values: readonly unknown[]): string {
   return values.map(() => "?").join(", ");
 }
 
-export function buildDatasetScopeFilter(scope: DashboardScope, alias = "psd"): ScopeSql {
+export function buildDatasetScopeFilter(
+  scope: DashboardScope,
+  alias = "psd",
+): ScopeSql {
   if (scope.level === "ORG_ALL") return { sql: "1 = 1", params: [] };
 
   if (scope.level === "PROCESS_ALL") {
@@ -130,11 +133,15 @@ export function buildDatasetScopeFilter(scope: DashboardScope, alias = "psd"): S
     const conditions: string[] = [];
     const params: string[] = [];
     if (scope.branchIds.length) {
-      conditions.push(`${alias}.branch_id IN (${placeholders(scope.branchIds)})`);
+      conditions.push(
+        `${alias}.branch_id IN (${placeholders(scope.branchIds)})`,
+      );
       params.push(...scope.branchIds);
     }
     if (scope.processIds.length) {
-      conditions.push(`${alias}.process_id IN (${placeholders(scope.processIds)})`);
+      conditions.push(
+        `${alias}.process_id IN (${placeholders(scope.processIds)})`,
+      );
       params.push(...scope.processIds);
     }
     return conditions.length
@@ -145,7 +152,10 @@ export function buildDatasetScopeFilter(scope: DashboardScope, alias = "psd"): S
   return { sql: "1 = 0", params: [] };
 }
 
-function buildEmployeeScopeFilter(scope: DashboardScope, alias = "e"): ScopeSql {
+function buildEmployeeScopeFilter(
+  scope: DashboardScope,
+  alias = "e",
+): ScopeSql {
   if (scope.level === "ORG_ALL") return { sql: "1 = 1", params: [] };
   if (scope.level === "BRANCH_ALL" && scope.branchIds.length) {
     return {
@@ -163,11 +173,15 @@ function buildEmployeeScopeFilter(scope: DashboardScope, alias = "e"): ScopeSql 
     const conditions: string[] = [];
     const params: string[] = [];
     if (scope.branchIds.length) {
-      conditions.push(`${alias}.branch_id IN (${placeholders(scope.branchIds)})`);
+      conditions.push(
+        `${alias}.branch_id IN (${placeholders(scope.branchIds)})`,
+      );
       params.push(...scope.branchIds);
     }
     if (scope.processIds.length) {
-      conditions.push(`${alias}.process_id IN (${placeholders(scope.processIds)})`);
+      conditions.push(
+        `${alias}.process_id IN (${placeholders(scope.processIds)})`,
+      );
       params.push(...scope.processIds);
     }
     return conditions.length
@@ -199,10 +213,14 @@ function mapDataset(row: DatasetRow) {
     approvalStatus: String(row.approval_status ?? "draft"),
     activeStatus: Number(row.active_status ?? 0) === 1,
     mappingVersionCount: Number(row.mapping_version_count ?? 0),
-    currentMappingVersion: row.current_mapping_version === null || row.current_mapping_version === undefined
-      ? null
-      : Number(row.current_mapping_version),
-    currentEffectiveFrom: row.current_effective_from ? String(row.current_effective_from) : null,
+    currentMappingVersion:
+      row.current_mapping_version === null ||
+      row.current_mapping_version === undefined
+        ? null
+        : Number(row.current_mapping_version),
+    currentEffectiveFrom: row.current_effective_from
+      ? String(row.current_effective_from)
+      : null,
   };
 }
 
@@ -228,7 +246,8 @@ async function datasetRowForUser(
       LIMIT 1${lock ? " FOR UPDATE" : ""}`,
     [idOrKey, idOrKey, ...scoped.params],
   );
-  if (!rows[0]) throw notFound("Performance dataset was not found in your assigned scope");
+  if (!rows[0])
+    throw notFound("Performance dataset was not found in your assigned scope");
   return rows[0];
 }
 
@@ -244,7 +263,11 @@ async function ensureDatasetAssignmentAllowed(
     if (!processId || !scope.processIds.includes(processId)) {
       throw forbidden("The selected process is outside your assigned scope");
     }
-    if (branchId && scope.branchIds.length && !scope.branchIds.includes(branchId)) {
+    if (
+      branchId &&
+      scope.branchIds.length &&
+      !scope.branchIds.includes(branchId)
+    ) {
       throw forbidden("The selected branch is outside your assigned scope");
     }
     return;
@@ -252,7 +275,9 @@ async function ensureDatasetAssignmentAllowed(
 
   if (scope.level === "BRANCH_ALL") {
     if (!branchId || !scope.branchIds.includes(branchId)) {
-      throw forbidden("Branch-scoped source owners must select an assigned branch");
+      throw forbidden(
+        "Branch-scoped source owners must select an assigned branch",
+      );
     }
     if (processId) {
       const [rows] = await connection.execute<RowDataPacket[]>(
@@ -265,7 +290,9 @@ async function ensureDatasetAssignmentAllowed(
         [processId, branchId],
       );
       if (!rows.length) {
-        throw forbidden("The selected process is not active in the selected branch");
+        throw forbidden(
+          "The selected process is not active in the selected branch",
+        );
       }
     }
     return;
@@ -289,7 +316,8 @@ async function ensureEmployeeAllowed(
       LIMIT 1`,
     [employeeId, ...scoped.params],
   );
-  if (!rows.length) throw forbidden("The selected employee is outside your assigned scope");
+  if (!rows.length)
+    throw forbidden("The selected employee is outside your assigned scope");
 }
 
 async function ensureProcessAllowed(
@@ -355,7 +383,9 @@ export const performanceGovernanceService = {
         effectiveTo: version.effective_to ? String(version.effective_to) : null,
         status: String(version.status),
         approvedBy: version.approved_by ? String(version.approved_by) : null,
-        approvedAt: version.approved_at ? new Date(version.approved_at).toISOString() : null,
+        approvedAt: version.approved_at
+          ? new Date(version.approved_at).toISOString()
+          : null,
         createdAt: new Date(version.created_at).toISOString(),
       })),
     };
@@ -421,7 +451,11 @@ export const performanceGovernanceService = {
     return id;
   },
 
-  async setDatasetActive(userId: string, idOrKey: string, activeStatus: boolean): Promise<void> {
+  async setDatasetActive(
+    userId: string,
+    idOrKey: string,
+    activeStatus: boolean,
+  ): Promise<void> {
     const dataset = await datasetRowForUser(userId, idOrKey);
     await db.execute(
       `UPDATE performance_source_dataset SET active_status = ?, updated_at = NOW() WHERE id = ?`,
@@ -437,8 +471,14 @@ export const performanceGovernanceService = {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
-      const dataset = await datasetRowForUser(userId, idOrKey, connection, true);
-      if (Number(dataset.active_status) !== 1) throw conflict("Inactive datasets cannot be approved");
+      const dataset = await datasetRowForUser(
+        userId,
+        idOrKey,
+        connection,
+        true,
+      );
+      if (Number(dataset.active_status) !== 1)
+        throw conflict("Inactive datasets cannot be approved");
 
       const [versions] = await connection.execute<RowDataPacket[]>(
         `SELECT version_no, DATE_FORMAT(effective_from, '%Y-%m-%d') AS effective_from
@@ -450,8 +490,13 @@ export const performanceGovernanceService = {
         [dataset.id],
       );
       const latest = versions[0];
-      if (latest?.effective_from && effectiveFrom <= String(latest.effective_from)) {
-        throw conflict(`The new mapping effective date must be after ${String(latest.effective_from)}`);
+      if (
+        latest?.effective_from &&
+        effectiveFrom <= String(latest.effective_from)
+      ) {
+        throw conflict(
+          `The new mapping effective date must be after ${String(latest.effective_from)}`,
+        );
       }
 
       const versionNo = Number(latest?.version_no ?? 0) + 1;
@@ -468,7 +513,14 @@ export const performanceGovernanceService = {
            (id, dataset_id, version_no, mapping_json, effective_from, status,
             approved_by, approved_at, created_by)
          VALUES (UUID(), ?, ?, ?, ?, 'active', ?, NOW(), ?)`,
-        [dataset.id, versionNo, JSON.stringify(parseJson(dataset.mapping_json, {})), effectiveFrom, userId, userId],
+        [
+          dataset.id,
+          versionNo,
+          JSON.stringify(parseJson(dataset.mapping_json, {})),
+          effectiveFrom,
+          userId,
+          userId,
+        ],
       );
       await connection.execute(
         `UPDATE performance_source_dataset
@@ -486,7 +538,10 @@ export const performanceGovernanceService = {
     }
   },
 
-  async assertDatasetAccess(userId: string, idOrKey: string): Promise<PerformanceDataset> {
+  async assertDatasetAccess(
+    userId: string,
+    idOrKey: string,
+  ): Promise<PerformanceDataset> {
     const row = await datasetRowForUser(userId, idOrKey);
     return mapDataset(row) as PerformanceDataset;
   },
@@ -523,7 +578,9 @@ export const performanceGovernanceService = {
         status: String(row.status),
         windowFrom: row.window_from ? String(row.window_from) : null,
         windowTo: row.window_to ? String(row.window_to) : null,
-        sourceFileName: row.source_file_name ? String(row.source_file_name) : null,
+        sourceFileName: row.source_file_name
+          ? String(row.source_file_name)
+          : null,
         sourceRows: Number(row.source_row_count ?? 0),
         stagedRows: Number(row.staged_row_count ?? 0),
         mappedRows: Number(row.mapped_row_count ?? 0),
@@ -531,8 +588,12 @@ export const performanceGovernanceService = {
         publishedFacts: Number(row.published_fact_count ?? 0),
         errorCount: Number(row.error_count ?? 0),
         errorSummary: row.error_summary ? String(row.error_summary) : null,
-        startedAt: row.started_at ? new Date(row.started_at).toISOString() : null,
-        finishedAt: row.finished_at ? new Date(row.finished_at).toISOString() : null,
+        startedAt: row.started_at
+          ? new Date(row.started_at).toISOString()
+          : null,
+        finishedAt: row.finished_at
+          ? new Date(row.finished_at).toISOString()
+          : null,
         createdAt: new Date(row.created_at).toISOString(),
       })),
       total: Number(countRows[0]?.total ?? 0),
@@ -553,29 +614,31 @@ export const performanceGovernanceService = {
         LIMIT 1`,
       [runId, ...scoped.params],
     );
-    if (!runs[0]) throw notFound("Ingestion run was not found in your assigned scope");
+    if (!runs[0])
+      throw notFound("Ingestion run was not found in your assigned scope");
 
-    const [[validations], [reconciliations], [exceptions], [publications]] = await Promise.all([
-      db.execute<RowDataPacket[]>(
-        `SELECT * FROM performance_validation_result
+    const [[validations], [reconciliations], [exceptions], [publications]] =
+      await Promise.all([
+        db.execute<RowDataPacket[]>(
+          `SELECT * FROM performance_validation_result
           WHERE run_id = ? ORDER BY severity DESC, id ASC LIMIT 500`,
-        [runId],
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT * FROM performance_reconciliation_result
+          [runId],
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT * FROM performance_reconciliation_result
           WHERE run_id = ? ORDER BY reconciliation_code`,
-        [runId],
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT * FROM integration_mapping_exception
+          [runId],
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT * FROM integration_mapping_exception
           WHERE integration_run_id = ? ORDER BY created_at ASC LIMIT 500`,
-        [runId],
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT * FROM performance_publication_batch WHERE run_id = ? LIMIT 1`,
-        [runId],
-      ),
-    ]);
+          [runId],
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT * FROM performance_publication_batch WHERE run_id = ? LIMIT 1`,
+          [runId],
+        ),
+      ]);
     return {
       run: runs[0],
       validations,
@@ -585,15 +648,20 @@ export const performanceGovernanceService = {
     };
   },
 
-  async listMappingExceptions(userId: string, input: {
-    status?: string;
-    datasetId?: string | null;
-    page?: number;
-    pageSize?: number;
-  }) {
+  async listMappingExceptions(
+    userId: string,
+    input: {
+      status?: string;
+      datasetId?: string | null;
+      page?: number;
+      pageSize?: number;
+    },
+  ) {
     const scope = await scopeFor(userId);
     const scoped = buildDatasetScopeFilter(scope, "psd");
-    const status = String(input.status ?? "open").trim().toLowerCase();
+    const status = String(input.status ?? "open")
+      .trim()
+      .toLowerCase();
     const safePage = pageNumber(input.page, 1, 100000);
     const safePageSize = pageNumber(input.pageSize, 25, 100);
     const offset = (safePage - 1) * safePageSize;
@@ -636,7 +704,9 @@ export const performanceGovernanceService = {
         detail: String(row.exception_detail ?? ""),
         status: String(row.status),
         createdAt: new Date(row.created_at).toISOString(),
-        updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+        updatedAt: row.updated_at
+          ? new Date(row.updated_at).toISOString()
+          : null,
       })),
       total: Number(countRows[0]?.total ?? 0),
       page: safePage,
@@ -665,19 +735,28 @@ export const performanceGovernanceService = {
         [exceptionId, ...scoped.params],
       );
       const exception = rows[0];
-      if (!exception) throw notFound("Mapping exception was not found in your assigned scope");
+      if (!exception)
+        throw notFound(
+          "Mapping exception was not found in your assigned scope",
+        );
       if (String(exception.status).toLowerCase() !== "open") {
         throw conflict("This mapping exception is already closed");
       }
 
-      const effectiveFrom = input.effectiveFrom?.trim() || new Date().toISOString().slice(0, 10);
+      const effectiveFrom =
+        input.effectiveFrom?.trim() || new Date().toISOString().slice(0, 10);
       const effectiveTo = input.effectiveTo?.trim() || null;
       if (effectiveTo && effectiveTo < effectiveFrom) {
-        throw conflict("The mapping effective-to date cannot be before effective-from");
+        throw conflict(
+          "The mapping effective-to date cannot be before effective-from",
+        );
       }
 
       if (input.action === "map_employee") {
-        if (!input.employeeId) throw conflict("An HRMS employee is required to resolve this exception");
+        if (!input.employeeId)
+          throw conflict(
+            "An HRMS employee is required to resolve this exception",
+          );
         await ensureEmployeeAllowed(connection, scope, input.employeeId);
         await connection.execute(
           `INSERT INTO performance_identity_map
@@ -703,9 +782,17 @@ export const performanceGovernanceService = {
       }
 
       if (input.action === "map_process") {
-        if (!input.processId) throw conflict("An HRMS process is required to resolve this exception");
+        if (!input.processId)
+          throw conflict(
+            "An HRMS process is required to resolve this exception",
+          );
         const branchId = input.branchId?.trim() || exception.branch_id || null;
-        await ensureProcessAllowed(connection, scope, input.processId, branchId);
+        await ensureProcessAllowed(
+          connection,
+          scope,
+          input.processId,
+          branchId,
+        );
         await connection.execute(
           `INSERT INTO performance_process_map
              (id, source_key, external_process, process_id, branch_id, effective_from,
@@ -733,7 +820,10 @@ export const performanceGovernanceService = {
         `Resolution action: ${input.action}`,
         input.notes?.trim() ? `Resolution notes: ${input.notes.trim()}` : null,
         `Resolved by: ${userId}`,
-      ].filter(Boolean).join("\n").slice(0, 4000);
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 4000);
       await connection.execute(
         `UPDATE integration_mapping_exception
             SET status = ?, exception_detail = ?, updated_at = NOW()
@@ -749,15 +839,18 @@ export const performanceGovernanceService = {
     }
   },
 
-  async saveIdentityMap(userId: string, input: {
-    sourceKey: string;
-    externalIdentifier: string;
-    identifierType: string;
-    employeeId: string;
-    processId?: string | null;
-    effectiveFrom: string;
-    effectiveTo?: string | null;
-  }): Promise<void> {
+  async saveIdentityMap(
+    userId: string,
+    input: {
+      sourceKey: string;
+      externalIdentifier: string;
+      identifierType: string;
+      employeeId: string;
+      processId?: string | null;
+      effectiveFrom: string;
+      effectiveTo?: string | null;
+    },
+  ): Promise<void> {
     await datasetRowForUser(userId, input.sourceKey);
     const scope = await scopeFor(userId);
     await ensureEmployeeAllowed(db, scope, input.employeeId);
@@ -784,17 +877,25 @@ export const performanceGovernanceService = {
     );
   },
 
-  async saveProcessMap(userId: string, input: {
-    sourceKey: string;
-    externalProcess: string;
-    processId: string;
-    branchId?: string | null;
-    effectiveFrom: string;
-    effectiveTo?: string | null;
-  }): Promise<void> {
+  async saveProcessMap(
+    userId: string,
+    input: {
+      sourceKey: string;
+      externalProcess: string;
+      processId: string;
+      branchId?: string | null;
+      effectiveFrom: string;
+      effectiveTo?: string | null;
+    },
+  ): Promise<void> {
     await datasetRowForUser(userId, input.sourceKey);
     const scope = await scopeFor(userId);
-    await ensureProcessAllowed(db, scope, input.processId, input.branchId ?? null);
+    await ensureProcessAllowed(
+      db,
+      scope,
+      input.processId,
+      input.branchId ?? null,
+    );
     await db.execute(
       `INSERT INTO performance_process_map
          (id, source_key, external_process, process_id, branch_id, effective_from,
@@ -826,9 +927,10 @@ export const performanceGovernanceService = {
     const searchParams = term ? Array(4).fill(`%${term}%`) : [];
 
     // The four option lists are independent; fetch them concurrently.
-    const [[employees], [processes], [branches], [metrics]] = await Promise.all([
-      db.execute<RowDataPacket[]>(
-      `SELECT e.id, e.employee_code,
+    const [[employees], [processes], [branches], [metrics]] = await Promise.all(
+      [
+        db.execute<RowDataPacket[]>(
+          `SELECT e.id, e.employee_code,
               COALESCE(NULLIF(e.full_name, ''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name,
               e.process_id, e.branch_id, pm.process_name, bm.branch_name
          FROM employees e
@@ -839,40 +941,43 @@ export const performanceGovernanceService = {
           ${searchSql}
         ORDER BY employee_name ASC, e.employee_code ASC
         LIMIT 200`,
-      [...employeeScope.params, ...searchParams],
-    ),
-      db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT pm.id, pm.process_name
+          [...employeeScope.params, ...searchParams],
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT DISTINCT pm.id, pm.process_name
          FROM process_master pm
          JOIN employees e ON e.process_id = pm.id AND e.active_status = 1
         WHERE pm.active_status = 1
           AND ${employeeScope.sql}
         ORDER BY pm.process_name ASC`,
-      employeeScope.params,
-    ),
-      db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT bm.id, bm.branch_name
+          employeeScope.params,
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT DISTINCT bm.id, bm.branch_name
          FROM branch_master bm
          JOIN employees e ON e.branch_id = bm.id AND e.active_status = 1
         WHERE bm.active_status = 1
           AND ${employeeScope.sql}
         ORDER BY bm.branch_name ASC`,
-      employeeScope.params,
-    ),
-      db.execute<RowDataPacket[]>(
-      `SELECT id, metric_code, metric_name, unit, direction,
+          employeeScope.params,
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT id, metric_code, metric_name, unit, direction,
               COALESCE(aggregation_method, 'average') AS aggregation_method
          FROM kpi_metric_master
         WHERE active_status = 1
         ORDER BY COALESCE(display_order, 100), metric_name, metric_code`,
-    ),
-    ]);
+        ),
+      ],
+    );
 
     return {
       employees: employees.map((row) => ({
         id: String(row.id),
         employeeCode: String(row.employee_code ?? ""),
-        employeeName: String(row.employee_name ?? row.employee_code ?? "Employee"),
+        employeeName: String(
+          row.employee_name ?? row.employee_code ?? "Employee",
+        ),
         processId: row.process_id ? String(row.process_id) : null,
         branchId: row.branch_id ? String(row.branch_id) : null,
         processName: row.process_name ? String(row.process_name) : null,

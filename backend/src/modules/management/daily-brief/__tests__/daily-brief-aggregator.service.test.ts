@@ -13,7 +13,9 @@ vi.mock("../../../../shared/accessGuard.js", () => ({ hasRole }));
 // db_audit.call_quality_assessment. Mocked defensively so this file's tests never attempt
 // a real cross-DB connection, matching the convention already used in
 // daily-brief-quality.module.test.ts.
-const { querySource } = vi.hoisted(() => ({ querySource: vi.fn(async () => []) }));
+const { querySource } = vi.hoisted(() => ({
+  querySource: vi.fn(async () => []),
+}));
 vi.mock("../../../../db/sourceDb.js", () => ({ querySource }));
 
 import { buildManagerDailyBrief } from "../daily-brief-aggregator.service.js";
@@ -40,24 +42,33 @@ describe("daily-brief-aggregator: attendance summary", () => {
   it("counts present/half-day/absent/missing_punch from attendance_daily_record", async () => {
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM attendance_daily_record")) {
-        return [[{
-          total: 10,
-          expected_to_work: 10,
-          present: 6,
-          attended_days: 6.5,
-          half_day: 1,
-          absent: 2,
-          missing_punch: 1,
-          late_count: 3,
-        }]];
+        return [
+          [
+            {
+              total: 10,
+              expected_to_work: 10,
+              present: 6,
+              attended_days: 6.5,
+              half_day: 1,
+              absent: 2,
+              missing_punch: 1,
+              late_count: 3,
+            },
+          ],
+        ];
       }
       if (sql.includes("FROM attendance_reconciliation_issue")) return [[]];
       if (sql.includes("FROM work_item")) return [[]];
-      if (sql.includes("FROM business_action_queue")) return [[{ open_count: 0 }]];
+      if (sql.includes("FROM business_action_queue"))
+        return [[{ open_count: 0 }]];
       return [[]];
     });
 
-    const brief = await buildManagerDailyBrief(recipient(["e1", "e2", "e3"]), "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const brief = await buildManagerDailyBrief(
+      recipient(["e1", "e2", "e3"]),
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
     expect(brief.attendance.present).toBe(6);
     expect(brief.attendance.halfDay).toBe(1);
@@ -67,7 +78,9 @@ describe("daily-brief-aggregator: attendance summary", () => {
     expect(brief.attendance.expectedToWork).toBe(10);
     expect(brief.attendance.attendancePct).toBe(65); // 6.5/10 * 100
 
-    const attendanceHealth = brief.sourceHealth.find((h) => h.module === "attendance");
+    const attendanceHealth = brief.sourceHealth.find(
+      (h) => h.module === "attendance",
+    );
     expect(attendanceHealth?.state).toBe("AVAILABLE");
   });
 
@@ -78,13 +91,20 @@ describe("daily-brief-aggregator: attendance summary", () => {
       }
       if (sql.includes("FROM attendance_reconciliation_issue")) return [[]];
       if (sql.includes("FROM work_item")) return [[]];
-      if (sql.includes("FROM business_action_queue")) return [[{ open_count: 0 }]];
+      if (sql.includes("FROM business_action_queue"))
+        return [[{ open_count: 0 }]];
       return [[]];
     });
 
-    const brief = await buildManagerDailyBrief(recipient(["e1"]), "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const brief = await buildManagerDailyBrief(
+      recipient(["e1"]),
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
-    const attendanceHealth = brief.sourceHealth.find((h) => h.module === "attendance");
+    const attendanceHealth = brief.sourceHealth.find(
+      (h) => h.module === "attendance",
+    );
     expect(attendanceHealth?.state).toBe("ERROR");
     expect(attendanceHealth?.detail).toContain("simulated failure");
     // The payload must not read as "zero absences" when the query actually failed —
@@ -96,33 +116,76 @@ describe("daily-brief-aggregator: attendance summary", () => {
   it("payroll_readiness signal is hidden (null, NOT_APPLICABLE) for a non-payroll-role recipient", async () => {
     hasRole.mockResolvedValue(false); // team_leader is not in PAYROLL_ROLES
     execute.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM attendance_daily_record")) return [[{ total: 0, expected_to_work: 0, present: 0, attended_days: 0, half_day: 0, absent: 0, missing_punch: 0, late_count: 0 }]];
+      if (sql.includes("FROM attendance_daily_record"))
+        return [
+          [
+            {
+              total: 0,
+              expected_to_work: 0,
+              present: 0,
+              attended_days: 0,
+              half_day: 0,
+              absent: 0,
+              missing_punch: 0,
+              late_count: 0,
+            },
+          ],
+        ];
       if (sql.includes("FROM attendance_reconciliation_issue")) return [[]];
       if (sql.includes("FROM work_item")) return [[]];
-      if (sql.includes("FROM business_action_queue")) return [[{ open_count: 5 }]];
+      if (sql.includes("FROM business_action_queue"))
+        return [[{ open_count: 5 }]];
       return [[]];
     });
 
-    const brief = await buildManagerDailyBrief(recipient(["e1"]), "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const brief = await buildManagerDailyBrief(
+      recipient(["e1"]),
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
     expect(brief.payrollReadiness).toBeNull();
-    const payrollHealth = brief.sourceHealth.find((h) => h.module === "payroll_readiness");
+    const payrollHealth = brief.sourceHealth.find(
+      (h) => h.module === "payroll_readiness",
+    );
     expect(payrollHealth?.state).toBe("NOT_APPLICABLE");
     // The business_action_queue query must never even run for a non-payroll recipient.
-    expect(execute).not.toHaveBeenCalledWith(expect.stringContaining("business_action_queue"), expect.anything());
+    expect(execute).not.toHaveBeenCalledWith(
+      expect.stringContaining("business_action_queue"),
+      expect.anything(),
+    );
   });
 
   it("payroll_readiness signal IS populated for a payroll-role recipient", async () => {
     hasRole.mockResolvedValue(true);
     execute.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM attendance_daily_record")) return [[{ total: 0, expected_to_work: 0, present: 0, attended_days: 0, half_day: 0, absent: 0, missing_punch: 0, late_count: 0 }]];
+      if (sql.includes("FROM attendance_daily_record"))
+        return [
+          [
+            {
+              total: 0,
+              expected_to_work: 0,
+              present: 0,
+              attended_days: 0,
+              half_day: 0,
+              absent: 0,
+              missing_punch: 0,
+              late_count: 0,
+            },
+          ],
+        ];
       if (sql.includes("FROM attendance_reconciliation_issue")) return [[]];
       if (sql.includes("FROM work_item")) return [[]];
-      if (sql.includes("FROM business_action_queue")) return [[{ open_count: 5 }]];
+      if (sql.includes("FROM business_action_queue"))
+        return [[{ open_count: 5 }]];
       return [[]];
     });
 
-    const brief = await buildManagerDailyBrief(recipient(["e1"]), "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const brief = await buildManagerDailyBrief(
+      recipient(["e1"]),
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
     expect(brief.payrollReadiness).not.toBeNull();
     expect(brief.payrollReadiness?.value).toBe(5);

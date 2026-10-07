@@ -15,12 +15,16 @@
  * not the whole thing. See mira-fix-draft-guard.ts for what remains before any diff of
  * this service's making could ever reach a deploy button.
  */
-import { randomUUID } from 'crypto';
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { checkFixDraftSafety, extractTouchedFiles } from './mira-fix-draft-guard.js';
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import {
+  checkFixDraftSafety,
+  extractTouchedFiles,
+} from "./mira-fix-draft-guard.js";
 
-export type FixDraftStatus = 'drafted' | 'rejected' | 'deploying' | 'deployed' | 'failed';
+export type FixDraftStatus =
+  "drafted" | "rejected" | "deploying" | "deployed" | "failed";
 
 export interface FixDraft {
   id: string;
@@ -50,16 +54,30 @@ export async function createFixDraft(params: {
   const guardResult = checkFixDraftSafety(diffText);
   const targetFiles = extractTouchedFiles(diffText);
   const id = randomUUID();
-  const status: FixDraftStatus = guardResult.safe ? 'drafted' : 'rejected';
+  const status: FixDraftStatus = guardResult.safe ? "drafted" : "rejected";
   const rejectedReason = guardResult.safe
     ? null
-    : guardResult.deniedFiles.map((d) => `${d.file}: ${d.reason}`).join('; ').slice(0, 500);
-  const safetyFlags = guardResult.safe ? null : JSON.stringify(guardResult.deniedFiles);
+    : guardResult.deniedFiles
+        .map((d) => `${d.file}: ${d.reason}`)
+        .join("; ")
+        .slice(0, 500);
+  const safetyFlags = guardResult.safe
+    ? null
+    : JSON.stringify(guardResult.deniedFiles);
 
   await db.execute(
     `INSERT INTO mira_fix_draft (id, work_item_id, status, target_files, diff_text, model, safety_flags, rejected_reason, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-    [id, workItemId, status, JSON.stringify(targetFiles), diffText, model ?? null, safetyFlags, rejectedReason],
+    [
+      id,
+      workItemId,
+      status,
+      JSON.stringify(targetFiles),
+      diffText,
+      model ?? null,
+      safetyFlags,
+      rejectedReason,
+    ],
   );
 
   return {
@@ -69,7 +87,9 @@ export async function createFixDraft(params: {
     targetFiles,
     diffText,
     model: model ?? null,
-    safetyFlags: guardResult.safe ? null : guardResult.deniedFiles.map((d) => `${d.file}: ${d.reason}`),
+    safetyFlags: guardResult.safe
+      ? null
+      : guardResult.deniedFiles.map((d) => `${d.file}: ${d.reason}`),
     rejectedReason,
     createdAt: new Date().toISOString(),
   };
@@ -80,7 +100,11 @@ function rowToFixDraft(row: RowDataPacket): FixDraft {
     if (!v) return [];
     try {
       const parsed = JSON.parse(String(v));
-      return Array.isArray(parsed) ? parsed.map((x) => (typeof x === 'string' ? x : x?.file ?? String(x))) : [];
+      return Array.isArray(parsed)
+        ? parsed.map((x) =>
+            typeof x === "string" ? x : (x?.file ?? String(x)),
+          )
+        : [];
     } catch {
       return [];
     }
@@ -90,17 +114,21 @@ function rowToFixDraft(row: RowDataPacket): FixDraft {
     workItemId: String(row.work_item_id),
     status: row.status as FixDraftStatus,
     targetFiles: parseJsonArray(row.target_files),
-    diffText: String(row.diff_text ?? ''),
+    diffText: String(row.diff_text ?? ""),
     model: row.model ? String(row.model) : null,
     safetyFlags: row.safety_flags ? parseJsonArray(row.safety_flags) : null,
     rejectedReason: row.rejected_reason ? String(row.rejected_reason) : null,
-    createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+    createdAt: row.created_at
+      ? new Date(row.created_at).toISOString()
+      : new Date().toISOString(),
   };
 }
 
 /** Read-only: every draft ever attempted for a work_item, most recent first — so a
  * rejected attempt stays visible as history, not just the one that happened to succeed. */
-export async function listFixDraftsForWorkItem(workItemId: string): Promise<FixDraft[]> {
+export async function listFixDraftsForWorkItem(
+  workItemId: string,
+): Promise<FixDraft[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, work_item_id, status, target_files, diff_text, model, safety_flags, rejected_reason, created_at
        FROM mira_fix_draft
@@ -112,7 +140,9 @@ export async function listFixDraftsForWorkItem(workItemId: string): Promise<FixD
 }
 
 /** Read-only: a single draft by id, or null if it does not exist. */
-export async function getFixDraftById(draftId: string): Promise<FixDraft | null> {
+export async function getFixDraftById(
+  draftId: string,
+): Promise<FixDraft | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, work_item_id, status, target_files, diff_text, model, safety_flags, rejected_reason, created_at
        FROM mira_fix_draft

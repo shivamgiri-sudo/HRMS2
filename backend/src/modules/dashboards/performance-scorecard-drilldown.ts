@@ -1,6 +1,9 @@
 import { db } from "../../db/mysql.js";
 import type { DrilldownResult } from "./dashboard-drilldown.service.js";
-import { type DashboardScope, buildScopeWhereEmployees } from "../../shared/dashboardScope.js";
+import {
+  type DashboardScope,
+  buildScopeWhereEmployees,
+} from "../../shared/dashboardScope.js";
 import type { MetricResult } from "./dashboard-metric.service.js";
 
 interface ScorecardFilters {
@@ -9,12 +12,17 @@ interface ScorecardFilters {
   dateTo?: string;
 }
 
-function requireRange(
-  filters: Record<string, unknown> | undefined,
-): { employeeId: string; dateFrom: string; dateTo: string } {
+function requireRange(filters: Record<string, unknown> | undefined): {
+  employeeId: string;
+  dateFrom: string;
+  dateTo: string;
+} {
   const f = (filters ?? {}) as ScorecardFilters;
   if (!f.employeeId || !f.dateFrom || !f.dateTo) {
-    throw Object.assign(new Error("employeeId, dateFrom and dateTo are required"), { status: 400 });
+    throw Object.assign(
+      new Error("employeeId, dateFrom and dateTo are required"),
+      { status: 400 },
+    );
   }
   return { employeeId: f.employeeId, dateFrom: f.dateFrom, dateTo: f.dateTo };
 }
@@ -26,8 +34,16 @@ function requireRange(
  * of reporting relationship — matches the pattern every other handler in
  * dashboard-drilldown.service.ts uses (buildScopeWhereEmployees joined into the SQL).
  */
-async function fetchSnapshotRows(scope: DashboardScope, employeeId: string, dateFrom: string, dateTo: string) {
-  const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+async function fetchSnapshotRows(
+  scope: DashboardScope,
+  employeeId: string,
+  dateFrom: string,
+  dateTo: string,
+) {
+  const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+    scope,
+    "e",
+  );
   const [rows] = (await db.execute(
     `SELECT e.employee_code AS employeeCode, e.full_name AS employeeName,
             s.snapshot_date AS snapshotDate, s.attendance_status AS attendanceStatus,
@@ -86,7 +102,9 @@ export async function drillUnplannedLeave(
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId, dateFrom, dateTo } = requireRange(filters);
-  const rows = (await fetchSnapshotRows(scope, employeeId, dateFrom, dateTo)).filter((r) => Boolean(r.unplannedLeaveFlag));
+  const rows = (
+    await fetchSnapshotRows(scope, employeeId, dateFrom, dateTo)
+  ).filter((r) => Boolean(r.unplannedLeaveFlag));
   return {
     metricCode: "UNPLANNED_LEAVE",
     records: rows.map((r) => ({
@@ -104,7 +122,10 @@ export async function drillPipStatus(
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId } = requireRange(filters);
-  const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+  const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+    scope,
+    "e",
+  );
   const [rows] = (await db.execute(
     `SELECT pr.status, pr.start_date, pr.end_date, pr.reason, pc.checkpoint_date, pc.rating, pc.notes
        FROM pip_record pr
@@ -146,7 +167,8 @@ export async function drillAttrition(
     records: rows.map((r) => ({
       employeeCode: r.employeeCode,
       snapshotDate: r.snapshotDate,
-      teamAttritionPct: r.teamAttritionPct === null ? null : Number(r.teamAttritionPct),
+      teamAttritionPct:
+        r.teamAttritionPct === null ? null : Number(r.teamAttritionPct),
     })),
     totalCount: rows.length,
     note: "Team-level rollup for this employee's managed team",
@@ -164,7 +186,8 @@ export async function drillShrinkage(
     records: rows.map((r) => ({
       employeeCode: r.employeeCode,
       snapshotDate: r.snapshotDate,
-      teamShrinkagePct: r.teamShrinkagePct === null ? null : Number(r.teamShrinkagePct),
+      teamShrinkagePct:
+        r.teamShrinkagePct === null ? null : Number(r.teamShrinkagePct),
     })),
     totalCount: rows.length,
     note: "Team-level rollup for this employee's managed team",
@@ -213,27 +236,43 @@ function stubMetricResult(metricCode: string): MetricResult {
   };
 }
 
-export async function getAttendanceStatusMetric(_scope: DashboardScope): Promise<MetricResult> {
+export async function getAttendanceStatusMetric(
+  _scope: DashboardScope,
+): Promise<MetricResult> {
   return stubMetricResult("ATTENDANCE_STATUS");
 }
-export async function getLatecomingMetric(_scope: DashboardScope): Promise<MetricResult> {
+export async function getLatecomingMetric(
+  _scope: DashboardScope,
+): Promise<MetricResult> {
   return stubMetricResult("LATECOMING");
 }
-export async function getUnplannedLeaveMetric(_scope: DashboardScope): Promise<MetricResult> {
+export async function getUnplannedLeaveMetric(
+  _scope: DashboardScope,
+): Promise<MetricResult> {
   return stubMetricResult("UNPLANNED_LEAVE");
 }
-export async function getPipStatusMetric(_scope: DashboardScope): Promise<MetricResult> {
+export async function getPipStatusMetric(
+  _scope: DashboardScope,
+): Promise<MetricResult> {
   return stubMetricResult("PIP_STATUS");
 }
-export async function getQualityBaselineMetric(_scope: DashboardScope): Promise<MetricResult> {
+export async function getQualityBaselineMetric(
+  _scope: DashboardScope,
+): Promise<MetricResult> {
   return stubMetricResult("QUALITY_BASELINE");
 }
-export async function getAttritionMetric(_scope: DashboardScope): Promise<MetricResult> {
+export async function getAttritionMetric(
+  _scope: DashboardScope,
+): Promise<MetricResult> {
   return stubMetricResult("ATTRITION");
 }
-export async function getShrinkageMetric(_scope: DashboardScope): Promise<MetricResult> {
+export async function getShrinkageMetric(
+  _scope: DashboardScope,
+): Promise<MetricResult> {
   return stubMetricResult("SHRINKAGE");
 }
-export async function getRevenueMetric(_scope: DashboardScope): Promise<MetricResult> {
+export async function getRevenueMetric(
+  _scope: DashboardScope,
+): Promise<MetricResult> {
   return stubMetricResult("REVENUE");
 }

@@ -10,9 +10,13 @@ vi.mock("../../../payroll/payroll-governance.service.js", () => ({
   payrollGovernanceService: { readiness: readinessMock },
 }));
 
-const { validatePayrollRunCreationMock } = vi.hoisted(() => ({ validatePayrollRunCreationMock: vi.fn() }));
+const { validatePayrollRunCreationMock } = vi.hoisted(() => ({
+  validatePayrollRunCreationMock: vi.fn(),
+}));
 vi.mock("../../../payroll/payroll-branch-readiness.service.js", () => ({
-  payrollBranchReadinessService: { validatePayrollRunCreation: validatePayrollRunCreationMock },
+  payrollBranchReadinessService: {
+    validatePayrollRunCreation: validatePayrollRunCreationMock,
+  },
 }));
 
 import {
@@ -36,7 +40,11 @@ describe("daily-brief-payroll: role gate", () => {
 
   it("SECURITY-CRITICAL: buildPayrollReadinessModule returns NOT_APPLICABLE (not an error, not empty-silent) for role='team_leader'", async () => {
     execute.mockReset();
-    const result = await buildPayrollReadinessModule("team_leader", {}, "2026-08-18");
+    const result = await buildPayrollReadinessModule(
+      "team_leader",
+      {},
+      "2026-08-18",
+    );
 
     expect(result.applicable).toBe(false);
     expect(result.sourceHealth.state).toBe("NOT_APPLICABLE");
@@ -67,20 +75,22 @@ describe("daily-brief-payroll: payroll-role path never touches monetary fields",
   it("returns run summaries with operational fields only, and no query string names a monetary column", async () => {
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM salary_prep_run")) {
-        return [[
-          {
-            id: "run-1",
-            run_month: "2026-08",
-            status: "processing",
-            attendance_snapshot_locked: 1,
-            compliance_checked: 0,
-            validation_status: "pending",
-            finance_approved_by: null,
-            finance_approved_at: null,
-            ceo_acknowledged_by: null,
-            ceo_acknowledged_at: null,
-          },
-        ]];
+        return [
+          [
+            {
+              id: "run-1",
+              run_month: "2026-08",
+              status: "processing",
+              attendance_snapshot_locked: 1,
+              compliance_checked: 0,
+              validation_status: "pending",
+              finance_approved_by: null,
+              finance_approved_at: null,
+              ceo_acknowledged_by: null,
+              ceo_acknowledged_at: null,
+            },
+          ],
+        ];
       }
       return [[]];
     });
@@ -91,9 +101,16 @@ describe("daily-brief-payroll: payroll-role path never touches monetary fields",
         statutory: { status: "WARNING" },
       },
     });
-    validatePayrollRunCreationMock.mockResolvedValue({ blocked: ["Branch A"], ready: ["Branch B"] });
+    validatePayrollRunCreationMock.mockResolvedValue({
+      blocked: ["Branch A"],
+      ready: ["Branch B"],
+    });
 
-    const result = await buildPayrollReadinessModule("payroll_head", {}, "2026-08-18");
+    const result = await buildPayrollReadinessModule(
+      "payroll_head",
+      {},
+      "2026-08-18",
+    );
 
     expect(result.applicable).toBe(true);
     expect(result.sourceHealth.state).toBe("AVAILABLE");
@@ -110,7 +127,10 @@ describe("daily-brief-payroll: payroll-role path never touches monetary fields",
       blockerCount: 2,
       warningCount: 1,
       categoryStatuses: { bank: "BLOCKED", statutory: "WARNING" },
-      branchReadinessGaps: { blockedBranches: ["Branch A"], readyBranches: ["Branch B"] },
+      branchReadinessGaps: {
+        blockedBranches: ["Branch A"],
+        readyBranches: ["Branch B"],
+      },
     });
     expect(result.pendingApprovalsCount).toBe(1);
 
@@ -126,7 +146,13 @@ describe("daily-brief-payroll: payroll-role path never touches monetary fields",
     // categoryStatuses values are readiness *category* names like "bank"/"statutory" —
     // acceptable; this checks no numeric monetary payload leaked into the JSON keys.
     expect(Object.keys(result.runs[0])).not.toEqual(
-      expect.arrayContaining(["grossSalary", "netSalary", "amount", "pfAmount", "esicAmount"]),
+      expect.arrayContaining([
+        "grossSalary",
+        "netSalary",
+        "amount",
+        "pfAmount",
+        "esicAmount",
+      ]),
     );
     expect(resultJson).not.toMatch(/"gross|"net_pay|"pfAmount|"esicAmount/i);
   });
@@ -134,39 +160,55 @@ describe("daily-brief-payroll: payroll-role path never touches monetary fields",
   it("a readiness-service failure is treated as unknown/not-clear (blockerCount -1), never as PASS", async () => {
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM salary_prep_run")) {
-        return [[
-          {
-            id: "run-2",
-            run_month: "2026-08",
-            status: "draft",
-            attendance_snapshot_locked: 0,
-            compliance_checked: 0,
-            validation_status: null,
-            finance_approved_by: null,
-            finance_approved_at: null,
-            ceo_acknowledged_by: null,
-            ceo_acknowledged_at: null,
-          },
-        ]];
+        return [
+          [
+            {
+              id: "run-2",
+              run_month: "2026-08",
+              status: "draft",
+              attendance_snapshot_locked: 0,
+              compliance_checked: 0,
+              validation_status: null,
+              finance_approved_by: null,
+              finance_approved_at: null,
+              ceo_acknowledged_by: null,
+              ceo_acknowledged_at: null,
+            },
+          ],
+        ];
       }
       return [[]];
     });
     readinessMock.mockRejectedValue(new Error("simulated readiness failure"));
-    validatePayrollRunCreationMock.mockResolvedValue({ blocked: [], ready: [] });
+    validatePayrollRunCreationMock.mockResolvedValue({
+      blocked: [],
+      ready: [],
+    });
 
-    const result = await buildPayrollReadinessModule("finance_head", {}, "2026-08-18");
+    const result = await buildPayrollReadinessModule(
+      "finance_head",
+      {},
+      "2026-08-18",
+    );
 
     expect(result.runs[0].blockerCount).toBe(-1);
-    expect(result.runs[0].categoryStatuses._CHECK_ERROR).toContain("simulated readiness failure");
+    expect(result.runs[0].categoryStatuses._CHECK_ERROR).toContain(
+      "simulated readiness failure",
+    );
   });
 
   it("a thrown salary_prep_run query still returns applicable:true with sourceHealth ERROR, never a silent empty pass", async () => {
     execute.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM salary_prep_run")) throw new Error("ER_NO_SUCH_TABLE simulated");
+      if (sql.includes("FROM salary_prep_run"))
+        throw new Error("ER_NO_SUCH_TABLE simulated");
       return [[]];
     });
 
-    const result = await buildPayrollReadinessModule("payroll", {}, "2026-08-18");
+    const result = await buildPayrollReadinessModule(
+      "payroll",
+      {},
+      "2026-08-18",
+    );
 
     expect(result.applicable).toBe(true);
     expect(result.sourceHealth.state).toBe("ERROR");
@@ -182,13 +224,16 @@ describe("daily-brief-payroll: buildPayrollOperationalHint never touches salary_
 
   it("returns a safe one-liner sourced from attendance_reconciliation_issue only", async () => {
     execute.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM attendance_reconciliation_issue")) return [[{ open_count: 3 }]];
+      if (sql.includes("FROM attendance_reconciliation_issue"))
+        return [[{ open_count: 3 }]];
       return [[]];
     });
 
     const hint = await buildPayrollOperationalHint(["e1", "e2"], "2026-08-18");
 
-    expect(hint).toBe("3 unresolved attendance records may block payroll readiness for your team.");
+    expect(hint).toBe(
+      "3 unresolved attendance records may block payroll readiness for your team.",
+    );
     for (const call of execute.mock.calls) {
       expect(String(call[0])).not.toMatch(/salary_prep_run/i);
     }

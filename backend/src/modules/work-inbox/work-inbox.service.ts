@@ -30,25 +30,37 @@ export type WorkItemInput = {
 export async function assertWorkItemAccess(
   userId: string,
   workItemId: string,
-  action: 'complete' | 'escalate' | 'reassign'
+  action: "complete" | "escalate" | "reassign",
 ): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    'SELECT assigned_to_user_id, assigned_to_role, status FROM work_item WHERE id = ? LIMIT 1',
-    [workItemId]
+    "SELECT assigned_to_user_id, assigned_to_role, status FROM work_item WHERE id = ? LIMIT 1",
+    [workItemId],
   );
   if (!(rows as any[]).length) {
-    throw Object.assign(new Error('Work item not found'), { statusCode: 404 });
+    throw Object.assign(new Error("Work item not found"), { statusCode: 404 });
   }
   const item = (rows as any)[0];
-  if (item.status === 'completed' || item.status === 'cancelled') {
-    throw Object.assign(new Error('Work item already ' + item.status), { statusCode: 400 });
+  if (item.status === "completed" || item.status === "cancelled") {
+    throw Object.assign(new Error("Work item already " + item.status), {
+      statusCode: 400,
+    });
   }
   const { roleKeys } = await getUserRoleContext(userId);
-  const isPrivileged = roleKeys.some(r =>
-    ['super_admin', 'admin', 'ho_hr', 'hr_branch', 'branch_head', 'operations_head'].includes(r)
+  const isPrivileged = roleKeys.some((r) =>
+    [
+      "super_admin",
+      "admin",
+      "ho_hr",
+      "hr_branch",
+      "branch_head",
+      "operations_head",
+    ].includes(r),
   );
   if (item.assigned_to_user_id !== userId && !isPrivileged) {
-    throw Object.assign(new Error('Not authorized to ' + action + ' this work item'), { statusCode: 403 });
+    throw Object.assign(
+      new Error("Not authorized to " + action + " this work item"),
+      { statusCode: 403 },
+    );
   }
 }
 
@@ -59,11 +71,21 @@ export async function createWorkItem(input: WorkItemInput): Promise<string> {
        assigned_to_user_id, assigned_to_role, branch_id, process_id, priority, status, due_at, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
     [
-      id, input.itemType, input.title, input.description ?? null, input.moduleCode,
-      input.entityType, input.entityId, input.assignedToUserId ?? null,
-      input.assignedToRole ?? null, input.branchId ?? null, input.processId ?? null,
-      input.priority ?? "medium", input.dueAt ?? null, input.createdBy ?? null,
-    ]
+      id,
+      input.itemType,
+      input.title,
+      input.description ?? null,
+      input.moduleCode,
+      input.entityType,
+      input.entityId,
+      input.assignedToUserId ?? null,
+      input.assignedToRole ?? null,
+      input.branchId ?? null,
+      input.processId ?? null,
+      input.priority ?? "medium",
+      input.dueAt ?? null,
+      input.createdBy ?? null,
+    ],
   );
   return id;
 }
@@ -123,7 +145,14 @@ export async function createWorkItem(input: WorkItemInput): Promise<string> {
 // (IT access closure retargeted admin -> it) — this array's length also drives the fixed
 // placeholder count below. 'trainer' removed same day (owner ruling — trainer clearance
 // dropped from the exit process entirely), moving this from 7 back to 6 slots.
-const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "it"] as const;
+const CLEARANCE_OWNER_ROLES = [
+  "manager",
+  "hr",
+  "admin",
+  "wfm",
+  "payroll",
+  "it",
+] as const;
 
 // Fixed-length (CLEARANCE_OWNER_ROLES.length) params for the exit-clearance branch's
 // "owner_role IN (?,?,?,?,?,?)" — see that branch's comment for why this stays a fixed
@@ -322,7 +351,13 @@ const DERIVED_REGISTRY_UNION_SQL = `
              OR (fb.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin'))
               )`;
 
-export async function getMyWorkItems(userId: string, role: string, allRoles: readonly string[] = [role], limit = 50, offset = 0) {
+export async function getMyWorkItems(
+  userId: string,
+  role: string,
+  allRoles: readonly string[] = [role],
+  limit = 50,
+  offset = 0,
+) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
   const safeOffset = Math.max(0, Number(offset) || 0);
   const ownerRoleParams = paddedOwnerRoleParams(allRoles);
@@ -381,7 +416,20 @@ export async function getMyWorkItems(userId: string, role: string, allRoles: rea
     // work_item(userId, role) -> work_inbox_item(userId) -> leave(userId, role) ->
     // exit(userId, ...CLEARANCE_OWNER_ROLES.length owner-role slots) -> bgv(role) ->
     // grn(role, role) -> budget(role, role)
-    [userId, role, userId, userId, role, userId, ...ownerRoleParams, role, role, role, role, role]
+    [
+      userId,
+      role,
+      userId,
+      userId,
+      role,
+      userId,
+      ...ownerRoleParams,
+      role,
+      role,
+      role,
+      role,
+      role,
+    ],
   );
   return rows;
 }
@@ -390,7 +438,12 @@ export async function getMyWorkItems(userId: string, role: string, allRoles: rea
  * The same five derived queues, standalone — for getMyPending() (modules/inbox/inbox.service.ts),
  * the endpoint the Work Inbox page actually reads. See DERIVED_REGISTRY_UNION_SQL's comment.
  */
-export async function getDerivedRegistryItems(userId: string, role: string, allRoles: readonly string[] = [role], limit = 200) {
+export async function getDerivedRegistryItems(
+  userId: string,
+  role: string,
+  allRoles: readonly string[] = [role],
+  limit = 200,
+) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
   const ownerRoleParams = paddedOwnerRoleParams(allRoles);
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -404,7 +457,7 @@ export async function getDerivedRegistryItems(userId: string, role: string, allR
      LIMIT ${safeLimit}`,
     // leave(userId, role) -> exit(userId, ...CLEARANCE_OWNER_ROLES.length owner-role slots) -> bgv(role) ->
     // grn(role, role) -> budget(role, role)
-    [userId, role, userId, ...ownerRoleParams, role, role, role, role, role]
+    [userId, role, userId, ...ownerRoleParams, role, role, role, role, role],
   );
   return rows;
 }
@@ -445,7 +498,7 @@ export async function getTeamWorkItems(userId: string, limit = 100) {
      ) merged
      ORDER BY merged.created_at DESC
      LIMIT ${safeLimit}`,
-    [userId, userId, userId]
+    [userId, userId, userId],
   );
   return rows;
 }
@@ -457,52 +510,67 @@ export async function getTeamWorkItems(userId: string, limit = 100) {
  * UPDATE on status closes that: the loser's affectedRows is 0 and it throws instead of
  * writing a duplicate audit entry.
  */
-export async function completeWorkItem(id: string, userId: string, remarks?: string): Promise<void> {
+export async function completeWorkItem(
+  id: string,
+  userId: string,
+  remarks?: string,
+): Promise<void> {
   const [result] = await db.execute<ResultSetHeader>(
     `UPDATE work_item SET status='completed', completed_at=NOW(), completed_by=?, updated_at=NOW()
      WHERE id=? AND status NOT IN ('completed', 'cancelled')`,
-    [userId, id]
+    [userId, id],
   );
   if (!result.affectedRows) {
-    throw Object.assign(new Error('Work item not found or already completed'), { statusCode: 409 });
+    throw Object.assign(new Error("Work item not found or already completed"), {
+      statusCode: 409,
+    });
   }
   await db.execute(
     `INSERT INTO work_item_audit_log (id, work_item_id, action, from_status, to_status, remarks, performed_by)
      VALUES (UUID(), ?, 'complete', 'pending', 'completed', ?, ?)`,
-    [id, remarks ?? null, userId]
+    [id, remarks ?? null, userId],
   );
 }
 
-export async function escalateWorkItem(id: string, userId: string, remarks?: string): Promise<void> {
+export async function escalateWorkItem(
+  id: string,
+  userId: string,
+  remarks?: string,
+): Promise<void> {
   await db.execute(
     `UPDATE work_item SET escalation_level = escalation_level + 1, status='escalated', updated_at=NOW() WHERE id=?`,
-    [id]
+    [id],
   );
   await db.execute(
     `INSERT INTO work_item_audit_log (id, work_item_id, action, from_status, to_status, remarks, performed_by)
      VALUES (UUID(), ?, 'escalate', 'pending', 'escalated', ?, ?)`,
-    [id, remarks ?? null, userId]
+    [id, remarks ?? null, userId],
   );
 }
 
-export async function reassignWorkItem(id: string, toUserId: string, byUserId: string, remarks?: string): Promise<void> {
+export async function reassignWorkItem(
+  id: string,
+  toUserId: string,
+  byUserId: string,
+  remarks?: string,
+): Promise<void> {
   await db.execute(
     `UPDATE work_item SET assigned_to_user_id=?, updated_at=NOW() WHERE id=?`,
-    [toUserId, id]
+    [toUserId, id],
   );
   await db.execute(
     `INSERT INTO work_item_audit_log (id, work_item_id, action, from_status, to_status, remarks, performed_by)
      VALUES (UUID(), ?, 'reassign', 'pending', 'pending', ?, ?)`,
-    [id, remarks ?? null, byUserId]
+    [id, remarks ?? null, byUserId],
   );
 }
 
 export async function createWorkItemIfNotExists(
-  input: WorkItemInput & { dedupKey?: string }
+  input: WorkItemInput & { dedupKey?: string },
 ): Promise<string | null> {
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM work_item WHERE entity_type=? AND entity_id=? AND item_type=? AND status='pending' LIMIT 1`,
-    [input.entityType, input.entityId, input.itemType]
+    [input.entityType, input.entityId, input.itemType],
   );
   if ((existing as RowDataPacket[]).length > 0) {
     return (existing as RowDataPacket[])[0].id as string;
@@ -534,7 +602,7 @@ export async function getWorkItemStats(userId: string, role: string) {
         WHERE user_id=? AND is_actioned=0
      ) merged
      GROUP BY module_code`,
-    [userId, role, userId]
+    [userId, role, userId],
   );
   const byModule: Record<string, number> = {};
   let pending = 0;
@@ -561,7 +629,11 @@ export async function getWorkItemStats(userId: string, role: string) {
  * it can be overdue. Including it would mean inventing a deadline. Callers wanting the
  * age-based signal should read `aged_count` from getUnifiedInboxSummary.
  */
-export async function getOverdueItems(userId: string, role: string, limit = 50) {
+export async function getOverdueItems(
+  userId: string,
+  role: string,
+  limit = 50,
+) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM work_item
@@ -571,7 +643,7 @@ export async function getOverdueItems(userId: string, role: string, limit = 50) 
        AND status='pending'
      ORDER BY due_at ASC
      LIMIT ${safeLimit}`,
-    [userId, role]
+    [userId, role],
   );
   return rows;
 }
@@ -606,7 +678,12 @@ export type UnifiedInboxSummary = {
   aged_count: number;
   unread_count: number;
   by_source: Record<string, number>;
-  by_type: Array<{ type: string; priority: string; count: number; actionUrl: string | null }>;
+  by_type: Array<{
+    type: string;
+    priority: string;
+    count: number;
+    actionUrl: string | null;
+  }>;
 };
 
 export async function getUnifiedInboxSummary(
@@ -667,7 +744,8 @@ export async function getUnifiedInboxSummary(
     // Only `work_item` carries a due date. `work_inbox_item` has none, so its rows are
     // never counted as overdue — an unactioned age is not a missed deadline.
     overdue_count: Number(legacyRow.overdue_count ?? 0),
-    aged_count: Number(legacyRow.aged_count ?? 0) + Number(inboxRow.aged_count ?? 0),
+    aged_count:
+      Number(legacyRow.aged_count ?? 0) + Number(inboxRow.aged_count ?? 0),
     unread_count: Number(inboxRow.unread_count ?? 0),
     by_source: { work_item: legacyPending, work_inbox_item: inboxPending },
     // A multi-item group links to the inbox, not to one arbitrary member of itself.
@@ -692,18 +770,27 @@ export async function getUnifiedInboxSummary(
   };
 }
 
-export async function getDashboardWorkItems(branchId?: string, processId?: string) {
+export async function getDashboardWorkItems(
+  branchId?: string,
+  processId?: string,
+) {
   const params: string[] = [];
   let where = "wi.status NOT IN ('completed','cancelled')";
-  if (branchId) { where += " AND wi.branch_id = ?"; params.push(branchId); }
-  if (processId) { where += " AND wi.process_id = ?"; params.push(processId); }
+  if (branchId) {
+    where += " AND wi.branch_id = ?";
+    params.push(branchId);
+  }
+  if (processId) {
+    where += " AND wi.process_id = ?";
+    params.push(processId);
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT wi.item_type, wi.priority, COUNT(*) as count,
             SUM(CASE WHEN wi.due_at < NOW() THEN 1 ELSE 0 END) as overdue_count
      FROM work_item wi WHERE ${where}
      GROUP BY wi.item_type, wi.priority
      ORDER BY wi.priority`,
-    params
+    params,
   );
   return rows;
 }

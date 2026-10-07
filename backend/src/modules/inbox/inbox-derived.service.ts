@@ -33,7 +33,10 @@ export type DerivedEntityType =
   | "finance_budget_header";
 export type DerivedDecision = "approve" | "reject";
 
-function apiError(statusCode: number, message: string): Error & { statusCode: number } {
+function apiError(
+  statusCode: number,
+  message: string,
+): Error & { statusCode: number } {
   return Object.assign(new Error(message), { statusCode });
 }
 
@@ -56,7 +59,9 @@ export function isDerivedEntityType(v: string): v is DerivedEntityType {
  * getMyPending() already resolves the caller's roles for the same union query these two
  * branches were just added to.
  */
-async function getActorRoleContext(actorUserId: string): Promise<{ primaryRole: string; userRoles: string[] }> {
+async function getActorRoleContext(
+  actorUserId: string,
+): Promise<{ primaryRole: string; userRoles: string[] }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
     [actorUserId],
@@ -68,8 +73,12 @@ async function getActorRoleContext(actorUserId: string): Promise<{ primaryRole: 
 /** Wraps a bare `Error` (no statusCode) the way this codebase's finance guards do, so
  * errorHandler.ts doesn't replace the real reason with a generic 500 in production — see
  * resolveFinanceStageRole's own comment on exactly this failure mode. */
-function withStatus(err: unknown, fallback: number): Error & { statusCode: number } {
-  if (err instanceof Error && "statusCode" in err) return err as Error & { statusCode: number };
+function withStatus(
+  err: unknown,
+  fallback: number,
+): Error & { statusCode: number } {
+  if (err instanceof Error && "statusCode" in err)
+    return err as Error & { statusCode: number };
   const message = err instanceof Error ? err.message : String(err);
   return apiError(fallback, message);
 }
@@ -88,15 +97,27 @@ export async function decideDerivedItem(
   // Applied uniformly here rather than per-branch so Work Inbox can't become the
   // looser path into the same three domains.
   if (decision === "reject" && !trimmedRemarks) {
-    return Promise.reject(apiError(400, "Remarks are required to reject this item"));
+    return Promise.reject(
+      apiError(400, "Remarks are required to reject this item"),
+    );
   }
 
   if (entityType === "leave_request") {
     if (!(await canReviewLeave(actorUserId, entityId))) {
-      throw apiError(403, "Forbidden: leave request is outside your approval scope");
+      throw apiError(
+        403,
+        "Forbidden: leave request is outside your approval scope",
+      );
     }
     const status = decision === "approve" ? "approved" : "rejected";
-    return leaveService.reviewRequest(entityId, { status: status as "approved" | "rejected", remarks: trimmedRemarks || null }, actorUserId);
+    return leaveService.reviewRequest(
+      entityId,
+      {
+        status: status as "approved" | "rejected",
+        remarks: trimmedRemarks || null,
+      },
+      actorUserId,
+    );
   }
 
   if (entityType === "exit_clearance_task") {
@@ -125,7 +146,17 @@ export async function decideDerivedItem(
   }
 
   if (entityType === "candidate_bgv_check") {
-    if (!(await hasAnyRole(actorUserId, "hr", "hr_head", "admin", "super_admin", "recruiter", "recruitment_hr"))) {
+    if (
+      !(await hasAnyRole(
+        actorUserId,
+        "hr",
+        "hr_head",
+        "admin",
+        "super_admin",
+        "recruiter",
+        "recruitment_hr",
+      ))
+    ) {
       throw apiError(403, "Forbidden: BGV review is outside your role");
     }
     const [checkRows] = await db.execute<RowDataPacket[]>(
@@ -137,7 +168,11 @@ export async function decideDerivedItem(
     const status = decision === "approve" ? "verified" : "failed";
     return manualReview(
       String(check.candidate_id),
-      { checkId: entityId, status, remarks: trimmedRemarks || `Reviewed from Work Inbox (${decision})` },
+      {
+        checkId: entityId,
+        status,
+        remarks: trimmedRemarks || `Reviewed from Work Inbox (${decision})`,
+      },
       actorUserId,
     );
   }
@@ -147,7 +182,9 @@ export async function decideDerivedItem(
     // grn.service.ts's reviewGrn(). Branch scope and stage-role resolution are the same real
     // guards that route enforces (assertFinanceRecordBranch, resolveFinanceStageRole), not a
     // looser reimplementation of them.
-    let grn: { branch_id?: string | null; status?: string; grn_type?: string | null } | undefined;
+    let grn:
+      | { branch_id?: string | null; status?: string; grn_type?: string | null }
+      | undefined;
     try {
       grn = await grnService.getGrn(entityId);
     } catch (err) {
@@ -156,18 +193,29 @@ export async function decideDerivedItem(
     if (!grn) throw apiError(404, "GRN not found");
     const { primaryRole, userRoles } = await getActorRoleContext(actorUserId);
     try {
-      await assertFinanceRecordBranch({ userId: actorUserId, primaryRole, userRoles, recordBranchId: grn.branch_id ?? null });
+      await assertFinanceRecordBranch({
+        userId: actorUserId,
+        primaryRole,
+        userRoles,
+        recordBranchId: grn.branch_id ?? null,
+      });
     } catch (err) {
       throw withStatus(err, 403);
     }
     const effectiveRole = resolveFinanceStageRole({
-      primaryRole, userRoles, currentStatus: String(grn.status ?? ""), workflow: "grn",
+      primaryRole,
+      userRoles,
+      currentStatus: String(grn.status ?? ""),
+      workflow: "grn",
       grnType: grn.grn_type ?? null,
     });
     try {
       return await grnService.reviewGrn(
         entityId,
-        { decision: decision === "approve" ? "approved" : "rejected", reviewNote: trimmedRemarks || undefined },
+        {
+          decision: decision === "approve" ? "approved" : "rejected",
+          reviewNote: trimmedRemarks || undefined,
+        },
         actorUserId,
         effectiveRole,
       );
@@ -180,19 +228,30 @@ export async function decideDerivedItem(
   {
     let budget: { branch_id?: string | null; status?: string } | undefined;
     try {
-      budget = await branchBudgetService.get(entityId) as { branch_id?: string | null; status?: string };
+      budget = (await branchBudgetService.get(entityId)) as {
+        branch_id?: string | null;
+        status?: string;
+      };
     } catch (err) {
       throw withStatus(err, 404);
     }
     if (!budget) throw apiError(404, "Budget not found");
     const { primaryRole, userRoles } = await getActorRoleContext(actorUserId);
     try {
-      await assertFinanceRecordBranch({ userId: actorUserId, primaryRole, userRoles, recordBranchId: budget.branch_id ?? null });
+      await assertFinanceRecordBranch({
+        userId: actorUserId,
+        primaryRole,
+        userRoles,
+        recordBranchId: budget.branch_id ?? null,
+      });
     } catch (err) {
       throw withStatus(err, 403);
     }
     const effectiveRole = resolveFinanceStageRole({
-      primaryRole, userRoles, currentStatus: String(budget.status ?? ""), workflow: "budget",
+      primaryRole,
+      userRoles,
+      currentStatus: String(budget.status ?? ""),
+      workflow: "budget",
     });
     try {
       return await branchBudgetService.review(
@@ -214,12 +273,18 @@ export async function getDerivedItemDetail(
   actorUserId: string,
 ): Promise<Record<string, unknown>> {
   if (entityType === "leave_request") {
-    if (!(await canReviewLeave(actorUserId, entityId)) ) {
+    if (!(await canReviewLeave(actorUserId, entityId))) {
       // canReviewLeave also returns false for a request that does not exist — resolve
       // which before deciding 403 vs 404, same distinction the real review route makes.
-      const [exists] = await db.execute<RowDataPacket[]>(`SELECT id FROM leave_request WHERE id = ? LIMIT 1`, [entityId]);
+      const [exists] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM leave_request WHERE id = ? LIMIT 1`,
+        [entityId],
+      );
       if (!exists.length) throw apiError(404, "Leave request not found");
-      throw apiError(403, "Forbidden: leave request is outside your approval scope");
+      throw apiError(
+        403,
+        "Forbidden: leave request is outside your approval scope",
+      );
     }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT lr.*, e.full_name AS employee_name, e.employee_code, b.branch_name, p.process_name,
@@ -256,7 +321,17 @@ export async function getDerivedItemDetail(
   }
 
   if (entityType === "candidate_bgv_check") {
-    if (!(await hasAnyRole(actorUserId, "hr", "hr_head", "admin", "super_admin", "recruiter", "recruitment_hr"))) {
+    if (
+      !(await hasAnyRole(
+        actorUserId,
+        "hr",
+        "hr_head",
+        "admin",
+        "super_admin",
+        "recruiter",
+        "recruitment_hr",
+      ))
+    ) {
       throw apiError(403, "Forbidden: BGV review is outside your role");
     }
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -280,7 +355,13 @@ export async function getDerivedItemDetail(
     if (!grn) throw apiError(404, "GRN not found");
     const { primaryRole, userRoles } = await getActorRoleContext(actorUserId);
     try {
-      await assertFinanceRecordBranch({ userId: actorUserId, primaryRole, userRoles, recordBranchId: (grn as { branch_id?: string | null }).branch_id ?? null });
+      await assertFinanceRecordBranch({
+        userId: actorUserId,
+        primaryRole,
+        userRoles,
+        recordBranchId:
+          (grn as { branch_id?: string | null }).branch_id ?? null,
+      });
     } catch (err) {
       throw withStatus(err, 403);
     }
@@ -297,7 +378,13 @@ export async function getDerivedItemDetail(
   if (!budget) throw apiError(404, "Budget not found");
   const { primaryRole, userRoles } = await getActorRoleContext(actorUserId);
   try {
-    await assertFinanceRecordBranch({ userId: actorUserId, primaryRole, userRoles, recordBranchId: (budget as { branch_id?: string | null }).branch_id ?? null });
+    await assertFinanceRecordBranch({
+      userId: actorUserId,
+      primaryRole,
+      userRoles,
+      recordBranchId:
+        (budget as { branch_id?: string | null }).branch_id ?? null,
+    });
   } catch (err) {
     throw withStatus(err, 403);
   }

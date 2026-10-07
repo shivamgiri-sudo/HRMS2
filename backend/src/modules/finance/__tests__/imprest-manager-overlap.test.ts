@@ -21,10 +21,13 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
  * another, and open-ended on either side.
  */
 
-const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
+const { execute, getConnection } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  getConnection: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
-let imprestService: typeof import("../imprest.service.js")["imprestService"];
+let imprestService: (typeof import("../imprest.service.js"))["imprestService"];
 beforeAll(async () => {
   ({ imprestService } = await import("../imprest.service.js"));
 }, 120_000);
@@ -44,12 +47,24 @@ function makeConnection(clashes: unknown[], current?: Record<string, unknown>) {
     execute: vi.fn(async (sql: string) => {
       const flat = String(sql).replace(/\s+/g, " ").trim();
       statements.push(flat);
-      if (/FROM imprest_manager/.test(flat) && /branch_id = \?/.test(flat) && /FOR UPDATE/.test(flat)) {
+      if (
+        /FROM imprest_manager/.test(flat) &&
+        /branch_id = \?/.test(flat) &&
+        /FOR UPDATE/.test(flat)
+      ) {
         return [clashes, []];
       }
       if (/FROM imprest_manager\s+WHERE id = \?\s+FOR UPDATE/.test(flat)) {
         return [
-          [current ?? { id: "m-self", branch_id: "br1", effective_from: "2026-01-01", effective_to: null, active_status: 1 }],
+          [
+            current ?? {
+              id: "m-self",
+              branch_id: "br1",
+              effective_from: "2026-01-01",
+              effective_to: null,
+              active_status: 1,
+            },
+          ],
           [],
         ];
       }
@@ -62,7 +77,12 @@ function makeConnection(clashes: unknown[], current?: Record<string, unknown>) {
   };
 }
 
-const CLASH = { id: "m-existing", user_id: "u-alice", effective_from: "2026-01-01", effective_to: null };
+const CLASH = {
+  id: "m-existing",
+  user_id: "u-alice",
+  effective_from: "2026-01-01",
+  effective_to: null,
+};
 
 const APPOINT = {
   branchId: "br1",
@@ -77,7 +97,10 @@ beforeEach(() => {
   // saveManager ends by re-reading the row through getManager, which uses the pool rather than
   // the transaction's connection. Without a row here every success path throws "not found" and
   // the test would be asserting the mock, not the guard.
-  execute.mockResolvedValue([[{ id: "m-new", branch_id: "br1", user_id: "u-bob" }], []]);
+  execute.mockResolvedValue([
+    [{ id: "m-new", branch_id: "br1", user_id: "u-bob" }],
+    [],
+  ]);
 });
 
 describe("an overlapping appointment is refused", () => {
@@ -88,7 +111,9 @@ describe("an overlapping appointment is refused", () => {
       /already has an imprest manager for that period/i,
     );
     expect(conn.rollback).toHaveBeenCalled();
-    expect(conn.statements.some((s) => /INSERT INTO imprest_manager/.test(s))).toBe(false);
+    expect(
+      conn.statements.some((s) => /INSERT INTO imprest_manager/.test(s)),
+    ).toBe(false);
   });
 
   it("names the clashing period, so the message says what to do about it", async () => {
@@ -103,14 +128,18 @@ describe("an overlapping appointment is refused", () => {
     const conn = makeConnection([]);
     getConnection.mockResolvedValue(conn);
     await imprestService.saveManager(APPOINT, "actor");
-    expect(conn.statements.some((s) => /INSERT INTO imprest_manager/.test(s))).toBe(true);
+    expect(
+      conn.statements.some((s) => /INSERT INTO imprest_manager/.test(s)),
+    ).toBe(true);
     expect(conn.commit).toHaveBeenCalled();
   });
 });
 
 describe("the overlap predicate itself", () => {
   /** Captures the parameters the overlap query was asked with. */
-  async function overlapQuery(input: Parameters<typeof imprestService.saveManager>[0]) {
+  async function overlapQuery(
+    input: Parameters<typeof imprestService.saveManager>[0],
+  ) {
     const conn = makeConnection([]);
     getConnection.mockResolvedValue(conn);
     await imprestService.saveManager(input, "actor");
@@ -120,7 +149,10 @@ describe("the overlap predicate itself", () => {
     const call = conn.execute.mock.calls.find(
       ([s]) => /FOR UPDATE/.test(String(s)) && /branch_id = \?/.test(String(s)),
     );
-    return { sql: String(call?.[0] ?? "").replace(/\s+/g, " "), params: (call?.[1] ?? []) as unknown[] };
+    return {
+      sql: String(call?.[0] ?? "").replace(/\s+/g, " "),
+      params: (call?.[1] ?? []) as unknown[],
+    };
   }
 
   it("treats a NULL end date as open-ended on BOTH sides", async () => {
@@ -128,7 +160,10 @@ describe("the overlap predicate itself", () => {
     // the incoming one, so a new open-ended appointment slips past an existing one.
     const q = await overlapQuery(APPOINT);
     const coalesces = q.sql.match(/COALESCE\([^)]*'9999-12-31'\)/g) ?? [];
-    expect(coalesces.length, "both the stored and the incoming end date need it").toBe(2);
+    expect(
+      coalesces.length,
+      "both the stored and the incoming end date need it",
+    ).toBe(2);
   });
 
   it("compares against the branch, and excludes the row being edited", async () => {
@@ -159,11 +194,19 @@ describe("ending an appointment is still allowed", () => {
     const conn = makeConnection([CLASH]);
     getConnection.mockResolvedValue(conn);
     await imprestService.saveManager(
-      { id: "m-existing", branchId: "br1", userId: "u-alice", effectiveFrom: "2026-01-01",
-        effectiveTo: "2026-08-08", activeStatus: 0 },
+      {
+        id: "m-existing",
+        branchId: "br1",
+        userId: "u-alice",
+        effectiveFrom: "2026-01-01",
+        effectiveTo: "2026-08-08",
+        activeStatus: 0,
+      },
       "actor",
     );
-    expect(conn.statements.some((s) => /UPDATE imprest_manager/.test(s))).toBe(true);
+    expect(conn.statements.some((s) => /UPDATE imprest_manager/.test(s))).toBe(
+      true,
+    );
     expect(conn.commit).toHaveBeenCalled();
   });
 });
@@ -176,14 +219,19 @@ describe("the existing validations still hold", () => {
     [{ ...APPOINT, effectiveTo: "2026-05-01" }, /cannot be before/i],
   ])("rejects invalid input (%#)", async (input, message) => {
     getConnection.mockResolvedValue(makeConnection([]));
-    await expect(imprestService.saveManager(input as never, "actor")).rejects.toThrow(message);
+    await expect(
+      imprestService.saveManager(input as never, "actor"),
+    ).rejects.toThrow(message);
   });
 
   it("checks the input before opening a transaction", async () => {
     // A rejected appointment should not have taken a connection or a row lock.
     getConnection.mockResolvedValue(makeConnection([]));
     await expect(
-      imprestService.saveManager({ ...APPOINT, branchId: "" } as never, "actor"),
+      imprestService.saveManager(
+        { ...APPOINT, branchId: "" } as never,
+        "actor",
+      ),
     ).rejects.toThrow();
     expect(getConnection).not.toHaveBeenCalled();
   });

@@ -1,7 +1,8 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
-export type OrgChartScope = "my-chain" | "my-team" | "process" | "branch" | "company";
+export type OrgChartScope =
+  "my-chain" | "my-team" | "process" | "branch" | "company";
 
 export interface ScopeResolution {
   scopeType: OrgChartScope;
@@ -37,11 +38,13 @@ export interface UserOrgContext {
  * Resolve user's org-chart context and available scopes.
  * This is the foundation for all org-chart access control.
  */
-export async function resolveUserOrgContext(userId: string): Promise<UserOrgContext> {
+export async function resolveUserOrgContext(
+  userId: string,
+): Promise<UserOrgContext> {
   // Fetch user roles
   const [roleRows] = await db.execute<RowDataPacket[]>(
     "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-    [userId]
+    [userId],
   );
   const roles = (roleRows as { role_key: string }[]).map((r) => r.role_key);
   const roleSet = new Set(roles);
@@ -51,9 +54,13 @@ export async function resolveUserOrgContext(userId: string): Promise<UserOrgCont
   const isHr = roleSet.has("hr");
   const isCeo = roleSet.has("ceo");
   const isBranchHead = roleSet.has("branch_head");
-  const isProcessManager = roleSet.has("process_manager") || roleSet.has("manager");
+  const isProcessManager =
+    roleSet.has("process_manager") || roleSet.has("manager");
   const isWfm = roleSet.has("wfm") || roleSet.has("operations_manager");
-  const isTeamLeader = roleSet.has("team_leader") || roleSet.has("tl") || roleSet.has("assistant_manager");
+  const isTeamLeader =
+    roleSet.has("team_leader") ||
+    roleSet.has("tl") ||
+    roleSet.has("assistant_manager");
 
   // Fetch employee record
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -64,7 +71,7 @@ export async function resolveUserOrgContext(userId: string): Promise<UserOrgCont
        LEFT JOIN process_master p ON p.id = e.process_id
       WHERE e.user_id = ? AND e.active_status = 1
       LIMIT 1`,
-    [userId]
+    [userId],
   );
   const emp = (empRows as any[])[0];
 
@@ -107,7 +114,10 @@ export async function resolveUserOrgContext(userId: string): Promise<UserOrgCont
   }
 
   // 3. process (available for process_manager, wfm, or full-access roles)
-  if (processId && (isProcessManager || isWfm || isSuperAdmin || isAdmin || isHr || isCeo)) {
+  if (
+    processId &&
+    (isProcessManager || isWfm || isSuperAdmin || isAdmin || isHr || isCeo)
+  ) {
     const processCount = await getScopeCount("process", processId);
     availableScopes.push({
       scopeType: "process",
@@ -149,7 +159,13 @@ export async function resolveUserOrgContext(userId: string): Promise<UserOrgCont
   let defaultScope: OrgChartScope = "my-chain";
   if (availableScopes.length > 0) {
     // Prefer: company > branch > process > my-team > my-chain
-    const scopePriority: OrgChartScope[] = ["company", "branch", "process", "my-team", "my-chain"];
+    const scopePriority: OrgChartScope[] = [
+      "company",
+      "branch",
+      "process",
+      "my-team",
+      "my-chain",
+    ];
     for (const s of scopePriority) {
       if (availableScopes.some((sc) => sc.scopeType === s)) {
         defaultScope = s;
@@ -189,7 +205,7 @@ async function getMyChainCount(employeeId: string): Promise<number> {
   // Direct reports
   const [directRows] = await db.execute<RowDataPacket[]>(
     "SELECT COUNT(*) AS cnt FROM employees WHERE reporting_manager_id = ? AND active_status = 1",
-    [employeeId]
+    [employeeId],
   );
   const directCount = (directRows as any[])[0]?.cnt ?? 0;
   return upwardIds.length + 1 + directCount; // chain + self + direct reports
@@ -201,7 +217,7 @@ async function getMyChainCount(employeeId: string): Promise<number> {
 async function getMyTeamCount(employeeId: string): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT COUNT(*) AS cnt FROM employees WHERE reporting_manager_id = ? AND active_status = 1",
-    [employeeId]
+    [employeeId],
   );
   return (rows as any[])[0]?.cnt ?? 0;
 }
@@ -209,24 +225,27 @@ async function getMyTeamCount(employeeId: string): Promise<number> {
 /**
  * Count employees in a given scope.
  */
-async function getScopeCount(scopeType: string, scopeId: string | null): Promise<number> {
+async function getScopeCount(
+  scopeType: string,
+  scopeId: string | null,
+): Promise<number> {
   if (scopeType === "company") {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT COUNT(*) AS cnt FROM employees WHERE active_status = 1"
+      "SELECT COUNT(*) AS cnt FROM employees WHERE active_status = 1",
     );
     return (rows as any[])[0]?.cnt ?? 0;
   }
   if (scopeType === "branch") {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS cnt FROM employees WHERE branch_id = ? AND active_status = 1",
-      [scopeId]
+      [scopeId],
     );
     return (rows as any[])[0]?.cnt ?? 0;
   }
   if (scopeType === "process") {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS cnt FROM employees WHERE process_id = ? AND active_status = 1",
-      [scopeId]
+      [scopeId],
     );
     return (rows as any[])[0]?.cnt ?? 0;
   }
@@ -245,7 +264,7 @@ export async function getManagerChain(employeeId: string): Promise<string[]> {
     visited.add(currentId);
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT reporting_manager_id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1",
-      [currentId]
+      [currentId],
     );
     const managerId = (rows as any[])[0]?.reporting_manager_id ?? null;
     if (managerId && managerId !== currentId) {
@@ -272,7 +291,7 @@ export function buildScopeWhereClause(
     departmentId?: string;
     designationId?: string;
     status?: string;
-  }
+  },
 ): { sql: string; params: unknown[] } {
   const wheres: string[] = [];
   const params: unknown[] = [];
@@ -343,12 +362,16 @@ export function buildScopeWhereClause(
  */
 export async function assertScopeAccess(
   userId: string,
-  requestedScope: OrgChartScope
+  requestedScope: OrgChartScope,
 ): Promise<UserOrgContext> {
   const ctx = await resolveUserOrgContext(userId);
-  const allowed = ctx.availableScopes.some((s) => s.scopeType === requestedScope);
+  const allowed = ctx.availableScopes.some(
+    (s) => s.scopeType === requestedScope,
+  );
   if (!allowed) {
-    const err = new Error(`Forbidden: scope '${requestedScope}' not available for this user`) as Error & {
+    const err = new Error(
+      `Forbidden: scope '${requestedScope}' not available for this user`,
+    ) as Error & {
       statusCode?: number;
     };
     err.statusCode = 403;

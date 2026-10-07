@@ -61,7 +61,7 @@ describe("finance-approve refuses runs that cannot legitimately be signed off", 
 
   it("refuses with 409, not 400 — the request is valid, the run's state is not", () => {
     const body = handler();
-    const guard = body.slice(body.indexOf("runStatus === \"draft\""));
+    const guard = body.slice(body.indexOf('runStatus === "draft"'));
     expect(guard).toMatch(/status\(409\)/);
   });
 

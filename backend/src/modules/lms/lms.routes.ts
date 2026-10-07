@@ -19,12 +19,18 @@ import { randomUUID } from "crypto";
 import axios from "axios";
 
 const router = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 router.use(requireAuth);
 
 async function currentHrmsRoles(userId: string): Promise<string[]> {
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1", [userId]);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+    [userId],
+  );
   return rows.map((row: any) => String(row.role_key));
 }
 
@@ -46,7 +52,12 @@ async function currentEmployee(userId: string) {
 async function currentLmsContext(req: AuthenticatedRequest, res: Response) {
   const employee = await currentEmployee(req.authUser!.id);
   if (!employee) {
-    res.status(403).json({ success: false, message: "No active HRMS employee profile found for LMS mapping" });
+    res
+      .status(403)
+      .json({
+        success: false,
+        message: "No active HRMS employee profile found for LMS mapping",
+      });
     return null;
   }
   const roles = await currentHrmsRoles(req.authUser!.id);
@@ -66,7 +77,10 @@ async function resolveOwnEmployeeId(req: AuthenticatedRequest, res: Response) {
 type LmsPortal = "trainee" | "coordinator" | "admin";
 type LmsSessionUserType = LmsPortal | "management";
 
-const LMS_SESSION_ROUTES: Record<LmsSessionUserType, { route: string; storageKey: string }> = {
+const LMS_SESSION_ROUTES: Record<
+  LmsSessionUserType,
+  { route: string; storageKey: string }
+> = {
   trainee: { route: "/lms", storageKey: "lms_token_trainee" },
   coordinator: { route: "/coordinator", storageKey: "lms_token_coordinator" },
   admin: { route: "/admin", storageKey: "lms_token_admin" },
@@ -78,7 +92,11 @@ const LMS_SESSION_ROUTES: Record<LmsSessionUserType, { route: string; storageKey
  * (chk_portal_session_user_type). Deliberately narrower than LMS_SESSION_ROUTES, which
  * carries a 'management' persona the LMS schema does not recognise.
  */
-const LMS_PORTAL_SESSION_USER_TYPES: readonly string[] = ["trainee", "coordinator", "admin"];
+const LMS_PORTAL_SESSION_USER_TYPES: readonly string[] = [
+  "trainee",
+  "coordinator",
+  "admin",
+];
 
 /**
  * The portal names on the wire ("trainee") do not match the keys the service
@@ -88,7 +106,10 @@ const LMS_PORTAL_SESSION_USER_TYPES: readonly string[] = ["trainee", "coordinato
  * of role or LMS enrolment. Map explicitly rather than renaming the service
  * key: /native/employee below reads `.employee` directly.
  */
-const PORTAL_ACCESS_KEY: Record<LmsPortal, "employee" | "coordinator" | "admin"> = {
+const PORTAL_ACCESS_KEY: Record<
+  LmsPortal,
+  "employee" | "coordinator" | "admin"
+> = {
   trainee: "employee",
   coordinator: "coordinator",
   admin: "admin",
@@ -102,7 +123,11 @@ function joinBaseUrl(baseUrl: string, route: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${route}`;
 }
 
-function attachLmsSessionParams(url: string, lmsToken: string, lmsUserType: string): string {
+function attachLmsSessionParams(
+  url: string,
+  lmsToken: string,
+  lmsUserType: string,
+): string {
   const next = new URL(url);
   next.searchParams.set("hrms_lms_token", lmsToken);
   next.searchParams.set("lms_user_type", lmsUserType);
@@ -122,7 +147,9 @@ function attachLmsSessionParams(url: string, lmsToken: string, lmsUserType: stri
  * There is no safe default here. An identity resolver that cannot identify someone must
  * stop, not guess.
  */
-function lmsIdentityNotMapped(portal: LmsPortal): Error & { statusCode: number; code: string } {
+function lmsIdentityNotMapped(
+  portal: LmsPortal,
+): Error & { statusCode: number; code: string } {
   // The admin mapping is held HRMS-side, so pointing an administrator at the LMS to fix it would
   // send them to the wrong system.
   const remedy =
@@ -192,7 +219,7 @@ async function resolveDirectLmsIdentity(
         WHERE active = 1
           AND (login_id = ? OR login_id = ?)
         LIMIT 1`,
-      [employeeCode, email]
+      [employeeCode, email],
     );
     if (rows[0]?.login_id) {
       return { userId: String(rows[0].login_id), userType: "coordinator" };
@@ -206,7 +233,7 @@ async function resolveDirectLmsIdentity(
       WHERE active = 1
         AND (employee_id = ? OR email = ?)
       LIMIT 1`,
-    [employeeCode, email]
+    [employeeCode, email],
   );
   if (rows[0]?.employee_id) {
     return { userId: String(rows[0].employee_id), userType: "trainee" };
@@ -222,7 +249,9 @@ async function buildLmsSession(
   const lmsApiUrl = env.LMS_API_URL;
 
   if (!lmsApiUrl) {
-    const err = new Error("LMS_API_URL not configured on HRMS2 backend") as Error & { statusCode?: number };
+    const err = new Error(
+      "LMS_API_URL not configured on HRMS2 backend",
+    ) as Error & { statusCode?: number };
     err.statusCode = 503;
     throw err;
   }
@@ -252,20 +281,30 @@ async function buildLmsSession(
   // resolver path returns it today, but fail with a readable message rather than a raw
   // constraint violation if one ever does.
   if (!LMS_PORTAL_SESSION_USER_TYPES.includes(identity.userType)) {
-    throw new Error(`LMS does not accept a portal session for user type "${identity.userType}"`);
+    throw new Error(
+      `LMS does not accept a portal session for user type "${identity.userType}"`,
+    );
   }
 
   await pool.execute(
     `INSERT INTO portal_sessions
        (id, session_family_id, token, user_id, user_type, expires_at, absolute_expires_at, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-    [sessionId, sessionId, lmsToken, identity.userId, identity.userType, expiresAt, expiresAt]
+    [
+      sessionId,
+      sessionId,
+      lmsToken,
+      identity.userId,
+      identity.userType,
+      expiresAt,
+      expiresAt,
+    ],
   );
 
   await db.execute(
     `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
      VALUES (?, 'sso_session', 1, 0, 'success', ?)`,
-    [randomUUID(), req.authUser!.id]
+    [randomUUID(), req.authUser!.id],
   );
 
   return {
@@ -280,102 +319,170 @@ async function buildLmsSession(
 }
 
 // Native HRMS-integrated LMS access. No external link or LMS re-login required.
-router.get("/native/access", h(async (req: AuthenticatedRequest, res: Response) => {
-  const ctx = await currentLmsContext(req, res);
-  if (!ctx) return;
-  res.json({ success: true, data: ctx.access });
-}));
-
-router.get("/native/employee", h(async (req: AuthenticatedRequest, res: Response) => {
-  const ctx = await currentLmsContext(req, res);
-  if (!ctx) return;
-  if (!ctx.access.access.employee) return res.status(403).json({ success: false, message: "LMS employee access is not mapped" });
-  const data = await lmsService.getNativeEmployeeDashboard(ctx.access.employeeCode, ctx.access.user.email);
-  res.json({ success: true, data: { ...data, access: ctx.access } });
-}));
-
-router.get("/native/coordinator", h(async (req: AuthenticatedRequest, res: Response) => {
-  const ctx = await currentLmsContext(req, res);
-  if (!ctx) return;
-  if (!ctx.access.access.coordinator) return res.status(403).json({ success: false, message: "Coordinator LMS access is not assigned to this HRMS user" });
-  res.json({ success: true, data: { ...(await lmsService.getNativeCoordinatorDashboard(ctx.access)), access: ctx.access } });
-}));
-
-router.get("/native/admin", h(async (req: AuthenticatedRequest, res: Response) => {
-  try {
+router.get(
+  "/native/access",
+  h(async (req: AuthenticatedRequest, res: Response) => {
     const ctx = await currentLmsContext(req, res);
     if (!ctx) return;
-    if (!ctx.access.access.admin) return res.status(403).json({ success: false, message: "Admin LMS access is not assigned to this HRMS user" });
-    const dashboard = await lmsService.getNativeAdminDashboard();
-    res.json({ success: true, data: { ...dashboard, access: ctx.access } });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "LMS service error";
-    console.error("[lms/native/admin]", msg);
-    // Same disclosure defect as /launch-context: _details carried the raw driver text.
-    res.status(500).json({ success: false, error: "LMS dashboard unavailable" });
-  }
-}));
+    res.json({ success: true, data: ctx.access });
+  }),
+);
 
-router.get("/batch-planner", requireRole("admin", "hr", "super_admin", "operations_head", "trainer"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  const data = await lmsService.getNativeBatchPlanner();
-  res.json({ success: true, data });
-}));
+router.get(
+  "/native/employee",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const ctx = await currentLmsContext(req, res);
+    if (!ctx) return;
+    if (!ctx.access.access.employee)
+      return res
+        .status(403)
+        .json({ success: false, message: "LMS employee access is not mapped" });
+    const data = await lmsService.getNativeEmployeeDashboard(
+      ctx.access.employeeCode,
+      ctx.access.user.email,
+    );
+    res.json({ success: true, data: { ...data, access: ctx.access } });
+  }),
+);
 
-router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response) => {
-  const portal = isLmsPortal(req.query.portal) ? req.query.portal : "trainee";
-  const ctx = await currentLmsContext(req, res);
-  if (!ctx) return;
-
-  if (!env.LMS_API_URL) {
-    return res.status(503).json({ success: false, message: "LMS_API_URL not configured on HRMS backend" });
-  }
-
-  if (!ctx.access.access[PORTAL_ACCESS_KEY[portal]]) {
-    return res.status(403).json({ success: false, message: `LMS access is not assigned for the ${portal} portal` });
-  }
-
-  const portalUrl = joinBaseUrl(env.LMS_API_URL, LMS_SESSION_ROUTES[portal].route);
-
-  try {
-    const session = await buildLmsSession(req, ctx, portal);
-    const embedUrl = attachLmsSessionParams(portalUrl, session.lmsToken, session.lmsUserType);
+router.get(
+  "/native/coordinator",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const ctx = await currentLmsContext(req, res);
+    if (!ctx) return;
+    if (!ctx.access.access.coordinator)
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "Coordinator LMS access is not assigned to this HRMS user",
+        });
     res.json({
       success: true,
       data: {
-        portal: portal,
-        portal_url: portalUrl,
-        embed_url: embedUrl,
-        lms_token: session.lmsToken,
-        lms_user_type: session.lmsUserType,
-        bridge_error: session.bridgeError,
+        ...(await lmsService.getNativeCoordinatorDashboard(ctx.access)),
+        access: ctx.access,
       },
     });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "LMS launch unavailable";
-    console.error("[lms/launch-context] direct LMS session mint failed:", message);
+  }),
+);
 
-    // One curated exception to the generic 502 below: an unmapped identity is not an
-    // outage, it is a data gap only HR or the LMS admin can close, and the caller can do
-    // nothing with "LMS launch unavailable". This message is authored here (it names no
-    // table, column or internal detail), so it does not reopen the leak the comment below
-    // describes.
-    if ((err as { code?: string })?.code === "LMS_IDENTITY_NOT_MAPPED") {
-      return res.status((err as { statusCode?: number }).statusCode ?? 409).json({
-        success: false,
-        code: "LMS_IDENTITY_NOT_MAPPED",
+router.get(
+  "/native/admin",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const ctx = await currentLmsContext(req, res);
+      if (!ctx) return;
+      if (!ctx.access.access.admin)
+        return res
+          .status(403)
+          .json({
+            success: false,
+            message: "Admin LMS access is not assigned to this HRMS user",
+          });
+      const dashboard = await lmsService.getNativeAdminDashboard();
+      res.json({ success: true, data: { ...dashboard, access: ctx.access } });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "LMS service error";
+      console.error("[lms/native/admin]", msg);
+      // Same disclosure defect as /launch-context: _details carried the raw driver text.
+      res
+        .status(500)
+        .json({ success: false, error: "LMS dashboard unavailable" });
+    }
+  }),
+);
+
+router.get(
+  "/batch-planner",
+  requireRole("admin", "hr", "super_admin", "operations_head", "trainer"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const data = await lmsService.getNativeBatchPlanner();
+    res.json({ success: true, data });
+  }),
+);
+
+router.get(
+  "/launch-context",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const portal = isLmsPortal(req.query.portal) ? req.query.portal : "trainee";
+    const ctx = await currentLmsContext(req, res);
+    if (!ctx) return;
+
+    if (!env.LMS_API_URL) {
+      return res
+        .status(503)
+        .json({
+          success: false,
+          message: "LMS_API_URL not configured on HRMS backend",
+        });
+    }
+
+    if (!ctx.access.access[PORTAL_ACCESS_KEY[portal]]) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: `LMS access is not assigned for the ${portal} portal`,
+        });
+    }
+
+    const portalUrl = joinBaseUrl(
+      env.LMS_API_URL,
+      LMS_SESSION_ROUTES[portal].route,
+    );
+
+    try {
+      const session = await buildLmsSession(req, ctx, portal);
+      const embedUrl = attachLmsSessionParams(
+        portalUrl,
+        session.lmsToken,
+        session.lmsUserType,
+      );
+      res.json({
+        success: true,
+        data: {
+          portal: portal,
+          portal_url: portalUrl,
+          embed_url: embedUrl,
+          lms_token: session.lmsToken,
+          lms_user_type: session.lmsUserType,
+          bridge_error: session.bridgeError,
+        },
+      });
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "LMS launch unavailable";
+      console.error(
+        "[lms/launch-context] direct LMS session mint failed:",
         message,
+      );
+
+      // One curated exception to the generic 502 below: an unmapped identity is not an
+      // outage, it is a data gap only HR or the LMS admin can close, and the caller can do
+      // nothing with "LMS launch unavailable". This message is authored here (it names no
+      // table, column or internal detail), so it does not reopen the leak the comment below
+      // describes.
+      if ((err as { code?: string })?.code === "LMS_IDENTITY_NOT_MAPPED") {
+        return res
+          .status((err as { statusCode?: number }).statusCode ?? 409)
+          .json({
+            success: false,
+            code: "LMS_IDENTITY_NOT_MAPPED",
+            message,
+          });
+      }
+      // `error` is deliberately not returned. hrmsApi.ts prefers payload.error over
+      // payload.message, so anything put here is what the user reads — which is how
+      // "Field 'session_family_id' doesn't have a default value" reached the CEO's screen.
+      // The detail is logged above; the browser gets the curated message only.
+      res.status(502).json({
+        success: false,
+        message: "LMS launch unavailable",
       });
     }
-    // `error` is deliberately not returned. hrmsApi.ts prefers payload.error over
-    // payload.message, so anything put here is what the user reads — which is how
-    // "Field 'session_family_id' doesn't have a default value" reached the CEO's screen.
-    // The detail is logged above; the browser gets the curated message only.
-    res.status(502).json({
-      success: false,
-      message: "LMS launch unavailable",
-    });
-  }
-}));
+  }),
+);
 
 /**
  * Self-service LMS admin identity link.
@@ -391,220 +498,367 @@ router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response)
  * still required first: a verified LMS password proves *identity*, not that HRMS intends
  * to grant this person LMS Admin access at all.
  */
-router.post("/admin-link", h(async (req: AuthenticatedRequest, res: Response) => {
-  const ctx = await currentLmsContext(req, res);
-  if (!ctx) return;
-  if (!ctx.access.access.admin) {
-    return res.status(403).json({ success: false, message: "LMS administrator access is not assigned to this HRMS user" });
-  }
+router.post(
+  "/admin-link",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const ctx = await currentLmsContext(req, res);
+    if (!ctx) return;
+    if (!ctx.access.access.admin) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "LMS administrator access is not assigned to this HRMS user",
+        });
+    }
 
-  const adminId = String(req.body?.adminId ?? "").trim();
-  const password = String(req.body?.password ?? "");
-  if (!adminId || !password) {
-    return res.status(400).json({ success: false, message: "LMS admin ID and password are required" });
-  }
-  if (!env.LMS_API_URL) {
-    return res.status(503).json({ success: false, message: "LMS_API_URL not configured on HRMS backend" });
-  }
+    const adminId = String(req.body?.adminId ?? "").trim();
+    const password = String(req.body?.password ?? "");
+    if (!adminId || !password) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "LMS admin ID and password are required",
+        });
+    }
+    if (!env.LMS_API_URL) {
+      return res
+        .status(503)
+        .json({
+          success: false,
+          message: "LMS_API_URL not configured on HRMS backend",
+        });
+    }
 
-  const employeeCode = String(ctx.access.employeeCode ?? "").trim();
-  if (!employeeCode) {
-    return res.status(403).json({ success: false, message: "No employee code on this HRMS account" });
-  }
+    const employeeCode = String(ctx.access.employeeCode ?? "").trim();
+    if (!employeeCode) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "No employee code on this HRMS account",
+        });
+    }
 
-  const auditFailure = async (reason: string) => {
-    try {
-      await db.execute(
-        `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
+    const auditFailure = async (reason: string) => {
+      try {
+        await db.execute(
+          `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
          VALUES (?, 'admin_identity_link', 0, 1, 'failed', ?)`,
-        [randomUUID(), req.authUser!.id],
-      );
-    } catch (auditErr) {
-      console.error("[lms/admin-link] audit write failed:", auditErr, "original reason:", reason);
-    }
-  };
+          [randomUUID(), req.authUser!.id],
+        );
+      } catch (auditErr) {
+        console.error(
+          "[lms/admin-link] audit write failed:",
+          auditErr,
+          "original reason:",
+          reason,
+        );
+      }
+    };
 
-  // Refuse to steal an identity another HRMS employee already owns, rather than silently
-  // repointing it — same non-guessing posture as lmsIdentityNotMapped above.
-  const [existingOwner] = await db.execute<RowDataPacket[]>(
-    `SELECT hrms_employee_code FROM lms_admin_identity_map WHERE lms_admin_id = ? AND active = 1 AND hrms_employee_code != ? LIMIT 1`,
-    [adminId, employeeCode],
-  );
-  if (existingOwner[0]?.hrms_employee_code) {
-    await auditFailure("admin_id already linked to a different employee");
-    return res.status(409).json({ success: false, message: "This LMS admin account is already linked to another HRMS employee." });
-  }
-
-  let verified = false;
-  try {
-    const loginRes = await axios.post(
-      `${env.LMS_API_URL.replace(/\/+$/, "")}/api/auth/admin/login`,
-      { adminId, password },
-      { timeout: 10000, validateStatus: () => true },
+    // Refuse to steal an identity another HRMS employee already owns, rather than silently
+    // repointing it — same non-guessing posture as lmsIdentityNotMapped above.
+    const [existingOwner] = await db.execute<RowDataPacket[]>(
+      `SELECT hrms_employee_code FROM lms_admin_identity_map WHERE lms_admin_id = ? AND active = 1 AND hrms_employee_code != ? LIMIT 1`,
+      [adminId, employeeCode],
     );
-    if (loginRes.status === 200 && loginRes.data?.ok) {
-      verified = true;
-    } else if (loginRes.status === 401) {
-      await auditFailure("invalid credentials");
-      return res.status(401).json({ success: false, message: "Invalid LMS admin ID or password." });
-    } else if (loginRes.status === 403) {
-      await auditFailure("account locked");
-      return res.status(403).json({ success: false, message: loginRes.data?.message || "LMS admin account is locked." });
-    } else {
-      await auditFailure(`unexpected LMS response ${loginRes.status}`);
-      return res.status(502).json({ success: false, message: "LMS verification unavailable. Please try again." });
+    if (existingOwner[0]?.hrms_employee_code) {
+      await auditFailure("admin_id already linked to a different employee");
+      return res
+        .status(409)
+        .json({
+          success: false,
+          message:
+            "This LMS admin account is already linked to another HRMS employee.",
+        });
     }
-  } catch (err: unknown) {
-    console.error("[lms/admin-link] LMS login call failed:", err instanceof Error ? err.message : err);
-    await auditFailure("LMS login call threw");
-    return res.status(502).json({ success: false, message: "LMS verification unavailable. Please try again." });
-  }
 
-  if (!verified) {
-    await auditFailure("unverified");
-    return res.status(401).json({ success: false, message: "Invalid LMS admin ID or password." });
-  }
+    let verified = false;
+    try {
+      const loginRes = await axios.post(
+        `${env.LMS_API_URL.replace(/\/+$/, "")}/api/auth/admin/login`,
+        { adminId, password },
+        { timeout: 10000, validateStatus: () => true },
+      );
+      if (loginRes.status === 200 && loginRes.data?.ok) {
+        verified = true;
+      } else if (loginRes.status === 401) {
+        await auditFailure("invalid credentials");
+        return res
+          .status(401)
+          .json({
+            success: false,
+            message: "Invalid LMS admin ID or password.",
+          });
+      } else if (loginRes.status === 403) {
+        await auditFailure("account locked");
+        return res
+          .status(403)
+          .json({
+            success: false,
+            message: loginRes.data?.message || "LMS admin account is locked.",
+          });
+      } else {
+        await auditFailure(`unexpected LMS response ${loginRes.status}`);
+        return res
+          .status(502)
+          .json({
+            success: false,
+            message: "LMS verification unavailable. Please try again.",
+          });
+      }
+    } catch (err: unknown) {
+      console.error(
+        "[lms/admin-link] LMS login call failed:",
+        err instanceof Error ? err.message : err,
+      );
+      await auditFailure("LMS login call threw");
+      return res
+        .status(502)
+        .json({
+          success: false,
+          message: "LMS verification unavailable. Please try again.",
+        });
+    }
 
-  await db.execute(
-    `INSERT INTO lms_admin_identity_map (id, hrms_employee_code, lms_admin_id, active, mapped_by, remarks)
+    if (!verified) {
+      await auditFailure("unverified");
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid LMS admin ID or password." });
+    }
+
+    await db.execute(
+      `INSERT INTO lms_admin_identity_map (id, hrms_employee_code, lms_admin_id, active, mapped_by, remarks)
      VALUES (?, ?, ?, 1, ?, 'Self-linked via verified LMS login')
      ON DUPLICATE KEY UPDATE lms_admin_id = VALUES(lms_admin_id), active = 1,
        mapped_by = VALUES(mapped_by), remarks = VALUES(remarks), updated_at = NOW()`,
-    [randomUUID(), employeeCode, adminId, employeeCode],
-  );
-
-  try {
-    await db.execute(
-      `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
-       VALUES (?, 'admin_identity_link', 1, 0, 'success', ?)`,
-      [randomUUID(), req.authUser!.id],
+      [randomUUID(), employeeCode, adminId, employeeCode],
     );
-  } catch (auditErr) {
-    console.error("[lms/admin-link] audit write failed on success path:", auditErr);
-  }
 
-  res.json({ success: true, message: "LMS admin account linked." });
-}));
+    try {
+      await db.execute(
+        `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
+       VALUES (?, 'admin_identity_link', 1, 0, 'success', ?)`,
+        [randomUUID(), req.authUser!.id],
+      );
+    } catch (auditErr) {
+      console.error(
+        "[lms/admin-link] audit write failed on success path:",
+        auditErr,
+      );
+    }
+
+    res.json({ success: true, message: "LMS admin account linked." });
+  }),
+);
 
 // Legacy aliases retained for existing pages.
-router.get("/launch-urls/me", h(async (req: AuthenticatedRequest, res: Response) => {
-  const employeeId = await resolveOwnEmployeeId(req, res);
-  if (!employeeId) return;
-  res.json({ success: true, data: { learner_url: "/lms/my-learning", coordinator_url: "/lms/coordinator", admin_url: "/lms/integration" } });
-}));
+router.get(
+  "/launch-urls/me",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const employeeId = await resolveOwnEmployeeId(req, res);
+    if (!employeeId) return;
+    res.json({
+      success: true,
+      data: {
+        learner_url: "/lms/my-learning",
+        coordinator_url: "/lms/coordinator",
+        admin_url: "/lms/integration",
+      },
+    });
+  }),
+);
 
-router.get("/launch-urls/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  const isAdminHr = await hasRole(userId, "admin", "hr");
-  if (!isAdminHr) {
-    const emp = await getEmployeeForUser(userId);
-    if (!emp || emp.id !== req.params.employeeId) return res.status(403).json({ success: false, message: "Forbidden" });
-  }
-  res.json({ success: true, data: { learner_url: "/lms/my-learning", coordinator_url: "/lms/coordinator", admin_url: "/lms/integration" } });
-}));
+router.get(
+  "/launch-urls/:employeeId",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const isAdminHr = await hasRole(userId, "admin", "hr");
+    if (!isAdminHr) {
+      const emp = await getEmployeeForUser(userId);
+      if (!emp || emp.id !== req.params.employeeId)
+        return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    res.json({
+      success: true,
+      data: {
+        learner_url: "/lms/my-learning",
+        coordinator_url: "/lms/coordinator",
+        admin_url: "/lms/integration",
+      },
+    });
+  }),
+);
 
-router.get("/progress/me", h(async (req: AuthenticatedRequest, res: Response) => {
-  const employeeId = await resolveOwnEmployeeId(req, res);
-  if (!employeeId) return;
-  res.json({ success: true, data: await lmsService.getProgress(employeeId) });
-}));
+router.get(
+  "/progress/me",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const employeeId = await resolveOwnEmployeeId(req, res);
+    if (!employeeId) return;
+    res.json({ success: true, data: await lmsService.getProgress(employeeId) });
+  }),
+);
 
-router.get("/progress/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  const isAdminHr = await hasRole(userId, "admin", "hr");
-  if (!isAdminHr) {
-    const emp = await getEmployeeForUser(userId);
-    if (!emp || emp.id !== req.params.employeeId) return res.status(403).json({ success: false, message: "Forbidden" });
-  }
-  res.json({ success: true, data: await lmsService.getProgress(req.params.employeeId) });
-}));
+router.get(
+  "/progress/:employeeId",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const isAdminHr = await hasRole(userId, "admin", "hr");
+    if (!isAdminHr) {
+      const emp = await getEmployeeForUser(userId);
+      if (!emp || emp.id !== req.params.employeeId)
+        return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    res.json({
+      success: true,
+      data: await lmsService.getProgress(req.params.employeeId),
+    });
+  }),
+);
 
-router.get("/certifications/me", h(async (req: AuthenticatedRequest, res: Response) => {
-  const employeeId = await resolveOwnEmployeeId(req, res);
-  if (!employeeId) return;
-  res.json({ success: true, data: await lmsService.getCertifications(employeeId) });
-}));
+router.get(
+  "/certifications/me",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const employeeId = await resolveOwnEmployeeId(req, res);
+    if (!employeeId) return;
+    res.json({
+      success: true,
+      data: await lmsService.getCertifications(employeeId),
+    });
+  }),
+);
 
-router.get("/certifications/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  const isAdminHr = await hasRole(userId, "admin", "hr");
-  if (!isAdminHr) {
-    const emp = await getEmployeeForUser(userId);
-    if (!emp || emp.id !== req.params.employeeId) return res.status(403).json({ success: false, message: "Forbidden" });
-  }
-  res.json({ success: true, data: await lmsService.getCertifications(req.params.employeeId) });
-}));
+router.get(
+  "/certifications/:employeeId",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const isAdminHr = await hasRole(userId, "admin", "hr");
+    if (!isAdminHr) {
+      const emp = await getEmployeeForUser(userId);
+      if (!emp || emp.id !== req.params.employeeId)
+        return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    res.json({
+      success: true,
+      data: await lmsService.getCertifications(req.params.employeeId),
+    });
+  }),
+);
 
-router.get("/mapping", requireRole("admin", "hr", "trainer"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  res.json({ success: true, data: await lmsService.listMappings() });
-}));
+router.get(
+  "/mapping",
+  requireRole("admin", "hr", "trainer"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    res.json({ success: true, data: await lmsService.listMappings() });
+  }),
+);
 
-router.post("/mapping",
+router.post(
+  "/mapping",
   requireRole("admin", "hr", "trainer"),
   requireScopedRole(["hr", "trainer"], async (req) => {
-    const [rows] = await db.execute(
-      'SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1',
-      [req.body.employee_id]
-    ) as any[];
+    const [rows] = (await db.execute(
+      "SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1",
+      [req.body.employee_id],
+    )) as any[];
     const emp = rows[0];
     return { branchId: emp?.branch_id, processId: emp?.process_id };
   }),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employee_id, lms_learner_id, email } = req.body;
-    if (!employee_id || !lms_learner_id) return res.status(400).json({ error: "employee_id and lms_learner_id required" });
-    res.status(201).json({ success: true, data: await lmsService.upsertMapping(employee_id, lms_learner_id, email) });
-  })
+    if (!employee_id || !lms_learner_id)
+      return res
+        .status(400)
+        .json({ error: "employee_id and lms_learner_id required" });
+    res
+      .status(201)
+      .json({
+        success: true,
+        data: await lmsService.upsertMapping(
+          employee_id,
+          lms_learner_id,
+          email,
+        ),
+      });
+  }),
 );
 
-router.post("/mapping/auto-map",
+router.post(
+  "/mapping/auto-map",
   requireRole("admin", "hr", "trainer"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { lms_learner_id } = req.body;
-    if (!lms_learner_id) return res.status(400).json({ error: "lms_learner_id required" });
-    const result = await lmsEmployeeMapper.mapLmsTrainee(String(lms_learner_id));
+    if (!lms_learner_id)
+      return res.status(400).json({ error: "lms_learner_id required" });
+    const result = await lmsEmployeeMapper.mapLmsTrainee(
+      String(lms_learner_id),
+    );
     res.json({ success: result.success, data: result });
-  })
+  }),
 );
 
-router.get("/mapping/audit",
+router.get(
+  "/mapping/audit",
   requireRole("admin", "hr", "trainer"),
   h(async (_req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM lms_mapping_audit ORDER BY attempted_at DESC LIMIT 100`
+      `SELECT * FROM lms_mapping_audit ORDER BY attempted_at DESC LIMIT 100`,
     );
     res.json({ success: true, data: rows });
-  })
+  }),
 );
 
-router.get("/sync-log", requireRole("admin", "hr", "trainer"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  res.json({ success: true, data: await lmsService.getSyncLog() });
-}));
+router.get(
+  "/sync-log",
+  requireRole("admin", "hr", "trainer"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    res.json({ success: true, data: await lmsService.getSyncLog() });
+  }),
+);
 
 // ── LMS connection test ────────────────────────────────────────────────────────
-router.get("/connection", requireRole("admin", "hr", "super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  const result = await lmsService.testConnection();
-  res.json({ success: true, data: result });
-}));
+router.get(
+  "/connection",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const result = await lmsService.testConnection();
+    res.json({ success: true, data: result });
+  }),
+);
 
 // ── Manual full sync ───────────────────────────────────────────────────────────
-router.post("/sync", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const actorId = req.authUser!.id;
-  const result = await runFullSync(actorId);
-  res.json({ success: true, data: result });
-}));
+router.post(
+  "/sync",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const actorId = req.authUser!.id;
+    const result = await runFullSync(actorId);
+    res.json({ success: true, data: result });
+  }),
+);
 
 // ── Sync status (last 5 audit rows) ───────────────────────────────────────────
-router.get("/sync/status", requireRole("admin", "hr", "super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  const connection = await lmsService.testConnection();
-  const [rows] = await db.execute(
-    "SELECT * FROM lms_sync_audit_log ORDER BY created_at DESC LIMIT 5"
-  );
-  res.json({ success: true, data: { connection, recent_syncs: rows } });
-}));
+router.get(
+  "/sync/status",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const connection = await lmsService.testConnection();
+    const [rows] = await db.execute(
+      "SELECT * FROM lms_sync_audit_log ORDER BY created_at DESC LIMIT 5",
+    );
+    res.json({ success: true, data: { connection, recent_syncs: rows } });
+  }),
+);
 
 // GET /api/lms/progress-summary
-router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "operations_head", "branch_head"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  const [summaryRows] = await db.execute<RowDataPacket[]>(`
+router.get(
+  "/progress-summary",
+  requireRole("admin", "hr", "super_admin", "operations_head", "branch_head"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const [summaryRows] = await db.execute<RowDataPacket[]>(`
     SELECT
       COUNT(DISTINCT m.employee_id) AS totalLearners,
       COUNT(DISTINCT CASE WHEN m.is_active = 1 THEN m.employee_id END) AS mappedLearners,
@@ -616,9 +870,11 @@ router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "opera
     LEFT JOIN lms_learning_progress_snapshot p ON p.employee_id = m.employee_id
     LEFT JOIN lms_certification_snapshot c ON c.employee_id = m.employee_id
   `);
-  const summary = (summaryRows as any[])[0] ?? {};
+    const summary = (summaryRows as any[])[0] ?? {};
 
-  const [atRiskRows] = await db.execute<RowDataPacket[]>(`
+    const [atRiskRows] = await db
+      .execute<RowDataPacket[]>(
+        `
     SELECT lp.employee_id, lp.employee_code, e.full_name AS employee_name,
            lp.readiness_score, lp.attrition_risk_signal, lp.batch_no, lp.synced_at
     FROM lms_learner_progress lp
@@ -626,9 +882,13 @@ router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "opera
     WHERE lp.attrition_risk_signal = 'red'
     ORDER BY lp.readiness_score ASC
     LIMIT 20
-  `).catch(() => [[] as RowDataPacket[], []] as const);
+  `,
+      )
+      .catch(() => [[] as RowDataPacket[], []] as const);
 
-  const [byBatchRows] = await db.execute<RowDataPacket[]>(`
+    const [byBatchRows] = await db
+      .execute<RowDataPacket[]>(
+        `
     SELECT lp.batch_no,
            COUNT(DISTINCT lp.employee_id) AS total_learners,
            ROUND(AVG(lp.readiness_score), 1) AS avg_readiness,
@@ -639,9 +899,11 @@ router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "opera
     GROUP BY lp.batch_no
     ORDER BY lp.batch_no DESC
     LIMIT 20
-  `).catch(() => [[] as RowDataPacket[], []] as const);
+  `,
+      )
+      .catch(() => [[] as RowDataPacket[], []] as const);
 
-  const [perEmpRows] = await db.execute<RowDataPacket[]>(`
+    const [perEmpRows] = await db.execute<RowDataPacket[]>(`
     SELECT
       e.id AS employee_id,
       e.employee_code,
@@ -661,32 +923,36 @@ router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "opera
     LIMIT 200
   `);
 
-  const [syncStatusRows] = await db.execute<RowDataPacket[]>(
-    `SELECT sync_type, status, records_synced, errors_count, created_at
-     FROM lms_sync_audit_log ORDER BY created_at DESC LIMIT 4`
-  );
+    const [syncStatusRows] = await db.execute<RowDataPacket[]>(
+      `SELECT sync_type, status, records_synced, errors_count, created_at
+     FROM lms_sync_audit_log ORDER BY created_at DESC LIMIT 4`,
+    );
 
-  res.json({
-    success: true,
-    data: perEmpRows,
-    summary: {
-      totalLearners: Number(summary.totalLearners ?? 0),
-      mappedLearners: Number(summary.mappedLearners ?? 0),
-      activeBatches: (byBatchRows as any[]).length,
-      averageCourseCompletion: Number(summary.averageCourseCompletion ?? 0),
-      averageAssessmentPass: Number(summary.averageAssessmentPass ?? 0),
-      averageAttendance: 0,
-      certifiedCount: Number(summary.certifiedCount ?? 0),
-      ojtReadyCount: 0,
-      opsHandoverReadyCount: (byBatchRows as any[]).reduce((s: number, r: any) => s + Number(r.ready_count ?? 0), 0),
-      atRiskCount: (atRiskRows as any[]).length,
-      lastSyncAt: summary.lastSyncAt ?? null,
-    },
-    byBatch: byBatchRows,
-    atRiskLearners: atRiskRows,
-    syncStatus: syncStatusRows,
-  });
-}));
+    res.json({
+      success: true,
+      data: perEmpRows,
+      summary: {
+        totalLearners: Number(summary.totalLearners ?? 0),
+        mappedLearners: Number(summary.mappedLearners ?? 0),
+        activeBatches: (byBatchRows as any[]).length,
+        averageCourseCompletion: Number(summary.averageCourseCompletion ?? 0),
+        averageAssessmentPass: Number(summary.averageAssessmentPass ?? 0),
+        averageAttendance: 0,
+        certifiedCount: Number(summary.certifiedCount ?? 0),
+        ojtReadyCount: 0,
+        opsHandoverReadyCount: (byBatchRows as any[]).reduce(
+          (s: number, r: any) => s + Number(r.ready_count ?? 0),
+          0,
+        ),
+        atRiskCount: (atRiskRows as any[]).length,
+        lastSyncAt: summary.lastSyncAt ?? null,
+      },
+      byBatch: byBatchRows,
+      atRiskLearners: atRiskRows,
+      syncStatus: syncStatusRows,
+    });
+  }),
+);
 
 // GET /api/lms/sso-session
 // HRMS2 backend calls LMS /api/auth/bridge with backend-only secret.
@@ -705,53 +971,75 @@ router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "opera
 //
 // Gated on the same computed capability its siblings use, rather than a fresh role list, so
 // there is one definition of "may act as LMS admin" instead of two that can drift.
-router.get("/sso-session", h(async (req: AuthenticatedRequest, res: Response) => {
-  const ctx = await currentLmsContext(req, res);
-  if (!ctx) return;
-  if (!ctx.access.access.admin) {
-    return res.status(403).json({ success: false, message: "LMS administrator access is not assigned to this HRMS user" });
-  }
-  try {
-    const session = await buildLmsSession(req, ctx, "admin");
-    res.json({ success: true, ...session });
-  } catch (e: any) {
-    console.error("[lms/sso-session] bridge error:", e?.message);
-    if (e?.statusCode === 503) {
-      return res.status(503).json({ success: false, message: e.message });
+router.get(
+  "/sso-session",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const ctx = await currentLmsContext(req, res);
+    if (!ctx) return;
+    if (!ctx.access.access.admin) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "LMS administrator access is not assigned to this HRMS user",
+        });
     }
-    return res.status(502).json({ success: false, message: "LMS SSO unavailable. Please try again or contact support." });
-  }
-}));
+    try {
+      const session = await buildLmsSession(req, ctx, "admin");
+      res.json({ success: true, ...session });
+    } catch (e: any) {
+      console.error("[lms/sso-session] bridge error:", e?.message);
+      if (e?.statusCode === 503) {
+        return res.status(503).json({ success: false, message: e.message });
+      }
+      return res
+        .status(502)
+        .json({
+          success: false,
+          message: "LMS SSO unavailable. Please try again or contact support.",
+        });
+    }
+  }),
+);
 
-router.get("/launch-audit",
+router.get(
+  "/launch-audit",
   requireRole("admin", "hr", "super_admin"),
   h(async (_req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM lms_sync_audit_log WHERE sync_type = 'sso_session' ORDER BY created_at DESC LIMIT 50`
+      `SELECT * FROM lms_sync_audit_log WHERE sync_type = 'sso_session' ORDER BY created_at DESC LIMIT 50`,
     );
     res.json({ success: true, data: rows });
-  })
+  }),
 );
 
 // ── Save Integration Hub LMS credentials ──────────────────────────────────────
 // POST /api/lms/config  { host, port, database, username, password, db_type? }
 // Encrypts creds, upserts into integration_config (lms_sync key), invalidates pool cache.
-router.post("/config", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { host, port, database, username, password, db_type } = req.body;
-  if (!host || !database || !username || !password) {
-    return res.status(400).json({ success: false, message: "host, database, username, password required" });
-  }
-  const creds = {
-    host: String(host),
-    port: Number(port ?? 3306),
-    database: String(database),
-    username: String(username),
-    password: String(password),
-    db_type: (db_type === "mssql" ? "mssql" : "mysql") as "mysql" | "mssql",
-  };
-  const encrypted = encryptCredentials(creds);
-  await db.execute(
-    `INSERT INTO integration_config (id, integration_key, integration_name, integration_type, vendor_name, config_json, encrypted_credentials, active_status, notes)
+router.post(
+  "/config",
+  requireRole("admin", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { host, port, database, username, password, db_type } = req.body;
+    if (!host || !database || !username || !password) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "host, database, username, password required",
+        });
+    }
+    const creds = {
+      host: String(host),
+      port: Number(port ?? 3306),
+      database: String(database),
+      username: String(username),
+      password: String(password),
+      db_type: (db_type === "mssql" ? "mssql" : "mysql") as "mysql" | "mssql",
+    };
+    const encrypted = encryptCredentials(creds);
+    await db.execute(
+      `INSERT INTO integration_config (id, integration_key, integration_name, integration_type, vendor_name, config_json, encrypted_credentials, active_status, notes)
      VALUES (UUID(), 'lms_sync', 'MCN LMS Sync', 'database', 'MCN LMS',
        JSON_OBJECT('db_type', ?, 'host', ?, 'port', ?, 'database', ?, 'description', 'Read-only sync from deployed MCN LMS'),
        ?, 1, 'Pulls trainee progress and certifications from lms_mcn into HRMS snapshot tables')
@@ -760,60 +1048,93 @@ router.post("/config", requireRole("admin", "super_admin"), h(async (req: Authen
        config_json = VALUES(config_json),
        active_status = 1,
        updated_at = NOW()`,
-    [creds.db_type, creds.host, creds.port, creds.database, encrypted]
-  );
-  // Ensure schedule row exists (disabled by default)
-  await db.execute(
-    `INSERT IGNORE INTO integration_schedule (id, integration_key, cron_expression, enabled)
-     VALUES (UUID(), 'lms_sync', '0 */6 * * *', 0)`
-  );
-  invalidatePool("lms_sync");
-  res.json({ success: true, message: "LMS credentials saved. Connection will be tested on next request." });
-}));
+      [creds.db_type, creds.host, creds.port, creds.database, encrypted],
+    );
+    // Ensure schedule row exists (disabled by default)
+    await db.execute(
+      `INSERT IGNORE INTO integration_schedule (id, integration_key, cron_expression, enabled)
+     VALUES (UUID(), 'lms_sync', '0 */6 * * *', 0)`,
+    );
+    invalidatePool("lms_sync");
+    res.json({
+      success: true,
+      message:
+        "LMS credentials saved. Connection will be tested on next request.",
+    });
+  }),
+);
 
 // ── Get current config (non-sensitive) ────────────────────────────────────────
-router.get("/config", requireRole("admin", "hr", "super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  const [rows] = await db.execute<any[]>(
-    `SELECT ic.integration_key, ic.integration_name, ic.active_status, ic.updated_at,
+router.get(
+  "/config",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<any[]>(
+      `SELECT ic.integration_key, ic.integration_name, ic.active_status, ic.updated_at,
             ic.config_json,
             CASE WHEN ic.encrypted_credentials IS NOT NULL THEN 1 ELSE 0 END AS has_credentials,
             isch.cron_expression, isch.enabled AS schedule_enabled, isch.last_run_at, isch.next_run_at
        FROM integration_config ic
        LEFT JOIN integration_schedule isch ON isch.integration_key = ic.integration_key
       WHERE ic.integration_key = 'lms_sync'
-      LIMIT 1`
-  );
-  const row = (rows as any[])[0] ?? null;
-  if (row?.config_json && typeof row.config_json === "string") {
-    try { row.config_json = JSON.parse(row.config_json); } catch {}
-  }
-  // Never return encrypted_credentials — return only non-sensitive config
-  res.json({ success: true, data: row });
-}));
+      LIMIT 1`,
+    );
+    const row = (rows as any[])[0] ?? null;
+    if (row?.config_json && typeof row.config_json === "string") {
+      try {
+        row.config_json = JSON.parse(row.config_json);
+      } catch {}
+    }
+    // Never return encrypted_credentials — return only non-sensitive config
+    res.json({ success: true, data: row });
+  }),
+);
 
 // Absorbed from lms-dashboard.routes.ts
-router.get("/learner-progress/:employee_id", h(async (req: any, res: Response) => {
-  const userId = req.authUser!.id;
-  const isPrivileged = await hasRole(userId, "admin", "hr", "trainer", "operations_head", "ceo", "manager");
-  if (!isPrivileged) {
-    // Allow employees to access only their own record
-    const emp = await getEmployeeForUser(userId);
-    if (!emp || emp.id !== req.params.employee_id) {
-      return res.status(403).json({ success: false, message: "Forbidden" });
+router.get(
+  "/learner-progress/:employee_id",
+  h(async (req: any, res: Response) => {
+    const userId = req.authUser!.id;
+    const isPrivileged = await hasRole(
+      userId,
+      "admin",
+      "hr",
+      "trainer",
+      "operations_head",
+      "ceo",
+      "manager",
+    );
+    if (!isPrivileged) {
+      // Allow employees to access only their own record
+      const emp = await getEmployeeForUser(userId);
+      if (!emp || emp.id !== req.params.employee_id) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
     }
-  }
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM lms_learner_progress WHERE employee_id = ? LIMIT 1`,
-    [req.params.employee_id]
-  );
-  if (!rows.length) return res.status(404).json({ success: false, error: "No LMS record found" });
-  // generatedAt feeds the dashboard Source Freshness panel, which otherwise reads
-  // "Timestamp unavailable" (CEO UAT).
-  res.json({ success: true, data: rows[0], generatedAt: new Date().toISOString() });
-}));
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM lms_learner_progress WHERE employee_id = ? LIMIT 1`,
+      [req.params.employee_id],
+    );
+    if (!rows.length)
+      return res
+        .status(404)
+        .json({ success: false, error: "No LMS record found" });
+    // generatedAt feeds the dashboard Source Freshness panel, which otherwise reads
+    // "Timestamp unavailable" (CEO UAT).
+    res.json({
+      success: true,
+      data: rows[0],
+      generatedAt: new Date().toISOString(),
+    });
+  }),
+);
 
-router.get("/batch-progress/:batch_no", requireRole("admin", "hr", "trainer", "operations_head"), h(async (req: any, res: Response) => {
-  const [summary] = await db.execute<RowDataPacket[]>(`
+router.get(
+  "/batch-progress/:batch_no",
+  requireRole("admin", "hr", "trainer", "operations_head"),
+  h(async (req: any, res: Response) => {
+    const [summary] = await db.execute<RowDataPacket[]>(
+      `
     SELECT batch_no,
            COUNT(DISTINCT employee_id) AS total_learners,
            AVG(mcq_best_score) AS avg_score,
@@ -821,23 +1142,33 @@ router.get("/batch-progress/:batch_no", requireRole("admin", "hr", "trainer", "o
            SUM(CASE WHEN ops_handover_ready = 1 THEN 1 ELSE 0 END) AS ready_count,
            SUM(CASE WHEN attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS high_risk_count
     FROM lms_learner_progress WHERE batch_no = ? GROUP BY batch_no
-  `, [req.params.batch_no]);
-  res.json({ success: true, data: (summary as any[])[0] || {} });
-}));
+  `,
+      [req.params.batch_no],
+    );
+    res.json({ success: true, data: (summary as any[])[0] || {} });
+  }),
+);
 
-router.get("/assessment-history/:employee_id", h(async (req: any, res: Response) => {
-  const userId = req.authUser!.id;
-  const isAdminHr = await hasRole(userId, "admin", "hr");
-  if (!isAdminHr) {
-    const emp = await getEmployeeForUser(userId);
-    if (!emp || emp.id !== req.params.employee_id) return res.status(403).json({ success: false, message: "Forbidden" });
-  }
-  const [rows] = await db.execute<RowDataPacket[]>(`
+router.get(
+  "/assessment-history/:employee_id",
+  h(async (req: any, res: Response) => {
+    const userId = req.authUser!.id;
+    const isAdminHr = await hasRole(userId, "admin", "hr");
+    if (!isAdminHr) {
+      const emp = await getEmployeeForUser(userId);
+      if (!emp || emp.id !== req.params.employee_id)
+        return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `
     SELECT id, employee_id, employee_code, assessment_name, attempt_no,
            score, percentage, result, time_taken_seconds, attempted_at, synced_at
     FROM lms_assessment_scores WHERE employee_id = ? ORDER BY attempted_at DESC LIMIT 50
-  `, [req.params.employee_id]);
-  res.json({ success: true, data: rows });
-}));
+  `,
+      [req.params.employee_id],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
 
 export { router as lmsRouter };

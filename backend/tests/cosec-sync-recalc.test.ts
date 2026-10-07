@@ -3,24 +3,35 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { mockExecute, mockQueue, mockDrain } = vi.hoisted(() => ({
   mockExecute: vi.fn(),
   mockQueue: vi.fn(),
-  mockDrain: vi.fn().mockResolvedValue({ processed: 0, failed: 0, skipped_locked: 0 }),
+  mockDrain: vi
+    .fn()
+    .mockResolvedValue({ processed: 0, failed: 0, skipped_locked: 0 }),
 }));
 
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: mockExecute, query: vi.fn().mockResolvedValue([[],[]]) } }));
-
-vi.mock("../src/modules/payroll/payroll-targeted-recalculation.service.js", () => ({
-  queuePayrollRecalculation: mockQueue,
-  drainPayrollRecalcQueue: mockDrain,
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: mockExecute, query: vi.fn().mockResolvedValue([[], []]) },
 }));
+
+vi.mock(
+  "../src/modules/payroll/payroll-targeted-recalculation.service.js",
+  () => ({
+    queuePayrollRecalculation: mockQueue,
+    drainPayrollRecalcQueue: mockDrain,
+  }),
+);
 
 // Mock attendanceEngineService
 vi.mock("../src/modules/wfm/attendance-engine.service.js", () => ({
-  attendanceEngineService: { upsertDailyRecord: vi.fn().mockResolvedValue(undefined) },
+  attendanceEngineService: {
+    upsertDailyRecord: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 
 import { triggerPostSyncPayrollRecalc } from "../src/modules/wfm/cosec-sync.service.js";
 
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("triggerPostSyncPayrollRecalc", () => {
   it("queues and drains for each distinct payroll month", async () => {

@@ -2,7 +2,10 @@ import fs from "fs";
 import path from "path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ONBOARDING_DOCUMENT_ROOT } from "../onboardingDocumentPath.js";
-import { resolveDocumentPath, type CandidateDocument } from "../secure-documents.service.js";
+import {
+  resolveDocumentPath,
+  type CandidateDocument,
+} from "../secure-documents.service.js";
 
 /**
  * A candidate onboarding document must stay servable when file_path names another
@@ -56,7 +59,11 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  try { fs.rmSync(realPath, { force: true }); } catch { /* best effort */ }
+  try {
+    fs.rmSync(realPath, { force: true });
+  } catch {
+    /* best effort */
+  }
 });
 
 describe("resolveDocumentPath — onboarding documents", () => {
@@ -81,12 +88,16 @@ describe("resolveDocumentPath — onboarding documents", () => {
   it("still yields a non-existent path when the file is genuinely gone", () => {
     // 58 rows are marked file_missing because the bytes are truly absent. Those must
     // keep producing the existing 404 rather than resolving to something wrong.
-    const missing = resolveDocumentPath(doc({ raw_path: "/nowhere/does-not-exist.pdf" }));
+    const missing = resolveDocumentPath(
+      doc({ raw_path: "/nowhere/does-not-exist.pdf" }),
+    );
     expect(fs.existsSync(missing)).toBe(false);
   });
 
   it("throws when there is no path at all", () => {
-    expect(() => resolveDocumentPath(doc({ raw_path: null, raw_url: null }))).toThrow();
+    expect(() =>
+      resolveDocumentPath(doc({ raw_path: null, raw_url: null })),
+    ).toThrow();
   });
 });
 
@@ -96,9 +107,15 @@ describe("resolveDocumentPath — portal documents keep their original handling"
     // Resolving those against the onboarding directory would be wrong even when a
     // same-named file happened to exist there.
     const resolved = resolveDocumentPath(
-      doc({ source: "portal", raw_path: null, raw_url: `uploads/portal/${STORED_NAME}` }),
+      doc({
+        source: "portal",
+        raw_path: null,
+        raw_url: `uploads/portal/${STORED_NAME}`,
+      }),
     );
-    expect(resolved).toBe(path.resolve(process.cwd(), `uploads/portal/${STORED_NAME}`));
+    expect(resolved).toBe(
+      path.resolve(process.cwd(), `uploads/portal/${STORED_NAME}`),
+    );
     expect(resolved).not.toBe(realPath);
   });
 });

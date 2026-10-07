@@ -9,12 +9,20 @@ import { syncInboundCdrDaily } from "../src/modules/reporting/inbound-cdr-sync.s
 
 async function main() {
   const result = await syncInboundCdrDaily("demo-super-admin-id", 30);
-  console.log("[SYNC] inbound_cdr_daily_actual:", JSON.stringify(result.clientResults, null, 2));
-  const failed = Object.entries(result.clientResults).filter(([, r]) => r.error);
+  console.log(
+    "[SYNC] inbound_cdr_daily_actual:",
+    JSON.stringify(result.clientResults, null, 2),
+  );
+  const failed = Object.entries(result.clientResults).filter(
+    ([, r]) => r.error,
+  );
   if (failed.length) {
     console.error("[SYNC] Failures:", failed.map(([code]) => code).join(", "));
     process.exit(1);
   }
   process.exit(0);
 }
-main().catch((e) => { console.error("[SYNC] FAILED", e); process.exit(1); });
+main().catch((e) => {
+  console.error("[SYNC] FAILED", e);
+  process.exit(1);
+});

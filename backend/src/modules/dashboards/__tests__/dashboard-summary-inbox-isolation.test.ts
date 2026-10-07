@@ -45,7 +45,7 @@ describe("dashboard summary — inbox failure isolation", () => {
     expect(
       summaryHandler,
       "getUnifiedInboxSummary is awaited before the metrics are computed; " +
-        "without a try/catch one inbox failure blanks every metric tile"
+        "without a try/catch one inbox failure blanks every metric tile",
     ).toMatch(/try\s*\{[\s\S]*getUnifiedInboxSummary[\s\S]*\}\s*catch/);
   });
 
@@ -57,11 +57,14 @@ describe("dashboard summary — inbox failure isolation", () => {
     // Match the call site, not the bare identifier — the identifier also appears
     // in the explanatory comment above the try/catch.
     const callIdx = summaryHandler.search(/executeDashboardMetrics\(/);
-    expect(callIdx, "shared summary no longer computes metrics").toBeGreaterThan(-1);
+    expect(
+      callIdx,
+      "shared summary no longer computes metrics",
+    ).toBeGreaterThan(-1);
     const catchIdx = summaryHandler.search(/\}\s*catch/);
     expect(
       callIdx,
-      "executeDashboardMetrics must be defined after the guarded inbox call, not inside its try"
+      "executeDashboardMetrics must be defined after the guarded inbox call, not inside its try",
     ).toBeGreaterThan(catchIdx);
   });
 
@@ -79,7 +82,7 @@ describe("dashboard summary — inbox failure isolation", () => {
     // an unschema'd marker would be silently dropped before it reached the client.
     expect(
       contract,
-      "workItemsStatus must be declared on dashboardSummarySchema or zod will strip it"
+      "workItemsStatus must be declared on dashboardSummarySchema or zod will strip it",
     ).toMatch(/workItemsStatus:\s*z\.enum\(\["ok",\s*"unavailable"\]\)/);
   });
 

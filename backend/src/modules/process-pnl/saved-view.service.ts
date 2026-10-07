@@ -5,7 +5,10 @@ import { db } from "../../db/mysql.js";
 // Structurally identical to the Executor interfaces used across this session's other
 // process-pnl services — same dependency-injection pattern for testability.
 interface Executor {
-  execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[T, unknown]>;
 }
 
 /**
@@ -31,7 +34,10 @@ function toRecord(row: RowDataPacket): SavedViewRecord {
     userId: String(row.user_id),
     moduleKey: String(row.module_key),
     viewName: String(row.view_name),
-    config: typeof row.config_json === "string" ? JSON.parse(row.config_json) : row.config_json,
+    config:
+      typeof row.config_json === "string"
+        ? JSON.parse(row.config_json)
+        : row.config_json,
     isDefault: Number(row.is_default) === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -41,11 +47,11 @@ function toRecord(row: RowDataPacket): SavedViewRecord {
 export async function listSavedViews(
   userId: string,
   moduleKey: string,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<SavedViewRecord[]> {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT * FROM finance_saved_view WHERE user_id = ? AND module_key = ? ORDER BY view_name`,
-    [userId, moduleKey]
+    [userId, moduleKey],
   );
   return rows.map(toRecord);
 }
@@ -55,38 +61,52 @@ export async function createSavedView(
   moduleKey: string,
   viewName: string,
   config: unknown,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<SavedViewRecord> {
   if (!moduleKey?.trim()) throw new Error("Module key is required");
   if (!viewName?.trim()) throw new Error("View name is required");
 
   const [existing] = await executor.execute<RowDataPacket[]>(
     `SELECT id FROM finance_saved_view WHERE user_id = ? AND module_key = ? AND view_name = ? LIMIT 1`,
-    [userId, moduleKey, viewName.trim()]
+    [userId, moduleKey, viewName.trim()],
   );
   if (existing[0]) {
-    throw new Error(`A saved view named "${viewName.trim()}" already exists for this module — choose a different name or delete the existing one first`);
+    throw new Error(
+      `A saved view named "${viewName.trim()}" already exists for this module — choose a different name or delete the existing one first`,
+    );
   }
 
   const id = randomUUID();
   await executor.execute(
     `INSERT INTO finance_saved_view (id, user_id, module_key, view_name, config_json, is_default)
      VALUES (?,?,?,?,?,0)`,
-    [id, userId, moduleKey, viewName.trim(), JSON.stringify(config ?? {})]
+    [id, userId, moduleKey, viewName.trim(), JSON.stringify(config ?? {})],
   );
-  const [rows] = await executor.execute<RowDataPacket[]>(`SELECT * FROM finance_saved_view WHERE id = ? LIMIT 1`, [id]);
+  const [rows] = await executor.execute<RowDataPacket[]>(
+    `SELECT * FROM finance_saved_view WHERE id = ? LIMIT 1`,
+    [id],
+  );
   return toRecord(rows[0]);
 }
 
-export async function deleteSavedView(id: string, userId: string, executor: Executor = db): Promise<void> {
+export async function deleteSavedView(
+  id: string,
+  userId: string,
+  executor: Executor = db,
+): Promise<void> {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT id FROM finance_saved_view WHERE id = ? AND user_id = ? LIMIT 1`,
-    [id, userId]
+    [id, userId],
   );
   if (!rows[0]) {
-    throw new Error("Saved view was not found — it may belong to a different user or may already be deleted");
+    throw new Error(
+      "Saved view was not found — it may belong to a different user or may already be deleted",
+    );
   }
-  await executor.execute(`DELETE FROM finance_saved_view WHERE id = ? AND user_id = ?`, [id, userId]);
+  await executor.execute(
+    `DELETE FROM finance_saved_view WHERE id = ? AND user_id = ?`,
+    [id, userId],
+  );
 }
 
 export const savedViewService = {

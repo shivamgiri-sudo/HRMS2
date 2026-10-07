@@ -1,17 +1,20 @@
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { buildScopeWhereClause } from '../../shared/scopeAccess.js';
-import { nonReactivatableSqlList } from '../exit/exitEmploymentStatus.js';
-import { sendJoiningDocReminderEmail } from './ats.email.service.js';
-import { generateJoiningDocumentChecklist, recalculateDocumentProgress } from '../employees/employeeJoiningDocuments.service.js';
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
+import { sendJoiningDocReminderEmail } from "./ats.email.service.js";
+import {
+  generateJoiningDocumentChecklist,
+  recalculateDocumentProgress,
+} from "../employees/employeeJoiningDocuments.service.js";
 // Esign_State_Authority. The eSign counters below are GENERATED from it rather
 // than hand-written, so the query cannot drift from `classifyEsignState`.
-import { esignBucketCaseSql } from './esignState.js';
-import { ZipArchive } from 'archiver';
-import type { Archiver as ArchiverInstance } from 'archiver';
-import fs from 'fs';
-import path from 'path';
-import type { Response } from 'express';
+import { esignBucketCaseSql } from "./esignState.js";
+import { ZipArchive } from "archiver";
+import type { Archiver as ArchiverInstance } from "archiver";
+import fs from "fs";
+import path from "path";
+import type { Response } from "express";
 
 /**
  * archiver 8 removed the callable factory.
@@ -39,7 +42,11 @@ function newZipArchive(): ArchiverInstance {
   return new ZipArchive({ zlib: { level: 9 } }) as unknown as ArchiverInstance;
 }
 
-const STORAGE_ROOT = path.resolve(process.cwd(), 'private-storage', 'employee-joining-documents');
+const STORAGE_ROOT = path.resolve(
+  process.cwd(),
+  "private-storage",
+  "employee-joining-documents",
+);
 
 /**
  * The roles this page is mounted for, as the scope resolver sees them.
@@ -49,7 +56,13 @@ const STORAGE_ROOT = path.resolve(process.cwd(), 'private-storage', 'employee-jo
  * user_assignment_scope rows whose role_key is in this list, so a role admitted
  * by the router but missing here would resolve to no scope and an empty page.
  */
-export const TRACKER_SCOPE_ROLES = ['admin', 'super_admin', 'hr', 'payroll_hr', 'branch_head'];
+export const TRACKER_SCOPE_ROLES = [
+  "admin",
+  "super_admin",
+  "hr",
+  "payroll_hr",
+  "branch_head",
+];
 
 /**
  * Who appears on this page at all — anyone who actually has joining documents,
@@ -93,7 +106,7 @@ const TRACKER_POPULATION_JOIN = `
 const DAYS_SINCE_ID_CREATED_SQL = `DATEDIFF(CURDATE(), e.created_at)`;
 
 export interface KeyDocumentStatus {
-  code: 'APPOINTMENT_LETTER' | 'ID_PROOF' | 'BANK_DETAILS' | 'ADDRESS_PROOF';
+  code: "APPOINTMENT_LETTER" | "ID_PROOF" | "BANK_DETAILS" | "ADDRESS_PROOF";
   status: string;
   verification_status: string | null;
 }
@@ -246,20 +259,23 @@ export interface TrackerResponse {
   hasPrev: boolean;
 }
 
-export function parseKeyDocuments(keyDocumentsRaw: string | null): KeyDocumentStatus[] {
-  if (!keyDocumentsRaw || keyDocumentsRaw.trim() === '') {
+export function parseKeyDocuments(
+  keyDocumentsRaw: string | null,
+): KeyDocumentStatus[] {
+  if (!keyDocumentsRaw || keyDocumentsRaw.trim() === "") {
     return [];
   }
 
   return keyDocumentsRaw
-    .split('||')
+    .split("||")
     .filter(Boolean)
-    .map(part => {
-      const [code, status, verificationStatus] = part.split(':');
+    .map((part) => {
+      const [code, status, verificationStatus] = part.split(":");
       return {
-        code: code as KeyDocumentStatus['code'],
+        code: code as KeyDocumentStatus["code"],
         status,
-        verification_status: verificationStatus === 'null' ? null : verificationStatus,
+        verification_status:
+          verificationStatus === "null" ? null : verificationStatus,
       };
     });
 }
@@ -268,7 +284,7 @@ export function parseKeyDocuments(keyDocumentsRaw: string | null): KeyDocumentSt
  * The buckets the tracker tiles render, and the only buckets the summary produces.
  * One name per tile, so a count cannot exist without somewhere to display it.
  */
-export type SummaryBucket = 'completed' | 'in_progress' | 'pending';
+export type SummaryBucket = "completed" | "in_progress" | "pending";
 
 /**
  * The single classification the tiles and the row badge both go through.
@@ -297,16 +313,19 @@ const BUCKET_THRESHOLDS = {
 } as const;
 
 export function classifyEmployeeBucket(pct: number): SummaryBucket {
-  if (pct >= BUCKET_THRESHOLDS.completedMin) return 'completed';
-  if (pct > BUCKET_THRESHOLDS.inProgressMin) return 'in_progress'; // absorbs the former 75-99 pending_verification band
-  return 'pending';
+  if (pct >= BUCKET_THRESHOLDS.completedMin) return "completed";
+  if (pct > BUCKET_THRESHOLDS.inProgressMin) return "in_progress"; // absorbs the former 75-99 pending_verification band
+  return "pending";
 }
 
 /** Field on `TrackerSummary` each bucket increments. */
-const BUCKET_COUNT_FIELD: Record<SummaryBucket, 'completed_count' | 'in_progress_count' | 'pending_count'> = {
-  completed: 'completed_count',
-  in_progress: 'in_progress_count',
-  pending: 'pending_count',
+const BUCKET_COUNT_FIELD: Record<
+  SummaryBucket,
+  "completed_count" | "in_progress_count" | "pending_count"
+> = {
+  completed: "completed_count",
+  in_progress: "in_progress_count",
+  pending: "pending_count",
 };
 
 /**
@@ -332,7 +351,9 @@ function summaryBucketCaseSql(column: string): string {
             END`;
 }
 
-export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): TrackerSummary {
+export function calculateTrackerSummary(
+  employees: EmployeeDocumentRow[],
+): TrackerSummary {
   const summary: TrackerSummary = {
     total_employees: employees.length,
     completed_count: 0,
@@ -425,22 +446,24 @@ interface TrackerSummaryRow extends RowDataPacket {
  */
 export async function filterEmployeeIdsToScope(
   actorUserId: string,
-  employeeIds: string[]
+  employeeIds: string[],
 ): Promise<string[]> {
   if (employeeIds.length === 0) return [];
-  const scope = await buildScopeWhereClause(actorUserId, TRACKER_SCOPE_ROLES, { branchId: 'e.branch_id' });
-  if (scope.sql === '1=1') return employeeIds;
-  if (scope.sql === '1=0') return [];
+  const scope = await buildScopeWhereClause(actorUserId, TRACKER_SCOPE_ROLES, {
+    branchId: "e.branch_id",
+  });
+  if (scope.sql === "1=1") return employeeIds;
+  if (scope.sql === "1=0") return [];
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT e.id FROM employees e WHERE e.id IN (?) AND (${scope.sql})`,
-    [employeeIds, ...scope.params]
+    [employeeIds, ...scope.params],
   );
   return (rows as Array<{ id: string }>).map((r) => r.id);
 }
 
 export async function getJoiningDocumentsTracker(
   actorUserId: string,
-  filters: TrackerQueryParams
+  filters: TrackerQueryParams,
 ): Promise<TrackerResponse> {
   // Clamped here as well as at the route, deliberately. The route is one caller and
   // this is the function that builds the OFFSET arithmetic, so it cannot assume its
@@ -478,14 +501,14 @@ export async function getJoiningDocumentsTracker(
     // resigned employee (the common case, maps to 'inactive') was never excluded
     // and stayed on this tracker indefinitely.
     `(e.employment_status IS NULL OR e.employment_status NOT IN (${nonReactivatableSqlList()}))`,
-    'e.employee_code IS NOT NULL',
+    "e.employee_code IS NOT NULL",
     // Legacy (db_bill-migrated) employees get a placeholder checklist row from
     // createLegacyJoiningChecklists.ts (mandatory=0, status='verified' — their
     // documents were verified offline pre-HRMS), which satisfies the checklist
     // EXISTS clause above and makes them pass through into this tracker showing
     // "pending" — they were never real joining-document work items. Exclude them
     // outright rather than trying to display a synthetic "verified" status.
-    'e.legacy_emp_id IS NULL',
+    "e.legacy_emp_id IS NULL",
   ];
   const params: (string | number)[] = [];
 
@@ -500,38 +523,40 @@ export async function getJoiningDocumentsTracker(
   // user_assignment_scope, so scope_type='all' (head-office hr/admin, payroll
   // heads) still means org-wide, super_admin bypasses inside it, and a user whose
   // roles carry no scope row at all resolves to 1=0 rather than to everything.
-  const scope = await buildScopeWhereClause(actorUserId, TRACKER_SCOPE_ROLES, { branchId: 'e.branch_id' });
+  const scope = await buildScopeWhereClause(actorUserId, TRACKER_SCOPE_ROLES, {
+    branchId: "e.branch_id",
+  });
   whereClauses.push(`(${scope.sql})`);
   params.push(...(scope.params as (string | number)[]));
 
   // Apply filters
-  if (filters.status && filters.status !== 'all') {
-    whereClauses.push('e.joining_document_status = ?');
+  if (filters.status && filters.status !== "all") {
+    whereClauses.push("e.joining_document_status = ?");
     params.push(filters.status);
   }
 
   if (filters.branch_id) {
-    whereClauses.push('e.branch_id = ?');
+    whereClauses.push("e.branch_id = ?");
     params.push(filters.branch_id);
   }
 
   if (filters.process_id) {
-    whereClauses.push('e.process_id = ?');
+    whereClauses.push("e.process_id = ?");
     params.push(filters.process_id);
   }
 
   if (filters.completion_min !== undefined) {
-    whereClauses.push('e.joining_document_completion_pct >= ?');
+    whereClauses.push("e.joining_document_completion_pct >= ?");
     params.push(filters.completion_min);
   }
 
   if (filters.completion_max !== undefined) {
-    whereClauses.push('e.joining_document_completion_pct <= ?');
+    whereClauses.push("e.joining_document_completion_pct <= ?");
     params.push(filters.completion_max);
   }
 
   if (filters.search && filters.search.trim()) {
-    whereClauses.push('(e.employee_code LIKE ? OR e.full_name LIKE ?)');
+    whereClauses.push("(e.employee_code LIKE ? OR e.full_name LIKE ?)");
     // % and _ are LIKE wildcards, so an unescaped box lets a typed "%" match the
     // whole branch rather than nothing.
     const searchPattern = `%${filters.search.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
@@ -544,11 +569,14 @@ export async function getJoiningDocumentsTracker(
   // (e.created_at is functionally dependent on e.id, the GROUP BY key) without it
   // having to be selected by every statement that interpolates `fromWhereGroupSQL`.
   const havingParts: string[] = [];
-  if (filters.overdue_only) havingParts.push('overdue_count > 0');
-  if (filters.id_creation_sla_only) havingParts.push(`${DAYS_SINCE_ID_CREATED_SQL} > 3`);
-  const havingClause = havingParts.length ? `HAVING ${havingParts.join(' AND ')}` : '';
+  if (filters.overdue_only) havingParts.push("overdue_count > 0");
+  if (filters.id_creation_sla_only)
+    havingParts.push(`${DAYS_SINCE_ID_CREATED_SQL} > 3`);
+  const havingClause = havingParts.length
+    ? `HAVING ${havingParts.join(" AND ")}`
+    : "";
 
-  const whereSQL = whereClauses.join(' AND ');
+  const whereSQL = whereClauses.join(" AND ");
 
   /**
    * The eSign bucket expression, GENERATED from Esign_State_Authority.
@@ -565,7 +593,7 @@ export async function getJoiningDocumentsTracker(
    * exactly `COUNT(c.id)` — the denominator *is* the row count, so no document
    * can leave it (Requirement 6, criteria 1 and 3).
    */
-  const esignBucketSQL = esignBucketCaseSql('c.status');
+  const esignBucketSQL = esignBucketCaseSql("c.status");
 
   /**
    * The overdue predicate, extracted for the same reason `fromWhereGroupSQL` is.
@@ -696,21 +724,27 @@ export async function getJoiningDocumentsTracker(
   // the values still never touch the SQL as raw text and the numbers still arrive as
   // numbers. That is the pattern already working in grn.service.ts:1466 and
   // client-billing.routes.ts:168 against this same database.
-  const [rows] = await db.query<TrackerQueryRow[]>(sql, [...params, limit, offset]);
+  const [rows] = await db.query<TrackerQueryRow[]>(sql, [
+    ...params,
+    limit,
+    offset,
+  ]);
 
-  const employees: EmployeeDocumentRow[] = rows.map(row => ({
+  const employees: EmployeeDocumentRow[] = rows.map((row) => ({
     id: row.id,
     employee_id: row.id,
     employee_code: row.employee_code,
     full_name: row.full_name,
-    branch_name: row.branch_name || '',
-    process_name: row.process_name || '',
+    branch_name: row.branch_name || "",
+    process_name: row.process_name || "",
     lob_name: row.lob_name,
     date_of_joining: row.date_of_joining,
     onboarding_submitted_at: row.onboarding_submitted_at,
     salary_assigned_at: row.salary_assigned_at,
     joining_document_status: row.joining_document_status,
-    joining_document_completion_pct: Number(row.joining_document_completion_pct),
+    joining_document_completion_pct: Number(
+      row.joining_document_completion_pct,
+    ),
     is_pre_joining: Number(row.active_status ?? 1) === 0,
     total_documents: Number(row.total_documents),
     verified_count: Number(row.verified_count),
@@ -720,8 +754,12 @@ export async function getJoiningDocumentsTracker(
     // eSign denominator at all; coercing its NULL to 0 was the whole defect —
     // the page renders a dash for null and a badge for a number, and it was being
     // handed a number for employees with nothing to sign.
-    esign_completed_count: row.esign_completed_count === null ? null : Number(row.esign_completed_count),
-    esign_pending_count: row.esign_pending_count === null ? null : Number(row.esign_pending_count),
+    esign_completed_count:
+      row.esign_completed_count === null
+        ? null
+        : Number(row.esign_completed_count),
+    esign_pending_count:
+      row.esign_pending_count === null ? null : Number(row.esign_pending_count),
     last_document_update: row.last_document_update,
     assigned_hr_name: row.assigned_hr_name,
     key_documents: parseKeyDocuments(row.key_documents_raw),
@@ -750,14 +788,19 @@ export async function getJoiningDocumentsTracker(
          SELECT e.id, ${overdueCountSQL} AS overdue_count
          ${fromWhereGroupSQL}
        ) t`,
-      params
+      params,
     );
     total = Number((countRows[0] as { total: number } | undefined)?.total ?? 0);
   } else {
     total = 0;
   }
 
-  const summary = await queryTrackerSummary(fromWhereGroupSQL, overdueCountSQL, needsCorrectionCountSQL, params);
+  const summary = await queryTrackerSummary(
+    fromWhereGroupSQL,
+    overdueCountSQL,
+    needsCorrectionCountSQL,
+    params,
+  );
 
   return {
     rows: employees,
@@ -789,16 +832,21 @@ async function queryTrackerSummary(
   fromWhereGroupSQL: string,
   overdueCountSQL: string,
   needsCorrectionCountSQL: string,
-  params: (string | number)[]
+  params: (string | number)[],
 ): Promise<TrackerSummary> {
   // The bucket bands and their output aliases both come from the same two tables
   // `classifyEmployeeBucket` and `calculateTrackerSummary` use, so a fourth bucket
   // cannot be added to `SummaryBucket` without this SELECT gaining a column for it.
-  const bucketCountSelects = (Object.entries(BUCKET_COUNT_FIELD) as Array<
-    [SummaryBucket, (typeof BUCKET_COUNT_FIELD)[SummaryBucket]]
-  >)
-    .map(([bucket, field]) => `SUM(${summaryBucketCaseSql('t.pct')} = '${bucket}') AS ${field}`)
-    .join(',\n      ');
+  const bucketCountSelects = (
+    Object.entries(BUCKET_COUNT_FIELD) as Array<
+      [SummaryBucket, (typeof BUCKET_COUNT_FIELD)[SummaryBucket]]
+    >
+  )
+    .map(
+      ([bucket, field]) =>
+        `SUM(${summaryBucketCaseSql("t.pct")} = '${bucket}') AS ${field}`,
+    )
+    .join(",\n      ");
 
   // db.query, not db.execute — same reason the main row query above already
   // uses it (see that query's own comment): this shares the same UNION-based
@@ -824,7 +872,7 @@ async function queryTrackerSummary(
         ${DAYS_SINCE_ID_CREATED_SQL} AS days_since_id_created
       ${fromWhereGroupSQL}
     ) t`,
-    params
+    params,
   );
 
   const row = summaryRows[0];
@@ -863,7 +911,7 @@ export interface BulkGenerateResult {
 export async function sendBulkReminders(
   employeeIds: string[],
   customMessage: string | null,
-  actorUserId: string
+  actorUserId: string,
 ): Promise<BulkRemindResult> {
   void actorUserId; // reserved for audit logging in future
 
@@ -882,7 +930,7 @@ export async function sendBulkReminders(
      FROM employees
      WHERE id IN (?)
        AND LOWER(COALESCE(employment_status, '')) NOT IN ('resigned', 'terminated')`,
-    [employeeIds]
+    [employeeIds],
   );
 
   for (const emp of employees as Array<{
@@ -899,7 +947,7 @@ export async function sendBulkReminders(
       result.errors.push({
         employee_id: emp.id,
         employee_code: emp.employee_code,
-        error: 'No email address',
+        error: "No email address",
       });
       continue;
     }
@@ -910,9 +958,11 @@ export async function sendBulkReminders(
         `SELECT document_name FROM employee_joining_document_checklist
          WHERE employee_id = ? AND status NOT IN ('verified','signed','completed')
          ORDER BY created_at ASC`,
-        [emp.id]
+        [emp.id],
       );
-      const pendingDocs = (docRows as any[]).map((r: any) => String(r.document_name));
+      const pendingDocs = (docRows as any[]).map((r: any) =>
+        String(r.document_name),
+      );
       void customMessage; // reserved for future custom message override
       if (pendingDocs.length === 0) {
         // All documents already complete — skip sending a redundant reminder
@@ -949,7 +999,7 @@ export interface BulkAssignResult {
 export async function bulkAssignHR(
   employeeIds: string[],
   assignedHrUserId: string,
-  actorUserId: string
+  actorUserId: string,
 ): Promise<BulkAssignResult> {
   const connection = await db.getConnection();
   try {
@@ -959,7 +1009,7 @@ export async function bulkAssignHR(
       `UPDATE employee_joining_document_checklist
        SET assigned_hr_user_id = ?, updated_at = NOW()
        WHERE employee_id IN (?)`,
-      [assignedHrUserId, employeeIds]
+      [assignedHrUserId, employeeIds],
     )) as [ResultSetHeader, unknown];
 
     await connection.query(
@@ -968,7 +1018,11 @@ export async function bulkAssignHR(
        SELECT DISTINCT employee_id, 'BULK_ASSIGN_HR', ?, ?, NOW()
        FROM employee_joining_document_checklist
        WHERE employee_id IN (?)`,
-      [actorUserId, JSON.stringify({ assigned_hr_user_id: assignedHrUserId }), employeeIds]
+      [
+        actorUserId,
+        JSON.stringify({ assigned_hr_user_id: assignedHrUserId }),
+        employeeIds,
+      ],
     );
 
     await connection.commit();
@@ -992,7 +1046,7 @@ export async function bulkSetDueDate(
   employeeIds: string[],
   dueDate: string,
   documentCodes: string[] | null,
-  actorUserId: string
+  actorUserId: string,
 ): Promise<BulkSetDueDateResult> {
   let sql = `UPDATE employee_joining_document_checklist
              SET due_at = ?, updated_at = NOW()
@@ -1008,7 +1062,10 @@ export async function bulkSetDueDate(
   try {
     await connection.beginTransaction();
 
-    const [result] = (await connection.query(sql, params)) as [ResultSetHeader, unknown];
+    const [result] = (await connection.query(sql, params)) as [
+      ResultSetHeader,
+      unknown,
+    ];
 
     await connection.query(
       `INSERT INTO employee_joining_document_audit_log
@@ -1016,7 +1073,11 @@ export async function bulkSetDueDate(
        SELECT DISTINCT employee_id, 'BULK_SET_DUE_DATE', ?, ?, NOW()
        FROM employee_joining_document_checklist
        WHERE employee_id IN (?)`,
-      [actorUserId, JSON.stringify({ due_date: dueDate, document_codes: documentCodes }), employeeIds]
+      [
+        actorUserId,
+        JSON.stringify({ due_date: dueDate, document_codes: documentCodes }),
+        employeeIds,
+      ],
     );
 
     await connection.commit();
@@ -1039,7 +1100,7 @@ export interface BulkVerifyResult {
 
 export async function bulkVerifyDocuments(
   employeeIds: string[],
-  actorUserId: string
+  actorUserId: string,
 ): Promise<BulkVerifyResult> {
   const result: BulkVerifyResult = {
     success: true,
@@ -1074,7 +1135,7 @@ export async function bulkVerifyDocuments(
          SET status = 'verified', verification_status = 'verified',
              verified_at = NOW(), verified_by = ?, due_at = NULL, updated_at = NOW()
          WHERE employee_id = ? AND status = 'uploaded_pending_review'`,
-        [actorUserId, employeeId]
+        [actorUserId, employeeId],
       )) as [ResultSetHeader, unknown];
 
       // 2. eSigned rows — nobody reviewed these, the provider verified the
@@ -1092,7 +1153,7 @@ export async function bulkVerifyDocuments(
          WHERE employee_id = ? AND status = 'esign_completed'
            AND signature_mode = 'aadhaar_esign_verified'
            AND verification_status IS NULL`,
-        [employeeId]
+        [employeeId],
       )) as [ResultSetHeader, unknown];
 
       if (uploadedResult.affectedRows > 0) {
@@ -1102,7 +1163,7 @@ export async function bulkVerifyDocuments(
           `INSERT INTO employee_joining_document_audit_log
            (employee_id, action_type, actor_user_id, remarks, created_at)
            VALUES (?, 'BULK_VERIFY', ?, 'Verified all pending documents', NOW())`,
-          [employeeId, actorUserId]
+          [employeeId, actorUserId],
         );
       }
 
@@ -1119,11 +1180,11 @@ export async function bulkVerifyDocuments(
             employeeId,
             actorUserId,
             JSON.stringify({
-              verificationSource: 'aadhaar_esign',
-              signatureMode: 'aadhaar_esign_verified',
+              verificationSource: "aadhaar_esign",
+              signatureMode: "aadhaar_esign_verified",
               rowsVerified: esignedResult.affectedRows,
             }),
-          ]
+          ],
         );
       }
 
@@ -1136,7 +1197,7 @@ export async function bulkVerifyDocuments(
       await connection.rollback();
       const [emp] = await db.execute<RowDataPacket[]>(
         `SELECT employee_code FROM employees WHERE id = ? LIMIT 1`,
-        [employeeId]
+        [employeeId],
       );
       result.errors.push({
         employee_id: employeeId,
@@ -1155,7 +1216,11 @@ export async function bulkVerifyDocuments(
       // The verification itself is committed; a failed recalculation only means
       // the percentage is stale until the pack is next opened, which recomputes
       // it anyway. Do not fail the bulk action for it.
-      console.error('[bulkVerifyDocuments] progress recalculation failed', employeeId, error);
+      console.error(
+        "[bulkVerifyDocuments] progress recalculation failed",
+        employeeId,
+        error,
+      );
     }
   }
 
@@ -1168,14 +1233,14 @@ export async function streamBulkDocumentsZip(
   employeeIds: string[],
   documentCodes: string[] | null,
   res: Response,
-  actorUserId?: string
+  actorUserId?: string,
 ): Promise<void> {
   const archive = newZipArchive();
 
   // Pipe archive data to Express response
   archive.pipe(res);
-  archive.on('error', (err: Error) => {
-    console.error('[tracker] Archive error during ZIP creation:', err.message);
+  archive.on("error", (err: Error) => {
+    console.error("[tracker] Archive error during ZIP creation:", err.message);
   });
 
   // Branch RBAC — the same resolver getJoiningDocumentsTracker() uses above.
@@ -1230,13 +1295,18 @@ export async function streamBulkDocumentsZip(
     original_filename: string;
   }>) {
     const resolvedPath = path.resolve(STORAGE_ROOT, file.storage_path);
-    if (!resolvedPath.startsWith(STORAGE_ROOT + path.sep) && resolvedPath !== STORAGE_ROOT) {
-      console.warn(`[tracker] Path traversal blocked for storage_path: ${file.storage_path}`);
+    if (
+      !resolvedPath.startsWith(STORAGE_ROOT + path.sep) &&
+      resolvedPath !== STORAGE_ROOT
+    ) {
+      console.warn(
+        `[tracker] Path traversal blocked for storage_path: ${file.storage_path}`,
+      );
       continue;
     }
 
     if (fs.existsSync(resolvedPath)) {
-      const safeName = file.full_name.replace(/[^a-zA-Z0-9]/g, '');
+      const safeName = file.full_name.replace(/[^a-zA-Z0-9]/g, "");
       const folderName = `${file.employee_code}-${safeName}`;
       const safeFilename = path.basename(file.original_filename);
       const archivePath = `${folderName}/${file.document_code}-${safeFilename}`;
@@ -1251,7 +1321,7 @@ export async function streamBulkDocumentsZip(
 
 export async function bulkGenerateChecklists(
   employeeIds: string[],
-  actorUserId: string
+  actorUserId: string,
 ): Promise<BulkGenerateResult> {
   const result: BulkGenerateResult = {
     success: true,
@@ -1268,19 +1338,25 @@ export async function bulkGenerateChecklists(
      FROM employees
      WHERE id IN (?)
        AND LOWER(COALESCE(employment_status, '')) NOT IN ('resigned', 'terminated')`,
-    [employeeIds]
+    [employeeIds],
   );
 
   const [existingChecklists] = await db.query<RowDataPacket[]>(
     `SELECT DISTINCT employee_id FROM employee_joining_document_checklist WHERE employee_id IN (?)`,
-    [employeeIds]
+    [employeeIds],
   );
 
   const existingEmployeeIds = new Set(
-    (existingChecklists as Array<{ employee_id: string }>).map(r => r.employee_id)
+    (existingChecklists as Array<{ employee_id: string }>).map(
+      (r) => r.employee_id,
+    ),
   );
 
-  for (const emp of employees as Array<{ id: string; employee_code: string; full_name: string }>) {
+  for (const emp of employees as Array<{
+    id: string;
+    employee_code: string;
+    full_name: string;
+  }>) {
     if (existingEmployeeIds.has(emp.id)) {
       result.skipped++;
       continue;

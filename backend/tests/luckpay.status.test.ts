@@ -21,9 +21,11 @@ import axios from "axios";
 vi.hoisted(() => {
   process.env.LUCKPAY_PROVIDER_ENABLED = "true";
   process.env.LUCKPAY_ENV = "production";
-  process.env.LUCKPAY_BASIC_TOKEN = process.env.LUCKPAY_BASIC_TOKEN || "test-basic-token";
+  process.env.LUCKPAY_BASIC_TOKEN =
+    process.env.LUCKPAY_BASIC_TOKEN || "test-basic-token";
   process.env.LUCKPAY_CLIENT_ID = process.env.LUCKPAY_CLIENT_ID || "TESTCLIENT";
-  process.env.LUCKPAY_WEBHOOK_SECRET = process.env.LUCKPAY_WEBHOOK_SECRET || "test-webhook-secret";
+  process.env.LUCKPAY_WEBHOOK_SECRET =
+    process.env.LUCKPAY_WEBHOOK_SECRET || "test-webhook-secret";
 });
 
 // No org_settings rows -> credential resolution falls through to env above.
@@ -35,10 +37,20 @@ import { luckpayClient } from "../src/modules/integrations/luckpay/luckpay.clien
 import { resetLuckpayTokenCache } from "../src/modules/integrations/luckpay/luckpay.transport.js";
 
 const BASE = "https://api-banking.luckpay.in/apibanking/api/v1";
-const REF = { clientTransactionId: "CTN_5612", transactionId: "APIB178273887977XXXX" };
-const token = () => ({ data: { data: { token: "access-token", expiry: "Thu Jan 29 11:38:18 IST 2026" } } });
+const REF = {
+  clientTransactionId: "CTN_5612",
+  transactionId: "APIB178273887977XXXX",
+};
+const token = () => ({
+  data: {
+    data: { token: "access-token", expiry: "Thu Jan 29 11:38:18 IST 2026" },
+  },
+});
 
-const PDF = Buffer.from("%PDF-1.6\nfake signed agreement body for testing purposes", "utf8");
+const PDF = Buffer.from(
+  "%PDF-1.6\nfake signed agreement body for testing purposes",
+  "utf8",
+);
 
 beforeEach(() => {
   resetLuckpayTokenCache();
@@ -48,28 +60,50 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("DigiLocker status (checkKycStatus)", () => {
   it("TC-LPS-01: posts both identifiers to the documented path", async () => {
-    const post = vi.spyOn(axios, "post")
+    const post = vi
+      .spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({ data: { code: "200", status: "Success", data: { details: { status: "approved" } } } });
+      .mockResolvedValueOnce({
+        data: {
+          code: "200",
+          status: "Success",
+          data: { details: { status: "approved" } },
+        },
+      });
 
     await luckpayClient.checkKycStatus(REF);
 
     expect(post).toHaveBeenNthCalledWith(
       2,
       `${BASE}/checkKycStatus`,
-      { clientTransactionId: "CTN_5612", transactionId: "APIB178273887977XXXX" },
+      {
+        clientTransactionId: "CTN_5612",
+        transactionId: "APIB178273887977XXXX",
+      },
       expect.objectContaining({
-        headers: expect.objectContaining({ "X-Access-Token": "Bearer access-token" }),
+        headers: expect.objectContaining({
+          "X-Access-Token": "Bearer access-token",
+        }),
       }),
     );
   });
 
   it("TC-LPS-02: 'approved' completes; 'requested' stays pending", async () => {
-    for (const [providerStatus, expected] of [["approved", "completed"], ["requested", "pending"]] as const) {
+    for (const [providerStatus, expected] of [
+      ["approved", "completed"],
+      ["requested", "pending"],
+    ] as const) {
       resetLuckpayTokenCache();
-      vi.spyOn(axios, "post").mockReset()
+      vi.spyOn(axios, "post")
+        .mockReset()
         .mockResolvedValueOnce(token())
-        .mockResolvedValueOnce({ data: { code: "200", status: "Success", data: { gatewayId: "APIB1", details: { status: providerStatus } } } });
+        .mockResolvedValueOnce({
+          data: {
+            code: "200",
+            status: "Success",
+            data: { gatewayId: "APIB1", details: { status: providerStatus } },
+          },
+        });
       const r = await luckpayClient.checkKycStatus(REF);
       expect(r.state, `details.status=${providerStatus}`).toBe(expected);
     }
@@ -80,7 +114,14 @@ describe("DigiLocker status (checkKycStatus)", () => {
     // candidate finished. Reading it would approve every in-flight session.
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({ data: { code: "200", status: "Success", message: "DigiLocker status checked successfully", data: { gatewayId: "APIB1", details: { status: "requested" } } } });
+      .mockResolvedValueOnce({
+        data: {
+          code: "200",
+          status: "Success",
+          message: "DigiLocker status checked successfully",
+          data: { gatewayId: "APIB1", details: { status: "requested" } },
+        },
+      });
 
     const r = await luckpayClient.checkKycStatus(REF);
     expect(r.state).toBe("pending");
@@ -89,7 +130,9 @@ describe("DigiLocker status (checkKycStatus)", () => {
   it("TC-LPS-04: an unrecognised status stays pending, never terminal", async () => {
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({ data: { data: { details: { status: "SOMETHING_NEW" } } } });
+      .mockResolvedValueOnce({
+        data: { data: { details: { status: "SOMETHING_NEW" } } },
+      });
 
     const r = await luckpayClient.checkKycStatus(REF);
     expect(r.state).toBe("pending");
@@ -99,7 +142,15 @@ describe("DigiLocker status (checkKycStatus)", () => {
   it("TC-LPS-05: reads gatewayId as the transaction id", async () => {
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({ data: { data: { clientTransactionId: "txn-1", gatewayId: "APIB1772105890443001", details: { status: "approved" } } } });
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            clientTransactionId: "txn-1",
+            gatewayId: "APIB1772105890443001",
+            details: { status: "approved" },
+          },
+        },
+      });
 
     const r = await luckpayClient.checkKycStatus(REF);
     expect(r.transactionId).toBe("APIB1772105890443001");
@@ -121,7 +172,9 @@ describe("eSign status (checkESignStatus)", () => {
         esignDetails: {
           agreement_status: agreementStatus,
           file_name: "dummy_esign_agreement.pdf",
-          signing_parties: [{ status: partyStatus, type: "self", signature_type: "electronic" }],
+          signing_parties: [
+            { status: partyStatus, type: "self", signature_type: "electronic" },
+          ],
         },
       },
     },
@@ -151,9 +204,13 @@ describe("eSign status (checkESignStatus)", () => {
   });
 
   it("TC-LPS-08: expiry and rejection map to terminal states", async () => {
-    for (const [agreement, expected] of [["expired", "expired"], ["rejected", "failed"]] as const) {
+    for (const [agreement, expected] of [
+      ["expired", "expired"],
+      ["rejected", "failed"],
+    ] as const) {
       resetLuckpayTokenCache();
-      vi.spyOn(axios, "post").mockReset()
+      vi.spyOn(axios, "post")
+        .mockReset()
         .mockResolvedValueOnce(token())
         .mockResolvedValueOnce(esignBody(agreement, agreement));
       const r = await luckpayClient.checkESignStatus(REF);
@@ -168,13 +225,20 @@ describe("initiate calls expose gatewayId for later polling", () => {
       .mockResolvedValueOnce(token())
       .mockResolvedValueOnce({
         data: {
-          code: "200", status: "Success",
-          data: { clientTransactionId: "6007980900", gatewayId: "APIB1772109515416003", status: "requested" },
+          code: "200",
+          status: "Success",
+          data: {
+            clientTransactionId: "6007980900",
+            gatewayId: "APIB1772109515416003",
+            status: "requested",
+          },
         },
       });
 
     const r = await luckpayClient.initiateDigilockerWithUrl({
-      clientTransactionId: "6007980900", customerName: "John", mobileNumber: "8907100000",
+      clientTransactionId: "6007980900",
+      customerName: "John",
+      mobileNumber: "8907100000",
     });
     // Without this the completion half has no id to poll with and silently
     // falls back to our own clientTransactionId, which the provider rejects.
@@ -195,7 +259,9 @@ describe("live production payloads (captured 2026-07-29, account LPM14)", () => 
       .mockResolvedValueOnce(token())
       .mockResolvedValueOnce({
         data: {
-          code: "200", status: "Success", message: "Verification completed successfully",
+          code: "200",
+          status: "Success",
+          message: "Verification completed successfully",
           data: {
             clientTransactionId: "4164564",
             gatewayId: "APIB1785307893997014",
@@ -204,18 +270,26 @@ describe("live production payloads (captured 2026-07-29, account LPM14)", () => 
             details: {
               status: "PENDING",
               customerIdentifier: "8934071154",
-              authorizationUrl: "https://digilocker-prod.digitap.work?token=eyJhbGciOiJSUzI1NiJ9.abc",
-              accessToken: { validTill: "2026-07-29T12:31:34", createdAt: "2026-07-29T12:21:34" },
+              authorizationUrl:
+                "https://digilocker-prod.digitap.work?token=eyJhbGciOiJSUzI1NiJ9.abc",
+              accessToken: {
+                validTill: "2026-07-29T12:31:34",
+                createdAt: "2026-07-29T12:21:34",
+              },
             },
           },
         },
       });
 
     const r = await luckpayClient.initiateDigilockerWithUrl({
-      clientTransactionId: "4164564", customerName: "Aman Jaiswal", mobileNumber: "8934071154",
+      clientTransactionId: "4164564",
+      customerName: "Aman Jaiswal",
+      mobileNumber: "8934071154",
     });
 
-    expect(r.verificationUrl).toBe("https://digilocker-prod.digitap.work?token=eyJhbGciOiJSUzI1NiJ9.abc");
+    expect(r.verificationUrl).toBe(
+      "https://digilocker-prod.digitap.work?token=eyJhbGciOiJSUzI1NiJ9.abc",
+    );
     expect(r.providerReferenceId).toBe("APIB1785307893997014");
     // responseMessage "SUCCESS" must not be mistaken for a completed session.
     expect(r.status).toBe("PENDING");
@@ -226,24 +300,38 @@ describe("live production payloads (captured 2026-07-29, account LPM14)", () => 
       .mockResolvedValueOnce(token())
       .mockResolvedValueOnce({
         data: {
-          code: "200", status: "Success", message: "eSign request initiated successfully",
+          code: "200",
+          status: "Success",
+          message: "eSign request initiated successfully",
           data: {
             clientTransactionId: "TXN-ESIGN-4134186",
             gatewayId: "APIB1785307958630015",
             status: "PENDING",
             responseMessage: "SUCCESS",
-            esignDetails: { file_name: "agreement.pdf", self_signed: false, no_of_pages: 0 },
-            redirect_url: "https://api.trusthub.in/api/aadhaar-e-sign/redirect/c6fa615f-0ab7-4758-99d1-dcd3942d54a8",
+            esignDetails: {
+              file_name: "agreement.pdf",
+              self_signed: false,
+              no_of_pages: 0,
+            },
+            redirect_url:
+              "https://api.trusthub.in/api/aadhaar-e-sign/redirect/c6fa615f-0ab7-4758-99d1-dcd3942d54a8",
           },
         },
       });
 
     const r = await luckpayClient.initiateEsignWithUrl({
       filePath: __filename,
-      request: { clientTransactionId: "TXN-ESIGN-4134186", signedBy: "John Doe", location: "Mumbai", reason: "Signing Agreement" },
+      request: {
+        clientTransactionId: "TXN-ESIGN-4134186",
+        signedBy: "John Doe",
+        location: "Mumbai",
+        reason: "Signing Agreement",
+      },
     });
 
-    expect(r.verificationUrl).toBe("https://api.trusthub.in/api/aadhaar-e-sign/redirect/c6fa615f-0ab7-4758-99d1-dcd3942d54a8");
+    expect(r.verificationUrl).toBe(
+      "https://api.trusthub.in/api/aadhaar-e-sign/redirect/c6fa615f-0ab7-4758-99d1-dcd3942d54a8",
+    );
     expect(r.providerReferenceId).toBe("APIB1785307958630015");
   });
 
@@ -255,8 +343,14 @@ describe("live production payloads (captured 2026-07-29, account LPM14)", () => 
       .mockResolvedValueOnce({
         data: {
           data: {
-            gatewayId: "APIB1785307958630015", status: "PENDING", responseMessage: "SUCCESS",
-            esignDetails: { file_name: "agreement.pdf", self_signed: false, no_of_pages: 0 },
+            gatewayId: "APIB1785307958630015",
+            status: "PENDING",
+            responseMessage: "SUCCESS",
+            esignDetails: {
+              file_name: "agreement.pdf",
+              self_signed: false,
+              no_of_pages: 0,
+            },
           },
         },
       });
@@ -271,7 +365,11 @@ describe("document download", () => {
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
       .mockResolvedValueOnce({
-        data: { code: "200", status: "Success", data: { esignDownloadDetails: { file: PDF.toString("base64") } } },
+        data: {
+          code: "200",
+          status: "Success",
+          data: { esignDownloadDetails: { file: PDF.toString("base64") } },
+        },
       });
 
     const r = await luckpayClient.downloadESignDocument(REF);
@@ -280,16 +378,25 @@ describe("document download", () => {
 
   it("TC-LPS-11: KYC document unwraps the double-base64 JSON envelope", async () => {
     // details.file is base64 of {"file_in_base64": "<base64 pdf>", ...}
-    const wrapper = Buffer.from(JSON.stringify({
-      file_in_base64: PDF.toString("base64"),
-      size_in_bytes: PDF.length,
-      file_name: "aadhaar.pdf",
-      file_type: "application/pdf",
-    }), "utf8").toString("base64");
+    const wrapper = Buffer.from(
+      JSON.stringify({
+        file_in_base64: PDF.toString("base64"),
+        size_in_bytes: PDF.length,
+        file_name: "aadhaar.pdf",
+        file_type: "application/pdf",
+      }),
+      "utf8",
+    ).toString("base64");
 
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({ data: { code: "200", status: "Success", data: { details: { file: wrapper } } } });
+      .mockResolvedValueOnce({
+        data: {
+          code: "200",
+          status: "Success",
+          data: { details: { file: wrapper } },
+        },
+      });
 
     const r = await luckpayClient.downloadKycDocument(REF);
     expect(r.buffer?.subarray(0, 5).toString()).toBe("%PDF-");
@@ -300,7 +407,9 @@ describe("document download", () => {
   it("TC-LPS-12: does not mistake a short status string for a document", async () => {
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({ data: { code: "200", status: "Success", message: "ok" } });
+      .mockResolvedValueOnce({
+        data: { code: "200", status: "Success", message: "ok" },
+      });
 
     const r = await luckpayClient.downloadESignDocument(REF);
     expect(r.buffer).toBeNull();
@@ -310,7 +419,13 @@ describe("document download", () => {
   it("TC-LPS-13: masks PII in the sanitized payload", async () => {
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({ data: { data: { details: { status: "approved", customerIdentifier: "8375854251" } } } });
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            details: { status: "approved", customerIdentifier: "8375854251" },
+          },
+        },
+      });
 
     const r = await luckpayClient.checkKycStatus(REF);
     expect(JSON.stringify(r.sanitized)).not.toContain("8375854251");

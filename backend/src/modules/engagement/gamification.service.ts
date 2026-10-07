@@ -4,9 +4,9 @@
 // Description: Points, tiers, and leaderboard management
 // =====================================================
 
-import { db } from '../../db/mysql.js';
-import { RowDataPacket, ResultSetHeader, PoolConnection } from 'mysql2/promise';
-import { randomUUID } from 'crypto';
+import { db } from "../../db/mysql.js";
+import { RowDataPacket, ResultSetHeader, PoolConnection } from "mysql2/promise";
+import { randomUUID } from "crypto";
 import {
   GamificationPointsLedger,
   GamificationTierMaster,
@@ -17,7 +17,7 @@ import {
   LeaderboardEntry,
   PaginatedResult,
   PointsLedgerFilters,
-} from './engagement.types.js';
+} from "./engagement.types.js";
 
 // =====================================================
 // POINTS METHODS
@@ -31,7 +31,7 @@ export async function addPoints(
   points: number,
   transactionType: TransactionType,
   description?: string,
-  referenceId?: string
+  referenceId?: string,
 ): Promise<GamificationPointsLedger> {
   const conn = await db.getConnection();
   try {
@@ -42,7 +42,7 @@ export async function addPoints(
       `SELECT COALESCE(SUM(points_delta), 0) as total_points
        FROM gamification_points_ledger
        WHERE employee_id = ?`,
-      [employeeId]
+      [employeeId],
     );
     const currentBalance = balanceRows[0]?.total_points || 0;
     const newBalance = currentBalance + points;
@@ -54,7 +54,15 @@ export async function addPoints(
         transaction_id, employee_id, points_delta, transaction_type,
         reference_id, description, balance_after, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [transactionId, employeeId, points, transactionType, referenceId, description, newBalance]
+      [
+        transactionId,
+        employeeId,
+        points,
+        transactionType,
+        referenceId,
+        description,
+        newBalance,
+      ],
     );
 
     // 3. Auto tier upgrade
@@ -65,7 +73,7 @@ export async function addPoints(
     // 4. Return transaction record
     const [ledgerRows] = await conn.execute<RowDataPacket[]>(
       `SELECT * FROM gamification_points_ledger WHERE transaction_id = ?`,
-      [transactionId]
+      [transactionId],
     );
 
     return ledgerRows[0] as GamificationPointsLedger;
@@ -85,7 +93,7 @@ export async function getPointsBalance(employeeId: string): Promise<number> {
     `SELECT COALESCE(SUM(points_delta), 0) as total_points
      FROM gamification_points_ledger
      WHERE employee_id = ?`,
-    [employeeId]
+    [employeeId],
   );
   return rows[0]?.total_points || 0;
 }
@@ -97,7 +105,7 @@ export async function getPointsHistory(
   employeeId: string,
   filters?: PointsLedgerFilters,
   page: number = 1,
-  limit: number = 20
+  limit: number = 20,
 ): Promise<PaginatedResult<GamificationPointsLedger>> {
   let sql = `SELECT * FROM gamification_points_ledger WHERE employee_id = ?`;
   const params: unknown[] = [employeeId];
@@ -117,7 +125,7 @@ export async function getPointsHistory(
   }
 
   // Count total
-  const countSql = sql.replace('SELECT *', 'SELECT COUNT(*) as total');
+  const countSql = sql.replace("SELECT *", "SELECT COUNT(*) as total");
   const [countRows] = await db.execute<RowDataPacket[]>(countSql, params);
   const total = countRows[0]?.total || 0;
 
@@ -138,20 +146,21 @@ export async function getPointsHistory(
  * Get leaderboard - top N employees by points
  */
 export async function getLeaderboard(
-  period: 'all-time' | 'day' | 'week' | 'month' | 'quarter' | 'year' = 'all-time',
-  limit: number = 10
+  period:
+    "all-time" | "day" | "week" | "month" | "quarter" | "year" = "all-time",
+  limit: number = 10,
 ): Promise<LeaderboardEntry[]> {
   const safeLimit = Math.min(Math.max(Math.trunc(Number(limit) || 10), 1), 100);
-  let dateFilter = '';
-  if (period === 'day') {
+  let dateFilter = "";
+  if (period === "day") {
     dateFilter = `AND created_at >= CURDATE() - INTERVAL 1 DAY AND created_at < CURDATE()`;
-  } else if (period === 'week') {
+  } else if (period === "week") {
     dateFilter = `AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`;
-  } else if (period === 'month') {
+  } else if (period === "month") {
     dateFilter = `AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')`;
-  } else if (period === 'quarter') {
+  } else if (period === "quarter") {
     dateFilter = `AND created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)`;
-  } else if (period === 'year') {
+  } else if (period === "year") {
     dateFilter = `AND created_at >= DATE_FORMAT(NOW(), '%Y-01-01')`;
   }
 
@@ -192,7 +201,9 @@ export async function getLeaderboard(
 /**
  * Get all tiers
  */
-export async function getTiers(activeOnly: boolean = false): Promise<GamificationTierMaster[]> {
+export async function getTiers(
+  activeOnly: boolean = false,
+): Promise<GamificationTierMaster[]> {
   let sql = `SELECT * FROM gamification_tier_master`;
   if (activeOnly) {
     sql += ` WHERE is_active = 1`;
@@ -206,10 +217,12 @@ export async function getTiers(activeOnly: boolean = false): Promise<Gamificatio
 /**
  * Get single tier by ID
  */
-export async function getTierById(tierId: string): Promise<GamificationTierMaster | null> {
+export async function getTierById(
+  tierId: string,
+): Promise<GamificationTierMaster | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM gamification_tier_master WHERE tier_id = ?`,
-    [tierId]
+    [tierId],
   );
   return rows[0] ? (rows[0] as GamificationTierMaster) : null;
 }
@@ -217,7 +230,9 @@ export async function getTierById(tierId: string): Promise<GamificationTierMaste
 /**
  * Create new tier
  */
-export async function createTier(data: CreateTierDTO): Promise<GamificationTierMaster> {
+export async function createTier(
+  data: CreateTierDTO,
+): Promise<GamificationTierMaster> {
   const tierId = randomUUID();
   await db.executeRun(
     `INSERT INTO gamification_tier_master (
@@ -234,11 +249,11 @@ export async function createTier(data: CreateTierDTO): Promise<GamificationTierM
       data.tier_icon || null,
       data.benefits_json ? JSON.stringify(data.benefits_json) : null,
       data.is_active ?? true,
-    ]
+    ],
   );
 
   const created = await getTierById(tierId);
-  if (!created) throw new Error('Failed to create tier');
+  if (!created) throw new Error("Failed to create tier");
   return created;
 }
 
@@ -247,41 +262,41 @@ export async function createTier(data: CreateTierDTO): Promise<GamificationTierM
  */
 export async function updateTier(
   tierId: string,
-  updates: UpdateTierDTO
+  updates: UpdateTierDTO,
 ): Promise<GamificationTierMaster | null> {
   const fields: string[] = [];
   const params: unknown[] = [];
 
   if (updates.tier_name !== undefined) {
-    fields.push('tier_name = ?');
+    fields.push("tier_name = ?");
     params.push(updates.tier_name);
   }
   if (updates.tier_level !== undefined) {
-    fields.push('tier_level = ?');
+    fields.push("tier_level = ?");
     params.push(updates.tier_level);
   }
   if (updates.min_points !== undefined) {
-    fields.push('min_points = ?');
+    fields.push("min_points = ?");
     params.push(updates.min_points);
   }
   if (updates.max_points !== undefined) {
-    fields.push('max_points = ?');
+    fields.push("max_points = ?");
     params.push(updates.max_points);
   }
   if (updates.tier_color !== undefined) {
-    fields.push('tier_color = ?');
+    fields.push("tier_color = ?");
     params.push(updates.tier_color);
   }
   if (updates.tier_icon !== undefined) {
-    fields.push('tier_icon = ?');
+    fields.push("tier_icon = ?");
     params.push(updates.tier_icon);
   }
   if (updates.benefits_json !== undefined) {
-    fields.push('benefits_json = ?');
+    fields.push("benefits_json = ?");
     params.push(JSON.stringify(updates.benefits_json));
   }
   if (updates.is_active !== undefined) {
-    fields.push('is_active = ?');
+    fields.push("is_active = ?");
     params.push(updates.is_active);
   }
 
@@ -289,10 +304,10 @@ export async function updateTier(
     return await getTierById(tierId);
   }
 
-  fields.push('updated_at = NOW()');
+  fields.push("updated_at = NOW()");
   params.push(tierId);
 
-  const sql = `UPDATE gamification_tier_master SET ${fields.join(', ')} WHERE tier_id = ?`;
+  const sql = `UPDATE gamification_tier_master SET ${fields.join(", ")} WHERE tier_id = ?`;
   await db.executeRun(sql, params);
 
   return await getTierById(tierId);
@@ -316,7 +331,7 @@ export async function getEmployeeTier(employeeId: string): Promise<{
      FROM employee_tier_status ets
      LEFT JOIN gamification_tier_master gtm ON ets.current_tier_id = gtm.tier_id
      WHERE ets.employee_id = ?`,
-    [employeeId]
+    [employeeId],
   );
 
   if (statusRows.length === 0) {
@@ -325,10 +340,12 @@ export async function getEmployeeTier(employeeId: string): Promise<{
       `SELECT * FROM gamification_tier_master
        WHERE is_active = 1 AND min_points <= ?
        ORDER BY tier_level DESC LIMIT 1`,
-      [totalPoints]
+      [totalPoints],
     );
 
-    const currentTier = tierRows[0] ? (tierRows[0] as GamificationTierMaster) : null;
+    const currentTier = tierRows[0]
+      ? (tierRows[0] as GamificationTierMaster)
+      : null;
 
     // Find next tier
     let pointsToNext: number | null = null;
@@ -339,7 +356,7 @@ export async function getEmployeeTier(employeeId: string): Promise<{
         `SELECT * FROM gamification_tier_master
          WHERE is_active = 1 AND tier_level > ?
          ORDER BY tier_level ASC LIMIT 1`,
-        [currentTier.tier_level]
+        [currentTier.tier_level],
       );
 
       if (nextTierRows.length > 0) {
@@ -347,7 +364,11 @@ export async function getEmployeeTier(employeeId: string): Promise<{
         pointsToNext = nextTier.min_points - totalPoints;
         progressPercentage = Math.min(
           100,
-          Math.round(((totalPoints - currentTier.min_points) / (nextTier.min_points - currentTier.min_points)) * 100)
+          Math.round(
+            ((totalPoints - currentTier.min_points) /
+              (nextTier.min_points - currentTier.min_points)) *
+              100,
+          ),
         );
       }
     }
@@ -380,7 +401,7 @@ export async function getEmployeeTier(employeeId: string): Promise<{
     `SELECT * FROM gamification_tier_master
      WHERE is_active = 1 AND tier_level > ?
      ORDER BY tier_level ASC LIMIT 1`,
-    [currentTier.tier_level]
+    [currentTier.tier_level],
   );
 
   let pointsToNext: number | null = null;
@@ -391,7 +412,11 @@ export async function getEmployeeTier(employeeId: string): Promise<{
     pointsToNext = nextTier.min_points - totalPoints;
     progressPercentage = Math.min(
       100,
-      Math.round(((totalPoints - currentTier.min_points) / (nextTier.min_points - currentTier.min_points)) * 100)
+      Math.round(
+        ((totalPoints - currentTier.min_points) /
+          (nextTier.min_points - currentTier.min_points)) *
+          100,
+      ),
     );
   }
 
@@ -410,7 +435,7 @@ export async function getEmployeeTier(employeeId: string): Promise<{
 export async function checkTierUpgrade(
   employeeId: string,
   newTotalPoints: number,
-  connection?: PoolConnection
+  connection?: PoolConnection,
 ): Promise<void> {
   const conn = connection || (await db.getConnection());
   const shouldRelease = !connection;
@@ -421,7 +446,7 @@ export async function checkTierUpgrade(
       `SELECT * FROM gamification_tier_master
        WHERE is_active = 1 AND min_points <= ?
        ORDER BY tier_level DESC LIMIT 1`,
-      [newTotalPoints]
+      [newTotalPoints],
     );
 
     if (tierRows.length === 0) {
@@ -434,7 +459,7 @@ export async function checkTierUpgrade(
     // Check current tier
     const [statusRows] = await conn.execute<RowDataPacket[]>(
       `SELECT * FROM employee_tier_status WHERE employee_id = ?`,
-      [employeeId]
+      [employeeId],
     );
 
     if (statusRows.length === 0) {
@@ -446,19 +471,21 @@ export async function checkTierUpgrade(
         `SELECT * FROM gamification_tier_master
          WHERE is_active = 1 AND tier_level > ?
          ORDER BY tier_level ASC LIMIT 1`,
-        [newTier.tier_level]
+        [newTier.tier_level],
       );
 
-      const pointsToNext = nextTierRows.length > 0
-        ? (nextTierRows[0] as GamificationTierMaster).min_points - newTotalPoints
-        : null;
+      const pointsToNext =
+        nextTierRows.length > 0
+          ? (nextTierRows[0] as GamificationTierMaster).min_points -
+            newTotalPoints
+          : null;
 
       await conn.execute(
         `INSERT INTO employee_tier_status (
           status_id, employee_id, current_tier_id, total_points,
           points_to_next_tier, tier_achieved_at, last_updated
         ) VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
-        [statusId, employeeId, newTier.tier_id, newTotalPoints, pointsToNext]
+        [statusId, employeeId, newTier.tier_id, newTotalPoints, pointsToNext],
       );
     } else {
       // Check if upgrade needed
@@ -466,7 +493,7 @@ export async function checkTierUpgrade(
 
       const [currentTierRows] = await conn.execute<RowDataPacket[]>(
         `SELECT tier_level FROM gamification_tier_master WHERE tier_id = ?`,
-        [currentStatus.current_tier_id]
+        [currentStatus.current_tier_id],
       );
 
       const currentTierLevel = currentTierRows[0]?.tier_level || 0;
@@ -477,19 +504,21 @@ export async function checkTierUpgrade(
           `SELECT * FROM gamification_tier_master
            WHERE is_active = 1 AND tier_level > ?
            ORDER BY tier_level ASC LIMIT 1`,
-          [newTier.tier_level]
+          [newTier.tier_level],
         );
 
-        const pointsToNext = nextTierRows.length > 0
-          ? (nextTierRows[0] as GamificationTierMaster).min_points - newTotalPoints
-          : null;
+        const pointsToNext =
+          nextTierRows.length > 0
+            ? (nextTierRows[0] as GamificationTierMaster).min_points -
+              newTotalPoints
+            : null;
 
         await conn.execute(
           `UPDATE employee_tier_status
            SET current_tier_id = ?, total_points = ?, points_to_next_tier = ?,
                tier_achieved_at = NOW(), last_updated = NOW()
            WHERE employee_id = ?`,
-          [newTier.tier_id, newTotalPoints, pointsToNext, employeeId]
+          [newTier.tier_id, newTotalPoints, pointsToNext, employeeId],
         );
       } else {
         // Just update points
@@ -497,18 +526,20 @@ export async function checkTierUpgrade(
           `SELECT * FROM gamification_tier_master
            WHERE is_active = 1 AND tier_level > ?
            ORDER BY tier_level ASC LIMIT 1`,
-          [currentTierLevel]
+          [currentTierLevel],
         );
 
-        const pointsToNext = nextTierRows.length > 0
-          ? (nextTierRows[0] as GamificationTierMaster).min_points - newTotalPoints
-          : null;
+        const pointsToNext =
+          nextTierRows.length > 0
+            ? (nextTierRows[0] as GamificationTierMaster).min_points -
+              newTotalPoints
+            : null;
 
         await conn.execute(
           `UPDATE employee_tier_status
            SET total_points = ?, points_to_next_tier = ?, last_updated = NOW()
            WHERE employee_id = ?`,
-          [newTotalPoints, pointsToNext, employeeId]
+          [newTotalPoints, pointsToNext, employeeId],
         );
       }
     }

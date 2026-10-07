@@ -1,7 +1,10 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
-import { loadSpanTargetContext, spanTarget } from "./dashboard-monthly-target.shared.js";
+import {
+  loadSpanTargetContext,
+  spanTarget,
+} from "./dashboard-monthly-target.shared.js";
 
 /** Same dashboard_code/metric_code the Overview tab's Monthly Target editor
  * (and the Date-wise Target upload/edit) write to (bellavita-cart-dashboard.
@@ -68,13 +71,32 @@ const CART_TARGET_METRIC = "BB_CART_REVENUE_TARGET";
 const readRows = (sql: string, params: Array<string | number>) =>
   withDeadlockRetry(() => db.execute<RowDataPacket[]>(sql, params));
 
-const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const num = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
 const round2 = (v: number): number => Math.round(v * 100) / 100;
-const pct = (part: number, whole: number): number => (whole > 0 ? round2((part / whole) * 100) : 0);
+const pct = (part: number, whole: number): number =>
+  whole > 0 ? round2((part / whole) * 100) : 0;
 const p2 = (n: number): string => String(n).padStart(2, "0");
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const MONTH_IDX: Record<string, number> = Object.fromEntries(MON.map((m, i) => [m.toLowerCase(), i + 1]));
+const MON = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+const MONTH_IDX: Record<string, number> = Object.fromEntries(
+  MON.map((m, i) => [m.toLowerCase(), i + 1]),
+);
 const MAX_RANGE_DAYS = 200;
 const MAX_DAILY_COLUMNS = 62;
 const AUTO_DIALER = "VDAD";
@@ -95,13 +117,18 @@ function eachDay(from: string, to: string): string[] {
 function daysBetween(a: string, b: string): number {
   const [y1, m1, d1] = a.split("-").map(Number);
   const [y2, m2, d2] = b.split("-").map(Number);
-  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000);
+  return Math.round(
+    (Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000,
+  );
 }
 function todayLocal(): string {
   const n = new Date();
   return `${n.getFullYear()}-${p2(n.getMonth() + 1)}-${p2(n.getDate())}`;
 }
-function resolveRange(fromInput: string, toInput: string): { from: string; to: string } {
+function resolveRange(
+  fromInput: string,
+  toInput: string,
+): { from: string; to: string } {
   const today = todayLocal();
   let from = DATE_RE.test(fromInput) ? fromInput : `${today.slice(0, 7)}-01`;
   let to = DATE_RE.test(toInput) ? toInput : today;
@@ -109,8 +136,10 @@ function resolveRange(fromInput: string, toInput: string): { from: string; to: s
   if (addDays(from, MAX_RANGE_DAYS) < to) to = addDays(from, MAX_RANGE_DAYS);
   return { from, to };
 }
-const dayLabel = (iso: string): string => `${Number(iso.slice(8, 10))}-${MON[Number(iso.slice(5, 7)) - 1]}`;
-const weekNo = (iso: string): number => Math.min(5, Math.ceil(Number(iso.slice(8, 10)) / 7));
+const dayLabel = (iso: string): string =>
+  `${Number(iso.slice(8, 10))}-${MON[Number(iso.slice(5, 7)) - 1]}`;
+const weekNo = (iso: string): number =>
+  Math.min(5, Math.ceil(Number(iso.slice(8, 10)) / 7));
 
 /** "19-May-26" / "2026-05-19" -> "2026-05-19". */
 function parseTextDate(raw: unknown): string | null {
@@ -124,18 +153,25 @@ function parseTextDate(raw: unknown): string | null {
   return `${m[3].length === 2 ? `20${m[3]}` : m[3]}-${p2(mon)}-${p2(Number(m[1]))}`;
 }
 function durationToSec(v: unknown): number {
-  const m = String(v ?? "").trim().match(/^(\d{1,3}):(\d{2}):(\d{2})$/);
+  const m = String(v ?? "")
+    .trim()
+    .match(/^(\d{1,3}):(\d{2}):(\d{2})$/);
   return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0;
 }
 /** '1.00' / '0.50' as a number, 'P' = present (1), 'HD' = half day (0.5), anything else 0. */
 function attendanceValue(v: unknown): number {
-  const t = String(v ?? '').trim().toUpperCase();
-  if (t === 'P') return 1;
-  if (t === 'HD') return 0.5;
+  const t = String(v ?? "")
+    .trim()
+    .toUpperCase();
+  if (t === "P") return 1;
+  if (t === "HD") return 0.5;
   const n = parseFloat(t);
   return Number.isFinite(n) ? n : 0;
 }
-const parsePct = (v: unknown): number => { const n = parseFloat(String(v ?? "").replace("%", "")); return Number.isFinite(n) ? n : 0; };
+const parsePct = (v: unknown): number => {
+  const n = parseFloat(String(v ?? "").replace("%", ""));
+  return Number.isFinite(n) ? n : 0;
+};
 
 export function tenureBucket(days: number): string {
   if (days <= 30) return "0-30";
@@ -148,44 +184,99 @@ export function tenureBucket(days: number): string {
 
 /* --------------------------------- types ---------------------------------- */
 
-export interface CartColumn { key: string; label: string; kind: "mtd" | "week" | "day"; from: string; to: string }
+export interface CartColumn {
+  key: string;
+  label: string;
+  kind: "mtd" | "week" | "day";
+  from: string;
+  to: string;
+}
 
 export interface CartSnapshotValues {
-  overallBase: number; workableCases: number; dndCases: number;
-  uniqueAttempted: number; uniqueConnected: number; uniqueConnectedPct: number;
-  sameDayUniqueAttempt: number; sameDayUniqueConnect: number; sameDayUniqueConnectPct: number;
-  ncConnect: number; cpa: number | null;
-  revenue: number; saleCount: number;
-  convBasePct: number; convUniqueConnectPct: number;
-  target: number | null; overallRevenueBau: number; achievementPct: number | null; aov: number;
-  codOrders: number; paidOrders: number; rtoOrders: number; rtoRevenue: number;
-  duplicateCartRows: number; duplicateOrderRows: number; duplicateRevenue: number;
+  overallBase: number;
+  workableCases: number;
+  dndCases: number;
+  uniqueAttempted: number;
+  uniqueConnected: number;
+  uniqueConnectedPct: number;
+  sameDayUniqueAttempt: number;
+  sameDayUniqueConnect: number;
+  sameDayUniqueConnectPct: number;
+  ncConnect: number;
+  cpa: number | null;
+  revenue: number;
+  saleCount: number;
+  convBasePct: number;
+  convUniqueConnectPct: number;
+  target: number | null;
+  overallRevenueBau: number;
+  achievementPct: number | null;
+  aov: number;
+  codOrders: number;
+  paidOrders: number;
+  rtoOrders: number;
+  rtoRevenue: number;
+  duplicateCartRows: number;
+  duplicateOrderRows: number;
+  duplicateRevenue: number;
 }
 
 export interface CartOrderIntegrity {
-  saleRows: number; uniqueOrders: number; duplicateRows: number;
-  grossRevenue: number; revenue: number; duplicateRevenue: number; blankOrderIdRows: number;
-  cartRows: number; uniqueCarts: number; duplicateCartRows: number;
+  saleRows: number;
+  uniqueOrders: number;
+  duplicateRows: number;
+  grossRevenue: number;
+  revenue: number;
+  duplicateRevenue: number;
+  blankOrderIdRows: number;
+  cartRows: number;
+  uniqueCarts: number;
+  duplicateCartRows: number;
 }
 
 export interface BellavitaCartSnapshotData {
-  from: string; to: string; dataThrough: string | null;
-  columns: CartColumn[]; values: Record<string, CartSnapshotValues>;
+  from: string;
+  to: string;
+  dataThrough: string | null;
+  columns: CartColumn[];
+  values: Record<string, CartSnapshotValues>;
   integrity: CartOrderIntegrity;
-  daily: Array<{ date: string; base: number; connected: number; saleCount: number; revenue: number }>;
+  daily: Array<{
+    date: string;
+    base: number;
+    connected: number;
+    saleCount: number;
+    revenue: number;
+  }>;
   targetNote: string;
   dailyColumnsOmitted: boolean;
 }
 
-interface CartDay { rows: number; base: number; attempted: number; connected: number; dnd: number; sdc: number }
+interface CartDay {
+  rows: number;
+  base: number;
+  attempted: number;
+  connected: number;
+  dnd: number;
+  sdc: number;
+}
 interface SaleDay {
-  orders: number; revenue: number; rows: number; gross: number;
-  cod: number; paid: number; rto: number; rtoRevenue: number;
+  orders: number;
+  revenue: number;
+  rows: number;
+  gross: number;
+  cod: number;
+  paid: number;
+  rto: number;
+  rtoRevenue: number;
 }
 
 /* --------------------------------- loaders -------------------------------- */
 
-async function loadCartDaily(from: string, to: string): Promise<Map<string, CartDay>> {
+async function loadCartDaily(
+  from: string,
+  to: string,
+): Promise<Map<string, CartDay>> {
   const [rows] = await readRows(
     `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS d,
        COUNT(*) AS row_cnt,
@@ -202,8 +293,12 @@ async function loadCartDaily(from: string, to: string): Promise<Map<string, Cart
   const m = new Map<string, CartDay>();
   for (const r of rows) {
     m.set(String(r.d), {
-      rows: num(r.row_cnt), base: num(r.base), attempted: num(r.attempted),
-      connected: num(r.connected), dnd: num(r.dnd), sdc: num(r.sdc),
+      rows: num(r.row_cnt),
+      base: num(r.base),
+      attempted: num(r.attempted),
+      connected: num(r.connected),
+      dnd: num(r.dnd),
+      sdc: num(r.sdc),
     });
   }
   return m;
@@ -220,7 +315,10 @@ const ORDER_SUBQUERY = `
      AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id <> ''
    GROUP BY bella_vita_order_id`;
 
-async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<string, SaleDay>; blankRows: number }> {
+async function loadSalesDaily(
+  from: string,
+  to: string,
+): Promise<{ daily: Map<string, SaleDay>; blankRows: number }> {
   const [rows] = await readRows(
     `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS d, COUNT(*) AS orders, SUM(a) AS revenue, SUM(n) AS row_cnt, SUM(g) AS gross,
             SUM(pay = 'cod') AS cod, SUM(pay = 'paid') AS paid, SUM(rto) AS rto, SUM(CASE WHEN rto = 1 THEN a ELSE 0 END) AS rto_rev
@@ -230,8 +328,14 @@ async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<st
   const daily = new Map<string, SaleDay>();
   for (const r of rows) {
     daily.set(String(r.d), {
-      orders: num(r.orders), revenue: num(r.revenue), rows: num(r.row_cnt), gross: num(r.gross),
-      cod: num(r.cod), paid: num(r.paid), rto: num(r.rto), rtoRevenue: num(r.rto_rev),
+      orders: num(r.orders),
+      revenue: num(r.revenue),
+      rows: num(r.row_cnt),
+      gross: num(r.gross),
+      cod: num(r.cod),
+      paid: num(r.paid),
+      rto: num(r.rto),
+      rtoRevenue: num(r.rto_rev),
     });
   }
   const [[blank]] = await readRows(
@@ -242,7 +346,10 @@ async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<st
   return { daily, blankRows: num(blank?.n) };
 }
 
-async function loadAgentCountByDay(from: string, to: string): Promise<Map<string, number>> {
+async function loadAgentCountByDay(
+  from: string,
+  to: string,
+): Promise<Map<string, number>> {
   const [rows] = await readRows(
     `SELECT DATE_FORMAT(report_date, '%Y-%m-%d') AS d, COUNT(DISTINCT noiid) AS agents
        FROM db_masmis.bb_apr WHERE lob = 'Abandon Cart' AND report_date BETWEEN ? AND ? GROUP BY report_date`,
@@ -253,33 +360,61 @@ async function loadAgentCountByDay(from: string, to: string): Promise<Map<string
 
 /* ------------------------------ columns builder ---------------------------- */
 
-function buildColumns(from: string, to: string, lastDataDay: string | null): { columns: CartColumn[]; omitted: boolean } {
-  const days = eachDay(from, lastDataDay && lastDataDay < to ? (lastDataDay < from ? from : lastDataDay) : to);
+function buildColumns(
+  from: string,
+  to: string,
+  lastDataDay: string | null,
+): { columns: CartColumn[]; omitted: boolean } {
+  const days = eachDay(
+    from,
+    lastDataDay && lastDataDay < to
+      ? lastDataDay < from
+        ? from
+        : lastDataDay
+      : to,
+  );
   const months = new Set(days.map((d) => d.slice(0, 7)));
   const multi = months.size > 1;
   const singleFromFirst = !multi && from.endsWith("-01");
   const columns: CartColumn[] = [
-    { key: "mtd", label: singleFromFirst ? "MTD" : "Selected range", kind: "mtd", from, to },
+    {
+      key: "mtd",
+      label: singleFromFirst ? "MTD" : "Selected range",
+      kind: "mtd",
+      from,
+      to,
+    },
   ];
   const weeks = new Map<string, { label: string; from: string; to: string }>();
   for (const d of days) {
     const key = `${d.slice(0, 7)}-W${weekNo(d)}`;
-    const label = multi ? `${MON[Number(d.slice(5, 7)) - 1]} Week-${weekNo(d)}` : `Week-${weekNo(d)}`;
+    const label = multi
+      ? `${MON[Number(d.slice(5, 7)) - 1]} Week-${weekNo(d)}`
+      : `Week-${weekNo(d)}`;
     const cur = weeks.get(key);
-    if (!cur) weeks.set(key, { label, from: d, to: d }); else cur.to = d;
+    if (!cur) weeks.set(key, { label, from: d, to: d });
+    else cur.to = d;
   }
-  for (const [key, w] of weeks) columns.push({ key, label: w.label, kind: "week", from: w.from, to: w.to });
+  for (const [key, w] of weeks)
+    columns.push({ key, label: w.label, kind: "week", from: w.from, to: w.to });
   const omitted = days.length > MAX_DAILY_COLUMNS;
-  if (!omitted) for (const d of days) columns.push({ key: d, label: dayLabel(d), kind: "day", from: d, to: d });
+  if (!omitted)
+    for (const d of days)
+      columns.push({ key: d, label: dayLabel(d), kind: "day", from: d, to: d });
   return { columns, omitted };
 }
 
 /* --------------------------------- snapshot -------------------------------- */
 
-export async function getBellavitaCartSnapshot(fromInput: string, toInput: string): Promise<BellavitaCartSnapshotData> {
+export async function getBellavitaCartSnapshot(
+  fromInput: string,
+  toInput: string,
+): Promise<BellavitaCartSnapshotData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const [cartDaily, sales, agentsByDay] = await Promise.all([
-    loadCartDaily(from, to), loadSalesDaily(from, to), loadAgentCountByDay(from, to),
+    loadCartDaily(from, to),
+    loadSalesDaily(from, to),
+    loadAgentCountByDay(from, to),
   ]);
 
   const cartDates = [...cartDaily.keys()].sort();
@@ -291,37 +426,82 @@ export async function getBellavitaCartSnapshot(fromInput: string, toInput: strin
   // day's monthly target spread evenly across its month -- same convention already used for
   // Bellavita Chat's planned capacity, now overridable per day.
   const allDates = [...new Set(columns.flatMap((c) => eachDay(c.from, c.to)))];
-  const targetCtx = await loadSpanTargetContext(CART_DASHBOARD_CODE, CART_TARGET_METRIC, allDates);
+  const targetCtx = await loadSpanTargetContext(
+    CART_DASHBOARD_CODE,
+    CART_TARGET_METRIC,
+    allDates,
+  );
 
   const values: Record<string, CartSnapshotValues> = {};
   for (const col of columns) {
     const span = eachDay(col.from, col.to);
     const target = spanTarget(targetCtx, span);
-    let base = 0, attempted = 0, connected = 0, dnd = 0, sdc = 0, cartRows = 0;
-    let orders = 0, revenue = 0, saleRows = 0, gross = 0, cod = 0, paid = 0, rto = 0, rtoRev = 0;
+    let base = 0,
+      attempted = 0,
+      connected = 0,
+      dnd = 0,
+      sdc = 0,
+      cartRows = 0;
+    let orders = 0,
+      revenue = 0,
+      saleRows = 0,
+      gross = 0,
+      cod = 0,
+      paid = 0,
+      rto = 0,
+      rtoRev = 0;
     const agentCounts: number[] = [];
     for (const d of span) {
       const c = cartDaily.get(d);
       if (c) {
-        base += c.base; attempted += c.attempted; connected += c.connected; dnd += c.dnd; sdc += c.sdc; cartRows += c.rows;
+        base += c.base;
+        attempted += c.attempted;
+        connected += c.connected;
+        dnd += c.dnd;
+        sdc += c.sdc;
+        cartRows += c.rows;
         const ag = agentsByDay.get(d);
         if (ag) agentCounts.push(ag);
       }
       const s = sales.daily.get(d);
-      if (s) { orders += s.orders; revenue += s.revenue; saleRows += s.rows; gross += s.gross; cod += s.cod; paid += s.paid; rto += s.rto; rtoRev += s.rtoRevenue; }
+      if (s) {
+        orders += s.orders;
+        revenue += s.revenue;
+        saleRows += s.rows;
+        gross += s.gross;
+        cod += s.cod;
+        paid += s.paid;
+        rto += s.rto;
+        rtoRev += s.rtoRevenue;
+      }
     }
-    const avgAgents = agentCounts.length ? agentCounts.reduce((a, b) => a + b, 0) / agentCounts.length : 0;
+    const avgAgents = agentCounts.length
+      ? agentCounts.reduce((a, b) => a + b, 0) / agentCounts.length
+      : 0;
     values[col.key] = {
-      overallBase: base, workableCases: base, dndCases: dnd,
-      uniqueAttempted: attempted, uniqueConnected: connected, uniqueConnectedPct: pct(connected, attempted),
-      sameDayUniqueAttempt: attempted, sameDayUniqueConnect: sdc, sameDayUniqueConnectPct: pct(sdc, attempted),
+      overallBase: base,
+      workableCases: base,
+      dndCases: dnd,
+      uniqueAttempted: attempted,
+      uniqueConnected: connected,
+      uniqueConnectedPct: pct(connected, attempted),
+      sameDayUniqueAttempt: attempted,
+      sameDayUniqueConnect: sdc,
+      sameDayUniqueConnectPct: pct(sdc, attempted),
       ncConnect: Math.max(0, connected - sdc),
       cpa: avgAgents > 0 ? Math.round(base / avgAgents) : null,
-      revenue: round2(revenue), saleCount: orders,
-      convBasePct: pct(orders, base), convUniqueConnectPct: pct(orders, connected),
-      target, overallRevenueBau: round2(revenue), achievementPct: target ? pct(revenue, target) : null,
+      revenue: round2(revenue),
+      saleCount: orders,
+      convBasePct: pct(orders, base),
+      convUniqueConnectPct: pct(orders, connected),
+      target,
+      overallRevenueBau: round2(revenue),
+      achievementPct: target ? pct(revenue, target) : null,
       aov: orders > 0 ? Math.round(revenue / orders) : 0,
-      codOrders: cod, paidOrders: paid, rtoOrders: rto, rtoRevenue: round2(rtoRev),
+      codOrders: cod,
+      paidOrders: paid,
+      rtoOrders: rto,
+      rtoRevenue: round2(rtoRev),
       duplicateCartRows: Math.max(0, cartRows - base),
       duplicateOrderRows: Math.max(0, saleRows - orders),
       duplicateRevenue: round2(Math.max(0, gross - revenue)),
@@ -329,26 +509,48 @@ export async function getBellavitaCartSnapshot(fromInput: string, toInput: strin
   }
 
   const m = values.mtd;
-  let saleRows = 0, gross = 0, cartRows = 0;
-  for (const s of sales.daily.values()) { saleRows += s.rows; gross += s.gross; }
+  let saleRows = 0,
+    gross = 0,
+    cartRows = 0;
+  for (const s of sales.daily.values()) {
+    saleRows += s.rows;
+    gross += s.gross;
+  }
   for (const c of cartDaily.values()) cartRows += c.rows;
 
-  const dayKeys = eachDay(from, dataThrough && dataThrough < to ? dataThrough : to);
+  const dayKeys = eachDay(
+    from,
+    dataThrough && dataThrough < to ? dataThrough : to,
+  );
   return {
-    from, to, dataThrough, columns, values,
+    from,
+    to,
+    dataThrough,
+    columns,
+    values,
     integrity: {
-      saleRows, uniqueOrders: m.saleCount, duplicateRows: Math.max(0, saleRows - m.saleCount),
-      grossRevenue: round2(gross), revenue: m.revenue, duplicateRevenue: round2(Math.max(0, gross - m.revenue)),
+      saleRows,
+      uniqueOrders: m.saleCount,
+      duplicateRows: Math.max(0, saleRows - m.saleCount),
+      grossRevenue: round2(gross),
+      revenue: m.revenue,
+      duplicateRevenue: round2(Math.max(0, gross - m.revenue)),
       blankOrderIdRows: sales.blankRows,
-      cartRows, uniqueCarts: m.overallBase, duplicateCartRows: Math.max(0, cartRows - m.overallBase),
+      cartRows,
+      uniqueCarts: m.overallBase,
+      duplicateCartRows: Math.max(0, cartRows - m.overallBase),
     },
     daily: dayKeys.map((d) => ({
-      date: d, base: cartDaily.get(d)?.base ?? 0, connected: cartDaily.get(d)?.connected ?? 0,
-      saleCount: sales.daily.get(d)?.orders ?? 0, revenue: sales.daily.get(d)?.revenue ?? 0,
+      date: d,
+      base: cartDaily.get(d)?.base ?? 0,
+      connected: cartDaily.get(d)?.connected ?? 0,
+      saleCount: sales.daily.get(d)?.orders ?? 0,
+      revenue: sales.daily.get(d)?.revenue ?? 0,
     })),
-    targetNote: targetCtx.dailyByDate.size === 0 && targetCtx.monthlyByMonth.size === 0
-      ? "No target has been set yet for this range -- set a monthly figure on the Overview tab, or upload/edit real per-day values there, and it will appear here across MTD/week/day."
-      : "Target prefers a real per-day value (Overview tab's Date-wise Target) where one is set; otherwise it falls back to the monthly figure spread evenly across the days in its month. A column touching a period with no target at all shows — rather than a partial number.",
+    targetNote:
+      targetCtx.dailyByDate.size === 0 && targetCtx.monthlyByMonth.size === 0
+        ? "No target has been set yet for this range -- set a monthly figure on the Overview tab, or upload/edit real per-day values there, and it will appear here across MTD/week/day."
+        : "Target prefers a real per-day value (Overview tab's Date-wise Target) where one is set; otherwise it falls back to the monthly figure spread evenly across the days in its month. A column touching a period with no target at all shows — rather than a partial number.",
     dailyColumnsOmitted: omitted,
   };
 }
@@ -356,31 +558,80 @@ export async function getBellavitaCartSnapshot(fromInput: string, toInput: strin
 /* --------------------------------- agents ---------------------------------- */
 
 export interface CartAgentRow {
-  empId: string; name: string; doj: string | null; tenureDays: number | null; bucket: string | null;
-  status: "Active" | "InActive" | "Not in APR"; tl: string;
-  saleMade: number; cod: number; paid: number; rto: number; codPct: number; paidPct: number; rtoPct: number;
-  rtoAmount: number; revenue: number; avgSalePerDay: number;
-  attendanceDays: number; manDays: number; calls: number;
-  avgLoginSec: number; avgNetLoginSec: number; avgBreakSec: number; avgTalkSec: number; avgDispoSec: number;
-  acht: number; occupancyPct: number;
-  allocation: number; connected: number; connectedPct: number; convPct: number;
+  empId: string;
+  name: string;
+  doj: string | null;
+  tenureDays: number | null;
+  bucket: string | null;
+  status: "Active" | "InActive" | "Not in APR";
+  tl: string;
+  saleMade: number;
+  cod: number;
+  paid: number;
+  rto: number;
+  codPct: number;
+  paidPct: number;
+  rtoPct: number;
+  rtoAmount: number;
+  revenue: number;
+  avgSalePerDay: number;
+  attendanceDays: number;
+  manDays: number;
+  calls: number;
+  avgLoginSec: number;
+  avgNetLoginSec: number;
+  avgBreakSec: number;
+  avgTalkSec: number;
+  avgDispoSec: number;
+  acht: number;
+  occupancyPct: number;
+  allocation: number;
+  connected: number;
+  connectedPct: number;
+  convPct: number;
   byPeriod: Record<string, { sales: number; revenue: number }>;
 }
 
 export interface BellavitaCartAgentsData {
-  from: string; to: string; dataThrough: string | null;
+  from: string;
+  to: string;
+  dataThrough: string | null;
   columns: CartColumn[];
   agents: CartAgentRow[];
-  totals: { saleMade: number; revenue: number; allocation: number; connected: number; calls: number; agentsActive: number };
+  totals: {
+    saleMade: number;
+    revenue: number;
+    allocation: number;
+    connected: number;
+    calls: number;
+    agentsActive: number;
+  };
   /** Ids with carts but no Abandon Cart APR row and no sale -- not listed as agents. */
   otherAgents: { count: number; allocation: number };
-  autoDialer: { allocation: number; connected: number; connectedPct: number; sharePct: number };
+  autoDialer: {
+    allocation: number;
+    connected: number;
+    connectedPct: number;
+    sharePct: number;
+  };
   targetNote: string;
 }
 
 interface AprRow {
-  date: string; empId: string; name: string; calls: number; loginSec: number; netSec: number; breakSec: number;
-  talkSec: number; dispoSec: number; acht: number; util: number; att: number; tl: string; doj: string | null;
+  date: string;
+  empId: string;
+  name: string;
+  calls: number;
+  loginSec: number;
+  netSec: number;
+  breakSec: number;
+  talkSec: number;
+  dispoSec: number;
+  acht: number;
+  util: number;
+  att: number;
+  tl: string;
+  doj: string | null;
 }
 
 async function loadApr(from: string, to: string): Promise<AprRow[]> {
@@ -395,10 +646,12 @@ async function loadApr(from: string, to: string): Promise<AprRow[]> {
   // row for each agent-day -- talk time present, then a numeric attendance,
   // then the latest upload -- rather than blindly the last one.
   const score = (r: RowDataPacket): number =>
-    (r.talk_time ? 4 : 0) + (r.num_calls_chat ? 2 : 0) + (/^\d/.test(String(r.attendance_1 ?? "")) ? 1 : 0);
+    (r.talk_time ? 4 : 0) +
+    (r.num_calls_chat ? 2 : 0) +
+    (/^\d/.test(String(r.attendance_1 ?? "")) ? 1 : 0);
   const best = new Map<string, RowDataPacket>();
   for (const r of rows) {
-    const empId = String(r.noiid ?? '').trim();
+    const empId = String(r.noiid ?? "").trim();
     if (!empId) continue;
     const key = `${empId}|${r.d}`;
     const cur = best.get(key);
@@ -407,19 +660,32 @@ async function loadApr(from: string, to: string): Promise<AprRow[]> {
   const out: AprRow[] = [];
   for (const [key, r] of best) {
     out.push({
-      date: String(r.d), empId: key.split('|')[0], name: String(r.emp_name ?? '').trim(),
-      calls: num(r.num_calls_chat), loginSec: durationToSec(r.login_time), netSec: durationToSec(r.net_login_hrs),
-      breakSec: durationToSec(r.total_break), talkSec: durationToSec(r.talk_time), dispoSec: durationToSec(r.dispo_time),
-      acht: num(r.acht), util: parsePct(r.utilization), att: attendanceValue(r.attendance_1),
-      tl: String(r.team_leader ?? '').trim(), doj: parseTextDate(r.fhd),
+      date: String(r.d),
+      empId: key.split("|")[0],
+      name: String(r.emp_name ?? "").trim(),
+      calls: num(r.num_calls_chat),
+      loginSec: durationToSec(r.login_time),
+      netSec: durationToSec(r.net_login_hrs),
+      breakSec: durationToSec(r.total_break),
+      talkSec: durationToSec(r.talk_time),
+      dispoSec: durationToSec(r.dispo_time),
+      acht: num(r.acht),
+      util: parsePct(r.utilization),
+      att: attendanceValue(r.attendance_1),
+      tl: String(r.team_leader ?? "").trim(),
+      doj: parseTextDate(r.fhd),
     });
   }
   return out;
 }
 
-const titleCase = (s: string): string => s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+const titleCase = (s: string): string =>
+  s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
-export async function getBellavitaCartAgents(fromInput: string, toInput: string): Promise<BellavitaCartAgentsData> {
+export async function getBellavitaCartAgents(
+  fromInput: string,
+  toInput: string,
+): Promise<BellavitaCartAgentsData> {
   const { from, to } = resolveRange(fromInput, toInput);
 
   const [apr, saleAgents, cartAgent, orderRows, cartDaily] = await Promise.all([
@@ -447,27 +713,61 @@ export async function getBellavitaCartAgents(fromInput: string, toInput: string)
   const cartDates = [...cartDaily.keys()].sort();
   const dataThrough = cartDates.length ? cartDates[cartDates.length - 1] : null;
   const { columns } = buildColumns(from, to, dataThrough);
-  const colOfDay = (d: string): string[] => columns.filter((c) => c.from <= d && d <= c.to).map((c) => c.key);
+  const colOfDay = (d: string): string[] =>
+    columns.filter((c) => c.from <= d && d <= c.to).map((c) => c.key);
 
   const agents = new Map<string, CartAgentRow>();
   const ensure = (empId: string): CartAgentRow => {
     let a = agents.get(empId);
     if (!a) {
       a = {
-        empId, name: empId, doj: null, tenureDays: null, bucket: null, status: "Not in APR", tl: "",
-        saleMade: 0, cod: 0, paid: 0, rto: 0, codPct: 0, paidPct: 0, rtoPct: 0, rtoAmount: 0, revenue: 0, avgSalePerDay: 0,
-        attendanceDays: 0, manDays: 0, calls: 0,
-        avgLoginSec: 0, avgNetLoginSec: 0, avgBreakSec: 0, avgTalkSec: 0, avgDispoSec: 0, acht: 0, occupancyPct: 0,
-        allocation: 0, connected: 0, connectedPct: 0, convPct: 0, byPeriod: {},
+        empId,
+        name: empId,
+        doj: null,
+        tenureDays: null,
+        bucket: null,
+        status: "Not in APR",
+        tl: "",
+        saleMade: 0,
+        cod: 0,
+        paid: 0,
+        rto: 0,
+        codPct: 0,
+        paidPct: 0,
+        rtoPct: 0,
+        rtoAmount: 0,
+        revenue: 0,
+        avgSalePerDay: 0,
+        attendanceDays: 0,
+        manDays: 0,
+        calls: 0,
+        avgLoginSec: 0,
+        avgNetLoginSec: 0,
+        avgBreakSec: 0,
+        avgTalkSec: 0,
+        avgDispoSec: 0,
+        acht: 0,
+        occupancyPct: 0,
+        allocation: 0,
+        connected: 0,
+        connectedPct: 0,
+        convPct: 0,
+        byPeriod: {},
       };
       agents.set(empId, a);
     }
     return a;
   };
-  const bump = (a: CartAgentRow, day: string, sales: number, revenue: number) => {
+  const bump = (
+    a: CartAgentRow,
+    day: string,
+    sales: number,
+    revenue: number,
+  ) => {
     for (const key of colOfDay(day)) {
       const cur = a.byPeriod[key] ?? { sales: 0, revenue: 0 };
-      cur.sales += sales; cur.revenue = round2(cur.revenue + revenue);
+      cur.sales += sales;
+      cur.revenue = round2(cur.revenue + revenue);
       a.byPeriod[key] = cur;
     }
   };
@@ -477,7 +777,8 @@ export async function getBellavitaCartAgents(fromInput: string, toInput: string)
   const aprByAgent = new Map<string, AprRow[]>();
   for (const r of apr) {
     const arr = aprByAgent.get(r.empId);
-    if (arr) arr.push(r); else aprByAgent.set(r.empId, [r]);
+    if (arr) arr.push(r);
+    else aprByAgent.set(r.empId, [r]);
   }
   // Tenure runs to the end of the selected range (never past today) -- the
   // reference sheet's 184 days for a 20-Mar joiner is counted to 20 Sep.
@@ -489,7 +790,10 @@ export async function getBellavitaCartAgents(fromInput: string, toInput: string)
     a.name = titleCase(latest.name || empId);
     a.tl = latest.tl;
     a.doj = latest.doj;
-    if (a.doj) { a.tenureDays = Math.max(0, daysBetween(a.doj, asOf)); a.bucket = tenureBucket(a.tenureDays); }
+    if (a.doj) {
+      a.tenureDays = Math.max(0, daysBetween(a.doj, asOf));
+      a.bucket = tenureBucket(a.tenureDays);
+    }
     const n = rows.length;
     a.attendanceDays = rows.filter((r) => r.att > 0).length;
     a.manDays = round2(rows.reduce((s, r) => s + r.att, 0));
@@ -502,33 +806,54 @@ export async function getBellavitaCartAgents(fromInput: string, toInput: string)
     a.acht = Math.round(rows.reduce((s, r) => s + r.acht, 0) / n);
     // Occupancy = (talk + dispo time) / net login time, as ratio of sums -- reproduces the reference sheet (Abhishek 49%).
     const netTotal = rows.reduce((s, r) => s + r.netSec, 0);
-    a.occupancyPct = netTotal > 0 ? Math.round((rows.reduce((s, r) => s + r.talkSec + r.dispoSec, 0) / netTotal) * 100) : 0;
+    a.occupancyPct =
+      netTotal > 0
+        ? Math.round(
+            (rows.reduce((s, r) => s + r.talkSec + r.dispoSec, 0) / netTotal) *
+              100,
+          )
+        : 0;
     // Active = worked in the last 2 days of the APR data in this range.
-    a.status = lastAprDay && daysBetween(latest.date, lastAprDay) <= 2 ? "Active" : "InActive";
+    a.status =
+      lastAprDay && daysBetween(latest.date, lastAprDay) <= 2
+        ? "Active"
+        : "InActive";
   }
 
   // ---- Sales per order ----
   for (const o of orderRows) {
-    const empId = String(o.emp_id ?? "").trim().toUpperCase();
+    const empId = String(o.emp_id ?? "")
+      .trim()
+      .toUpperCase();
     if (!empId) continue;
     const a = ensure(empId);
     const amt = num(o.a);
-    a.saleMade += 1; a.revenue = round2(a.revenue + amt);
+    a.saleMade += 1;
+    a.revenue = round2(a.revenue + amt);
     if (o.pay === "cod") a.cod += 1;
     if (o.pay === "paid") a.paid += 1;
-    if (num(o.rto) === 1) { a.rto += 1; a.rtoAmount = round2(a.rtoAmount + amt); }
+    if (num(o.rto) === 1) {
+      a.rto += 1;
+      a.rtoAmount = round2(a.rtoAmount + amt);
+    }
     bump(a, String(o.d), 1, amt);
   }
 
   // ---- Join date, name and TL from the sales table (the APR's date is the same for everyone) ----
   for (const s of saleAgents) {
-    const empId = String(s.emp_id ?? "").trim().toUpperCase();
+    const empId = String(s.emp_id ?? "")
+      .trim()
+      .toUpperCase();
     const a = empId ? agents.get(empId) : undefined;
     if (!a) continue;
     if (s.nm) a.name = titleCase(String(s.nm));
     if (s.tl && !a.tl) a.tl = String(s.tl);
     const doj = parseTextDate(s.fhd);
-    if (doj) { a.doj = doj; a.tenureDays = Math.max(0, daysBetween(doj, asOf)); a.bucket = tenureBucket(a.tenureDays); }
+    if (doj) {
+      a.doj = doj;
+      a.tenureDays = Math.max(0, daysBetween(doj, asOf));
+      a.bucket = tenureBucket(a.tenureDays);
+    }
   }
 
   // ---- Allocation from carts (real agents only; the auto-dialer is separate) ----
@@ -536,12 +861,18 @@ export async function getBellavitaCartAgents(fromInput: string, toInput: string)
   let allAllocation = 0;
   for (const r of cartAgent) {
     const code = String(r.agent ?? "").trim();
-    const alloc = num(r.alloc), conn = num(r.conn);
+    const alloc = num(r.alloc),
+      conn = num(r.conn);
     allAllocation += alloc;
-    if (code === AUTO_DIALER) { dialer.allocation += alloc; dialer.connected += conn; continue; }
+    if (code === AUTO_DIALER) {
+      dialer.allocation += alloc;
+      dialer.connected += conn;
+      continue;
+    }
     if (!/^MAS\d+$/i.test(code)) continue;
     const a = ensure(code.toUpperCase());
-    a.allocation += alloc; a.connected += conn;
+    a.allocation += alloc;
+    a.connected += conn;
   }
 
   // An agent needs an Abandon Cart APR row or a sale to be listed; ids that only
@@ -550,30 +881,58 @@ export async function getBellavitaCartAgents(fromInput: string, toInput: string)
   const list = [...agents.values()]
     .filter((a) => {
       if (a.attendanceDays > 0 || a.saleMade > 0) return true;
-      if (a.allocation > 0) { otherAgents.count += 1; otherAgents.allocation += a.allocation; }
+      if (a.allocation > 0) {
+        otherAgents.count += 1;
+        otherAgents.allocation += a.allocation;
+      }
       return false;
     })
     .map((a) => {
       const denom = Math.max(1, a.attendanceDays);
       return {
         ...a,
-        codPct: pct(a.cod, a.saleMade), paidPct: pct(a.paid, a.saleMade), rtoPct: pct(a.rto, a.saleMade),
+        codPct: pct(a.cod, a.saleMade),
+        paidPct: pct(a.paid, a.saleMade),
+        rtoPct: pct(a.rto, a.saleMade),
         avgSalePerDay: a.attendanceDays > 0 ? round2(a.saleMade / denom) : 0,
-        connectedPct: pct(a.connected, a.allocation), convPct: pct(a.saleMade, a.allocation),
+        connectedPct: pct(a.connected, a.allocation),
+        convPct: pct(a.saleMade, a.allocation),
       };
     })
     .sort((x, y) => y.revenue - x.revenue || y.allocation - x.allocation);
 
-  const totals = list.reduce((t, a) => ({
-    saleMade: t.saleMade + a.saleMade, revenue: round2(t.revenue + a.revenue), allocation: t.allocation + a.allocation,
-    connected: t.connected + a.connected, calls: t.calls + a.calls, agentsActive: t.agentsActive + (a.status === "Active" ? 1 : 0),
-  }), { saleMade: 0, revenue: 0, allocation: 0, connected: 0, calls: 0, agentsActive: 0 });
+  const totals = list.reduce(
+    (t, a) => ({
+      saleMade: t.saleMade + a.saleMade,
+      revenue: round2(t.revenue + a.revenue),
+      allocation: t.allocation + a.allocation,
+      connected: t.connected + a.connected,
+      calls: t.calls + a.calls,
+      agentsActive: t.agentsActive + (a.status === "Active" ? 1 : 0),
+    }),
+    {
+      saleMade: 0,
+      revenue: 0,
+      allocation: 0,
+      connected: 0,
+      calls: 0,
+      agentsActive: 0,
+    },
+  );
 
   return {
-    from, to, dataThrough, columns, agents: list, totals, otherAgents,
+    from,
+    to,
+    dataThrough,
+    columns,
+    agents: list,
+    totals,
+    otherAgents,
     autoDialer: {
-      allocation: dialer.allocation, connected: dialer.connected,
-      connectedPct: pct(dialer.connected, dialer.allocation), sharePct: pct(dialer.allocation, allAllocation),
+      allocation: dialer.allocation,
+      connected: dialer.connected,
+      connectedPct: pct(dialer.connected, dialer.allocation),
+      sharePct: pct(dialer.allocation, allAllocation),
     },
     targetNote:
       "Target, Achievement % and the TQ/MQ/BQ band are not in the database (they live in the reference sheet), so they are not shown. Tenure is counted to the end of the data in this range.",
@@ -583,18 +942,50 @@ export async function getBellavitaCartAgents(fromInput: string, toInput: string)
 /* ------------------------------ agent drill-down --------------------------- */
 
 export interface CartAgentDetail {
-  empId: string; name: string; from: string; to: string;
-  kpis: { saleMade: number; revenue: number; allocation: number; connected: number; connectedPct: number; convPct: number; calls: number };
-  daily: Array<{ date: string; allocation: number; connected: number; sales: number; revenue: number; loginSec: number; talkSec: number }>;
+  empId: string;
+  name: string;
+  from: string;
+  to: string;
+  kpis: {
+    saleMade: number;
+    revenue: number;
+    allocation: number;
+    connected: number;
+    connectedPct: number;
+    convPct: number;
+    calls: number;
+  };
+  daily: Array<{
+    date: string;
+    allocation: number;
+    connected: number;
+    sales: number;
+    revenue: number;
+    loginSec: number;
+    talkSec: number;
+  }>;
   subDispositions: Array<{ label: string; count: number }>;
-  orders: Array<{ orderId: string; date: string; amount: number; payment: string; rto: boolean; rows: number }>;
+  orders: Array<{
+    orderId: string;
+    date: string;
+    amount: number;
+    payment: string;
+    rto: boolean;
+    rows: number;
+  }>;
 }
 
 const DETAIL_LIMIT = 100;
 
-export async function getBellavitaCartAgentDetail(empIdRaw: string, fromInput: string, toInput: string): Promise<CartAgentDetail | null> {
+export async function getBellavitaCartAgentDetail(
+  empIdRaw: string,
+  fromInput: string,
+  toInput: string,
+): Promise<CartAgentDetail | null> {
   const { from, to } = resolveRange(fromInput, toInput);
-  const empId = String(empIdRaw ?? "").trim().toUpperCase();
+  const empId = String(empIdRaw ?? "")
+    .trim()
+    .toUpperCase();
   if (!/^MAS\d+$/.test(empId)) return null;
 
   const [cartRows, subRows, orders, apr] = await Promise.all([
@@ -622,34 +1013,74 @@ export async function getBellavitaCartAgentDetail(empIdRaw: string, fromInput: s
   const days = new Map<string, CartAgentDetail["daily"][number]>();
   const row = (d: string) => {
     let r = days.get(d);
-    if (!r) { r = { date: d, allocation: 0, connected: 0, sales: 0, revenue: 0, loginSec: 0, talkSec: 0 }; days.set(d, r); }
+    if (!r) {
+      r = {
+        date: d,
+        allocation: 0,
+        connected: 0,
+        sales: 0,
+        revenue: 0,
+        loginSec: 0,
+        talkSec: 0,
+      };
+      days.set(d, r);
+    }
     return r;
   };
-  for (const r of cartRows) { const x = row(String(r.d)); x.allocation = num(r.alloc); x.connected = num(r.conn); }
-  for (const r of mine) { const x = row(r.date); x.loginSec = r.loginSec; x.talkSec = r.talkSec; }
+  for (const r of cartRows) {
+    const x = row(String(r.d));
+    x.allocation = num(r.alloc);
+    x.connected = num(r.conn);
+  }
+  for (const r of mine) {
+    const x = row(r.date);
+    x.loginSec = r.loginSec;
+    x.talkSec = r.talkSec;
+  }
 
   // Totals for the KPI strip come from ALL orders (not just the 100 listed).
   const [allOrders] = await readRows(
     `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS d, COUNT(*) AS n, SUM(a) AS rev FROM (${ORDER_SUBQUERY}) o WHERE emp_id = ? GROUP BY d`,
     [from, to, empId],
   );
-  for (const r of allOrders) { const x = row(String(r.d)); x.sales = num(r.n); x.revenue = num(r.rev); }
+  for (const r of allOrders) {
+    const x = row(String(r.d));
+    x.sales = num(r.n);
+    x.revenue = num(r.rev);
+  }
 
   const daily = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
   if (daily.length === 0 && orders.length === 0) return null;
-  const sum = <K extends "allocation" | "connected" | "sales" | "revenue">(k: K) => daily.reduce((s, r) => s + r[k], 0);
+  const sum = <K extends "allocation" | "connected" | "sales" | "revenue">(
+    k: K,
+  ) => daily.reduce((s, r) => s + r[k], 0);
   const allocation = sum("allocation");
   return {
-    empId, name: titleCase(mine[mine.length - 1]?.name || empId), from, to,
+    empId,
+    name: titleCase(mine[mine.length - 1]?.name || empId),
+    from,
+    to,
     kpis: {
-      saleMade: sum("sales"), revenue: round2(sum("revenue")), allocation, connected: sum("connected"),
-      connectedPct: pct(sum("connected"), allocation), convPct: pct(sum("sales"), allocation),
+      saleMade: sum("sales"),
+      revenue: round2(sum("revenue")),
+      allocation,
+      connected: sum("connected"),
+      connectedPct: pct(sum("connected"), allocation),
+      convPct: pct(sum("sales"), allocation),
       calls: mine.reduce((s, r) => s + r.calls, 0),
     },
     daily,
-    subDispositions: subRows.map((r) => ({ label: String(r.s), count: num(r.n) })),
+    subDispositions: subRows.map((r) => ({
+      label: String(r.s),
+      count: num(r.n),
+    })),
     orders: orders.map((o) => ({
-      orderId: String(o.oid), date: String(o.d), amount: num(o.a), payment: String(o.pay ?? ""), rto: num(o.rto) === 1, rows: num(o.n),
+      orderId: String(o.oid),
+      date: String(o.d),
+      amount: num(o.a),
+      payment: String(o.pay ?? ""),
+      rto: num(o.rto) === 1,
+      rows: num(o.n),
     })),
   };
 }

@@ -26,16 +26,22 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 20_000 });
 
-const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
+const { execute, getConnection } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  getConnection: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
 vi.mock("../../process-pnl/budget-consumption.service.js", () => ({
   budgetConsumptionService: {
-    reserve: vi.fn(), consume: vi.fn(), release: vi.fn(), reverseConsumption: vi.fn(),
+    reserve: vi.fn(),
+    consume: vi.fn(),
+    release: vi.fn(),
+    reverseConsumption: vi.fn(),
   },
 }));
 
-let grnService: typeof import("../grn.service.js")["grnService"];
+let grnService: (typeof import("../grn.service.js"))["grnService"];
 beforeAll(async () => {
   ({ grnService } = await import("../grn.service.js"));
 }, 120_000);
@@ -46,7 +52,9 @@ function makeConnection(grn: Record<string, unknown>) {
   let commitIndex = -1;
   const conn = {
     statements,
-    get commitIndex() { return commitIndex; },
+    get commitIndex() {
+      return commitIndex;
+    },
     execute: vi.fn(async (sql: string, params?: unknown[]) => {
       statements.push(String(sql).replace(/\s+/g, " ").trim());
       (conn as unknown as { params: unknown[][] }).params.push(params ?? []);
@@ -56,7 +64,9 @@ function makeConnection(grn: Record<string, unknown>) {
     }),
     params: [] as unknown[][],
     beginTransaction: vi.fn(async () => {}),
-    commit: vi.fn(async () => { commitIndex = statements.length; }),
+    commit: vi.fn(async () => {
+      commitIndex = statements.length;
+    }),
     rollback: vi.fn(async () => {}),
     release: vi.fn(() => {}),
   };
@@ -64,8 +74,13 @@ function makeConnection(grn: Record<string, unknown>) {
 }
 
 const SUBMITTED = {
-  id: "g1", status: "submitted", budget_line_id: "bl1",
-  amount_with_tax: 5000, amount: 5000, quantity: 1, grn_type: "expense",
+  id: "g1",
+  status: "submitted",
+  budget_line_id: "bl1",
+  amount_with_tax: 5000,
+  amount: 5000,
+  quantity: 1,
+  grn_type: "expense",
 };
 
 const eventIndex = (statements: string[]) =>
@@ -80,7 +95,12 @@ describe("reviewGrn writes the approval history", () => {
   it("records an approval", async () => {
     const conn = makeConnection(SUBMITTED);
     getConnection.mockResolvedValue(conn);
-    await grnService.reviewGrn("g1", { decision: "approved" }, "u1", "branch_head");
+    await grnService.reviewGrn(
+      "g1",
+      { decision: "approved" },
+      "u1",
+      "branch_head",
+    );
 
     const at = eventIndex(conn.statements);
     expect(at, "an approved GRN must leave a history row").toBeGreaterThan(-1);
@@ -88,7 +108,7 @@ describe("reviewGrn writes the approval history", () => {
     expect(params).toContain("grn");
     expect(params).toContain("g1");
     expect(params).toContain("approve");
-    expect(params).toContain("submitted");           // from
+    expect(params).toContain("submitted"); // from
     expect(params).toContain("branch_head_approved"); // to
   });
 
@@ -96,7 +116,10 @@ describe("reviewGrn writes the approval history", () => {
     const conn = makeConnection(SUBMITTED);
     getConnection.mockResolvedValue(conn);
     await grnService.reviewGrn(
-      "g1", { decision: "rejected", reviewNote: "Bill does not match the PO" }, "u1", "branch_head"
+      "g1",
+      { decision: "rejected", reviewNote: "Bill does not match the PO" },
+      "u1",
+      "branch_head",
     );
 
     const at = eventIndex(conn.statements);
@@ -110,7 +133,12 @@ describe("reviewGrn writes the approval history", () => {
     // never happened.
     const conn = makeConnection(SUBMITTED);
     getConnection.mockResolvedValue(conn);
-    await grnService.reviewGrn("g1", { decision: "approved" }, "u1", "branch_head");
+    await grnService.reviewGrn(
+      "g1",
+      { decision: "approved" },
+      "u1",
+      "branch_head",
+    );
 
     const at = eventIndex(conn.statements);
     // Assert it exists before asserting where it is — otherwise -1 satisfies "before the
@@ -124,7 +152,12 @@ describe("reviewGrn writes the approval history", () => {
     // super_admin reviewing a 'submitted' GRN acts AT the Branch Head stage.
     const conn = makeConnection(SUBMITTED);
     getConnection.mockResolvedValue(conn);
-    await grnService.reviewGrn("g1", { decision: "approved" }, "u-super", "super_admin");
+    await grnService.reviewGrn(
+      "g1",
+      { decision: "approved" },
+      "u-super",
+      "super_admin",
+    );
 
     const params = conn.params[eventIndex(conn.statements)];
     expect(params).toContain("branch_head");
@@ -137,7 +170,7 @@ describe("reviewGrn writes the approval history", () => {
     const conn = makeConnection({ ...SUBMITTED, status: "approved" });
     getConnection.mockResolvedValue(conn);
     await expect(
-      grnService.reviewGrn("g1", { decision: "approved" }, "u1", "branch_head")
+      grnService.reviewGrn("g1", { decision: "approved" }, "u1", "branch_head"),
     ).rejects.toThrow();
 
     expect(eventIndex(conn.statements)).toBe(-1);
@@ -157,7 +190,8 @@ describe("reviewGrn writes the approval history", () => {
  */
 describe("GRN review roles match the stages that exist", () => {
   // This file lives beside the sources it reads, so resolve from __dirname rather than cwd.
-  const srcFile = (name: string) => readFileSync(resolve(__dirname, "..", name), "utf8");
+  const srcFile = (name: string) =>
+    readFileSync(resolve(__dirname, "..", name), "utf8");
   const routes = srcFile("grn.routes.ts");
   const smart = srcFile("grn-smart.routes.ts");
   const resolver = srcFile("finance-workflow-role.ts");
@@ -168,7 +202,7 @@ describe("GRN review roles match the stages that exist", () => {
     // reconsidered — not the role list quietly drifting out of step with the resolver.
     const expectedRoleBlock = resolver.slice(
       resolver.indexOf("const expectedRole ="),
-      resolver.indexOf(";", resolver.indexOf("const expectedRole =")) + 1
+      resolver.indexOf(";", resolver.indexOf("const expectedRole =")) + 1,
     );
     expect(expectedRoleBlock).toContain('"branch_head"');
     expect(expectedRoleBlock).toContain('"accounts_head"');
@@ -185,7 +219,9 @@ describe("GRN review roles match the stages that exist", () => {
       // contents and make every assertion below vacuous.
       const open = source.indexOf("[", source.indexOf(decl) + decl.length - 1);
       const list = source.slice(open, source.indexOf("]", open));
-      expect(list, `${name} review roles must include accounts_head`).toContain("accounts_head");
+      expect(list, `${name} review roles must include accounts_head`).toContain(
+        "accounts_head",
+      );
       expect(list).toContain("branch_head");
       expect(list).toContain("finance_head");
     }
@@ -193,6 +229,8 @@ describe("GRN review roles match the stages that exist", () => {
 
   it("accounts_head keeps the payment authority that is actually theirs", () => {
     // The new mid-chain review stage is IN ADDITION to this, not instead of it.
-    expect(payments).toContain('const PAYMENT_WRITE_ROLES = ["accounts_head", "super_admin"]');
+    expect(payments).toContain(
+      'const PAYMENT_WRITE_ROLES = ["accounts_head", "super_admin"]',
+    );
   });
 });

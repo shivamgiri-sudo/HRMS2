@@ -84,41 +84,57 @@ describe("attendanceReconciliationService", () => {
     //
     // Same fix, same reason as keying the payroll.security mocks by SQL.
     dbQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("attendance_reconciliation_cosec_exclusion")) return [[], []];
+      if (sql.includes("attendance_reconciliation_cosec_exclusion"))
+        return [[], []];
 
       if (sql.includes("employee_biometric_enrollment")) {
-        return [[{
-          employee_id: "emp-1",
-          employee_code: "MAS47814",
-          biometric_code: "MAS47814",
-          cosec_user_id: "MAS47814",
-          active_status: 1,
-          employment_status: "active",
-        }], []];
+        return [
+          [
+            {
+              employee_id: "emp-1",
+              employee_code: "MAS47814",
+              biometric_code: "MAS47814",
+              cosec_user_id: "MAS47814",
+              active_status: 1,
+              employment_status: "active",
+            },
+          ],
+          [],
+        ];
       }
 
       if (sql.includes("integration_biometric_daily")) {
-        return [[{
-          employee_code: "MAS47814",
-          record_date: "2026-07-25",
-          biometric_minutes: 557,
-          total_punches: 11,
-        }], []];
+        return [
+          [
+            {
+              employee_code: "MAS47814",
+              record_date: "2026-07-25",
+              biometric_minutes: 557,
+              total_punches: 11,
+            },
+          ],
+          [],
+        ];
       }
 
       if (sql.includes("attendance_daily_record")) {
-        return [[{
-          employee_id: "emp-1",
-          record_date: "2026-07-25",
-          attendance_status: "absent",
-          biometric_minutes: 557,
-          raw_minutes: 0,
-          dialler_minutes: 0,
-          attendance_source: "dialler",
-          source_system: "dialer_session_log.session_date",
-          is_locked: 0,
-          mismatch_flag: 1,
-        }], []];
+        return [
+          [
+            {
+              employee_id: "emp-1",
+              record_date: "2026-07-25",
+              attendance_status: "absent",
+              biometric_minutes: 557,
+              raw_minutes: 0,
+              dialler_minutes: 0,
+              attendance_source: "dialler",
+              source_system: "dialer_session_log.session_date",
+              is_locked: 0,
+              mismatch_flag: 1,
+            },
+          ],
+          [],
+        ];
       }
 
       // apr, dialer_session_log, and anything added later: no rows, which is
@@ -136,17 +152,29 @@ describe("attendanceReconciliationService", () => {
 
   it("issues the four independent range reads concurrently", async () => {
     ncosecQuery.mockResolvedValueOnce({
-      recordset: [{
-        cosec_user_id: "MAS1", punch_date: "2026-07-25", first_punch: "2026-07-25 10:00:00",
-        last_punch: "2026-07-25 19:00:00", total_punches: 4, working_minutes: 540,
-      }],
+      recordset: [
+        {
+          cosec_user_id: "MAS1",
+          punch_date: "2026-07-25",
+          first_punch: "2026-07-25 10:00:00",
+          last_punch: "2026-07-25 19:00:00",
+          total_punches: 4,
+          working_minutes: 540,
+        },
+      ],
     });
     const started: string[] = [];
     let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
     dbQuery.mockImplementation(async (sql: string) => {
-      const tag = ["integration_biometric_daily", "FROM attendance_daily_record", "FROM apr a", "dialer_session_log"]
-        .find((t) => sql.includes(t));
+      const tag = [
+        "integration_biometric_daily",
+        "FROM attendance_daily_record",
+        "FROM apr a",
+        "dialer_session_log",
+      ].find((t) => sql.includes(t));
       if (tag) {
         started.push(tag);
         // Hold every read until all four have started: only possible if they run concurrently.
@@ -155,7 +183,10 @@ describe("attendanceReconciliationService", () => {
       }
       return [[], []];
     });
-    await attendanceReconciliationService.audit({ from: "2026-07-25", to: "2026-07-25" });
+    await attendanceReconciliationService.audit({
+      from: "2026-07-25",
+      to: "2026-07-25",
+    });
     expect(new Set(started.slice(0, 4)).size).toBe(4);
   });
 });

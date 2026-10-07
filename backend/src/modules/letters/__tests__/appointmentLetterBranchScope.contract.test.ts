@@ -12,11 +12,14 @@ import { appointmentLetterSearchTerm } from "../appointmentLetterEligibility.ser
 // than filtering after the fact or trusting a branch id from the request.
 const routes = readFileSync(
   resolve(process.cwd(), "src/modules/letters/appointmentLetter.routes.ts"),
-  "utf8"
+  "utf8",
 );
 const service = readFileSync(
-  resolve(process.cwd(), "src/modules/letters/appointmentLetterEligibility.service.ts"),
-  "utf8"
+  resolve(
+    process.cwd(),
+    "src/modules/letters/appointmentLetterEligibility.service.ts",
+  ),
+  "utf8",
 );
 
 /** The body of one route handler, from its path literal to the next router. call. */
@@ -57,7 +60,9 @@ describe("Appointment letters — branch RBAC", () => {
   });
 
   it("applies the scope inside the queue's id query, before eligibility is evaluated", () => {
-    const queueFn = service.slice(service.indexOf("export async function listAppointmentLetterQueue"));
+    const queueFn = service.slice(
+      service.indexOf("export async function listAppointmentLetterQueue"),
+    );
     expect(queueFn).toContain("filters.scopeSql");
     expect(queueFn).toContain("filters.scopeParams");
   });
@@ -65,7 +70,9 @@ describe("Appointment letters — branch RBAC", () => {
 
 describe("Appointment letters — employee search", () => {
   it("searches in SQL so it can reach past the queue's LIMIT", () => {
-    const queueFn = service.slice(service.indexOf("export async function listAppointmentLetterQueue"));
+    const queueFn = service.slice(
+      service.indexOf("export async function listAppointmentLetterQueue"),
+    );
     expect(queueFn).toContain("LIKE ?");
     expect(queueFn).toContain("e.employee_code LIKE ?");
   });
@@ -90,12 +97,16 @@ describe("Appointment letters — employee search", () => {
  */
 describe("Appointment letters — EPF forms are not a blocker", () => {
   const eligibility = readFileSync(
-    resolve(process.cwd(), "src/modules/letters/appointmentLetterEligibility.service.ts"),
-    "utf8"
+    resolve(
+      process.cwd(),
+      "src/modules/letters/appointmentLetterEligibility.service.ts",
+    ),
+    "utf8",
   );
 
   it("names both EPF documents in one shared constant", () => {
-    const list = eligibility.match(/EPF_DOCUMENT_CODES = \[(.*?)\]/s)?.[1] ?? "";
+    const list =
+      eligibility.match(/EPF_DOCUMENT_CODES = \[(.*?)\]/s)?.[1] ?? "";
     expect(list).toContain('"EPF_DECLARATION"');
     expect(list).toContain('"EPF_NOMINATION_FORM2"');
   });
@@ -126,8 +137,11 @@ describe("Appointment letters — EPF forms are not a blocker", () => {
  */
 describe("Appointment letters — the BGV blocker is specific", () => {
   const eligibility = readFileSync(
-    resolve(process.cwd(), "src/modules/letters/appointmentLetterEligibility.service.ts"),
-    "utf8"
+    resolve(
+      process.cwd(),
+      "src/modules/letters/appointmentLetterEligibility.service.ts",
+    ),
+    "utf8",
   );
 
   it("reads the per-category statuses, not just the verdict", () => {
@@ -139,7 +153,7 @@ describe("Appointment letters — the BGV blocker is specific", () => {
   it("names the outstanding categories in the blocker reason", () => {
     expect(eligibility).toContain("outstandingBgvCategories(");
     expect(eligibility).toContain("candidateId,\n          report,");
-    expect(eligibility).toContain("Outstanding: ${outstanding.join(\", \")}");
+    expect(eligibility).toContain('Outstanding: ${outstanding.join(", ")}');
   });
 
   it("takes applicability from getApplicableChecks rather than re-deriving it", () => {
@@ -153,13 +167,19 @@ describe("Appointment letters — the BGV blocker is specific", () => {
   });
 
   it("counts only passed/waived as done, so 'not_run' is reported outstanding", () => {
-    const fn = eligibility.slice(eligibility.indexOf("async function outstandingBgvCategories"));
+    const fn = eligibility.slice(
+      eligibility.indexOf("async function outstandingBgvCategories"),
+    );
     expect(fn).toContain('v === "passed"');
     expect(fn).toContain('v === "waived"');
   });
 
   it("keeps the blocker even when applicability cannot be resolved", () => {
-    const fn = eligibility.slice(eligibility.indexOf("async function outstandingBgvCategories"));
-    expect(fn).toContain(".catch(() => ({ includeEmployment: false, includeCriminal: false, denominator: 80 }))");
+    const fn = eligibility.slice(
+      eligibility.indexOf("async function outstandingBgvCategories"),
+    );
+    expect(fn).toContain(
+      ".catch(() => ({ includeEmployment: false, includeCriminal: false, denominator: 80 }))",
+    );
   });
 });

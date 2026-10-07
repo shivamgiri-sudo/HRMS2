@@ -17,7 +17,13 @@ const PROCESS_ID = "7889a7ac-5e88-11f1-adb1-00155d0ab410";
  */
 function mockScope(opts: {
   roleKey: string;
-  assignmentRows: Array<{ scope_type: string; branch_id: string | null; process_id: string | null; department_id?: string | null; cost_centre_id?: string | null }>;
+  assignmentRows: Array<{
+    scope_type: string;
+    branch_id: string | null;
+    process_id: string | null;
+    department_id?: string | null;
+    cost_centre_id?: string | null;
+  }>;
   hasEmployee?: boolean;
 }) {
   dbExecute.mockImplementation(async (sql?: string) => {
@@ -29,13 +35,15 @@ function mockScope(opts: {
         : [[{ id: EMPLOYEE_ID, branch_id: BRANCH_ID, process_id: PROCESS_ID }]];
     }
     if (sql.includes("FROM user_assignment_scope")) {
-      return [opts.assignmentRows.map((r) => ({
-        scope_type: r.scope_type,
-        branch_id: r.branch_id,
-        process_id: r.process_id,
-        department_id: r.department_id ?? null,
-        cost_centre_id: r.cost_centre_id ?? null,
-      }))];
+      return [
+        opts.assignmentRows.map((r) => ({
+          scope_type: r.scope_type,
+          branch_id: r.branch_id,
+          process_id: r.process_id,
+          department_id: r.department_id ?? null,
+          cost_centre_id: r.cost_centre_id ?? null,
+        })),
+      ];
     }
     return [[]];
   });
@@ -60,7 +68,9 @@ describe("resolveFullScope: an assignment grant on one dimension does not narrow
   it("a branch-only grant does not narrow processScope to the caller's own process", async () => {
     mockScope({
       roleKey: "branch_head",
-      assignmentRows: [{ scope_type: "branch", branch_id: BRANCH_ID, process_id: null }],
+      assignmentRows: [
+        { scope_type: "branch", branch_id: BRANCH_ID, process_id: null },
+      ],
     });
     const scope = await resolveFullScope(USER_ID);
     expect(scope.branchScope).toEqual({ mode: "restricted", ids: [BRANCH_ID] });
@@ -70,28 +80,41 @@ describe("resolveFullScope: an assignment grant on one dimension does not narrow
   it("a process-only grant does not narrow branchScope to the caller's own branch", async () => {
     mockScope({
       roleKey: "process_manager",
-      assignmentRows: [{ scope_type: "process", branch_id: null, process_id: PROCESS_ID }],
+      assignmentRows: [
+        { scope_type: "process", branch_id: null, process_id: PROCESS_ID },
+      ],
     });
     const scope = await resolveFullScope(USER_ID);
-    expect(scope.processScope).toEqual({ mode: "restricted", ids: [PROCESS_ID] });
+    expect(scope.processScope).toEqual({
+      mode: "restricted",
+      ids: [PROCESS_ID],
+    });
     expect(scope.branchScope).toEqual({ mode: "all", ids: [] });
   });
 
   it("an explicit grant on both dimensions still restricts both (unchanged behaviour)", async () => {
     mockScope({
       roleKey: "branch_head",
-      assignmentRows: [{ scope_type: "branch", branch_id: BRANCH_ID, process_id: PROCESS_ID }],
+      assignmentRows: [
+        { scope_type: "branch", branch_id: BRANCH_ID, process_id: PROCESS_ID },
+      ],
     });
     const scope = await resolveFullScope(USER_ID);
     expect(scope.branchScope).toEqual({ mode: "restricted", ids: [BRANCH_ID] });
-    expect(scope.processScope).toEqual({ mode: "restricted", ids: [PROCESS_ID] });
+    expect(scope.processScope).toEqual({
+      mode: "restricted",
+      ids: [PROCESS_ID],
+    });
   });
 
   it("no assignment row at all still falls back to the caller's own employee record", async () => {
     mockScope({ roleKey: "employee", assignmentRows: [] });
     const scope = await resolveFullScope(USER_ID);
     expect(scope.branchScope).toEqual({ mode: "restricted", ids: [BRANCH_ID] });
-    expect(scope.processScope).toEqual({ mode: "restricted", ids: [PROCESS_ID] });
+    expect(scope.processScope).toEqual({
+      mode: "restricted",
+      ids: [PROCESS_ID],
+    });
   });
 
   it("no assignment row and no employee record fails closed, never dimAll()", async () => {

@@ -5,12 +5,12 @@
  */
 
 export type LawfulBasis =
-  | "consent"              // Data principal gave explicit consent
-  | "employment_contract"  // Processing necessary for employment relationship
-  | "legal_obligation"     // Statutory/legal requirement (PF, ESIC, TDS, etc.)
-  | "legitimate_interest"  // Legitimate operational interest
-  | "vital_interest"       // Emergency/safety
-  | "public_task";         // Not applicable for private HRMS
+  | "consent" // Data principal gave explicit consent
+  | "employment_contract" // Processing necessary for employment relationship
+  | "legal_obligation" // Statutory/legal requirement (PF, ESIC, TDS, etc.)
+  | "legitimate_interest" // Legitimate operational interest
+  | "vital_interest" // Emergency/safety
+  | "public_task"; // Not applicable for private HRMS
 
 export interface ProcessingPurpose {
   code: string;
@@ -18,7 +18,7 @@ export interface ProcessingPurpose {
   description: string;
   lawfulBasis: LawfulBasis;
   dataCategories: string[];
-  canBeWithdrawn: boolean;   // Can the data principal withdraw consent for this?
+  canBeWithdrawn: boolean; // Can the data principal withdraw consent for this?
   retentionDays?: number;
   requiresConsentVersion: boolean;
   sensitivityLevel: "standard" | "sensitive" | "highly_sensitive";
@@ -109,7 +109,8 @@ export const PROCESSING_PURPOSES: ProcessingPurpose[] = [
   {
     code: "optional_photo",
     name: "Photo/Publication",
-    description: "Using employee photo in internal directories or communications",
+    description:
+      "Using employee photo in internal directories or communications",
     lawfulBasis: "consent",
     dataCategories: ["identity"],
     canBeWithdrawn: true,

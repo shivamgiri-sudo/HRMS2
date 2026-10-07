@@ -19,18 +19,31 @@ interface Entry {
 
 const store = new Map<string, Entry>();
 
-export async function memo<T>(key: string, fn: () => Promise<T>, ttlMs = TTL_MS): Promise<T> {
+export async function memo<T>(
+  key: string,
+  fn: () => Promise<T>,
+  ttlMs = TTL_MS,
+): Promise<T> {
   const hit = store.get(key);
   if (hit) {
-    if (hit.pending) return (hit.value !== undefined ? Promise.resolve(hit.value as T) : (hit.pending as Promise<T>));
+    if (hit.pending)
+      return hit.value !== undefined
+        ? Promise.resolve(hit.value as T)
+        : (hit.pending as Promise<T>);
     const age = Date.now() - hit.at;
     if (age < ttlMs) return hit.value as T;
     if (age < STALE_MS) {
       // stale-while-revalidate: answer now, refresh behind the scenes.
       const stale = hit.value as T;
       const pending = fn().then(
-        (value) => { store.set(key, { at: Date.now(), value }); return value; },
-        () => { store.set(key, hit); return stale; },
+        (value) => {
+          store.set(key, { at: Date.now(), value });
+          return value;
+        },
+        () => {
+          store.set(key, hit);
+          return stale;
+        },
       );
       store.set(key, { at: hit.at, value: stale, pending });
       return stale;
@@ -40,7 +53,9 @@ export async function memo<T>(key: string, fn: () => Promise<T>, ttlMs = TTL_MS)
     (value) => {
       store.set(key, { at: Date.now(), value });
       if (store.size > MAX_ENTRIES) {
-        const oldest = [...store.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        const oldest = [...store.entries()].sort(
+          (a, b) => a[1].at - b[1].at,
+        )[0];
         if (oldest) store.delete(oldest[0]);
       }
       return value;

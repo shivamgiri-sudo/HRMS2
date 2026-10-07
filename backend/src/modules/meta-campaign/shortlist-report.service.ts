@@ -12,21 +12,26 @@
  * cannot be screened at all.
  */
 
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { parseLead } from './meta-lead.parser.js';
-import type { ParsedLead } from './meta-lead.parser.js';
-import { requisitionClosedReason, screenLead } from './lead-screener.service.js';
-import type { MetaScreeningConfig } from '../job-requisition/job-requisition.types.js';
-import type { MetaLeadDetail } from './meta-campaign.types.js';
-import { loadAllCampaignCriteria } from './campaign-screening.js';
-import type { CampaignCriteria } from './campaign-screening.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { parseLead } from "./meta-lead.parser.js";
+import type { ParsedLead } from "./meta-lead.parser.js";
+import {
+  requisitionClosedReason,
+  screenLead,
+} from "./lead-screener.service.js";
+import type { MetaScreeningConfig } from "../job-requisition/job-requisition.types.js";
+import type { MetaLeadDetail } from "./meta-campaign.types.js";
+import { loadAllCampaignCriteria } from "./campaign-screening.js";
+import type { CampaignCriteria } from "./campaign-screening.js";
 
-export type CurrentResult = 'pending' | 'qualified' | 'disqualified';
+export type CurrentResult = "pending" | "qualified" | "disqualified";
 /** unmapped = no requisition to screen against; no_data = raw payload unusable (Graph fetch failed). */
-export type ProposedResult = 'qualified' | 'disqualified' | 'unmapped' | 'no_data';
+export type ProposedResult =
+  "qualified" | "disqualified" | "unmapped" | "no_data";
 /** campaign_criteria = no requisition, screened on the campaign's own criteria ("JR pending"). */
-export type MappingSource = 'routing_code' | 'stored' | 'campaign_criteria' | 'none';
+export type MappingSource =
+  "routing_code" | "stored" | "campaign_criteria" | "none";
 
 export interface RequisitionInfo {
   id: string;
@@ -94,10 +99,15 @@ export interface RequisitionIndex {
   campaignByForm: Map<string, CampaignCriteria>;
 }
 
-const asNumber = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
-const asIso = (v: unknown): string | null => (v ? new Date(v as string).toISOString() : null);
+const asNumber = (v: unknown): number | null =>
+  v === null || v === undefined ? null : Number(v);
+const asIso = (v: unknown): string | null =>
+  v ? new Date(v as string).toISOString() : null;
 
-export function indexRequisitions(list: RequisitionInfo[], campaigns: CampaignCriteria[] = []): RequisitionIndex {
+export function indexRequisitions(
+  list: RequisitionInfo[],
+  campaigns: CampaignCriteria[] = [],
+): RequisitionIndex {
   const byId = new Map<string, RequisitionInfo>();
   const byCode = new Map<string, RequisitionInfo>();
   for (const r of list) {
@@ -111,8 +121,12 @@ export function indexRequisitions(list: RequisitionInfo[], campaigns: CampaignCr
 
 function parseRawPayload(raw: unknown): MetaLeadDetail | null {
   try {
-    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (obj && typeof obj === 'object' && Array.isArray((obj as MetaLeadDetail).field_data)) {
+    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (
+      obj &&
+      typeof obj === "object" &&
+      Array.isArray((obj as MetaLeadDetail).field_data)
+    ) {
       return obj as MetaLeadDetail;
     }
   } catch {
@@ -125,13 +139,15 @@ function parseRawPayload(raw: unknown): MetaLeadDetail | null {
 export function resolveRequisition(
   parsed: ParsedLead | null,
   storedId: string | null,
-  index: RequisitionIndex
+  index: RequisitionIndex,
 ): { requisition: RequisitionInfo | null; source: MappingSource } {
-  const routed = parsed?.routingCode ? index.byCode.get(parsed.routingCode.toUpperCase()) : undefined;
-  if (routed) return { requisition: routed, source: 'routing_code' };
+  const routed = parsed?.routingCode
+    ? index.byCode.get(parsed.routingCode.toUpperCase())
+    : undefined;
+  if (routed) return { requisition: routed, source: "routing_code" };
   const stored = storedId ? index.byId.get(storedId) : undefined;
-  if (stored) return { requisition: stored, source: 'stored' };
-  return { requisition: null, source: 'none' };
+  if (stored) return { requisition: stored, source: "stored" };
+  return { requisition: null, source: "none" };
 }
 
 export function screenAgainst(parsed: ParsedLead, r: RequisitionInfo) {
@@ -150,7 +166,7 @@ export function screenAgainst(parsed: ParsedLead, r: RequisitionInfo) {
       experienceMinYears: r.experienceMin,
       experienceMaxYears: r.experienceMax,
       screeningConfig: r.screeningConfig,
-    }
+    },
   );
 }
 
@@ -165,10 +181,17 @@ export function closedReasonFor(r: RequisitionInfo): string | null {
 }
 
 /** Pure: evaluate one stored lead row. No I/O. */
-export function evaluateLeadRow(row: LeadRow, index: RequisitionIndex): ShortlistEvaluation {
-  const current = (['pending', 'qualified', 'disqualified'].includes(String(row.screening_result))
-    ? row.screening_result
-    : 'pending') as CurrentResult;
+export function evaluateLeadRow(
+  row: LeadRow,
+  index: RequisitionIndex,
+): ShortlistEvaluation {
+  const current = (
+    ["pending", "qualified", "disqualified"].includes(
+      String(row.screening_result),
+    )
+      ? row.screening_result
+      : "pending"
+  ) as CurrentResult;
 
   const base = {
     leadId: String(row.id),
@@ -181,9 +204,15 @@ export function evaluateLeadRow(row: LeadRow, index: RequisitionIndex): Shortlis
 
   const detail = parseRawPayload(row.raw_payload);
   const parsed = detail ? parseLead(detail) : null;
-  const { requisition, source } = resolveRequisition(parsed, row.requisition_id, index);
+  const { requisition, source } = resolveRequisition(
+    parsed,
+    row.requisition_id,
+    index,
+  );
 
-  const campaign = row.meta_form_id ? index.campaignByForm.get(String(row.meta_form_id)) ?? null : null;
+  const campaign = row.meta_form_id
+    ? (index.campaignByForm.get(String(row.meta_form_id)) ?? null)
+    : null;
   const reqFields = {
     mappingSource: source,
     campaignName: campaign?.campaignName ?? null,
@@ -195,7 +224,17 @@ export function evaluateLeadRow(row: LeadRow, index: RequisitionIndex): Shortlis
   };
 
   if (!parsed) {
-    return { ...base, ...reqFields, proposedResult: 'no_data', reason: null, skipped: [], closedReason: null, outreachEligible: false, changed: false, relink: false };
+    return {
+      ...base,
+      ...reqFields,
+      proposedResult: "no_data",
+      reason: null,
+      skipped: [],
+      closedReason: null,
+      outreachEligible: false,
+      changed: false,
+      relink: false,
+    };
   }
   if (!requisition && campaign?.screeningConfig) {
     // No requisition yet: screen on the campaign's own criteria. No batch to open or close, and no
@@ -215,13 +254,15 @@ export function evaluateLeadRow(row: LeadRow, index: RequisitionIndex): Shortlis
         experienceMinYears: null,
         experienceMaxYears: null,
         screeningConfig: campaign.screeningConfig,
-      }
+      },
     );
-    const proposedCampaign: ProposedResult = result.qualified ? 'qualified' : 'disqualified';
+    const proposedCampaign: ProposedResult = result.qualified
+      ? "qualified"
+      : "disqualified";
     return {
       ...base,
       ...reqFields,
-      mappingSource: 'campaign_criteria',
+      mappingSource: "campaign_criteria",
       proposedResult: proposedCampaign,
       reason: result.reason,
       skipped: result.skipped,
@@ -232,11 +273,23 @@ export function evaluateLeadRow(row: LeadRow, index: RequisitionIndex): Shortlis
     };
   }
   if (!requisition) {
-    return { ...base, ...reqFields, proposedResult: 'unmapped', reason: null, skipped: [], closedReason: null, outreachEligible: false, changed: false, relink: false };
+    return {
+      ...base,
+      ...reqFields,
+      proposedResult: "unmapped",
+      reason: null,
+      skipped: [],
+      closedReason: null,
+      outreachEligible: false,
+      changed: false,
+      relink: false,
+    };
   }
 
   const result = screenAgainst(parsed, requisition);
-  const proposed: ProposedResult = result.qualified ? 'qualified' : 'disqualified';
+  const proposed: ProposedResult = result.qualified
+    ? "qualified"
+    : "disqualified";
   const closedReason = closedReasonFor(requisition);
   return {
     ...base,
@@ -247,7 +300,7 @@ export function evaluateLeadRow(row: LeadRow, index: RequisitionIndex): Shortlis
     closedReason,
     outreachEligible: result.qualified && !closedReason,
     changed: current !== proposed,
-    relink: source === 'routing_code' && row.requisition_id !== requisition.id,
+    relink: source === "routing_code" && row.requisition_id !== requisition.id,
   };
 }
 
@@ -261,7 +314,7 @@ export async function loadRequisitionIndex(): Promise<RequisitionIndex> {
             meta_target_age_min, meta_target_age_max, education_requirement,
             experience_min_years, experience_max_years, meta_screening_config,
             approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount
-       FROM job_requisition`
+       FROM job_requisition`,
   );
   const campaigns = await loadAllCampaignCriteria().catch(() => []);
   return indexRequisitions(
@@ -270,7 +323,7 @@ export async function loadRequisitionIndex(): Promise<RequisitionIndex> {
       let screeningConfig: MetaScreeningConfig | null = null;
       if (cfg) {
         try {
-          screeningConfig = typeof cfg === 'string' ? JSON.parse(cfg) : cfg;
+          screeningConfig = typeof cfg === "string" ? JSON.parse(cfg) : cfg;
         } catch {
           screeningConfig = null;
         }
@@ -294,17 +347,17 @@ export async function loadRequisitionIndex(): Promise<RequisitionIndex> {
         fulfilledHeadcount: asNumber(r.fulfilled_headcount),
       };
     }),
-    campaigns
+    campaigns,
   );
 }
 
 /** Evaluate every stored lead, keyset-paged so the raw payloads are never all in memory at once. */
 export async function evaluateAllLeads(
-  indexOverride?: RequisitionIndex
+  indexOverride?: RequisitionIndex,
 ): Promise<{ evaluations: ShortlistEvaluation[]; index: RequisitionIndex }> {
   const index = indexOverride ?? (await loadRequisitionIndex());
   const evaluations: ShortlistEvaluation[] = [];
-  let after = '';
+  let after = "";
   for (;;) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, meta_form_id, requisition_id, raw_payload, parsed_name, parsed_phone,
@@ -313,10 +366,11 @@ export async function evaluateAllLeads(
         WHERE id > ?
         ORDER BY id
         LIMIT ${PAGE}`,
-      [after]
+      [after],
     );
     if (!rows.length) break;
-    for (const r of rows) evaluations.push(evaluateLeadRow(r as unknown as LeadRow, index));
+    for (const r of rows)
+      evaluations.push(evaluateLeadRow(r as unknown as LeadRow, index));
     after = String(rows[rows.length - 1]!.id);
     if (rows.length < PAGE) break;
   }
@@ -326,10 +380,14 @@ export async function evaluateAllLeads(
 // ── Cache (the full pass reads every payload; the page asks several questions of it) ───────────
 
 const CACHE_TTL_MS = 60_000;
-let cache: { at: number; value: { evaluations: ShortlistEvaluation[]; index: RequisitionIndex } } | null = null;
+let cache: {
+  at: number;
+  value: { evaluations: ShortlistEvaluation[]; index: RequisitionIndex };
+} | null = null;
 
 export async function getEvaluations(force = false) {
-  if (!force && cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.value;
+  if (!force && cache && Date.now() - cache.at < CACHE_TTL_MS)
+    return cache.value;
   const value = await evaluateAllLeads();
   cache = { at: Date.now(), value };
   return value;
@@ -345,33 +403,44 @@ export interface ShortlistFilters {
   /** Restrict to one branch (used for branch-scoped callers; unmapped leads are then excluded). */
   branchName?: string;
   requisitionId?: string;
-  proposed?: ProposedResult | 'all';
-  current?: CurrentResult | 'all';
+  proposed?: ProposedResult | "all";
+  current?: CurrentResult | "all";
   changedOnly?: boolean;
   outreachEligibleOnly?: boolean;
   search?: string;
 }
 
-export function filterEvaluations(list: ShortlistEvaluation[], f: ShortlistFilters): ShortlistEvaluation[] {
+export function filterEvaluations(
+  list: ShortlistEvaluation[],
+  f: ShortlistFilters,
+): ShortlistEvaluation[] {
   const q = f.search?.trim().toLowerCase();
   return list.filter((e) => {
     if (f.branchName && e.branch !== f.branchName) return false;
     if (f.requisitionId && e.requisitionId !== f.requisitionId) return false;
-    if (f.proposed && f.proposed !== 'all' && e.proposedResult !== f.proposed) return false;
-    if (f.current && f.current !== 'all' && e.currentResult !== f.current) return false;
+    if (f.proposed && f.proposed !== "all" && e.proposedResult !== f.proposed)
+      return false;
+    if (f.current && f.current !== "all" && e.currentResult !== f.current)
+      return false;
     if (f.changedOnly && !e.changed) return false;
     if (f.outreachEligibleOnly && !e.outreachEligible) return false;
-    if (q && !`${e.name ?? ''} ${e.phone ?? ''}`.toLowerCase().includes(q)) return false;
+    if (q && !`${e.name ?? ""} ${e.phone ?? ""}`.toLowerCase().includes(q))
+      return false;
     return true;
   });
 }
 
-const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+const bump = (m: Map<string, number>, k: string) =>
+  m.set(k, (m.get(k) ?? 0) + 1);
 const top = (m: Map<string, number>, n: number) =>
-  [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([label, count]) => ({ label, count }));
+  [...m.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([label, count]) => ({ label, count }));
 
 /** Numbers vary per lead ("Age 16 below minimum 18"); group reasons by their shape. */
-const reasonKey = (reason: string) => reason.replace(/\d+(\.\d+)?/g, 'N').replace(/"[^"]*"/g, '"…"');
+const reasonKey = (reason: string) =>
+  reason.replace(/\d+(\.\d+)?/g, "N").replace(/"[^"]*"/g, '"…"');
 
 export interface ShortlistSummary {
   totalLeads: number;
@@ -395,7 +464,7 @@ export interface ShortlistSummary {
   /** Leads screened on campaign-level criteria or unmapped, grouped by campaign ("JR pending"). */
   byCampaign: Array<{
     campaignName: string;
-    criteria: 'campaign_criteria' | 'none';
+    criteria: "campaign_criteria" | "none";
     total: number;
     qualified: number;
     disqualified: number;
@@ -417,13 +486,25 @@ export interface ShortlistSummary {
   }>;
 }
 
-export function summarise(list: ShortlistEvaluation[], index: RequisitionIndex): ShortlistSummary {
-  const proposed: Record<ProposedResult, number> = { qualified: 0, disqualified: 0, unmapped: 0, no_data: 0 };
-  const current: Record<CurrentResult, number> = { pending: 0, qualified: 0, disqualified: 0 };
+export function summarise(
+  list: ShortlistEvaluation[],
+  index: RequisitionIndex,
+): ShortlistSummary {
+  const proposed: Record<ProposedResult, number> = {
+    qualified: 0,
+    disqualified: 0,
+    unmapped: 0,
+    no_data: 0,
+  };
+  const current: Record<CurrentResult, number> = {
+    pending: 0,
+    qualified: 0,
+    disqualified: 0,
+  };
   const reasons = new Map<string, number>();
   const skipped = new Map<string, number>();
-  const perReq = new Map<string, ShortlistSummary['byRequisition'][number]>();
-  const perCampaign = new Map<string, ShortlistSummary['byCampaign'][number]>();
+  const perReq = new Map<string, ShortlistSummary["byRequisition"][number]>();
+  const perCampaign = new Map<string, ShortlistSummary["byCampaign"][number]>();
   let wouldChange = 0;
   let newlyQualified = 0;
   let wouldRelink = 0;
@@ -438,25 +519,40 @@ export function summarise(list: ShortlistEvaluation[], index: RequisitionIndex):
     if (e.notified) alreadyNotified += 1;
     if (e.changed) {
       wouldChange += 1;
-      if (e.proposedResult === 'qualified') newlyQualified += 1;
-      if (e.proposedResult === 'disqualified' && e.currentResult === 'qualified') newlyDisqualified += 1;
+      if (e.proposedResult === "qualified") newlyQualified += 1;
+      if (
+        e.proposedResult === "disqualified" &&
+        e.currentResult === "qualified"
+      )
+        newlyDisqualified += 1;
     }
     if (e.relink) wouldRelink += 1;
     if (e.outreachEligible) outreachEligible += 1;
-    if (e.proposedResult === 'qualified' && e.closedReason) qualifiedButBatchClosed += 1;
+    if (e.proposedResult === "qualified" && e.closedReason)
+      qualifiedButBatchClosed += 1;
     if (e.reason) bump(reasons, reasonKey(e.reason));
     for (const s of e.skipped) bump(skipped, reasonKey(s));
 
     if (!e.requisitionId) {
-      const label = e.campaignName ?? 'Unknown campaign';
+      const label = e.campaignName ?? "Unknown campaign";
       let c = perCampaign.get(label);
       if (!c) {
-        c = { campaignName: label, criteria: e.mappingSource === 'campaign_criteria' ? 'campaign_criteria' : 'none', total: 0, qualified: 0, disqualified: 0, unscreened: 0 };
+        c = {
+          campaignName: label,
+          criteria:
+            e.mappingSource === "campaign_criteria"
+              ? "campaign_criteria"
+              : "none",
+          total: 0,
+          qualified: 0,
+          disqualified: 0,
+          unscreened: 0,
+        };
         perCampaign.set(label, c);
       }
       c.total += 1;
-      if (e.proposedResult === 'qualified') c.qualified += 1;
-      else if (e.proposedResult === 'disqualified') c.disqualified += 1;
+      if (e.proposedResult === "qualified") c.qualified += 1;
+      else if (e.proposedResult === "disqualified") c.disqualified += 1;
       else c.unscreened += 1;
     }
     if (e.requisitionId) {
@@ -480,8 +576,8 @@ export function summarise(list: ShortlistEvaluation[], index: RequisitionIndex):
         perReq.set(e.requisitionId, row);
       }
       row.total += 1;
-      if (e.proposedResult === 'qualified') row.qualified += 1;
-      if (e.proposedResult === 'disqualified') row.disqualified += 1;
+      if (e.proposedResult === "qualified") row.qualified += 1;
+      if (e.proposedResult === "disqualified") row.disqualified += 1;
       if (e.outreachEligible) row.outreachEligible += 1;
     }
   }
@@ -511,19 +607,26 @@ export async function getLeadShortlistDetail(leadId: string) {
     `SELECT id, meta_form_id, requisition_id, raw_payload, parsed_name, parsed_phone,
             screening_result, notification_sent_at, created_at
        FROM meta_lead_raw WHERE id = ? LIMIT 1`,
-    [leadId]
+    [leadId],
   );
   const row = rows[0];
   if (!row) return null;
   const evaluation = evaluateLeadRow(row as unknown as LeadRow, index);
   const detail = parseRawPayload(row.raw_payload);
   const parsed = detail ? parseLead(detail) : null;
-  const requisition = evaluation.requisitionId ? index.byId.get(evaluation.requisitionId) ?? null : null;
-  const campaign = row.meta_form_id ? index.campaignByForm.get(String(row.meta_form_id)) ?? null : null;
+  const requisition = evaluation.requisitionId
+    ? (index.byId.get(evaluation.requisitionId) ?? null)
+    : null;
+  const campaign = row.meta_form_id
+    ? (index.campaignByForm.get(String(row.meta_form_id)) ?? null)
+    : null;
   return {
     evaluation,
     requisition,
-    campaign: campaign && { name: campaign.campaignName, screeningConfig: campaign.screeningConfig },
+    campaign: campaign && {
+      name: campaign.campaignName,
+      screeningConfig: campaign.screeningConfig,
+    },
     lead: parsed && {
       age: parsed.age,
       education: parsed.education,
@@ -539,7 +642,7 @@ export async function getLeadShortlistDetail(leadId: string) {
 // ── CSV ───────────────────────────────────────────────────────────────────────────────────────
 
 const csvCell = (v: unknown): string => {
-  let s = v === null || v === undefined ? '' : String(v);
+  let s = v === null || v === undefined ? "" : String(v);
   // Neutralise spreadsheet formula injection from candidate-authored text.
   if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -547,17 +650,48 @@ const csvCell = (v: unknown): string => {
 
 export function toCsv(list: ShortlistEvaluation[]): string {
   const header = [
-    'Lead ID', 'Name', 'Phone', 'Campaign', 'Requisition', 'Designation', 'Branch', 'Process', 'Mapped via',
-    'Current result', 'Proposed result', 'Would change', 'Outreach eligible', 'Batch status',
-    'Disqualification reason', 'Not verified', 'Already notified', 'Applied on',
+    "Lead ID",
+    "Name",
+    "Phone",
+    "Campaign",
+    "Requisition",
+    "Designation",
+    "Branch",
+    "Process",
+    "Mapped via",
+    "Current result",
+    "Proposed result",
+    "Would change",
+    "Outreach eligible",
+    "Batch status",
+    "Disqualification reason",
+    "Not verified",
+    "Already notified",
+    "Applied on",
   ];
   const lines = list.map((e) =>
     [
-      e.leadId, e.name, e.phone, e.campaignName, e.requisitionCode, e.designation, e.branch, e.process, e.mappingSource,
-      e.currentResult, e.proposedResult, e.changed ? 'yes' : 'no', e.outreachEligible ? 'yes' : 'no',
-      e.closedReason ?? (e.requisitionId ? 'open' : ''), e.reason, e.skipped.join('; '),
-      e.notified ? 'yes' : 'no', e.createdAt,
-    ].map(csvCell).join(',')
+      e.leadId,
+      e.name,
+      e.phone,
+      e.campaignName,
+      e.requisitionCode,
+      e.designation,
+      e.branch,
+      e.process,
+      e.mappingSource,
+      e.currentResult,
+      e.proposedResult,
+      e.changed ? "yes" : "no",
+      e.outreachEligible ? "yes" : "no",
+      e.closedReason ?? (e.requisitionId ? "open" : ""),
+      e.reason,
+      e.skipped.join("; "),
+      e.notified ? "yes" : "no",
+      e.createdAt,
+    ]
+      .map(csvCell)
+      .join(","),
   );
-  return [header.map(csvCell).join(','), ...lines].join('\r\n');
+  return [header.map(csvCell).join(","), ...lines].join("\r\n");
 }

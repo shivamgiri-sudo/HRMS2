@@ -43,8 +43,10 @@ import sql from "mssql";
 import { db } from "../src/db/mysql.js";
 
 const APPLY = process.argv.includes("--apply");
-const FROM = process.argv.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? "2026-07-01";
-const TO = process.argv.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a))[1] ?? "2026-08-12";
+const FROM =
+  process.argv.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? "2026-07-01";
+const TO =
+  process.argv.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a))[1] ?? "2026-08-12";
 
 async function punchingUserIds(): Promise<string[]> {
   const pool = await sql.connect({
@@ -70,7 +72,10 @@ async function punchingUserIds(): Promise<string[]> {
   console.log(`window ${FROM} .. ${TO}   mode=${APPLY ? "APPLY" : "DRY RUN"}`);
   const punching = await punchingUserIds();
   console.log(`distinct device UserIDs punching in window: ${punching.length}`);
-  if (!punching.length) { await db.end(); return; }
+  if (!punching.length) {
+    await db.end();
+    return;
+  }
 
   const ph = punching.map(() => "?").join(", ");
   // LOWER() on the status deliberately: employment_status holds BOTH casings
@@ -90,18 +95,32 @@ async function punchingUserIds(): Promise<string[]> {
     punching,
   );
 
-  console.log(`\nactive employees punching with NO enrollment row: ${targets.length}`);
+  console.log(
+    `\nactive employees punching with NO enrollment row: ${targets.length}`,
+  );
   const byBranch: Record<string, number> = {};
-  for (const t of targets) byBranch[t.branch_name ?? "(none)"] = (byBranch[t.branch_name ?? "(none)"] ?? 0) + 1;
+  for (const t of targets)
+    byBranch[t.branch_name ?? "(none)"] =
+      (byBranch[t.branch_name ?? "(none)"] ?? 0) + 1;
   console.log("by branch:", JSON.stringify(byBranch));
-  console.table(targets.slice(0, 15).map((t) => ({
-    code: t.employee_code, name: String(t.full_name ?? "").trim(),
-    doj: t.date_of_joining, branch: t.branch_name,
-  })));
+  console.table(
+    targets.slice(0, 15).map((t) => ({
+      code: t.employee_code,
+      name: String(t.full_name ?? "").trim(),
+      doj: t.date_of_joining,
+      branch: t.branch_name,
+    })),
+  );
 
-  if (!targets.length) { console.log("nothing to do"); await db.end(); return; }
+  if (!targets.length) {
+    console.log("nothing to do");
+    await db.end();
+    return;
+  }
   if (!APPLY) {
-    console.log(`\nDRY RUN — nothing written. Re-run with --apply to enrol these ${targets.length}.`);
+    console.log(
+      `\nDRY RUN — nothing written. Re-run with --apply to enrol these ${targets.length}.`,
+    );
     await db.end();
     return;
   }
@@ -128,14 +147,20 @@ async function punchingUserIds(): Promise<string[]> {
              WHERE b.employee_id = e.id AND b.is_active = 1)`,
       punching,
     );
-    console.log(`\ninserted=${inserted} expected=${targets.length} stillUnenrolled=${left[0].n}`);
+    console.log(
+      `\ninserted=${inserted} expected=${targets.length} stillUnenrolled=${left[0].n}`,
+    );
     if (inserted === targets.length && Number(left[0].n) === 0) {
       await conn.commit();
       console.log("*** COMMITTED ***");
-      console.log("Next: npx tsx scripts/cosec-sync-backfill.ts <from> <to> to materialise their attendance.");
+      console.log(
+        "Next: npx tsx scripts/cosec-sync-backfill.ts <from> <to> to materialise their attendance.",
+      );
     } else {
       await conn.rollback();
-      console.log("*** ROLLED BACK — counts did not reconcile, nothing changed ***");
+      console.log(
+        "*** ROLLED BACK — counts did not reconcile, nothing changed ***",
+      );
     }
   } catch (e: any) {
     await conn.rollback();
@@ -146,6 +171,10 @@ async function punchingUserIds(): Promise<string[]> {
   await db.end();
 })().catch(async (e) => {
   console.error("ERR", e?.message ?? e);
-  try { await db.end(); } catch { /* ignore */ }
+  try {
+    await db.end();
+  } catch {
+    /* ignore */
+  }
   process.exit(1);
 });

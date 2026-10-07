@@ -41,7 +41,8 @@ vi.mock("../../../shared/financeApprovalEvent.js", () => ({
 }));
 
 const svc = await import("../payroll-cc-attendance.service.js");
-const { recordFinanceApprovalEvent } = await import("../../../shared/financeApprovalEvent.js");
+const { recordFinanceApprovalEvent } =
+  await import("../../../shared/financeApprovalEvent.js");
 
 const MONTH = "2026-08";
 const BRANCH = "branch-1";
@@ -90,7 +91,8 @@ function installMock(opts: {
     }
     if (s.includes("INSERT")) return [{ affectedRows: 1 }, []];
     if (s.includes("DELETE")) return [{ affectedRows: 0 }, []];
-    if (s.includes("FROM cost_centre_master")) return [[{ cost_centre_name: "CC One" }], []];
+    if (s.includes("FROM cost_centre_master"))
+      return [[{ cost_centre_name: "CC One" }], []];
     return [[], []];
   };
   execute.mockImplementation(impl);
@@ -104,7 +106,9 @@ beforeEach(() => {
 describe("stage order", () => {
   it("refuses HO approval on a packet the Branch Head has not approved", async () => {
     installMock({ finalizationRow: row({ status: "hr_finalized" }) });
-    await expect(svc.approve("ho", MONTH, BRANCH, CC, PAYROLL_HEAD)).rejects.toMatchObject({
+    await expect(
+      svc.approve("ho", MONTH, BRANCH, CC, PAYROLL_HEAD),
+    ).rejects.toMatchObject({
       status: 409,
       code: "CC_ATT_WRONG_STAGE",
     });
@@ -112,7 +116,9 @@ describe("stage order", () => {
 
   it("refuses Branch Head approval on a packet nobody has finalized", async () => {
     installMock({ finalizationRow: null });
-    await expect(svc.approve("branch", MONTH, BRANCH, CC, BRANCH_HEAD)).rejects.toMatchObject({
+    await expect(
+      svc.approve("branch", MONTH, BRANCH, CC, BRANCH_HEAD),
+    ).rejects.toMatchObject({
       status: 404,
       code: "CC_ATT_NOT_FOUND",
     });
@@ -126,7 +132,10 @@ describe("stage order", () => {
 
   it("accepts HO approval from branch_head_approved", async () => {
     installMock({
-      finalizationRow: row({ status: "branch_head_approved", branch_head_approved_by: BRANCH_HEAD.userId }),
+      finalizationRow: row({
+        status: "branch_head_approved",
+        branch_head_approved_by: BRANCH_HEAD.userId,
+      }),
     });
     const res = await svc.approve("ho", MONTH, BRANCH, CC, PAYROLL_HEAD);
     expect(res.status).toBe("ho_approved");
@@ -135,20 +144,33 @@ describe("stage order", () => {
 
 describe("maker-checker", () => {
   it("blocks the person who finalized from approving it as Branch Head", async () => {
-    installMock({ finalizationRow: row({ status: "hr_finalized", hr_finalized_by: "same-person" }) });
+    installMock({
+      finalizationRow: row({
+        status: "hr_finalized",
+        hr_finalized_by: "same-person",
+      }),
+    });
     await expect(
-      svc.approve("branch", MONTH, BRANCH, CC, { userId: "same-person", role: "branch_head" })
+      svc.approve("branch", MONTH, BRANCH, CC, {
+        userId: "same-person",
+        role: "branch_head",
+      }),
     ).rejects.toMatchObject({ status: 409, code: "CC_ATT_MAKER_CHECKER" });
   });
 
   it("blocks regardless of which role the JWT presents, when the user also holds payroll_hr", async () => {
-    installMock({ finalizationRow: row({ status: "hr_finalized", hr_finalized_by: "dual-hat" }) });
+    installMock({
+      finalizationRow: row({
+        status: "hr_finalized",
+        hr_finalized_by: "dual-hat",
+      }),
+    });
     await expect(
       svc.approve("branch", MONTH, BRANCH, CC, {
         userId: "dual-hat",
         role: "branch_head",
         roles: ["branch_head", "payroll_hr"],
-      })
+      }),
     ).rejects.toMatchObject({ code: "CC_ATT_MAKER_CHECKER" });
   });
 
@@ -161,12 +183,17 @@ describe("maker-checker", () => {
       }),
     });
     await expect(
-      svc.approve("ho", MONTH, BRANCH, CC, { userId: "both-hats", role: "payroll_head" })
+      svc.approve("ho", MONTH, BRANCH, CC, {
+        userId: "both-hats",
+        role: "payroll_head",
+      }),
     ).rejects.toMatchObject({ code: "CC_ATT_MAKER_CHECKER" });
   });
 
   it("exempts super_admin, the documented break-glass role", async () => {
-    installMock({ finalizationRow: row({ status: "hr_finalized", hr_finalized_by: "root" }) });
+    installMock({
+      finalizationRow: row({ status: "hr_finalized", hr_finalized_by: "root" }),
+    });
     const res = await svc.approve("branch", MONTH, BRANCH, CC, {
       userId: "root",
       role: "super_admin",
@@ -177,8 +204,13 @@ describe("maker-checker", () => {
 
 describe("concurrency", () => {
   it("refuses when the guarded UPDATE matches no row, rather than reporting success", async () => {
-    installMock({ finalizationRow: row({ status: "hr_finalized" }), updateAffected: 0 });
-    await expect(svc.approve("branch", MONTH, BRANCH, CC, BRANCH_HEAD)).rejects.toMatchObject({
+    installMock({
+      finalizationRow: row({ status: "hr_finalized" }),
+      updateAffected: 0,
+    });
+    await expect(
+      svc.approve("branch", MONTH, BRANCH, CC, BRANCH_HEAD),
+    ).rejects.toMatchObject({
       status: 409,
       code: "CC_ATT_STATE_CHANGED",
     });
@@ -189,7 +221,9 @@ describe("concurrency", () => {
 describe("send back", () => {
   it("requires a reason", async () => {
     installMock({ finalizationRow: row({ status: "hr_finalized" }) });
-    await expect(svc.sendBack("branch", MONTH, BRANCH, CC, BRANCH_HEAD, "   ")).rejects.toMatchObject({
+    await expect(
+      svc.sendBack("branch", MONTH, BRANCH, CC, BRANCH_HEAD, "   "),
+    ).rejects.toMatchObject({
       status: 400,
       code: "CC_ATT_REASON_REQUIRED",
     });
@@ -197,7 +231,14 @@ describe("send back", () => {
 
   it("returns the packet to unprocessed so it must be finalized again", async () => {
     installMock({ finalizationRow: row({ status: "hr_finalized" }) });
-    const res = await svc.sendBack("branch", MONTH, BRANCH, CC, BRANCH_HEAD, "Two regularizations still open");
+    const res = await svc.sendBack(
+      "branch",
+      MONTH,
+      BRANCH,
+      CC,
+      BRANCH_HEAD,
+      "Two regularizations still open",
+    );
     expect(res.status).toBe("unprocessed");
   });
 });
@@ -206,13 +247,15 @@ describe("unlock", () => {
   it("is only available once the HO has approved", async () => {
     installMock({ finalizationRow: row({ status: "branch_head_approved" }) });
     await expect(
-      svc.requestUnlock(MONTH, BRANCH, CC, "A late leave approval landed", HR)
+      svc.requestUnlock(MONTH, BRANCH, CC, "A late leave approval landed", HR),
     ).rejects.toMatchObject({ status: 409, code: "CC_ATT_NOT_APPROVED" });
   });
 
   it("refuses a reason too short to be an audit trail", async () => {
     installMock({ finalizationRow: row({ status: "ho_approved" }) });
-    await expect(svc.requestUnlock(MONTH, BRANCH, CC, "oops", HR)).rejects.toMatchObject({
+    await expect(
+      svc.requestUnlock(MONTH, BRANCH, CC, "oops", HR),
+    ).rejects.toMatchObject({
       status: 400,
       code: "CC_ATT_UNLOCK_REASON_REQUIRED",
     });
@@ -220,30 +263,56 @@ describe("unlock", () => {
 
   it("moves an approved packet to unlock_requested", async () => {
     installMock({ finalizationRow: row({ status: "ho_approved" }) });
-    const res = await svc.requestUnlock(MONTH, BRANCH, CC, "A late leave approval landed", HR);
+    const res = await svc.requestUnlock(
+      MONTH,
+      BRANCH,
+      CC,
+      "A late leave approval landed",
+      HR,
+    );
     expect(res.status).toBe("unlock_requested");
   });
 
   it("blocks the requester from reviewing their own unlock request", async () => {
     installMock({
       unlockRequestRow: {
-        id: "req-1", finalization_id: "fin-1", cycle_no: 1, status: "pending",
-        requested_by: "self", process_month: MONTH, branch_id: BRANCH, cost_centre_id: CC,
+        id: "req-1",
+        finalization_id: "fin-1",
+        cycle_no: 1,
+        status: "pending",
+        requested_by: "self",
+        process_month: MONTH,
+        branch_id: BRANCH,
+        cost_centre_id: CC,
       },
     });
     await expect(
-      svc.reviewUnlock("req-1", "approve", { userId: "self", role: "payroll_head" })
+      svc.reviewUnlock("req-1", "approve", {
+        userId: "self",
+        role: "payroll_head",
+      }),
     ).rejects.toMatchObject({ code: "CC_ATT_MAKER_CHECKER" });
   });
 
   it("granting an unlock reopens the packet at unprocessed and bumps the cycle", async () => {
     installMock({
       unlockRequestRow: {
-        id: "req-1", finalization_id: "fin-1", cycle_no: 1, status: "pending",
-        requested_by: HR.userId, process_month: MONTH, branch_id: BRANCH, cost_centre_id: CC,
+        id: "req-1",
+        finalization_id: "fin-1",
+        cycle_no: 1,
+        status: "pending",
+        requested_by: HR.userId,
+        process_month: MONTH,
+        branch_id: BRANCH,
+        cost_centre_id: CC,
       },
     });
-    const res = await svc.reviewUnlock("req-1", "approve", PAYROLL_HEAD, "Approved, correct and resubmit");
+    const res = await svc.reviewUnlock(
+      "req-1",
+      "approve",
+      PAYROLL_HEAD,
+      "Approved, correct and resubmit",
+    );
     expect(res.status).toBe("approved");
     expect(res.finalizationStatus).toBe("unprocessed");
     const sql = execute.mock.calls.map((c) => String(c[0])).join("\n");
@@ -255,19 +324,37 @@ describe("unlock", () => {
   it("refusing an unlock leaves the packet approved", async () => {
     installMock({
       unlockRequestRow: {
-        id: "req-1", finalization_id: "fin-1", cycle_no: 1, status: "pending",
-        requested_by: HR.userId, process_month: MONTH, branch_id: BRANCH, cost_centre_id: CC,
+        id: "req-1",
+        finalization_id: "fin-1",
+        cycle_no: 1,
+        status: "pending",
+        requested_by: HR.userId,
+        process_month: MONTH,
+        branch_id: BRANCH,
+        cost_centre_id: CC,
       },
     });
-    const res = await svc.reviewUnlock("req-1", "reject", PAYROLL_HEAD, "Raise it in next month's cycle");
+    const res = await svc.reviewUnlock(
+      "req-1",
+      "reject",
+      PAYROLL_HEAD,
+      "Raise it in next month's cycle",
+    );
     expect(res.finalizationStatus).toBe("ho_approved");
   });
 
   it("requires a reason to refuse", async () => {
     installMock({
-      unlockRequestRow: { id: "req-1", finalization_id: "fin-1", status: "pending", requested_by: HR.userId },
+      unlockRequestRow: {
+        id: "req-1",
+        finalization_id: "fin-1",
+        status: "pending",
+        requested_by: HR.userId,
+      },
     });
-    await expect(svc.reviewUnlock("req-1", "reject", PAYROLL_HEAD)).rejects.toMatchObject({
+    await expect(
+      svc.reviewUnlock("req-1", "reject", PAYROLL_HEAD),
+    ).rejects.toMatchObject({
       status: 400,
       code: "CC_ATT_REJECT_REASON_REQUIRED",
     });
@@ -275,9 +362,16 @@ describe("unlock", () => {
 
   it("refuses a request that has already been decided", async () => {
     installMock({
-      unlockRequestRow: { id: "req-1", finalization_id: "fin-1", status: "approved", requested_by: HR.userId },
+      unlockRequestRow: {
+        id: "req-1",
+        finalization_id: "fin-1",
+        status: "approved",
+        requested_by: HR.userId,
+      },
     });
-    await expect(svc.reviewUnlock("req-1", "approve", PAYROLL_HEAD)).rejects.toMatchObject({
+    await expect(
+      svc.reviewUnlock("req-1", "approve", PAYROLL_HEAD),
+    ).rejects.toMatchObject({
       code: "CC_ATT_UNLOCK_WRONG_STAGE",
     });
   });
@@ -294,7 +388,7 @@ describe("audit", () => {
         toStatus: "branch_head_approved",
         actorRole: "branch_head",
       }),
-      connection
+      connection,
     );
   });
 });
@@ -302,7 +396,9 @@ describe("audit", () => {
 describe("month handling", () => {
   it("rejects anything that is not YYYY-MM, since run_month is a VARCHAR and a bad value matches nothing", async () => {
     installMock({});
-    await expect(svc.approve("branch", "2026-08-01", BRANCH, CC, BRANCH_HEAD)).rejects.toMatchObject({
+    await expect(
+      svc.approve("branch", "2026-08-01", BRANCH, CC, BRANCH_HEAD),
+    ).rejects.toMatchObject({
       code: "CC_ATT_BAD_MONTH",
     });
   });

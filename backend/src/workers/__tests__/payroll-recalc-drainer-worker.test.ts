@@ -16,7 +16,10 @@ import { resolve } from "node:path";
  * a COSEC sync happened to visit the same month.
  */
 
-const { mockExecute, mockDrain } = vi.hoisted(() => ({ mockExecute: vi.fn(), mockDrain: vi.fn() }));
+const { mockExecute, mockDrain } = vi.hoisted(() => ({
+  mockExecute: vi.fn(),
+  mockDrain: vi.fn(),
+}));
 vi.mock("../../db/mysql.js", () => ({ db: { execute: mockExecute } }));
 vi.mock("../../modules/payroll/payroll-recalc-drainer.service.js", () => ({
   drainPayrollRecalcQueue: mockDrain,
@@ -26,14 +29,24 @@ vi.mock("../../lib/logger.js", () => ({
 }));
 // Run the body directly rather than under a real distributed lock.
 vi.mock("../worker-utils.js", () => ({
-  withWorkerLock: vi.fn(async (_name: string, fn: () => Promise<void>) => { await fn(); return true; }),
+  withWorkerLock: vi.fn(async (_name: string, fn: () => Promise<void>) => {
+    await fn();
+    return true;
+  }),
   registerTimer: vi.fn(),
   unregisterTimer: vi.fn(),
 }));
 
-const SOURCE = readFileSync(resolve(process.cwd(), "src/workers/payroll-recalc-drainer.worker.ts"), "utf8");
+const SOURCE = readFileSync(
+  resolve(process.cwd(), "src/workers/payroll-recalc-drainer.worker.ts"),
+  "utf8",
+);
 
-const drained = (processed = 0, failed = 0, skipped_locked = 0) => ({ processed, failed, skipped_locked });
+const drained = (processed = 0, failed = 0, skipped_locked = 0) => ({
+  processed,
+  failed,
+  skipped_locked,
+});
 
 /** The worker asks for months with pending work, then drains each. */
 function stubMonths(months: Array<{ month: string; pending: number }>) {
@@ -56,14 +69,17 @@ describe("the drainer keeps going until the month is actually empty", () => {
       .mockResolvedValueOnce(drained(112))
       .mockResolvedValue(drained(0));
 
-    const { startPayrollRecalcDrainerWorker } = await import("../payroll-recalc-drainer.worker.js");
+    const { startPayrollRecalcDrainerWorker } =
+      await import("../payroll-recalc-drainer.worker.js");
     expect(typeof startPayrollRecalcDrainerWorker).toBe("function");
 
     // Exercise the drain loop through the module's own tick by invoking the interval callback.
     vi.useFakeTimers();
     startPayrollRecalcDrainerWorker();
     await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
-    await vi.waitFor(() => expect(mockDrain.mock.calls.length).toBeGreaterThan(3));
+    await vi.waitFor(() =>
+      expect(mockDrain.mock.calls.length).toBeGreaterThan(3),
+    );
     vi.useRealTimers();
   });
 });
@@ -72,7 +88,9 @@ describe("properties the loop must hold, pinned at source", () => {
   it("stops on no progress, not on an empty read", () => {
     // Keying the loop on rows SEEN would spin forever against rows another drainer has claimed
     // between the SELECT and the UPDATE.
-    expect(SOURCE).toMatch(/const movedThisBatch = result\.processed \+ result\.failed \+ result\.skipped_locked/);
+    expect(SOURCE).toMatch(
+      /const movedThisBatch = result\.processed \+ result\.failed \+ result\.skipped_locked/,
+    );
     expect(SOURCE).toMatch(/if \(movedThisBatch === 0\) break/);
   });
 
@@ -91,7 +109,9 @@ describe("properties the loop must hold, pinned at source", () => {
 
   it("bounds how much payroll recalculation one tick can trigger", () => {
     expect(SOURCE).toMatch(/MAX_BATCHES_PER_MONTH/);
-    expect(SOURCE).toMatch(/while \(batches < MAX_BATCHES_PER_MONTH && moved < startingBacklog\)/);
+    expect(SOURCE).toMatch(
+      /while \(batches < MAX_BATCHES_PER_MONTH && moved < startingBacklog\)/,
+    );
   });
 
   it("says so when it hits the cap, so a capped drain is not read as a finished one", () => {
@@ -115,7 +135,10 @@ describe("properties the loop must hold, pinned at source", () => {
 describe("registered in both topologies", () => {
   // A worker in only one of server.ts / all-workers.ts silently never runs in the other.
   const server = readFileSync(resolve(process.cwd(), "src/server.ts"), "utf8");
-  const all = readFileSync(resolve(process.cwd(), "src/workers/all-workers.ts"), "utf8");
+  const all = readFileSync(
+    resolve(process.cwd(), "src/workers/all-workers.ts"),
+    "utf8",
+  );
 
   it("starts in server.ts", () => {
     expect(server).toMatch(/startPayrollRecalcDrainerWorker\(\)/);

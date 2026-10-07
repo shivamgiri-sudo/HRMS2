@@ -32,7 +32,9 @@ describe("computeEmployeeSnapshot", () => {
 
   it("marks unplanned_leave_flag true when attendance_status is missing_punch", async () => {
     mocks.execute
-      .mockResolvedValueOnce([[{ attendance_status: "missing_punch", late_by_minutes: 0 }]]) // attendance
+      .mockResolvedValueOnce([
+        [{ attendance_status: "missing_punch", late_by_minutes: 0 }],
+      ]) // attendance
       .mockResolvedValueOnce([[]]) // active pip
       .mockResolvedValueOnce([[{ overall_score: 82.5 }]]) // quality
       .mockResolvedValueOnce([[{ designation_id: "desig-1" }]]) // employee designation
@@ -47,7 +49,9 @@ describe("computeEmployeeSnapshot", () => {
 
   it("binds the snapshot date (not today) into the PIP-active query, for historical correctness", async () => {
     mocks.execute
-      .mockResolvedValueOnce([[{ attendance_status: "present", late_by_minutes: 0 }]]) // attendance
+      .mockResolvedValueOnce([
+        [{ attendance_status: "present", late_by_minutes: 0 }],
+      ]) // attendance
       .mockResolvedValueOnce([[{ status: "active", rating: "on_track" }]]) // active pip
       .mockResolvedValueOnce([[{ overall_score: 90 }]]) // quality
       .mockResolvedValueOnce([[{ designation_id: "desig-1" }]]) // employee designation
@@ -68,18 +72,24 @@ describe("computeEmployeeSnapshot", () => {
 
   it("populates real rollup metrics for an employee with direct reports", async () => {
     mocks.execute
-      .mockResolvedValueOnce([[{ attendance_status: "present", late_by_minutes: 0 }]]) // attendance
+      .mockResolvedValueOnce([
+        [{ attendance_status: "present", late_by_minutes: 0 }],
+      ]) // attendance
       .mockResolvedValueOnce([[]]) // active pip
       .mockResolvedValueOnce([[{ overall_score: 90 }]]) // quality
       .mockResolvedValueOnce([[{ designation_id: "desig-1" }]]) // designation
       .mockResolvedValueOnce([[{ has_reports: 1 }]]) // manager-tier check
       .mockResolvedValueOnce([[{ id: "report-1" }, { id: "report-2" }]]) // direct report ids
-      .mockResolvedValueOnce([[{ process_id: "proc-1", branch_id: "branch-1" }]]); // manager's own scope
+      .mockResolvedValueOnce([
+        [{ process_id: "proc-1", branch_id: "branch-1" }],
+      ]); // manager's own scope
 
     mockListSnapshots.mockResolvedValueOnce([{ total_shrinkage_pct: 12.5 }]);
     mockGetDashboardSummary.mockResolvedValueOnce({ attrition_rate: 8.2 });
     mockGetStatement.mockResolvedValueOnce({
-      rows: [{ componentKey: "recognized_revenue", values: { "proc-1": 500000 } }],
+      rows: [
+        { componentKey: "recognized_revenue", values: { "proc-1": 500000 } },
+      ],
     });
 
     const result = await computeEmployeeSnapshot("mgr-1", "2026-08-24");
@@ -91,7 +101,9 @@ describe("computeEmployeeSnapshot", () => {
 
   it("skips all 3 rollup calls and leaves metrics null when the manager has neither process_id nor branch_id", async () => {
     mocks.execute
-      .mockResolvedValueOnce([[{ attendance_status: "present", late_by_minutes: 0 }]]) // attendance
+      .mockResolvedValueOnce([
+        [{ attendance_status: "present", late_by_minutes: 0 }],
+      ]) // attendance
       .mockResolvedValueOnce([[]]) // active pip
       .mockResolvedValueOnce([[{ overall_score: 90 }]]) // quality
       .mockResolvedValueOnce([[{ designation_id: "desig-1" }]]) // designation
@@ -111,7 +123,9 @@ describe("computeEmployeeSnapshot", () => {
 
   it("leaves rollup metrics null for an individual contributor with no direct reports", async () => {
     mocks.execute
-      .mockResolvedValueOnce([[{ attendance_status: "present", late_by_minutes: 0 }]])
+      .mockResolvedValueOnce([
+        [{ attendance_status: "present", late_by_minutes: 0 }],
+      ])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[{ overall_score: 90 }]])
       .mockResolvedValueOnce([[{ designation_id: "desig-2" }]])
@@ -127,13 +141,17 @@ describe("computeEmployeeSnapshot", () => {
 
   it("degrades a single rollup metric to null on that service's own failure, without affecting the others", async () => {
     mocks.execute
-      .mockResolvedValueOnce([[{ attendance_status: "present", late_by_minutes: 0 }]])
+      .mockResolvedValueOnce([
+        [{ attendance_status: "present", late_by_minutes: 0 }],
+      ])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[{ overall_score: 90 }]])
       .mockResolvedValueOnce([[{ designation_id: "desig-1" }]])
       .mockResolvedValueOnce([[{ has_reports: 1 }]])
       .mockResolvedValueOnce([[{ id: "report-1" }]])
-      .mockResolvedValueOnce([[{ process_id: "proc-1", branch_id: "branch-1" }]]);
+      .mockResolvedValueOnce([
+        [{ process_id: "proc-1", branch_id: "branch-1" }],
+      ]);
 
     mockListSnapshots.mockRejectedValueOnce(new Error("db down"));
     mockGetDashboardSummary.mockResolvedValueOnce({ attrition_rate: 5.0 });
@@ -142,8 +160,8 @@ describe("computeEmployeeSnapshot", () => {
     const result = await computeEmployeeSnapshot("mgr-2", "2026-08-24");
 
     expect(result.teamShrinkagePct).toBeNull(); // service threw
-    expect(result.teamAttritionPct).toBe(5.0);   // succeeded
-    expect(result.teamRevenue).toBeNull();       // no matching row, not an error
+    expect(result.teamAttritionPct).toBe(5.0); // succeeded
+    expect(result.teamRevenue).toBeNull(); // no matching row, not an error
   });
 });
 
@@ -157,7 +175,9 @@ describe("writeEmployeePerformanceSnapshots", () => {
       // emp-fail: computeEmployeeSnapshot's first query throws
       .mockRejectedValueOnce(new Error("connection reset"))
       // emp-ok: computeEmployeeSnapshot's 4 queries succeed
-      .mockResolvedValueOnce([[{ attendance_status: "present", late_by_minutes: 0 }]]) // attendance
+      .mockResolvedValueOnce([
+        [{ attendance_status: "present", late_by_minutes: 0 }],
+      ]) // attendance
       .mockResolvedValueOnce([[]]) // active pip
       .mockResolvedValueOnce([[{ overall_score: 90 }]]) // quality
       .mockResolvedValueOnce([[{ designation_id: "desig-2" }]]) // employee designation

@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type ExecuteCall = [string, unknown[]?];
 
-const { dbExecute, aprExecute, qualityExecute, outboundExecute, salesBrandExecute, getPoolForKey } = vi.hoisted(() => {
+const {
+  dbExecute,
+  aprExecute,
+  qualityExecute,
+  outboundExecute,
+  salesBrandExecute,
+  getPoolForKey,
+} = vi.hoisted(() => {
   const dbExecute = vi.fn();
   const aprExecute = vi.fn();
   const qualityExecute = vi.fn();
@@ -44,53 +51,121 @@ import {
 function setupTargetDb(options: { lineageColumns?: boolean } = {}) {
   dbExecute.mockImplementation(async (sql: string, params?: unknown[]) => {
     if (sql.includes("INFORMATION_SCHEMA.COLUMNS")) {
-      return [[
-        { COLUMN_NAME: "numerator_value" },
-        { COLUMN_NAME: "denominator_value" },
-        { COLUMN_NAME: "source_system" },
-        { COLUMN_NAME: "source_record_count" },
-        { COLUMN_NAME: "formula_version_id" },
-        { COLUMN_NAME: "integration_run_id" },
-        { COLUMN_NAME: "computed_at" },
-      ].filter(() => options.lineageColumns !== false), []];
+      return [
+        [
+          { COLUMN_NAME: "numerator_value" },
+          { COLUMN_NAME: "denominator_value" },
+          { COLUMN_NAME: "source_system" },
+          { COLUMN_NAME: "source_record_count" },
+          { COLUMN_NAME: "formula_version_id" },
+          { COLUMN_NAME: "integration_run_id" },
+          { COLUMN_NAME: "computed_at" },
+        ].filter(() => options.lineageColumns !== false),
+        [],
+      ];
     }
     if (sql.includes("FROM kpi_metric_master")) {
-      return [[
-        { id: "metric-aht", metric_code: "AHT" },
-        { id: "metric-talk", metric_code: "TALK_TIME" },
-        { id: "metric-dials", metric_code: "DIALS" },
-        { id: "metric-acw", metric_code: "ACW" },
-        { id: "metric-quality", metric_code: "QUALITY_SCORE" },
-        { id: "metric-fatal", metric_code: "FATAL_RATE" },
-        { id: "metric-conversion", metric_code: "CONVERSION_RATE" },
-        { id: "metric-sales", metric_code: "SALES_COUNT" },
-        { id: "metric-revenue", metric_code: "REVENUE" },
-        { id: "metric-aov", metric_code: "AOV" },
-        { id: "metric-cod", metric_code: "COD_SHARE" },
-        { id: "metric-rto", metric_code: "RTO_RATE" },
-      ], []];
+      return [
+        [
+          { id: "metric-aht", metric_code: "AHT" },
+          { id: "metric-talk", metric_code: "TALK_TIME" },
+          { id: "metric-dials", metric_code: "DIALS" },
+          { id: "metric-acw", metric_code: "ACW" },
+          { id: "metric-quality", metric_code: "QUALITY_SCORE" },
+          { id: "metric-fatal", metric_code: "FATAL_RATE" },
+          { id: "metric-conversion", metric_code: "CONVERSION_RATE" },
+          { id: "metric-sales", metric_code: "SALES_COUNT" },
+          { id: "metric-revenue", metric_code: "REVENUE" },
+          { id: "metric-aov", metric_code: "AOV" },
+          { id: "metric-cod", metric_code: "COD_SHARE" },
+          { id: "metric-rto", metric_code: "RTO_RATE" },
+        ],
+        [],
+      ];
     }
     if (sql.includes("FROM kpi_formula_version")) {
-      return [[
-        { id: "formula-aht", metric_code: "AHT", formula_code: "AHT_WEIGHTED" },
-        { id: "formula-talk", metric_code: "TALK_TIME", formula_code: "TALK_TIME_WEIGHTED" },
-        { id: "formula-dials", metric_code: "DIALS", formula_code: "CALLS_TOTAL" },
-        { id: "formula-acw", metric_code: "ACW", formula_code: "ACW_WEIGHTED" },
-        { id: "formula-quality", metric_code: "QUALITY_SCORE", formula_code: "QUALITY_WEIGHTED" },
-        { id: "formula-fatal", metric_code: "FATAL_RATE", formula_code: "FATAL_RATE" },
-        { id: "formula-conversion", metric_code: "CONVERSION_RATE", formula_code: "CONVERSION_RATE" },
-        { id: "formula-sales", metric_code: "SALES_COUNT", formula_code: "SALES_TOTAL" },
-        { id: "formula-revenue", metric_code: "REVENUE", formula_code: "REVENUE_TOTAL" },
-        { id: "formula-aov", metric_code: "AOV", formula_code: "AOV_WEIGHTED" },
-        { id: "formula-cod", metric_code: "COD_SHARE", formula_code: "COD_SHARE" },
-        { id: "formula-rto", metric_code: "RTO_RATE", formula_code: "RTO_RATE" },
-      ], []];
+      return [
+        [
+          {
+            id: "formula-aht",
+            metric_code: "AHT",
+            formula_code: "AHT_WEIGHTED",
+          },
+          {
+            id: "formula-talk",
+            metric_code: "TALK_TIME",
+            formula_code: "TALK_TIME_WEIGHTED",
+          },
+          {
+            id: "formula-dials",
+            metric_code: "DIALS",
+            formula_code: "CALLS_TOTAL",
+          },
+          {
+            id: "formula-acw",
+            metric_code: "ACW",
+            formula_code: "ACW_WEIGHTED",
+          },
+          {
+            id: "formula-quality",
+            metric_code: "QUALITY_SCORE",
+            formula_code: "QUALITY_WEIGHTED",
+          },
+          {
+            id: "formula-fatal",
+            metric_code: "FATAL_RATE",
+            formula_code: "FATAL_RATE",
+          },
+          {
+            id: "formula-conversion",
+            metric_code: "CONVERSION_RATE",
+            formula_code: "CONVERSION_RATE",
+          },
+          {
+            id: "formula-sales",
+            metric_code: "SALES_COUNT",
+            formula_code: "SALES_TOTAL",
+          },
+          {
+            id: "formula-revenue",
+            metric_code: "REVENUE",
+            formula_code: "REVENUE_TOTAL",
+          },
+          {
+            id: "formula-aov",
+            metric_code: "AOV",
+            formula_code: "AOV_WEIGHTED",
+          },
+          {
+            id: "formula-cod",
+            metric_code: "COD_SHARE",
+            formula_code: "COD_SHARE",
+          },
+          {
+            id: "formula-rto",
+            metric_code: "RTO_RATE",
+            formula_code: "RTO_RATE",
+          },
+        ],
+        [],
+      ];
     }
     if (sql.includes("FROM employees")) {
-      return [[
-        { id: "emp-1001", employee_code: "MAS1001", biometric_code: "BIO1001" },
-        { id: "emp-1002", employee_code: "MAS1002", biometric_code: "BIO1002" },
-      ], []];
+      return [
+        [
+          {
+            id: "emp-1001",
+            employee_code: "MAS1001",
+            biometric_code: "BIO1001",
+          },
+          {
+            id: "emp-1002",
+            employee_code: "MAS1002",
+            biometric_code: "BIO1002",
+          },
+        ],
+        [],
+      ];
     }
     if (sql.includes("INSERT INTO kpi_daily_actual")) {
       return [{ affectedRows: 1 }, []];
@@ -100,7 +175,9 @@ function setupTargetDb(options: { lineageColumns?: boolean } = {}) {
 }
 
 function insertedFacts(): ExecuteCall[] {
-  return dbExecute.mock.calls.filter(([sql]: ExecuteCall) => sql.includes("INSERT INTO kpi_daily_actual"));
+  return dbExecute.mock.calls.filter(([sql]: ExecuteCall) =>
+    sql.includes("INSERT INTO kpi_daily_actual"),
+  );
 }
 
 function mockAprPhysicalTables(rows: Array<Record<string, unknown>>) {
@@ -124,29 +201,32 @@ describe("kpi data source connector", () => {
   it("syncs APR from live dialer columns with weighted AHT and biometric fallback", async () => {
     aprExecute.mockImplementation(async (sql: string) => {
       if (!sql.includes("vicidial_agent_log_10_25")) return [[], []];
-      return [[
-        {
-          agent_user: "MAS1001",
-          total_talk: 600,
-          total_dispo: 120,
-          total_calls: 12,
-          source_records: 2,
-        },
-        {
-          agent_user: "BIO1002",
-          total_talk: 300,
-          total_dispo: 60,
-          total_calls: 6,
-          source_records: 1,
-        },
-        {
-          agent_user: "UNKNOWN",
-          total_talk: 90,
-          total_dispo: 10,
-          total_calls: 1,
-          source_records: 1,
-        },
-      ], []];
+      return [
+        [
+          {
+            agent_user: "MAS1001",
+            total_talk: 600,
+            total_dispo: 120,
+            total_calls: 12,
+            source_records: 2,
+          },
+          {
+            agent_user: "BIO1002",
+            total_talk: 300,
+            total_dispo: 60,
+            total_calls: 6,
+            source_records: 1,
+          },
+          {
+            agent_user: "UNKNOWN",
+            total_talk: 90,
+            total_dispo: 10,
+            total_calls: 1,
+            source_records: 1,
+          },
+        ],
+        [],
+      ];
     });
 
     const result = await syncAprMetrics("2026-07-17");
@@ -166,12 +246,23 @@ describe("kpi data source connector", () => {
   it("syncs APR facts from healthy dialer tables and reports a failed table", async () => {
     aprExecute.mockImplementation(async (sql: string) => {
       if (sql.includes("vicidial_agent_log_11_5")) {
-        throw new Error("Query execution was interrupted, maximum statement execution time exceeded");
+        throw new Error(
+          "Query execution was interrupted, maximum statement execution time exceeded",
+        );
       }
       if (sql.includes("vicidial_agent_log_10_25")) {
-        return [[
-          { agent_user: "MAS1001", total_talk: 600, total_dispo: 120, total_calls: 12, source_records: 2 },
-        ], []];
+        return [
+          [
+            {
+              agent_user: "MAS1001",
+              total_talk: 600,
+              total_dispo: 120,
+              total_calls: 12,
+              source_records: 2,
+            },
+          ],
+          [],
+        ];
       }
       return [[], []];
     });
@@ -184,22 +275,25 @@ describe("kpi data source connector", () => {
   });
 
   it("syncs quality using weighted score and Mydashboards fatal definition", async () => {
-    qualityExecute.mockResolvedValueOnce([[
-      {
-        agent_user: "MAS1001",
-        points_earned: 180,
-        points_possible: 200,
-        fatal_audits: 1,
-        // All four audits were scored here, so the fatal rate stays 1/4 = 25%
-        // and this case is unchanged. The query now also selects scored_audits
-        // because unscored audits must not sit in the denominator — 21% of
-        // July's real audits carry quality_percentage NULL, and counting them
-        // reported 0% fatal for work nobody assessed.
-        scored_audits: 4,
-        total_audits: 4,
-        last_audit_date: "2026-07-18",
-      },
-    ], []]);
+    qualityExecute.mockResolvedValueOnce([
+      [
+        {
+          agent_user: "MAS1001",
+          points_earned: 180,
+          points_possible: 200,
+          fatal_audits: 1,
+          // All four audits were scored here, so the fatal rate stays 1/4 = 25%
+          // and this case is unchanged. The query now also selects scored_audits
+          // because unscored audits must not sit in the denominator — 21% of
+          // July's real audits carry quality_percentage NULL, and counting them
+          // reported 0% fatal for work nobody assessed.
+          scored_audits: 4,
+          total_audits: 4,
+          last_audit_date: "2026-07-18",
+        },
+      ],
+      [],
+    ]);
 
     const result = await syncQualityMetrics("2026-07");
 
@@ -211,14 +305,17 @@ describe("kpi data source connector", () => {
   });
 
   it("syncs outbound conversion from SaleDone without requiring sales schema access", async () => {
-    outboundExecute.mockResolvedValueOnce([[
-      {
-        agent_user: "MAS1001",
-        converted_sales: 3,
-        eligible_contacts: 12,
-        source_records: 12,
-      },
-    ], []]);
+    outboundExecute.mockResolvedValueOnce([
+      [
+        {
+          agent_user: "MAS1001",
+          converted_sales: 3,
+          eligible_contacts: 12,
+          source_records: 12,
+        },
+      ],
+      [],
+    ]);
 
     const result = await syncConversionMetrics("2026-07-18");
 
@@ -230,14 +327,17 @@ describe("kpi data source connector", () => {
 
   it("falls back to legacy kpi_daily_actual columns before migration 504 is applied", async () => {
     setupTargetDb({ lineageColumns: false });
-    outboundExecute.mockResolvedValueOnce([[
-      {
-        agent_user: "MAS1001",
-        converted_sales: 2,
-        eligible_contacts: 4,
-        source_records: 4,
-      },
-    ], []]);
+    outboundExecute.mockResolvedValueOnce([
+      [
+        {
+          agent_user: "MAS1001",
+          converted_sales: 2,
+          eligible_contacts: 4,
+          source_records: 4,
+        },
+      ],
+      [],
+    ]);
 
     await syncConversionMetrics("2026-07-18");
 
@@ -247,7 +347,9 @@ describe("kpi data source connector", () => {
   });
 
   it("reports missing source connector configuration instead of hiding failures", async () => {
-    getPoolForKey.mockRejectedValueOnce(new Error("No credentials configured for integration: outbound_calls"));
+    getPoolForKey.mockRejectedValueOnce(
+      new Error("No credentials configured for integration: outbound_calls"),
+    );
 
     const result = await syncConversionMetrics("2026-07-18");
 
@@ -257,54 +359,64 @@ describe("kpi data source connector", () => {
     ]);
   });
   it("syncs brand MIS APR rows from existing Bellavita, GNC and Neemans tables", async () => {
-    salesBrandExecute.mockResolvedValueOnce([[
-      {
-        agent_user: "MAS1001",
-        total_calls: 20,
-        total_aht: 600,
-        total_talk: 400,
-        total_dispo: 100,
-        source_records: 2,
-      },
-      {
-        agent_user: "UNKNOWN",
-        total_calls: 5,
-        total_aht: 100,
-        total_talk: 40,
-        total_dispo: 10,
-        source_records: 1,
-      },
-    ], []]);
+    salesBrandExecute.mockResolvedValueOnce([
+      [
+        {
+          agent_user: "MAS1001",
+          total_calls: 20,
+          total_aht: 600,
+          total_talk: 400,
+          total_dispo: 100,
+          source_records: 2,
+        },
+        {
+          agent_user: "UNKNOWN",
+          total_calls: 5,
+          total_aht: 100,
+          total_talk: 40,
+          total_dispo: 10,
+          source_records: 1,
+        },
+      ],
+      [],
+    ]);
 
     const result = await syncSalesBrandMisMetrics("2026-07-18");
 
     expect(result).toMatchObject({ synced: 1, skipped: 1, errors: [] });
     expect(salesBrandExecute.mock.calls[0][0]).toContain("db_masmis.bb_apr");
     expect(salesBrandExecute.mock.calls[0][0]).toContain("db_masmis.gnc_apr");
-    expect(salesBrandExecute.mock.calls[0][0]).toContain("db_masmis.neemans_apr");
+    expect(salesBrandExecute.mock.calls[0][0]).toContain(
+      "db_masmis.neemans_apr",
+    );
     const values = insertedFacts().map(([, params]) => params?.[3]);
     expect(values).toContain(20);
     expect(values).toContain(30);
     expect(values).toContain(5);
   });
   it("syncs rich sales order facts from Bellavita, GNC and Neemans sales tables", async () => {
-    salesBrandExecute.mockResolvedValueOnce([[
-      {
-        agent_user: "MAS1001",
-        converted_sales: 4,
-        revenue: 2400,
-        cod_orders: 1,
-        rto_orders: 1,
-        source_records: 4,
-      },
-    ], []]);
+    salesBrandExecute.mockResolvedValueOnce([
+      [
+        {
+          agent_user: "MAS1001",
+          converted_sales: 4,
+          revenue: 2400,
+          cod_orders: 1,
+          rto_orders: 1,
+          source_records: 4,
+        },
+      ],
+      [],
+    ]);
 
     const result = await syncSalesOrderMetrics("2026-07-18");
 
     expect(result).toMatchObject({ synced: 1, skipped: 0, errors: [] });
     expect(salesBrandExecute.mock.calls[0][0]).toContain("db_masmis.bb_sale");
     expect(salesBrandExecute.mock.calls[0][0]).toContain("db_masmis.gnc_sale");
-    expect(salesBrandExecute.mock.calls[0][0]).toContain("db_masmis.neemans_sale_raw");
+    expect(salesBrandExecute.mock.calls[0][0]).toContain(
+      "db_masmis.neemans_sale_raw",
+    );
     const values = insertedFacts().map(([, params]) => params?.[3]);
     expect(values).toContain(4);
     expect(values).toContain(2400);
@@ -328,44 +440,57 @@ describe("kpi daily actual scope attribution", () => {
       .slice(sql.indexOf("(") + 1, sql.indexOf(")"))
       .split(",")
       .map((column) => column.trim());
-    return Object.fromEntries(columns.map((column, index) => [column, (params as unknown[])[index]]));
+    return Object.fromEntries(
+      columns.map((column, index) => [column, (params as unknown[])[index]]),
+    );
   }
 
   function setupWithScope(employees: Array<Record<string, unknown>>) {
     dbExecute.mockImplementation(async (sql: string) => {
       if (sql.includes("INFORMATION_SCHEMA.COLUMNS")) {
-        return [[
-          { COLUMN_NAME: "numerator_value" },
-          { COLUMN_NAME: "denominator_value" },
-          { COLUMN_NAME: "source_system" },
-          { COLUMN_NAME: "source_record_count" },
-          { COLUMN_NAME: "formula_version_id" },
-          { COLUMN_NAME: "integration_run_id" },
-          { COLUMN_NAME: "computed_at" },
-          { COLUMN_NAME: "process_id_at_event" },
-          { COLUMN_NAME: "branch_id_at_event" },
-        ], []];
+        return [
+          [
+            { COLUMN_NAME: "numerator_value" },
+            { COLUMN_NAME: "denominator_value" },
+            { COLUMN_NAME: "source_system" },
+            { COLUMN_NAME: "source_record_count" },
+            { COLUMN_NAME: "formula_version_id" },
+            { COLUMN_NAME: "integration_run_id" },
+            { COLUMN_NAME: "computed_at" },
+            { COLUMN_NAME: "process_id_at_event" },
+            { COLUMN_NAME: "branch_id_at_event" },
+          ],
+          [],
+        ];
       }
       if (sql.includes("FROM kpi_metric_master")) {
-        return [[
-          { id: "metric-talk", metric_code: "TALK_TIME" },
-          { id: "metric-dials", metric_code: "DIALS" },
-          { id: "metric-aht", metric_code: "AHT" },
-          { id: "metric-acw", metric_code: "ACW" },
-        ], []];
+        return [
+          [
+            { id: "metric-talk", metric_code: "TALK_TIME" },
+            { id: "metric-dials", metric_code: "DIALS" },
+            { id: "metric-aht", metric_code: "AHT" },
+            { id: "metric-acw", metric_code: "ACW" },
+          ],
+          [],
+        ];
       }
       if (sql.includes("FROM kpi_formula_version")) return [[], []];
       // The scope lookup and the identifier lookup both read employees; they are told apart
       // by the columns they ask for, not by the table.
-      if (sql.includes("process_id") && sql.includes("FROM employees")) return [employees, []];
+      if (sql.includes("process_id") && sql.includes("FROM employees"))
+        return [employees, []];
       if (sql.includes("FROM employees")) {
-        return [employees.map((employee) => ({
-          id: employee.id,
-          employee_code: employee.employee_code,
-          biometric_code: employee.biometric_code,
-        })), []];
+        return [
+          employees.map((employee) => ({
+            id: employee.id,
+            employee_code: employee.employee_code,
+            biometric_code: employee.biometric_code,
+          })),
+          [],
+        ];
       }
-      if (sql.includes("INSERT INTO kpi_daily_actual")) return [{ affectedRows: 1 }, []];
+      if (sql.includes("INSERT INTO kpi_daily_actual"))
+        return [{ affectedRows: 1 }, []];
       return [[], []];
     });
   }
@@ -380,10 +505,22 @@ describe("kpi daily actual scope attribution", () => {
 
   it("stamps the employee's process and branch onto every fact it writes", async () => {
     setupWithScope([
-      { id: "emp-1001", employee_code: "MAS1001", biometric_code: "BIO1001", process_id: "proc-cs", branch_id: "branch-noida" },
+      {
+        id: "emp-1001",
+        employee_code: "MAS1001",
+        biometric_code: "BIO1001",
+        process_id: "proc-cs",
+        branch_id: "branch-noida",
+      },
     ]);
     mockAprPhysicalTables([
-      { agent_user: "MAS1001", total_talk: 600, total_dispo: 120, total_calls: 12, source_records: 2 },
+      {
+        agent_user: "MAS1001",
+        total_talk: 600,
+        total_dispo: 120,
+        total_calls: 12,
+        source_records: 2,
+      },
     ]);
 
     await syncAprMetrics("2026-07-31");
@@ -399,10 +536,22 @@ describe("kpi daily actual scope attribution", () => {
 
   it("writes NULL scope rather than failing when the employee has no process or branch", async () => {
     setupWithScope([
-      { id: "emp-1002", employee_code: "MAS1002", biometric_code: "BIO1002", process_id: null, branch_id: null },
+      {
+        id: "emp-1002",
+        employee_code: "MAS1002",
+        biometric_code: "BIO1002",
+        process_id: null,
+        branch_id: null,
+      },
     ]);
     mockAprPhysicalTables([
-      { agent_user: "MAS1002", total_talk: 300, total_dispo: 60, total_calls: 6, source_records: 1 },
+      {
+        agent_user: "MAS1002",
+        total_talk: 300,
+        total_dispo: 60,
+        total_calls: 6,
+        source_records: 1,
+      },
     ]);
 
     const result = await syncAprMetrics("2026-07-31");
@@ -417,17 +566,35 @@ describe("kpi daily actual scope attribution", () => {
     // Guards the maybeAdd gating: an older database must not get an INSERT naming columns it
     // does not have.
     dbExecute.mockImplementation(async (sql: string) => {
-      if (sql.includes("INFORMATION_SCHEMA.COLUMNS")) return [[{ COLUMN_NAME: "numerator_value" }], []];
-      if (sql.includes("FROM kpi_metric_master")) return [[{ id: "metric-dials", metric_code: "DIALS" }], []];
+      if (sql.includes("INFORMATION_SCHEMA.COLUMNS"))
+        return [[{ COLUMN_NAME: "numerator_value" }], []];
+      if (sql.includes("FROM kpi_metric_master"))
+        return [[{ id: "metric-dials", metric_code: "DIALS" }], []];
       if (sql.includes("FROM kpi_formula_version")) return [[], []];
       if (sql.includes("FROM employees")) {
-        return [[{ id: "emp-1001", employee_code: "MAS1001", biometric_code: "BIO1001" }], []];
+        return [
+          [
+            {
+              id: "emp-1001",
+              employee_code: "MAS1001",
+              biometric_code: "BIO1001",
+            },
+          ],
+          [],
+        ];
       }
-      if (sql.includes("INSERT INTO kpi_daily_actual")) return [{ affectedRows: 1 }, []];
+      if (sql.includes("INSERT INTO kpi_daily_actual"))
+        return [{ affectedRows: 1 }, []];
       return [[], []];
     });
     mockAprPhysicalTables([
-      { agent_user: "MAS1001", total_talk: 600, total_dispo: 120, total_calls: 12, source_records: 2 },
+      {
+        agent_user: "MAS1001",
+        total_talk: 600,
+        total_dispo: 120,
+        total_calls: 12,
+        source_records: 2,
+      },
     ]);
 
     await syncAprMetrics("2026-07-31");

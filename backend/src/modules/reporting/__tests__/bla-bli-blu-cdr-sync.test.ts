@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildDailySql, formatReportDate } from "../bla-bli-blu-cdr-sync.service.js";
+import {
+  buildDailySql,
+  formatReportDate,
+} from "../bla-bli-blu-cdr-sync.service.js";
 
 /**
  * These tests do NOT hit dialer_db directly (a live connection to it was

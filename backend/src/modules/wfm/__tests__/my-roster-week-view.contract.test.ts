@@ -27,7 +27,10 @@ import { describe, expect, it } from "vitest";
 const SRC = readFileSync(resolve(__dirname, "../wfm.routes.ts"), "utf8");
 
 describe("GET /my-roster/weeks reads by date range, not cycle_id", () => {
-  const block = SRC.slice(SRC.indexOf('"/my-roster/weeks"'), SRC.indexOf('"/my-roster/week/:weekStart"'));
+  const block = SRC.slice(
+    SRC.indexOf('"/my-roster/weeks"'),
+    SRC.indexOf('"/my-roster/week/:weekStart"'),
+  );
 
   it("is scoped to the authenticated employee", () => {
     expect(block).toMatch(/getEmployeeForUser\(req\.authUser!\.id\)/);
@@ -35,7 +38,9 @@ describe("GET /my-roster/weeks reads by date range, not cycle_id", () => {
   });
 
   it("groups by the Monday of each week, not by cycle_id", () => {
-    expect(block).toMatch(/DATE_SUB\(roster_date, INTERVAL WEEKDAY\(roster_date\) DAY\)/);
+    expect(block).toMatch(
+      /DATE_SUB\(roster_date, INTERVAL WEEKDAY\(roster_date\) DAY\)/,
+    );
     expect(block).not.toMatch(/GROUP BY cycle_id/);
   });
 
@@ -53,12 +58,17 @@ describe("GET /my-roster/weeks reads by date range, not cycle_id", () => {
   });
 
   it("reports 'acknowledged' only when every row in the week has reached a terminal state", () => {
-    expect(block).toMatch(/terminal_count.*===\s*Number\(r\.total_count\)\s*\?\s*"acknowledged"\s*:\s*"published"/s);
+    expect(block).toMatch(
+      /terminal_count.*===\s*Number\(r\.total_count\)\s*\?\s*"acknowledged"\s*:\s*"published"/s,
+    );
   });
 });
 
 describe("GET /my-roster/week/:weekStart reads shift + status for the 7 days", () => {
-  const block = SRC.slice(SRC.indexOf('"/my-roster/week/:weekStart"'), SRC.indexOf('wfmRouter.get("/my-weekoff"'));
+  const block = SRC.slice(
+    SRC.indexOf('"/my-roster/week/:weekStart"'),
+    SRC.indexOf('wfmRouter.get("/my-weekoff"'),
+  );
 
   it("is scoped to the authenticated employee and validates the date param", () => {
     expect(block).toMatch(/getEmployeeForUser\(req\.authUser!\.id\)/);
@@ -70,8 +80,12 @@ describe("GET /my-roster/week/:weekStart reads shift + status for the 7 days", (
     // shift_template_id is only populated by the cycle-based generator; shift_id (the legacy
     // FK to wfm_shift_master) is what the 412,032 cycle_id-less rows actually carry.
     expect(block).toMatch(/COALESCE\(wst\.shift_name, wsm\.shift_name\)/);
-    expect(block).toMatch(/LEFT JOIN wfm_shift_template wst ON wst\.id = wra\.shift_template_id/);
-    expect(block).toMatch(/LEFT JOIN wfm_shift_master wsm ON wsm\.id = wra\.shift_id/);
+    expect(block).toMatch(
+      /LEFT JOIN wfm_shift_template wst ON wst\.id = wra\.shift_template_id/,
+    );
+    expect(block).toMatch(
+      /LEFT JOIN wfm_shift_master wsm ON wsm\.id = wra\.shift_id/,
+    );
   });
 
   it("never reports a legacy 'generated' row as pending/acknowledged/disputed", () => {
@@ -79,7 +93,10 @@ describe("GET /my-roster/week/:weekStart reads shift + status for the 7 days", (
     // ack-disputed or pending_employee_ack sets must not collapse into "pending" (which would
     // trigger NativeMyRoster.tsx's amber "needs acknowledgement" banner on data that was
     // never published for acknowledgement).
-    const fn = SRC.slice(SRC.indexOf("function mapAckStatus"), SRC.indexOf("function mapAckStatus") + 500);
+    const fn = SRC.slice(
+      SRC.indexOf("function mapAckStatus"),
+      SRC.indexOf("function mapAckStatus") + 500,
+    );
     expect(fn).toMatch(/return "not_published"/);
   });
 });

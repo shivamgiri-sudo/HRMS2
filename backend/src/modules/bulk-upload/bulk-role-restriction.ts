@@ -21,18 +21,30 @@ import type { NextFunction, Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { expandRoles, normalizeRoleInputs } from "../../platform/policy/index.js";
+import {
+  expandRoles,
+  normalizeRoleInputs,
+} from "../../platform/policy/index.js";
 
 /** Roles that already have the whole Hub (the requireRole list this router carried before). */
 export const HUB_FULL_ACCESS_ROLES = [
-  "admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr",
+  "admin",
+  "hr",
+  "super_admin",
+  "wfm",
+  "wfm_analyst",
+  "payroll",
+  "payroll_hr",
 ] as const;
 
 /** Roles that may use the Hub for Employee LOB Mapping only. */
 export const LOB_ONLY_ROLES = ["branch_wfm", "ho_wfm", "wfm_spoc"] as const;
 
 /** Everything a Hub route that LOB-only callers need accepts. */
-export const HUB_ROLES: readonly string[] = [...HUB_FULL_ACCESS_ROLES, ...LOB_ONLY_ROLES];
+export const HUB_ROLES: readonly string[] = [
+  ...HUB_FULL_ACCESS_ROLES,
+  ...LOB_ONLY_ROLES,
+];
 
 /** upload_type_code of the one type LOB-only callers may touch (== EMPLOYEE_LOB_UPLOAD_TYPE). */
 export const LOB_ONLY_UPLOAD_TYPE = "EMPLOYEE_LOB_MAPPING";
@@ -41,8 +53,13 @@ export const LOB_ONLY_IMPORT_RPC = "import_employee_lob_batch";
 /** The only file-storage category the Hub uploads into. */
 export const LOB_ONLY_FILE_CATEGORY = "bulk-uploads";
 
-const canonical = (role: string): string => role.trim().replace(/[\s-]+/g, "_").toLowerCase();
-const isLobOnlyRole = (role: string): boolean => (LOB_ONLY_ROLES as readonly string[]).includes(role);
+const canonical = (role: string): string =>
+  role
+    .trim()
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
+const isLobOnlyRole = (role: string): boolean =>
+  (LOB_ONLY_ROLES as readonly string[]).includes(role);
 
 /**
  * True when the user holds at least one LOB-only role and no role that already grants full Hub
@@ -53,12 +70,16 @@ const isLobOnlyRole = (role: string): boolean => (LOB_ONLY_ROLES as readonly str
  * What remains is normalized + alias-expanded exactly as requireRole() does, so branch_hr
  * (-> hr), payroll_admin (-> payroll) and the like still count as full access.
  */
-export function isLobOnlyUploader(userRoles: readonly string[] | null | undefined): boolean {
+export function isLobOnlyUploader(
+  userRoles: readonly string[] | null | undefined,
+): boolean {
   const roles = (userRoles ?? []).map(canonical).filter(Boolean);
   if (!roles.some(isLobOnlyRole)) return false;
   const others = roles.filter((role) => !isLobOnlyRole(role));
   const effective = expandRoles(normalizeRoleInputs(others));
-  return !effective.some((role) => (HUB_FULL_ACCESS_ROLES as readonly string[]).includes(role));
+  return !effective.some((role) =>
+    (HUB_FULL_ACCESS_ROLES as readonly string[]).includes(role),
+  );
 }
 
 /**
@@ -70,7 +91,10 @@ export function isLobOnlyUploader(userRoles: readonly string[] | null | undefine
 function callerRoles(req: AuthenticatedRequest): readonly string[] {
   const own = req.authUser?.roles;
   if (own && own.length > 0) return own;
-  return (req as AuthenticatedRequest & { userRoles?: readonly string[] }).userRoles ?? [];
+  return (
+    (req as AuthenticatedRequest & { userRoles?: readonly string[] })
+      .userRoles ?? []
+  );
 }
 
 export function isLobOnlyCaller(req: AuthenticatedRequest): boolean {
@@ -84,15 +108,24 @@ function forbid(res: Response, message: string) {
 const NOT_ALLOWED = "Your role can only use the Employee LOB Mapping upload.";
 
 /** Routes LOB-only callers must never reach (stats, reconcile). */
-export function denyLobOnly(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+export function denyLobOnly(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+) {
   if (isLobOnlyCaller(req)) return forbid(res, NOT_ALLOWED);
   return next();
 }
 
 /** POST /batches — a LOB-only caller may only create Employee LOB Mapping batches. */
-export function restrictLobOnlyBatchCreate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+export function restrictLobOnlyBatchCreate(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+) {
   if (!isLobOnlyCaller(req)) return next();
-  const type = (req.body as { upload_type_code?: unknown } | undefined)?.upload_type_code;
+  const type = (req.body as { upload_type_code?: unknown } | undefined)
+    ?.upload_type_code;
   if (type !== LOB_ONLY_UPLOAD_TYPE) return forbid(res, NOT_ALLOWED);
   return next();
 }
@@ -103,8 +136,14 @@ export function restrictLobOnlyBatchCreate(req: AuthenticatedRequest, res: Respo
  * one so existence is not revealed. With `requireImportRpc` the request must also carry the LOB
  * rpc_name, because the import route dispatches on rpc_name rather than on the batch's type.
  */
-export function restrictLobOnlyBatchAccess(options: { requireImportRpc?: boolean } = {}) {
-  return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+export function restrictLobOnlyBatchAccess(
+  options: { requireImportRpc?: boolean } = {},
+) {
+  return async (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction,
+  ) => {
     try {
       if (!isLobOnlyCaller(req)) return next();
       if (options.requireImportRpc) {
@@ -116,7 +155,9 @@ export function restrictLobOnlyBatchAccess(options: { requireImportRpc?: boolean
         [req.params.id],
       );
       const batch = rows[0];
-      const mine = batch && String(batch.uploaded_by ?? "") === String(req.authUser?.id ?? "");
+      const mine =
+        batch &&
+        String(batch.uploaded_by ?? "") === String(req.authUser?.id ?? "");
       if (!batch || !mine || batch.upload_type_code !== LOB_ONLY_UPLOAD_TYPE) {
         return forbid(res, NOT_ALLOWED);
       }
@@ -128,7 +169,11 @@ export function restrictLobOnlyBatchAccess(options: { requireImportRpc?: boolean
 }
 
 /** POST /api/files/upload — the Hub's file step; LOB-only callers may only use its own category. */
-export function restrictLobOnlyFileCategory(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+export function restrictLobOnlyFileCategory(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+) {
   if (!isLobOnlyCaller(req)) return next();
   const category = String(req.query?.category ?? "");
   if (category !== LOB_ONLY_FILE_CATEGORY) return forbid(res, NOT_ALLOWED);
@@ -142,7 +187,9 @@ export function filterTemplatesForCaller<T extends object>(
 ): T[] {
   if (!isLobOnlyCaller(req)) return [...templates];
   return templates.filter(
-    (t) => (t as { upload_type_code?: unknown }).upload_type_code === LOB_ONLY_UPLOAD_TYPE,
+    (t) =>
+      (t as { upload_type_code?: unknown }).upload_type_code ===
+      LOB_ONLY_UPLOAD_TYPE,
   );
 }
 

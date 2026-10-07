@@ -50,7 +50,13 @@ export function toCounts(row: Record<string, unknown>): AttendanceCounts {
     const v = Number(row[k] ?? 0);
     return Number.isFinite(v) ? v : 0;
   };
-  return { scheduled: n("scheduled"), present: n("present"), absent: n("absent"), onLeave: n("on_leave"), late: n("late_count") };
+  return {
+    scheduled: n("scheduled"),
+    present: n("present"),
+    absent: n("absent"),
+    onLeave: n("on_leave"),
+    late: n("late_count"),
+  };
 }
 
 export function sumCounts(rows: AttendanceCounts[]): AttendanceCounts {
@@ -74,7 +80,11 @@ export function isValidDate(s: string): boolean {
   if (!DATE_RE.test(s)) return false;
   const [y, m, d] = s.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
 }
 
 export function addDays(date: string, days: number): string {
@@ -87,7 +97,11 @@ export function addDays(date: string, days: number): string {
 export function daySpan(from: string, to: string): number {
   const [fy, fm, fd] = from.split("-").map(Number);
   const [ty, tm, td] = to.split("-").map(Number);
-  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000) + 1;
+  return (
+    Math.round(
+      (Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000,
+    ) + 1
+  );
 }
 
 /** Monday of the week containing `date` (roster weeks are Mon-Sun). */
@@ -98,7 +112,10 @@ export function weekStartMonday(date: string): string {
 }
 
 /** The window of identical length that ends the day before `from` — for "vs previous period" deltas. */
-export function previousWindow(from: string, to: string): { from: string; to: string } {
+export function previousWindow(
+  from: string,
+  to: string,
+): { from: string; to: string } {
   const span = daySpan(from, to);
   return { from: addDays(from, -span), to: addDays(from, -1) };
 }
@@ -111,7 +128,11 @@ export function eachDate(from: string, to: string): string[] {
 }
 
 /** Clamp a range so it never ends after `today` (future roster days are not yet attendance facts). */
-export function clampToToday(from: string, to: string, today: string): { from: string; to: string; empty: boolean } {
+export function clampToToday(
+  from: string,
+  to: string,
+  today: string,
+): { from: string; to: string; empty: boolean } {
   const effTo = to > today ? today : to;
   return { from, to: effTo, empty: from > effTo };
 }
@@ -138,10 +159,22 @@ export function isPublishStage(s: string): s is PublishStage {
   return (PUBLISH_STAGES as readonly string[]).includes(s);
 }
 
-const ACK_TERMINAL: readonly string[] = ["acknowledged", "approved_final", "published_to_rta", "force_approved_by_manager", "realigned_by_manager"];
-const ACK_DISPUTED: readonly string[] = ["rejected_by_employee", "pending_manager_action", "escalated_to_hr", "manager_rejected_employee_request"];
+const ACK_TERMINAL: readonly string[] = [
+  "acknowledged",
+  "approved_final",
+  "published_to_rta",
+  "force_approved_by_manager",
+  "realigned_by_manager",
+];
+const ACK_DISPUTED: readonly string[] = [
+  "rejected_by_employee",
+  "pending_manager_action",
+  "escalated_to_hr",
+  "manager_rejected_employee_request",
+];
 
-export type AckGroup = "not_published" | "awaiting_ack" | "acknowledged" | "disputed";
+export type AckGroup =
+  "not_published" | "awaiting_ack" | "acknowledged" | "disputed";
 
 /**
  * Same mapping wfm.routes.ts uses for /my-roster (mapAckStatus): the platform derives the
@@ -155,7 +188,11 @@ export function ackGroupOf(stage: string): AckGroup {
   return "not_published";
 }
 
-export interface StageCount { week: string; status: string; count: number }
+export interface StageCount {
+  week: string;
+  status: string;
+  count: number;
+}
 
 export interface PublishFunnel {
   total: number;
@@ -170,28 +207,49 @@ export interface PublishFunnel {
   disputedPctOfPublished: number;
 }
 
-export function buildFunnel(rows: Array<{ status: string; count: number }>): PublishFunnel {
-  let total = 0, unpublished = 0, awaitingAck = 0, acknowledged = 0, disputed = 0;
+export function buildFunnel(
+  rows: Array<{ status: string; count: number }>,
+): PublishFunnel {
+  let total = 0,
+    unpublished = 0,
+    awaitingAck = 0,
+    acknowledged = 0,
+    disputed = 0;
   for (const r of rows) {
     const c = Number(r.count) || 0;
     total += c;
     switch (ackGroupOf(r.status)) {
-      case "not_published": unpublished += c; break;
-      case "awaiting_ack": awaitingAck += c; break;
-      case "acknowledged": acknowledged += c; break;
-      case "disputed": disputed += c; break;
+      case "not_published":
+        unpublished += c;
+        break;
+      case "awaiting_ack":
+        awaitingAck += c;
+        break;
+      case "acknowledged":
+        acknowledged += c;
+        break;
+      case "disputed":
+        disputed += c;
+        break;
     }
   }
   const published = total - unpublished;
   return {
-    total, published, unpublished, awaitingAck, acknowledged, disputed,
+    total,
+    published,
+    unpublished,
+    awaitingAck,
+    acknowledged,
+    disputed,
     publishedPct: safePct(published, total),
     ackPctOfPublished: safePct(acknowledged, published),
     disputedPctOfPublished: safePct(disputed, published),
   };
 }
 
-export interface WeekPublishRow extends PublishFunnel { week: string }
+export interface WeekPublishRow extends PublishFunnel {
+  week: string;
+}
 
 /** Group (week,status,count) rows into one funnel per Monday-start week, oldest first. */
 export function funnelByWeek(rows: StageCount[]): WeekPublishRow[] {
@@ -206,10 +264,15 @@ export function funnelByWeek(rows: StageCount[]): WeekPublishRow[] {
     .map(([week, list]) => ({ week, ...buildFunnel(list) }));
 }
 
-export function stageTotals(rows: StageCount[]): Array<{ status: string; count: number }> {
+export function stageTotals(
+  rows: StageCount[],
+): Array<{ status: string; count: number }> {
   const m = new Map<string, number>();
-  for (const r of rows) m.set(r.status, (m.get(r.status) ?? 0) + (Number(r.count) || 0));
-  return [...m.entries()].map(([status, count]) => ({ status, count })).sort((a, b) => b.count - a.count);
+  for (const r of rows)
+    m.set(r.status, (m.get(r.status) ?? 0) + (Number(r.count) || 0));
+  return [...m.entries()]
+    .map(([status, count]) => ({ status, count }))
+    .sort((a, b) => b.count - a.count);
 }
 
 /* ── Day status for a rostered day ─────────────────────────────────────────── */
@@ -243,7 +306,8 @@ export function dayStatus(i: DayStatusInput): string {
     if (i.attendanceStatus === "leave_approved") return "On Leave";
     if (i.date === i.today) {
       const start = timeToMinutes(i.shiftStart);
-      if (start !== null && i.nowMinutes !== undefined && i.nowMinutes < start) return "Upcoming";
+      if (start !== null && i.nowMinutes !== undefined && i.nowMinutes < start)
+        return "Upcoming";
     }
     return "Absent";
   }
@@ -254,19 +318,28 @@ export function dayStatus(i: DayStatusInput): string {
 
 export const HABITUAL_LATE_THRESHOLD = 3;
 
-export function isHabitual(count: number, threshold = HABITUAL_LATE_THRESHOLD): boolean {
+export function isHabitual(
+  count: number,
+  threshold = HABITUAL_LATE_THRESHOLD,
+): boolean {
   return count >= threshold;
 }
 
 /** Attrition % per the aon-bucket-attrition report's own stated denominator: exits / (headcount + exits). */
-export function attritionPct(exits: number, activeHeadcount: number): number | null {
+export function attritionPct(
+  exits: number,
+  activeHeadcount: number,
+): number | null {
   const denom = Number(activeHeadcount) + Number(exits);
   if (!Number.isFinite(denom) || denom <= 0) return null;
   return round1((Number(exits) / denom) * 100);
 }
 
 /** Percentage-point delta between two values; null if either is unknown. */
-export function deltaPts(current: number | null | undefined, previous: number | null | undefined): number | null {
+export function deltaPts(
+  current: number | null | undefined,
+  previous: number | null | undefined,
+): number | null {
   if (current == null || previous == null) return null;
   return round1(current - previous);
 }

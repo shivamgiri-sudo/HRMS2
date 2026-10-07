@@ -20,7 +20,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(path.resolve(DIR, "../payrollCalculate.service.ts"), "utf8");
+const source = fs.readFileSync(
+  path.resolve(DIR, "../payrollCalculate.service.ts"),
+  "utf8",
+);
 
 /** The `INSERT INTO salary_prep_line (...)` column list, comments stripped. */
 function insertColumns(): string[] {
@@ -67,7 +70,12 @@ describe("the line carries its branch and cost centre", () => {
     // contract. Asserting the position keeps the three literals anchored to each other.
     const cols = insertColumns();
     expect(cols.slice(0, 6)).toEqual([
-      "id", "run_id", "employee_id", "employee_code", "branch_id", "cost_centre_id",
+      "id",
+      "run_id",
+      "employee_id",
+      "employee_code",
+      "branch_id",
+      "cost_centre_id",
     ]);
   });
 
@@ -80,8 +88,12 @@ describe("the line carries its branch and cost centre", () => {
     // Anchored to THIS insert: the file contains more than one ON DUPLICATE KEY UPDATE, and the
     // first one belongs to a different statement entirely.
     const insertStart = source.indexOf("INSERT INTO salary_prep_line\n");
-    const upsert = source.slice(source.indexOf("ON DUPLICATE KEY UPDATE", insertStart));
-    expect(upsert.slice(0, 600)).toContain("cost_centre_id = VALUES(cost_centre_id)");
+    const upsert = source.slice(
+      source.indexOf("ON DUPLICATE KEY UPDATE", insertStart),
+    );
+    expect(upsert.slice(0, 600)).toContain(
+      "cost_centre_id = VALUES(cost_centre_id)",
+    );
     expect(upsert.slice(0, 600)).toContain("branch_id = VALUES(branch_id)");
   });
 });

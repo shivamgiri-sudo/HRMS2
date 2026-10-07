@@ -60,7 +60,9 @@ interface WfmAnalyticsSummary {
 
 export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
   const today = new Date().toISOString().slice(0, 10);
-  const next7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const next7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
 
   // Roster publish rate (processes with published roster for next 7 days)
   const [rosterPublish] = await db.query<RowDataPacket[]>(
@@ -71,7 +73,7 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      WHERE r.roster_date BETWEEN ? AND ?
        AND r.status = 'published'
        AND r.is_active = 1`,
-    [today, next7Days]
+    [today, next7Days],
   );
 
   const publishedCount = rosterPublish[0]?.published_processes ?? 0;
@@ -90,7 +92,7 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      WHERE r.roster_date = ?
        AND r.status = 'published'
        AND r.is_active = 1`,
-    [today]
+    [today],
   );
 
   const rostered = adherence[0]?.rostered_count ?? 1;
@@ -104,13 +106,15 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
        SUM(CASE WHEN is_late = 1 THEN 1 ELSE 0 END) as late_arrivals,
        COUNT(*) as total_attendance_records
      FROM attendance
-     WHERE attendance_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND CURDATE()`
+     WHERE attendance_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND CURDATE()`,
   );
 
   const unplannedAbsent = shrinkage[0]?.unplanned_absent ?? 0;
   const lateArrivals = shrinkage[0]?.late_arrivals ?? 0;
   const totalRecords = shrinkage[0]?.total_attendance_records ?? 1;
-  const shrinkagePct = Math.round(((unplannedAbsent + lateArrivals) / totalRecords) * 100);
+  const shrinkagePct = Math.round(
+    ((unplannedAbsent + lateArrivals) / totalRecords) * 100,
+  );
 
   // Attendance exceptions
   const [exceptions] = await db.query<RowDataPacket[]>(
@@ -121,7 +125,7 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      FROM attendance_exceptions
      WHERE exception_date = ?
        AND is_resolved = 0`,
-    [today]
+    [today],
   );
 
   // Real-time attendance (today)
@@ -138,7 +142,7 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      WHERE r.roster_date = ?
        AND r.status = 'published'
        AND r.is_active = 1`,
-    [today]
+    [today],
   );
 
   const expectedToday = rtAttendance[0]?.expected_today ?? 1;
@@ -163,13 +167,19 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      GROUP BY a.employee_id, e.name, b.name
      HAVING avg_over_break_mins > 0
      ORDER BY avg_over_break_mins DESC
-     LIMIT 10`
+     LIMIT 10`,
   );
 
   const overBreakCount = breakCompliance.length;
-  const avgOverBreak = overBreakCount > 0
-    ? Math.round(breakCompliance.reduce((sum, r) => sum + Number(r.avg_over_break_mins ?? 0), 0) / overBreakCount)
-    : 0;
+  const avgOverBreak =
+    overBreakCount > 0
+      ? Math.round(
+          breakCompliance.reduce(
+            (sum, r) => sum + Number(r.avg_over_break_mins ?? 0),
+            0,
+          ) / overBreakCount,
+        )
+      : 0;
 
   // Workforce forecast (next 7 days: demand vs supply)
   const [forecast] = await db.query<RowDataPacket[]>(
@@ -185,7 +195,7 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      WHERE d.forecast_date BETWEEN ? AND ?
      GROUP BY d.forecast_date
      ORDER BY d.forecast_date ASC`,
-    [today, next7Days]
+    [today, next7Days],
   );
 
   // Adherence by process (today)
@@ -207,7 +217,7 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      GROUP BY p.id, p.name
      HAVING rostered > 0
      ORDER BY p.name ASC`,
-    [today]
+    [today],
   );
 
   return {

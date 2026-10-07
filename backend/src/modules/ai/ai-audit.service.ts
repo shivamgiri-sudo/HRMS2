@@ -1,12 +1,12 @@
-import { createHash } from 'crypto';
+import { createHash } from "crypto";
 import { sqlLimitOffset } from "../../db/pagination.js";
-import { db } from '../../db/mysql.js';
+import { db } from "../../db/mysql.js";
 import type {
   AiGenerateRequest,
   AiGenerateResponse,
   AiUsageLogRow,
   AiPromptAuditRow,
-} from './ai-provider.types.js';
+} from "./ai-provider.types.js";
 
 class AiAuditService {
   private lastAuditWarningAt = 0;
@@ -53,7 +53,7 @@ class AiAuditService {
       );
       return Number((result as { insertId?: number }).insertId || 0);
     } catch (auditError) {
-      this.warnAuditFailure('usage log', auditError);
+      this.warnAuditFailure("usage log", auditError);
       return 0;
     }
   }
@@ -66,7 +66,9 @@ class AiAuditService {
     detectedIntent?: string,
   ): Promise<void> {
     const questionHash = this.hashString(request.userQuestion);
-    const contextHash = this.hashString(JSON.stringify(request.sanitizedContext));
+    const contextHash = this.hashString(
+      JSON.stringify(request.sanitizedContext),
+    );
 
     try {
       await db.execute(
@@ -89,7 +91,7 @@ class AiAuditService {
         ],
       );
     } catch (auditError) {
-      this.warnAuditFailure('prompt audit log', auditError);
+      this.warnAuditFailure("prompt audit log", auditError);
     }
   }
 
@@ -98,7 +100,7 @@ class AiAuditService {
     requestId: number | null,
     providerKey: string,
     modelName: string,
-    rating: 'helpful' | 'not_helpful' | 'incorrect' | 'unsafe',
+    rating: "helpful" | "not_helpful" | "incorrect" | "unsafe",
     feedbackText?: string,
   ): Promise<void> {
     await db.execute(
@@ -127,7 +129,7 @@ class AiAuditService {
     // providerKey is optional so an all-providers total is possible — a small
     // new capability (not pure wiring): the clause and its param are only
     // included when a key is actually supplied.
-    const providerClause = providerKey ? 'provider_key = ? AND ' : '';
+    const providerClause = providerKey ? "provider_key = ? AND " : "";
     const params = providerKey ? [providerKey, from, to] : [from, to];
     const [rows] = await db.execute<any[]>(
       `SELECT
@@ -165,14 +167,29 @@ class AiAuditService {
     limit?: number;
     offset?: number;
   }): Promise<{ logs: AiUsageLogRow[]; total: number }> {
-    const conditions: string[] = ['1=1'];
+    const conditions: string[] = ["1=1"];
     const params: unknown[] = [];
-    if (filters.providerKey) { conditions.push('provider_key = ?'); params.push(filters.providerKey); }
-    if (filters.userId) { conditions.push('user_id = ?'); params.push(filters.userId); }
-    if (filters.requestSource) { conditions.push('request_source = ?'); params.push(filters.requestSource); }
-    if (filters.fromDate) { conditions.push('created_at >= ?'); params.push(filters.fromDate); }
-    if (filters.toDate) { conditions.push('created_at <= ?'); params.push(filters.toDate); }
-    const whereClause = conditions.join(' AND ');
+    if (filters.providerKey) {
+      conditions.push("provider_key = ?");
+      params.push(filters.providerKey);
+    }
+    if (filters.userId) {
+      conditions.push("user_id = ?");
+      params.push(filters.userId);
+    }
+    if (filters.requestSource) {
+      conditions.push("request_source = ?");
+      params.push(filters.requestSource);
+    }
+    if (filters.fromDate) {
+      conditions.push("created_at >= ?");
+      params.push(filters.fromDate);
+    }
+    if (filters.toDate) {
+      conditions.push("created_at <= ?");
+      params.push(filters.toDate);
+    }
+    const whereClause = conditions.join(" AND ");
     const [countRows] = await db.execute<any[]>(
       `SELECT COUNT(*) AS total FROM ai_provider_usage_log WHERE ${whereClause}`,
       params,
@@ -186,7 +203,10 @@ class AiAuditService {
        ${sqlLimitOffset(limit, offset)}`,
       params,
     );
-    return { logs: logs as AiUsageLogRow[], total: Number(countRows[0]?.total || 0) };
+    return {
+      logs: logs as AiUsageLogRow[],
+      total: Number(countRows[0]?.total || 0),
+    };
   }
 
   async getPromptAuditLogs(filters: {
@@ -197,13 +217,25 @@ class AiAuditService {
     limit?: number;
     offset?: number;
   }): Promise<{ logs: AiPromptAuditRow[]; total: number }> {
-    const conditions: string[] = ['1=1'];
+    const conditions: string[] = ["1=1"];
     const params: unknown[] = [];
-    if (filters.userId) { conditions.push('user_id = ?'); params.push(filters.userId); }
-    if (filters.providerKey) { conditions.push('provider_key = ?'); params.push(filters.providerKey); }
-    if (filters.fromDate) { conditions.push('created_at >= ?'); params.push(filters.fromDate); }
-    if (filters.toDate) { conditions.push('created_at <= ?'); params.push(filters.toDate); }
-    const whereClause = conditions.join(' AND ');
+    if (filters.userId) {
+      conditions.push("user_id = ?");
+      params.push(filters.userId);
+    }
+    if (filters.providerKey) {
+      conditions.push("provider_key = ?");
+      params.push(filters.providerKey);
+    }
+    if (filters.fromDate) {
+      conditions.push("created_at >= ?");
+      params.push(filters.fromDate);
+    }
+    if (filters.toDate) {
+      conditions.push("created_at <= ?");
+      params.push(filters.toDate);
+    }
+    const whereClause = conditions.join(" AND ");
     const [countRows] = await db.execute<any[]>(
       `SELECT COUNT(*) AS total FROM ai_prompt_audit_log WHERE ${whereClause}`,
       params,
@@ -217,13 +249,16 @@ class AiAuditService {
        ${sqlLimitOffset(limit, offset)}`,
       params,
     );
-    return { logs: logs as AiPromptAuditRow[], total: Number(countRows[0]?.total || 0) };
+    return {
+      logs: logs as AiPromptAuditRow[],
+      total: Number(countRows[0]?.total || 0),
+    };
   }
 
   async getTodayUsageCount(providerKey?: string): Promise<number> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const providerClause = providerKey ? 'provider_key = ? AND ' : '';
+    const providerClause = providerKey ? "provider_key = ? AND " : "";
     const params = providerKey ? [providerKey, today] : [today];
     const [rows] = await db.execute<any[]>(
       `SELECT COUNT(*) AS count FROM ai_provider_usage_log
@@ -237,7 +272,7 @@ class AiAuditService {
     const firstDay = new Date();
     firstDay.setDate(1);
     firstDay.setHours(0, 0, 0, 0);
-    const providerClause = providerKey ? 'provider_key = ? AND ' : '';
+    const providerClause = providerKey ? "provider_key = ? AND " : "";
     const params = providerKey ? [providerKey, firstDay] : [firstDay];
     const [rows] = await db.execute<any[]>(
       `SELECT COUNT(*) AS count FROM ai_provider_usage_log
@@ -247,13 +282,17 @@ class AiAuditService {
     return Number(rows[0]?.count || 0);
   }
 
-  async getTodayTokenUsage(providerKey?: string): Promise<{ inputTokens: number; outputTokens: number }> {
+  async getTodayTokenUsage(
+    providerKey?: string,
+  ): Promise<{ inputTokens: number; outputTokens: number }> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return this.getTokenUsageSince(providerKey, today);
   }
 
-  async getMonthTokenUsage(providerKey?: string): Promise<{ inputTokens: number; outputTokens: number }> {
+  async getMonthTokenUsage(
+    providerKey?: string,
+  ): Promise<{ inputTokens: number; outputTokens: number }> {
     const firstDay = new Date();
     firstDay.setDate(1);
     firstDay.setHours(0, 0, 0, 0);
@@ -264,7 +303,7 @@ class AiAuditService {
     providerKey: string | undefined,
     fromDate: Date,
   ): Promise<{ inputTokens: number; outputTokens: number }> {
-    const providerClause = providerKey ? 'provider_key = ? AND ' : '';
+    const providerClause = providerKey ? "provider_key = ? AND " : "";
     const params = providerKey ? [providerKey, fromDate] : [fromDate];
     const [rows] = await db.execute<any[]>(
       `SELECT
@@ -281,7 +320,7 @@ class AiAuditService {
   }
 
   private hashString(value: string): string {
-    return createHash('sha256').update(value).digest('hex');
+    return createHash("sha256").update(value).digest("hex");
   }
 }
 

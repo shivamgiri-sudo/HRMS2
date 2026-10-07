@@ -15,7 +15,10 @@ router.get("/authorize", (_req: Request, res: Response) => {
   const frontendUrl = env.FRONTEND_URL || "http://localhost:8085";
 
   const docRows = docList
-    .map((d) => `<li style="margin:6px 0;padding:6px 12px;background:#f0f4ff;border-radius:6px;font-size:14px;">✓ ${d.replace(/_/g, " ")}</li>`)
+    .map(
+      (d) =>
+        `<li style="margin:6px 0;padding:6px 12px;background:#f0f4ff;border-radius:6px;font-size:14px;">✓ ${d.replace(/_/g, " ")}</li>`,
+    )
     .join("");
 
   const callbackUrl = `${frontendUrl}/onboard-full?token=__TOKEN__&step=digilocker&state=${encodeURIComponent(state)}&candidateId=${encodeURIComponent(candidateId)}`;
@@ -115,7 +118,7 @@ router.get("/callback", async (req: Request, res: Response) => {
       `UPDATE ats_bgv_check
           SET status = 'verified', verification_result = 'mock_verified', verified_at = NOW()
         WHERE candidate_id = ? AND provider_key = 'mock_digilocker'`,
-      [candidateId]
+      [candidateId],
     );
 
     // IMPORTANT: Digilocker fetches Aadhaar + PAN from government = already verified at source
@@ -123,10 +126,10 @@ router.get("/callback", async (req: Request, res: Response) => {
     const now = new Date();
 
     // Create/update Aadhaar check as verified
-    const [existingAadhaar] = await db.execute(
+    const [existingAadhaar] = (await db.execute(
       `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = 'aadhaar' LIMIT 1`,
-      [candidateId]
-    ) as any;
+      [candidateId],
+    )) as any;
 
     if (existingAadhaar.length > 0) {
       await db.execute(
@@ -134,22 +137,22 @@ router.get("/callback", async (req: Request, res: Response) => {
          SET status = 'verified', provider_key = 'digilocker', result_summary = 'Verified via DigiLocker',
              verified_at = NOW(), updated_at = NOW()
          WHERE id = ?`,
-        [existingAadhaar[0].id]
+        [existingAadhaar[0].id],
       );
     } else {
       await db.execute(
         `INSERT INTO candidate_bgv_check
          (id, candidate_id, check_type, provider_key, status, result_summary, verified_at, created_at, updated_at)
          VALUES (UUID(), ?, 'aadhaar', 'digilocker', 'verified', 'Verified via DigiLocker', NOW(), NOW(), NOW())`,
-        [candidateId]
+        [candidateId],
       );
     }
 
     // Create/update PAN check as verified
-    const [existingPan] = await db.execute(
+    const [existingPan] = (await db.execute(
       `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = 'pan' LIMIT 1`,
-      [candidateId]
-    ) as any;
+      [candidateId],
+    )) as any;
 
     if (existingPan.length > 0) {
       await db.execute(
@@ -157,14 +160,14 @@ router.get("/callback", async (req: Request, res: Response) => {
          SET status = 'verified', provider_key = 'digilocker', result_summary = 'Verified via DigiLocker',
              verified_at = NOW(), updated_at = NOW()
          WHERE id = ?`,
-        [existingPan[0].id]
+        [existingPan[0].id],
       );
     } else {
       await db.execute(
         `INSERT INTO candidate_bgv_check
          (id, candidate_id, check_type, provider_key, status, result_summary, verified_at, created_at, updated_at)
          VALUES (UUID(), ?, 'pan', 'digilocker', 'verified', 'Verified via DigiLocker', NOW(), NOW(), NOW())`,
-        [candidateId]
+        [candidateId],
       );
     }
   } catch (_e) {

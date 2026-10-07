@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { Role, expandRoles, PAYROLL_ROLES, PII_READ_ROLES } from "../src/platform/policy/roles.js";
-import { Permission, can, assertPermission } from "../src/platform/policy/permissions.js";
+import {
+  Role,
+  expandRoles,
+  PAYROLL_ROLES,
+  PII_READ_ROLES,
+} from "../src/platform/policy/roles.js";
+import {
+  Permission,
+  can,
+  assertPermission,
+} from "../src/platform/policy/permissions.js";
 
 describe("Role enum", () => {
   it("all Role values are non-empty strings", () => {
@@ -91,17 +100,23 @@ describe("can() — permission checks", () => {
   });
 
   it("returns false for unknown role", () => {
-    expect(can(["nonexistent_role" as any], Permission.EMPLOYEE_READ)).toBe(false);
+    expect(can(["nonexistent_role" as any], Permission.EMPLOYEE_READ)).toBe(
+      false,
+    );
   });
 });
 
 describe("assertPermission()", () => {
   it("does not throw when permission is satisfied", () => {
-    expect(() => assertPermission([Role.ADMIN], Permission.MIGRATION_CONSOLE)).not.toThrow();
+    expect(() =>
+      assertPermission([Role.ADMIN], Permission.MIGRATION_CONSOLE),
+    ).not.toThrow();
   });
 
   it("throws with status 403 when denied", () => {
-    expect(() => assertPermission([Role.EMPLOYEE], Permission.MIGRATION_CONSOLE)).toThrow();
+    expect(() =>
+      assertPermission([Role.EMPLOYEE], Permission.MIGRATION_CONSOLE),
+    ).toThrow();
     try {
       assertPermission([Role.EMPLOYEE], Permission.MIGRATION_CONSOLE);
     } catch (err: any) {

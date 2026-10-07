@@ -83,7 +83,9 @@ export async function computeEmployeeSnapshot(
       `SELECT id FROM employees WHERE (reporting_manager_id = ? OR manager_id = ?) AND active_status = 1`,
       [employeeId, employeeId],
     )) as any;
-    const directReportIds = (reportRows as Array<{ id: string }>).map((r) => r.id);
+    const directReportIds = (reportRows as Array<{ id: string }>).map(
+      (r) => r.id,
+    );
 
     const [[managerScope]] = (await db.execute(
       `SELECT process_id, branch_id FROM employees WHERE id = ? LIMIT 1`,
@@ -119,11 +121,17 @@ export async function computeEmployeeSnapshot(
             toDate: date,
             branchId,
           });
-          if (snapshots.length > 0 && snapshots[0].total_shrinkage_pct !== null) {
+          if (
+            snapshots.length > 0 &&
+            snapshots[0].total_shrinkage_pct !== null
+          ) {
             teamShrinkagePct = Number(snapshots[0].total_shrinkage_pct);
           }
         } catch (err) {
-          console.error(`[performance-scorecard] shrinkage lookup failed for manager ${employeeId}`, err);
+          console.error(
+            `[performance-scorecard] shrinkage lookup failed for manager ${employeeId}`,
+            err,
+          );
         }
       }
 
@@ -136,12 +144,21 @@ export async function computeEmployeeSnapshot(
         // that historical date. Sharper version of the already-accepted
         // "30-day rolling, not a true daily figure" caveat. Not fixed here —
         // fixing it means changing the shared service, out of scope.
-        const summary = await managementService.getDashboardSummary(processId, directReportIds);
-        if (summary?.attrition_rate !== undefined && summary.attrition_rate !== null) {
+        const summary = await managementService.getDashboardSummary(
+          processId,
+          directReportIds,
+        );
+        if (
+          summary?.attrition_rate !== undefined &&
+          summary.attrition_rate !== null
+        ) {
           teamAttritionPct = Number(summary.attrition_rate);
         }
       } catch (err) {
-        console.error(`[performance-scorecard] attrition lookup failed for manager ${employeeId}`, err);
+        console.error(
+          `[performance-scorecard] attrition lookup failed for manager ${employeeId}`,
+          err,
+        );
       }
 
       try {
@@ -150,18 +167,22 @@ export async function computeEmployeeSnapshot(
         const period = date.slice(0, 7); // YYYY-MM
         const statement = await getStatement({ period, processId }, "process");
         const revenueRow = statement.rows.find(
-          (r: { componentKey: string }) => r.componentKey === "recognized_revenue",
+          (r: { componentKey: string }) =>
+            r.componentKey === "recognized_revenue",
         );
         if (revenueRow) {
-          const values = Object.values(revenueRow.values as Record<string, number | null>).filter(
-            (v): v is number => v !== null,
-          );
+          const values = Object.values(
+            revenueRow.values as Record<string, number | null>,
+          ).filter((v): v is number => v !== null);
           if (values.length > 0) {
             teamRevenue = values.reduce((sum, v) => sum + v, 0);
           }
         }
       } catch (err) {
-        console.error(`[performance-scorecard] revenue lookup failed for manager ${employeeId}`, err);
+        console.error(
+          `[performance-scorecard] revenue lookup failed for manager ${employeeId}`,
+          err,
+        );
       }
     }
   }
@@ -171,7 +192,8 @@ export async function computeEmployeeSnapshot(
     snapshotDate: date,
     attendanceStatus,
     lateByMinutes: Number(attendance?.late_by_minutes ?? 0),
-    unplannedLeaveFlag: attendanceStatus !== null && UNPLANNED_STATUSES.has(attendanceStatus),
+    unplannedLeaveFlag:
+      attendanceStatus !== null && UNPLANNED_STATUSES.has(attendanceStatus),
     pipStatus,
     designationId: emp?.designation_id ?? null,
     qualityScore:
@@ -195,7 +217,10 @@ export async function computeEmployeeSnapshot(
  */
 export async function writeEmployeePerformanceSnapshots(
   date: string,
-): Promise<{ written: number; errors: Array<{ employeeId: string; error: string }> }> {
+): Promise<{
+  written: number;
+  errors: Array<{ employeeId: string; error: string }>;
+}> {
   const [rows] = (await db.execute(
     `SELECT id FROM employees WHERE active_status = 1`,
   )) as any;
@@ -234,7 +259,9 @@ export async function writeEmployeePerformanceSnapshots(
           snapshot.pipStatus,
           snapshot.designationId,
           snapshot.qualityScore,
-          snapshot.templateMetrics ? JSON.stringify(snapshot.templateMetrics) : null,
+          snapshot.templateMetrics
+            ? JSON.stringify(snapshot.templateMetrics)
+            : null,
           snapshot.teamAttritionPct,
           snapshot.teamShrinkagePct,
           snapshot.teamRevenue,

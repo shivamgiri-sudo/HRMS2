@@ -102,14 +102,30 @@ const n = (v: unknown): number => {
   const parsed = Number(v ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 };
-export const normBranchName = (name: unknown): string => String(name ?? "").trim().toUpperCase();
-export const normCode = (code: unknown): string => String(code ?? "").trim().toUpperCase();
+export const normBranchName = (name: unknown): string =>
+  String(name ?? "")
+    .trim()
+    .toUpperCase();
+export const normCode = (code: unknown): string =>
+  String(code ?? "")
+    .trim()
+    .toUpperCase();
 
 /** The header status that makes an HRMS budget the source for its branch + month. See banner. */
 export const ACTIVE_HRMS_BUDGET_STATUS = "active";
 
-async function readHrmsEntries(period: string): Promise<{ entries: BudgetEntry[]; branchNames: Set<string>; branchIds: Set<string> }> {
-  const out = { entries: [] as BudgetEntry[], branchNames: new Set<string>(), branchIds: new Set<string>() };
+async function readHrmsEntries(
+  period: string,
+): Promise<{
+  entries: BudgetEntry[];
+  branchNames: Set<string>;
+  branchIds: Set<string>;
+}> {
+  const out = {
+    entries: [] as BudgetEntry[],
+    branchNames: new Set<string>(),
+    branchIds: new Set<string>(),
+  };
   if (!(await tableExists("finance_budget_header"))) return out;
 
   // Which branches have an active HRMS budget this month — even one with no lines yet, because the
@@ -125,7 +141,8 @@ async function readHrmsEntries(period: string): Promise<{ entries: BudgetEntry[]
     if (h.branch_id) out.branchIds.add(String(h.branch_id));
     if (h.branch_name) out.branchNames.add(normBranchName(h.branch_name));
   }
-  if (headers.length === 0 || !(await tableExists("finance_budget_line"))) return out;
+  if (headers.length === 0 || !(await tableExists("finance_budget_line")))
+    return out;
 
   const hasAllocation = await tableExists("finance_budget_line_allocation");
   const [lines] = await db.execute<RowDataPacket[]>(
@@ -134,9 +151,11 @@ async function readHrmsEntries(period: string): Promise<{ entries: BudgetEntry[]
             l.head, l.sub_head, l.item_name,
             ${hasAllocation ? "COALESCE(a.cost_centre_id, l.cost_centre_id)" : "l.cost_centre_id"} AS cost_centre_id,
             ccm.cost_centre_code,
-            ${hasAllocation
-              ? `CASE WHEN a.id IS NOT NULL THEN ${budgetExGstSql("a")} ELSE ${budgetExGstSql("l")} END`
-              : budgetExGstSql("l")} AS amount
+            ${
+              hasAllocation
+                ? `CASE WHEN a.id IS NOT NULL THEN ${budgetExGstSql("a")} ELSE ${budgetExGstSql("l")} END`
+                : budgetExGstSql("l")
+            } AS amount
        FROM finance_budget_header h
        JOIN finance_budget_line l ON l.budget_id = h.id
        ${hasAllocation ? "LEFT JOIN finance_budget_line_allocation a ON a.budget_line_id = l.id AND l.cost_centre_id IS NULL" : ""}
@@ -147,7 +166,10 @@ async function readHrmsEntries(period: string): Promise<{ entries: BudgetEntry[]
     [period],
   );
   for (const r of lines) {
-    const label = [r.head, r.sub_head, r.item_name].map((v) => (v ? String(v).trim() : "")).filter(Boolean).join(" / ");
+    const label = [r.head, r.sub_head, r.item_name]
+      .map((v) => (v ? String(v).trim() : ""))
+      .filter(Boolean)
+      .join(" / ");
     out.entries.push({
       source: "hrms",
       budgetRef: String(r.budget_id),
@@ -171,7 +193,11 @@ const CC_BY_CODE_SQL = `(SELECT MIN(id) AS id, cost_centre_code AS code
 
 async function readMirrorEntries(period: string): Promise<BudgetEntry[]> {
   const out: BudgetEntry[] = [];
-  if (!(await tableExists("finance_budget_snapshot")) || !(await tableExists("finance_budget_line_snapshot"))) return out;
+  if (
+    !(await tableExists("finance_budget_snapshot")) ||
+    !(await tableExists("finance_budget_line_snapshot"))
+  )
+    return out;
   const [lines] = await db.execute<RowDataPacket[]>(
     `SELECT l.bill_source_id, l.budget_source_id, l.expense_type_name, l.amount,
             b.branch_name, bm.id AS branch_id, cc.id AS cost_centre_id
@@ -232,21 +258,30 @@ async function readMirrorEntries(period: string): Promise<BudgetEntry[]> {
  * Every budget entry for one month, HRMS first and the mirror only for branches HRMS has no active
  * budget for. See the banner for the rule; every P&L budget figure is a sum over this list.
  */
-export async function readBudgetEntries(period: string): Promise<BudgetEntry[]> {
+export async function readBudgetEntries(
+  period: string,
+): Promise<BudgetEntry[]> {
   if (!PERIOD_RE.test(period)) return [];
   const hrms = await readHrmsEntries(period);
   const mirror = await readMirrorEntries(period);
   return [
     ...hrms.entries,
-    ...mirror.filter((e) => !mirrorSuppressed(e, hrms.branchNames, hrms.branchIds)),
+    ...mirror.filter(
+      (e) => !mirrorSuppressed(e, hrms.branchNames, hrms.branchIds),
+    ),
   ];
 }
 
 /** A mirror entry is dropped when its branch (by normalised name, or by resolved id) has an active
  *  HRMS budget for the month. Exported for the unit test. */
-export function mirrorSuppressed(e: BudgetEntry, hrmsBranchNames: Set<string>, hrmsBranchIds: Set<string>): boolean {
+export function mirrorSuppressed(
+  e: BudgetEntry,
+  hrmsBranchNames: Set<string>,
+  hrmsBranchIds: Set<string>,
+): boolean {
   if (e.source !== "mirror") return false;
-  if (e.branchName && hrmsBranchNames.has(normBranchName(e.branchName))) return true;
+  if (e.branchName && hrmsBranchNames.has(normBranchName(e.branchName)))
+    return true;
   return Boolean(e.branchId && hrmsBranchIds.has(e.branchId));
 }
 
@@ -262,7 +297,9 @@ export function budgetByBranchId(entries: BudgetEntry[]): Map<string, number> {
 
 /** Budget per cost centre id — only entries that name a cost centre (never a header top-up or an
  *  unallocated branch-level HRMS line). */
-export function budgetByCostCentreId(entries: BudgetEntry[]): Map<string, number> {
+export function budgetByCostCentreId(
+  entries: BudgetEntry[],
+): Map<string, number> {
   const out = new Map<string, number>();
   for (const e of entries) {
     if (!e.costCentreId) continue;
@@ -273,9 +310,17 @@ export function budgetByCostCentreId(entries: BudgetEntry[]): Map<string, number
 
 /** Entries whose cost centre CODE is one of `codes` (case/space-insensitive, as the SQL IN on a
  *  unicode_ci column used to be). */
-export function entriesForCodes(entries: BudgetEntry[], codes: string[]): BudgetEntry[] {
+export function entriesForCodes(
+  entries: BudgetEntry[],
+  codes: string[],
+): BudgetEntry[] {
   const want = new Set(codes.map(normCode).filter(Boolean));
-  return entries.filter((e) => e.kind === "line" && e.costCentreCode && want.has(normCode(e.costCentreCode)));
+  return entries.filter(
+    (e) =>
+      e.kind === "line" &&
+      e.costCentreCode &&
+      want.has(normCode(e.costCentreCode)),
+  );
 }
 
 /**
@@ -284,11 +329,17 @@ export function entriesForCodes(entries: BudgetEntry[], codes: string[]): Budget
  * otherwise it is `shared` and never pro-rated. Only mirror budgets carry top-up entries, so HRMS
  * budgets contribute nothing here (their top-ups are already inside the lines).
  */
-export function topUpsForCodes(entries: BudgetEntry[], codes: string[]): { attributable: number; shared: number } {
+export function topUpsForCodes(
+  entries: BudgetEntry[],
+  codes: string[],
+): { attributable: number; shared: number } {
   const out = { attributable: 0, shared: 0 };
   const want = new Set(codes.map(normCode).filter(Boolean));
   if (want.size === 0) return out;
-  const perBudget = new Map<string, { topUp: number; lines: number; inScope: number; hasTopUp: boolean }>();
+  const perBudget = new Map<
+    string,
+    { topUp: number; lines: number; inScope: number; hasTopUp: boolean }
+  >();
   const slot = (ref: string) => {
     let s = perBudget.get(ref);
     if (!s) {
@@ -306,7 +357,8 @@ export function topUpsForCodes(entries: BudgetEntry[], codes: string[]): { attri
     } else {
       const s = slot(key);
       s.lines += 1;
-      if (e.costCentreCode && want.has(normCode(e.costCentreCode))) s.inScope += 1;
+      if (e.costCentreCode && want.has(normCode(e.costCentreCode)))
+        s.inScope += 1;
     }
   }
   for (const s of perBudget.values()) {
@@ -317,4 +369,5 @@ export function topUpsForCodes(entries: BudgetEntry[], codes: string[]): { attri
   return out;
 }
 
-export const sumAmount = (entries: BudgetEntry[]): number => entries.reduce((t, e) => t + e.amount, 0);
+export const sumAmount = (entries: BudgetEntry[]): number =>
+  entries.reduce((t, e) => t + e.amount, 0);

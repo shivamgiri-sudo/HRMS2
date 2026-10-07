@@ -28,7 +28,9 @@ const SOURCE = readFileSync(
 
 /** The single UPDATE that clears approval stamps. Sliced so an unrelated query cannot satisfy this. */
 const RESET = (() => {
-  const start = SOURCE.indexOf("`UPDATE salary_prep_run\n        SET status = 'processing'");
+  const start = SOURCE.indexOf(
+    "`UPDATE salary_prep_run\n        SET status = 'processing'",
+  );
   return start === -1 ? "" : SOURCE.slice(start, start + 800);
 })();
 
@@ -49,8 +51,15 @@ describe("recalculation clears the validation stamp without violating NOT NULL",
   it("still clears the stamp columns that ARE nullable", () => {
     // The point of the 2026-08-14 change was that a signature must never describe figures a later
     // recalculation has changed. Fixing the NOT NULL violation must not quietly drop that.
-    for (const col of ["validated_by", "validated_at", "finance_approved_by", "ceo_acknowledged_by"]) {
-      expect(RESET, `${col} must still be cleared`).toMatch(new RegExp(`${col} = NULL`));
+    for (const col of [
+      "validated_by",
+      "validated_at",
+      "finance_approved_by",
+      "ceo_acknowledged_by",
+    ]) {
+      expect(RESET, `${col} must still be cleared`).toMatch(
+        new RegExp(`${col} = NULL`),
+      );
     }
   });
 

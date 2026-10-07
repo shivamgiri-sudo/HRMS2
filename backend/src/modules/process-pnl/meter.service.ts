@@ -6,7 +6,10 @@ import { db } from "../../db/mysql.js";
 // getCostCentreMeterConsumption run against either the shared pool or a fake executor in tests,
 // same dependency-injection pattern already established for computeLineAllocations.
 interface Executor {
-  execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[T, unknown]>;
 }
 
 /**
@@ -85,7 +88,7 @@ export async function listMeters(branchId: string): Promise<MeterOption[]> {
       WHERE branch_id = ? AND active_status = 1
         AND (effective_to IS NULL OR effective_to >= CURDATE())
       ORDER BY meter_name`,
-    [branchId]
+    [branchId],
   );
   return rows.map((row) => ({
     id: String(row.id),
@@ -99,10 +102,14 @@ export async function listMeters(branchId: string): Promise<MeterOption[]> {
   }));
 }
 
-export async function createMeter(input: CreateMeterInput, actorUserId: string): Promise<MeterOption> {
+export async function createMeter(
+  input: CreateMeterInput,
+  actorUserId: string,
+): Promise<MeterOption> {
   if (!input.meterCode?.trim()) throw new Error("Meter code is required");
   if (!input.meterName?.trim()) throw new Error("Meter name is required");
-  if (!Number.isFinite(input.fixedRate) || input.fixedRate < 0) throw new Error("Fixed rate cannot be negative");
+  if (!Number.isFinite(input.fixedRate) || input.fixedRate < 0)
+    throw new Error("Fixed rate cannot be negative");
   if (!input.costCentreId?.trim()) throw new Error("Cost centre is required");
 
   /*
@@ -126,11 +133,13 @@ export async function createMeter(input: CreateMeterInput, actorUserId: string):
    */
   const [ownerRows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
-    [input.costCentreId]
+    [input.costCentreId],
   );
   if (!ownerRows[0]) throw new Error("Cost centre not found");
   if (String(ownerRows[0].branch_id) !== String(input.branchId)) {
-    throw new Error("A meter's cost centre must belong to the same branch as the meter");
+    throw new Error(
+      "A meter's cost centre must belong to the same branch as the meter",
+    );
   }
 
   const id = randomUUID();
@@ -151,7 +160,7 @@ export async function createMeter(input: CreateMeterInput, actorUserId: string):
       input.effectiveFrom,
       actorUserId,
       actorUserId,
-    ]
+    ],
   );
   const meters = await listMeters(input.branchId);
   const created = meters.find((m) => m.id === id);
@@ -163,11 +172,11 @@ async function getReadingRow(
   meterId: string,
   periodCode: string,
   readingType: "actual" | "estimated",
-  executor: Executor = db
+  executor: Executor = db,
 ) {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT * FROM finance_meter_reading WHERE meter_id = ? AND period_code = ? AND reading_type = ? LIMIT 1`,
-    [meterId, periodCode, readingType]
+    [meterId, periodCode, readingType],
   );
   return rows[0] ?? null;
 }
@@ -180,18 +189,24 @@ async function getReadingRow(
  * budget-topup.service.ts's getLineBranch(). Returns null when the meter does not exist, which
  * assertFinanceRecordBranch treats as a denial rather than as "unrestricted".
  */
-export async function getMeterBranchId(meterId: string, executor: Executor = db): Promise<string | null> {
+export async function getMeterBranchId(
+  meterId: string,
+  executor: Executor = db,
+): Promise<string | null> {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT branch_id FROM finance_meter_master WHERE id = ? LIMIT 1`,
-    [meterId]
+    [meterId],
   );
   return rows[0]?.branch_id ? String(rows[0].branch_id) : null;
 }
 
-export async function listReadings(meterId: string, periodCode: string): Promise<MeterReadingRecord[]> {
+export async function listReadings(
+  meterId: string,
+  periodCode: string,
+): Promise<MeterReadingRecord[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM finance_meter_reading WHERE meter_id = ? AND period_code = ? ORDER BY reading_type`,
-    [meterId, periodCode]
+    [meterId, periodCode],
   );
   return rows.map(toReading);
 }
@@ -220,14 +235,21 @@ export async function saveReading(
   periodCode: string,
   input: SaveReadingInput,
   actorUserId: string,
-  executor?: Executor
+  executor?: Executor,
 ): Promise<{ reading: MeterReadingRecord; reconciliation: boolean }> {
-  if (executor) return saveReadingWith(meterId, periodCode, input, actorUserId, executor);
+  if (executor)
+    return saveReadingWith(meterId, periodCode, input, actorUserId, executor);
 
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
-    const result = await saveReadingWith(meterId, periodCode, input, actorUserId, connection);
+    const result = await saveReadingWith(
+      meterId,
+      periodCode,
+      input,
+      actorUserId,
+      connection,
+    );
     await connection.commit();
     return result;
   } catch (error) {
@@ -243,9 +265,10 @@ async function saveReadingWith(
   periodCode: string,
   input: SaveReadingInput,
   actorUserId: string,
-  executor: Executor
+  executor: Executor,
 ): Promise<{ reading: MeterReadingRecord; reconciliation: boolean }> {
-  if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+  if (!/^\d{4}-\d{2}$/.test(periodCode))
+    throw new Error("A valid budget period (YYYY-MM) is required");
   if (input.closingReading < input.openingReading) {
     throw new Error("Closing reading cannot be less than opening reading");
   }
@@ -258,7 +281,7 @@ async function saveReadingWith(
 
   const [meterRows] = await executor.execute<RowDataPacket[]>(
     `SELECT id, fixed_rate FROM finance_meter_master WHERE id = ? LIMIT 1`,
-    [meterId]
+    [meterId],
   );
   const meter = meterRows[0];
   if (!meter) throw new Error("Meter was not found");
@@ -289,16 +312,29 @@ async function saveReadingWith(
       input.estimationMethod?.trim() || null,
       input.estimationReason?.trim() || null,
       actorUserId,
-    ]
+    ],
   );
-  const saved = await getReadingRow(meterId, periodCode, input.readingType, executor);
+  const saved = await getReadingRow(
+    meterId,
+    periodCode,
+    input.readingType,
+    executor,
+  );
   if (!saved) throw new Error("Reading was saved but could not be reloaded");
   const reading = toReading(saved);
 
   let reconciliation = false;
   if (input.readingType === "actual") {
-    const estimatedRow = await getReadingRow(meterId, periodCode, "estimated", executor);
-    if (estimatedRow && String(estimatedRow.reconciliation_status) !== "reconciled") {
+    const estimatedRow = await getReadingRow(
+      meterId,
+      periodCode,
+      "estimated",
+      executor,
+    );
+    if (
+      estimatedRow &&
+      String(estimatedRow.reconciliation_status) !== "reconciled"
+    ) {
       const estimatedAmount = Number(estimatedRow.amount);
       const actualAmount = reading.amount;
       await executor.execute(
@@ -316,11 +352,11 @@ async function saveReadingWith(
           actualAmount,
           Math.round((actualAmount - estimatedAmount) * 100) / 100,
           actorUserId,
-        ]
+        ],
       );
       await executor.execute(
         `UPDATE finance_meter_reading SET reconciliation_status = 'reconciled' WHERE id = ?`,
-        [String(estimatedRow.id)]
+        [String(estimatedRow.id)],
       );
       reconciliation = true;
     }
@@ -336,11 +372,18 @@ async function saveReadingWith(
  * for the period yet — callers must treat that as missing data, not a zero pool, matching the
  * "do not silently allocate" principle already established for the other sharing methods.
  */
-export type MeterUtilityType = "electricity" | "diesel" | "water" | "gas" | "other";
-export type MeterShareRule = "fixed_pct" | "headcount" | "seats" | "floor_area" | "sub_meter_remainder";
+export type MeterUtilityType =
+  "electricity" | "diesel" | "water" | "gas" | "other";
+export type MeterShareRule =
+  "fixed_pct" | "headcount" | "seats" | "floor_area" | "sub_meter_remainder";
 
 type Usage = { consumption: number; amount: number };
-const addUsage = (map: Map<string, Usage>, ccId: string, consumption: number, amount: number) => {
+const addUsage = (
+  map: Map<string, Usage>,
+  ccId: string,
+  consumption: number,
+  amount: number,
+) => {
   const cur = map.get(ccId) ?? { consumption: 0, amount: 0 };
   cur.consumption += consumption;
   cur.amount += amount;
@@ -377,18 +420,21 @@ export async function getBranchMeterConsumption(
   branchId: string,
   periodCode: string,
   executor: Executor = db,
-  utilityType?: MeterUtilityType
+  utilityType?: MeterUtilityType,
 ): Promise<Map<string, Usage>> {
   const params: unknown[] = [branchId];
   let utilityFilter = "";
-  if (utilityType) { utilityFilter = " AND utility_type = ?"; params.push(utilityType); }
+  if (utilityType) {
+    utilityFilter = " AND utility_type = ?";
+    params.push(utilityType);
+  }
 
   const [meterRows] = await executor.execute<RowDataPacket[]>(
     `SELECT id, cost_centre_id, meter_type, utility_type, parent_meter_id, share_rule
        FROM finance_meter_master
       WHERE branch_id = ? AND active_status = 1
         AND (effective_to IS NULL OR effective_to >= CURDATE())${utilityFilter}`,
-    params
+    params,
   );
   if (meterRows.length === 0) return new Map();
 
@@ -397,7 +443,9 @@ export async function getBranchMeterConsumption(
   for (const row of meterRows) {
     const meterId = String(row.id);
     const actual = await getReadingRow(meterId, periodCode, "actual", executor);
-    const chosen = actual ?? (await getReadingRow(meterId, periodCode, "estimated", executor));
+    const chosen =
+      actual ??
+      (await getReadingRow(meterId, periodCode, "estimated", executor));
     if (!chosen) continue;
     usageByMeter.set(meterId, {
       consumption: Number(chosen.consumption),
@@ -421,18 +469,29 @@ export async function getBranchMeterConsumption(
     const owner = String(row.cost_centre_id);
     const shared = String(row.meter_type ?? "dedicated") === "shared";
 
-    if (!shared) { addUsage(out, owner, usage.consumption, usage.amount); continue; }
+    if (!shared) {
+      addUsage(out, owner, usage.consumption, usage.amount);
+      continue;
+    }
 
     // Only the part no sub-meter has already claimed is shareable.
     const subs = subsByParent.get(meterId) ?? [];
-    const subConsumption = subs.reduce((a, s) => a + (usageByMeter.get(String(s.id))?.consumption ?? 0), 0);
+    const subConsumption = subs.reduce(
+      (a, s) => a + (usageByMeter.get(String(s.id))?.consumption ?? 0),
+      0,
+    );
     const shareable = Math.max(0, usage.consumption - subConsumption);
     if (shareable <= 0) continue;
-    const amountRatio = usage.consumption > 0 ? shareable / usage.consumption : 0;
+    const amountRatio =
+      usage.consumption > 0 ? shareable / usage.consumption : 0;
     const shareableAmount = usage.amount * amountRatio;
 
     const weights = await shareWeights(
-      row, subs, branchId, periodCode, executor
+      row,
+      subs,
+      branchId,
+      periodCode,
+      executor,
     );
     const totalWeight = [...weights.values()].reduce((a, b) => a + b, 0);
     if (totalWeight <= 0) {
@@ -442,7 +501,12 @@ export async function getBranchMeterConsumption(
     }
     for (const [ccId, w] of weights) {
       if (w <= 0) continue;
-      addUsage(out, ccId, shareable * (w / totalWeight), shareableAmount * (w / totalWeight));
+      addUsage(
+        out,
+        ccId,
+        shareable * (w / totalWeight),
+        shareableAmount * (w / totalWeight),
+      );
     }
   }
 
@@ -457,7 +521,7 @@ async function shareWeights(
   subs: RowDataPacket[],
   branchId: string,
   periodCode: string,
-  executor: Executor
+  executor: Executor,
 ): Promise<Map<string, number>> {
   const rule = (meter.share_rule ?? "headcount") as MeterShareRule;
   const weights = new Map<string, number>();
@@ -469,21 +533,28 @@ async function shareWeights(
         WHERE meter_id = ?
           AND effective_from <= ?
           AND (effective_to IS NULL OR effective_to >= ?)`,
-      [String(meter.id), periodEndDate(periodCode), periodEndDate(periodCode)]
+      [String(meter.id), periodEndDate(periodCode), periodEndDate(periodCode)],
     );
-    shares.forEach((s) => weights.set(String(s.cost_centre_id), Number(s.share_pct)));
+    shares.forEach((s) =>
+      weights.set(String(s.cost_centre_id), Number(s.share_pct)),
+    );
     return weights;
   }
 
   // Driver-based rules read finance_cost_centre_monthly_driver directly rather than going through
   // branch-budget-allocation.service, which already imports this module — routing through it would
   // create an import cycle.
-  const column = rule === "seats" ? "seat_count" : rule === "floor_area" ? "floor_area_sqft" : "planned_headcount";
+  const column =
+    rule === "seats"
+      ? "seat_count"
+      : rule === "floor_area"
+        ? "floor_area_sqft"
+        : "planned_headcount";
   const [drivers] = await executor.execute<RowDataPacket[]>(
     `SELECT cost_centre_id, ${column} AS weight
        FROM finance_cost_centre_monthly_driver
       WHERE branch_id = ? AND period_code = ?`,
-    [branchId, periodCode]
+    [branchId, periodCode],
   );
 
   // sub_meter_remainder: the leftover belongs to the cost centres that are NOT separately metered.
@@ -505,11 +576,11 @@ export async function getCostCentreMeterConsumption(
   costCentreId: string,
   periodCode: string,
   executor: Executor = db,
-  utilityType?: MeterUtilityType
+  utilityType?: MeterUtilityType,
 ): Promise<Usage | null> {
   const [own] = await executor.execute<RowDataPacket[]>(
     `SELECT branch_id FROM finance_meter_master WHERE cost_centre_id = ? LIMIT 1`,
-    [costCentreId]
+    [costCentreId],
   );
   // Without a meter of its own the cost centre may still hold a share of a shared meter, so fall
   // back to its branch via the cost-centre master.
@@ -517,13 +588,18 @@ export async function getCostCentreMeterConsumption(
   if (!branchId) {
     const [cc] = await executor.execute<RowDataPacket[]>(
       `SELECT branch_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
-      [costCentreId]
+      [costCentreId],
     );
     branchId = cc[0]?.branch_id ? String(cc[0].branch_id) : null;
   }
   if (!branchId) return null;
 
-  const byCostCentre = await getBranchMeterConsumption(branchId, periodCode, executor, utilityType);
+  const byCostCentre = await getBranchMeterConsumption(
+    branchId,
+    periodCode,
+    executor,
+    utilityType,
+  );
   return byCostCentre.get(costCentreId) ?? null;
 }
 

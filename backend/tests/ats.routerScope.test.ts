@@ -48,10 +48,14 @@ describe("mounting a sub-router with root-level middleware", () => {
     const app = express().use("/api/ats", parent);
 
     // The sub-router's own route is still guarded...
-    expect((await request(app).get("/api/ats/recruiter/thing")).status).toBe(403);
+    expect((await request(app).get("/api/ats/recruiter/thing")).status).toBe(
+      403,
+    );
     // ...and the sibling is reachable again.
     const sibling = await request(app).get("/api/ats/candidates");
-    expect(sibling.status, "sibling route is still being intercepted").toBe(200);
+    expect(sibling.status, "sibling route is still being intercepted").toBe(
+      200,
+    );
   });
 
   it("the real router scopes its guards rather than applying them at the root", async () => {
@@ -61,8 +65,14 @@ describe("mounting a sub-router with root-level middleware", () => {
       "utf8",
     );
     // A bare `use(requireAuth)` / `use(authRoles)` is the regression.
-    expect(source, "guards are applied at the router root and will 403 sibling routes")
-      .not.toMatch(/recruiterHiringRouter\.use\(\s*(requireAuth|authRoles)\s*\)/);
-    expect(source).toMatch(/recruiterHiringRouter\.use\(\s*"\/recruiter",\s*requireAuth,\s*authRoles\s*\)/);
+    expect(
+      source,
+      "guards are applied at the router root and will 403 sibling routes",
+    ).not.toMatch(
+      /recruiterHiringRouter\.use\(\s*(requireAuth|authRoles)\s*\)/,
+    );
+    expect(source).toMatch(
+      /recruiterHiringRouter\.use\(\s*"\/recruiter",\s*requireAuth,\s*authRoles\s*\)/,
+    );
   });
 });

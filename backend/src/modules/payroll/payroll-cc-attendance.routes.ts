@@ -24,7 +24,10 @@
 
 import { Router } from "express";
 import type { NextFunction, Response } from "express";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
@@ -46,7 +49,8 @@ export const payrollCcAttendanceRouter = Router();
 // ---------------------------------------------------------------------------
 
 function resolveMonth(raw: unknown): string {
-  if (typeof raw === "string" && /^\d{4}-\d{2}$/.test(raw.trim())) return raw.trim();
+  if (typeof raw === "string" && /^\d{4}-\d{2}$/.test(raw.trim()))
+    return raw.trim();
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
@@ -82,12 +86,26 @@ const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: true };
  * mistake their presence below for working access.
  */
 const READ_ROLES = [
-  "branch_head", "payroll_branch", "payroll_hr", "payroll_head",
-  "super_admin", "admin", "payroll", "wfm", "hr", "finance", "process_manager",
+  "branch_head",
+  "payroll_branch",
+  "payroll_hr",
+  "payroll_head",
+  "super_admin",
+  "admin",
+  "payroll",
+  "wfm",
+  "hr",
+  "finance",
+  "process_manager",
 ] as const;
 
 /** The branch-side makers: Branch Payroll HR and the Branch WFM person, per the owner's ask. */
-const BRANCH_MAKER_ROLES = ["payroll_hr", "wfm", "payroll_branch", "super_admin"] as const;
+const BRANCH_MAKER_ROLES = [
+  "payroll_hr",
+  "wfm",
+  "payroll_branch",
+  "super_admin",
+] as const;
 const BRANCH_APPROVER_ROLES = ["branch_head", "super_admin"] as const;
 const HO_APPROVER_ROLES = ["payroll_head", "super_admin"] as const;
 
@@ -109,22 +127,30 @@ function actorOf(req: AuthenticatedRequest) {
  */
 function fail(res: Response, err: unknown, where: string) {
   if (err instanceof CcAttendanceError) {
-    return res.status(err.status).json({ success: false, code: err.code, message: err.message });
+    return res
+      .status(err.status)
+      .json({ success: false, code: err.code, message: err.message });
   }
   const msg = err instanceof Error ? err.message : String(err);
   console.error(`[CcAttendance] ${where} — ${msg}`);
-  return res.status(500).json({ success: false, message: "Cost-centre attendance request failed" });
+  return res
+    .status(500)
+    .json({ success: false, message: "Cost-centre attendance request failed" });
 }
 
 /** Guards a path segment that is either a cost_centre_master UUID or the UNASSIGNED sentinel. */
 function assertCostCentreId(res: Response, raw: string): string | null {
   const id = String(raw ?? "").trim();
   if (!id) {
-    res.status(400).json({ success: false, message: "cost centre id is required" });
+    res
+      .status(400)
+      .json({ success: false, message: "cost centre id is required" });
     return null;
   }
   if (id !== UNASSIGNED_COST_CENTRE && !/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
-    res.status(400).json({ success: false, message: "cost centre id is not valid" });
+    res
+      .status(400)
+      .json({ success: false, message: "cost centre id is not valid" });
     return null;
   }
   return id;
@@ -142,14 +168,22 @@ payrollCcAttendanceRouter.get(
   requireRole(...HO_APPROVER_ROLES, "admin", "payroll"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const month = typeof req.query.month === "string" ? resolveMonth(req.query.month) : undefined;
-      const branchId = typeof req.query.branchId === "string" ? req.query.branchId : undefined;
-      const requests = await payrollCcAttendanceService.listPendingUnlockRequests(month, branchId);
+      const month =
+        typeof req.query.month === "string"
+          ? resolveMonth(req.query.month)
+          : undefined;
+      const branchId =
+        typeof req.query.branchId === "string" ? req.query.branchId : undefined;
+      const requests =
+        await payrollCcAttendanceService.listPendingUnlockRequests(
+          month,
+          branchId,
+        );
       return res.json({ success: true, data: requests });
     } catch (err) {
       return fail(res, err, "GET /unlock-requests");
     }
-  }
+  },
 );
 
 payrollCcAttendanceRouter.post(
@@ -158,23 +192,29 @@ payrollCcAttendanceRouter.post(
   requireRole(...HO_APPROVER_ROLES),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { decision, notes } = req.body as { decision?: string; notes?: string };
+      const { decision, notes } = req.body as {
+        decision?: string;
+        notes?: string;
+      };
       if (decision !== "approve" && decision !== "reject") {
         return res
           .status(400)
-          .json({ success: false, message: "'decision' must be 'approve' or 'reject'" });
+          .json({
+            success: false,
+            message: "'decision' must be 'approve' or 'reject'",
+          });
       }
       const result = await payrollCcAttendanceService.reviewUnlock(
         req.params.requestId,
         decision,
         actorOf(req),
-        notes
+        notes,
       );
       return res.json({ success: true, data: result });
     } catch (err) {
       return fail(res, err, "POST /unlock-requests/:requestId/review");
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -186,19 +226,35 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    [
+      "branch_head",
+      "payroll_branch",
+      "payroll_hr",
+      "payroll_head",
+      "payroll",
+      "wfm",
+      "process_manager",
+    ],
     branchScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
-      const data = await payrollCcAttendanceService.listCostCentres(month, req.params.branchId);
-      return res.json({ success: true, month, branch_id: req.params.branchId, data });
+      const data = await payrollCcAttendanceService.listCostCentres(
+        month,
+        req.params.branchId,
+      );
+      return res.json({
+        success: true,
+        month,
+        branch_id: req.params.branchId,
+        data,
+      });
     } catch (err) {
       return fail(res, err, "GET /:branchId/cost-centres");
     }
-  }
+  },
 );
 
 payrollCcAttendanceRouter.get(
@@ -206,19 +262,35 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    [
+      "branch_head",
+      "payroll_branch",
+      "payroll_hr",
+      "payroll_head",
+      "payroll",
+      "wfm",
+      "process_manager",
+    ],
     branchScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
-      const data = await payrollCcAttendanceService.branchSummary(month, req.params.branchId);
-      return res.json({ success: true, month, branch_id: req.params.branchId, data });
+      const data = await payrollCcAttendanceService.branchSummary(
+        month,
+        req.params.branchId,
+      );
+      return res.json({
+        success: true,
+        month,
+        branch_id: req.params.branchId,
+        data,
+      });
     } catch (err) {
       return fail(res, err, "GET /:branchId/summary");
     }
-  }
+  },
 );
 
 payrollCcAttendanceRouter.get(
@@ -226,9 +298,17 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    [
+      "branch_head",
+      "payroll_branch",
+      "payroll_hr",
+      "payroll_head",
+      "payroll",
+      "wfm",
+      "process_manager",
+    ],
     branchScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -238,13 +318,13 @@ payrollCcAttendanceRouter.get(
       const data = await payrollCcAttendanceService.getCostCentreDetail(
         month,
         req.params.branchId,
-        costCentreId
+        costCentreId,
       );
       return res.json({ success: true, data });
     } catch (err) {
       return fail(res, err, "GET /:branchId/:costCentreId/employees");
     }
-  }
+  },
 );
 
 payrollCcAttendanceRouter.get(
@@ -252,9 +332,17 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    [
+      "branch_head",
+      "payroll_branch",
+      "payroll_hr",
+      "payroll_head",
+      "payroll",
+      "wfm",
+      "process_manager",
+    ],
     branchScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -264,13 +352,13 @@ payrollCcAttendanceRouter.get(
       const data = await payrollCcAttendanceService.getHistory(
         month,
         req.params.branchId,
-        costCentreId
+        costCentreId,
       );
       return res.json({ success: true, data });
     } catch (err) {
       return fail(res, err, "GET /:branchId/:costCentreId/history");
     }
-  }
+  },
 );
 
 /**
@@ -284,9 +372,17 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    [
+      "branch_head",
+      "payroll_branch",
+      "payroll_hr",
+      "payroll_head",
+      "payroll",
+      "wfm",
+      "process_manager",
+    ],
     branchScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -296,12 +392,23 @@ payrollCcAttendanceRouter.get(
       const rows = await payrollCcAttendanceService.getLiveEmployeeGrid(
         month,
         req.params.branchId,
-        costCentreId
+        costCentreId,
       );
 
       const header = [
-        "SNo", "EmpCode", "EmpName", "EmpLocation", "TotalDays",
-        "A", "P", "OD", "HD/DH/FTP", "L", "H", "W", "SalDays",
+        "SNo",
+        "EmpCode",
+        "EmpName",
+        "EmpLocation",
+        "TotalDays",
+        "A",
+        "P",
+        "OD",
+        "HD/DH/FTP",
+        "L",
+        "H",
+        "W",
+        "SalDays",
       ];
       const cell = (v: unknown) => {
         const s = v === null || v === undefined ? "" : String(v);
@@ -311,25 +418,35 @@ payrollCcAttendanceRouter.get(
         header.join(","),
         ...rows.map((r, i) =>
           [
-            i + 1, r.employee_code, r.employee_name, r.emp_location, r.total_days,
-            r.absent_days, r.present_days, r.od_days, r.half_days, r.leave_days,
-            r.holiday_days, r.weekoff_days, r.sal_days,
+            i + 1,
+            r.employee_code,
+            r.employee_name,
+            r.emp_location,
+            r.total_days,
+            r.absent_days,
+            r.present_days,
+            r.od_days,
+            r.half_days,
+            r.leave_days,
+            r.holiday_days,
+            r.weekoff_days,
+            r.sal_days,
           ]
             .map(cell)
-            .join(",")
+            .join(","),
         ),
       ];
 
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="cc-attendance-${costCentreId}-${month}.csv"`
+        `attachment; filename="cc-attendance-${costCentreId}-${month}.csv"`,
       );
       return res.send(lines.join("\n"));
     } catch (err) {
       return fail(res, err, "GET /:branchId/:costCentreId/export");
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -340,7 +457,11 @@ payrollCcAttendanceRouter.post(
   "/:branchId/:costCentreId/finalize",
   requireAuth,
   requireRole(...BRANCH_MAKER_ROLES),
-  requireScopedRole(["payroll_hr", "wfm", "payroll_branch"], branchScopeTarget, SCOPE_OPTIONS),
+  requireScopedRole(
+    ["payroll_hr", "wfm", "payroll_branch"],
+    branchScopeTarget,
+    SCOPE_OPTIONS,
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const costCentreId = assertCostCentreId(res, req.params.costCentreId);
@@ -351,7 +472,7 @@ payrollCcAttendanceRouter.post(
         req.params.branchId,
         costCentreId,
         actorOf(req),
-        typeof req.body?.remarks === "string" ? req.body.remarks : undefined
+        typeof req.body?.remarks === "string" ? req.body.remarks : undefined,
       );
 
       // Notify the Branch Head. Deliberately after the commit and deliberately not awaited into
@@ -360,14 +481,16 @@ payrollCcAttendanceRouter.post(
         req.params.branchId,
         result.finalizationId,
         month,
-        result.employees
-      ).catch((e) => console.warn(`[CcAttendance] finalize notify failed — ${String(e)}`));
+        result.employees,
+      ).catch((e) =>
+        console.warn(`[CcAttendance] finalize notify failed — ${String(e)}`),
+      );
 
       return res.json({ success: true, data: result });
     } catch (err) {
       return fail(res, err, "POST /:branchId/:costCentreId/finalize");
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -390,20 +513,24 @@ payrollCcAttendanceRouter.post(
         req.params.branchId,
         costCentreId,
         actorOf(req),
-        typeof req.body?.remarks === "string" ? req.body.remarks : undefined
+        typeof req.body?.remarks === "string" ? req.body.remarks : undefined,
       );
 
       void triggerCcAttendanceBranchApproved(
         req.params.branchId,
         result.finalizationId,
-        month
-      ).catch((e) => console.warn(`[CcAttendance] branch-approve notify failed — ${String(e)}`));
+        month,
+      ).catch((e) =>
+        console.warn(
+          `[CcAttendance] branch-approve notify failed — ${String(e)}`,
+        ),
+      );
 
       return res.json({ success: true, data: result });
     } catch (err) {
       return fail(res, err, "POST /:branchId/:costCentreId/branch-approve");
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -425,13 +552,13 @@ payrollCcAttendanceRouter.post(
         req.params.branchId,
         costCentreId,
         actorOf(req),
-        typeof req.body?.remarks === "string" ? req.body.remarks : undefined
+        typeof req.body?.remarks === "string" ? req.body.remarks : undefined,
       );
       return res.json({ success: true, data: result });
     } catch (err) {
       return fail(res, err, "POST /:branchId/:costCentreId/ho-approve");
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -462,7 +589,10 @@ async function scopeSendBackToBranch(
       return;
     }
     // An HO send-back is the Payroll Head's org-wide authority, unscoped by design.
-    if (req.body?.stage === "ho" && (await hasAnyRole(userId, ...HO_APPROVER_ROLES))) {
+    if (
+      req.body?.stage === "ho" &&
+      (await hasAnyRole(userId, ...HO_APPROVER_ROLES))
+    ) {
       next();
       return;
     }
@@ -475,7 +605,8 @@ async function scopeSendBackToBranch(
     if (!ok) {
       res.status(403).json({
         success: false,
-        message: "Forbidden: this record is outside your assigned branch/process/team scope",
+        message:
+          "Forbidden: this record is outside your assigned branch/process/team scope",
       });
       return;
     }
@@ -502,13 +633,13 @@ payrollCcAttendanceRouter.post(
         req.params.branchId,
         costCentreId,
         actorOf(req),
-        String(req.body?.reason ?? "")
+        String(req.body?.reason ?? ""),
       );
       return res.json({ success: true, data: result });
     } catch (err) {
       return fail(res, err, "POST /:branchId/:costCentreId/send-back");
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -518,11 +649,17 @@ payrollCcAttendanceRouter.post(
 payrollCcAttendanceRouter.post(
   "/:branchId/:costCentreId/request-unlock",
   requireAuth,
-  requireRole("payroll_hr", "wfm", "payroll_branch", "branch_head", "super_admin"),
+  requireRole(
+    "payroll_hr",
+    "wfm",
+    "payroll_branch",
+    "branch_head",
+    "super_admin",
+  ),
   requireScopedRole(
     ["payroll_hr", "wfm", "payroll_branch", "branch_head"],
     branchScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -534,18 +671,20 @@ payrollCcAttendanceRouter.post(
         req.params.branchId,
         costCentreId,
         String(req.body?.reason ?? ""),
-        actorOf(req)
+        actorOf(req),
       );
 
       void triggerCcAttendanceUnlockRequested(
         req.params.branchId,
         result.finalizationId,
-        month
-      ).catch((e) => console.warn(`[CcAttendance] unlock notify failed — ${String(e)}`));
+        month,
+      ).catch((e) =>
+        console.warn(`[CcAttendance] unlock notify failed — ${String(e)}`),
+      );
 
       return res.json({ success: true, data: result });
     } catch (err) {
       return fail(res, err, "POST /:branchId/:costCentreId/request-unlock");
     }
-  }
+  },
 );

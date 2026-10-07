@@ -1,15 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { recordWorkerRun } = vi.hoisted(() => ({ recordWorkerRun: vi.fn(async () => undefined) }));
+const { recordWorkerRun } = vi.hoisted(() => ({
+  recordWorkerRun: vi.fn(async () => undefined),
+}));
 vi.mock("../../../../workers/worker-utils.js", () => ({ recordWorkerRun }));
 
-const { getDispatchBlock } = vi.hoisted(() => ({ getDispatchBlock: vi.fn(async () => ({ blocked: false })) }));
-vi.mock("../../../../shared/notification-dispatch-block.js", () => ({ getDispatchBlock }));
+const { getDispatchBlock } = vi.hoisted(() => ({
+  getDispatchBlock: vi.fn(async () => ({ blocked: false })),
+}));
+vi.mock("../../../../shared/notification-dispatch-block.js", () => ({
+  getDispatchBlock,
+}));
 
-const { resolveAllEligibleRecipients } = vi.hoisted(() => ({ resolveAllEligibleRecipients: vi.fn() }));
-vi.mock("../daily-brief-recipient.resolver.js", () => ({ resolveAllEligibleRecipients }));
+const { resolveAllEligibleRecipients } = vi.hoisted(() => ({
+  resolveAllEligibleRecipients: vi.fn(),
+}));
+vi.mock("../daily-brief-recipient.resolver.js", () => ({
+  resolveAllEligibleRecipients,
+}));
 
-const { dispatchDailyBrief } = vi.hoisted(() => ({ dispatchDailyBrief: vi.fn() }));
+const { dispatchDailyBrief } = vi.hoisted(() => ({
+  dispatchDailyBrief: vi.fn(),
+}));
 vi.mock("../daily-brief-dispatch.service.js", () => ({ dispatchDailyBrief }));
 
 function recipient(id: string) {
@@ -45,23 +57,27 @@ describe("daily-brief.cron", () => {
   });
 
   describe("dependency-timing default run time", () => {
-    it("defaults to 09:30, genuinely after every dependency job found in the repo " +
-      "(attendance-engine 23:00, reconciliation 02:00, attendance-gaps 06:00, " +
-      "payroll-readiness 07:00, roster-shortages 09:00)", async () => {
-      const { parseRunTime } = await import("../daily-brief.cron.js");
-      const { hour, minute } = parseRunTime(undefined);
-      expect(hour).toBe(9);
-      expect(minute).toBe(30);
+    it(
+      "defaults to 09:30, genuinely after every dependency job found in the repo " +
+        "(attendance-engine 23:00, reconciliation 02:00, attendance-gaps 06:00, " +
+        "payroll-readiness 07:00, roster-shortages 09:00)",
+      async () => {
+        const { parseRunTime } = await import("../daily-brief.cron.js");
+        const { hour, minute } = parseRunTime(undefined);
+        expect(hour).toBe(9);
+        expect(minute).toBe(30);
 
-      const latestDependencyHour = 9; // roster-shortages sync, cron/business-action-sync.cron.ts
-      expect(hour).toBeGreaterThanOrEqual(latestDependencyHour);
-      if (hour === latestDependencyHour) {
-        expect(minute).toBeGreaterThan(0);
-      }
-    });
+        const latestDependencyHour = 9; // roster-shortages sync, cron/business-action-sync.cron.ts
+        expect(hour).toBeGreaterThanOrEqual(latestDependencyHour);
+        if (hour === latestDependencyHour) {
+          expect(minute).toBeGreaterThan(0);
+        }
+      },
+    );
 
     it("computes a next-run delay consistent with the configured HH:mm", async () => {
-      const { millisecondsUntilNextManagerDailyBriefRun } = await import("../daily-brief.cron.js");
+      const { millisecondsUntilNextManagerDailyBriefRun } =
+        await import("../daily-brief.cron.js");
       process.env.MANAGER_DAILY_BRIEF_TIME = "09:30";
       const now = new Date(2026, 7, 19, 8, 0, 0, 0); // 08:00 local, before today's 09:30
       const ms = millisecondsUntilNextManagerDailyBriefRun(now);
@@ -69,7 +85,8 @@ describe("daily-brief.cron", () => {
     });
 
     it("rolls over to the next day when the configured time has already passed today", async () => {
-      const { millisecondsUntilNextManagerDailyBriefRun } = await import("../daily-brief.cron.js");
+      const { millisecondsUntilNextManagerDailyBriefRun } =
+        await import("../daily-brief.cron.js");
       process.env.MANAGER_DAILY_BRIEF_TIME = "09:30";
       const now = new Date(2026, 7, 19, 10, 0, 0, 0); // 10:00 local, after today's 09:30
       const ms = millisecondsUntilNextManagerDailyBriefRun(now);
@@ -87,7 +104,10 @@ describe("daily-brief.cron", () => {
 
   describe("MANAGER_DAILY_BRIEF_ENABLED gate", () => {
     it("is a no-op (never resolves recipients or fires) when unset", async () => {
-      const { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } = await import("../daily-brief.cron.js");
+      const {
+        startManagerDailyBriefScheduler,
+        stopManagerDailyBriefScheduler,
+      } = await import("../daily-brief.cron.js");
       vi.useFakeTimers();
       startManagerDailyBriefScheduler();
       await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000); // fast-forward two full days
@@ -95,9 +115,12 @@ describe("daily-brief.cron", () => {
       stopManagerDailyBriefScheduler();
     });
 
-    it("is a no-op when explicitly \"false\"", async () => {
+    it('is a no-op when explicitly "false"', async () => {
       process.env.MANAGER_DAILY_BRIEF_ENABLED = "false";
-      const { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } = await import("../daily-brief.cron.js");
+      const {
+        startManagerDailyBriefScheduler,
+        stopManagerDailyBriefScheduler,
+      } = await import("../daily-brief.cron.js");
       vi.useFakeTimers();
       startManagerDailyBriefScheduler();
       await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000);
@@ -107,9 +130,15 @@ describe("daily-brief.cron", () => {
 
     it("registers and fires once enabled", async () => {
       process.env.MANAGER_DAILY_BRIEF_ENABLED = "true";
-      resolveAllEligibleRecipients.mockResolvedValue({ resolved: [], unresolved: [] });
-      const { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler, millisecondsUntilNextManagerDailyBriefRun } =
-        await import("../daily-brief.cron.js");
+      resolveAllEligibleRecipients.mockResolvedValue({
+        resolved: [],
+        unresolved: [],
+      });
+      const {
+        startManagerDailyBriefScheduler,
+        stopManagerDailyBriefScheduler,
+        millisecondsUntilNextManagerDailyBriefRun,
+      } = await import("../daily-brief.cron.js");
       vi.useFakeTimers();
       startManagerDailyBriefScheduler();
       const delay = millisecondsUntilNextManagerDailyBriefRun();
@@ -121,37 +150,68 @@ describe("daily-brief.cron", () => {
 
   describe("MANAGER_DAILY_BRIEF_DRY_RUN hard gate", () => {
     it("passes dryRun:true through to dispatchDailyBrief when unset", async () => {
-      resolveAllEligibleRecipients.mockResolvedValue({ resolved: [recipient("e1")], unresolved: [] });
-      dispatchDailyBrief.mockResolvedValue({ status: "dry_run", brief: {}, html: "<p/>", subject: "s" });
+      resolveAllEligibleRecipients.mockResolvedValue({
+        resolved: [recipient("e1")],
+        unresolved: [],
+      });
+      dispatchDailyBrief.mockResolvedValue({
+        status: "dry_run",
+        brief: {},
+        html: "<p/>",
+        subject: "s",
+      });
       const { runManagerDailyBrief } = await import("../daily-brief.cron.js");
 
       const summary = await runManagerDailyBrief("2026-08-18");
 
-      expect(dispatchDailyBrief).toHaveBeenCalledWith("e1", { businessDate: "2026-08-18", dryRun: true });
+      expect(dispatchDailyBrief).toHaveBeenCalledWith("e1", {
+        businessDate: "2026-08-18",
+        dryRun: true,
+      });
       expect(summary.dryRunOnly).toBe(1);
       expect(summary.sent).toBe(0);
     });
 
     it("passes dryRun:true even when MANAGER_DAILY_BRIEF_DRY_RUN is garbage/truthy-looking", async () => {
       process.env.MANAGER_DAILY_BRIEF_DRY_RUN = "yes";
-      resolveAllEligibleRecipients.mockResolvedValue({ resolved: [recipient("e1")], unresolved: [] });
-      dispatchDailyBrief.mockResolvedValue({ status: "dry_run", brief: {}, html: "<p/>", subject: "s" });
+      resolveAllEligibleRecipients.mockResolvedValue({
+        resolved: [recipient("e1")],
+        unresolved: [],
+      });
+      dispatchDailyBrief.mockResolvedValue({
+        status: "dry_run",
+        brief: {},
+        html: "<p/>",
+        subject: "s",
+      });
       const { runManagerDailyBrief } = await import("../daily-brief.cron.js");
 
       await runManagerDailyBrief("2026-08-18");
 
-      expect(dispatchDailyBrief).toHaveBeenCalledWith("e1", { businessDate: "2026-08-18", dryRun: true });
+      expect(dispatchDailyBrief).toHaveBeenCalledWith("e1", {
+        businessDate: "2026-08-18",
+        dryRun: true,
+      });
     });
 
-    it("only passes dryRun:false when the env var is the literal string \"false\"", async () => {
+    it('only passes dryRun:false when the env var is the literal string "false"', async () => {
       process.env.MANAGER_DAILY_BRIEF_DRY_RUN = "false";
-      resolveAllEligibleRecipients.mockResolvedValue({ resolved: [recipient("e1")], unresolved: [] });
-      dispatchDailyBrief.mockResolvedValue({ status: "dispatched", dispatchIds: ["d-1"] });
+      resolveAllEligibleRecipients.mockResolvedValue({
+        resolved: [recipient("e1")],
+        unresolved: [],
+      });
+      dispatchDailyBrief.mockResolvedValue({
+        status: "dispatched",
+        dispatchIds: ["d-1"],
+      });
       const { runManagerDailyBrief } = await import("../daily-brief.cron.js");
 
       const summary = await runManagerDailyBrief("2026-08-18");
 
-      expect(dispatchDailyBrief).toHaveBeenCalledWith("e1", { businessDate: "2026-08-18", dryRun: false });
+      expect(dispatchDailyBrief).toHaveBeenCalledWith("e1", {
+        businessDate: "2026-08-18",
+        dryRun: false,
+      });
       expect(summary.sent).toBe(1);
     });
   });
@@ -178,8 +238,13 @@ describe("daily-brief.cron", () => {
 
   describe("bounded concurrency", () => {
     it("never has more than the batch size of dispatchDailyBrief calls in flight at once", async () => {
-      const recipients = Array.from({ length: 17 }, (_, i) => recipient(`e${i}`));
-      resolveAllEligibleRecipients.mockResolvedValue({ resolved: recipients, unresolved: [] });
+      const recipients = Array.from({ length: 17 }, (_, i) =>
+        recipient(`e${i}`),
+      );
+      resolveAllEligibleRecipients.mockResolvedValue({
+        resolved: recipients,
+        unresolved: [],
+      });
 
       let inFlight = 0;
       let maxInFlight = 0;
@@ -190,7 +255,12 @@ describe("daily-brief.cron", () => {
         return new Promise((resolve) => {
           releasers.push(() => {
             inFlight -= 1;
-            resolve({ status: "dry_run", brief: {}, html: "<p/>", subject: "s" });
+            resolve({
+              status: "dry_run",
+              brief: {},
+              html: "<p/>",
+              subject: "s",
+            });
           });
         });
       });
@@ -243,7 +313,11 @@ describe("daily-brief.cron", () => {
 
   describe("global dispatch block", () => {
     it("skips the whole run without resolving recipients when globally blocked", async () => {
-      getDispatchBlock.mockResolvedValue({ blocked: true, scope: "global", reason: "incident" });
+      getDispatchBlock.mockResolvedValue({
+        blocked: true,
+        scope: "global",
+        reason: "incident",
+      });
       const { runManagerDailyBrief } = await import("../daily-brief.cron.js");
 
       const summary = await runManagerDailyBrief("2026-08-18");

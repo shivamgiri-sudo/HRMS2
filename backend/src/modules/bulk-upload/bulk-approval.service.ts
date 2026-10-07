@@ -55,7 +55,13 @@ export const TWO_STAGE_TYPES = new Set(["INCENTIVE_BULK", "DEDUCTION_BULK"]);
  * BULK_UPLOAD with can_create = 1, so the page has always been open to them — this
  * list was the only thing refusing the import itself.
  */
-export const UPLOADER_ROLES = ["super_admin", "wfm", "wfm_spoc", "wfm_analyst", "payroll_hr"];
+export const UPLOADER_ROLES = [
+  "super_admin",
+  "wfm",
+  "wfm_spoc",
+  "wfm_analyst",
+  "payroll_hr",
+];
 
 /**
  * Who may approve at stage 1. Deliberately NOT the uploader roles — a branch WFM must
@@ -209,8 +215,11 @@ export async function loadStagedRows(batchId: string): Promise<StagedRow[]> {
     const source = r.normalized_data;
     const parsed = typeof source === "string" ? JSON.parse(source) : source;
     const data: Record<string, string> = {};
-    for (const [k, v] of Object.entries((parsed ?? {}) as Record<string, unknown>)) {
-      data[String(k).trim().toLowerCase()] = v === null || v === undefined ? "" : String(v).trim();
+    for (const [k, v] of Object.entries(
+      (parsed ?? {}) as Record<string, unknown>,
+    )) {
+      data[String(k).trim().toLowerCase()] =
+        v === null || v === undefined ? "" : String(v).trim();
     }
     return { rowId: String(r.id), rowNo: Number(r.row_no), data };
   });
@@ -331,10 +340,13 @@ export async function resolveEmployees(
  * branch_id, because there is no single branch head who could legitimately approve
  * it and picking one silently would route half the rows past their own approver.
  */
-export function resolveSingleBranch(
-  employees: ResolvedEmployee[],
-): { branchId: string | null; error?: string } {
-  const branches = new Set(employees.map((e) => e.branch_id).filter(Boolean) as string[]);
+export function resolveSingleBranch(employees: ResolvedEmployee[]): {
+  branchId: string | null;
+  error?: string;
+} {
+  const branches = new Set(
+    employees.map((e) => e.branch_id).filter(Boolean) as string[],
+  );
   if (branches.size === 0) return { branchId: null };
   if (branches.size > 1) {
     return {
@@ -387,7 +399,10 @@ export async function linkRowToEntity(
  * it was (still 'pending'/'valid'), and reconcileStuckRows closes that gap once the batch
  * finishes rather than pretending here that the write succeeded.
  */
-export async function markRowFailed(rowId: string, message: string): Promise<void> {
+export async function markRowFailed(
+  rowId: string,
+  message: string,
+): Promise<void> {
   await withBulkLockRetry(() =>
     db.execute(
       `UPDATE upload_batch_row
@@ -409,7 +424,10 @@ export async function markRowFailed(rowId: string, message: string): Promise<voi
  *
  * The reason is still recorded, so a skipped row can always be explained.
  */
-export async function markRowSkipped(rowId: string, reason: string): Promise<void> {
+export async function markRowSkipped(
+  rowId: string,
+  reason: string,
+): Promise<void> {
   await withBulkLockRetry(() =>
     db.execute(
       `UPDATE upload_batch_row
@@ -464,8 +482,13 @@ export async function lockEntity(params: {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE locked_at = locked_at`,
         [
-          randomUUID(), params.entityType, params.entityId, params.batchId,
-          params.batchNo, params.employeeId, params.lockedBy,
+          randomUUID(),
+          params.entityType,
+          params.entityId,
+          params.batchId,
+          params.batchNo,
+          params.employeeId,
+          params.lockedBy,
           params.reason ?? "Created by an approved bulk upload",
         ],
       ),
@@ -524,8 +547,13 @@ export async function lockEntities(
     const values: unknown[] = [];
     for (const e of slice) {
       values.push(
-        randomUUID(), e.entityType, e.entityId, e.batchId,
-        e.batchNo, e.employeeId, e.lockedBy,
+        randomUUID(),
+        e.entityType,
+        e.entityId,
+        e.batchId,
+        e.batchNo,
+        e.employeeId,
+        e.lockedBy,
         e.reason ?? "Created by an approved bulk upload",
       );
     }
@@ -688,7 +716,10 @@ export async function assertCanApprove(
       { allowAdminBypass: false, requireScopeForNonAdmin: true },
     );
     if (!inScope) {
-      throw new BulkUploadError("This batch belongs to a branch outside your scope.", 403);
+      throw new BulkUploadError(
+        "This batch belongs to a branch outside your scope.",
+        403,
+      );
     }
   }
 }
@@ -727,7 +758,9 @@ export interface ReconcileResult {
  * what upload_batch_row actually holds, not just what the caller's own in-memory
  * tally happened to observe before something crashed.
  */
-export async function reconcileStuckRows(batchId: string): Promise<ReconcileResult> {
+export async function reconcileStuckRows(
+  batchId: string,
+): Promise<ReconcileResult> {
   const [strayResult] = await db.execute<ResultSetHeader>(
     `UPDATE upload_batch_row
         SET row_status = 'error',
@@ -775,27 +808,28 @@ export async function reconcileStuckRows(batchId: string): Promise<ReconcileResu
  * The target table + the status value that means "this row's correction is really
  * in effect", one entry per approval-gated entity type.
  */
-const APPLIED_CHECK: Record<string, { sql: string; appliedValues: string[] }> = {
-  attendance_regularization: {
-    sql: `SELECT id, status FROM attendance_regularization WHERE id IN (%IDS%)`,
-    appliedValues: ["approved"],
-  },
-  leave_request: {
-    sql: `SELECT id, status FROM leave_request WHERE id IN (%IDS%)`,
-    appliedValues: ["approved"],
-  },
-  employee_deduction_entries: {
-    sql: `SELECT id, status FROM employee_deduction_entries WHERE id IN (%IDS%)`,
-    appliedValues: ["active"],
-  },
-  incentive_upload_line: {
-    sql: `SELECT iul.id AS id, iub.status AS status
+const APPLIED_CHECK: Record<string, { sql: string; appliedValues: string[] }> =
+  {
+    attendance_regularization: {
+      sql: `SELECT id, status FROM attendance_regularization WHERE id IN (%IDS%)`,
+      appliedValues: ["approved"],
+    },
+    leave_request: {
+      sql: `SELECT id, status FROM leave_request WHERE id IN (%IDS%)`,
+      appliedValues: ["approved"],
+    },
+    employee_deduction_entries: {
+      sql: `SELECT id, status FROM employee_deduction_entries WHERE id IN (%IDS%)`,
+      appliedValues: ["active"],
+    },
+    incentive_upload_line: {
+      sql: `SELECT iul.id AS id, iub.status AS status
             FROM incentive_upload_line iul
             JOIN incentive_upload_batch iub ON iub.id = iul.batch_id
            WHERE iul.id IN (%IDS%)`,
-    appliedValues: ["approved"],
-  },
-};
+      appliedValues: ["approved"],
+    },
+  };
 
 export interface VerifyResult {
   checked: number;
@@ -841,7 +875,8 @@ export async function verifyRowsActuallyApplied(
     ids,
   );
   const statusMap = new Map<string, string>();
-  for (const s of statusRows as RowDataPacket[]) statusMap.set(String(s.id), String(s.status));
+  for (const s of statusRows as RowDataPacket[])
+    statusMap.set(String(s.id), String(s.status));
 
   let confirmed = 0;
   let mismatched = 0;
@@ -882,7 +917,9 @@ export interface RowWithLiveStatus extends RowDataPacket {
   entity_status: string | null;
 }
 
-export async function loadRowsWithLiveStatus(batchId: string): Promise<RowWithLiveStatus[]> {
+export async function loadRowsWithLiveStatus(
+  batchId: string,
+): Promise<RowWithLiveStatus[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM upload_batch_row WHERE upload_batch_id = ? ORDER BY row_no ASC",
     [batchId],
@@ -907,13 +944,14 @@ export async function loadRowsWithLiveStatus(batchId: string): Promise<RowWithLi
       cfg.sql.replace("%IDS%", placeholders),
       ids,
     );
-    for (const s of statusRows as RowDataPacket[]) statusByEntity.set(String(s.id), String(s.status));
+    for (const s of statusRows as RowDataPacket[])
+      statusByEntity.set(String(s.id), String(s.status));
   }
 
   for (const r of rowsArr) {
     const entityId = r.created_entity_id ? String(r.created_entity_id) : null;
     r.entity_created = Boolean(entityId);
-    r.entity_status = entityId ? statusByEntity.get(entityId) ?? null : null;
+    r.entity_status = entityId ? (statusByEntity.get(entityId) ?? null) : null;
   }
   return rowsArr;
 }
@@ -1058,10 +1096,15 @@ export async function markStageDecided(params: {
             updated_at = NOW()
       WHERE id = ? AND approval_status = ?`,
     [
-      params.batchStatus, params.next, params.userId, params.remarks,
+      params.batchStatus,
+      params.next,
+      params.userId,
+      params.remarks,
       params.summary.slice(0, 1000),
-      params.userId, params.remarks,
-      params.batchId, params.expectedFrom,
+      params.userId,
+      params.remarks,
+      params.batchId,
+      params.expectedFrom,
     ],
   );
   return res.affectedRows > 0;
@@ -1091,9 +1134,14 @@ export async function markStageRejected(params: {
             updated_at = NOW()
       WHERE id = ? AND approval_status = ?`,
     [
-      params.userId, params.reason, params.summary.slice(0, 1000),
-      params.userId, params.stage, params.reason,
-      params.batchId, params.expectedFrom,
+      params.userId,
+      params.reason,
+      params.summary.slice(0, 1000),
+      params.userId,
+      params.stage,
+      params.reason,
+      params.batchId,
+      params.expectedFrom,
     ],
   );
   return res.affectedRows > 0;
@@ -1221,8 +1269,12 @@ export async function sendPartialApplyEmail(params: {
   );
   const failedRows = (rowData as RowDataPacket[]).map((r) => ({
     row_no: r.row_no as number,
-    raw_data: (typeof r.raw_data === "string" ? JSON.parse(r.raw_data) : r.raw_data) as Record<string, unknown>,
-    error_messages: (typeof r.error_messages === "string" ? JSON.parse(r.error_messages) : r.error_messages ?? []) as string[],
+    raw_data: (typeof r.raw_data === "string"
+      ? JSON.parse(r.raw_data)
+      : r.raw_data) as Record<string, unknown>,
+    error_messages: (typeof r.error_messages === "string"
+      ? JSON.parse(r.error_messages)
+      : (r.error_messages ?? [])) as string[],
   })) as FailedRowForEmail[];
 
   if (!failedRows.length) return;
@@ -1230,20 +1282,31 @@ export async function sendPartialApplyEmail(params: {
   // Derive column headers from the first row's keys
   const dataKeys = Object.keys(failedRows[0].raw_data);
 
-  const tableRows = failedRows.map((row) => {
-    const cells = dataKeys.map(
-      (k) => `<td style="padding:6px 10px;border:1px solid #e2e8f0;white-space:nowrap">${String(row.raw_data[k] ?? "")}</td>`,
-    ).join("");
-    const errors = (row.error_messages || []).map((e) => `<li>${e}</li>`).join("");
-    return `<tr>
+  const tableRows = failedRows
+    .map((row) => {
+      const cells = dataKeys
+        .map(
+          (k) =>
+            `<td style="padding:6px 10px;border:1px solid #e2e8f0;white-space:nowrap">${String(row.raw_data[k] ?? "")}</td>`,
+        )
+        .join("");
+      const errors = (row.error_messages || [])
+        .map((e) => `<li>${e}</li>`)
+        .join("");
+      return `<tr>
       <td style="padding:6px 10px;border:1px solid #e2e8f0;font-weight:600;color:#64748b">${row.row_no}</td>
       ${cells}
       <td style="padding:6px 10px;border:1px solid #e2e8f0;color:#dc2626"><ul style="margin:0;padding-left:14px">${errors}</ul></td>
     </tr>`;
-  }).join("");
+    })
+    .join("");
 
-  const headerCells = [`<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">Row #</th>`,
-    ...dataKeys.map((k) => `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">${k}</th>`),
+  const headerCells = [
+    `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">Row #</th>`,
+    ...dataKeys.map(
+      (k) =>
+        `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">${k}</th>`,
+    ),
     `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left;color:#dc2626">Errors (fix & re-upload)</th>`,
   ].join("");
 
@@ -1300,7 +1363,9 @@ export async function sendPartialApplyEmail(params: {
     ...failedRows.map((row) => {
       const cells = [
         row.row_no,
-        ...dataKeys.map((k) => `"${String(row.raw_data[k] ?? "").replace(/"/g, '""')}"`),
+        ...dataKeys.map(
+          (k) => `"${String(row.raw_data[k] ?? "").replace(/"/g, '""')}"`,
+        ),
         `"${(row.error_messages || []).join("; ").replace(/"/g, '""')}"`,
       ];
       return cells.join(",");
@@ -1308,19 +1373,23 @@ export async function sendPartialApplyEmail(params: {
   ];
   const csvContent = csvLines.join("\n");
 
-  await emailService.send({
-    to: uploader.email as string,
-    subject: `[PeopleOS] Partial Approval — ${params.batch.upload_batch_no} (${params.failedCount} row(s) need correction)`,
-    html,
-    text: `Hi ${uploader.full_name || uploader.email},\n\nYour batch ${params.batch.upload_batch_no} was partially approved.\n${params.appliedCount} row(s) succeeded, ${params.failedCount} row(s) failed.\n\nFailed rows are attached as a CSV. Fix the errors and re-upload a new batch.\n\nMAS Callnet PeopleOS`,
-    attachments: [
-      {
-        filename: `failed_rows_${params.batch.upload_batch_no}.csv`,
-        content: Buffer.from(csvContent, "utf8"),
-        contentType: "text/csv",
-      },
-    ],
-  }).catch(() => { /* email failure must not block the approval response */ });
+  await emailService
+    .send({
+      to: uploader.email as string,
+      subject: `[PeopleOS] Partial Approval — ${params.batch.upload_batch_no} (${params.failedCount} row(s) need correction)`,
+      html,
+      text: `Hi ${uploader.full_name || uploader.email},\n\nYour batch ${params.batch.upload_batch_no} was partially approved.\n${params.appliedCount} row(s) succeeded, ${params.failedCount} row(s) failed.\n\nFailed rows are attached as a CSV. Fix the errors and re-upload a new batch.\n\nMAS Callnet PeopleOS`,
+      attachments: [
+        {
+          filename: `failed_rows_${params.batch.upload_batch_no}.csv`,
+          content: Buffer.from(csvContent, "utf8"),
+          contentType: "text/csv",
+        },
+      ],
+    })
+    .catch(() => {
+      /* email failure must not block the approval response */
+    });
 }
 
 /**

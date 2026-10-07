@@ -23,7 +23,10 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const src = fs.readFileSync(path.resolve(__dirname, "../dispatch.service.ts"), "utf8");
+const src = fs.readFileSync(
+  path.resolve(__dirname, "../dispatch.service.ts"),
+  "utf8",
+);
 const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("undeliverable recipients are recorded", () => {
@@ -71,7 +74,10 @@ describe("undeliverable recipients are recorded", () => {
     const at = code.indexOf("channelUnconfigured(channel)");
     const branch = code.slice(at, at + 220);
     expect(branch).toContain("failed.push");
-    expect(branch, "channel-level skip must not write per-message rows").not.toContain("recordUndeliverable");
+    expect(
+      branch,
+      "channel-level skip must not write per-message rows",
+    ).not.toContain("recordUndeliverable");
   });
 
   it("only the enum's own values are used for status and retention", () => {

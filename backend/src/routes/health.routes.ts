@@ -1,6 +1,14 @@
 import { Router } from "express";
-import { pingDb, getCircuitBreakerStatus, resetCircuitBreaker } from "../db/mysql.js";
-import { getMigrationHealth, verifySchemaVersion, getSchemaVerificationState } from "../db/runPendingMigrations.js";
+import {
+  pingDb,
+  getCircuitBreakerStatus,
+  resetCircuitBreaker,
+} from "../db/mysql.js";
+import {
+  getMigrationHealth,
+  verifySchemaVersion,
+  getSchemaVerificationState,
+} from "../db/runPendingMigrations.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
 import { requireRole } from "../middleware/requireRole.js";
 
@@ -41,12 +49,18 @@ async function getDatabaseStatus(): Promise<"ok" | "error"> {
   }
 }
 
-function buildReadinessChecks(dbStatus: "ok" | "error", schemaStatus: SchemaStatus): ReadinessCheck[] {
+function buildReadinessChecks(
+  dbStatus: "ok" | "error",
+  schemaStatus: SchemaStatus,
+): ReadinessCheck[] {
   return [
     {
       area: "database",
       status: dbStatus === "ok" ? "ok" : "error",
-      message: dbStatus === "ok" ? "Primary MySQL connection is reachable." : "Primary MySQL connection failed. Check backend environment and network access.",
+      message:
+        dbStatus === "ok"
+          ? "Primary MySQL connection is reachable."
+          : "Primary MySQL connection failed. Check backend environment and network access.",
       owner: "IT / Backend",
     },
     {
@@ -60,19 +74,22 @@ function buildReadinessChecks(dbStatus: "ok" | "error", schemaStatus: SchemaStat
     {
       area: "attendance_reports",
       status: "warning",
-      message: "Validate COSEC sync, active employee date logic, missing punch handling, branch/process/cost-centre filters, and report counts before production sign-off.",
+      message:
+        "Validate COSEC sync, active employee date logic, missing punch handling, branch/process/cost-centre filters, and report counts before production sign-off.",
       owner: "WFM / HR / DBA",
     },
     {
       area: "payroll_reports",
       status: "warning",
-      message: "Validate salary component breakdown, gross/net totals, payslip PDF values, monthly payroll trend, and maker-checker workflow before payroll publish.",
+      message:
+        "Validate salary component breakdown, gross/net totals, payslip PDF values, monthly payroll trend, and maker-checker workflow before payroll publish.",
       owner: "Payroll / Finance / DBA",
     },
     {
       area: "privacy_and_exports",
       status: "warning",
-      message: "Sensitive exports should have role checks, review trail, watermarking where applicable, and masked fields for non-authorized users.",
+      message:
+        "Sensitive exports should have role checks, review trail, watermarking where applicable, and masked fields for non-authorized users.",
       owner: "Compliance / IT Security",
     },
   ];
@@ -171,7 +188,9 @@ healthRouter.get("/version", async (_req, res) => {
     commit: build.commit,
     branch: build.branch,
     builtAt: build.builtAt,
-    startedAt: new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString(),
+    startedAt: new Date(
+      Date.now() - Math.round(process.uptime() * 1000),
+    ).toISOString(),
     runtime: {
       node: process.version,
       // Backend and workers run from the same dist but as separate pm2 processes. Asking
@@ -209,45 +228,61 @@ healthRouter.get("/ready", async (_req, res) => {
 /**
  * GET /health/db-circuit - Circuit breaker status (admin only)
  */
-healthRouter.get("/db-circuit", requireAuth, requireRole("admin", "super_admin"), (_req, res) => {
-  const cb = getCircuitBreakerStatus();
-  const retryAfterMs = cb.status === "open" ? Math.max(0, cb.nextProbeTime - Date.now()) : 0;
-  return res.json({
-    success: true,
-    circuitBreaker: {
-      ...cb,
-      lastFailure: cb.lastFailure ? new Date(cb.lastFailure).toISOString() : null,
-      nextProbeTime: cb.nextProbeTime ? new Date(cb.nextProbeTime).toISOString() : null,
-      retryAfterSeconds: Math.ceil(retryAfterMs / 1000),
-    },
-  });
-});
+healthRouter.get(
+  "/db-circuit",
+  requireAuth,
+  requireRole("admin", "super_admin"),
+  (_req, res) => {
+    const cb = getCircuitBreakerStatus();
+    const retryAfterMs =
+      cb.status === "open" ? Math.max(0, cb.nextProbeTime - Date.now()) : 0;
+    return res.json({
+      success: true,
+      circuitBreaker: {
+        ...cb,
+        lastFailure: cb.lastFailure
+          ? new Date(cb.lastFailure).toISOString()
+          : null,
+        nextProbeTime: cb.nextProbeTime
+          ? new Date(cb.nextProbeTime).toISOString()
+          : null,
+        retryAfterSeconds: Math.ceil(retryAfterMs / 1000),
+      },
+    });
+  },
+);
 
 /**
  * POST /health/db-circuit/reset - Manually close the circuit breaker (admin only)
  * Use when DB is confirmed healthy but the in-memory breaker is still open after a
  * transient failure. This does NOT restart the process — it only resets the breaker.
  */
-healthRouter.post("/db-circuit/reset", requireAuth, requireRole("admin", "super_admin"), async (_req, res) => {
-  const before = getCircuitBreakerStatus();
-  resetCircuitBreaker();
-  // Probe the DB to confirm it's actually reachable before declaring success
-  try {
-    await pingDb();
-    return res.json({
-      success: true,
-      message: "Circuit breaker reset and DB connectivity confirmed.",
-      before: before.status,
-      after: "closed",
-    });
-  } catch (err: any) {
-    return res.status(503).json({
-      success: false,
-      message: "Circuit breaker reset, but DB ping failed — DB may still be unreachable.",
-      error: err?.message ?? String(err),
-    });
-  }
-});
+healthRouter.post(
+  "/db-circuit/reset",
+  requireAuth,
+  requireRole("admin", "super_admin"),
+  async (_req, res) => {
+    const before = getCircuitBreakerStatus();
+    resetCircuitBreaker();
+    // Probe the DB to confirm it's actually reachable before declaring success
+    try {
+      await pingDb();
+      return res.json({
+        success: true,
+        message: "Circuit breaker reset and DB connectivity confirmed.",
+        before: before.status,
+        after: "closed",
+      });
+    } catch (err: any) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Circuit breaker reset, but DB ping failed — DB may still be unreachable.",
+        error: err?.message ?? String(err),
+      });
+    }
+  },
+);
 
 /**
  * GET /health/readiness - Detailed readiness check (protected)
@@ -255,44 +290,57 @@ healthRouter.post("/db-circuit/reset", requireAuth, requireRole("admin", "super_
  * Full diagnostic information for administrators.
  * Includes migration status, database connectivity, and checklist items.
  */
-healthRouter.get("/readiness", requireAuth, requireRole("admin", "super_admin"), async (_req, res) => {
-  const dbStatus = await getDatabaseStatus();
-  const schemaStatus = await verifySchemaVersion();
-  const migrations = getMigrationHealth();
-  const checks = buildReadinessChecks(dbStatus, schemaStatus);
-  const hasError = checks.some((check) => check.status === "error");
-  const hasWarning = checks.some((check) => check.status === "warning");
-  const cb = getCircuitBreakerStatus();
+healthRouter.get(
+  "/readiness",
+  requireAuth,
+  requireRole("admin", "super_admin"),
+  async (_req, res) => {
+    const dbStatus = await getDatabaseStatus();
+    const schemaStatus = await verifySchemaVersion();
+    const migrations = getMigrationHealth();
+    const checks = buildReadinessChecks(dbStatus, schemaStatus);
+    const hasError = checks.some((check) => check.status === "error");
+    const hasWarning = checks.some((check) => check.status === "warning");
+    const cb = getCircuitBreakerStatus();
 
-  return res.status(hasError ? 503 : 200).json({
-    success: !hasError,
-    service: "MCN HRMS Backend API",
-    status: hasError ? "not_ready" : hasWarning ? "ready_with_warnings" : "ready",
-    checks,
-    circuitBreaker: {
-      status: cb.status,
-      failures: cb.failures,
-      lastFailure: cb.lastFailure ? new Date(cb.lastFailure).toISOString() : null,
-      nextProbeTime: cb.nextProbeTime ? new Date(cb.nextProbeTime).toISOString() : null,
-    },
-    summary: {
-      errors: checks.filter((check) => check.status === "error").length,
-      warnings: checks.filter((check) => check.status === "warning").length,
-      ok: checks.filter((check) => check.status === "ok").length,
-      migrations: {
-        status: schemaStatus.valid ? "ok" : "failed",
-        applied_count: schemaStatus.appliedCount,
-        pending_count: schemaStatus.pendingCount,
-        pending_files: schemaStatus.pendingFiles,
-        runner_status: migrations.status,
-        runner_applied_count: migrations.applied.length,
-        runner_skipped_count: migrations.skipped.length,
-        failed_count: migrations.failed.length,
-        // Only include failure details in protected endpoint
-        failed: migrations.failed,
-        completed_at: migrations.completedAt,
+    return res.status(hasError ? 503 : 200).json({
+      success: !hasError,
+      service: "MCN HRMS Backend API",
+      status: hasError
+        ? "not_ready"
+        : hasWarning
+          ? "ready_with_warnings"
+          : "ready",
+      checks,
+      circuitBreaker: {
+        status: cb.status,
+        failures: cb.failures,
+        lastFailure: cb.lastFailure
+          ? new Date(cb.lastFailure).toISOString()
+          : null,
+        nextProbeTime: cb.nextProbeTime
+          ? new Date(cb.nextProbeTime).toISOString()
+          : null,
       },
-    },
-    timestamp: new Date().toISOString(),
-  });
-});
+      summary: {
+        errors: checks.filter((check) => check.status === "error").length,
+        warnings: checks.filter((check) => check.status === "warning").length,
+        ok: checks.filter((check) => check.status === "ok").length,
+        migrations: {
+          status: schemaStatus.valid ? "ok" : "failed",
+          applied_count: schemaStatus.appliedCount,
+          pending_count: schemaStatus.pendingCount,
+          pending_files: schemaStatus.pendingFiles,
+          runner_status: migrations.status,
+          runner_applied_count: migrations.applied.length,
+          runner_skipped_count: migrations.skipped.length,
+          failed_count: migrations.failed.length,
+          // Only include failure details in protected endpoint
+          failed: migrations.failed,
+          completed_at: migrations.completedAt,
+        },
+      },
+      timestamp: new Date().toISOString(),
+    });
+  },
+);

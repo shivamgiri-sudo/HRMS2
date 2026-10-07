@@ -29,7 +29,8 @@ export interface SnapshotSyncDb {
   execute(sql: string, params?: unknown[]): Promise<[unknown, unknown]>;
 }
 
-const employeeDisplayNameSql = "COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))";
+const employeeDisplayNameSql =
+  "COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))";
 
 function key(expr: string) {
   return `LOWER(TRIM(CONVERT(${expr} USING utf8mb4))) COLLATE utf8mb4_unicode_ci`;
@@ -205,8 +206,15 @@ export async function runIdentitySourceSnapshotSync(
   snapshotRunId = randomUUID(),
   capturedAt = new Date().toISOString().slice(0, 19).replace("T", " "),
 ) {
-  const statements = buildIdentitySourceSnapshotSyncStatements(snapshotRunId, capturedAt);
-  const sources: Array<{ sourceSystem: IdentitySourceSystem; affectedRows: number; error?: string }> = [];
+  const statements = buildIdentitySourceSnapshotSyncStatements(
+    snapshotRunId,
+    capturedAt,
+  );
+  const sources: Array<{
+    sourceSystem: IdentitySourceSystem;
+    affectedRows: number;
+    error?: string;
+  }> = [];
 
   await database.execute(
     "UPDATE report_identity_source_snapshot SET is_current = 0 WHERE is_current = 1",
@@ -218,11 +226,17 @@ export async function runIdentitySourceSnapshotSync(
     // sources with it. Record the failure and carry on so every accessible source still loads.
     try {
       const [result] = await database.execute(statement.sql, statement.params);
-      const affectedRows = Number((result as ResultSetHeader | undefined)?.affectedRows ?? 0);
+      const affectedRows = Number(
+        (result as ResultSetHeader | undefined)?.affectedRows ?? 0,
+      );
       sources.push({ sourceSystem: statement.sourceSystem, affectedRows });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      sources.push({ sourceSystem: statement.sourceSystem, affectedRows: 0, error: message });
+      sources.push({
+        sourceSystem: statement.sourceSystem,
+        affectedRows: 0,
+        error: message,
+      });
     }
   }
 
@@ -231,11 +245,15 @@ export async function runIdentitySourceSnapshotSync(
     capturedAt,
     totalAffectedRows: sources.reduce((sum, row) => sum + row.affectedRows, 0),
     sources,
-    failedSources: sources.filter((row) => row.error).map((row) => row.sourceSystem),
+    failedSources: sources
+      .filter((row) => row.error)
+      .map((row) => row.sourceSystem),
   };
 }
 
-export function buildIdentitySourceSnapshotReportSql(query: SnapshotReportQuery): BuiltSql {
+export function buildIdentitySourceSnapshotReportSql(
+  query: SnapshotReportQuery,
+): BuiltSql {
   const clauses = ["ris.is_current = 1"];
   const params: unknown[] = [];
 

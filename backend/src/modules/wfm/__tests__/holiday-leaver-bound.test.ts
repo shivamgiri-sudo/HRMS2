@@ -28,12 +28,19 @@ beforeEach(() => {
 });
 
 /** The holiday-eligibility query the override resolver issues. */
-const holidayCall = () => calls.find((c) => /leave_holiday_master/i.test(c.sql));
+const holidayCall = () =>
+  calls.find((c) => /leave_holiday_master/i.test(c.sql));
 
 describe("the engine will not grant a holiday after the last working day", () => {
   it("bounds the holiday lookup by the leaving date when there is one", async () => {
     await attendanceEngineService.resolveOverridePriority(
-      "emp-1", "2026-08-28", "branch-1", "2024-01-01", null, null, "2026-08-08",
+      "emp-1",
+      "2026-08-28",
+      "branch-1",
+      "2024-01-01",
+      null,
+      null,
+      "2026-08-08",
     );
     const c = holidayCall();
     expect(c).toBeDefined();
@@ -44,7 +51,13 @@ describe("the engine will not grant a holiday after the last working day", () =>
 
   it("keeps the joining-date exclusion alongside it — both bounds, not one replacing the other", async () => {
     await attendanceEngineService.resolveOverridePriority(
-      "emp-1", "2026-08-15", "branch-1", "2026-08-10", null, null, "2026-08-20",
+      "emp-1",
+      "2026-08-15",
+      "branch-1",
+      "2026-08-10",
+      null,
+      null,
+      "2026-08-20",
     );
     const c = holidayCall()!;
     expect(c.sql).toMatch(/holiday_date\s*>=\s*\?/);
@@ -55,7 +68,13 @@ describe("the engine will not grant a holiday after the last working day", () =>
 
   it("applies no upper bound for someone still employed", async () => {
     await attendanceEngineService.resolveOverridePriority(
-      "emp-1", "2026-08-28", "branch-1", "2024-01-01", null, null, null,
+      "emp-1",
+      "2026-08-28",
+      "branch-1",
+      "2024-01-01",
+      null,
+      null,
+      null,
     );
     const c = holidayCall()!;
     expect(c.sql).not.toMatch(/holiday_date\s*<=\s*\?/);
@@ -65,7 +84,13 @@ describe("the engine will not grant a holiday after the last working day", () =>
     // mysql2 can hand a DATE back as a full timestamp; comparing that to a DATE column as a
     // string would silently exclude the last working day itself.
     await attendanceEngineService.resolveOverridePriority(
-      "emp-1", "2026-08-15", "branch-1", "2024-01-01", null, null, "2026-08-15T18:30:00.000Z",
+      "emp-1",
+      "2026-08-15",
+      "branch-1",
+      "2024-01-01",
+      null,
+      null,
+      "2026-08-15T18:30:00.000Z",
     );
     expect(holidayCall()!.params).toContain("2026-08-15");
   });
@@ -78,7 +103,10 @@ describe("the three cases, as the rule is stated", () => {
   const granted = (lastWorkingDay: string) =>
     AUG_HOLIDAYS.filter((h) => h <= lastWorkingDay).length;
 
-  it("left on the 8th -> 0 holidays", () => expect(granted("2026-08-08")).toBe(0));
-  it("left on the 17th -> 1 holiday", () => expect(granted("2026-08-17")).toBe(1));
-  it("left on the 30th -> 2 holidays", () => expect(granted("2026-08-30")).toBe(2));
+  it("left on the 8th -> 0 holidays", () =>
+    expect(granted("2026-08-08")).toBe(0));
+  it("left on the 17th -> 1 holiday", () =>
+    expect(granted("2026-08-17")).toBe(1));
+  it("left on the 30th -> 2 holidays", () =>
+    expect(granted("2026-08-30")).toBe(2));
 });

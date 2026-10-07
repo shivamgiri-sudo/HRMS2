@@ -91,19 +91,30 @@ export interface DailyTrend {
 
 const SERIES: DailyTrendSeriesMeta[] = [
   {
-    key: "revenue", label: "Revenue", basis: "estimated",
-    method: "Month's seat revenue spread evenly across days — seat billing is a monthly rate, so no daily revenue event exists to measure.",
+    key: "revenue",
+    label: "Revenue",
+    basis: "estimated",
+    method:
+      "Month's seat revenue spread evenly across days — seat billing is a monthly rate, so no daily revenue event exists to measure.",
   },
   {
-    key: "grnCost", label: "GRN / vendor cost", basis: "actual",
-    method: "Real spend, dated by the supplier's bill date. Differs from the monthly statement, which books cost by accounting period.",
+    key: "grnCost",
+    label: "GRN / vendor cost",
+    basis: "actual",
+    method:
+      "Real spend, dated by the supplier's bill date. Differs from the monthly statement, which books cost by accounting period.",
   },
   {
-    key: "peopleCost", label: "People cost", basis: "estimated",
-    method: "Month's people cost distributed by the payable attendance actually recorded each day. The rate is monthly, so this is a shape, not a measurement.",
+    key: "peopleCost",
+    label: "People cost",
+    basis: "estimated",
+    method:
+      "Month's people cost distributed by the payable attendance actually recorded each day. The rate is monthly, so this is a shape, not a measurement.",
   },
   {
-    key: "headcount", label: "Headcount present", basis: "actual",
+    key: "headcount",
+    label: "Headcount present",
+    basis: "actual",
     method: "Employees with an attendance record that day.",
   },
 ];
@@ -131,7 +142,10 @@ function dateKey(year: number, month: number, day: number): string {
 }
 
 /** The month's people cost: posted payroll when it exists, otherwise the running snapshot. */
-async function monthlyPeopleCost(period: string, branchId?: string): Promise<number> {
+async function monthlyPeopleCost(
+  period: string,
+  branchId?: string,
+): Promise<number> {
   // Branch filter (2026-09-23, owner rule): pay counts against the branch of the EFFECTIVE cost
   // centre — the mapped payroll cost centre (pnl_employee_cost_centre_override) else the HR one —
   // and the home branch only for staff with no cost centre; the same rule as Live P&L, CEO Overview
@@ -140,8 +154,10 @@ async function monthlyPeopleCost(period: string, branchId?: string): Promise<num
   if (await tableExists("salary_prep_line")) {
     const attr = branchId
       ? await payrollAttributionSql({
-          employeeIdExpr: "e.id", homeCostCentreExpr: "e.cost_centre_id",
-          homeBranchExpr: "e.branch_id", homeProcessExpr: "e.process_id",
+          employeeIdExpr: "e.id",
+          homeCostCentreExpr: "e.cost_centre_id",
+          homeBranchExpr: "e.branch_id",
+          homeProcessExpr: "e.process_id",
         })
       : null;
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -159,8 +175,10 @@ async function monthlyPeopleCost(period: string, branchId?: string): Promise<num
   if (await tableExists("pnl_running_salary_snapshot")) {
     const attr = branchId
       ? await payrollAttributionSql({
-          employeeIdExpr: "s.employee_id", homeCostCentreExpr: "s.cost_centre_id",
-          homeBranchExpr: "s.branch_id", homeProcessExpr: "s.process_id",
+          employeeIdExpr: "s.employee_id",
+          homeCostCentreExpr: "s.cost_centre_id",
+          homeBranchExpr: "s.branch_id",
+          homeProcessExpr: "s.process_id",
         })
       : null;
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -180,15 +198,22 @@ export async function getDailyTrend(
   options: { branchId?: string } = {},
 ): Promise<DailyTrend> {
   if (!/^\d{4}-\d{2}$/.test(period)) {
-    throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+    throw Object.assign(new Error("period must be YYYY-MM"), {
+      statusCode: 400,
+    });
   }
   const [year, month] = period.split("-").map(Number);
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const monthStart = `${period}-01`;
-  const nextMonth = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+  const nextMonth = new Date(Date.UTC(year, month, 1))
+    .toISOString()
+    .slice(0, 10);
 
   const [forecast, peopleCostTotal] = await Promise.all([
-    getSeatRevenueForecast(period, options.branchId ? { branchId: options.branchId } : {}),
+    getSeatRevenueForecast(
+      period,
+      options.branchId ? { branchId: options.branchId } : {},
+    ),
     monthlyPeopleCost(period, options.branchId),
   ]);
   const monthlyRevenue = forecast.projectedMonthEnd;
@@ -212,13 +237,18 @@ export async function getDailyTrend(
           AND g.bill_date >= ? AND g.bill_date < ?
           ${branchSql}
         GROUP BY d`,
-      options.branchId ? [monthStart, nextMonth, options.branchId] : [monthStart, nextMonth],
+      options.branchId
+        ? [monthStart, nextMonth, options.branchId]
+        : [monthStart, nextMonth],
     );
     for (const r of rows) grnByDay.set(String(r.d), n(r.amount));
   }
 
   // Attendance: headcount present, and the payable weight that shapes the people-cost curve.
-  const attendanceByDay = new Map<string, { headcount: number; payable: number }>();
+  const attendanceByDay = new Map<
+    string,
+    { headcount: number; payable: number }
+  >();
   let totalPayable = 0;
   if (await tableExists("attendance_daily_record")) {
     const branchSql = options.branchId ? "AND a.branch_id = ?" : "";
@@ -230,7 +260,9 @@ export async function getDailyTrend(
         WHERE a.record_date >= ? AND a.record_date < ?
           ${branchSql}
         GROUP BY d`,
-      options.branchId ? [monthStart, nextMonth, options.branchId] : [monthStart, nextMonth],
+      options.branchId
+        ? [monthStart, nextMonth, options.branchId]
+        : [monthStart, nextMonth],
     );
     for (const r of rows) {
       const payable = n(r.payable);
@@ -251,9 +283,12 @@ export async function getDailyTrend(
     // Revenue: straight line. People cost: shaped by that day's payable attendance, falling back to
     // a straight line only if no attendance was recorded for the month at all.
     const revenue = daysInMonth > 0 ? monthlyRevenue / daysInMonth : 0;
-    const peopleCost = totalPayable > 0
-      ? (peopleCostTotal * (attendance?.payable ?? 0)) / totalPayable
-      : (daysInMonth > 0 ? peopleCostTotal / daysInMonth : 0);
+    const peopleCost =
+      totalPayable > 0
+        ? (peopleCostTotal * (attendance?.payable ?? 0)) / totalPayable
+        : daysInMonth > 0
+          ? peopleCostTotal / daysInMonth
+          : 0;
 
     const totalCost = grnCost + peopleCost;
     cumulativeRevenue += revenue;
@@ -268,9 +303,15 @@ export async function getDailyTrend(
       headcount: attendance?.headcount ?? 0,
       cumulativeRevenue,
       cumulativeCost,
-      cumulativeOpPct: cumulativeRevenue > 0
-        ? Number((((cumulativeRevenue - cumulativeCost) / cumulativeRevenue) * 100).toFixed(2))
-        : null,
+      cumulativeOpPct:
+        cumulativeRevenue > 0
+          ? Number(
+              (
+                ((cumulativeRevenue - cumulativeCost) / cumulativeRevenue) *
+                100
+              ).toFixed(2),
+            )
+          : null,
     });
   }
 

@@ -16,9 +16,16 @@ import { resolveFinanceStageRole } from "../finance/finance-workflow-role.js";
 import { bpoPnlRouter } from "./bpo-pnl.routes.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
-import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
+import {
+  branchBudgetService,
+  getCompanyBudgetConsolidation,
+} from "./branch-budget.service.js";
 import { getHeadSubHeadCoverage } from "./budget-headroom-gate.service.js";
-import { getCeoOverview, getYtdSummary, type CeoFilters } from "./ceo-overview.service.js";
+import {
+  getCeoOverview,
+  getYtdSummary,
+  type CeoFilters,
+} from "./ceo-overview.service.js";
 import { bpoPnlFullWaterfallService } from "./bpo-pnl-full-waterfall.service.js";
 import { budgetTopupService } from "./budget-topup.service.js";
 import { budgetClosureService } from "./budget-closure.service.js";
@@ -28,11 +35,20 @@ import { meterService } from "./meter.service.js";
 import { costCentreMappingService } from "./cost-centre-mapping.service.js";
 import { savedViewService } from "./saved-view.service.js";
 import { gradeEngineService } from "./grade-engine.service.js";
-import { checkBudgetExceptions, checkSharingMethodReadiness } from "./budget-readiness.service.js";
+import {
+  checkBudgetExceptions,
+  checkSharingMethodReadiness,
+} from "./budget-readiness.service.js";
 import { budgetCoverageService } from "./budget-coverage.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
-import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
-import { getCostLeakageReview, getStafflessCostCentreSpend } from "./pnl-cost-leakage.service.js";
+import {
+  pnlStatementService,
+  type StatementViewBy,
+} from "./pnl-statement.service.js";
+import {
+  getCostLeakageReview,
+  getStafflessCostCentreSpend,
+} from "./pnl-cost-leakage.service.js";
 import { getDailyTrend } from "./pnl-daily-trend.service.js";
 import { getPnlDrilldown } from "./pnl-drilldown.service.js";
 import { getSeatRevenueForecast } from "./pnl-seat-revenue-forecast.service.js";
@@ -50,7 +66,10 @@ import { getPnlTrendSeries } from "./pnl-trend-series.service.js";
 import { getPnlInsights } from "./pnl-insights.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { clearPnlReadCache } from "./pnl-read-cache.js";
-import { narrowProcessScope, resolveClientSearchProcessIds } from "./pnl-client-search-scope.js";
+import {
+  narrowProcessScope,
+  resolveClientSearchProcessIds,
+} from "./pnl-client-search-scope.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -75,8 +94,10 @@ import {
 } from "./pnl-cost-centre-override.service.js";
 
 const router = Router();
-const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 /**
  * A repeatable filter parameter, as either `?ids=a,b,c` or `?ids=a&ids=b&ids=c`.
@@ -134,14 +155,36 @@ const BUDGET_READ_ROLES = [
   "coo",
 ] as const;
 const BUDGET_CREATE_ROLES = ["super_admin", "admin", "branch_admin"] as const;
-const BUDGET_REVIEW_ROLES = ["branch_head", "finance_head", "accounts_head", "super_admin"] as const;
+const BUDGET_REVIEW_ROLES = [
+  "branch_head",
+  "finance_head",
+  "accounts_head",
+  "super_admin",
+] as const;
 // Company-wide, all-branches budget consolidation (PR 11) — deliberately excludes
 // branch_admin/branch_head/finance (branch-scoped roles that shouldn't see all-branch data).
-const BUDGET_CONSOLIDATION_ROLES = ["super_admin", "admin", "ceo", "coo", "finance_head", "accounts_head"] as const;
+const BUDGET_CONSOLIDATION_ROLES = [
+  "super_admin",
+  "admin",
+  "ceo",
+  "coo",
+  "finance_head",
+  "accounts_head",
+] as const;
 // Whoever hits "exceeds available budget" while raising/approving a GRN — the branch side
 // of budget work, not the review side.
-const TOPUP_CREATE_ROLES = ["super_admin", "admin", "branch_admin", "branch_head"] as const;
-const TOPUP_REVIEW_ROLES = ["branch_head", "finance_head", "accounts_head", "super_admin"] as const;
+const TOPUP_CREATE_ROLES = [
+  "super_admin",
+  "admin",
+  "branch_admin",
+  "branch_head",
+] as const;
+const TOPUP_REVIEW_ROLES = [
+  "branch_head",
+  "finance_head",
+  "accounts_head",
+  "super_admin",
+] as const;
 
 function actor(req: AuthenticatedRequest) {
   return {
@@ -158,7 +201,10 @@ function actor(req: AuthenticatedRequest) {
  * branch, so resolveFinanceBranchScope has nothing to pin — the branch has to be read off the
  * record first. A null branch is a denial for a branch-scoped caller, never a free pass.
  */
-async function assertBranchOf(req: AuthenticatedRequest, recordBranchId: string | null | undefined) {
+async function assertBranchOf(
+  req: AuthenticatedRequest,
+  recordBranchId: string | null | undefined,
+) {
   const user = actor(req);
   await assertFinanceRecordBranch({
     userId: user.id,
@@ -176,7 +222,10 @@ async function assertBranchOf(req: AuthenticatedRequest, recordBranchId: string 
  * by that function at all — resolved separately here via the process's own branch_id, the same
  * way assertBranchOf resolves a cost centre's branch). Global finance roles are a no-op in both.
  */
-async function assertProcessInScope(req: AuthenticatedRequest, processId: string) {
+async function assertProcessInScope(
+  req: AuthenticatedRequest,
+  processId: string,
+) {
   const user = actor(req);
   await resolveFinanceProcessScope({
     userId: user.id,
@@ -189,7 +238,7 @@ async function assertProcessInScope(req: AuthenticatedRequest, processId: string
 
 async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
   const user = actor(req);
-  const budget = await branchBudgetService.get(budgetId) as any;
+  const budget = (await branchBudgetService.get(budgetId)) as any;
   await assertFinanceRecordBranch({
     userId: user.id,
     primaryRole: user.role,
@@ -208,7 +257,11 @@ router.use(requireAuth);
  * on the next read rather than up to a minute later. Never blocks or denies: it always calls next().
  */
 router.use("/pnl", (req, res, next) => {
-  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+  if (
+    req.method !== "GET" &&
+    req.method !== "HEAD" &&
+    req.method !== "OPTIONS"
+  ) {
     res.on("finish", () => {
       if (res.statusCode < 400) clearPnlReadCache();
     });
@@ -225,7 +278,9 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
     const data = await branchBudgetService.list({
       period: req.query.period ? String(req.query.period) : undefined,
@@ -233,7 +288,7 @@ router.get(
       status: req.query.status ? String(req.query.status) : undefined,
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -254,15 +309,20 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
     if (!branchId || !req.query.period) {
       res.json({ success: true, data: [] });
       return;
     }
-    const data = await branchBudgetService.getPriorBudgetFromMirror(String(req.query.period), branchId);
+    const data = await branchBudgetService.getPriorBudgetFromMirror(
+      String(req.query.period),
+      branchId,
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -270,7 +330,10 @@ router.get(
   requireRole(...BUDGET_CONSOLIDATION_ROLES),
   h(async (req, res) => {
     const periodCode = String(req.query.period ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid period (YYYY-MM) is required"), { statusCode: 400 });
+    if (!/^\d{4}-\d{2}$/.test(periodCode))
+      throw Object.assign(new Error("A valid period (YYYY-MM) is required"), {
+        statusCode: 400,
+      });
     const [branchSummaries, headBreakdown, periodLocked] = await Promise.all([
       branchBudgetService.list({ period: periodCode }),
       getCompanyBudgetConsolidation(periodCode),
@@ -284,13 +347,15 @@ router.get(
         // error anywhere in the payload. The catch stays — one branch's failure must not take
         // down the whole rollup — but the row now says it could not be measured rather than
         // asserting a zero, and completionPct is null so no client can chart it as progress.
-        const coverage = await budgetCoverageService.getCoverage(summary.id).catch((error) => {
-          console.error(
-            `[budget-consolidation] coverage unavailable for budget ${summary.id}: `
-              + (error instanceof Error ? error.message : String(error))
-          );
-          return null;
-        });
+        const coverage = await budgetCoverageService
+          .getCoverage(summary.id)
+          .catch((error) => {
+            console.error(
+              `[budget-consolidation] coverage unavailable for budget ${summary.id}: ` +
+                (error instanceof Error ? error.message : String(error)),
+            );
+            return null;
+          });
         return {
           budgetId: summary.id,
           branchName: summary.branch_name,
@@ -300,7 +365,7 @@ router.get(
            *  "we could not tell". */
           coverageAvailable: Boolean(coverage),
         };
-      })
+      }),
     );
     // Same transparency-flag pattern as bpo-pnl.routes.ts's read endpoints: this rollup still
     // recomputes live from finance_budget_header/finance_budget_line even once the period's P&L
@@ -308,8 +373,16 @@ router.get(
     // legitimately move after the period's official P&L is frozen. Surfacing the flag makes that
     // visible instead of silent; serving the frozen figure itself is follow-up work, since budget
     // consolidation has no snapshot table of its own to substitute in.
-    res.json({ success: true, data: { branchSummaries, headBreakdown, readiness, isPeriodLocked: periodLocked } });
-  })
+    res.json({
+      success: true,
+      data: {
+        branchSummaries,
+        headBreakdown,
+        readiness,
+        isPeriodLocked: periodLocked,
+      },
+    });
+  }),
 );
 
 // Declared BEFORE /pnl/budgets/:id — Express matches in order.
@@ -318,9 +391,13 @@ router.get(
   requireRole(...BUDGET_REVIEW_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const data = await branchBudgetService.listPendingForReviewer(user.role, user.id, user.roles);
+    const data = await branchBudgetService.listPendingForReviewer(
+      user.role,
+      user.id,
+      user.roles,
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -329,7 +406,7 @@ router.get(
   h(async (req, res) => {
     const data = await scopedBudget(req, req.params.id);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -341,17 +418,22 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
-    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    if (!branchId)
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const data = await branchBudgetService.availableLines({
       branchId,
       processId: req.query.processId ? String(req.query.processId) : undefined,
-      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+      costCentreId: req.query.costCentreId
+        ? String(req.query.costCentreId)
+        : undefined,
       period: req.query.period ? String(req.query.period) : undefined,
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 /**
@@ -370,15 +452,25 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
-    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    if (!branchId)
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const period = req.query.period ? String(req.query.period) : "";
     const head = req.query.head ? String(req.query.head) : "";
-    if (!period) throw Object.assign(new Error("Period is required"), { statusCode: 400 });
-    if (!head) throw Object.assign(new Error("Head is required"), { statusCode: 400 });
+    if (!period)
+      throw Object.assign(new Error("Period is required"), { statusCode: 400 });
+    if (!head)
+      throw Object.assign(new Error("Head is required"), { statusCode: 400 });
     const subHead = req.query.subHead ? String(req.query.subHead) : null;
-    const coverage = await getHeadSubHeadCoverage(branchId, period, head, subHead);
+    const coverage = await getHeadSubHeadCoverage(
+      branchId,
+      period,
+      head,
+      subHead,
+    );
     res.json({
       success: true,
       data: {
@@ -387,7 +479,7 @@ router.get(
         aggregateAvailable: coverage.aggregateAvailable,
       },
     });
-  })
+  }),
 );
 
 // NOTE: POST /pnl/budgets and POST /pnl/budgets/:id/submit are owned exclusively by
@@ -404,9 +496,12 @@ router.post(
   h(async (req, res) => {
     const user = actor(req);
     const budget = await scopedBudget(req, req.params.id);
-    const decision = String(req.body?.decision ?? "") as "approve" | "reject" | "revision";
+    const decision = String(req.body?.decision ?? "") as
+      "approve" | "reject" | "revision";
     if (!["approve", "reject", "revision"].includes(decision)) {
-      throw Object.assign(new Error("Invalid budget decision"), { statusCode: 400 });
+      throw Object.assign(new Error("Invalid budget decision"), {
+        statusCode: 400,
+      });
     }
     const effectiveRole = resolveFinanceStageRole({
       primaryRole: user.role,
@@ -417,13 +512,15 @@ router.post(
     const rawCorrections = Array.isArray(req.body?.lineCorrections)
       ? req.body.lineCorrections
       : [];
-    const lineCorrections = rawCorrections.map((entry: Record<string, unknown>) => ({
-      lineId: entry.lineId ? String(entry.lineId) : null,
-      head: String(entry.head ?? ""),
-      subHead: entry.subHead ? String(entry.subHead) : null,
-      itemName: entry.itemName ? String(entry.itemName) : null,
-      note: String(entry.note ?? ""),
-    }));
+    const lineCorrections = rawCorrections.map(
+      (entry: Record<string, unknown>) => ({
+        lineId: entry.lineId ? String(entry.lineId) : null,
+        head: String(entry.head ?? ""),
+        subHead: entry.subHead ? String(entry.subHead) : null,
+        itemName: entry.itemName ? String(entry.itemName) : null,
+        note: String(entry.note ?? ""),
+      }),
+    );
     const data = await branchBudgetService.review(
       req.params.id,
       decision,
@@ -431,10 +528,10 @@ router.post(
       effectiveRole,
       req.body?.remarks ? String(req.body.remarks) : undefined,
       lineCorrections,
-      [user.role, ...(user.roles ?? [])]
+      [user.role, ...(user.roles ?? [])],
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // Preflight read: checks whether a tax treatment amendment is eligible for a given budget line.
@@ -446,10 +543,10 @@ router.get(
   h(async (req, res) => {
     const data = await branchBudgetService.getTaxAmendmentPreflight(
       req.params.budgetId,
-      req.params.lineId
+      req.params.lineId,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // Tax Treatment Amendment — Step 1 (request).
@@ -462,13 +559,28 @@ router.patch(
   requireRole("finance_head", "super_admin"),
   h(async (req, res) => {
     const user = actor(req);
-    const { taxTreatment, gstRate, gstType, recoverableTaxPct, reason } = req.body ?? {};
-    const VALID_TREATMENTS = ["inclusive", "exclusive", "exempt", "reverse_charge", "non_gst"];
+    const { taxTreatment, gstRate, gstType, recoverableTaxPct, reason } =
+      req.body ?? {};
+    const VALID_TREATMENTS = [
+      "inclusive",
+      "exclusive",
+      "exempt",
+      "reverse_charge",
+      "non_gst",
+    ];
     if (!VALID_TREATMENTS.includes(String(taxTreatment ?? ""))) {
-      throw Object.assign(new Error("taxTreatment must be one of: " + VALID_TREATMENTS.join(", ")), { statusCode: 400 });
+      throw Object.assign(
+        new Error(
+          "taxTreatment must be one of: " + VALID_TREATMENTS.join(", "),
+        ),
+        { statusCode: 400 },
+      );
     }
     if (!String(reason ?? "").trim()) {
-      throw Object.assign(new Error("reason is required for a tax treatment amendment"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("reason is required for a tax treatment amendment"),
+        { statusCode: 400 },
+      );
     }
     const data = await branchBudgetService.requestTaxAmendment(
       req.params.budgetId,
@@ -481,10 +593,10 @@ router.patch(
       },
       user.id,
       user.role,
-      String(reason)
+      String(reason),
     );
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 // List tax amendments for a budget (pending + recent history).
@@ -494,10 +606,13 @@ router.get(
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
     const budgetId = String(req.query.budgetId ?? "").trim();
-    if (!budgetId) throw Object.assign(new Error("budgetId query param is required"), { statusCode: 400 });
+    if (!budgetId)
+      throw Object.assign(new Error("budgetId query param is required"), {
+        statusCode: 400,
+      });
     const data = await branchBudgetService.listTaxAmendments(budgetId);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // Tax Treatment Amendment — Step 2 (review: approve or reject).
@@ -510,20 +625,26 @@ router.post(
     const user = actor(req);
     const { decision, reason } = req.body ?? {};
     if (!["approved", "rejected"].includes(String(decision ?? ""))) {
-      throw Object.assign(new Error("decision must be 'approved' or 'rejected'"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("decision must be 'approved' or 'rejected'"),
+        { statusCode: 400 },
+      );
     }
     if (String(decision) === "rejected" && !String(reason ?? "").trim()) {
-      throw Object.assign(new Error("reason is required when rejecting an amendment"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("reason is required when rejecting an amendment"),
+        { statusCode: 400 },
+      );
     }
     const data = await branchBudgetService.reviewTaxAmendment(
       req.params.id,
       String(decision) as "approved" | "rejected",
       user.id,
       user.role,
-      reason ? String(reason) : undefined
+      reason ? String(reason) : undefined,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // 2-A: Budget transfer / virement — submit creates a pending request; a distinct authorised
@@ -534,9 +655,17 @@ router.post(
   requireRole("finance_head", "accounts_head", "super_admin"),
   h(async (req, res) => {
     const user = actor(req);
-    await assertBranchOf(req, await branchBudgetService.get(req.params.budgetId).then((b: any) => b?.branch_id));
+    await assertBranchOf(
+      req,
+      await branchBudgetService
+        .get(req.params.budgetId)
+        .then((b: any) => b?.branch_id),
+    );
     const { fromLineId, toLineId, transferAmount, reason } = req.body ?? {};
-    if (!fromLineId || !toLineId) throw Object.assign(new Error("fromLineId and toLineId are required"), { statusCode: 400 });
+    if (!fromLineId || !toLineId)
+      throw Object.assign(new Error("fromLineId and toLineId are required"), {
+        statusCode: 400,
+      });
     const data = await branchBudgetService.submitTransfer({
       budgetId: req.params.budgetId,
       fromLineId: String(fromLineId),
@@ -547,7 +676,7 @@ router.post(
       actorRole: user.role,
     });
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 // 2-A: Review a pending virement — approve (applies with canonical recalc) or reject.
@@ -560,17 +689,19 @@ router.post(
     const user = actor(req);
     const { decision, remarks } = req.body ?? {};
     if (!["approve", "reject"].includes(String(decision ?? ""))) {
-      throw Object.assign(new Error("decision must be 'approve' or 'reject'"), { statusCode: 400 });
+      throw Object.assign(new Error("decision must be 'approve' or 'reject'"), {
+        statusCode: 400,
+      });
     }
     const data = await branchBudgetService.reviewTransfer(
       req.params.id,
       String(decision) as "approve" | "reject",
       user.id,
       user.role,
-      remarks ? String(remarks) : undefined
+      remarks ? String(remarks) : undefined,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // 2-A: List all transfers for a budget — pending, approved, and rejected.
@@ -578,10 +709,15 @@ router.get(
   "/pnl/budgets/:budgetId/transfers",
   requireRole("finance_head", "accounts_head", "super_admin"),
   h(async (req, res) => {
-    await assertBranchOf(req, await branchBudgetService.get(req.params.budgetId).then((b: any) => b?.branch_id));
+    await assertBranchOf(
+      req,
+      await branchBudgetService
+        .get(req.params.budgetId)
+        .then((b: any) => b?.branch_id),
+    );
     const data = await branchBudgetService.listTransfers(req.params.budgetId);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // Per-cost-centre budget vs actual, with the head / sub-head breakdown the tab drills into.
@@ -593,16 +729,20 @@ router.get(
   requireRole(...BUDGET_READ_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const branchId = await budgetCostCentreUtilizationService.getBudgetBranch(req.params.id);
+    const branchId = await budgetCostCentreUtilizationService.getBudgetBranch(
+      req.params.id,
+    );
     await assertFinanceRecordBranch({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
       recordBranchId: branchId,
     });
-    const { rows, unallocated } = await budgetCostCentreUtilizationService.get(req.params.id);
+    const { rows, unallocated } = await budgetCostCentreUtilizationService.get(
+      req.params.id,
+    );
     res.json({ success: true, data: rows, meta: { unallocated } });
-  })
+  }),
 );
 
 // 4-D: GRN drill-through per budget line — shows all GRN cost allocations that consumed a line.
@@ -612,7 +752,7 @@ router.get(
   h(async (req, res) => {
     const data = await branchBudgetService.getGrnsForLine(req.params.lineId);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // A reviewer correcting the lines in place at their own stage, rather than sending the whole budget
@@ -636,10 +776,10 @@ router.delete(
       req.params.id,
       user.id,
       user.role,
-      String(req.body?.reason ?? "")
+      String(req.body?.reason ?? ""),
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -660,12 +800,15 @@ router.post(
       Array.isArray(req.body?.lines) ? req.body.lines : [],
       user.id,
       effectiveRole,
-      String(req.body?.reason ?? "")
+      String(req.body?.reason ?? ""),
     );
     // Keep head/sub-head coverage in step with the edited line set, exactly as the create path does.
     await budgetCoverageService.syncPlannedFromLines(req.params.id, user.id);
-    res.json({ success: true, data: await branchBudgetService.get(req.params.id) });
-  })
+    res.json({
+      success: true,
+      data: await branchBudgetService.get(req.params.id),
+    });
+  }),
 );
 
 // Budget top-up requests: the formal "ask for more against this exact line" path, gated by
@@ -679,23 +822,31 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
     const data = await budgetTopupService.list({
       branchScope,
       status: req.query.status ? String(req.query.status) : undefined,
       head: req.query.head ? String(req.query.head) : undefined,
       subHead: req.query.subHead ? String(req.query.subHead) : undefined,
-      requestedBy: req.query.requestedBy ? String(req.query.requestedBy) : undefined,
+      requestedBy: req.query.requestedBy
+        ? String(req.query.requestedBy)
+        : undefined,
       period: req.query.period ? String(req.query.period) : undefined,
-      raisedFrom: req.query.raisedFrom ? String(req.query.raisedFrom) : undefined,
+      raisedFrom: req.query.raisedFrom
+        ? String(req.query.raisedFrom)
+        : undefined,
       raisedTo: req.query.raisedTo ? String(req.query.raisedTo) : undefined,
-      pendingWithRole: req.query.pendingWith ? String(req.query.pendingWith) : undefined,
+      pendingWithRole: req.query.pendingWith
+        ? String(req.query.pendingWith)
+        : undefined,
     });
     // `data` stays the array it has always been so BudgetTopupPanel keeps working unchanged;
     // the tab counts ride alongside it rather than wrapping it.
     res.json({ success: true, data: data.rows, counts: data.counts });
-  })
+  }),
 );
 
 router.get(
@@ -711,7 +862,7 @@ router.get(
       recordBranchId: String((data as any).branch_id),
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -723,11 +874,16 @@ router.post(
     const isNewLine = Boolean(req.body?.isNewLine);
     // Array.isArray guard here, not a length check — create()'s own validation is what refuses
     // an empty/malformed split set, with a message the reviewer can act on.
-    const costCentreSplits = Array.isArray(req.body?.costCentreSplits) ? req.body.costCentreSplits : [];
+    const costCentreSplits = Array.isArray(req.body?.costCentreSplits)
+      ? req.body.costCentreSplits
+      : [];
 
     if (isNewLine) {
       const budgetId = String(req.body?.budgetId ?? "");
-      if (!budgetId) throw Object.assign(new Error("A budget is required"), { statusCode: 400 });
+      if (!budgetId)
+        throw Object.assign(new Error("A budget is required"), {
+          statusCode: 400,
+        });
       const budgetBranchId = await budgetTopupService.getBudgetBranch(budgetId);
       await assertFinanceRecordBranch({
         userId: user.id,
@@ -740,27 +896,35 @@ router.post(
           isNewLine: true,
           budgetId,
           head: req.body?.head != null ? String(req.body.head) : undefined,
-          subHead: req.body?.subHead != null ? String(req.body.subHead) : undefined,
+          subHead:
+            req.body?.subHead != null ? String(req.body.subHead) : undefined,
           unit: req.body?.unit != null ? String(req.body.unit) : undefined,
-          unitRate: req.body?.unitRate != null ? Number(req.body.unitRate) : undefined,
+          unitRate:
+            req.body?.unitRate != null ? Number(req.body.unitRate) : undefined,
           // How the top-up should be shared across cost centres. Validated by
           // computeLineAllocations when it is applied, which is the only place that knows the
           // supported set — echoing that list here would be a second copy to keep in step.
-          allocationDriver: req.body?.allocationDriver != null ? String(req.body.allocationDriver) : undefined,
+          allocationDriver:
+            req.body?.allocationDriver != null
+              ? String(req.body.allocationDriver)
+              : undefined,
           requestedAmount: Number(req.body?.requestedAmount ?? 0),
           requestedQuantity: Number(req.body?.requestedQuantity ?? 0),
           reason: String(req.body?.reason ?? ""),
           costCentreSplits,
         },
         user.id,
-        user.role
+        user.role,
       );
       res.status(201).json({ success: true, data });
       return;
     }
 
     const budgetLineId = String(req.body?.budgetLineId ?? "");
-    if (!budgetLineId) throw Object.assign(new Error("A budget line is required"), { statusCode: 400 });
+    if (!budgetLineId)
+      throw Object.assign(new Error("A budget line is required"), {
+        statusCode: 400,
+      });
     const lineBranchId = await budgetTopupService.getLineBranch(budgetLineId);
     await assertFinanceRecordBranch({
       userId: user.id,
@@ -776,14 +940,17 @@ router.post(
         reason: String(req.body?.reason ?? ""),
         // Omitted means "share it the way this line is already shared" — the line's own driver is
         // re-run over the new total when the top-up is applied. Explicit splits still override.
-        allocationDriver: req.body?.allocationDriver != null ? String(req.body.allocationDriver) : undefined,
+        allocationDriver:
+          req.body?.allocationDriver != null
+            ? String(req.body.allocationDriver)
+            : undefined,
         costCentreSplits,
       },
       user.id,
-      user.role
+      user.role,
     );
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -800,7 +967,10 @@ router.post(
       recordBranchId: String((request as any).branch_id),
     });
     const decision = String(req.body?.decision ?? "") as "approve" | "reject";
-    if (!["approve", "reject"].includes(decision)) throw Object.assign(new Error("Invalid top-up decision"), { statusCode: 400 });
+    if (!["approve", "reject"].includes(decision))
+      throw Object.assign(new Error("Invalid top-up decision"), {
+        statusCode: 400,
+      });
     const effectiveRole = resolveFinanceStageRole({
       primaryRole: user.role,
       userRoles: user.roles,
@@ -812,10 +982,10 @@ router.post(
       decision,
       user.id,
       effectiveRole,
-      req.body?.remarks ? String(req.body.remarks) : undefined
+      req.body?.remarks ? String(req.body.remarks) : undefined,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // Finance Head direct budget increase (owner decision, 2026-08-21): bypasses the 2-stage
@@ -829,7 +999,9 @@ router.post(
   requireRole("finance_head", "super_admin"),
   h(async (req, res) => {
     const user = actor(req);
-    const lineBranchId = await budgetTopupService.getLineBranch(req.params.lineId);
+    const lineBranchId = await budgetTopupService.getLineBranch(
+      req.params.lineId,
+    );
     await assertFinanceRecordBranch({
       userId: user.id,
       primaryRole: user.role,
@@ -841,20 +1013,38 @@ router.post(
         budgetLineId: req.params.lineId,
         additionalQuantity: Number(req.body?.additionalQuantity ?? 0),
         reason: String(req.body?.reason ?? ""),
-        costCentreSplits: Array.isArray(req.body?.costCentreSplits) ? req.body.costCentreSplits : [],
+        costCentreSplits: Array.isArray(req.body?.costCentreSplits)
+          ? req.body.costCentreSplits
+          : [],
       },
       user.id,
-      user.role
+      user.role,
     );
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 // Monthly business-case close/reopen per (budget, head, sub-head) — owner requirement,
 // 2026-08-21. See budget-closure.service.ts's header comment for the full design.
-const CLOSURE_READ_ROLES = ["super_admin", "admin", "branch_admin", "branch_head", "finance_head", "accounts_head"] as const;
-const CLOSURE_CLOSE_ROLES = ["super_admin", "branch_admin", "finance_head"] as const;
-const CLOSURE_REOPEN_REQUEST_ROLES = ["super_admin", "admin", "branch_admin", "finance_head"] as const;
+const CLOSURE_READ_ROLES = [
+  "super_admin",
+  "admin",
+  "branch_admin",
+  "branch_head",
+  "finance_head",
+  "accounts_head",
+] as const;
+const CLOSURE_CLOSE_ROLES = [
+  "super_admin",
+  "branch_admin",
+  "finance_head",
+] as const;
+const CLOSURE_REOPEN_REQUEST_ROLES = [
+  "super_admin",
+  "admin",
+  "branch_admin",
+  "finance_head",
+] as const;
 const CLOSURE_REVIEW_ROLES = ["super_admin", "finance_head"] as const;
 
 router.get(
@@ -864,7 +1054,7 @@ router.get(
     await scopedBudget(req, req.params.budgetId);
     const data = await budgetClosureService.getStatus(req.params.budgetId);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -880,10 +1070,10 @@ router.post(
       req.body?.subHead ? String(req.body.subHead) : null,
       req.body?.reason ? String(req.body.reason) : null,
       user.id,
-      user.role
+      user.role,
     );
     res.json({ success: true });
-  })
+  }),
 );
 
 router.post(
@@ -894,16 +1084,22 @@ router.post(
     const user = actor(req);
     await scopedBudget(req, req.params.budgetId);
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
-    if (!items.length) throw Object.assign(new Error("At least one head/sub-head is required"), { statusCode: 400 });
+    if (!items.length)
+      throw Object.assign(new Error("At least one head/sub-head is required"), {
+        statusCode: 400,
+      });
     const data = await budgetClosureService.bulkClose(
       req.params.budgetId,
-      items.map((item: any) => ({ head: String(item.head ?? ""), subHead: item.subHead ? String(item.subHead) : null })),
+      items.map((item: any) => ({
+        head: String(item.head ?? ""),
+        subHead: item.subHead ? String(item.subHead) : null,
+      })),
       req.body?.reason ? String(req.body.reason) : null,
       user.id,
-      user.role
+      user.role,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -919,10 +1115,10 @@ router.post(
       req.body?.subHead ? String(req.body.subHead) : null,
       String(req.body?.reason ?? ""),
       user.id,
-      user.role
+      user.role,
     );
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -931,7 +1127,9 @@ router.post(
   requireRole(...CLOSURE_REVIEW_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const requestBranchId = await budgetClosureService.getReopenRequestBranch(req.params.id);
+    const requestBranchId = await budgetClosureService.getReopenRequestBranch(
+      req.params.id,
+    );
     await assertFinanceRecordBranch({
       userId: user.id,
       primaryRole: user.role,
@@ -939,16 +1137,17 @@ router.post(
       recordBranchId: requestBranchId,
     });
     const decision = String(req.body?.decision ?? "") as "approve" | "reject";
-    if (!["approve", "reject"].includes(decision)) throw Object.assign(new Error("Invalid decision"), { statusCode: 400 });
+    if (!["approve", "reject"].includes(decision))
+      throw Object.assign(new Error("Invalid decision"), { statusCode: 400 });
     const data = await budgetClosureService.reviewReopen(
       req.params.id,
       decision,
       user.id,
       user.role,
-      req.body?.reviewNotes ? String(req.body.reviewNotes) : undefined
+      req.body?.reviewNotes ? String(req.body.reviewNotes) : undefined,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -960,12 +1159,16 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
-    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
-    const data = await branchBudgetAllocationService.listActiveCostCentres(branchId);
+    if (!branchId)
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    const data =
+      await branchBudgetAllocationService.listActiveCostCentres(branchId);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -977,14 +1180,24 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
-    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    if (!branchId)
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const periodCode = String(req.query.period ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
-    const data = await branchBudgetAllocationService.getMonthlyDrivers(branchId, periodCode);
+    if (!/^\d{4}-\d{2}$/.test(periodCode))
+      throw Object.assign(
+        new Error("A valid budget period (YYYY-MM) is required"),
+        { statusCode: 400 },
+      );
+    const data = await branchBudgetAllocationService.getMonthlyDrivers(
+      branchId,
+      periodCode,
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.put(
@@ -999,9 +1212,14 @@ router.put(
       userRoles: user.roles,
       requestedBranchId: req.body?.branchId,
     });
-    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    if (!branchId)
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const periodCode = String(req.body?.periodCode ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
+    if (!/^\d{4}-\d{2}$/.test(periodCode))
+      throw Object.assign(
+        new Error("A valid budget period (YYYY-MM) is required"),
+        { statusCode: 400 },
+      );
     const drivers = Array.isArray(req.body?.drivers) ? req.body.drivers : [];
     const data = await branchBudgetAllocationService.saveMonthlyDrivers(
       branchId,
@@ -1019,10 +1237,10 @@ router.put(
         hiringVolume: Number(d.hiringVolume ?? 0),
         remarks: d.remarks ? String(d.remarks) : null,
       })),
-      user.id
+      user.id,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1034,12 +1252,15 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
-    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    if (!branchId)
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const data = await meterService.listMeters(branchId);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -1054,7 +1275,8 @@ router.post(
       userRoles: user.roles,
       requestedBranchId: req.body?.branchId,
     });
-    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    if (!branchId)
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const data = await meterService.createMeter(
       {
         branchId,
@@ -1064,12 +1286,14 @@ router.post(
         location: req.body?.location ? String(req.body.location) : null,
         readingUnit: String(req.body?.readingUnit ?? "Unit"),
         fixedRate: Number(req.body?.fixedRate ?? 0),
-        effectiveFrom: String(req.body?.effectiveFrom ?? new Date().toISOString().slice(0, 10)),
+        effectiveFrom: String(
+          req.body?.effectiveFrom ?? new Date().toISOString().slice(0, 10),
+        ),
       },
-      user.id
+      user.id,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1077,11 +1301,21 @@ router.get(
   requireRole(...BUDGET_READ_ROLES),
   h(async (req, res) => {
     const periodCode = String(req.query.period ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
-    await assertBranchOf(req, await meterService.getMeterBranchId(String(req.params.id)));
-    const data = await meterService.listReadings(String(req.params.id), periodCode);
+    if (!/^\d{4}-\d{2}$/.test(periodCode))
+      throw Object.assign(
+        new Error("A valid budget period (YYYY-MM) is required"),
+        { statusCode: 400 },
+      );
+    await assertBranchOf(
+      req,
+      await meterService.getMeterBranchId(String(req.params.id)),
+    );
+    const data = await meterService.listReadings(
+      String(req.params.id),
+      periodCode,
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.put(
@@ -1091,31 +1325,46 @@ router.put(
   h(async (req, res) => {
     const user = actor(req);
     const periodCode = String(req.body?.periodCode ?? "");
-    await assertBranchOf(req, await meterService.getMeterBranchId(String(req.params.id)));
+    await assertBranchOf(
+      req,
+      await meterService.getMeterBranchId(String(req.params.id)),
+    );
     const data = await meterService.saveReading(
       String(req.params.id),
       periodCode,
       {
         openingReading: Number(req.body?.openingReading ?? 0),
         closingReading: Number(req.body?.closingReading ?? 0),
-        readingType: req.body?.readingType === "estimated" ? "estimated" : "actual",
-        estimationMethod: req.body?.estimationMethod ? String(req.body.estimationMethod) : null,
-        estimationReason: req.body?.estimationReason ? String(req.body.estimationReason) : null,
+        readingType:
+          req.body?.readingType === "estimated" ? "estimated" : "actual",
+        estimationMethod: req.body?.estimationMethod
+          ? String(req.body.estimationMethod)
+          : null,
+        estimationReason: req.body?.estimationReason
+          ? String(req.body.estimationReason)
+          : null,
       },
-      user.id
+      user.id,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
   "/pnl/cost-centres/:id/mapping-history",
   requireRole(...BUDGET_READ_ROLES),
   h(async (req, res) => {
-    await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(String(req.params.id)));
-    const data = await costCentreMappingService.getMappingHistory(String(req.params.id));
+    await assertBranchOf(
+      req,
+      await costCentreMappingService.getCostCentreBranchId(
+        String(req.params.id),
+      ),
+    );
+    const data = await costCentreMappingService.getMappingHistory(
+      String(req.params.id),
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.put(
@@ -1124,13 +1373,20 @@ router.put(
   requireRole(...BUDGET_CREATE_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const requestedBranchId = req.body?.branchId ? String(req.body.branchId) : null;
+    const requestedBranchId = req.body?.branchId
+      ? String(req.body.branchId)
+      : null;
     // Two checks, not one. The cost centre must already belong to the caller's branch, AND the
     // branch it is being moved to must also be theirs — otherwise a branch admin could pull
     // another branch's cost centre into their own, or push their own out of reach. Only resolved
     // when a branch was actually supplied: a process-only remap sends null, and feeding that
     // through the resolver would turn it into an unrequested branch reassignment.
-    await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(String(req.params.id)));
+    await assertBranchOf(
+      req,
+      await costCentreMappingService.getCostCentreBranchId(
+        String(req.params.id),
+      ),
+    );
     if (requestedBranchId) {
       await resolveFinanceBranchScope({
         userId: user.id,
@@ -1147,10 +1403,10 @@ router.put(
         effectiveFrom: String(req.body?.effectiveFrom ?? ""),
         changeReason: String(req.body?.changeReason ?? ""),
       },
-      user.id
+      user.id,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1159,10 +1415,13 @@ router.get(
   h(async (req, res) => {
     const user = actor(req);
     const moduleKey = String(req.query.moduleKey ?? "");
-    if (!moduleKey) throw Object.assign(new Error("moduleKey is required"), { statusCode: 400 });
+    if (!moduleKey)
+      throw Object.assign(new Error("moduleKey is required"), {
+        statusCode: 400,
+      });
     const data = await savedViewService.listSavedViews(user.id, moduleKey);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -1175,10 +1434,10 @@ router.post(
       user.id,
       String(req.body?.moduleKey ?? ""),
       String(req.body?.viewName ?? ""),
-      req.body?.config ?? {}
+      req.body?.config ?? {},
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.delete(
@@ -1189,7 +1448,7 @@ router.delete(
     const user = actor(req);
     await savedViewService.deleteSavedView(String(req.params.id), user.id);
     res.json({ success: true });
-  })
+  }),
 );
 
 router.get(
@@ -1198,14 +1457,27 @@ router.get(
   h(async (req, res) => {
     const costCentreId = String(req.query.costCentreId ?? "");
     const periodCode = String(req.query.period ?? "");
-    if (!costCentreId) throw Object.assign(new Error("Cost centre is required"), { statusCode: 400 });
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
+    if (!costCentreId)
+      throw Object.assign(new Error("Cost centre is required"), {
+        statusCode: 400,
+      });
+    if (!/^\d{4}-\d{2}$/.test(periodCode))
+      throw Object.assign(
+        new Error("A valid budget period (YYYY-MM) is required"),
+        { statusCode: 400 },
+      );
     // The sibling PUT already resolves scope from its body's branchId; this GET is addressed by
     // cost centre alone, so the branch has to come off the cost centre itself.
-    await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(costCentreId));
-    const data = await gradeEngineService.listGradeDrivers(costCentreId, periodCode);
+    await assertBranchOf(
+      req,
+      await costCentreMappingService.getCostCentreBranchId(costCentreId),
+    );
+    const data = await gradeEngineService.listGradeDrivers(
+      costCentreId,
+      periodCode,
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.put(
@@ -1220,11 +1492,19 @@ router.put(
       userRoles: user.roles,
       requestedBranchId: req.body?.branchId,
     });
-    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    if (!branchId)
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const costCentreId = String(req.body?.costCentreId ?? "");
     const periodCode = String(req.body?.periodCode ?? "");
-    if (!costCentreId) throw Object.assign(new Error("Cost centre is required"), { statusCode: 400 });
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
+    if (!costCentreId)
+      throw Object.assign(new Error("Cost centre is required"), {
+        statusCode: 400,
+      });
+    if (!/^\d{4}-\d{2}$/.test(periodCode))
+      throw Object.assign(
+        new Error("A valid budget period (YYYY-MM) is required"),
+        { statusCode: 400 },
+      );
     const drivers = Array.isArray(req.body?.drivers) ? req.body.drivers : [];
     const data = await gradeEngineService.saveGradeDrivers(
       branchId,
@@ -1235,10 +1515,10 @@ router.put(
         plannedHeadcount: Number(d.plannedHeadcount ?? 0),
         remarks: d.remarks ? String(d.remarks) : null,
       })),
-      user.id
+      user.id,
     );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1250,14 +1530,21 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
-    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    if (!branchId)
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const periodCode = String(req.query.period ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
+    if (!/^\d{4}-\d{2}$/.test(periodCode))
+      throw Object.assign(
+        new Error("A valid budget period (YYYY-MM) is required"),
+        { statusCode: 400 },
+      );
     const data = await checkSharingMethodReadiness(branchId, periodCode);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // Scoped to "/pnl" on purpose. This router is mounted on the SHARED "/api/finance" base
@@ -1273,10 +1560,15 @@ router.use("/pnl/bpo", bpoPnlRouter);
 router.use("/pnl/lobs", processLobRouter);
 router.use("/", pnlBulkUploadRouter);
 
-function readFilters(req: AuthenticatedRequest, scopedBranchId?: string | null) {
+function readFilters(
+  req: AuthenticatedRequest,
+  scopedBranchId?: string | null,
+) {
   return {
     period: req.query.period ? String(req.query.period) : undefined,
-    branchId: scopedBranchId ?? (req.query.branchId ? String(req.query.branchId) : undefined),
+    branchId:
+      scopedBranchId ??
+      (req.query.branchId ? String(req.query.branchId) : undefined),
     processId: req.query.processId ? String(req.query.processId) : undefined,
     clientId: req.query.clientId ? String(req.query.clientId) : undefined,
     search: req.query.search ? String(req.query.search) : undefined,
@@ -1295,11 +1587,17 @@ function readFilters(req: AuthenticatedRequest, scopedBranchId?: string | null) 
 // canonical numbers before the response is sent.
 async function fetchCanonicalProfitRow(
   processId: string,
-  filters: Partial<import("./process-pnl.types.js").PnlQueryFilters>
+  filters: Partial<import("./process-pnl.types.js").PnlQueryFilters>,
 ): Promise<{ row: Record<string, unknown>; manualAdjustment: unknown } | null> {
   try {
-    const canonical = await canonicalPnlService.getProcessDetail(processId, filters);
-    const typed = canonical as { row?: Record<string, unknown>; manualAdjustment?: unknown };
+    const canonical = await canonicalPnlService.getProcessDetail(
+      processId,
+      filters,
+    );
+    const typed = canonical as {
+      row?: Record<string, unknown>;
+      manualAdjustment?: unknown;
+    };
     if (!typed?.row) return null;
     // Part B: manualAdjustment travels alongside `row` rather than being folded into it — a
     // consumer must be able to tell the system figure from the adjusted one at a glance.
@@ -1314,7 +1612,7 @@ async function fetchCanonicalProfitRow(
 
 function mergeCanonicalProfit(
   legacy: object,
-  canonical: { row: Record<string, unknown>; manualAdjustment: unknown } | null
+  canonical: { row: Record<string, unknown>; manualAdjustment: unknown } | null,
 ): Record<string, unknown> & { calculationEngine: string } {
   const base = legacy as Record<string, unknown>;
   if (!canonical) return { ...base, calculationEngine: "legacy_fallback" };
@@ -1339,7 +1637,7 @@ function mergeCanonicalProfit(
 async function overlayCanonicalProfit(
   processId: string,
   filters: Partial<import("./process-pnl.types.js").PnlQueryFilters>,
-  legacy: object
+  legacy: object,
 ): Promise<Record<string, unknown> & { calculationEngine: string }> {
   const row = await fetchCanonicalProfitRow(processId, filters);
   return mergeCanonicalProfit(legacy, row);
@@ -1354,11 +1652,16 @@ async function scopedFilters(req: AuthenticatedRequest) {
     userId: user.id,
     primaryRole: user.role,
     userRoles: req.userRoles,
-    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    requestedBranchId: req.query.branchId
+      ? String(req.query.branchId)
+      : undefined,
   });
-  const base = readFilters(req, scope.mode === "branches" && scope.branchIds.length === 1
-    ? scope.branchIds[0]
-    : undefined);
+  const base = readFilters(
+    req,
+    scope.mode === "branches" && scope.branchIds.length === 1
+      ? scope.branchIds[0]
+      : undefined,
+  );
   return scope.mode === "all" ? base : { ...base, branchIds: scope.branchIds };
 }
 
@@ -1394,20 +1697,28 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
     const confinedBranch = await resolveFinanceBranchScope({
-      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
     });
     const period = req.query.period ? String(req.query.period) : "";
     const processId = await resolveFinanceProcessScope({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
+      requestedProcessId: req.query.processId
+        ? String(req.query.processId)
+        : undefined,
     });
     const confinedProcess = await resolveFinanceProcessScope({
-      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
     });
     // The page's Client / Search filters, as the process ids they match (audit item 19) —
     // intersected with the process scope above, so they can only narrow it.
@@ -1415,21 +1726,31 @@ router.get(
       clientId: req.query.clientId ? String(req.query.clientId) : null,
       search: req.query.search ? String(req.query.search) : null,
     });
-    const baseProcessIds = confinedProcess ? [confinedProcess] : requestedProcessIds;
+    const baseProcessIds = confinedProcess
+      ? [confinedProcess]
+      : requestedProcessIds;
     const data = await getCeoOverview(period, {
       branchId: branchId ?? undefined,
       // Folded into processIds when a client/search filter applies: scopeOf() UNIONS the singular
       // with the list, which would otherwise re-widen past the intersection.
-      processId: clientSearch ? undefined : processId ?? undefined,
-      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+      processId: clientSearch ? undefined : (processId ?? undefined),
+      costCentreId: req.query.costCentreId
+        ? String(req.query.costCentreId)
+        : undefined,
       branchIds: confinedBranch ? [confinedBranch] : requestedBranchIds,
       processIds: clientSearch
-        ? narrowProcessScope([...baseProcessIds, ...(processId && !confinedProcess ? [processId] : [])], clientSearch)
+        ? narrowProcessScope(
+            [
+              ...baseProcessIds,
+              ...(processId && !confinedProcess ? [processId] : []),
+            ],
+            clientSearch,
+          )
         : baseProcessIds,
       costCentreIds: csv(req.query.costCentreIds),
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 /*
@@ -1455,11 +1776,16 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: req.userRoles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
-    const data = await bpoPnlFullWaterfallService.getFullWaterfall(period, branchId ?? undefined);
+    const data = await bpoPnlFullWaterfallService.getFullWaterfall(
+      period,
+      branchId ?? undefined,
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1467,20 +1793,29 @@ router.get(
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
     const upTo = req.query.upTo ? String(req.query.upTo) : "";
-    if (!/^\d{4}-\d{2}$/.test(upTo)) throw Object.assign(new Error("upTo must be YYYY-MM"), { statusCode: 400 });
+    if (!/^\d{4}-\d{2}$/.test(upTo))
+      throw Object.assign(new Error("upTo must be YYYY-MM"), {
+        statusCode: 400,
+      });
     const user = actor(req);
     // The page's own branch selection is honoured (audit item 18: the strip used to be company-wide
     // beside a branch-scoped panel). A requested branch goes through resolveFinanceBranchScope,
     // which returns it only when the caller may read it and THROWS for anyone else's — so a
     // request can narrow a scoped user's view, never widen it. With no request, the user's own
     // confinement applies exactly as before.
-    const requestedBranchId = req.query.branchId ? String(req.query.branchId).trim() : "";
+    const requestedBranchId = req.query.branchId
+      ? String(req.query.branchId).trim()
+      : "";
     const branchFilter = await resolveFinanceBranchScope({
-      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
       requestedBranchId: requestedBranchId || undefined,
     });
     const confinedProcess = await resolveFinanceProcessScope({
-      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
     });
     const filters: CeoFilters = {};
     if (branchFilter !== undefined) filters.branchId = branchFilter;
@@ -1490,13 +1825,16 @@ router.get(
       search: req.query.search ? String(req.query.search) : null,
     });
     if (clientSearch) {
-      filters.processIds = narrowProcessScope(confinedProcess ? [confinedProcess] : [], clientSearch);
+      filters.processIds = narrowProcessScope(
+        confinedProcess ? [confinedProcess] : [],
+        clientSearch,
+      );
     } else if (confinedProcess !== undefined) {
       filters.processId = confinedProcess;
     }
     const data = await getYtdSummary(upTo, filters);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1506,7 +1844,9 @@ router.get(
     const period = req.query.period ? String(req.query.period) : "";
     const requestedBranchIds = csv(req.query.branchIds);
     const user = actor(req);
-    const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const requestedBranchId = req.query.branchId
+      ? String(req.query.branchId)
+      : undefined;
     const confinedRequestedBranch = await resolveFinanceBranchScope({
       userId: user.id,
       primaryRole: user.role,
@@ -1536,7 +1876,7 @@ router.get(
       ...(clientSearch ? { processIds: clientSearch } : {}),
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 /**
@@ -1553,7 +1893,13 @@ router.get(
  * Only roles entitled to payroll get that; everyone else gets the same total grouped by
  * designation. Decided here rather than in the component so a frontend mistake cannot leak it.
  */
-const PNL_PEOPLE_DETAIL_ROLES = new Set(["super_admin", "finance", "finance_head", "accounts_head", "payroll_head"]);
+const PNL_PEOPLE_DETAIL_ROLES = new Set([
+  "super_admin",
+  "finance",
+  "finance_head",
+  "accounts_head",
+  "payroll_head",
+]);
 
 router.get(
   "/pnl/drilldown",
@@ -1561,34 +1907,57 @@ router.get(
   h(async (req, res) => {
     const metric = String(req.query.metric ?? "");
     if (!["revenue", "people", "indirect", "budget"].includes(metric)) {
-      throw Object.assign(new Error("metric must be one of: revenue, people, indirect, budget"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("metric must be one of: revenue, people, indirect, budget"),
+        { statusCode: 400 },
+      );
     }
     const period = String(req.query.period ?? "");
     if (!/^\d{4}-\d{2}$/.test(period)) {
-      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+      throw Object.assign(new Error("period must be YYYY-MM"), {
+        statusCode: 400,
+      });
     }
 
     const user = actor(req);
-    const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
-    const requestedProcessId = req.query.processId ? String(req.query.processId) : undefined;
-    const costCentreId = req.query.costCentreId ? String(req.query.costCentreId) : undefined;
+    const requestedBranchId = req.query.branchId
+      ? String(req.query.branchId)
+      : undefined;
+    const requestedProcessId = req.query.processId
+      ? String(req.query.processId)
+      : undefined;
+    const costCentreId = req.query.costCentreId
+      ? String(req.query.costCentreId)
+      : undefined;
 
-    const scopeKeysGiven = [requestedBranchId, requestedProcessId, costCentreId].filter(Boolean).length;
+    const scopeKeysGiven = [
+      requestedBranchId,
+      requestedProcessId,
+      costCentreId,
+    ].filter(Boolean).length;
     if (scopeKeysGiven !== 1) {
       throw Object.assign(
-        new Error("exactly one of branchId, processId or costCentreId is required"),
-        { statusCode: 400 }
+        new Error(
+          "exactly one of branchId, processId or costCentreId is required",
+        ),
+        { statusCode: 400 },
       );
     }
 
     const branchId = requestedBranchId
       ? await resolveFinanceBranchScope({
-          userId: user.id, primaryRole: user.role, userRoles: user.roles, requestedBranchId,
+          userId: user.id,
+          primaryRole: user.role,
+          userRoles: user.roles,
+          requestedBranchId,
         })
       : undefined;
     const processId = requestedProcessId
       ? await resolveFinanceProcessScope({
-          userId: user.id, primaryRole: user.role, userRoles: user.roles, requestedProcessId,
+          userId: user.id,
+          primaryRole: user.role,
+          userRoles: user.roles,
+          requestedProcessId,
         })
       : undefined;
 
@@ -1596,38 +1965,64 @@ router.get(
     // cost-centre read in this file does — assertBranchOf treats an unmapped cost centre as a
     // denial rather than as unrestricted.
     if (costCentreId) {
-      await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(costCentreId));
+      await assertBranchOf(
+        req,
+        await costCentreMappingService.getCostCentreBranchId(costCentreId),
+      );
     }
 
-    const roles = [user.role, ...(user.roles ?? [])].filter(Boolean).map(String);
+    const roles = [user.role, ...(user.roles ?? [])]
+      .filter(Boolean)
+      .map(String);
     const aggregatePeople = !roles.some((r) => PNL_PEOPLE_DETAIL_ROLES.has(r));
 
-    const bucketParam = req.query.peopleBucket ? String(req.query.peopleBucket) : undefined;
-    if (bucketParam && !["agent_salary", "dsc_people", "bmc_people"].includes(bucketParam)) {
+    const bucketParam = req.query.peopleBucket
+      ? String(req.query.peopleBucket)
+      : undefined;
+    if (
+      bucketParam &&
+      !["agent_salary", "dsc_people", "bmc_people"].includes(bucketParam)
+    ) {
       throw Object.assign(
-        new Error("peopleBucket must be one of: agent_salary, dsc_people, bmc_people"),
-        { statusCode: 400 }
+        new Error(
+          "peopleBucket must be one of: agent_salary, dsc_people, bmc_people",
+        ),
+        { statusCode: 400 },
       );
     }
 
     // Statement breakdown lines under Total Indirect Cost: GRN Consumed / GRN Committed (reserved).
-    const grnKindParam = req.query.grnKind ? String(req.query.grnKind) : undefined;
+    const grnKindParam = req.query.grnKind
+      ? String(req.query.grnKind)
+      : undefined;
     if (grnKindParam && !["consumed", "reserved"].includes(grnKindParam)) {
-      throw Object.assign(new Error("grnKind must be one of: consumed, reserved"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("grnKind must be one of: consumed, reserved"),
+        { statusCode: 400 },
+      );
     }
 
     const data = await getPnlDrilldown({
       metric: metric as "revenue" | "people" | "indirect" | "budget",
       period,
-      peopleBucket: bucketParam as "agent_salary" | "dsc_people" | "bmc_people" | undefined,
+      peopleBucket: bucketParam as
+        "agent_salary" | "dsc_people" | "bmc_people" | undefined,
       grnKind: grnKindParam as "consumed" | "reserved" | undefined,
       branchId: requestedBranchId ? (branchId ?? requestedBranchId) : undefined,
-      processId: requestedProcessId ? (processId ?? requestedProcessId) : undefined,
+      processId: requestedProcessId
+        ? (processId ?? requestedProcessId)
+        : undefined,
       costCentreId,
       aggregatePeople,
     });
-    res.json({ success: true, data: { ...data, peopleAggregated: metric === "people" && aggregatePeople } });
-  })
+    res.json({
+      success: true,
+      data: {
+        ...data,
+        peopleAggregated: metric === "people" && aggregatePeople,
+      },
+    });
+  }),
 );
 
 /**
@@ -1642,18 +2037,22 @@ router.get(
   h(async (req, res) => {
     const period = String(req.query.period ?? "");
     if (!/^\d{4}-\d{2}$/.test(period)) {
-      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+      throw Object.assign(new Error("period must be YYYY-MM"), {
+        statusCode: 400,
+      });
     }
     const user = actor(req);
     const branchId = await resolveFinanceBranchScope({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
     const data = await getDailyTrend(period, branchId ? { branchId } : {});
     res.json({ success: true, data });
-  })
+  }),
 );
 
 /**
@@ -1669,18 +2068,25 @@ router.get(
   h(async (req, res) => {
     const period = String(req.query.period ?? "");
     if (!/^\d{4}-\d{2}$/.test(period)) {
-      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+      throw Object.assign(new Error("period must be YYYY-MM"), {
+        statusCode: 400,
+      });
     }
     const user = actor(req);
     const branchId = await resolveFinanceBranchScope({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
     });
-    const data = await getSeatRevenueForecast(period, branchId ? { branchId } : {});
+    const data = await getSeatRevenueForecast(
+      period,
+      branchId ? { branchId } : {},
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 /**
@@ -1703,7 +2109,12 @@ async function asForbidden<T>(work: Promise<T>): Promise<T> {
     return await work;
   } catch (error) {
     const err = error as Error & { statusCode?: number };
-    if (!err.statusCode && /^(Your user account is not mapped|You cannot access|You can only access)/.test(String(err.message))) {
+    if (
+      !err.statusCode &&
+      /^(Your user account is not mapped|You cannot access|You can only access)/.test(
+        String(err.message),
+      )
+    ) {
       err.statusCode = 403;
     }
     throw err;
@@ -1716,15 +2127,22 @@ router.get(
   h(async (req, res) => {
     const period = String(req.query.period ?? "");
     const user = actor(req);
-    const branchId = await asForbidden(resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
-    }));
-    const data = await getSeatBillingEstimate(period, branchId ? { branchIds: [branchId] } : {});
+    const branchId = await asForbidden(
+      resolveFinanceBranchScope({
+        userId: user.id,
+        primaryRole: user.role,
+        userRoles: user.roles,
+        requestedBranchId: req.query.branchId
+          ? String(req.query.branchId)
+          : undefined,
+      }),
+    );
+    const data = await getSeatBillingEstimate(
+      period,
+      branchId ? { branchIds: [branchId] } : {},
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1733,9 +2151,12 @@ router.get(
   h(async (req, res) => {
     const { branchId } = await getOwnCostCentreBranch(String(req.params.id));
     await asForbidden(assertBranchOf(req, branchId));
-    const data = await getSeatBillingCostCentreDetail(String(req.params.id), String(req.query.period ?? ""));
+    const data = await getSeatBillingCostCentreDetail(
+      String(req.params.id),
+      String(req.query.period ?? ""),
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -1744,11 +2165,13 @@ router.post(
   requireRole(...PNL_WRITE_ROLES),
   h(async (req, res) => {
     const body = req.body ?? {};
-    const { branchId } = await getOwnCostCentreBranch(String(body.costCentreId ?? ""));
+    const { branchId } = await getOwnCostCentreBranch(
+      String(body.costCentreId ?? ""),
+    );
     await asForbidden(assertBranchOf(req, branchId));
     const data = await createSeatBillingLine(body, actor(req).id);
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 router.patch(
@@ -1762,9 +2185,13 @@ router.patch(
     // The cost centre of a line is fixed at creation; moving revenue between cost centres is a
     // new line on the other one, so it cannot be smuggled in through an edit.
     const { costCentreId: _ignored, ...patch } = req.body ?? {};
-    const data = await updateSeatBillingLine(String(req.params.id), patch, actor(req).id);
+    const data = await updateSeatBillingLine(
+      String(req.params.id),
+      patch,
+      actor(req).id,
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -1775,10 +2202,16 @@ router.post(
     const { costCentreId } = await getLineCostCentre(String(req.params.id));
     const { branchId } = await getOwnCostCentreBranch(costCentreId);
     await asForbidden(assertBranchOf(req, branchId));
-    const reason = req.body?.reason ? String(req.body.reason).slice(0, 500) : null;
-    const data = await deactivateSeatBillingLine(String(req.params.id), actor(req).id, reason);
+    const reason = req.body?.reason
+      ? String(req.body.reason).slice(0, 500)
+      : null;
+    const data = await deactivateSeatBillingLine(
+      String(req.params.id),
+      actor(req).id,
+      reason,
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -1789,9 +2222,13 @@ router.post(
     const costCentreId = String(req.body?.costCentreId ?? "");
     const { branchId } = await getOwnCostCentreBranch(costCentreId);
     await asForbidden(assertBranchOf(req, branchId));
-    const data = await importSeatBillingFromInvoice(costCentreId, String(req.body?.period ?? ""), actor(req).id);
+    const data = await importSeatBillingFromInvoice(
+      costCentreId,
+      String(req.body?.period ?? ""),
+      actor(req).id,
+    );
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 /**
@@ -1809,7 +2246,7 @@ router.get(
   h(async (_req, res) => {
     const data = await listCostCentreOverrides();
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1819,7 +2256,7 @@ router.get(
     const branchId = req.query.branchId ? String(req.query.branchId) : null;
     const data = await listOverrideCostCentreOptions(branchId);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1827,9 +2264,13 @@ router.get(
   requireRole(...PNL_WRITE_ROLES),
   h(async (req, res) => {
     const branchId = req.query.branchId ? String(req.query.branchId) : null;
-    const data = await searchEmployeesForOverride(String(req.query.q ?? ""), branchId, Number(req.query.limit ?? 20));
+    const data = await searchEmployeesForOverride(
+      String(req.query.q ?? ""),
+      branchId,
+      Number(req.query.limit ?? 20),
+    );
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -1837,12 +2278,19 @@ router.post(
   requireWriteAccess,
   requireRole(...PNL_WRITE_ROLES),
   h(async (req, res) => {
-    const employeeCodes = Array.isArray(req.body?.employeeCodes) ? req.body.employeeCodes.map(String) : [];
+    const employeeCodes = Array.isArray(req.body?.employeeCodes)
+      ? req.body.employeeCodes.map(String)
+      : [];
     const targetCostCentreId = String(req.body?.targetCostCentreId ?? "");
-    const reason = req.body?.reason ? String(req.body.reason).slice(0, 500) : null;
-    const data = await bulkSetCostCentreOverride({ employeeCodes, targetCostCentreId, reason }, actor(req).id);
+    const reason = req.body?.reason
+      ? String(req.body.reason).slice(0, 500)
+      : null;
+    const data = await bulkSetCostCentreOverride(
+      { employeeCodes, targetCostCentreId, reason },
+      actor(req).id,
+    );
     res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 router.post(
@@ -1850,9 +2298,12 @@ router.post(
   requireWriteAccess,
   requireRole(...PNL_WRITE_ROLES),
   h(async (req, res) => {
-    await deactivateCostCentreOverride(String(req.params.employeeId), actor(req).id);
+    await deactivateCostCentreOverride(
+      String(req.params.employeeId),
+      actor(req).id,
+    );
     res.json({ success: true });
-  })
+  }),
 );
 
 /**
@@ -1867,12 +2318,15 @@ router.get(
     const user = actor(req);
     const scopeType = String(req.query.scope ?? "company");
     const scopeId = req.query.scopeId ? String(req.query.scopeId) : null;
-    const branchScope = await asForbidden(resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId: scopeType === "branch" && scopeId ? scopeId : undefined,
-    }));
+    const branchScope = await asForbidden(
+      resolveFinanceBranchScope({
+        userId: user.id,
+        primaryRole: user.role,
+        userRoles: user.roles,
+        requestedBranchId:
+          scopeType === "branch" && scopeId ? scopeId : undefined,
+      }),
+    );
     let costCentreBranchId: string | null = null;
     if (scopeType === "cost_centre" && scopeId) {
       costCentreBranchId = (await getOwnCostCentreBranch(scopeId)).branchId;
@@ -1888,7 +2342,7 @@ router.get(
       costCentreBranchId,
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 /**
@@ -1901,19 +2355,23 @@ router.get(
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const branchScope = await asForbidden(resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
-    }));
+    const branchScope = await asForbidden(
+      resolveFinanceBranchScope({
+        userId: user.id,
+        primaryRole: user.role,
+        userRoles: user.roles,
+        requestedBranchId: req.query.branchId
+          ? String(req.query.branchId)
+          : undefined,
+      }),
+    );
     const data = await getPnlInsights({
       period: String(req.query.period ?? ""),
       months: req.query.months ? Number(req.query.months) : undefined,
       branchScope: branchScope ?? null,
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 /**
@@ -1929,11 +2387,13 @@ router.get(
   h(async (req, res) => {
     const period = String(req.query.period ?? "");
     if (!/^\d{4}-\d{2}$/.test(period)) {
-      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+      throw Object.assign(new Error("period must be YYYY-MM"), {
+        statusCode: 400,
+      });
     }
     const data = await getCostLeakageReview(period);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 router.get(
@@ -1943,14 +2403,18 @@ router.get(
     const period = String(req.query.period ?? "");
     const costCentreId = String(req.query.costCentreId ?? "");
     if (!/^\d{4}-\d{2}$/.test(period)) {
-      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+      throw Object.assign(new Error("period must be YYYY-MM"), {
+        statusCode: 400,
+      });
     }
     if (!costCentreId) {
-      throw Object.assign(new Error("costCentreId is required"), { statusCode: 400 });
+      throw Object.assign(new Error("costCentreId is required"), {
+        statusCode: 400,
+      });
     }
     const data = await getStafflessCostCentreSpend(period, costCentreId);
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // Every sibling P&L read — ceo-overview, trend, export, budgets — carries
@@ -1958,10 +2422,14 @@ router.get(
 // and nothing else, so any authenticated employee could read revenue, cost and margin for
 // the branch scopedFilters resolved them to. `payroll` and `payroll_hr` are added because
 // the Payroll dashboard renders this endpoint's figures and they are entitled to it.
-router.get("/pnl/summary", requireRole(...PNL_READ_ROLES, "payroll", "payroll_hr"), h(async (req, res) => {
-  const data = await canonicalPnlService.getSummary(await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/summary",
+  requireRole(...PNL_READ_ROLES, "payroll", "payroll_hr"),
+  h(async (req, res) => {
+    const data = await canonicalPnlService.getSummary(await scopedFilters(req));
+    res.json({ success: true, data });
+  }),
+);
 
 // Recomputes the per-employee running-salary snapshot the P&L reads for Agent/DSC/BMC. Explicit
 // rather than automatic on read: it calls computeRunningSalary once per employee, so it belongs
@@ -1973,7 +2441,9 @@ router.post(
   h(async (req, res) => {
     const period = String(req.body?.period ?? "");
     const user = actor(req);
-    const requestedBranchId = req.body?.branchId ? String(req.body.branchId) : undefined;
+    const requestedBranchId = req.body?.branchId
+      ? String(req.body.branchId)
+      : undefined;
     const confinedBranch = await resolveFinanceBranchScope({
       userId: user.id,
       primaryRole: user.role,
@@ -1985,7 +2455,7 @@ router.post(
       asOfDate: req.body?.asOfDate ? String(req.body.asOfDate) : undefined,
     });
     res.json({ success: true, data });
-  })
+  }),
 );
 
 // Transposed statement (P&L components as rows, entities as dynamic columns) — read-only
@@ -1996,82 +2466,168 @@ router.post(
 // narrowing that router.use() would silently open this route. Adding an explicit
 // requireRole(...PNL_READ_ROLES) here would change nothing for any caller today; left for an owner
 // decision rather than added silently.
-router.get("/pnl/statement", h(async (req, res) => {
-  const viewBy = (req.query.viewBy ? String(req.query.viewBy) : "process") as StatementViewBy;
-  const data = await pnlStatementService.getStatement(await scopedFilters(req), viewBy);
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/statement",
+  h(async (req, res) => {
+    const viewBy = (
+      req.query.viewBy ? String(req.query.viewBy) : "process"
+    ) as StatementViewBy;
+    const data = await pnlStatementService.getStatement(
+      await scopedFilters(req),
+      viewBy,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
 // Keep the legacy process list contract for existing detail-page consumers.
-router.get("/pnl/processes", h(async (req, res) => {
-  const data = await processPnlService.listProcesses(await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes",
+  h(async (req, res) => {
+    const data = await processPnlService.listProcesses(
+      await scopedFilters(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/overview", h(async (req, res) => {
-  const filters = await scopedFilters(req);
-  const legacy = await processPnlService.getOverview(req.params.processId, filters);
-  const data = await overlayCanonicalProfit(req.params.processId, filters, legacy);
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/overview",
+  h(async (req, res) => {
+    const filters = await scopedFilters(req);
+    const legacy = await processPnlService.getOverview(
+      req.params.processId,
+      filters,
+    );
+    const data = await overlayCanonicalProfit(
+      req.params.processId,
+      filters,
+      legacy,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/revenue", h(async (req, res) => {
-  const data = await processPnlService.getRevenue(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/revenue",
+  h(async (req, res) => {
+    const data = await processPnlService.getRevenue(
+      req.params.processId,
+      await scopedFilters(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/workforce", h(async (req, res) => {
-  const data = await processPnlService.getWorkforce(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/workforce",
+  h(async (req, res) => {
+    const data = await processPnlService.getWorkforce(
+      req.params.processId,
+      await scopedFilters(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/people-cost", h(async (req, res) => {
-  const data = await processPnlService.getPeopleCost(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/people-cost",
+  h(async (req, res) => {
+    const data = await processPnlService.getPeopleCost(
+      req.params.processId,
+      await scopedFilters(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/direct-cost", h(async (req, res) => {
-  const data = await processPnlService.getDirectCost(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/direct-cost",
+  h(async (req, res) => {
+    const data = await processPnlService.getDirectCost(
+      req.params.processId,
+      await scopedFilters(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/indirect-allocation", h(async (req, res) => {
-  const data = await processPnlService.getIndirectAllocation(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/indirect-allocation",
+  h(async (req, res) => {
+    const data = await processPnlService.getIndirectAllocation(
+      req.params.processId,
+      await scopedFilters(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/trend", h(async (req, res) => {
-  const filters = await scopedFilters(req);
-  const data = await canonicalPnlService.getProcessTrend(req.params.processId, filters);
-  res.json({ success: true, data: { period: filters.period, ...data } });
-}));
+router.get(
+  "/pnl/processes/:processId/trend",
+  h(async (req, res) => {
+    const filters = await scopedFilters(req);
+    const data = await canonicalPnlService.getProcessTrend(
+      req.params.processId,
+      filters,
+    );
+    res.json({ success: true, data: { period: filters.period, ...data } });
+  }),
+);
 
-router.get("/pnl/processes/:processId/reconciliation", h(async (req, res) => {
-  const data = await processPnlService.getReconciliation(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/reconciliation",
+  h(async (req, res) => {
+    const data = await processPnlService.getReconciliation(
+      req.params.processId,
+      await scopedFilters(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/ledger", h(async (req, res) => {
-  const data = await processPnlService.getLedger(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/ledger",
+  h(async (req, res) => {
+    const data = await processPnlService.getLedger(
+      req.params.processId,
+      await scopedFilters(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/detail", h(async (req, res) => {
-  const filters = await scopedFilters(req);
-  const bundle = await processPnlService.getDetailBundle(req.params.processId, filters);
-  const canonicalRow = await fetchCanonicalProfitRow(req.params.processId, filters);
-  const data = {
-    ...bundle,
-    overview: mergeCanonicalProfit(bundle.overview, canonicalRow),
-    record: mergeCanonicalProfit(bundle.record, canonicalRow),
-  };
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/detail",
+  h(async (req, res) => {
+    const filters = await scopedFilters(req);
+    const bundle = await processPnlService.getDetailBundle(
+      req.params.processId,
+      filters,
+    );
+    const canonicalRow = await fetchCanonicalProfitRow(
+      req.params.processId,
+      filters,
+    );
+    const data = {
+      ...bundle,
+      overview: mergeCanonicalProfit(bundle.overview, canonicalRow),
+      record: mergeCanonicalProfit(bundle.record, canonicalRow),
+    };
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/processes/:processId/canonical-detail", h(async (req, res) => {
-  const data = await canonicalPnlService.getProcessDetail(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/processes/:processId/canonical-detail",
+  h(async (req, res) => {
+    const data = await canonicalPnlService.getProcessDetail(
+      req.params.processId,
+      await scopedFilters(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
 
 // F-01/F-10: company-wide P&L configuration (contracts, rates, monthly plan, reference data,
 // periods, adjustments) and period-close/governance state have no per-row branch/process owner
@@ -2084,186 +2640,344 @@ router.get("/pnl/processes/:processId/canonical-detail", h(async (req, res) => {
 // either (navConfig.tsx). Fixes F-01's "BPO configuration reads... return unrestricted data
 // under the broad inherited read role" and closes the frontend/backend mismatch in F-10.
 const PNL_GLOBAL_ONLY_ROLES = [
-  "super_admin", "admin", "ceo", "coo", "finance", "finance_head", "accounts_head", "payroll_head",
+  "super_admin",
+  "admin",
+  "ceo",
+  "coo",
+  "finance",
+  "finance_head",
+  "accounts_head",
+  "payroll_head",
 ] as const;
 
-router.get("/pnl/config/reference-data", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (_req, res) => {
-  const data = await processPnlGovernanceService.getReferenceData();
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/config/reference-data",
+  requireRole(...PNL_GLOBAL_ONLY_ROLES),
+  h(async (_req, res) => {
+    const data = await processPnlGovernanceService.getReferenceData();
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/config/contracts", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (_req, res) => {
-  const data = await processPnlGovernanceService.listContracts();
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/config/contracts",
+  requireRole(...PNL_GLOBAL_ONLY_ROLES),
+  h(async (_req, res) => {
+    const data = await processPnlGovernanceService.listContracts();
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/config/rates", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (_req, res) => {
-  const data = await processPnlGovernanceService.listRates();
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/config/rates",
+  requireRole(...PNL_GLOBAL_ONLY_ROLES),
+  h(async (_req, res) => {
+    const data = await processPnlGovernanceService.listRates();
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/config/monthly-plan", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.listMonthlyPlans(
-    req.query.period ? String(req.query.period) : undefined
-  );
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/config/monthly-plan",
+  requireRole(...PNL_GLOBAL_ONLY_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.listMonthlyPlans(
+      req.query.period ? String(req.query.period) : undefined,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/config/periods", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (_req, res) => {
-  const data = await processPnlGovernanceService.listPeriods();
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/config/periods",
+  requireRole(...PNL_GLOBAL_ONLY_ROLES),
+  h(async (_req, res) => {
+    const data = await processPnlGovernanceService.listPeriods();
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/config/adjustments", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.listAdjustments(
-    req.query.period ? String(req.query.period) : undefined,
-    req.query.processId ? String(req.query.processId) : undefined
-  );
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/config/adjustments",
+  requireRole(...PNL_GLOBAL_ONLY_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.listAdjustments(
+      req.query.period ? String(req.query.period) : undefined,
+      req.query.processId ? String(req.query.processId) : undefined,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/period-close", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (req, res) => {
-  const data = await canonicalPnlService.getPeriodClose(
-    req.query.period ? String(req.query.period) : undefined,
-    req.userRoles,
-    req.authUser.role
-  );
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/period-close",
+  requireRole(...PNL_GLOBAL_ONLY_ROLES),
+  h(async (req, res) => {
+    const data = await canonicalPnlService.getPeriodClose(
+      req.query.period ? String(req.query.period) : undefined,
+      req.userRoles,
+      req.authUser.role,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/export", h(async (req, res) => {
-  const csv = await canonicalPnlService.exportCsv(await scopedFilters(req));
-  res.setHeader("Content-Type", "text/csv");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="process-pnl-${req.query.period ?? "current"}.csv"`
-  );
-  res.send(csv);
-}));
+router.get(
+  "/pnl/export",
+  h(async (req, res) => {
+    const csv = await canonicalPnlService.exportCsv(await scopedFilters(req));
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="process-pnl-${req.query.period ?? "current"}.csv"`,
+    );
+    res.send(csv);
+  }),
+);
 
-router.post("/pnl/contracts", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.saveContract(req.body, req.authUser.id);
-  res.status(201).json({ success: true, data });
-}));
+router.post(
+  "/pnl/contracts",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.saveContract(
+      req.body,
+      req.authUser.id,
+    );
+    res.status(201).json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/rates", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.saveRate(req.body, req.authUser.id);
-  res.status(201).json({ success: true, data });
-}));
+router.post(
+  "/pnl/rates",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.saveRate(
+      req.body,
+      req.authUser.id,
+    );
+    res.status(201).json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/monthly-plan", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.saveMonthlyPlan(req.body, req.authUser.id);
-  res.status(201).json({ success: true, data });
-}));
+router.post(
+  "/pnl/monthly-plan",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.saveMonthlyPlan(
+      req.body,
+      req.authUser.id,
+    );
+    res.status(201).json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/adjustments", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.createAdjustment(req.body, req.authUser.id);
-  res.status(201).json({ success: true, data });
-}));
+router.post(
+  "/pnl/adjustments",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.createAdjustment(
+      req.body,
+      req.authUser.id,
+    );
+    res.status(201).json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/adjustments/:adjustmentId/approve", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.approveAdjustment(req.params.adjustmentId, req.authUser.id);
-  res.json({ success: true, data });
-}));
+router.post(
+  "/pnl/adjustments/:adjustmentId/approve",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.approveAdjustment(
+      req.params.adjustmentId,
+      req.authUser.id,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/adjustments/:adjustmentId/reject", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.rejectAdjustment(
-    req.params.adjustmentId,
-    req.authUser.id,
-    req.body?.reason ? String(req.body.reason) : null
-  );
-  res.json({ success: true, data });
-}));
+router.post(
+  "/pnl/adjustments/:adjustmentId/reject",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.rejectAdjustment(
+      req.params.adjustmentId,
+      req.authUser.id,
+      req.body?.reason ? String(req.body.reason) : null,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/adjustments/:adjustmentId/reverse", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.reverseAdjustment(
-    req.params.adjustmentId,
-    req.authUser.id,
-    req.body?.reason ? String(req.body.reason) : null
-  );
-  res.json({ success: true, data });
-}));
+router.post(
+  "/pnl/adjustments/:adjustmentId/reverse",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.reverseAdjustment(
+      req.params.adjustmentId,
+      req.authUser.id,
+      req.body?.reason ? String(req.body.reason) : null,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/recalculate", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await canonicalPnlService.recalculate(
-    req.body?.period ? String(req.body.period) : undefined
-  );
-  res.json({ success: true, data });
-}));
+router.post(
+  "/pnl/recalculate",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await canonicalPnlService.recalculate(
+      req.body?.period ? String(req.body.period) : undefined,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/period/:periodId/signoff", requireWriteAccess, requireRole(...PNL_SIGNOFF_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.signoffPeriod(
-    req.params.periodId,
-    req.body?.note ? String(req.body.note) : null,
-    req.authUser.id,
-    req.userRoles,
-    req.authUser.role
-  );
-  res.json({ success: true, data });
-}));
+router.post(
+  "/pnl/period/:periodId/signoff",
+  requireWriteAccess,
+  requireRole(...PNL_SIGNOFF_ROLES),
+  h(async (req, res) => {
+    const data = await processPnlGovernanceService.signoffPeriod(
+      req.params.periodId,
+      req.body?.note ? String(req.body.note) : null,
+      req.authUser.id,
+      req.userRoles,
+      req.authUser.role,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/period/:periodId/lock", requireWriteAccess, requireRole(...PNL_SIGNOFF_ROLES), h(async (req, res) => {
-  const data = await canonicalPnlService.lockPeriod(req.params.periodId, req.authUser.id);
-  res.json({ success: true, data });
-}));
+router.post(
+  "/pnl/period/:periodId/lock",
+  requireWriteAccess,
+  requireRole(...PNL_SIGNOFF_ROLES),
+  h(async (req, res) => {
+    const data = await canonicalPnlService.lockPeriod(
+      req.params.periodId,
+      req.authUser.id,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
 // ── Rewards & Penalties ─────────────────────────────────────────────────────
 
 const RP_READ_ROLES = [...PNL_READ_ROLES] as const;
-const RP_WRITE_ROLES = ["super_admin", "admin", "finance", "finance_head", "accounts_head"] as const;
-const RP_APPROVE_ROLES = ["super_admin", "finance_head", "accounts_head"] as const;
+const RP_WRITE_ROLES = [
+  "super_admin",
+  "admin",
+  "finance",
+  "finance_head",
+  "accounts_head",
+] as const;
+const RP_APPROVE_ROLES = [
+  "super_admin",
+  "finance_head",
+  "accounts_head",
+] as const;
 
-router.get("/pnl/reward-penalty", requireAuth, requireRole(...RP_READ_ROLES), h(async (req, res) => {
-  const period = String(req.query.period ?? "");
-  const costCentreId = req.query.costCentreId ? String(req.query.costCentreId) : undefined;
-  // F-01: branch_head/process_manager are in RP_READ_ROLES but this list is company-wide
-  // whenever costCentreId is absent. An explicit costCentreId is checked against the caller's
-  // branch via its own cost centre; with no filter at all, the query is confined to the
-  // caller's branch scope instead of returning every branch's rewards/penalties.
-  const user = actor(req);
-  if (costCentreId) {
-    await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(costCentreId));
-  }
-  const branchScope = await resolveFinanceBranchScopeSet({
-    userId: user.id,
-    primaryRole: user.role,
-    userRoles: user.roles,
-    requestedBranchId: undefined,
-  });
-  const data = await listRewardPenalty(period, costCentreId, branchScope);
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/reward-penalty",
+  requireAuth,
+  requireRole(...RP_READ_ROLES),
+  h(async (req, res) => {
+    const period = String(req.query.period ?? "");
+    const costCentreId = req.query.costCentreId
+      ? String(req.query.costCentreId)
+      : undefined;
+    // F-01: branch_head/process_manager are in RP_READ_ROLES but this list is company-wide
+    // whenever costCentreId is absent. An explicit costCentreId is checked against the caller's
+    // branch via its own cost centre; with no filter at all, the query is confined to the
+    // caller's branch scope instead of returning every branch's rewards/penalties.
+    const user = actor(req);
+    if (costCentreId) {
+      await assertBranchOf(
+        req,
+        await costCentreMappingService.getCostCentreBranchId(costCentreId),
+      );
+    }
+    const branchScope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: undefined,
+    });
+    const data = await listRewardPenalty(period, costCentreId, branchScope);
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/reward-penalty/summary", requireAuth, requireRole(...RP_READ_ROLES), h(async (req, res) => {
-  const period = String(req.query.period ?? "");
-  const user = actor(req);
-  const branchScope = await resolveFinanceBranchScopeSet({
-    userId: user.id,
-    primaryRole: user.role,
-    userRoles: user.roles,
-    requestedBranchId: undefined,
-  });
-  const data = await getRewardPenaltySummary(period, branchScope);
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/reward-penalty/summary",
+  requireAuth,
+  requireRole(...RP_READ_ROLES),
+  h(async (req, res) => {
+    const period = String(req.query.period ?? "");
+    const user = actor(req);
+    const branchScope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: undefined,
+    });
+    const data = await getRewardPenaltySummary(period, branchScope);
+    res.json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/reward-penalty", requireAuth, requireWriteAccess, requireRole(...RP_WRITE_ROLES), h(async (req, res) => {
-  const entry = await createRewardPenaltyEntry(req.body, req.authUser.id);
-  res.status(201).json({ success: true, data: entry });
-}));
+router.post(
+  "/pnl/reward-penalty",
+  requireAuth,
+  requireWriteAccess,
+  requireRole(...RP_WRITE_ROLES),
+  h(async (req, res) => {
+    const entry = await createRewardPenaltyEntry(req.body, req.authUser.id);
+    res.status(201).json({ success: true, data: entry });
+  }),
+);
 
-router.put("/pnl/reward-penalty/:id/approve", requireAuth, requireWriteAccess, requireRole(...RP_APPROVE_ROLES), h(async (req, res) => {
-  const result = await approveRewardPenaltyEntry(req.params.id, req.authUser.id);
-  if (!result.ok) return res.status(400).json({ success: false, error: result.error });
-  res.json({ success: true });
-}));
+router.put(
+  "/pnl/reward-penalty/:id/approve",
+  requireAuth,
+  requireWriteAccess,
+  requireRole(...RP_APPROVE_ROLES),
+  h(async (req, res) => {
+    const result = await approveRewardPenaltyEntry(
+      req.params.id,
+      req.authUser.id,
+    );
+    if (!result.ok)
+      return res.status(400).json({ success: false, error: result.error });
+    res.json({ success: true });
+  }),
+);
 
-router.put("/pnl/reward-penalty/:id/reject", requireAuth, requireWriteAccess, requireRole(...RP_APPROVE_ROLES), h(async (req, res) => {
-  const reason = String(req.body?.reason ?? "");
-  const result = await rejectRewardPenaltyEntry(req.params.id, req.authUser.id, reason);
-  if (!result.ok) return res.status(400).json({ success: false, error: result.error });
-  res.json({ success: true });
-}));
+router.put(
+  "/pnl/reward-penalty/:id/reject",
+  requireAuth,
+  requireWriteAccess,
+  requireRole(...RP_APPROVE_ROLES),
+  h(async (req, res) => {
+    const reason = String(req.body?.reason ?? "");
+    const result = await rejectRewardPenaltyEntry(
+      req.params.id,
+      req.authUser.id,
+      reason,
+    );
+    if (!result.ok)
+      return res.status(400).json({ success: false, error: result.error });
+    res.json({ success: true });
+  }),
+);
 
 // ── Manual P&L Adjustments (Projected Revenue / Penalty / Reward) ──────────
 // Separate, never-blended adjustment line — see pnl-manual-adjustment.service.ts's file doc.
@@ -2271,67 +2985,130 @@ router.put("/pnl/reward-penalty/:id/reject", requireAuth, requireWriteAccess, re
 // maker-checker entry, the same shape as reward-penalty, plus branch_head who can raise one for
 // their own process (budget-topup.service.ts's TOPUP_CREATE_ROLES also includes branch_head).
 const ADJUSTMENT_READ_ROLES = [...PNL_READ_ROLES] as const;
-const ADJUSTMENT_WRITE_ROLES = ["super_admin", "admin", "branch_admin", "branch_head", "finance", "finance_head", "accounts_head"] as const;
-const ADJUSTMENT_APPROVE_ROLES = ["super_admin", "finance_head", "accounts_head"] as const;
+const ADJUSTMENT_WRITE_ROLES = [
+  "super_admin",
+  "admin",
+  "branch_admin",
+  "branch_head",
+  "finance",
+  "finance_head",
+  "accounts_head",
+] as const;
+const ADJUSTMENT_APPROVE_ROLES = [
+  "super_admin",
+  "finance_head",
+  "accounts_head",
+] as const;
 
-router.get("/pnl/manual-adjustments", requireAuth, requireRole(...ADJUSTMENT_READ_ROLES), h(async (req, res) => {
-  const user = actor(req);
-  // F-01: branch_head/process_manager are in ADJUSTMENT_READ_ROLES. resolveFinanceBranchScope
-  // both validates an explicit ?branchId against the caller's scope and, when absent, resolves
-  // to the caller's own branch rather than leaving the filter off entirely.
-  const branchId = await resolveFinanceBranchScope({
-    userId: user.id, primaryRole: user.role, userRoles: user.roles,
-    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
-  });
-  const processId = await resolveFinanceProcessScope({
-    userId: user.id, primaryRole: user.role, userRoles: user.roles,
-    requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
-  });
-  if (processId) await assertProcessInScope(req, processId);
-  const data = await pnlManualAdjustmentService.listManualAdjustments({
-    processId,
-    branchId,
-    periodCode: req.query.period ? String(req.query.period) : undefined,
-    status: req.query.status ? (String(req.query.status) as never) : undefined,
-  });
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/manual-adjustments",
+  requireAuth,
+  requireRole(...ADJUSTMENT_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    // F-01: branch_head/process_manager are in ADJUSTMENT_READ_ROLES. resolveFinanceBranchScope
+    // both validates an explicit ?branchId against the caller's scope and, when absent, resolves
+    // to the caller's own branch rather than leaving the filter off entirely.
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
+    });
+    const processId = await resolveFinanceProcessScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedProcessId: req.query.processId
+        ? String(req.query.processId)
+        : undefined,
+    });
+    if (processId) await assertProcessInScope(req, processId);
+    const data = await pnlManualAdjustmentService.listManualAdjustments({
+      processId,
+      branchId,
+      periodCode: req.query.period ? String(req.query.period) : undefined,
+      status: req.query.status
+        ? (String(req.query.status) as never)
+        : undefined,
+    });
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/manual-adjustments/adjusted-total", requireAuth, requireRole(...ADJUSTMENT_READ_ROLES), h(async (req, res) => {
-  const processId = String(req.query.processId ?? "");
-  if (processId) await assertProcessInScope(req, processId);
-  const period = String(req.query.period ?? "");
-  const systemRevenue = Number(req.query.systemRevenue ?? 0);
-  const data = await pnlManualAdjustmentService.getAdjustedTotal(processId, period, systemRevenue);
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/manual-adjustments/adjusted-total",
+  requireAuth,
+  requireRole(...ADJUSTMENT_READ_ROLES),
+  h(async (req, res) => {
+    const processId = String(req.query.processId ?? "");
+    if (processId) await assertProcessInScope(req, processId);
+    const period = String(req.query.period ?? "");
+    const systemRevenue = Number(req.query.systemRevenue ?? 0);
+    const data = await pnlManualAdjustmentService.getAdjustedTotal(
+      processId,
+      period,
+      systemRevenue,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.post("/pnl/manual-adjustments", requireAuth, requireWriteAccess, requireRole(...ADJUSTMENT_WRITE_ROLES), h(async (req, res) => {
-  const user = actor(req);
-  const data = await pnlManualAdjustmentService.createManualAdjustment(
-    {
-      processId: String(req.body?.processId ?? ""),
-      periodCode: String(req.body?.periodCode ?? ""),
-      adjustmentType: req.body?.adjustmentType,
-      amount: Number(req.body?.amount),
-      reason: String(req.body?.reason ?? ""),
-    },
-    req.authUser.id,
-    { primaryRole: user.role, userRoles: user.roles }
-  );
-  res.status(201).json({ success: true, data });
-}));
+router.post(
+  "/pnl/manual-adjustments",
+  requireAuth,
+  requireWriteAccess,
+  requireRole(...ADJUSTMENT_WRITE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const data = await pnlManualAdjustmentService.createManualAdjustment(
+      {
+        processId: String(req.body?.processId ?? ""),
+        periodCode: String(req.body?.periodCode ?? ""),
+        adjustmentType: req.body?.adjustmentType,
+        amount: Number(req.body?.amount),
+        reason: String(req.body?.reason ?? ""),
+      },
+      req.authUser.id,
+      { primaryRole: user.role, userRoles: user.roles },
+    );
+    res.status(201).json({ success: true, data });
+  }),
+);
 
-router.put("/pnl/manual-adjustments/:id/approve", requireAuth, requireWriteAccess, requireRole(...ADJUSTMENT_APPROVE_ROLES), h(async (req, res) => {
-  const data = await pnlManualAdjustmentService.reviewManualAdjustment(req.params.id, "approve", req.authUser.id);
-  res.json({ success: true, data });
-}));
+router.put(
+  "/pnl/manual-adjustments/:id/approve",
+  requireAuth,
+  requireWriteAccess,
+  requireRole(...ADJUSTMENT_APPROVE_ROLES),
+  h(async (req, res) => {
+    const data = await pnlManualAdjustmentService.reviewManualAdjustment(
+      req.params.id,
+      "approve",
+      req.authUser.id,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.put("/pnl/manual-adjustments/:id/reject", requireAuth, requireWriteAccess, requireRole(...ADJUSTMENT_APPROVE_ROLES), h(async (req, res) => {
-  const reason = String(req.body?.reason ?? "");
-  const data = await pnlManualAdjustmentService.reviewManualAdjustment(req.params.id, "reject", req.authUser.id, reason);
-  res.json({ success: true, data });
-}));
+router.put(
+  "/pnl/manual-adjustments/:id/reject",
+  requireAuth,
+  requireWriteAccess,
+  requireRole(...ADJUSTMENT_APPROVE_ROLES),
+  h(async (req, res) => {
+    const reason = String(req.body?.reason ?? "");
+    const data = await pnlManualAdjustmentService.reviewManualAdjustment(
+      req.params.id,
+      "reject",
+      req.authUser.id,
+      reason,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
 // ── Trend / receivables ageing / seat billability (2026-09-10 build) ───────
 // All three sit under /pnl, so they inherit the requireRole(...PNL_READ_ROLES) gate above.
@@ -2342,38 +3119,66 @@ router.put("/pnl/manual-adjustments/:id/reject", requireAuth, requireWriteAccess
 async function scopedTrendFilters(req: AuthenticatedRequest) {
   const user = actor(req);
   const branchId = await resolveFinanceBranchScope({
-    userId: user.id, primaryRole: user.role, userRoles: user.roles,
-    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    userId: user.id,
+    primaryRole: user.role,
+    userRoles: user.roles,
+    requestedBranchId: req.query.branchId
+      ? String(req.query.branchId)
+      : undefined,
   });
   const processId = await resolveFinanceProcessScope({
-    userId: user.id, primaryRole: user.role, userRoles: user.roles,
-    requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
+    userId: user.id,
+    primaryRole: user.role,
+    userRoles: user.roles,
+    requestedProcessId: req.query.processId
+      ? String(req.query.processId)
+      : undefined,
   });
   if (processId) await assertProcessInScope(req, processId);
   return { branchId, processId };
 }
 
-router.get("/pnl/trend", requireAuth, h(async (req, res) => {
-  const scoped = await scopedTrendFilters(req);
-  // Client / Search as process ids (audit item 19), intersected with any process scope above.
-  const clientSearch = await resolveClientSearchProcessIds({
-    clientId: req.query.clientId ? String(req.query.clientId) : null,
-    search: req.query.search ? String(req.query.search) : null,
-  });
-  const data = await getPnlTrend(clientSearch
-    ? { branchId: scoped.branchId, processIds: narrowProcessScope(scoped.processId ? [scoped.processId] : [], clientSearch) }
-    : scoped);
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/trend",
+  requireAuth,
+  h(async (req, res) => {
+    const scoped = await scopedTrendFilters(req);
+    // Client / Search as process ids (audit item 19), intersected with any process scope above.
+    const clientSearch = await resolveClientSearchProcessIds({
+      clientId: req.query.clientId ? String(req.query.clientId) : null,
+      search: req.query.search ? String(req.query.search) : null,
+    });
+    const data = await getPnlTrend(
+      clientSearch
+        ? {
+            branchId: scoped.branchId,
+            processIds: narrowProcessScope(
+              scoped.processId ? [scoped.processId] : [],
+              clientSearch,
+            ),
+          }
+        : scoped,
+    );
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/receivables-ageing", requireAuth, h(async (req, res) => {
-  const data = await getReceivablesAgeing(await scopedTrendFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/receivables-ageing",
+  requireAuth,
+  h(async (req, res) => {
+    const data = await getReceivablesAgeing(await scopedTrendFilters(req));
+    res.json({ success: true, data });
+  }),
+);
 
-router.get("/pnl/seat-billability", requireAuth, h(async (req, res) => {
-  const data = await getSeatBillability(await scopedTrendFilters(req));
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/seat-billability",
+  requireAuth,
+  h(async (req, res) => {
+    const data = await getSeatBillability(await scopedTrendFilters(req));
+    res.json({ success: true, data });
+  }),
+);
 
 export { router as processPnlRouter };

@@ -78,7 +78,8 @@ function authenticateAs(
     const fromExtra = extra?.(text);
     if (fromExtra) return fromExtra;
     if (/is_read_only/i.test(text)) return [[{ is_read_only: 0 }], []];
-    if (/user_roles/i.test(text)) return [roleKeys.map((role_key) => ({ role_key })), []];
+    if (/user_roles/i.test(text))
+      return [roleKeys.map((role_key) => ({ role_key })), []];
     return [[], []];
   });
 }
@@ -130,7 +131,12 @@ describe("GET /api/access/rbac-reconciliation — admin access", () => {
     );
     mockFrom.mockReturnValue({
       select: vi.fn(() => ({
-        order: vi.fn(() => Promise.resolve({ data: [{ user_id: "u-1", role: "admin" }], error: null })),
+        order: vi.fn(() =>
+          Promise.resolve({
+            data: [{ user_id: "u-1", role: "admin" }],
+            error: null,
+          }),
+        ),
       })),
     });
 
@@ -160,7 +166,9 @@ describe("GET /api/access/rbac-reconciliation — admin access", () => {
     expect(r.status).toBe(200);
     const report = r.body.data;
     expect(report.mismatches.length).toBeGreaterThan(0);
-    const mismatch = report.mismatches.find((m: { user_id: string }) => m.user_id === "u-missing");
+    const mismatch = report.mismatches.find(
+      (m: { user_id: string }) => m.user_id === "u-missing",
+    );
     expect(mismatch).toBeDefined();
     expect(mismatch.in_mysql_only).toContain("hr");
     expect(mismatch.supabase_roles).toHaveLength(0);
@@ -186,7 +194,12 @@ describe("RBAC authority — MySQL is the backend authority", () => {
     authenticateAs("user-admin", ["admin"]);
     mockFrom.mockReturnValue({
       select: vi.fn(() => ({
-        order: vi.fn(() => Promise.resolve({ data: [{ user_id: "u-ghost", role: "admin" }], error: null })),
+        order: vi.fn(() =>
+          Promise.resolve({
+            data: [{ user_id: "u-ghost", role: "admin" }],
+            error: null,
+          }),
+        ),
       })),
     });
 
@@ -197,8 +210,9 @@ describe("RBAC authority — MySQL is the backend authority", () => {
     expect(r.status).toBe(200);
     // Reconciliation reports; it must never write. A report that silently
     // repaired the mismatch would hide the drift it exists to surface.
-    const writeCalls = mockExecute.mock.calls.filter(([sql]: [unknown]) =>
-      typeof sql === "string" && /INSERT|UPDATE|DELETE/i.test(sql),
+    const writeCalls = mockExecute.mock.calls.filter(
+      ([sql]: [unknown]) =>
+        typeof sql === "string" && /INSERT|UPDATE|DELETE/i.test(sql),
     );
     expect(writeCalls).toHaveLength(0);
   });

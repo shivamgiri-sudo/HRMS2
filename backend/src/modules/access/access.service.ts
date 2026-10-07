@@ -28,7 +28,7 @@ export interface ReconciliationReport {
 export async function getRbacReconciliation(): Promise<ReconciliationReport> {
   // 1. Fetch all active MySQL user_roles
   const [mysqlRows] = await db.execute<RowDataPacket[]>(
-    "SELECT user_id, role_key FROM user_roles WHERE active_status = 1 ORDER BY user_id"
+    "SELECT user_id, role_key FROM user_roles WHERE active_status = 1 ORDER BY user_id",
   );
 
   const mysqlByUser = new Map<string, string[]>();
@@ -51,13 +51,20 @@ export async function getRbacReconciliation(): Promise<ReconciliationReport> {
 
 // ── Role administration (MySQL-authoritative writes) ─────────────────────────
 
-export async function assignRole(userId: string, roleKey: string, actorUserId: string, req?: Request): Promise<void> {
+export async function assignRole(
+  userId: string,
+  roleKey: string,
+  actorUserId: string,
+  req?: Request,
+): Promise<void> {
   const [catalog] = await db.execute<RowDataPacket[]>(
     "SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1",
-    [roleKey]
+    [roleKey],
   );
   if ((catalog as RowDataPacket[]).length === 0) {
-    throw Object.assign(new Error(`Role not in catalog: ${roleKey}`), { statusCode: 400 });
+    throw Object.assign(new Error(`Role not in catalog: ${roleKey}`), {
+      statusCode: 400,
+    });
   }
   // granted_by/granted_at are re-stamped on the ON DUPLICATE KEY branch as well as the
   // INSERT. That branch is a REACTIVATION of a previously revoked grant, which is a new
@@ -68,32 +75,55 @@ export async function assignRole(userId: string, roleKey: string, actorUserId: s
     `INSERT INTO user_roles (id, user_id, role_key, active_status, granted_by, granted_at)
      VALUES (?, ?, ?, 1, ?, NOW())
      ON DUPLICATE KEY UPDATE active_status = 1, granted_by = VALUES(granted_by), granted_at = VALUES(granted_at)`,
-    [randomUUID(), userId, roleKey, actorUserId]
+    [randomUUID(), userId, roleKey, actorUserId],
   );
-  await logSensitiveAction({ actor_user_id: actorUserId, action_type: "ROLE_ASSIGNED", module_key: "ACCESS_CONTROL", entity_type: "user", entity_id: userId, change_summary: { role_key: roleKey }, req });
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: "ROLE_ASSIGNED",
+    module_key: "ACCESS_CONTROL",
+    entity_type: "user",
+    entity_id: userId,
+    change_summary: { role_key: roleKey },
+    req,
+  });
 }
 
-export async function revokeRole(userId: string, roleKey: string, actorUserId: string, req?: Request): Promise<void> {
+export async function revokeRole(
+  userId: string,
+  roleKey: string,
+  actorUserId: string,
+  req?: Request,
+): Promise<void> {
   await db.execute(
     "UPDATE user_roles SET active_status = 0 WHERE user_id = ? AND role_key = ?",
-    [userId, roleKey]
+    [userId, roleKey],
   );
-  await logSensitiveAction({ actor_user_id: actorUserId, action_type: "ROLE_REVOKED", module_key: "ACCESS_CONTROL", entity_type: "user", entity_id: userId, change_summary: { role_key: roleKey }, req });
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: "ROLE_REVOKED",
+    module_key: "ACCESS_CONTROL",
+    entity_type: "user",
+    entity_id: userId,
+    change_summary: { role_key: roleKey },
+    req,
+  });
 }
 
-export async function getUserRoles(userId: string): Promise<{ role_key: string; role_name: string }[]> {
+export async function getUserRoles(
+  userId: string,
+): Promise<{ role_key: string; role_name: string }[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ur.role_key, wrc.role_name FROM user_roles ur
      JOIN workforce_role_catalog wrc ON wrc.role_key = ur.role_key
      WHERE ur.user_id = ? AND ur.active_status = 1 ORDER BY ur.role_key`,
-    [userId]
+    [userId],
   );
   return rows as { role_key: string; role_name: string }[];
 }
 
 export async function listRoleCatalog() {
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT role_key, role_name, description FROM workforce_role_catalog WHERE active_status = 1 ORDER BY role_key"
+    "SELECT role_key, role_name, description FROM workforce_role_catalog WHERE active_status = 1 ORDER BY role_key",
   );
   return rows as RowDataPacket[];
 }
@@ -101,22 +131,41 @@ export async function listRoleCatalog() {
 // ── Sensitive action log query (admin only) ───────────────────────────────────
 
 export async function querySensitiveActionLog(filters: {
-  actor_user_id?: string; module_key?: string; action_type?: string;
-  entity_type?: string; entity_id?: string; limit?: number;
+  actor_user_id?: string;
+  module_key?: string;
+  action_type?: string;
+  entity_type?: string;
+  entity_id?: string;
+  limit?: number;
 }) {
   const conds: string[] = [];
   const params: unknown[] = [];
-  if (filters.actor_user_id) { conds.push("actor_user_id = ?"); params.push(filters.actor_user_id); }
-  if (filters.module_key)    { conds.push("module_key = ?");    params.push(filters.module_key); }
-  if (filters.action_type)   { conds.push("action_type = ?");   params.push(filters.action_type); }
-  if (filters.entity_type)   { conds.push("entity_type = ?");   params.push(filters.entity_type); }
-  if (filters.entity_id)     { conds.push("entity_id = ?");     params.push(filters.entity_id); }
+  if (filters.actor_user_id) {
+    conds.push("actor_user_id = ?");
+    params.push(filters.actor_user_id);
+  }
+  if (filters.module_key) {
+    conds.push("module_key = ?");
+    params.push(filters.module_key);
+  }
+  if (filters.action_type) {
+    conds.push("action_type = ?");
+    params.push(filters.action_type);
+  }
+  if (filters.entity_type) {
+    conds.push("entity_type = ?");
+    params.push(filters.entity_type);
+  }
+  if (filters.entity_id) {
+    conds.push("entity_id = ?");
+    params.push(filters.entity_id);
+  }
   const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
   const limit = Math.min(filters.limit ?? 100, 500);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, actor_user_id, action_type, module_key, entity_type, entity_id, ip_address, change_summary, acted_at
      FROM sensitive_action_log ${where} ORDER BY acted_at DESC LIMIT ${limit}`,
-    params
+    params,
   );
   return rows as RowDataPacket[];
 }
@@ -138,14 +187,22 @@ export interface AccessMeResponse {
   } | null;
   roles: string[];
   scopes: Array<{
-    id: string; role_key: string; scope_type: string;
-    branch_id: string | null; process_id: string | null;
-    lob_id: string | null; department_id: string | null;
+    id: string;
+    role_key: string;
+    scope_type: string;
+    branch_id: string | null;
+    process_id: string | null;
+    lob_id: string | null;
+    department_id: string | null;
     manager_employee_id: string | null;
   }>;
   pages: Array<{
-    page_code: string; can_view: boolean; can_create: boolean;
-    can_edit: boolean; can_delete: boolean; can_export: boolean;
+    page_code: string;
+    can_view: boolean;
+    can_create: boolean;
+    can_edit: boolean;
+    can_delete: boolean;
+    can_export: boolean;
   }>;
   disabledPageCodes: string[];
 }
@@ -183,7 +240,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
   const loadDisabledPageRows = async (): Promise<DisabledPageRow[]> => {
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
-        "SELECT page_code FROM page_catalog WHERE active_status = 0"
+        "SELECT page_code FROM page_catalog WHERE active_status = 0",
       );
       return rows as DisabledPageRow[];
     } catch {
@@ -194,13 +251,13 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
   const loadActiveCatalogRows = async (): Promise<CatalogPageRow[]> => {
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
-        "SELECT page_code FROM page_catalog WHERE active_status = 1"
+        "SELECT page_code FROM page_catalog WHERE active_status = 1",
       );
       return rows as CatalogPageRow[];
     } catch {
       try {
         const [rows] = await db.execute<RowDataPacket[]>(
-          "SELECT page_code FROM page_catalog"
+          "SELECT page_code FROM page_catalog",
         );
         return rows as CatalogPageRow[];
       } catch {
@@ -228,7 +285,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
            AND rpa.active_status = 1
            AND COALESCE(pc.active_status, 1) = 1
          GROUP BY rpa.page_code`,
-        roleKeys
+        roleKeys,
       );
       return rows as PageRow[];
     } catch {
@@ -243,7 +300,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
          WHERE role_key IN (${placeholders})
            AND active_status = 1
          GROUP BY page_code`,
-        roleKeys
+        roleKeys,
       );
       return rows as PageRow[];
     }
@@ -258,7 +315,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
          WHERE upa.user_id = ?
            AND upa.active_status = 1
            AND COALESCE(pc.active_status, 1) = 1`,
-        [userId]
+        [userId],
       );
       return rows as PageRow[];
     } catch {
@@ -268,7 +325,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
            FROM user_page_access
            WHERE user_id = ?
              AND active_status = 1`,
-          [userId]
+          [userId],
         );
         return rows as PageRow[];
       } catch {
@@ -278,48 +335,55 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
   };
 
   // Batch 1: all queries independent of each other run in parallel
-  const [[roleRows], [empRows], [scopeRows], disabledRows, activeCatalogRows] = await Promise.all([
-    db.execute<RowDataPacket[]>(
-      "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-      [userId]
-    ),
-    db.execute<RowDataPacket[]>(
-      "SELECT id, employee_code, first_name, last_name, full_name FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
-      [userId]
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT id, role_key, scope_type, branch_id, process_id, lob_id, department_id, manager_employee_id
+  const [[roleRows], [empRows], [scopeRows], disabledRows, activeCatalogRows] =
+    await Promise.all([
+      db.execute<RowDataPacket[]>(
+        "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+        [userId],
+      ),
+      db.execute<RowDataPacket[]>(
+        "SELECT id, employee_code, first_name, last_name, full_name FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+        [userId],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT id, role_key, scope_type, branch_id, process_id, lob_id, department_id, manager_employee_id
        FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
-      [userId]
-    ),
-    loadDisabledPageRows(),
-    loadActiveCatalogRows(),
-  ]);
+        [userId],
+      ),
+      loadDisabledPageRows(),
+      loadActiveCatalogRows(),
+    ]);
 
   const roles = (roleRows as RoleRow[]).map((r) => String(r.role_key ?? ""));
   const emp = (empRows as EmployeeRow[])[0] ?? null;
   const scopes = scopeRows as ScopeRow[];
-  const disabledPageCodes = (disabledRows as DisabledPageRow[]).map((row) => String(row.page_code));
-  const activePageCodes = (activeCatalogRows as CatalogPageRow[]).map((row) => String(row.page_code));
+  const disabledPageCodes = (disabledRows as DisabledPageRow[]).map((row) =>
+    String(row.page_code),
+  );
+  const activePageCodes = (activeCatalogRows as CatalogPageRow[]).map((row) =>
+    String(row.page_code),
+  );
 
   // Batch 2: page-permissions (depends on roles) + user-page-overrides run in parallel
-  const allRoleKeys = [...new Set([...roles, ...scopes.map((s) => s.role_key ?? "")])].filter(Boolean);
+  const allRoleKeys = [
+    ...new Set([...roles, ...scopes.map((s) => s.role_key ?? "")]),
+  ].filter(Boolean);
 
   const [pageRows, userPageRows] = await Promise.all([
     loadRolePageRows(allRoleKeys),
     loadUserPageRows(),
   ]);
   let pages: AccessMeResponse["pages"] = (pageRows as PageRow[]).map((r) => ({
-    page_code:  r.page_code as string,
-    can_view:   Boolean(r.can_view),
+    page_code: r.page_code as string,
+    can_view: Boolean(r.can_view),
     can_create: Boolean(r.can_create),
-    can_edit:   Boolean(r.can_edit),
+    can_edit: Boolean(r.can_edit),
     can_delete: Boolean(r.can_delete),
     can_export: Boolean(r.can_export),
   }));
 
   // Merge: user overrides replace role-based for matching page_code
-  const pageMap = new Map(pages.map(p => [p.page_code, p]));
+  const pageMap = new Map(pages.map((p) => [p.page_code, p]));
 
   if (roles.includes("super_admin")) {
     for (const pageCode of activePageCodes) {
@@ -377,7 +441,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
         WHERE active_status = 1
           AND (reporting_manager_id = ? OR manager_id = ?)
         LIMIT 1`,
-      [emp.id, emp.id]
+      [emp.id, emp.id],
     );
     if ((reportRows as RowDataPacket[]).length > 0) {
       pageMap.set(TEAM_ATTENDANCE_PAGE, {
@@ -406,16 +470,18 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
   return {
     userId,
     email: undefined, // email not stored in MySQL — caller knows it from auth
-    employeeId:   emp?.id ?? null,
+    employeeId: emp?.id ?? null,
     employeeCode: emp?.employee_code ?? null,
     employeeName: emp?.full_name ?? null,
-    employee: emp ? {
-      id: emp.id,
-      employee_code: emp.employee_code,
-      first_name: emp.first_name,
-      last_name: emp.last_name ?? null,
-      full_name: emp.full_name ?? null,
-    } : null,
+    employee: emp
+      ? {
+          id: emp.id,
+          employee_code: emp.employee_code,
+          first_name: emp.first_name,
+          last_name: emp.last_name ?? null,
+          full_name: emp.full_name ?? null,
+        }
+      : null,
     roles,
     scopes: scopes.map((scope) => ({
       id: String(scope.id ?? ""),

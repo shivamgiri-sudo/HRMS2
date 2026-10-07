@@ -5,7 +5,10 @@ import { db } from "../../db/mysql.js";
 // Structurally identical to the Executor interfaces used across this session's other
 // process-pnl services — same dependency-injection pattern for testability.
 interface Executor {
-  execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[T, unknown]>;
 }
 
 /**
@@ -42,16 +45,16 @@ function avgMonthlyCtc(minCtc: number, maxCtc: number): number {
 export async function listGradeDrivers(
   costCentreId: string,
   periodCode: string,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<GradeDriverRecord[]> {
   const [gradeRows] = await executor.execute<RowDataPacket[]>(
-    `SELECT id, grade_name, band, min_ctc, max_ctc FROM grade_band_master WHERE active_status = 1 ORDER BY grade_name`
+    `SELECT id, grade_name, band, min_ctc, max_ctc FROM grade_band_master WHERE active_status = 1 ORDER BY grade_name`,
   );
   const [driverRows] = await executor.execute<RowDataPacket[]>(
     `SELECT grade_id, planned_headcount, remarks, status
        FROM finance_cost_centre_grade_driver
       WHERE cost_centre_id = ? AND period_code = ?`,
-    [costCentreId, periodCode]
+    [costCentreId, periodCode],
   );
   const byGrade = new Map(driverRows.map((row) => [String(row.grade_id), row]));
 
@@ -67,7 +70,9 @@ export async function listGradeDrivers(
       minCtc,
       maxCtc,
       plannedHeadcount,
-      monthlyCost: Math.round(plannedHeadcount * avgMonthlyCtc(minCtc, maxCtc) * 100) / 100,
+      monthlyCost:
+        Math.round(plannedHeadcount * avgMonthlyCtc(minCtc, maxCtc) * 100) /
+        100,
       remarks: driver?.remarks ?? null,
       status: (driver?.status as "draft" | "approved") ?? "draft",
     };
@@ -79,20 +84,23 @@ export async function saveGradeDrivers(
   costCentreId: string,
   periodCode: string,
   drivers: SaveGradeDriverInput[],
-  actorUserId: string
+  actorUserId: string,
 ): Promise<GradeDriverRecord[]> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) {
     throw new Error("A valid budget period (YYYY-MM) is required");
   }
   const [activeGrades] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM grade_band_master WHERE active_status = 1`
+    `SELECT id FROM grade_band_master WHERE active_status = 1`,
   );
   const activeGradeIds = new Set(activeGrades.map((row) => String(row.id)));
   for (const driver of drivers) {
     if (!activeGradeIds.has(driver.gradeId)) {
       throw new Error(`Grade ${driver.gradeId} is not an active grade band`);
     }
-    if (!Number.isFinite(driver.plannedHeadcount) || driver.plannedHeadcount < 0) {
+    if (
+      !Number.isFinite(driver.plannedHeadcount) ||
+      driver.plannedHeadcount < 0
+    ) {
       throw new Error("Planned headcount cannot be negative");
     }
   }
@@ -118,7 +126,7 @@ export async function saveGradeDrivers(
           driver.plannedHeadcount,
           driver.remarks?.trim() || null,
           actorUserId,
-        ]
+        ],
       );
     }
     await connection.commit();
@@ -140,14 +148,14 @@ export async function saveGradeDrivers(
 export async function getCostCentreGradeWeightedCost(
   costCentreId: string,
   periodCode: string,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<{ totalHeadcount: number; blendedMonthlyCost: number } | null> {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT d.planned_headcount, g.min_ctc, g.max_ctc
        FROM finance_cost_centre_grade_driver d
        JOIN grade_band_master g ON g.id = d.grade_id
       WHERE d.cost_centre_id = ? AND d.period_code = ? AND d.planned_headcount > 0`,
-    [costCentreId, periodCode]
+    [costCentreId, periodCode],
   );
   if (rows.length === 0) return null;
 
@@ -156,7 +164,8 @@ export async function getCostCentreGradeWeightedCost(
   for (const row of rows) {
     const headcount = Number(row.planned_headcount);
     totalHeadcount += headcount;
-    blendedMonthlyCost += headcount * avgMonthlyCtc(Number(row.min_ctc), Number(row.max_ctc));
+    blendedMonthlyCost +=
+      headcount * avgMonthlyCtc(Number(row.min_ctc), Number(row.max_ctc));
   }
   return {
     totalHeadcount: Math.round(totalHeadcount * 100) / 100,

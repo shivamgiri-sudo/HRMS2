@@ -46,35 +46,41 @@
  *   node backend/scripts/backfill-line-summary-from-dbbill.mjs --month=2026-07
  *   node backend/scripts/backfill-line-summary-from-dbbill.mjs
  */
-import { connect } from './lib/db-connect.mjs';
-import { num, PAID_ROW_FILTER } from './lib/dbbill-salary-mapping.mjs';
+import { connect } from "./lib/db-connect.mjs";
+import { num, PAID_ROW_FILTER } from "./lib/dbbill-salary-mapping.mjs";
 
-const arg = (n, fb) => process.argv.find(a => a.startsWith(`--${n}=`))?.split('=')[1] ?? fb;
-const DRY_RUN   = process.argv.includes('--dry-run');
-const ONLY_MONTH = arg('month', null);
-const HRMS_HOST = arg('hrms-host', null);
-const BILL_HOST = arg('bill-host', null);
-const log = (m) => process.stdout.write(`[${new Date().toLocaleTimeString('en-IN')}] ${m}\n`);
+const arg = (n, fb) =>
+  process.argv.find((a) => a.startsWith(`--${n}=`))?.split("=")[1] ?? fb;
+const DRY_RUN = process.argv.includes("--dry-run");
+const ONLY_MONTH = arg("month", null);
+const HRMS_HOST = arg("hrms-host", null);
+const BILL_HOST = arg("bill-host", null);
+const log = (m) =>
+  process.stdout.write(`[${new Date().toLocaleTimeString("en-IN")}] ${m}\n`);
 
 /** hrms line column -> [db_bill column, kind] */
 const MONEY_COLS = [
-  ['tds',              'IncomeTax'],
-  ['lwp_deduction',    'LeaveDeduction'],
-  ['advance_recovery', 'AdvPaid'],
-  ['loan_emi',         'LoanDed'],
-  ['incentive_total',  'Incentive'],
-  ['other_deductions', 'OtherDeduction'],
+  ["tds", "IncomeTax"],
+  ["lwp_deduction", "LeaveDeduction"],
+  ["advance_recovery", "AdvPaid"],
+  ["loan_emi", "LoanDed"],
+  ["incentive_total", "Incentive"],
+  ["other_deductions", "OtherDeduction"],
   // Paid-leave day count. Already correct on 129,587 of 129,696 rows; 109 drifted
   // by a combined 54.5 days. Included so the column is exact rather than nearly so.
-  ['leave_days',       'Leave'],
+  ["leave_days", "Leave"],
 ];
 
 async function main() {
-  log(`Backfill line summary columns${DRY_RUN ? ' [DRY-RUN]' : ''}${ONLY_MONTH ? ` month=${ONLY_MONTH}` : ' all months'}`);
-  const hrms = await connect('mas_hrms', { host: HRMS_HOST, log });
-  const bill = await connect('db_bill', { host: BILL_HOST, log });
+  log(
+    `Backfill line summary columns${DRY_RUN ? " [DRY-RUN]" : ""}${ONLY_MONTH ? ` month=${ONLY_MONTH}` : " all months"}`,
+  );
+  const hrms = await connect("mas_hrms", { host: HRMS_HOST, log });
+  const bill = await connect("db_bill", { host: BILL_HOST, log });
 
-  const monthCond = ONLY_MONTH ? `AND DATE_FORMAT(SalayDate,'%Y-%m') = ${bill.escape(ONLY_MONTH)}` : '';
+  const monthCond = ONLY_MONTH
+    ? `AND DATE_FORMAT(SalayDate,'%Y-%m') = ${bill.escape(ONLY_MONTH)}`
+    : "";
   const [bRows] = await bill.query(`
     SELECT TRIM(EmpCode) AS code, DATE_FORMAT(SalayDate,'%Y-%m') AS mon,
            IncomeTax, LeaveDeduction, AdvPaid, LoanDed, Incentive, OtherDeduction,
@@ -83,9 +89,11 @@ async function main() {
      WHERE ${PAID_ROW_FILTER} ${monthCond}
   `);
   log(`  db_bill rows: ${bRows.length}`);
-  const bMap = new Map(bRows.map(r => [`${r.code}|${r.mon}`, r]));
+  const bMap = new Map(bRows.map((r) => [`${r.code}|${r.mon}`, r]));
 
-  const hrmsMonthCond = ONLY_MONTH ? `WHERE r.run_month = ${hrms.escape(ONLY_MONTH)}` : '';
+  const hrmsMonthCond = ONLY_MONTH
+    ? `WHERE r.run_month = ${hrms.escape(ONLY_MONTH)}`
+    : "";
   const [hRows] = await hrms.query(`
     SELECT l.id, TRIM(l.employee_code) AS code, r.run_month AS mon,
            l.tds, l.lwp_deduction, l.advance_recovery, l.loan_emi,
@@ -96,50 +104,75 @@ async function main() {
   `);
   log(`  mas_hrms lines: ${hRows.length}`);
 
-  const changed = Object.fromEntries([...MONEY_COLS.map(([c]) => [c, 0]),
-    ['final_payable_days', 0], ['lwp_days', 0]]);
-  const drift = Object.fromEntries(Object.keys(changed).map(k => [k, 0]));
-  let rowsTouched = 0, unmatched = 0;
+  const changed = Object.fromEntries([
+    ...MONEY_COLS.map(([c]) => [c, 0]),
+    ["final_payable_days", 0],
+    ["lwp_days", 0],
+  ]);
+  const drift = Object.fromEntries(Object.keys(changed).map((k) => [k, 0]));
+  let rowsTouched = 0,
+    unmatched = 0;
 
   for (const h of hRows) {
     const b = bMap.get(`${h.code}|${h.mon}`);
-    if (!b) { unmatched++; continue; }
+    if (!b) {
+      unmatched++;
+      continue;
+    }
 
-    const sets = [], vals = [];
+    const sets = [],
+      vals = [];
     for (const [hc, bc] of MONEY_COLS) {
       const want = num(b[bc]);
       const have = num(h[hc]);
       if (Math.abs(want - have) > 0.011) {
-        sets.push(`${hc} = ?`); vals.push(want);
-        changed[hc]++; drift[hc] += want - have;
+        sets.push(`${hc} = ?`);
+        vals.push(want);
+        changed[hc]++;
+        drift[hc] += want - have;
       }
     }
     const wantPayable = num(b.EarnedDays);
     if (Math.abs(wantPayable - num(h.final_payable_days)) > 0.011) {
-      sets.push('final_payable_days = ?'); vals.push(wantPayable);
-      changed.final_payable_days++; drift.final_payable_days += wantPayable - num(h.final_payable_days);
+      sets.push("final_payable_days = ?");
+      vals.push(wantPayable);
+      changed.final_payable_days++;
+      drift.final_payable_days += wantPayable - num(h.final_payable_days);
     }
     const wantLwp = Math.max(0, num(b.WorkingDays) - num(b.EarnedDays));
     if (Math.abs(wantLwp - num(h.lwp_days)) > 0.011) {
-      sets.push('lwp_days = ?'); vals.push(wantLwp);
-      changed.lwp_days++; drift.lwp_days += wantLwp - num(h.lwp_days);
+      sets.push("lwp_days = ?");
+      vals.push(wantLwp);
+      changed.lwp_days++;
+      drift.lwp_days += wantLwp - num(h.lwp_days);
     }
 
     if (sets.length === 0) continue;
     rowsTouched++;
     if (!DRY_RUN) {
-      await hrms.query(`UPDATE salary_prep_line SET ${sets.join(', ')} WHERE id = ?`, [...vals, h.id]);
+      await hrms.query(
+        `UPDATE salary_prep_line SET ${sets.join(", ")} WHERE id = ?`,
+        [...vals, h.id],
+      );
     }
   }
 
-  log('');
-  log(`${DRY_RUN ? 'WOULD UPDATE' : 'UPDATED'} ${rowsTouched} line(s); unmatched in db_bill: ${unmatched}`);
-  log('  column                rows        delta');
+  log("");
+  log(
+    `${DRY_RUN ? "WOULD UPDATE" : "UPDATED"} ${rowsTouched} line(s); unmatched in db_bill: ${unmatched}`,
+  );
+  log("  column                rows        delta");
   for (const k of Object.keys(changed)) {
     if (changed[k] === 0) continue;
-    const isDays = k.endsWith('_days');
-    log(`  ${k.padEnd(20)} ${String(changed[k]).padStart(6)}  ${isDays ? drift[k].toFixed(2) + ' days' : 'Rs ' + drift[k].toFixed(2)}`);
+    const isDays = k.endsWith("_days");
+    log(
+      `  ${k.padEnd(20)} ${String(changed[k]).padStart(6)}  ${isDays ? drift[k].toFixed(2) + " days" : "Rs " + drift[k].toFixed(2)}`,
+    );
   }
-  await hrms.end(); await bill.end();
+  await hrms.end();
+  await bill.end();
 }
-main().catch(e => { console.error('FATAL:', e.message); process.exit(1); });
+main().catch((e) => {
+  console.error("FATAL:", e.message);
+  process.exit(1);
+});

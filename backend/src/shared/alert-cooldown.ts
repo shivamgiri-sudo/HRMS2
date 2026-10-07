@@ -33,13 +33,13 @@ let tableUnavailable = false;
 export async function shouldAlert(
   workerName: string,
   subjectId: string,
-  cooldownMs: number
+  cooldownMs: number,
 ): Promise<boolean> {
   const key = `${workerName}:${subjectId}`;
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT last_sent_at FROM alert_cooldown WHERE alert_key = ? LIMIT 1",
-      [key]
+      [key],
     );
     tableUnavailable = false;
     if (!rows.length) return true;
@@ -52,7 +52,7 @@ export async function shouldAlert(
       console.warn(
         `[alert-cooldown] falling back to in-process throttling for ${workerName} — ` +
           `is 1054_alert_worker_governance.sql in MIGRATION_MANIFEST? ` +
-          `(${error instanceof Error ? error.message : String(error)})`
+          `(${error instanceof Error ? error.message : String(error)})`,
       );
     }
     const last = memoryFallback.get(key);
@@ -61,7 +61,10 @@ export async function shouldAlert(
 }
 
 /** Record that an alert just went out. Best-effort. */
-export async function markAlerted(workerName: string, subjectId: string): Promise<void> {
+export async function markAlerted(
+  workerName: string,
+  subjectId: string,
+): Promise<void> {
   const key = `${workerName}:${subjectId}`;
   // Always recorded in memory too, so a table that disappears mid-run still has
   // a throttle to fall back on.
@@ -71,7 +74,7 @@ export async function markAlerted(workerName: string, subjectId: string): Promis
       `INSERT INTO alert_cooldown (alert_key, last_sent_at, send_count)
             VALUES (?, NOW(), 1)
        ON DUPLICATE KEY UPDATE last_sent_at = NOW(), send_count = send_count + 1`,
-      [key]
+      [key],
     );
   } catch {
     /* observability must not fail the work it observes */
@@ -82,17 +85,21 @@ export async function markAlerted(workerName: string, subjectId: string): Promis
  * Drop rows older than `olderThanMs`. Called opportunistically by the workers so
  * the table cannot grow without bound; there is no scheduled sweep for it.
  */
-export async function cleanupCooldowns(workerName: string, olderThanMs: number): Promise<void> {
+export async function cleanupCooldowns(
+  workerName: string,
+  olderThanMs: number,
+): Promise<void> {
   const cutoff = Date.now() - olderThanMs;
   for (const [key, ts] of memoryFallback.entries()) {
-    if (key.startsWith(`${workerName}:`) && ts < cutoff) memoryFallback.delete(key);
+    if (key.startsWith(`${workerName}:`) && ts < cutoff)
+      memoryFallback.delete(key);
   }
   try {
     await db.execute(
       `DELETE FROM alert_cooldown
         WHERE alert_key LIKE ?
           AND last_sent_at < DATE_SUB(NOW(), INTERVAL ? SECOND)`,
-      [`${workerName}:%`, Math.max(1, Math.round(olderThanMs / 1000))]
+      [`${workerName}:%`, Math.max(1, Math.round(olderThanMs / 1000))],
     );
   } catch {
     /* ignore */

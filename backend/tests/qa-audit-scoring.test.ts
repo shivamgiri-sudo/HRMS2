@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { scoreQaAudit, type QaFormParameter, type QaParameterScore } from "../src/modules/quality-dashboard/qa-audit-scoring.js";
+import {
+  scoreQaAudit,
+  type QaFormParameter,
+  type QaParameterScore,
+} from "../src/modules/quality-dashboard/qa-audit-scoring.js";
 
 /**
  * There is no quality schema in mas_hrms at all — QA_EVALUATION and
@@ -10,14 +14,28 @@ import { scoreQaAudit, type QaFormParameter, type QaParameterScore } from "../sr
  * These pin the three rules that decide whether a manual score is honest.
  */
 
-const P = (id: string, maxScore: number, isFatal = false): QaFormParameter => ({ id, maxScore, isFatal });
-const S = (formParameterId: string, score: number | null, notApplicable = false): QaParameterScore =>
-  ({ formParameterId, score, notApplicable });
+const P = (id: string, maxScore: number, isFatal = false): QaFormParameter => ({
+  id,
+  maxScore,
+  isFatal,
+});
+const S = (
+  formParameterId: string,
+  score: number | null,
+  notApplicable = false,
+): QaParameterScore => ({ formParameterId, score, notApplicable });
 
 describe("straightforward scoring", () => {
   it("sums the scored parameters and reports a percentage", () => {
-    const result = scoreQaAudit([P("a", 10), P("b", 10)], [S("a", 8), S("b", 7)]);
-    expect(result).toMatchObject({ totalScore: 15, maxScore: 20, qualityPercentage: 75 });
+    const result = scoreQaAudit(
+      [P("a", 10), P("b", 10)],
+      [S("a", 8), S("b", 7)],
+    );
+    expect(result).toMatchObject({
+      totalScore: 15,
+      maxScore: 20,
+      qualityPercentage: 75,
+    });
   });
 
   it("rounds to two places rather than carrying float noise", () => {
@@ -35,13 +53,21 @@ describe("not-applicable parameters", () => {
       [P("a", 10), P("b", 10)],
       [S("a", 8), S("b", null, true)],
     );
-    expect(result).toMatchObject({ totalScore: 8, maxScore: 10, qualityPercentage: 80 });
+    expect(result).toMatchObject({
+      totalScore: 8,
+      maxScore: 10,
+      qualityPercentage: 80,
+    });
   });
 
   it("treats a missing score the same as not-applicable", () => {
     // A parameter the auditor never touched cannot be assessed either.
     const result = scoreQaAudit([P("a", 10), P("b", 10)], [S("a", 9)]);
-    expect(result).toMatchObject({ maxScore: 10, qualityPercentage: 90, notApplicableCount: 1 });
+    expect(result).toMatchObject({
+      maxScore: 10,
+      qualityPercentage: 90,
+      notApplicableCount: 1,
+    });
   });
 
   it("reports how many were assessed, so the gap stays visible", () => {
@@ -68,7 +94,10 @@ describe("fatal parameters", () => {
       [P("a", 10), P("fatal", 10, true)],
       [S("a", 10), S("fatal", 0)],
     );
-    expect(result).toMatchObject({ fatalTriggered: true, qualityPercentage: 0 });
+    expect(result).toMatchObject({
+      fatalTriggered: true,
+      qualityPercentage: 0,
+    });
   });
 
   it("leaves the raw totals intact so the breach can be explained", () => {
@@ -87,7 +116,10 @@ describe("fatal parameters", () => {
       [P("a", 10), P("fatal", 10, true)],
       [S("a", 8), S("fatal", 10)],
     );
-    expect(result).toMatchObject({ fatalTriggered: false, qualityPercentage: 90 });
+    expect(result).toMatchObject({
+      fatalTriggered: false,
+      qualityPercentage: 90,
+    });
   });
 
   it("does not trigger when the fatal parameter did not apply to the call", () => {
@@ -96,7 +128,10 @@ describe("fatal parameters", () => {
       [P("a", 10), P("fatal", 10, true)],
       [S("a", 8), S("fatal", null, true)],
     );
-    expect(result).toMatchObject({ fatalTriggered: false, qualityPercentage: 80 });
+    expect(result).toMatchObject({
+      fatalTriggered: false,
+      qualityPercentage: 80,
+    });
   });
 
   it("triggers on a negative score as well as zero", () => {
@@ -107,7 +142,10 @@ describe("fatal parameters", () => {
 
 describe("edge cases that must not throw", () => {
   it("handles a form with no parameters", () => {
-    expect(scoreQaAudit([], [])).toMatchObject({ qualityPercentage: null, assessedCount: 0 });
+    expect(scoreQaAudit([], [])).toMatchObject({
+      qualityPercentage: null,
+      assessedCount: 0,
+    });
   });
 
   it("ignores scores for parameters not on the form", () => {

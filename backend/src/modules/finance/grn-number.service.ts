@@ -8,7 +8,7 @@ import { db } from "../../db/mysql.js";
  */
 export async function allocateGrnNumber(
   branchId: string,
-  financialYear: string
+  financialYear: string,
 ): Promise<string> {
   const connection = await db.getConnection();
   try {
@@ -19,7 +19,7 @@ export async function allocateGrnNumber(
          FROM branch_master
         WHERE id = ?
         LIMIT 1`,
-      [branchId]
+      [branchId],
     );
     if (!branchRows[0]) throw new Error("Selected branch was not found");
 
@@ -28,7 +28,7 @@ export async function allocateGrnNumber(
         (branch_id, financial_year, next_sequence)
        VALUES (?, ?, 1)
        ON DUPLICATE KEY UPDATE next_sequence = next_sequence`,
-      [branchId, financialYear]
+      [branchId, financialYear],
     );
 
     const [sequenceRows] = await connection.execute<RowDataPacket[]>(
@@ -36,9 +36,10 @@ export async function allocateGrnNumber(
          FROM finance_grn_sequence
         WHERE branch_id = ? AND financial_year = ?
         FOR UPDATE`,
-      [branchId, financialYear]
+      [branchId, financialYear],
     );
-    if (!sequenceRows[0]) throw new Error("GRN sequence could not be initialized");
+    if (!sequenceRows[0])
+      throw new Error("GRN sequence could not be initialized");
 
     const storedNextSequence = Number(sequenceRows[0].next_sequence);
 
@@ -59,14 +60,17 @@ export async function allocateGrnNumber(
          FROM grn_request
         WHERE branch_id = ? AND financial_year = ?
           AND grn_number REGEXP '^Mas/[0-9]+/[0-9]{2}/[0-9]+$'`,
-      [branchId, financialYear]
+      [branchId, financialYear],
     );
     const maxSeqFromGrnRequest =
       maxRows[0]?.max_seq === null || maxRows[0]?.max_seq === undefined
         ? null
         : Number(maxRows[0].max_seq);
 
-    const sequenceToUse = Math.max(storedNextSequence, (maxSeqFromGrnRequest ?? 0) + 1);
+    const sequenceToUse = Math.max(
+      storedNextSequence,
+      (maxSeqFromGrnRequest ?? 0) + 1,
+    );
     if (!Number.isSafeInteger(sequenceToUse) || sequenceToUse < 1) {
       throw new Error("GRN sequence is invalid");
     }
@@ -75,7 +79,7 @@ export async function allocateGrnNumber(
       `UPDATE finance_grn_sequence
           SET next_sequence = ?
         WHERE branch_id = ? AND financial_year = ?`,
-      [sequenceToUse + 1, branchId, financialYear]
+      [sequenceToUse + 1, branchId, financialYear],
     );
     await connection.commit();
 

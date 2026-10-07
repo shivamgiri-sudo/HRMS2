@@ -17,9 +17,18 @@ import { wfmService } from "../wfm/wfm.service.js";
 import { DISPUTE_TYPES } from "../wfm/wfm.validation.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
-  loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
-  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeDate,
-  type ImportOutcome, type ApplyOutcome, type BatchRecord,
+  loadStagedRows,
+  resolveEmployees,
+  resolveSingleBranch,
+  linkRowToEntity,
+  markRowFailed,
+  markPendingApproval,
+  lockEntities,
+  BulkUploadError,
+  normalizeDate,
+  type ImportOutcome,
+  type ApplyOutcome,
+  type BatchRecord,
 } from "./bulk-approval.service.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 import { withBulkLockRetry } from "./lock-retry.js";
@@ -36,7 +45,10 @@ const TIME_RE = /^\d{2}:\d{2}$/;
  *  Users type "Half Day", "half-day", "Half_Day" etc. — all map to "half_day".
  */
 function normalizeRequestedStatus(raw: string): string {
-  const s = raw.trim().toLowerCase().replace(/[\s\-]+/g, "_");
+  const s = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-]+/g, "_");
   if (s === "half_day" || s === "halfday") return "half_day";
   if (s === "present") return "present";
   if (s === "absent") return "absent";
@@ -71,18 +83,26 @@ function validateRow(d: Record<string, string>): string | null {
   if (d.dispute_type && /^[-–—nN\/aA\s]+$/.test(d.dispute_type.trim())) {
     d.dispute_type = "";
   }
-  if (d.dispute_type && !(DISPUTE_TYPES as readonly string[]).includes(d.dispute_type.toLowerCase())) {
+  if (
+    d.dispute_type &&
+    !(DISPUTE_TYPES as readonly string[]).includes(d.dispute_type.toLowerCase())
+  ) {
     return `dispute_type "${d.dispute_type}" is not a recognised dispute type`;
   }
   for (const field of ["new_punch_in", "new_punch_out"]) {
-    if (d[field] && !TIME_RE.test(d[field])) return `${field} must be HH:MM (got "${d[field]}")`;
+    if (d[field] && !TIME_RE.test(d[field]))
+      return `${field} must be HH:MM (got "${d[field]}")`;
   }
 
   // A regularization with neither a status nor a corrected punch cannot change
   // anything — reviewRegularization refuses to approve it. Catching that here means
   // the uploader sees it at upload time, not the branch head at approval time.
   if (!d.requested_status && !d.new_punch_in && !d.new_punch_out) {
-    const exceptionTypes = ["work_from_home", "week_off_worked", "holiday_worked"];
+    const exceptionTypes = [
+      "work_from_home",
+      "week_off_worked",
+      "holiday_worked",
+    ];
     if (!exceptionTypes.includes((d.dispute_type ?? "").toLowerCase())) {
       return "row has neither requested_status nor a corrected punch time, so approving it could not change the attendance record";
     }
@@ -95,7 +115,8 @@ function validateRow(d: Record<string, string>): string | null {
   const lookback = new Date();
   lookback.setDate(lookback.getDate() - MAX_LOOKBACK_DAYS);
   lookback.setHours(0, 0, 0, 0);
-  if (session < lookback) return `cannot regularize dates older than ${MAX_LOOKBACK_DAYS} days`;
+  if (session < lookback)
+    return `cannot regularize dates older than ${MAX_LOOKBACK_DAYS} days`;
 
   return null;
 }
@@ -105,9 +126,13 @@ export async function importRegularizationBatch(
   userId: string,
 ): Promise<ImportOutcome> {
   const rows = await loadStagedRows(batchId);
-  if (rows.length === 0) throw new BulkUploadError("This batch has no rows left to import.", 400);
+  if (rows.length === 0)
+    throw new BulkUploadError("This batch has no rows left to import.", 400);
 
-  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""), { includeInactive: true });
+  const employees = await resolveEmployees(
+    rows.map((r) => r.data.employee_code ?? ""),
+    { includeInactive: true },
+  );
   const errors: string[] = [];
   let staged = 0;
   let failed = 0;
@@ -175,7 +200,9 @@ export async function importRegularizationBatch(
               sessionDate: d.session_date,
               reason: d.reason,
               reasonCode: d.reason_code || undefined,
-              requestedStatus: (d.requested_status ? normalizeRequestedStatus(d.requested_status) : null) as never,
+              requestedStatus: (d.requested_status
+                ? normalizeRequestedStatus(d.requested_status)
+                : null) as never,
               disputeType: (d.dispute_type?.toLowerCase() || null) as never,
               newPunchIn: d.new_punch_in || null,
               newPunchOut: d.new_punch_out || null,
@@ -256,7 +283,11 @@ async function linkedRows(batchId: string): Promise<LinkedRow[]> {
  * swept up by the reconciliation worker; a stale payroll line surfaces in payroll readiness.
  */
 async function runDeferredSideEffects(
-  applied: Array<{ employeeId: string; sessionDate: string; regularizationId: string }>,
+  applied: Array<{
+    employeeId: string;
+    sessionDate: string;
+    regularizationId: string;
+  }>,
   approverUserId: string,
 ): Promise<void> {
   if (applied.length === 0) return;
@@ -280,7 +311,9 @@ async function runDeferredSideEffects(
                    AND ar.status NOT IN ('approved','rejected','cancelled','discarded'))`,
       employeeIds,
     );
-  } catch { /* non-fatal: the inbox reconciliation sweep closes what this misses */ }
+  } catch {
+    /* non-fatal: the inbox reconciliation sweep closes what this misses */
+  }
 
   // 2. One SMS per employee, not per row. Someone with eight corrections in the file gets one
   //    message about the batch rather than eight identical ones seconds apart.
@@ -293,7 +326,10 @@ async function runDeferredSideEffects(
     );
     const byEmp = new Map<string, { name: string; phone: string | null }>();
     for (const e of empRows as any[]) {
-      byEmp.set(String(e.id), { name: String(e.name ?? ""), phone: e.mobile ?? e.personal_phone ?? null });
+      byEmp.set(String(e.id), {
+        name: String(e.name ?? ""),
+        phone: e.mobile ?? e.personal_phone ?? null,
+      });
     }
     const datesByEmp = new Map<string, string[]>();
     for (const a of applied) {
@@ -306,50 +342,69 @@ async function runDeferredSideEffects(
       const sorted = [...new Set(dates)].sort();
       sendSMS(emp.phone, "attendance_regularization_approved", {
         name: emp.name,
-        date: sorted.length === 1 ? sorted[0] : `${sorted[0]} +${sorted.length - 1} more`,
+        date:
+          sorted.length === 1
+            ? sorted[0]
+            : `${sorted[0]} +${sorted.length - 1} more`,
       }).catch(() => {});
     }
-  } catch { /* non-fatal */ }
+  } catch {
+    /* non-fatal */
+  }
 
   // 3. Payroll recalculation, once per distinct employee-month.
   try {
-    const { recalculateOpenPayrollForEmployee, queuePayrollRecalculation } = await import(
-      "../payroll/payroll-targeted-recalculation.service.js"
-    );
-    const byEmpMonth = new Map<string, { employeeId: string; month: string; regularizationId: string }>();
+    const { recalculateOpenPayrollForEmployee, queuePayrollRecalculation } =
+      await import("../payroll/payroll-targeted-recalculation.service.js");
+    const byEmpMonth = new Map<
+      string,
+      { employeeId: string; month: string; regularizationId: string }
+    >();
     for (const a of applied) {
       const month = a.sessionDate.slice(0, 7);
       const key = `${a.employeeId}|${month}`;
       if (!byEmpMonth.has(key)) {
-        byEmpMonth.set(key, { employeeId: a.employeeId, month, regularizationId: a.regularizationId });
+        byEmpMonth.set(key, {
+          employeeId: a.employeeId,
+          month,
+          regularizationId: a.regularizationId,
+        });
       }
     }
     // Bounded like the row loop: a recalculation is heavier than a row, and the pool is shared
     // with 45 workers.
-    await mapWithConcurrency([...byEmpMonth.values()], BULK_ROW_CONCURRENCY, async (t) => {
-      try {
-        await recalculateOpenPayrollForEmployee({
-          employeeId: t.employeeId,
-          payrollMonth: t.month,
-          sourceEventType: "attendance_regularization",
-          sourceEventId: t.regularizationId,
-          reason: `Bulk approved attendance regularizations for ${t.month}`,
-          actorUserId: approverUserId,
-        });
-      } catch (err: any) {
+    await mapWithConcurrency(
+      [...byEmpMonth.values()],
+      BULK_ROW_CONCURRENCY,
+      async (t) => {
         try {
-          await queuePayrollRecalculation({
+          await recalculateOpenPayrollForEmployee({
             employeeId: t.employeeId,
             payrollMonth: t.month,
             sourceEventType: "attendance_regularization",
             sourceEventId: t.regularizationId,
-            reason: `Bulk recalculation failed: ${err?.message ?? String(err)}`,
-            requestedBy: approverUserId,
+            reason: `Bulk approved attendance regularizations for ${t.month}`,
+            actorUserId: approverUserId,
           });
-        } catch { /* payroll readiness will surface the stale line */ }
-      }
-    });
-  } catch { /* non-fatal */ }
+        } catch (err: any) {
+          try {
+            await queuePayrollRecalculation({
+              employeeId: t.employeeId,
+              payrollMonth: t.month,
+              sourceEventType: "attendance_regularization",
+              sourceEventId: t.regularizationId,
+              reason: `Bulk recalculation failed: ${err?.message ?? String(err)}`,
+              requestedBy: approverUserId,
+            });
+          } catch {
+            /* payroll readiness will surface the stale line */
+          }
+        }
+      },
+    );
+  } catch {
+    /* non-fatal */
+  }
 }
 
 export async function applyRegularizationBatch(
@@ -374,7 +429,9 @@ export async function applyRegularizationBatch(
   // withBulkLockRetry below exists for. This mirrors applyLeaveBatch's grouping.
   const byEmployee = new Map<string, LinkedRow[]>();
   for (const row of rows) {
-    const key = row.employee_id ? String(row.employee_id) : `__unresolved_${row.row_no}`;
+    const key = row.employee_id
+      ? String(row.employee_id)
+      : `__unresolved_${row.row_no}`;
     if (!byEmployee.has(key)) byEmployee.set(key, []);
     byEmployee.get(key)!.push(row);
   }
@@ -394,7 +451,11 @@ export async function applyRegularizationBatch(
       let grpFailed = 0;
       const grpErrors: string[] = [];
       const grpLocked: { entityId: string; employeeId: string | null }[] = [];
-      const grpApplied_: { employeeId: string; sessionDate: string; regularizationId: string }[] = [];
+      const grpApplied_: {
+        employeeId: string;
+        sessionDate: string;
+        regularizationId: string;
+      }[] = [];
 
       for (const row of empRows) {
         try {
@@ -413,9 +474,12 @@ export async function applyRegularizationBatch(
               // re-costs an employee's whole month once per correction they have in the file.
               // Collected below and run once each after the loop; see runDeferredSideEffects.
               { deferSideEffects: true },
-            )
+            ),
           );
-          grpLocked.push({ entityId: row.created_entity_id, employeeId: row.employee_id ? String(row.employee_id) : null });
+          grpLocked.push({
+            entityId: row.created_entity_id,
+            employeeId: row.employee_id ? String(row.employee_id) : null,
+          });
           // Collected for the deferred side effects. Only rows that actually applied, so a
           // failed row never triggers a notification or a recalculation of its own.
           if (row.employee_id && row.session_date) {
@@ -433,7 +497,10 @@ export async function applyRegularizationBatch(
             entity_type: ENTITY_TYPE,
             entity_id: row.created_entity_id,
             reason: remarks ?? undefined,
-            new_value_json: { via_bulk_upload: true, upload_batch_no: batch.upload_batch_no },
+            new_value_json: {
+              via_bulk_upload: true,
+              upload_batch_no: batch.upload_batch_no,
+            },
           });
           grpApplied++;
         } catch (err) {
@@ -447,7 +514,11 @@ export async function applyRegularizationBatch(
     },
   );
 
-  const appliedRows: { employeeId: string; sessionDate: string; regularizationId: string }[] = [];
+  const appliedRows: {
+    employeeId: string;
+    sessionDate: string;
+    regularizationId: string;
+  }[] = [];
   for (const r of groupResults) {
     applied += r.grpApplied;
     failed += r.grpFailed;
@@ -503,7 +574,9 @@ export async function reapplyPartialBatch(
 
   const byEmployee = new Map<string, LinkedRow[]>();
   for (const row of rows) {
-    const key = row.employee_id ? String(row.employee_id) : `__unresolved_${row.row_no}`;
+    const key = row.employee_id
+      ? String(row.employee_id)
+      : `__unresolved_${row.row_no}`;
     if (!byEmployee.has(key)) byEmployee.set(key, []);
     byEmployee.get(key)!.push(row);
   }
@@ -518,7 +591,11 @@ export async function reapplyPartialBatch(
       let grpFailed = 0;
       const grpErrors: string[] = [];
       const grpLocked: { entityId: string; employeeId: string | null }[] = [];
-      const grpApplied_: { employeeId: string; sessionDate: string; regularizationId: string }[] = [];
+      const grpApplied_: {
+        employeeId: string;
+        sessionDate: string;
+        regularizationId: string;
+      }[] = [];
 
       for (const row of empRows) {
         try {
@@ -533,9 +610,12 @@ export async function reapplyPartialBatch(
               },
               approverUserId,
               { deferSideEffects: true },
-            )
+            ),
           );
-          grpLocked.push({ entityId: row.created_entity_id, employeeId: row.employee_id ? String(row.employee_id) : null });
+          grpLocked.push({
+            entityId: row.created_entity_id,
+            employeeId: row.employee_id ? String(row.employee_id) : null,
+          });
           if (row.employee_id && row.session_date) {
             grpApplied_.push({
               employeeId: String(row.employee_id),
@@ -560,7 +640,11 @@ export async function reapplyPartialBatch(
     },
   );
 
-  const appliedRows: { employeeId: string; sessionDate: string; regularizationId: string }[] = [];
+  const appliedRows: {
+    employeeId: string;
+    sessionDate: string;
+    regularizationId: string;
+  }[] = [];
   for (const r of groupResults) {
     applied += r.grpApplied;
     failed += r.grpFailed;
@@ -607,7 +691,9 @@ export async function rejectRegularizationBatch(
       );
       applied++;
     } catch (err) {
-      errors.push(`Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`);
+      errors.push(
+        `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`,
+      );
       failed++;
     }
   }

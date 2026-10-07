@@ -6,7 +6,10 @@ import {
   buildScopeWhere,
   buildScopeWhereEmployees,
 } from "../../shared/dashboardScope.js";
-import { enrichMetric, type MetricEnrichment } from "./dashboard-target.service.js";
+import {
+  enrichMetric,
+  type MetricEnrichment,
+} from "./dashboard-target.service.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
 import {
   HALF_DAY_STATUS,
@@ -20,7 +23,10 @@ import {
 } from "../../shared/attendanceStatus.js";
 import { IST_DATE_EXPR } from "../../utils/dateUtils.js";
 import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
-import { PENDENCY_CUTOFF_DATE, raisedOnOrAfterCutoffSql } from "./pendency-cutoff.js";
+import {
+  PENDENCY_CUTOFF_DATE,
+  raisedOnOrAfterCutoffSql,
+} from "./pendency-cutoff.js";
 
 // ─── Candidate-keyed pendency: what does NOT count as outstanding ─────────────
 /**
@@ -39,8 +45,7 @@ const GENUINE_CANDIDATE_SQL = excludeEmployeeShapedCandidatesSql("cand");
  * closed out. Compared case-insensitively: `ats_candidate.status` is free varchar and
  * holds both 'Rejected' and 'rejected' shapes.
  */
-const DEAD_CANDIDATE_SQL =
-  `LOWER(COALESCE(cand.status, '')) IN ('rejected', 'no show', 'inactive')`;
+const DEAD_CANDIDATE_SQL = `LOWER(COALESCE(cand.status, '')) IN ('rejected', 'no show', 'inactive')`;
 
 // ─── Shared metric wrapper shape ──────────────────────────────────────────────
 export interface MetricResult {
@@ -124,15 +129,35 @@ async function wrapEnriched(
   cutoffDate?: string | null,
 ): Promise<MetricResult> {
   let enrichment: Partial<MetricEnrichment> = {
-    previousValue: null, target: null, variance: null, variancePct: null,
-    trend: undefined, status: undefined,
+    previousValue: null,
+    target: null,
+    variance: null,
+    variancePct: null,
+    trend: undefined,
+    status: undefined,
   };
   if (value !== null) {
     try {
-      enrichment = await enrichMetric(metricCode, value, 'monthly', higherIsBetter, branchId, processId);
+      enrichment = await enrichMetric(
+        metricCode,
+        value,
+        "monthly",
+        higherIsBetter,
+        branchId,
+        processId,
+      );
       // Let enrichment override status only if it has target data; otherwise keep computed status
-      if (enrichment.target !== null && enrichment.status && enrichment.status !== 'unknown') {
-        const statusMap: Record<string, MetricResult["status"]> = { good: "ok", warning: "warn", critical: "critical", unknown: "unknown" };
+      if (
+        enrichment.target !== null &&
+        enrichment.status &&
+        enrichment.status !== "unknown"
+      ) {
+        const statusMap: Record<string, MetricResult["status"]> = {
+          good: "ok",
+          warning: "warn",
+          critical: "critical",
+          unknown: "unknown",
+        };
         status = statusMap[enrichment.status] ?? status;
       }
     } catch (err) {
@@ -166,14 +191,22 @@ async function wrapEnriched(
  * a silently-swallowed ER_BAD_FIELD_ERROR is indistinguishable from an empty table.
  */
 function nullResult(metricCode: string, error?: unknown): MetricResult {
-  const failure = error === undefined
-    ? null
-    : logSourceFailure("dashboard-metric", error, { metricCode });
+  const failure =
+    error === undefined
+      ? null
+      : logSourceFailure("dashboard-metric", error, { metricCode });
   return {
-    value: null, previousValue: null, target: null, variance: null,
-    variancePct: null, changePct: null, status: "unknown", trend: null,
+    value: null,
+    previousValue: null,
+    target: null,
+    variance: null,
+    variancePct: null,
+    changePct: null,
+    status: "unknown",
+    trend: null,
     drilldownApi: `/api/dashboards/:dashboardCode/metric/${metricCode}/drilldown`,
-    actionUrl: null, detail: {},
+    actionUrl: null,
+    detail: {},
     // Carry the driver code through to the response so the UI can say *why* a tile is
     // blank. Previously every null was reported as a generic "SOURCE_UNAVAILABLE",
     // which read identically whether the table was empty or the SQL was invalid.
@@ -186,11 +219,24 @@ function nullResult(metricCode: string, error?: unknown): MetricResult {
 }
 
 // ─── Headcount ────────────────────────────────────────────────────────────────
-export async function getHeadcountMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getHeadcountMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
-    const { sql: reqScopeSql, params: reqScopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
-    const { sql: availScopeSql, params: availScopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+      scope,
+      "e",
+    );
+    const { sql: reqScopeSql, params: reqScopeParams } = buildScopeWhere(
+      scope,
+      "branch_id",
+      "process_id",
+    );
+    const { sql: availScopeSql, params: availScopeParams } = buildScopeWhere(
+      scope,
+      "e.branch_id",
+      "e.process_id",
+    );
 
     // active/required/available are three independent aggregates — none reads
     // another's result. Previously three sequential awaits (~4.8s measured
@@ -213,7 +259,7 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
         // employees affected as of 2026-08-13 — this was a latent, not live, gap).
         `SELECT COUNT(*) AS active FROM employees e
           WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE() AND ${scopeSql}`,
-        scopeParams
+        scopeParams,
       ),
       // Required HC: today's planned HC from slot requirements, fallback to workforce mandate
       db.execute<RowDataPacket[]>(
@@ -225,7 +271,7 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
            FROM workforce_mandate wm
            WHERE wm.active_status = 1 AND ${reqScopeSql})
          ) AS required_hc`,
-        [...reqScopeParams, ...reqScopeParams]
+        [...reqScopeParams, ...reqScopeParams],
       ),
       // Available HC: employees clocked in/active today (IST)
       db.execute<RowDataPacket[]>(
@@ -235,24 +281,38 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
          WHERE s.session_date = ${IST_DATE_EXPR}
            AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
            AND ${availScopeSql}`,
-        availScopeParams
+        availScopeParams,
       ),
     ]);
     const active = Number((rows[0] as any)?.active ?? 0);
 
     // Use scheduled/mandated HC, fall back to active headcount as baseline
     const requiredRaw = (reqRows[0] as any)?.required_hc;
-    const required = requiredRaw === null || requiredRaw === undefined
-      ? null
-      : Number(requiredRaw);
-    const available = availRows[0] != null ? Number((availRows[0] as any).available_hc ?? 0) : null;
-    const short = required != null && available != null ? required - available : null;
+    const required =
+      requiredRaw === null || requiredRaw === undefined
+        ? null
+        : Number(requiredRaw);
+    const available =
+      availRows[0] != null
+        ? Number((availRows[0] as any).available_hc ?? 0)
+        : null;
+    const short =
+      required != null && available != null ? required - available : null;
 
     const status: MetricResult["status"] = active === 0 ? "warn" : "ok";
     // `active` doubles as the source row count: a scope that matches no employees must
     // report NO_DATA_IN_SOURCE, not a confident headcount of 0. That is precisely what a
     // team-scoped manager with no mapped reports was seeing.
-    return wrapEnriched("HEADCOUNT", active, { active, required, available, short }, status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), active);
+    return wrapEnriched(
+      "HEADCOUNT",
+      active,
+      { active, required, available, short },
+      status,
+      true,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      active,
+    );
   } catch (err) {
     return nullResult("HEADCOUNT", err);
   }
@@ -272,9 +332,15 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
  * deducted, and no date_of_joining gate is applied: a future-dated joiner is a seat already
  * filled as far as a hiring decision goes.
  */
-export async function getHiringAlertMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getHiringAlertMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params } = buildScopeWhere(scope, "wm.branch_id", "wm.process_id");
+    const { sql: scopeSql, params } = buildScopeWhere(
+      scope,
+      "wm.branch_id",
+      "wm.process_id",
+    );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*)                                                    AS process_count,
@@ -297,7 +363,7 @@ export async function getHiringAlertMetrics(scope: DashboardScope): Promise<Metr
        WHERE wm.active_status = 1
          AND (wm.effective_to IS NULL OR wm.effective_to >= CURDATE())
          AND ${scopeSql}`,
-      params
+      params,
     );
 
     const row = (rows[0] ?? {}) as Record<string, unknown>;
@@ -316,8 +382,14 @@ export async function getHiringAlertMetrics(scope: DashboardScope): Promise<Metr
     // must report NO_DATA_IN_SOURCE rather than a confident "0 short", which would read as
     // "you are fully staffed" when the truth is "nobody told this system your mandate".
     return wrapEnriched(
-      "HIRING_ALERT", shortage, detail, status, false,
-      targetScopeId(scope.branchIds), targetScopeId(scope.processIds), processCount
+      "HIRING_ALERT",
+      shortage,
+      detail,
+      status,
+      false,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      processCount,
     );
   } catch (err) {
     return nullResult("HIRING_ALERT", err);
@@ -325,7 +397,9 @@ export async function getHiringAlertMetrics(scope: DashboardScope): Promise<Metr
 }
 
 // ─── Onboarding ───────────────────────────────────────────────────────────────
-export async function getOnboardingMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getOnboardingMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
     // ats_onboarding_bridge has no bridge_status/branch_id/process_id column — the
     // status column is `status`, and the only route to branch/process is via the
@@ -333,7 +407,11 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     // The previous query referenced all three nonexistent columns, so this metric
     // raised ER_BAD_FIELD_ERROR on every CEO, HR and Recruiter dashboard load and
     // was silently reported as "no data".
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "bm.id",
+      "pm.id",
+    );
 
     // bridgeRows and otpRows are independent aggregates over different tables —
     // previously two sequential awaits (~3.3s measured against the live DB).
@@ -388,7 +466,7 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
          LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
          LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
          WHERE ${scopeSql}`,
-        scopeParams
+        scopeParams,
       ),
       // This subquery carried no scope predicate, so an org-wide OTP count leaked into
       // every branch- and process-scoped dashboard. candidate_onboarding_profile has no
@@ -403,7 +481,7 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
           WHERE cop.otp_verified = 1
             AND ${GENUINE_CANDIDATE_SQL}
             AND ${scopeSql}`,
-        scopeParams
+        scopeParams,
       ),
     ]);
 
@@ -426,7 +504,8 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     // release so any other consumer does not silently lose the value.
     const otpVerified = Number((otpRows[0] as any)?.otp_verified ?? 0);
 
-    const status: MetricResult["status"] = stuck > 0 ? "critical" : pending > 10 ? "warn" : "ok";
+    const status: MetricResult["status"] =
+      stuck > 0 ? "critical" : pending > 10 ? "warn" : "ok";
     return wrapEnriched(
       "ONBOARDING",
       submitted + pending,
@@ -448,9 +527,14 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
         // Actionable in every respect except age — raised before the cutoff. Reported so
         // the drop from pendingRaw is fully explained by the payload.
         pendingBeforeCutoff,
-        staleNotActionable: pendingAlreadyJoined + pendingClosedCandidate + pendingNonCandidate,
+        staleNotActionable:
+          pendingAlreadyJoined + pendingClosedCandidate + pendingNonCandidate,
       },
-      status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), total,
+      status,
+      true,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      total,
       PENDENCY_CUTOFF_DATE,
     );
   } catch (err) {
@@ -459,14 +543,17 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
 }
 
 // ─── Attendance ───────────────────────────────────────────────────────────────
-export async function getAttendanceMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getAttendanceMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildEmployeeLinkedScopeWhere(
-      scope,
-      "employee_id",
-      "branch_id",
-      "process_id",
-    );
+    const { sql: scopeSql, params: scopeParams } =
+      buildEmployeeLinkedScopeWhere(
+        scope,
+        "employee_id",
+        "branch_id",
+        "process_id",
+      );
 
     // Reused across the live-present query and the coverage query below —
     // both filter on the same "e" alias, so build it once.
@@ -490,7 +577,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
        WHERE s.session_date = ${IST_DATE_EXPR}
          AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
          AND ${employeeScopeE.sql}`,
-      employeeScopeE.params
+      employeeScopeE.params,
     );
     const dayPromise = db.execute<RowDataPacket[]>(
       // Processed attendance trails real time: the most recent record_date routinely holds
@@ -544,18 +631,31 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
       } catch (err) {
         // Left null rather than 0: "nobody is unenrolled" is the reassuring answer, and
         // reporting it on a failed query would hide the very gap this figure exists to show.
-        logSourceFailure("dashboard-metric.attendance-coverage", err, { metricCode: "ATTENDANCE" });
+        logSourceFailure("dashboard-metric.attendance-coverage", err, {
+          metricCode: "ATTENDANCE",
+        });
         return null;
       }
     })();
 
-    const [[liveRows], [dayRows]] = await Promise.all([livePromise, dayPromise]);
+    const [[liveRows], [dayRows]] = await Promise.all([
+      livePromise,
+      dayPromise,
+    ]);
     const anchorDate = (dayRows[0] as any)?.record_date ?? null;
     if (!anchorDate) {
       const noAttendanceSourceEarly = await coveragePromise;
       void noAttendanceSourceEarly;
-      return wrapEnriched("ATTENDANCE", null, {}, "unknown", true,
-        targetScopeId(scope.branchIds), targetScopeId(scope.processIds), 0);
+      return wrapEnriched(
+        "ATTENDANCE",
+        null,
+        {},
+        "unknown",
+        true,
+        targetScopeId(scope.branchIds),
+        targetScopeId(scope.processIds),
+        0,
+      );
     }
 
     // Status vocabulary comes from shared/attendanceStatus.ts. Previously this counted
@@ -575,7 +675,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
          COUNT(*) AS total
        FROM attendance_daily_record
        WHERE record_date = ? AND ${scopeSql}`,
-      [anchorDate, ...scopeParams]
+      [anchorDate, ...scopeParams],
     );
 
     const livePresent = Number((liveRows[0] as any)?.live_present ?? 0);
@@ -596,7 +696,8 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
     // Half days count as 0.5, matching the employee self dashboard exactly so the same
     // person cannot see two different attendance percentages.
     const denominator = expectedToWork > 0 ? expectedToWork : totalRecords;
-    const attendanceRate = denominator > 0 ? Math.round((attendedDays / denominator) * 100) : null;
+    const attendanceRate =
+      denominator > 0 ? Math.round((attendedDays / denominator) * 100) : null;
 
     // Employees who cannot register a punch at all, as opposed to those who did not attend.
     //
@@ -616,7 +717,13 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
     const noAttendanceSource = await coveragePromise;
 
     const status: MetricResult["status"] =
-      attendanceRate === null ? "unknown" : attendanceRate < 70 ? "critical" : attendanceRate < 85 ? "warn" : "ok";
+      attendanceRate === null
+        ? "unknown"
+        : attendanceRate < 70
+          ? "critical"
+          : attendanceRate < 85
+            ? "warn"
+            : "ok";
 
     // Share of the anchored day that is still unreconciled.
     //
@@ -627,31 +734,39 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
     // 2026-07-27 genuinely had 541 missing punches and that is operational badness
     // worth seeing. But a 19% reading with no explanation looks like a broken panel,
     // so the reason is reported alongside it and the tile can say why.
-    const unreconciledPct = totalRecords > 0
-      ? Math.round((missedPunch / totalRecords) * 100)
-      : null;
+    const unreconciledPct =
+      totalRecords > 0 ? Math.round((missedPunch / totalRecords) * 100) : null;
 
-    const result = await wrapEnriched("ATTENDANCE", attendanceRate, {
-      present,
-      // The numerator the percentage is actually built from: present + half a day for
-      // each half day. `present` alone was published as the metric's numerator, so the
-      // envelope advertised 214/308 = 69% beside a value of 81% and anyone checking the
-      // tile's arithmetic — or building a drilldown off numerator/denominator — got a
-      // different answer than the tile. See ATTENDANCE numeratorKey in
-      // dashboard-definition.service.ts.
-      attendedDays,
-      halfDay,
-      livePresent,
-      absent,
-      late,
-      missedPunch,
-      onLeave,
-      expectedToWork: denominator,
-      totalRecords,
+    const result = await wrapEnriched(
+      "ATTENDANCE",
       attendanceRate,
-      noAttendanceSource,
-      unreconciledPct,
-    }, status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), totalRecords);
+      {
+        present,
+        // The numerator the percentage is actually built from: present + half a day for
+        // each half day. `present` alone was published as the metric's numerator, so the
+        // envelope advertised 214/308 = 69% beside a value of 81% and anyone checking the
+        // tile's arithmetic — or building a drilldown off numerator/denominator — got a
+        // different answer than the tile. See ATTENDANCE numeratorKey in
+        // dashboard-definition.service.ts.
+        attendedDays,
+        halfDay,
+        livePresent,
+        absent,
+        late,
+        missedPunch,
+        onLeave,
+        expectedToWork: denominator,
+        totalRecords,
+        attendanceRate,
+        noAttendanceSource,
+        unreconciledPct,
+      },
+      status,
+      true,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      totalRecords,
+    );
 
     // The day this actually describes — two days back today. Presenting it as
     // "now" is what makes an old figure look like a broken one.
@@ -739,9 +854,14 @@ const PAN_ABSENT_SQL = `(
   AND (e.pan_number_encrypted IS NULL OR e.pan_number_encrypted = '')
 )`;
 
-export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getPayrollReadinessMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+      scope,
+      "e",
+    );
 
     // Tenure grace window: bank/PAN take a few weeks of normal onboarding
     // paperwork to reach the system, and UAN allocation is a statutory EPFO
@@ -813,7 +933,7 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
        -- this denominator, so a missing bank account or PAN on one of them never showed
        -- as a payroll blocker.
        WHERE e.active_status = 1 AND ${scopeSql}`,
-      scopeParams
+      scopeParams,
     );
 
     const r = rows[0] as any;
@@ -836,11 +956,21 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
       "PAYROLL_READINESS",
       readyCount,
       {
-        total, readyCount, blockerCount, missingBank, missingPan, invalidPan, missingUan,
+        total,
+        readyCount,
+        blockerCount,
+        missingBank,
+        missingPan,
+        invalidPan,
+        missingUan,
         // Cannot be reached by the NEFT file specifically — see the note in the query.
         missingNeftBank: Number(r.missingNeftBank ?? 0),
       },
-      status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), total
+      status,
+      true,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      total,
     );
   } catch (err) {
     return nullResult("PAYROLL_READINESS", err);
@@ -848,11 +978,17 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
 }
 
 // ─── Incentive ────────────────────────────────────────────────────────────────
-export async function getIncentiveMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getIncentiveMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
     // The status column is `status`, not `batch_status` — the old name raised
     // ER_BAD_FIELD_ERROR on every payroll dashboard load. branch_id/process_id are real.
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "branch_id",
+      "process_id",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -863,7 +999,7 @@ export async function getIncentiveMetrics(scope: DashboardScope): Promise<Metric
          SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejectedBatches
        FROM incentive_upload_batch
        WHERE ${scopeSql}`,
-      scopeParams
+      scopeParams,
     );
 
     const r = rows[0] as any;
@@ -879,7 +1015,11 @@ export async function getIncentiveMetrics(scope: DashboardScope): Promise<Metric
       "INCENTIVE",
       pendingBatches,
       { pendingBatches, pendingAmount, approvedAmount, rejectedBatches },
-      status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), Number(r.source_rows ?? 0)
+      status,
+      false,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      Number(r.source_rows ?? 0),
     );
   } catch (err) {
     return nullResult("INCENTIVE", err);
@@ -887,12 +1027,18 @@ export async function getIncentiveMetrics(scope: DashboardScope): Promise<Metric
 }
 
 // ─── TAT ──────────────────────────────────────────────────────────────────────
-export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getTatMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
     // task_tat_instance carries branch_id but no process_id, so passing a process
     // column raised ER_BAD_FIELD_ERROR for every process-scoped role. Branch scope is
     // the finest granularity this source supports.
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "branch_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "branch_id",
+      "branch_id",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -904,31 +1050,47 @@ export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult
              THEN TIMESTAMPDIFF(HOUR, created_at, NOW()) ELSE NULL END) AS avgAgeHours
        FROM task_tat_instance
        WHERE ${scopeSql}`,
-      scopeParams
+      scopeParams,
     );
 
     const r = rows[0] as any;
     const open = Number(r.open_count ?? 0);
     const overdue = Number(r.overdue ?? 0);
     const breached = Number(r.breached ?? 0);
-    const avgAgeHours = r.avgAgeHours !== null ? Math.round(Number(r.avgAgeHours)) : null;
+    const avgAgeHours =
+      r.avgAgeHours !== null ? Math.round(Number(r.avgAgeHours)) : null;
 
     const status: MetricResult["status"] =
       breached > 0 ? "critical" : overdue > 0 ? "warn" : "ok";
 
-    return wrapEnriched("TAT", open, { open, overdue, breached, avgAgeHours }, status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), Number(r.source_rows ?? 0));
+    return wrapEnriched(
+      "TAT",
+      open,
+      { open, overdue, breached, avgAgeHours },
+      status,
+      false,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      Number(r.source_rows ?? 0),
+    );
   } catch (err) {
     return nullResult("TAT", err);
   }
 }
 
 // ─── Resignation ──────────────────────────────────────────────────────────────
-export async function getResignationMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getResignationMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
     // exit_request has no exit_status column (it is `status`) and no branch/process
     // columns, so the previous query raised ER_BAD_FIELD_ERROR on every dashboard that
     // shows resignations. Scope routes through the employee instead.
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "e.branch_id",
+      "e.process_id",
+    );
 
     // `status` is varchar(50) with no declared vocabulary, so the named buckets are a
     // guess at what it holds. They were wrong: the only value in production is
@@ -958,7 +1120,7 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
        FROM exit_request er
        LEFT JOIN employees e ON e.id = er.employee_id
        WHERE ${scopeSql}`,
-      scopeParams
+      scopeParams,
     );
 
     const r = rows[0] as any;
@@ -969,14 +1131,21 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
     const other = Number(r.other ?? 0);
 
     const status: MetricResult["status"] =
-      pendingDiscussion > 5 ? "critical" : pendingDiscussion > 0 ? "warn" : "ok";
+      pendingDiscussion > 5
+        ? "critical"
+        : pendingDiscussion > 0
+          ? "warn"
+          : "ok";
 
     return wrapEnriched(
       "RESIGNATION",
       totalActive,
       { pendingDiscussion, accepted, withdrawn, other, totalActive },
-      status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds),
-      Number(r.sourceRows ?? 0)
+      status,
+      false,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      Number(r.sourceRows ?? 0),
     );
   } catch (err) {
     return nullResult("RESIGNATION", err);
@@ -984,9 +1153,15 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
 }
 
 // DPDP withdrawal
-export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getDpdpWithdrawalMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "e.branch_id",
+      "e.process_id",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -999,13 +1174,14 @@ export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<M
        FROM dpdp_consent_withdrawal dcw
        LEFT JOIN employees e ON e.user_id = dcw.requester_id
        WHERE ${scopeSql}`,
-      scopeParams
+      scopeParams,
     );
 
     const r = rows[0] as any;
     const pending = Number(r.pending ?? 0);
     const overdue = Number(r.overdue ?? 0);
-    const status: MetricResult["status"] = overdue > 0 ? "critical" : pending > 0 ? "warn" : "ok";
+    const status: MetricResult["status"] =
+      overdue > 0 ? "critical" : pending > 0 ? "warn" : "ok";
 
     return wrapEnriched(
       // "DPDP_WITHDRAWAL" here, but the catalog defines this metric as "DPDP". Targets and
@@ -1041,9 +1217,15 @@ export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<M
 }
 
 // Appointment letter eSign
-export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getAppointmentEsignMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "e.branch_id",
+      "e.process_id",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -1065,13 +1247,14 @@ export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise
        FROM appointment_letter_request alr
        LEFT JOIN employees e ON e.id = alr.employee_id
        WHERE ${scopeSql}`,
-      scopeParams
+      scopeParams,
     );
 
     const r = rows[0] as any;
     const pending = Number(r.pending ?? 0);
     const overrideRequested = Number(r.overrideRequested ?? 0);
-    const status: MetricResult["status"] = overrideRequested > 0 ? "warn" : pending > 10 ? "warn" : "ok";
+    const status: MetricResult["status"] =
+      overrideRequested > 0 ? "warn" : pending > 10 ? "warn" : "ok";
 
     return wrapEnriched(
       "APPOINTMENT_ESIGN",
@@ -1124,13 +1307,19 @@ export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise
  * Legacy/test candidates and candidates the business has already rejected are excluded;
  * both are reported separately so the exclusion is visible rather than silent.
  */
-export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getBgvMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
     // candidate_bgv_check has no `bgv_status` column (it is `status`), and
     // ats_onboarding_bridge carries no branch/process columns to scope by — so an
     // earlier query raised ER_BAD_FIELD_ERROR and the BGV tile was permanently blank.
     // Scope routes via the candidate, as the other candidate-keyed metrics do.
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "bm.id",
+      "pm.id",
+    );
 
     const OUTSTANDING_STATUS = `(bgv.status IS NULL OR bgv.status IN ('pending','not_started','queued','manual_review','in_progress'))`;
     // A check still open but raised before the cutoff is history, not queue. Counted
@@ -1169,25 +1358,29 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
             AND ${scopeSql}
           GROUP BY bgv.candidate_id
        ) c`,
-      scopeParams
+      scopeParams,
     );
 
     // Everything the two filters above removed, so the tile can say how much it set
     // aside instead of quietly shrinking. Counted in candidates, same unit as the
     // headline. A failure here must not take the metric down — the exclusions are
     // provenance, not the measurement.
-    const [excludedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
+    const [excludedRows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT
          COUNT(DISTINCT CASE WHEN NOT (${GENUINE_CANDIDATE_SQL}) OR cand.id IS NULL
                              THEN bgv.candidate_id END) AS nonCandidateRecords,
          COUNT(DISTINCT CASE WHEN ${GENUINE_CANDIDATE_SQL} AND ${DEAD_CANDIDATE_SQL}
                              THEN bgv.candidate_id END) AS closedCandidates
        FROM candidate_bgv_check bgv
        LEFT JOIN ats_candidate cand ON cand.id = bgv.candidate_id`,
-    ).catch((err: unknown) => {
-      logSourceFailure("dashboard-metric.bgv-exclusions", err, { metricCode: "BGV" });
-      return [[{ nonCandidateRecords: null, closedCandidates: null }]] as any;
-    });
+      )
+      .catch((err: unknown) => {
+        logSourceFailure("dashboard-metric.bgv-exclusions", err, {
+          metricCode: "BGV",
+        });
+        return [[{ nonCandidateRecords: null, closedCandidates: null }]] as any;
+      });
 
     const r = rows[0] as any;
     const pending = Number(r.pending ?? 0);
@@ -1216,8 +1409,10 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
         // Candidates whose only outstanding checks predate the cutoff. They are still
         // open; they are just not this queue. See pendency-cutoff.ts.
         pendingBeforeCutoff: Number(r.pendingBeforeCutoff ?? 0),
-        excludedNonCandidateRecords: x?.nonCandidateRecords == null ? null : Number(x.nonCandidateRecords),
-        excludedClosedCandidates: x?.closedCandidates == null ? null : Number(x.closedCandidates),
+        excludedNonCandidateRecords:
+          x?.nonCandidateRecords == null ? null : Number(x.nonCandidateRecords),
+        excludedClosedCandidates:
+          x?.closedCandidates == null ? null : Number(x.closedCandidates),
       },
       status,
       false,
@@ -1232,13 +1427,19 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
 }
 
 // ─── Name Mismatch ────────────────────────────────────────────────────────────
-export async function getNameMismatchMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getNameMismatchMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
     // The previous query referenced nm.match_status and nm.is_blocking (neither exists —
     // the real columns are overall_match_status and blocks_employee_code) and scoped on
     // ats_onboarding_bridge.branch_id/process_id, which that table also lacks. Every
     // execution raised ER_BAD_FIELD_ERROR and was reported as "no data".
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "bm.id",
+      "pm.id",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -1255,7 +1456,7 @@ export async function getNameMismatchMetrics(scope: DashboardScope): Promise<Met
        -- rows in ats_candidate are not a live name-verification queue.
        WHERE ${GENUINE_CANDIDATE_SQL}
          AND ${scopeSql}`,
-      scopeParams
+      scopeParams,
     );
 
     const r = rows[0] as any;
@@ -1267,16 +1468,31 @@ export async function getNameMismatchMetrics(scope: DashboardScope): Promise<Met
     const status: MetricResult["status"] =
       blocking > 0 ? "critical" : mismatch > 0 ? "warn" : "ok";
 
-    return wrapEnriched("NAME_MISMATCH", mismatch + partial, { mismatch, partial, pending, blocking }, status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), Number(r.source_rows ?? 0));
+    return wrapEnriched(
+      "NAME_MISMATCH",
+      mismatch + partial,
+      { mismatch, partial, pending, blocking },
+      status,
+      false,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      Number(r.source_rows ?? 0),
+    );
   } catch (err) {
     return nullResult("NAME_MISMATCH", err);
   }
 }
 
 // ─── Joining Document eSign ──────────────────────────────────────────────────
-export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getJoiningDocEsignMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "e.branch_id",
+      "e.process_id",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -1299,7 +1515,14 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
     const pending = Number(r.pending ?? 0);
     const overdue = Number(r.overdue ?? 0);
     const failed = Number(r.failed ?? 0);
-    const status: MetricResult["status"] = overdue > 0 ? "critical" : failed > 0 ? "warn" : pending > 10 ? "warn" : "ok";
+    const status: MetricResult["status"] =
+      overdue > 0
+        ? "critical"
+        : failed > 0
+          ? "warn"
+          : pending > 10
+            ? "warn"
+            : "ok";
 
     return wrapEnriched(
       "JOINING_DOC_ESIGN",
@@ -1337,9 +1560,15 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
  * cannot be scoped to a branch. Those are counted in `unscopeable` and excluded from a
  * scoped viewer's totals rather than leaked org-wide.
  */
-export async function getAttendanceExceptionMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getAttendanceExceptionMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "emp.branch_id", "emp.process_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "emp.branch_id",
+      "emp.process_id",
+    );
 
     const openIssuesQuery = db.execute<RowDataPacket[]>(
       `SELECT
@@ -1383,7 +1612,10 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
 
     // The open-issue breakdown and the resolved-in-30-days count read different predicates of the
     // same table and depend on nothing but the scope, so they run together, not back to back.
-    const [[rows], [clearedRows]] = await Promise.all([openIssuesQuery, clearedQuery]);
+    const [[rows], [clearedRows]] = await Promise.all([
+      openIssuesQuery,
+      clearedQuery,
+    ]);
 
     const r = rows[0] as any;
     const blockers = Number(r.blockers ?? 0);
@@ -1414,7 +1646,9 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
         // returned. It is not what the panel's "Cleared in the last 30 days" row means,
         // and dashboard-widget-coverage.test.ts rightly fails any detail key that is
         // fetched on every dashboard load and displayed nowhere.
-        resolvedLast30d: Number((clearedRows[0] as any)?.resolved_last_30d ?? 0),
+        resolvedLast30d: Number(
+          (clearedRows[0] as any)?.resolved_last_30d ?? 0,
+        ),
         unscopeable: Number(r.unscopeable ?? 0),
       },
       status,
@@ -1448,9 +1682,14 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
  * The headline is instead the count of active employees with no document on file at all
  * (1,100 of 1,120), which is the real compliance signal.
  */
-export async function getDocumentComplianceMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getDocumentComplianceMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+      scope,
+      "e",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       // Joined directly instead of via a derived table. The old form ran
@@ -1489,12 +1728,21 @@ export async function getDocumentComplianceMetrics(scope: DashboardScope): Promi
     const activeEmployees = Number(r.activeEmployees ?? 0);
     const employeesWithNoDocs = Number(r.employeesWithNoDocs ?? 0);
     const unverifiedDocs = Number(r.unverifiedDocs ?? 0);
-    const coveragePct = activeEmployees > 0
-      ? Math.round(((activeEmployees - employeesWithNoDocs) / activeEmployees) * 1000) / 10
-      : null;
+    const coveragePct =
+      activeEmployees > 0
+        ? Math.round(
+            ((activeEmployees - employeesWithNoDocs) / activeEmployees) * 1000,
+          ) / 10
+        : null;
 
     const status: MetricResult["status"] =
-      coveragePct === null ? "unknown" : coveragePct < 50 ? "critical" : coveragePct < 90 ? "warn" : "ok";
+      coveragePct === null
+        ? "unknown"
+        : coveragePct < 50
+          ? "critical"
+          : coveragePct < 90
+            ? "warn"
+            : "ok";
 
     return wrapEnriched(
       "DOC_COMPLIANCE",
@@ -1534,9 +1782,14 @@ export async function getDocumentComplianceMetrics(scope: DashboardScope): Promi
  * Real columns: `employee_code` (not employee_id), `activity_date` (not attendance_date),
  * `first_punch`, `last_punch`, `total_punches`, `biometric_minutes`.
  */
-export async function getBiometricActivityMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getBiometricActivityMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+      scope,
+      "e",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -1565,9 +1818,18 @@ export async function getBiometricActivityMetrics(scope: DashboardScope): Promis
 
     // A single punch means no out-punch was captured, which becomes an attendance
     // exception downstream — so a high share of them is the signal worth surfacing.
-    const singlePunchPct = employees > 0 ? Math.round((singlePunchOnly / employees) * 1000) / 10 : null;
+    const singlePunchPct =
+      employees > 0
+        ? Math.round((singlePunchOnly / employees) * 1000) / 10
+        : null;
     const status: MetricResult["status"] =
-      singlePunchPct === null ? "unknown" : singlePunchPct > 25 ? "critical" : singlePunchPct > 10 ? "warn" : "ok";
+      singlePunchPct === null
+        ? "unknown"
+        : singlePunchPct > 25
+          ? "critical"
+          : singlePunchPct > 10
+            ? "warn"
+            : "ok";
 
     return wrapEnriched(
       "BIOMETRIC_ACTIVITY",
@@ -1599,9 +1861,14 @@ export async function getBiometricActivityMetrics(scope: DashboardScope): Promis
  * make them up. Anchored on the newest run by (run_month, created_at) so it tracks the
  * run the rest of the payroll panel describes.
  */
-export async function getSalaryComponentMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getSalaryComponentMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+      scope,
+      "e",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -1638,7 +1905,11 @@ export async function getSalaryComponentMetrics(scope: DashboardScope): Promise<
     // Deductions exceeding earnings on a run is arithmetically impossible for a payable
     // register and indicates a component-mapping fault, so it is surfaced, not smoothed.
     const status: MetricResult["status"] =
-      componentCodes === 0 ? "unknown" : deductionTotal > earningTotal ? "critical" : "ok";
+      componentCodes === 0
+        ? "unknown"
+        : deductionTotal > earningTotal
+          ? "critical"
+          : "ok";
 
     return wrapEnriched(
       "SALARY_COMPONENTS",
@@ -1677,9 +1948,15 @@ export async function getSalaryComponentMetrics(scope: DashboardScope): Promise<
  * `offer_letter_status` is 100% NULL in this window, so offers are not reported at all
  * rather than shown as a permanent zero.
  */
-export async function getRecruiterActivityMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getRecruiterActivityMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(
+      scope,
+      "bm.id",
+      "pm.id",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -1703,10 +1980,17 @@ export async function getRecruiterActivityMetrics(scope: DashboardScope): Promis
     const leads = Number(r.source_rows ?? 0);
     const selected = Number(r.selected ?? 0);
     const joined = Number(r.joined ?? 0);
-    const conversionPct = selected > 0 ? Math.round((joined / selected) * 1000) / 10 : null;
+    const conversionPct =
+      selected > 0 ? Math.round((joined / selected) * 1000) / 10 : null;
 
     const status: MetricResult["status"] =
-      leads === 0 ? "unknown" : selected === 0 ? "critical" : conversionPct !== null && conversionPct < 20 ? "warn" : "ok";
+      leads === 0
+        ? "unknown"
+        : selected === 0
+          ? "critical"
+          : conversionPct !== null && conversionPct < 20
+            ? "warn"
+            : "ok";
 
     return wrapEnriched(
       "RECRUITER_ACTIVITY",
@@ -1744,9 +2028,14 @@ export async function getRecruiterActivityMetrics(scope: DashboardScope): Promis
  * remainder are leavers whose history is retained; they are excluded by the active join
  * so a branch-scoped viewer's numbers reconcile with their own headcount.
  */
-export async function getTrainingProgressMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getTrainingProgressMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+      scope,
+      "e",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -1768,10 +2057,17 @@ export async function getTrainingProgressMetrics(scope: DashboardScope): Promise
     const total = Number(r.source_rows ?? 0);
     const completed = Number(r.completed ?? 0);
     const notStarted = Number(r.notStarted ?? 0);
-    const completionRate = total > 0 ? Math.round((completed / total) * 1000) / 10 : null;
+    const completionRate =
+      total > 0 ? Math.round((completed / total) * 1000) / 10 : null;
 
     const status: MetricResult["status"] =
-      completionRate === null ? "unknown" : completionRate < 40 ? "critical" : completionRate < 70 ? "warn" : "ok";
+      completionRate === null
+        ? "unknown"
+        : completionRate < 40
+          ? "critical"
+          : completionRate < 70
+            ? "warn"
+            : "ok";
 
     return wrapEnriched(
       "TRAINING_PROGRESS",
@@ -1783,7 +2079,8 @@ export async function getTrainingProgressMetrics(scope: DashboardScope): Promise
         completed,
         inProgress: Number(r.inProgress ?? 0),
         notStarted,
-        avgCompletionPct: r.avgCompletionPct === null ? null : Number(r.avgCompletionPct),
+        avgCompletionPct:
+          r.avgCompletionPct === null ? null : Number(r.avgCompletionPct),
         avgScore: r.avgScore === null ? null : Number(r.avgScore),
       },
       status,
@@ -1814,9 +2111,14 @@ export async function getTrainingProgressMetrics(scope: DashboardScope): Promise
  * in 064_leave_legacy_sync.sql, which 000_run_all.sql does not source because another
  * file shares its 064 prefix.
  */
-export async function getLeaveApprovalMetrics(scope: DashboardScope): Promise<MetricResult> {
+export async function getLeaveApprovalMetrics(
+  scope: DashboardScope,
+): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+      scope,
+      "e",
+    );
 
     // When the request was FILED, not when the leave falls. A request filed on 26-Aug for
     // leave taken in July is still somebody's decision to make; filtering on from_date
@@ -1881,7 +2183,8 @@ export async function getLeaveApprovalMetrics(scope: DashboardScope): Promise<Me
         needsBranchHead: Number(r.needsBranchHead ?? 0),
         approved: Number(r.approved ?? 0),
         rejected: Number(r.rejected ?? 0),
-        oldestPendingDays: r.oldestPendingDays === null ? null : Number(r.oldestPendingDays),
+        oldestPendingDays:
+          r.oldestPendingDays === null ? null : Number(r.oldestPendingDays),
         // Migrated rows the db_bill import left as 'pending', and the raw total the
         // table still reports. Both kept so the backlog is visible and the headline is
         // reconcilable against a plain status count.

@@ -27,10 +27,14 @@ import path from "path";
 
 // The module pulls in the db pool at import time; the pure helper under test
 // needs none of it.
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(), query: vi.fn(), getConnection: vi.fn() } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: vi.fn(), query: vi.fn(), getConnection: vi.fn() },
+}));
 
 const SOURCE = fs.readFileSync(
-  path.resolve(__dirname, "..", "wfm.service.ts"), "utf8");
+  path.resolve(__dirname, "..", "wfm.service.ts"),
+  "utf8",
+);
 
 describe("minutesBetweenClockTimes", () => {
   it("measures an ordinary shift", async () => {
@@ -49,20 +53,27 @@ describe("minutesBetweenClockTimes", () => {
   it("accepts the formats the two callers actually send", async () => {
     const { minutesBetweenClockTimes } = await import("../wfm.service.js");
     expect(minutesBetweenClockTimes("09:00:00", "18:00:00")).toBe(540);
-    expect(minutesBetweenClockTimes("2026-08-06 09:00:00", "2026-08-06 18:00:00")).toBe(540);
+    expect(
+      minutesBetweenClockTimes("2026-08-06 09:00:00", "2026-08-06 18:00:00"),
+    ).toBe(540);
   });
 
   it("returns null rather than guessing on unusable input", async () => {
     const { minutesBetweenClockTimes } = await import("../wfm.service.js");
-    for (const [a, b] of [["", "18:00"], ["abc", "18:00"], ["09:00", ""], ["99:99", "18:00"]]) {
+    for (const [a, b] of [
+      ["", "18:00"],
+      ["abc", "18:00"],
+      ["09:00", ""],
+      ["99:99", "18:00"],
+    ]) {
       expect(minutesBetweenClockTimes(a, b), `${a} → ${b}`).toBeNull();
     }
   });
 
   it("refuses a zero-length or implausibly long span", async () => {
     const { minutesBetweenClockTimes } = await import("../wfm.service.js");
-    expect(minutesBetweenClockTimes("09:00", "09:00")).toBeNull();   // 0, or a full 24h
-    expect(minutesBetweenClockTimes("09:00", "08:00")).toBeNull();   // 23h wrap — a slip
+    expect(minutesBetweenClockTimes("09:00", "09:00")).toBeNull(); // 0, or a full 24h
+    expect(minutesBetweenClockTimes("09:00", "08:00")).toBeNull(); // 23h wrap — a slip
   });
 });
 
@@ -73,7 +84,9 @@ describe("reviewRegularization applies what it approves", () => {
   });
 
   it("refuses an approval that would change nothing", () => {
-    const at = SOURCE.indexOf("!effectiveRequestedStatus && !hasPunchCorrection");
+    const at = SOURCE.indexOf(
+      "!effectiveRequestedStatus && !hasPunchCorrection",
+    );
     expect(at, "no guard against a no-op approval").toBeGreaterThan(-1);
     expect(SOURCE.slice(at, at + 400)).toMatch(/throw new Error/);
   });
@@ -89,7 +102,10 @@ describe("reviewRegularization applies what it approves", () => {
     expect(SOURCE).toMatch(/classifyOperationsNetLogin|classifyCosecMinutes/);
     expect(SOURCE).toMatch(/resolveHalfDayFloorMinutes/);
     // No open-coded thresholds: 480/540/240 must come from the engine.
-    const block = SOURCE.slice(SOURCE.indexOf("let appliedStatus"), SOURCE.indexOf("const appliedSource"));
+    const block = SOURCE.slice(
+      SOURCE.indexOf("let appliedStatus"),
+      SOURCE.indexOf("const appliedSource"),
+    );
     expect(block).not.toMatch(/\b(480|540|240)\b/);
   });
 

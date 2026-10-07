@@ -18,9 +18,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const execute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: (...a: unknown[]) => execute(...a) },
+}));
 
-const { sourceColumns, clearSourceRegistryCache } = await import("../bpo-master-source-registry.js");
+const { sourceColumns, clearSourceRegistryCache } =
+  await import("../bpo-master-source-registry.js");
 
 /** One column of employee_bank_detail, in whichever case the server chose to label it. */
 function row(upper: boolean) {
@@ -31,7 +34,8 @@ function row(upper: boolean) {
     data_type: "varbinary",
   };
   const shaped: Record<string, unknown> = { current_schema: "mas_hrms" };
-  for (const [k, v] of Object.entries(base)) shaped[upper ? k.toUpperCase() : k] = v;
+  for (const [k, v] of Object.entries(base))
+    shaped[upper ? k.toUpperCase() : k] = v;
   return shaped;
 }
 
@@ -65,7 +69,10 @@ describe("the source registry reads information_schema in either column case", (
 
   it("does not throw on a row that is missing identifiers entirely", async () => {
     // A malformed row must be skipped, not abort the whole snapshot and 500 every report.
-    execute.mockResolvedValue([[{ current_schema: "mas_hrms" }, row(true)], []]);
+    execute.mockResolvedValue([
+      [{ current_schema: "mas_hrms" }, row(true)],
+      [],
+    ]);
 
     const columns = await sourceColumns("employee_bank_detail");
 

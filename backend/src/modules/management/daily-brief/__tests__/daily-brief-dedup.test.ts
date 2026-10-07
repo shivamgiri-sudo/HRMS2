@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { dedupeSignals, rankSignals, type DedupableSignal } from "../daily-brief-dedup.js";
+import {
+  dedupeSignals,
+  rankSignals,
+  type DedupableSignal,
+} from "../daily-brief-dedup.js";
 
 describe("dedupeSignals", () => {
   it("merges two same-employee-same-issue signals into one, preferring the actionable one", () => {
@@ -61,8 +65,18 @@ describe("dedupeSignals", () => {
   });
 
   it("never drops a signal with no employeeId — org-level signals are always kept as-is", () => {
-    const orgSignal: DedupableSignal = { key: "org-1", label: "Org attendance %", value: 92, category: "attendance_mismatch" };
-    const otherOrgSignal: DedupableSignal = { key: "org-2", label: "Another org metric", value: 10, category: "attendance_mismatch" };
+    const orgSignal: DedupableSignal = {
+      key: "org-1",
+      label: "Org attendance %",
+      value: 92,
+      category: "attendance_mismatch",
+    };
+    const otherOrgSignal: DedupableSignal = {
+      key: "org-2",
+      label: "Another org metric",
+      value: 10,
+      category: "attendance_mismatch",
+    };
 
     const result = dedupeSignals([orgSignal, otherOrgSignal]);
 
@@ -70,8 +84,20 @@ describe("dedupeSignals", () => {
   });
 
   it("does not merge two different employees even if categories match", () => {
-    const a: DedupableSignal = { key: "a", label: "A", value: 1, employeeId: "emp-1", category: "missing_punch" };
-    const b: DedupableSignal = { key: "b", label: "B", value: 1, employeeId: "emp-2", category: "missing_punch" };
+    const a: DedupableSignal = {
+      key: "a",
+      label: "A",
+      value: 1,
+      employeeId: "emp-1",
+      category: "missing_punch",
+    };
+    const b: DedupableSignal = {
+      key: "b",
+      label: "B",
+      value: 1,
+      employeeId: "emp-2",
+      category: "missing_punch",
+    };
 
     const result = dedupeSignals([a, b]);
 
@@ -112,16 +138,69 @@ describe("rankSignals", () => {
   });
 
   it("orders the full priority ladder per spec section 45", () => {
-    const informational: DedupableSignal = { key: "info", label: "FYI", value: null, kind: "info" };
-    const normalMetric: DedupableSignal = { key: "metric", label: "Headcount", value: 100, kind: "metric" };
-    const positive: DedupableSignal = { key: "positive", label: "Great month", value: 1, isPositive: true, kind: "positive" };
-    const hygiene: DedupableSignal = { key: "hygiene", label: "Repeated late arrivals", value: 3, kind: "hygiene" };
-    const anomaly: DedupableSignal = { key: "anomaly", label: "D-1 attendance drop", value: 1, kind: "anomaly" };
-    const businessRisk: DedupableSignal = { key: "risk", label: "Staffing shortfall", value: 1, kind: "business_risk", priority: "critical" };
-    const highAction: DedupableSignal = { key: "high-action", label: "Resolve soon", value: 1, kind: "action", priority: "high" };
-    const criticalAction: DedupableSignal = { key: "critical-action", label: "Resolve now", value: 1, kind: "action", priority: "critical" };
+    const informational: DedupableSignal = {
+      key: "info",
+      label: "FYI",
+      value: null,
+      kind: "info",
+    };
+    const normalMetric: DedupableSignal = {
+      key: "metric",
+      label: "Headcount",
+      value: 100,
+      kind: "metric",
+    };
+    const positive: DedupableSignal = {
+      key: "positive",
+      label: "Great month",
+      value: 1,
+      isPositive: true,
+      kind: "positive",
+    };
+    const hygiene: DedupableSignal = {
+      key: "hygiene",
+      label: "Repeated late arrivals",
+      value: 3,
+      kind: "hygiene",
+    };
+    const anomaly: DedupableSignal = {
+      key: "anomaly",
+      label: "D-1 attendance drop",
+      value: 1,
+      kind: "anomaly",
+    };
+    const businessRisk: DedupableSignal = {
+      key: "risk",
+      label: "Staffing shortfall",
+      value: 1,
+      kind: "business_risk",
+      priority: "critical",
+    };
+    const highAction: DedupableSignal = {
+      key: "high-action",
+      label: "Resolve soon",
+      value: 1,
+      kind: "action",
+      priority: "high",
+    };
+    const criticalAction: DedupableSignal = {
+      key: "critical-action",
+      label: "Resolve now",
+      value: 1,
+      kind: "action",
+      priority: "critical",
+    };
 
-    const shuffled = [informational, normalMetric, positive, hygiene, anomaly, businessRisk, highAction, criticalAction];
+    const shuffled = [
+      informational,
+      normalMetric,
+      positive,
+      hygiene,
+      anomaly,
+      businessRisk,
+      highAction,
+      criticalAction,
+    ];
     const ranked = rankSignals(shuffled).map((s) => s.key);
 
     expect(ranked).toEqual([
@@ -137,8 +216,18 @@ describe("rankSignals", () => {
   });
 
   it("is a stable sort — equal-rank signals keep their input order", () => {
-    const a: DedupableSignal = { key: "a", label: "A", value: 1, category: "z" };
-    const b: DedupableSignal = { key: "b", label: "B", value: 1, category: "z" };
+    const a: DedupableSignal = {
+      key: "a",
+      label: "A",
+      value: 1,
+      category: "z",
+    };
+    const b: DedupableSignal = {
+      key: "b",
+      label: "B",
+      value: 1,
+      category: "z",
+    };
 
     const ranked = rankSignals([a, b]);
     expect(ranked.map((s) => s.key)).toEqual(["a", "b"]);
@@ -147,7 +236,13 @@ describe("rankSignals", () => {
   it("does not mutate the input array", () => {
     const input: DedupableSignal[] = [
       { key: "pos", label: "P", value: 1, isPositive: true },
-      { key: "act", label: "A", value: 1, kind: "action", priority: "critical" },
+      {
+        key: "act",
+        label: "A",
+        value: 1,
+        kind: "action",
+        priority: "critical",
+      },
     ];
     const copy = [...input];
     rankSignals(input);

@@ -1,10 +1,16 @@
 import { describe, it, expect } from "vitest";
 import {
-  classifySkillFinding, effectiveThreshold, isSystemic, evidenceNote, PARAMETER_RULES,
+  classifySkillFinding,
+  effectiveThreshold,
+  isSystemic,
+  evidenceNote,
+  PARAMETER_RULES,
   type SkillParameterRule,
 } from "../tni-derivation.service.js";
 
-const rule = PARAMETER_RULES.find((r) => r.key === "accuracy") as SkillParameterRule;
+const rule = PARAMETER_RULES.find(
+  (r) => r.key === "accuracy",
+) as SkillParameterRule;
 
 /**
  * effectiveThreshold, not the classification math, is the piece that actually
@@ -22,16 +28,16 @@ describe("effectiveThreshold", () => {
 
   it("floors at MIN_EFFECTIVE_THRESHOLD when the baseline is low", () => {
     // A 5% baseline + 15pp margin would be 20% — too low a bar to mean anything.
-    expect(effectiveThreshold(rule, 0.05)).toBe(0.30);
+    expect(effectiveThreshold(rule, 0.05)).toBe(0.3);
   });
 
   it("does not floor when baseline+margin already clears the floor", () => {
-    expect(effectiveThreshold(rule, 0.30)).toBeCloseTo(0.45, 5);
+    expect(effectiveThreshold(rule, 0.3)).toBeCloseTo(0.45, 5);
   });
 });
 
 describe("classifySkillFinding", () => {
-  const threshold = 0.30; // a fixed, explicit threshold — this function no longer computes one itself
+  const threshold = 0.3; // a fixed, explicit threshold — this function no longer computes one itself
 
   it("raises nothing below the minimum sample, no matter how bad the rate", () => {
     // 4 scored, 4 failed — a 100% fail rate on evidence too thin to trust.
@@ -56,7 +62,10 @@ describe("classifySkillFinding", () => {
    */
   it("flags EXTREME_REVIEW rather than a normal finding on real-shaped extreme evidence", () => {
     const r = classifySkillFinding(rule, 118, 118, threshold);
-    expect(r).toEqual({ severity: "EXTREME_REVIEW", coachingType: "ONE_ON_ONE" });
+    expect(r).toEqual({
+      severity: "EXTREME_REVIEW",
+      coachingType: "ONE_ON_ONE",
+    });
   });
 
   it("does not flag EXTREME_REVIEW when the sample is too small, even at 100%", () => {
@@ -97,7 +106,9 @@ describe("isSystemic", () => {
 describe("evidenceNote", () => {
   it("states the fail rate a manager can verify against the same window", () => {
     const note = evidenceNote(rule, 50, 18, "2026-08-09", "2026-09-08");
-    expect(note).toBe('18 of 50 audits failed "accuracy" between 2026-08-09 and 2026-09-08 (36%)');
+    expect(note).toBe(
+      '18 of 50 audits failed "accuracy" between 2026-08-09 and 2026-09-08 (36%)',
+    );
   });
 
   /**
@@ -107,10 +118,17 @@ describe("evidenceNote", () => {
    * something to the person reading it, not just to the code that raised it.
    */
   it("names the org baseline the agent is being compared against, when given one", () => {
-    const note = evidenceNote(rule, 500, 290, "2026-08-09", "2026-09-08", 0.499);
+    const note = evidenceNote(
+      rule,
+      500,
+      290,
+      "2026-08-09",
+      "2026-09-08",
+      0.499,
+    );
     expect(note).toBe(
       '290 of 500 audits failed "accuracy" between 2026-08-09 and 2026-09-08 (58%), ' +
-      'vs an org-wide baseline of 49.9% for this parameter',
+        "vs an org-wide baseline of 49.9% for this parameter",
     );
   });
 });

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { buildOrgForest, type OrgTreeServiceNode } from "../employee.service";
 
-type Row = Pick<OrgTreeServiceNode, "id" | "name" | "reporting_manager_id"> & Partial<OrgTreeServiceNode>;
+type Row = Pick<OrgTreeServiceNode, "id" | "name" | "reporting_manager_id"> &
+  Partial<OrgTreeServiceNode>;
 
 function row(id: string, managerId: string | null): OrgTreeServiceNode {
   return {
@@ -35,7 +36,12 @@ function idsInForest(nodes: OrgTreeServiceNode[]): Set<string> {
 
 describe("buildOrgForest", () => {
   it("places every employee exactly once when the data is clean", () => {
-    const rows: Row[] = [row("1", null), row("2", "1"), row("3", "1"), row("4", "2")];
+    const rows: Row[] = [
+      row("1", null),
+      row("2", "1"),
+      row("3", "1"),
+      row("4", "2"),
+    ];
     const built = buildOrgForest(rows as OrgTreeServiceNode[], null);
 
     expect(built.renderedCount).toBe(4);
@@ -107,7 +113,10 @@ describe("buildOrgForest", () => {
     // cannot claim to be showing people it is not showing.
     expect(built.renderedCount).toBe(3);
     expect(built.dataIssues).toContainEqual(
-      expect.objectContaining({ type: "missing_manager", employeeId: "orphan" }),
+      expect.objectContaining({
+        type: "missing_manager",
+        employeeId: "orphan",
+      }),
     );
   });
 
@@ -120,7 +129,13 @@ describe("buildOrgForest", () => {
   });
 
   it("reports direct and total headcount for each manager", () => {
-    const rows: Row[] = [row("1", null), row("2", "1"), row("3", "1"), row("4", "2"), row("5", "4")];
+    const rows: Row[] = [
+      row("1", null),
+      row("2", "1"),
+      row("3", "1"),
+      row("4", "2"),
+      row("5", "4"),
+    ];
     const built = buildOrgForest(rows as OrgTreeServiceNode[], null);
 
     const top = built.roots.find((r) => r.id === "1")!;

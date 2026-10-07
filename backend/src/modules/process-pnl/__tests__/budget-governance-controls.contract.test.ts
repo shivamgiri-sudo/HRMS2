@@ -25,7 +25,9 @@ function read(rel: string) {
 describe("Budget tax amendment (737a0a42)", () => {
   it("migration 460 creates finance_budget_line_tax_amendment with COLLATE", () => {
     const sql = read("sql/460_budget_line_tax_amendment.sql");
-    expect(sql).toContain("CREATE TABLE IF NOT EXISTS finance_budget_line_tax_amendment");
+    expect(sql).toContain(
+      "CREATE TABLE IF NOT EXISTS finance_budget_line_tax_amendment",
+    );
     expect(sql).toContain("status");
     expect(sql).toContain("requested_by");
     expect(sql).toContain("gross_delta");
@@ -65,7 +67,10 @@ describe("Budget tax amendment (737a0a42)", () => {
     // grew -- attaching a status and code to each throw was enough to push pnl_cost_amount out
     // of range, failing the test while the behaviour it guards was untouched.
     const offset = svc.slice(fnStart + 1).search(/\n {2}async /);
-    const fn = offset > -1 ? svc.slice(fnStart, fnStart + 1 + offset) : svc.slice(fnStart);
+    const fn =
+      offset > -1
+        ? svc.slice(fnStart, fnStart + 1 + offset)
+        : svc.slice(fnStart);
     expect(fn).toContain("isPeriodLocked(");
     const txIdx = fn.indexOf("beginTransaction");
     const lockIdx = fn.indexOf("isPeriodLocked(");
@@ -81,18 +86,31 @@ describe("Budget tax amendment (737a0a42)", () => {
     // grew -- attaching a status and code to each throw was enough to push pnl_cost_amount out
     // of range, failing the test while the behaviour it guards was untouched.
     const offset = svc.slice(fnStart + 1).search(/\n {2}async /);
-    const fn = offset > -1 ? svc.slice(fnStart, fnStart + 1 + offset) : svc.slice(fnStart);
+    const fn =
+      offset > -1
+        ? svc.slice(fnStart, fnStart + 1 + offset)
+        : svc.slice(fnStart);
     expect(fn).toContain("calculateBudgetLine(");
     // All dependent columns must be updated
-    for (const col of ["pnl_cost_amount", "cgst_amount", "recoverable_tax_amount"]) {
-      expect(fn, `${col} must be rewritten on amendment approval`).toContain(col);
+    for (const col of [
+      "pnl_cost_amount",
+      "cgst_amount",
+      "recoverable_tax_amount",
+    ]) {
+      expect(fn, `${col} must be rewritten on amendment approval`).toContain(
+        col,
+      );
     }
   });
 
   it("GET/PATCH/review routes are wired in process-pnl.routes.ts", () => {
     const routes = read("src/modules/process-pnl/process-pnl.routes.ts");
-    expect(routes).toContain("/pnl/budgets/:budgetId/lines/:lineId/tax-amendment-preflight");
-    expect(routes).toContain("/pnl/budgets/:budgetId/lines/:lineId/tax-treatment");
+    expect(routes).toContain(
+      "/pnl/budgets/:budgetId/lines/:lineId/tax-amendment-preflight",
+    );
+    expect(routes).toContain(
+      "/pnl/budgets/:budgetId/lines/:lineId/tax-treatment",
+    );
     expect(routes).toContain("/pnl/budget-tax-amendments");
     expect(routes).toContain("/pnl/budget-tax-amendments/:id/review");
   });
@@ -161,7 +179,7 @@ describe("Salary verification readiness integration", () => {
     expect(routes).toContain("async function markReadinessDoneIfComplete");
     // Must be called in verify-bulk and verify-employee handlers
     const bulkIdx = routes.indexOf("POST /verify-bulk");
-    const empIdx  = routes.indexOf("POST /verify-employee");
+    const empIdx = routes.indexOf("POST /verify-employee");
     const calls = (routes.match(/markReadinessDoneIfComplete\(/g) ?? []).length;
     expect(calls).toBeGreaterThanOrEqual(2);
     expect(bulkIdx).toBeGreaterThan(-1);
@@ -171,13 +189,18 @@ describe("Salary verification readiness integration", () => {
   it("markReadinessDoneIfComplete is also called when a flag is resolved", () => {
     const routes = read("src/modules/payroll/salary-verification.routes.ts");
     const patchIdx = routes.indexOf("PATCH /flags/:flagId");
-    const callAfterPatch = routes.indexOf("markReadinessDoneIfComplete(", patchIdx);
+    const callAfterPatch = routes.indexOf(
+      "markReadinessDoneIfComplete(",
+      patchIdx,
+    );
     expect(callAfterPatch).toBeGreaterThan(patchIdx);
   });
 
   it("UPDATE sets salary_verification_done=1 when total>0, open_flags=0, verified>=total", () => {
     const routes = read("src/modules/payroll/salary-verification.routes.ts");
-    const fn = routes.slice(routes.indexOf("async function markReadinessDoneIfComplete"));
+    const fn = routes.slice(
+      routes.indexOf("async function markReadinessDoneIfComplete"),
+    );
     expect(fn).toContain("salary_verification_done = 1");
     expect(fn).toContain("salary_verification_at = NOW()");
     expect(fn).toContain("openFlags === 0");

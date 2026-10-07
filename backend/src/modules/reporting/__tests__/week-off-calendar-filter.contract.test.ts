@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const src = readFileSync(
-  resolve(process.cwd(), "src/modules/reporting/executors/wfm.executor.ts"), "utf8");
+  resolve(process.cwd(), "src/modules/reporting/executors/wfm.executor.ts"),
+  "utf8",
+);
 
 /**
  * week-off-calendar filtered on `ws.shift_name = 'WO'`. wfm_shift_master holds three shifts —
@@ -25,7 +27,9 @@ describe("week-off-calendar filter", () => {
     return src.slice(start, end === -1 ? src.length : end);
   })();
 
-  const code = block.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const code = block
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
 
   it("selects week-offs by is_week_off, the column that carries the meaning", () => {
     expect(code).toMatch(/wra\.is_week_off\s*=\s*1/);

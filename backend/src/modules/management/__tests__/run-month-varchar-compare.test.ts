@@ -3,7 +3,12 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const SRC_DIR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+);
 
 /**
  * `salary_prep_run.run_month` is VARCHAR(7) holding 'YYYY-MM' — it is NOT a DATE.
@@ -49,27 +54,31 @@ export function dateComparisons(raw: string): string[] {
   const src = codeOnly(raw);
   return [
     ...src.matchAll(
-      /run_month\s*(?:>=|<=|>|<|=)\s*(?:DATE_SUB|DATE_ADD|CURDATE|NOW|CURRENT_DATE)\s*\(/gi
+      /run_month\s*(?:>=|<=|>|<|=)\s*(?:DATE_SUB|DATE_ADD|CURDATE|NOW|CURRENT_DATE)\s*\(/gi,
     ),
   ].map((m) => m[0].replace(/\s+/g, " "));
 }
 
 /** run_month wrapped in DATE_FORMAT — returns NULL for a varchar 'YYYY-MM'. */
 export function dateFormatWraps(raw: string): string[] {
-  return [...codeOnly(raw).matchAll(/DATE_FORMAT\(\s*[A-Za-z_]*\.?run_month\b/gi)].map((m) =>
-    m[0].replace(/\s+/g, " ")
-  );
+  return [
+    ...codeOnly(raw).matchAll(/DATE_FORMAT\(\s*[A-Za-z_]*\.?run_month\b/gi),
+  ].map((m) => m[0].replace(/\s+/g, " "));
 }
 
 describe("salary_prep_run.run_month is VARCHAR, not DATE", () => {
   it("flags a comparison against a DATE function", () => {
     expect(
-      dateComparisons("WHERE sp.run_month >= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)")
+      dateComparisons(
+        "WHERE sp.run_month >= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)",
+      ),
     ).toHaveLength(1);
   });
 
   it("flags DATE_FORMAT applied to the column", () => {
-    expect(dateFormatWraps("SELECT DATE_FORMAT(sp.run_month, '%Y-%m')")).toHaveLength(1);
+    expect(
+      dateFormatWraps("SELECT DATE_FORMAT(sp.run_month, '%Y-%m')"),
+    ).toHaveLength(1);
   });
 
   it("accepts the correct form — cutoff rendered as 'YYYY-MM', compared as a string", () => {

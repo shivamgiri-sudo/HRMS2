@@ -28,11 +28,14 @@ import "dotenv/config";
 const APPLY = process.env.APPLY === "1";
 const YEAR = Number(process.env.YEAR ?? 2026);
 /** Only months that have actually arrived. Defaults to the current month. */
-const THROUGH_MONTH = Number(process.env.THROUGH_MONTH ?? new Date().getMonth() + 1);
+const THROUGH_MONTH = Number(
+  process.env.THROUGH_MONTH ?? new Date().getMonth() + 1,
+);
 
 async function main() {
   const { db } = await import("../src/db/mysql.js");
-  const { creditMonthlyLeaves } = await import("../src/workers/leave-monthly-credit.worker.js");
+  const { creditMonthlyLeaves } =
+    await import("../src/workers/leave-monthly-credit.worker.js");
 
   const [schedule]: any = await db.query(
     `SELECT lcs.month, lcs.leave_code, lcs.credit_days, lt.id AS leave_type_id
@@ -41,7 +44,10 @@ async function main() {
       WHERE lcs.month <= ? ORDER BY lcs.month`,
     [THROUGH_MONTH],
   );
-  if (!schedule.length) throw new Error("leave_credit_schedule has no rows — nothing to credit from");
+  if (!schedule.length)
+    throw new Error(
+      "leave_credit_schedule has no rows — nothing to credit from",
+    );
 
   // Who SHOULD have a credit for a given month: active employees whose accrual had started.
   // prorateMonthlyCredit returns 0 for anyone who joined after the month, so they are not a gap.
@@ -58,9 +64,14 @@ async function main() {
       WHERE credit_year = ? AND credit_type = 'monthly' AND credit_month <= ?`,
     [YEAR, THROUGH_MONTH],
   );
-  const have = new Set(logged.map((r: any) => `${r.employee_id}|${r.leave_type_id}|${r.credit_month}`));
+  const have = new Set(
+    logged.map(
+      (r: any) => `${r.employee_id}|${r.leave_type_id}|${r.credit_month}`,
+    ),
+  );
 
-  const { leavePolicyService } = await import("../src/modules/leave/leave-policy.service.js");
+  const { leavePolicyService } =
+    await import("../src/modules/leave/leave-policy.service.js");
   const { prorateMonthlyCredit } = leavePolicyService;
 
   const gaps: Record<string, number> = {};
@@ -68,7 +79,11 @@ async function main() {
   for (const s of schedule) {
     const key = `${String(s.month).padStart(2, "0")} ${s.leave_code}`;
     for (const emp of employees) {
-      const p = prorateMonthlyCredit(String(emp.accrual_start_date).slice(0, 10), Number(s.month), YEAR);
+      const p = prorateMonthlyCredit(
+        String(emp.accrual_start_date).slice(0, 10),
+        Number(s.month),
+        YEAR,
+      );
       // Apply the WORKER'S OWN rounding, not just `p > 0`. Someone who joined on the last day
       // of a month prorates to 1/31 = 0.03, which the worker rounds to 0.0 days and correctly
       // skips without writing a log row. Testing `p > 0` alone reported 45 of those as missing
@@ -82,17 +97,31 @@ async function main() {
     }
   }
 
-  console.log(`${APPLY ? "APPLY" : "DRY RUN"} — ${YEAR}, months 1..${THROUGH_MONTH}, ${employees.length} active employees`);
+  console.log(
+    `${APPLY ? "APPLY" : "DRY RUN"} — ${YEAR}, months 1..${THROUGH_MONTH}, ${employees.length} active employees`,
+  );
   console.log(`missing monthly credits: ${totalGaps}\n`);
   if (totalGaps) {
-    console.table(Object.entries(gaps).sort().map(([k, n]) => {
-      const [month, code] = k.split(" ");
-      return { month, type: code, employees_missing: n };
-    }));
+    console.table(
+      Object.entries(gaps)
+        .sort()
+        .map(([k, n]) => {
+          const [month, code] = k.split(" ");
+          return { month, type: code, employees_missing: n };
+        }),
+    );
   }
 
-  if (!totalGaps) { console.log("Every scheduled credit is already in place."); await (db as any).end?.(); return; }
-  if (!APPLY) { console.log("No changes written. Re-run with APPLY=1 to credit the gaps."); await (db as any).end?.(); return; }
+  if (!totalGaps) {
+    console.log("Every scheduled credit is already in place.");
+    await (db as any).end?.();
+    return;
+  }
+  if (!APPLY) {
+    console.log("No changes written. Re-run with APPLY=1 to credit the gaps.");
+    await (db as any).end?.();
+    return;
+  }
 
   // The worker's own function, month by month. Idempotent per employee/type/month, so this
   // fills the gaps and leaves everything already credited untouched.
@@ -104,8 +133,13 @@ async function main() {
     `SELECT COUNT(*) n FROM leave_el_credit_log WHERE credit_year = ? AND credit_type = 'monthly' AND credit_month <= ?`,
     [YEAR, THROUGH_MONTH],
   );
-  console.log(`\nCredit rows before: ${logged.length}   after: ${after[0].n}   (+${after[0].n - logged.length})`);
+  console.log(
+    `\nCredit rows before: ${logged.length}   after: ${after[0].n}   (+${after[0].n - logged.length})`,
+  );
   await (db as any).end?.();
 }
 
-main().catch((e) => { console.error("ERR", e instanceof Error ? e.message : String(e)); process.exit(1); });
+main().catch((e) => {
+  console.error("ERR", e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});

@@ -43,54 +43,278 @@ beforeEach(() => execute.mockReset());
  * reference voucher agrees: its second column is 166,262, which is the CEO's gross alone.
  */
 const HEAD_OFFICE = [
-  { employee_code: "MAS59445", designation_name: "VICE PRESIDENT", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 222307, gross_salary: 266667, pf_employee: 0, pf_employer: 0,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 44360, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS00001", designation_name: "CHIEF EXECUTIVE OFFICER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 133462, gross_salary: 166262, pf_employee: 16800, pf_employer: 16800,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 16000, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS38964", designation_name: "DY. GENERAL MANAGER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 109088, gross_salary: 124368, pf_employee: 6480, pf_employer: 6480,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 8800, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS47905", designation_name: "SR. MANAGER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 107812, gross_salary: 124184, pf_employee: 6672, pf_employer: 6672,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 9700, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS00176", designation_name: "SR. MANAGER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 85512, gross_salary: 95672, pf_employee: 5160, pf_employer: 5160,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 0, loan_emi: 5000, other_deductions: 0 },
-  { employee_code: "MAS00175", designation_name: "DY. MANAGER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 75932, gross_salary: 80096, pf_employee: 4164, pf_employer: 4164,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 0, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS00183", designation_name: "CHAIRMAN", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 62500, gross_salary: 68500, pf_employee: 6000, pf_employer: 6000,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 0, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS07197", designation_name: "DY. MANAGER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 59379, gross_salary: 65581, pf_employee: 6202, pf_employer: 6202,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 0, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS00182", designation_name: "ASSISTANT MANAGER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 56935, gross_salary: 65535, pf_employee: 3600, pf_employer: 3600,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 0, loan_emi: 5000, other_deductions: 0 },
-  { employee_code: "MAS55833", designation_name: "EXECUTIVE", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 35016, gross_salary: 40632, pf_employee: 616, pf_employer: 616,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 0, loan_emi: 5000, other_deductions: 0 },
-  { employee_code: "MAS62735", designation_name: "BUSINESS DEVELOPER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 31501, gross_salary: 32414, pf_employee: 2080, pf_employer: 2080,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 0, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS60079", designation_name: "EXECUTIVE", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 30000, gross_salary: 30000, pf_employee: 0, pf_employer: 0,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 0, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS08107", designation_name: "SR. EXECUTIVE", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 27075, gross_salary: 28335, pf_employee: 1260, pf_employer: 1260,
-    esic_employee: 0, esic_employer: 0, professional_tax: 0, tds: 0, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS07320", designation_name: "DY. MANAGER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 0, gross_salary: 0, pf_employee: 0, pf_employer: 0,
-    esic_employee: 0, esic_employer: 0, professional_tax: 200, tds: 0, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS28874", designation_name: "ASSISTANT MANAGER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 0, gross_salary: 0, pf_employee: 0, pf_employer: 0,
-    esic_employee: 0, esic_employer: 0, professional_tax: 200, tds: 0, loan_emi: 0, other_deductions: 0 },
-  { employee_code: "MAS02995", designation_name: "SR. MANAGER", employment_type: "ONROLL", branch_id: "br-ho", branch_name: "HEAD OFFICE",
-    net_salary: 0, gross_salary: 0, pf_employee: 0, pf_employer: 0,
-    esic_employee: 0, esic_employer: 0, professional_tax: 200, tds: 0, loan_emi: 0, other_deductions: 0 },
+  {
+    employee_code: "MAS59445",
+    designation_name: "VICE PRESIDENT",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 222307,
+    gross_salary: 266667,
+    pf_employee: 0,
+    pf_employer: 0,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 44360,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS00001",
+    designation_name: "CHIEF EXECUTIVE OFFICER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 133462,
+    gross_salary: 166262,
+    pf_employee: 16800,
+    pf_employer: 16800,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 16000,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS38964",
+    designation_name: "DY. GENERAL MANAGER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 109088,
+    gross_salary: 124368,
+    pf_employee: 6480,
+    pf_employer: 6480,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 8800,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS47905",
+    designation_name: "SR. MANAGER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 107812,
+    gross_salary: 124184,
+    pf_employee: 6672,
+    pf_employer: 6672,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 9700,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS00176",
+    designation_name: "SR. MANAGER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 85512,
+    gross_salary: 95672,
+    pf_employee: 5160,
+    pf_employer: 5160,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 0,
+    loan_emi: 5000,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS00175",
+    designation_name: "DY. MANAGER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 75932,
+    gross_salary: 80096,
+    pf_employee: 4164,
+    pf_employer: 4164,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 0,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS00183",
+    designation_name: "CHAIRMAN",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 62500,
+    gross_salary: 68500,
+    pf_employee: 6000,
+    pf_employer: 6000,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 0,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS07197",
+    designation_name: "DY. MANAGER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 59379,
+    gross_salary: 65581,
+    pf_employee: 6202,
+    pf_employer: 6202,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 0,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS00182",
+    designation_name: "ASSISTANT MANAGER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 56935,
+    gross_salary: 65535,
+    pf_employee: 3600,
+    pf_employer: 3600,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 0,
+    loan_emi: 5000,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS55833",
+    designation_name: "EXECUTIVE",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 35016,
+    gross_salary: 40632,
+    pf_employee: 616,
+    pf_employer: 616,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 0,
+    loan_emi: 5000,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS62735",
+    designation_name: "BUSINESS DEVELOPER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 31501,
+    gross_salary: 32414,
+    pf_employee: 2080,
+    pf_employer: 2080,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 0,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS60079",
+    designation_name: "EXECUTIVE",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 30000,
+    gross_salary: 30000,
+    pf_employee: 0,
+    pf_employer: 0,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 0,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS08107",
+    designation_name: "SR. EXECUTIVE",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 27075,
+    gross_salary: 28335,
+    pf_employee: 1260,
+    pf_employer: 1260,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 0,
+    tds: 0,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS07320",
+    designation_name: "DY. MANAGER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 0,
+    gross_salary: 0,
+    pf_employee: 0,
+    pf_employer: 0,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 200,
+    tds: 0,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS28874",
+    designation_name: "ASSISTANT MANAGER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 0,
+    gross_salary: 0,
+    pf_employee: 0,
+    pf_employer: 0,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 200,
+    tds: 0,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
+  {
+    employee_code: "MAS02995",
+    designation_name: "SR. MANAGER",
+    employment_type: "ONROLL",
+    branch_id: "br-ho",
+    branch_name: "HEAD OFFICE",
+    net_salary: 0,
+    gross_salary: 0,
+    pf_employee: 0,
+    pf_employer: 0,
+    esic_employee: 0,
+    esic_employer: 0,
+    professional_tax: 200,
+    tds: 0,
+    loan_emi: 0,
+    other_deductions: 0,
+  },
 ];
 
 /** The CEO row, for the tests that need one identifiable person. */
@@ -98,18 +322,35 @@ const CEO = HEAD_OFFICE.find((r) => r.employee_code === "MAS00001")!;
 const STAFF = HEAD_OFFICE.find((r) => r.employee_code === "MAS07197")!;
 
 const COHORT = {
-  cohort_key: "c_suite", label: "C-Suite", designation_pattern: "CHIEF%",
-  employment_type: null, employee_code_prefix: null, column_index: 1, priority: 100,
+  cohort_key: "c_suite",
+  label: "C-Suite",
+  designation_pattern: "CHIEF%",
+  employment_type: null,
+  employee_code_prefix: null,
+  column_index: 1,
+  priority: 100,
 };
-const ENTITY_MAS = { company_code: "MAS", employee_code_prefix: "MAS", employment_type: null, branch_id: null, priority: 100 };
+const ENTITY_MAS = {
+  company_code: "MAS",
+  employee_code_prefix: "MAS",
+  employment_type: null,
+  branch_id: null,
+  priority: 100,
+};
 
 /** Scripts the four reads generate() performs, in order. */
-function script(lines: unknown[], opts: { entities?: unknown[]; cohorts?: unknown[] } = {}) {
+function script(
+  lines: unknown[],
+  opts: { entities?: unknown[]; cohorts?: unknown[] } = {},
+) {
   execute.mockImplementation(async (sql: string) => {
-    if (/FROM salary_prep_run/.test(sql)) return [[{ id: "run1", run_month: "2026-06" }], []];
-    if (/FROM finance_payroll_entity_rule/.test(sql)) return [opts.entities ?? [ENTITY_MAS], []];
+    if (/FROM salary_prep_run/.test(sql))
+      return [[{ id: "run1", run_month: "2026-06" }], []];
+    if (/FROM finance_payroll_entity_rule/.test(sql))
+      return [opts.entities ?? [ENTITY_MAS], []];
     if (/FROM salary_prep_line/.test(sql)) return [lines, []];
-    if (/FROM finance_payroll_voucher_cohort/.test(sql)) return [opts.cohorts ?? [COHORT], []];
+    if (/FROM finance_payroll_voucher_cohort/.test(sql))
+      return [opts.cohorts ?? [COHORT], []];
     return [[], []];
   });
 }
@@ -120,7 +361,10 @@ const lineOf = (voucher: { lines: { ledger_name: string }[] }, name: string) =>
 describe("reproducing the June-2026 HEAD OFFICE voucher", () => {
   it("produces one voucher, numbered and dated as the reference is", async () => {
     script(HEAD_OFFICE);
-    const { vouchers, period } = await svc.salaryVoucherService.generate("run1", { serialFrom: 614 });
+    const { vouchers, period } = await svc.salaryVoucherService.generate(
+      "run1",
+      { serialFrom: 614 },
+    );
     expect(period).toBe("2026-06");
     expect(vouchers).toHaveLength(1);
     expect(vouchers[0].voucher_no).toBe("HEAD OFFICE/MAS/06/26/614");
@@ -162,7 +406,9 @@ describe("reproducing the June-2026 HEAD OFFICE voucher", () => {
     // columns are [staff, c-suite]; the reference prints [c-suite, staff].
     expect(lineOf(v, "Gross Salary").columns).toEqual([1_023_151, 166_262]);
     expect(lineOf(v, "Salary Payable A/C").columns).toEqual([903_057, 133_462]);
-    expect(lineOf(v, "Employer's Contribution to Epf").columns).toEqual([42_234, 16_800]);
+    expect(lineOf(v, "Employer's Contribution to Epf").columns).toEqual([
+      42_234, 16_800,
+    ]);
     expect(lineOf(v, "TDS SALARY 2026-27").columns).toEqual([62_860, 16_000]);
     expect(lineOf(v, "EPF Admin Charges").columns).toEqual([3_519, 1_400]);
   });
@@ -174,8 +420,11 @@ describe("reproducing the June-2026 HEAD OFFICE voucher", () => {
     expect(v.totals.debit).toBe(1_253_366);
     expect(v.totals.credit).toBe(1_253_366);
     for (const line of v.lines) {
-      const summed = Math.round(line.columns.reduce((s, n) => s + n, 0) * 100) / 100;
-      expect(summed, `${line.ledger_name} columns must sum to its amount`).toBe(line.amount);
+      const summed =
+        Math.round(line.columns.reduce((s, n) => s + n, 0) * 100) / 100;
+      expect(summed, `${line.ledger_name} columns must sum to its amount`).toBe(
+        line.amount,
+      );
     }
   });
 });
@@ -189,11 +438,19 @@ describe("advances are per employee", () => {
       { ...STAFF, employee_code: "MAS-C", loan_emi: 5000 },
     ]);
     const [v] = (await svc.salaryVoucherService.generate("run1")).vouchers;
-    const advances = v.lines.filter((l) => l.ledger_name.startsWith("Advance Against Salary"));
+    const advances = v.lines.filter((l) =>
+      l.ledger_name.startsWith("Advance Against Salary"),
+    );
     expect(advances).toHaveLength(3);
     expect(advances.every((a) => a.amount === 5000)).toBe(true);
-    expect(advances[0].ledger_name).toBe("Advance Against Salary (HEAD OFFICE)");
-    expect(advances.map((a) => a.employee_code)).toEqual(["MAS-A", "MAS-B", "MAS-C"]);
+    expect(advances[0].ledger_name).toBe(
+      "Advance Against Salary (HEAD OFFICE)",
+    );
+    expect(advances.map((a) => a.employee_code)).toEqual([
+      "MAS-A",
+      "MAS-B",
+      "MAS-C",
+    ]);
   });
 });
 
@@ -201,7 +458,9 @@ describe("the entity rule", () => {
   it("refuses to generate when no rule is configured", async () => {
     // Rather than defaulting every salary to whichever company sorts first.
     script([CEO], { entities: [] });
-    await expect(svc.salaryVoucherService.generate("run1")).rejects.toThrow(/No payroll entity rule/i);
+    await expect(svc.salaryVoucherService.generate("run1")).rejects.toThrow(
+      /No payroll entity rule/i,
+    );
   });
 
   it("excludes an employee whose code matches no entity, and names them", async () => {
@@ -219,11 +478,15 @@ describe("the entity rule", () => {
 
   it("separates entities into their own vouchers at the same branch", async () => {
     // HEAD OFFICE genuinely issues both HEAD OFFICE/MAS/... and HEAD OFFICE/IDC/... .
-    script(
-      [CEO, { ...STAFF, employee_code: "IDC61387" }],
-      { entities: [ENTITY_MAS, { company_code: "IDC", employee_code_prefix: "IDC", priority: 100 }] },
-    );
-    const { vouchers } = await svc.salaryVoucherService.generate("run1", { serialFrom: 614 });
+    script([CEO, { ...STAFF, employee_code: "IDC61387" }], {
+      entities: [
+        ENTITY_MAS,
+        { company_code: "IDC", employee_code_prefix: "IDC", priority: 100 },
+      ],
+    });
+    const { vouchers } = await svc.salaryVoucherService.generate("run1", {
+      serialFrom: 614,
+    });
     expect(vouchers).toHaveLength(2);
     expect(vouchers.map((v) => v.voucher_no)).toEqual([
       "HEAD OFFICE/IDC/06/26/614",
@@ -246,7 +509,14 @@ describe("cohorts are configuration", () => {
   it("a cohort with no matchers matches nobody, not everybody", async () => {
     // The dangerous direction: an unconfigured cohort silently swallowing the whole payroll.
     script([CEO, STAFF], {
-      cohorts: [{ ...COHORT, designation_pattern: null, employment_type: null, employee_code_prefix: null }],
+      cohorts: [
+        {
+          ...COHORT,
+          designation_pattern: null,
+          employment_type: null,
+          employee_code_prefix: null,
+        },
+      ],
     });
     const [v] = (await svc.salaryVoucherService.generate("run1")).vouchers;
     expect(lineOf(v, "Salary Payable A/C").columns).toEqual([192_841, 0]);
@@ -254,8 +524,15 @@ describe("cohorts are configuration", () => {
 
   it("can split on employment type instead, without a code change", async () => {
     script([CEO, { ...STAFF, employment_type: "MGMT. TRAINEE" }], {
-      cohorts: [{ ...COHORT, cohort_key: "trainee", label: "Trainees",
-                  designation_pattern: null, employment_type: "MGMT. TRAINEE" }],
+      cohorts: [
+        {
+          ...COHORT,
+          cohort_key: "trainee",
+          label: "Trainees",
+          designation_pattern: null,
+          employment_type: "MGMT. TRAINEE",
+        },
+      ],
     });
     const [v] = (await svc.salaryVoucherService.generate("run1")).vouchers;
     expect(v.cohort_labels).toEqual(["Staff", "Trainees"]);
@@ -277,23 +554,30 @@ describe("formatting helpers", () => {
   });
 
   it("builds the cost centre as short code and YYMM", async () => {
-    expect(svc.costCentreLabel("AHMEDABAD-JALDARSHAN", "2026-06")).toBe("AHM/2606");
+    expect(svc.costCentreLabel("AHMEDABAD-JALDARSHAN", "2026-06")).toBe(
+      "AHM/2606",
+    );
     expect(svc.costCentreLabel("HEAD OFFICE", "2027-01")).toBe("HO/2701");
   });
 
   it("rounds EPF admin per employee, which is what reproduces the reference", async () => {
     // Takes and returns paise, but the result is always a whole number of rupees: Tally will
     // not accept a fractional-rupee admin charge, and the reference voucher has none.
-    expect(svc.epfAdminCharge(1_680_000)).toBe(140_000);        // 16,800 -> 1,400.00
-    expect(svc.epfAdminCharge(4_223_400)).toBe(352_000);        // 42,234 -> 3,519.50 -> 3,520
-    expect(svc.epfAdminCharge(620_200)).toBe(51_700);           //  6,202 ->   516.83 ->   517
-    expect(svc.epfAdminCharge(4_223_400) % 100, "never a fractional rupee").toBe(0);
+    expect(svc.epfAdminCharge(1_680_000)).toBe(140_000); // 16,800 -> 1,400.00
+    expect(svc.epfAdminCharge(4_223_400)).toBe(352_000); // 42,234 -> 3,519.50 -> 3,520
+    expect(svc.epfAdminCharge(620_200)).toBe(51_700); //  6,202 ->   516.83 ->   517
+    expect(
+      svc.epfAdminCharge(4_223_400) % 100,
+      "never a fractional rupee",
+    ).toBe(0);
   });
 
   it("labels the financial year from April", async () => {
     script(HEAD_OFFICE);
     const [june] = (await svc.salaryVoucherService.generate("run1")).vouchers;
-    expect(june.lines.some((l) => l.ledger_name === "TDS SALARY 2026-27")).toBe(true);
+    expect(june.lines.some((l) => l.ledger_name === "TDS SALARY 2026-27")).toBe(
+      true,
+    );
     // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
     // company-wide, all states). The "Professional Tax {FY}" credit line is no
     // longer emitted by buildVoucher() at all, even though the HEAD_OFFICE
@@ -301,7 +585,9 @@ describe("formatting helpers", () => {
     // on three rows (that fixture is the real June-2026 salary_prep_line shape
     // and is left unedited for reconciliation fidelity) — so this now asserts
     // the line's absence rather than its presence.
-    expect(june.lines.some((l) => l.ledger_name === "Professional Tax 2026-27")).toBe(false);
+    expect(
+      june.lines.some((l) => l.ledger_name === "Professional Tax 2026-27"),
+    ).toBe(false);
   });
 
   it("dates the voucher on the last day of the payroll month", async () => {
@@ -336,13 +622,23 @@ describe("two branch rows sharing a name", () => {
    * shown one full of the other's money. Bucketing by id makes it deterministic.
    */
   const HO_A = { ...CEO, branch_id: "br-ho-a", branch_name: "HEAD OFFICE" };
-  const HO_B = { ...STAFF, employee_code: "MAS90001", branch_id: "br-ho-b", branch_name: "HEAD OFFICE" };
+  const HO_B = {
+    ...STAFF,
+    employee_code: "MAS90001",
+    branch_id: "br-ho-b",
+    branch_name: "HEAD OFFICE",
+  };
 
   it("keeps them as separate vouchers rather than merging them", async () => {
     script([HO_A, HO_B]);
-    const { vouchers } = await svc.salaryVoucherService.generate("run1", { serialFrom: 614 });
+    const { vouchers } = await svc.salaryVoucherService.generate("run1", {
+      serialFrom: 614,
+    });
     expect(vouchers).toHaveLength(2);
-    expect(vouchers.map((v) => v.branch_id).sort()).toEqual(["br-ho-a", "br-ho-b"]);
+    expect(vouchers.map((v) => v.branch_id).sort()).toEqual([
+      "br-ho-a",
+      "br-ho-b",
+    ]);
   });
 
   it("gives each voucher the branch id its own money belongs to", async () => {
@@ -357,16 +653,32 @@ describe("two branch rows sharing a name", () => {
 
   it("orders them deterministically, so serials do not shuffle between runs", async () => {
     script([HO_B, HO_A]);
-    const first = (await svc.salaryVoucherService.generate("run1", { serialFrom: 614 })).vouchers;
+    const first = (
+      await svc.salaryVoucherService.generate("run1", { serialFrom: 614 })
+    ).vouchers;
     script([HO_A, HO_B]);
-    const second = (await svc.salaryVoucherService.generate("run1", { serialFrom: 614 })).vouchers;
-    expect(first.map((v) => v.branch_id)).toEqual(second.map((v) => v.branch_id));
-    expect(first.map((v) => v.voucher_no)).toEqual(second.map((v) => v.voucher_no));
+    const second = (
+      await svc.salaryVoucherService.generate("run1", { serialFrom: 614 })
+    ).vouchers;
+    expect(first.map((v) => v.branch_id)).toEqual(
+      second.map((v) => v.branch_id),
+    );
+    expect(first.map((v) => v.voucher_no)).toEqual(
+      second.map((v) => v.voucher_no),
+    );
   });
 
   it("excludes a payroll line carrying a branch name but no id", async () => {
     // Without an id there is no branch to scope the voucher to, and no honest bucket for it.
-    script([CEO, { ...STAFF, employee_code: "MAS90002", branch_id: "", branch_name: "HEAD OFFICE" }]);
+    script([
+      CEO,
+      {
+        ...STAFF,
+        employee_code: "MAS90002",
+        branch_id: "",
+        branch_name: "HEAD OFFICE",
+      },
+    ]);
     const out = await svc.salaryVoucherService.generate("run1");
     expect(out.unassigned).toContain("MAS90002");
   });

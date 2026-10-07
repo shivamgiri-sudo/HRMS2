@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseNullableDecimal, parseDate, CLOVIA_QUALITY_AUDIT_HEADERS,
+  parseNullableDecimal,
+  parseDate,
+  CLOVIA_QUALITY_AUDIT_HEADERS,
 } from "../clovia-quality-audit-bulk.service.js";
 
 describe("parseNullableDecimal", () => {

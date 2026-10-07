@@ -5,7 +5,8 @@ import { env } from "../../config/env.js";
 // Web Push — loaded lazily
 let webpush: typeof import("web-push") | null = null;
 try {
-  webpush = (await import("web-push")).default as unknown as typeof import("web-push");
+  webpush = (await import("web-push"))
+    .default as unknown as typeof import("web-push");
   const vapidPublic = process.env.VAPID_PUBLIC_KEY;
   const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
   const vapidEmail = process.env.VAPID_EMAIL;
@@ -45,7 +46,7 @@ export async function notifyMeetingCreated(meetingId: string): Promise<void> {
   try {
     const [meetings] = await db.execute<(MeetingInfo & RowDataPacket)[]>(
       `SELECT id, title, meeting_type, start_at, mcnmeet_join_url, host_employee_id FROM mcnmeet_meeting WHERE id = ?`,
-      [meetingId]
+      [meetingId],
     );
     if (!meetings.length) return;
     const meeting = meetings[0];
@@ -55,12 +56,16 @@ export async function notifyMeetingCreated(meetingId: string): Promise<void> {
        FROM mcnmeet_meeting_invitee i
        LEFT JOIN employees e ON i.employee_id = e.id
        WHERE i.meeting_id = ?`,
-      [meetingId]
+      [meetingId],
     );
 
     const startTime = new Date(meeting.start_at).toLocaleString("en-IN", {
-      day: "2-digit", month: "short", year: "numeric",
-      hour: "2-digit", minute: "2-digit", hour12: true,
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
     });
 
     const title = `New Meeting: ${meeting.title}`;
@@ -74,30 +79,37 @@ export async function notifyMeetingCreated(meetingId: string): Promise<void> {
       });
     }
 
-    console.log(`[mcnmeet-notify] Sent ${invitees.length} push notifications for meeting created: ${meetingId}`);
+    console.log(
+      `[mcnmeet-notify] Sent ${invitees.length} push notifications for meeting created: ${meetingId}`,
+    );
   } catch (err) {
     console.error("[mcnmeet-notify] notifyMeetingCreated error:", err);
   }
 }
 
-export async function notifyMeetingCancelled(meetingId: string, reason: string): Promise<void> {
+export async function notifyMeetingCancelled(
+  meetingId: string,
+  reason: string,
+): Promise<void> {
   if (!env.MCNMEET_ENABLED) return;
 
   try {
     const [meetings] = await db.execute<(MeetingInfo & RowDataPacket)[]>(
       `SELECT id, title FROM mcnmeet_meeting WHERE id = ?`,
-      [meetingId]
+      [meetingId],
     );
     if (!meetings.length) return;
     const meeting = meetings[0];
 
     const [invitees] = await db.execute<InviteeInfo[]>(
       `SELECT i.employee_id FROM mcnmeet_meeting_invitee i WHERE i.meeting_id = ?`,
-      [meetingId]
+      [meetingId],
     );
 
     const title = `Meeting Cancelled: ${meeting.title}`;
-    const body = reason ? `Reason: ${reason.slice(0, 100)}` : "The meeting has been cancelled";
+    const body = reason
+      ? `Reason: ${reason.slice(0, 100)}`
+      : "The meeting has been cancelled";
 
     for (const invitee of invitees) {
       await sendPushToUser(invitee.employee_id, title, body, {
@@ -106,19 +118,23 @@ export async function notifyMeetingCancelled(meetingId: string, reason: string):
       });
     }
 
-    console.log(`[mcnmeet-notify] Sent ${invitees.length} cancellation notifications for meeting: ${meetingId}`);
+    console.log(
+      `[mcnmeet-notify] Sent ${invitees.length} cancellation notifications for meeting: ${meetingId}`,
+    );
   } catch (err) {
     console.error("[mcnmeet-notify] notifyMeetingCancelled error:", err);
   }
 }
 
-export async function notifyMeetingStartingSoon(meetingId: string): Promise<void> {
+export async function notifyMeetingStartingSoon(
+  meetingId: string,
+): Promise<void> {
   if (!env.MCNMEET_ENABLED) return;
 
   try {
     const [meetings] = await db.execute<(MeetingInfo & RowDataPacket)[]>(
       `SELECT id, title, mcnmeet_join_url FROM mcnmeet_meeting WHERE id = ?`,
-      [meetingId]
+      [meetingId],
     );
     if (!meetings.length) return;
     const meeting = meetings[0];
@@ -126,7 +142,7 @@ export async function notifyMeetingStartingSoon(meetingId: string): Promise<void
     const [invitees] = await db.execute<InviteeInfo[]>(
       `SELECT i.employee_id FROM mcnmeet_meeting_invitee i
        WHERE i.meeting_id = ? AND i.joined_status = 'not_joined'`,
-      [meetingId]
+      [meetingId],
     );
 
     const title = `Starting Soon: ${meeting.title}`;
@@ -140,19 +156,24 @@ export async function notifyMeetingStartingSoon(meetingId: string): Promise<void
       });
     }
 
-    console.log(`[mcnmeet-notify] Sent ${invitees.length} reminder notifications for meeting: ${meetingId}`);
+    console.log(
+      `[mcnmeet-notify] Sent ${invitees.length} reminder notifications for meeting: ${meetingId}`,
+    );
   } catch (err) {
     console.error("[mcnmeet-notify] notifyMeetingStartingSoon error:", err);
   }
 }
 
-export async function notifyRecordingAvailable(meetingId: string, recordingUrl: string): Promise<void> {
+export async function notifyRecordingAvailable(
+  meetingId: string,
+  recordingUrl: string,
+): Promise<void> {
   if (!env.MCNMEET_ENABLED) return;
 
   try {
     const [meetings] = await db.execute<(MeetingInfo & RowDataPacket)[]>(
       `SELECT id, title FROM mcnmeet_meeting WHERE id = ?`,
-      [meetingId]
+      [meetingId],
     );
     if (!meetings.length) return;
     const meeting = meetings[0];
@@ -161,7 +182,7 @@ export async function notifyRecordingAvailable(meetingId: string, recordingUrl: 
     const [invitees] = await db.execute<InviteeInfo[]>(
       `SELECT i.employee_id FROM mcnmeet_meeting_invitee i
        WHERE i.meeting_id = ? AND i.joined_status IN ('joined', 'late')`,
-      [meetingId]
+      [meetingId],
     );
 
     const title = `Recording Available: ${meeting.title}`;
@@ -175,19 +196,26 @@ export async function notifyRecordingAvailable(meetingId: string, recordingUrl: 
       });
     }
 
-    console.log(`[mcnmeet-notify] Sent ${invitees.length} recording notifications for meeting: ${meetingId}`);
+    console.log(
+      `[mcnmeet-notify] Sent ${invitees.length} recording notifications for meeting: ${meetingId}`,
+    );
   } catch (err) {
     console.error("[mcnmeet-notify] notifyRecordingAvailable error:", err);
   }
 }
 
-async function sendPushToUser(userId: string, title: string, body: string, data?: Record<string, string>): Promise<void> {
+async function sendPushToUser(
+  userId: string,
+  title: string,
+  body: string,
+  data?: Record<string, string>,
+): Promise<void> {
   if (!webpush) return;
 
   try {
     const [subs] = await db.execute<PushSubscription[]>(
       `SELECT endpoint, p256dh, auth_key FROM push_subscriptions WHERE user_id = ?`,
-      [userId]
+      [userId],
     );
 
     const payload = JSON.stringify({ title, body, data });
@@ -195,13 +223,20 @@ async function sendPushToUser(userId: string, title: string, body: string, data?
     for (const sub of subs) {
       try {
         await webpush.sendNotification(
-          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth_key } },
-          payload
+          {
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.p256dh, auth: sub.auth_key },
+          },
+          payload,
         );
       } catch (err: any) {
         // 410 Gone = subscription expired; remove it
         if (err?.statusCode === 410) {
-          await db.execute(`DELETE FROM push_subscriptions WHERE endpoint = ?`, [sub.endpoint]).catch(() => {});
+          await db
+            .execute(`DELETE FROM push_subscriptions WHERE endpoint = ?`, [
+              sub.endpoint,
+            ])
+            .catch(() => {});
         }
       }
     }
@@ -220,7 +255,7 @@ export async function sendUpcomingMeetingReminders(): Promise<number> {
       `SELECT id, title, mcnmeet_join_url FROM mcnmeet_meeting
        WHERE status = 'scheduled'
        AND start_at BETWEEN DATE_ADD(NOW(), INTERVAL 14 MINUTE) AND DATE_ADD(NOW(), INTERVAL 16 MINUTE)`,
-      []
+      [],
     );
 
     for (const meeting of meetings) {

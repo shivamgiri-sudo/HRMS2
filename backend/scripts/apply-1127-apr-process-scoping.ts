@@ -65,30 +65,46 @@ const ELIGIBLE_SQL = `
 
 /** The nine that had no process until 2026-08-11; all must stay eligible. */
 const NINE = [
-  "MAS62901", "MAS62903", "MAS62905", "MAS62906", "MAS62907",
-  "MAS62908", "MAS62909", "MAS62910", "MAS62913",
+  "MAS62901",
+  "MAS62903",
+  "MAS62905",
+  "MAS62906",
+  "MAS62907",
+  "MAS62908",
+  "MAS62909",
+  "MAS62910",
+  "MAS62913",
 ];
 
 function statementsFrom(file: string): string[] {
   // Strip full-line -- comments first: the header's rollback notes contain semicolons
   // and would otherwise split into bogus statements.
-  const stripped = fs.readFileSync(file, "utf8")
+  const stripped = fs
+    .readFileSync(file, "utf8")
     .split("\n")
     .filter((l) => !l.trim().startsWith("--"))
     .join("\n");
-  return stripped.split(";").map((s) => s.trim()).filter(Boolean);
+  return stripped
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 (async () => {
   const conn = await db.getConnection();
-  const count = async (sql: string, params: unknown[] = []): Promise<number> => {
+  const count = async (
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<number> => {
     const [rows]: any = await conn.query(sql, params);
     return Number(Object.values(rows[0])[0]);
   };
 
   try {
     const before = await count(ELIGIBLE_SQL);
-    console.log(`mode                    : ${APPLY ? "APPLY" : "DRY RUN (will roll back)"}`);
+    console.log(
+      `mode                    : ${APPLY ? "APPLY" : "DRY RUN (will roll back)"}`,
+    );
     console.log(`BEFORE apr-eligible     : ${before}`);
 
     const stmts = statementsFrom(SQL_FILE);
@@ -101,9 +117,11 @@ function statementsFrom(file: string): string[] {
     }
 
     const scoped = await count(
-      "SELECT COUNT(*) n FROM apr_eligibility_config WHERE active_status=1 AND process_id IS NOT NULL");
+      "SELECT COUNT(*) n FROM apr_eligibility_config WHERE active_status=1 AND process_id IS NOT NULL",
+    );
     const unscoped = await count(
-      "SELECT COUNT(*) n FROM apr_eligibility_config WHERE active_status=1 AND process_id IS NULL");
+      "SELECT COUNT(*) n FROM apr_eligibility_config WHERE active_status=1 AND process_id IS NULL",
+    );
     const after = await count(ELIGIBLE_SQL);
     const nine = await count(
       `SELECT COUNT(*) n FROM employees e
@@ -118,21 +136,33 @@ function statementsFrom(file: string): string[] {
 
     const ok = scoped === 60 && unscoped === 0 && nine === 9;
     console.log("\n--- verification (inside transaction) ---");
-    console.log(`  scoped active rules   : ${scoped}   ${scoped === 60 ? "OK" : "FAIL"} (expect 60)`);
-    console.log(`  unscoped active rules : ${unscoped}   ${unscoped === 0 ? "OK" : "FAIL"} (expect 0)`);
-    console.log(`  the nine still eligible: ${nine}   ${nine === 9 ? "OK" : "FAIL"} (expect 9)`);
-    console.log(`  apr-eligible after    : ${after}  (was ${before}; moved off = ${before - after})`);
+    console.log(
+      `  scoped active rules   : ${scoped}   ${scoped === 60 ? "OK" : "FAIL"} (expect 60)`,
+    );
+    console.log(
+      `  unscoped active rules : ${unscoped}   ${unscoped === 0 ? "OK" : "FAIL"} (expect 0)`,
+    );
+    console.log(
+      `  the nine still eligible: ${nine}   ${nine === 9 ? "OK" : "FAIL"} (expect 9)`,
+    );
+    console.log(
+      `  apr-eligible after    : ${after}  (was ${before}; moved off = ${before - after})`,
+    );
 
     if (ok && APPLY) {
       await conn.commit();
       console.log("\n*** COMMITTED ***");
-      console.log("Existing attendance rows are unchanged. Re-process to materialise:");
+      console.log(
+        "Existing attendance rows are unchanged. Re-process to materialise:",
+      );
       console.log("  npx tsx scripts/cosec-sync-backfill.ts <from> <to>");
     } else {
       await conn.rollback();
-      console.log(ok
-        ? "\nDRY RUN — rolled back. Re-run with --apply to commit."
-        : "\n*** ROLLED BACK — a check failed, nothing changed ***");
+      console.log(
+        ok
+          ? "\nDRY RUN — rolled back. Re-run with --apply to commit."
+          : "\n*** ROLLED BACK — a check failed, nothing changed ***",
+      );
     }
   } catch (e: any) {
     await conn.rollback();

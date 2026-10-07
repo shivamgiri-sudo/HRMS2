@@ -15,7 +15,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-let processService: typeof import("../org.service.js")["processService"];
+let processService: (typeof import("../org.service.js"))["processService"];
 beforeAll(async () => {
   ({ processService } = await import("../org.service.js"));
 }, 120_000);

@@ -28,10 +28,17 @@ import { mintAcceptToken, acceptUrl } from "./appointmentLetterAcceptToken.js";
 import { auditAppointmentLetter } from "./appointmentLetterAudit.js";
 import { buildAppointmentLetterEmailHtml } from "./appointmentLetterIssue.service.js";
 import { istDisplayDate } from "./letterFormat.js";
-import { syncAppointmentEsignForIssue, type AppointmentSyncOutcome } from "./appointmentLetterEsign.service.js";
-import { maskEmailAddress, type CustomResendRequest } from "./appointmentLetterResendRecipients.js";
+import {
+  syncAppointmentEsignForIssue,
+  type AppointmentSyncOutcome,
+} from "./appointmentLetterEsign.service.js";
+import {
+  maskEmailAddress,
+  type CustomResendRequest,
+} from "./appointmentLetterResendRecipients.js";
 
-const frontendBaseUrl = () => String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(/\/+$/, "");
+const frontendBaseUrl = () =>
+  String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(/\/+$/, "");
 
 /** Custom-recipient resends allowed per letter in any rolling hour. */
 export const MAX_RESENDS_PER_HOUR = 5;
@@ -49,7 +56,11 @@ export type ResendOutcome = {
 };
 
 const escapeHtml = (v: string) =>
-  v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 
 const normalisedOrNull = (v: unknown): string | null =>
   typeof v === "string" && v.includes("@") ? v.trim().toLowerCase() : null;
@@ -69,7 +80,10 @@ async function countRecentResends(issueId: string): Promise<number> {
  * and never throws.
  */
 async function sendRegisteredAddressNotice(params: {
-  to: string[]; employeeName: string; letterNumber: string; maskedRecipients: string[];
+  to: string[];
+  employeeName: string;
+  letterNumber: string;
+  maskedRecipients: string[];
 }): Promise<boolean> {
   if (params.to.length === 0) return true;
   let allSent = true;
@@ -91,18 +105,26 @@ If you did not expect this, please tell your HR team right away.</p>`;
         });
       } catch (error) {
         allSent = false;
-        console.warn("[appointment-letter] resend security notice failed:", error instanceof Error ? error.message : error);
+        console.warn(
+          "[appointment-letter] resend security notice failed:",
+          error instanceof Error ? error.message : error,
+        );
       }
     }
   } catch (error) {
     allSent = false;
-    console.warn("[appointment-letter] resend security notice unavailable:", error instanceof Error ? error.message : error);
+    console.warn(
+      "[appointment-letter] resend security notice unavailable:",
+      error instanceof Error ? error.message : error,
+    );
   }
   return allSent;
 }
 
 export async function resendAppointmentAcceptLink(params: {
-  issueId: string; actorUserId: string; custom?: CustomResendRequest | null;
+  issueId: string;
+  actorUserId: string;
+  custom?: CustomResendRequest | null;
 }): Promise<ResendOutcome> {
   const custom = params.custom ?? null;
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -121,41 +143,63 @@ export async function resendAppointmentAcceptLink(params: {
     [params.issueId],
   );
   const letter = (rows as RowDataPacket[])[0];
-  if (!letter) throw Object.assign(new Error("Letter not found"), { statusCode: 404 });
+  if (!letter)
+    throw Object.assign(new Error("Letter not found"), { statusCode: 404 });
 
   if (letter.revoked_at || String(letter.status) === "revoked") {
-    return { resent: false, message: "This letter has been revoked — there is nothing to resend." };
+    return {
+      resent: false,
+      message: "This letter has been revoked — there is nothing to resend.",
+    };
   }
-  if (["signed", "completed"].includes(String(letter.employee_esign_status ?? ""))) {
-    return { resent: false, message: "The employee has already accepted this letter — there is nothing to resend." };
+  if (
+    ["signed", "completed"].includes(String(letter.employee_esign_status ?? ""))
+  ) {
+    return {
+      resent: false,
+      message:
+        "The employee has already accepted this letter — there is nothing to resend.",
+    };
   }
-  const onFile = [...new Set(
-    [letter.personal_email, letter.official_email]
-      .map(normalisedOrNull)
-      .filter((e): e is string => e !== null),
-  )];
+  const onFile = [
+    ...new Set(
+      [letter.personal_email, letter.official_email]
+        .map(normalisedOrNull)
+        .filter((e): e is string => e !== null),
+    ),
+  ];
 
   let recipients: string[];
   if (custom) {
     if ((await countRecentResends(params.issueId)) >= MAX_RESENDS_PER_HOUR) {
       return {
-        resent: false, status: 429,
+        resent: false,
+        status: 429,
         message: `This letter has already been resent ${MAX_RESENDS_PER_HOUR} times in the last hour. Please wait before trying again.`,
       };
     }
     recipients = custom.recipients;
   } else {
     // Untouched legacy behaviour: the on-file addresses exactly as stored.
-    recipients = [letter.personal_email, letter.official_email]
-      .filter((e): e is string => typeof e === "string" && e.includes("@"));
+    recipients = [letter.personal_email, letter.official_email].filter(
+      (e): e is string => typeof e === "string" && e.includes("@"),
+    );
     if (recipients.length === 0) {
-      return { resent: false, message: "This employee has no email address on record." };
+      return {
+        resent: false,
+        message: "This employee has no email address on record.",
+      };
     }
   }
 
-  const previousHash: string | null = letter.accept_token_hash ? String(letter.accept_token_hash) : null;
+  const previousHash: string | null = letter.accept_token_hash
+    ? String(letter.accept_token_hash)
+    : null;
   const { token, tokenHash } = mintAcceptToken();
-  await db.execute(`UPDATE appointment_letter_issue SET accept_token_hash = ? WHERE id = ?`, [tokenHash, params.issueId]);
+  await db.execute(
+    `UPDATE appointment_letter_issue SET accept_token_hash = ? WHERE id = ?`,
+    [tokenHash, params.issueId],
+  );
 
   const attachments: Array<{ filename: string; content: Buffer }> = [];
   if (letter.signed_file_path) {
@@ -164,7 +208,9 @@ export async function resendAppointmentAcceptLink(params: {
         filename: `${letter.letter_number}.pdf`,
         content: await fs.promises.readFile(String(letter.signed_file_path)),
       });
-    } catch { /* the link still carries the letter; send without the attachment */ }
+    } catch {
+      /* the link still carries the letter; send without the attachment */
+    }
   }
 
   const emailedTo: string[] = [];
@@ -174,7 +220,9 @@ export async function resendAppointmentAcceptLink(params: {
       employeeName: String(letter.employee_name ?? ""),
       employeeCode: letter.employee_code ? String(letter.employee_code) : null,
       processName: letter.process_name ? String(letter.process_name) : null,
-      reportingManagerName: letter.reporting_manager_name ? String(letter.reporting_manager_name) : null,
+      reportingManagerName: letter.reporting_manager_name
+        ? String(letter.reporting_manager_name)
+        : null,
       letterNumber: String(letter.letter_number),
       designation: String(letter.designation ?? ""),
       dateOfJoining: istDisplayDate(letter.date_of_joining),
@@ -195,24 +243,51 @@ export async function resendAppointmentAcceptLink(params: {
   } catch (error) {
     // Nothing reached the employee: put the previous link back rather than
     // leaving them with none that works.
-    await db.execute(
-      `UPDATE appointment_letter_issue SET accept_token_hash = ? WHERE id = ? AND accept_token_hash = ?`,
-      [previousHash, params.issueId, tokenHash],
-    ).catch(() => undefined);
+    await db
+      .execute(
+        `UPDATE appointment_letter_issue SET accept_token_hash = ? WHERE id = ? AND accept_token_hash = ?`,
+        [previousHash, params.issueId, tokenHash],
+      )
+      .catch(() => undefined);
     const message = error instanceof Error ? error.message : String(error);
-    await auditAppointmentLetter(params.issueId, "LINK_RESEND_EMAIL_FAILED", params.actorUserId, {
-      error: message,
-      ...(custom ? { customRecipients: true, attemptedTo: recipients, reason: custom.reason } : {}),
-    });
-    return { resent: false, message: `The email could not be sent: ${message}` };
+    await auditAppointmentLetter(
+      params.issueId,
+      "LINK_RESEND_EMAIL_FAILED",
+      params.actorUserId,
+      {
+        error: message,
+        ...(custom
+          ? {
+              customRecipients: true,
+              attemptedTo: recipients,
+              reason: custom.reason,
+            }
+          : {}),
+      },
+    );
+    return {
+      resent: false,
+      message: `The email could not be sent: ${message}`,
+    };
   }
 
   const sentAt = new Date().toISOString();
   const letterNumber = String(letter.letter_number);
 
   if (!custom) {
-    await auditAppointmentLetter(params.issueId, "LINK_RESENT", params.actorUserId, { emailedTo });
-    return { resent: true, message: `Accept link re-sent to ${emailedTo.join(", ")}.`, emailedTo, letterNumber, sentAt };
+    await auditAppointmentLetter(
+      params.issueId,
+      "LINK_RESENT",
+      params.actorUserId,
+      { emailedTo },
+    );
+    return {
+      resent: true,
+      message: `Accept link re-sent to ${emailedTo.join(", ")}.`,
+      emailedTo,
+      letterNumber,
+      sentAt,
+    };
   }
 
   // The registered address(es) hear about it — except any that just received the
@@ -225,23 +300,38 @@ export async function resendAppointmentAcceptLink(params: {
     maskedRecipients: emailedTo.map(maskEmailAddress),
   });
 
-  await auditAppointmentLetter(params.issueId, "LINK_RESENT", params.actorUserId, {
-    emailedTo,
-    customRecipients: true,
-    onFile: emailedTo.map((address) => ({ address, onFile: onFile.includes(address) })),
-    reason: custom.reason,
-    registeredAddressNotified: noticeTo.length === 0 ? null : noticeSent,
-  });
+  await auditAppointmentLetter(
+    params.issueId,
+    "LINK_RESENT",
+    params.actorUserId,
+    {
+      emailedTo,
+      customRecipients: true,
+      onFile: emailedTo.map((address) => ({
+        address,
+        onFile: onFile.includes(address),
+      })),
+      reason: custom.reason,
+      registeredAddressNotified: noticeTo.length === 0 ? null : noticeSent,
+    },
+  );
   return {
     resent: true,
     message: `Accept link sent to ${emailedTo.map(maskEmailAddress).join(", ")}.`,
-    emailedTo, letterNumber, sentAt,
+    emailedTo,
+    letterNumber,
+    sentAt,
   };
 }
 
 export type ResendHistoryEntry = {
-  id: string; actedAt: string | null; actor: string | null;
-  outcome: "sent" | "failed"; custom: boolean; recipients: string[]; reason: string | null;
+  id: string;
+  actedAt: string | null;
+  actor: string | null;
+  outcome: "sent" | "failed";
+  custom: boolean;
+  recipients: string[];
+  reason: string | null;
 };
 export type ResendOptions = {
   letterNumber: string;
@@ -252,7 +342,12 @@ export type ResendOptions = {
 function parseDetail(raw: unknown): Record<string, unknown> {
   if (raw && typeof raw === "object") return raw as Record<string, unknown>;
   if (typeof raw === "string") {
-    try { const v = JSON.parse(raw); return v && typeof v === "object" ? v as Record<string, unknown> : {}; } catch { return {}; }
+    try {
+      const v = JSON.parse(raw);
+      return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
   }
   return {};
 }
@@ -262,7 +357,9 @@ function parseDetail(raw: unknown): Record<string, unknown> {
  * only has to show HR where the one-click option goes) and the resend history.
  * Scope is enforced by the route before this is called.
  */
-export async function getAppointmentResendOptions(issueId: string): Promise<ResendOptions> {
+export async function getAppointmentResendOptions(
+  issueId: string,
+): Promise<ResendOptions> {
   const [letterRows] = await db.execute<RowDataPacket[]>(
     `SELECT i.letter_number, e.personal_email,
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email
@@ -272,13 +369,20 @@ export async function getAppointmentResendOptions(issueId: string): Promise<Rese
     [issueId],
   );
   const letter = (letterRows as RowDataPacket[])[0];
-  if (!letter) throw Object.assign(new Error("Letter not found"), { statusCode: 404 });
+  if (!letter)
+    throw Object.assign(new Error("Letter not found"), { statusCode: 404 });
 
   const onFile: ResendOptions["onFile"] = [];
   const seen = new Set<string>();
-  for (const [kind, value] of [["personal", letter.personal_email], ["official", letter.official_email]] as const) {
+  for (const [kind, value] of [
+    ["personal", letter.personal_email],
+    ["official", letter.official_email],
+  ] as const) {
     const addr = normalisedOrNull(value);
-    if (addr && !seen.has(addr)) { seen.add(addr); onFile.push({ kind, masked: maskEmailAddress(addr) }); }
+    if (addr && !seen.has(addr)) {
+      seen.add(addr);
+      onFile.push({ kind, masked: maskEmailAddress(addr) });
+    }
   }
 
   const [auditRows] = await db.execute<RowDataPacket[]>(
@@ -294,28 +398,46 @@ export async function getAppointmentResendOptions(issueId: string): Promise<Rese
   // Looked up separately rather than joined: the audit table and auth_user were
   // created with different collations, and a join on the ids would need a cast.
   const actors = new Map<string, string>();
-  const actorIds = [...new Set(audits.map((a) => a.actor_user_id).filter((v): v is string => typeof v === "string" && v !== ""))];
+  const actorIds = [
+    ...new Set(
+      audits
+        .map((a) => a.actor_user_id)
+        .filter((v): v is string => typeof v === "string" && v !== ""),
+    ),
+  ];
   if (actorIds.length > 0) {
     try {
       const [users] = await db.execute<RowDataPacket[]>(
         `SELECT id, email FROM auth_user WHERE id IN (${actorIds.map(() => "?").join(",")})`,
         actorIds,
       );
-      for (const u of users as RowDataPacket[]) actors.set(String(u.id), String(u.email ?? ""));
-    } catch { /* names are a convenience; the history is still useful without them */ }
+      for (const u of users as RowDataPacket[])
+        actors.set(String(u.id), String(u.email ?? ""));
+    } catch {
+      /* names are a convenience; the history is still useful without them */
+    }
   }
 
   const history = audits.map((a): ResendHistoryEntry => {
     const detail = parseDetail(a.detail_json);
-    const addrs = Array.isArray(detail.emailedTo) ? detail.emailedTo
-      : Array.isArray(detail.attemptedTo) ? detail.attemptedTo : [];
+    const addrs = Array.isArray(detail.emailedTo)
+      ? detail.emailedTo
+      : Array.isArray(detail.attemptedTo)
+        ? detail.attemptedTo
+        : [];
     return {
       id: String(a.id),
-      actedAt: a.acted_at ? new Date(a.acted_at as string | Date).toISOString() : null,
-      actor: a.actor_user_id ? (actors.get(String(a.actor_user_id)) || null) : null,
+      actedAt: a.acted_at
+        ? new Date(a.acted_at as string | Date).toISOString()
+        : null,
+      actor: a.actor_user_id
+        ? actors.get(String(a.actor_user_id)) || null
+        : null,
       outcome: a.action === "LINK_RESENT" ? "sent" : "failed",
       custom: detail.customRecipients === true,
-      recipients: addrs.filter((x): x is string => typeof x === "string").map(maskEmailAddress),
+      recipients: addrs
+        .filter((x): x is string => typeof x === "string")
+        .map(maskEmailAddress),
       reason: typeof detail.reason === "string" ? detail.reason : null,
     };
   });
@@ -323,6 +445,8 @@ export async function getAppointmentResendOptions(issueId: string): Promise<Rese
 }
 
 /** HR "Check status": pull the employee's signature state from the provider now. */
-export async function checkAppointmentEsignStatus(issueId: string): Promise<AppointmentSyncOutcome> {
+export async function checkAppointmentEsignStatus(
+  issueId: string,
+): Promise<AppointmentSyncOutcome> {
   return syncAppointmentEsignForIssue(issueId);
 }

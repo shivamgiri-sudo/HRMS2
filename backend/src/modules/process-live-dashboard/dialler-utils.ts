@@ -29,7 +29,7 @@ export function fmtDuration(sec: number): string {
   const s = Math.max(0, Math.floor(Number(sec) || 0));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
-  return `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
 /**
@@ -40,10 +40,10 @@ export function fmtDuration(sec: number): string {
  * handled too. Empty or unparseable input returns ''.
  */
 export function fmtDateTime(v: unknown): string {
-  if (v === null || v === undefined || v === '') return '';
-  const d = v instanceof Date ? v : new Date(String(v).replace(' ', 'T'));
+  if (v === null || v === undefined || v === "") return "";
+  const d = v instanceof Date ? v : new Date(String(v).replace(" ", "T"));
   if (Number.isNaN(d.getTime())) return String(v);
-  const p = (x: number) => String(x).padStart(2, '0');
+  const p = (x: number) => String(x).padStart(2, "0");
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
@@ -53,9 +53,9 @@ export function fmtSec(sec: number): string {
   const m = Math.floor((s % 3600) / 60);
   const rem = s % 60;
   if (h > 0) {
-    return `${h}:${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+    return `${h}:${String(m).padStart(2, "0")}:${String(rem).padStart(2, "0")}`;
   }
-  return `${m}:${String(rem).padStart(2, '0')}`;
+  return `${m}:${String(rem).padStart(2, "0")}`;
 }
 
 /**
@@ -73,14 +73,26 @@ export function finalMetric(raw: {
   holdCount?: number;
   loginCount: number;
 }) {
-  const { offered, handled, calls20, abndWithin, handledTalkSec, handledAcwSec, holdSec, loginCount } = raw;
+  const {
+    offered,
+    handled,
+    calls20,
+    abndWithin,
+    handledTalkSec,
+    handledAcwSec,
+    holdSec,
+    loginCount,
+  } = raw;
   const holdCount = raw.holdCount ?? 0;
   const abandoned = offered - handled;
   const abndAfter = Math.max(0, abandoned - abndWithin);
   const denominator = offered - abndWithin;
   const sl = pct(calls20, denominator);
   const al = pct(handled, offered);
-  const ahtSec = handled > 0 ? round((handledTalkSec + holdSec + handledAcwSec) / handled, 0) : 0;
+  const ahtSec =
+    handled > 0
+      ? round((handledTalkSec + holdSec + handledAcwSec) / handled, 0)
+      : 0;
   const cpa = loginCount > 0 ? round(handled / loginCount, 2) : 0;
   const avgWrapSec = handled > 0 ? round(handledAcwSec / handled, 0) : 0;
   // holdTimeSec = average hold per hold-event (GAS: holdTimeTotalSec / holdCount)
@@ -123,7 +135,10 @@ export function defaultRange(): { from: string; to: string } {
 }
 
 /** Validate and parse from/to query params */
-export function parseRange(raw: { from?: string; to?: string }): { from: string; to: string } {
+export function parseRange(raw: { from?: string; to?: string }): {
+  from: string;
+  to: string;
+} {
   const def = defaultRange();
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
   return {

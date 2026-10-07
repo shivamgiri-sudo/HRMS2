@@ -53,7 +53,7 @@ export async function requestDialerHold(params: {
       `INSERT INTO training_dialer_hold
          (id, employee_id, training_assignment_id, status, reason)
        VALUES (?, ?, ?, 'requested', ?)`,
-      [id, params.employeeId, params.trainingAssignmentId, params.reason]
+      [id, params.employeeId, params.trainingAssignmentId, params.reason],
     );
   } catch (err) {
     if ((err as { code?: string }).code === "ER_DUP_ENTRY") return null;
@@ -84,25 +84,30 @@ export async function requestDialerHold(params: {
 /** WFM/Ops confirming they have paused the agent in Vicidial. Idempotent — a second call on an already-applied hold is a no-op, not an error, since two people confirming the same action is not a conflict worth failing on. */
 export async function markDialerHoldApplied(
   holdId: string,
-  appliedBy: string
+  appliedBy: string,
 ): Promise<void> {
   const [result] = await db.execute<ResultSetHeader>(
     `UPDATE training_dialer_hold
         SET status = 'applied', applied_by = ?, applied_at = NOW(), updated_at = NOW()
       WHERE id = ? AND status = 'requested'`,
-    [appliedBy, holdId]
+    [appliedBy, holdId],
   );
   if (result.affectedRows === 0) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT status FROM training_dialer_hold WHERE id = ? LIMIT 1`,
-      [holdId]
+      [holdId],
     );
     const current = (rows as RowDataPacket[])[0]?.status;
     if (!current) {
-      throw Object.assign(new Error("Dialer hold not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Dialer hold not found"), {
+        statusCode: 404,
+      });
     }
     if (current !== "applied") {
-      throw Object.assign(new Error(`Dialer hold is ${current}, cannot mark applied`), { statusCode: 409 });
+      throw Object.assign(
+        new Error(`Dialer hold is ${current}, cannot mark applied`),
+        { statusCode: 409 },
+      );
     }
     // Already applied — treat as success (idempotent).
   }
@@ -120,17 +125,20 @@ export async function markDialerHoldApplied(
 export async function liftDialerHold(
   holdId: string,
   liftedBy: string,
-  notes?: string
+  notes?: string,
 ): Promise<void> {
   const [result] = await db.execute<ResultSetHeader>(
     `UPDATE training_dialer_hold
         SET status = 'lifted', lifted_by = ?, lifted_at = NOW(),
             notes = COALESCE(?, notes), updated_at = NOW()
       WHERE id = ? AND status IN ('requested', 'applied')`,
-    [liftedBy, notes ?? null, holdId]
+    [liftedBy, notes ?? null, holdId],
   );
   if (result.affectedRows === 0) {
-    throw Object.assign(new Error("Dialer hold not found or already resolved"), { statusCode: 409 });
+    throw Object.assign(
+      new Error("Dialer hold not found or already resolved"),
+      { statusCode: 409 },
+    );
   }
 
   await writeSensitiveActionLog({
@@ -153,7 +161,7 @@ export async function listActiveDialerHolds(): Promise<RowDataPacket[]> {
        JOIN training_assignment ta ON ta.id = h.training_assignment_id
        JOIN skill_category sc ON sc.id = ta.skill_category_id
       WHERE h.status IN ('requested', 'applied')
-      ORDER BY h.requested_at ASC`
+      ORDER BY h.requested_at ASC`,
   );
   return rows as RowDataPacket[];
 }

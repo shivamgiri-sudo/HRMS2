@@ -13,11 +13,23 @@ import { config } from "dotenv";
 import { fileURLToPath } from "url";
 import path from "path";
 
-config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.env") });
+config({
+  path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.env"),
+});
 
 const APPLY = process.argv.includes("--apply");
 
-const PLACEHOLDERS = new Set(["na", "n/a", "n.a.", "-", "--", "nil", "none", "null", ""]);
+const PLACEHOLDERS = new Set([
+  "na",
+  "n/a",
+  "n.a.",
+  "-",
+  "--",
+  "nil",
+  "none",
+  "null",
+  "",
+]);
 function blankToNull(value) {
   if (value === null || value === undefined) return null;
   const s = String(value).trim();
@@ -47,37 +59,49 @@ async function main() {
   });
 
   try {
-    console.log(`[vendor-sync] Connecting to db_bill (${process.env.BILL_DB_HOST}/${process.env.BILL_DB_NAME}) ...`);
+    console.log(
+      `[vendor-sync] Connecting to db_bill (${process.env.BILL_DB_HOST}/${process.env.BILL_DB_NAME}) ...`,
+    );
     const [billRows] = await bill.query(
-      "SELECT Id, vendor, TallyHead, state, pincode, TDS, TDSSection, TDSEnabled FROM tbl_vendormaster"
+      "SELECT Id, vendor, TallyHead, state, pincode, TDS, TDSSection, TDSEnabled FROM tbl_vendormaster",
     );
     console.log(`[vendor-sync] db_bill rows: ${billRows.length}`);
 
     const [existingRows] = await hrms.query(
-      "SELECT vendor_code FROM vendor_master WHERE vendor_code LIKE 'DB_BILL_%'"
+      "SELECT vendor_code FROM vendor_master WHERE vendor_code LIKE 'DB_BILL_%'",
     );
-    const existingCodes = new Set(existingRows.map((r) => String(r.vendor_code)));
-    console.log(`[vendor-sync] mas_hrms existing DB_BILL vendors: ${existingCodes.size}`);
+    const existingCodes = new Set(
+      existingRows.map((r) => String(r.vendor_code)),
+    );
+    console.log(
+      `[vendor-sync] mas_hrms existing DB_BILL vendors: ${existingCodes.size}`,
+    );
 
     const toInsert = [];
     let skippedExists = 0;
-    let skippedBlank  = 0;
+    let skippedBlank = 0;
 
     for (const row of billRows) {
       const vendorCode = `DB_BILL_${row.Id}`;
-      if (existingCodes.has(vendorCode)) { skippedExists += 1; continue; }
+      if (existingCodes.has(vendorCode)) {
+        skippedExists += 1;
+        continue;
+      }
 
       const vendorName = blankToNull(row.vendor);
-      if (!vendorName)  { skippedBlank += 1;  continue; }
+      if (!vendorName) {
+        skippedBlank += 1;
+        continue;
+      }
 
       toInsert.push({
-        id:          randomUUID(),
+        id: randomUUID(),
         vendor_code: vendorCode,
         vendor_name: vendorName,
-        tally_name:  blankToNull(row.TallyHead),
-        state:       blankToNull(row.state),
-        pin_code:    blankToNull(row.pincode),
-        tds_rate:    ratioToNull(row.TDS),
+        tally_name: blankToNull(row.TallyHead),
+        state: blankToNull(row.state),
+        pin_code: blankToNull(row.pincode),
+        tds_rate: ratioToNull(row.TDS),
         tds_enabled: Number(row.TDSEnabled) === 1 ? 1 : 0,
         tds_section: blankToNull(row.TDSSection)?.slice(0, 20) ?? null,
       });
@@ -91,14 +115,21 @@ async function main() {
 
     if (toInsert.length > 0) {
       console.log(`\n--- New vendors (first 20) ---`);
-      toInsert.slice(0, 20).forEach((v) =>
-        console.log(`  ${v.vendor_code.padEnd(16)} ${v.vendor_name}${v.tally_name ? ' [tally: ' + v.tally_name + ']' : ''}`)
-      );
-      if (toInsert.length > 20) console.log(`  ... and ${toInsert.length - 20} more`);
+      toInsert
+        .slice(0, 20)
+        .forEach((v) =>
+          console.log(
+            `  ${v.vendor_code.padEnd(16)} ${v.vendor_name}${v.tally_name ? " [tally: " + v.tally_name + "]" : ""}`,
+          ),
+        );
+      if (toInsert.length > 20)
+        console.log(`  ... and ${toInsert.length - 20} more`);
     }
 
     if (!APPLY) {
-      console.log(`\nDRY RUN — nothing written. Re-run with --apply to insert.`);
+      console.log(
+        `\nDRY RUN — nothing written. Re-run with --apply to insert.`,
+      );
       return;
     }
 
@@ -109,17 +140,30 @@ async function main() {
            (id, vendor_code, vendor_name, vendor_type, tally_name, state, pin_code,
             tds_rate, tds_enabled, tds_section, is_active)
          VALUES (?, ?, ?, 'supplier', ?, ?, ?, ?, ?, ?, 1)`,
-        [v.id, v.vendor_code, v.vendor_name, v.tally_name, v.state, v.pin_code,
-         v.tds_rate, v.tds_enabled, v.tds_section]
+        [
+          v.id,
+          v.vendor_code,
+          v.vendor_name,
+          v.tally_name,
+          v.state,
+          v.pin_code,
+          v.tds_rate,
+          v.tds_enabled,
+          v.tds_section,
+        ],
       );
       written += 1;
     }
-    console.log(`\nAPPLIED — ${written} vendor(s) inserted into mas_hrms.vendor_master.`);
-
+    console.log(
+      `\nAPPLIED — ${written} vendor(s) inserted into mas_hrms.vendor_master.`,
+    );
   } finally {
     await hrms.end();
     await bill.end();
   }
 }
 
-main().catch((err) => { console.error("FAILED:", err.message); process.exit(1); });
+main().catch((err) => {
+  console.error("FAILED:", err.message);
+  process.exit(1);
+});

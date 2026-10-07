@@ -10,7 +10,10 @@ router.get("/banks", (_req, res) => {
 });
 
 router.get("/address-proof-types", (_req, res) => {
-  res.json({ success: true, data: OnboardingDataService.getAddressProofTypes() });
+  res.json({
+    success: true,
+    data: OnboardingDataService.getAddressProofTypes(),
+  });
 });
 
 router.get("/states", (_req, res) => {

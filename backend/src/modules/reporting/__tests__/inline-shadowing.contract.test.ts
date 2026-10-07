@@ -27,7 +27,9 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 
 const inlineCodes = (): Set<string> => {
   const src = read("src/modules/reporting/report-suite.routes.ts");
-  return new Set([...src.matchAll(/^\s{4}case "([a-z0-9-]+)"/gm)].map(m => m[1]));
+  return new Set(
+    [...src.matchAll(/^\s{4}case "([a-z0-9-]+)"/gm)].map((m) => m[1]),
+  );
 };
 
 /**
@@ -68,47 +70,48 @@ const inlineCodes = (): Set<string> => {
  * observable — which is exactly what the before/after capture showed.
  */
 const SHADOWED_BACKLOG = new Set<string>([
-  
   // "anniversary-list" left this list on 2026-08-09 — the executor filtered to the current
   // month while the screen listed the whole year, so the download held a tenth of the rows.
-  
+
   // "attendance-daily" left this list on 2026-08-09 — the executor returned 160 rows
   // against the screen's 1,127, because it drove from attendance_daily_record instead of
   // employees and so could not see anyone without an attendance row.
-  
+
   // "attendance-dispute-summary" left this list on 2026-08-08 — the inline block
   // same, and the executor also lacked the dispute_type filter that separates disputes from plain regularizations.
-  
+
   // "attendance-summary" left this list on 2026-08-09 — same rows as the screen,
   // disjoint columns, catalogue matches the screen.
-  
-  
+
   // "biometric-reconciliation" left this list on 2026-08-09 — same rows as the screen,
   // disjoint columns, catalogue matches the screen.
-  
+
   // "birthday-list" left this list on 2026-08-09 — the executor filtered to the current
   // month while the screen listed the whole year, so the download held a tenth of the rows.
   "clearance-status-register",
-  "confirmation-due-list", "contract-expiry-list", "cost-centre-headcount", 
+  "confirmation-due-list",
+  "contract-expiry-list",
+  "cost-centre-headcount",
   // "daily-hc-shift" left this list on 2026-08-09 — same row count as the screen,
   // disjoint columns, and the catalogue names the screen's.
-  
+
   // "daily-shrinkage-report" left this list on 2026-08-08. The shadow hid disjoint column
   // sets: the inline block emitted the nine metrics the catalogue declares and the executor
   // emitted three of its own, so the downloaded workbook shared no metric column with the
   // screen. The executor now carries the inline SQL and the block is gone.
-  "employee-master", "employee-movement",
-  
+  "employee-master",
+  "employee-movement",
+
   // "gratuity-liability-register" left this list on 2026-08-09 —
   // screen 175 rows, download 131 — the executor lacked the five-year qualifying filter.
   "grievance-register",
-  
+
   // "holiday-master-list" left this list on 2026-08-09 —
   // the executor returned a different column set from the screen.
-  "identity-source-snapshot", 
+  "identity-source-snapshot",
   // "increment-promotion-history" left this list on 2026-08-09 —
   // screen and download returned 1,408 and 1,368 rows.
-  
+
   // "late-arrival-summary" left this list on 2026-08-08. The shadow was hiding a genuine
   // disagreement rather than a duplicate: the inline block returned one row per late arrival
   // (2,199 live) and the executor grouped by employee into totals (577). Because the preview
@@ -117,20 +120,23 @@ const SHADOWED_BACKLOG = new Set<string>([
   // The catalogue settled it — 10 of the 10 columns unique to the detail shape are declared,
   // 0 of the 3 unique to the aggregate — so the executor was rewritten to the detail and the
   // inline block removed.
-  "leave-allocation-register", "leave-balance-export",
+  "leave-allocation-register",
+  "leave-balance-export",
   // "leave-encashment-register" left this list on 2026-08-08. Its inline block queried a
   // table named leave_encashment that does not exist, so the shadow guaranteed a 500; the
   // executor it was hiding raises ReportSourceUnavailableError instead, which is the honest
   // answer for a report whose source is genuinely absent.
-  
+
   // "leave-lapse-summary" left this list on 2026-08-08 — screen and download returned 3,000
   // and 2,916 rows for the same code.
-  
+
   // "leave-lwp-reconciliation" left this list on 2026-08-08 — the shadow hid a different
   // report entirely (650 rows against 1,569) and kept the executor from receiving the
   // bind-order fix its LEFT JOIN placeholder needs.
-  
-  "leave-trend-monthly", "lifecycle-events", "maternity-paternity-register",
+
+  "leave-trend-monthly",
+  "lifecycle-events",
+  "maternity-paternity-register",
   // "monthly-attrition-summary" left this list on 2026-08-08. Its inline block read
   // attrition_record, a table that exists with 0 rows, so the report showed zero attrition
   // while 1,666 employees left in seven months. The executor it shadowed counts from the
@@ -140,25 +146,23 @@ const SHADOWED_BACKLOG = new Set<string>([
   // missing_manager where the catalogue and the grid expect with_manager / without_manager,
   // so the downloaded workbook carried the right numbers under keys nothing reads. The
   // executor now matches the inline SQL exactly and the block is gone.
-  
+
   // "monthly-shrinkage-trend" left this list on 2026-08-09 — same rows as the screen,
   // disjoint columns, catalogue matches the screen.
-  
-  
+
   // "overtime-summary" left this list on 2026-08-08 — the executor measured overtime in
   // minutes against a different baseline from the screen, so the two disagreed on which days
   // counted as overtime at all.
-  "payroll-register", "payroll-variance", 
+  "payroll-register",
+  "payroll-variance",
   // "punch-raw-export" left this list on 2026-08-09 — same row count as the screen,
   // disjoint columns, and the catalogue names the screen's.
-  
-  
+
   // "regularization-summary" left this list on 2026-08-08 — the inline block
   // returned one row per request while the executor counted per employee.
-  
+
   // "shift-adherence-detail" left this list on 2026-08-09 — same rows as the screen,
   // disjoint columns, catalogue matches the screen.
-  
 ]);
 
 describe("inline route blocks must not shadow executors", () => {
@@ -178,8 +182,8 @@ describe("inline route blocks must not shadow executors", () => {
   });
 
   it("no NEW code shadows an executor", () => {
-    const shadowed = [...inline].filter(c => execs.has(c)).sort();
-    const unexpected = shadowed.filter(c => !SHADOWED_BACKLOG.has(c));
+    const shadowed = [...inline].filter((c) => execs.has(c)).sort();
+    const unexpected = shadowed.filter((c) => !SHADOWED_BACKLOG.has(c));
 
     expect(
       unexpected,
@@ -190,8 +194,10 @@ describe("inline route blocks must not shadow executors", () => {
   });
 
   it("the shadowing backlog only shrinks", () => {
-    const shadowed = new Set([...inline].filter(c => execs.has(c)));
-    const fixedButStillListed = [...SHADOWED_BACKLOG].filter(c => !shadowed.has(c)).sort();
+    const shadowed = new Set([...inline].filter((c) => execs.has(c)));
+    const fixedButStillListed = [...SHADOWED_BACKLOG]
+      .filter((c) => !shadowed.has(c))
+      .sort();
 
     expect(
       fixedButStillListed,

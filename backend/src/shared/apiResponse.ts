@@ -21,7 +21,11 @@ export function apiSuccess<T>(data: T, meta?: ApiMeta): ApiSuccessResponse<T> {
   return meta ? { success: true, data, meta } : { success: true, data };
 }
 
-export function apiError(code: string, message: string, status = 500): ApiErrorResponse {
+export function apiError(
+  code: string,
+  message: string,
+  status = 500,
+): ApiErrorResponse {
   return {
     success: false,
     error: { code, message },
@@ -40,10 +44,15 @@ export type SourceFailureDetail = {
 };
 
 export function describeSourceFailure(error: unknown): SourceFailureDetail {
-  const err = error as { code?: unknown; sqlState?: unknown; message?: unknown } | null;
+  const err = error as {
+    code?: unknown;
+    sqlState?: unknown;
+    message?: unknown;
+  } | null;
   return {
     errorCode: typeof err?.code === "string" ? err.code : null,
-    errorMessage: typeof err?.message === "string" ? err.message : String(error),
+    errorMessage:
+      typeof err?.message === "string" ? err.message : String(error),
     sqlState: typeof err?.sqlState === "string" ? err.sqlState : null,
   };
 }

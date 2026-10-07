@@ -5,7 +5,9 @@ describe("normalizeRoleInputs", () => {
   it("maps legacy role labels to canonical roles", () => {
     expect(normalizeRoleInputs(["hr_admin"])).toEqual(["hr"]);
     expect(normalizeRoleInputs(["QA_Manager"])).toEqual(["qa"]);
-    expect(normalizeRoleInputs(["Operations_Manager"])).toEqual(["operations_manager"]);
+    expect(normalizeRoleInputs(["Operations_Manager"])).toEqual([
+      "operations_manager",
+    ]);
     expect(normalizeRoleInputs(["payroll_admin"])).toEqual(["payroll"]);
     expect(normalizeRoleInputs(["wfm_spoc"])).toEqual(["wfm"]);
     expect(normalizeRoleInputs(["branch_it"])).toEqual(["it"]);

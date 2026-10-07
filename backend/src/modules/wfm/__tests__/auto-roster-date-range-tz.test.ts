@@ -20,8 +20,13 @@ describe("dateRange returns exactly the requested dates, timezone-independent", 
   it("returns every date in a 7-day range with none shifted", () => {
     const dates = dateRange("2026-08-17", "2026-08-23");
     expect(dates).toEqual([
-      "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20",
-      "2026-08-21", "2026-08-22", "2026-08-23",
+      "2026-08-17",
+      "2026-08-18",
+      "2026-08-19",
+      "2026-08-20",
+      "2026-08-21",
+      "2026-08-22",
+      "2026-08-23",
     ]);
   });
 
@@ -31,7 +36,10 @@ describe("dateRange returns exactly the requested dates, timezone-independent", 
 
   it("handles a month boundary correctly", () => {
     expect(dateRange("2026-08-30", "2026-09-02")).toEqual([
-      "2026-08-30", "2026-08-31", "2026-09-01", "2026-09-02",
+      "2026-08-30",
+      "2026-08-31",
+      "2026-09-01",
+      "2026-09-02",
     ]);
   });
 });

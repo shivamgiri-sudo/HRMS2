@@ -4,7 +4,10 @@ import { env } from "../config/env.js";
 
 function isPrivateIPv4(ip: string): boolean {
   const parts = ip.split(".").map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return true;
   }
 
@@ -24,7 +27,12 @@ function isPrivateIPv4(ip: string): boolean {
 function isPrivateIPv6(ip: string): boolean {
   const normalized = ip.toLowerCase();
   if (normalized === "::1" || normalized === "::") return true;
-  if (normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe80:")) return true;
+  if (
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe80:")
+  )
+    return true;
   if (normalized.startsWith("::ffff:")) {
     return isPrivateIPv4(normalized.replace("::ffff:", ""));
   }
@@ -44,7 +52,10 @@ const BLOCKED_HOSTNAMES = new Set([
   "metadata",
 ]);
 
-export async function assertSafeOutboundUrl(rawUrl: string, context: string): Promise<URL> {
+export async function assertSafeOutboundUrl(
+  rawUrl: string,
+  context: string,
+): Promise<URL> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -68,7 +79,8 @@ export async function assertSafeOutboundUrl(rawUrl: string, context: string): Pr
   }
 
   if (net.isIP(hostname)) {
-    if (isPrivateAddress(hostname)) throw new Error(`${context} URL targets a private IP`);
+    if (isPrivateAddress(hostname))
+      throw new Error(`${context} URL targets a private IP`);
     return url;
   }
 
@@ -79,7 +91,10 @@ export async function assertSafeOutboundUrl(rawUrl: string, context: string): Pr
     throw new Error(`${context} URL host could not be resolved`);
   }
 
-  if (records.length === 0 || records.some((record) => isPrivateAddress(record.address))) {
+  if (
+    records.length === 0 ||
+    records.some((record) => isPrivateAddress(record.address))
+  ) {
     throw new Error(`${context} URL resolves to a private or unsafe address`);
   }
 

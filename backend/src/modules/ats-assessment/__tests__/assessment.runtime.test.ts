@@ -33,7 +33,8 @@ import { supabaseAuthClient } from "../../../db/supabaseAdmin.js";
 import { getProcessRepository } from "../../../modules/process/process.repository.js";
 
 const repositoryRoot = resolve(process.cwd(), "..");
-const readRepositoryFile = (path: string) => readFileSync(resolve(repositoryRoot, path), "utf8");
+const readRepositoryFile = (path: string) =>
+  readFileSync(resolve(repositoryRoot, path), "utf8");
 
 const mockDbExecute = db.execute as ReturnType<typeof vi.fn>;
 const mockPingDb = pingDb as ReturnType<typeof vi.fn>;
@@ -51,19 +52,26 @@ beforeEach(() => {
     updateStatus: vi.fn(),
   });
   mockPingDb.mockResolvedValue(undefined);
-  mockGetUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+  mockGetUser.mockResolvedValue({
+    data: { user: { id: "user-1" } },
+    error: null,
+  });
 });
 
 describe("ATS assessment app routing", () => {
   it("mounts ats-ext before the generic /api client router", () => {
     const appSource = readRepositoryFile("backend/src/app.ts");
-    const atsExtMount = appSource.indexOf('app.use("/api/ats-ext", atsExtRouter)');
+    const atsExtMount = appSource.indexOf(
+      'app.use("/api/ats-ext", atsExtRouter)',
+    );
     const genericApiMount = appSource.indexOf('app.use("/api", clientRouter)');
 
     expect(atsExtMount).toBeGreaterThan(-1);
     expect(genericApiMount).toBeGreaterThan(-1);
     expect(atsExtMount).toBeLessThan(genericApiMount);
-    expect(appSource.match(/app\.use\(\"\/api\/ats-ext\", atsExtRouter\)/g)).toHaveLength(1);
+    expect(
+      appSource.match(/app\.use\(\"\/api\/ats-ext\", atsExtRouter\)/g),
+    ).toHaveLength(1);
   });
 
   it("serves the public assessment health endpoint without auth", async () => {
@@ -77,7 +85,9 @@ describe("ATS assessment app routing", () => {
   });
 
   it("keeps the assessment admin dashboard protected", async () => {
-    const res = await request(app).get("/api/ats-ext/assessment-admin/dashboard");
+    const res = await request(app).get(
+      "/api/ats-ext/assessment-admin/dashboard",
+    );
 
     expect(res.status).toBe(401);
     expect(res.body.success).toBe(false);
@@ -92,7 +102,9 @@ describe("ATS assessment app routing", () => {
   });
 
   it("serves the canonical template-builder page publicly", async () => {
-    const res = await request(app).get("/api/ats-ext/assessment-admin/template-builder");
+    const res = await request(app).get(
+      "/api/ats-ext/assessment-admin/template-builder",
+    );
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/html");
@@ -100,9 +112,13 @@ describe("ATS assessment app routing", () => {
   });
 
   it("redirects the legacy template-builder URL to the canonical route", async () => {
-    const res = await request(app).get("/api/ats-ext/assessment-template-builder");
+    const res = await request(app).get(
+      "/api/ats-ext/assessment-template-builder",
+    );
 
     expect(res.status).toBe(308);
-    expect(res.headers.location).toBe("/api/ats-ext/assessment-admin/template-builder");
+    expect(res.headers.location).toBe(
+      "/api/ats-ext/assessment-admin/template-builder",
+    );
   });
 });

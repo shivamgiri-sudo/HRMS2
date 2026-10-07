@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
 
 /**
  * Verifying an education document must reach the BGV report.
@@ -19,53 +19,84 @@ import { describe, expect, it } from 'vitest';
  * is_auto_approved guard exists to reject.
  */
 const secureDocs = readFileSync(
-  resolve(process.cwd(), 'src/modules/ats/secure-documents.service.ts'),
-  'utf8',
+  resolve(process.cwd(), "src/modules/ats/secure-documents.service.ts"),
+  "utf8",
 );
 
-describe('education BGV status follows verified documents', () => {
-  it('syncs only from verifyCandidateDocument, not from an upload path', () => {
-    const verify = secureDocs.slice(secureDocs.indexOf('export async function verifyCandidateDocument'));
-    const body = verify.slice(0, verify.indexOf('export async function rejectCandidateDocument'));
-    expect(body).toContain('syncEducationStatusFromDocuments(document.candidate_id)');
+describe("education BGV status follows verified documents", () => {
+  it("syncs only from verifyCandidateDocument, not from an upload path", () => {
+    const verify = secureDocs.slice(
+      secureDocs.indexOf("export async function verifyCandidateDocument"),
+    );
+    const body = verify.slice(
+      0,
+      verify.indexOf("export async function rejectCandidateDocument"),
+    );
+    expect(body).toContain(
+      "syncEducationStatusFromDocuments(document.candidate_id)",
+    );
     // Exactly one caller: the verify path.
-    expect(secureDocs.match(/syncEducationStatusFromDocuments\(/g)).toHaveLength(2); // definition + call
+    expect(
+      secureDocs.match(/syncEducationStatusFromDocuments\(/g),
+    ).toHaveLength(2); // definition + call
   });
 
-  it('only fires for education documents, using the existing categoryOf mapping', () => {
-    const verify = secureDocs.slice(secureDocs.indexOf('export async function verifyCandidateDocument'));
-    const body = verify.slice(0, verify.indexOf('export async function rejectCandidateDocument'));
-    expect(body).toContain('categoryOf(document.document_type) === "education"');
+  it("only fires for education documents, using the existing categoryOf mapping", () => {
+    const verify = secureDocs.slice(
+      secureDocs.indexOf("export async function verifyCandidateDocument"),
+    );
+    const body = verify.slice(
+      0,
+      verify.indexOf("export async function rejectCandidateDocument"),
+    );
+    expect(body).toContain(
+      'categoryOf(document.document_type) === "education"',
+    );
   });
 
-  it('counts only documents whose status is verified', () => {
-    const fn = secureDocs.slice(secureDocs.indexOf('async function syncEducationStatusFromDocuments'));
-    expect(fn).toContain("String(r.document_status) === \"verified\"");
-    expect(fn).toContain('if (verified === 0) return;');
+  it("counts only documents whose status is verified", () => {
+    const fn = secureDocs.slice(
+      secureDocs.indexOf("async function syncEducationStatusFromDocuments"),
+    );
+    expect(fn).toContain('String(r.document_status) === "verified"');
+    expect(fn).toContain("if (verified === 0) return;");
   });
 
-  it('writes passed only when every education document is verified', () => {
-    const fn = secureDocs.slice(secureDocs.indexOf('async function syncEducationStatusFromDocuments'));
-    expect(fn).toContain('verified === educationDocs.length ? "passed" : "partial"');
+  it("writes passed only when every education document is verified", () => {
+    const fn = secureDocs.slice(
+      secureDocs.indexOf("async function syncEducationStatusFromDocuments"),
+    );
+    expect(fn).toContain(
+      'verified === educationDocs.length ? "passed" : "partial"',
+    );
   });
 
-  it('never overwrites a locked report, an HR failure, or an existing pass', () => {
-    const fn = secureDocs.slice(secureDocs.indexOf('async function syncEducationStatusFromDocuments'));
-    expect(fn).toContain('AND locked = 0');
+  it("never overwrites a locked report, an HR failure, or an existing pass", () => {
+    const fn = secureDocs.slice(
+      secureDocs.indexOf("async function syncEducationStatusFromDocuments"),
+    );
+    expect(fn).toContain("AND locked = 0");
     expect(fn).toContain("NOT IN ('failed', 'passed')");
   });
 
-  it('re-derives the overall verdict rather than setting it directly', () => {
-    const fn = secureDocs.slice(secureDocs.indexOf('async function syncEducationStatusFromDocuments'));
-    expect(fn).toContain('computeAndSaveScore(candidateId)');
+  it("re-derives the overall verdict rather than setting it directly", () => {
+    const fn = secureDocs.slice(
+      secureDocs.indexOf("async function syncEducationStatusFromDocuments"),
+    );
+    expect(fn).toContain("computeAndSaveScore(candidateId)");
     // overall_status is computed, never assigned — the same rule bgv-verification
     // enforces so a 'clear' cannot be written without the checks behind it.
     expect(fn).not.toMatch(/overall_status\s*=\s*['"]/);
   });
 
-  it('does not fail the document verification when the sync fails', () => {
-    const verify = secureDocs.slice(secureDocs.indexOf('export async function verifyCandidateDocument'));
-    const body = verify.slice(0, verify.indexOf('export async function rejectCandidateDocument'));
-    expect(body).toContain('.catch((err: unknown)');
+  it("does not fail the document verification when the sync fails", () => {
+    const verify = secureDocs.slice(
+      secureDocs.indexOf("export async function verifyCandidateDocument"),
+    );
+    const body = verify.slice(
+      0,
+      verify.indexOf("export async function rejectCandidateDocument"),
+    );
+    expect(body).toContain(".catch((err: unknown)");
   });
 });

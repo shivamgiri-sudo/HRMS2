@@ -4,8 +4,8 @@
 // Description: Badge management and auto-award logic
 // =====================================================
 
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import type {
   BadgeMaster,
   EmployeeBadgeEarned,
@@ -14,17 +14,17 @@ import type {
   AwardBadgeDTO,
   BadgeFilters,
   BadgeCriteria,
-} from './engagement.types.js';
-import crypto from 'crypto';
-import { addPoints } from './gamification.service.js';
+} from "./engagement.types.js";
+import crypto from "crypto";
+import { addPoints } from "./gamification.service.js";
 
 export type AutoAwardActivity =
-  | 'performance_review'
-  | 'attendance'
-  | 'survey_completed'
-  | 'payslip_acknowledged'
-  | 'kpi_score_recorded'
-  | 'tenure';
+  | "performance_review"
+  | "attendance"
+  | "survey_completed"
+  | "payslip_acknowledged"
+  | "kpi_score_recorded"
+  | "tenure";
 
 // =====================================================
 // BADGE MANAGEMENT
@@ -33,7 +33,9 @@ export type AutoAwardActivity =
 /**
  * Get badges with optional filters
  */
-export async function getBadges(filters?: BadgeFilters): Promise<BadgeMaster[]> {
+export async function getBadges(
+  filters?: BadgeFilters,
+): Promise<BadgeMaster[]> {
   let sql = `
     SELECT DISTINCT badge_id, badge_name, badge_description, badge_icon,
            badge_category, points_value, criteria_json, is_active,
@@ -44,22 +46,22 @@ export async function getBadges(filters?: BadgeFilters): Promise<BadgeMaster[]> 
   const params: unknown[] = [];
 
   if (filters?.badge_category) {
-    sql += ' AND badge_category = ?';
+    sql += " AND badge_category = ?";
     params.push(filters.badge_category);
   }
 
   if (filters?.is_active !== undefined) {
-    sql += ' AND is_active = ?';
+    sql += " AND is_active = ?";
     params.push(filters.is_active);
   }
 
   if (filters?.search) {
-    sql += ' AND (badge_name LIKE ? OR badge_description LIKE ?)';
+    sql += " AND (badge_name LIKE ? OR badge_description LIKE ?)";
     const searchTerm = `%${filters.search}%`;
     params.push(searchTerm, searchTerm);
   }
 
-  sql += ' GROUP BY badge_id ORDER BY badge_category, badge_name';
+  sql += " GROUP BY badge_id ORDER BY badge_category, badge_name";
 
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
 
@@ -68,7 +70,7 @@ export async function getBadges(filters?: BadgeFilters): Promise<BadgeMaster[]> 
     badge_name: row.badge_name as string,
     badge_description: row.badge_description as string | null,
     badge_icon: row.badge_icon as string | null,
-    badge_category: row.badge_category as BadgeMaster['badge_category'],
+    badge_category: row.badge_category as BadgeMaster["badge_category"],
     points_value: row.points_value as number,
     criteria_json: row.criteria_json as BadgeCriteria | null,
     is_active: Boolean(row.is_active),
@@ -80,7 +82,9 @@ export async function getBadges(filters?: BadgeFilters): Promise<BadgeMaster[]> 
 /**
  * Get single badge by ID
  */
-export async function getBadgeById(badgeId: string): Promise<BadgeMaster | null> {
+export async function getBadgeById(
+  badgeId: string,
+): Promise<BadgeMaster | null> {
   const sql = `
     SELECT badge_id, badge_name, badge_description, badge_icon,
            badge_category, points_value, criteria_json, is_active,
@@ -99,7 +103,7 @@ export async function getBadgeById(badgeId: string): Promise<BadgeMaster | null>
     badge_name: row.badge_name as string,
     badge_description: row.badge_description as string | null,
     badge_icon: row.badge_icon as string | null,
-    badge_category: row.badge_category as BadgeMaster['badge_category'],
+    badge_category: row.badge_category as BadgeMaster["badge_category"],
     points_value: row.points_value as number,
     criteria_json: row.criteria_json as BadgeCriteria | null,
     is_active: Boolean(row.is_active),
@@ -139,7 +143,7 @@ export async function createBadge(data: CreateBadgeDTO): Promise<BadgeMaster> {
   await db.executeRun(sql, params);
 
   const badge = await getBadgeById(badgeId);
-  if (!badge) throw new Error('Failed to create badge');
+  if (!badge) throw new Error("Failed to create badge");
 
   return badge;
 }
@@ -149,37 +153,39 @@ export async function createBadge(data: CreateBadgeDTO): Promise<BadgeMaster> {
  */
 export async function updateBadge(
   badgeId: string,
-  updates: UpdateBadgeDTO
+  updates: UpdateBadgeDTO,
 ): Promise<BadgeMaster | null> {
   const fields: string[] = [];
   const params: unknown[] = [];
 
   if (updates.badge_name !== undefined) {
-    fields.push('badge_name = ?');
+    fields.push("badge_name = ?");
     params.push(updates.badge_name);
   }
   if (updates.badge_description !== undefined) {
-    fields.push('badge_description = ?');
+    fields.push("badge_description = ?");
     params.push(updates.badge_description);
   }
   if (updates.badge_icon !== undefined) {
-    fields.push('badge_icon = ?');
+    fields.push("badge_icon = ?");
     params.push(updates.badge_icon);
   }
   if (updates.badge_category !== undefined) {
-    fields.push('badge_category = ?');
+    fields.push("badge_category = ?");
     params.push(updates.badge_category);
   }
   if (updates.points_value !== undefined) {
-    fields.push('points_value = ?');
+    fields.push("points_value = ?");
     params.push(updates.points_value);
   }
   if (updates.criteria_json !== undefined) {
-    fields.push('criteria_json = ?');
-    params.push(updates.criteria_json ? JSON.stringify(updates.criteria_json) : null);
+    fields.push("criteria_json = ?");
+    params.push(
+      updates.criteria_json ? JSON.stringify(updates.criteria_json) : null,
+    );
   }
   if (updates.is_active !== undefined) {
-    fields.push('is_active = ?');
+    fields.push("is_active = ?");
     params.push(updates.is_active);
   }
 
@@ -187,11 +193,11 @@ export async function updateBadge(
     return getBadgeById(badgeId);
   }
 
-  fields.push('updated_at = ?');
+  fields.push("updated_at = ?");
   params.push(new Date().toISOString());
   params.push(badgeId);
 
-  const sql = `UPDATE gamification_badge_master SET ${fields.join(', ')} WHERE badge_id = ?`;
+  const sql = `UPDATE gamification_badge_master SET ${fields.join(", ")} WHERE badge_id = ?`;
 
   await db.executeRun(sql, params);
 
@@ -203,7 +209,10 @@ export async function updateBadge(
  */
 export async function deactivateBadge(badgeId: string): Promise<boolean> {
   const sql = `UPDATE gamification_badge_master SET is_active = 0, updated_at = ? WHERE badge_id = ?`;
-  const [result] = await db.executeRun(sql, [new Date().toISOString(), badgeId]);
+  const [result] = await db.executeRun(sql, [
+    new Date().toISOString(),
+    badgeId,
+  ]);
   return (result as ResultSetHeader).affectedRows > 0;
 }
 
@@ -214,11 +223,13 @@ export async function deactivateBadge(badgeId: string): Promise<boolean> {
 /**
  * Award badge manually
  */
-export async function awardBadge(data: AwardBadgeDTO): Promise<EmployeeBadgeEarned> {
+export async function awardBadge(
+  data: AwardBadgeDTO,
+): Promise<EmployeeBadgeEarned> {
   // Check if employee exists
   const [empRows] = await db.execute<RowDataPacket[]>(
-    'SELECT id FROM employees WHERE id = ?',
-    [data.employee_id]
+    "SELECT id FROM employees WHERE id = ?",
+    [data.employee_id],
   );
   if (empRows.length === 0) {
     throw new Error(`Employee ${data.employee_id} not found`);
@@ -235,11 +246,13 @@ export async function awardBadge(data: AwardBadgeDTO): Promise<EmployeeBadgeEarn
 
   // Check if already earned
   const [existingRows] = await db.execute<RowDataPacket[]>(
-    'SELECT earned_id FROM employee_badge_earned WHERE employee_id = ? AND badge_id = ?',
-    [data.employee_id, data.badge_id]
+    "SELECT earned_id FROM employee_badge_earned WHERE employee_id = ? AND badge_id = ?",
+    [data.employee_id, data.badge_id],
   );
   if (existingRows.length > 0) {
-    throw new Error(`Employee ${data.employee_id} already has badge ${data.badge_id}`);
+    throw new Error(
+      `Employee ${data.employee_id} already has badge ${data.badge_id}`,
+    );
   }
 
   const earnedId = crypto.randomUUID();
@@ -268,9 +281,9 @@ export async function awardBadge(data: AwardBadgeDTO): Promise<EmployeeBadgeEarn
     await addPoints(
       data.employee_id,
       badge.points_value,
-      'badge_earned',
+      "badge_earned",
       `Badge earned: ${badge.badge_name}`,
-      earnedId
+      earnedId,
     );
   }
 
@@ -335,27 +348,27 @@ export async function getEmployeeBadges(employeeId: string): Promise<
  */
 export async function checkAutoAwards(
   employeeId: string,
-  activityType: AutoAwardActivity
+  activityType: AutoAwardActivity,
 ): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
 
   switch (activityType) {
-    case 'performance_review':
+    case "performance_review":
       awarded.push(...(await checkPerformanceBadges(employeeId)));
       break;
-    case 'attendance':
+    case "attendance":
       awarded.push(...(await checkAttendanceBadges(employeeId)));
       break;
-    case 'survey_completed':
+    case "survey_completed":
       awarded.push(...(await checkSurveyBadges(employeeId)));
       break;
-    case 'payslip_acknowledged':
+    case "payslip_acknowledged":
       awarded.push(...(await checkPayslipBadges(employeeId)));
       break;
-    case 'kpi_score_recorded':
+    case "kpi_score_recorded":
       awarded.push(...(await checkKpiBadges(employeeId)));
       break;
-    case 'tenure':
+    case "tenure":
       awarded.push(...(await checkTenureBadges(employeeId)));
       break;
     default:
@@ -368,10 +381,16 @@ export async function checkAutoAwards(
 /**
  * Queue a best-effort badge evaluation after a protected workflow succeeds.
  */
-export function queueAutoAwards(employeeId: string, activityType: AutoAwardActivity): void {
+export function queueAutoAwards(
+  employeeId: string,
+  activityType: AutoAwardActivity,
+): void {
   const timeout = setTimeout(() => {
     void checkAutoAwards(employeeId, activityType).catch((error: unknown) => {
-      console.error(`Failed to evaluate ${activityType} badges for ${employeeId}`, error);
+      console.error(
+        `Failed to evaluate ${activityType} badges for ${employeeId}`,
+        error,
+      );
     });
   }, 0);
   timeout.unref();
@@ -380,15 +399,21 @@ export function queueAutoAwards(employeeId: string, activityType: AutoAwardActiv
 function areConsecutiveMonthlyPeriods(rows: RowDataPacket[]): boolean {
   const periods = rows.map((row) => {
     const [year, month] = String(row.period).split("-").map(Number);
-    return Number.isInteger(year) && Number.isInteger(month) ? year * 12 + month : Number.NaN;
+    return Number.isInteger(year) && Number.isInteger(month)
+      ? year * 12 + month
+      : Number.NaN;
   });
-  return periods.every((period, index) => index === 0 || periods[index - 1] - period === 1);
+  return periods.every(
+    (period, index) => index === 0 || periods[index - 1] - period === 1,
+  );
 }
 
 /**
  * Check performance badges (top_performer, revenue_champion)
  */
-async function checkPerformanceBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
+async function checkPerformanceBadges(
+  employeeId: string,
+): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
 
   // Top Performer: Rating >= 4.5 in the latest generated feedback report
@@ -398,18 +423,18 @@ async function checkPerformanceBadges(employeeId: string): Promise<EmployeeBadge
      WHERE employee_id = ?
      ORDER BY report_generated_at DESC
      LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
 
   if (perfRows.length > 0 && perfRows[0].overall_score >= 4.5) {
-    const badge = await findBadgeByName('Top Performer');
+    const badge = await findBadgeByName("Top Performer");
     if (badge) {
       try {
         const earned = await awardBadge({
           employee_id: employeeId,
           badge_id: badge.badge_id,
-          reason: 'Achieved rating >= 4.5 in performance review',
-          awarded_by: 'system',
+          reason: "Achieved rating >= 4.5 in performance review",
+          awarded_by: "system",
         });
         awarded.push(earned);
       } catch (err) {
@@ -424,7 +449,9 @@ async function checkPerformanceBadges(employeeId: string): Promise<EmployeeBadge
 /**
  * Check attendance badges (early_bird, perfect_attendance)
  */
-async function checkAttendanceBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
+async function checkAttendanceBadges(
+  employeeId: string,
+): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
 
   // Early Bird: 90%+ check-ins before 9:00 AM in last 30 days
@@ -436,20 +463,21 @@ async function checkAttendanceBadges(employeeId: string): Promise<EmployeeBadgeE
      WHERE employee_id = ?
        AND login_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
        AND login_time IS NOT NULL`,
-    [employeeId]
+    [employeeId],
   );
 
   if (earlyRows.length > 0 && earlyRows[0].total_days >= 20) {
-    const earlyPercentage = (earlyRows[0].early_count / earlyRows[0].total_days) * 100;
+    const earlyPercentage =
+      (earlyRows[0].early_count / earlyRows[0].total_days) * 100;
     if (earlyPercentage >= 90) {
-      const badge = await findBadgeByName('Early Bird');
+      const badge = await findBadgeByName("Early Bird");
       if (badge) {
         try {
           const earned = await awardBadge({
             employee_id: employeeId,
             badge_id: badge.badge_id,
-            reason: '90%+ check-ins before 9 AM in last 30 days',
-            awarded_by: 'system',
+            reason: "90%+ check-ins before 9 AM in last 30 days",
+            awarded_by: "system",
           });
           awarded.push(earned);
         } catch (err) {
@@ -471,7 +499,7 @@ async function checkAttendanceBadges(employeeId: string): Promise<EmployeeBadgeE
        AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
        AND ra.is_week_off = 0
        AND ra.roster_status NOT IN ('Week Off', 'Holiday')`,
-    [employeeId]
+    [employeeId],
   );
 
   if (
@@ -479,14 +507,14 @@ async function checkAttendanceBadges(employeeId: string): Promise<EmployeeBadgeE
     absenceRows[0].rostered_days >= 60 &&
     absenceRows[0].absence_count === 0
   ) {
-    const badge = await findBadgeByName('Perfect Attendance');
+    const badge = await findBadgeByName("Perfect Attendance");
     if (badge) {
       try {
         const earned = await awardBadge({
           employee_id: employeeId,
           badge_id: badge.badge_id,
-          reason: 'No absences in last 90 days',
-          awarded_by: 'system',
+          reason: "No absences in last 90 days",
+          awarded_by: "system",
         });
         awarded.push(earned);
       } catch (err) {
@@ -501,7 +529,9 @@ async function checkAttendanceBadges(employeeId: string): Promise<EmployeeBadgeE
 /**
  * Check survey badges (survey_champion)
  */
-async function checkSurveyBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
+async function checkSurveyBadges(
+  employeeId: string,
+): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
 
   // Survey Champion: Completed 10+ surveys or pulse checks
@@ -519,18 +549,18 @@ async function checkSurveyBadges(employeeId: string): Promise<EmployeeBadgeEarne
        (SELECT COUNT(DISTINCT survey_id) FROM survey_response WHERE employee_id = ?)
        +
        (SELECT COUNT(DISTINCT response_date) FROM pulse_response WHERE employee_id = ?) as participation_count`,
-    [employeeId, employeeId]
+    [employeeId, employeeId],
   );
 
   if (surveyRows.length > 0 && surveyRows[0].participation_count >= 10) {
-    const badge = await findBadgeByName('Survey Champion');
+    const badge = await findBadgeByName("Survey Champion");
     if (badge) {
       try {
         const earned = await awardBadge({
           employee_id: employeeId,
           badge_id: badge.badge_id,
-          reason: 'Completed 10+ surveys or pulse checks',
-          awarded_by: 'system',
+          reason: "Completed 10+ surveys or pulse checks",
+          awarded_by: "system",
         });
         awarded.push(earned);
       } catch (err) {
@@ -545,24 +575,26 @@ async function checkSurveyBadges(employeeId: string): Promise<EmployeeBadgeEarne
 /**
  * Check payslip acknowledgement badges.
  */
-async function checkPayslipBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
+async function checkPayslipBadges(
+  employeeId: string,
+): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) as acknowledgement_count
      FROM salary_payslip
      WHERE employee_id = ? AND acknowledged_at IS NOT NULL`,
-    [employeeId]
+    [employeeId],
   );
 
   if (rows.length > 0 && rows[0].acknowledgement_count >= 10) {
-    const badge = await findBadgeByName('Payslip Champion');
+    const badge = await findBadgeByName("Payslip Champion");
     if (badge) {
       try {
         const earned = await awardBadge({
           employee_id: employeeId,
           badge_id: badge.badge_id,
-          reason: 'Acknowledged 10+ payslips',
-          awarded_by: 'system',
+          reason: "Acknowledged 10+ payslips",
+          awarded_by: "system",
         });
         awarded.push(earned);
       } catch (err) {
@@ -577,7 +609,9 @@ async function checkPayslipBadges(employeeId: string): Promise<EmployeeBadgeEarn
 /**
  * Check KPI badges from the last three recorded periods.
  */
-async function checkKpiBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
+async function checkKpiBadges(
+  employeeId: string,
+): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ks.period,
@@ -617,7 +651,7 @@ async function checkKpiBadges(employeeId: string): Promise<EmployeeBadgeEarned[]
      GROUP BY ks.period
      ORDER BY ks.period DESC
      LIMIT 3`,
-    [employeeId, employeeId, employeeId]
+    [employeeId, employeeId, employeeId],
   );
 
   if (
@@ -627,14 +661,16 @@ async function checkKpiBadges(employeeId: string): Promise<EmployeeBadgeEarned[]
   ) {
     // Use "KPI Overachiever" for the KPI path to avoid collision with "Top Performer"
     // awarded via the performance-review path in checkPerformanceBadges.
-    const badge = await findBadgeByName('KPI Overachiever') || await findBadgeByName('Top Performer');
+    const badge =
+      (await findBadgeByName("KPI Overachiever")) ||
+      (await findBadgeByName("Top Performer"));
     if (badge) {
       try {
         const earned = await awardBadge({
           employee_id: employeeId,
           badge_id: badge.badge_id,
-          reason: 'Exceeded KPI targets for 3 consecutive months',
-          awarded_by: 'system',
+          reason: "Exceeded KPI targets for 3 consecutive months",
+          awarded_by: "system",
         });
         awarded.push(earned);
       } catch (err) {
@@ -649,13 +685,15 @@ async function checkKpiBadges(employeeId: string): Promise<EmployeeBadgeEarned[]
 /**
  * Check tenure badges (6_month, 1_year, 2_year, 5_year)
  */
-async function checkTenureBadges(employeeId: string): Promise<EmployeeBadgeEarned[]> {
+async function checkTenureBadges(
+  employeeId: string,
+): Promise<EmployeeBadgeEarned[]> {
   const awarded: EmployeeBadgeEarned[] = [];
 
   // Get employee join date
   const [empRows] = await db.execute<RowDataPacket[]>(
-    'SELECT date_of_joining FROM employees WHERE id = ?',
-    [employeeId]
+    "SELECT date_of_joining FROM employees WHERE id = ?",
+    [employeeId],
   );
 
   if (empRows.length === 0) return awarded;
@@ -663,14 +701,15 @@ async function checkTenureBadges(employeeId: string): Promise<EmployeeBadgeEarne
   const joinDate = new Date(empRows[0].date_of_joining as string);
   const now = new Date();
   let tenureMonths =
-    (now.getFullYear() - joinDate.getFullYear()) * 12 + (now.getMonth() - joinDate.getMonth());
+    (now.getFullYear() - joinDate.getFullYear()) * 12 +
+    (now.getMonth() - joinDate.getMonth());
   if (now.getDate() < joinDate.getDate()) tenureMonths -= 1;
 
   const tenureMilestones = [
-    { months: 6, name: '6 Month Milestone' },
-    { months: 12, name: '1 Year Anniversary' },
-    { months: 24, name: '2 Year Veteran' },
-    { months: 60, name: '5 Year Legend' },
+    { months: 6, name: "6 Month Milestone" },
+    { months: 12, name: "1 Year Anniversary" },
+    { months: 24, name: "2 Year Veteran" },
+    { months: 60, name: "5 Year Legend" },
   ];
 
   for (const milestone of tenureMilestones) {
@@ -682,7 +721,7 @@ async function checkTenureBadges(employeeId: string): Promise<EmployeeBadgeEarne
             employee_id: employeeId,
             badge_id: badge.badge_id,
             reason: `${milestone.months} months of service`,
-            awarded_by: 'system',
+            awarded_by: "system",
           });
           awarded.push(earned);
         } catch (err) {
@@ -705,7 +744,7 @@ async function findBadgeByName(badgeName: string): Promise<BadgeMaster | null> {
             created_at, updated_at
      FROM gamification_badge_master
      WHERE badge_name = ? AND is_active = 1`,
-    [badgeName]
+    [badgeName],
   );
 
   if (rows.length === 0) return null;
@@ -716,7 +755,7 @@ async function findBadgeByName(badgeName: string): Promise<BadgeMaster | null> {
     badge_name: row.badge_name as string,
     badge_description: row.badge_description as string | null,
     badge_icon: row.badge_icon as string | null,
-    badge_category: row.badge_category as BadgeMaster['badge_category'],
+    badge_category: row.badge_category as BadgeMaster["badge_category"],
     points_value: row.points_value as number,
     criteria_json: row.criteria_json as BadgeCriteria | null,
     is_active: Boolean(row.is_active),

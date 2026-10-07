@@ -24,13 +24,20 @@ const { execute, logSensitiveAction } = vi.hoisted(() => ({
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
-vi.mock("../payroll-governance.service.js", () => ({ payrollGovernanceService: { readiness: vi.fn() } }));
-vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem: vi.fn() } }));
+vi.mock("../payroll-governance.service.js", () => ({
+  payrollGovernanceService: { readiness: vi.fn() },
+}));
+vi.mock("../../inbox/inbox.service.js", () => ({
+  inboxService: { createItem: vi.fn() },
+}));
 
 import { payrollAttendanceControlService } from "../payroll-attendance-control.service.js";
 
 const SOURCE = readFileSync(
-  resolve(process.cwd(), "src/modules/payroll/payroll-attendance-control.service.ts"),
+  resolve(
+    process.cwd(),
+    "src/modules/payroll/payroll-attendance-control.service.ts",
+  ),
   "utf8",
 );
 
@@ -55,7 +62,9 @@ describe("repairMissingAdr is audited", () => {
     expect(entry.entity_type).toBe("attendance_daily_record");
     // The keys carry employee and date, so the row says which attendance was
     // written rather than only how many rows were.
-    expect(entry.change_summary.conflict_keys).toEqual(["other:emp-1:2026-07-01"]);
+    expect(entry.change_summary.conflict_keys).toEqual([
+      "other:emp-1:2026-07-01",
+    ]);
   });
 
   it("logs even when nothing was repaired", async () => {

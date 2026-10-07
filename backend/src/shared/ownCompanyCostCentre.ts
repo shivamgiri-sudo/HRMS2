@@ -23,9 +23,11 @@ export function ownCompanyCostCentreSql(alias: string): string {
  */
 export function ownCompanyBranchSql(alias: string): string {
   const p = alias ? `${alias}.` : "";
-  return `((NULLIF(TRIM(COALESCE(${p}company_name, '')), '') IS NULL OR REPLACE(REPLACE(REPLACE(LOWER(${p}company_name), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%')`
-    + ` AND REPLACE(REPLACE(LOWER(COALESCE(${p}branch_name, '')), ' ', ''), '-', '') NOT LIKE '%dialdesk%'`
-    + ` AND REPLACE(REPLACE(LOWER(COALESCE(${p}branch_name, '')), ' ', ''), '-', '') NOT LIKE '%ispark%')`;
+  return (
+    `((NULLIF(TRIM(COALESCE(${p}company_name, '')), '') IS NULL OR REPLACE(REPLACE(REPLACE(LOWER(${p}company_name), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%')` +
+    ` AND REPLACE(REPLACE(LOWER(COALESCE(${p}branch_name, '')), ' ', ''), '-', '') NOT LIKE '%dialdesk%'` +
+    ` AND REPLACE(REPLACE(LOWER(COALESCE(${p}branch_name, '')), ' ', ''), '-', '') NOT LIKE '%ispark%')`
+  );
 }
 
 /**
@@ -33,7 +35,10 @@ export function ownCompanyBranchSql(alias: string): string {
  * (several carry no branch at all). `processAlias` is process_master, `branchAlias` is the LEFT
  * JOINed branch_master.
  */
-export function notDialDeskProcessSql(processAlias: string, branchAlias: string): string {
+export function notDialDeskProcessSql(
+  processAlias: string,
+  branchAlias: string,
+): string {
   // Name, code and client together: a few DialDesk / I-Spark processes sit on a MAS branch and are
   // recognisable only by their code (BSS_BLD_NOI_ISPARK_563) or client ("Ispark dataconnect Pvt Ltd").
   const id = `REPLACE(REPLACE(LOWER(CONCAT_WS(' ', ${processAlias}.process_name, ${processAlias}.process_code, ${processAlias}.client_name)), ' ', ''), '-', '')`;
@@ -41,7 +46,11 @@ export function notDialDeskProcessSql(processAlias: string, branchAlias: string)
 }
 
 const HIDDEN_GRN_SCOPE_TTL_MS = 5 * 60 * 1000;
-let hiddenGrnScope: { at: number; branchIds: string[]; costCentreIds: string[] } | null = null;
+let hiddenGrnScope: {
+  at: number;
+  branchIds: string[];
+  costCentreIds: string[];
+} | null = null;
 
 /**
  * Loads the ids of the branches and cost centres that are not MAS Callnet's, so ownCompanyGrnSql
@@ -51,9 +60,15 @@ let hiddenGrnScope: { at: number; branchIds: string[]; costCentreIds: string[] }
  */
 export async function refreshHiddenGrnScope(): Promise<void> {
   if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") return;
-  if (hiddenGrnScope && Date.now() - hiddenGrnScope.at < HIDDEN_GRN_SCOPE_TTL_MS) return;
+  if (
+    hiddenGrnScope &&
+    Date.now() - hiddenGrnScope.at < HIDDEN_GRN_SCOPE_TTL_MS
+  )
+    return;
   const { db } = await import("../db/mysql.js");
-  const [branches] = await db.query<RowDataPacket[]>(`SELECT hb.id FROM branch_master hb WHERE NOT ${ownCompanyBranchSql("hb")}`);
+  const [branches] = await db.query<RowDataPacket[]>(
+    `SELECT hb.id FROM branch_master hb WHERE NOT ${ownCompanyBranchSql("hb")}`,
+  );
   const [costCentres] = await db.query<RowDataPacket[]>(
     `SELECT hc.id FROM cost_centre_master hc WHERE NULLIF(TRIM(COALESCE(hc.company_name, '')), '') IS NOT NULL AND NOT (${ownCompanyCostCentreSql("hc")})`,
   );
@@ -80,6 +95,8 @@ export function ownCompanyGrnSql(grnAlias: string): string {
   const c = hiddenGrnScope
     ? idList(hiddenGrnScope.costCentreIds)
     : `SELECT hc.id FROM cost_centre_master hc WHERE NULLIF(TRIM(COALESCE(hc.company_name, '')), '') IS NOT NULL AND NOT (${ownCompanyCostCentreSql("hc")})`;
-  return `((${grnAlias}.branch_id IS NULL OR ${grnAlias}.branch_id NOT IN (${b}))`
-    + ` AND (${grnAlias}.cost_centre_id IS NULL OR ${grnAlias}.cost_centre_id NOT IN (${c})))`;
+  return (
+    `((${grnAlias}.branch_id IS NULL OR ${grnAlias}.branch_id NOT IN (${b}))` +
+    ` AND (${grnAlias}.cost_centre_id IS NULL OR ${grnAlias}.cost_centre_id NOT IN (${c})))`
+  );
 }

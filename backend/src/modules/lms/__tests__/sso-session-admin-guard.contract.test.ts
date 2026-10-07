@@ -65,7 +65,11 @@ describe("GET /api/lms/sso-session is gated on LMS admin access", () => {
   });
 
   it("keeps the sibling gates it was modelled on", () => {
-    expect(SRC).toMatch(/if \(!ctx\.access\.access\.employee\) return res\.status\(403\)/);
-    expect(SRC).toMatch(/if \(!ctx\.access\.access\.coordinator\) return res\.status\(403\)/);
+    expect(SRC).toMatch(
+      /if \(!ctx\.access\.access\.employee\) return res\.status\(403\)/,
+    );
+    expect(SRC).toMatch(
+      /if \(!ctx\.access\.access\.coordinator\) return res\.status\(403\)/,
+    );
   });
 });

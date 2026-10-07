@@ -44,7 +44,9 @@ describe("attendance unlock refuses a day belonging to a closed payroll run", ()
   });
 
   it("compares run_month as a string — it is VARCHAR, and a DATE comparison matches zero rows", () => {
-    expect(UNLOCK_BLOCK).toMatch(/run_month\s*=\s*DATE_FORMAT\(\?,\s*'%Y-%m'\)/);
+    expect(UNLOCK_BLOCK).toMatch(
+      /run_month\s*=\s*DATE_FORMAT\(\?,\s*'%Y-%m'\)/,
+    );
   });
 
   it("answers 409, matching the locked->409 shape the A.3 override endpoints already use", () => {
@@ -88,7 +90,9 @@ describe("the closed-run guard must prove THIS employee was in THAT run", () => 
   });
 
   it("still compares run_month as a string, since it is VARCHAR", () => {
-    expect(UNLOCK_BLOCK).toMatch(/run_month\s*=\s*DATE_FORMAT\(\?,\s*'%Y-%m'\)/);
+    expect(UNLOCK_BLOCK).toMatch(
+      /run_month\s*=\s*DATE_FORMAT\(\?,\s*'%Y-%m'\)/,
+    );
   });
 });
 

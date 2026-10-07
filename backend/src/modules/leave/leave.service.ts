@@ -17,14 +17,28 @@ import { assertDaysWritable } from "../../shared/attendanceLockGuard.js";
 export const NO_CHARGEABLE_DAYS = "NO_CHARGEABLE_DAYS";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
-import { notifyLeaveSubmitted, notifyLeaveDecision, notifyLeavePendingBranchHead } from "./leave.notifications.js";
+import {
+  notifyLeaveSubmitted,
+  notifyLeaveDecision,
+  notifyLeavePendingBranchHead,
+} from "./leave.notifications.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 import { leavePolicyService } from "./leave-policy.service.js";
-import { captureAttendanceSnapshot, readAttendanceSnapshots } from "../../shared/attendanceSnapshot.js";
-import { applyRestore, planLeaveRestore, rederiveDates, type DateRestorePlan } from "../../shared/attendanceRestore.js";
+import {
+  captureAttendanceSnapshot,
+  readAttendanceSnapshots,
+} from "../../shared/attendanceSnapshot.js";
+import {
+  applyRestore,
+  planLeaveRestore,
+  rederiveDates,
+  type DateRestorePlan,
+} from "../../shared/attendanceRestore.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
-  classifyLeaveDays, getEmployeeLeaveScope, chargeableDates,
+  classifyLeaveDays,
+  getEmployeeLeaveScope,
+  chargeableDates,
 } from "../../shared/leaveChargeableDays.js";
 import type {
   LeaveBalanceLedger,
@@ -44,7 +58,9 @@ import type {
 
 /** ADR rows for a set of dates, keyed YYYY-MM-DD, on the caller's transaction. */
 async function loadAttendanceRowsForRestore(
-  conn: any, employeeId: string, dates: string[]
+  conn: any,
+  employeeId: string,
+  dates: string[],
 ): Promise<Map<string, any>> {
   const out = new Map<string, any>();
   if (dates.length === 0) return out;
@@ -52,7 +68,7 @@ async function loadAttendanceRowsForRestore(
   const [rows] = await conn.execute(
     `SELECT * FROM attendance_daily_record
       WHERE employee_id = ? AND record_date IN (${placeholders})`,
-    [employeeId, ...dates]
+    [employeeId, ...dates],
   );
   for (const row of rows as RowDataPacket[]) {
     out.set(String((row as any).record_date).slice(0, 10), row);
@@ -82,7 +98,10 @@ function groupDatesByYear(dates: string[]): Map<number, string[]> {
 // this system and parsing would just mean filtering out HDCL/HDML anyway;
 // this mirrors how checkMonthlyCapExceeded already hardcodes CL/ML.
 // (2026-08-13, leave-module audit — policy sign-off on #7.)
-const POOL_PARTNER_CODE: Readonly<Record<string, string>> = { CL: "ML", ML: "CL" };
+const POOL_PARTNER_CODE: Readonly<Record<string, string>> = {
+  CL: "ML",
+  ML: "CL",
+};
 
 interface BalanceSnapshot {
   exists: boolean;
@@ -93,36 +112,57 @@ interface BalanceSnapshot {
 }
 
 async function readBalance(
-  conn: any, employeeId: string, leaveTypeId: string, year: number
+  conn: any,
+  employeeId: string,
+  leaveTypeId: string,
+  year: number,
 ): Promise<BalanceSnapshot> {
   const [rows] = await conn.execute(
     `SELECT allocated_days, adjusted_days, used_days FROM leave_balance_ledger
       WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-    [employeeId, leaveTypeId, year]
+    [employeeId, leaveTypeId, year],
   );
   const row = (rows as RowDataPacket[])[0] as any;
-  if (!row) return { exists: false, allocatedDays: 0, adjustedDays: 0, usedDays: 0, available: 0 };
+  if (!row)
+    return {
+      exists: false,
+      allocatedDays: 0,
+      adjustedDays: 0,
+      usedDays: 0,
+      available: 0,
+    };
   const allocatedDays = Number(row.allocated_days ?? 0);
   const adjustedDays = Number(row.adjusted_days ?? 0);
   const usedDays = Number(row.used_days ?? 0);
-  return { exists: true, allocatedDays, adjustedDays, usedDays, available: Math.max(0, allocatedDays + adjustedDays - usedDays) };
+  return {
+    exists: true,
+    allocatedDays,
+    adjustedDays,
+    usedDays,
+    available: Math.max(0, allocatedDays + adjustedDays - usedDays),
+  };
 }
 
 async function applyBalanceDeduction(
-  conn: any, employeeId: string, leaveTypeId: string, year: number, days: number, balanceExists: boolean
+  conn: any,
+  employeeId: string,
+  leaveTypeId: string,
+  year: number,
+  days: number,
+  balanceExists: boolean,
 ): Promise<void> {
   if (days <= 0) return;
   if (balanceExists) {
     await conn.execute(
       `UPDATE leave_balance_ledger SET used_days = used_days + ?
         WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-      [days, employeeId, leaveTypeId, year]
+      [days, employeeId, leaveTypeId, year],
     );
   } else {
     await conn.execute(
       `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
        VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
-      [employeeId, leaveTypeId, year, days]
+      [employeeId, leaveTypeId, year, days],
     );
   }
 }
@@ -153,7 +193,7 @@ async function writeHolidayScope(
   holidayId: string,
   branchId: string | null,
   scope: { costCentreIds: string[]; designationIds: string[] },
-  actorId: string | null
+  actorId: string | null,
 ): Promise<void> {
   // De-duplicate: holiday_cost_centre_mapping has no unique key on
   // (holiday_id, cost_centre_id), so a repeated id in the payload would insert
@@ -166,7 +206,7 @@ async function writeHolidayScope(
       `INSERT INTO holiday_cost_centre_mapping
          (id, holiday_id, branch_id, cost_centre_id, is_active, created_by)
        VALUES (?, ?, ?, ?, 1, ?)`,
-      [randomUUID(), holidayId, branchId, costCentreId, actorId]
+      [randomUUID(), holidayId, branchId, costCentreId, actorId],
     );
   }
   for (const designationId of designationIds) {
@@ -174,7 +214,7 @@ async function writeHolidayScope(
       `INSERT INTO holiday_designation_mapping
          (id, holiday_id, designation_id, is_active, created_by)
        VALUES (?, ?, ?, 1, ?)`,
-      [randomUUID(), holidayId, designationId, actorId]
+      [randomUUID(), holidayId, designationId, actorId],
     );
   }
 }
@@ -194,7 +234,7 @@ export {
 export const leaveService = {
   async listLeaveTypes(employeeId?: string): Promise<LeaveType[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM leave_type_master WHERE active_status = 1 ORDER BY leave_name ASC"
+      "SELECT * FROM leave_type_master WHERE active_status = 1 ORDER BY leave_name ASC",
     );
     const types = rows as LeaveType[];
 
@@ -202,7 +242,12 @@ export const leaveService = {
     if (employeeId) {
       for (const type of types) {
         try {
-          const result = await getEffectiveConfig(employeeId, 'leave_type', type.id, type as unknown as Record<string, unknown>);
+          const result = await getEffectiveConfig(
+            employeeId,
+            "leave_type",
+            type.id,
+            type as unknown as Record<string, unknown>,
+          );
           Object.assign(type, result.config);
         } catch (err) {
           // Skip customization on error
@@ -216,25 +261,37 @@ export const leaveService = {
 
   async createLeaveType(input: CreateLeaveTypeInput): Promise<LeaveType> {
     const [dup] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM leave_type_master WHERE leave_code = ? LIMIT 1", [input.leaveCode]
+      "SELECT id FROM leave_type_master WHERE leave_code = ? LIMIT 1",
+      [input.leaveCode],
     );
-    if ((dup as RowDataPacket[]).length > 0) throw new Error("Leave code already exists");
+    if ((dup as RowDataPacket[]).length > 0)
+      throw new Error("Leave code already exists");
 
     const id = randomUUID();
     await db.execute(
       `INSERT INTO leave_type_master (id, leave_code, leave_name, max_days_per_year, carry_forward, requires_approval, paid_leave)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, input.leaveCode, input.leaveName, input.maxDaysPerYear,
-       input.carryForward ? 1 : 0, input.requiresApproval ? 1 : 0, input.paidLeave ? 1 : 0]
+      [
+        id,
+        input.leaveCode,
+        input.leaveName,
+        input.maxDaysPerYear,
+        input.carryForward ? 1 : 0,
+        input.requiresApproval ? 1 : 0,
+        input.paidLeave ? 1 : 0,
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM leave_type_master WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM leave_type_master WHERE id = ? LIMIT 1",
+      [id],
     );
     return (rows as LeaveType[])[0];
   },
 
-
-  async submitRequest(input: LeaveRequestInput, actorUserId?: string): Promise<LeaveRequest> {
+  async submitRequest(
+    input: LeaveRequestInput,
+    actorUserId?: string,
+  ): Promise<LeaveRequest> {
     const id = randomUUID();
 
     // ── Inactive employee guard ─────────────────────────────────────────────
@@ -247,7 +304,10 @@ export const leaveService = {
         [input.employeeId],
       );
       const emp = (empCheck as RowDataPacket[])[0];
-      if (!emp) throw Object.assign(new Error("Employee not found"), { statusCode: 404 });
+      if (!emp)
+        throw Object.assign(new Error("Employee not found"), {
+          statusCode: 404,
+        });
       if (Number(emp.active_status) !== 1) {
         throw Object.assign(
           new Error("Cannot apply leave for an inactive (exited) employee"),
@@ -275,7 +335,9 @@ export const leaveService = {
     const isHalfDay = input.totalDays === 0.5;
     if (!Number.isInteger(input.totalDays) && !isHalfDay) {
       throw Object.assign(
-        new Error(`A leave request must be whole days, or exactly 0.5 for a half day (got ${input.totalDays}).`),
+        new Error(
+          `A leave request must be whole days, or exactly 0.5 for a half day (got ${input.totalDays}).`,
+        ),
         { statusCode: 400 },
       );
     }
@@ -283,7 +345,9 @@ export const leaveService = {
       // 400, not 500: this is the caller's input being wrong, and a bulk upload row that
       // hits it should read as a row error rather than a server fault.
       throw Object.assign(
-        new Error("A half day must be a single date — set from_date and to_date to the same day."),
+        new Error(
+          "A half day must be a single date — set from_date and to_date to the same day.",
+        ),
         { statusCode: 400 },
       );
     }
@@ -291,9 +355,10 @@ export const leaveService = {
     // ── Resolve leave_code for policy enforcement ─────────────────────────
     const [ltCodeRows] = await db.execute<RowDataPacket[]>(
       `SELECT leave_code FROM leave_type_master WHERE id = ? AND active_status = 1 LIMIT 1`,
-      [input.leaveTypeId]
+      [input.leaveTypeId],
     );
-    const leaveCode = (ltCodeRows as Array<{ leave_code: string }>)[0]?.leave_code ?? null;
+    const leaveCode =
+      (ltCodeRows as Array<{ leave_code: string }>)[0]?.leave_code ?? null;
 
     // Half day: CL/ML only, and never onto a day that is already fully paid.
     // Both checks live here rather than only at approval so a bulk-upload row fails as a ROW
@@ -305,7 +370,7 @@ export const leaveService = {
         throw Object.assign(
           new Error(
             `Half-day leave is only available on ${[...HALF_DAY_LEAVE_CODES].join(" and ")} ` +
-            `(got ${leaveCode ?? "an unknown leave type"}). Apply a full day, or use CL/ML.`,
+              `(got ${leaveCode ?? "an unknown leave type"}). Apply a full day, or use CL/ML.`,
           ),
           { statusCode: 400 },
         );
@@ -315,7 +380,9 @@ export const leaveService = {
           WHERE employee_id = ? AND record_date = ? LIMIT 1`,
         [input.employeeId, input.fromDate],
       );
-      const currentStatus = String((existingAdr as RowDataPacket[])[0]?.attendance_status ?? "");
+      const currentStatus = String(
+        (existingAdr as RowDataPacket[])[0]?.attendance_status ?? "",
+      );
       if (currentStatus && halfDayAttendanceTarget(currentStatus) === null) {
         throw Object.assign(
           new Error(halfDayRefusalMessage(input.fromDate, currentStatus)),
@@ -342,9 +409,11 @@ export const leaveService = {
     if (leaveCode && GENDER_RESTRICTED_CODES.has(leaveCode)) {
       const [genderRows] = await db.execute<RowDataPacket[]>(
         `SELECT gender FROM employees WHERE id = ? LIMIT 1`,
-        [input.employeeId]
+        [input.employeeId],
       );
-      const gender = String((genderRows as RowDataPacket[])[0]?.gender ?? "").toLowerCase().trim();
+      const gender = String((genderRows as RowDataPacket[])[0]?.gender ?? "")
+        .toLowerCase()
+        .trim();
       const isFemale = ["female", "f"].includes(gender);
       const isMale = ["male", "m"].includes(gender);
       const isFemaleOnly = leaveCode === "MTRL";
@@ -352,7 +421,7 @@ export const leaveService = {
       if ((isFemaleOnly && !isFemale) || (isMaleOnly && !isMale)) {
         throw Object.assign(
           new Error(
-            `This leave type is not available for your profile. Please contact HR if you believe this is incorrect.`
+            `This leave type is not available for your profile. Please contact HR if you believe this is incorrect.`,
           ),
           { statusCode: 400 },
         );
@@ -368,7 +437,10 @@ export const leaveService = {
     // both. (2026-08-13, leave-module audit — policy sign-off on #18/#19.)
     const submitScope = await getEmployeeLeaveScope(input.employeeId);
     const submitClassification = await classifyLeaveDays(
-      input.employeeId, submitScope, input.fromDate, input.toDate
+      input.employeeId,
+      submitScope,
+      input.fromDate,
+      input.toDate,
     );
     const chargeableCount = chargeableDates(submitClassification).length;
     // Applying leave is NOT roster-validated. A range falling entirely on the employee's
@@ -379,19 +451,20 @@ export const leaveService = {
     // therefore always accepted, and when no date in the range is chargeable the applied
     // calendar days stand as the stored count rather than the row being refused or stored
     // as a zero-day ghost.
-    const effectiveDayCount = chargeableCount > 0 ? chargeableCount : submitClassification.size;
+    const effectiveDayCount =
+      chargeableCount > 0 ? chargeableCount : submitClassification.size;
     // What actually gets stored. A half day is half of ONE day; every other request stores
     // the authoritative count. Declared here so the INSERT and the audit row can never
     // record different numbers.
     const storedDays = isHalfDay ? 0.5 : effectiveDayCount;
 
     // ── CL / ML policy enforcement ────────────────────────────────────────
-    if (leaveCode === 'CL' || leaveCode === 'ML') {
+    if (leaveCode === "CL" || leaveCode === "ML") {
       // More than 2 continuous days must be applied as EL
       if (effectiveDayCount > 2) {
         throw Object.assign(
           new Error(
-            `${leaveCode} can only be applied for up to 2 continuous days. For longer leave, please apply for Earned Leave (EL).`
+            `${leaveCode} can only be applied for up to 2 continuous days. For longer leave, please apply for Earned Leave (EL).`,
           ),
           { statusCode: 400 },
         );
@@ -399,13 +472,16 @@ export const leaveService = {
 
       // Combined CL+ML monthly cap (policy engine: leave → cl_ml_policy → monthly_cap_days, default 2)
       const capCheck = await leavePolicyService.checkMonthlyCapExceeded(
-        input.employeeId, input.fromDate, input.toDate, effectiveDayCount
+        input.employeeId,
+        input.fromDate,
+        input.toDate,
+        effectiveDayCount,
       );
       if (capCheck.exceeded) {
         throw Object.assign(
           new Error(
             `Monthly leave limit reached for ${capCheck.monthBreached}. ` +
-            `You have already used ${capCheck.usedDays} of ${capCheck.cap} allowed CL/ML days this month.`
+              `You have already used ${capCheck.usedDays} of ${capCheck.cap} allowed CL/ML days this month.`,
           ),
           { statusCode: 400 },
         );
@@ -413,15 +489,15 @@ export const leaveService = {
     }
 
     // ── EL policy enforcement ─────────────────────────────────────────────
-    let initialStatus = 'pending';
+    let initialStatus = "pending";
     let elOccurrenceCount: number | null = null;
-    if (leaveCode === 'EL') {
+    if (leaveCode === "EL") {
       // Single-application cap: max 12 days
       const singleGo = leavePolicyService.checkELSingleGoCap(effectiveDayCount);
       if (singleGo.exceeded) {
         throw Object.assign(
           new Error(
-            `Earned Leave cannot exceed ${singleGo.cap} days in a single application.`
+            `Earned Leave cannot exceed ${singleGo.cap} days in a single application.`,
           ),
           { statusCode: 400 },
         );
@@ -429,12 +505,14 @@ export const leaveService = {
 
       // No two EL requests in the same calendar month
       const sameMonth = await leavePolicyService.checkELInSameMonth(
-        input.employeeId, input.fromDate, input.toDate
+        input.employeeId,
+        input.fromDate,
+        input.toDate,
       );
       if (sameMonth.hasConflict) {
         throw Object.assign(
           new Error(
-            `You already have an Earned Leave request in ${sameMonth.conflictMonth}. Only one EL application per calendar month is allowed.`
+            `You already have an Earned Leave request in ${sameMonth.conflictMonth}. Only one EL application per calendar month is allowed.`,
           ),
           { statusCode: 400 },
         );
@@ -445,10 +523,12 @@ export const leaveService = {
       // in, not just from_date's year — a Dec/Jan-spanning EL request is
       // relevant to both years' occurrence counts. (2026-08-13, #14 fix)
       const occurrences = await leavePolicyService.checkELOccurrences(
-        input.employeeId, input.fromDate, input.toDate
+        input.employeeId,
+        input.fromDate,
+        input.toDate,
       );
       if (occurrences.isException) {
-        initialStatus = 'pending_branch_head';
+        initialStatus = "pending_branch_head";
         elOccurrenceCount = occurrences.count;
       }
     }
@@ -465,10 +545,15 @@ export const leaveService = {
     const lockName = `leave_submit_${input.employeeId}`;
     const lockConn = await (db as any).getConnection();
     try {
-      const [lockRows] = await lockConn.query("SELECT GET_LOCK(?, 10) AS acquired", [lockName]);
+      const [lockRows] = await lockConn.query(
+        "SELECT GET_LOCK(?, 10) AS acquired",
+        [lockName],
+      );
       if (Number((lockRows as any)?.[0]?.acquired) !== 1) {
         throw Object.assign(
-          new Error("Another leave submission for this employee is already in progress. Please try again."),
+          new Error(
+            "Another leave submission for this employee is already in progress. Please try again.",
+          ),
           { statusCode: 409 },
         );
       }
@@ -480,13 +565,13 @@ export const leaveService = {
               AND from_date <= ?
               AND to_date   >= ?
             LIMIT 1`,
-          [input.employeeId, input.toDate, input.fromDate]
+          [input.employeeId, input.toDate, input.fromDate],
         );
         if ((overlapRows as RowDataPacket[]).length > 0) {
           throw Object.assign(
             new Error(
               `A leave request already exists for one or more dates in the range ` +
-              `${input.fromDate} – ${input.toDate}. Cancel the existing request before applying again.`
+                `${input.fromDate} – ${input.toDate}. Cancel the existing request before applying again.`,
             ),
             { statusCode: 409 },
           );
@@ -500,11 +585,21 @@ export const leaveService = {
         await lockConn.execute(
           `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [id, input.employeeId, input.leaveTypeId, input.fromDate, input.toDate,
-           storedDays, input.reason ?? null, initialStatus]
+          [
+            id,
+            input.employeeId,
+            input.leaveTypeId,
+            input.fromDate,
+            input.toDate,
+            storedDays,
+            input.reason ?? null,
+            initialStatus,
+          ],
         );
       } finally {
-        await lockConn.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
+        await lockConn
+          .query("SELECT RELEASE_LOCK(?)", [lockName])
+          .catch(() => {});
       }
     } finally {
       lockConn.release();
@@ -522,8 +617,12 @@ export const leaveService = {
       entity_id: id,
       employee_id: input.employeeId,
       new_value_json: {
-        status: initialStatus, leave_type_id: input.leaveTypeId, leave_code: leaveCode,
-        from_date: input.fromDate, to_date: input.toDate, total_days: storedDays,
+        status: initialStatus,
+        leave_type_id: input.leaveTypeId,
+        leave_code: leaveCode,
+        from_date: input.fromDate,
+        to_date: input.toDate,
+        total_days: storedDays,
       },
     }).catch(() => {});
 
@@ -544,53 +643,59 @@ export const leaveService = {
                 e.manager_id,
                 e.branch_id
          FROM employees e WHERE e.id = ? LIMIT 1`,
-        [input.employeeId]
+        [input.employeeId],
       );
-      const emp = (empRows[0] as any);
+      const emp = empRows[0] as any;
       const [ltRows] = await db.execute<RowDataPacket[]>(
         `SELECT leave_name FROM leave_type_master WHERE id = ? LIMIT 1`,
-        [input.leaveTypeId]
+        [input.leaveTypeId],
       );
-      const leaveType = (ltRows[0] as any)?.leave_name ?? 'Leave';
-      const { inboxService } = await import('../inbox/inbox.service.js');
+      const leaveType = (ltRows[0] as any)?.leave_name ?? "Leave";
+      const { inboxService } = await import("../inbox/inbox.service.js");
 
-      if (initialStatus === 'pending_branch_head') {
-        const approverRole = await leavePolicyService.getExceptionApproverRole(input.leaveTypeId);
-        const approverUserIds = await resolveRoleHolderUserIds(approverRole, emp?.branch_id ?? null);
+      if (initialStatus === "pending_branch_head") {
+        const approverRole = await leavePolicyService.getExceptionApproverRole(
+          input.leaveTypeId,
+        );
+        const approverUserIds = await resolveRoleHolderUserIds(
+          approverRole,
+          emp?.branch_id ?? null,
+        );
         for (const approverUserId of approverUserIds) {
           await inboxService.createItem({
             user_id: approverUserId,
-            type: 'leave_request',
+            type: "leave_request",
             title: `[ACTION REQUIRED] Escalated Leave Request: ${emp?.full_name ?? input.employeeId}`,
-            description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${effectiveDayCount} day${effectiveDayCount === 1 ? '' : 's'}) — this is EL occurrence #${(elOccurrenceCount ?? 0)} this year and requires ${approverRole.replace(/_/g, ' ')} approval.${input.reason ? ` Reason: ${input.reason}` : ''}`,
-            entity_type: 'leave',
+            description: `${emp?.employee_code ?? ""} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${effectiveDayCount} day${effectiveDayCount === 1 ? "" : "s"}) — this is EL occurrence #${elOccurrenceCount ?? 0} this year and requires ${approverRole.replace(/_/g, " ")} approval.${input.reason ? ` Reason: ${input.reason}` : ""}`,
+            entity_type: "leave",
             entity_id: id,
             action_url: `/leave/requests`,
-            priority: 'high',
+            priority: "high",
           });
         }
       } else {
-        const managerEmpId = emp?.reporting_manager_id ?? emp?.manager_id ?? null;
+        const managerEmpId =
+          emp?.reporting_manager_id ?? emp?.manager_id ?? null;
         if (managerEmpId) {
           const [mgRows] = await db.execute<RowDataPacket[]>(
             `SELECT user_id FROM employees WHERE id = ? AND user_id IS NOT NULL LIMIT 1`,
-            [managerEmpId]
+            [managerEmpId],
           );
           const managerUserId = (mgRows[0] as any)?.user_id ?? null;
           if (managerUserId) {
             await inboxService.createItem({
               user_id: managerUserId,
-              type: 'leave_request',
+              type: "leave_request",
               title: `[ACTION REQUIRED] Leave Request: ${emp?.full_name ?? input.employeeId}`,
-              description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${effectiveDayCount} day${effectiveDayCount === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
+              description: `${emp?.employee_code ?? ""} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${effectiveDayCount} day${effectiveDayCount === 1 ? "" : "s"})${input.reason ? `. Reason: ${input.reason}` : "."}`,
               // The leave request, not the employee. Keyed on the employee this
               // collapsed every request a person raised onto one alert, so a
               // second application never reached the manager and approving one
               // could not tell the inbox which alert to close.
-              entity_type: 'leave',
+              entity_type: "leave",
               entity_id: id,
               action_url: `/leave/requests`,
-              priority: 'high',
+              priority: "high",
             });
           }
         }
@@ -602,35 +707,43 @@ export const leaveService = {
     // Email to the approver (fire-and-forget), alongside the inbox item and the SMS
     // below. Ships in shadow until leave_submitted/leave_pending_branch_head is
     // switched live.
-    if (initialStatus === 'pending_branch_head') {
-      setImmediate(() => { void notifyLeavePendingBranchHead(id, elOccurrenceCount ?? undefined); });
+    if (initialStatus === "pending_branch_head") {
+      setImmediate(() => {
+        void notifyLeavePendingBranchHead(id, elOccurrenceCount ?? undefined);
+      });
     } else {
-      setImmediate(() => { void notifyLeaveSubmitted(id); });
+      setImmediate(() => {
+        void notifyLeaveSubmitted(id);
+      });
     }
 
     // SMS — leave request submitted (fire-and-forget)
     try {
       const [empRow] = await db.execute<RowDataPacket[]>(
         `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
-         FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+         FROM employees WHERE id = ? LIMIT 1`,
+        [input.employeeId],
       );
-      const emp = (empRow[0] as any);
+      const emp = empRow[0] as any;
       const phone = emp?.mobile ?? emp?.personal_phone ?? null;
       if (phone) {
-        sendSMS(phone, 'leave_request_submitted', {
+        sendSMS(phone, "leave_request_submitted", {
           name: emp.name,
           from_date: input.fromDate,
           to_date: input.toDate,
         }).catch(() => {});
       }
-    } catch { /* non-fatal */ }
+    } catch {
+      /* non-fatal */
+    }
 
     return this.getRequest(id);
   },
 
   async getRequest(id: string): Promise<LeaveRequest> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM leave_request WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM leave_request WHERE id = ? LIMIT 1",
+      [id],
     );
     const rec = (rows as LeaveRequest[])[0];
     if (!rec) throw new Error("Leave request not found");
@@ -640,8 +753,8 @@ export const leaveService = {
   // Returns ISO date strings (YYYY-MM-DD) for every calendar day in [fromDate, toDate] inclusive.
   _dateRange(fromDate: string, toDate: string): string[] {
     const dates: string[] = [];
-    const cur = new Date(fromDate + 'T00:00:00Z');
-    const end = new Date(toDate + 'T00:00:00Z');
+    const cur = new Date(fromDate + "T00:00:00Z");
+    const end = new Date(toDate + "T00:00:00Z");
     while (cur <= end) {
       dates.push(cur.toISOString().slice(0, 10));
       cur.setUTCDate(cur.getUTCDate() + 1);
@@ -657,18 +770,24 @@ export const leaveService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT 1 FROM leave_request
         WHERE employee_id = ? AND status IN ('pending','pending_branch_head') LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     return rows.length > 0;
   },
 
-  async reviewRequest(id: string, input: ReviewLeaveInput, reviewerId: string): Promise<LeaveRequest> {
+  async reviewRequest(
+    id: string,
+    input: ReviewLeaveInput,
+    reviewerId: string,
+  ): Promise<LeaveRequest> {
     const request = await this.getRequest(id);
 
-    if (request.status === 'lapsed') {
+    if (request.status === "lapsed") {
       throw Object.assign(
-        new Error("This leave request was lapsed at payroll cycle close and can no longer be approved or modified."),
-        { statusCode: 409 }
+        new Error(
+          "This leave request was lapsed at payroll cycle close and can no longer be approved or modified.",
+        ),
+        { statusCode: 409 },
       );
     }
 
@@ -688,7 +807,7 @@ export const leaveService = {
       // loses the race gets a clear 409 instead. (2026-08-13 audit)
       const [lockedRows] = await conn.execute(
         `SELECT status FROM leave_request WHERE id = ? FOR UPDATE`,
-        [id]
+        [id],
       );
       const lockedStatus = (lockedRows as RowDataPacket[])[0]?.status;
       if (lockedStatus === undefined) {
@@ -696,8 +815,10 @@ export const leaveService = {
       }
       if (lockedStatus !== request.status) {
         throw Object.assign(
-          new Error(`This leave request was already moved to '${lockedStatus}' by another action. Refresh and try again.`),
-          { statusCode: 409 }
+          new Error(
+            `This leave request was already moved to '${lockedStatus}' by another action. Refresh and try again.`,
+          ),
+          { statusCode: 409 },
         );
       }
 
@@ -705,7 +826,10 @@ export const leaveService = {
       // branch_head_approved is the terminal approval status for the two EL
       // exception paths (>12-day EL and 3rd occurrence in year), so it must
       // trigger the same balance deduction and attendance write as 'approved'.
-      if (input.status === 'approved' || input.status === 'branch_head_approved') {
+      if (
+        input.status === "approved" ||
+        input.status === "branch_head_approved"
+      ) {
         if (!request.leave_type_id) {
           throw new Error("Leave type is required for approval");
         }
@@ -723,12 +847,12 @@ export const leaveService = {
               AND from_date <= ?
               AND to_date   >= ?
             LIMIT 1`,
-          [request.employee_id, id, request.to_date, request.from_date]
+          [request.employee_id, id, request.to_date, request.from_date],
         );
         if ((approvalOverlapRows as RowDataPacket[]).length > 0) {
           throw Object.assign(
             new Error(
-              `Cannot approve — this employee already has an approved leave request overlapping ${request.from_date} – ${request.to_date}.`
+              `Cannot approve — this employee already has an approved leave request overlapping ${request.from_date} – ${request.to_date}.`,
             ),
             { statusCode: 409 },
           );
@@ -739,7 +863,7 @@ export const leaveService = {
 
         const [typeRows] = await conn.execute(
           `SELECT leave_code, paid_leave, max_days_per_year FROM leave_type_master WHERE id = ? LIMIT 1`,
-          [leaveTypeId]
+          [leaveTypeId],
         );
         const typeInfo = (typeRows as RowDataPacket[])[0] as any;
         if (!typeInfo) throw new Error("Leave type not found");
@@ -756,7 +880,10 @@ export const leaveService = {
         // eligibility logic, never by this leave-approval code path.
         const approvalScope = await getEmployeeLeaveScope(employeeId);
         const approvalClassification = await classifyLeaveDays(
-          employeeId, approvalScope, String(request.from_date), String(request.to_date)
+          employeeId,
+          approvalScope,
+          String(request.from_date),
+          String(request.to_date),
         );
         const chargeable = chargeableDates(approvalClassification);
         // A request whose every date is a Week Off or company holiday is still approvable.
@@ -783,7 +910,7 @@ export const leaveService = {
         if (partnerCode) {
           const [partnerTypeRows] = await conn.execute(
             `SELECT id FROM leave_type_master WHERE leave_code = ? AND active_status = 1 LIMIT 1`,
-            [partnerCode]
+            [partnerCode],
           );
           partnerTypeId = (partnerTypeRows as RowDataPacket[])[0]?.id ?? null;
         }
@@ -796,13 +923,20 @@ export const leaveService = {
         if (partnerTypeId) {
           const [partnerCapRows] = await conn.execute(
             `SELECT COALESCE(max_days_per_year, 0) AS cap FROM leave_type_master WHERE id = ? LIMIT 1`,
-            [partnerTypeId]
+            [partnerTypeId],
           );
-          partnerMaxDaysPerYear = Number((partnerCapRows as RowDataPacket[])[0]?.cap ?? 0);
+          partnerMaxDaysPerYear = Number(
+            (partnerCapRows as RowDataPacket[])[0]?.cap ?? 0,
+          );
         }
 
         const byYear = groupDatesByYear(chargeable);
-        const deductionBuckets: Array<{ leaveTypeId: string; year: number; days: number; isPrimary: boolean }> = [];
+        const deductionBuckets: Array<{
+          leaveTypeId: string;
+          year: number;
+          days: number;
+          isPrimary: boolean;
+        }> = [];
 
         // A half day is 0.5 of ONE date. Counting dates here charged it a whole day: every
         // half-day leave approved before this deducted 1.00 against a total_days of 0.50,
@@ -832,20 +966,28 @@ export const leaveService = {
             `SELECT (? > YEAR(CURDATE())) AS is_future_year,
                     EXISTS(SELECT 1 FROM leave_balance_ledger
                             WHERE employee_id = ? AND balance_year = ?) AS has_any_row`,
-            [year, employeeId, year]
+            [year, employeeId, year],
           );
           const yearGuard = (yearGuardRows as RowDataPacket[])[0] as any;
-          if (Number(yearGuard?.is_future_year) === 1 && Number(yearGuard?.has_any_row) === 0) {
+          if (
+            Number(yearGuard?.is_future_year) === 1 &&
+            Number(yearGuard?.has_any_row) === 0
+          ) {
             throw Object.assign(
               new Error(
                 `Leave balances for ${year} have not been opened yet, so this request cannot ` +
-                `be approved against them. Approve it once ${year} balances are credited.`
+                  `be approved against them. Approve it once ${year} balances are credited.`,
               ),
               { statusCode: 400 },
             );
           }
 
-          const primary = await readBalance(conn, employeeId, leaveTypeId, year);
+          const primary = await readBalance(
+            conn,
+            employeeId,
+            leaveTypeId,
+            year,
+          );
           // No ledger row yet for the DIRECTLY REQUESTED type (e.g. HR hasn't
           // run balance-seeding for this employee/type/year) is treated
           // permissively, same as before this rewrite: the row is created
@@ -876,17 +1018,23 @@ export const leaveService = {
 
           // Cap first, because it binds before balance does: it is what decides how much this
           // request may draw at all, and only then does it matter which bucket supplies it.
-          const capTotal = pooled ? maxDaysPerYear + partnerMaxDaysPerYear : maxDaysPerYear;
-          const usedTotal = pooled ? primary.usedDays + partner!.usedDays : primary.usedDays;
+          const capTotal = pooled
+            ? maxDaysPerYear + partnerMaxDaysPerYear
+            : maxDaysPerYear;
+          const usedTotal = pooled
+            ? primary.usedDays + partner!.usedDays
+            : primary.usedDays;
           if (capTotal > 0 && usedTotal + daysNeeded > capTotal) {
-            const scope = pooled ? `${leaveCode}+${partnerCode} combined` : leaveCode;
+            const scope = pooled
+              ? `${leaveCode}+${partnerCode} combined`
+              : leaveCode;
             const split = pooled
               ? ` (${primary.usedDays} ${leaveCode} + ${partner!.usedDays} ${partnerCode})`
               : "";
             throw Object.assign(
               new Error(
                 `Approving this request would exceed the annual limit of ${capTotal} day(s) ` +
-                `for ${scope} in ${year}. Already used: ${usedTotal}${split}, requested: ${daysNeeded}.`
+                  `for ${scope} in ${year}. Already used: ${usedTotal}${split}, requested: ${daysNeeded}.`,
               ),
               { statusCode: 400 },
             );
@@ -900,12 +1048,16 @@ export const leaveService = {
           // administrative gap, not a real shortfall) exactly as before; a missing row for the
           // PARTNER never invents credit, because pooling may only draw balance that was
           // actually allocated.
-          const fromPrimary = primary.exists ? Math.min(daysNeeded, primary.available) : daysNeeded;
+          const fromPrimary = primary.exists
+            ? Math.min(daysNeeded, primary.available)
+            : daysNeeded;
           let remainder = daysNeeded - fromPrimary;
 
           let fromPartner = 0;
           if (remainder > 0 && pooled) {
-            fromPartner = partner!.exists ? Math.min(remainder, partner!.available) : 0;
+            fromPartner = partner!.exists
+              ? Math.min(remainder, partner!.available)
+              : 0;
             remainder -= fromPartner;
           }
 
@@ -915,19 +1067,43 @@ export const leaveService = {
               : "";
             throw Object.assign(
               new Error(
-                `Insufficient leave balance for ${year}. Available: ${primary.available + fromPartner}${poolNote}, Requested: ${daysNeeded}.`
+                `Insufficient leave balance for ${year}. Available: ${primary.available + fromPartner}${poolNote}, Requested: ${daysNeeded}.`,
               ),
               { statusCode: 400 },
             );
           }
 
           if (fromPrimary > 0) {
-            await applyBalanceDeduction(conn, employeeId, leaveTypeId, year, fromPrimary, primary.exists);
-            deductionBuckets.push({ leaveTypeId, year, days: fromPrimary, isPrimary: true });
+            await applyBalanceDeduction(
+              conn,
+              employeeId,
+              leaveTypeId,
+              year,
+              fromPrimary,
+              primary.exists,
+            );
+            deductionBuckets.push({
+              leaveTypeId,
+              year,
+              days: fromPrimary,
+              isPrimary: true,
+            });
           }
           if (fromPartner > 0 && partnerTypeId) {
-            await applyBalanceDeduction(conn, employeeId, partnerTypeId, year, fromPartner, partner!.exists);
-            deductionBuckets.push({ leaveTypeId: partnerTypeId, year, days: fromPartner, isPrimary: false });
+            await applyBalanceDeduction(
+              conn,
+              employeeId,
+              partnerTypeId,
+              year,
+              fromPartner,
+              partner!.exists,
+            );
+            deductionBuckets.push({
+              leaveTypeId: partnerTypeId,
+              year,
+              days: fromPartner,
+              isPrimary: false,
+            });
           }
         }
 
@@ -938,7 +1114,13 @@ export const leaveService = {
           await conn.execute(
             `INSERT INTO leave_balance_deduction (id, leave_request_id, leave_type_id, balance_year, days_deducted, is_primary_type)
              VALUES (UUID(), ?, ?, ?, ?, ?)`,
-            [id, bucket.leaveTypeId, bucket.year, bucket.days, bucket.isPrimary ? 1 : 0]
+            [
+              id,
+              bucket.leaveTypeId,
+              bucket.year,
+              bucket.days,
+              bucket.isPrimary ? 1 : 0,
+            ],
           );
         }
 
@@ -986,7 +1168,10 @@ export const leaveService = {
           );
           const byDate = new Map<string, string>();
           for (const r of adrNow as RowDataPacket[]) {
-            byDate.set(String(r.record_date).slice(0, 10), String(r.attendance_status ?? ""));
+            byDate.set(
+              String(r.record_date).slice(0, 10),
+              String(r.attendance_status ?? ""),
+            );
           }
           for (const d of chargeable) {
             const existing = byDate.get(String(d).slice(0, 10)) ?? null;
@@ -1013,13 +1198,21 @@ export const leaveService = {
           "This leave approval",
         );
 
-        const valuesSql = chargeable.map(() => "(UUID(), ?, ?, ?, ?, ?, 'leave_service')").join(", ");
+        const valuesSql = chargeable
+          .map(() => "(UUID(), ?, ?, ?, ?, ?, 'leave_service')")
+          .join(", ");
         const valuesParams: unknown[] = [];
         for (const d of chargeable) {
           const statusForDay = isHalfDayApproval
             ? (halfDayTargets.get(String(d)) ?? attendanceStatus)
             : attendanceStatus;
-          valuesParams.push(request.employee_id, d, statusForDay, lwpValue, changeReason);
+          valuesParams.push(
+            request.employee_id,
+            d,
+            statusForDay,
+            lwpValue,
+            changeReason,
+          );
         }
         await conn.execute(
           `INSERT INTO attendance_daily_record
@@ -1029,14 +1222,17 @@ export const leaveService = {
              attendance_status    = IF(is_locked = 0, VALUES(attendance_status), attendance_status),
              lwp_value            = IF(is_locked = 0, VALUES(lwp_value), lwp_value),
              status_change_reason = IF(is_locked = 0, VALUES(status_change_reason), status_change_reason)`,
-          valuesParams
+          valuesParams,
         );
       }
 
       // Restore balance when rejecting or cancelling a previously approved leave.
       // branch_head_approved is treated as approved for balance/ADR purposes.
-      if ((input.status === 'rejected' || input.status === 'cancelled') &&
-          (request.status === 'approved' || request.status === 'branch_head_approved')) {
+      if (
+        (input.status === "rejected" || input.status === "cancelled") &&
+        (request.status === "approved" ||
+          request.status === "branch_head_approved")
+      ) {
         const employeeId = request.employee_id;
 
         // Revert attendance through the shared restore, the same path a discard
@@ -1048,12 +1244,21 @@ export const leaveService = {
         // something else already changed, never touch one it shouldn't.
         const restoreScope = await getEmployeeLeaveScope(employeeId);
         const restoreClassification = await classifyLeaveDays(
-          employeeId, restoreScope, String(request.from_date), String(request.to_date)
+          employeeId,
+          restoreScope,
+          String(request.from_date),
+          String(request.to_date),
         );
         const restoreDates = chargeableDates(restoreClassification);
-        const adrRows = await loadAttendanceRowsForRestore(conn, employeeId, restoreDates);
+        const adrRows = await loadAttendanceRowsForRestore(
+          conn,
+          employeeId,
+          restoreDates,
+        );
         const snapshots = await readAttendanceSnapshots(conn, "leave", id);
-        revertPlans = restoreDates.map((d) => planLeaveRestore(d, adrRows.get(d), snapshots.get(d)));
+        revertPlans = restoreDates.map((d) =>
+          planLeaveRestore(d, adrRows.get(d), snapshots.get(d)),
+        );
 
         // Balance restore reads back exactly what approval recorded it
         // deducted (leave_balance_deduction — see the approval branch above),
@@ -1080,15 +1285,22 @@ export const leaveService = {
           const y = Number(plan.date.slice(0, 4));
           lockedDatesInYear.set(y, (lockedDatesInYear.get(y) ?? 0) + 1);
         }
-        const totalLockedDays = revertPlans.filter((p) => p.mode === "skip_locked").length;
+        const totalLockedDays = revertPlans.filter(
+          (p) => p.mode === "skip_locked",
+        ).length;
 
         const [bucketRows] = await conn.execute(
           `SELECT leave_type_id, balance_year, days_deducted, is_primary_type
              FROM leave_balance_deduction WHERE leave_request_id = ?
              ORDER BY balance_year, is_primary_type DESC`,
-          [id]
+          [id],
         );
-        const buckets = bucketRows as Array<{ leave_type_id: string; balance_year: number; days_deducted: number; is_primary_type: number }>;
+        const buckets = bucketRows as Array<{
+          leave_type_id: string;
+          balance_year: number;
+          days_deducted: number;
+          is_primary_type: number;
+        }>;
 
         if (buckets.length === 0) {
           // Pre-fix approval (no leave_balance_deduction rows recorded yet) —
@@ -1098,24 +1310,33 @@ export const leaveService = {
           // before this fix shipped.
           const leaveTypeId = request.leave_type_id;
           const year = new Date(request.from_date).getFullYear();
-          const restorable = Math.max(0, Number(request.total_days) - totalLockedDays);
+          const restorable = Math.max(
+            0,
+            Number(request.total_days) - totalLockedDays,
+          );
           await conn.execute(
             `UPDATE leave_balance_ledger SET used_days = GREATEST(0, used_days - ?)
               WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-            [restorable, employeeId, leaveTypeId, year]
+            [restorable, employeeId, leaveTypeId, year],
           );
         } else {
           for (const year of new Set(buckets.map((b) => b.balance_year))) {
             const yearBuckets = buckets.filter((b) => b.balance_year === year);
             let lockedRemaining = lockedDatesInYear.get(year) ?? 0;
             for (const bucket of yearBuckets) {
-              const restorable = Math.max(0, Number(bucket.days_deducted) - lockedRemaining);
-              lockedRemaining = Math.max(0, lockedRemaining - Number(bucket.days_deducted));
+              const restorable = Math.max(
+                0,
+                Number(bucket.days_deducted) - lockedRemaining,
+              );
+              lockedRemaining = Math.max(
+                0,
+                lockedRemaining - Number(bucket.days_deducted),
+              );
               if (restorable <= 0) continue;
               await conn.execute(
                 `UPDATE leave_balance_ledger SET used_days = GREATEST(0, used_days - ?)
                   WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-                [restorable, employeeId, bucket.leave_type_id, year]
+                [restorable, employeeId, bucket.leave_type_id, year],
               );
             }
           }
@@ -1124,13 +1345,17 @@ export const leaveService = {
         if (totalLockedDays > 0) {
           console.warn(
             `[leave-service] ${input.status} of leave ${id}: ${totalLockedDays} day(s) ` +
-            `fall in a payroll-locked attendance period and were not reverted; balance restore reduced accordingly.`
+              `fall in a payroll-locked attendance period and were not reverted; balance restore reduced accordingly.`,
           );
         }
 
         await applyRestore(
-          conn, employeeId, revertPlans, snapshots, reviewerId,
-          `Leave ${input.status} — auto-reverted by leave service`
+          conn,
+          employeeId,
+          revertPlans,
+          snapshots,
+          reviewerId,
+          `Leave ${input.status} — auto-reverted by leave service`,
         );
       }
 
@@ -1142,7 +1367,10 @@ export const leaveService = {
       //
       // Only approvals are stamped. `approved_by` means approver — writing a rejecter
       // into it would make that report name the wrong person.
-      if (input.status === 'approved' || input.status === 'branch_head_approved') {
+      if (
+        input.status === "approved" ||
+        input.status === "branch_head_approved"
+      ) {
         // reviewerId is an auth user id, but leave.executor.ts joins
         // `employees appr ON appr.id = lr.approved_by`, so the column has to hold an
         // EMPLOYEE id or the report shows a raw UUID instead of an employee code.
@@ -1152,46 +1380,52 @@ export const leaveService = {
         // writes non-employee strings here too.
         const [approverRows] = await conn.execute(
           `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-          [reviewerId]
+          [reviewerId],
         );
         const approvedBy =
-          String((approverRows as RowDataPacket[])?.[0]?.id ?? '').trim() || reviewerId;
+          String((approverRows as RowDataPacket[])?.[0]?.id ?? "").trim() ||
+          reviewerId;
 
         // approval_level is NOT NULL DEFAULT 'normal', so it is only written on the
         // branch-head path. Writing 'normal' explicitly would clobber any level set
         // elsewhere for no gain.
-        const sets = ['status = ?', 'approved_by = ?', 'approved_at = NOW()'];
-        if (input.status === 'branch_head_approved') sets.push(`approval_level = 'branch_head'`);
+        const sets = ["status = ?", "approved_by = ?", "approved_at = NOW()"];
+        if (input.status === "branch_head_approved")
+          sets.push(`approval_level = 'branch_head'`);
 
         // `AND status = ?` + affectedRows check is defense-in-depth alongside the
         // FOR UPDATE lock above (same pattern discardService already uses for its
         // own status transition) — belt and suspenders against a double-approval.
         const [approveResult] = await conn.execute(
-          `UPDATE leave_request SET ${sets.join(', ')} WHERE id = ? AND status = ?`,
-          [input.status, approvedBy, id, request.status]
+          `UPDATE leave_request SET ${sets.join(", ")} WHERE id = ? AND status = ?`,
+          [input.status, approvedBy, id, request.status],
         );
         if ((approveResult as any).affectedRows !== 1) {
           throw Object.assign(
-            new Error("This leave request was already updated by another action. Refresh and try again."),
-            { statusCode: 409 }
+            new Error(
+              "This leave request was already updated by another action. Refresh and try again.",
+            ),
+            { statusCode: 409 },
           );
         }
       } else {
         const [otherResult] = await conn.execute(
           "UPDATE leave_request SET status = ? WHERE id = ? AND status = ?",
-          [input.status, id, request.status]
+          [input.status, id, request.status],
         );
         if ((otherResult as any).affectedRows !== 1) {
           throw Object.assign(
-            new Error("This leave request was already updated by another action. Refresh and try again."),
-            { statusCode: 409 }
+            new Error(
+              "This leave request was already updated by another action. Refresh and try again.",
+            ),
+            { statusCode: 409 },
           );
         }
       }
       await conn.execute(
         `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
          VALUES (UUID(), ?, ?, ?, ?)`,
-        [id, input.status, reviewerId, input.remarks ?? null]
+        [id, input.status, reviewerId, input.remarks ?? null],
       );
 
       await conn.commit();
@@ -1225,31 +1459,40 @@ export const leaveService = {
     if (revertPlans.length > 0) {
       try {
         await rederiveDates(request.employee_id, revertPlans);
-      } catch { /* non-fatal: the nightly engine sweep will pick these up */ }
+      } catch {
+        /* non-fatal: the nightly engine sweep will pick these up */
+      }
     }
 
     // The decision is made, so the approver's alert has served its purpose.
     // Closed on both keys because alerts raised before the entity_id fix above
     // carry the employee id rather than the request id, and those approvers
     // are still being reminded about leave they have already dealt with.
-    const { inboxService } = await import('../inbox/inbox.service.js');
+    const { inboxService } = await import("../inbox/inbox.service.js");
     await inboxService.resolveItems({
-      entity_type: 'leave',
+      entity_type: "leave",
       entity_id: id,
-      types: ['leave_request'],
+      types: ["leave_request"],
     });
     if (!(await this._hasOpenLeave(request.employee_id))) {
       await inboxService.resolveItems({
-        entity_type: 'leave',
+        entity_type: "leave",
         entity_id: request.employee_id,
-        types: ['leave_request'],
+        types: ["leave_request"],
       });
     }
 
     // Email notification (fire-and-forget), alongside the SMS below rather than
     // instead of it. Ships in shadow.
-    if (['approved', 'branch_head_approved', 'rejected', 'cancelled'].includes(input.status)) {
-      const notifyStatus = input.status === 'branch_head_approved' ? 'approved' : input.status as 'approved' | 'rejected' | 'cancelled';
+    if (
+      ["approved", "branch_head_approved", "rejected", "cancelled"].includes(
+        input.status,
+      )
+    ) {
+      const notifyStatus =
+        input.status === "branch_head_approved"
+          ? "approved"
+          : (input.status as "approved" | "rejected" | "cancelled");
       setImmediate(() => {
         void notifyLeaveDecision(id, notifyStatus, input.remarks);
       });
@@ -1260,14 +1503,20 @@ export const leaveService = {
       const updated = await this.getRequest(id);
       const [empRow] = await db.execute<RowDataPacket[]>(
         `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
-         FROM employees WHERE id = ? LIMIT 1`, [updated.employee_id]
+         FROM employees WHERE id = ? LIMIT 1`,
+        [updated.employee_id],
       );
-      const emp = (empRow[0] as any);
+      const emp = empRow[0] as any;
       const phone = emp?.mobile ?? emp?.personal_phone ?? null;
-      const isApproved = input.status === 'approved' || input.status === 'branch_head_approved';
+      const isApproved =
+        input.status === "approved" || input.status === "branch_head_approved";
       if (phone && isApproved) {
-        sendSMS(phone, 'leave_approved', { name: emp.name, from_date: updated.from_date, to_date: updated.to_date }).catch(() => {});
-      } else if (phone && input.status === 'rejected') {
+        sendSMS(phone, "leave_approved", {
+          name: emp.name,
+          from_date: updated.from_date,
+          to_date: updated.to_date,
+        }).catch(() => {});
+      } else if (phone && input.status === "rejected") {
         // Not sent, deliberately: this used to call sendSMS(phone, 'request_rejected', ...), but
         // 'request_rejected' is not a registered SmartPing DLT template key — buildSMS() threw
         // "Unknown SmartPing DLT template key" on every call, caught silently, so every leave
@@ -1282,7 +1531,9 @@ export const leaveService = {
         // enabled=0/dispatch_mode='shadow', confirmed 2026-08-18) — so a rejected employee
         // currently gets no automated notification via any channel, only what's visible in the
         // HRMS UI itself.
-        console.warn(`[leave] rejection SMS not attempted for request ${id} — no registered DLT template for a rejection`);
+        console.warn(
+          `[leave] rejection SMS not attempted for request ${id} — no registered DLT template for a rejection`,
+        );
       }
 
       // In-app decision notice for the employee themselves. Previously the only
@@ -1297,49 +1548,92 @@ export const leaveService = {
       // nobody needs to act on). (2026-08-21 audit)
       const [userRow] = await db.execute<RowDataPacket[]>(
         `SELECT user_id FROM employees WHERE id = ? AND user_id IS NOT NULL LIMIT 1`,
-        [updated.employee_id]
+        [updated.employee_id],
       );
       const employeeUserId = (userRow[0] as any)?.user_id ?? null;
       if (employeeUserId) {
         const decisionLabel =
-          input.status === 'approved' || input.status === 'branch_head_approved' ? 'approved' :
-          input.status === 'rejected' || input.status === 'branch_head_rejected' ? 'rejected' :
-          input.status === 'cancelled' ? 'cancelled' : null;
+          input.status === "approved" || input.status === "branch_head_approved"
+            ? "approved"
+            : input.status === "rejected" ||
+                input.status === "branch_head_rejected"
+              ? "rejected"
+              : input.status === "cancelled"
+                ? "cancelled"
+                : null;
         if (decisionLabel) {
-          await db.execute(
-            `INSERT INTO portal_notification (
+          await db
+            .execute(
+              `INSERT INTO portal_notification (
                id, user_id, user_type, title, message, notification_type,
                reference_id, priority, read_status
              ) VALUES (UUID(), ?, 'employee', ?, ?, 'leave_decision', ?, ?, 0)`,
-            [
-              employeeUserId,
-              decisionLabel === 'approved' ? 'Leave Request Approved' : decisionLabel === 'rejected' ? 'Leave Request Rejected' : 'Leave Request Cancelled',
-              `Your leave request for ${updated.from_date} to ${updated.to_date} was ${decisionLabel}${input.remarks ? `. Remarks: ${input.remarks}` : '.'}`,
-              id,
-              decisionLabel === 'rejected' ? 'high' : 'medium',
-            ]
-          ).catch(() => {});
+              [
+                employeeUserId,
+                decisionLabel === "approved"
+                  ? "Leave Request Approved"
+                  : decisionLabel === "rejected"
+                    ? "Leave Request Rejected"
+                    : "Leave Request Cancelled",
+                `Your leave request for ${updated.from_date} to ${updated.to_date} was ${decisionLabel}${input.remarks ? `. Remarks: ${input.remarks}` : "."}`,
+                id,
+                decisionLabel === "rejected" ? "high" : "medium",
+              ],
+            )
+            .catch(() => {});
         }
       }
-    } catch { /* non-fatal */ }
+    } catch {
+      /* non-fatal */
+    }
 
     return this.getRequest(id);
   },
 
-  async listRequests(filters: LeaveRequestFilters): Promise<PaginatedResult<LeaveRequest>> {
-    const { page, limit, employeeId, leaveTypeId, status, fromDate, toDate, activeOn } = filters;
+  async listRequests(
+    filters: LeaveRequestFilters,
+  ): Promise<PaginatedResult<LeaveRequest>> {
+    const {
+      page,
+      limit,
+      employeeId,
+      leaveTypeId,
+      status,
+      fromDate,
+      toDate,
+      activeOn,
+    } = filters;
     const offset = (page - 1) * limit;
     const conds: string[] = [];
     const params: unknown[] = [];
     // Every condition is qualified with lr., because the join below brings in a table that
     // also carries created_at — leaving them bare would make those references ambiguous.
-    if (employeeId)  { conds.push("lr.employee_id = ?");    params.push(employeeId); }
-    if (leaveTypeId) { conds.push("lr.leave_type_id = ?");  params.push(leaveTypeId); }
-    if (status)      { conds.push("lr.status = ?");         params.push(status); }
-    if (fromDate)    { conds.push("lr.from_date >= ?");     params.push(fromDate); }
-    if (toDate)      { conds.push("lr.to_date <= ?");       params.push(toDate); }
-    if (activeOn)    { conds.push("lr.from_date <= ?");     params.push(activeOn);
-                       conds.push("lr.to_date >= ?");       params.push(activeOn); }
+    if (employeeId) {
+      conds.push("lr.employee_id = ?");
+      params.push(employeeId);
+    }
+    if (leaveTypeId) {
+      conds.push("lr.leave_type_id = ?");
+      params.push(leaveTypeId);
+    }
+    if (status) {
+      conds.push("lr.status = ?");
+      params.push(status);
+    }
+    if (fromDate) {
+      conds.push("lr.from_date >= ?");
+      params.push(fromDate);
+    }
+    if (toDate) {
+      conds.push("lr.to_date <= ?");
+      params.push(toDate);
+    }
+    if (activeOn) {
+      conds.push("lr.from_date <= ?");
+      params.push(activeOn);
+      conds.push("lr.to_date >= ?");
+      params.push(activeOn);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     // leave_request stores only leave_type_id and leave_type_code, so a caller rendering a
     // request had no name to show. The dashboard activity feed fell back to the word "Leave"
@@ -1352,12 +1646,18 @@ export const leaveService = {
         ${where}
         ORDER BY lr.applied_at DESC
         LIMIT ${limit} OFFSET ${offset}`,
-      params
+      params,
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM leave_request lr ${where}`, params
+      `SELECT COUNT(*) AS total FROM leave_request lr ${where}`,
+      params,
     );
-    return { data: rows as LeaveRequest[], total: (countRows as any)[0]?.total ?? 0, page, limit };
+    return {
+      data: rows as LeaveRequest[],
+      total: (countRows as any)[0]?.total ?? 0,
+      page,
+      limit,
+    };
   },
 
   async getBalance(employeeId: string, year: number): Promise<any[]> {
@@ -1376,7 +1676,7 @@ export const leaveService = {
           AND lbl.balance_year  = ?
         WHERE lt.active_status = 1
         ORDER BY lt.leave_name ASC`,
-      [year, employeeId, year]
+      [year, employeeId, year],
     );
 
     const currentYear = new Date().getFullYear();
@@ -1411,14 +1711,18 @@ export const leaveService = {
         continue;
       }
       // Prefer the canonical (non-legacy) row for identity/display.
-      const rowIsLegacy = LEGACY_CODES.has(String(row.leave_code ?? "").toUpperCase())
-        || /\(legacy\)\s*$/i.test(String(row.leave_name ?? ""));
+      const rowIsLegacy =
+        LEGACY_CODES.has(String(row.leave_code ?? "").toUpperCase()) ||
+        /\(legacy\)\s*$/i.test(String(row.leave_name ?? ""));
       const base = rowIsLegacy ? existing : row;
       merged.set(key, {
         ...base,
-        allocated_days: Number(existing.allocated_days ?? 0) + Number(row.allocated_days ?? 0),
-        used_days:      Number(existing.used_days ?? 0)      + Number(row.used_days ?? 0),
-        adjusted_days:  Number(existing.adjusted_days ?? 0)  + Number(row.adjusted_days ?? 0),
+        allocated_days:
+          Number(existing.allocated_days ?? 0) +
+          Number(row.allocated_days ?? 0),
+        used_days: Number(existing.used_days ?? 0) + Number(row.used_days ?? 0),
+        adjusted_days:
+          Number(existing.adjusted_days ?? 0) + Number(row.adjusted_days ?? 0),
       });
     }
 
@@ -1436,7 +1740,10 @@ export const leaveService = {
   async listHolidays(year?: number): Promise<LeaveHoliday[]> {
     let sql = "SELECT * FROM leave_holiday_master WHERE active_status = 1";
     const params: unknown[] = [];
-    if (year) { sql += " AND YEAR(holiday_date) = ?"; params.push(year); }
+    if (year) {
+      sql += " AND YEAR(holiday_date) = ?";
+      params.push(year);
+    }
     sql += " ORDER BY holiday_date ASC";
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     const holidays = rows as LeaveHoliday[];
@@ -1451,12 +1758,12 @@ export const leaveService = {
     const [ccRows] = await db.query<RowDataPacket[]>(
       `SELECT holiday_id, cost_centre_id FROM holiday_cost_centre_mapping
         WHERE holiday_id IN (?) AND cost_centre_id IS NOT NULL`,
-      [ids]
+      [ids],
     );
     const [dgRows] = await db.query<RowDataPacket[]>(
       `SELECT holiday_id, designation_id FROM holiday_designation_mapping
         WHERE holiday_id IN (?)`,
-      [ids]
+      [ids],
     );
     const ccBy = new Map<string, string[]>();
     for (const r of ccRows as any[]) {
@@ -1477,7 +1784,10 @@ export const leaveService = {
     }));
   },
 
-  async createHoliday(input: CreateHolidayInput, createdBy?: string | null): Promise<LeaveHoliday> {
+  async createHoliday(
+    input: CreateHolidayInput,
+    createdBy?: string | null,
+  ): Promise<LeaveHoliday> {
     const id = randomUUID();
     const conn = await (db as any).getConnection();
     try {
@@ -1485,16 +1795,28 @@ export const leaveService = {
       await conn.execute(
         `INSERT INTO leave_holiday_master (id, holiday_name, holiday_date, holiday_type, branch_id)
          VALUES (?, ?, ?, ?, ?)`,
-        [id, input.holidayName, input.holidayDate, input.holidayType, input.branchId ?? null]
+        [
+          id,
+          input.holidayName,
+          input.holidayDate,
+          input.holidayType,
+          input.branchId ?? null,
+        ],
       );
       // The mapping rows are written in the SAME transaction as the holiday. A
       // holiday that exists without the scope its creator chose is worse than
       // no holiday at all: it silently applies to the entire branch and pays
       // people who were never meant to get the day off.
-      await writeHolidayScope(conn, id, input.branchId ?? null, {
-        costCentreIds: input.costCentreIds ?? [],
-        designationIds: input.designationIds ?? [],
-      }, createdBy ?? null);
+      await writeHolidayScope(
+        conn,
+        id,
+        input.branchId ?? null,
+        {
+          costCentreIds: input.costCentreIds ?? [],
+          designationIds: input.designationIds ?? [],
+        },
+        createdBy ?? null,
+      );
       await conn.commit();
     } catch (err) {
       await conn.rollback();
@@ -1503,7 +1825,8 @@ export const leaveService = {
       conn.release();
     }
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1",
+      [id],
     );
     const holiday = (rows as LeaveHoliday[])[0];
     return {
@@ -1519,11 +1842,11 @@ export const leaveService = {
   async updateHolidayScope(
     holidayId: string,
     input: UpdateHolidayScopeInput,
-    updatedBy?: string | null
+    updatedBy?: string | null,
   ): Promise<LeaveHoliday> {
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id, branch_id FROM leave_holiday_master WHERE id = ? LIMIT 1",
-      [holidayId]
+      [holidayId],
     );
     const row = (existing as RowDataPacket[])[0] as any;
     if (!row) throw new Error("Holiday not found");
@@ -1535,9 +1858,21 @@ export const leaveService = {
       // is_active entirely — it asks only whether ANY mapping row exists for
       // the holiday — so a soft-deleted row would keep the holiday narrowed
       // while matching nobody, silently removing the day from everyone.
-      await conn.execute("DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?", [holidayId]);
-      await conn.execute("DELETE FROM holiday_designation_mapping WHERE holiday_id = ?", [holidayId]);
-      await writeHolidayScope(conn, holidayId, row.branch_id ?? null, input, updatedBy ?? null);
+      await conn.execute(
+        "DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?",
+        [holidayId],
+      );
+      await conn.execute(
+        "DELETE FROM holiday_designation_mapping WHERE holiday_id = ?",
+        [holidayId],
+      );
+      await writeHolidayScope(
+        conn,
+        holidayId,
+        row.branch_id ?? null,
+        input,
+        updatedBy ?? null,
+      );
       await conn.commit();
     } catch (err) {
       await conn.rollback();
@@ -1547,7 +1882,8 @@ export const leaveService = {
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [holidayId]
+      "SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1",
+      [holidayId],
     );
     return {
       ...(rows as LeaveHoliday[])[0],
@@ -1559,13 +1895,17 @@ export const leaveService = {
   // Called by payroll at cycle lock time. Marks all still-pending leave requests
   // that overlap the given month as 'lapsed'. The LWP deduction already stands in
   // attendance_daily_record (absent rows) — no salary recalculation needed.
-  async lapseUnresolvedLeaves(runId: string, runMonth: string, employeeIds: string[]): Promise<{ lapsed: number }> {
+  async lapseUnresolvedLeaves(
+    runId: string,
+    runMonth: string,
+    employeeIds: string[],
+  ): Promise<{ lapsed: number }> {
     if (!employeeIds.length) return { lapsed: 0 };
 
-    const [year, mon] = runMonth.split('-').map(Number);
+    const [year, mon] = runMonth.split("-").map(Number);
     const monthStart = `${runMonth}-01`;
     const lastDay = new Date(year, mon, 0).getDate();
-    const monthEnd = `${runMonth}-${String(lastDay).padStart(2, '0')}`;
+    const monthEnd = `${runMonth}-${String(lastDay).padStart(2, "0")}`;
     const reason = `Payroll cycle ${runMonth} locked — leave not approved before cycle close`;
 
     // Fetch pending leave requests still unresolved as THIS month closes, for
@@ -1585,7 +1925,7 @@ export const leaveService = {
     // means a request only lapses once the closing month is its OWN LAST
     // month — a request extending beyond the month being closed survives to
     // be decided (or lapsed in turn) at its own later month's close instead.
-    const placeholders = employeeIds.map(() => '?').join(', ');
+    const placeholders = employeeIds.map(() => "?").join(", ");
     const [pendingRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_id, leave_type_id, from_date, to_date, total_days
          FROM leave_request
@@ -1600,7 +1940,7 @@ export const leaveService = {
     if (!(pendingRows as any[]).length) return { lapsed: 0 };
 
     const ids = (pendingRows as any[]).map((r: any) => r.id);
-    const idPlaceholders = ids.map(() => '?').join(', ');
+    const idPlaceholders = ids.map(() => "?").join(", ");
 
     await db.execute(
       `UPDATE leave_request
@@ -1614,14 +1954,20 @@ export const leaveService = {
 
     // Audit log — one row per lapsed request
     for (const req of pendingRows as any[]) {
-      await db.execute(
-        `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
+      await db
+        .execute(
+          `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
          VALUES (UUID(), ?, 'lapsed_by_payroll_close', 'system', ?)`,
-        [req.id, reason],
-      ).catch((e: unknown) => console.error('[leave-service] lapse audit log error:', e));
+          [req.id, reason],
+        )
+        .catch((e: unknown) =>
+          console.error("[leave-service] lapse audit log error:", e),
+        );
     }
 
-    console.log(`[leave-service] Lapsed ${ids.length} pending leave request(s) for payroll run ${runId} (${runMonth})`);
+    console.log(
+      `[leave-service] Lapsed ${ids.length} pending leave request(s) for payroll run ${runId} (${runMonth})`,
+    );
     return { lapsed: ids.length };
   },
 };

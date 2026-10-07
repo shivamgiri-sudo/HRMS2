@@ -3,8 +3,8 @@
  * Run: node c:/tmp/send-daily-report-test.mjs
  */
 
-import nodemailer from 'nodemailer';
-import mysql from 'mysql2/promise';
+import nodemailer from "nodemailer";
+import mysql from "mysql2/promise";
 
 // The database password is read from the environment, never written here. This file was one
 // of 13 that had it as a source literal; the repository is public and the same value
@@ -12,29 +12,45 @@ import mysql from 'mysql2/promise';
 // backend/src/db/__tests__/no-hardcoded-credentials.contract.test.ts exists to catch.
 // Run: node --env-file=backend/.env <this script>
 if (!process.env.DB_PASSWORD) {
-  throw new Error('DB_PASSWORD is not set. Run with: node --env-file=backend/.env <script>');
+  throw new Error(
+    "DB_PASSWORD is not set. Run with: node --env-file=backend/.env <script>",
+  );
 }
 
-const DB = { host: '122.184.128.90', user: 'shivam_user', password: process.env.DB_PASSWORD, database: 'mas_hrms' };
-const SMTP = { host: 'smtp.gmail.com', port: 587, user: 'careers@teammas.in', pass: 'tpimnpkbqsltavbd' };
-const YESTERDAY = '2026-08-24';
-const WEEK_START = '2026-08-18'; // Monday of that week
-const MONTH_START = '2026-08-01';
-const TO = 'shivam.giri@teammas.in';
-const DASHBOARD_URL = 'https://mcnhrms.teammas.in/recruitment/candidates';
+const DB = {
+  host: "122.184.128.90",
+  user: "shivam_user",
+  password: process.env.DB_PASSWORD,
+  database: "mas_hrms",
+};
+const SMTP = {
+  host: "smtp.gmail.com",
+  port: 587,
+  user: "careers@teammas.in",
+  pass: "tpimnpkbqsltavbd",
+};
+const YESTERDAY = "2026-08-24";
+const WEEK_START = "2026-08-18"; // Monday of that week
+const MONTH_START = "2026-08-01";
+const TO = "shivam.giri@teammas.in";
+const DASHBOARD_URL = "https://mcnhrms.teammas.in/recruitment/candidates";
 const SLA_MINUTES = 240;
 
 const db = await mysql.createPool(DB);
 
-function fmtPct(n, d) { return d ? `${Math.round((n/d)*100)}%` : '0%'; }
+function fmtPct(n, d) {
+  return d ? `${Math.round((n / d) * 100)}%` : "0%";
+}
 function fmtWait(min) {
-  if (min === null || min === undefined || min < 0) return '—';
-  const h = Math.floor(min/60), m = Math.round(min%60);
+  if (min === null || min === undefined || min < 0) return "—";
+  const h = Math.floor(min / 60),
+    m = Math.round(min % 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 async function periodMetrics(branch, from, to) {
-  const [rows] = await db.execute(`
+  const [rows] = await db.execute(
+    `
     SELECT
       COUNT(DISTINCT c.id) AS walkin,
       SUM(CASE WHEN c.current_stage IN ('Selected','selected','Offered','offer_approved','converted','payroll_validated','Onboarded') THEN 1 ELSE 0 END) AS selected,
@@ -47,18 +63,28 @@ async function periodMetrics(branch, from, to) {
       ROUND(AVG(CASE WHEN s.interview_started_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE,COALESCE(c.walk_in_date,c.created_at),s.interview_started_at) END),0) AS avg_wait
     FROM ats_candidate c LEFT JOIN ats_interview_submission s ON s.candidate_id=c.id
     WHERE c.record_type='candidate' AND c.applied_for_branch=? AND DATE(COALESCE(c.walk_in_date,c.created_at)) BETWEEN ? AND ?`,
-    [SLA_MINUTES, branch, from, to]
+    [SLA_MINUTES, branch, from, to],
   );
   const r = rows[0] || {};
-  const walkin = Number(r.walkin||0), selected = Number(r.selected||0);
-  return { walkin, selected, rejected: Number(r.rejected||0), waiting: Number(r.waiting||0),
-    clientRoundPending: Number(r.client_rnd_pending||0), noShow: Number(r.no_show||0),
-    slaBreachCount: Number(r.sla_breach||0), pending: Number(r.pending||0),
-    selectionPct: fmtPct(selected,walkin), avgWaitMinutes: r.avg_wait!=null?Number(r.avg_wait):null };
+  const walkin = Number(r.walkin || 0),
+    selected = Number(r.selected || 0);
+  return {
+    walkin,
+    selected,
+    rejected: Number(r.rejected || 0),
+    waiting: Number(r.waiting || 0),
+    clientRoundPending: Number(r.client_rnd_pending || 0),
+    noShow: Number(r.no_show || 0),
+    slaBreachCount: Number(r.sla_breach || 0),
+    pending: Number(r.pending || 0),
+    selectionPct: fmtPct(selected, walkin),
+    avgWaitMinutes: r.avg_wait != null ? Number(r.avg_wait) : null,
+  };
 }
 
 async function processFtd(branch) {
-  const [rows] = await db.execute(`
+  const [rows] = await db.execute(
+    `
     SELECT c.applied_for_branch AS branch, COALESCE(c.applied_for_process,'Unknown') AS process,
       COUNT(DISTINCT c.id) AS walkin,
       SUM(CASE WHEN c.current_stage IN ('Selected','selected','Offered','offer_approved','converted','payroll_validated','Onboarded') THEN 1 ELSE 0 END) AS selected,
@@ -70,18 +96,33 @@ async function processFtd(branch) {
       ROUND(AVG(CASE WHEN s.interview_started_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE,COALESCE(c.walk_in_date,c.created_at),s.interview_started_at) END),0) AS avg_wait
     FROM ats_candidate c LEFT JOIN ats_interview_submission s ON s.candidate_id=c.id
     WHERE c.record_type='candidate' AND c.applied_for_branch=? AND DATE(COALESCE(c.walk_in_date,c.created_at))=?
-    GROUP BY c.applied_for_branch, c.applied_for_process ORDER BY walkin DESC`, [branch, YESTERDAY]);
-  return rows.filter(r => !String(r.process||'').match(/^[0-9a-f]{8}-/)).map(r => {
-    const walkin=Number(r.walkin||0), selected=Number(r.selected||0);
-    return { branch: String(r.branch||branch), process: String(r.process||'Unknown'),
-      walkin, selected, rejected:Number(r.rejected||0), waiting:Number(r.waiting||0),
-      clientRoundPending:Number(r.client_rnd_pending||0), noShow:Number(r.no_show||0),
-      pending:Number(r.pending||0), selectionPct:fmtPct(selected,walkin), avgWaitMinutes:r.avg_wait!=null?Number(r.avg_wait):null };
-  });
+    GROUP BY c.applied_for_branch, c.applied_for_process ORDER BY walkin DESC`,
+    [branch, YESTERDAY],
+  );
+  return rows
+    .filter((r) => !String(r.process || "").match(/^[0-9a-f]{8}-/))
+    .map((r) => {
+      const walkin = Number(r.walkin || 0),
+        selected = Number(r.selected || 0);
+      return {
+        branch: String(r.branch || branch),
+        process: String(r.process || "Unknown"),
+        walkin,
+        selected,
+        rejected: Number(r.rejected || 0),
+        waiting: Number(r.waiting || 0),
+        clientRoundPending: Number(r.client_rnd_pending || 0),
+        noShow: Number(r.no_show || 0),
+        pending: Number(r.pending || 0),
+        selectionPct: fmtPct(selected, walkin),
+        avgWaitMinutes: r.avg_wait != null ? Number(r.avg_wait) : null,
+      };
+    });
 }
 
 async function recruiterFtd(branch) {
-  const [rows] = await db.execute(`
+  const [rows] = await db.execute(
+    `
     SELECT COALESCE(c.recruiter_assigned_name,c.recruiter_name,'Unassigned') AS recruiter,
       c.applied_for_branch AS branch,
       COUNT(DISTINCT c.id) AS sourced,
@@ -92,16 +133,31 @@ async function recruiterFtd(branch) {
       ROUND(AVG(CASE WHEN s.interview_started_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE,COALESCE(c.walk_in_date,c.created_at),s.interview_started_at) END),0) AS avg_wait
     FROM ats_candidate c LEFT JOIN ats_interview_submission s ON s.candidate_id=c.id
     WHERE c.record_type='candidate' AND c.applied_for_branch=? AND DATE(COALESCE(c.walk_in_date,c.created_at))=?
-    GROUP BY recruiter,c.applied_for_branch ORDER BY attended DESC`, [SLA_MINUTES, branch, YESTERDAY]);
-  return rows.map(r => {
-    const attended=Number(r.attended||0), selected=Number(r.selected||0), slaMet=Number(r.sla_met||0), pending=Number(r.pending||0);
-    const avgWait=r.avg_wait!=null?Number(r.avg_wait):null;
-    let attention='Stable';
-    if(pending>=3||(avgWait!==null&&avgWait>180)) attention='Critical';
-    else if(pending>=1||(avgWait!==null&&avgWait>90)) attention='At Risk';
-    return { recruiter:String(r.recruiter||'Unassigned'), branch:String(r.branch||branch),
-      sourced:Number(r.sourced||0), attended, slaPct:fmtPct(slaMet,attended),
-      selectionPct:fmtPct(selected,attended), avgWaitMinutes:avgWait, pendingCount:pending, attention };
+    GROUP BY recruiter,c.applied_for_branch ORDER BY attended DESC`,
+    [SLA_MINUTES, branch, YESTERDAY],
+  );
+  return rows.map((r) => {
+    const attended = Number(r.attended || 0),
+      selected = Number(r.selected || 0),
+      slaMet = Number(r.sla_met || 0),
+      pending = Number(r.pending || 0);
+    const avgWait = r.avg_wait != null ? Number(r.avg_wait) : null;
+    let attention = "Stable";
+    if (pending >= 3 || (avgWait !== null && avgWait > 180))
+      attention = "Critical";
+    else if (pending >= 1 || (avgWait !== null && avgWait > 90))
+      attention = "At Risk";
+    return {
+      recruiter: String(r.recruiter || "Unassigned"),
+      branch: String(r.branch || branch),
+      sourced: Number(r.sourced || 0),
+      attended,
+      slaPct: fmtPct(slaMet, attended),
+      selectionPct: fmtPct(selected, attended),
+      avgWaitMinutes: avgWait,
+      pendingCount: pending,
+      attention,
+    };
   });
 }
 
@@ -111,22 +167,40 @@ function buildHtml(reports) {
   const TDN = `style="padding:6px 9px;font-size:12px;color:#111827;border:1px solid #e5e7eb;text-align:center;"`;
 
   const attBadge = (a) => {
-    const s = {Stable:'background:#dcfce7;color:#166534;','At Risk':'background:#fef9c3;color:#854d0e;',Critical:'background:#fee2e2;color:#991b1b;'}[a]||'';
+    const s =
+      {
+        Stable: "background:#dcfce7;color:#166534;",
+        "At Risk": "background:#fef9c3;color:#854d0e;",
+        Critical: "background:#fee2e2;color:#991b1b;",
+      }[a] || "";
     return `<span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;${s}">${a}</span>`;
   };
 
   let allInterventions = [];
-  let allRecruiterRows = '';
-  let allProcessRows = '';
+  let allRecruiterRows = "";
+  let allProcessRows = "";
 
-  for (const { branchName, ftd, wtd, mtd, processFtdData, recruiterFtdData, interventions } of reports) {
-    allInterventions.push(...interventions.map(i=>`<li style="font-size:13px;color:#7c2d12;line-height:1.8;">${i}</li>`));
+  for (const {
+    branchName,
+    ftd,
+    wtd,
+    mtd,
+    processFtdData,
+    recruiterFtdData,
+    interventions,
+  } of reports) {
+    allInterventions.push(
+      ...interventions.map(
+        (i) =>
+          `<li style="font-size:13px;color:#7c2d12;line-height:1.8;">${i}</li>`,
+      ),
+    );
     for (const p of processFtdData) {
       allProcessRows += `<tr>
         <td ${TD}>${p.branch}</td><td ${TD}>${p.process}</td>
         <td ${TDN}>${p.walkin}</td><td ${TDN}>${p.selected}</td><td ${TDN}>${p.rejected}</td>
         <td ${TDN}>${p.waiting}</td><td ${TDN}>${p.clientRoundPending}</td><td ${TDN}>${p.noShow}</td>
-        <td ${TDN}>${p.pending>0?`<span style="color:#dc2626;font-weight:700;">${p.pending}</span>`:0}</td>
+        <td ${TDN}>${p.pending > 0 ? `<span style="color:#dc2626;font-weight:700;">${p.pending}</span>` : 0}</td>
         <td ${TDN}>${p.selectionPct}</td><td ${TDN}>${fmtWait(p.avgWaitMinutes)}</td>
       </tr>`;
     }
@@ -136,35 +210,53 @@ function buildHtml(reports) {
         <td ${TDN}>${r.sourced}</td><td ${TDN}>${r.attended}</td>
         <td ${TDN}>${r.slaPct}</td><td ${TDN}>${r.selectionPct}</td>
         <td ${TDN}>${fmtWait(r.avgWaitMinutes)}</td>
-        <td ${TDN}>${r.pendingCount>0?`<span style="color:#dc2626;font-weight:700;">${r.pendingCount}</span>`:0}</td>
+        <td ${TDN}>${r.pendingCount > 0 ? `<span style="color:#dc2626;font-weight:700;">${r.pendingCount}</span>` : 0}</td>
         <td style="padding:6px 9px;border:1px solid #e5e7eb;">${attBadge(r.attention)}</td>
       </tr>`;
     }
   }
 
   // Combined FTD/WTD/MTD across all branches
-  const combined = (period) => reports.reduce((acc, r) => {
-    const m = r[period];
-    acc.walkin += m.walkin; acc.selected += m.selected; acc.rejected += m.rejected;
-    acc.waiting += m.waiting; acc.clientRoundPending += m.clientRoundPending;
-    acc.noShow += m.noShow; acc.slaBreachCount += m.slaBreachCount; acc.pending += m.pending;
-    return acc;
-  }, { walkin:0,selected:0,rejected:0,waiting:0,clientRoundPending:0,noShow:0,slaBreachCount:0,pending:0 });
+  const combined = (period) =>
+    reports.reduce(
+      (acc, r) => {
+        const m = r[period];
+        acc.walkin += m.walkin;
+        acc.selected += m.selected;
+        acc.rejected += m.rejected;
+        acc.waiting += m.waiting;
+        acc.clientRoundPending += m.clientRoundPending;
+        acc.noShow += m.noShow;
+        acc.slaBreachCount += m.slaBreachCount;
+        acc.pending += m.pending;
+        return acc;
+      },
+      {
+        walkin: 0,
+        selected: 0,
+        rejected: 0,
+        waiting: 0,
+        clientRoundPending: 0,
+        noShow: 0,
+        slaBreachCount: 0,
+        pending: 0,
+      },
+    );
 
-  const [cFtd, cWtd, cMtd] = ['ftd','wtd','mtd'].map(combined);
+  const [cFtd, cWtd, cMtd] = ["ftd", "wtd", "mtd"].map(combined);
   const periodRow = (label, m) => `<tr>
     <td ${TD}><strong>${label}</strong></td>
     <td ${TDN}>${m.walkin}</td><td ${TDN}>${m.selected}</td><td ${TDN}>${m.rejected}</td>
     <td ${TDN}>${m.waiting}</td><td ${TDN}>${m.clientRoundPending}</td><td ${TDN}>${m.noShow}</td>
     <td ${TDN}>${m.slaBreachCount}</td>
-    <td ${TDN}>${fmtPct(m.selected,m.walkin)}</td>
+    <td ${TDN}>${fmtPct(m.selected, m.walkin)}</td>
     <td ${TDN}>—</td>
   </tr>`;
 
   const interventionHtml = allInterventions.length
     ? `<div style="background:#fff7ed;border-left:4px solid #ea580c;padding:14px 16px;border-radius:6px;margin-bottom:20px;">
         <p style="margin:0 0 8px 0;font-size:13px;font-weight:700;color:#ea580c;text-transform:uppercase;letter-spacing:0.5px;">⚠ Top Management Intervention Points</p>
-        <ul style="margin:0;padding-left:18px;">${allInterventions.join('')}</ul>
+        <ul style="margin:0;padding-left:18px;">${allInterventions.join("")}</ul>
       </div>`
     : `<div style="background:#f0fdf4;border-left:4px solid #22c55e;padding:14px 16px;border-radius:6px;margin-bottom:20px;">
         <p style="margin:0;font-size:13px;color:#166534;">✓ No critical intervention points yesterday. Good work!</p>
@@ -189,9 +281,9 @@ function buildHtml(reports) {
         <th ${TH}>SLA Breach</th><th ${TH}>Selection%</th><th ${TH}>Avg Wait</th>
       </tr></thead>
       <tbody>
-        ${periodRow('FTD (24 Aug)',cFtd)}
-        ${periodRow('WTD',cWtd)}
-        ${periodRow('MTD',cMtd)}
+        ${periodRow("FTD (24 Aug)", cFtd)}
+        ${periodRow("WTD", cWtd)}
+        ${periodRow("MTD", cMtd)}
       </tbody>
     </table>
     <p style="margin:20px 0 6px;font-size:14px;font-weight:700;color:#dc2626;font-style:italic;">Process-wise Summary by Branch: FTD (24 Aug)</p>
@@ -201,7 +293,7 @@ function buildHtml(reports) {
         <th ${TH}>Rejected</th><th ${TH}>Waiting</th><th ${TH}>Client Rnd</th><th ${TH}>No Show</th>
         <th ${TH}>Pending</th><th ${TH}>Selection%</th><th ${TH}>Avg Wait</th>
       </tr></thead>
-      <tbody>${allProcessRows||`<tr><td colspan="11" style="padding:12px;text-align:center;color:#9ca3af;border:1px solid #e5e7eb;">No walk-ins yesterday</td></tr>`}</tbody>
+      <tbody>${allProcessRows || `<tr><td colspan="11" style="padding:12px;text-align:center;color:#9ca3af;border:1px solid #e5e7eb;">No walk-ins yesterday</td></tr>`}</tbody>
     </table>
     <p style="margin:20px 0 6px;font-size:14px;font-weight:700;color:#111827;">Recruiter Productivity: FTD (24 Aug)</p>
     <table style="width:100%;border-collapse:collapse;">
@@ -209,7 +301,7 @@ function buildHtml(reports) {
         <th ${TH}>Recruiter</th><th ${TH}>Branch</th><th ${TH}>Sourced</th><th ${TH}>Attended</th>
         <th ${TH}>SLA%</th><th ${TH}>Selection%</th><th ${TH}>Avg Wait</th><th ${TH}>Pending</th><th ${TH}>Attention</th>
       </tr></thead>
-      <tbody>${allRecruiterRows||`<tr><td colspan="9" style="padding:12px;text-align:center;color:#9ca3af;border:1px solid #e5e7eb;">No activity</td></tr>`}</tbody>
+      <tbody>${allRecruiterRows || `<tr><td colspan="9" style="padding:12px;text-align:center;color:#9ca3af;border:1px solid #e5e7eb;">No activity</td></tr>`}</tbody>
     </table>
     <div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;text-align:center;border:1px solid #e5e7eb;">
       <span style="font-size:13px;color:#374151;">ATS Dashboard Link: </span>
@@ -224,7 +316,7 @@ function buildHtml(reports) {
 }
 
 // -- Main --
-const BRANCHES = ['NOIDA', 'NOIDA-2', 'AHMEDABAD-JALDARSHAN'];
+const BRANCHES = ["NOIDA", "NOIDA-2", "AHMEDABAD-JALDARSHAN"];
 const reports = [];
 
 for (const branch of BRANCHES) {
@@ -237,28 +329,52 @@ for (const branch of BRANCHES) {
   ]);
 
   const interventions = [];
-  if (ftd.pending > 0) interventions.push(`${ftd.pending} candidate${ftd.pending>1?'s':''} pending interview form submission in <strong>${branch}</strong> (${fmtPct(ftd.pending,ftd.walkin)} of yesterday's walk-ins). Branch head to ensure closure.`);
+  if (ftd.pending > 0)
+    interventions.push(
+      `${ftd.pending} candidate${ftd.pending > 1 ? "s" : ""} pending interview form submission in <strong>${branch}</strong> (${fmtPct(ftd.pending, ftd.walkin)} of yesterday's walk-ins). Branch head to ensure closure.`,
+    );
   for (const p of processFtdData) {
-    if (p.pending > 0) interventions.push(`${branch} → ${p.process}: ${p.pending} pending case${p.pending>1?'s':''} with no form submitted.`);
+    if (p.pending > 0)
+      interventions.push(
+        `${branch} → ${p.process}: ${p.pending} pending case${p.pending > 1 ? "s" : ""} with no form submitted.`,
+      );
   }
   for (const r of recruiterFtdData) {
-    if (r.attention === 'Critical') interventions.push(`Recruiter <strong>${r.recruiter}</strong> (${branch}): ${r.pendingCount} pending form${r.pendingCount>1?'s':''} not submitted. Immediate action needed.`);
+    if (r.attention === "Critical")
+      interventions.push(
+        `Recruiter <strong>${r.recruiter}</strong> (${branch}): ${r.pendingCount} pending form${r.pendingCount > 1 ? "s" : ""} not submitted. Immediate action needed.`,
+      );
   }
 
-  reports.push({ branchName: branch, ftd, wtd, mtd, processFtdData, recruiterFtdData, interventions });
-  console.log(`✓ ${branch}: FTD walkin=${ftd.walkin} selected=${ftd.selected} pending=${ftd.pending}`);
+  reports.push({
+    branchName: branch,
+    ftd,
+    wtd,
+    mtd,
+    processFtdData,
+    recruiterFtdData,
+    interventions,
+  });
+  console.log(
+    `✓ ${branch}: FTD walkin=${ftd.walkin} selected=${ftd.selected} pending=${ftd.pending}`,
+  );
 }
 
 const html = buildHtml(reports);
 
-const mailer = nodemailer.createTransport({ host: SMTP.host, port: SMTP.port, secure: false, auth: { user: SMTP.user, pass: SMTP.pass } });
+const mailer = nodemailer.createTransport({
+  host: SMTP.host,
+  port: SMTP.port,
+  secure: false,
+  auth: { user: SMTP.user, pass: SMTP.pass },
+});
 
 const result = await mailer.sendMail({
   from: '"MAS Callnet PeopleOS" <careers@teammas.in>',
   to: TO,
-  subject: `[All Branches] Daily Hiring Report – 24 Aug 2026 | FTD: ${reports.reduce((s,r)=>s+r.ftd.walkin,0)} Walk-ins · ${reports.reduce((s,r)=>s+r.ftd.selected,0)} Selected · ${reports.reduce((s,r)=>s+r.ftd.pending,0)} Pending`,
+  subject: `[All Branches] Daily Hiring Report – 24 Aug 2026 | FTD: ${reports.reduce((s, r) => s + r.ftd.walkin, 0)} Walk-ins · ${reports.reduce((s, r) => s + r.ftd.selected, 0)} Selected · ${reports.reduce((s, r) => s + r.ftd.pending, 0)} Pending`,
   html,
 });
 
-console.log('\n✉ Email sent:', result.messageId);
+console.log("\n✉ Email sent:", result.messageId);
 await db.end();

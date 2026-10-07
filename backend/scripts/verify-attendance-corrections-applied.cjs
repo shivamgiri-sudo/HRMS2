@@ -29,7 +29,10 @@
 const mysql = require("mysql2/promise");
 require("dotenv").config();
 
-const argDays = Number((process.argv.find((a) => a.startsWith("--days=")) || "").split("=")[1]) || 90;
+const argDays =
+  Number(
+    (process.argv.find((a) => a.startsWith("--days=")) || "").split("=")[1],
+  ) || 90;
 const asJson = process.argv.includes("--json");
 
 // Legacy import codes -> canonical attendance_status. Only consulted when requested_status is null.
@@ -48,8 +51,10 @@ const HALF_DAY_SOURCES = ["absent", "missing_punch", "unreconciled"];
 
 async function main() {
   const c = await mysql.createConnection({
-    host: process.env.DB_HOST, user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
     port: +(process.env.DB_PORT || 3306),
   });
   const since = `DATE_SUB(CURDATE(), INTERVAL ${argDays} DAY)`;
@@ -97,37 +102,68 @@ async function main() {
     const locked = Number(r.is_locked) === 1;
     const ownedByThis = r.regularization_id === r.id;
     const changedAfterApproval =
-      r.reviewed_at && r.updated_at && new Date(r.updated_at) > new Date(r.reviewed_at);
+      r.reviewed_at &&
+      r.updated_at &&
+      new Date(r.updated_at) > new Date(r.reviewed_at);
 
-    const row = { employee: String(r.employee_id).slice(0, 8), date: r.d, wanted, got: r.got, locked: r.is_locked };
+    const row = {
+      employee: String(r.employee_id).slice(0, 8),
+      date: r.d,
+      wanted,
+      got: r.got,
+      locked: r.is_locked,
+    };
     if (locked && !ownedByThis) buckets.confirmed.push(row);
     else if (changedAfterApproval) buckets.regraded.push(row);
     else buckets.unexplained.push(row);
   }
 
   if (asJson) {
-    console.log(JSON.stringify({ windowDays: argDays, counts: {
-      confirmed: buckets.confirmed.length, regraded: buckets.regraded.length,
-      unexplained: buckets.unexplained.length }, buckets }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          windowDays: argDays,
+          counts: {
+            confirmed: buckets.confirmed.length,
+            regraded: buckets.regraded.length,
+            unexplained: buckets.unexplained.length,
+          },
+          buckets,
+        },
+        null,
+        2,
+      ),
+    );
   } else {
-    console.log(`Attendance corrections reconciliation — last ${argDays} days\n`);
+    console.log(
+      `Attendance corrections reconciliation — last ${argDays} days\n`,
+    );
     const show = (key, title, note) => {
       console.log(`  ${String(buckets[key].length).padStart(5)}  ${title}`);
       console.log(`         ${note}`);
       if (buckets[key].length) console.table(buckets[key].slice(0, 5));
       console.log("");
     };
-    show("confirmed", "CONFIRMED silently discarded",
-      "approved, diverged, sitting on a locked day it does not own — the silent-no-op signature");
-    show("regraded", "changed after approval",
-      "the day was rewritten after the approval (COSEC re-sync / APR import) — a different question");
-    show("unexplained", "diverged, cause not established",
-      "unlocked and not touched since approval — needs eyes, not necessarily a fault");
+    show(
+      "confirmed",
+      "CONFIRMED silently discarded",
+      "approved, diverged, sitting on a locked day it does not own — the silent-no-op signature",
+    );
+    show(
+      "regraded",
+      "changed after approval",
+      "the day was rewritten after the approval (COSEC re-sync / APR import) — a different question",
+    );
+    show(
+      "unexplained",
+      "diverged, cause not established",
+      "unlocked and not touched since approval — needs eyes, not necessarily a fault",
+    );
     console.log(
       buckets.confirmed.length === 0
         ? "No silently discarded changes. Every approved change either landed or was later re-graded."
         : `${buckets.confirmed.length} approved change(s) were silently discarded.\n` +
-          `Each one is a person who was told their change went through. Investigate before payroll runs.`,
+            `Each one is a person who was told their change went through. Investigate before payroll runs.`,
     );
   }
 
@@ -135,4 +171,7 @@ async function main() {
   if (buckets.confirmed.length > 0) process.exitCode = 1;
 }
 
-main().catch((e) => { console.error("ERR", e.message); process.exit(2); });
+main().catch((e) => {
+  console.error("ERR", e.message);
+  process.exit(2);
+});

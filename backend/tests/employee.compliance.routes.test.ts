@@ -54,9 +54,15 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
   hasAnyRole: vi.fn().mockResolvedValue(true),
 }));
 
-vi.mock("../src/modules/employees/employeeJoiningDocuments.service.js", () => employeeJoiningDocumentsServiceMocks);
+vi.mock(
+  "../src/modules/employees/employeeJoiningDocuments.service.js",
+  () => employeeJoiningDocumentsServiceMocks,
+);
 
-vi.mock("../src/modules/employees/universalDigitalFormFill.service.js", () => universalFormFillMocks);
+vi.mock(
+  "../src/modules/employees/universalDigitalFormFill.service.js",
+  () => universalFormFillMocks,
+);
 
 vi.mock("../src/modules/employees/epfComplianceValidation.service.js", () => ({
   validateEpfCompliance: vi.fn(),
@@ -66,17 +72,21 @@ vi.mock("../src/modules/employees/epfComplianceValidation.service.js", () => ({
 // here — even hoisted — is overwritten by whatever the machine has configured.
 // Assert against the resolved secret instead of a literal, so the test verifies
 // the auth mechanism rather than one environment's value.
-process.env.LUCKPAY_WEBHOOK_SECRET = process.env.LUCKPAY_WEBHOOK_SECRET || "shared-secret";
+process.env.LUCKPAY_WEBHOOK_SECRET =
+  process.env.LUCKPAY_WEBHOOK_SECRET || "shared-secret";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
 /** The secret the app actually resolved, whatever the environment supplied. */
 let resolvedWebhookSecret = "shared-secret";
 
-let publicEmployeeDocumentRouter: Awaited<typeof import("../src/modules/employees/employee.compliance.routes.js")>["publicEmployeeDocumentRouter"];
+let publicEmployeeDocumentRouter: Awaited<
+  typeof import("../src/modules/employees/employee.compliance.routes.js")
+>["publicEmployeeDocumentRouter"];
 
 beforeAll(async () => {
-  const mod = await import("../src/modules/employees/employee.compliance.routes.js");
+  const mod =
+    await import("../src/modules/employees/employee.compliance.routes.js");
   publicEmployeeDocumentRouter = mod.publicEmployeeDocumentRouter;
   const { env } = await import("../src/config/env.js");
   resolvedWebhookSecret = env.LUCKPAY_WEBHOOK_SECRET ?? "shared-secret";
@@ -103,11 +113,15 @@ describe("public employee document eSign routes", () => {
       .send({ provider_reference_id: "ref-1" });
 
     expect(res.status).toBe(401);
-    expect(employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook).not.toHaveBeenCalled();
+    expect(
+      employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook,
+    ).not.toHaveBeenCalled();
   });
 
   it("accepts Luckpay webhook requests with the shared secret", async () => {
-    employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook.mockResolvedValueOnce({ matched: true, processed: true });
+    employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook.mockResolvedValueOnce(
+      { matched: true, processed: true },
+    );
     const app = buildApp();
 
     const res = await request(app)
@@ -121,7 +135,9 @@ describe("public employee document eSign routes", () => {
     // used to pass req.body straight through, leaving payload undefined so the
     // handler matched nothing and returned 200 with matched:false — the
     // assertion below previously encoded that bug.
-    expect(employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook).toHaveBeenCalledWith(
+    expect(
+      employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({ payload: { provider_reference_id: "ref-1" } }),
     );
   });
@@ -131,7 +147,8 @@ describe("public employee document eSign routes", () => {
     // and it had no secret check at all. Anyone able to guess a
     // provider_reference_id could drive it to esign_completed with
     // signature_mode 'aadhaar_esign_verified' and lock the file.
-    const mod = await import("../src/modules/employees/employee.compliance.routes.js");
+    const mod =
+      await import("../src/modules/employees/employee.compliance.routes.js");
     const app = express();
     app.use(express.json());
     app.use("/api/employees", mod.employeeJoiningDocumentsRouter);
@@ -141,12 +158,17 @@ describe("public employee document eSign routes", () => {
       .send({ provider_reference_id: "ref-1" });
 
     expect(res.status).toBe(401);
-    expect(employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook).not.toHaveBeenCalled();
+    expect(
+      employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook,
+    ).not.toHaveBeenCalled();
   });
 
   it("accepts the employee-scoped Luckpay webhook with the shared secret", async () => {
-    employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook.mockResolvedValueOnce({ matched: true, processed: true });
-    const mod = await import("../src/modules/employees/employee.compliance.routes.js");
+    employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook.mockResolvedValueOnce(
+      { matched: true, processed: true },
+    );
+    const mod =
+      await import("../src/modules/employees/employee.compliance.routes.js");
     const app = express();
     app.use(express.json());
     app.use("/api/employees", mod.employeeJoiningDocumentsRouter);
@@ -157,28 +179,34 @@ describe("public employee document eSign routes", () => {
       .send({ provider_reference_id: "ref-1" });
 
     expect(res.status).toBe(200);
-    expect(employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook).toHaveBeenCalledWith(
+    expect(
+      employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({ payload: { provider_reference_id: "ref-1" } }),
     );
   });
 
   it("returns provider details for the public eSign start route", async () => {
-    employeeJoiningDocumentsServiceMocks.getPublicJoiningDocumentEsignSession.mockResolvedValueOnce({
-      token: "token-1",
-      checklist_id: "check-1",
-      employee_id: "emp-1",
-      document_code: "EPF_DECLARATION",
-      document_name: "EPF Declaration",
-      employee_name: "Employee One",
-      employee_code: "EMP001",
-      expires_at: new Date(Date.now() + 60_000).toISOString(),
-      token_status: "active",
-      provider_url: "https://luckpay.example/esign",
-      tx_status: "initiated",
-    });
+    employeeJoiningDocumentsServiceMocks.getPublicJoiningDocumentEsignSession.mockResolvedValueOnce(
+      {
+        token: "token-1",
+        checklist_id: "check-1",
+        employee_id: "emp-1",
+        document_code: "EPF_DECLARATION",
+        document_name: "EPF Declaration",
+        employee_name: "Employee One",
+        employee_code: "EMP001",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        token_status: "active",
+        provider_url: "https://luckpay.example/esign",
+        tx_status: "initiated",
+      },
+    );
 
     const app = buildApp();
-    const res = await request(app).post("/api/public/employee-documents/esign/token-1/start").send({ action: "esign" });
+    const res = await request(app)
+      .post("/api/public/employee-documents/esign/token-1/start")
+      .send({ action: "esign" });
 
     expect(res.status).toBe(200);
     expect(res.body.data.provider_url).toBe("https://luckpay.example/esign");
@@ -186,29 +214,39 @@ describe("public employee document eSign routes", () => {
   });
 
   it("stores hashed EPF consent tokens instead of raw tokens", async () => {
-    employeeJoiningDocumentsServiceMocks.getPublicJoiningDocumentEsignSession.mockResolvedValueOnce({
-      checklist_id: "check-1",
-      employee_id: "emp-1",
-      document_code: "EPF_DECLARATION",
-      document_name: "EPF Declaration",
-      employee_name: "Employee One",
-      employee_code: "EMP001",
-      expires_at: new Date(Date.now() + 60_000).toISOString(),
-      token_status: "active",
-      provider_url: null,
-      tx_status: null,
-    });
-    universalFormFillMocks.employeeReviewChecklistByToken.mockResolvedValueOnce({ success: true });
+    employeeJoiningDocumentsServiceMocks.getPublicJoiningDocumentEsignSession.mockResolvedValueOnce(
+      {
+        checklist_id: "check-1",
+        employee_id: "emp-1",
+        document_code: "EPF_DECLARATION",
+        document_name: "EPF Declaration",
+        employee_name: "Employee One",
+        employee_code: "EMP001",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        token_status: "active",
+        provider_url: null,
+        tx_status: null,
+      },
+    );
+    universalFormFillMocks.employeeReviewChecklistByToken.mockResolvedValueOnce(
+      { success: true },
+    );
 
     const app = buildApp();
     const token = "review-token-123";
 
     const res = await request(app)
       .post(`/api/public/employee-documents/esign/${token}`)
-      .send({ action: "confirm", record_epf_consent: true, actor_name: "Test Employee" });
+      .send({
+        action: "confirm",
+        record_epf_consent: true,
+        actor_name: "Test Employee",
+      });
 
     expect(res.status).toBe(200);
-    const consentInsert = mockExecute.mock.calls.find((call) => String(call[0]).includes("INSERT INTO employee_epf_consent_receipt"));
+    const consentInsert = mockExecute.mock.calls.find((call) =>
+      String(call[0]).includes("INSERT INTO employee_epf_consent_receipt"),
+    );
     expect(consentInsert).toBeDefined();
     expect(consentInsert?.[1]?.[0]).toBe(hashIdentifier(token));
     expect(consentInsert?.[1]?.[0]).not.toBe(token);

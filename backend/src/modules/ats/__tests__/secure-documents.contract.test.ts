@@ -36,24 +36,41 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const read = (relative: string) => readFileSync(resolve(process.cwd(), relative), "utf8");
+const read = (relative: string) =>
+  readFileSync(resolve(process.cwd(), relative), "utf8");
 
 const app = read("src/app.ts");
 const service = read("src/modules/ats/secure-documents.service.ts");
 const routes = read("src/modules/ats/secure-documents.routes.ts");
 const runner = read("src/db/runPendingMigrations.ts");
-const migration272 = read("sql/272_hrms2_joining_control_room_document_viewer.sql");
-const migration1024 = read("sql/1024_candidate_onboarding_document_rejected_status.sql");
+const migration272 = read(
+  "sql/272_hrms2_joining_control_room_document_viewer.sql",
+);
+const migration1024 = read(
+  "sql/1024_candidate_onboarding_document_rejected_status.sql",
+);
 
 /**
  * Live columns of ats_candidate_documents, read from information_schema on
  * production 2026-07-31. Note the absence of document_name.
  */
 const ATS_CANDIDATE_DOCUMENTS_COLUMNS = [
-  "id", "candidate_id", "document_type", "file_name", "file_url", "file_mime_type",
-  "file_size", "mandatory_flag", "sensitive_flag", "consent_purpose",
-  "name_match_status", "verification_status", "verified_by", "verified_at",
-  "rejection_reason", "uploaded_at",
+  "id",
+  "candidate_id",
+  "document_type",
+  "file_name",
+  "file_url",
+  "file_mime_type",
+  "file_size",
+  "mandatory_flag",
+  "sensitive_flag",
+  "consent_purpose",
+  "name_match_status",
+  "verification_status",
+  "verified_by",
+  "verified_at",
+  "rejection_reason",
+  "uploaded_at",
 ];
 
 /** Pull the values out of the first ENUM(...) for a named column in a SQL file. */
@@ -65,7 +82,9 @@ function enumValues(sql: string, columnName: string): string[] {
 
 describe("secure document viewer — router mount", () => {
   it("app.ts imports and mounts secureDocumentsRouter", () => {
-    expect(app).toContain('import { secureDocumentsRouter } from "./modules/ats/secure-documents.routes.js"');
+    expect(app).toContain(
+      'import { secureDocumentsRouter } from "./modules/ats/secure-documents.routes.js"',
+    );
     expect(app).toContain('app.use("/api/ats", secureDocumentsRouter)');
   });
 
@@ -74,9 +93,10 @@ describe("secure document viewer — router mount", () => {
     // request reaching them would throw rather than 401.
     expect(routes).toContain("req.authUser!.id");
     const clientRouterMount = app.indexOf('app.use("/api", clientRouter)');
-    const secureMount = app.indexOf('app.use("/api", secureDocumentsRouter)') >= 0
-      ? app.indexOf('app.use("/api", secureDocumentsRouter)')
-      : app.indexOf('app.use("/api/ats", secureDocumentsRouter)');
+    const secureMount =
+      app.indexOf('app.use("/api", secureDocumentsRouter)') >= 0
+        ? app.indexOf('app.use("/api", secureDocumentsRouter)')
+        : app.indexOf('app.use("/api/ats", secureDocumentsRouter)');
     expect(clientRouterMount).toBeGreaterThan(-1);
     expect(secureMount).toBeGreaterThan(clientRouterMount);
   });
@@ -85,7 +105,9 @@ describe("secure document viewer — router mount", () => {
     // atsRouter is mounted on the same /api/ats prefix and wins on overlap.
     const atsRoutes = read("src/modules/ats/ats.routes.ts");
     expect(atsRoutes).not.toMatch(/atsRouter\.\w+\(\s*"\/documents\//);
-    expect(atsRoutes).not.toMatch(/atsRouter\.\w+\(\s*"\/candidates\/:\w+\/documents"/);
+    expect(atsRoutes).not.toMatch(
+      /atsRouter\.\w+\(\s*"\/candidates\/:\w+\/documents"/,
+    );
   });
 });
 
@@ -96,7 +118,11 @@ describe("secure document viewer — ats_candidate_documents columns", () => {
   });
 
   it("derives the document_name alias from columns that do exist", () => {
-    const matches = [...service.matchAll(/COALESCE\(file_name, document_type\) AS document_name/g)];
+    const matches = [
+      ...service.matchAll(
+        /COALESCE\(file_name, document_type\) AS document_name/g,
+      ),
+    ];
     // Once in listCandidateDocuments, once in getCandidateDocument.
     expect(matches).toHaveLength(2);
     for (const column of ["file_name", "document_type"]) {
@@ -110,8 +136,15 @@ describe("secure document viewer — document_status values", () => {
     const after = enumValues(migration1024, "document_status");
     expect(after).toContain("rejected");
     for (const preexisting of [
-      "uploaded", "verification_pending", "verified", "mismatch",
-      "failed", "manual_review", "waived", "deleted", "file_missing",
+      "uploaded",
+      "verification_pending",
+      "verified",
+      "mismatch",
+      "failed",
+      "manual_review",
+      "waived",
+      "deleted",
+      "file_missing",
     ]) {
       expect(after).toContain(preexisting);
     }
@@ -121,24 +154,31 @@ describe("secure document viewer — document_status values", () => {
 
   it("every status the service writes is a value the column accepts", () => {
     const allowed = enumValues(migration1024, "document_status");
-    const written = [...service.matchAll(/SET document_status = '([a-z_]+)'/g)].map((m) => m[1]);
+    const written = [
+      ...service.matchAll(/SET document_status = '([a-z_]+)'/g),
+    ].map((m) => m[1]);
     expect(written).toContain("verified");
     expect(written).toContain("rejected");
     for (const status of written) expect(allowed).toContain(status);
   });
 
   it("is registered in the migration manifest, or it never runs", () => {
-    expect(runner).toContain("1024_candidate_onboarding_document_rejected_status.sql");
+    expect(runner).toContain(
+      "1024_candidate_onboarding_document_rejected_status.sql",
+    );
   });
 });
 
 describe("secure document viewer — access log", () => {
   it("every audited access_type is a value the 272 enum accepts", () => {
     const allowed = enumValues(migration272, "access_type");
-    const audited = [...service.matchAll(/auditDocumentAccess\([^,]+,[^,]+,\s*"([a-z_]+)"/g)].map((m) => m[1]);
+    const audited = [
+      ...service.matchAll(/auditDocumentAccess\([^,]+,[^,]+,\s*"([a-z_]+)"/g),
+    ].map((m) => m[1]);
     expect(audited.length).toBeGreaterThan(0);
     for (const accessType of audited) expect(allowed).toContain(accessType);
     // stream/download reach the log through the accessType parameter instead.
-    for (const accessType of ["stream", "download"]) expect(allowed).toContain(accessType);
+    for (const accessType of ["stream", "download"])
+      expect(allowed).toContain(accessType);
   });
 });

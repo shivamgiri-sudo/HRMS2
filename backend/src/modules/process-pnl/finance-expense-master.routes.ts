@@ -66,20 +66,25 @@ router.get(
       const roles = new Set(
         [req.authUser.role, ...(req.userRoles ?? [])]
           .filter((role): role is string => Boolean(role))
-          .map((role) => role.toLowerCase())
+          .map((role) => role.toLowerCase()),
       );
-      const canReadInactive = roles.has("finance_head") || roles.has("super_admin");
+      const canReadInactive =
+        roles.has("finance_head") || roles.has("super_admin");
       const includeInactive =
-        canReadInactive && String(req.query.includeInactive ?? "false") === "true";
+        canReadInactive &&
+        String(req.query.includeInactive ?? "false") === "true";
       const data = await financeExpenseMasterService.list(includeInactive);
       res.json({ success: true, data });
     } catch (error: unknown) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to load expense master",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to load expense master",
       });
     }
-  }
+  },
 );
 
 router.post(
@@ -97,16 +102,19 @@ router.post(
       }
       const data = await financeExpenseMasterService.saveHead(
         req.body,
-        req.authUser.id
+        req.authUser.id,
       );
       res.status(req.body?.id ? 200 : 201).json({ success: true, data });
     } catch (error: unknown) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to save expense head",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to save expense head",
       });
     }
-  }
+  },
 );
 
 router.post(
@@ -124,16 +132,19 @@ router.post(
       }
       const data = await financeExpenseMasterService.saveSubHead(
         req.body,
-        req.authUser.id
+        req.authUser.id,
       );
       res.status(req.body?.id ? 200 : 201).json({ success: true, data });
     } catch (error: unknown) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to save expense sub-head",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to save expense sub-head",
       });
     }
-  }
+  },
 );
 
 router.delete(
@@ -144,16 +155,19 @@ router.delete(
     try {
       const data = await financeExpenseMasterService.deleteHead(
         req.params.id,
-        req.authUser.id
+        req.authUser.id,
       );
       res.json({ success: true, data });
     } catch (error: unknown) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to delete expense head",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to delete expense head",
       });
     }
-  }
+  },
 );
 
 router.delete(
@@ -164,16 +178,19 @@ router.delete(
     try {
       const data = await financeExpenseMasterService.deleteSubHead(
         req.params.id,
-        req.authUser.id
+        req.authUser.id,
       );
       res.json({ success: true, data });
     } catch (error: unknown) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to delete expense sub-head",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to delete expense sub-head",
       });
     }
-  }
+  },
 );
 
 export { router as financeExpenseMasterRouter };

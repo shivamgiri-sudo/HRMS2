@@ -14,7 +14,10 @@ import os from "os";
 import path from "path";
 import PizZip from "pizzip";
 import { applyTransformRule } from "../src/modules/employees/pdfAcroFormFill.service.js";
-import { renderPlaceholderDocx, matchPlaceholderField } from "../src/modules/employees/universalDigitalFormFill.service.js";
+import {
+  renderPlaceholderDocx,
+  matchPlaceholderField,
+} from "../src/modules/employees/universalDigitalFormFill.service.js";
 import {
   TEMPLATE_DEFINITIONS,
   buildTemplateDocx,
@@ -26,7 +29,11 @@ import {
  * the company constant, so they resolve without being field values. Same set the sibling
  * templateTokenCoverage.contract.test.ts keeps.
  */
-const RENDERER_INJECTED = new Set(["branch_address", "branch_name", "company_registered_office"]);
+const RENDERER_INJECTED = new Set([
+  "branch_address",
+  "branch_name",
+  "company_registered_office",
+]);
 
 /**
  * Whether the fill engine can resolve a token.
@@ -68,24 +75,39 @@ describe("joining document templates", () => {
     expect(defined).toEqual(expect.arrayContaining([...EXPECTED]));
   });
 
-  it.each(EXPECTED)("TC-TPL-02: %s uses only field keys the engine can resolve", (code) => {
-    const template = readTemplate(code);
-    const unknown = template.tokens.filter((token) => !isResolvable(token));
-    expect(unknown, `unknown tokens would render blank: ${unknown.join(", ")}`).toEqual([]);
-  });
+  it.each(EXPECTED)(
+    "TC-TPL-02: %s uses only field keys the engine can resolve",
+    (code) => {
+      const template = readTemplate(code);
+      const unknown = template.tokens.filter((token) => !isResolvable(token));
+      expect(
+        unknown,
+        `unknown tokens would render blank: ${unknown.join(", ")}`,
+      ).toEqual([]);
+    },
+  );
 
-  it.each(EXPECTED)("TC-TPL-03: %s carries at least one placeholder", (code) => {
-    // A template with no placeholders would produce an unfilled document that
-    // still looks plausible — worse than one that is obviously wrong.
-    expect(readTemplate(code).tokens.length).toBeGreaterThan(0);
-  });
+  it.each(EXPECTED)(
+    "TC-TPL-03: %s carries at least one placeholder",
+    (code) => {
+      // A template with no placeholders would produce an unfilled document that
+      // still looks plausible — worse than one that is obviously wrong.
+      expect(readTemplate(code).tokens.length).toBeGreaterThan(0);
+    },
+  );
 
   it("TC-TPL-04: each document names the signer and carries a date", () => {
     const nameToken = /(employee_name|candidate_name)/;
     for (const code of EXPECTED) {
       const { tokens } = readTemplate(code);
-      expect(tokens.some((t) => nameToken.test(t)), `${code} has no name field`).toBe(true);
-      expect(tokens.some((t) => t.includes("date")), `${code} has no date field`).toBe(true);
+      expect(
+        tokens.some((t) => nameToken.test(t)),
+        `${code} has no name field`,
+      ).toBe(true);
+      expect(
+        tokens.some((t) => t.includes("date")),
+        `${code} has no date field`,
+      ).toBe(true);
     }
   });
 
@@ -101,16 +123,26 @@ describe("joining document templates", () => {
     );
     for (const code of EXPECTED) {
       let xml = readTemplate(code).xml;
-      for (const [token, value] of Object.entries(sample)) xml = xml.split(`{{${token}}}`).join(value);
-      expect(xml, `${code} still contains an unreplaced placeholder`).not.toMatch(/\{\{/);
+      for (const [token, value] of Object.entries(sample))
+        xml = xml.split(`{{${token}}}`).join(value);
+      expect(
+        xml,
+        `${code} still contains an unreplaced placeholder`,
+      ).not.toMatch(/\{\{/);
     }
   });
 
   it("TC-TPL-06: templates are valid DOCX packages", () => {
     for (const code of EXPECTED) {
       const zip = new PizZip(readTemplate(code).buffer);
-      expect(zip.file("[Content_Types].xml"), `${code} missing content types`).toBeTruthy();
-      expect(zip.file("word/document.xml"), `${code} missing document.xml`).toBeTruthy();
+      expect(
+        zip.file("[Content_Types].xml"),
+        `${code} missing content types`,
+      ).toBeTruthy();
+      expect(
+        zip.file("word/document.xml"),
+        `${code} missing document.xml`,
+      ).toBeTruthy();
     }
   });
 
@@ -162,7 +194,10 @@ describe("joining document templates", () => {
       });
       const xml = new PizZip(out).file("word/document.xml")?.asText() ?? "";
       expect(xml).toContain("KAMAL SINGH RAWAT");
-      expect(xml, "employee code was eaten by the legacy fix-up pass").toContain("MAS36220");
+      expect(
+        xml,
+        "employee code was eaten by the legacy fix-up pass",
+      ).toContain("MAS36220");
       expect(xml, "a token survived substitution").not.toMatch(/\{\{/);
       // Dates render in the Indian convention, not as a raw ISO string.
       expect(xml).toContain("29/07/2026");
@@ -178,13 +213,23 @@ describe("joining document templates", () => {
         const file = path.join(dir, `${code}.docx`);
         fs.writeFileSync(file, buildTemplateDocx(code));
         const replacements = Object.fromEntries(
-          templateTokens(code).map((token) => [token, token.includes("date") ? "2026-07-29" : `V_${token}`]),
+          templateTokens(code).map((token) => [
+            token,
+            token.includes("date") ? "2026-07-29" : `V_${token}`,
+          ]),
         );
-        const xml = new PizZip(await renderPlaceholderDocx(file, replacements)).file("word/document.xml")?.asText() ?? "";
-        expect(xml, `${code} left a placeholder unreplaced`).not.toMatch(/\{\{/);
+        const xml =
+          new PizZip(await renderPlaceholderDocx(file, replacements))
+            .file("word/document.xml")
+            ?.asText() ?? "";
+        expect(xml, `${code} left a placeholder unreplaced`).not.toMatch(
+          /\{\{/,
+        );
         for (const token of templateTokens(code)) {
           const expected = token.includes("date") ? "29/07/2026" : `V_${token}`;
-          expect(xml, `${code} lost the value for ${token}`).toContain(expected);
+          expect(xml, `${code} lost the value for ${token}`).toContain(
+            expected,
+          );
         }
       }
     } finally {

@@ -18,11 +18,24 @@ export interface ComponentLine {
 }
 
 export const payrollComplianceService = {
-  async logAudit(runId: string, employeeId: string | null, eventType: string, detail: unknown, actorUserId?: string | null) {
+  async logAudit(
+    runId: string,
+    employeeId: string | null,
+    eventType: string,
+    detail: unknown,
+    actorUserId?: string | null,
+  ) {
     await db.execute(
       `INSERT INTO payroll_calculation_audit (id, run_id, employee_id, event_type, event_detail, actor_user_id)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), runId, employeeId, eventType, JSON.stringify(detail ?? {}), actorUserId ?? null]
+      [
+        randomUUID(),
+        runId,
+        employeeId,
+        eventType,
+        JSON.stringify(detail ?? {}),
+        actorUserId ?? null,
+      ],
     );
   },
 
@@ -50,7 +63,7 @@ export const payrollComplianceService = {
         JSON.stringify(input.metadata ?? {}),
         input.req?.ip ?? null,
         input.req?.headers?.["user-agent"] ?? null,
-      ]
+      ],
     );
   },
 
@@ -76,15 +89,23 @@ export const payrollComplianceService = {
         input.issueDetail ?? null,
         input.severity ?? "warning",
         input.ownerRole ?? null,
-      ]
+      ],
     );
   },
 
   async clearRunIssues(runId: string) {
-    await db.execute("DELETE FROM payroll_compliance_issue WHERE run_id = ?", [runId]);
+    await db.execute("DELETE FROM payroll_compliance_issue WHERE run_id = ?", [
+      runId,
+    ]);
   },
 
-  async getComponentBreakup(employeeId: string, runMonth: string, grossMonthly: number, basicPct = 40, hraPct = 20): Promise<ComponentLine[]> {
+  async getComponentBreakup(
+    employeeId: string,
+    runMonth: string,
+    grossMonthly: number,
+    basicPct = 40,
+    hraPct = 20,
+  ): Promise<ComponentLine[]> {
     const monthStart = `${runMonth}-01`;
     const [snapRows] = await db.execute<RowDataPacket[]>(
       `SELECT component_code, component_name, component_type, amount_monthly,
@@ -95,7 +116,7 @@ export const payrollComplianceService = {
           AND (effective_to IS NULL OR effective_to >= ?)
           AND locked_status = 1
         ORDER BY component_type, component_code`,
-      [employeeId, monthStart, monthStart]
+      [employeeId, monthStart, monthStart],
     );
 
     if (snapRows.length > 0) {
@@ -117,43 +138,117 @@ export const payrollComplianceService = {
     const { conv, ma, pa } = breakSpecialAllowance(special);
 
     return [
-      { component_code: "BASIC", component_name: "Basic Salary", component_type: "earning", amount: basic, source: "structure", taxable: true, pf_applicable: true, esic_applicable: true },
-      { component_code: "HRA", component_name: "House Rent Allowance", component_type: "earning", amount: hra, source: "structure", taxable: true, pf_applicable: false, esic_applicable: true },
-      { component_code: "CONV", component_name: "Conveyance Allowance", component_type: "earning", amount: conv, source: "structure", taxable: true, pf_applicable: false, esic_applicable: true },
-      { component_code: "MA", component_name: "Medical Allowance", component_type: "earning", amount: ma, source: "structure", taxable: true, pf_applicable: false, esic_applicable: true },
-      { component_code: "PA", component_name: "Personal Allowance", component_type: "earning", amount: pa, source: "structure", taxable: true, pf_applicable: false, esic_applicable: true },
+      {
+        component_code: "BASIC",
+        component_name: "Basic Salary",
+        component_type: "earning",
+        amount: basic,
+        source: "structure",
+        taxable: true,
+        pf_applicable: true,
+        esic_applicable: true,
+      },
+      {
+        component_code: "HRA",
+        component_name: "House Rent Allowance",
+        component_type: "earning",
+        amount: hra,
+        source: "structure",
+        taxable: true,
+        pf_applicable: false,
+        esic_applicable: true,
+      },
+      {
+        component_code: "CONV",
+        component_name: "Conveyance Allowance",
+        component_type: "earning",
+        amount: conv,
+        source: "structure",
+        taxable: true,
+        pf_applicable: false,
+        esic_applicable: true,
+      },
+      {
+        component_code: "MA",
+        component_name: "Medical Allowance",
+        component_type: "earning",
+        amount: ma,
+        source: "structure",
+        taxable: true,
+        pf_applicable: false,
+        esic_applicable: true,
+      },
+      {
+        component_code: "PA",
+        component_name: "Personal Allowance",
+        component_type: "earning",
+        amount: pa,
+        source: "structure",
+        taxable: true,
+        pf_applicable: false,
+        esic_applicable: true,
+      },
     ];
   },
 
-  applyLwpToEarnings(components: ComponentLine[], workingDays: number, lwpDays: number) {
-    const ratio = workingDays > 0 ? Math.max(0, (workingDays - lwpDays) / workingDays) : 1;
+  applyLwpToEarnings(
+    components: ComponentLine[],
+    workingDays: number,
+    lwpDays: number,
+  ) {
+    const ratio =
+      workingDays > 0 ? Math.max(0, (workingDays - lwpDays) / workingDays) : 1;
     return components.map((c) => {
       if (c.component_type !== "earning") return c;
       return { ...c, amount: r2(c.amount * ratio) };
     });
   },
 
-  async replaceLineComponents(runId: string, lineId: string | null, employeeId: string, components: ComponentLine[]) {
-    await db.execute("DELETE FROM salary_prep_line_component WHERE run_id = ? AND employee_id = ?", [runId, employeeId]);
+  async replaceLineComponents(
+    runId: string,
+    lineId: string | null,
+    employeeId: string,
+    components: ComponentLine[],
+  ) {
+    await db.execute(
+      "DELETE FROM salary_prep_line_component WHERE run_id = ? AND employee_id = ?",
+      [runId, employeeId],
+    );
     if (components.length === 0) return;
 
-    const placeholders = components.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const placeholders = components
+      .map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .join(", ");
     const values: unknown[] = [];
     for (const c of components) {
-      values.push(randomUUID(), runId, lineId, employeeId, c.component_code, c.component_name, c.component_type, r2(c.amount), c.source, c.taxable === false ? 0 : 1);
+      values.push(
+        randomUUID(),
+        runId,
+        lineId,
+        employeeId,
+        c.component_code,
+        c.component_name,
+        c.component_type,
+        r2(c.amount),
+        c.source,
+        c.taxable === false ? 0 : 1,
+      );
     }
     await db.execute(
       `INSERT INTO salary_prep_line_component
         (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
        VALUES ${placeholders}`,
-      values
+      values,
     );
   },
 
   async validateRun(runId: string) {
     await this.clearRunIssues(runId);
 
-    const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1",
+      [runId],
+    );
     const run = runRows[0] as any;
     if (!run) throw new Error("Payroll run not found");
 
@@ -175,32 +270,79 @@ export const payrollComplianceService = {
           AND LOWER(e.employment_status) = 'active'
           AND (e.date_of_joining IS NULL OR e.date_of_joining <= LAST_DAY(CONCAT(?, '-01')))
           AND (e.date_of_exit IS NULL OR e.date_of_exit >= CONCAT(?, '-01'))`,
-      [run.run_month, run.run_month]
+      [run.run_month, run.run_month],
     );
 
-    type IssueRow = [string, string, string | null, string, string, string | null, string, string | null];
+    type IssueRow = [
+      string,
+      string,
+      string | null,
+      string,
+      string,
+      string | null,
+      string,
+      string | null,
+    ];
     const issueRows: IssueRow[] = [];
     for (const emp of empRows as any[]) {
       if (!emp.salary_assignment_id) {
-        issueRows.push([randomUUID(), runId, emp.id, "MISSING_SALARY_ASSIGNMENT", "Salary structure not assigned", `${emp.employee_code} has no active salary assignment.`, "blocking", "finance"]);
+        issueRows.push([
+          randomUUID(),
+          runId,
+          emp.id,
+          "MISSING_SALARY_ASSIGNMENT",
+          "Salary structure not assigned",
+          `${emp.employee_code} has no active salary assignment.`,
+          "blocking",
+          "finance",
+        ]);
       }
       if (!emp.branch_id) {
-        issueRows.push([randomUUID(), runId, emp.id, "MISSING_BRANCH", "Branch missing", `${emp.employee_code} has no branch mapping.`, "critical", "hr"]);
+        issueRows.push([
+          randomUUID(),
+          runId,
+          emp.id,
+          "MISSING_BRANCH",
+          "Branch missing",
+          `${emp.employee_code} has no branch mapping.`,
+          "critical",
+          "hr",
+        ]);
       }
       if (!emp.bank_id) {
-        issueRows.push([randomUUID(), runId, emp.id, "MISSING_BANK_DETAILS", "Bank details missing", `${emp.employee_code} has no active bank details.`, "blocking", "finance"]);
+        issueRows.push([
+          randomUUID(),
+          runId,
+          emp.id,
+          "MISSING_BANK_DETAILS",
+          "Bank details missing",
+          `${emp.employee_code} has no active bank details.`,
+          "blocking",
+          "finance",
+        ]);
         // tinyint, not a status string — comparing it to "verified" would mark every
         // employee unverified, which is how a plain rename would have failed here.
       } else if (Number(emp.bank_verified) !== 1) {
-        issueRows.push([randomUUID(), runId, emp.id, "BANK_NOT_VERIFIED", "Bank details not verified", `${emp.employee_code} bank details exist but are not verified.`, "critical", "finance"]);
+        issueRows.push([
+          randomUUID(),
+          runId,
+          emp.id,
+          "BANK_NOT_VERIFIED",
+          "Bank details not verified",
+          `${emp.employee_code} bank details exist but are not verified.`,
+          "critical",
+          "finance",
+        ]);
       }
     }
     const issues = issueRows.length;
     if (issueRows.length > 0) {
-      const placeholders = issueRows.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const placeholders = issueRows
+        .map(() => "(?, ?, ?, ?, ?, ?, ?, ?)")
+        .join(", ");
       await db.execute(
         `INSERT INTO payroll_compliance_issue (id, run_id, employee_id, issue_code, issue_title, issue_detail, severity, owner_role) VALUES ${placeholders}`,
-        issueRows.flat()
+        issueRows.flat(),
       );
     }
 
@@ -210,21 +352,42 @@ export const payrollComplianceService = {
               compliance_checked_at = NOW(),
               compliance_issues_count = ?
         WHERE id = ?`,
-      [issues, runId]
+      [issues, runId],
     );
 
-    return { run_id: runId, employees_checked: empRows.length, issues_count: issues, can_calculate: issues === 0 };
+    return {
+      run_id: runId,
+      employees_checked: empRows.length,
+      issues_count: issues,
+      can_calculate: issues === 0,
+    };
   },
 
-  async upsertComponentSnapshot(employeeId: string, effectiveFrom: string, components: ComponentLine[], actorUserId?: string | null) {
-    if (components.length === 0) return { employee_id: employeeId, effective_from: effectiveFrom, components_saved: 0 };
+  async upsertComponentSnapshot(
+    employeeId: string,
+    effectiveFrom: string,
+    components: ComponentLine[],
+    actorUserId?: string | null,
+  ) {
+    if (components.length === 0)
+      return {
+        employee_id: employeeId,
+        effective_from: effectiveFrom,
+        components_saved: 0,
+      };
 
-    const placeholders = components.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)").join(", ");
+    const placeholders = components
+      .map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)")
+      .join(", ");
     const values: unknown[] = [];
     for (const c of components) {
       values.push(
-        randomUUID(), employeeId, effectiveFrom,
-        c.component_code, c.component_name, c.component_type,
+        randomUUID(),
+        employeeId,
+        effectiveFrom,
+        c.component_code,
+        c.component_name,
+        c.component_type,
         r2(c.amount),
         c.taxable === false ? 0 : 1,
         c.pf_applicable ? 1 : 0,
@@ -246,16 +409,25 @@ export const payrollComplianceService = {
          esic_applicable = VALUES(esic_applicable),
          locked_status = 1,
          updated_at = NOW()`,
-      values
+      values,
     );
-    return { employee_id: employeeId, effective_from: effectiveFrom, components_saved: components.length };
+    return {
+      employee_id: employeeId,
+      effective_from: effectiveFrom,
+      components_saved: components.length,
+    };
   },
 
   async addManualAdjustment(input: {
     runId: string;
     lineId: string;
     employeeId: string;
-    adjustmentType: "earning" | "deduction" | "lwp_override" | "attendance_override" | "statutory_override";
+    adjustmentType:
+      | "earning"
+      | "deduction"
+      | "lwp_override"
+      | "attendance_override"
+      | "statutory_override";
     componentCode: string;
     componentName: string;
     amount: number;
@@ -266,22 +438,41 @@ export const payrollComplianceService = {
       `SELECT spr.status FROM salary_prep_run spr
         JOIN salary_prep_line spl ON spl.run_id = spr.id
        WHERE spl.id = ? LIMIT 1`,
-      [input.lineId]
+      [input.lineId],
     );
     const status = String((runRows[0] as any)?.status ?? "");
     // isRunClosed rather than a literal list: runs finish as FINALIZED, which the
     // old list omitted, so lines on settled runs stayed editable.
-    if (isRunClosed(status)) throw new Error(`Cannot edit payroll line because run is ${status}`);
+    if (isRunClosed(status))
+      throw new Error(`Cannot edit payroll line because run is ${status}`);
 
     await db.execute(
       `INSERT INTO salary_prep_line_adjustment
         (id, run_id, line_id, employee_id, adjustment_type, component_code, component_name,
          amount, reason, created_by, approved_by, approved_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [randomUUID(), input.runId, input.lineId, input.employeeId, input.adjustmentType, input.componentCode, input.componentName, r2(input.amount), input.reason, input.actorUserId ?? null, input.actorUserId ?? null]
+      [
+        randomUUID(),
+        input.runId,
+        input.lineId,
+        input.employeeId,
+        input.adjustmentType,
+        input.componentCode,
+        input.componentName,
+        r2(input.amount),
+        input.reason,
+        input.actorUserId ?? null,
+        input.actorUserId ?? null,
+      ],
     );
 
-    await this.logAudit(input.runId, input.employeeId, "MANUAL_PAYROLL_ADJUSTMENT", input, input.actorUserId);
+    await this.logAudit(
+      input.runId,
+      input.employeeId,
+      "MANUAL_PAYROLL_ADJUSTMENT",
+      input,
+      input.actorUserId,
+    );
     return { ok: true };
   },
 };

@@ -1,7 +1,7 @@
-import nodemailer from 'nodemailer';
-import { randomUUID } from 'crypto';
-import { db } from '../../db/mysql.js';
-import { env } from '../../config/env.js';
+import nodemailer from "nodemailer";
+import { randomUUID } from "crypto";
+import { db } from "../../db/mysql.js";
+import { env } from "../../config/env.js";
 import {
   candidateSuccessEmail,
   recruiterNotificationEmail,
@@ -11,21 +11,40 @@ import {
   payrollHRNotificationEmail,
   branchHeadApprovalEmail,
   rejectedEmail,
-} from './email.templates.js';
+} from "./email.templates.js";
 
-type EmailType = 'registration' | 'selected' | 'rejected' | 'rejected_professional' | 'token_sent' | 'offer_review' | 'approved' | 'welcome' |
-                 'recruiter_notification' | 'selection_congratulations' | 'selection_letter' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval' | 'otp_verification' |
-                 'joining_doc_reminder' | 'bank_resubmit_request' | 'bgv_address_link';
+type EmailType =
+  | "registration"
+  | "selected"
+  | "rejected"
+  | "rejected_professional"
+  | "token_sent"
+  | "offer_review"
+  | "approved"
+  | "welcome"
+  | "recruiter_notification"
+  | "selection_congratulations"
+  | "selection_letter"
+  | "bgv_completion"
+  | "payroll_hr_notification"
+  | "branch_head_approval"
+  | "otp_verification"
+  | "joining_doc_reminder"
+  | "bank_resubmit_request"
+  | "bgv_address_link";
 
-interface SendResult { ok: boolean; error?: string }
+interface SendResult {
+  ok: boolean;
+  error?: string;
+}
 
 const transporter = nodemailer.createTransport({
-  host:   env.SMTP_HOST   || '',
-  port:   Number(env.SMTP_PORT || 587),
+  host: env.SMTP_HOST || "",
+  port: Number(env.SMTP_PORT || 587),
   secure: false,
   auth: {
-    user: env.SMTP_USER || '',
-    pass: env.SMTP_PASS || '',
+    user: env.SMTP_USER || "",
+    pass: env.SMTP_PASS || "",
   },
 });
 
@@ -33,7 +52,7 @@ async function logEmail(
   candidateId: string,
   type: EmailType,
   sentTo: string,
-  status: 'sent' | 'failed' | 'skipped',
+  status: "sent" | "failed" | "skipped",
   error?: string,
 ) {
   try {
@@ -43,8 +62,11 @@ async function logEmail(
       [randomUUID(), candidateId, type, sentTo, status, error ?? null],
     );
   } catch (logError: unknown) {
-    const message = logError instanceof Error ? logError.message : String(logError);
-    console.warn(`[ATS-EMAIL] failed to log ${type} email for ${candidateId}: ${message}`);
+    const message =
+      logError instanceof Error ? logError.message : String(logError);
+    console.warn(
+      `[ATS-EMAIL] failed to log ${type} email for ${candidateId}: ${message}`,
+    );
   }
 }
 
@@ -56,8 +78,10 @@ async function send(
   type: EmailType,
 ): Promise<SendResult> {
   if (!env.SMTP_USER || !env.SMTP_PASS) {
-    console.warn(`[ATS-EMAIL] SMTP not configured - skipping ${type} to ${to} (candidate ${candidateId})`);
-    await logEmail(candidateId, type, to, 'skipped', 'SMTP not configured');
+    console.warn(
+      `[ATS-EMAIL] SMTP not configured - skipping ${type} to ${to} (candidate ${candidateId})`,
+    );
+    await logEmail(candidateId, type, to, "skipped", "SMTP not configured");
     return { ok: true };
   }
   const fromAddr = env.SMTP_FROM || env.SMTP_USER;
@@ -69,12 +93,17 @@ async function send(
         body: html,
       });
   try {
-    await transporter.sendMail({ from: `"MAS Callnet" <${fromAddr}>`, to, subject: subject.replace(/[^\x20-\x7E]/g, "-"), html: finalHtml });
-    await logEmail(candidateId, type, to, 'sent');
+    await transporter.sendMail({
+      from: `"MAS Callnet" <${fromAddr}>`,
+      to,
+      subject: subject.replace(/[^\x20-\x7E]/g, "-"),
+      html: finalHtml,
+    });
+    await logEmail(candidateId, type, to, "sent");
     return { ok: true };
   } catch (err: unknown) {
     const msg = (err as Error)?.message ?? String(err);
-    await logEmail(candidateId, type, to, 'failed', msg);
+    await logEmail(candidateId, type, to, "failed", msg);
     return { ok: false, error: msg };
   }
 }
@@ -96,9 +125,10 @@ function atsFrame(input: {
   actionUrl?: string;
   note?: string;
 }): string {
-  const action = input.actionLabel && input.actionUrl
-    ? `<p style="margin:26px 0 10px"><a href="${escapeHtml(input.actionUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:13px 22px;border-radius:999px;font-weight:800">${escapeHtml(input.actionLabel)}</a></p>`
-    : "";
+  const action =
+    input.actionLabel && input.actionUrl
+      ? `<p style="margin:26px 0 10px"><a href="${escapeHtml(input.actionUrl)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:13px 22px;border-radius:999px;font-weight:800">${escapeHtml(input.actionLabel)}</a></p>`
+      : "";
   const note = input.note
     ? `<div style="margin-top:22px;border-left:4px solid #f59e0b;background:#fffbeb;border-radius:12px;padding:14px 16px;color:#92400e;font-size:14px;line-height:1.6">${input.note}</div>`
     : "";
@@ -126,58 +156,73 @@ function atsFrame(input: {
 }
 
 export async function sendRegistrationEmail(params: {
-  candidateId: string; to: string; candidateName: string;
-  candidateCode: string; branch: string; recruiterName: string; recruiterMobile: string;
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  candidateCode: string;
+  branch: string;
+  recruiterName: string;
+  recruiterMobile: string;
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Registration Successful - MAS Callnet',
+    "Registration Successful - MAS Callnet",
     `<p>Dear ${params.candidateName},</p>
      <p>Your registration at MAS Callnet (${params.branch}) was successful.</p>
      <p><strong>Your Candidate ID: ${params.candidateCode}</strong></p>
      <p>Recruiter: ${params.recruiterName} | ${params.recruiterMobile}</p>
      <p>We will be in touch shortly. Thank you for your interest.</p>`,
     params.candidateId,
-    'registration',
+    "registration",
   );
 }
 
 export async function sendSelectedEmail(params: {
-  candidateId: string; to: string; candidateName: string;
-  branchName: string; hrName: string; hrPhone: string;
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  branchName: string;
+  hrName: string;
+  hrPhone: string;
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Congratulations! You have been selected - MAS Callnet',
+    "Congratulations! You have been selected - MAS Callnet",
     `<p>Dear ${params.candidateName},</p>
      <p>Congratulations! You have been selected at MAS Callnet, ${params.branchName}.</p>
      <p>Your HR contact: ${params.hrName} | ${params.hrPhone}</p>
      <p>You will receive further instructions for completing your joining formalities.</p>`,
     params.candidateId,
-    'selected',
+    "selected",
   );
 }
 
 export async function sendRejectedEmail(params: {
-  candidateId: string; to: string; candidateName: string; branchName: string;
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  branchName: string;
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Thank you for visiting MAS Callnet',
+    "Thank you for visiting MAS Callnet",
     `<p>Dear ${params.candidateName},</p>
      <p>Thank you for your time and interest in MAS Callnet, ${params.branchName}.</p>
      <p>We will keep your profile on file for future opportunities.</p>`,
     params.candidateId,
-    'rejected',
+    "rejected",
   );
 }
 
 export async function sendOnboardingTokenEmail(params: {
-  candidateId: string; to: string; candidateName: string; onboardingLink: string;
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  onboardingLink: string;
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Complete Your Joining Formalities - MAS Callnet',
+    "Complete Your Joining Formalities - MAS Callnet",
     atsFrame({
       eyebrow: "Candidate Onboarding",
       title: "Complete Your 10-Step Joining Form",
@@ -192,7 +237,7 @@ export async function sendOnboardingTokenEmail(params: {
       note: "This secure link is valid for 15 days. If it expires, ask your recruiter or HR to resend it.",
     }),
     params.candidateId,
-    'token_sent',
+    "token_sent",
   );
 }
 
@@ -208,11 +253,15 @@ export async function sendOnboardingTokenEmail(params: {
  * names the one thing that's actually needed and says nothing about why.
  */
 export async function sendBankResubmitEmail(params: {
-  candidateId: string; to: string; candidateName: string; onboardingLink: string; bankName?: string | null;
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  onboardingLink: string;
+  bankName?: string | null;
 }): Promise<SendResult> {
   return send(
     params.to,
-    'Action needed: confirm your bank account number - MAS Callnet',
+    "Action needed: confirm your bank account number - MAS Callnet",
     atsFrame({
       eyebrow: "Bank Details",
       title: "Please re-confirm your bank account number",
@@ -224,28 +273,36 @@ export async function sendBankResubmitEmail(params: {
       note: "This secure link is valid for 15 days. If it expires, ask HR to resend it.",
     }),
     params.candidateId,
-    'bank_resubmit_request',
+    "bank_resubmit_request",
   );
 }
 
 export async function sendOfferReviewEmail(params: {
-  candidateId: string; to: string; candidateName: string; offerSummary: string;
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  offerSummary: string;
 }): Promise<SendResult> {
   return send(
     params.to,
-    'New Employment Offer Awaiting Your Approval - MAS Callnet',
+    "New Employment Offer Awaiting Your Approval - MAS Callnet",
     `<p>A new employment offer requires your approval.</p>
      <p><strong>Candidate:</strong> ${params.candidateName}</p>
      <p>${params.offerSummary}</p>
      <p>Please log in to review and approve.</p>`,
     params.candidateId,
-    'offer_review',
+    "offer_review",
   );
 }
 
 export async function sendWelcomeEmail(params: {
-  candidateId: string; to: string; candidateName: string;
-  employeeCode: string; loginEmail: string; tempPassword: string; loginUrl: string;
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  employeeCode: string;
+  loginEmail: string;
+  tempPassword: string;
+  loginUrl: string;
 }): Promise<SendResult> {
   return send(
     params.to,
@@ -266,7 +323,7 @@ export async function sendWelcomeEmail(params: {
       note: "You will be asked to change your temporary password on first login. Do not share this password with anyone.",
     }),
     params.candidateId,
-    'welcome',
+    "welcome",
   );
 }
 
@@ -294,10 +351,10 @@ export async function sendCandidateSuccessEmail(params: {
 
   return send(
     params.to,
-    'Registration Successful - MAS Callnet',
+    "Registration Successful - MAS Callnet",
     html,
     params.candidateId,
-    'registration',
+    "registration",
   );
 }
 
@@ -325,11 +382,11 @@ export async function sendRecruiterNotificationEmail(params: {
   return send(
     params.to,
     params.metaLead
-      ? 'META Lead Registered - New Candidate Assigned - MAS Callnet'
-      : 'New Candidate Assigned - MAS Callnet',
+      ? "META Lead Registered - New Candidate Assigned - MAS Callnet"
+      : "New Candidate Assigned - MAS Callnet",
     html,
     params.candidateId,
-    'recruiter_notification',
+    "recruiter_notification",
   );
 }
 
@@ -354,10 +411,10 @@ export async function sendSelectionCongratulationsEmail(params: {
 
   return send(
     params.to,
-    'Congratulations! You are Selected - MAS Callnet',
+    "Congratulations! You are Selected - MAS Callnet",
     html,
     params.candidateId,
-    'selection_congratulations',
+    "selection_congratulations",
   );
 }
 
@@ -394,10 +451,10 @@ export async function sendSelectionLetterOfIntent(params: {
 
   return send(
     params.to,
-    'Selection Letter of Intent - MAS Callnet',
+    "Selection Letter of Intent - MAS Callnet",
     html,
     params.candidateId,
-    'selection_letter',
+    "selection_letter",
   );
 }
 
@@ -405,7 +462,7 @@ export async function sendBGVCompletionEmail(params: {
   candidateId: string;
   to: string;
   candidateName: string;
-  bgvStatus: 'verified' | 'negative' | 'insufficient';
+  bgvStatus: "verified" | "negative" | "insufficient";
   bgvRemarks: string;
   nextSteps: string;
 }): Promise<SendResult> {
@@ -416,13 +473,14 @@ export async function sendBGVCompletionEmail(params: {
     nextSteps: params.nextSteps,
   });
 
-  const statusText = params.bgvStatus === 'verified' ? 'Completed' : 'Action Required';
+  const statusText =
+    params.bgvStatus === "verified" ? "Completed" : "Action Required";
   return send(
     params.to,
     `BGV ${statusText} - MAS Callnet`,
     html,
     params.candidateId,
-    'bgv_completion',
+    "bgv_completion",
   );
 }
 
@@ -444,10 +502,10 @@ export async function sendPayrollHRNotificationEmail(params: {
 
   return send(
     params.to,
-    'New Candidate for Validation - MAS Callnet',
+    "New Candidate for Validation - MAS Callnet",
     html,
     params.candidateId,
-    'payroll_hr_notification',
+    "payroll_hr_notification",
   );
 }
 
@@ -473,10 +531,10 @@ export async function sendBranchHeadApprovalEmail(params: {
 
   return send(
     params.to,
-    'Approval Request - MAS Callnet',
+    "Approval Request - MAS Callnet",
     html,
     params.candidateId,
-    'branch_head_approval',
+    "branch_head_approval",
   );
 }
 
@@ -504,7 +562,7 @@ export async function sendPayrollHrJoiningDocNotification(params: {
       note: "This action is assigned to Payroll HR. The joining document issue is required before the employee's first day.",
     }),
     cid,
-    'payroll_hr_notification',
+    "payroll_hr_notification",
   );
 }
 
@@ -526,7 +584,7 @@ export async function sendOnboardingOtp(params: {
       <p style="color:#64748b;font-size:13px">Valid for 10 minutes. Do not share this OTP with anyone.</p>
     </div>`;
   if (!params.email) return null;
-  return send(params.email, subject, html, params.email, 'otp_verification');
+  return send(params.email, subject, html, params.email, "otp_verification");
 }
 
 export async function sendRejectedEmailProfessional(params: {
@@ -545,10 +603,10 @@ export async function sendRejectedEmailProfessional(params: {
   });
   return send(
     params.to,
-    'Update on Your Application - MAS Callnet India',
+    "Update on Your Application - MAS Callnet India",
     html,
     params.candidateId,
-    'rejected_professional',
+    "rejected_professional",
   );
 }
 
@@ -563,12 +621,24 @@ export function buildJoiningDocEsignEmailHtml(params: {
   signLink: string;
   expiryStr: string;
 }): string {
-  const { employeeName, employeeCode, processName, reportingManagerName, documentName, signLink, expiryStr } = params;
+  const {
+    employeeName,
+    employeeCode,
+    processName,
+    reportingManagerName,
+    documentName,
+    signLink,
+    expiryStr,
+  } = params;
   const identityBits = [
     employeeCode ? `Code: <strong>${employeeCode}</strong>` : null,
     processName ? `Process: <strong>${processName}</strong>` : null,
-    reportingManagerName ? `Reporting Manager: <strong>${reportingManagerName}</strong>` : null,
-  ].filter(Boolean).join(" &nbsp;|&nbsp; ");
+    reportingManagerName
+      ? `Reporting Manager: <strong>${reportingManagerName}</strong>`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" &nbsp;|&nbsp; ");
   return `
   <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
     <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
@@ -621,12 +691,23 @@ export function buildEpfComplianceReviewEmailHtml(params: {
   reviewLink: string;
   expiryStr: string;
 }): string {
-  const { employeeName, employeeCode, processName, reportingManagerName, reviewLink, expiryStr } = params;
+  const {
+    employeeName,
+    employeeCode,
+    processName,
+    reportingManagerName,
+    reviewLink,
+    expiryStr,
+  } = params;
   const identityBits = [
     employeeCode ? `Code: <strong>${employeeCode}</strong>` : null,
     processName ? `Process: <strong>${processName}</strong>` : null,
-    reportingManagerName ? `Reporting Manager: <strong>${reportingManagerName}</strong>` : null,
-  ].filter(Boolean).join(" &nbsp;|&nbsp; ");
+    reportingManagerName
+      ? `Reporting Manager: <strong>${reportingManagerName}</strong>`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" &nbsp;|&nbsp; ");
   return `
   <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
     <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
@@ -666,8 +747,10 @@ export async function sendJoiningDocReminderEmail(params: {
   employeeId: string;
 }): Promise<SendResult> {
   const { to, employeeName, pendingDocuments, employeeId } = params;
-  const docList = pendingDocuments.map(d => `<li style="margin-bottom:4px">${d}</li>`).join('');
-  const hrLink = `${env.FRONTEND_URL || 'http://localhost:5173'}/employees/${employeeId}/joining-documents`;
+  const docList = pendingDocuments
+    .map((d) => `<li style="margin-bottom:4px">${d}</li>`)
+    .join("");
+  const hrLink = `${env.FRONTEND_URL || "http://localhost:5173"}/employees/${employeeId}/joining-documents`;
   const html = `
   <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
     <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
@@ -687,7 +770,13 @@ export async function sendJoiningDocReminderEmail(params: {
       <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 28px;color:#94a3b8;font-size:11px">MAS Callnet India Pvt. Ltd.</div>
     </div>
   </div>`;
-  return send(to, 'Reminder: Joining documents pending — MAS Callnet', html, employeeId, 'joining_doc_reminder');
+  return send(
+    to,
+    "Reminder: Joining documents pending — MAS Callnet",
+    html,
+    employeeId,
+    "joining_doc_reminder",
+  );
 }
 
 export async function sendAddressBgvLinkEmail(params: {
@@ -700,8 +789,19 @@ export async function sendAddressBgvLinkEmail(params: {
   maxAttempts: number;
   expiresAt: Date;
 }): Promise<SendResult> {
-  const { candidateName, declaredAddress, verificationLink, attemptNumber, maxAttempts, expiresAt } = params;
-  const expiryStr = expiresAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const {
+    candidateName,
+    declaredAddress,
+    verificationLink,
+    attemptNumber,
+    maxAttempts,
+    expiresAt,
+  } = params;
+  const expiryStr = expiresAt.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
   const html = `
   <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
     <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
@@ -751,5 +851,11 @@ export async function sendAddressBgvLinkEmail(params: {
       </div>
     </div>
   </div>`;
-  return send(params.to, 'Action Required: Verify your current address — MAS Callnet BGV', html, params.candidateId, 'bgv_address_link');
+  return send(
+    params.to,
+    "Action Required: Verify your current address — MAS Callnet BGV",
+    html,
+    params.candidateId,
+    "bgv_address_link",
+  );
 }

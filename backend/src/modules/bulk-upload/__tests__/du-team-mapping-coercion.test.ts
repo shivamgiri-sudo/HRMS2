@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { normalizeAgentId, DU_TEAM_MAPPING_HEADERS } from "../du-team-mapping-bulk.service.js";
+import {
+  normalizeAgentId,
+  DU_TEAM_MAPPING_HEADERS,
+} from "../du-team-mapping-bulk.service.js";
 
 describe("normalizeAgentId", () => {
   it("reads a real agent id from the sample", () => {

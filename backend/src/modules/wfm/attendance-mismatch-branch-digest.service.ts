@@ -49,7 +49,7 @@ export async function runAttendanceMismatchBranchDigest(): Promise<void> {
        JOIN employees e ON e.id = ari.employee_id
        JOIN branch_master bm ON bm.id = e.branch_id
       WHERE ari.resolved_at IS NULL
-      GROUP BY e.branch_id, bm.branch_name`
+      GROUP BY e.branch_id, bm.branch_name`,
   );
 
   for (const row of rows) {
@@ -57,14 +57,19 @@ export async function runAttendanceMismatchBranchDigest(): Promise<void> {
       await triggerAttendanceMismatchBranchBacklog(
         row.branch_id as string,
         row.branch_name as string,
-        Number(row.employee_count)
+        Number(row.employee_count),
       );
     } catch (err) {
-      console.warn(`[attendance-mismatch-branch-digest] failed for branch ${row.branch_id as string}:`, err);
+      console.warn(
+        `[attendance-mismatch-branch-digest] failed for branch ${row.branch_id as string}:`,
+        err,
+      );
     }
   }
 
   if (rows.length > 0) {
-    console.log(`[attendance-mismatch-branch-digest] notified ${rows.length} branch(es) with open attendance exceptions`);
+    console.log(
+      `[attendance-mismatch-branch-digest] notified ${rows.length} branch(es) with open attendance exceptions`,
+    );
   }
 }

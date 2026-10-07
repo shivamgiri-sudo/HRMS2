@@ -17,12 +17,25 @@ import { join, resolve } from "node:path";
 
 const ROOT = resolve(__dirname, "..");
 const APPROVED_SCHEDULE: Record<number, "CL" | "ML"> = {
-  1: "CL", 2: "ML", 3: "CL", 4: "ML", 5: "CL", 6: "ML",
-  7: "CL", 8: "CL", 9: "ML", 10: "CL", 11: "ML", 12: "CL",
+  1: "CL",
+  2: "ML",
+  3: "CL",
+  4: "ML",
+  5: "CL",
+  6: "ML",
+  7: "CL",
+  8: "CL",
+  9: "ML",
+  10: "CL",
+  11: "ML",
+  12: "CL",
 };
 
 describe("Approved CL/ML schedule — source-of-truth contract", () => {
-  const migrationSql = readFileSync(join(ROOT, "sql/245_leave_credit_redesign.sql"), "utf8");
+  const migrationSql = readFileSync(
+    join(ROOT, "sql/245_leave_credit_redesign.sql"),
+    "utf8",
+  );
 
   it("seeds exactly the approved month-to-leave-type mapping, nothing else", () => {
     const rowPattern = /\((\d{1,2}),\s*'(CL|ML)',\s*[\d.]+\)/g;
@@ -67,7 +80,9 @@ describe("Approved CL/ML schedule — source-of-truth contract", () => {
 
   it("disables the old fractional monthly_credit_days rate for CL/ML (Step 1 of 245)", () => {
     expect(migrationSql).toMatch(/SET\s+lpc\.monthly_credit_days\s*=\s*0/i);
-    expect(migrationSql).toMatch(/WHERE\s+lt\.leave_code\s+IN\s*\(\s*'CL'\s*,\s*'ML'\s*\)/i);
+    expect(migrationSql).toMatch(
+      /WHERE\s+lt\.leave_code\s+IN\s*\(\s*'CL'\s*,\s*'ML'\s*\)/i,
+    );
   });
 });
 
@@ -89,7 +104,10 @@ describe("Legacy Design-1 fractional logic — confirmed non-executable", () => 
       // to a credit/rate variable.
       const codeOnly = content
         .split("\n")
-        .filter((line) => !line.trim().startsWith("*") && !line.trim().startsWith("//"))
+        .filter(
+          (line) =>
+            !line.trim().startsWith("*") && !line.trim().startsWith("//"),
+        )
         .join("\n");
       expect(codeOnly).not.toMatch(/0\.583/);
       expect(codeOnly).not.toMatch(/0\.417/);
@@ -125,14 +143,20 @@ describe("Legacy Design-1 fractional logic — confirmed non-executable", () => 
         // in actual code should trip this guard.
         const codeOnly = content
           .split("\n")
-          .filter((line) => !line.trim().startsWith("*") && !line.trim().startsWith("//"))
+          .filter(
+            (line) =>
+              !line.trim().startsWith("*") && !line.trim().startsWith("//"),
+          )
           .join("\n");
         if (/\bmonthly_credit_days\b/.test(codeOnly)) {
           readFound = true;
         }
       }
     }
-    expect(readFound, "monthly_credit_days must remain unread outside the type declaration").toBe(false);
+    expect(
+      readFound,
+      "monthly_credit_days must remain unread outside the type declaration",
+    ).toBe(false);
   });
 });
 
@@ -143,12 +167,17 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
   beforeEach(async () => {
     vi.resetModules();
     exec.mockReset();
-    vi.doMock("../src/db/mysql.js", () => ({ db: { execute: exec }, pingDb: vi.fn() }));
+    vi.doMock("../src/db/mysql.js", () => ({
+      db: { execute: exec },
+      pingDb: vi.fn(),
+    }));
     const mod = await import("../src/workers/leave-monthly-credit.worker.js");
     creditMonthlyLeaves = mod.creditMonthlyLeaves;
   });
 
-  const CL_ID = "lt-cl", ML_ID = "lt-ml", EL_ID = "lt-el";
+  const CL_ID = "lt-cl",
+    ML_ID = "lt-ml",
+    EL_ID = "lt-el";
 
   function routeExec(handlers: Array<[RegExp, unknown]>) {
     exec.mockImplementation((sql: string) => {
@@ -162,9 +191,35 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
   it("credits exactly 1.0 day for a CL schedule month — never a fractional amount", async () => {
     const insertedAmounts: number[] = [];
     routeExec([
-      [/SELECT id, leave_code FROM leave_type_master/i, [[{ id: CL_ID, leave_code: "CL" }, { id: ML_ID, leave_code: "ML" }, { id: EL_ID, leave_code: "EL" }], []]],
-      [/SELECT id, date_of_joining FROM employees/i, [[{ id: "emp-1", date_of_joining: "2024-01-01" }], []]],
-      [/FROM leave_credit_schedule/i, [[{ month: 1, leave_code: "CL", credit_days: 1.0, leave_type_id: CL_ID }], []]],
+      [
+        /SELECT id, leave_code FROM leave_type_master/i,
+        [
+          [
+            { id: CL_ID, leave_code: "CL" },
+            { id: ML_ID, leave_code: "ML" },
+            { id: EL_ID, leave_code: "EL" },
+          ],
+          [],
+        ],
+      ],
+      [
+        /SELECT id, date_of_joining FROM employees/i,
+        [[{ id: "emp-1", date_of_joining: "2024-01-01" }], []],
+      ],
+      [
+        /FROM leave_credit_schedule/i,
+        [
+          [
+            {
+              month: 1,
+              leave_code: "CL",
+              credit_days: 1.0,
+              leave_type_id: CL_ID,
+            },
+          ],
+          [],
+        ],
+      ],
       [/SELECT 1 FROM leave_el_credit_log/i, [[], []]], // not yet credited
     ]);
     exec.mockImplementation((sql: string, params: unknown[]) => {
@@ -172,9 +227,35 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
         insertedAmounts.push(Number(params[4])); // roundedDays param position
       }
       for (const [pattern, result] of [
-        [/SELECT id, leave_code FROM leave_type_master/i, [[{ id: CL_ID, leave_code: "CL" }, { id: ML_ID, leave_code: "ML" }, { id: EL_ID, leave_code: "EL" }], []]],
-        [/SELECT id, date_of_joining FROM employees/i, [[{ id: "emp-1", date_of_joining: "2024-01-01" }], []]],
-        [/FROM leave_credit_schedule/i, [[{ month: 1, leave_code: "CL", credit_days: 1.0, leave_type_id: CL_ID }], []]],
+        [
+          /SELECT id, leave_code FROM leave_type_master/i,
+          [
+            [
+              { id: CL_ID, leave_code: "CL" },
+              { id: ML_ID, leave_code: "ML" },
+              { id: EL_ID, leave_code: "EL" },
+            ],
+            [],
+          ],
+        ],
+        [
+          /SELECT id, date_of_joining FROM employees/i,
+          [[{ id: "emp-1", date_of_joining: "2024-01-01" }], []],
+        ],
+        [
+          /FROM leave_credit_schedule/i,
+          [
+            [
+              {
+                month: 1,
+                leave_code: "CL",
+                credit_days: 1.0,
+                leave_type_id: CL_ID,
+              },
+            ],
+            [],
+          ],
+        ],
         [/SELECT 1 FROM leave_el_credit_log/i, [[], []]],
       ] as Array<[RegExp, unknown]>) {
         if (pattern.test(sql)) return Promise.resolve(result);
@@ -194,9 +275,35 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
     exec.mockImplementation((sql: string) => {
       if (/INSERT INTO leave_balance_ledger/i.test(sql)) insertCount++;
       for (const [pattern, result] of [
-        [/SELECT id, leave_code FROM leave_type_master/i, [[{ id: CL_ID, leave_code: "CL" }, { id: ML_ID, leave_code: "ML" }, { id: EL_ID, leave_code: "EL" }], []]],
-        [/SELECT id, date_of_joining FROM employees/i, [[{ id: "emp-1", date_of_joining: "2024-01-01" }], []]],
-        [/FROM leave_credit_schedule/i, [[{ month: 1, leave_code: "CL", credit_days: 1.0, leave_type_id: CL_ID }], []]],
+        [
+          /SELECT id, leave_code FROM leave_type_master/i,
+          [
+            [
+              { id: CL_ID, leave_code: "CL" },
+              { id: ML_ID, leave_code: "ML" },
+              { id: EL_ID, leave_code: "EL" },
+            ],
+            [],
+          ],
+        ],
+        [
+          /SELECT id, date_of_joining FROM employees/i,
+          [[{ id: "emp-1", date_of_joining: "2024-01-01" }], []],
+        ],
+        [
+          /FROM leave_credit_schedule/i,
+          [
+            [
+              {
+                month: 1,
+                leave_code: "CL",
+                credit_days: 1.0,
+                leave_type_id: CL_ID,
+              },
+            ],
+            [],
+          ],
+        ],
         [/SELECT 1 FROM leave_el_credit_log/i, [[{ 1: 1 }], []]], // ALREADY credited
       ] as Array<[RegExp, unknown]>) {
         if (pattern.test(sql)) return Promise.resolve(result);
@@ -215,13 +322,38 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
     // ever be returned for a CL month. This test locks that contract: for
     // month 2, only ML rows are ever supplied by the schedule query.
     routeExec([
-      [/SELECT id, leave_code FROM leave_type_master/i, [[{ id: CL_ID, leave_code: "CL" }, { id: ML_ID, leave_code: "ML" }, { id: EL_ID, leave_code: "EL" }], []]],
+      [
+        /SELECT id, leave_code FROM leave_type_master/i,
+        [
+          [
+            { id: CL_ID, leave_code: "CL" },
+            { id: ML_ID, leave_code: "ML" },
+            { id: EL_ID, leave_code: "EL" },
+          ],
+          [],
+        ],
+      ],
       [/SELECT id, date_of_joining FROM employees/i, [[], []]],
-      [/FROM leave_credit_schedule/i, [[{ month: 2, leave_code: "ML", credit_days: 1.0, leave_type_id: ML_ID }], []]],
+      [
+        /FROM leave_credit_schedule/i,
+        [
+          [
+            {
+              month: 2,
+              leave_code: "ML",
+              credit_days: 1.0,
+              leave_type_id: ML_ID,
+            },
+          ],
+          [],
+        ],
+      ],
     ]);
     await expect(creditMonthlyLeaves(2026, 2)).resolves.not.toThrow();
     // Assert only ML appeared in the schedule fetch for month 2.
-    const scheduleCall = exec.mock.calls.find(([s]) => /FROM leave_credit_schedule/i.test(String(s)));
+    const scheduleCall = exec.mock.calls.find(([s]) =>
+      /FROM leave_credit_schedule/i.test(String(s)),
+    );
     expect(scheduleCall).toBeDefined();
   });
 });

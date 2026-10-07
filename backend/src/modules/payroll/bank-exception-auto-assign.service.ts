@@ -34,7 +34,10 @@ import { db } from "../../db/mysql.js";
 import { notificationGateway } from "../communication/notification.gateway.js";
 import type { BankReadinessResult } from "./bank-payment-readiness.service.js";
 
-type BankReadinessRow = BankReadinessResult & { branch_id: string | null; branch_name: string | null };
+type BankReadinessRow = BankReadinessResult & {
+  branch_id: string | null;
+  branch_name: string | null;
+};
 
 const AUTO_ASSIGN_CLASSES = new Set(["INVALID", "MISSING", "CONFLICT"]);
 
@@ -54,7 +57,10 @@ const branchHrCache = new Map<string, PayrollHrPerson | null>();
  */
 async function resolveProcessAndManager(
   employeeId: string,
-): Promise<{ process_name: string | null; reporting_manager_name: string | null }> {
+): Promise<{
+  process_name: string | null;
+  reporting_manager_name: string | null;
+}> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT pm.process_name,
             COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
@@ -66,10 +72,15 @@ async function resolveProcessAndManager(
     [employeeId],
   );
   const row = (rows as any[])[0];
-  return { process_name: row?.process_name ?? null, reporting_manager_name: row?.reporting_manager_name ?? null };
+  return {
+    process_name: row?.process_name ?? null,
+    reporting_manager_name: row?.reporting_manager_name ?? null,
+  };
 }
 
-async function resolvePayrollHrForBranch(branchId: string): Promise<PayrollHrPerson | null> {
+async function resolvePayrollHrForBranch(
+  branchId: string,
+): Promise<PayrollHrPerson | null> {
   if (branchHrCache.has(branchId)) return branchHrCache.get(branchId)!;
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT DISTINCT e.id AS employee_id, e.user_id, e.employee_code,
@@ -93,7 +104,9 @@ async function resolvePayrollHrForBranch(branchId: string): Promise<PayrollHrPer
     [branchId, branchId],
   );
   const row = (rows as any[])[0];
-  const result = row ? { employeeId: row.employee_id, userId: row.user_id, name: row.name } : null;
+  const result = row
+    ? { employeeId: row.employee_id, userId: row.user_id, name: row.name }
+    : null;
   branchHrCache.set(branchId, result);
   return result;
 }
@@ -113,7 +126,12 @@ export interface AutoAssignSummary {
 export async function autoAssignBankExceptionsToPayrollHr(
   rows: BankReadinessRow[],
 ): Promise<AutoAssignSummary> {
-  const summary: AutoAssignSummary = { eligible: 0, assigned: 0, notified: 0, skipped_no_branch_hr: 0 };
+  const summary: AutoAssignSummary = {
+    eligible: 0,
+    assigned: 0,
+    notified: 0,
+    skipped_no_branch_hr: 0,
+  };
 
   for (const r of rows) {
     if (!AUTO_ASSIGN_CLASSES.has(r.readiness_class)) continue;
@@ -126,7 +144,11 @@ export async function autoAssignBankExceptionsToPayrollHr(
       continue;
     }
 
-    const note = `Auto-assigned to branch payroll HR (${hr.name}) — ${r.readiness_class}: ${r.reason_detail ?? ""}`.slice(0, 2000);
+    const note =
+      `Auto-assigned to branch payroll HR (${hr.name}) — ${r.readiness_class}: ${r.reason_detail ?? ""}`.slice(
+        0,
+        2000,
+      );
     const [result] = await db.execute<ResultSetHeader>(
       `INSERT INTO payroll_bank_exception
          (id, employee_id, owner_user_id, workflow_status, notes, created_by, updated_by)
@@ -163,7 +185,8 @@ export async function autoAssignBankExceptionsToPayrollHr(
         assigned_to: hr.name,
       },
     });
-    if (outcome.outcome === "sent" || outcome.outcome === "shadow") summary.notified++;
+    if (outcome.outcome === "sent" || outcome.outcome === "shadow")
+      summary.notified++;
   }
 
   return summary;

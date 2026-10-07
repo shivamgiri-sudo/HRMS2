@@ -6,7 +6,10 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordMoneyEventAudit } from "../../shared/moneyEventAudit.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
 import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
-import { notifyFullFinalReady, notifyFFApproved } from "./exit.notifications.js";
+import {
+  notifyFullFinalReady,
+  notifyFFApproved,
+} from "./exit.notifications.js";
 // Type-only import — does not create a runtime circular dependency with
 // ff-compute.service.ts, which imports ffService from this file.
 import type { ComputedStatus } from "./ff-compute.service.js";
@@ -19,7 +22,10 @@ import type { ComputedStatus } from "./ff-compute.service.js";
  * the maker-checker refusal reached Finance as a generic 500 with no reason attached, which
  * reads as a broken screen rather than a control doing its job.
  */
-function ffError(statusCode: number, message: string): Error & { statusCode: number } {
+function ffError(
+  statusCode: number,
+  message: string,
+): Error & { statusCode: number } {
   return Object.assign(new Error(message), { statusCode });
 }
 
@@ -119,7 +125,7 @@ export interface PayrollAlreadyPaid {
 async function recordGratuityAudit(
   exitRequestId: string,
   employeeId: string,
-  gratuityAmount: number
+  gratuityAmount: number,
 ): Promise<void> {
   try {
     if (!(gratuityAmount > 0)) return; // nothing was granted; nothing to explain
@@ -138,16 +144,20 @@ async function recordGratuityAudit(
        WHERE e.id = ?
        ORDER BY esa.effective_from DESC
        LIMIT 1`,
-      [exitRequestId, employeeId]
+      [exitRequestId, employeeId],
     );
     const row = (rows as any[])[0];
-    if (!row?.ctc_annual || !row?.date_of_joining || !row?.last_working_day) return;
+    if (!row?.ctc_annual || !row?.date_of_joining || !row?.last_working_day)
+      return;
 
-    const basicMonthly = (Number(row.ctc_annual) / 12) * (Number(row.basic_pct ?? 40) / 100);
+    const basicMonthly =
+      (Number(row.ctc_annual) / 12) * (Number(row.basic_pct ?? 40) / 100);
     const years =
-      (new Date(row.last_working_day).getTime() - new Date(row.date_of_joining).getTime()) /
+      (new Date(row.last_working_day).getTime() -
+        new Date(row.date_of_joining).getTime()) /
       (365.25 * 24 * 60 * 60 * 1000);
-    if (!Number.isFinite(basicMonthly) || !Number.isFinite(years) || years <= 0) return;
+    if (!Number.isFinite(basicMonthly) || !Number.isFinite(years) || years <= 0)
+      return;
 
     await db.execute(
       `INSERT INTO gratuity_calculation_audit
@@ -169,7 +179,7 @@ async function recordGratuityAudit(
         "(basic/daysInMonth)*daysPerYear*years, per statutory_config",
         gratuityAmount,
         gratuityAmount,
-      ]
+      ],
     );
   } catch (error) {
     // Never let recording the workings break the settlement itself.
@@ -192,8 +202,11 @@ export function ffComponentSum(data: {
 }): number {
   const n = (v: unknown) => Number(v ?? 0);
   return (
-    n(data.earnedLeaveEncashment) + n(data.gratuityAmount) + n(data.salaryHold)
-    - n(data.noticeRecovery) - n(data.advancesRecovery)
+    n(data.earnedLeaveEncashment) +
+    n(data.gratuityAmount) +
+    n(data.salaryHold) -
+    n(data.noticeRecovery) -
+    n(data.advancesRecovery)
   );
 }
 
@@ -205,11 +218,11 @@ export const ffService = {
     exitRequestId: string,
     data: FfInput,
     preparedBy: string,
-    req?: Request
+    req?: Request,
   ): Promise<FullFinalCalculation> {
     const [exitRows] = await db.execute<RowDataPacket[]>(
       "SELECT id, employee_id FROM exit_request WHERE id = ? LIMIT 1",
-      [exitRequestId]
+      [exitRequestId],
     );
     const exitReq = (exitRows as any[])[0];
     if (!exitReq) throw new Error("Exit request not found");
@@ -229,12 +242,12 @@ export const ffService = {
     if (Math.abs(suppliedNet - expectedNet) > FF_NET_TOLERANCE) {
       throw new Error(
         `F&F net payable (${suppliedNet.toFixed(2)}) does not equal its own components ` +
-        `(${expectedNet.toFixed(2)} = leave encashment ${Number(data.earnedLeaveEncashment ?? 0).toFixed(2)} ` +
-        `+ gratuity ${Number(data.gratuityAmount ?? 0).toFixed(2)} ` +
-        `+ salary hold ${Number(data.salaryHold ?? 0).toFixed(2)} ` +
-        `- notice recovery ${Number(data.noticeRecovery ?? 0).toFixed(2)} ` +
-        `- advances recovery ${Number(data.advancesRecovery ?? 0).toFixed(2)}). ` +
-        `Correct the components or the net before saving — a settlement total that disagrees with its own workings cannot be approved or paid.`
+          `(${expectedNet.toFixed(2)} = leave encashment ${Number(data.earnedLeaveEncashment ?? 0).toFixed(2)} ` +
+          `+ gratuity ${Number(data.gratuityAmount ?? 0).toFixed(2)} ` +
+          `+ salary hold ${Number(data.salaryHold ?? 0).toFixed(2)} ` +
+          `- notice recovery ${Number(data.noticeRecovery ?? 0).toFixed(2)} ` +
+          `- advances recovery ${Number(data.advancesRecovery ?? 0).toFixed(2)}). ` +
+          `Correct the components or the net before saving — a settlement total that disagrees with its own workings cannot be approved or paid.`,
       );
     }
 
@@ -246,17 +259,40 @@ export const ffService = {
     // getPayrollAlreadyPaid). If the preview itself cannot be computed, that must
     // never block settlement creation — it degrades to "no deviation check
     // performed", the same failure posture as recordGratuityAudit below.
-    let deviations: Record<string, { supplied: number; computed: number }> | undefined;
+    let deviations:
+      Record<string, { supplied: number; computed: number }> | undefined;
     try {
       const { computeFfPreview } = await import("./ff-compute.service.js");
       const preview = await computeFfPreview(exitRequestId);
-      const candidates: Array<[string, number | undefined, ComputedStatus, number]> = [
-        ["noticeRecovery", data.noticeRecovery, preview.notice.recovery_amount.status, preview.notice.recovery_amount.value],
-        ["earnedLeaveEncashment", data.earnedLeaveEncashment, preview.leave_encashment.amount.status, preview.leave_encashment.amount.value],
-        ["advancesRecovery", data.advancesRecovery, preview.advances_loans.total_recovery.status, preview.advances_loans.total_recovery.value],
+      const candidates: Array<
+        [string, number | undefined, ComputedStatus, number]
+      > = [
+        [
+          "noticeRecovery",
+          data.noticeRecovery,
+          preview.notice.recovery_amount.status,
+          preview.notice.recovery_amount.value,
+        ],
+        [
+          "earnedLeaveEncashment",
+          data.earnedLeaveEncashment,
+          preview.leave_encashment.amount.status,
+          preview.leave_encashment.amount.value,
+        ],
+        [
+          "advancesRecovery",
+          data.advancesRecovery,
+          preview.advances_loans.total_recovery.status,
+          preview.advances_loans.total_recovery.value,
+        ],
       ];
       if (preview.gratuity.status === "draft") {
-        candidates.push(["gratuityAmount", data.gratuityAmount, "computed", preview.gratuity.amount]);
+        candidates.push([
+          "gratuityAmount",
+          data.gratuityAmount,
+          "computed",
+          preview.gratuity.amount,
+        ]);
       }
       const found: Record<string, { supplied: number; computed: number }> = {};
       for (const [field, supplied, status, computedValue] of candidates) {
@@ -271,15 +307,25 @@ export const ffService = {
         if (!String(data.overrideReason ?? "").trim()) {
           throw ffError(
             422,
-            `These figures differ from what the F&F compute engine derived: ${Object.entries(found)
-              .map(([f, v]) => `${f} (supplied ${v.supplied.toFixed(2)} vs computed ${v.computed.toFixed(2)})`)
-              .join(", ")}. Provide overrideReason to explain the deviation, or use the computed figures.`
+            `These figures differ from what the F&F compute engine derived: ${Object.entries(
+              found,
+            )
+              .map(
+                ([f, v]) =>
+                  `${f} (supplied ${v.supplied.toFixed(2)} vs computed ${v.computed.toFixed(2)})`,
+              )
+              .join(
+                ", ",
+              )}. Provide overrideReason to explain the deviation, or use the computed figures.`,
           );
         }
       }
     } catch (err) {
       if ((err as { statusCode?: number }).statusCode === 422) throw err; // real refusal, not a compute failure
-      console.error("[ff] compute-preview deviation check failed (non-fatal)", err);
+      console.error(
+        "[ff] compute-preview deviation check failed (non-fatal)",
+        err,
+      );
     }
 
     const id = randomUUID();
@@ -295,21 +341,25 @@ export const ffService = {
         exitRequestId,
         exitReq.employee_id,
         data.calculationDate,
-        data.noticePeriodDays    ?? 0,
+        data.noticePeriodDays ?? 0,
         data.noticeShortfallDays ?? 0,
-        data.noticeRecovery      ?? 0,
+        data.noticeRecovery ?? 0,
         data.earnedLeaveEncashment ?? 0,
-        data.gratuityAmount      ?? 0,
-        data.salaryHold          ?? 0,
-        data.advancesRecovery    ?? 0,
-        data.netPayable          ?? 0,
+        data.gratuityAmount ?? 0,
+        data.salaryHold ?? 0,
+        data.advancesRecovery ?? 0,
+        data.netPayable ?? 0,
         preparedBy,
-      ]
+      ],
     );
 
     // Records the workings behind the gratuity figure. Cannot fail the settlement - see the
     // function's own try/catch - and skips itself rather than record workings it cannot establish.
-    await recordGratuityAudit(exitRequestId, exitReq.employee_id, Number(data.gratuityAmount ?? 0));
+    await recordGratuityAudit(
+      exitRequestId,
+      exitReq.employee_id,
+      Number(data.gratuityAmount ?? 0),
+    );
 
     void logSensitiveAction({
       actor_user_id: preparedBy,
@@ -320,7 +370,12 @@ export const ffService = {
       change_summary: {
         exit_request_id: exitRequestId,
         employee_id: exitReq.employee_id,
-        ...(deviations ? { computed_deviations: deviations, override_reason: data.overrideReason } : {}),
+        ...(deviations
+          ? {
+              computed_deviations: deviations,
+              override_reason: data.overrideReason,
+            }
+          : {}),
       },
       req,
     });
@@ -336,13 +391,13 @@ export const ffService = {
          LEFT JOIN employees e ON e.id = ff.employee_id
         WHERE ff.exit_request_id = ?
         LIMIT 1`,
-      [exitRequestId]
+      [exitRequestId],
     );
     const rec = (rows as FullFinalCalculation[])[0];
     if (!rec) throw new Error("F&F calculation not found");
     rec.payroll_already_paid = await this.getPayrollAlreadyPaid(
       rec.employee_id,
-      String(rec.calculation_date)
+      String(rec.calculation_date),
     );
     return rec;
   },
@@ -357,7 +412,7 @@ export const ffService = {
    */
   async getPayrollAlreadyPaid(
     employeeId: string,
-    calculationDate: string
+    calculationDate: string,
   ): Promise<PayrollAlreadyPaid[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT spr.run_month,
@@ -373,7 +428,7 @@ export const ffService = {
           AND spr.run_month BETWEEN DATE_FORMAT(DATE_SUB(?, INTERVAL 2 MONTH), '%Y-%m')
                                 AND DATE_FORMAT(?, '%Y-%m')
         ORDER BY spr.run_month DESC`,
-      [employeeId, calculationDate, calculationDate]
+      [employeeId, calculationDate, calculationDate],
     );
     return rows as PayrollAlreadyPaid[];
   },
@@ -381,15 +436,16 @@ export const ffService = {
   async approveFF(
     id: string,
     approvedBy: string,
-    req?: Request
+    req?: Request,
   ): Promise<FullFinalCalculation> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM full_final_calculation WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     const rec = (rows as any[])[0];
     if (!rec) throw ffError(404, "F&F calculation not found");
-    if (rec.status === "paid") throw ffError(409, "F&F already paid — cannot re-approve");
+    if (rec.status === "paid")
+      throw ffError(409, "F&F already paid — cannot re-approve");
 
     // WHERE carries the status this decision was made on. It was `WHERE id = ?` alone, with
     // no predicate at all, which made the guard above advisory: between that SELECT and this
@@ -401,12 +457,15 @@ export const ffService = {
       `UPDATE full_final_calculation
           SET status = 'approved', approved_by = ?, approved_at = NOW(), updated_at = NOW()
         WHERE id = ? AND status = ?`,
-      [approvedBy, id, rec.status]
+      [approvedBy, id, rec.status],
     );
 
     // No FULL_FINAL_APPROVED entry may be written for an approval that did not happen.
     if (approveResult.affectedRows !== 1) {
-      throw ffError(409, "F&F changed while this approval was in flight — reload and retry");
+      throw ffError(
+        409,
+        "F&F changed while this approval was in flight — reload and retry",
+      );
     }
 
     void logSensitiveAction({
@@ -463,29 +522,35 @@ export const ffService = {
     id: string,
     paidBy: string,
     paymentReference: string,
-    req?: Request
+    req?: Request,
   ): Promise<FullFinalCalculation> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM full_final_calculation WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     const rec = (rows as any[])[0];
     if (!rec) throw ffError(404, "F&F calculation not found");
 
     if (rec.status === "paid") throw ffError(409, "F&F is already marked paid");
     if (rec.status !== "approved") {
-      throw ffError(409, `Cannot mark paid: F&F is '${rec.status}', not 'approved'`);
+      throw ffError(
+        409,
+        `Cannot mark paid: F&F is '${rec.status}', not 'approved'`,
+      );
     }
 
     const reference = String(paymentReference ?? "").trim();
     if (!reference) {
-      throw ffError(400, "A payment reference (bank/UTR/cheque) is required to mark an F&F paid");
+      throw ffError(
+        400,
+        "A payment reference (bank/UTR/cheque) is required to mark an F&F paid",
+      );
     }
 
     if (rec.approved_by && String(rec.approved_by) === String(paidBy)) {
       throw ffError(
         403,
-        "Payment must be recorded by someone other than the person who approved this settlement"
+        "Payment must be recorded by someone other than the person who approved this settlement",
       );
     }
 
@@ -501,7 +566,7 @@ export const ffService = {
       throw ffError(
         409,
         `Cannot mark this F&F paid: ${noc.reason ?? "NOC clearance is not complete"}. ` +
-        "Complete the NOC in Payroll › NOC Management, or have a Payroll Head override it there."
+          "Complete the NOC in Payroll › NOC Management, or have a Payroll Head override it there.",
       );
     }
 
@@ -522,22 +587,22 @@ export const ffService = {
             SET status = 'paid', ff_paid_by = ?, ff_paid_at = NOW(),
                 ff_payment_reference = ?, updated_at = NOW()
           WHERE id = ? AND status = 'approved'`,
-        [paidBy, reference, id]
+        [paidBy, reference, id],
       );
 
-    // The expected-state predicate above was already right; its result was never read.
-    //
-    // Two payers recording the same settlement at once both passed the SELECT-time checks,
-    // both issued this UPDATE, and only the first matched a row. The second changed nothing
-    // — its payment reference was silently discarded — yet still fell through to write a
-    // FULL_FINAL_PAID entry naming itself as payer and carrying its own reference, and
-    // returned success. The audit trail would then show a settlement disbursed twice, under
-    // two references, one of which was never recorded anywhere. On the one control whose
-    // entire purpose is to reconcile a payment against a bank statement.
+      // The expected-state predicate above was already right; its result was never read.
+      //
+      // Two payers recording the same settlement at once both passed the SELECT-time checks,
+      // both issued this UPDATE, and only the first matched a row. The second changed nothing
+      // — its payment reference was silently discarded — yet still fell through to write a
+      // FULL_FINAL_PAID entry naming itself as payer and carrying its own reference, and
+      // returned success. The audit trail would then show a settlement disbursed twice, under
+      // two references, one of which was never recorded anywhere. On the one control whose
+      // entire purpose is to reconcile a payment against a bank statement.
       if (payResult.affectedRows !== 1) {
         throw ffError(
           409,
-          "F&F was already marked paid by someone else — this payment was not recorded"
+          "F&F was already marked paid by someone else — this payment was not recorded",
         );
       }
 
@@ -574,7 +639,7 @@ export const ffService = {
     id: string,
     verifiedBy: string,
     reason: string,
-    req?: Request
+    req?: Request,
   ): Promise<FullFinalCalculation> {
     // CLAUDE.md requires this override to carry "an audit reason" — the role gate
     // and actor/timestamp were already recorded, but no caller ever supplied why the
@@ -582,12 +647,15 @@ export const ffService = {
     // existing callers can't silently keep omitting it.
     const trimmedReason = String(reason ?? "").trim();
     if (!trimmedReason) {
-      throw ffError(400, "A reason is required to clear a provisional F&F calculation");
+      throw ffError(
+        400,
+        "A reason is required to clear a provisional F&F calculation",
+      );
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM full_final_calculation WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     const rec = (rows as any[])[0];
     if (!rec) throw ffError(404, "F&F calculation not found");
@@ -597,7 +665,7 @@ export const ffService = {
     const [nameRows] = await db.execute<RowDataPacket[]>(
       `SELECT CONCAT_WS(' ', first_name, last_name) AS full_name
          FROM employees WHERE user_id = ? LIMIT 1`,
-      [verifiedBy]
+      [verifiedBy],
     );
     const verifierName = (nameRows[0] as any)?.full_name ?? verifiedBy;
 
@@ -610,7 +678,7 @@ export const ffService = {
               verification_reason = ?,
               updated_at = NOW()
         WHERE id = ?`,
-      [verifiedBy, verifierName, trimmedReason, id]
+      [verifiedBy, verifierName, trimmedReason, id],
     );
 
     void logSensitiveAction({
@@ -619,7 +687,12 @@ export const ffService = {
       module_key: "exit",
       entity_type: "full_final_calculation",
       entity_id: id,
-      change_summary: { exit_request_id: rec.exit_request_id, verified_by: verifiedBy, verified_by_name: verifierName, reason: trimmedReason },
+      change_summary: {
+        exit_request_id: rec.exit_request_id,
+        verified_by: verifiedBy,
+        verified_by_name: verifierName,
+        reason: trimmedReason,
+      },
       req,
     });
 
@@ -635,7 +708,7 @@ export const ffService = {
       daysInMonth?: number;
       monthsPerYear?: number;
       maxGratuity?: number;
-    }
+    },
   ): GratuityCalculation {
     if (gratuityWageBase === undefined) {
       return {
@@ -645,15 +718,15 @@ export const ffService = {
       };
     }
 
-    const joinDate    = new Date(doj);
-    const lwd         = new Date(exitDate);
-    const diffMs      = lwd.getTime() - joinDate.getTime();
+    const joinDate = new Date(doj);
+    const lwd = new Date(exitDate);
+    const diffMs = lwd.getTime() - joinDate.getTime();
     const tenureYears = diffMs / (365.25 * 24 * 60 * 60 * 1000);
     const completedYears = Math.floor(tenureYears);
 
-    const minYears     = config?.minYears     ?? 5;
-    const daysInMonth  = config?.daysInMonth  ?? 26;
-    const monthsPer    = config?.monthsPerYear ?? 15;
+    const minYears = config?.minYears ?? 5;
+    const daysInMonth = config?.daysInMonth ?? 26;
+    const monthsPer = config?.monthsPerYear ?? 15;
 
     if (completedYears < minYears) {
       return {
@@ -683,7 +756,7 @@ export const ffService = {
    */
   async calculateGratuityFromEmployee(
     employeeId: string,
-    lastWorkingDay?: string | Date
+    lastWorkingDay?: string | Date,
   ): Promise<GratuityCalculation> {
     const [salRows] = await db.execute<RowDataPacket[]>(
       `SELECT esa.ctc_annual, ss.basic_pct
@@ -692,9 +765,11 @@ export const ffService = {
         WHERE esa.employee_id = ? AND esa.active_status = 1
         ORDER BY esa.effective_from DESC
         LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
-    const sal = (salRows as Array<{ ctc_annual: number; basic_pct: number }>)[0];
+    const sal = (
+      salRows as Array<{ ctc_annual: number; basic_pct: number }>
+    )[0];
     if (!sal) {
       return {
         amount: 0,
@@ -703,8 +778,13 @@ export const ffService = {
       };
     }
 
-    const lastBasicMonthly = (sal.ctc_annual / 12) * ((sal.basic_pct ?? 40) / 100);
-    const result = await calculateGratuity(employeeId, lastBasicMonthly, lastWorkingDay);
+    const lastBasicMonthly =
+      (sal.ctc_annual / 12) * ((sal.basic_pct ?? 40) / 100);
+    const result = await calculateGratuity(
+      employeeId,
+      lastBasicMonthly,
+      lastWorkingDay,
+    );
 
     if (!result.eligible) {
       // Reporting a configuration gap as "minimum service not completed" told a
@@ -732,7 +812,8 @@ export const ffService = {
 
     let note = `Draft calculation over ${result.years} completed years on a last basic of ${lastBasicMonthly.toFixed(2)}. Requires verification before F&F approval.`;
     if (result.capMissing) {
-      note += " No gratuity_statutory_cap configured — this amount is uncapped and must be checked against the Payment of Gratuity Act ceiling before approval.";
+      note +=
+        " No gratuity_statutory_cap configured — this amount is uncapped and must be checked against the Payment of Gratuity Act ceiling before approval.";
     } else if (result.capApplied) {
       note += ` Statutory cap applied: formula produced ${result.uncappedAmount}, capped to ${result.amount}.`;
     }

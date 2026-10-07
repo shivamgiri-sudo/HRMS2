@@ -35,7 +35,11 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
-import { splitSql, MIGRATION_MANIFEST, isIdempotentMigrationError } from "../../src/db/runPendingMigrations.js";
+import {
+  splitSql,
+  MIGRATION_MANIFEST,
+  isIdempotentMigrationError,
+} from "../../src/db/runPendingMigrations.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SQL_DIR = path.resolve(HERE, "../../sql");
@@ -62,11 +66,15 @@ const DB_NAME = process.env.UAT_DB_NAME ?? "mas_hrms_test";
 // ── Guards. Identical in spirit to migrate-fresh-test.ts, and not overridable. ────────────────
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 if (!LOCAL_HOSTS.has(DB_HOST.trim().toLowerCase())) {
-  console.error(`FATAL: refusing to build schema on non-local host '${DB_HOST}'.`);
+  console.error(
+    `FATAL: refusing to build schema on non-local host '${DB_HOST}'.`,
+  );
   process.exit(1);
 }
 if (!/(^test_|_test$|_testing$|_uat$|^uat_)/i.test(DB_NAME)) {
-  console.error(`FATAL: '${DB_NAME}' does not look disposable. Name it *_test or *_uat.`);
+  console.error(
+    `FATAL: '${DB_NAME}' does not look disposable. Name it *_test or *_uat.`,
+  );
   process.exit(1);
 }
 
@@ -80,26 +88,39 @@ interface Failure {
 
 async function main() {
   const conn = await mysql.createConnection({
-    host: DB_HOST, port: DB_PORT, user: DB_USER, password: DB_PASSWORD,
+    host: DB_HOST,
+    port: DB_PORT,
+    user: DB_USER,
+    password: DB_PASSWORD,
     multipleStatements: false,
   });
 
-  console.log(`[uat-schema] target ${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}`);
+  console.log(
+    `[uat-schema] target ${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}`,
+  );
   await conn.query(`DROP DATABASE IF EXISTS \`${DB_NAME}\``);
   // utf8mb4_unicode_ci is the DATABASE default on production; the SERVER default there is
   // utf8mb4_0900_ai_ci (set on the container). Reproducing BOTH is the point — a bare
   // CHARSET=utf8mb4 in a migration resolves to the server default, not the database default, and
   // the resulting cross-collation join is a hard errno 1267. Making them equal here would hide it.
-  await conn.query(`CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  await conn.query(
+    `CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+  );
   await conn.changeUser({ database: DB_NAME });
   await conn.query("SET SESSION FOREIGN_KEY_CHECKS = 0");
 
-  let applied = 0, missingFiles = 0, benignSkips = 0, statementsRun = 0;
+  let applied = 0,
+    missingFiles = 0,
+    benignSkips = 0,
+    statementsRun = 0;
   const failures: Failure[] = [];
 
   for (const file of MIGRATION_MANIFEST) {
     const full = path.join(SQL_DIR, file);
-    if (!fs.existsSync(full)) { missingFiles++; continue; }
+    if (!fs.existsSync(full)) {
+      missingFiles++;
+      continue;
+    }
 
     // `USE` and `SOURCE` are STRIPPED, matching migrate-fresh-test.ts lines 144/210.
     // This is not cosmetic. 177 of these files carry a bare `USE mas_hrms;`, and one carries
@@ -118,12 +139,17 @@ async function main() {
         await conn.query(statement);
         statementsRun++;
       } catch (error) {
-        if (isIdempotentMigrationError(error)) { benignSkips++; continue; }
+        if (isIdempotentMigrationError(error)) {
+          benignSkips++;
+          continue;
+        }
         const e = error as { code?: string; message?: string };
         failures.push({
-          file, statementIndex: i + 1,
+          file,
+          statementIndex: i + 1,
           statement: statement.replace(/\s+/g, " ").slice(0, 160),
-          code: String(e.code ?? "?"), message: String(e.message ?? error).slice(0, 200),
+          code: String(e.code ?? "?"),
+          message: String(e.message ?? error).slice(0, 200),
         });
       }
     }
@@ -131,16 +157,28 @@ async function main() {
   }
 
   const [[{ tables }]] = await conn.query<any[]>(
-    "SELECT COUNT(*) AS tables FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", [DB_NAME]);
+    "SELECT COUNT(*) AS tables FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?",
+    [DB_NAME],
+  );
   const [[{ columns }]] = await conn.query<any[]>(
-    "SELECT COUNT(*) AS columns FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ?", [DB_NAME]);
+    "SELECT COUNT(*) AS columns FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ?",
+    [DB_NAME],
+  );
 
-  console.log(`\n[uat-schema] files in manifest : ${MIGRATION_MANIFEST.length}`);
-  console.log(`[uat-schema] files processed   : ${applied}  (absent from disk: ${missingFiles})`);
+  console.log(
+    `\n[uat-schema] files in manifest : ${MIGRATION_MANIFEST.length}`,
+  );
+  console.log(
+    `[uat-schema] files processed   : ${applied}  (absent from disk: ${missingFiles})`,
+  );
   console.log(`[uat-schema] statements run    : ${statementsRun}`);
-  console.log(`[uat-schema] benign skips      : ${benignSkips}  (already-exists / dup column / dup key)`);
+  console.log(
+    `[uat-schema] benign skips      : ${benignSkips}  (already-exists / dup column / dup key)`,
+  );
   console.log(`[uat-schema] hard failures     : ${failures.length}`);
-  console.log(`[uat-schema] schema built      : ${tables} tables / ${columns} columns`);
+  console.log(
+    `[uat-schema] schema built      : ${tables} tables / ${columns} columns`,
+  );
 
   if (failures.length) {
     const byCode = new Map<string, number>();
@@ -150,10 +188,18 @@ async function main() {
       console.log(`    ${String(n).padStart(4)} ${code}`);
     }
   }
-  fs.writeFileSync("/tmp/uat-schema-failures.json", JSON.stringify(failures, null, 2));
-  console.log(`\n[uat-schema] full failure detail -> /tmp/uat-schema-failures.json`);
+  fs.writeFileSync(
+    "/tmp/uat-schema-failures.json",
+    JSON.stringify(failures, null, 2),
+  );
+  console.log(
+    `\n[uat-schema] full failure detail -> /tmp/uat-schema-failures.json`,
+  );
 
   await conn.end();
 }
 
-main().catch((error) => { console.error(error); process.exit(1); });
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

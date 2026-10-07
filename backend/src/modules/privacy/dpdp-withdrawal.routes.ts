@@ -9,8 +9,10 @@ import { getUserRoleContext } from "../../shared/roleResolver.js";
 export const dpdpWithdrawalRouter = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 // POST /dpdp-withdrawal/request — employee submits
 dpdpWithdrawalRouter.post(
@@ -25,7 +27,9 @@ dpdpWithdrawalRouter.post(
     };
 
     if (!reason?.trim()) {
-      return res.status(400).json({ success: false, message: "reason is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "reason is required" });
     }
 
     const data = await svc.submitRequest(
@@ -34,11 +38,11 @@ dpdpWithdrawalRouter.post(
       scope_json ?? null,
       reason,
       channel ?? "self",
-      { requester_ip: req.ip, requester_ua: req.headers['user-agent'] }
+      { requester_ip: req.ip, requester_ua: req.headers["user-agent"] },
     );
 
     return res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 // GET /dpdp-withdrawal/my-requests — employee sees own
@@ -48,7 +52,7 @@ dpdpWithdrawalRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await svc.getMyRequests(req.authUser!.id);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // GET /dpdp-withdrawal — HR/compliance sees all
@@ -64,7 +68,7 @@ dpdpWithdrawalRouter.get(
       dateTo: req.query.date_to as string | undefined,
     });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // GET /dpdp-withdrawal/stats — aggregate stats for dashboard
@@ -85,7 +89,7 @@ dpdpWithdrawalRouter.get(
   h(async (_req: AuthenticatedRequest, res: Response) => {
     const data = await svc.getStats();
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // GET /dpdp-withdrawal/:id — get single (own or HR)
@@ -93,14 +97,23 @@ dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal/:id",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
+    const { primaryRole: role } = await getUserRoleContext(
+      (req as any).authUser?.id ?? "",
+    );
     const isHr = ["admin", "hr", "compliance", "dpo"].includes(role);
-    const record = await svc.getById(req.params.id, req.authUser!.id, isHr, true);
+    const record = await svc.getById(
+      req.params.id,
+      req.authUser!.id,
+      isHr,
+      true,
+    );
     if (!record) {
-      return res.status(404).json({ success: false, message: "Not found or access denied" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Not found or access denied" });
     }
     return res.json({ success: true, data: record });
-  })
+  }),
 );
 
 // POST /dpdp-withdrawal/:id/start-review — HR starts review
@@ -110,8 +123,11 @@ dpdpWithdrawalRouter.post(
   requireRole("hr", "admin", "dpo", "compliance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     await svc.startReview(req.params.id, req.authUser!.id);
-    return res.json({ success: true, message: "Review started and processing hold applied" });
-  })
+    return res.json({
+      success: true,
+      message: "Review started and processing hold applied",
+    });
+  }),
 );
 
 // POST /dpdp-withdrawal/:id/approve — HR/DPO approves
@@ -123,7 +139,7 @@ dpdpWithdrawalRouter.post(
     const { remarks } = req.body as { remarks?: string };
     await svc.approve(req.params.id, req.authUser!.id, remarks);
     return res.json({ success: true, message: "Withdrawal approved" });
-  })
+  }),
 );
 
 // POST /dpdp-withdrawal/:id/reject — HR/DPO rejects
@@ -134,11 +150,13 @@ dpdpWithdrawalRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { reason } = req.body as { reason?: string };
     if (!reason?.trim()) {
-      return res.status(400).json({ success: false, message: "reason is required for rejection" });
+      return res
+        .status(400)
+        .json({ success: false, message: "reason is required for rejection" });
     }
     await svc.reject(req.params.id, req.authUser!.id, reason);
     return res.json({ success: true, message: "Withdrawal rejected" });
-  })
+  }),
 );
 
 // POST /dpdp-withdrawal/:id/release-hold — HR releases hold manually
@@ -149,7 +167,7 @@ dpdpWithdrawalRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     await svc.releaseHold(req.params.id, req.authUser!.id);
     return res.json({ success: true, message: "Processing hold released" });
-  })
+  }),
 );
 
 // GET /dpdp-withdrawal/:id/audit — full audit trail
@@ -157,16 +175,22 @@ dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal/:id/audit",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
-    const isHr = ["admin", "hr", "compliance", "dpo", "super_admin"].includes(role);
+    const { primaryRole: role } = await getUserRoleContext(
+      (req as any).authUser?.id ?? "",
+    );
+    const isHr = ["admin", "hr", "compliance", "dpo", "super_admin"].includes(
+      role,
+    );
     // Anyone can see audit for their own request; HR can see all
     const record = await svc.getById(req.params.id, req.authUser!.id, isHr);
     if (!record) {
-      return res.status(404).json({ success: false, message: "Not found or access denied" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Not found or access denied" });
     }
     const data = await svc.getAudit(req.params.id, req.authUser!.id);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // GET /dpdp-withdrawal/stats moved above, before /dpdp-withdrawal/:id — see the comment there.
@@ -179,7 +203,7 @@ dpdpWithdrawalRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await svc.getTasksForWithdrawal(req.params.id);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // PATCH /dpdp-withdrawal/:id/tasks/:taskId — complete a task
@@ -191,7 +215,7 @@ dpdpWithdrawalRouter.patch(
     const { notes } = req.body as { notes?: string };
     await svc.completeTask(req.params.taskId, req.authUser!.id, notes);
     return res.json({ success: true, message: "Task marked complete" });
-  })
+  }),
 );
 
 // GET /dpdp-withdrawal/:id/evidence — list evidence
@@ -202,7 +226,7 @@ dpdpWithdrawalRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await svc.getEvidenceForWithdrawal(req.params.id);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // POST /dpdp-withdrawal/:id/evidence — add evidence record
@@ -217,9 +241,22 @@ dpdpWithdrawalRouter.post(
       file_ref?: string;
     };
     if (!evidence_type?.trim() || !description?.trim()) {
-      return res.status(400).json({ success: false, message: "evidence_type and description required" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "evidence_type and description required",
+        });
     }
-    await svc.addEvidence(req.params.id, evidence_type, description, req.authUser!.id, file_ref);
-    return res.status(201).json({ success: true, message: "Evidence recorded" });
-  })
+    await svc.addEvidence(
+      req.params.id,
+      evidence_type,
+      description,
+      req.authUser!.id,
+      file_ref,
+    );
+    return res
+      .status(201)
+      .json({ success: true, message: "Evidence recorded" });
+  }),
 );

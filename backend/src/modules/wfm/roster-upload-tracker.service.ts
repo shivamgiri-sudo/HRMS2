@@ -8,9 +8,9 @@
 //
 // Reads never need the alert table (migration 1834): while it is missing the notification trail
 // is simply empty and nothing else changes.
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { logger } from '../../logger.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { logger } from "../../logger.js";
 import {
   addDays,
   classifyCell,
@@ -20,7 +20,7 @@ import {
   UPLOAD_STATUSES,
   type EscalationStage,
   type UploadStatus,
-} from './roster-upload-tracker.logic.js';
+} from "./roster-upload-tracker.logic.js";
 
 export const DEFAULT_WEEKS = 6;
 export const MAX_WEEKS = 12;
@@ -34,11 +34,11 @@ const MISSING_EMPLOYEE_LIMIT = 200;
  * in Exception Control (owner, 2026-09-21). Compared case-insensitively on the trimmed name;
  * both "HEAD OFFICE" and "Head Office" exist as separate branch rows.
  */
-export const ROSTER_EXEMPT_BRANCH_NAMES: readonly string[] = ['head office'];
+export const ROSTER_EXEMPT_BRANCH_NAMES: readonly string[] = ["head office"];
 
-const WFM_ROLE_KEYS = ['wfm', 'branch_wfm'] as const;
-const PROCESS_MANAGER_ROLE_KEYS = ['process_manager'] as const;
-const BRANCH_HEAD_ROLE_KEYS = ['branch_head'] as const;
+const WFM_ROLE_KEYS = ["wfm", "branch_wfm"] as const;
+const PROCESS_MANAGER_ROLE_KEYS = ["process_manager"] as const;
+const BRANCH_HEAD_ROLE_KEYS = ["branch_head"] as const;
 
 export interface PersonRef {
   userId: string | null;
@@ -107,7 +107,10 @@ export interface TrackerResult {
     processes: { id: string; name: string; branchId: string }[];
     managers: { id: string; name: string }[];
   };
-  summary: { currentWeek: Record<UploadStatus, number>; nextWeek: Record<UploadStatus, number> };
+  summary: {
+    currentWeek: Record<UploadStatus, number>;
+    nextWeek: Record<UploadStatus, number>;
+  };
 }
 
 export interface PairRow {
@@ -125,48 +128,71 @@ interface CoverageRow {
 }
 
 const emptyCounts = (): Record<UploadStatus, number> =>
-  Object.fromEntries(UPLOAD_STATUSES.map((s) => [s, 0])) as Record<UploadStatus, number>;
+  Object.fromEntries(UPLOAD_STATUSES.map((s) => [s, 0])) as Record<
+    UploadStatus,
+    number
+  >;
 
-const pairKey = (branchId: string, processId: string): string => `${branchId}|${processId}`;
-const inList = (ids: readonly unknown[]): string => ids.map(() => '?').join(',');
+const pairKey = (branchId: string, processId: string): string =>
+  `${branchId}|${processId}`;
+const inList = (ids: readonly unknown[]): string =>
+  ids.map(() => "?").join(",");
 
 function isMissingObject(err: unknown): boolean {
   const e = err as { code?: string; errno?: number };
-  return e?.code === 'ER_NO_SUCH_TABLE' || e?.errno === 1146 || e?.code === 'ER_BAD_FIELD_ERROR' || e?.errno === 1054;
+  return (
+    e?.code === "ER_NO_SUCH_TABLE" ||
+    e?.errno === 1146 ||
+    e?.code === "ER_BAD_FIELD_ERROR" ||
+    e?.errno === 1054
+  );
 }
 
-async function query<T extends RowDataPacket>(sql: string, params: unknown[]): Promise<T[]> {
+async function query<T extends RowDataPacket>(
+  sql: string,
+  params: unknown[],
+): Promise<T[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params as never[]);
   return rows as T[];
 }
 
 /** Every active branch × process that has at least one active employee, with headcount. */
-async function loadPairs(filter: { branchId?: string; processId?: string; scope?: TrackerScope }): Promise<PairRow[]> {
+async function loadPairs(filter: {
+  branchId?: string;
+  processId?: string;
+  scope?: TrackerScope;
+}): Promise<PairRow[]> {
   const conds = [
     `e.employment_status = 'active'`,
-    'e.branch_id IS NOT NULL',
-    'e.process_id IS NOT NULL',
-    'p.active_status = 1',
+    "e.branch_id IS NOT NULL",
+    "e.process_id IS NOT NULL",
+    "p.active_status = 1",
     `LOWER(TRIM(br.branch_name)) NOT IN (${inList(ROSTER_EXEMPT_BRANCH_NAMES)})`,
   ];
   const params: unknown[] = [...ROSTER_EXEMPT_BRANCH_NAMES];
   const restrict = (column: string, ids: string[] | null | undefined) => {
     if (ids) {
-      conds.push(ids.length ? `${column} IN (${inList(ids)})` : '1 = 0');
+      conds.push(ids.length ? `${column} IN (${inList(ids)})` : "1 = 0");
       params.push(...ids);
     }
   };
-  if (filter.branchId) { conds.push('e.branch_id = ?'); params.push(filter.branchId); }
-  if (filter.processId) { conds.push('e.process_id = ?'); params.push(filter.processId); }
-  restrict('e.branch_id', filter.scope?.branchIds);
-  restrict('e.process_id', filter.scope?.processIds);
+  if (filter.branchId) {
+    conds.push("e.branch_id = ?");
+    params.push(filter.branchId);
+  }
+  if (filter.processId) {
+    conds.push("e.process_id = ?");
+    params.push(filter.processId);
+  }
+  restrict("e.branch_id", filter.scope?.branchIds);
+  restrict("e.process_id", filter.scope?.processIds);
 
   const rows = await query<RowDataPacket>(
     `SELECT e.branch_id, br.branch_name, e.process_id, p.process_name, COUNT(*) AS expected
        FROM employees e
        JOIN branch_master br ON br.id = e.branch_id
        JOIN process_master p ON p.id = e.process_id
-      WHERE ${conds.join(' AND ')}
+      WHERE ${conds.join(" AND ")}
       GROUP BY e.branch_id, br.branch_name, e.process_id, p.process_name
       ORDER BY br.branch_name, p.process_name`,
     params,
@@ -181,7 +207,9 @@ async function loadPairs(filter: { branchId?: string; processId?: string; scope?
 }
 
 /** Per branch × process × week: employees covered by committed uploads and when. */
-async function loadCoverage(weeks: string[]): Promise<Map<string, CoverageRow>> {
+async function loadCoverage(
+  weeks: string[],
+): Promise<Map<string, CoverageRow>> {
   const from = weeks[0];
   const to = addDays(weeks[weeks.length - 1], 6);
   const rows = await query<RowDataPacket>(
@@ -205,21 +233,25 @@ async function loadCoverage(weeks: string[]): Promise<Map<string, CoverageRow>> 
   );
   const out = new Map<string, CoverageRow>();
   for (const r of rows) {
-    out.set(`${pairKey(String(r.branch_id), String(r.process_id))}|${String(r.week_start)}`, {
-      covered: Number(r.covered),
-      firstCommitMs: Number(r.first_commit) * 1000,
-      fullCommitMs: Number(r.full_commit) * 1000,
-    });
+    out.set(
+      `${pairKey(String(r.branch_id), String(r.process_id))}|${String(r.week_start)}`,
+      {
+        covered: Number(r.covered),
+        firstCommitMs: Number(r.first_commit) * 1000,
+        fullCommitMs: Number(r.full_commit) * 1000,
+      },
+    );
   }
   return out;
 }
 
-const personName = (r: RowDataPacket): string => String(r.full_name ?? r.email ?? 'Unknown').trim();
+const personName = (r: RowDataPacket): string =>
+  String(r.full_name ?? r.email ?? "Unknown").trim();
 
 /** Users holding one of `roleKeys` for each id in `column` (branch_id / process_id). */
 async function loadRoleHolders(
   roleKeys: readonly string[],
-  column: 'branch_id' | 'process_id',
+  column: "branch_id" | "process_id",
   ids: string[],
 ): Promise<Map<string, PersonRef[]>> {
   const out = new Map<string, PersonRef[]>();
@@ -239,12 +271,19 @@ async function loadRoleHolders(
       const list = out.get(String(r.scope_id)) ?? [];
       const userId = String(r.user_id);
       if (!list.some((p) => p.userId === userId)) {
-        list.push({ userId, employeeId: r.employee_id ? String(r.employee_id) : null, name: personName(r) });
+        list.push({
+          userId,
+          employeeId: r.employee_id ? String(r.employee_id) : null,
+          name: personName(r),
+        });
       }
       out.set(String(r.scope_id), list);
     }
   } catch (err) {
-    logger.warn({ err: (err as Error).message, roleKeys }, '[roster-upload-tracker] role-holder lookup failed');
+    logger.warn(
+      { err: (err as Error).message, roleKeys },
+      "[roster-upload-tracker] role-holder lookup failed",
+    );
   }
   return out;
 }
@@ -253,7 +292,9 @@ async function loadRoleHolders(
  * The reporting manager covering the most employees of each branch × process. Used when nobody
  * holds the process_manager role for the process, so the row still names someone.
  */
-async function loadModalManagers(pairs: PairRow[]): Promise<Map<string, PersonRef>> {
+async function loadModalManagers(
+  pairs: PairRow[],
+): Promise<Map<string, PersonRef>> {
   const out = new Map<string, PersonRef>();
   if (pairs.length === 0) return out;
   const processIds = [...new Set(pairs.map((p) => p.processId))];
@@ -273,7 +314,11 @@ async function loadModalManagers(pairs: PairRow[]): Promise<Map<string, PersonRe
   for (const r of rows) {
     const key = pairKey(String(r.branch_id), String(r.process_id));
     if (out.has(key)) continue;
-    out.set(key, { userId: r.user_id ? String(r.user_id) : null, employeeId: String(r.mid), name: personName(r) });
+    out.set(key, {
+      userId: r.user_id ? String(r.user_id) : null,
+      employeeId: String(r.mid),
+      name: personName(r),
+    });
   }
   return out;
 }
@@ -283,14 +328,19 @@ export interface RecipientDirectory {
   managersByPair: Map<string, PersonRef[]>;
 }
 
-export async function loadRecipientDirectory(pairs: PairRow[]): Promise<RecipientDirectory> {
+export async function loadRecipientDirectory(
+  pairs: PairRow[],
+): Promise<RecipientDirectory> {
   const branchIds = [...new Set(pairs.map((p) => p.branchId))];
   const processIds = [...new Set(pairs.map((p) => p.processId))];
   const [wfmByBranch, holdersByProcess, modal] = await Promise.all([
-    loadRoleHolders(WFM_ROLE_KEYS, 'branch_id', branchIds),
-    loadRoleHolders(PROCESS_MANAGER_ROLE_KEYS, 'process_id', processIds),
+    loadRoleHolders(WFM_ROLE_KEYS, "branch_id", branchIds),
+    loadRoleHolders(PROCESS_MANAGER_ROLE_KEYS, "process_id", processIds),
     loadModalManagers(pairs).catch((err) => {
-      logger.warn({ err: (err as Error).message }, '[roster-upload-tracker] modal-manager lookup failed');
+      logger.warn(
+        { err: (err as Error).message },
+        "[roster-upload-tracker] modal-manager lookup failed",
+      );
       return new Map<string, PersonRef>();
     }),
   ]);
@@ -298,18 +348,26 @@ export async function loadRecipientDirectory(pairs: PairRow[]): Promise<Recipien
   for (const p of pairs) {
     const holders = holdersByProcess.get(p.processId);
     const fallback = modal.get(pairKey(p.branchId, p.processId));
-    managersByPair.set(pairKey(p.branchId, p.processId), holders?.length ? holders : fallback ? [fallback] : []);
+    managersByPair.set(
+      pairKey(p.branchId, p.processId),
+      holders?.length ? holders : fallback ? [fallback] : [],
+    );
   }
   return { wfmByBranch, managersByPair };
 }
 
 /** Manager's own reporting manager plus the branch head — the Monday 10:00 escalation targets. */
-export async function loadSkipLevel(branchId: string, managers: PersonRef[]): Promise<PersonRef[]> {
+export async function loadSkipLevel(
+  branchId: string,
+  managers: PersonRef[],
+): Promise<PersonRef[]> {
   const out: PersonRef[] = [];
   const add = (p: PersonRef) => {
     if (p.userId && !out.some((o) => o.userId === p.userId)) out.push(p);
   };
-  const employeeIds = managers.map((m) => m.employeeId).filter((id): id is string => Boolean(id));
+  const employeeIds = managers
+    .map((m) => m.employeeId)
+    .filter((id): id is string => Boolean(id));
   if (employeeIds.length) {
     try {
       const rows = await query<RowDataPacket>(
@@ -320,20 +378,36 @@ export async function loadSkipLevel(branchId: string, managers: PersonRef[]): Pr
         employeeIds,
       );
       for (const r of rows) {
-        add({ userId: r.user_id ? String(r.user_id) : null, employeeId: String(r.employee_id), name: personName(r) });
+        add({
+          userId: r.user_id ? String(r.user_id) : null,
+          employeeId: String(r.employee_id),
+          name: personName(r),
+        });
       }
     } catch (err) {
-      logger.warn({ err: (err as Error).message }, '[roster-upload-tracker] skip-level lookup failed');
+      logger.warn(
+        { err: (err as Error).message },
+        "[roster-upload-tracker] skip-level lookup failed",
+      );
     }
   }
-  const heads = await loadRoleHolders(BRANCH_HEAD_ROLE_KEYS, 'branch_id', [branchId]);
+  const heads = await loadRoleHolders(BRANCH_HEAD_ROLE_KEYS, "branch_id", [
+    branchId,
+  ]);
   (heads.get(branchId) ?? []).forEach(add);
   return out;
 }
 
-function buildCells(pair: PairRow, weeks: string[], coverage: Map<string, CoverageRow>, nowMs: number): TrackerCell[] {
+function buildCells(
+  pair: PairRow,
+  weeks: string[],
+  coverage: Map<string, CoverageRow>,
+  nowMs: number,
+): TrackerCell[] {
   return weeks.map((weekStart) => {
-    const cov = coverage.get(`${pairKey(pair.branchId, pair.processId)}|${weekStart}`);
+    const cov = coverage.get(
+      `${pairKey(pair.branchId, pair.processId)}|${weekStart}`,
+    );
     const result = classifyCell({
       expected: pair.expected,
       covered: cov?.covered ?? 0,
@@ -354,10 +428,19 @@ function buildCells(pair: PairRow, weeks: string[], coverage: Map<string, Covera
   });
 }
 
-export function windowFor(opts: Pick<TrackerQuery, "weeks" | "offset">, nowMs: number): string[] {
-  const count = Math.min(MAX_WEEKS, Math.max(1, Math.trunc(opts.weeks ?? DEFAULT_WEEKS)));
+export function windowFor(
+  opts: Pick<TrackerQuery, "weeks" | "offset">,
+  nowMs: number,
+): string[] {
+  const count = Math.min(
+    MAX_WEEKS,
+    Math.max(1, Math.trunc(opts.weeks ?? DEFAULT_WEEKS)),
+  );
   const shift = Math.trunc(opts.offset ?? 0);
-  const first = addDays(currentWeekStart(nowMs), (shift - WEEKS_BEFORE_CURRENT) * 7);
+  const first = addDays(
+    currentWeekStart(nowMs),
+    (shift - WEEKS_BEFORE_CURRENT) * 7,
+  );
   return weekWindow(first, count);
 }
 
@@ -374,13 +457,18 @@ export async function loadGrid(
   filter: { branchId?: string; processId?: string; scope?: TrackerScope } = {},
 ): Promise<GridData> {
   const pairs = await loadPairs(filter);
-  const [coverage, directory] = await Promise.all([loadCoverage(weeks), loadRecipientDirectory(pairs)]);
+  const [coverage, directory] = await Promise.all([
+    loadCoverage(weeks),
+    loadRecipientDirectory(pairs),
+  ]);
   const rows = pairs.map((pair) => ({
     branchId: pair.branchId,
     branchName: pair.branchName,
     processId: pair.processId,
     processName: pair.processName,
-    managers: directory.managersByPair.get(pairKey(pair.branchId, pair.processId)) ?? [],
+    managers:
+      directory.managersByPair.get(pairKey(pair.branchId, pair.processId)) ??
+      [],
     cells: buildCells(pair, weeks, coverage, nowMs),
   }));
   return { pairs, directory, rows };
@@ -388,7 +476,10 @@ export async function loadGrid(
 
 const managerKey = (m: PersonRef): string => m.employeeId ?? m.userId ?? m.name;
 
-function countAt(rows: TrackerProcessRow[], weekStart: string): Record<UploadStatus, number> {
+function countAt(
+  rows: TrackerProcessRow[],
+  weekStart: string,
+): Record<UploadStatus, number> {
   const counts = emptyCounts();
   for (const row of rows) {
     const cell = row.cells.find((c) => c.weekStart === weekStart);
@@ -411,11 +502,19 @@ export async function getTracker(q: TrackerQuery = {}): Promise<TrackerResult> {
   });
 
   const managerFiltered = q.managerId
-    ? allRows.filter((r) => r.managers.some((m) => m.employeeId === q.managerId || m.userId === q.managerId))
+    ? allRows.filter((r) =>
+        r.managers.some(
+          (m) => m.employeeId === q.managerId || m.userId === q.managerId,
+        ),
+      )
     : allRows;
   const summaryRows = managerFiltered;
   const visible = q.status
-    ? managerFiltered.filter((r) => r.cells.some((c) => weeks.includes(c.weekStart) && c.status === q.status))
+    ? managerFiltered.filter((r) =>
+        r.cells.some(
+          (c) => weeks.includes(c.weekStart) && c.status === q.status,
+        ),
+      )
     : managerFiltered;
 
   const byBranch = new Map<string, TrackerBranch>();
@@ -426,12 +525,16 @@ export async function getTracker(q: TrackerQuery = {}): Promise<TrackerResult> {
       wfm: directory.wfmByBranch.get(row.branchId) ?? [],
       processes: [],
     };
-    branch.processes.push({ ...row, cells: row.cells.filter((c) => weeks.includes(c.weekStart)) });
+    branch.processes.push({
+      ...row,
+      cells: row.cells.filter((c) => weeks.includes(c.weekStart)),
+    });
     byBranch.set(row.branchId, branch);
   }
 
   const managerOptions = new Map<string, string>();
-  for (const row of allRows) for (const m of row.managers) managerOptions.set(managerKey(m), m.name);
+  for (const row of allRows)
+    for (const m of row.managers) managerOptions.set(managerKey(m), m.name);
 
   return {
     nowMs,
@@ -443,11 +546,22 @@ export async function getTracker(q: TrackerQuery = {}): Promise<TrackerResult> {
     })),
     branches: [...byBranch.values()],
     filters: {
-      branches: [...new Map(allRows.map((r) => [r.branchId, r.branchName])).entries()].map(([id, name]) => ({ id, name })),
-      processes: allRows.map((r) => ({ id: r.processId, name: r.processName, branchId: r.branchId })),
-      managers: [...managerOptions.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
+      branches: [
+        ...new Map(allRows.map((r) => [r.branchId, r.branchName])).entries(),
+      ].map(([id, name]) => ({ id, name })),
+      processes: allRows.map((r) => ({
+        id: r.processId,
+        name: r.processName,
+        branchId: r.branchId,
+      })),
+      managers: [...managerOptions.entries()]
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
     },
-    summary: { currentWeek: countAt(summaryRows, thisWeek), nextWeek: countAt(summaryRows, nextWeek) },
+    summary: {
+      currentWeek: countAt(summaryRows, thisWeek),
+      nextWeek: countAt(summaryRows, nextWeek),
+    },
   };
 }
 
@@ -459,7 +573,9 @@ export interface AlertTrailEntry {
 }
 
 /** Sent stages per "branch|process|week" for the escalation sweep. Empty until migration 1834. */
-export async function loadSentStages(weeks: string[]): Promise<Map<string, Set<EscalationStage>>> {
+export async function loadSentStages(
+  weeks: string[],
+): Promise<Map<string, Set<EscalationStage>>> {
   const out = new Map<string, Set<EscalationStage>>();
   try {
     const rows = await query<RowDataPacket>(
@@ -480,7 +596,11 @@ export async function loadSentStages(weeks: string[]): Promise<Map<string, Set<E
   return out;
 }
 
-async function loadTrail(branchId: string, processId: string, weekStart: string): Promise<AlertTrailEntry[]> {
+async function loadTrail(
+  branchId: string,
+  processId: string,
+  weekStart: string,
+): Promise<AlertTrailEntry[]> {
   try {
     const rows = await query<RowDataPacket>(
       `SELECT a.stage, a.recipient_role, UNIX_TIMESTAMP(a.sent_at) AS sent_at, e.full_name
@@ -517,7 +637,7 @@ export interface CellDetail {
     id: number;
     status: string;
     fileName: string | null;
-    scope: 'branch' | 'process';
+    scope: "branch" | "process";
     uploadedBy: string | null;
     createdAtMs: number;
     committedAtMs: number | null;
@@ -535,7 +655,11 @@ export async function getCellDetail(
   nowMs = Date.now(),
   scope?: TrackerScope,
 ): Promise<CellDetail | null> {
-  const { rows, directory } = await loadGrid([weekStart], nowMs, { branchId, processId, scope });
+  const { rows, directory } = await loadGrid([weekStart], nowMs, {
+    branchId,
+    processId,
+    scope,
+  });
   const row = rows[0];
   if (!row) return null;
   const weekEnd = addDays(weekStart, 6);
@@ -583,7 +707,7 @@ export async function getCellDetail(
       id: Number(b.id),
       status: String(b.status),
       fileName: b.file_name ? String(b.file_name) : null,
-      scope: b.process_id ? 'process' : 'branch',
+      scope: b.process_id ? "process" : "branch",
       uploadedBy: b.email ? String(b.email) : null,
       createdAtMs: Number(b.created_at) * 1000,
       committedAtMs: b.committed_at ? Number(b.committed_at) * 1000 : null,
@@ -591,8 +715,8 @@ export async function getCellDetail(
     })),
     uncoveredEmployees: uncovered.map((e) => ({
       id: String(e.id),
-      code: String(e.employee_code ?? ''),
-      name: String(e.full_name ?? ''),
+      code: String(e.employee_code ?? ""),
+      name: String(e.full_name ?? ""),
     })),
     uncoveredTotal: Math.max(0, row.cells[0].expected - row.cells[0].covered),
     trail,

@@ -14,9 +14,12 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 const { error } = vi.hoisted(() => ({ error: vi.fn() }));
-vi.mock("../../../lib/logger.js", () => ({ logger: { error, warn: vi.fn(), info: vi.fn() } }));
+vi.mock("../../../lib/logger.js", () => ({
+  logger: { error, warn: vi.fn(), info: vi.fn() },
+}));
 
-const { recordExitFollowUpFailure } = await import("../exit-followup-recovery.js");
+const { recordExitFollowUpFailure } =
+  await import("../exit-followup-recovery.js");
 
 const EXIT_ID = "exit-1";
 const EMP_ID = "emp-1";
@@ -31,9 +34,16 @@ describe("recordExitFollowUpFailure", () => {
     execute.mockResolvedValueOnce([[], []]); // no existing item
     execute.mockResolvedValueOnce([{ insertId: 1 }, []]); // insert
 
-    await recordExitFollowUpFailure("ACCESS_DEPROVISION", EXIT_ID, EMP_ID, new Error("LMS unreachable"));
+    await recordExitFollowUpFailure(
+      "ACCESS_DEPROVISION",
+      EXIT_ID,
+      EMP_ID,
+      new Error("LMS unreachable"),
+    );
 
-    const insert = execute.mock.calls.find(([s]) => /INSERT INTO work_item/i.test(String(s)));
+    const insert = execute.mock.calls.find(([s]) =>
+      /INSERT INTO work_item/i.test(String(s)),
+    );
     expect(insert, "no work_item was created for the failed step").toBeTruthy();
     const params = insert![1] as unknown[];
     expect(params).toContain("EXIT_FOLLOWUP_ACCESS_DEPROVISION");
@@ -49,11 +59,19 @@ describe("recordExitFollowUpFailure", () => {
     // moment the insert moved into the shared work-item recorder with a different column order —
     // a positional assertion pins the SQL's shape, not the claim being made.
     const seen: Record<string, string[]> = {};
-    for (const step of ["FF_DRAFT_CREATION", "DIRECT_REPORT_REPARENT", "IT_DEPROVISION_DISPATCH"] as const) {
+    for (const step of [
+      "FF_DRAFT_CREATION",
+      "DIRECT_REPORT_REPARENT",
+      "IT_DEPROVISION_DISPATCH",
+    ] as const) {
       execute.mockReset();
-      execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([{ insertId: 1 }, []]);
+      execute
+        .mockResolvedValueOnce([[], []])
+        .mockResolvedValueOnce([{ insertId: 1 }, []]);
       await recordExitFollowUpFailure(step, EXIT_ID, EMP_ID, new Error("x"));
-      const params = execute.mock.calls.find(([s]) => /INSERT INTO work_item/i.test(String(s)))![1] as string[];
+      const params = execute.mock.calls.find(([s]) =>
+        /INSERT INTO work_item/i.test(String(s)),
+      )![1] as string[];
       seen[step] = params.map(String);
     }
     // An unsettled F&F is payroll's, orphaned reports are HR's, access is IT's.
@@ -62,8 +80,12 @@ describe("recordExitFollowUpFailure", () => {
     expect(seen.IT_DEPROVISION_DISPATCH).toContain("it");
     // And each must still carry its own step type, so the routing is not just coincidence.
     expect(seen.FF_DRAFT_CREATION).toContain("EXIT_FOLLOWUP_FF_DRAFT_CREATION");
-    expect(seen.DIRECT_REPORT_REPARENT).toContain("EXIT_FOLLOWUP_DIRECT_REPORT_REPARENT");
-    expect(seen.IT_DEPROVISION_DISPATCH).toContain("EXIT_FOLLOWUP_IT_DEPROVISION_DISPATCH");
+    expect(seen.DIRECT_REPORT_REPARENT).toContain(
+      "EXIT_FOLLOWUP_DIRECT_REPORT_REPARENT",
+    );
+    expect(seen.IT_DEPROVISION_DISPATCH).toContain(
+      "EXIT_FOLLOWUP_IT_DEPROVISION_DISPATCH",
+    );
   });
 
   /**
@@ -75,20 +97,42 @@ describe("recordExitFollowUpFailure", () => {
     execute.mockResolvedValueOnce([[{ id: "wi-1" }], []]); // an open item already exists
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
-    await recordExitFollowUpFailure("ACCESS_DEPROVISION", EXIT_ID, EMP_ID, new Error("still failing"));
+    await recordExitFollowUpFailure(
+      "ACCESS_DEPROVISION",
+      EXIT_ID,
+      EMP_ID,
+      new Error("still failing"),
+    );
 
-    expect(execute.mock.calls.some(([s]) => /INSERT INTO work_item/i.test(String(s)))).toBe(false);
-    const update = execute.mock.calls.find(([s]) => /UPDATE work_item/i.test(String(s)));
+    expect(
+      execute.mock.calls.some(([s]) =>
+        /INSERT INTO work_item/i.test(String(s)),
+      ),
+    ).toBe(false);
+    const update = execute.mock.calls.find(([s]) =>
+      /UPDATE work_item/i.test(String(s)),
+    );
     expect(update, "an existing open item should be refreshed").toBeTruthy();
     expect(update![1]).toContain("wi-1");
   });
 
   it("only reuses an item that is still open — a completed one does not suppress a new failure", async () => {
-    execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([{ insertId: 1 }, []]);
-    await recordExitFollowUpFailure("FF_DRAFT_CREATION", EXIT_ID, EMP_ID, new Error("y"));
+    execute
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([{ insertId: 1 }, []]);
+    await recordExitFollowUpFailure(
+      "FF_DRAFT_CREATION",
+      EXIT_ID,
+      EMP_ID,
+      new Error("y"),
+    );
 
-    const select = execute.mock.calls.find(([s]) => /SELECT id FROM work_item/i.test(String(s)));
-    expect(String(select![0])).toContain("status NOT IN ('completed', 'cancelled')");
+    const select = execute.mock.calls.find(([s]) =>
+      /SELECT id FROM work_item/i.test(String(s)),
+    );
+    expect(String(select![0])).toContain(
+      "status NOT IN ('completed', 'cancelled')",
+    );
   });
 
   /**
@@ -100,18 +144,30 @@ describe("recordExitFollowUpFailure", () => {
     execute.mockRejectedValue(new Error("work_item table is gone"));
 
     await expect(
-      recordExitFollowUpFailure("ACCESS_DEPROVISION", EXIT_ID, EMP_ID, new Error("original"))
+      recordExitFollowUpFailure(
+        "ACCESS_DEPROVISION",
+        EXIT_ID,
+        EMP_ID,
+        new Error("original"),
+      ),
     ).resolves.toBeUndefined();
 
     expect(error).toHaveBeenCalledTimes(1);
   });
 
   it("carries a list of failures, not just a single Error", async () => {
-    execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([{ insertId: 1 }, []]);
+    execute
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([{ insertId: 1 }, []]);
     // deprovisionEmployeeAccess reports a failures[] array rather than throwing.
-    await recordExitFollowUpFailure("ACCESS_DEPROVISION", EXIT_ID, EMP_ID, ["lms revoke failed", "leave cleanup failed"]);
+    await recordExitFollowUpFailure("ACCESS_DEPROVISION", EXIT_ID, EMP_ID, [
+      "lms revoke failed",
+      "leave cleanup failed",
+    ]);
 
-    const insert = execute.mock.calls.find(([s]) => /INSERT INTO work_item/i.test(String(s)))!;
+    const insert = execute.mock.calls.find(([s]) =>
+      /INSERT INTO work_item/i.test(String(s)),
+    )!;
     expect(JSON.stringify(insert[1])).toContain("lms revoke failed");
     expect(JSON.stringify(insert[1])).toContain("leave cleanup failed");
   });

@@ -68,7 +68,9 @@ async function scopeOf(req: AuthenticatedRequest) {
     userId: user.id,
     primaryRole: user.role,
     userRoles: user.roles,
-    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    requestedBranchId: req.query.branchId
+      ? String(req.query.branchId)
+      : undefined,
   });
 }
 
@@ -83,28 +85,40 @@ async function scopeOf(req: AuthenticatedRequest) {
  *
  * Returns the allocation's branch so a caller can 404 a missing row before deciding anything.
  */
-async function assertAllocationBranch(req: AuthenticatedRequest, allocationId: string) {
+async function assertAllocationBranch(
+  req: AuthenticatedRequest,
+  allocationId: string,
+) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id FROM imprest_allocation WHERE id = ? LIMIT 1`,
     [allocationId],
   );
   if (!rows[0]) return { found: false as const };
   const scope = await scopeOf(req);
-  if (scope.mode === "branches" && !scope.branchIds.includes(String(rows[0].branch_id))) {
+  if (
+    scope.mode === "branches" &&
+    !scope.branchIds.includes(String(rows[0].branch_id))
+  ) {
     return { found: true as const, allowed: false as const };
   }
   return { found: true as const, allowed: true as const };
 }
 
 /** Same shape as assertAllocationBranch, for an imprest_manager id instead of an allocation id. */
-async function assertManagerBranch(req: AuthenticatedRequest, managerId: string) {
+async function assertManagerBranch(
+  req: AuthenticatedRequest,
+  managerId: string,
+) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id FROM imprest_manager WHERE id = ? LIMIT 1`,
     [managerId],
   );
   if (!rows[0]) return { found: false as const };
   const scope = await scopeOf(req);
-  if (scope.mode === "branches" && !scope.branchIds.includes(String(rows[0].branch_id))) {
+  if (
+    scope.mode === "branches" &&
+    !scope.branchIds.includes(String(rows[0].branch_id))
+  ) {
     return { found: true as const, allowed: false as const };
   }
   return { found: true as const, allowed: true as const };
@@ -124,7 +138,10 @@ imprestRouter.get(
   "/my",
   h(async (req, res) => {
     const userId = req.authUser?.id;
-    if (!userId) return res.status(401).json({ success: false, error: "Not authenticated" });
+    if (!userId)
+      return res
+        .status(401)
+        .json({ success: false, error: "Not authenticated" });
 
     // Resolve the caller's active imprest_manager record(s). A user can only ever have
     // one active appointment per branch, but they could hold floats at multiple branches.
@@ -150,7 +167,9 @@ imprestRouter.get(
     // For each manager record, fetch current closing balance
     const withBalance = await Promise.all(
       (rows as RowDataPacket[]).map(async (m) => {
-        const currentBalance = await imprestLedgerService.getBalance(String(m.id));
+        const currentBalance = await imprestLedgerService.getBalance(
+          String(m.id),
+        );
         return { ...m, current_balance: currentBalance };
       }),
     );
@@ -183,12 +202,24 @@ imprestRouter.get(
   requireRole(...IMPREST_READ_ROLES),
   h(async (req, res) => {
     const data = await imprestService.getManager(req.params.id);
-    if (!data) return res.status(404).json({ success: false, error: "Imprest manager not found" });
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, error: "Imprest manager not found" });
     // Every other read here is branch-scoped; fetching one by id must not be the way around it.
     const scope = await scopeOf(req);
-    if (scope.mode === "branches"
-        && !scope.branchIds.includes(String((data as { branch_id?: unknown }).branch_id ?? ""))) {
-      return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+    if (
+      scope.mode === "branches" &&
+      !scope.branchIds.includes(
+        String((data as { branch_id?: unknown }).branch_id ?? ""),
+      )
+    ) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "You do not have access to this branch",
+        });
     }
     res.json({ success: true, data });
   }),
@@ -240,11 +271,18 @@ imprestRouter.get(
   h(async (req, res) => {
     const branchId = String(req.query.branchId ?? "").trim();
     if (!branchId) {
-      return res.status(400).json({ success: false, error: "branchId is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "branchId is required" });
     }
     const scope = await scopeOf(req);
     if (scope.mode === "branches" && !scope.branchIds.includes(branchId)) {
-      return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "You do not have access to this branch",
+        });
     }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id, e.user_id, e.employee_code, e.full_name
@@ -276,10 +314,17 @@ imprestRouter.post(
     try {
       const access = await assertManagerBranch(req, req.params.id);
       if (!access.found) {
-        return res.status(404).json({ success: false, error: "Imprest manager not found" });
+        return res
+          .status(404)
+          .json({ success: false, error: "Imprest manager not found" });
       }
       if (!access.allowed) {
-        return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+        return res
+          .status(403)
+          .json({
+            success: false,
+            error: "You do not have access to this branch",
+          });
       }
       const user = actor(req);
       const data = await imprestService.postAdjustment(
@@ -312,7 +357,9 @@ imprestRouter.get(
       // the route just never read it off the query string, so an org-wide viewer had no way to
       // narrow the list to one branch; the same param /managers already exposes.
       branchId: req.query.branchId ? String(req.query.branchId) : undefined,
-      imprestManagerId: req.query.imprestManagerId ? String(req.query.imprestManagerId) : undefined,
+      imprestManagerId: req.query.imprestManagerId
+        ? String(req.query.imprestManagerId)
+        : undefined,
       status: req.query.status ? String(req.query.status) : undefined,
       from: req.query.from ? String(req.query.from) : undefined,
       to: req.query.to ? String(req.query.to) : undefined,
@@ -335,15 +382,23 @@ imprestRouter.post(
         userId: actor(req).id,
         primaryRole: actor(req).role,
         userRoles: actor(req).roles,
-        requestedBranchId: req.body?.branchId ? String(req.body.branchId) : undefined,
+        requestedBranchId: req.body?.branchId
+          ? String(req.body.branchId)
+          : undefined,
       });
-      if (scope.mode === "branches" && !scope.branchIds.includes(String(req.body?.branchId ?? ""))) {
+      if (
+        scope.mode === "branches" &&
+        !scope.branchIds.includes(String(req.body?.branchId ?? ""))
+      ) {
         return res.status(403).json({
           success: false,
           error: "You do not have access to this branch",
         });
       }
-      const data = await imprestService.createAllocation(req.body, actor(req).id);
+      const data = await imprestService.createAllocation(
+        req.body,
+        actor(req).id,
+      );
       res.status(201).json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to create the imprest allocation");
@@ -360,10 +415,17 @@ imprestRouter.post(
     try {
       const access = await assertAllocationBranch(req, req.params.id);
       if (!access.found) {
-        return res.status(404).json({ success: false, error: "Imprest allocation not found" });
+        return res
+          .status(404)
+          .json({ success: false, error: "Imprest allocation not found" });
       }
       if (!access.allowed) {
-        return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+        return res
+          .status(403)
+          .json({
+            success: false,
+            error: "You do not have access to this branch",
+          });
       }
       const user = actor(req);
       const data = await imprestService.reviewAllocation(
@@ -387,12 +449,22 @@ imprestRouter.get(
   h(async (req, res) => {
     const access = await assertAllocationBranch(req, req.params.id);
     if (!access.found) {
-      return res.status(404).json({ success: false, error: "Imprest allocation not found" });
+      return res
+        .status(404)
+        .json({ success: false, error: "Imprest allocation not found" });
     }
     if (!access.allowed) {
-      return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "You do not have access to this branch",
+        });
     }
-    const data = await listFinanceApprovalEvents("imprest_allocation", req.params.id);
+    const data = await listFinanceApprovalEvents(
+      "imprest_allocation",
+      req.params.id,
+    );
     res.json({ success: true, data });
   }),
 );
@@ -405,7 +477,9 @@ imprestRouter.get(
   h(async (req, res) => {
     const data = await imprestLedgerService.listEntries({
       branchScope: await scopeOf(req),
-      imprestManagerId: req.query.imprestManagerId ? String(req.query.imprestManagerId) : undefined,
+      imprestManagerId: req.query.imprestManagerId
+        ? String(req.query.imprestManagerId)
+        : undefined,
       from: req.query.from ? String(req.query.from) : undefined,
       to: req.query.to ? String(req.query.to) : undefined,
       limit: req.query.limit ? Number(req.query.limit) : undefined,
@@ -421,11 +495,15 @@ imprestRouter.get(
     const from = String(req.query.from ?? "");
     const to = String(req.query.to ?? "");
     if (!from || !to) {
-      return res.status(400).json({ success: false, error: "from and to dates are required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "from and to dates are required" });
     }
     const data = await imprestLedgerService.getPeriodSummary({
       branchScope: await scopeOf(req),
-      imprestManagerId: req.query.imprestManagerId ? String(req.query.imprestManagerId) : undefined,
+      imprestManagerId: req.query.imprestManagerId
+        ? String(req.query.imprestManagerId)
+        : undefined,
       from,
       to,
     });
@@ -457,11 +535,15 @@ imprestRouter.get(
     const from = String(req.query.from ?? "");
     const to = String(req.query.to ?? "");
     if (!from || !to) {
-      return res.status(400).json({ success: false, error: "from and to dates are required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "from and to dates are required" });
     }
     const data = await imprestLedgerService.getDetailsReport({
       branchScope: await scopeOf(req),
-      imprestManagerId: req.query.imprestManagerId ? String(req.query.imprestManagerId) : undefined,
+      imprestManagerId: req.query.imprestManagerId
+        ? String(req.query.imprestManagerId)
+        : undefined,
       from,
       to,
     });
@@ -471,8 +553,18 @@ imprestRouter.get(
 
 /** The same report as a CSV, in the reference workbook's exact column order. */
 const IMPREST_DETAIL_COLUMNS = [
-  "S.No.", "Date", "GRN", "Exp. Head", "Exp. SubHead", "INFLOW", "OUTFLOW", "Balance",
-  "Mode", "Chq No", "Bank", "Remarks",
+  "S.No.",
+  "Date",
+  "GRN",
+  "Exp. Head",
+  "Exp. SubHead",
+  "INFLOW",
+  "OUTFLOW",
+  "Balance",
+  "Mode",
+  "Chq No",
+  "Bank",
+  "Remarks",
 ] as const;
 
 imprestRouter.get(
@@ -482,11 +574,15 @@ imprestRouter.get(
     const from = String(req.query.from ?? "");
     const to = String(req.query.to ?? "");
     if (!from || !to) {
-      return res.status(400).json({ success: false, error: "from and to dates are required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "from and to dates are required" });
     }
     const report = await imprestLedgerService.getDetailsReport({
       branchScope: await scopeOf(req),
-      imprestManagerId: req.query.imprestManagerId ? String(req.query.imprestManagerId) : undefined,
+      imprestManagerId: req.query.imprestManagerId
+        ? String(req.query.imprestManagerId)
+        : undefined,
       from,
       to,
     });
@@ -508,9 +604,18 @@ imprestRouter.get(
     ]);
     // "Total" in the Exp. SubHead column and a BLANK Balance, exactly as the reference has it.
     body.push([
-      "", "", "", "", "Total",
-      money(report.totals.inflow), money(report.totals.outflow),
-      "", "", "", "", "",
+      "",
+      "",
+      "",
+      "",
+      "Total",
+      money(report.totals.inflow),
+      money(report.totals.outflow),
+      "",
+      "",
+      "",
+      "",
+      "",
     ]);
 
     // Remarks are free text written by whoever raised the voucher and routinely contain commas
@@ -524,7 +629,10 @@ imprestRouter.get(
       .map((row) => row.map(escape).join(","))
       .join("\n");
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", 'attachment; filename="Imprest_Details.csv"');
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="Imprest_Details.csv"',
+    );
     res.send(csv);
   }),
 );
@@ -549,8 +657,17 @@ imprestRouter.get(
   requireRole(...IMPREST_READ_ROLES),
   h(async (req, res) => {
     const check = await assertManagerBranch(req, req.params.id);
-    if (!check.found) return res.status(404).json({ success: false, error: "Imprest manager not found" });
-    if (!check.allowed) return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+    if (!check.found)
+      return res
+        .status(404)
+        .json({ success: false, error: "Imprest manager not found" });
+    if (!check.allowed)
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "You do not have access to this branch",
+        });
     const data = await imprestService.getReplenishmentStatus(req.params.id);
     res.json({ success: true, data });
   }),
@@ -561,9 +678,20 @@ imprestRouter.get(
   requireRole(...IMPREST_READ_ROLES),
   h(async (req, res) => {
     const check = await assertManagerBranch(req, req.params.id);
-    if (!check.found) return res.status(404).json({ success: false, error: "Imprest manager not found" });
-    if (!check.allowed) return res.status(403).json({ success: false, error: "You do not have access to this branch" });
-    const data = await imprestService.getConsumptionSinceLastReplenishment(req.params.id);
+    if (!check.found)
+      return res
+        .status(404)
+        .json({ success: false, error: "Imprest manager not found" });
+    if (!check.allowed)
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "You do not have access to this branch",
+        });
+    const data = await imprestService.getConsumptionSinceLastReplenishment(
+      req.params.id,
+    );
     res.json({ success: true, data });
   }),
 );

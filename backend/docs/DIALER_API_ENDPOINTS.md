@@ -21,6 +21,7 @@ GET /api/dialer/health
 Verify dialer database connection status.
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -41,9 +42,11 @@ GET /api/dialer/agent-status/:employeeCode
 Get agent's most recent activity from vicidial_agent_log.
 
 **Parameters**:
+
 - `employeeCode` (path) - Employee code (e.g., MAS60644, IDC61739)
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -70,6 +73,7 @@ GET /api/dialer/active-agents
 List all agents with activity in the last hour.
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -96,6 +100,7 @@ GET /api/dialer/is-active/:employeeCode
 Quick check if agent has activity in last 5 minutes.
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -119,10 +124,12 @@ GET /api/dialer/agent-activity/:employeeCode?start=YYYY-MM-DD&end=YYYY-MM-DD
 Retrieve agent activity logs for date range.
 
 **Query Parameters**:
+
 - `start` (required) - Start date (YYYY-MM-DD)
 - `end` (required) - End date (YYYY-MM-DD)
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -156,10 +163,12 @@ GET /api/dialer/calls/inbound/:employeeCode/:date
 Retrieve inbound call records for specific date.
 
 **Parameters**:
+
 - `employeeCode` (path) - Employee code
 - `date` (path) - Date (YYYY-MM-DD)
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -194,6 +203,7 @@ GET /api/dialer/calls/outbound/:employeeCode/:date
 Retrieve outbound call records for specific date.
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -229,6 +239,7 @@ GET /api/dialer/agent-summary/:employeeCode/:date
 Comprehensive daily summary combining agent activity and call data.
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -276,6 +287,7 @@ GET /api/dialer/calls/hourly/:employeeCode/:date
 Hourly breakdown of call volume.
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -298,6 +310,7 @@ GET /api/dialer/calls/dispositions/:employeeCode/:date
 Call outcome statistics.
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -315,9 +328,11 @@ Call outcome statistics.
 ## Database Tables
 
 ### vicidial_agent_log_11_5
+
 Agent activity tracking with status changes, pause types, and time metrics.
 
 **Key Columns**:
+
 - `user` - Employee code
 - `event_time` - Activity timestamp
 - `status` - LOGIN, PAUSED, READY, etc.
@@ -327,9 +342,11 @@ Agent activity tracking with status changes, pause types, and time metrics.
 ---
 
 ### vw_inbound_cdr (View)
+
 Inbound call detail records.
 
 **Key Columns**:
+
 - `AgentId` - Employee code
 - `AgentName` - Agent name
 - `CallDate` - Call date
@@ -341,9 +358,11 @@ Inbound call detail records.
 ---
 
 ### vw_outbound_cdr (View)
+
 Outbound call detail records.
 
 **Key Columns**:
+
 - `Agent` - Employee code
 - `CallDate` - Call date
 - `StartTime`, `EndTime` - Call timestamps
@@ -356,6 +375,7 @@ Outbound call detail records.
 ## Use Cases
 
 ### 1. Real-Time Agent Monitoring
+
 ```javascript
 // Check if agent is currently active
 const response = await hrmsApi.get(`/api/dialer/is-active/MAS60644`);
@@ -365,29 +385,34 @@ if (response.data.data.is_active) {
 ```
 
 ### 2. WFM Attendance Validation
+
 ```javascript
 // Validate agent clock-in with dialer activity
-const summary = await hrmsApi.get(`/api/dialer/agent-summary/MAS60644/2026-06-08`);
+const summary = await hrmsApi.get(
+  `/api/dialer/agent-summary/MAS60644/2026-06-08`,
+);
 const firstActivity = summary.data.agent_activity.first_activity;
 // Compare with HRMS attendance punch time
 ```
 
 ### 3. Productivity Reporting
+
 ```javascript
 // Get daily call metrics for team
-const agents = ['MAS60644', 'IDC61739', 'MAS62686'];
+const agents = ["MAS60644", "IDC61739", "MAS62686"];
 const summaries = await Promise.all(
-  agents.map(code => 
-    hrmsApi.get(`/api/dialer/agent-summary/${code}/2026-06-08`)
-  )
+  agents.map((code) =>
+    hrmsApi.get(`/api/dialer/agent-summary/${code}/2026-06-08`),
+  ),
 );
 // Calculate team averages, top performers
 ```
 
 ### 4. Live Dashboard
+
 ```javascript
 // Show real-time active agents
-const activeAgents = await hrmsApi.get('/api/dialer/active-agents');
+const activeAgents = await hrmsApi.get("/api/dialer/active-agents");
 // Display on WFM live tracking dashboard
 ```
 
@@ -396,14 +421,16 @@ const activeAgents = await hrmsApi.get('/api/dialer/active-agents');
 ## Security
 
 **READ-ONLY Enforcement**:
+
 1. MySQL session set to `TRANSACTION READ ONLY`
 2. Query wrapper blocks non-SELECT statements
 3. Connection pool configured with minimal privileges
 
 **Error Example**:
+
 ```javascript
 // This will throw error:
-dialerQuery('UPDATE vicidial_agent_log SET status = ?', ['LOGOUT']);
+dialerQuery("UPDATE vicidial_agent_log SET status = ?", ["LOGOUT"]);
 // Error: DIALER_DB: Only SELECT/SHOW/DESCRIBE queries allowed (READ-ONLY)
 ```
 

@@ -8,7 +8,12 @@
  * malformed token is one flat 404 — see appointmentLetterPublic.service.ts.
  */
 import fs from "fs";
-import { Router, type NextFunction, type Request, type Response } from "express";
+import {
+  Router,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import rateLimit from "express-rate-limit";
 import {
   getPublicLetterFile,
@@ -29,7 +34,11 @@ const startLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: "Too many attempts from this network. Please wait a few minutes and try again." },
+  message: {
+    success: false,
+    message:
+      "Too many attempts from this network. Please wait a few minutes and try again.",
+  },
 });
 
 /** A signed letter is a salary document behind a bearer token: bound guessing and scraping. */
@@ -38,7 +47,11 @@ const downloadLimiter = rateLimit({
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: "Too many attempts from this network. Please wait a few minutes and try again." },
+  message: {
+    success: false,
+    message:
+      "Too many attempts from this network. Please wait a few minutes and try again.",
+  },
 });
 
 type Handler = (req: Request, res: Response) => Promise<unknown>;
@@ -49,15 +62,27 @@ type Handler = (req: Request, res: Response) => Promise<unknown>;
  * masks it. Answering the known ones here keeps an ordinary bad link from being
  * logged as an API error on every click.
  */
-const h = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => {
-  void fn(req, res).catch((error: unknown) => {
-    const known = error as { statusCode?: number; code?: string; message?: string };
-    if (known?.statusCode && known.statusCode >= 400 && known.statusCode < 500 && known.code) {
-      return res.status(known.statusCode).json({ success: false, code: known.code, message: known.message });
-    }
-    return next(error);
-  });
-};
+const h =
+  (fn: Handler) => (req: Request, res: Response, next: NextFunction) => {
+    void fn(req, res).catch((error: unknown) => {
+      const known = error as {
+        statusCode?: number;
+        code?: string;
+        message?: string;
+      };
+      if (
+        known?.statusCode &&
+        known.statusCode >= 400 &&
+        known.statusCode < 500 &&
+        known.code
+      ) {
+        return res
+          .status(known.statusCode)
+          .json({ success: false, code: known.code, message: known.message });
+      }
+      return next(error);
+    });
+  };
 
 /** The URL carries a bearer token: never cache the response, never leak it in a Referer. */
 const privateResponse = (res: Response) => {
@@ -66,45 +91,72 @@ const privateResponse = (res: Response) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
 };
 
-publicAppointmentLetterRouter.get("/:token/session", h(async (req, res) => {
-  privateResponse(res);
-  const session = await getPublicLetterSession(String(req.params.token));
-  return res.json({ success: true, data: { session } });
-}));
+publicAppointmentLetterRouter.get(
+  "/:token/session",
+  h(async (req, res) => {
+    privateResponse(res);
+    const session = await getPublicLetterSession(String(req.params.token));
+    return res.json({ success: true, data: { session } });
+  }),
+);
 
-publicAppointmentLetterRouter.get("/:token/file", h(async (req, res) => {
-  privateResponse(res);
-  const file = await getPublicLetterFile(String(req.params.token));
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, "")}"`);
-  const stream = fs.createReadStream(file.storagePath);
-  stream.on("error", () => {
-    if (!res.headersSent) res.status(404).json({ success: false, code: "LETTER_FILE_MISSING", message: "The letter document is not available. Please contact HR." });
-    else res.destroy();
-  });
-  stream.pipe(res);
-}));
+publicAppointmentLetterRouter.get(
+  "/:token/file",
+  h(async (req, res) => {
+    privateResponse(res);
+    const file = await getPublicLetterFile(String(req.params.token));
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${file.fileName.replace(/"/g, "")}"`,
+    );
+    const stream = fs.createReadStream(file.storagePath);
+    stream.on("error", () => {
+      if (!res.headersSent)
+        res
+          .status(404)
+          .json({
+            success: false,
+            code: "LETTER_FILE_MISSING",
+            message: "The letter document is not available. Please contact HR.",
+          });
+      else res.destroy();
+    });
+    stream.pipe(res);
+  }),
+);
 
 /**
  * The employee-signed copy, as a download. Same token gate and no-store headers as
  * /file; 404 until the employee has signed, 410 for a revoked letter.
  */
-publicAppointmentLetterRouter.get("/:token/signed-file", downloadLimiter, h(async (req, res) => {
-  privateResponse(res);
-  const file = await getPublicSignedLetter(String(req.params.token));
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Length", String(file.bytes.length));
-  res.setHeader("Content-Disposition", `attachment; filename="${file.fileName.replace(/"/g, "")}"`);
-  return res.end(file.bytes);
-}));
+publicAppointmentLetterRouter.get(
+  "/:token/signed-file",
+  downloadLimiter,
+  h(async (req, res) => {
+    privateResponse(res);
+    const file = await getPublicSignedLetter(String(req.params.token));
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", String(file.bytes.length));
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.fileName.replace(/"/g, "")}"`,
+    );
+    return res.end(file.bytes);
+  }),
+);
 
 // Starting a session is a billed provider call: rate-limited on top of the global limiter.
-publicAppointmentLetterRouter.post("/:token/start", startLimiter, h(async (req, res) => {
-  privateResponse(res);
-  const out = await startPublicLetterEsign({
-    token: String(req.params.token),
-    ipAddress: req.ip,
-    userAgent: req.get("user-agent") ?? null,
-  });
-  return res.json({ success: true, data: out });
-}));
+publicAppointmentLetterRouter.post(
+  "/:token/start",
+  startLimiter,
+  h(async (req, res) => {
+    privateResponse(res);
+    const out = await startPublicLetterEsign({
+      token: String(req.params.token),
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? null,
+    });
+    return res.json({ success: true, data: out });
+  }),
+);

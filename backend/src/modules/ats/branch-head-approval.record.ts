@@ -76,8 +76,11 @@ export async function recordBranchHeadDecision(params: {
   const remarks = params.remarks ?? null;
 
   const empty: DecisionOutcome = {
-    recorded: false, alreadyDecided: false,
-    approvalId: null, payrollValidationId: null, existingStatus: null,
+    recorded: false,
+    alreadyDecided: false,
+    approvalId: null,
+    payrollValidationId: null,
+    existingStatus: null,
   };
 
   // Latest validation for this candidate. Ordered by created_at because
@@ -98,7 +101,12 @@ export async function recordBranchHeadDecision(params: {
         SET branch_head_id = ?, approval_status = ?, remarks = ?,
             approved_at = NOW(), updated_at = NOW()
       WHERE payroll_validation_id = ? AND approval_status = 'pending'`,
-    [params.branchHeadEmployeeId, params.decision, remarks, payrollValidationId],
+    [
+      params.branchHeadEmployeeId,
+      params.decision,
+      remarks,
+      payrollValidationId,
+    ],
   );
 
   if (upd.affectedRows > 0) {
@@ -107,9 +115,11 @@ export async function recordBranchHeadDecision(params: {
       [payrollValidationId],
     );
     return {
-      recorded: true, alreadyDecided: false,
+      recorded: true,
+      alreadyDecided: false,
       approvalId: row[0]?.id ? String(row[0].id) : null,
-      payrollValidationId, existingStatus: null,
+      payrollValidationId,
+      existingStatus: null,
     };
   }
 
@@ -123,7 +133,8 @@ export async function recordBranchHeadDecision(params: {
 
   if (existing[0]) {
     return {
-      recorded: true, alreadyDecided: true,
+      recorded: true,
+      alreadyDecided: true,
       approvalId: String(existing[0].id),
       payrollValidationId,
       existingStatus: String(existing[0].approval_status),
@@ -135,11 +146,20 @@ export async function recordBranchHeadDecision(params: {
     `INSERT INTO ats_branch_head_approval
        (id, payroll_validation_id, branch_head_id, approval_status, remarks, approved_at, notified_at)
      VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
-    [id, payrollValidationId, params.branchHeadEmployeeId, params.decision, remarks],
+    [
+      id,
+      payrollValidationId,
+      params.branchHeadEmployeeId,
+      params.decision,
+      remarks,
+    ],
   );
   return {
-    recorded: true, alreadyDecided: false,
-    approvalId: id, payrollValidationId, existingStatus: null,
+    recorded: true,
+    alreadyDecided: false,
+    approvalId: id,
+    payrollValidationId,
+    existingStatus: null,
   };
 }
 

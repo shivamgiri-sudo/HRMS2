@@ -24,7 +24,7 @@ import { mobilityService } from "../modules/mobility/mobility.service.js";
  */
 
 const RUN_HOUR = 1; // 01:00 local — after midnight so an effective_date of today is due,
-                    // and before the 02:00 access-expiry sweep and the payroll jobs.
+// and before the 02:00 access-expiry sweep and the payroll jobs.
 let nextRun: NodeJS.Timeout | undefined;
 let running = false;
 
@@ -38,14 +38,18 @@ export function millisecondsUntilNextTransferSweep(now = new Date()): number {
 export async function runPendingTransferSweep(): Promise<{ applied: number }> {
   // Overlap guard for this process. Cross-process safety is the service's row claim.
   if (running) {
-    console.warn("[mobility-transfer] previous sweep still running — skipping this tick");
+    console.warn(
+      "[mobility-transfer] previous sweep still running — skipping this tick",
+    );
     return { applied: 0 };
   }
   running = true;
   try {
     const applied = await mobilityService.applyPendingTransfers();
     if (applied > 0) {
-      console.log(`[mobility-transfer] applied ${applied} deferred transfer(s)`);
+      console.log(
+        `[mobility-transfer] applied ${applied} deferred transfer(s)`,
+      );
     }
     return { applied };
   } finally {
@@ -69,7 +73,9 @@ function scheduleNext(): void {
 export function startMobilityTransferWorker(): void {
   if (nextRun) return;
   scheduleNext();
-  console.log(`[mobility-transfer] scheduled — next run in ${Math.round(millisecondsUntilNextTransferSweep() / 60000)} min`);
+  console.log(
+    `[mobility-transfer] scheduled — next run in ${Math.round(millisecondsUntilNextTransferSweep() / 60000)} min`,
+  );
 }
 
 export function stopMobilityTransferWorker(): void {

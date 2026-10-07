@@ -62,13 +62,17 @@ async function main() {
         AND NOT EXISTS (
               SELECT 1 FROM finance_budget_line_allocation a
                WHERE a.budget_line_id = l.id)
-      ORDER BY h.period_code, h.budget_number, l.head, l.sub_head`
+      ORDER BY h.period_code, h.budget_number, l.head, l.sub_head`,
   );
 
   console.log(
-    `${lines.length} branch-level line(s) carry a sharing driver with no split computed from it.`
+    `${lines.length} branch-level line(s) carry a sharing driver with no split computed from it.`,
   );
-  console.log(APPLY ? "MODE: --apply, writing.\n" : "MODE: dry run, writing nothing. Pass --apply to write.\n");
+  console.log(
+    APPLY
+      ? "MODE: --apply, writing.\n"
+      : "MODE: dry run, writing nothing. Pass --apply to write.\n",
+  );
 
   let written = 0;
   let skipped = 0;
@@ -80,7 +84,11 @@ async function main() {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
-      const result = await resyncLineAllocations(connection, String(line.id), ACTOR);
+      const result = await resyncLineAllocations(
+        connection,
+        String(line.id),
+        ACTOR,
+      );
       if (result.status === "written") {
         written += 1;
         money += Number(line.gross_amount ?? 0);
@@ -96,29 +104,38 @@ async function main() {
     } catch (error) {
       skipped += 1;
       const message = error instanceof Error ? error.message : String(error);
-      reasons.set("UNEXPECTED", [...(reasons.get("UNEXPECTED") ?? []), `${label}: ${message}`]);
+      reasons.set("UNEXPECTED", [
+        ...(reasons.get("UNEXPECTED") ?? []),
+        `${label}: ${message}`,
+      ]);
       await connection.rollback();
     } finally {
       connection.release();
     }
   }
 
-  console.log(`\n${written} line(s) ${APPLY ? "split" : "would split"} cleanly, covering Rs ${money.toFixed(2)}.`);
+  console.log(
+    `\n${written} line(s) ${APPLY ? "split" : "would split"} cleanly, covering Rs ${money.toFixed(2)}.`,
+  );
   if (skipped) {
     console.log(`${skipped} line(s) need a person before they can be split:`);
     for (const [reason, labels] of reasons) {
       console.log(`\n  ${reason} — ${labels.length} line(s)`);
       for (const label of labels.slice(0, 10)) console.log(`      ${label}`);
-      if (labels.length > 10) console.log(`      ... and ${labels.length - 10} more`);
+      if (labels.length > 10)
+        console.log(`      ... and ${labels.length - 10} more`);
     }
     console.log(
-      "\n  MONTHLY_DRIVER_MISSING   set the monthly driver for every active cost centre in that"
-      + "\n                           branch (Branch Budget → Drivers), then re-run."
-      + "\n  MANUAL_SPLIT_INCOMPLETE  the line was planned with a manual split and no percentages"
-      + "\n                           were ever recorded. Open the budget and enter them."
+      "\n  MONTHLY_DRIVER_MISSING   set the monthly driver for every active cost centre in that" +
+        "\n                           branch (Branch Budget → Drivers), then re-run." +
+        "\n  MANUAL_SPLIT_INCOMPLETE  the line was planned with a manual split and no percentages" +
+        "\n                           were ever recorded. Open the budget and enter them.",
     );
   }
-  if (!APPLY && written) console.log("\nNothing was written. Re-run with --apply once the above reads correctly.");
+  if (!APPLY && written)
+    console.log(
+      "\nNothing was written. Re-run with --apply once the above reads correctly.",
+    );
 }
 
 main()

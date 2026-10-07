@@ -15,8 +15,21 @@ import {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 // Process list is managed in ats_form_config (hiringProcessOptions) — no hardcoded enum here.
-const VALID_DECISIONS = ["Selected", "Rejected", "Hold", "Client Round - Pending", "No Show"] as const;
-const VALID_STAGES = ["Arrival", "Round 1- HR Screening", "Interview - Skill Test", "Round 2- Op's", "Round 3- Client", "Selection Discussion"] as const;
+const VALID_DECISIONS = [
+  "Selected",
+  "Rejected",
+  "Hold",
+  "Client Round - Pending",
+  "No Show",
+] as const;
+const VALID_STAGES = [
+  "Arrival",
+  "Round 1- HR Screening",
+  "Interview - Skill Test",
+  "Round 2- Op's",
+  "Round 3- Client",
+  "Selection Discussion",
+] as const;
 
 const STAGE_RANK: Record<string, number> = {
   Arrival: 0,
@@ -69,9 +82,14 @@ function requireField(value: unknown, label: string): string {
   return v;
 }
 
-function validateEnum<T extends string>(value: unknown, label: string, allowed: readonly T[]): T {
+function validateEnum<T extends string>(
+  value: unknown,
+  label: string,
+  allowed: readonly T[],
+): T {
   const v = String(value ?? "").trim() as T;
-  if (!allowed.includes(v)) err(`Invalid ${label}: "${v}". Allowed: ${allowed.join(", ")}`, 400);
+  if (!allowed.includes(v))
+    err(`Invalid ${label}: "${v}". Allowed: ${allowed.join(", ")}`, 400);
   return v;
 }
 
@@ -87,7 +105,9 @@ function nvlNum(v: unknown): number | null {
 
 function boolish(v: unknown): boolean {
   if (typeof v === "boolean") return v;
-  const normalized = String(v ?? "").trim().toLowerCase();
+  const normalized = String(v ?? "")
+    .trim()
+    .toLowerCase();
   return ["1", "true", "yes", "y", "on"].includes(normalized);
 }
 
@@ -114,14 +134,16 @@ function normalizeDateInput(value: unknown): string | null {
  * Uses the chain: employees.user_id → employees.id → ats_recruiter_roster.employee_id.
  * Returns null if no recruiter row is linked to this user.
  */
-export async function resolveRecruiterForActor(userId: string): Promise<RecruiterProfile | null> {
+export async function resolveRecruiterForActor(
+  userId: string,
+): Promise<RecruiterProfile | null> {
   const [rows] = await db.execute<RecruiterRosterRow[]>(
     `SELECT r.id, r.name, r.recruiter_code, r.email, r.branch, r.employee_id
        FROM ats_recruiter_roster r
        JOIN employees e ON e.id = r.employee_id
       WHERE e.user_id = ? AND r.active_status = 1
       LIMIT 1`,
-    [userId]
+    [userId],
   );
   let rec = rows[0];
   if (!rec) {
@@ -143,7 +165,7 @@ export async function resolveRecruiterForActor(userId: string): Promise<Recruite
           ELSE 2
         END
         LIMIT 1`,
-      [userId]
+      [userId],
     );
     rec = fallbackRows[0];
   }
@@ -169,19 +191,24 @@ export interface RecruiterProfile {
   employeeId: string | null;
 }
 
-export async function verifyRecruiter(recruiterCode: string, pin: string): Promise<RecruiterProfile> {
+export async function verifyRecruiter(
+  recruiterCode: string,
+  pin: string,
+): Promise<RecruiterProfile> {
   if (!recruiterCode || !pin) err("Recruiter Code and PIN are required", 400);
 
   const [rows] = await db.execute<RecruiterRosterRow[]>(
     `SELECT id, name, recruiter_code, pin_hash, email, branch, employee_id, active_status
      FROM ats_recruiter_roster WHERE recruiter_code = ? LIMIT 1`,
-    [recruiterCode.trim()]
+    [recruiterCode.trim()],
   );
   const rec = rows[0];
   if (!rec) err("Invalid recruiter credentials", 401);
   if (!rec.active_status) err("Recruiter account is inactive", 403);
 
-  const pinMatch = rec.pin_hash ? await bcrypt.compare(pin, rec.pin_hash) : false;
+  const pinMatch = rec.pin_hash
+    ? await bcrypt.compare(pin, rec.pin_hash)
+    : false;
   if (!pinMatch) err("Invalid recruiter credentials", 401);
 
   // Biometric availability check
@@ -189,10 +216,13 @@ export async function verifyRecruiter(recruiterCode: string, pin: string): Promi
     const [bioRows] = await db.execute<RowDataPacket[]>(
       `SELECT first_punch_in FROM biometric_attendance_log
        WHERE employee_id = ? AND punch_date = CURDATE() AND first_punch_in IS NOT NULL LIMIT 1`,
-      [rec.employee_id]
+      [rec.employee_id],
     );
     if (!bioRows.length) {
-      err("Recruiter is not marked available today (no biometric punch-in found)", 403);
+      err(
+        "Recruiter is not marked available today (no biometric punch-in found)",
+        403,
+      );
     }
   } else {
     // Fall back to the roster flag when no employee_id is set
@@ -228,9 +258,13 @@ export interface PendingCandidate {
   rewalkinCount?: number;
 }
 
-export async function getMyPendingCandidates(recruiterName?: string): Promise<PendingCandidate[]> {
+export async function getMyPendingCandidates(
+  recruiterName?: string,
+): Promise<PendingCandidate[]> {
   const params: unknown[] = [];
-  const recruiterClause = recruiterName ? "AND recruiter_assigned_name = ?" : "";
+  const recruiterClause = recruiterName
+    ? "AND recruiter_assigned_name = ?"
+    : "";
   if (recruiterName) params.push(recruiterName);
   const [rows] = await db.execute<PendingCandidateRow[]>(
     `SELECT
@@ -254,7 +288,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
        ${recruiterClause}
        AND (status = 'Waiting' OR (status IS NULL AND current_stage IN ('New', 'Applied', 'Screening', 'Registered')))
      ORDER BY pending_minutes DESC`,
-    params
+    params,
   );
   return rows.map((r) => ({
     candidateId: r.id,
@@ -274,7 +308,11 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
 
 // ── Submission history ────────────────────────────────────────────────────────
 
-export async function getSubmissionHistory(recruiterCode?: string | null, _rosterId?: string | null, _userId?: string | null) {
+export async function getSubmissionHistory(
+  recruiterCode?: string | null,
+  _rosterId?: string | null,
+  _userId?: string | null,
+) {
   if (!recruiterCode) return [];
   const params = [recruiterCode];
   const [rows] = await db.execute<SubmissionHistoryRow[]>(
@@ -288,7 +326,7 @@ export async function getSubmissionHistory(recruiterCode?: string | null, _roste
      WHERE s.recruiter_code = ?
      ORDER BY s.submitted_at DESC
      LIMIT 200`,
-    params
+    params,
   );
   return rows;
 }
@@ -331,14 +369,23 @@ export async function getRecruiterDailyStats(
      WHERE (${filters.join(" OR ")}) AND DATE(s.submitted_at) = CURDATE()`,
     params,
   );
-  return rows[0] ?? { total_today: 0, selected_today: 0, rejected_today: 0, noshow_today: 0, hold_today: 0, conversion_rate: 0 };
+  return (
+    rows[0] ?? {
+      total_today: 0,
+      selected_today: 0,
+      rejected_today: 0,
+      noshow_today: 0,
+      hold_today: 0,
+      conversion_rate: 0,
+    }
+  );
 }
 
 // ── Other-recruiters pending candidates (for substitute flow) ─────────────────
 
 export async function getOtherRecruitersPendingCandidates(
   excludeRecruiterName: string,
-  branch: string
+  branch: string,
 ): Promise<PendingCandidate[]> {
   const [rows] = await db.execute<PendingCandidateRow[]>(
     `SELECT
@@ -364,7 +411,7 @@ export async function getOtherRecruitersPendingCandidates(
        AND recruiter_assigned_name != ?
        AND applied_for_branch = ?
      ORDER BY pending_minutes DESC`,
-    [excludeRecruiterName, branch]
+    [excludeRecruiterName, branch],
   );
   return rows.map((r) => ({
     candidateId: r.id,
@@ -387,19 +434,24 @@ export async function reassignCandidate(
   candidateId: string,
   newRecruiterId: string,
   reason: string,
-  actorEmail: string
+  actorEmail: string,
 ): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, recruiter_id, recruiter_assigned_id, recruiter_assigned_name
        FROM ats_candidate WHERE id = ? LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
   if (!rows.length) err("Candidate not found", 404);
-  const candidate = rows[0] as { id: string; recruiter_id?: string | null; recruiter_assigned_id?: string | null; recruiter_assigned_name?: string | null };
+  const candidate = rows[0] as {
+    id: string;
+    recruiter_id?: string | null;
+    recruiter_assigned_id?: string | null;
+    recruiter_assigned_name?: string | null;
+  };
 
   const [recRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, name FROM ats_recruiter_roster WHERE id = ? AND active_status = 1 LIMIT 1`,
-    [newRecruiterId]
+    [newRecruiterId],
   );
   if (!recRows.length) err("Target recruiter not found or inactive", 404);
   const newRec = recRows[0] as { id: string; name: string };
@@ -414,7 +466,7 @@ export async function reassignCandidate(
              recruiter_assigned_name = ?,
              recruiter_assigned_at = NOW()
        WHERE id = ?`,
-      [newRec.id, newRec.id, newRec.name, candidateId]
+      [newRec.id, newRec.id, newRec.name, candidateId],
     );
     await conn.execute(
       `INSERT INTO ats_recruiter_assignment_log
@@ -427,7 +479,7 @@ export async function reassignCandidate(
         newRec.id,
         reason || "HR reassignment",
         actorEmail,
-      ]
+      ],
     );
     await conn.commit();
   } catch (e) {
@@ -585,16 +637,28 @@ interface SubmissionResultRow extends RowDataPacket {
 
 function validateSubmission(input: SubmissionInput) {
   // Mandatory fields
-  const process = requireField(input.interviewedForProcess, "Interviewed for Process");
+  const process = requireField(
+    input.interviewedForProcess,
+    "Interviewed for Process",
+  );
   const finalDecision = requireField(input.finalDecision, "Final Decision");
-  const walkinEndStage = requireField(input.walkinEndStage, "Walk-in End Stage");
+  const walkinEndStage = requireField(
+    input.walkinEndStage,
+    "Walk-in End Stage",
+  );
   const clientRoundConducted = boolish(input.clientRoundConducted);
-  const followupRequired = boolish(input.followupRequired) || finalDecision === "Client Round - Pending" || finalDecision === "Hold";
+  const followupRequired =
+    boolish(input.followupRequired) ||
+    finalDecision === "Client Round - Pending" ||
+    finalDecision === "Hold";
 
   validateEnum(finalDecision, "Final Decision", VALID_DECISIONS);
 
   if (!VALID_STAGES.includes(walkinEndStage as (typeof VALID_STAGES)[number]))
-    err(`Invalid Walk-in End Stage: "${walkinEndStage}". Allowed: ${VALID_STAGES.join(", ")}`, 400);
+    err(
+      `Invalid Walk-in End Stage: "${walkinEndStage}". Allowed: ${VALID_STAGES.join(", ")}`,
+      400,
+    );
 
   const rank = STAGE_RANK[walkinEndStage] ?? -1;
 
@@ -603,18 +667,26 @@ function validateSubmission(input: SubmissionInput) {
     requireField(input.round1Result, "Round1 Result");
     if (input.round1Result === "Rejected") {
       const voc = nvl(input.round1Voc);
-      if (!voc) err("Round1 VOC is required when Round1 Result is Rejected", 400);
+      if (!voc)
+        err("Round1 VOC is required when Round1 Result is Rejected", 400);
       if (!GENERAL_VOC_OPTIONS.has(voc!))
-        err(`Invalid Round1 VOC: "${voc}". Must be one of the allowed General VOC options.`, 400);
+        err(
+          `Invalid Round1 VOC: "${voc}". Must be one of the allowed General VOC options.`,
+          400,
+        );
     }
   }
 
   // Skill Test VOC mandatory only when Skill Test Result = Rejected
   if (nvl(input.skillTestResult) === "Rejected") {
     const svoc = nvl(input.skillTestVoc);
-    if (!svoc) err("SkillTest VOC is required when SkillTest Result is Rejected", 400);
+    if (!svoc)
+      err("SkillTest VOC is required when SkillTest Result is Rejected", 400);
     if (!SKILL_VOC_OPTIONS.has(svoc!))
-      err(`Invalid SkillTest VOC: "${svoc}". Must be one of the allowed Skill VOC options.`, 400);
+      err(
+        `Invalid SkillTest VOC: "${svoc}". Must be one of the allowed Skill VOC options.`,
+        400,
+      );
   }
 
   // Round 2 mandatory from rank 3+
@@ -623,9 +695,13 @@ function validateSubmission(input: SubmissionInput) {
     requireField(input.secondRoundInterviewerId, "Second Round Interviewer");
     if (input.round2Result === "Rejected") {
       const voc = nvl(input.round2Voc);
-      if (!voc) err("Round2 VOC is required when Round2 Result is Rejected", 400);
+      if (!voc)
+        err("Round2 VOC is required when Round2 Result is Rejected", 400);
       if (!GENERAL_VOC_OPTIONS.has(voc!))
-        err(`Invalid Round2 VOC: "${voc}". Must be one of the allowed General VOC options.`, 400);
+        err(
+          `Invalid Round2 VOC: "${voc}". Must be one of the allowed General VOC options.`,
+          400,
+        );
     }
   }
 
@@ -634,9 +710,13 @@ function validateSubmission(input: SubmissionInput) {
     requireField(input.round3Result, "Round3 Result");
     if (input.round3Result === "Rejected") {
       const voc = nvl(input.round3Voc);
-      if (!voc) err("Round3 VOC is required when Round3 Result is Rejected", 400);
+      if (!voc)
+        err("Round3 VOC is required when Round3 Result is Rejected", 400);
       if (!GENERAL_VOC_OPTIONS.has(voc!))
-      err(`Invalid Round3 VOC: "${voc}". Must be one of the allowed General VOC options.`, 400);
+        err(
+          `Invalid Round3 VOC: "${voc}". Must be one of the allowed General VOC options.`,
+          400,
+        );
     }
   }
 
@@ -646,13 +726,18 @@ function validateSubmission(input: SubmissionInput) {
     !!nvl(input.clientRoundResult) ||
     !!nvl(input.clientRoundRemarks);
   if (clientRoundPayloadPresent && !nvl(input.clientRoundInterviewerName)) {
-    err("Client Round Interviewer Name is required when client round details are captured", 400);
+    err(
+      "Client Round Interviewer Name is required when client round details are captured",
+      400,
+    );
   }
   if (followupRequired) {
     const followupDate = nvl(input.followupDate);
     const followupReason = nvl(input.followupReason);
-    if (!followupDate) err("Follow-up Date is required when follow-up is required", 400);
-    if (!followupReason) err("Follow-up Reason is required when follow-up is required", 400);
+    if (!followupDate)
+      err("Follow-up Date is required when follow-up is required", 400);
+    if (!followupReason)
+      err("Follow-up Reason is required when follow-up is required", 400);
   }
 
   // Selected requires salary, DOJ, reporting timing; cascades round results
@@ -673,7 +758,17 @@ function validateSubmission(input: SubmissionInput) {
     }
   }
 
-  return { process, finalDecision, walkinEndStage, rank, r1, r2, r3, clientRoundConducted, followupRequired };
+  return {
+    process,
+    finalDecision,
+    walkinEndStage,
+    rank,
+    r1,
+    r2,
+    r3,
+    clientRoundConducted,
+    followupRequired,
+  };
 }
 
 // ── Submit interview update ───────────────────────────────────────────────────
@@ -681,65 +776,251 @@ function validateSubmission(input: SubmissionInput) {
 export async function submitInterviewUpdate(
   raw: Record<string, unknown>,
   actorUserId: string | undefined,
-  recruiterProfile: RecruiterProfile
+  recruiterProfile: RecruiterProfile,
 ) {
   const input: SubmissionInput = {
-    candidateId: String(raw.candidateId || raw.CandidateID || raw["Candidate ID"] || "").trim() || undefined,
-    qToken: String(raw.qToken || raw.QToken || raw["Q Token"] || "").trim() || undefined,
-    interviewedForProcess: String(raw.interviewedForProcess || raw["Interviewed for Process"] || "").trim() || undefined,
-    walkinEndStage: String(raw.walkinEndStage || raw["Walk-in End Stage"] || raw.walkin_end_stage || "").trim() || undefined,
-    finalDecision: String(raw.finalDecision || raw.FinalDecision || raw["Final Decision"] || "").trim() || undefined,
-    round1Result: String(raw.round1Result || raw.Round1_Result || raw["Round1 Result"] || "").trim() || undefined,
-    round1Voc: String(raw.round1Voc || raw.Round1_VOC || raw["Round1 VOC"] || "").trim() || undefined,
-    round1Remarks: String(raw.round1Remarks || raw["Round1 Remarks"] || "").trim() || undefined,
-    skillTestTyping: raw.skillTestTyping ?? raw["SkillTest Typing Score (WPM/Accuracy%)"] ?? null,
+    candidateId:
+      String(
+        raw.candidateId || raw.CandidateID || raw["Candidate ID"] || "",
+      ).trim() || undefined,
+    qToken:
+      String(raw.qToken || raw.QToken || raw["Q Token"] || "").trim() ||
+      undefined,
+    interviewedForProcess:
+      String(
+        raw.interviewedForProcess || raw["Interviewed for Process"] || "",
+      ).trim() || undefined,
+    walkinEndStage:
+      String(
+        raw.walkinEndStage ||
+          raw["Walk-in End Stage"] ||
+          raw.walkin_end_stage ||
+          "",
+      ).trim() || undefined,
+    finalDecision:
+      String(
+        raw.finalDecision || raw.FinalDecision || raw["Final Decision"] || "",
+      ).trim() || undefined,
+    round1Result:
+      String(
+        raw.round1Result || raw.Round1_Result || raw["Round1 Result"] || "",
+      ).trim() || undefined,
+    round1Voc:
+      String(
+        raw.round1Voc || raw.Round1_VOC || raw["Round1 VOC"] || "",
+      ).trim() || undefined,
+    round1Remarks:
+      String(raw.round1Remarks || raw["Round1 Remarks"] || "").trim() ||
+      undefined,
+    skillTestTyping:
+      raw.skillTestTyping ??
+      raw["SkillTest Typing Score (WPM/Accuracy%)"] ??
+      null,
     skillTestAi: raw.skillTestAi ?? raw["SkillTest AI Score"] ?? null,
-    skillTestResult: String(raw.skillTestResult || raw["SkillTest Result"] || "").trim() || undefined,
-    skillTestVoc: String(raw.skillTestVoc || raw["SkillTest VOC"] || "").trim() || undefined,
-    skillTestRemarks: String(raw.skillTestRemarks || raw["SkillTest Remarks"] || "").trim() || undefined,
-    round2Result: String(raw.round2Result || raw["Round2 Result"] || "").trim() || undefined,
-    round2Voc: String(raw.round2Voc || raw["Round2 VOC"] || "").trim() || undefined,
-    round2Remarks: String(raw.round2Remarks || raw["Round2 Remarks"] || "").trim() || undefined,
-    round3Result: String(raw.round3Result || raw["Round3 Result"] || "").trim() || undefined,
-    round3Voc: String(raw.round3Voc || raw["Round3 VOC"] || "").trim() || undefined,
-    round3Remarks: String(raw.round3Remarks || raw["Round3 Remarks"] || "").trim() || undefined,
-    secondRoundInterviewerId: String(raw.secondRoundInterviewerId || raw["Second Round Interviewer ID"] || raw.second_round_interviewer_id || "").trim() || undefined,
-    secondRoundInterviewerNameSnapshot: String(raw.secondRoundInterviewerNameSnapshot || raw["Second Round Interviewer Name"] || raw.second_round_interviewer_name_snapshot || "").trim() || undefined,
-    secondRoundInterviewerBranchSnapshot: String(raw.secondRoundInterviewerBranchSnapshot || raw["Second Round Interviewer Branch"] || raw.second_round_interviewer_branch_snapshot || "").trim() || undefined,
-    secondRoundInterviewerDesignationSnapshot: String(raw.secondRoundInterviewerDesignationSnapshot || raw["Second Round Interviewer Designation"] || raw.second_round_interviewer_designation_snapshot || "").trim() || undefined,
-    secondRoundInterviewerOverrideReason: String(raw.secondRoundInterviewerOverrideReason || raw["Second Round Interviewer Override Reason"] || raw.second_round_interviewer_override_reason || "").trim() || undefined,
-    clientRoundConducted: raw.clientRoundConducted ?? raw["Client Round Conducted"] ?? raw.client_round_conducted ?? undefined,
-    clientRoundInterviewerName: String(raw.clientRoundInterviewerName || raw["Client Round Interviewer Name"] || raw.client_round_interviewer_name || "").trim() || undefined,
-    clientRoundResult: String(raw.clientRoundResult || raw["Client Round Result"] || raw.client_round_result || "").trim() || undefined,
-    clientRoundRemarks: String(raw.clientRoundRemarks || raw["Client Round Remarks"] || raw.client_round_remarks || "").trim() || undefined,
-    followupRequired: raw.followupRequired ?? raw["Follow-up Required"] ?? raw.followup_required ?? undefined,
-    followupDate: String(raw.followupDate || raw["Follow-up Date"] || raw.followup_date || "").trim() || undefined,
-    followupReason: String(raw.followupReason || raw["Follow-up Reason"] || raw.followup_reason || "").trim() || undefined,
-    hiringSourceSnapshot: String(raw.hiringSourceSnapshot || raw["Hiring Source Snapshot"] || raw.hiring_source_snapshot || "").trim() || undefined,
-    refereeEmployeeCodeSnapshot: String(raw.refereeEmployeeCodeSnapshot || raw["Referee Employee Code Snapshot"] || raw.referee_employee_code_snapshot || "").trim() || undefined,
-    refereeNameSnapshot: String(raw.refereeNameSnapshot || raw["Referee Name Snapshot"] || raw.referee_name_snapshot || "").trim() || undefined,
-    callingActivityId: String(raw.callingActivityId || raw["Calling Activity ID"] || raw.calling_activity_id || "").trim() || undefined,
-    candidateCalledAt: String(raw.candidateCalledAt || raw["Candidate Called At"] || raw.candidate_called_at || "").trim() || undefined,
-    interviewStartedAt: String(raw.interviewStartedAt || raw["Interview Started At"] || raw.interview_started_at || "").trim() || undefined,
-    callingSourceSnapshot: String(raw.callingSourceSnapshot || raw["Calling Source Snapshot"] || raw.calling_source_snapshot || "").trim() || undefined,
-    callingLastRemarks: String(raw.callingLastRemarks || raw["Calling Last Remarks"] || raw.calling_last_remarks || "").trim() || undefined,
-    callingLineupDate: String(raw.callingLineupDate || raw["Calling Lineup Date"] || raw.calling_lineup_date || "").trim() || undefined,
-    callingTurnupStatus: String(raw.callingTurnupStatus || raw["Calling Turnup Status"] || raw.calling_turnup_status || "").trim() || undefined,
+    skillTestResult:
+      String(raw.skillTestResult || raw["SkillTest Result"] || "").trim() ||
+      undefined,
+    skillTestVoc:
+      String(raw.skillTestVoc || raw["SkillTest VOC"] || "").trim() ||
+      undefined,
+    skillTestRemarks:
+      String(raw.skillTestRemarks || raw["SkillTest Remarks"] || "").trim() ||
+      undefined,
+    round2Result:
+      String(raw.round2Result || raw["Round2 Result"] || "").trim() ||
+      undefined,
+    round2Voc:
+      String(raw.round2Voc || raw["Round2 VOC"] || "").trim() || undefined,
+    round2Remarks:
+      String(raw.round2Remarks || raw["Round2 Remarks"] || "").trim() ||
+      undefined,
+    round3Result:
+      String(raw.round3Result || raw["Round3 Result"] || "").trim() ||
+      undefined,
+    round3Voc:
+      String(raw.round3Voc || raw["Round3 VOC"] || "").trim() || undefined,
+    round3Remarks:
+      String(raw.round3Remarks || raw["Round3 Remarks"] || "").trim() ||
+      undefined,
+    secondRoundInterviewerId:
+      String(
+        raw.secondRoundInterviewerId ||
+          raw["Second Round Interviewer ID"] ||
+          raw.second_round_interviewer_id ||
+          "",
+      ).trim() || undefined,
+    secondRoundInterviewerNameSnapshot:
+      String(
+        raw.secondRoundInterviewerNameSnapshot ||
+          raw["Second Round Interviewer Name"] ||
+          raw.second_round_interviewer_name_snapshot ||
+          "",
+      ).trim() || undefined,
+    secondRoundInterviewerBranchSnapshot:
+      String(
+        raw.secondRoundInterviewerBranchSnapshot ||
+          raw["Second Round Interviewer Branch"] ||
+          raw.second_round_interviewer_branch_snapshot ||
+          "",
+      ).trim() || undefined,
+    secondRoundInterviewerDesignationSnapshot:
+      String(
+        raw.secondRoundInterviewerDesignationSnapshot ||
+          raw["Second Round Interviewer Designation"] ||
+          raw.second_round_interviewer_designation_snapshot ||
+          "",
+      ).trim() || undefined,
+    secondRoundInterviewerOverrideReason:
+      String(
+        raw.secondRoundInterviewerOverrideReason ||
+          raw["Second Round Interviewer Override Reason"] ||
+          raw.second_round_interviewer_override_reason ||
+          "",
+      ).trim() || undefined,
+    clientRoundConducted:
+      raw.clientRoundConducted ??
+      raw["Client Round Conducted"] ??
+      raw.client_round_conducted ??
+      undefined,
+    clientRoundInterviewerName:
+      String(
+        raw.clientRoundInterviewerName ||
+          raw["Client Round Interviewer Name"] ||
+          raw.client_round_interviewer_name ||
+          "",
+      ).trim() || undefined,
+    clientRoundResult:
+      String(
+        raw.clientRoundResult ||
+          raw["Client Round Result"] ||
+          raw.client_round_result ||
+          "",
+      ).trim() || undefined,
+    clientRoundRemarks:
+      String(
+        raw.clientRoundRemarks ||
+          raw["Client Round Remarks"] ||
+          raw.client_round_remarks ||
+          "",
+      ).trim() || undefined,
+    followupRequired:
+      raw.followupRequired ??
+      raw["Follow-up Required"] ??
+      raw.followup_required ??
+      undefined,
+    followupDate:
+      String(
+        raw.followupDate || raw["Follow-up Date"] || raw.followup_date || "",
+      ).trim() || undefined,
+    followupReason:
+      String(
+        raw.followupReason ||
+          raw["Follow-up Reason"] ||
+          raw.followup_reason ||
+          "",
+      ).trim() || undefined,
+    hiringSourceSnapshot:
+      String(
+        raw.hiringSourceSnapshot ||
+          raw["Hiring Source Snapshot"] ||
+          raw.hiring_source_snapshot ||
+          "",
+      ).trim() || undefined,
+    refereeEmployeeCodeSnapshot:
+      String(
+        raw.refereeEmployeeCodeSnapshot ||
+          raw["Referee Employee Code Snapshot"] ||
+          raw.referee_employee_code_snapshot ||
+          "",
+      ).trim() || undefined,
+    refereeNameSnapshot:
+      String(
+        raw.refereeNameSnapshot ||
+          raw["Referee Name Snapshot"] ||
+          raw.referee_name_snapshot ||
+          "",
+      ).trim() || undefined,
+    callingActivityId:
+      String(
+        raw.callingActivityId ||
+          raw["Calling Activity ID"] ||
+          raw.calling_activity_id ||
+          "",
+      ).trim() || undefined,
+    candidateCalledAt:
+      String(
+        raw.candidateCalledAt ||
+          raw["Candidate Called At"] ||
+          raw.candidate_called_at ||
+          "",
+      ).trim() || undefined,
+    interviewStartedAt:
+      String(
+        raw.interviewStartedAt ||
+          raw["Interview Started At"] ||
+          raw.interview_started_at ||
+          "",
+      ).trim() || undefined,
+    callingSourceSnapshot:
+      String(
+        raw.callingSourceSnapshot ||
+          raw["Calling Source Snapshot"] ||
+          raw.calling_source_snapshot ||
+          "",
+      ).trim() || undefined,
+    callingLastRemarks:
+      String(
+        raw.callingLastRemarks ||
+          raw["Calling Last Remarks"] ||
+          raw.calling_last_remarks ||
+          "",
+      ).trim() || undefined,
+    callingLineupDate:
+      String(
+        raw.callingLineupDate ||
+          raw["Calling Lineup Date"] ||
+          raw.calling_lineup_date ||
+          "",
+      ).trim() || undefined,
+    callingTurnupStatus:
+      String(
+        raw.callingTurnupStatus ||
+          raw["Calling Turnup Status"] ||
+          raw.calling_turnup_status ||
+          "",
+      ).trim() || undefined,
     offerSalary: raw.offerSalary ?? raw["Offer Salary"] ?? null,
-    offerDoj: String(raw.offerDoj || raw["Date of Joining"] || "").trim() || undefined,
-    reportingTiming: String(raw.reportingTiming || raw["Reporting Timing"] || "").trim() || undefined,
-    otDetails: String(raw.otDetails || raw["OT Details"] || "").trim() || undefined,
-    performanceIncentives: String(raw.performanceIncentives || raw["Performance Incentives"] || "").trim() || undefined,
+    offerDoj:
+      String(raw.offerDoj || raw["Date of Joining"] || "").trim() || undefined,
+    reportingTiming:
+      String(raw.reportingTiming || raw["Reporting Timing"] || "").trim() ||
+      undefined,
+    otDetails:
+      String(raw.otDetails || raw["OT Details"] || "").trim() || undefined,
+    performanceIncentives:
+      String(
+        raw.performanceIncentives || raw["Performance Incentives"] || "",
+      ).trim() || undefined,
     requisitionId: String(raw.requisitionId || "").trim() || undefined,
-    substituteFlag: raw.substituteFlag === true || raw.substituteFlag === "true" || raw.substitute_flag === true || raw.substitute_flag === "true" || false,
-    substituteReason: String(raw.substituteReason || raw.substitute_reason || "").trim() || undefined,
-    processId: String(raw.processId || raw.process_id || "").trim() || undefined,
+    substituteFlag:
+      raw.substituteFlag === true ||
+      raw.substituteFlag === "true" ||
+      raw.substitute_flag === true ||
+      raw.substitute_flag === "true" ||
+      false,
+    substituteReason:
+      String(raw.substituteReason || raw.substitute_reason || "").trim() ||
+      undefined,
+    processId:
+      String(raw.processId || raw.process_id || "").trim() || undefined,
   };
 
-  if (!input.candidateId && !input.qToken) err("CandidateID or QToken required", 400);
+  if (!input.candidateId && !input.qToken)
+    err("CandidateID or QToken required", 400);
 
   // Validate all fields — throws on any violation
-  const { process, finalDecision, walkinEndStage, r1, r2, r3 } = validateSubmission(input);
+  const { process, finalDecision, walkinEndStage, r1, r2, r3 } =
+    validateSubmission(input);
 
   const conn = await db.getConnection();
   try {
@@ -764,7 +1045,7 @@ export async function submitInterviewUpdate(
        WHERE ${whereClause}
        LIMIT 1
        FOR UPDATE`,
-      whereParams as string[]
+      whereParams as string[],
     );
     const candidate = candRows[0];
     if (!candidate) err("Candidate not found", 404);
@@ -774,24 +1055,43 @@ export async function submitInterviewUpdate(
       candidate.recruiter_id,
       candidate.recruiter_assigned_id,
       candidate.assigned_recruiter_id,
-    ].filter(Boolean).map(String);
-    const assignedById = assignedRecruiterIds.length > 0 && assignedRecruiterIds.includes(String(recruiterProfile.id));
-    const assignedByName = candidate.recruiter_assigned_name && candidate.recruiter_assigned_name === recruiterProfile.name;
-    if ((assignedRecruiterIds.length > 0 || candidate.recruiter_assigned_name) && !assignedById && !assignedByName) {
+    ]
+      .filter(Boolean)
+      .map(String);
+    const assignedById =
+      assignedRecruiterIds.length > 0 &&
+      assignedRecruiterIds.includes(String(recruiterProfile.id));
+    const assignedByName =
+      candidate.recruiter_assigned_name &&
+      candidate.recruiter_assigned_name === recruiterProfile.name;
+    if (
+      (assignedRecruiterIds.length > 0 || candidate.recruiter_assigned_name) &&
+      !assignedById &&
+      !assignedByName
+    ) {
       if (!input.substituteFlag || !input.substituteReason?.trim()) {
-        err("This candidate is assigned to a different recruiter. Provide a substitute reason to proceed.", 403);
+        err(
+          "This candidate is assigned to a different recruiter. Provide a substitute reason to proceed.",
+          403,
+        );
       }
     }
 
     // QToken consistency: if we matched by candidateId, ensure qToken (if given) belongs to this candidate
-    if (input.qToken && input.candidateId && candidate.q_token && candidate.q_token !== input.qToken) {
+    if (
+      input.qToken &&
+      input.candidateId &&
+      candidate.q_token &&
+      candidate.q_token !== input.qToken
+    ) {
       err("QToken does not match this candidate", 409);
     }
 
     const effectiveQToken = candidate.q_token ?? input.qToken ?? null;
 
     // Check for existing submission (upsert) — q_token may be NULL
-    const candidateBranch = candidate.branch_display_name ?? candidate.applied_for_branch ?? null;
+    const candidateBranch =
+      candidate.branch_display_name ?? candidate.applied_for_branch ?? null;
 
     let secondRoundInterviewerSnapshot: {
       id: string;
@@ -810,15 +1110,28 @@ export async function submitInterviewUpdate(
            LEFT JOIN designation_master des ON des.id = e.designation_id
           WHERE e.id = ?
           LIMIT 1`,
-        [String(input.secondRoundInterviewerId)]
+        [String(input.secondRoundInterviewerId)],
       );
       const interviewer = interviewerRows[0];
       if (!interviewer) err("Second round interviewer not found", 404);
       const interviewerBranch = nvl(interviewer.branch_name);
-      const recruiterBranch = recruiterProfile.branch?.trim().toLowerCase().replace(/\s+/g, " ");
-      const normalizedInterviewerBranch = interviewerBranch?.trim().toLowerCase().replace(/\s+/g, " ");
-      if (recruiterBranch && normalizedInterviewerBranch && recruiterBranch !== normalizedInterviewerBranch) {
-        err("Second round interviewer must be from the same branch as the recruiter", 400);
+      const recruiterBranch = recruiterProfile.branch
+        ?.trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+      const normalizedInterviewerBranch = interviewerBranch
+        ?.trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+      if (
+        recruiterBranch &&
+        normalizedInterviewerBranch &&
+        recruiterBranch !== normalizedInterviewerBranch
+      ) {
+        err(
+          "Second round interviewer must be from the same branch as the recruiter",
+          400,
+        );
       }
       secondRoundInterviewerSnapshot = {
         id: String(interviewer.id),
@@ -870,7 +1183,7 @@ export async function submitInterviewUpdate(
              LIMIT 1) AS alias_id,
            (SELECT config_value FROM ats_form_config
              WHERE config_key = 'hiringProcessOptions' LIMIT 1) AS process_options`,
-        [process, process]
+        [process, process],
       );
       const match = processRows[0] ?? {};
       const masterId = match.master_id ? String(match.master_id) : null;
@@ -880,10 +1193,14 @@ export async function submitInterviewUpdate(
         .map((option) => option.trim().toLowerCase())
         .filter(Boolean);
 
-      if (!masterId && !aliasId && !dropdownOptions.includes(process.trim().toLowerCase())) {
+      if (
+        !masterId &&
+        !aliasId &&
+        !dropdownOptions.includes(process.trim().toLowerCase())
+      ) {
         err(
           `Invalid Interviewed for Process: "${process}". Pick one of the configured hiring processes.`,
-          400
+          400,
         );
       }
       resolvedProcessId = resolvedProcessId ?? masterId ?? aliasId;
@@ -899,36 +1216,72 @@ export async function submitInterviewUpdate(
            FROM ats_interview_submission
            WHERE candidate_id = ? AND q_token IS NULL
            LIMIT 1 FOR UPDATE`,
-      effectiveQToken ? [candidate.id, effectiveQToken] : [candidate.id]
+      effectiveQToken ? [candidate.id, effectiveQToken] : [candidate.id],
     );
     const existing = existingRows[0] ?? null;
 
     const submissionId = existing?.id ?? randomUUID();
     const isUpdate = !!existing;
-    const clientRoundConductedFlag = boolish(input.clientRoundConducted) ? 1 : 0;
-    const followupRequiredFlag = boolish(input.followupRequired) || finalDecision === "Client Round - Pending" || finalDecision === "Hold" ? 1 : 0;
-    const secondRoundInterviewerId = secondRoundInterviewerSnapshot?.id ?? nvl(input.secondRoundInterviewerId);
-    const secondRoundInterviewerNameSnapshot = secondRoundInterviewerSnapshot?.name ?? nvl(input.secondRoundInterviewerNameSnapshot);
-    const secondRoundInterviewerBranchSnapshot = secondRoundInterviewerSnapshot?.branch ?? nvl(input.secondRoundInterviewerBranchSnapshot);
-    const secondRoundInterviewerDesignationSnapshot = secondRoundInterviewerSnapshot?.designation ?? nvl(input.secondRoundInterviewerDesignationSnapshot);
-    const secondRoundInterviewerOverrideReason = nvl(input.secondRoundInterviewerOverrideReason);
+    const clientRoundConductedFlag = boolish(input.clientRoundConducted)
+      ? 1
+      : 0;
+    const followupRequiredFlag =
+      boolish(input.followupRequired) ||
+      finalDecision === "Client Round - Pending" ||
+      finalDecision === "Hold"
+        ? 1
+        : 0;
+    const secondRoundInterviewerId =
+      secondRoundInterviewerSnapshot?.id ?? nvl(input.secondRoundInterviewerId);
+    const secondRoundInterviewerNameSnapshot =
+      secondRoundInterviewerSnapshot?.name ??
+      nvl(input.secondRoundInterviewerNameSnapshot);
+    const secondRoundInterviewerBranchSnapshot =
+      secondRoundInterviewerSnapshot?.branch ??
+      nvl(input.secondRoundInterviewerBranchSnapshot);
+    const secondRoundInterviewerDesignationSnapshot =
+      secondRoundInterviewerSnapshot?.designation ??
+      nvl(input.secondRoundInterviewerDesignationSnapshot);
+    const secondRoundInterviewerOverrideReason = nvl(
+      input.secondRoundInterviewerOverrideReason,
+    );
     const clientRoundInterviewerName = nvl(input.clientRoundInterviewerName);
     const clientRoundResult = nvl(input.clientRoundResult);
     const clientRoundRemarks = nvl(input.clientRoundRemarks);
     const followupDate = normalizeDateInput(input.followupDate);
     const followupReason = nvl(input.followupReason);
-    const hiringSourceSnapshot = nvl(input.hiringSourceSnapshot) ?? candidate.sourcing_channel ?? null;
-    const refereeEmployeeCodeSnapshot = nvl(input.refereeEmployeeCodeSnapshot) ?? candidate.referee_employee_code ?? null;
-    const refereeNameSnapshot = nvl(input.refereeNameSnapshot) ?? candidate.referee_name ?? null;
-    const callingActivityId = nvl(input.callingActivityId) ?? candidate.latest_calling_activity_id ?? null;
+    const hiringSourceSnapshot =
+      nvl(input.hiringSourceSnapshot) ?? candidate.sourcing_channel ?? null;
+    const refereeEmployeeCodeSnapshot =
+      nvl(input.refereeEmployeeCodeSnapshot) ??
+      candidate.referee_employee_code ??
+      null;
+    const refereeNameSnapshot =
+      nvl(input.refereeNameSnapshot) ?? candidate.referee_name ?? null;
+    const callingActivityId =
+      nvl(input.callingActivityId) ??
+      candidate.latest_calling_activity_id ??
+      null;
     const candidateCalledAt = nvl(input.candidateCalledAt) ?? null;
     const interviewStartedAt = nvl(input.interviewStartedAt) ?? null;
-    const callingSourceSnapshot = nvl(input.callingSourceSnapshot) ?? candidate.calling_source_snapshot ?? null;
-    const callingLastRemarks = nvl(input.callingLastRemarks) ?? candidate.calling_last_remarks ?? null;
-    const callingLineupDate = nvl(input.callingLineupDate) ?? candidate.calling_lineup_date ?? null;
-    const callingTurnupStatus = nvl(input.callingTurnupStatus) ?? candidate.calling_turnup_status ?? null;
-    const substituteInterviewerId = input.substituteFlag && input.substituteReason?.trim() ? recruiterProfile.id : null;
-    const substituteReason = input.substituteFlag && input.substituteReason?.trim() ? input.substituteReason.trim() : null;
+    const callingSourceSnapshot =
+      nvl(input.callingSourceSnapshot) ??
+      candidate.calling_source_snapshot ??
+      null;
+    const callingLastRemarks =
+      nvl(input.callingLastRemarks) ?? candidate.calling_last_remarks ?? null;
+    const callingLineupDate =
+      nvl(input.callingLineupDate) ?? candidate.calling_lineup_date ?? null;
+    const callingTurnupStatus =
+      nvl(input.callingTurnupStatus) ?? candidate.calling_turnup_status ?? null;
+    const substituteInterviewerId =
+      input.substituteFlag && input.substituteReason?.trim()
+        ? recruiterProfile.id
+        : null;
+    const substituteReason =
+      input.substituteFlag && input.substituteReason?.trim()
+        ? input.substituteReason.trim()
+        : null;
 
     if (isUpdate) {
       await conn.execute(
@@ -1038,7 +1391,7 @@ export async function submitInterviewUpdate(
           substituteInterviewerId,
           substituteReason,
           submissionId,
-        ]
+        ],
       );
     } else {
       await conn.execute(
@@ -1113,7 +1466,7 @@ export async function submitInterviewUpdate(
           nvl(input.performanceIncentives),
           substituteInterviewerId,
           substituteReason,
-        ]
+        ],
       );
     }
 
@@ -1140,7 +1493,13 @@ export async function submitInterviewUpdate(
     await conn.execute(
       `INSERT INTO ats_interview_submission_audit (id, submission_id, action, actor_user_id, snapshot)
        VALUES (?, ?, ?, ?, CAST(? AS JSON))`,
-      [randomUUID(), submissionId, isUpdate ? "UPDATE" : "INSERT", actorUserId ?? null, JSON.stringify(snapshotData)]
+      [
+        randomUUID(),
+        submissionId,
+        isUpdate ? "UPDATE" : "INSERT",
+        actorUserId ?? null,
+        JSON.stringify(snapshotData),
+      ],
     );
 
     // Update canonical ATS decision fields only; never touch created_date / created_time.
@@ -1230,7 +1589,7 @@ export async function submitInterviewUpdate(
         nvl(input.performanceIncentives),
         finalDecision,
         candidate.id,
-      ]
+      ],
     );
 
     // Close the queue token so the candidate leaves the live queue display
@@ -1241,17 +1600,27 @@ export async function submitInterviewUpdate(
            updated_at = NOW()
        WHERE candidate_id = ?
          AND queue_status IN ('waiting', 'called', 'in_interview')`,
-      [finalDecision, candidate.id]
+      [finalDecision, candidate.id],
     );
 
     // Stage log
     await conn.execute(
       `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), candidate.id, candidate.current_stage || candidate.status || null, walkinEndStage, nvl(raw.remarks), actorUserId ?? null]
+      [
+        randomUUID(),
+        candidate.id,
+        candidate.current_stage || candidate.status || null,
+        walkinEndStage,
+        nvl(raw.remarks),
+        actorUserId ?? null,
+      ],
     );
 
-    if ((raw.proxySubmission === true || raw.proxySubmission === "true") && actorUserId) {
+    if (
+      (raw.proxySubmission === true || raw.proxySubmission === "true") &&
+      actorUserId
+    ) {
       await conn.execute(
         `INSERT INTO ats_interview_submission_audit (id, submission_id, action, actor_user_id, snapshot)
          VALUES (?, ?, 'PROXY_SUBMISSION', ?, CAST(? AS JSON))`,
@@ -1259,8 +1628,12 @@ export async function submitInterviewUpdate(
           randomUUID(),
           submissionId,
           actorUserId,
-          JSON.stringify({ proxySubmission: true, recruiterCode: recruiterProfile.recruiterCode, recruiterName: recruiterProfile.name }),
-        ]
+          JSON.stringify({
+            proxySubmission: true,
+            recruiterCode: recruiterProfile.recruiterCode,
+            recruiterName: recruiterProfile.name,
+          }),
+        ],
       );
     }
 
@@ -1275,7 +1648,7 @@ export async function submitInterviewUpdate(
           actorUserId,
           submissionId,
           JSON.stringify({
-            action: 'SUBSTITUTE_INTERVIEW_SUBMISSION',
+            action: "SUBSTITUTE_INTERVIEW_SUBMISSION",
             candidate_id: candidate.id,
             candidate_code: candidate.candidate_code,
             original_recruiter_name: candidate.recruiter_assigned_name,
@@ -1284,7 +1657,7 @@ export async function submitInterviewUpdate(
             substitute_reason: input.substituteReason,
             final_decision: finalDecision,
           }),
-        ]
+        ],
       );
     }
 
@@ -1297,67 +1670,98 @@ export async function submitInterviewUpdate(
           await jobRequisitionService.linkCandidate(
             input.requisitionId!,
             candidate.id,
-            actorUserId ?? 'system',
-            'candidate_applied',
-            'auto-linked at interview feedback submission'
+            actorUserId ?? "system",
+            "candidate_applied",
+            "auto-linked at interview feedback submission",
           );
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           // 409 "already linked" is expected on re-submissions — continue to outcome update
-          if (!msg.includes('already linked')) {
-            console.warn('[recruiter-submission link]', msg);
+          if (!msg.includes("already linked")) {
+            console.warn("[recruiter-submission link]", msg);
             return;
           }
         }
         // Always update outcome regardless of whether link was new or pre-existing
-        if (finalDecision === 'Selected' || finalDecision === 'Rejected') {
-          const outcome = finalDecision === 'Selected' ? 'selected' : 'rejected';
+        if (finalDecision === "Selected" || finalDecision === "Rejected") {
+          const outcome =
+            finalDecision === "Selected" ? "selected" : "rejected";
           try {
             await jobRequisitionService.updateCandidateOutcome(
               input.requisitionId!,
               candidate.id,
-              outcome as 'selected' | 'rejected',
-              `${finalDecision} at interview feedback`
+              outcome as "selected" | "rejected",
+              `${finalDecision} at interview feedback`,
             );
           } catch (e2: unknown) {
-            console.warn('[recruiter-submission outcome]', e2 instanceof Error ? e2.message : e2);
+            console.warn(
+              "[recruiter-submission outcome]",
+              e2 instanceof Error ? e2.message : e2,
+            );
           }
         }
-      })().catch((e: unknown) => console.warn('[recruiter-submission auto-link/outcome]', e instanceof Error ? e.message : e));
+      })().catch((e: unknown) =>
+        console.warn(
+          "[recruiter-submission auto-link/outcome]",
+          e instanceof Error ? e.message : e,
+        ),
+      );
     }
 
     if (finalDecision === "Selected") {
-      console.log(`[ats] Sending onboarding token to candidate ${candidate.id} (${candidate.email || 'NO EMAIL'})`);
+      console.log(
+        `[ats] Sending onboarding token to candidate ${candidate.id} (${candidate.email || "NO EMAIL"})`,
+      );
       try {
         await sendOnboardingToken(candidate.id, actorUserId ?? "SYSTEM");
-        console.log(`[ats] Onboarding token sent successfully to ${candidate.email}`);
+        console.log(
+          `[ats] Onboarding token sent successfully to ${candidate.email}`,
+        );
       } catch (e) {
-        console.error("[ats] automatic onboarding link failed:", e instanceof Error ? e.message : String(e));
+        console.error(
+          "[ats] automatic onboarding link failed:",
+          e instanceof Error ? e.message : String(e),
+        );
       }
     } else if (finalDecision === "Rejected" || finalDecision === "No Show") {
       if (!candidate.email) {
-        console.warn(`[ats] Cannot send rejection email - candidate ${candidate.id} has no email address`);
+        console.warn(
+          `[ats] Cannot send rejection email - candidate ${candidate.id} has no email address`,
+        );
       } else {
-        console.log(`[ats] Sending rejection email to ${candidate.email} (candidate ${candidate.id}, decision: ${finalDecision})`);
+        console.log(
+          `[ats] Sending rejection email to ${candidate.email} (candidate ${candidate.id}, decision: ${finalDecision})`,
+        );
         sendRejectedEmail({
           candidateId: candidate.id,
           to: candidate.email,
           candidateName: candidate.full_name ?? "Candidate",
-          branchName: candidate.branch_display_name ?? candidate.applied_for_branch ?? "",
-        }).then(() => {
-          console.log(`[ats] Rejection email sent successfully to ${candidate.email}`);
-        }).catch((e: unknown) => {
-          console.error(`[ats] Rejection email failed for ${candidate.email}:`, e instanceof Error ? e.message : String(e));
-        });
+          branchName:
+            candidate.branch_display_name ?? candidate.applied_for_branch ?? "",
+        })
+          .then(() => {
+            console.log(
+              `[ats] Rejection email sent successfully to ${candidate.email}`,
+            );
+          })
+          .catch((e: unknown) => {
+            console.error(
+              `[ats] Rejection email failed for ${candidate.email}:`,
+              e instanceof Error ? e.message : String(e),
+            );
+          });
       }
     }
 
     // Fetch updated submission row for response (outside transaction)
     const [subRows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM ats_interview_submission WHERE id = ? LIMIT 1`,
-      [submissionId]
+      [submissionId],
     );
-    return { submission: subRows[0] ?? null, action: isUpdate ? "updated" : "created" };
+    return {
+      submission: subRows[0] ?? null,
+      action: isUpdate ? "updated" : "created",
+    };
   } catch (e) {
     await conn.rollback();
     throw e;

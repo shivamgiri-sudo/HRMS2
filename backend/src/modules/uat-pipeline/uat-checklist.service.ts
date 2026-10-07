@@ -40,8 +40,10 @@ import {
 
 // ── Verdicts ──────────────────────────────────────────────────────────────────
 
-export type ChecklistVerdict = "pass" | "fail" | "warn" | "not_applicable" | "undetermined";
-export type ChecklistSource = "floor" | "capability" | "static" | "llm" | "human" | "db";
+export type ChecklistVerdict =
+  "pass" | "fail" | "warn" | "not_applicable" | "undetermined";
+export type ChecklistSource =
+  "floor" | "capability" | "static" | "llm" | "human" | "db";
 
 /**
  * Severity order. `undetermined` sits ABOVE `pass` and `not_applicable` on purpose: an item
@@ -67,7 +69,9 @@ export interface ChecklistItemResult {
 }
 
 /** The single worst of any number of results for one item. */
-export function worstOf(...results: ChecklistItemResult[]): ChecklistItemResult {
+export function worstOf(
+  ...results: ChecklistItemResult[]
+): ChecklistItemResult {
   if (results.length === 0) {
     throw new Error("[uat] worstOf called with no results");
   }
@@ -104,7 +108,7 @@ export function evaluateFloor(scan: StaticScanResult): ChecklistItemResult[] {
           verdict: "pass",
           source: "floor",
           evidence: "No candidate file matches a deny-tier protected pattern.",
-        }
+        },
   );
 
   // BR-02 is a human gate: the path layer can only say whether one is REQUIRED. It reports
@@ -118,19 +122,23 @@ export function evaluateFloor(scan: StaticScanResult): ChecklistItemResult[] {
           source: "floor",
           evidence:
             `${review.length} review-tier path hit(s) require a named approver: ` +
-            review.map((h) => h.path).slice(0, 3).join(", "),
+            review
+              .map((h) => h.path)
+              .slice(0, 3)
+              .join(", "),
         }
       : {
           itemKey: "BR-02",
           verdict: "not_applicable",
           source: "floor",
           evidence: "No review-tier path hit; no path-based approver required.",
-        }
+        },
   );
 
   // Category-specific floor items. A deny hit in a given category fails the matching item,
   // so the reviewer sees WHICH rule blocked rather than only that something did.
-  const byCategory = (category: string) => deny.filter((h) => h.category === category);
+  const byCategory = (category: string) =>
+    deny.filter((h) => h.category === category);
   const controlPlane = byCategory("control-plane");
   if (controlPlane.length) {
     out.push({
@@ -147,7 +155,10 @@ export function evaluateFloor(scan: StaticScanResult): ChecklistItemResult[] {
   const fileCount = scan.impactedPaths?.length ?? 0;
   out.push({
     itemKey: "BR-03",
-    verdict: fileCount > 6 || (scan.impactedModules?.length ?? 0) > 2 ? "warn" : "pass",
+    verdict:
+      fileCount > 6 || (scan.impactedModules?.length ?? 0) > 2
+        ? "warn"
+        : "pass",
     source: "static",
     evidence: `${fileCount} candidate file(s) across ${scan.impactedModules?.length ?? 0} module(s).`,
   });
@@ -168,7 +179,9 @@ export function evaluateFloor(scan: StaticScanResult): ChecklistItemResult[] {
  * files look harmless but whose effect is an HR policy outcome — a leave carry-forward fix
  * trips no protected path and must still reach an HR policy owner.
  */
-export function evaluateCapabilities(scan: StaticScanResult): ChecklistItemResult[] {
+export function evaluateCapabilities(
+  scan: StaticScanResult,
+): ChecklistItemResult[] {
   const out: ChecklistItemResult[] = [];
   const hits: CapabilityHit[] = scan.capabilityHits ?? [];
   const worstClass = capabilityClassFor(hits);
@@ -179,7 +192,8 @@ export function evaluateCapabilities(scan: StaticScanResult): ChecklistItemResul
       itemKey: "BR-01",
       verdict: "fail",
       source: "capability",
-      evidence: explainCapabilityDeny(denyHits) ?? "A DENY-class capability matched.",
+      evidence:
+        explainCapabilityDeny(denyHits) ?? "A DENY-class capability matched.",
     });
   }
 
@@ -199,8 +213,9 @@ export function evaluateCapabilities(scan: StaticScanResult): ChecklistItemResul
           itemKey: "BR-02b",
           verdict: "not_applicable",
           source: "capability",
-          evidence: "No capability at REVIEW or above matched; no capability approver required.",
-        }
+          evidence:
+            "No capability at REVIEW or above matched; no capability approver required.",
+        },
   );
 
   // Statutory and compliance items map onto specific capabilities. Absent a match the item
@@ -267,7 +282,7 @@ export interface SuppliedVerdict {
  */
 export function evaluateDbRules(
   rules: DbChecklistRule[],
-  supplied: SuppliedVerdict[]
+  supplied: SuppliedVerdict[],
 ): ChecklistItemResult[] {
   const byKey = new Map(supplied.map((s) => [s.itemKey, s]));
   const out: ChecklistItemResult[] = [];
@@ -313,7 +328,9 @@ export function evaluateDbRules(
  * move an item's verdict up the severity order, never down. This is the function the
  * "an admin cannot loosen the floor" property rests on.
  */
-export function mergeLayers(...layers: ChecklistItemResult[][]): ChecklistItemResult[] {
+export function mergeLayers(
+  ...layers: ChecklistItemResult[][]
+): ChecklistItemResult[] {
   const byKey = new Map<string, ChecklistItemResult>();
   for (const layer of layers) {
     for (const r of layer) {
@@ -347,7 +364,7 @@ export interface ChecklistGate {
 export function gateFor(
   scan: StaticScanResult,
   results: ChecklistItemResult[],
-  blockingItemKeys: Set<string>
+  blockingItemKeys: Set<string>,
 ): ChecklistGate {
   const blockingReasons: string[] = [];
   const warnings: string[] = [];
@@ -359,7 +376,8 @@ export function gateFor(
       continue;
     }
     if (!blockingItemKeys.has(r.itemKey)) continue;
-    if (r.verdict === "fail") blockingReasons.push(`${r.itemKey}: ${r.evidence}`);
+    if (r.verdict === "fail")
+      blockingReasons.push(`${r.itemKey}: ${r.evidence}`);
     else if (r.verdict === "undetermined") outstanding = true;
   }
 
@@ -369,13 +387,15 @@ export function gateFor(
   // items. A deny that somehow produced no failing item must still block.
   if (scan.effectiveRisk === "deny" && blockingReasons.length === 0) {
     blockingReasons.push(
-      scan.blockedReason ?? "Static scan classified this request as deny-tier."
+      scan.blockedReason ?? "Static scan classified this request as deny-tier.",
     );
   }
 
   const outcome: ChecklistGate["outcome"] = blockingReasons.length
     ? "blocked"
-    : outstanding || roles.length || PATH_TIER_RANK[scan.effectiveRisk] >= PATH_TIER_RANK.review
+    : outstanding ||
+        roles.length ||
+        PATH_TIER_RANK[scan.effectiveRisk] >= PATH_TIER_RANK.review
       ? "needs_approval"
       : "passed";
 

@@ -1,7 +1,7 @@
-import { db } from './src/db/mysql.js';
+import { db } from "./src/db/mysql.js";
 
 async function testManagerData() {
-  console.log('=== ANALYZING MANAGER DATA ===\n');
+  console.log("=== ANALYZING MANAGER DATA ===\n");
 
   // Find all employees who ARE managers (have people reporting to them)
   const [managersWithTeams] = await db.execute<any[]>(`
@@ -21,12 +21,14 @@ async function testManagerData() {
     LIMIT 10
   `);
 
-  console.log('Managers with teams:');
+  console.log("Managers with teams:");
   if (managersWithTeams.length === 0) {
-    console.log('  NO MANAGERS WITH TEAMS FOUND!');
+    console.log("  NO MANAGERS WITH TEAMS FOUND!");
   } else {
     managersWithTeams.forEach((m: any) => {
-      console.log(`  - ${m.employee_code}: ${m.first_name} ${m.last_name} (${m.team_size} team members)`);
+      console.log(
+        `  - ${m.employee_code}: ${m.first_name} ${m.last_name} (${m.team_size} team members)`,
+      );
     });
   }
 
@@ -87,29 +89,42 @@ async function testManagerData() {
     console.log(`Name: ${testManager[0].first_name}`);
     console.log(`Email: ${testManager[0].email}`);
     console.log(`User ID: ${testManager[0].user_id}`);
-    console.log(`Role: ${testManager[0].role_key || 'NONE'}`);
+    console.log(`Role: ${testManager[0].role_key || "NONE"}`);
 
     // Assign some employees to this manager if none exist
-    if (managersWithTeams.length === 0 ||
-        !managersWithTeams.some((m: any) => m.id === testManager[0].id)) {
-      console.log(`\nManager has no team. Checking employees available for assignment...`);
+    if (
+      managersWithTeams.length === 0 ||
+      !managersWithTeams.some((m: any) => m.id === testManager[0].id)
+    ) {
+      console.log(
+        `\nManager has no team. Checking employees available for assignment...`,
+      );
 
-      const [availableEmployees] = await db.execute<any[]>(`
+      const [availableEmployees] = await db.execute<any[]>(
+        `
         SELECT id, employee_code, first_name, last_name
         FROM employees
         WHERE active_status = 1
           AND id != ?
           AND reporting_manager_id IS NULL
         LIMIT 5
-      `, [testManager[0].id]);
+      `,
+        [testManager[0].id],
+      );
 
-      console.log(`\nAvailable employees without manager: ${availableEmployees.length}`);
+      console.log(
+        `\nAvailable employees without manager: ${availableEmployees.length}`,
+      );
       availableEmployees.forEach((emp: any) => {
-        console.log(`  - ${emp.employee_code}: ${emp.first_name} ${emp.last_name}`);
+        console.log(
+          `  - ${emp.employee_code}: ${emp.first_name} ${emp.last_name}`,
+        );
       });
 
       if (availableEmployees.length > 0) {
-        console.log(`\nWOULD assign these ${availableEmployees.length} employees to manager (READ-ONLY TEST - not executing)`);
+        console.log(
+          `\nWOULD assign these ${availableEmployees.length} employees to manager (READ-ONLY TEST - not executing)`,
+        );
       }
     }
   }

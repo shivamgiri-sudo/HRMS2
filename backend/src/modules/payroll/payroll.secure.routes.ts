@@ -9,7 +9,10 @@ import { runRankSql } from "./run-status.js";
 import { SYNTHETIC_RUN_CREATORS } from "./payroll.service.js";
 
 const router = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -28,7 +31,14 @@ router.use(requireAuth);
 // to this scope-roles array — matching every other live payroll route's convention
 // (super_admin/admin bypass via allowAdminBypass and requireRole's own unconditional
 // super_admin fast-path, so it never belongs in a scope-roles array).
-const PAYROLL_READ_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
+const PAYROLL_READ_SCOPE_ROLES = [
+  "hr",
+  "finance",
+  "payroll",
+  "finance_head",
+  "payroll_head",
+  "payroll_admin",
+];
 
 // `ceo` removed 31-Jul-2026 (CEO UAT, Critical).
 //
@@ -53,93 +63,142 @@ const PAYROLL_READ_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", "p
 // with any of the newly-added roles (verified live), and this list has no effect on
 // allowCeoAllRead regardless (that flag keys off the caller's own role set, not this
 // array — see shared/scopeAccess.ts).
-router.get("/runs", requireRole(
-  "admin", "super_admin", "hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin",
-), h(async (req, res) => {
-  const scoped = await buildScopeWhereClause(
-    req.authUser!.id,
-    PAYROLL_READ_SCOPE_ROLES,
-    {
-      branchId: "spr.branch_id",
-      processId: "spr.process_id",
-    },
-    { allowAdminBypass: true, allowCeoAllRead: false },
-  );
-  (req as any).scopeFilter = scoped;
-  return c.listRuns(req, res);
-}));
+router.get(
+  "/runs",
+  requireRole(
+    "admin",
+    "super_admin",
+    "hr",
+    "finance",
+    "payroll",
+    "finance_head",
+    "payroll_head",
+    "payroll_admin",
+  ),
+  h(async (req, res) => {
+    const scoped = await buildScopeWhereClause(
+      req.authUser!.id,
+      PAYROLL_READ_SCOPE_ROLES,
+      {
+        branchId: "spr.branch_id",
+        processId: "spr.process_id",
+      },
+      { allowAdminBypass: true, allowCeoAllRead: false },
+    );
+    (req as any).scopeFilter = scoped;
+    return c.listRuns(req, res);
+  }),
+);
 
 // `ceo` removed — see the note on /runs above. This one is the more sensitive of
 // the pair: it returns employee-level gross, net and deductions. Role list widened
 // 2026-08-14 for the same reason as /runs above.
-router.get("/records", requireRole(
-  "admin", "super_admin", "hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin",
-), h(async (req, res) => {
-  const scoped = await buildScopeWhereClause(
-    req.authUser!.id,
-    PAYROLL_READ_SCOPE_ROLES,
-    {
-      branchId: "e.branch_id",
-      processId: "e.process_id",
-    },
-    { allowAdminBypass: true, allowCeoAllRead: false },
-  );
-
-  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-  const limit = Math.min(Math.max(1, Number(req.query.limit ?? 50) || 50), 1000);
-  const offset = (page - 1) * limit;
-  const conds: string[] = [];
-  const params: unknown[] = [];
-
-  if (req.query.runMonth) { conds.push("spr.run_month = ?"); params.push(String(req.query.runMonth)); }
-  if (req.query.status) {
-    const normalizedStatus = String(req.query.status).trim().toLowerCase();
-    if (normalizedStatus === "paid") {
-      conds.push("LOWER(COALESCE(spr.status, '')) IN ('disbursed', 'finalized', 'finalised', 'paid')");
-    } else if (normalizedStatus === "processing") {
-      conds.push("(LOWER(COALESCE(spr.status, '')) IN ('processing', 'reviewed', 'approved', 'locked') OR LOWER(COALESCE(spl.status, '')) = 'calculated')");
-    } else if (normalizedStatus === "pending") {
-      conds.push("(LOWER(COALESCE(spr.status, '')) NOT IN ('disbursed', 'finalized', 'finalised', 'paid', 'processing', 'reviewed', 'approved', 'locked') AND LOWER(COALESCE(spl.status, '')) <> 'calculated')");
-    } else {
-      conds.push("(LOWER(COALESCE(spr.status, '')) = ? OR LOWER(COALESCE(spl.status, '')) = ?)");
-      params.push(normalizedStatus, normalizedStatus);
-    }
-  }
-  if (req.query.branchId) { conds.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
-  if (req.query.processId) { conds.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-  if (req.query.departmentId) { conds.push("e.department_id = ?"); params.push(String(req.query.departmentId)); }
-  if (req.query.costCentreId || req.query.costCenterId) {
-    conds.push("e.cost_centre_id = ?");
-    params.push(String(req.query.costCentreId ?? req.query.costCenterId));
-  }
-  if (req.query.search) {
-    const escaped = String(req.query.search).replace(/[%_\\]/g, ch => "\\" + ch);
-    conds.push(
-      "(e.employee_code LIKE ? ESCAPE '\\\\' OR e.full_name LIKE ? ESCAPE '\\\\' OR e.email LIKE ? ESCAPE '\\\\'" +
-      " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ? ESCAPE '\\\\')"
+router.get(
+  "/records",
+  requireRole(
+    "admin",
+    "super_admin",
+    "hr",
+    "finance",
+    "payroll",
+    "finance_head",
+    "payroll_head",
+    "payroll_admin",
+  ),
+  h(async (req, res) => {
+    const scoped = await buildScopeWhereClause(
+      req.authUser!.id,
+      PAYROLL_READ_SCOPE_ROLES,
+      {
+        branchId: "e.branch_id",
+        processId: "e.process_id",
+      },
+      { allowAdminBypass: true, allowCeoAllRead: false },
     );
-    const s = `%${escaped}%`;
-    params.push(s, s, s, s);
-  }
 
-  const scopeClause = String(scoped.sql).replace(/^WHERE\s+/i, "").trim();
-  if (scopeClause) {
-    conds.push(`(${scopeClause})`);
-    params.push(...(scoped.params || []));
-  }
+    const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+    const limit = Math.min(
+      Math.max(1, Number(req.query.limit ?? 50) || 50),
+      1000,
+    );
+    const offset = (page - 1) * limit;
+    const conds: string[] = [];
+    const params: unknown[] = [];
 
-  // Guards its sibling endpoints already apply but this one never did: listRuns excludes
-  // synthetic creators (payroll.service.ts) and /analytics excludes cancelled runs. Without
-  // them a cancelled or test-auto-gen run competes in the ROW_NUMBER ranking above and can
-  // supply the amounts a user reads as this month's payroll.
-  conds.push("LOWER(COALESCE(spr.status, '')) <> 'cancelled'");
-  conds.push(
-    `(spr.created_by IS NULL OR spr.created_by NOT IN (${SYNTHETIC_RUN_CREATORS.map(() => "?").join(",")}))`
-  );
-  params.push(...SYNTHETIC_RUN_CREATORS);
+    if (req.query.runMonth) {
+      conds.push("spr.run_month = ?");
+      params.push(String(req.query.runMonth));
+    }
+    if (req.query.status) {
+      const normalizedStatus = String(req.query.status).trim().toLowerCase();
+      if (normalizedStatus === "paid") {
+        conds.push(
+          "LOWER(COALESCE(spr.status, '')) IN ('disbursed', 'finalized', 'finalised', 'paid')",
+        );
+      } else if (normalizedStatus === "processing") {
+        conds.push(
+          "(LOWER(COALESCE(spr.status, '')) IN ('processing', 'reviewed', 'approved', 'locked') OR LOWER(COALESCE(spl.status, '')) = 'calculated')",
+        );
+      } else if (normalizedStatus === "pending") {
+        conds.push(
+          "(LOWER(COALESCE(spr.status, '')) NOT IN ('disbursed', 'finalized', 'finalised', 'paid', 'processing', 'reviewed', 'approved', 'locked') AND LOWER(COALESCE(spl.status, '')) <> 'calculated')",
+        );
+      } else {
+        conds.push(
+          "(LOWER(COALESCE(spr.status, '')) = ? OR LOWER(COALESCE(spl.status, '')) = ?)",
+        );
+        params.push(normalizedStatus, normalizedStatus);
+      }
+    }
+    if (req.query.branchId) {
+      conds.push("e.branch_id = ?");
+      params.push(String(req.query.branchId));
+    }
+    if (req.query.processId) {
+      conds.push("e.process_id = ?");
+      params.push(String(req.query.processId));
+    }
+    if (req.query.departmentId) {
+      conds.push("e.department_id = ?");
+      params.push(String(req.query.departmentId));
+    }
+    if (req.query.costCentreId || req.query.costCenterId) {
+      conds.push("e.cost_centre_id = ?");
+      params.push(String(req.query.costCentreId ?? req.query.costCenterId));
+    }
+    if (req.query.search) {
+      const escaped = String(req.query.search).replace(
+        /[%_\\]/g,
+        (ch) => "\\" + ch,
+      );
+      conds.push(
+        "(e.employee_code LIKE ? ESCAPE '\\\\' OR e.full_name LIKE ? ESCAPE '\\\\' OR e.email LIKE ? ESCAPE '\\\\'" +
+          " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ? ESCAPE '\\\\')",
+      );
+      const s = `%${escaped}%`;
+      params.push(s, s, s, s);
+    }
 
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const baseQuery = `
+    const scopeClause = String(scoped.sql)
+      .replace(/^WHERE\s+/i, "")
+      .trim();
+    if (scopeClause) {
+      conds.push(`(${scopeClause})`);
+      params.push(...(scoped.params || []));
+    }
+
+    // Guards its sibling endpoints already apply but this one never did: listRuns excludes
+    // synthetic creators (payroll.service.ts) and /analytics excludes cancelled runs. Without
+    // them a cancelled or test-auto-gen run competes in the ROW_NUMBER ranking above and can
+    // supply the amounts a user reads as this month's payroll.
+    conds.push("LOWER(COALESCE(spr.status, '')) <> 'cancelled'");
+    conds.push(
+      `(spr.created_by IS NULL OR spr.created_by NOT IN (${SYNTHETIC_RUN_CREATORS.map(() => "?").join(",")}))`,
+    );
+    params.push(...SYNTHETIC_RUN_CREATORS);
+
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    const baseQuery = `
     FROM (
       SELECT spl.id,
              spl.run_id,
@@ -191,18 +250,28 @@ router.get("/records", requireRole(
     ) ranked
     WHERE ranked.rn = 1`;
 
-  // Page and total are independent reads: issue together.
-  const [[rows], [countRows]] = await Promise.all([
-    db.execute<RowDataPacket[]>(
-      `SELECT * ${baseQuery}
+    // Page and total are independent reads: issue together.
+    const [[rows], [countRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT * ${baseQuery}
       ORDER BY run_month DESC, employee_code ASC
       LIMIT ${limit} OFFSET ${offset}`,
-      params,
-    ),
-    db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${baseQuery}`, params),
-  ]);
+        params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total ${baseQuery}`,
+        params,
+      ),
+    ]);
 
-  return res.json({ success: true, data: rows, total: Number(countRows[0]?.total ?? 0), page, limit });
-}));
+    return res.json({
+      success: true,
+      data: rows,
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      limit,
+    });
+  }),
+);
 
 export { router as payrollSecureRouter };

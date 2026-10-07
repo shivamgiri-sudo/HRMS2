@@ -13,7 +13,9 @@ import type { ScanInput, StaticScanResult } from "../uat-pipeline.types.js";
  * mechanism by which the registry gets better rather than just older.
  */
 
-function scan(partial: Partial<ScanInput> & { title: string; text: string }): StaticScanResult {
+function scan(
+  partial: Partial<ScanInput> & { title: string; text: string },
+): StaticScanResult {
   return runStaticScan({
     feedbackId: "fixture",
     pageRoute: null,
@@ -38,7 +40,9 @@ describe("historical defects — the risk model would have caught these", () => 
       text: "The payable days figure in the P&L report is different from what payroll calculated for the same month. Looks like holidays and week-offs are not counted the same way.",
     });
     expect(r.effectiveRisk).toBe("deny");
-    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain("payroll_calculation");
+    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain(
+      "payroll_calculation",
+    );
   });
 
   it("CLOSED_RUN_STATUSES mismatch hiding finalized payroll runs -> deny", () => {
@@ -57,7 +61,9 @@ describe("historical defects — the risk model would have caught these", () => 
       text: "Employees on the night shift punch in at 00:05 and the system rejects the punch as an invalid time.",
     });
     expect(r.effectiveRisk).toBe("deny");
-    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain("attendance_classification");
+    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain(
+      "attendance_classification",
+    );
   });
 
   it("branch role union failing open on access checks -> deny via auth", () => {
@@ -90,12 +96,14 @@ describe("the case a path-only model misses", () => {
 
     expect(
       r.protectedHits.filter((h) => h.tier === "deny"),
-      "fixture is only meaningful if no deny-tier PATH matches"
+      "fixture is only meaningful if no deny-tier PATH matches",
     ).toEqual([]);
 
     expect(r.capabilityClass).toBe("HIGH_REVIEW");
     expect(r.effectiveRisk).toBe("review");
-    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain("leave_entitlement");
+    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain(
+      "leave_entitlement",
+    );
     expect(r.requiredApproverRoles).toContain("UAT_DOMAIN_OWNER_HR");
   });
 
@@ -105,7 +113,9 @@ describe("the case a path-only model misses", () => {
       text: "The roster shows my week off on Tuesday but it was published as Sunday.",
     });
     expect(r.capabilityClass).toBe("HIGH_REVIEW");
-    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain("roster_shift");
+    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain(
+      "roster_shift",
+    );
   });
 });
 
@@ -133,11 +143,13 @@ describe("a user's own labelling cannot lower the verdict", () => {
     const r = scan({
       title: "Small display issue",
       text: "The PF deduction amount on the payslip is showing the wrong figure.",
-      moduleHint: "visitor",          // user picked the wrong module
+      moduleHint: "visitor", // user picked the wrong module
       pageRoute: "/visitor-management",
     });
     expect(r.effectiveRisk).toBe("deny");
-    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain("payroll_calculation");
+    expect(r.capabilityHits.map((h) => h.capabilityKey)).toContain(
+      "payroll_calculation",
+    );
   });
 });
 
@@ -155,12 +167,18 @@ describe("scan output is reproducible and explains itself", () => {
       text: "Gratuity paid on exit was calculated on the wrong number of years.",
     });
     expect(r.effectiveRisk).toBe("deny");
-    expect(r.blockedReason, "a blocked request must tell the submitter why").toBeTruthy();
+    expect(
+      r.blockedReason,
+      "a blocked request must tell the submitter why",
+    ).toBeTruthy();
     expect(r.blockedReason!.length).toBeGreaterThan(20);
   });
 
   it("a non-blocked scan carries no blockedReason", () => {
-    const r = scan({ title: "Tooltip please", text: "Add a tooltip to the label." });
+    const r = scan({
+      title: "Tooltip please",
+      text: "Add a tooltip to the label.",
+    });
     expect(r.blockedReason).toBeNull();
   });
 
@@ -171,7 +189,10 @@ describe("scan output is reproducible and explains itself", () => {
     });
     for (const h of r.capabilityHits) {
       expect(["path", "table", "keyword"]).toContain(h.signal);
-      expect(h.matchedToken, `hit on ${h.capabilityKey} has no matched token`).toBeTruthy();
+      expect(
+        h.matchedToken,
+        `hit on ${h.capabilityKey} has no matched token`,
+      ).toBeTruthy();
     }
   });
 });

@@ -1,5 +1,5 @@
-import mysql from 'mysql2/promise';
-import { env } from '../config/env.js';
+import mysql from "mysql2/promise";
+import { env } from "../config/env.js";
 
 // External ticketing system behind the Molecular Email / Reginald Men Email
 // dashboards. Same host and credentials for both dashboards — only the
@@ -8,7 +8,7 @@ import { env } from '../config/env.js';
 // aggregates out of it.
 const pools = new Map<string, mysql.Pool>();
 
-export type EmailTicketSource = 'db_email' | 'molecular_db_email';
+export type EmailTicketSource = "db_email" | "molecular_db_email";
 
 function buildConfig(database: EmailTicketSource): mysql.PoolOptions {
   return {
@@ -21,31 +21,38 @@ function buildConfig(database: EmailTicketSource): mysql.PoolOptions {
     connectionLimit: 3,
     queueLimit: 0,
     connectTimeout: 15000,
-    timezone: '+05:30',
+    timezone: "+05:30",
     // DATE(...)-truncated GROUP BY output comes back as a plain 'YYYY-MM-DD'
     // string instead of a JS Date — see hrms2-dialler-db-no-datestrings memory:
     // slicing a Date's toISOString() shifts the day across a UTC boundary.
     dateStrings: true,
     connectAttributes: {
-      program_name: 'HRMS_ReadOnly_MolecularEmail',
+      program_name: "HRMS_ReadOnly_MolecularEmail",
     },
   };
 }
 
-export async function getMolecularEmailPool(database: EmailTicketSource): Promise<mysql.Pool> {
+export async function getMolecularEmailPool(
+  database: EmailTicketSource,
+): Promise<mysql.Pool> {
   let pool = pools.get(database);
   if (!pool) {
     pool = mysql.createPool(buildConfig(database));
     pools.set(database, pool);
     try {
       const conn = await pool.getConnection();
-      await conn.query('SET SESSION TRANSACTION READ ONLY');
+      await conn.query("SET SESSION TRANSACTION READ ONLY");
       conn.release();
-      console.log(`[MOLECULAR_EMAIL] Connected to ${env.MOLECULAR_EMAIL_DB_HOST}:${env.MOLECULAR_EMAIL_DB_PORT}/${database} (READ-ONLY)`);
+      console.log(
+        `[MOLECULAR_EMAIL] Connected to ${env.MOLECULAR_EMAIL_DB_HOST}:${env.MOLECULAR_EMAIL_DB_PORT}/${database} (READ-ONLY)`,
+      );
     } catch (error: unknown) {
       pools.delete(database);
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[MOLECULAR_EMAIL] Connection failed for ${database}:`, message);
+      console.error(
+        `[MOLECULAR_EMAIL] Connection failed for ${database}:`,
+        message,
+      );
       throw error;
     }
   }

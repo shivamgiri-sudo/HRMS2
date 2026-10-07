@@ -52,24 +52,24 @@ import { finalizeKitEsign } from "../src/modules/employees/joiningKitDispatch.se
 // ── Data models ───────────────────────────────────────────────────────────────
 
 export type KitClassification =
-  | "closed"                               // R3.3, R3.4 — finalizeKitEsign ran
-  | "left_untouched"                       // R3.5 — provider reports unsigned, zero writes
-  | "already_closed"                       // R3.8 — no provider call
-  | "unresolvable_no_provider_reference"   // R3.7 — no provider call, not an error
-  | "error";                               // per-kit throw, message reported, run continues
+  | "closed" // R3.3, R3.4 — finalizeKitEsign ran
+  | "left_untouched" // R3.5 — provider reports unsigned, zero writes
+  | "already_closed" // R3.8 — no provider call
+  | "unresolvable_no_provider_reference" // R3.7 — no provider call, not an error
+  | "error"; // per-kit throw, message reported, run continues
 
 export interface BackfillReportEntry {
   employee_code: string;
   dispatch_date: string;
   provider_reference: string | null;
-  provider_status: string | null;          // null where no call was made
+  provider_status: string | null; // null where no call was made
   classification: KitClassification;
   documents_closed: number;
-  note: string;                            // carries completedAtSource, or the error message
+  note: string; // carries completedAtSource, or the error message
 }
 
 export interface BackfillReport {
-  entries: BackfillReportEntry[];          // exactly one per selected kit
+  entries: BackfillReportEntry[]; // exactly one per selected kit
   totals: Record<KitClassification, number>;
   providerCalls: { status: number; download: number };
 }
@@ -124,7 +124,10 @@ type StrandedKitRow = {
   tx_status: string | null;
 };
 
-async function selectStrandedKits(db: Pool, kitIds?: string[]): Promise<StrandedKitRow[]> {
+async function selectStrandedKits(
+  db: Pool,
+  kitIds?: string[],
+): Promise<StrandedKitRow[]> {
   const restrict = kitIds?.length
     ? ` AND k.id IN (${kitIds.map(() => "?").join(", ")})`
     : "";
@@ -210,7 +213,10 @@ async function auditExaminedUnsigned(
         row.employee_id,
         // The state found and deliberately left alone, so the remediation stays
         // reviewable against what it saw rather than against what it changed.
-        JSON.stringify({ kit: { status: row.kit_status }, checklist: observedChecklist }),
+        JSON.stringify({
+          kit: { status: row.kit_status },
+          checklist: observedChecklist,
+        }),
         JSON.stringify({
           kitId: row.kit_id,
           examined: true,
@@ -226,7 +232,9 @@ async function auditExaminedUnsigned(
     return null;
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    console.warn(`[backfill] audit row not written for kit ${row.kit_id}: ${message}`);
+    console.warn(
+      `[backfill] audit row not written for kit ${row.kit_id}: ${message}`,
+    );
     return message;
   }
 }
@@ -251,7 +259,10 @@ async function observeChecklist(db: Pool, kitId: string): Promise<unknown> {
 // ── The runner ────────────────────────────────────────────────────────────────
 
 export async function runBackfill(deps: {
-  client: Pick<typeof luckpayClient, "checkESignStatus" | "downloadESignDocument">;
+  client: Pick<
+    typeof luckpayClient,
+    "checkESignStatus" | "downloadESignDocument"
+  >;
   db: Pool;
   actorUserId: string;
   confirm: boolean;
@@ -272,11 +283,15 @@ export async function runBackfill(deps: {
    * would be unmeasured.
    */
   const countingClient = {
-    async checkESignStatus(ref: Parameters<typeof deps.client.checkESignStatus>[0]) {
+    async checkESignStatus(
+      ref: Parameters<typeof deps.client.checkESignStatus>[0],
+    ) {
       providerCalls.status += 1;
       return deps.client.checkESignStatus(ref);
     },
-    async downloadESignDocument(ref: Parameters<typeof deps.client.downloadESignDocument>[0]) {
+    async downloadESignDocument(
+      ref: Parameters<typeof deps.client.downloadESignDocument>[0],
+    ) {
       providerCalls.download += 1;
       return deps.client.downloadESignDocument(ref);
     },
@@ -315,7 +330,11 @@ export async function runBackfill(deps: {
 
       // R3.7 — nothing to poll with. Not an error, and no billed call.
       const providerReference = row.provider_reference_id?.trim() ?? "";
-      if (!row.tx_id || !providerReference || !POLLABLE_PROVIDER_REFERENCE.test(providerReference)) {
+      if (
+        !row.tx_id ||
+        !providerReference ||
+        !POLLABLE_PROVIDER_REFERENCE.test(providerReference)
+      ) {
         entry.classification = "unresolvable_no_provider_reference";
         entry.note = !row.tx_id
           ? "no kit-scope luckpay transaction row; no provider call"
@@ -359,7 +378,9 @@ export async function runBackfill(deps: {
       // did not, completedAt stays null, finalizeKitEsign's COALESCE(?, NOW())
       // uses the run time, and the note says so rather than disguising it.
       const providerCompletedAt = extractProviderCompletedAt(status.sanitized);
-      const completedAtSource = providerCompletedAt ? "provider" : "backfill_run_time";
+      const completedAtSource = providerCompletedAt
+        ? "provider"
+        : "backfill_run_time";
 
       if (!deps.confirm) {
         // Dry run reports the provider's verdict — what a confirmed run would
@@ -380,7 +401,10 @@ export async function runBackfill(deps: {
         // remediation is distinguishable by value rather than by timestamp
         // (R12.1, R12.2). old_value there retains the pre-backfill status of the
         // kit and of every member checklist row (R12.5).
-        backfill: { actorUserId: deps.actorUserId, providerReferenceId: providerReference },
+        backfill: {
+          actorUserId: deps.actorUserId,
+          providerReferenceId: providerReference,
+        },
         client: countingClient,
       });
 
@@ -389,7 +413,9 @@ export async function runBackfill(deps: {
       entry.note =
         `completedAtSource=${completedAtSource}` +
         (result.artefactRetrieved ? "" : "; signed artefact not retrieved") +
-        (result.placementOk ? "" : "; signature placement outside reserved band");
+        (result.placementOk
+          ? ""
+          : "; signature placement outside reserved band");
     } catch (e) {
       // A single bad kit must not abandon the other 25 before the window closes.
       entry.classification = "error";
@@ -399,7 +425,10 @@ export async function runBackfill(deps: {
   }
 
   const totals = Object.fromEntries(
-    CLASSIFICATIONS.map((c) => [c, entries.filter((e) => e.classification === c).length]),
+    CLASSIFICATIONS.map((c) => [
+      c,
+      entries.filter((e) => e.classification === c).length,
+    ]),
   ) as Record<KitClassification, number>;
 
   return { entries, totals, providerCalls };
@@ -441,7 +470,10 @@ const COLUMNS = [
   "note",
 ] as const;
 
-function cell(entry: BackfillReportEntry, column: (typeof COLUMNS)[number]): string {
+function cell(
+  entry: BackfillReportEntry,
+  column: (typeof COLUMNS)[number],
+): string {
   const value = entry[column];
   return value === null || value === undefined ? "" : String(value);
 }
@@ -454,15 +486,26 @@ export function toCsv(report: BackfillReport): string {
   return (
     [
       COLUMNS.join(","),
-      ...report.entries.map((e) => COLUMNS.map((c) => csvField(cell(e, c))).join(",")),
+      ...report.entries.map((e) =>
+        COLUMNS.map((c) => csvField(cell(e, c))).join(","),
+      ),
     ].join("\n") + "\n"
   );
 }
 
 export function renderTable(report: BackfillReport): string {
-  const rows = [COLUMNS as unknown as string[], ...report.entries.map((e) => COLUMNS.map((c) => cell(e, c)))];
-  const widths = COLUMNS.map((_, i) => Math.max(...rows.map((r) => r[i].length)));
-  const line = (r: string[]) => r.map((v, i) => v.padEnd(widths[i])).join("  ").trimEnd();
+  const rows = [
+    COLUMNS as unknown as string[],
+    ...report.entries.map((e) => COLUMNS.map((c) => cell(e, c))),
+  ];
+  const widths = COLUMNS.map((_, i) =>
+    Math.max(...rows.map((r) => r[i].length)),
+  );
+  const line = (r: string[]) =>
+    r
+      .map((v, i) => v.padEnd(widths[i]))
+      .join("  ")
+      .trimEnd();
   return [
     line(rows[0]),
     widths.map((w) => "-".repeat(w)).join("  "),
@@ -470,7 +513,11 @@ export function renderTable(report: BackfillReport): string {
   ].join("\n");
 }
 
-function printReport(report: BackfillReport, confirm: boolean, reportPath: string | null): void {
+function printReport(
+  report: BackfillReport,
+  confirm: boolean,
+  reportPath: string | null,
+): void {
   console.log(`\nExamined ${report.entries.length} kit(s).\n`);
   if (report.entries.length) console.log(renderTable(report));
 
@@ -483,7 +530,9 @@ function printReport(report: BackfillReport, confirm: boolean, reportPath: strin
       ` (upper bound one status and one download per kit).`,
   );
   if (!confirm) {
-    console.log("\nDRY RUN — nothing was written. Re-run with --confirm to act.");
+    console.log(
+      "\nDRY RUN — nothing was written. Re-run with --confirm to act.",
+    );
   }
 
   if (reportPath) {
@@ -545,11 +594,17 @@ async function main(): Promise<void> {
   }
 
   const { db } = await import("../src/db/mysql.js");
-  const { luckpayClient } = await import("../src/modules/integrations/luckpay/luckpay.client.js");
+  const { luckpayClient } =
+    await import("../src/modules/integrations/luckpay/luckpay.client.js");
 
-  console.log(args.confirm ? "MODE: CONFIRMED (writes)" : "MODE: DRY RUN (status calls only, no writes)");
+  console.log(
+    args.confirm
+      ? "MODE: CONFIRMED (writes)"
+      : "MODE: DRY RUN (status calls only, no writes)",
+  );
   console.log(`Actor: ${args.actorUserId}`);
-  if (args.kitIds.length) console.log(`Restricted to ${args.kitIds.length} kit id(s).`);
+  if (args.kitIds.length)
+    console.log(`Restricted to ${args.kitIds.length} kit id(s).`);
 
   try {
     const report = await runBackfill({
@@ -575,7 +630,10 @@ async function main(): Promise<void> {
 
 // Only when run directly, so the module can be imported by tests without
 // opening a pool or reading argv.
-if (process.argv[1] && /backfill-stranded-joining-kits\.(ts|js)$/.test(process.argv[1])) {
+if (
+  process.argv[1] &&
+  /backfill-stranded-joining-kits\.(ts|js)$/.test(process.argv[1])
+) {
   main().catch((e) => {
     console.error(e);
     process.exit(1);

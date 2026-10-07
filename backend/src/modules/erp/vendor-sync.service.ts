@@ -29,7 +29,17 @@ interface BillVendorRow {
   TDSEnabled: number | null;
 }
 
-const PLACEHOLDERS = new Set(["na", "n/a", "n.a.", "-", "--", "nil", "none", "null", ""]);
+const PLACEHOLDERS = new Set([
+  "na",
+  "n/a",
+  "n.a.",
+  "-",
+  "--",
+  "nil",
+  "none",
+  "null",
+  "",
+]);
 function blankToNull(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const s = String(value).trim();
@@ -48,7 +58,7 @@ export async function syncVendorsFromDbBill(): Promise<{
   skipped: number;
 }> {
   const billRows = await billQuery<BillVendorRow>(
-    "SELECT Id, vendor, TallyHead, state, pincode, TDS, TDSSection, TDSEnabled FROM tbl_vendormaster"
+    "SELECT Id, vendor, TallyHead, state, pincode, TDS, TDSSection, TDSEnabled FROM tbl_vendormaster",
   );
 
   if (billRows.length === 0) {
@@ -57,10 +67,10 @@ export async function syncVendorsFromDbBill(): Promise<{
 
   // Build the set of db_bill IDs already in mas_hrms so we can skip them quickly.
   const [existingRows] = await db.execute<RowDataPacket[]>(
-    "SELECT vendor_code FROM vendor_master WHERE vendor_code LIKE 'DB_BILL_%'"
+    "SELECT vendor_code FROM vendor_master WHERE vendor_code LIKE 'DB_BILL_%'",
   );
   const existingCodes = new Set<string>(
-    (existingRows as RowDataPacket[]).map((r) => String(r.vendor_code))
+    (existingRows as RowDataPacket[]).map((r) => String(r.vendor_code)),
   );
 
   let inserted = 0;
@@ -81,22 +91,32 @@ export async function syncVendorsFromDbBill(): Promise<{
       continue;
     }
 
-    const tallyName   = blankToNull(row.TallyHead);
-    const state       = blankToNull(row.state);
-    const pinCode     = blankToNull(row.pincode);
-    const tdsRate     = ratioToNull(row.TDS);
-    const tdsEnabled  = Number(row.TDSEnabled) === 1 ? 1 : 0;
-    const rawSection  = blankToNull(row.TDSSection);
+    const tallyName = blankToNull(row.TallyHead);
+    const state = blankToNull(row.state);
+    const pinCode = blankToNull(row.pincode);
+    const tdsRate = ratioToNull(row.TDS);
+    const tdsEnabled = Number(row.TDSEnabled) === 1 ? 1 : 0;
+    const rawSection = blankToNull(row.TDSSection);
     // Truncate to 20 chars — the column is VARCHAR(20). The backfill script normalises
     // the free-text further; here we just store it so Finance can review and correct.
-    const tdsSection  = rawSection ? rawSection.slice(0, 20) : null;
+    const tdsSection = rawSection ? rawSection.slice(0, 20) : null;
 
     await db.execute(
       `INSERT INTO vendor_master
          (id, vendor_code, vendor_name, vendor_type, tally_name, state, pin_code,
           tds_rate, tds_enabled, tds_section, is_active)
        VALUES (?, ?, ?, 'supplier', ?, ?, ?, ?, ?, ?, 1)`,
-      [randomUUID(), vendorCode, vendorName, tallyName, state, pinCode, tdsRate, tdsEnabled, tdsSection]
+      [
+        randomUUID(),
+        vendorCode,
+        vendorName,
+        tallyName,
+        state,
+        pinCode,
+        tdsRate,
+        tdsEnabled,
+        tdsSection,
+      ],
     );
 
     inserted += 1;

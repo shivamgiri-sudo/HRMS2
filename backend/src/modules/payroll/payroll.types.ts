@@ -3,8 +3,8 @@ export interface SalaryStructure {
   structure_code: string;
   structure_name: string;
   description: string | null;
-  basic_pct: number;   // % of gross CTC for Basic (default 40)
-  hra_pct: number;     // % of gross CTC for HRA (default 20)
+  basic_pct: number; // % of gross CTC for Basic (default 40)
+  hra_pct: number; // % of gross CTC for HRA (default 20)
   active_status: number;
   created_at: string;
 }
@@ -124,8 +124,8 @@ export interface NetSalaryResult {
   pf_employer_epf: number; // 3.67% of pfBase
   pf_employer_eps: number; // 8.33% of min(Basic, EPS wage ceiling ₹15000)
   esic_employer: number;
-  gratuity: number;        // 4.81% of Basic (employer cost)
-  ctc_monthly: number;     // gross + employer PF + employer ESIC + gratuity
+  gratuity: number; // 4.81% of Basic (employer cost)
+  ctc_monthly: number; // gross + employer PF + employer ESIC + gratuity
 }
 
 export interface NetSalaryParams {
@@ -135,21 +135,21 @@ export interface NetSalaryParams {
   pfEmployeePct: number;
   esicEmployeePct: number;
   esicWageLimit: number;
-  pfWageLimit: number;     // statutory PF wage ceiling (₹15,000)
+  pfWageLimit: number; // statutory PF wage ceiling (₹15,000)
   professionalTax: number;
   tds: number;
-  basicPct: number;        // % of gross CTC allocated to Basic (default 40)
-  hraPct: number;          // % of gross CTC allocated to HRA (default 20)
+  basicPct: number; // % of gross CTC allocated to Basic (default 40)
+  hraPct: number; // % of gross CTC allocated to HRA (default 20)
   allowances?: SalaryAllowance[]; // variable pay: night shift, incentives, etc.
-  pfOptOut?: boolean;      // true = employee voluntarily opted out of PF deduction
-  esicOptOut?: boolean;    // true = employee voluntarily opted out of ESI deduction
+  pfOptOut?: boolean; // true = employee voluntarily opted out of PF deduction
+  esicOptOut?: boolean; // true = employee voluntarily opted out of ESI deduction
   // true = employee was covered by ESI at the start of their current contribution
   // period (Apr-Sep / Oct-Mar) and must stay covered even though this month's
   // gross has since crossed esicWageLimit (ESI Act s.2(6A)/Reg 3). Independent
   // of esicOptOut — opt-out always wins over continuity.
   esicContinuityOverride?: boolean;
   esicEmployerPct?: number; // employer ESIC % of gross (default 3.25, from statutory_config)
-  gratuityPct?: number;    // employer gratuity provision % of basic (default 4.81)
+  gratuityPct?: number; // employer gratuity provision % of basic (default 4.81)
 }
 
 export interface PaginatedResult<T> {

@@ -28,7 +28,9 @@ const PERIOD_RE = /^\d{4}-\d{2}$/;
 export class FuturePeriodError extends Error {
   statusCode = 400;
   constructor(period: string, currentPeriod: string) {
-    super(`period ${period} has not happened yet (current period is ${currentPeriod}) — a P&L cannot be computed for a month that has not started`);
+    super(
+      `period ${period} has not happened yet (current period is ${currentPeriod}) — a P&L cannot be computed for a month that has not started`,
+    );
     this.name = "FuturePeriodError";
   }
 }
@@ -50,5 +52,6 @@ export function isFuturePeriod(period: string): boolean {
  *  their own "malformed period" handling should validate the YYYY-MM shape first — this function
  *  is silent (no-op) on a non-YYYY-MM string so it never masks that separate validation. */
 export function assertNotFuturePeriod(period: string): void {
-  if (isFuturePeriod(period)) throw new FuturePeriodError(period, currentPeriod());
+  if (isFuturePeriod(period))
+    throw new FuturePeriodError(period, currentPeriod());
 }

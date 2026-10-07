@@ -22,11 +22,16 @@ function build(sheets: Record<string, unknown[][]>): XLSX.WorkBook {
   for (const [name, rows] of Object.entries(sheets)) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
   }
-  return XLSX.read(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
+  return XLSX.read(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }), {
+    type: "buffer",
+  });
 }
 
 const readRows = (wb: XLSX.WorkBook, name: string): unknown[][] =>
-  XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "" }) as unknown[][];
+  XLSX.utils.sheet_to_json(wb.Sheets[name], {
+    header: 1,
+    defval: "",
+  }) as unknown[][];
 
 /** A sheet that looks like a roster: identity columns plus several dated columns. */
 const ROSTER_ROWS: unknown[][] = [
@@ -45,10 +50,12 @@ const PLANNING_ROWS: unknown[][] = [
 /** Mirrors the importer's scan: first sheet, then every other sheet until one has a header row. */
 function pickRosterSheet(wb: XLSX.WorkBook): { sheetName: string | null } {
   const first = wb.SheetNames[0];
-  if (analyzeHeaders(readRows(wb, first)).headerRowIndex !== -1) return { sheetName: first };
+  if (analyzeHeaders(readRows(wb, first)).headerRowIndex !== -1)
+    return { sheetName: first };
   for (const name of wb.SheetNames) {
     if (name === first) continue;
-    if (analyzeHeaders(readRows(wb, name)).headerRowIndex !== -1) return { sheetName: name };
+    if (analyzeHeaders(readRows(wb, name)).headerRowIndex !== -1)
+      return { sheetName: name };
   }
   return { sheetName: null };
 }
@@ -87,7 +94,13 @@ describe("roster import — sheet selection", () => {
     const wb = build({
       Planning: PLANNING_ROWS,
       Roster: [
-        ["Emp Code", "Name", new Date("2026-08-01"), new Date("2026-08-02"), new Date("2026-08-03")],
+        [
+          "Emp Code",
+          "Name",
+          new Date("2026-08-01"),
+          new Date("2026-08-02"),
+          new Date("2026-08-03"),
+        ],
         ["MAS001", "A Person", "10:00 - 19:00", "WO", "10:00 - 19:00"],
       ],
     });
@@ -103,14 +116,22 @@ describe("roster import — the scan is load-bearing", () => {
     // was never even opened.
     const wb = build({ Planning: PLANNING_ROWS, Roster: ROSTER_ROWS });
     const firstSheetOnly = analyzeHeaders(readRows(wb, wb.SheetNames[0]));
-    expect(firstSheetOnly.headerRowIndex, "first sheet must NOT look like a roster").toBe(-1);
-    expect(pickRosterSheet(wb).sheetName, "the scan must still find it").toBe("Roster");
+    expect(
+      firstSheetOnly.headerRowIndex,
+      "first sheet must NOT look like a roster",
+    ).toBe(-1);
+    expect(pickRosterSheet(wb).sheetName, "the scan must still find it").toBe(
+      "Roster",
+    );
   });
 
   it("the service scans beyond the first sheet", () => {
     // The behaviour above lives in createImportBatch, which needs a database to call. Assert the
     // scan exists in the source so this file cannot pass while the service regresses.
-    const src = readFileSync(resolve(__dirname, "../roster-import.service.ts"), "utf8");
+    const src = readFileSync(
+      resolve(__dirname, "../roster-import.service.ts"),
+      "utf8",
+    );
     expect(src).toMatch(/for \(const candidate of probe\.SheetNames\)/);
     // Detection is bounded to the header band: reading all sheets in full OOMs Node on a 7.6 MB
     // 12-tab workbook.

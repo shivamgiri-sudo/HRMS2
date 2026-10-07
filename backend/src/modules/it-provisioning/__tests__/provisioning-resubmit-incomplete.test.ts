@@ -54,10 +54,16 @@ describe("a partially-completed provisioning task can be completed", () => {
 
   it("persists structured fields unconditionally, not only on first submission", () => {
     const persistAt = handler.indexOf("persistStructuredFields(taskId, body)");
-    expect(persistAt, "persistStructuredFields must still be called").toBeGreaterThan(-1);
+    expect(
+      persistAt,
+      "persistStructuredFields must still be called",
+    ).toBeGreaterThan(-1);
 
     const guardAt = handler.indexOf("if (!alreadyActioned)");
-    expect(guardAt, "the alreadyActioned guard must still exist for the state transition").toBeGreaterThan(-1);
+    expect(
+      guardAt,
+      "the alreadyActioned guard must still exist for the state transition",
+    ).toBeGreaterThan(-1);
 
     expect(
       persistAt,
@@ -80,7 +86,9 @@ describe("a partially-completed provisioning task can be completed", () => {
   it("refuses a locked task before dispatching any master-data write", () => {
     const lockAt = handler.indexOf("taskRow.locked");
     const dispatchAt = handler.indexOf("await dispatchTaskCompletion");
-    expect(lockAt, "the handler must check the locked flag").toBeGreaterThan(-1);
+    expect(lockAt, "the handler must check the locked flag").toBeGreaterThan(
+      -1,
+    );
     expect(
       lockAt,
       "the lock check must precede dispatchTaskCompletion. Neither that function nor any of " +
@@ -116,7 +124,10 @@ describe("the provisioning queue offers a way back into an actioned request", ()
      * verified by mutation, which is how this assertion was caught being useless.
      */
     const actionAt = tracker.indexOf('openDialog(req, "action")');
-    expect(actionAt, 'the action button must still call openDialog(req, "action")').toBeGreaterThan(-1);
+    expect(
+      actionAt,
+      'the action button must still call openDialog(req, "action")',
+    ).toBeGreaterThan(-1);
     const gate = tracker.slice(Math.max(0, actionAt - 400), actionAt);
     expect(
       gate,

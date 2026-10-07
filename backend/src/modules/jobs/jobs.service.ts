@@ -6,7 +6,8 @@ import { db } from "../../db/mysql.js";
 
 export type JobType = "full_time" | "part_time" | "contract" | "internship";
 export type PostingStatus = "draft" | "active" | "paused" | "closed";
-export type WalkinStatus = "waiting" | "called" | "in_interview" | "completed" | "no_show";
+export type WalkinStatus =
+  "waiting" | "called" | "in_interview" | "completed" | "no_show";
 
 export interface JobPosting {
   id: string;
@@ -92,7 +93,7 @@ function generatePostingCode(seq: number): string {
 
 async function nextPostingCode(): Promise<string> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT posting_code FROM job_posting ORDER BY created_at DESC LIMIT 1"
+    "SELECT posting_code FROM job_posting ORDER BY created_at DESC LIMIT 1",
   );
   const last = (rows as { posting_code: string }[])[0]?.posting_code ?? null;
   const year = new Date().getFullYear();
@@ -105,7 +106,7 @@ async function nextPostingCode(): Promise<string> {
 async function nextTokenNumber(dateStr: string): Promise<string> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT COUNT(*) AS cnt FROM walkin_queue WHERE DATE(registered_at) = ?",
-    [dateStr]
+    [dateStr],
   );
   const cnt = (rows as { cnt: number }[])[0]?.cnt ?? 0;
   return `T${String(cnt + 1).padStart(3, "0")}`;
@@ -114,7 +115,6 @@ async function nextTokenNumber(dateStr: string): Promise<string> {
 // ─── Service ───────────────────────────────────────────────────────────────────
 
 export const jobsService = {
-
   // ── Job Postings ──────────────────────────────────────────────────────────
 
   async listPostings(filters: {
@@ -125,19 +125,31 @@ export const jobsService = {
     const conds: string[] = [];
     const params: unknown[] = [];
 
-    if (filters.status)     { conds.push("status = ?");     params.push(filters.status); }
-    if (filters.process_id) { conds.push("process_id = ?"); params.push(filters.process_id); }
-    if (filters.branch_id)  { conds.push("branch_id = ?");  params.push(filters.branch_id); }
+    if (filters.status) {
+      conds.push("status = ?");
+      params.push(filters.status);
+    }
+    if (filters.process_id) {
+      conds.push("process_id = ?");
+      params.push(filters.process_id);
+    }
+    if (filters.branch_id) {
+      conds.push("branch_id = ?");
+      params.push(filters.branch_id);
+    }
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM job_posting ${where} ORDER BY created_at DESC`,
-      params
+      params,
     );
     return rows as JobPosting[];
   },
 
-  async createPosting(input: CreatePostingInput, userId: string): Promise<JobPosting> {
+  async createPosting(
+    input: CreatePostingInput,
+    userId: string,
+  ): Promise<JobPosting> {
     const id = randomUUID();
     const code = await nextPostingCode();
 
@@ -166,35 +178,55 @@ export const jobsService = {
         input.posted_by ?? userId,
         input.status ?? "draft",
         input.closing_date ?? null,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM job_posting WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM job_posting WHERE id = ? LIMIT 1",
+      [id],
     );
     return (rows as JobPosting[])[0];
   },
 
-  async updatePosting(id: string, input: UpdatePostingInput): Promise<JobPosting> {
+  async updatePosting(
+    id: string,
+    input: UpdatePostingInput,
+  ): Promise<JobPosting> {
     const sets: string[] = [];
     const params: unknown[] = [];
 
-    if (input.status !== undefined)       { sets.push("status = ?");       params.push(input.status); }
-    if (input.title !== undefined)        { sets.push("title = ?");        params.push(input.title); }
-    if (input.description !== undefined)  { sets.push("description = ?");  params.push(input.description); }
-    if (input.vacancies !== undefined)    { sets.push("vacancies = ?");    params.push(input.vacancies); }
-    if (input.closing_date !== undefined) { sets.push("closing_date = ?"); params.push(input.closing_date); }
+    if (input.status !== undefined) {
+      sets.push("status = ?");
+      params.push(input.status);
+    }
+    if (input.title !== undefined) {
+      sets.push("title = ?");
+      params.push(input.title);
+    }
+    if (input.description !== undefined) {
+      sets.push("description = ?");
+      params.push(input.description);
+    }
+    if (input.vacancies !== undefined) {
+      sets.push("vacancies = ?");
+      params.push(input.vacancies);
+    }
+    if (input.closing_date !== undefined) {
+      sets.push("closing_date = ?");
+      params.push(input.closing_date);
+    }
 
     if (sets.length === 0) throw new Error("No fields to update");
 
     params.push(id);
     await db.execute(
       `UPDATE job_posting SET ${sets.join(", ")} WHERE id = ?`,
-      params
+      params,
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM job_posting WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM job_posting WHERE id = ? LIMIT 1",
+      [id],
     );
     const rec = (rows as JobPosting[])[0];
     if (!rec) throw new Error("Job posting not found");
@@ -211,14 +243,23 @@ export const jobsService = {
     const conds: string[] = [];
     const params: unknown[] = [];
 
-    if (filters.status)    { conds.push("status = ?");                params.push(filters.status); }
-    if (filters.branch_id) { conds.push("branch_id = ?");             params.push(filters.branch_id); }
-    if (filters.date)      { conds.push("DATE(registered_at) = ?");   params.push(filters.date); }
+    if (filters.status) {
+      conds.push("status = ?");
+      params.push(filters.status);
+    }
+    if (filters.branch_id) {
+      conds.push("branch_id = ?");
+      params.push(filters.branch_id);
+    }
+    if (filters.date) {
+      conds.push("DATE(registered_at) = ?");
+      params.push(filters.date);
+    }
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM walkin_queue ${where} ORDER BY registered_at ASC`,
-      params
+      params,
     );
     return rows as WalkinEntry[];
   },
@@ -241,11 +282,12 @@ export const jobsService = {
         input.applied_role ?? null,
         input.branch_id ?? null,
         input.process_id ?? null,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM walkin_queue WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM walkin_queue WHERE id = ? LIMIT 1",
+      [id],
     );
     return (rows as WalkinEntry[])[0];
   },
@@ -253,35 +295,46 @@ export const jobsService = {
   async callCandidate(id: string): Promise<WalkinEntry> {
     await db.execute(
       "UPDATE walkin_queue SET status = 'called', called_at = NOW() WHERE id = ?",
-      [id]
+      [id],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM walkin_queue WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM walkin_queue WHERE id = ? LIMIT 1",
+      [id],
     );
     const rec = (rows as WalkinEntry[])[0];
     if (!rec) throw new Error("Walk-in entry not found");
     return rec;
   },
 
-  async updateWalkinStatus(id: string, input: {
-    status: WalkinStatus;
-    notes?: string;
-    recruiter_id?: string;
-  }): Promise<WalkinEntry> {
+  async updateWalkinStatus(
+    id: string,
+    input: {
+      status: WalkinStatus;
+      notes?: string;
+      recruiter_id?: string;
+    },
+  ): Promise<WalkinEntry> {
     const sets: string[] = ["status = ?"];
     const params: unknown[] = [input.status];
 
-    if (input.notes !== undefined)        { sets.push("notes = ?");        params.push(input.notes); }
-    if (input.recruiter_id !== undefined) { sets.push("recruiter_id = ?"); params.push(input.recruiter_id); }
+    if (input.notes !== undefined) {
+      sets.push("notes = ?");
+      params.push(input.notes);
+    }
+    if (input.recruiter_id !== undefined) {
+      sets.push("recruiter_id = ?");
+      params.push(input.recruiter_id);
+    }
 
     params.push(id);
     await db.execute(
       `UPDATE walkin_queue SET ${sets.join(", ")} WHERE id = ?`,
-      params
+      params,
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM walkin_queue WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM walkin_queue WHERE id = ? LIMIT 1",
+      [id],
     );
     const rec = (rows as WalkinEntry[])[0];
     if (!rec) throw new Error("Walk-in entry not found");

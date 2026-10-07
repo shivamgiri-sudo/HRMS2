@@ -12,7 +12,9 @@ import { describe, expect, it, vi } from "vitest";
  * A named pool resolves to the pool that exists, and the secret never moves.
  */
 vi.mock("../../../db/dialerDb.js", () => ({ getDialerPool: vi.fn() }));
-vi.mock("../../../db/onfidoDb.js", () => ({ getOnfidoPool: vi.fn(async () => ({ query: vi.fn() })) }));
+vi.mock("../../../db/onfidoDb.js", () => ({
+  getOnfidoPool: vi.fn(async () => ({ query: vi.fn() })),
+}));
 vi.mock("../../../db/bellaDb.js", () => ({ getBellaPool: vi.fn() }));
 vi.mock("../../../db/aprDb.js", () => ({ getAprPool: vi.fn() }));
 vi.mock("../../../db/masmisDb.js", () => ({ getMasmisPool: vi.fn() }));
@@ -43,7 +45,9 @@ describe("named pools", () => {
 
   it("names the alternatives when a source points at nothing", async () => {
     // Failing loudly beats returning no rows, which reads as "this client has no data".
-    await expect(pools.getNamedPool("nope")).rejects.toThrow(/not a database this system knows/i);
+    await expect(pools.getNamedPool("nope")).rejects.toThrow(
+      /not a database this system knows/i,
+    );
     await expect(pools.getNamedPool("nope")).rejects.toThrow(/onfido/);
   });
 });
@@ -61,15 +65,18 @@ describe("named pools", () => {
 describe("readSourceValues dispatches named_pool sources", () => {
   it("routes a named_pool source to the connector path instead of erroring", async () => {
     vi.resetModules();
-    const execute = vi.fn().mockResolvedValue([
-      [{ id: "emp-1", employee_code: "MAS999" }],
-      [],
-    ]);
-    vi.doMock("../../../db/mysql.js", () => ({ db: { query: vi.fn(), execute } }));
-    const namedQuery = vi.fn().mockResolvedValue([
-      [{ __employee_key: "MAS999", __score_date: "2026-09-09", answered: 5 }],
-      [],
-    ]);
+    const execute = vi
+      .fn()
+      .mockResolvedValue([[{ id: "emp-1", employee_code: "MAS999" }], []]);
+    vi.doMock("../../../db/mysql.js", () => ({
+      db: { query: vi.fn(), execute },
+    }));
+    const namedQuery = vi
+      .fn()
+      .mockResolvedValue([
+        [{ __employee_key: "MAS999", __score_date: "2026-09-09", answered: 5 }],
+        [],
+      ]);
     vi.doMock("../kpi-studio.pools.js", () => ({
       getNamedPool: vi.fn(async () => ({ query: namedQuery })),
     }));
@@ -77,14 +84,32 @@ describe("readSourceValues dispatches named_pool sources", () => {
     const { readSourceValues } = await import("../kpi-studio.sources.js");
 
     const source = {
-      id: "s-onfido", source_code: "ONFIDO_AGENT_DAILY", source_type: "named_pool",
-      integration_key: "onfido", source_object: "onfido_agent_daily_raw",
-      employee_key_column: "agent_name", employee_key_kind: "employee_code",
+      id: "s-onfido",
+      source_code: "ONFIDO_AGENT_DAILY",
+      source_type: "named_pool",
+      integration_key: "onfido",
+      source_object: "onfido_agent_daily_raw",
+      employee_key_column: "agent_name",
+      employee_key_kind: "employee_code",
       date_column: "work_date",
     };
-    const fields = [{ id: "f1", data_source_id: "s-onfido", field_name: "answered", source_column: "answered", aggregate_fn: "SUM" }];
+    const fields = [
+      {
+        id: "f1",
+        data_source_id: "s-onfido",
+        field_name: "answered",
+        source_column: "answered",
+        aggregate_fn: "SUM",
+      },
+    ];
 
-    const result = await readSourceValues(source as never, fields as never, ["emp-1"], "2026-09-01", "2026-09-09");
+    const result = await readSourceValues(
+      source as never,
+      fields as never,
+      ["emp-1"],
+      "2026-09-01",
+      "2026-09-09",
+    );
 
     expect(result.error).toBeUndefined();
     expect(namedQuery).toHaveBeenCalled();

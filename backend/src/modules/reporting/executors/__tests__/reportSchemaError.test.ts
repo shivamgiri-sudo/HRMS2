@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { rethrowReportSchemaError, ReportSourceUnavailableError } from "../types.js";
+import {
+  rethrowReportSchemaError,
+  ReportSourceUnavailableError,
+} from "../types.js";
 
 /**
  * Regression coverage for reports answering "0" when their source query is broken.
@@ -22,28 +25,47 @@ const mysqlError = (code: string, sqlMessage = "detail from mysql") =>
 
 describe("rethrowReportSchemaError", () => {
   it("never returns — every path throws", () => {
-    for (const code of ["ER_NO_SUCH_TABLE", "ER_BAD_FIELD_ERROR", "ER_PARSE_ERROR", "ECONNREFUSED"]) {
-      expect(() => rethrowReportSchemaError("exit", mysqlError(code), "SELECT 1 FROM t")).toThrow();
+    for (const code of [
+      "ER_NO_SUCH_TABLE",
+      "ER_BAD_FIELD_ERROR",
+      "ER_PARSE_ERROR",
+      "ECONNREFUSED",
+    ]) {
+      expect(() =>
+        rethrowReportSchemaError("exit", mysqlError(code), "SELECT 1 FROM t"),
+      ).toThrow();
     }
   });
 
   it("reports a missing table as ReportSourceUnavailableError, naming the table", () => {
     try {
-      rethrowReportSchemaError("exit", mysqlError("ER_NO_SUCH_TABLE"), "SELECT * FROM exit_request er WHERE 1=1");
+      rethrowReportSchemaError(
+        "exit",
+        mysqlError("ER_NO_SUCH_TABLE"),
+        "SELECT * FROM exit_request er WHERE 1=1",
+      );
       throw new Error("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(ReportSourceUnavailableError);
-      expect((e as ReportSourceUnavailableError).missingTable).toBe("exit_request");
+      expect((e as ReportSourceUnavailableError).missingTable).toBe(
+        "exit_request",
+      );
       expect((e as Error).message).toContain("does not exist");
     }
   });
 
   it("extracts a schema-qualified table name too", () => {
     try {
-      rethrowReportSchemaError("operations", mysqlError("ER_NO_SUCH_TABLE"), "SELECT * FROM db_audit.call_quality_assessment q");
+      rethrowReportSchemaError(
+        "operations",
+        mysqlError("ER_NO_SUCH_TABLE"),
+        "SELECT * FROM db_audit.call_quality_assessment q",
+      );
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as ReportSourceUnavailableError).missingTable).toBe("db_audit.call_quality_assessment");
+      expect((e as ReportSourceUnavailableError).missingTable).toBe(
+        "db_audit.call_quality_assessment",
+      );
     }
   });
 
@@ -51,7 +73,11 @@ describe("rethrowReportSchemaError", () => {
     // Borrowing the "table does not exist" wording would send the reader looking for the
     // wrong thing — the table is present, the column is not.
     try {
-      rethrowReportSchemaError("operations", mysqlError("ER_BAD_FIELD_ERROR", "Unknown column 'q.foo'"), "SELECT q.foo FROM db_audit.call_quality_assessment q");
+      rethrowReportSchemaError(
+        "operations",
+        mysqlError("ER_BAD_FIELD_ERROR", "Unknown column 'q.foo'"),
+        "SELECT q.foo FROM db_audit.call_quality_assessment q",
+      );
       throw new Error("should have thrown");
     } catch (e) {
       expect(e).not.toBeInstanceOf(ReportSourceUnavailableError);
@@ -63,7 +89,11 @@ describe("rethrowReportSchemaError", () => {
 
   it("treats ER_BAD_TABLE_ERROR as a missing source, not a missing column", () => {
     try {
-      rethrowReportSchemaError("leave", mysqlError("ER_BAD_TABLE_ERROR"), "SELECT * FROM leave_encashment_request x");
+      rethrowReportSchemaError(
+        "leave",
+        mysqlError("ER_BAD_TABLE_ERROR"),
+        "SELECT * FROM leave_encashment_request x",
+      );
       throw new Error("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(ReportSourceUnavailableError);
@@ -72,12 +102,18 @@ describe("rethrowReportSchemaError", () => {
 
   it("rethrows an unrelated error untouched, so a connection fault is not relabelled", () => {
     const original = mysqlError("ECONNREFUSED");
-    expect(() => rethrowReportSchemaError("exit", original, "SELECT 1 FROM t")).toThrow(original);
+    expect(() =>
+      rethrowReportSchemaError("exit", original, "SELECT 1 FROM t"),
+    ).toThrow(original);
   });
 
   it("still throws when the SQL has no parseable FROM clause", () => {
     try {
-      rethrowReportSchemaError("exit", mysqlError("ER_NO_SUCH_TABLE"), "WITH x AS (SELECT 1) SELECT * FROM x");
+      rethrowReportSchemaError(
+        "exit",
+        mysqlError("ER_NO_SUCH_TABLE"),
+        "WITH x AS (SELECT 1) SELECT * FROM x",
+      );
       throw new Error("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(ReportSourceUnavailableError);
@@ -94,7 +130,9 @@ describe("the executors no longer swallow schema errors", () => {
       new URL("../exit.executor.ts", import.meta.url),
       "utf8",
     );
-    expect(src).not.toContain("return { rows: [], rowCount: 0, isTruncated: false };");
+    expect(src).not.toContain(
+      "return { rows: [], rowCount: 0, isTruncated: false };",
+    );
     expect(src).toContain("rethrowReportSchemaError");
   });
 

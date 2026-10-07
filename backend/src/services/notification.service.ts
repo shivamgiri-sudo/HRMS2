@@ -9,10 +9,11 @@ import { env } from "../config/env.js";
 // Web Push — loaded lazily so the service starts even without web-push installed
 let webpush: typeof import("web-push") | null = null;
 try {
-  webpush = (await import("web-push")).default as unknown as typeof import("web-push");
-  const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
+  webpush = (await import("web-push"))
+    .default as unknown as typeof import("web-push");
+  const vapidPublic = process.env.VAPID_PUBLIC_KEY;
   const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
-  const vapidEmail   = process.env.VAPID_EMAIL;
+  const vapidEmail = process.env.VAPID_EMAIL;
   if (vapidPublic && vapidPrivate && vapidEmail) {
     webpush.setVapidDetails(`mailto:${vapidEmail}`, vapidPublic, vapidPrivate);
   } else {
@@ -30,7 +31,9 @@ try {
   const dbModule = await import("../db/mysql.js");
   db = dbModule.db;
 } catch {
-  console.warn("[NotificationService] Database module not found - notifications will fail");
+  console.warn(
+    "[NotificationService] Database module not found - notifications will fail",
+  );
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -135,15 +138,18 @@ export class NotificationService {
   }
 
   private getEnvTwilioConfig(): SmsConfig | null {
-    const provider = String(process.env.SMS_PROVIDER || "").trim().toLowerCase();
+    const provider = String(process.env.SMS_PROVIDER || "")
+      .trim()
+      .toLowerCase();
     if (provider && provider !== "twilio") {
       return null;
     }
 
     const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
     const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
-    const fromNumber = process.env.TWILIO_FROM_NUMBER?.trim()
-      || process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
+    const fromNumber =
+      process.env.TWILIO_FROM_NUMBER?.trim() ||
+      process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
 
     if (!accountSid || !authToken || !fromNumber) {
       return null;
@@ -169,14 +175,17 @@ export class NotificationService {
       if (db) {
         try {
           const [rows] = await (db.execute(
-            "SELECT * FROM smtp_config WHERE active_status = 1 ORDER BY id DESC LIMIT 1"
+            "SELECT * FROM smtp_config WHERE active_status = 1 ORDER BY id DESC LIMIT 1",
           ) as Promise<[RowDataPacket[], unknown]>);
 
           if (rows && rows.length > 0) {
             config = rows[0] as SmtpConfig;
           }
         } catch (error: any) {
-          console.warn("[NotificationService] SMTP config lookup failed, falling back to env:", error.message);
+          console.warn(
+            "[NotificationService] SMTP config lookup failed, falling back to env:",
+            error.message,
+          );
         }
       }
 
@@ -185,7 +194,10 @@ export class NotificationService {
       }
 
       if (!config) {
-        this.warnOnce("smtp", "[NotificationService] SMTP runtime not configured in DB or env");
+        this.warnOnce(
+          "smtp",
+          "[NotificationService] SMTP runtime not configured in DB or env",
+        );
         return null;
       }
 
@@ -194,10 +206,15 @@ export class NotificationService {
 
       // Verify connection
       await this.emailTransporter!.verify();
-      console.log("[NotificationService] Email transporter initialized successfully");
+      console.log(
+        "[NotificationService] Email transporter initialized successfully",
+      );
       return this.emailTransporter;
     } catch (error: any) {
-      console.error("[NotificationService] Failed to initialize email:", error.message);
+      console.error(
+        "[NotificationService] Failed to initialize email:",
+        error.message,
+      );
       return null;
     }
   }
@@ -214,14 +231,17 @@ export class NotificationService {
       if (db) {
         try {
           const [rows] = await (db.execute(
-            "SELECT * FROM sms_config WHERE active_status = 1 AND provider = 'twilio' ORDER BY id DESC LIMIT 1"
+            "SELECT * FROM sms_config WHERE active_status = 1 AND provider = 'twilio' ORDER BY id DESC LIMIT 1",
           ) as Promise<[RowDataPacket[], unknown]>);
 
           if (rows && rows.length > 0) {
             config = rows[0] as SmsConfig;
           }
         } catch (error: any) {
-          console.warn("[NotificationService] SMS config lookup failed, falling back to env:", error.message);
+          console.warn(
+            "[NotificationService] SMS config lookup failed, falling back to env:",
+            error.message,
+          );
         }
       }
 
@@ -230,23 +250,37 @@ export class NotificationService {
       }
 
       if (!config) {
-        const provider = String(process.env.SMS_PROVIDER || "twilio").trim().toLowerCase() || "twilio";
-        this.warnOnce("sms", `[NotificationService] SMS runtime not configured for legacy notification service (provider=${provider})`);
+        const provider =
+          String(process.env.SMS_PROVIDER || "twilio")
+            .trim()
+            .toLowerCase() || "twilio";
+        this.warnOnce(
+          "sms",
+          `[NotificationService] SMS runtime not configured for legacy notification service (provider=${provider})`,
+        );
         return null;
       }
 
       this.smsConfig = config;
 
       if (!config.account_sid || !config.auth_token) {
-        this.warnOnce("sms", "[NotificationService] Twilio credentials incomplete");
+        this.warnOnce(
+          "sms",
+          "[NotificationService] Twilio credentials incomplete",
+        );
         return null;
       }
 
       this.twilioClient = twilio(config.account_sid, config.auth_token);
-      console.log("[NotificationService] Twilio client initialized successfully");
+      console.log(
+        "[NotificationService] Twilio client initialized successfully",
+      );
       return this.twilioClient;
     } catch (error: any) {
-      console.error("[NotificationService] Failed to initialize SMS:", error.message);
+      console.error(
+        "[NotificationService] Failed to initialize SMS:",
+        error.message,
+      );
       return null;
     }
   }
@@ -254,21 +288,28 @@ export class NotificationService {
   /**
    * Get template by code
    */
-  private async getTemplate(templateCode: string): Promise<NotificationTemplate | null> {
+  private async getTemplate(
+    templateCode: string,
+  ): Promise<NotificationTemplate | null> {
     try {
       const [rows] = await (db.execute(
         "SELECT * FROM notification_template WHERE template_code = ? AND active_status = 1 LIMIT 1",
-        [templateCode]
+        [templateCode],
       ) as Promise<[RowDataPacket[], unknown]>);
 
       if (!rows || rows.length === 0) {
-        console.warn(`[NotificationService] Template not found: ${templateCode}`);
+        console.warn(
+          `[NotificationService] Template not found: ${templateCode}`,
+        );
         return null;
       }
 
       return rows[0] as NotificationTemplate;
     } catch (error: any) {
-      console.error(`[NotificationService] Failed to fetch template ${templateCode}:`, error.message);
+      console.error(
+        `[NotificationService] Failed to fetch template ${templateCode}:`,
+        error.message,
+      );
       return null;
     }
   }
@@ -276,12 +317,18 @@ export class NotificationService {
   /**
    * Render template with Handlebars
    */
-  private renderTemplate(template: string, context: NotificationContext): string {
+  private renderTemplate(
+    template: string,
+    context: NotificationContext,
+  ): string {
     try {
       const compiled = Handlebars.compile(template);
       return compiled(context);
     } catch (error: any) {
-      console.error("[NotificationService] Template render error:", error.message);
+      console.error(
+        "[NotificationService] Template render error:",
+        error.message,
+      );
       return template; // Return unrendered on error
     }
   }
@@ -293,7 +340,7 @@ export class NotificationService {
     to: string,
     subject: string,
     body: string,
-    logId: string
+    logId: string,
   ): Promise<boolean> {
     const transporter = await this.initEmailTransporter();
     if (!transporter || !this.smtpConfig) {
@@ -315,7 +362,10 @@ export class NotificationService {
       return true;
     } catch (error: any) {
       await this.logNotificationStatus(logId, "failed", error.message);
-      console.error(`[NotificationService] Email send failed to ${to}:`, error.message);
+      console.error(
+        `[NotificationService] Email send failed to ${to}:`,
+        error.message,
+      );
       return false;
     }
   }
@@ -326,7 +376,7 @@ export class NotificationService {
   private async sendSms(
     to: string,
     body: string,
-    logId: string
+    logId: string,
   ): Promise<boolean> {
     const client = await this.initSmsClient();
     if (!client || !this.smsConfig?.from_number) {
@@ -346,7 +396,10 @@ export class NotificationService {
       return true;
     } catch (error: any) {
       await this.logNotificationStatus(logId, "failed", error.message);
-      console.error(`[NotificationService] SMS send failed to ${to}:`, error.message);
+      console.error(
+        `[NotificationService] SMS send failed to ${to}:`,
+        error.message,
+      );
       return false;
     }
   }
@@ -359,7 +412,7 @@ export class NotificationService {
     recipient: NotificationRecipient,
     channel: "email" | "sms",
     subject: string | null,
-    body: string
+    body: string,
   ): Promise<string> {
     try {
       const logId = crypto.randomUUID();
@@ -377,11 +430,14 @@ export class NotificationService {
           channel,
           subject,
           body,
-        ]
+        ],
       );
       return logId;
     } catch (error: any) {
-      console.error("[NotificationService] Failed to create log:", error.message);
+      console.error(
+        "[NotificationService] Failed to create log:",
+        error.message,
+      );
       return crypto.randomUUID(); // Return temp ID
     }
   }
@@ -392,36 +448,44 @@ export class NotificationService {
   private async logNotificationStatus(
     logId: string,
     status: "sent" | "failed" | "bounced",
-    errorMessage?: string
+    errorMessage?: string,
   ): Promise<void> {
     try {
       await db.execute(
         `UPDATE notification_log
          SET status = ?, error_message = ?, sent_at = IF(? = 'sent', NOW(), sent_at)
          WHERE id = ?`,
-        [status, errorMessage || null, status, logId]
+        [status, errorMessage || null, status, logId],
       );
     } catch (error: any) {
-      console.error("[NotificationService] Failed to update log:", error.message);
+      console.error(
+        "[NotificationService] Failed to update log:",
+        error.message,
+      );
     }
   }
 
   /**
    * Send notification (main public method)
    */
-  async send(input: SendNotificationInput): Promise<{ sent: number; failed: number }> {
+  async send(
+    input: SendNotificationInput,
+  ): Promise<{ sent: number; failed: number }> {
     const { template_code, recipients, context, channel } = input;
 
     // Get template
     const template = await this.getTemplate(template_code);
     if (!template) {
-      console.error(`[NotificationService] Template ${template_code} not found`);
+      console.error(
+        `[NotificationService] Template ${template_code} not found`,
+      );
       return { sent: 0, failed: recipients.length };
     }
 
     // Determine channels
     const effectiveChannel = channel || template.channel;
-    const wantsEmail = effectiveChannel === "email" || effectiveChannel === "both";
+    const wantsEmail =
+      effectiveChannel === "email" || effectiveChannel === "both";
     const wantsSms = effectiveChannel === "sms" || effectiveChannel === "both";
     const useEmail = wantsEmail && !!(await this.initEmailTransporter());
     const useSms = wantsSms && !!(await this.initSmsClient());
@@ -430,18 +494,36 @@ export class NotificationService {
     let failed = 0;
 
     if ((wantsEmail ? !useEmail : true) && (wantsSms ? !useSms : true)) {
-      console.warn(`[NotificationService] Template ${template_code} skipped - no active delivery runtime`);
+      console.warn(
+        `[NotificationService] Template ${template_code} skipped - no active delivery runtime`,
+      );
       return { sent: 0, failed: recipients.length };
     }
 
     // Send to each recipient
     for (const recipient of recipients) {
       // Email
-      if (useEmail && recipient.email && template.subject && template.body_template) {
+      if (
+        useEmail &&
+        recipient.email &&
+        template.subject &&
+        template.body_template
+      ) {
         const subject = this.renderTemplate(template.subject, context);
         const body = this.renderTemplate(template.body_template, context);
-        const logId = await this.createNotificationLog(template_code, recipient, "email", subject, body);
-        const success = await this.sendEmail(recipient.email, subject, body, logId);
+        const logId = await this.createNotificationLog(
+          template_code,
+          recipient,
+          "email",
+          subject,
+          body,
+        );
+        const success = await this.sendEmail(
+          recipient.email,
+          subject,
+          body,
+          logId,
+        );
         if (success) sent++;
         else failed++;
       }
@@ -449,7 +531,13 @@ export class NotificationService {
       // SMS
       if (useSms && recipient.mobile && template.sms_template) {
         const smsBody = this.renderTemplate(template.sms_template, context);
-        const logId = await this.createNotificationLog(template_code, recipient, "sms", null, smsBody);
+        const logId = await this.createNotificationLog(
+          template_code,
+          recipient,
+          "sms",
+          null,
+          smsBody,
+        );
         const success = await this.sendSms(recipient.mobile, smsBody, logId);
         if (success) sent++;
         else failed++;
@@ -465,18 +553,33 @@ export class NotificationService {
           const title = template.subject
             ? this.renderTemplate(template.subject, context)
             : template_code;
-          const body = this.renderTemplate(template.body_template, context).slice(0, 200);
+          const body = this.renderTemplate(
+            template.body_template,
+            context,
+          ).slice(0, 200);
           const payload = JSON.stringify({ title, body });
-          for (const sub of subs as { endpoint: string; p256dh: string; auth_key: string }[]) {
-            webpush.sendNotification(
-              { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth_key } },
-              payload,
-            ).catch((err: any) => {
-              // 410 Gone = subscription expired; remove it
-              if (err?.statusCode === 410 && db) {
-                db.execute(`DELETE FROM push_subscriptions WHERE endpoint = ?`, [sub.endpoint]).catch(() => {});
-              }
-            });
+          for (const sub of subs as {
+            endpoint: string;
+            p256dh: string;
+            auth_key: string;
+          }[]) {
+            webpush
+              .sendNotification(
+                {
+                  endpoint: sub.endpoint,
+                  keys: { p256dh: sub.p256dh, auth: sub.auth_key },
+                },
+                payload,
+              )
+              .catch((err: any) => {
+                // 410 Gone = subscription expired; remove it
+                if (err?.statusCode === 410 && db) {
+                  db.execute(
+                    `DELETE FROM push_subscriptions WHERE endpoint = ?`,
+                    [sub.endpoint],
+                  ).catch(() => {});
+                }
+              });
           }
         } catch {
           /* web push is best-effort */
@@ -484,7 +587,9 @@ export class NotificationService {
       }
     }
 
-    console.log(`[NotificationService] Template ${template_code}: sent=${sent}, failed=${failed}`);
+    console.log(
+      `[NotificationService] Template ${template_code}: sent=${sent}, failed=${failed}`,
+    );
     return { sent, failed };
   }
 }

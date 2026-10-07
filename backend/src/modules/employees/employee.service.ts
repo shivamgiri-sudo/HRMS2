@@ -7,13 +7,23 @@ import { normalizeBloodGroup } from "./bloodGroup.util.js";
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
 import type { Employee, PaginatedResult } from "./employee.types.js";
-import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
+import type {
+  CreateEmployeeInput,
+  EmployeeFilters,
+  UpdateEmployeeInput,
+} from "./employee.validation.js";
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
 import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisioning.service.js";
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
 import { appendJourneyEvent } from "./journeyLog.service.js";
-import { checkSalaryStartDate, dayOf, setSalaryStartDate, type ApplySalaryStartDateArgs, type SalaryDateAuthority } from "../payroll/salary-start-date.service.js";
+import {
+  checkSalaryStartDate,
+  dayOf,
+  setSalaryStartDate,
+  type ApplySalaryStartDateArgs,
+  type SalaryDateAuthority,
+} from "../payroll/salary-start-date.service.js";
 
 // Directory list sort — SortableTableHead on the frontend already exposes these 8 columns,
 // but the query ignored sortBy entirely and always returned employee_code ASC, so "sort by
@@ -32,39 +42,72 @@ const EMPLOYEE_SORT_COLUMNS: Record<string, string> = {
   status: "e.employment_status",
 };
 
-const SENSITIVE_FIELDS: Array<{ inputKey: keyof UpdateEmployeeInput; dbCol: string; label: string }> = [
-  { inputKey: "branchId",           dbCol: "branch_id",           label: "Branch" },
-  { inputKey: "departmentId",       dbCol: "department_id",       label: "Department" },
-  { inputKey: "processId",          dbCol: "process_id",          label: "Process" },
-  { inputKey: "designationId",      dbCol: "designation_id",      label: "Designation" },
-  { inputKey: "reportingManagerId", dbCol: "reporting_manager_id",label: "Reporting Manager" },
-  { inputKey: "employmentStatus",   dbCol: "employment_status",   label: "Employment Status" },
-  { inputKey: "employmentType",     dbCol: "employment_type",     label: "Employment Type" },
+const SENSITIVE_FIELDS: Array<{
+  inputKey: keyof UpdateEmployeeInput;
+  dbCol: string;
+  label: string;
+}> = [
+  { inputKey: "branchId", dbCol: "branch_id", label: "Branch" },
+  { inputKey: "departmentId", dbCol: "department_id", label: "Department" },
+  { inputKey: "processId", dbCol: "process_id", label: "Process" },
+  { inputKey: "designationId", dbCol: "designation_id", label: "Designation" },
+  {
+    inputKey: "reportingManagerId",
+    dbCol: "reporting_manager_id",
+    label: "Reporting Manager",
+  },
+  {
+    inputKey: "employmentStatus",
+    dbCol: "employment_status",
+    label: "Employment Status",
+  },
+  {
+    inputKey: "employmentType",
+    dbCol: "employment_type",
+    label: "Employment Type",
+  },
   // Previously outside this list entirely: admin edits to these wrote silently, with no
   // before/after audit row at all, unlike every field above. dateOfJoining in particular
   // feeds payroll/tenure calculations elsewhere, and officialEmail is the login identity.
-  { inputKey: "dateOfJoining",      dbCol: "date_of_joining",     label: "Date of Joining" },
-  { inputKey: "firstName",          dbCol: "first_name",          label: "First Name" },
-  { inputKey: "lastName",           dbCol: "last_name",           label: "Last Name" },
-  { inputKey: "officialEmail",      dbCol: "official_email",      label: "Official Email" },
-  { inputKey: "mobile",             dbCol: "mobile",              label: "Mobile" },
-  { inputKey: "personalEmail",      dbCol: "personal_email",      label: "Personal Email" },
-  { inputKey: "dateOfBirth",        dbCol: "date_of_birth",       label: "Date of Birth" },
-  { inputKey: "gender",             dbCol: "gender",              label: "Gender" },
-  { inputKey: "bloodGroup",         dbCol: "blood_group",         label: "Blood Group" },
-  { inputKey: "address1",           dbCol: "address1",            label: "Address" },
-  { inputKey: "city",               dbCol: "city",                label: "City" },
+  {
+    inputKey: "dateOfJoining",
+    dbCol: "date_of_joining",
+    label: "Date of Joining",
+  },
+  { inputKey: "firstName", dbCol: "first_name", label: "First Name" },
+  { inputKey: "lastName", dbCol: "last_name", label: "Last Name" },
+  {
+    inputKey: "officialEmail",
+    dbCol: "official_email",
+    label: "Official Email",
+  },
+  { inputKey: "mobile", dbCol: "mobile", label: "Mobile" },
+  {
+    inputKey: "personalEmail",
+    dbCol: "personal_email",
+    label: "Personal Email",
+  },
+  { inputKey: "dateOfBirth", dbCol: "date_of_birth", label: "Date of Birth" },
+  { inputKey: "gender", dbCol: "gender", label: "Gender" },
+  { inputKey: "bloodGroup", dbCol: "blood_group", label: "Blood Group" },
+  { inputKey: "address1", dbCol: "address1", label: "Address" },
+  { inputKey: "city", dbCol: "city", label: "City" },
 ];
 
-const assignSalary = async (employeeId: string, structureId: string, ctcAnnual: number, effectiveFrom: string) => {
+const assignSalary = async (
+  employeeId: string,
+  structureId: string,
+  ctcAnnual: number,
+  effectiveFrom: string,
+) => {
   await db.execute(
     "UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id = ? AND active_status = 1",
-    [employeeId]
+    [employeeId],
   );
   const asgId = randomUUID();
   await db.execute(
     "INSERT INTO employee_salary_assignment (id, employee_id, structure_id, ctc_annual, effective_from) VALUES (?, ?, ?, ?, ?)",
-    [asgId, employeeId, structureId, ctcAnnual, effectiveFrom]
+    [asgId, employeeId, structureId, ctcAnnual, effectiveFrom],
   );
 };
 
@@ -72,13 +115,16 @@ const assignSalary = async (employeeId: string, structureId: string, ctcAnnual: 
  * Auto-create auth_user for employee with valid email.
  * Links employees.user_id to auth_user.id so employee can login via password reset.
  */
-const createAuthUserForEmployee = async (employeeId: string, email: string): Promise<string | null> => {
+const createAuthUserForEmployee = async (
+  employeeId: string,
+  email: string,
+): Promise<string | null> => {
   const normalizedEmail = email.toLowerCase().trim();
 
   // Check if auth_user already exists for this email
   const [existingAuth] = await db.execute<RowDataPacket[]>(
-    'SELECT id, is_blocked FROM auth_user WHERE email = ? LIMIT 1',
-    [normalizedEmail]
+    "SELECT id, is_blocked FROM auth_user WHERE email = ? LIMIT 1",
+    [normalizedEmail],
   );
 
   if (existingAuth.length > 0) {
@@ -87,7 +133,10 @@ const createAuthUserForEmployee = async (employeeId: string, email: string): Pro
       return null; // Don't link to blocked accounts
     }
     // Link existing auth_user to this employee
-    await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [authUser.id, employeeId]);
+    await db.execute("UPDATE employees SET user_id = ? WHERE id = ?", [
+      authUser.id,
+      employeeId,
+    ]);
     return String(authUser.id);
   }
 
@@ -97,18 +146,21 @@ const createAuthUserForEmployee = async (employeeId: string, email: string): Pro
   const passwordHash = await bcrypt.hash(randomPassword, 10);
 
   await db.execute(
-    'INSERT INTO auth_user (id, email, password_hash, must_change_password, is_blocked) VALUES (?, ?, ?, 1, 0)',
-    [userId, normalizedEmail, passwordHash]
+    "INSERT INTO auth_user (id, email, password_hash, must_change_password, is_blocked) VALUES (?, ?, ?, 1, 0)",
+    [userId, normalizedEmail, passwordHash],
   );
 
   // Link employee to auth_user
-  await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, employeeId]);
+  await db.execute("UPDATE employees SET user_id = ? WHERE id = ?", [
+    userId,
+    employeeId,
+  ]);
 
   // Assign default "employee" role if exists
   try {
     const [roleCheck] = await db.execute<RowDataPacket[]>(
-      'SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1',
-      ['employee']
+      "SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1",
+      ["employee"],
     );
     if (roleCheck.length > 0) {
       // System grant: no human actor, so granted_by stays NULL while granted_at is
@@ -130,7 +182,7 @@ const createAuthUserForEmployee = async (employeeId: string, email: string): Pro
            granted_at = IF(active_status = 0, NOW(), granted_at),
            granted_by = IF(active_status = 0, NULL, granted_by),
            active_status = 1`,
-        [userId, 'employee']
+        [userId, "employee"],
       );
     }
   } catch {
@@ -141,12 +193,16 @@ const createAuthUserForEmployee = async (employeeId: string, email: string): Pro
 };
 
 export const employeeService = {
-  async createEmployee(input: CreateEmployeeInput, _userId: string): Promise<Employee> {
+  async createEmployee(
+    input: CreateEmployeeInput,
+    _userId: string,
+  ): Promise<Employee> {
     const [dup] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM employees WHERE employee_code = ? LIMIT 1",
-      [input.employeeCode]
+      [input.employeeCode],
     );
-    if ((dup as RowDataPacket[]).length > 0) throw new Error("Employee code already exists");
+    if ((dup as RowDataPacket[]).length > 0)
+      throw new Error("Employee code already exists");
 
     // Dedup checks: PAN, Aadhaar, email, mobile against both employees and
     // employee_statutory_info — mirrors the ATS orchestrator path so that a
@@ -155,52 +211,68 @@ export const employeeService = {
       const pan = String(input.panNumber).trim().toUpperCase();
       const [panDup] = await db.execute<RowDataPacket[]>(
         `SELECT e.employee_code FROM employees e WHERE e.pan_number = ? AND e.active_status = 1 LIMIT 1`,
-        [pan]
+        [pan],
       );
       if ((panDup as RowDataPacket[]).length > 0)
-        throw new Error(`PAN ${pan} already registered under employee ${(panDup as RowDataPacket[])[0].employee_code}`);
+        throw new Error(
+          `PAN ${pan} already registered under employee ${(panDup as RowDataPacket[])[0].employee_code}`,
+        );
       const [panStat] = await db.execute<RowDataPacket[]>(
         `SELECT e.employee_code FROM employee_statutory_info si JOIN employees e ON e.id = si.employee_id WHERE si.pan_number = ? AND e.active_status = 1 LIMIT 1`,
-        [pan]
+        [pan],
       );
       if ((panStat as RowDataPacket[]).length > 0)
-        throw new Error(`PAN ${pan} already registered under employee ${(panStat as RowDataPacket[])[0].employee_code}`);
+        throw new Error(
+          `PAN ${pan} already registered under employee ${(panStat as RowDataPacket[])[0].employee_code}`,
+        );
     }
     if (input.aadhaarNumber) {
       const aadhaar = String(input.aadhaarNumber).trim();
       const [aaDup] = await db.execute<RowDataPacket[]>(
         `SELECT e.employee_code FROM employee_statutory_info si JOIN employees e ON e.id = si.employee_id WHERE si.aadhaar_id = ? AND e.active_status = 1 LIMIT 1`,
-        [aadhaar]
+        [aadhaar],
       );
       if ((aaDup as RowDataPacket[]).length > 0)
-        throw new Error(`Aadhaar already registered under employee ${(aaDup as RowDataPacket[])[0].employee_code}`);
+        throw new Error(
+          `Aadhaar already registered under employee ${(aaDup as RowDataPacket[])[0].employee_code}`,
+        );
     }
     if (input.email) {
       const emailNorm = String(input.email).toLowerCase().trim();
       const [emailDup] = await db.execute<RowDataPacket[]>(
         `SELECT employee_code FROM employees WHERE (email = ? OR official_email = ?) AND active_status = 1 LIMIT 1`,
-        [emailNorm, emailNorm]
+        [emailNorm, emailNorm],
       );
       if ((emailDup as RowDataPacket[]).length > 0)
-        throw new Error(`Email ${emailNorm} already registered under employee ${(emailDup as RowDataPacket[])[0].employee_code}`);
+        throw new Error(
+          `Email ${emailNorm} already registered under employee ${(emailDup as RowDataPacket[])[0].employee_code}`,
+        );
     }
     if (input.mobile) {
       const mobile = String(input.mobile).trim();
       const [mobDup] = await db.execute<RowDataPacket[]>(
         `SELECT employee_code FROM employees WHERE mobile = ? AND active_status = 1 LIMIT 1`,
-        [mobile]
+        [mobile],
       );
       if ((mobDup as RowDataPacket[]).length > 0)
-        throw new Error(`Mobile ${mobile} already registered under employee ${(mobDup as RowDataPacket[])[0].employee_code}`);
+        throw new Error(
+          `Mobile ${mobile} already registered under employee ${(mobDup as RowDataPacket[])[0].employee_code}`,
+        );
     }
 
     const id = randomUUID();
     // salary_start_date defaults to date_of_joining when not explicitly set
     const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
-    if (salaryStartDate && input.dateOfJoining && salaryStartDate < input.dateOfJoining) {
+    if (
+      salaryStartDate &&
+      input.dateOfJoining &&
+      salaryStartDate < input.dateOfJoining
+    ) {
       throw Object.assign(
-        new Error(`Salary start date (${salaryStartDate}) cannot be before date of joining (${input.dateOfJoining}).`),
-        { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" }
+        new Error(
+          `Salary start date (${salaryStartDate}) cannot be before date of joining (${input.dateOfJoining}).`,
+        ),
+        { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" },
       );
     }
 
@@ -211,7 +283,7 @@ export const employeeService = {
     if (costCentreId && (!resolvedBranchId || !resolvedProcessId)) {
       const [ccRows] = await db.execute<RowDataPacket[]>(
         `SELECT branch_id, process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
-        [costCentreId]
+        [costCentreId],
       );
       if (ccRows.length > 0) {
         resolvedBranchId = resolvedBranchId ?? ccRows[0].branch_id ?? null;
@@ -252,20 +324,24 @@ export const employeeService = {
         costCentreId,
         costCentreId,
         input.reportingManagerId ?? null,
-      ]
+      ],
     );
 
     // Always auto-create an auth_user. Use real email when available; fall back to a
     // deterministic internal placeholder so the account exists even before HR fills in
     // the email. The placeholder can be replaced later when the employee's email is set.
-    const rawEmail = (input.email ?? '').trim().toLowerCase();
-    const loginEmail = (rawEmail.includes('@') && rawEmail !== 'n/a')
-      ? rawEmail
-      : `${input.employeeCode.toLowerCase()}@mas.internal`;
+    const rawEmail = (input.email ?? "").trim().toLowerCase();
+    const loginEmail =
+      rawEmail.includes("@") && rawEmail !== "n/a"
+        ? rawEmail
+        : `${input.employeeCode.toLowerCase()}@mas.internal`;
     try {
       await createAuthUserForEmployee(id, loginEmail);
     } catch (error) {
-      console.error(`[WARN] Failed to auto-create auth for employee ${input.employeeCode}:`, error);
+      console.error(
+        `[WARN] Failed to auto-create auth for employee ${input.employeeCode}:`,
+        error,
+      );
     }
 
     const employee = await this.getEmployee(id);
@@ -277,12 +353,20 @@ export const employeeService = {
     }
 
     try {
-      const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: input.employeeCode, createdBy: _userId });
+      const lmsResult = await provisionLmsIdentityForEmployee({
+        employeeCode: input.employeeCode,
+        createdBy: _userId,
+      });
       if (lmsResult.message) {
-        console.warn(`[WARN] LMS provisioning for ${input.employeeCode}: ${lmsResult.message}`);
+        console.warn(
+          `[WARN] LMS provisioning for ${input.employeeCode}: ${lmsResult.message}`,
+        );
       }
     } catch (error) {
-      console.error(`[WARN] Failed to provision LMS identity for employee ${input.employeeCode}:`, error);
+      console.error(
+        `[WARN] Failed to provision LMS identity for employee ${input.employeeCode}:`,
+        error,
+      );
     }
 
     // Dispatch IT/WFM/Admin/HR provisioning tasks (same as ATS orchestrator path)
@@ -294,22 +378,48 @@ export const employeeService = {
       actorUserId: _userId,
       triggerEventId: null,
       joiningDate: input.dateOfJoining,
-    }).catch(err => console.error(`[WARN] Failed to dispatch provisioning tasks for ${input.employeeCode}:`, err));
+    }).catch((err) =>
+      console.error(
+        `[WARN] Failed to dispatch provisioning tasks for ${input.employeeCode}:`,
+        err,
+      ),
+    );
 
     return employee;
   },
 
   async getEmployee(id: string): Promise<Employee> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT *, COALESCE(NULLIF(TRIM(official_email),''), email) AS email FROM employees WHERE id = ? LIMIT 1", [id]
+      "SELECT *, COALESCE(NULLIF(TRIM(official_email),''), email) AS email FROM employees WHERE id = ? LIMIT 1",
+      [id],
     );
     const rec = (rows as Employee[])[0];
     if (!rec) throw new Error("Employee not found");
     return rec;
   },
 
-  async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, startDate, endDate, scopeFilter, includeAnalytics, sortBy, sortOrder } = filters;
+  async listEmployees(
+    filters: EmployeeFilters & {
+      scopeFilter?: { sql: string; params: unknown[] };
+    },
+  ): Promise<PaginatedResult<Employee>> {
+    const {
+      page,
+      limit,
+      status,
+      recordStatus,
+      processId,
+      branchId,
+      departmentId,
+      designationId,
+      search,
+      startDate,
+      endDate,
+      scopeFilter,
+      includeAnalytics,
+      sortBy,
+      sortOrder,
+    } = filters;
     const offset = (page - 1) * limit;
 
     // `active_status = 1` used to be hardcoded here, while `recordStatus` was declared in
@@ -319,9 +429,11 @@ export const employeeService = {
     // 57,517 inactive employees. Offboarded was the same. An accepted-and-ignored parameter
     // reads as supported from every layer above it, which is why this survived.
     const recordStatusCond =
-      recordStatus === "inactive" ? "e.active_status = 0"
-      : recordStatus === "all"    ? null
-      :                             "e.active_status = 1";
+      recordStatus === "inactive"
+        ? "e.active_status = 0"
+        : recordStatus === "all"
+          ? null
+          : "e.active_status = 1";
 
     // Filters shared between the row-fetching query and the analytics aggregates below.
     // Deliberately excludes recordStatusCond: the directory page's Active/Inactive metric
@@ -331,17 +443,38 @@ export const employeeService = {
     const filterConds: string[] = [];
     const filterParams: unknown[] = [];
 
-    if (status)       { filterConds.push("e.employment_status = ?"); filterParams.push(status); }
-    if (processId)    { filterConds.push("e.process_id = ?");        filterParams.push(processId); }
-    if (branchId)     { filterConds.push("e.branch_id = ?");         filterParams.push(branchId); }
-    if (departmentId) { filterConds.push("e.department_id = ?");     filterParams.push(departmentId); }
-    if (designationId){ filterConds.push("e.designation_id = ?");    filterParams.push(designationId); }
+    if (status) {
+      filterConds.push("e.employment_status = ?");
+      filterParams.push(status);
+    }
+    if (processId) {
+      filterConds.push("e.process_id = ?");
+      filterParams.push(processId);
+    }
+    if (branchId) {
+      filterConds.push("e.branch_id = ?");
+      filterParams.push(branchId);
+    }
+    if (departmentId) {
+      filterConds.push("e.department_id = ?");
+      filterParams.push(departmentId);
+    }
+    if (designationId) {
+      filterConds.push("e.designation_id = ?");
+      filterParams.push(designationId);
+    }
     // Joining-date range (Export Employee Directory's Start/End Date). Was never
     // wired to the backend at all — the frontend filtered client-side AFTER
     // downloading every row matching the other filters, which also meant the
     // export-too-large guard was checked against the pre-date-filter count.
-    if (startDate) { filterConds.push("e.date_of_joining >= ?"); filterParams.push(startDate); }
-    if (endDate)   { filterConds.push("e.date_of_joining <= ?"); filterParams.push(endDate); }
+    if (startDate) {
+      filterConds.push("e.date_of_joining >= ?");
+      filterParams.push(startDate);
+    }
+    if (endDate) {
+      filterConds.push("e.date_of_joining <= ?");
+      filterParams.push(endDate);
+    }
     if (search) {
       // PERF (2026-08-18): this used to be a 7-column leading-wildcard LIKE OR-chain —
       // unindexable by any B-tree index, confirmed live against production at 12-22
@@ -377,43 +510,55 @@ export const employeeService = {
         filterConds.push("e.employee_code LIKE ?");
         filterParams.push(`${term.toUpperCase()}%`);
       } else if (term.length < 3) {
-        filterConds.push("(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)");
+        filterConds.push(
+          "(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)",
+        );
         filterParams.push(`${term}%`, `${term}%`, `${term}%`);
       } else {
-        filterConds.push("MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)");
+        filterConds.push(
+          "MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)",
+        );
         filterParams.push(`${term}*`);
       }
     }
 
     // Apply scope filter from middleware
     if (scopeFilter?.sql) {
-      const scopeClause = scopeFilter.sql.replace(/^WHERE\s+/i, '').trim();
+      const scopeClause = scopeFilter.sql.replace(/^WHERE\s+/i, "").trim();
       if (scopeClause) {
         filterConds.push(`(${scopeClause})`);
         filterParams.push(...(scopeFilter.params ?? []));
       }
     }
 
-    const conds = recordStatusCond ? [recordStatusCond, ...filterConds] : [...filterConds];
+    const conds = recordStatusCond
+      ? [recordStatusCond, ...filterConds]
+      : [...filterConds];
     const params = [...filterParams];
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-    const filterWhere = filterConds.length ? `WHERE ${filterConds.join(" AND ")}` : "";
+    const filterWhere = filterConds.length
+      ? `WHERE ${filterConds.join(" AND ")}`
+      : "";
 
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
-    const orderExpr = (sortBy && EMPLOYEE_SORT_COLUMNS[sortBy]) || EMPLOYEE_SORT_COLUMNS.employeeCode;
+    const orderExpr =
+      (sortBy && EMPLOYEE_SORT_COLUMNS[sortBy]) ||
+      EMPLOYEE_SORT_COLUMNS.employeeCode;
     const orderDir = sortOrder === "desc" ? "DESC" : "ASC";
     // Secondary tiebreak on employee_code keeps pagination stable across pages when the
     // primary sort column has duplicate/NULL values (e.g. many employees share a department).
-    const orderClause = orderExpr === EMPLOYEE_SORT_COLUMNS.employeeCode
-      ? `ORDER BY ${orderExpr} ${orderDir}`
-      : `ORDER BY ${orderExpr} ${orderDir}, e.employee_code ASC`;
+    const orderClause =
+      orderExpr === EMPLOYEE_SORT_COLUMNS.employeeCode
+        ? `ORDER BY ${orderExpr} ${orderDir}`
+        : `ORDER BY ${orderExpr} ${orderDir}, e.employee_code ASC`;
 
     // Analytics (when requested) are independent of the page rows and count, so they are issued
     // in the same Promise.all instead of after it: wall time becomes the slowest single query
     // rather than their sum. `null` placeholders keep the destructuring positions stable.
-    const [[rows], [countRows], statsResult, breakdownResult] = await Promise.all([
-      db.execute<RowDataPacket[]>(
-        `SELECT
+    const [[rows], [countRows], statsResult, breakdownResult] =
+      await Promise.all([
+        db.execute<RowDataPacket[]>(
+          `SELECT
            e.id, e.employee_code,
            e.first_name, e.last_name,
            e.mobile, e.avatar_url, e.photo_url,
@@ -450,33 +595,34 @@ export const employeeService = {
          LEFT JOIN branch_master       bm    ON bm.id    = e.branch_id
          LEFT JOIN employees           mgr   ON mgr.id   = COALESCE(e.reporting_manager_id, e.manager_id)
          ${where} ${orderClause} LIMIT ${limit} OFFSET ${offset}`,
-        params
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS total FROM employees e ${where}`, params
-      ),
-      includeAnalytics
-        ? db.execute<RowDataPacket[]>(
-            `SELECT
+          params,
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS total FROM employees e ${where}`,
+          params,
+        ),
+        includeAnalytics
+          ? db.execute<RowDataPacket[]>(
+              `SELECT
                COUNT(*) AS total_employees,
                SUM(e.active_status = 1) AS active_employees,
                SUM(e.active_status = 0) AS inactive_employees,
                COUNT(DISTINCT e.department_id) AS department_count
              FROM employees e
              ${filterWhere}`,
-            filterParams,
-          )
-        : null,
-      includeAnalytics
-        ? db.execute<RowDataPacket[]>(
-            // PERF: the old shape (employees LEFT JOIN process_master, GROUP BY pm.id, pm.process_name)
-            // did one process_master lookup per employee row (~59k) and ran past the 10s cap on prod.
-            // Aggregate by process_id first (142 groups) and join the small result instead; the
-            // outer GROUP BY still folds NULL / unknown process ids into the single "Unassigned"
-            // row exactly as before. With no filters the scan is pinned to the covering
-            // (active_status, process_id) index: the optimiser otherwise picks idx_emp_process
-            // and fetches every row just to read active_status.
-            `SELECT
+              filterParams,
+            )
+          : null,
+        includeAnalytics
+          ? db.execute<RowDataPacket[]>(
+              // PERF: the old shape (employees LEFT JOIN process_master, GROUP BY pm.id, pm.process_name)
+              // did one process_master lookup per employee row (~59k) and ran past the 10s cap on prod.
+              // Aggregate by process_id first (142 groups) and join the small result instead; the
+              // outer GROUP BY still folds NULL / unknown process ids into the single "Unassigned"
+              // row exactly as before. With no filters the scan is pinned to the covering
+              // (active_status, process_id) index: the optimiser otherwise picks idx_emp_process
+              // and fetches every row just to read active_status.
+              `SELECT
                pm.id AS process_id,
                COALESCE(pm.process_name, 'Unassigned') AS process_name,
                SUM(a.active_count) AS active_count,
@@ -495,10 +641,10 @@ export const employeeService = {
              GROUP BY pm.id, pm.process_name
              ORDER BY total_count DESC
              LIMIT 100`,
-            filterParams,
-          )
-        : null,
-    ]);
+              filterParams,
+            )
+          : null,
+      ]);
     const result: PaginatedResult<Employee> = {
       data: rows as Employee[],
       total: (countRows as any)[0]?.total ?? 0,
@@ -532,7 +678,12 @@ export const employeeService = {
     return result;
   },
 
-  async updateEmployee(id: string, input: UpdateEmployeeInput, actorUserId: string, opts: { authority?: SalaryDateAuthority; allowBackdate?: boolean } = {}): Promise<Employee> {
+  async updateEmployee(
+    id: string,
+    input: UpdateEmployeeInput,
+    actorUserId: string,
+    opts: { authority?: SalaryDateAuthority; allowBackdate?: boolean } = {},
+  ): Promise<Employee> {
     // Snapshot current sensitive field values before update for audit trail
     const [snapRows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id, department_id, process_id, designation_id,
@@ -540,7 +691,7 @@ export const employeeService = {
               date_of_joining, salary_start_date, first_name, last_name, official_email, mobile,
               personal_email, date_of_birth, gender, blood_group, address1, city
        FROM employees WHERE id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     const snap = snapRows[0] ?? {};
 
@@ -554,16 +705,24 @@ export const employeeService = {
     const nextStatus = input.employmentStatus?.trim().toLowerCase();
     const isDeactivating = nextStatus === "inactive";
     const wasActive = Number(snap.active_status ?? 1) === 1;
-    const deactivationReason = (input as { deactivationReason?: string }).deactivationReason?.trim();
+    const deactivationReason = (
+      input as { deactivationReason?: string }
+    ).deactivationReason?.trim();
 
     // Cutting someone's access is not an ordinary field edit, and until now it
     // left no trace of why. Of the five employment-status audit rows ever
     // written, all five are 'active' → 'Active' case flips from the edit dialog
     // re-saving an unchanged value — not one records an actual deactivation.
-    if (isDeactivating && wasActive && (!deactivationReason || deactivationReason.length < 10)) {
+    if (
+      isDeactivating &&
+      wasActive &&
+      (!deactivationReason || deactivationReason.length < 10)
+    ) {
       throw Object.assign(
-        new Error("A reason of at least 10 characters is required to deactivate an employee."),
-        { statusCode: 400, code: "DEACTIVATION_REASON_REQUIRED" }
+        new Error(
+          "A reason of at least 10 characters is required to deactivate an employee.",
+        ),
+        { statusCode: 400, code: "DEACTIVATION_REASON_REQUIRED" },
       );
     }
 
@@ -582,75 +741,173 @@ export const employeeService = {
     // every save. Re-sending a value that is already stored grants nothing:
     // active_status is untouched here, so those employees stay signed out until
     // the reactivation flow or the activation job puts them right.
-    const wasStatusActive = String(snap.employment_status ?? "").trim().toLowerCase() === "active";
+    const wasStatusActive =
+      String(snap.employment_status ?? "")
+        .trim()
+        .toLowerCase() === "active";
     if (nextStatus === "active" && !wasActive && !wasStatusActive) {
       throw Object.assign(
         new Error(
-          "This employee is deactivated. Reactivation must go through Employees → Reactivation (/employees/reactivation), which records a reason and takes branch head approval and HR confirmation. It cannot be done from a profile edit."
+          "This employee is deactivated. Reactivation must go through Employees → Reactivation (/employees/reactivation), which records a reason and takes branch head approval and HR confirmation. It cannot be done from a profile edit.",
         ),
-        { statusCode: 409, code: "REACTIVATION_REQUIRES_APPROVAL" }
+        { statusCode: 409, code: "REACTIVATION_REQUIRES_APPROVAL" },
       );
     }
 
     // Guard: salary_start_date must never be before date_of_joining.
     // Evaluate against the effective final values — caller may be changing one or both.
-    const effectiveDoj = input.dateOfJoining ?? (snap.date_of_joining ? String(snap.date_of_joining).slice(0, 10) : null);
-    const effectiveSsd = input.salaryStartDate !== undefined
-      ? (input.salaryStartDate ?? null)
-      : (snap.salary_start_date ? String(snap.salary_start_date).slice(0, 10) : null);
+    const effectiveDoj =
+      input.dateOfJoining ??
+      (snap.date_of_joining ? String(snap.date_of_joining).slice(0, 10) : null);
+    const effectiveSsd =
+      input.salaryStartDate !== undefined
+        ? (input.salaryStartDate ?? null)
+        : snap.salary_start_date
+          ? String(snap.salary_start_date).slice(0, 10)
+          : null;
     if (effectiveSsd && effectiveDoj && effectiveSsd < effectiveDoj) {
       throw Object.assign(
-        new Error(`Salary start date (${effectiveSsd}) cannot be before date of joining (${effectiveDoj}).`),
-        { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" }
+        new Error(
+          `Salary start date (${effectiveSsd}) cannot be before date of joining (${effectiveDoj}).`,
+        ),
+        { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" },
       );
     }
 
     const sets: string[] = [];
     const params: unknown[] = [];
 
-    if (input.firstName         !== undefined) { sets.push("first_name = ?");           params.push(toStoredNameRequired(input.firstName)); }
-    if (input.lastName          !== undefined) { sets.push("last_name = ?");            params.push(toStoredName(input.lastName)); }
-    if (input.email             !== undefined) { sets.push("email = ?");                params.push(input.email ?? null); }
-    if (input.officialEmail     !== undefined) { sets.push("official_email = ?");       params.push(input.officialEmail ?? null); }
-    if (input.mobile            !== undefined) { sets.push("mobile = ?");               params.push(input.mobile ?? null); }
-    if (input.personalEmail     !== undefined) { sets.push("personal_email = ?");       params.push(input.personalEmail ?? null); }
-    if (input.personalMobile    !== undefined) { sets.push("personal_phone = ?");       params.push(input.personalMobile ?? null); }
-    if (input.gender            !== undefined) { sets.push("gender = ?");               params.push(input.gender); }
+    if (input.firstName !== undefined) {
+      sets.push("first_name = ?");
+      params.push(toStoredNameRequired(input.firstName));
+    }
+    if (input.lastName !== undefined) {
+      sets.push("last_name = ?");
+      params.push(toStoredName(input.lastName));
+    }
+    if (input.email !== undefined) {
+      sets.push("email = ?");
+      params.push(input.email ?? null);
+    }
+    if (input.officialEmail !== undefined) {
+      sets.push("official_email = ?");
+      params.push(input.officialEmail ?? null);
+    }
+    if (input.mobile !== undefined) {
+      sets.push("mobile = ?");
+      params.push(input.mobile ?? null);
+    }
+    if (input.personalEmail !== undefined) {
+      sets.push("personal_email = ?");
+      params.push(input.personalEmail ?? null);
+    }
+    if (input.personalMobile !== undefined) {
+      sets.push("personal_phone = ?");
+      params.push(input.personalMobile ?? null);
+    }
+    if (input.gender !== undefined) {
+      sets.push("gender = ?");
+      params.push(input.gender);
+    }
     // Normalised on the way in even though the schema already restricts it to the eight
     // canonical groups, so this path can never re-introduce the free-text values the
     // backfill migration cleans up.
-    if (input.bloodGroup        !== undefined) { sets.push("blood_group = ?");          params.push(normalizeBloodGroup(input.bloodGroup)); }
-    if (input.dateOfBirth       !== undefined) { sets.push("date_of_birth = ?");        params.push(input.dateOfBirth ?? null); }
-    if (input.dateOfJoining     !== undefined) { sets.push("date_of_joining = ?");      params.push(input.dateOfJoining); }
+    if (input.bloodGroup !== undefined) {
+      sets.push("blood_group = ?");
+      params.push(normalizeBloodGroup(input.bloodGroup));
+    }
+    if (input.dateOfBirth !== undefined) {
+      sets.push("date_of_birth = ?");
+      params.push(input.dateOfBirth ?? null);
+    }
+    if (input.dateOfJoining !== undefined) {
+      sets.push("date_of_joining = ?");
+      params.push(input.dateOfJoining);
+    }
     // salary_start_date is NOT written here. It is one of five stored copies of the same date, so
     // it goes through the central service below, which writes all of them in one transaction.
-    if (input.dateOfExit        !== undefined) { sets.push("date_of_exit = ?");         params.push(input.dateOfExit ?? null); }
-    if (input.employmentType    !== undefined) { sets.push("employment_type = ?, emp_type = ?"); params.push(input.employmentType, input.employmentType); }
-    if (input.employmentStatus  !== undefined) { sets.push("employment_status = ?");    params.push(input.employmentStatus); }
-    if (input.branchId          !== undefined) { sets.push("branch_id = ?");            params.push(input.branchId ?? null); }
-    if (input.departmentId      !== undefined) { sets.push("department_id = ?");        params.push(input.departmentId ?? null); }
-    if (input.processId         !== undefined) { sets.push("process_id = ?");           params.push(input.processId ?? null); }
+    if (input.dateOfExit !== undefined) {
+      sets.push("date_of_exit = ?");
+      params.push(input.dateOfExit ?? null);
+    }
+    if (input.employmentType !== undefined) {
+      sets.push("employment_type = ?, emp_type = ?");
+      params.push(input.employmentType, input.employmentType);
+    }
+    if (input.employmentStatus !== undefined) {
+      sets.push("employment_status = ?");
+      params.push(input.employmentStatus);
+    }
+    if (input.branchId !== undefined) {
+      sets.push("branch_id = ?");
+      params.push(input.branchId ?? null);
+    }
+    if (input.departmentId !== undefined) {
+      sets.push("department_id = ?");
+      params.push(input.departmentId ?? null);
+    }
+    if (input.processId !== undefined) {
+      sets.push("process_id = ?");
+      params.push(input.processId ?? null);
+    }
     if (input.costCentreId !== undefined) {
       sets.push("cost_centre_id = ?");
       params.push(input.costCentreId ?? null);
-      sets.push("cost_center_code = (SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1)");
+      sets.push(
+        "cost_center_code = (SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1)",
+      );
       params.push(input.costCentreId ?? null);
     }
-    if (input.designationId     !== undefined) { sets.push("designation_id = ?");       params.push(input.designationId ?? null); }
-    if (input.reportingManagerId !== undefined) { sets.push("reporting_manager_id = ?"); params.push(input.reportingManagerId ?? null); }
-    if (input.photoUrl          !== undefined) { sets.push("photo_url = ?");            params.push(input.photoUrl ?? null); }
-    if (input.designationName   !== undefined) { sets.push("designation = ?");          params.push(input.designationName ?? null); }
-    if (input.address1          !== undefined) { sets.push("address1 = ?");             params.push(input.address1 ?? null); }
-    if (input.city              !== undefined) { sets.push("city = ?");                 params.push(input.city ?? null); }
-    if (input.workingHoursStart !== undefined) { sets.push("working_hours_start = ?");  params.push(input.workingHoursStart ?? null); }
-    if (input.workingHoursEnd   !== undefined) { sets.push("working_hours_end = ?");    params.push(input.workingHoursEnd ?? null); }
-    if (input.workingDays       !== undefined) { sets.push("working_days = ?");         params.push(input.workingDays ? JSON.stringify(input.workingDays) : null); }
-    if (input.annualIncome      !== undefined) { sets.push("annual_income = ?");        params.push(input.annualIncome ?? null); }
-    if (input.countOfDependents !== undefined) { sets.push("count_of_dependents = ?");  params.push(input.countOfDependents ?? null); }
+    if (input.designationId !== undefined) {
+      sets.push("designation_id = ?");
+      params.push(input.designationId ?? null);
+    }
+    if (input.reportingManagerId !== undefined) {
+      sets.push("reporting_manager_id = ?");
+      params.push(input.reportingManagerId ?? null);
+    }
+    if (input.photoUrl !== undefined) {
+      sets.push("photo_url = ?");
+      params.push(input.photoUrl ?? null);
+    }
+    if (input.designationName !== undefined) {
+      sets.push("designation = ?");
+      params.push(input.designationName ?? null);
+    }
+    if (input.address1 !== undefined) {
+      sets.push("address1 = ?");
+      params.push(input.address1 ?? null);
+    }
+    if (input.city !== undefined) {
+      sets.push("city = ?");
+      params.push(input.city ?? null);
+    }
+    if (input.workingHoursStart !== undefined) {
+      sets.push("working_hours_start = ?");
+      params.push(input.workingHoursStart ?? null);
+    }
+    if (input.workingHoursEnd !== undefined) {
+      sets.push("working_hours_end = ?");
+      params.push(input.workingHoursEnd ?? null);
+    }
+    if (input.workingDays !== undefined) {
+      sets.push("working_days = ?");
+      params.push(input.workingDays ? JSON.stringify(input.workingDays) : null);
+    }
+    if (input.annualIncome !== undefined) {
+      sets.push("annual_income = ?");
+      params.push(input.annualIncome ?? null);
+    }
+    if (input.countOfDependents !== undefined) {
+      sets.push("count_of_dependents = ?");
+      params.push(input.countOfDependents ?? null);
+    }
 
     // Carry the deactivation across to the column the access gates actually read,
     // in the same statement, so the two can never disagree again.
-    if (isDeactivating && wasActive) { sets.push("active_status = 0"); }
+    if (isDeactivating && wasActive) {
+      sets.push("active_status = 0");
+    }
 
     // Write attrition fields when provided on a deactivation PATCH (issue #10 / #4).
     // COALESCE preserves an existing value if the caller passes null/undefined.
@@ -666,12 +923,20 @@ export const employeeService = {
         sets.push("attrition_date = COALESCE(?, attrition_date)");
         params.push(attrInput.attrition_date);
       }
-      if (attrInput.attrition_reason !== undefined && attrInput.attrition_reason) {
+      if (
+        attrInput.attrition_reason !== undefined &&
+        attrInput.attrition_reason
+      ) {
         sets.push("attrition_reason = COALESCE(?, attrition_reason)");
         params.push(attrInput.attrition_reason);
       }
-      if (attrInput.attrition_reason_notes !== undefined && attrInput.attrition_reason_notes) {
-        sets.push("attrition_reason_notes = COALESCE(?, attrition_reason_notes)");
+      if (
+        attrInput.attrition_reason_notes !== undefined &&
+        attrInput.attrition_reason_notes
+      ) {
+        sets.push(
+          "attrition_reason_notes = COALESCE(?, attrition_reason_notes)",
+        );
         params.push(attrInput.attrition_reason_notes);
       }
     }
@@ -680,7 +945,10 @@ export const employeeService = {
     // nothing is written) and applied after the profile UPDATE below, so a refused date cannot
     // leave the rest of the edit half-saved and a failed profile UPDATE cannot leave the date moved.
     let salaryDateChange: ApplySalaryStartDateArgs | null = null;
-    if (input.salaryStartDate !== undefined && dayOf(input.salaryStartDate) !== dayOf(snap.salary_start_date)) {
+    if (
+      input.salaryStartDate !== undefined &&
+      dayOf(input.salaryStartDate) !== dayOf(snap.salary_start_date)
+    ) {
       if (!input.salaryStartDate) {
         throw Object.assign(new Error("Salary start date cannot be cleared."), {
           statusCode: 400,
@@ -700,7 +968,10 @@ export const employeeService = {
 
     if (sets.length > 0) {
       params.push(id);
-      await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
+      await db.execute(
+        `UPDATE employees SET ${sets.join(", ")} WHERE id = ?`,
+        params,
+      );
 
       /**
        * A manager change is recorded as HISTORY, not just as an audit line.
@@ -715,11 +986,15 @@ export const employeeService = {
        * Deliberately not awaited and never allowed to throw: the profile edit is the user's
        * action and must not fail because a history row could not be written.
        */
-      const managerMoved = input.reportingManagerId !== undefined &&
-        String(input.reportingManagerId ?? "") !== String(snap.reporting_manager_id ?? "");
-      const processMoved = input.processId !== undefined &&
+      const managerMoved =
+        input.reportingManagerId !== undefined &&
+        String(input.reportingManagerId ?? "") !==
+          String(snap.reporting_manager_id ?? "");
+      const processMoved =
+        input.processId !== undefined &&
         String(input.processId ?? "") !== String(snap.process_id ?? "");
-      const branchMoved = input.branchId !== undefined &&
+      const branchMoved =
+        input.branchId !== undefined &&
         String(input.branchId ?? "") !== String(snap.branch_id ?? "");
 
       // Any of the three moves the person under different accountability, so all three open a
@@ -727,7 +1002,9 @@ export const employeeService = {
       if (managerMoved || processMoved || branchMoved) {
         void recordSupervisoryChange({
           employeeId: id,
-          ...(managerMoved ? { managerId: input.reportingManagerId ?? null } : {}),
+          ...(managerMoved
+            ? { managerId: input.reportingManagerId ?? null }
+            : {}),
           ...(processMoved ? { processId: input.processId ?? null } : {}),
           ...(branchMoved ? { branchId: input.branchId ?? null } : {}),
           changedBy: actorUserId ?? null,
@@ -736,9 +1013,12 @@ export const employeeService = {
       }
 
       // Log cost-centre / branch transfer with effective month for payroll traceability.
-      const ccMoved = input.costCentreId !== undefined &&
-        String(input.costCentreId ?? "") !== String((snap as any).cost_centre_id ?? "");
-      const effectiveMonth = (input as any).transferEffectiveMonth as string | null | undefined;
+      const ccMoved =
+        input.costCentreId !== undefined &&
+        String(input.costCentreId ?? "") !==
+          String((snap as any).cost_centre_id ?? "");
+      const effectiveMonth = (input as any).transferEffectiveMonth as
+        string | null | undefined;
       if ((ccMoved || branchMoved) && effectiveMonth) {
         const eventDate = `${effectiveMonth}-01`;
         void appendJourneyEvent({
@@ -746,12 +1026,22 @@ export const employeeService = {
           eventType: ccMoved ? "COST_CENTRE_TRANSFER" : "BRANCH_TRANSFER",
           eventDate,
           description: [
-            ccMoved ? `Cost Centre changed for payroll month ${effectiveMonth}` : null,
-            branchMoved ? `Branch changed for payroll month ${effectiveMonth}` : null,
-          ].filter(Boolean).join("; "),
+            ccMoved
+              ? `Cost Centre changed for payroll month ${effectiveMonth}`
+              : null,
+            branchMoved
+              ? `Branch changed for payroll month ${effectiveMonth}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join("; "),
           oldValue: JSON.stringify({
-            ...(ccMoved ? { cost_centre_id: (snap as any).cost_centre_id ?? null } : {}),
-            ...(branchMoved ? { branch_id: (snap as any).branch_id ?? null } : {}),
+            ...(ccMoved
+              ? { cost_centre_id: (snap as any).cost_centre_id ?? null }
+              : {}),
+            ...(branchMoved
+              ? { branch_id: (snap as any).branch_id ?? null }
+              : {}),
           }),
           newValue: JSON.stringify({
             ...(ccMoved ? { cost_centre_id: input.costCentreId ?? null } : {}),
@@ -765,7 +1055,9 @@ export const employeeService = {
 
       // Audit any sensitive field changes
       const changedSensitive = SENSITIVE_FIELDS.filter(
-        (f) => input[f.inputKey] !== undefined && String(input[f.inputKey] ?? "") !== String(snap[f.dbCol] ?? "")
+        (f) =>
+          input[f.inputKey] !== undefined &&
+          String(input[f.inputKey] ?? "") !== String(snap[f.dbCol] ?? ""),
       );
       if (changedSensitive.length > 0) {
         const oldVals: Record<string, unknown> = {};
@@ -805,9 +1097,18 @@ export const employeeService = {
           entity_type: "employee",
           entity_id: id,
           employee_id: id,
-          change_summary: { fields: ["Employment Status", "Active Status"], via: "profile_update" },
-          old_value_json: { "Employment Status": snap.employment_status ?? null, "Active Status": 1 },
-          new_value_json: { "Employment Status": "Inactive", "Active Status": 0 },
+          change_summary: {
+            fields: ["Employment Status", "Active Status"],
+            via: "profile_update",
+          },
+          old_value_json: {
+            "Employment Status": snap.employment_status ?? null,
+            "Active Status": 1,
+          },
+          new_value_json: {
+            "Employment Status": "Inactive",
+            "Active Status": 0,
+          },
           reason: deactivationReason,
         });
 
@@ -819,13 +1120,21 @@ export const employeeService = {
         // too. Deliberately NOT full & final: that is keyed to an exit_request
         // and belongs to payroll, and manufacturing a settlement record from a
         // profile edit would be worse than not having one.
-        const deprovision = await deprovisionEmployeeAccess(id, "employment_status_set_inactive");
+        const deprovision = await deprovisionEmployeeAccess(
+          id,
+          "employment_status_set_inactive",
+        );
         if (deprovision.failures.length > 0) {
-          process.stderr.write(JSON.stringify({
-            level: "error", module: "employees", event: "DEPROVISION_INCOMPLETE",
-            employee_id: id, failures: deprovision.failures,
-            timestamp: new Date().toISOString(),
-          }) + "\\n");
+          process.stderr.write(
+            JSON.stringify({
+              level: "error",
+              module: "employees",
+              event: "DEPROVISION_INCOMPLETE",
+              employee_id: id,
+              failures: deprovision.failures,
+              timestamp: new Date().toISOString(),
+            }) + "\\n",
+          );
         }
       }
     }
@@ -837,7 +1146,8 @@ export const employeeService = {
     // email filled in later via profile edit).
     if (input.officialEmail !== undefined || input.email !== undefined) {
       const [empRows] = await db.execute<RowDataPacket[]>(
-        'SELECT user_id, email, official_email FROM employees WHERE id = ? LIMIT 1', [id]
+        "SELECT user_id, email, official_email FROM employees WHERE id = ? LIMIT 1",
+        [id],
       );
       const empRow = (empRows as any[])[0];
       const userId: string | null = empRow?.user_id ?? null;
@@ -846,16 +1156,25 @@ export const employeeService = {
         // Employee has an account — sync the official email onto it
         const newEmail = input.officialEmail.toLowerCase().trim();
         const [conflict] = await db.execute<RowDataPacket[]>(
-          'SELECT id FROM auth_user WHERE email = ? AND id != ? LIMIT 1', [newEmail, userId]
+          "SELECT id FROM auth_user WHERE email = ? AND id != ? LIMIT 1",
+          [newEmail, userId],
         );
         if (!(conflict as any[]).length) {
-          await db.execute('UPDATE auth_user SET email = ? WHERE id = ?', [newEmail, userId]);
+          await db.execute("UPDATE auth_user SET email = ? WHERE id = ?", [
+            newEmail,
+            userId,
+          ]);
         }
       } else if (!userId) {
         // No auth account yet — create one now using the best available email
-        const bestEmail = [input.officialEmail, input.email, empRow?.official_email, empRow?.email]
-          .map((e: string | null | undefined) => (e ?? '').trim().toLowerCase())
-          .find((e: string) => e.includes('@') && e !== 'n/a');
+        const bestEmail = [
+          input.officialEmail,
+          input.email,
+          empRow?.official_email,
+          empRow?.email,
+        ]
+          .map((e: string | null | undefined) => (e ?? "").trim().toLowerCase())
+          .find((e: string) => e.includes("@") && e !== "n/a");
         if (bestEmail) {
           try {
             await createAuthUserForEmployee(id, bestEmail);
@@ -877,7 +1196,7 @@ export const employeeService = {
       attritionDate?: string | null;
       attritionReason?: string | null;
       attritionReasonNotes?: string | null;
-    }
+    },
   ): Promise<void> {
     const existing = await this.getEmployee(id);
 
@@ -887,8 +1206,10 @@ export const employeeService = {
     const trimmedReason = reason?.trim();
     if (!trimmedReason || trimmedReason.length < 10) {
       throw Object.assign(
-        new Error("A reason of at least 10 characters is required to deactivate an employee."),
-        { statusCode: 400, code: "DEACTIVATION_REASON_REQUIRED" }
+        new Error(
+          "A reason of at least 10 characters is required to deactivate an employee.",
+        ),
+        { statusCode: 400, code: "DEACTIVATION_REASON_REQUIRED" },
       );
     }
 
@@ -905,7 +1226,7 @@ export const employeeService = {
               attrition_reason  = COALESCE(?, attrition_reason),
               attrition_reason_notes = COALESCE(?, attrition_reason_notes)
         WHERE id = ?`,
-      [dolDate, dolDate, attrReason, attrNotes, id]
+      [dolDate, dolDate, attrReason, attrNotes, id],
     );
 
     await logSensitiveAction({
@@ -917,8 +1238,11 @@ export const employeeService = {
       employee_id: id,
       change_summary: { fields: ["Employment Status", "Active Status"] },
       old_value_json: {
-        "Employment Status": (existing as { employment_status?: unknown }).employment_status ?? null,
-        "Active Status": (existing as { active_status?: unknown }).active_status ?? null,
+        "Employment Status":
+          (existing as { employment_status?: unknown }).employment_status ??
+          null,
+        "Active Status":
+          (existing as { active_status?: unknown }).active_status ?? null,
       },
       new_value_json: { "Employment Status": "Inactive", "Active Status": 0 },
       reason: trimmedReason,
@@ -949,33 +1273,49 @@ export const employeeService = {
     // Resolve requester roles
     const [roleRows] = await db.execute<RowDataPacket[]>(
       "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-      [userId]
+      [userId],
     );
     const roles = (roleRows as { role_key: string }[]).map((r) => r.role_key);
 
     const isSuperAdmin = roles.includes("super_admin");
-    const isAdmin      = roles.includes("admin");
-    const isCeo        = roles.includes("ceo");
-    const isHr         = roles.includes("hr");
+    const isAdmin = roles.includes("admin");
+    const isCeo = roles.includes("ceo");
+    const isHr = roles.includes("hr");
     const isBranchHead = roles.includes("branch_head");
-    const isProcMgr    = roles.includes("process_manager") || roles.includes("manager");
-    const isWfm        = roles.includes("wfm") || roles.includes("operations_manager");
+    const isProcMgr =
+      roles.includes("process_manager") || roles.includes("manager");
+    const isWfm = roles.includes("wfm") || roles.includes("operations_manager");
 
     // Resolve own employee record for scope lookups
     const [selfRows] = await db.execute<RowDataPacket[]>(
       "SELECT id, branch_id, process_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
-      [userId]
+      [userId],
     );
-    const self = (selfRows as { id: string; branch_id: string | null; process_id: string | null }[])[0];
+    const self = (
+      selfRows as {
+        id: string;
+        branch_id: string | null;
+        process_id: string | null;
+      }[]
+    )[0];
 
     // Build scope WHERE
     const wheres: string[] = ["e.active_status = 1"];
     const qp: unknown[] = [];
 
     if (isSuperAdmin || isAdmin || isCeo || isHr) {
-      if (processId)    { wheres.push("e.process_id = ?");    qp.push(processId); }
-      if (branchId)     { wheres.push("e.branch_id = ?");     qp.push(branchId); }
-      if (departmentId) { wheres.push("e.department_id = ?"); qp.push(departmentId); }
+      if (processId) {
+        wheres.push("e.process_id = ?");
+        qp.push(processId);
+      }
+      if (branchId) {
+        wheres.push("e.branch_id = ?");
+        qp.push(branchId);
+      }
+      if (departmentId) {
+        wheres.push("e.department_id = ?");
+        qp.push(departmentId);
+      }
     } else if (isBranchHead) {
       const scopeBranch = self?.branch_id;
       if (!scopeBranch) return EMPTY_ORG_TREE(self?.id ?? null);
@@ -1004,7 +1344,7 @@ export const employeeService = {
       `${ORG_TREE_SELECT}
       WHERE ${wheres.join(" AND ")}
       ORDER BY e.date_of_joining ASC`,
-      qp
+      qp,
     );
 
     const employees = empRows as OrgTreeServiceNode[];
@@ -1022,10 +1362,15 @@ export const employeeService = {
 
       if (!scopedIdsForChain.has(self.id)) {
         const [ownRows] = await db.execute<RowDataPacket[]>(
-          `${ORG_TREE_SELECT} WHERE e.id = ? LIMIT 1`, [self.id]
+          `${ORG_TREE_SELECT} WHERE e.id = ? LIMIT 1`,
+          [self.id],
         );
         const own = (ownRows as OrgTreeServiceNode[])[0];
-        if (own) { employees.push(own); scopedIdsForChain.add(own.id); cursor = own.reporting_manager_id; }
+        if (own) {
+          employees.push(own);
+          scopedIdsForChain.add(own.id);
+          cursor = own.reporting_manager_id;
+        }
       }
 
       // Bounded walk — the guard is `seenChain`, so a cycle in the data terminates here
@@ -1033,11 +1378,14 @@ export const employeeService = {
       while (cursor && !seenChain.has(cursor) && chain.length < 25) {
         seenChain.add(cursor);
         if (scopedIdsForChain.has(cursor)) {
-          cursor = employees.find((e) => e.id === cursor)?.reporting_manager_id ?? null;
+          cursor =
+            employees.find((e) => e.id === cursor)?.reporting_manager_id ??
+            null;
           continue;
         }
         const [mgrRows] = await db.execute<RowDataPacket[]>(
-          `${ORG_TREE_SELECT} WHERE e.id = ? AND e.active_status = 1 LIMIT 1`, [cursor]
+          `${ORG_TREE_SELECT} WHERE e.id = ? AND e.active_status = 1 LIMIT 1`,
+          [cursor],
         );
         const mgr = (mgrRows as OrgTreeServiceNode[])[0];
         if (!mgr) break;
@@ -1165,8 +1513,18 @@ export function buildOrgForest(
   }
 
   const dataIssues: OrgTreeDataIssue[] = [];
-  const issueFor = (n: OrgTreeServiceNode, type: OrgTreeDataIssue["type"], detail: string) =>
-    dataIssues.push({ type, employeeId: n.id, employeeCode: n.employee_code, name: n.name, detail });
+  const issueFor = (
+    n: OrgTreeServiceNode,
+    type: OrgTreeDataIssue["type"],
+    detail: string,
+  ) =>
+    dataIssues.push({
+      type,
+      employeeId: n.id,
+      employeeCode: n.employee_code,
+      name: n.name,
+      detail,
+    });
 
   // Resolve each row's effective parent. Start from the recorded manager, then repair the
   // edges that make the graph something other than a forest.
@@ -1198,9 +1556,14 @@ export function buildOrgForest(
       if (state === "resolved") break;
       if (state === "visiting") {
         const node = byId.get(cursor)!;
-        const throughName = byId.get(effectiveParent.get(cursor) ?? "")?.name ?? "their manager";
+        const throughName =
+          byId.get(effectiveParent.get(cursor) ?? "")?.name ?? "their manager";
         effectiveParent.set(cursor, null);
-        issueFor(node, "cycle", `Reporting line loops back through ${throughName}`);
+        issueFor(
+          node,
+          "cycle",
+          `Reporting line loops back through ${throughName}`,
+        );
         break;
       }
       resolution.set(cursor, "visiting");
@@ -1230,8 +1593,11 @@ export function buildOrgForest(
 
   // Sort so the org reads top-down: biggest teams first, then alphabetically.
   const sortTree = (nodes: OrgTreeServiceNode[]) => {
-    nodes.sort((a, b) =>
-      (b.total_reports ?? 0) - (a.total_reports ?? 0) || a.name.localeCompare(b.name));
+    nodes.sort(
+      (a, b) =>
+        (b.total_reports ?? 0) - (a.total_reports ?? 0) ||
+        a.name.localeCompare(b.name),
+    );
     for (const n of nodes) sortTree(n.children);
   };
   sortTree(roots);

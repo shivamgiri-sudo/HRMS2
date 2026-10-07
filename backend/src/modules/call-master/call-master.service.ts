@@ -25,38 +25,98 @@ export interface CallMasterFilters {
  * adding them upstream, not aliasing a different parameter into their place.
  */
 const INBOUND_PARAMS = [
-  { key: "call_answered_within_5_seconds",          label: "Answered <5s",           column: "call_answered_within_5_seconds" },
-  { key: "call_identified_by_name",                 label: "Identified by Name",     column: null },
-  { key: "customer_concern_acknowledged",           label: "Concern Acknowledged",   column: "customer_concern_acknowledged" },
-  { key: "express_empathy",                         label: "Empathy Expressed",      column: "express_empathy" },
-  { key: "active_listening",                        label: "Active Listening",       column: "active_listening" },
-  { key: "assurance_or_appreciation_provided",      label: "Assurance Provided",     column: "assurance_or_appreciation_provided" },
-  { key: "politeness_and_no_sarcasm",               label: "Politeness",             column: "politeness_and_no_sarcasm" },
-  { key: "correct_and_complete_information",        label: "Correct Info",           column: "correct_and_complete_information" },
-  { key: "proper_hold_procedure",                   label: "Hold Procedure",         column: "proper_hold_procedure" },
-  { key: "call_avoidance",                          label: "Call Avoidance",         column: null },
-  { key: "address_recorded_completely",             label: "Address Recorded",       column: "address_recorded_completely" },
-  { key: "professionalism_maintained",              label: "Professionalism",        column: "professionalism_maintained" },
-  { key: "proper_call_closure",                     label: "Proper Closure",         column: "proper_call_closure" },
-  { key: "repeat_call_case_registered",             label: "Repeat Case Registered", column: null },
-  { key: "probing_done",                            label: "Probing Done",           column: "accurate_issue_probing" },
-  { key: "resolution_provided",                     label: "Resolution Provided",    column: null },
-  { key: "first_call_resolution",                   label: "FCR",                    column: null },
-  { key: "escalation_handled",                      label: "Escalation Handled",     column: "case_escalated_correctly" },
-  { key: "social_media_threat",                     label: "Social Media Threat",    column: null },
+  {
+    key: "call_answered_within_5_seconds",
+    label: "Answered <5s",
+    column: "call_answered_within_5_seconds",
+  },
+  { key: "call_identified_by_name", label: "Identified by Name", column: null },
+  {
+    key: "customer_concern_acknowledged",
+    label: "Concern Acknowledged",
+    column: "customer_concern_acknowledged",
+  },
+  {
+    key: "express_empathy",
+    label: "Empathy Expressed",
+    column: "express_empathy",
+  },
+  {
+    key: "active_listening",
+    label: "Active Listening",
+    column: "active_listening",
+  },
+  {
+    key: "assurance_or_appreciation_provided",
+    label: "Assurance Provided",
+    column: "assurance_or_appreciation_provided",
+  },
+  {
+    key: "politeness_and_no_sarcasm",
+    label: "Politeness",
+    column: "politeness_and_no_sarcasm",
+  },
+  {
+    key: "correct_and_complete_information",
+    label: "Correct Info",
+    column: "correct_and_complete_information",
+  },
+  {
+    key: "proper_hold_procedure",
+    label: "Hold Procedure",
+    column: "proper_hold_procedure",
+  },
+  { key: "call_avoidance", label: "Call Avoidance", column: null },
+  {
+    key: "address_recorded_completely",
+    label: "Address Recorded",
+    column: "address_recorded_completely",
+  },
+  {
+    key: "professionalism_maintained",
+    label: "Professionalism",
+    column: "professionalism_maintained",
+  },
+  {
+    key: "proper_call_closure",
+    label: "Proper Closure",
+    column: "proper_call_closure",
+  },
+  {
+    key: "repeat_call_case_registered",
+    label: "Repeat Case Registered",
+    column: null,
+  },
+  {
+    key: "probing_done",
+    label: "Probing Done",
+    column: "accurate_issue_probing",
+  },
+  { key: "resolution_provided", label: "Resolution Provided", column: null },
+  { key: "first_call_resolution", label: "FCR", column: null },
+  {
+    key: "escalation_handled",
+    label: "Escalation Handled",
+    column: "case_escalated_correctly",
+  },
+  { key: "social_media_threat", label: "Social Media Threat", column: null },
 ] as const;
 
 const OUTBOUND_PARAMS = [
-  { key: "Opening",          label: "Opening" },
-  { key: "Offered",          label: "Offered" },
-  { key: "ObjectionHandling",label: "Objection Handling" },
-  { key: "PrepaidPitch",     label: "Prepaid Pitch" },
+  { key: "Opening", label: "Opening" },
+  { key: "Offered", label: "Offered" },
+  { key: "ObjectionHandling", label: "Objection Handling" },
+  { key: "PrepaidPitch", label: "Prepaid Pitch" },
   { key: "UpsellingEfforts", label: "Upselling Efforts" },
-  { key: "OfferUrgency",     label: "Offer Urgency" },
-  { key: "SensitiveWordUsed",label: "Sensitive Word" },
+  { key: "OfferUrgency", label: "Offer Urgency" },
+  { key: "SensitiveWordUsed", label: "Sensitive Word" },
 ] as const;
 
-function buildClientFilter(alias: "q" | "d" | "", field: string, ids?: number[]): { clause: string; params: number[] } {
+function buildClientFilter(
+  alias: "q" | "d" | "",
+  field: string,
+  ids?: number[],
+): { clause: string; params: number[] } {
   if (!ids || ids.length === 0) return { clause: "", params: [] };
   const ph = ids.map(() => "?").join(",");
   const col = alias ? `${alias}.${field}` : field;
@@ -80,8 +140,11 @@ export async function getKPIs(filters: CallMasterFilters) {
 
   if (lob === "All" || lob === "Inbound") {
     const [ib] = await querySource<{
-      total: number; avg_quality: number; fatal_score: number;
-      avg_cx: number; avg_compliance: number;
+      total: number;
+      avg_quality: number;
+      fatal_score: number;
+      avg_cx: number;
+      avg_compliance: number;
     }>(
       `SELECT
         COUNT(*) AS total,
@@ -95,16 +158,22 @@ export async function getKPIs(filters: CallMasterFilters) {
           COALESCE(address_recorded_completely,0))/5.0*100),2) AS avg_compliance
        FROM db_audit.call_quality_assessment q
        WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}`,
-      [startDate, endDate, ...ibF.params]
+      [startDate, endDate, ...ibF.params],
     );
     results.inbound = ib;
   }
 
   if (lob === "All" || lob === "Outbound") {
     const [ob] = await querySource<{
-      total: number; conversion: number; ob_quality: number;
-      satisfaction_pct: number; positive_pct: number; negative_pct: number;
-      offer_accept_pct: number; cx_score: number; trust_score: number;
+      total: number;
+      conversion: number;
+      ob_quality: number;
+      satisfaction_pct: number;
+      positive_pct: number;
+      negative_pct: number;
+      offer_accept_pct: number;
+      cx_score: number;
+      trust_score: number;
     }>(
       `SELECT
         COUNT(*) AS total,
@@ -116,27 +185,33 @@ export async function getKPIs(filters: CallMasterFilters) {
         ROUND(SUM(CASE WHEN SaleDone='1' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS offer_accept_pct
        FROM db_external.CallDetails d
        WHERE d.CallDate BETWEEN ? AND ?${obF.clause}`,
-      [startDate, endDate, ...obF.params]
+      [startDate, endDate, ...obF.params],
     );
     if (ob) {
       // Composite scores from Mydashboards customer-intelligence formulas
       // Trust Score = satisfaction*0.5 + offer_accept*0.3 + (100-negative)*0.2
       const trustScore = Math.round(
         (ob.satisfaction_pct ?? 0) * 0.5 +
-        (ob.offer_accept_pct ?? 0) * 0.3 +
-        (100 - (ob.negative_pct ?? 0)) * 0.2
+          (ob.offer_accept_pct ?? 0) * 0.3 +
+          (100 - (ob.negative_pct ?? 0)) * 0.2,
       );
       // CX Score = positive*0.6 + offer_accept*0.4
       const cxScore = Math.round(
-        (ob.positive_pct ?? 0) * 0.6 +
-        (ob.offer_accept_pct ?? 0) * 0.4
+        (ob.positive_pct ?? 0) * 0.6 + (ob.offer_accept_pct ?? 0) * 0.4,
       );
       // Happiness Index = rule-based tier
       const happinessIndex =
-        trustScore >= 70 && cxScore >= 65 && (ob.conversion ?? 0) > 0 ? "High"
-        : trustScore >= 50 || cxScore >= 50 ? "Medium"
-        : "Low";
-      results.outbound = { ...ob, cx_score: cxScore, trust_score: trustScore, happiness_index: happinessIndex };
+        trustScore >= 70 && cxScore >= 65 && (ob.conversion ?? 0) > 0
+          ? "High"
+          : trustScore >= 50 || cxScore >= 50
+            ? "Medium"
+            : "Low";
+      results.outbound = {
+        ...ob,
+        cx_score: cxScore,
+        trust_score: trustScore,
+        happiness_index: happinessIndex,
+      };
     } else {
       results.outbound = ob;
     }
@@ -155,14 +230,14 @@ export async function getKPIs(filters: CallMasterFilters) {
         FROM db_external.CallDetails WHERE CallDate BETWEEN ? AND ?${obF2.clause}
           AND AgentName IS NOT NULL AND AgentName != ''
        ) t`,
-      [startDate, endDate, ...ibF2.params, startDate, endDate, ...obF2.params]
+      [startDate, endDate, ...ibF2.params, startDate, endDate, ...obF2.params],
     );
     results.active_agents = cnt?.cnt ?? 0;
   } else if (lob === "Inbound") {
     const [cnt] = await querySource<{ cnt: number }>(
       `SELECT COUNT(DISTINCT User) AS cnt FROM db_audit.call_quality_assessment
        WHERE CallDate BETWEEN ? AND ?${ibF.clause}`,
-      [startDate, endDate, ...ibF.params]
+      [startDate, endDate, ...ibF.params],
     );
     results.active_agents = cnt?.cnt ?? 0;
   } else {
@@ -170,7 +245,7 @@ export async function getKPIs(filters: CallMasterFilters) {
       `SELECT COUNT(DISTINCT AgentName) AS cnt FROM db_external.CallDetails d
        WHERE CallDate BETWEEN ? AND ?${obF.clause}
          AND AgentName IS NOT NULL AND AgentName != ''`,
-      [startDate, endDate, ...obF.params]
+      [startDate, endDate, ...obF.params],
     );
     results.active_agents = cnt?.cnt ?? 0;
   }
@@ -180,16 +255,23 @@ export async function getKPIs(filters: CallMasterFilters) {
 
 export async function getQualityTrend(
   filters: CallMasterFilters,
-  granularity: "daily" | "weekly" | "monthly" = "daily"
+  granularity: "daily" | "weekly" | "monthly" = "daily",
 ) {
   const { startDate, endDate, clientIds } = filters;
   const ibF = buildInboundClientFilter(clientIds);
   const groupExpr =
-    granularity === "monthly" ? "DATE_FORMAT(CallDate,'%Y-%m')"
-    : granularity === "weekly" ? "DATE_FORMAT(CallDate,'%Y-%u')"
-    : "DATE_FORMAT(CallDate,'%Y-%m-%d')";
+    granularity === "monthly"
+      ? "DATE_FORMAT(CallDate,'%Y-%m')"
+      : granularity === "weekly"
+        ? "DATE_FORMAT(CallDate,'%Y-%u')"
+        : "DATE_FORMAT(CallDate,'%Y-%m-%d')";
 
-  return querySource<{ period: string; quality: number; calls: number; fatal: number }>(
+  return querySource<{
+    period: string;
+    quality: number;
+    calls: number;
+    fatal: number;
+  }>(
     `SELECT ${groupExpr} AS period,
       ROUND(AVG(quality_percentage),2) AS quality,
       COUNT(*) AS calls,
@@ -197,21 +279,25 @@ export async function getQualityTrend(
      FROM db_audit.call_quality_assessment q
      WHERE CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY ${groupExpr} ORDER BY period ASC LIMIT 90`,
-    [startDate, endDate, ...ibF.params]
+    [startDate, endDate, ...ibF.params],
   );
 }
 
 export async function getTopAgents(
   filters: CallMasterFilters,
   limit = 10,
-  order: "top" | "bottom" = "top"
+  order: "top" | "bottom" = "top",
 ) {
   const { startDate, endDate, clientIds } = filters;
   const ibF = buildInboundClientFilter(clientIds);
   const dir = order === "top" ? "DESC" : "ASC";
 
   return querySource<{
-    agent: string; calls: number; quality: number; compliance: number; fatal_rate: number;
+    agent: string;
+    calls: number;
+    quality: number;
+    compliance: number;
+    fatal_rate: number;
   }>(
     `SELECT ANY_VALUE(COALESCE(am.AgentName, q.User)) AS agent,
       COUNT(*) AS calls,
@@ -224,7 +310,7 @@ export async function getTopAgents(
      WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY q.User HAVING calls >= 3
      ORDER BY quality ${dir} LIMIT ?`,
-    [startDate, endDate, ...ibF.params, String(limit)]
+    [startDate, endDate, ...ibF.params, String(limit)],
   );
 }
 
@@ -233,8 +319,14 @@ export async function getAgentAuditSummary(filters: CallMasterFilters) {
   const ibF = buildInboundClientFilter(clientIds);
 
   return querySource<{
-    agent: string; audit_count: number; cq_score: number;
-    fatal_count: number; fatal_pct: number; tq_count: number; mq_count: number; bq_count: number;
+    agent: string;
+    audit_count: number;
+    cq_score: number;
+    fatal_count: number;
+    fatal_pct: number;
+    tq_count: number;
+    mq_count: number;
+    bq_count: number;
   }>(
     `SELECT
       ANY_VALUE(COALESCE(am.AgentName, q.User)) AS agent,
@@ -249,7 +341,7 @@ export async function getAgentAuditSummary(filters: CallMasterFilters) {
      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
      WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY q.User ORDER BY cq_score DESC`,
-    [startDate, endDate, ...ibF.params]
+    [startDate, endDate, ...ibF.params],
   );
 }
 
@@ -258,7 +350,11 @@ export async function getSalesFunnel(filters: CallMasterFilters) {
   const obF = buildOutboundClientFilter(clientIds);
 
   const [row] = await querySource<{
-    total: number; offered: number; objection: number; upsell: number; sold: number;
+    total: number;
+    offered: number;
+    objection: number;
+    upsell: number;
+    sold: number;
   }>(
     `SELECT COUNT(*) AS total,
       SUM(CASE WHEN Opening='1' OR Opening=1 THEN 1 ELSE 0 END) AS offered,
@@ -267,7 +363,7 @@ export async function getSalesFunnel(filters: CallMasterFilters) {
       SUM(CASE WHEN SaleDone='1' OR SaleDone=1 THEN 1 ELSE 0 END) AS sold
      FROM db_external.CallDetails d
      WHERE d.CallDate BETWEEN ? AND ?${obF.clause}`,
-    [startDate, endDate, ...obF.params]
+    [startDate, endDate, ...obF.params],
   );
   return row ?? null;
 }
@@ -280,12 +376,12 @@ export async function getCXParameters(filters: CallMasterFilters) {
     const cols = INBOUND_PARAMS.map((p) =>
       p.column
         ? `ROUND(AVG(COALESCE(\`${p.column}\`,0))*100,1) AS \`${p.key}\``
-        : `NULL AS \`${p.key}\``
+        : `NULL AS \`${p.key}\``,
     ).join(",\n      ");
     const [row] = await querySource<Record<string, number>>(
       `SELECT ${cols} FROM db_audit.call_quality_assessment q
        WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}`,
-      [startDate, endDate, ...ibF.params]
+      [startDate, endDate, ...ibF.params],
     );
     return { params: row ?? {}, definitions: INBOUND_PARAMS };
   }
@@ -303,18 +399,26 @@ export async function getCXParameters(filters: CallMasterFilters) {
       ROUND(AVG(CASE WHEN LOWER(COALESCE(SensitiveWordUsed,'none'))='none' THEN 1 ELSE 0 END)*100,1) AS SensitiveWordUsed
      FROM db_external.CallDetails d
      WHERE d.CallDate BETWEEN ? AND ?${obF.clause}`,
-    [startDate, endDate, ...obF.params]
+    [startDate, endDate, ...obF.params],
   );
   return { params: row ?? {}, definitions: OUTBOUND_PARAMS };
 }
 
-export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 500) {
+export async function getFatalAgentSummary(
+  filters: CallMasterFilters,
+  limit = 500,
+) {
   const { startDate, endDate, clientIds } = filters;
   const ibF = buildInboundClientFilter(clientIds);
 
   return querySource<{
-    date: string; agent: string; client: string;
-    total_calls: number; fatal_calls: number; fatal_rate: number; avg_quality: number;
+    date: string;
+    agent: string;
+    client: string;
+    total_calls: number;
+    fatal_calls: number;
+    fatal_rate: number;
+    avg_quality: number;
   }>(
     `SELECT q.CallDate AS date,
       ANY_VALUE(COALESCE(am.AgentName, q.User)) AS agent,
@@ -329,7 +433,7 @@ export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 5
      WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY q.CallDate, q.User, q.ClientId
      ORDER BY q.CallDate DESC, q.User ASC LIMIT ?`,
-    [startDate, endDate, ...ibF.params, String(limit)]
+    [startDate, endDate, ...ibF.params, String(limit)],
   );
 }
 
@@ -339,39 +443,55 @@ export async function getCallsByClient(filters: CallMasterFilters) {
   const ibF = buildInboundClientFilter(clientIds);
   const obF = buildOutboundClientFilter(clientIds);
 
-  const ibQuery = () => querySource<{ client: string; calls: number; avg_quality?: number; conversion?: number }>(
-    `SELECT COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client,
+  const ibQuery = () =>
+    querySource<{
+      client: string;
+      calls: number;
+      avg_quality?: number;
+      conversion?: number;
+    }>(
+      `SELECT COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client,
       COUNT(*) AS calls,
       ROUND(AVG(q.quality_percentage),2) AS avg_quality
      FROM db_audit.call_quality_assessment q
      LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY q.ClientId, c.display_name ORDER BY calls DESC`,
-    [startDate, endDate, ...ibF.params]
-  );
+      [startDate, endDate, ...ibF.params],
+    );
 
-  const obQuery = () => querySource<{ client: string; calls: number; avg_quality?: number; conversion?: number }>(
-    `SELECT COALESCE(c.display_name, CONCAT('Client ', d.client_id)) AS client,
+  const obQuery = () =>
+    querySource<{
+      client: string;
+      calls: number;
+      avg_quality?: number;
+      conversion?: number;
+    }>(
+      `SELECT COALESCE(c.display_name, CONCAT('Client ', d.client_id)) AS client,
       COUNT(*) AS calls,
       ROUND(SUM(CASE WHEN SaleDone='1' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS conversion
      FROM db_external.CallDetails d
      LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(d.client_id AS UNSIGNED)
      WHERE d.CallDate BETWEEN ? AND ?${obF.clause}
      GROUP BY d.client_id, c.display_name ORDER BY calls DESC`,
-    [startDate, endDate, ...obF.params]
-  );
+      [startDate, endDate, ...obF.params],
+    );
 
   if (lob === "Outbound") return obQuery();
   if (lob === "Inbound") return ibQuery();
 
   // lob === "All": merge inbound + outbound by client name
   const [ib, ob] = await Promise.all([ibQuery(), obQuery()]);
-  const merged = new Map<string, { client: string; calls: number; avg_quality?: number; conversion?: number }>();
+  const merged = new Map<
+    string,
+    { client: string; calls: number; avg_quality?: number; conversion?: number }
+  >();
   for (const r of ib) merged.set(r.client, { ...r });
   for (const r of ob) {
     const existing = merged.get(r.client);
-    if (existing) { existing.calls += r.calls; }
-    else merged.set(r.client, r);
+    if (existing) {
+      existing.calls += r.calls;
+    } else merged.set(r.client, r);
   }
   return [...merged.values()].sort((a, b) => b.calls - a.calls);
 }
@@ -379,7 +499,12 @@ export async function getCallsByClient(filters: CallMasterFilters) {
 export async function getCallsByDay(filters: CallMasterFilters) {
   const { startDate, endDate, clientIds } = filters;
   const ibF = buildInboundClientFilter(clientIds);
-  return querySource<{ date: string; calls: number; avg_quality: number; fatal: number }>(
+  return querySource<{
+    date: string;
+    calls: number;
+    avg_quality: number;
+    fatal: number;
+  }>(
     `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date,
       COUNT(*) AS calls,
       ROUND(AVG(quality_percentage),2) AS avg_quality,
@@ -387,14 +512,19 @@ export async function getCallsByDay(filters: CallMasterFilters) {
      FROM db_audit.call_quality_assessment q
      WHERE CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d') ORDER BY date ASC`,
-    [startDate, endDate, ...ibF.params]
+    [startDate, endDate, ...ibF.params],
   );
 }
 
 export async function getFatalByDay(filters: CallMasterFilters) {
   const { startDate, endDate, clientIds } = filters;
   const ibF = buildInboundClientFilter(clientIds);
-  return querySource<{ date: string; total: number; fatal: number; fatal_pct: number }>(
+  return querySource<{
+    date: string;
+    total: number;
+    fatal: number;
+    fatal_pct: number;
+  }>(
     `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date,
       COUNT(*) AS total,
       SUM(CASE WHEN quality_percentage=0 THEN 1 ELSE 0 END) AS fatal,
@@ -402,7 +532,7 @@ export async function getFatalByDay(filters: CallMasterFilters) {
      FROM db_audit.call_quality_assessment q
      WHERE CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d') ORDER BY date ASC`,
-    [startDate, endDate, ...ibF.params]
+    [startDate, endDate, ...ibF.params],
   );
 }
 
@@ -415,7 +545,7 @@ export async function getScenarioDetail(filters: CallMasterFilters) {
      WHERE CallDate BETWEEN ? AND ?${ibF.clause}
        AND scenario IS NOT NULL AND scenario != ''
      GROUP BY scenario ORDER BY cnt DESC`,
-    [startDate, endDate, ...ibF.params]
+    [startDate, endDate, ...ibF.params],
   );
 }
 
@@ -428,7 +558,7 @@ export async function getActiveAgentsList(filters: CallMasterFilters) {
      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
      WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY q.User ORDER BY calls DESC`,
-    [startDate, endDate, ...ibF.params]
+    [startDate, endDate, ...ibF.params],
   );
 }
 
@@ -451,20 +581,17 @@ export async function getClientList() {
     `SELECT client_id AS id, display_name AS name
      FROM Shivamgiri.portal_client_config
      WHERE is_active = 1 AND display_name IS NOT NULL AND display_name != ''
-     ORDER BY display_name`
+     ORDER BY display_name`,
   );
 }
 
-export async function getExportData(
-  filters: CallMasterFilters,
-  limit = 5000
-) {
+export async function getExportData(filters: CallMasterFilters, limit = 5000) {
   const { startDate, endDate, clientIds, lob = "Inbound" } = filters;
 
   if (lob !== "Outbound") {
     const ibF = buildInboundClientFilter(clientIds);
     const paramCols = INBOUND_PARAMS.map((p) =>
-      p.column ? `q.\`${p.column}\` AS \`${p.key}\`` : `NULL AS \`${p.key}\``
+      p.column ? `q.\`${p.column}\` AS \`${p.key}\`` : `NULL AS \`${p.key}\``,
     ).join(", ");
     return querySource<Record<string, unknown>>(
       `SELECT q.CallDate, q.User AS agent_code,
@@ -474,7 +601,7 @@ export async function getExportData(
        LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
        WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
        ORDER BY q.CallDate DESC LIMIT ?`,
-      [startDate, endDate, ...ibF.params, String(limit)]
+      [startDate, endDate, ...ibF.params, String(limit)],
     );
   }
 
@@ -492,6 +619,6 @@ export async function getExportData(
      WHERE d.CallDate BETWEEN ? AND ?${obF.clause}
        AND d.AgentName IS NOT NULL AND d.AgentName != ''
      ORDER BY d.CallDate DESC LIMIT ?`,
-    [startDate, endDate, ...obF.params, String(limit)]
+    [startDate, endDate, ...obF.params, String(limit)],
   );
 }

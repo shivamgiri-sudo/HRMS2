@@ -35,16 +35,22 @@ export interface FixDraftGuardResult {
 // same philosophy as mira-issue-triage-guard.ts's UNSAFE_PATTERNS.
 const DENIED_PATH_PATTERNS: Array<[RegExp, string]> = [
   // Payroll arithmetic — never touched by an unattended AI proposal, however plausible.
-  [/payrollCalculate|payroll-calculate|salary.*calc|calc.*salary/i,
-    "touches payroll/salary calculation logic — this codebase's hardest rule, human-only"],
+  [
+    /payrollCalculate|payroll-calculate|salary.*calc|calc.*salary/i,
+    "touches payroll/salary calculation logic — this codebase's hardest rule, human-only",
+  ],
 
   // RBAC / access control.
-  [/requireRole|requireAuth|authMiddleware|rbac/i,
-    "touches an access-control or authorization file"],
+  [
+    /requireRole|requireAuth|authMiddleware|rbac/i,
+    "touches an access-control or authorization file",
+  ],
 
   // Field-level encryption and any credential/secret material.
-  [/field-encryption|encryption\.service|secret|credential/i,
-    "touches encryption or secret-handling code"],
+  [
+    /field-encryption|encryption\.service|secret|credential/i,
+    "touches encryption or secret-handling code",
+  ],
   [/(^|\/)\.env(\.|$)/i, "touches an environment/secrets file"],
   [/\.(pem|key|crt|p12|pfx)$/i, "touches a certificate or key file"],
 
@@ -59,8 +65,14 @@ const DENIED_PATH_PATTERNS: Array<[RegExp, string]> = [
 
   // This guard and its own draft pipeline — a diff must never be able to widen or disable
   // the very check gating it.
-  [/mira-fix-draft/i, "touches the fix-draft pipeline's own code — self-modification is never approvable"],
-  [/mira-issue-triage-guard|ai-input-guard/i, "touches an existing AI safety guard"],
+  [
+    /mira-fix-draft/i,
+    "touches the fix-draft pipeline's own code — self-modification is never approvable",
+  ],
+  [
+    /mira-issue-triage-guard|ai-input-guard/i,
+    "touches an existing AI safety guard",
+  ],
 ];
 
 /**
@@ -90,7 +102,16 @@ export function checkFixDraftSafety(diffText: string): FixDraftGuardResult {
   const deniedFiles: Array<{ file: string; reason: string }> = [];
 
   if (files.length === 0) {
-    return { safe: false, deniedFiles: [{ file: "(unparseable diff)", reason: "no recognizable file headers — refusing to approve an unparseable diff" }] };
+    return {
+      safe: false,
+      deniedFiles: [
+        {
+          file: "(unparseable diff)",
+          reason:
+            "no recognizable file headers — refusing to approve an unparseable diff",
+        },
+      ],
+    };
   }
 
   for (const file of files) {

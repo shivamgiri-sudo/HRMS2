@@ -40,7 +40,8 @@ export const CANONICAL_STAGES = [
 export type CanonicalStage = (typeof CANONICAL_STAGES)[number];
 
 /** Pipeline order, earliest first. Index is the stage's depth. */
-export const CANONICAL_STAGE_ORDER: readonly CanonicalStage[] = CANONICAL_STAGES;
+export const CANONICAL_STAGE_ORDER: readonly CanonicalStage[] =
+  CANONICAL_STAGES;
 
 /** Human labels for display, so callers do not re-invent them per dashboard. */
 export const CANONICAL_STAGE_LABEL: Record<CanonicalStage, string> = {
@@ -66,14 +67,14 @@ export const CANONICAL_STAGE_LABEL: Record<CanonicalStage, string> = {
  * why ~30k legacy rows landed on the top of the funnel.
  */
 const RAW_TO_CANONICAL: Record<string, CanonicalStage> = {
-  "applied": "applied",
-  "new": "applied",
-  "screening": "screening",
+  applied: "applied",
+  new: "applied",
+  screening: "screening",
   "round 1- hr screening": "screening",
   "round 1 - hr screening": "screening",
-  "interview": "assessment",
+  interview: "assessment",
   "interview - skill test": "assessment",
-  "assessment": "assessment",
+  assessment: "assessment",
   "round 2- op's": "ops_round",
   "round 2 - op's": "ops_round",
   "ops round": "ops_round",
@@ -81,28 +82,34 @@ const RAW_TO_CANONICAL: Record<string, CanonicalStage> = {
   "round 3 - client": "client_round",
   "client round": "client_round",
   "selection discussion": "selection_discussion",
-  "selected": "selected",
-  "offered": "offered",
-  "offer_approved": "offered",
+  selected: "selected",
+  offered: "offered",
+  offer_approved: "offered",
   // "Arrival" and "Arrived" are one stage recorded two ways.
-  "arrival": "arrived",
-  "arrived": "arrived",
-  "onboarded": "onboarded",
-  "converted": "onboarded",
-  "payroll_validated": "onboarded",
+  arrival: "arrived",
+  arrived: "arrived",
+  onboarded: "onboarded",
+  converted: "onboarded",
+  payroll_validated: "onboarded",
 };
 
-const normalise = (raw: string): string => raw.trim().toLowerCase().replace(/\s+/g, " ");
+const normalise = (raw: string): string =>
+  raw.trim().toLowerCase().replace(/\s+/g, " ");
 
 /** Canonical stage for a raw `current_stage` value, or null when unrecognised. */
-export function canonicalStage(raw: string | null | undefined): CanonicalStage | null {
+export function canonicalStage(
+  raw: string | null | undefined,
+): CanonicalStage | null {
   if (raw == null) return null;
   const key = normalise(String(raw));
   if (!key) return null;
   return RAW_TO_CANONICAL[key] ?? null;
 }
 
-export interface StageBucket { stage: string; count: number }
+export interface StageBucket {
+  stage: string;
+  count: number;
+}
 
 export interface FunnelStep {
   stage: CanonicalStage;
@@ -158,7 +165,8 @@ export function buildCanonicalFunnel(buckets: StageBucket[]): CanonicalFunnel {
 
   const steps: FunnelStep[] = CANONICAL_STAGE_ORDER.map((stage, i) => {
     const here = reached.get(stage) ?? 0;
-    const prev = i === 0 ? null : reached.get(CANONICAL_STAGE_ORDER[i - 1]) ?? 0;
+    const prev =
+      i === 0 ? null : (reached.get(CANONICAL_STAGE_ORDER[i - 1]) ?? 0);
     return {
       stage,
       label: CANONICAL_STAGE_LABEL[stage],
@@ -166,7 +174,8 @@ export function buildCanonicalFunnel(buckets: StageBucket[]): CanonicalFunnel {
       reached: here,
       // Guard the divide: a stage nobody reached gives no information, and 0/0 must not
       // render as a confident 0% conversion.
-      conversion_from_previous: prev == null ? null : prev > 0 ? here / prev : null,
+      conversion_from_previous:
+        prev == null ? null : prev > 0 ? here / prev : null,
     };
   });
 

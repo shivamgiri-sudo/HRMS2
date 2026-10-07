@@ -12,7 +12,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -31,7 +36,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -42,15 +47,21 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 export async function assetInventory(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["a.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
 
   // Branch scope applied directly on asset_master
-  if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
-  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
-    clauses.push(`a.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
+  if (scope.branchScope.mode === "none")
+    throw new ReportScopeAccessDeniedError("branchScope");
+  if (
+    scope.branchScope.mode === "restricted" &&
+    scope.branchScope.ids.length > 0
+  ) {
+    clauses.push(
+      `a.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`,
+    );
     params.push(...scope.branchScope.ids);
   }
 
@@ -88,11 +99,18 @@ export async function assetInventory(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -101,24 +119,36 @@ export async function assetInventory(
 export async function assetAllocationRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["a.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
 
   // Branch scope through employee join
-  if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
-  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
-    clauses.push(`e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
+  if (scope.branchScope.mode === "none")
+    throw new ReportScopeAccessDeniedError("branchScope");
+  if (
+    scope.branchScope.mode === "restricted" &&
+    scope.branchScope.ids.length > 0
+  ) {
+    clauses.push(
+      `e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`,
+    );
     params.push(...scope.branchScope.ids);
   }
-  if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
-  if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
-    clauses.push(`e.process_id IN (${scope.processScope.ids.map(() => "?").join(",")})`);
+  if (scope.processScope.mode === "none")
+    throw new ReportScopeAccessDeniedError("processScope");
+  if (
+    scope.processScope.mode === "restricted" &&
+    scope.processScope.ids.length > 0
+  ) {
+    clauses.push(
+      `e.process_id IN (${scope.processScope.ids.map(() => "?").join(",")})`,
+    );
     params.push(...scope.processScope.ids);
   }
 
@@ -165,11 +195,18 @@ export async function assetAllocationRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -178,22 +215,26 @@ export async function assetAllocationRegister(
 export async function assetMovementLog(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["a.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
 
   // Branch scope through employee join (employee may be null for location-only moves)
-  if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
-  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
+  if (scope.branchScope.mode === "none")
+    throw new ReportScopeAccessDeniedError("branchScope");
+  if (
+    scope.branchScope.mode === "restricted" &&
+    scope.branchScope.ids.length > 0
+  ) {
     // Apply via asset branch_id (movement tied to the asset's home branch) or employee
     clauses.push(
       `(a.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")}) ` +
-      `OR e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`
+        `OR e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`,
     );
     params.push(...scope.branchScope.ids, ...scope.branchScope.ids);
   }
@@ -233,12 +274,22 @@ export async function assetMovementLog(
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-    const rows  = await query(sql, params) as Record<string, unknown>[];
-    const nextCursor = (options.mode === "worker" && rows.length > 0)
-      ? (rows[rows.length - 1]._cursor as number) : null;
+    const sql =
+      options.mode === "worker"
+        ? `${base} LIMIT ${options.limit}`
+        : applyPagination(base, options);
+    const rows = (await query(sql, params)) as Record<string, unknown>[];
+    const nextCursor =
+      options.mode === "worker" && rows.length > 0
+        ? (rows[rows.length - 1]._cursor as number)
+        : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
-    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+    return {
+      rows: out,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: total > out.length,
+      nextCursor,
+    };
   } catch (err: unknown) {
     if ((err as Record<string, unknown>)?.["code"] === "ER_NO_SUCH_TABLE") {
       // asset_movement_log does not exist in mas_hrms and has no equivalent —
@@ -248,7 +299,7 @@ export async function assetMovementLog(
       throw new ReportSourceUnavailableError(
         "asset-movement-log",
         "asset_movement_log",
-        "Asset custody movements are not recorded in this database; the report is marked blocked in the catalog."
+        "Asset custody movements are not recorded in this database; the report is marked blocked in the catalog.",
       );
     }
     throw err;
@@ -276,14 +327,16 @@ export async function assetMovementLog(
 export async function documentExpiryTracker(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
   const daysAhead = Number(filters["daysAhead"] ?? 90);
-  const lookaheadDate = new Date(new Date().getTime() + daysAhead * 86400000).toISOString().slice(0, 10);
+  const lookaheadDate = new Date(new Date().getTime() + daysAhead * 86400000)
+    .toISOString()
+    .slice(0, 10);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   // This predicate is correct and currently fatal: employee_documents.expiry_date is NULL on ALL
@@ -297,7 +350,10 @@ export async function documentExpiryTracker(
 
   if (filters.status) {
     if (filters.status === "expired") {
-      clauses.pop(); clauses.pop(); params.pop(); params.pop();
+      clauses.pop();
+      clauses.pop();
+      params.pop();
+      params.pop();
       clauses.push("ed.expiry_date < ?");
       params.push(today);
     } else if (filters.status === "expiring_soon") {
@@ -341,12 +397,22 @@ export async function documentExpiryTracker(
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-    const rows  = await query(sql, params) as Record<string, unknown>[];
-    const nextCursor = (options.mode === "worker" && rows.length > 0)
-      ? (rows[rows.length - 1]._cursor as number) : null;
+    const sql =
+      options.mode === "worker"
+        ? `${base} LIMIT ${options.limit}`
+        : applyPagination(base, options);
+    const rows = (await query(sql, params)) as Record<string, unknown>[];
+    const nextCursor =
+      options.mode === "worker" && rows.length > 0
+        ? (rows[rows.length - 1]._cursor as number)
+        : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
-    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+    return {
+      rows: out,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: total > out.length,
+      nextCursor,
+    };
   } catch (err: unknown) {
     // Narrowed to the column it was written for. It previously swallowed EVERY
     // ER_BAD_FIELD_ERROR and returned an empty result, so the two columns above — which do not
@@ -362,7 +428,9 @@ export async function documentExpiryTracker(
     // expiry_date exists in mas_hrms — migration 415 is applied — so this branch is now dead here
     // and kept only for an environment that has not run it yet. Anything else is rethrown.
     const code = (err as Record<string, unknown>)?.["code"];
-    const message = String((err as Record<string, unknown>)?.["sqlMessage"] ?? "");
+    const message = String(
+      (err as Record<string, unknown>)?.["sqlMessage"] ?? "",
+    );
     if (code === "ER_BAD_FIELD_ERROR" && /expiry_date/.test(message)) {
       return { rows: [], rowCount: 0, isTruncated: false };
     }
@@ -386,15 +454,16 @@ export async function documentExpiryTracker(
 export async function documentVerificationStatus(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
-  if (filters.status === "verified")   clauses.push("ed.verified = 1");
-  if (filters.status === "unverified") clauses.push("COALESCE(ed.verified, 0) = 0");
+  if (filters.status === "verified") clauses.push("ed.verified = 1");
+  if (filters.status === "unverified")
+    clauses.push("COALESCE(ed.verified, 0) = 0");
   if (typeof filters["docType"] === "string" && filters["docType"]) {
     clauses.push("ed.doc_type = ?");
     params.push(String(filters["docType"]));
@@ -434,11 +503,18 @@ export async function documentVerificationStatus(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -456,7 +532,7 @@ export async function documentVerificationStatus(
 export async function certificationStatus(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -501,9 +577,16 @@ export async function certificationStatus(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }

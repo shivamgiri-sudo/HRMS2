@@ -41,12 +41,20 @@ async function main() {
       ORDER BY g.accounting_period, g.grn_number`,
   );
 
-  console.log(`${rows.length} row(s) found (expect 11 — this script targets only what the main backfill excluded).`);
-  console.log(APPLY ? "MODE: --apply, writing.\n" : "MODE: dry run, writing nothing. Pass --apply to write.\n");
+  console.log(
+    `${rows.length} row(s) found (expect 11 — this script targets only what the main backfill excluded).`,
+  );
+  console.log(
+    APPLY
+      ? "MODE: --apply, writing.\n"
+      : "MODE: dry run, writing nothing. Pass --apply to write.\n",
+  );
 
   let applied = 0;
   for (const row of rows as RowDataPacket[]) {
-    console.log(`  ${row.grn_number}  period=${row.accounting_period}  amount=${Number(row.amount_with_tax).toFixed(2)}`);
+    console.log(
+      `  ${row.grn_number}  period=${row.accounting_period}  amount=${Number(row.amount_with_tax).toFixed(2)}`,
+    );
     if (!APPLY) continue;
     const [result] = await db.execute(
       `UPDATE grn_cost_allocation
@@ -55,10 +63,22 @@ async function main() {
       [row.allocation_id],
     );
     if ((result as { affectedRows: number }).affectedRows === 1) applied += 1;
-    else console.error(`  FAILED ${row.grn_number}: not in 'reserved' at write time`);
+    else
+      console.error(
+        `  FAILED ${row.grn_number}: not in 'reserved' at write time`,
+      );
   }
 
-  console.log(APPLY ? `\n${applied} of ${rows.length} row(s) reclassified.` : "\nNothing written. Re-run with --apply once this reads correctly.");
+  console.log(
+    APPLY
+      ? `\n${applied} of ${rows.length} row(s) reclassified.`
+      : "\nNothing written. Re-run with --apply once this reads correctly.",
+  );
 }
 
-main().then(() => process.exit(0)).catch((e) => { console.error("FAILED", e); process.exit(1); });
+main()
+  .then(() => process.exit(0))
+  .catch((e) => {
+    console.error("FAILED", e);
+    process.exit(1);
+  });

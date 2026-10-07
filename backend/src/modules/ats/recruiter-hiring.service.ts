@@ -8,7 +8,8 @@ import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
 import { listActiveProcessNames } from "./process-options.js";
 
-export type DuplicateMode = "insert_duplicates_with_warning" | "update_existing" | "skip_duplicates";
+export type DuplicateMode =
+  "insert_duplicates_with_warning" | "update_existing" | "skip_duplicates";
 
 export type HiringSheetRow = Record<string, unknown>;
 
@@ -89,15 +90,43 @@ export type ImportResult = {
   updatedRows: number;
   duplicateRows: number;
   failedRows: number;
-  errors: Array<{ row_number: number; column_name: string | null; error_message: string }>;
+  errors: Array<{
+    row_number: number;
+    column_name: string | null;
+    error_message: string;
+  }>;
 };
 
 export type HiringDashboard = {
   metrics: Record<string, number>;
-  byRecruiter: Array<{ label: string; total: number; contacted: number; selected: number; joined: number }>;
-  bySource: Array<{ label: string; total: number; contacted: number; selected: number; joined: number }>;
-  byProcess: Array<{ label: string; total: number; contacted: number; selected: number; joined: number }>;
-  byBranch: Array<{ label: string; total: number; contacted: number; selected: number; joined: number }>;
+  byRecruiter: Array<{
+    label: string;
+    total: number;
+    contacted: number;
+    selected: number;
+    joined: number;
+  }>;
+  bySource: Array<{
+    label: string;
+    total: number;
+    contacted: number;
+    selected: number;
+    joined: number;
+  }>;
+  byProcess: Array<{
+    label: string;
+    total: number;
+    contacted: number;
+    selected: number;
+    joined: number;
+  }>;
+  byBranch: Array<{
+    label: string;
+    total: number;
+    contacted: number;
+    selected: number;
+    joined: number;
+  }>;
 };
 
 export type HiringActivityBootstrap = {
@@ -226,12 +255,35 @@ type ActivityActorContext = {
   location_name: string;
 };
 
-const TRUE_VALUES = new Set(["yes", "y", "true", "1", "selected", "joined", "walkin", "contacted"]);
-const FALSE_VALUES = new Set(["", "no", "n", "false", "0", "null", "undefined"]);
+const TRUE_VALUES = new Set([
+  "yes",
+  "y",
+  "true",
+  "1",
+  "selected",
+  "joined",
+  "walkin",
+  "contacted",
+]);
+const FALSE_VALUES = new Set([
+  "",
+  "no",
+  "n",
+  "false",
+  "0",
+  "null",
+  "undefined",
+]);
 
 const DEFAULT_HIRING_OPTION_LISTS = {
   processOptions: [] as string[],
-  sourceOptions: ["Walk-In", "Reference", "Job Portal", "Consultancy", "Employee Referral"],
+  sourceOptions: [
+    "Walk-In",
+    "Reference",
+    "Job Portal",
+    "Consultancy",
+    "Employee Referral",
+  ],
   positionOptions: [] as string[],
   wpGroupOptions: [] as string[],
   callingOutcomeOptions: [
@@ -259,8 +311,20 @@ const DEFAULT_HIRING_OPTION_LISTS = {
     "Other",
   ],
   genderOptions: ["Male", "Female", "Other"],
-  educationOptions: ["10th Pass", "12th Pass", "Graduate", "Post Graduate", "Diploma"],
-  experienceOptions: ["Fresher", "0-1 Year", "1-2 Years", "2-3 Years", "3+ Years"],
+  educationOptions: [
+    "10th Pass",
+    "12th Pass",
+    "Graduate",
+    "Post Graduate",
+    "Diploma",
+  ],
+  experienceOptions: [
+    "Fresher",
+    "0-1 Year",
+    "1-2 Years",
+    "2-3 Years",
+    "3+ Years",
+  ],
 };
 
 const HEADER_ALIASES: Record<string, string[]> = {
@@ -276,7 +340,10 @@ const HEADER_ALIASES: Record<string, string[]> = {
   mobile: ["Mobile No."],
   education_qualification: ["Candidate Education Qualification"],
   recruiter_remarks: ["HR Recruiter Remarks"],
-  recruiter_rejection_reason: ["HR Recruiter_Rejection Reasons", "HR Recruiter Rejection Reasons"],
+  recruiter_rejection_reason: [
+    "HR Recruiter_Rejection Reasons",
+    "HR Recruiter Rejection Reasons",
+  ],
   candidate_email: ["Candidate Email Address"],
   experience_level: ["Experience Level"],
   candidate_location: ["Candidate Location"],
@@ -295,10 +362,18 @@ const HEADER_ALIASES: Record<string, string[]> = {
   activity_month: ["Month"],
   batch_no: ["Batch No."],
   current_status: ["Current Status"],
-  joined_candidate_emp_code: ["Joined Candidate's Emp Code", "Joined Candidate Emp Code", "Employee Code"],
+  joined_candidate_emp_code: [
+    "Joined Candidate's Emp Code",
+    "Joined Candidate Emp Code",
+    "Employee Code",
+  ],
   emp_referral_details: ["Emp Referral Details"],
   walkin_flag: ["Walkin"],
-  final_selection_flag: ["FInal Selection", "Final Selection", "final_selection"],
+  final_selection_flag: [
+    "FInal Selection",
+    "Final Selection",
+    "final_selection",
+  ],
   joined_flag: ["Joined"],
   contacted_flag: ["Contacted"],
 };
@@ -354,7 +429,11 @@ export function parseSheetDate(value: unknown): string | null {
 
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return toIsoDate(value.getFullYear(), value.getMonth() + 1, value.getDate());
+    return toIsoDate(
+      value.getFullYear(),
+      value.getMonth() + 1,
+      value.getDate(),
+    );
   }
   if (typeof value === "number" && Number.isFinite(value)) {
     const parsed = XLSX.SSF.parse_date_code(value);
@@ -371,7 +450,9 @@ export function parseSheetDate(value: unknown): string | null {
       return toIsoDate(parsed.y, parsed.m, parsed.d);
     }
   }
-  const dmyMatch = raw.match(/^(\d{1,2})[-/\s]([A-Za-z]{3,9}|\d{1,2})[-/\s](\d{2,4})$/);
+  const dmyMatch = raw.match(
+    /^(\d{1,2})[-/\s]([A-Za-z]{3,9}|\d{1,2})[-/\s](\d{2,4})$/,
+  );
   if (dmyMatch) {
     const [, dayRaw, monthRaw, yearRaw] = dmyMatch;
     const day = Number(dayRaw);
@@ -405,22 +486,42 @@ export function parseSheetDate(value: unknown): string | null {
     const month = monthByName[monthText] ?? Number(monthRaw);
     const numericYear = Number(yearRaw);
     const year = yearRaw.length === 2 ? 2000 + numericYear : numericYear;
-    if (Number.isInteger(day) && Number.isInteger(month) && Number.isInteger(year) && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+    if (
+      Number.isInteger(day) &&
+      Number.isInteger(month) &&
+      Number.isInteger(year) &&
+      month >= 1 &&
+      month <= 12 &&
+      day >= 1 &&
+      day <= 31
+    ) {
       return toIsoDate(year, month, day);
     }
   }
   const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (isoMatch) {
-    return toIsoDate(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
+    return toIsoDate(
+      Number(isoMatch[1]),
+      Number(isoMatch[2]),
+      Number(isoMatch[3]),
+    );
   }
   const direct = new Date(raw);
   if (!Number.isNaN(direct.getTime())) {
-    return toIsoDate(direct.getFullYear(), direct.getMonth() + 1, direct.getDate());
+    return toIsoDate(
+      direct.getFullYear(),
+      direct.getMonth() + 1,
+      direct.getDate(),
+    );
   }
   const alt = raw.replace(/'/g, " ");
   const parsedAlt = new Date(alt);
   if (!Number.isNaN(parsedAlt.getTime())) {
-    return toIsoDate(parsedAlt.getFullYear(), parsedAlt.getMonth() + 1, parsedAlt.getDate());
+    return toIsoDate(
+      parsedAlt.getFullYear(),
+      parsedAlt.getMonth() + 1,
+      parsedAlt.getDate(),
+    );
   }
   return null;
 }
@@ -435,7 +536,9 @@ export function normalizeMonth(value: unknown): string | null {
   }
   const date = new Date(compact);
   if (!Number.isNaN(date.getTime())) {
-    return date.toLocaleDateString("en-IN", { month: "short", year: "2-digit" }).replace(/\s/g, "-");
+    return date
+      .toLocaleDateString("en-IN", { month: "short", year: "2-digit" })
+      .replace(/\s/g, "-");
   }
   return compact;
 }
@@ -448,7 +551,8 @@ function getIstDateParts(date = new Date()) {
     day: "2-digit",
   });
   const parts = formatter.formatToParts(date);
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  const get = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "";
   return {
     yyyy: get("year"),
     mm: get("month"),
@@ -464,12 +568,18 @@ function getCurrentIstDate() {
 function getCurrentIstMonthLabel() {
   const date = new Date(`${getCurrentIstDate()}T00:00:00+05:30`);
   return date
-    .toLocaleDateString("en-IN", { month: "short", year: "2-digit", timeZone: "Asia/Kolkata" })
+    .toLocaleDateString("en-IN", {
+      month: "short",
+      year: "2-digit",
+      timeZone: "Asia/Kolkata",
+    })
     .replace(/\s/g, "-");
 }
 
 function deriveContactedFlag(outcome: string | null) {
-  const lowered = String(outcome ?? "").trim().toLowerCase();
+  const lowered = String(outcome ?? "")
+    .trim()
+    .toLowerCase();
   if (!lowered) return 0;
   if (
     lowered.includes("not contacted") ||
@@ -486,7 +596,9 @@ function deriveContactedFlag(outcome: string | null) {
 }
 
 function deriveCurrentStatus(outcome: string | null) {
-  const lowered = String(outcome ?? "").trim().toLowerCase();
+  const lowered = String(outcome ?? "")
+    .trim()
+    .toLowerCase();
   if (!lowered) return null;
   if (lowered.includes("callback")) return "Callback Pending";
   if (
@@ -500,7 +612,12 @@ function deriveCurrentStatus(outcome: string | null) {
   ) {
     return "Not Contacted";
   }
-  if (lowered.includes("interested") || lowered.includes("visit") || lowered.includes("walk-in") || lowered.includes("walkin")) {
+  if (
+    lowered.includes("interested") ||
+    lowered.includes("visit") ||
+    lowered.includes("walk-in") ||
+    lowered.includes("walkin")
+  ) {
     return "Expected Walk-In";
   }
   if (lowered.includes("not interested")) return "Closed - Not Interested";
@@ -510,7 +627,7 @@ function deriveCurrentStatus(outcome: string | null) {
 async function getOptionList(configKey: string, fallback: string[]) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT config_value FROM ats_form_config WHERE config_key = ? LIMIT 1`,
-    [configKey]
+    [configKey],
   );
   const raw = rows[0]?.config_value;
   if (Array.isArray(raw)) return raw.map(String);
@@ -525,24 +642,36 @@ async function getOptionList(configKey: string, fallback: string[]) {
   return fallback;
 }
 
-async function getOptionLists(keys: string[], defaults: Record<string, string[]>): Promise<Record<string, string[]>> {
+async function getOptionLists(
+  keys: string[],
+  defaults: Record<string, string[]>,
+): Promise<Record<string, string[]>> {
   if (!keys.length) return {};
   const placeholders = keys.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT config_key, config_value FROM ats_form_config WHERE config_key IN (${placeholders})`,
-    keys
+    keys,
   );
-  const result: Record<string, string[]> = { ...Object.fromEntries(keys.map(k => [k, defaults[k] ?? []])) };
+  const result: Record<string, string[]> = {
+    ...Object.fromEntries(keys.map((k) => [k, defaults[k] ?? []])),
+  };
   for (const row of rows as any[]) {
     try {
-      const parsed = typeof row.config_value === "string" ? JSON.parse(row.config_value) : row.config_value;
+      const parsed =
+        typeof row.config_value === "string"
+          ? JSON.parse(row.config_value)
+          : row.config_value;
       if (Array.isArray(parsed)) result[row.config_key] = parsed.map(String);
-    } catch { /* keep default */ }
+    } catch {
+      /* keep default */
+    }
   }
   return result;
 }
 
-async function buildActivityActorContext(actorUserId: string): Promise<ActivityActorContext> {
+async function buildActivityActorContext(
+  actorUserId: string,
+): Promise<ActivityActorContext> {
   // The recruiter-roster lookup and the employee lookup do not depend on each other — issued together.
   const [recruiterProfile, [rows]] = await Promise.all([
     resolveRecruiterForActor(actorUserId).catch((err: unknown) => {
@@ -563,11 +692,12 @@ async function buildActivityActorContext(actorUserId: string): Promise<ActivityA
          LEFT JOIN branch_master b ON b.id = e.branch_id
         WHERE e.user_id = ?
         LIMIT 1`,
-      [actorUserId]
+      [actorUserId],
     ),
   ]);
   const employee = rows[0] ?? {};
-  const branchName = text(recruiterProfile?.branch) ?? text(employee.branch_name) ?? "Unmapped";
+  const branchName =
+    text(recruiterProfile?.branch) ?? text(employee.branch_name) ?? "Unmapped";
   const recruiterName =
     text(recruiterProfile?.name) ??
     text(employee.employee_name) ??
@@ -579,15 +709,20 @@ async function buildActivityActorContext(actorUserId: string): Promise<ActivityA
     activity_date: getCurrentIstDate(),
     activity_month: getCurrentIstMonthLabel(),
     recruiter_id: actorUserId,
-    recruiter_employee_id: text(recruiterProfile?.employeeId) ?? text(employee.employee_id),
-    recruiter_code: text(recruiterProfile?.recruiterCode) ?? text(employee.employee_code),
+    recruiter_employee_id:
+      text(recruiterProfile?.employeeId) ?? text(employee.employee_id),
+    recruiter_code:
+      text(recruiterProfile?.recruiterCode) ?? text(employee.employee_code),
     recruiter_name_snapshot: recruiterName,
     branch_name: branchName,
     location_name: branchName,
   };
 }
 
-function buildManualActivityPayload(payload: Record<string, unknown>, actor: ActivityActorContext) {
+function buildManualActivityPayload(
+  payload: Record<string, unknown>,
+  actor: ActivityActorContext,
+) {
   const recruiterRemarks =
     text(payload.recruiter_remarks) ??
     text(payload.calling_outcome) ??
@@ -595,7 +730,9 @@ function buildManualActivityPayload(payload: Record<string, unknown>, actor: Act
     null;
 
   const contactedFlag =
-    payload.contacted_flag !== undefined ? parseBool(payload.contacted_flag) : deriveContactedFlag(recruiterRemarks);
+    payload.contacted_flag !== undefined
+      ? parseBool(payload.contacted_flag)
+      : deriveContactedFlag(recruiterRemarks);
 
   return {
     ...payload,
@@ -608,11 +745,17 @@ function buildManualActivityPayload(payload: Record<string, unknown>, actor: Act
     branch_name: actor.branch_name,
     location_name: actor.location_name,
     recruiter_remarks: recruiterRemarks,
-    current_status: text(payload.current_status) ?? deriveCurrentStatus(recruiterRemarks),
+    current_status:
+      text(payload.current_status) ?? deriveCurrentStatus(recruiterRemarks),
     contacted_flag: contactedFlag,
-    walkin_flag: payload.walkin_flag !== undefined ? parseBool(payload.walkin_flag) : 0,
-    final_selection_flag: payload.final_selection_flag !== undefined ? parseBool(payload.final_selection_flag) : 0,
-    joined_flag: payload.joined_flag !== undefined ? parseBool(payload.joined_flag) : 0,
+    walkin_flag:
+      payload.walkin_flag !== undefined ? parseBool(payload.walkin_flag) : 0,
+    final_selection_flag:
+      payload.final_selection_flag !== undefined
+        ? parseBool(payload.final_selection_flag)
+        : 0,
+    joined_flag:
+      payload.joined_flag !== undefined ? parseBool(payload.joined_flag) : 0,
     source_system: text(payload.source_system) ?? "HRMS",
   };
 }
@@ -621,7 +764,10 @@ function normalizeStatus(value: unknown): string | null {
   return text(value);
 }
 
-export function mapSheetRow(row: HiringSheetRow): { normalized: NormalizedHiringActivity | null; errors: string[] } {
+export function mapSheetRow(row: HiringSheetRow): {
+  normalized: NormalizedHiringActivity | null;
+  errors: string[];
+} {
   const activityDate = parseSheetDate(pick(row, "activity_date"));
   const recruiterName = text(pick(row, "recruiter_name_snapshot"));
   const hiringSource = text(pick(row, "hiring_source"));
@@ -642,7 +788,9 @@ export function mapSheetRow(row: HiringSheetRow): { normalized: NormalizedHiring
   if (!mobile) errors.push("Mobile No. is required");
 
   const recruiterRemarks = text(pick(row, "recruiter_remarks"));
-  const recruiterRejectionReason = text(pick(row, "recruiter_rejection_reason"));
+  const recruiterRejectionReason = text(
+    pick(row, "recruiter_rejection_reason"),
+  );
   const hrInterviewStatus = normalizeStatus(pick(row, "hr_interview_status"));
   const hrRejectionReason = text(pick(row, "hr_rejection_reason"));
   const opsInterviewStatus = normalizeStatus(pick(row, "ops_interview_status"));
@@ -658,33 +806,69 @@ export function mapSheetRow(row: HiringSheetRow): { normalized: NormalizedHiring
   const contactedFlagRaw = parseBool(pick(row, "contacted_flag"));
   const walkinFlag = parseBool(pick(row, "walkin_flag"));
 
-  const contactedFlag = recruiterRemarks?.toLowerCase() === "not contacted" ? 0 : contactedFlagRaw;
-  const joiningStatusAuto = joiningStatus?.toLowerCase() === "joined" ? "Joined" : joiningStatus;
-  const currentStatusAuto = currentStatus || (finalSelectionFlag ? "Selected" : joiningStatusAuto || null);
+  const contactedFlag =
+    recruiterRemarks?.toLowerCase() === "not contacted" ? 0 : contactedFlagRaw;
+  const joiningStatusAuto =
+    joiningStatus?.toLowerCase() === "joined" ? "Joined" : joiningStatus;
+  const currentStatusAuto =
+    currentStatus ||
+    (finalSelectionFlag ? "Selected" : joiningStatusAuto || null);
 
   const isRejectedOutcome = (r: string | undefined) =>
-    ["rejected", "rejected (recruiter decision)", "not interested", "not interested (candidate declined)"]
-      .includes(r?.toLowerCase() ?? "");
-  if (isRejectedOutcome(recruiterRemarks ?? undefined) && !recruiterRejectionReason) {
-    errors.push("HR Recruiter_Rejection Reasons is mandatory when outcome is a rejection");
+    [
+      "rejected",
+      "rejected (recruiter decision)",
+      "not interested",
+      "not interested (candidate declined)",
+    ].includes(r?.toLowerCase() ?? "");
+  if (
+    isRejectedOutcome(recruiterRemarks ?? undefined) &&
+    !recruiterRejectionReason
+  ) {
+    errors.push(
+      "HR Recruiter_Rejection Reasons is mandatory when outcome is a rejection",
+    );
   }
   if (hrInterviewStatus?.toLowerCase() === "rejected" && !hrRejectionReason) {
-    errors.push("HR Rejection Reason is mandatory when HR Interview Status = Rejected");
+    errors.push(
+      "HR Rejection Reason is mandatory when HR Interview Status = Rejected",
+    );
   }
   if (opsInterviewStatus?.toLowerCase() === "rejected" && !opsRejectionReason) {
-    errors.push("Ops Rejection Reason is mandatory when Ops Interview Status = Rejected");
+    errors.push(
+      "Ops Rejection Reason is mandatory when Ops Interview Status = Rejected",
+    );
   }
-  if (finalSelectionFlag && !(currentStatusAuto || "").toLowerCase().includes("select")) {
-    errors.push("Current Status must indicate selected when FInal Selection = yes");
+  if (
+    finalSelectionFlag &&
+    !(currentStatusAuto || "").toLowerCase().includes("select")
+  ) {
+    errors.push(
+      "Current Status must indicate selected when FInal Selection = yes",
+    );
   }
-  if ((joinedFlag || joiningStatusAuto?.toLowerCase() === "joined") && !joinedCode) {
+  if (
+    (joinedFlag || joiningStatusAuto?.toLowerCase() === "joined") &&
+    !joinedCode
+  ) {
     errors.push("Joined Candidate's Emp Code is mandatory when Joined = yes");
   }
-  if ((hiringSource ?? "").toLowerCase() === "employee referral" && !empReferralDetails) {
-    errors.push("Emp Referral Details is mandatory when Hiring Source = Employee Referral");
+  if (
+    (hiringSource ?? "").toLowerCase() === "employee referral" &&
+    !empReferralDetails
+  ) {
+    errors.push(
+      "Emp Referral Details is mandatory when Hiring Source = Employee Referral",
+    );
   }
-  if (offerLetterStatus && /issued|sent|offer/i.test(offerLetterStatus) && !parseDecimal(pick(row, "salary_package_inr"))) {
-    errors.push("Salary Package in INR is mandatory when Offer Letter is issued or sent");
+  if (
+    offerLetterStatus &&
+    /issued|sent|offer/i.test(offerLetterStatus) &&
+    !parseDecimal(pick(row, "salary_package_inr"))
+  ) {
+    errors.push(
+      "Salary Package in INR is mandatory when Offer Letter is issued or sent",
+    );
   }
 
   const normalized: NormalizedHiringActivity = {
@@ -717,7 +901,10 @@ export function mapSheetRow(row: HiringSheetRow): { normalized: NormalizedHiring
     ai_interview_result: normalizeStatus(pick(row, "ai_interview_result")),
     ops_interviewer_employee_id: text(pick(row, "ops_interviewer_employee_id")),
     ops_interviewer_name: text(pick(row, "ops_interviewer_name")),
-    ops_interviewer_branch_snapshot: text(pick(row, "ops_interviewer_branch_snapshot")) || text(pick(row, "branch_name")) || locationName!,
+    ops_interviewer_branch_snapshot:
+      text(pick(row, "ops_interviewer_branch_snapshot")) ||
+      text(pick(row, "branch_name")) ||
+      locationName!,
     ops_interview_status: opsInterviewStatus,
     ops_rejection_reason: opsRejectionReason,
     salary_package_inr: parseDecimal(pick(row, "salary_package_inr")),
@@ -738,7 +925,8 @@ export function mapSheetRow(row: HiringSheetRow): { normalized: NormalizedHiring
     followup_required: parseBool(pick(row, "followup_required")),
     walkin_flag: walkinFlag,
     final_selection_flag: finalSelectionFlag,
-    joined_flag: joinedFlag || (joiningStatusAuto?.toLowerCase() === "joined" ? 1 : 0),
+    joined_flag:
+      joinedFlag || (joiningStatusAuto?.toLowerCase() === "joined" ? 1 : 0),
     contacted_flag: contactedFlag,
     linked_candidate_id: text(pick(row, "linked_candidate_id")),
     queue_token_id: text(pick(row, "queue_token_id")),
@@ -757,11 +945,17 @@ export function mapSheetRow(row: HiringSheetRow): { normalized: NormalizedHiring
   return { normalized, errors };
 }
 
-export function parseRecruiterSheet(buffer: Buffer, fileName: string): HiringSheetRow[] {
+export function parseRecruiterSheet(
+  buffer: Buffer,
+  fileName: string,
+): HiringSheetRow[] {
   const workbook = XLSX.read(buffer, { type: "buffer" });
   const sheet = workbook.SheetNames[0];
   if (!sheet) return [];
-  const rows = XLSX.utils.sheet_to_json<HiringSheetRow>(workbook.Sheets[sheet], { defval: "", raw: true });
+  const rows = XLSX.utils.sheet_to_json<HiringSheetRow>(
+    workbook.Sheets[sheet],
+    { defval: "", raw: true },
+  );
   return rows.map((row) => ({ ...row, __file_name: fileName }));
 }
 
@@ -772,36 +966,52 @@ async function getCurrentUserBranch(userId: string): Promise<string | null> {
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE e.user_id = ?
       LIMIT 1`,
-    [userId]
+    [userId],
   );
   return text(rows[0]?.branch_name);
 }
 
-export async function getHiringActivityBootstrap(userId: string): Promise<HiringActivityBootstrap> {
+export async function getHiringActivityBootstrap(
+  userId: string,
+): Promise<HiringActivityBootstrap> {
   const [actor, opts, masterProcessOptions] = await Promise.all([
     buildActivityActorContext(userId),
     getOptionLists(
-      ["hiringProcessOptions","hiringSourceOptions","hiringPositionOptions","hiringWpGroupOptions",
-       "hiringCallingOutcomeOptions","genderOptions","educationOptions","experienceOptions"],
+      [
+        "hiringProcessOptions",
+        "hiringSourceOptions",
+        "hiringPositionOptions",
+        "hiringWpGroupOptions",
+        "hiringCallingOutcomeOptions",
+        "genderOptions",
+        "educationOptions",
+        "experienceOptions",
+      ],
       {
-        hiringProcessOptions:       DEFAULT_HIRING_OPTION_LISTS.processOptions,
-        hiringSourceOptions:        DEFAULT_HIRING_OPTION_LISTS.sourceOptions,
-        hiringPositionOptions:      DEFAULT_HIRING_OPTION_LISTS.positionOptions,
-        hiringWpGroupOptions:       DEFAULT_HIRING_OPTION_LISTS.wpGroupOptions,
-        hiringCallingOutcomeOptions:DEFAULT_HIRING_OPTION_LISTS.callingOutcomeOptions,
-        genderOptions:              DEFAULT_HIRING_OPTION_LISTS.genderOptions,
-        educationOptions:           DEFAULT_HIRING_OPTION_LISTS.educationOptions,
-        experienceOptions:          DEFAULT_HIRING_OPTION_LISTS.experienceOptions,
-      }
+        hiringProcessOptions: DEFAULT_HIRING_OPTION_LISTS.processOptions,
+        hiringSourceOptions: DEFAULT_HIRING_OPTION_LISTS.sourceOptions,
+        hiringPositionOptions: DEFAULT_HIRING_OPTION_LISTS.positionOptions,
+        hiringWpGroupOptions: DEFAULT_HIRING_OPTION_LISTS.wpGroupOptions,
+        hiringCallingOutcomeOptions:
+          DEFAULT_HIRING_OPTION_LISTS.callingOutcomeOptions,
+        genderOptions: DEFAULT_HIRING_OPTION_LISTS.genderOptions,
+        educationOptions: DEFAULT_HIRING_OPTION_LISTS.educationOptions,
+        experienceOptions: DEFAULT_HIRING_OPTION_LISTS.experienceOptions,
+      },
     ),
     // process_master is the single place a process exists; the stored
     // hiringProcessOptions list is no longer consulted for process names.
     listActiveProcessNames(),
   ]);
-  const { hiringSourceOptions: sourceOptions,
-    hiringPositionOptions: positionOptions, hiringWpGroupOptions: wpGroupOptions,
-    hiringCallingOutcomeOptions: callingOutcomeOptions, genderOptions,
-    educationOptions, experienceOptions } = opts;
+  const {
+    hiringSourceOptions: sourceOptions,
+    hiringPositionOptions: positionOptions,
+    hiringWpGroupOptions: wpGroupOptions,
+    hiringCallingOutcomeOptions: callingOutcomeOptions,
+    genderOptions,
+    educationOptions,
+    experienceOptions,
+  } = opts;
   const processOptions = masterProcessOptions;
 
   return {
@@ -820,7 +1030,8 @@ export async function getHiringActivityBootstrap(userId: string): Promise<Hiring
       positionOptions,
       wpGroupOptions,
       callingOutcomeOptions,
-      rejectionReasonOptions: DEFAULT_HIRING_OPTION_LISTS.rejectionReasonOptions,
+      rejectionReasonOptions:
+        DEFAULT_HIRING_OPTION_LISTS.rejectionReasonOptions,
       genderOptions,
       educationOptions,
       experienceOptions,
@@ -828,7 +1039,11 @@ export async function getHiringActivityBootstrap(userId: string): Promise<Hiring
   };
 }
 
-function buildFilterSql(filters: HiringFilters, scopedOnly: boolean, branch?: string | null) {
+function buildFilterSql(
+  filters: HiringFilters,
+  scopedOnly: boolean,
+  branch?: string | null,
+) {
   const clauses: string[] = ["1=1"];
   const params: unknown[] = [];
   const add = (sql: string, value: unknown) => {
@@ -858,10 +1073,24 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean, branch?: st
   add("joining_status = ?", filters.joiningStatus);
   add("batch_no = ?", filters.batchNo);
   add("current_status = ?", filters.currentStatus);
-  add("walkin_flag = ?", filters.walkin !== undefined ? parseBool(filters.walkin) : undefined);
-  add("final_selection_flag = ?", filters.finalSelection !== undefined ? parseBool(filters.finalSelection) : undefined);
-  add("joined_flag = ?", filters.joined !== undefined ? parseBool(filters.joined) : undefined);
-  add("contacted_flag = ?", filters.contacted !== undefined ? parseBool(filters.contacted) : undefined);
+  add(
+    "walkin_flag = ?",
+    filters.walkin !== undefined ? parseBool(filters.walkin) : undefined,
+  );
+  add(
+    "final_selection_flag = ?",
+    filters.finalSelection !== undefined
+      ? parseBool(filters.finalSelection)
+      : undefined,
+  );
+  add(
+    "joined_flag = ?",
+    filters.joined !== undefined ? parseBool(filters.joined) : undefined,
+  );
+  add(
+    "contacted_flag = ?",
+    filters.contacted !== undefined ? parseBool(filters.contacted) : undefined,
+  );
 
   if (filters.search) {
     clauses.push(`(
@@ -886,7 +1115,11 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean, branch?: st
   return { sql: clauses.join(" AND "), params };
 }
 
-export async function listHiringActivity(userId: string, role: string | undefined, filters: HiringFilters) {
+export async function listHiringActivity(
+  userId: string,
+  role: string | undefined,
+  filters: HiringFilters,
+) {
   const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
   const branch = scopedOnly ? await getActorBranch(userId) : null;
   const { sql, params } = buildFilterSql(filters, scopedOnly, branch);
@@ -899,7 +1132,9 @@ export async function listHiringActivity(userId: string, role: string | undefine
   }
 
   const isExport = filters.export === "1";
-  const page = isExport ? 1 : Math.max(1, Math.trunc(Number(filters.page) || 1));
+  const page = isExport
+    ? 1
+    : Math.max(1, Math.trunc(Number(filters.page) || 1));
   const limit = isExport
     ? Math.min(Math.max(1, Math.trunc(Number(filters.limit) || 10000)), 10000)
     : Math.min(Math.max(1, Math.trunc(Number(filters.limit) || 50)), 100);
@@ -917,13 +1152,13 @@ export async function listHiringActivity(userId: string, role: string | undefine
       WHERE ${sql}
       ORDER BY arha.activity_date DESC, arha.created_at DESC
       LIMIT ${limit} OFFSET ${offset}`,
-    params
+    params,
   );
   const countPromise = db.execute<CountRow[]>(
     `SELECT COUNT(*) AS total
        FROM ats_recruiter_hiring_activity
       WHERE ${sql}`,
-    params
+    params,
   );
   // Rows and total are independent reads — issue them concurrently.
   const [[rows], [count]] = await Promise.all([rowsPromise, countPromise]);
@@ -936,7 +1171,9 @@ export async function listHiringActivity(userId: string, role: string | undefine
   };
 }
 
-async function findDuplicate(normalized: NormalizedHiringActivity): Promise<{ id: string } | null> {
+async function findDuplicate(
+  normalized: NormalizedHiringActivity,
+): Promise<{ id: string } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id
        FROM ats_recruiter_hiring_activity
@@ -956,7 +1193,7 @@ async function findDuplicate(normalized: NormalizedHiringActivity): Promise<{ id
       normalized.activity_month,
       normalized.candidate_name,
       normalized.process_name,
-    ]
+    ],
   );
   return rows[0]?.id ? { id: String(rows[0].id) } : null;
 }
@@ -965,13 +1202,19 @@ async function persistActivity(
   normalized: NormalizedHiringActivity,
   actorUserId: string,
   duplicateMode: DuplicateMode,
-  existingId?: string | null
+  existingId?: string | null,
 ) {
-  const duplicate = existingId ? { id: existingId } : await findDuplicate(normalized);
+  const duplicate = existingId
+    ? { id: existingId }
+    : await findDuplicate(normalized);
   const insertId = randomUUID();
 
   if (duplicate && duplicateMode === "skip_duplicates") {
-    return { action: "skipped" as const, id: duplicate.id, duplicateOf: duplicate.id };
+    return {
+      action: "skipped" as const,
+      id: duplicate.id,
+      duplicateOf: duplicate.id,
+    };
   }
 
   if (duplicate && duplicateMode === "update_existing") {
@@ -1066,32 +1309,46 @@ async function persistActivity(
        duplicate_override_reason, import_batch_id, source_system, raw_sheet_payload,
        is_followup_attempt, followup_of_activity_id, created_by, updated_by)
      VALUES (${insertValues.map(() => "?").join(", ")})`,
-    insertValues
+    insertValues,
   );
 
-  const action = (normalized as any).is_followup_attempt ? "followup" as const : "inserted" as const;
+  const action = (normalized as any).is_followup_attempt
+    ? ("followup" as const)
+    : ("inserted" as const);
   return { action, id: insertId, duplicateOf: duplicate?.id ?? null };
 }
 
 export async function upsertHiringActivity(
   payload: Record<string, unknown>,
   actorUserId: string,
-  duplicateMode: DuplicateMode = "insert_duplicates_with_warning"
+  duplicateMode: DuplicateMode = "insert_duplicates_with_warning",
 ) {
   const actor = await buildActivityActorContext(actorUserId);
-  const { normalized, errors } = mapSheetRow(buildManualActivityPayload(payload, actor));
+  const { normalized, errors } = mapSheetRow(
+    buildManualActivityPayload(payload, actor),
+  );
   if (!normalized) {
-    throw Object.assign(new Error(errors.join("; ")), { statusCode: 400, validationErrors: errors });
+    throw Object.assign(new Error(errors.join("; ")), {
+      statusCode: 400,
+      validationErrors: errors,
+    });
   }
   if (errors.length) {
-    throw Object.assign(new Error(errors.join("; ")), { statusCode: 400, validationErrors: errors });
+    throw Object.assign(new Error(errors.join("; ")), {
+      statusCode: 400,
+      validationErrors: errors,
+    });
   }
 
-  const persisted = await persistActivity(normalized, actorUserId, duplicateMode);
+  const persisted = await persistActivity(
+    normalized,
+    actorUserId,
+    duplicateMode,
+  );
   const rowId = persisted.id;
   const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
-    [rowId]
+    [rowId],
   );
   return { ...persisted, row: rows[0] ?? null };
 }
@@ -1099,20 +1356,27 @@ export async function upsertHiringActivity(
 export async function updateHiringActivityById(
   activityId: string,
   payload: Record<string, unknown>,
-  actorUserId: string
+  actorUserId: string,
 ) {
   const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
-    [activityId]
+    [activityId],
   );
   if (!rows.length) {
-    throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
+    throw Object.assign(new Error("Hiring activity not found"), {
+      statusCode: 404,
+    });
   }
 
   const actor = await buildActivityActorContext(actorUserId);
-  const { normalized, errors } = mapSheetRow(buildManualActivityPayload({ ...rows[0], ...payload }, actor));
+  const { normalized, errors } = mapSheetRow(
+    buildManualActivityPayload({ ...rows[0], ...payload }, actor),
+  );
   if (!normalized || errors.length) {
-    throw Object.assign(new Error(errors.join("; ") || "Invalid hiring activity row"), { statusCode: 400, validationErrors: errors });
+    throw Object.assign(
+      new Error(errors.join("; ") || "Invalid hiring activity row"),
+      { statusCode: 400, validationErrors: errors },
+    );
   }
 
   const sets = Object.keys(normalized)
@@ -1124,12 +1388,12 @@ export async function updateHiringActivityById(
   params.push(actorUserId, activityId);
   await db.execute(
     `UPDATE ats_recruiter_hiring_activity SET ${sets.join(", ")}, updated_by = ?, updated_at = NOW() WHERE id = ?`,
-    params
+    params,
   );
 
   const [updated] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
-    [activityId]
+    [activityId],
   );
   return { id: activityId, row: updated[0] ?? null };
 }
@@ -1138,14 +1402,14 @@ export async function importHiringActivityRows(
   rows: HiringSheetRow[],
   actorUserId: string,
   fileName: string,
-  duplicateMode: DuplicateMode = "insert_duplicates_with_warning"
+  duplicateMode: DuplicateMode = "insert_duplicates_with_warning",
 ): Promise<ImportResult> {
   const batchId = randomUUID();
   await db.execute(
     `INSERT INTO ats_recruiter_hiring_import_batch
       (id, file_name, uploaded_by, total_rows, inserted_rows, updated_rows, duplicate_rows, failed_rows, status, error_summary)
      VALUES (?, ?, ?, 0, 0, 0, 0, 0, 'processing', NULL)`,
-    [batchId, fileName, actorUserId]
+    [batchId, fileName, actorUserId],
   );
 
   let insertedRows = 0;
@@ -1162,31 +1426,46 @@ export async function importHiringActivityRows(
       if (!normalized || rowErrors.length) {
         failedRows += 1;
         const message = rowErrors.join("; ") || "Invalid row";
-        errors.push({ row_number: rowNumber, column_name: null, error_message: message });
+        errors.push({
+          row_number: rowNumber,
+          column_name: null,
+          error_message: message,
+        });
         await db.execute(
           `INSERT INTO ats_recruiter_hiring_import_error
             (id, import_batch_id, \`row_number\`, column_name, error_message, raw_row)
            VALUES (UUID(), ?, ?, ?, ?, ?)`,
-          [batchId, rowNumber, null, message, JSON.stringify(row)]
+          [batchId, rowNumber, null, message, JSON.stringify(row)],
         );
         continue;
       }
 
       normalized.import_batch_id = batchId;
       normalized.raw_sheet_payload = row;
-      const persisted = await persistActivity(normalized, actorUserId, duplicateMode);
+      const persisted = await persistActivity(
+        normalized,
+        actorUserId,
+        duplicateMode,
+      );
       if (persisted.action === "inserted") insertedRows += 1;
-      if (persisted.action === "followup") { insertedRows += 1; duplicateRows += 1; }
+      if (persisted.action === "followup") {
+        insertedRows += 1;
+        duplicateRows += 1;
+      }
       if (persisted.duplicateOf) duplicateRows += 1;
     } catch (err: unknown) {
       failedRows += 1;
       const message = err instanceof Error ? err.message : "Row import failed";
-      errors.push({ row_number: rowNumber, column_name: null, error_message: message });
+      errors.push({
+        row_number: rowNumber,
+        column_name: null,
+        error_message: message,
+      });
       await db.execute(
         `INSERT INTO ats_recruiter_hiring_import_error
           (id, import_batch_id, \`row_number\`, column_name, error_message, raw_row)
          VALUES (UUID(), ?, ?, ?, ?, ?)`,
-        [batchId, rowNumber, null, message, JSON.stringify(row)]
+        [batchId, rowNumber, null, message, JSON.stringify(row)],
       );
     }
   }
@@ -1210,7 +1489,7 @@ export async function importHiringActivityRows(
       failedRows > 0 ? "completed_with_errors" : "completed",
       errors.length ? JSON.stringify(errors.slice(0, 10)) : null,
       batchId,
-    ]
+    ],
   );
 
   return {
@@ -1225,7 +1504,9 @@ export async function importHiringActivityRows(
   };
 }
 
-async function resolveCandidateByActivity(activity: NormalizedHiringActivity): Promise<CandidateBridgeRecord | null> {
+async function resolveCandidateByActivity(
+  activity: NormalizedHiringActivity,
+): Promise<CandidateBridgeRecord | null> {
   const mobile = activity.mobile;
   const name = activity.candidate_name;
   const email = activity.candidate_email;
@@ -1245,15 +1526,31 @@ async function resolveCandidateByActivity(activity: NormalizedHiringActivity): P
   const isRealMobile = /^[6-9]\d{9}$/.test(String(mobile ?? "").trim());
   const queries: Array<[string, unknown[]]> = [];
   if (isRealMobile) {
-    queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE mobile = ? ORDER BY created_at DESC LIMIT 1`, [mobile]]);
-    queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE full_name = ? AND mobile = ? ORDER BY created_at DESC LIMIT 1`, [name, mobile]]);
+    queries.push([
+      `SELECT ${SAFE_COLS} FROM ats_candidate WHERE mobile = ? ORDER BY created_at DESC LIMIT 1`,
+      [mobile],
+    ]);
+    queries.push([
+      `SELECT ${SAFE_COLS} FROM ats_candidate WHERE full_name = ? AND mobile = ? ORDER BY created_at DESC LIMIT 1`,
+      [name, mobile],
+    ]);
   }
-  queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE email = ? ORDER BY created_at DESC LIMIT 1`, [email]]);
-  queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE employee_code = ? ORDER BY created_at DESC LIMIT 1`, [empCode]]);
-  queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE candidate_code = ? ORDER BY created_at DESC LIMIT 1`, [empCode]]);
+  queries.push([
+    `SELECT ${SAFE_COLS} FROM ats_candidate WHERE email = ? ORDER BY created_at DESC LIMIT 1`,
+    [email],
+  ]);
+  queries.push([
+    `SELECT ${SAFE_COLS} FROM ats_candidate WHERE employee_code = ? ORDER BY created_at DESC LIMIT 1`,
+    [empCode],
+  ]);
+  queries.push([
+    `SELECT ${SAFE_COLS} FROM ats_candidate WHERE candidate_code = ? ORDER BY created_at DESC LIMIT 1`,
+    [empCode],
+  ]);
 
   for (const [sql, params] of queries) {
-    if (params[0] === null || params[0] === undefined || params[0] === "") continue;
+    if (params[0] === null || params[0] === undefined || params[0] === "")
+      continue;
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     const candidate = rows[0];
     if (candidate?.id) return candidate as CandidateBridgeRecord;
@@ -1261,14 +1558,18 @@ async function resolveCandidateByActivity(activity: NormalizedHiringActivity): P
   return null;
 }
 
-async function syncActivityCandidateLink(activityId: string, candidateId: string | null, queueTokenId: string | null) {
+async function syncActivityCandidateLink(
+  activityId: string,
+  candidateId: string | null,
+  queueTokenId: string | null,
+) {
   await db.execute(
     `UPDATE ats_recruiter_hiring_activity
         SET linked_candidate_id = COALESCE(?, linked_candidate_id),
             queue_token_id = COALESCE(?, queue_token_id),
             updated_at = NOW()
       WHERE id = ?`,
-    [candidateId, queueTokenId, activityId]
+    [candidateId, queueTokenId, activityId],
   );
 }
 
@@ -1301,7 +1602,7 @@ export async function syncHiringActivityFromCandidateRegistration(params: {
       params.branchName ?? null,
       params.processName ?? null,
       params.processName ?? null,
-    ]
+    ],
   );
 
   const activityId = text(rows[0]?.id);
@@ -1326,22 +1627,31 @@ export async function syncHiringActivityFromCandidateRegistration(params: {
       params.branchName ?? null,
       params.processName ?? null,
       activityId,
-    ]
+    ],
   );
 
   return activityId;
 }
 
-export async function createCandidateFromActivity(activityId: string, actorUserId: string) {
+export async function createCandidateFromActivity(
+  activityId: string,
+  actorUserId: string,
+) {
   const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
-    [activityId]
+    [activityId],
   );
   const activity = rows[0];
-  if (!activity) throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
+  if (!activity)
+    throw Object.assign(new Error("Hiring activity not found"), {
+      statusCode: 404,
+    });
 
   const normalized = mapSheetRow(activity).normalized;
-  if (!normalized) throw Object.assign(new Error("Invalid hiring activity row"), { statusCode: 400 });
+  if (!normalized)
+    throw Object.assign(new Error("Invalid hiring activity row"), {
+      statusCode: 400,
+    });
 
   const existing = await resolveCandidateByActivity(normalized);
   if (existing) {
@@ -1367,7 +1677,7 @@ export async function createCandidateFromActivity(activityId: string, actorUserI
       recruiterName: normalized.recruiter_name_snapshot,
       profileStatus: "registered",
     },
-    actorUserId
+    actorUserId,
   );
 
   await syncActivityCandidateLink(activityId, candidate.id, null);
@@ -1375,74 +1685,120 @@ export async function createCandidateFromActivity(activityId: string, actorUserI
 }
 
 function tokenNumberFor(branchName: string, date: string, count: number) {
-  const prefix = (branchName || "GEN").replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase() || "GEN";
+  const prefix =
+    (branchName || "GEN")
+      .replace(/[^A-Za-z0-9]/g, "")
+      .slice(0, 3)
+      .toUpperCase() || "GEN";
   const compactDate = date.replace(/-/g, "");
   return `${prefix}-${compactDate}-${String(count).padStart(3, "0")}`;
 }
 
-async function ensureHumanTokenNumber(candidateId: string, branchName: string, arrivalDate: string) {
+async function ensureHumanTokenNumber(
+  candidateId: string,
+  branchName: string,
+  arrivalDate: string,
+) {
   const [rows] = await db.execute<CountRow[]>(
     `SELECT COUNT(*) AS total
        FROM ats_queue_token
       WHERE branch_name = ?
         AND DATE(created_at) = ?`,
-    [branchName, arrivalDate]
+    [branchName, arrivalDate],
   );
   const next = Number(rows[0]?.total ?? 0) + 1;
   return tokenNumberFor(branchName, arrivalDate, next);
 }
 
-export async function createTokenFromActivity(activityId: string, actorUserId: string) {
+export async function createTokenFromActivity(
+  activityId: string,
+  actorUserId: string,
+) {
   const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
-    [activityId]
+    [activityId],
   );
   const activity = rows[0];
-  if (!activity) throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
+  if (!activity)
+    throw Object.assign(new Error("Hiring activity not found"), {
+      statusCode: 404,
+    });
 
   const normalized = mapSheetRow(activity).normalized;
-  if (!normalized) throw Object.assign(new Error("Invalid hiring activity row"), { statusCode: 400 });
+  if (!normalized)
+    throw Object.assign(new Error("Invalid hiring activity row"), {
+      statusCode: 400,
+    });
 
-  let candidate: { id: string } | null = await resolveCandidateByActivity(normalized);
+  let candidate: { id: string } | null =
+    await resolveCandidateByActivity(normalized);
   if (!candidate) {
     const created = await createCandidateFromActivity(activityId, actorUserId);
     candidate = created.candidate;
   }
 
-  const token = await atsQueueService.createToken(candidate.id, `${normalized.activity_date} 09:00:00`);
-  const tokenNumber = await ensureHumanTokenNumber(candidate.id, normalized.branch_name ?? normalized.location_name, normalized.activity_date);
+  const token = await atsQueueService.createToken(
+    candidate.id,
+    `${normalized.activity_date} 09:00:00`,
+  );
+  const tokenNumber = await ensureHumanTokenNumber(
+    candidate.id,
+    normalized.branch_name ?? normalized.location_name,
+    normalized.activity_date,
+  );
   await db.execute(
     `UPDATE ats_queue_token SET token_number = ?, updated_at = NOW() WHERE id = ?`,
-    [tokenNumber, token.id]
+    [tokenNumber, token.id],
   );
   await db.execute(
     `UPDATE ats_candidate
         SET q_token = ?, status = 'Waiting', created_date = COALESCE(created_date, ?), created_time = COALESCE(created_time, TIME(?)),
             updated_at = NOW()
       WHERE id = ?`,
-    [tokenNumber, normalized.activity_date, `${normalized.activity_date} 09:00:00`, candidate.id]
+    [
+      tokenNumber,
+      normalized.activity_date,
+      `${normalized.activity_date} 09:00:00`,
+      candidate.id,
+    ],
   );
   await syncActivityCandidateLink(activityId, candidate.id, token.id);
 
   return { candidate, token: { ...token, token_number: tokenNumber } };
 }
 
-export async function sendOnboardingFromActivity(activityId: string, actorUserId: string) {
+export async function sendOnboardingFromActivity(
+  activityId: string,
+  actorUserId: string,
+) {
   const [rows] = await db.execute<HiringActivityRow[]>(
     `SELECT * FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
-    [activityId]
+    [activityId],
   );
   const activity = rows[0];
-  if (!activity) throw Object.assign(new Error("Hiring activity not found"), { statusCode: 404 });
+  if (!activity)
+    throw Object.assign(new Error("Hiring activity not found"), {
+      statusCode: 404,
+    });
 
   const normalized = mapSheetRow(activity).normalized;
-  if (!normalized) throw Object.assign(new Error("Invalid hiring activity row"), { statusCode: 400 });
+  if (!normalized)
+    throw Object.assign(new Error("Invalid hiring activity row"), {
+      statusCode: 400,
+    });
 
-  if (!normalized.final_selection_flag && !(normalized.current_status ?? "").toLowerCase().includes("select")) {
-    throw Object.assign(new Error("Candidate must be selected before onboarding"), { statusCode: 400 });
+  if (
+    !normalized.final_selection_flag &&
+    !(normalized.current_status ?? "").toLowerCase().includes("select")
+  ) {
+    throw Object.assign(
+      new Error("Candidate must be selected before onboarding"),
+      { statusCode: 400 },
+    );
   }
 
-  let candidate: { id: string } | null = await resolveCandidateByActivity(normalized);
+  let candidate: { id: string } | null =
+    await resolveCandidateByActivity(normalized);
   if (!candidate) {
     const created = await createCandidateFromActivity(activityId, actorUserId);
     candidate = created.candidate;
@@ -1464,13 +1820,17 @@ async function getActorBranch(userId: string): Promise<string | null> {
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE e.user_id = ?
       LIMIT 1`,
-    [userId]
+    [userId],
   );
   return (rows[0]?.branch_name as string | null) ?? null;
 }
 
-async function applyActivityFilters(filters: HiringFilters, scopedOnly: boolean, userId?: string) {
-  const branch = (scopedOnly && userId) ? await getActorBranch(userId) : null;
+async function applyActivityFilters(
+  filters: HiringFilters,
+  scopedOnly: boolean,
+  userId?: string,
+) {
+  const branch = scopedOnly && userId ? await getActorBranch(userId) : null;
   const { sql, params } = buildFilterSql(filters, scopedOnly, branch);
   if (scopedOnly && userId) {
     if (branch) {
@@ -1482,7 +1842,10 @@ async function applyActivityFilters(filters: HiringFilters, scopedOnly: boolean,
   return { sql, params };
 }
 
-async function aggregateBy(column: string, resolved: { sql: string; params: unknown[] }) {
+async function aggregateBy(
+  column: string,
+  resolved: { sql: string; params: unknown[] },
+) {
   const { sql, params } = resolved; // resolved once by the caller, not per breakdown
   const F = funnelPredicates("");
   const [rows] = await db.execute<DashboardGroupRow[]>(
@@ -1502,14 +1865,22 @@ async function aggregateBy(column: string, resolved: { sql: string; params: unkn
       GROUP BY COALESCE(NULLIF(TRIM(${column}), ''), 'Unmapped')
       ORDER BY total DESC
       LIMIT 50`,
-    params
+    params,
   );
   return rows;
 }
 
-export async function getHiringDashboard(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringDashboard> {
+export async function getHiringDashboard(
+  userId: string,
+  role: string | undefined,
+  filters: HiringFilters,
+): Promise<HiringDashboard> {
   const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
-  const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
+  const { sql, params } = await applyActivityFilters(
+    filters,
+    scopedOnly,
+    userId,
+  );
   // Same funnel definitions as the Analytics tab — see funnelPredicates().
   const F = funnelPredicates("");
   // The summary and the four breakdowns are independent reads over the same filter, so they
@@ -1550,7 +1921,7 @@ export async function getHiringDashboard(userId: string, role: string | undefine
         COUNT(DISTINCT CASE WHEN updated_at >= DATE_SUB(NOW(), INTERVAL 2 DAY) THEN recruiter_name_snapshot END) AS active_recruiters
       FROM ats_recruiter_hiring_activity
       WHERE COALESCE(is_followup_attempt, 0) = 0 AND ${sql}`,
-    params
+    params,
   );
 
   const metrics = {
@@ -1577,15 +1948,24 @@ export async function getHiringDashboard(userId: string, role: string | undefine
     recruiter_inactive_count: 0,
   };
   // Complement of active within the same scope, so the two always sum to the total.
-  metrics.recruiter_inactive_count = Math.max(0, metrics.recruiters_in_scope - metrics.active_recruiters);
-  metrics.contacted_pct = metrics.total_records ? Math.round((metrics.total_contacted / metrics.total_records) * 1000) / 10 : 0;
+  metrics.recruiter_inactive_count = Math.max(
+    0,
+    metrics.recruiters_in_scope - metrics.active_recruiters,
+  );
+  metrics.contacted_pct = metrics.total_records
+    ? Math.round((metrics.total_contacted / metrics.total_records) * 1000) / 10
+    : 0;
 
   const [byRecruiter, bySource, byProcess, byBranch] = await breakdownsPromise;
 
   return { metrics, byRecruiter, bySource, byProcess, byBranch };
 }
 
-export async function getCallingDashboard(userId: string, role: string | undefined, filters: HiringFilters) {
+export async function getCallingDashboard(
+  userId: string,
+  role: string | undefined,
+  filters: HiringFilters,
+) {
   const dashboard = await getHiringDashboard(userId, role, filters);
   return {
     metrics: {
@@ -1623,21 +2003,40 @@ export async function getCallingDashboard(userId: string, role: string | undefin
  */
 export function funnelPredicates(alias: string) {
   const t = alias ? `${alias}.` : "";
-  const IS_JOINED      = `${t}joined_flag = 1`;
-  const IS_SELECTED    = `(${t}final_selection_flag = 1 OR ${IS_JOINED})`;
-  const IS_WALKIN      = `(${t}walkin_flag = 1 OR ${IS_SELECTED})`;
+  const IS_JOINED = `${t}joined_flag = 1`;
+  const IS_SELECTED = `(${t}final_selection_flag = 1 OR ${IS_JOINED})`;
+  const IS_WALKIN = `(${t}walkin_flag = 1 OR ${IS_SELECTED})`;
   // "Shortlisted" also covers the free-text remarks recruiters use for intent.
   const IS_SHORTLISTED = `(${IS_WALKIN} OR LOWER(COALESCE(${t}recruiter_remarks,'')) IN ('if interested','interested','will visit','expected walk-in','shortlisted'))`;
-  const IS_CONTACTED   = `(${t}contacted_flag = 1 OR ${IS_SHORTLISTED})`;
+  const IS_CONTACTED = `(${t}contacted_flag = 1 OR ${IS_SHORTLISTED})`;
   return { IS_JOINED, IS_SELECTED, IS_WALKIN, IS_SHORTLISTED, IS_CONTACTED };
 }
 
 export interface HiringActivityAnalytics {
   funnel: { stage: string; count: number; pct: number; stagePct: number }[];
   byOutcome: { label: string; count: number }[];
-  bySource: { label: string; total: number; walkins: number; selected: number; joined: number }[];
-  byProcess: { label: string; total: number; walkins: number; selected: number; joined: number }[];
-  byRecruiter: { label: string; total: number; walkins: number; selected: number; joined: number; selRate: number }[];
+  bySource: {
+    label: string;
+    total: number;
+    walkins: number;
+    selected: number;
+    joined: number;
+  }[];
+  byProcess: {
+    label: string;
+    total: number;
+    walkins: number;
+    selected: number;
+    joined: number;
+  }[];
+  byRecruiter: {
+    label: string;
+    total: number;
+    walkins: number;
+    selected: number;
+    joined: number;
+    selRate: number;
+  }[];
   byBranch: Array<{
     label: string;
     total: number;
@@ -1654,10 +2053,22 @@ export interface HiringActivityAnalytics {
     dataQualityIssues: string[];
   }>;
   branchOptions: string[];
-  byGender: { label: string; count: number; walkins: number; selected: number; joined: number }[];
+  byGender: {
+    label: string;
+    count: number;
+    walkins: number;
+    selected: number;
+    joined: number;
+  }[];
   byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
-  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
+  followupDue: {
+    id: string;
+    candidate_name: string;
+    mobile: string;
+    followup_date: string;
+    followup_reason: string;
+  }[];
   followupDueCount: number;
   /**
    * Reconciliation block. Every grouped breakdown above is capped to a top-N for
@@ -1670,11 +2081,28 @@ export interface HiringActivityAnalytics {
     totalRecords: number;
     /** Per-breakdown truncation report. `shown` + `otherCount` always === totalRecords. */
     breakdowns: Record<
-      "byOutcome" | "bySource" | "byProcess" | "byRecruiter" | "byBranch" | "byGender",
-      { distinctGroups: number; shownGroups: number; shownRecords: number; otherGroups: number; otherRecords: number }
+      | "byOutcome"
+      | "bySource"
+      | "byProcess"
+      | "byRecruiter"
+      | "byBranch"
+      | "byGender",
+      {
+        distinctGroups: number;
+        shownGroups: number;
+        shownRecords: number;
+        otherGroups: number;
+        otherRecords: number;
+      }
     >;
     /** Trend window actually returned, and whether older dates were dropped. */
-    trendWindow: { distinctDates: number; shownDates: number; truncated: boolean; from: string | null; to: string | null };
+    trendWindow: {
+      distinctDates: number;
+      shownDates: number;
+      truncated: boolean;
+      from: string | null;
+      to: string | null;
+    };
   };
   /**
    * Names of sub-queries that failed. A failed query yields zeros, which are
@@ -1684,15 +2112,25 @@ export interface HiringActivityAnalytics {
   degraded: string[];
 }
 
-export async function getHiringActivityAnalytics(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringActivityAnalytics> {
+export async function getHiringActivityAnalytics(
+  userId: string,
+  role: string | undefined,
+  filters: HiringFilters,
+): Promise<HiringActivityAnalytics> {
   const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
 
   // ── Build WHERE for ats_recruiter_hiring_activity (arha) ─────────────────
   const clauses: string[] = ["COALESCE(arha.is_followup_attempt,0)=0"];
   const params: unknown[] = [];
 
-  if (filters.fromDate)    { clauses.push("arha.activity_date >= ?");              params.push(filters.fromDate); }
-  if (filters.toDate)      { clauses.push("arha.activity_date <= ?");              params.push(filters.toDate); }
+  if (filters.fromDate) {
+    clauses.push("arha.activity_date >= ?");
+    params.push(filters.fromDate);
+  }
+  if (filters.toDate) {
+    clauses.push("arha.activity_date <= ?");
+    params.push(filters.toDate);
+  }
   if (filters.branch) {
     clauses.push(`(
       LOWER(TRIM(COALESCE(arha.branch_name, ''))) = LOWER(TRIM(?))
@@ -1717,12 +2155,30 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   }
   // `month` (YYYY-MM) and `education` were accepted by the route but never applied
   // here, so callers received unfiltered totals under a filtered heading.
-  if (filters.month)       { clauses.push("DATE_FORMAT(arha.activity_date, '%Y-%m') = ?"); params.push(filters.month); }
-  if (filters.process)     { clauses.push("arha.process_name LIKE ?");             params.push(`%${filters.process}%`); }
-  if (filters.hiringSource){ clauses.push("arha.hiring_source LIKE ?");            params.push(`%${filters.hiringSource}%`); }
-  if (filters.recruiter)   { clauses.push("arha.recruiter_name_snapshot LIKE ?");  params.push(`%${filters.recruiter}%`); }
-  if (filters.gender)      { clauses.push("arha.gender = ?");                      params.push(filters.gender); }
-  if (filters.education)   { clauses.push("arha.education_qualification LIKE ?");  params.push(`%${filters.education}%`); }
+  if (filters.month) {
+    clauses.push("DATE_FORMAT(arha.activity_date, '%Y-%m') = ?");
+    params.push(filters.month);
+  }
+  if (filters.process) {
+    clauses.push("arha.process_name LIKE ?");
+    params.push(`%${filters.process}%`);
+  }
+  if (filters.hiringSource) {
+    clauses.push("arha.hiring_source LIKE ?");
+    params.push(`%${filters.hiringSource}%`);
+  }
+  if (filters.recruiter) {
+    clauses.push("arha.recruiter_name_snapshot LIKE ?");
+    params.push(`%${filters.recruiter}%`);
+  }
+  if (filters.gender) {
+    clauses.push("arha.gender = ?");
+    params.push(filters.gender);
+  }
+  if (filters.education) {
+    clauses.push("arha.education_qualification LIKE ?");
+    params.push(`%${filters.education}%`);
+  }
   const branch = scopedOnly ? await getActorBranch(userId) : null;
   if (scopedOnly) {
     if (branch) {
@@ -1756,7 +2212,8 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
 
   const W = clauses.join(" AND ");
 
-  const { IS_JOINED, IS_SELECTED, IS_WALKIN, IS_SHORTLISTED, IS_CONTACTED } = funnelPredicates("arha");
+  const { IS_JOINED, IS_SELECTED, IS_WALKIN, IS_SHORTLISTED, IS_CONTACTED } =
+    funnelPredicates("arha");
 
   // Build follow-up params reusing already-resolved branch
   const followupClauses: string[] = [
@@ -1803,7 +2260,11 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   // so every failure is recorded and returned; a zero the caller cannot distinguish
   // from a real measurement is worse than no number at all.
   const degraded: string[] = [];
-  const safe = async <T>(name: string, fn: () => Promise<[T, ...unknown[]]>, fallback: T): Promise<T> => {
+  const safe = async <T>(
+    name: string,
+    fn: () => Promise<[T, ...unknown[]]>,
+    fallback: T,
+  ): Promise<T> => {
     try {
       return (await fn())[0];
     } catch (error) {
@@ -1814,7 +2275,15 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   };
 
   // Top-N caps. Declared once so the response can report exactly what was cut.
-  const CAP = { outcome: 12, source: 10, process: 15, recruiter: 15, branch: 100, gender: 10, trendDays: 90 } as const;
+  const CAP = {
+    outcome: 12,
+    source: 10,
+    process: 15,
+    recruiter: 15,
+    branch: 100,
+    gender: 10,
+    trendDays: 90,
+  } as const;
 
   // ── Fire all queries in parallel ─────────────────────────────────────────
   const [
@@ -1833,8 +2302,11 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     cardinalityRows,
     trendMetaRows,
   ] = await Promise.all([
-    safe("summary", () => db.execute<RowDataPacket[]>(
-      `SELECT
+    safe(
+      "summary",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT
          COUNT(*)                                                AS logged,
          SUM(CASE WHEN ${IS_CONTACTED}   THEN 1 ELSE 0 END)    AS contacted,
          SUM(CASE WHEN ${IS_SHORTLISTED} THEN 1 ELSE 0 END)    AS shortlisted,
@@ -1842,15 +2314,20 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
          SUM(CASE WHEN ${IS_SELECTED}    THEN 1 ELSE 0 END)    AS selected,
          SUM(CASE WHEN ${IS_JOINED}      THEN 1 ELSE 0 END)    AS joined
        FROM ats_recruiter_hiring_activity arha WHERE ${W}`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("byOutcome", () => db.execute<RowDataPacket[]>(
-      // Outcome must be a single categorical axis. The previous version fell back to
-      // free-text recruiter_remarks, so "Rejected"/"rejected"/"REJECTED " each became
-      // their own slice and the donut double-counted the same outcome.
-      // Casing/whitespace are normalised and the label is derived from the pipeline
-      // flags first, which are the authoritative signal.
-      `SELECT CASE
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "byOutcome",
+      () =>
+        db.execute<RowDataPacket[]>(
+          // Outcome must be a single categorical axis. The previous version fell back to
+          // free-text recruiter_remarks, so "Rejected"/"rejected"/"REJECTED " each became
+          // their own slice and the donut double-counted the same outcome.
+          // Casing/whitespace are normalised and the label is derived from the pipeline
+          // flags first, which are the authoritative signal.
+          `SELECT CASE
                 WHEN ${IS_JOINED}   THEN 'Joined'
                 WHEN ${IS_SELECTED} THEN 'Selected'
                 WHEN LOWER(TRIM(COALESCE(arha.current_status,''))) LIKE '%reject%'
@@ -1865,40 +2342,60 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
               COUNT(*) AS count
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY count DESC`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("bySource", () => db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(arha.hiring_source,''),'Unknown') AS label,
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "bySource",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT COALESCE(NULLIF(arha.hiring_source,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
               SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY total DESC LIMIT ${CAP.source}`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("byProcess", () => db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(arha.process_name,''),'Unknown') AS label,
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "byProcess",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT COALESCE(NULLIF(arha.process_name,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
               SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY total DESC LIMIT ${CAP.process}`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("byRecruiter", () => db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(arha.recruiter_name_snapshot,''),'Unknown') AS label,
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "byRecruiter",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT COALESCE(NULLIF(arha.recruiter_name_snapshot,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
               SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY total DESC LIMIT ${CAP.recruiter}`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("byBranch", () => db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "byBranch",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT COALESCE(
                 NULLIF(TRIM(arha.branch_name),''),
                 NULLIF(TRIM(arha.location_name),''),
                 'Unmapped'
@@ -1925,38 +2422,58 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
                   END) AS joined_without_selection
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY total DESC LIMIT ${CAP.branch}`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("branchMaster", () => db.execute<RowDataPacket[]>(
-      `SELECT branch_name, branch_code
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "branchMaster",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT branch_name, branch_code
          FROM branch_master
         WHERE NULLIF(TRIM(branch_name), '') IS NOT NULL
         ORDER BY branch_name ASC`,
-      []
-    ), [] as RowDataPacket[]),
-    safe("byGender", () => db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(arha.gender,''),'Unknown') AS label,
+          [],
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "byGender",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT COALESCE(NULLIF(arha.gender,''),'Unknown') AS label,
               COUNT(*) AS count,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
               SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY count DESC LIMIT ${CAP.gender}`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("byDayOfWeek", () => db.execute<RowDataPacket[]>(
-      `SELECT DAYOFWEEK(arha.activity_date) AS dow, COUNT(*) AS count
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "byDayOfWeek",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT DAYOFWEEK(arha.activity_date) AS dow, COUNT(*) AS count
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY dow ORDER BY dow ASC`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("trend", () => db.execute<RowDataPacket[]>(
-      // The cap must keep the MOST RECENT dates. Ordering ascending before LIMIT
-      // returned the OLDEST 90 days, so any dataset with more than 90 distinct
-      // activity dates rendered an "Activity Trend" of the earliest history on
-      // record while presenting it as current. Take newest-first, then re-sort
-      // ascending for charting.
-      `SELECT t.date, t.logged, t.walkins, t.selected
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "trend",
+      () =>
+        db.execute<RowDataPacket[]>(
+          // The cap must keep the MOST RECENT dates. Ordering ascending before LIMIT
+          // returned the OLDEST 90 days, so any dataset with more than 90 distinct
+          // activity dates rendered an "Activity Trend" of the earliest history on
+          // record while presenting it as current. Take newest-first, then re-sort
+          // ascending for charting.
+          `SELECT t.date, t.logged, t.walkins, t.selected
          FROM (
            SELECT arha.activity_date AS date,
                   COUNT(*) AS logged,
@@ -1969,77 +2486,130 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
             LIMIT ${CAP.trendDays}
          ) t
         ORDER BY t.date ASC`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("followupDue", () => db.execute<RowDataPacket[]>(
-      `SELECT id, candidate_name, mobile,
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "followupDue",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT id, candidate_name, mobile,
               DATE_FORMAT(followup_date,'%Y-%m-%d') AS followup_date,
               followup_reason
          FROM ats_recruiter_hiring_activity
         WHERE ${followupClauses.join(" AND ")}
         ORDER BY followup_date ASC LIMIT 50`,
-      followupParams
-    ), [] as RowDataPacket[]),
-    safe("followupCount", () => db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total
+          followupParams,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "followupCount",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS total
          FROM ats_recruiter_hiring_activity
         WHERE ${followupClauses.join(" AND ")}`,
-      followupParams
-    ), [] as RowDataPacket[]),
+          followupParams,
+        ),
+      [] as RowDataPacket[],
+    ),
     // Distinct group counts per dimension. Compared against the capped result sets
     // these tell the UI exactly how many groups were folded into "Other".
-    safe("cardinality", () => db.execute<RowDataPacket[]>(
-      `SELECT
+    safe(
+      "cardinality",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT
          COUNT(DISTINCT COALESCE(NULLIF(arha.hiring_source,''),'Unknown'))            AS source_groups,
          COUNT(DISTINCT COALESCE(NULLIF(arha.process_name,''),'Unknown'))             AS process_groups,
          COUNT(DISTINCT COALESCE(NULLIF(arha.recruiter_name_snapshot,''),'Unknown'))  AS recruiter_groups,
          COUNT(DISTINCT COALESCE(NULLIF(TRIM(arha.branch_name),''), NULLIF(TRIM(arha.location_name),''),'Unmapped')) AS branch_groups,
          COUNT(DISTINCT COALESCE(NULLIF(arha.gender,''),'Unknown'))                   AS gender_groups
        FROM ats_recruiter_hiring_activity arha WHERE ${W}`,
-      params
-    ), [] as RowDataPacket[]),
-    safe("trendMeta", () => db.execute<RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT arha.activity_date) AS distinct_dates
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
+    safe(
+      "trendMeta",
+      () =>
+        db.execute<RowDataPacket[]>(
+          `SELECT COUNT(DISTINCT arha.activity_date) AS distinct_dates
          FROM ats_recruiter_hiring_activity arha WHERE ${W}`,
-      params
-    ), [] as RowDataPacket[]),
+          params,
+        ),
+      [] as RowDataPacket[],
+    ),
   ]);
 
   // ── Map results ───────────────────────────────────────────────────────────
   const s = summaryRows[0] ?? {};
-  const logged      = Number(s.logged      ?? 0);
-  const contacted   = Number(s.contacted   ?? 0);
+  const logged = Number(s.logged ?? 0);
+  const contacted = Number(s.contacted ?? 0);
   const shortlisted = Number(s.shortlisted ?? 0);
-  const walkins     = Number(s.walkins     ?? 0);
-  const selected    = Number(s.selected    ?? 0);
-  const joined      = Number(s.joined      ?? 0);
-  const pct = (n: number) => logged ? Math.round(n / logged * 1000) / 10 : 0;
+  const walkins = Number(s.walkins ?? 0);
+  const selected = Number(s.selected ?? 0);
+  const joined = Number(s.joined ?? 0);
+  const pct = (n: number) =>
+    logged ? Math.round((n / logged) * 1000) / 10 : 0;
   // Two denominators, both named. `pct` is share of the top of the funnel;
   // `stagePct` is conversion from the immediately preceding stage. The UI
   // previously showed one badge per stage without saying which it was, which is
   // the single most argued-about number on the page.
   const counts = [logged, contacted, shortlisted, walkins, selected, joined];
-  const stageNames = ["Logged", "Contacted", "Shortlisted", "Walked In", "Selected", "Joined"];
+  const stageNames = [
+    "Logged",
+    "Contacted",
+    "Shortlisted",
+    "Walked In",
+    "Selected",
+    "Joined",
+  ];
   const funnel = counts.map((count, i) => {
     const prev = i === 0 ? count : counts[i - 1];
     return {
       stage: stageNames[i],
       count,
       pct: i === 0 ? (logged ? 100 : 0) : pct(count),
-      stagePct: i === 0 ? (logged ? 100 : 0) : (prev > 0 ? Math.round((count / prev) * 1000) / 10 : 0),
+      stagePct:
+        i === 0
+          ? logged
+            ? 100
+            : 0
+          : prev > 0
+            ? Math.round((count / prev) * 1000) / 10
+            : 0,
     };
   });
 
-  const byOutcome   = (outcomeRows as any[]).map((r) => ({ label: String(r.label), count: Number(r.count) }));
-  const bySource    = (sourceRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), total: Number(r.total) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
-  const byProcess   = (processRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), total: Number(r.total) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
-  const normalizeBranchKey = (value: unknown) => String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\b(branch|office|site)\b/g, " ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const byOutcome = (outcomeRows as any[]).map((r) => ({
+    label: String(r.label),
+    count: Number(r.count),
+  }));
+  const bySource = (sourceRows as any[]).map((r) => ({
+    label: String(r.label || "Unknown"),
+    total: Number(r.total) || 0,
+    walkins: Number(r.walkins) || 0,
+    selected: Number(r.selected) || 0,
+    joined: Number(r.joined) || 0,
+  }));
+  const byProcess = (processRows as any[]).map((r) => ({
+    label: String(r.label || "Unknown"),
+    total: Number(r.total) || 0,
+    walkins: Number(r.walkins) || 0,
+    selected: Number(r.selected) || 0,
+    joined: Number(r.joined) || 0,
+  }));
+  const normalizeBranchKey = (value: unknown) =>
+    String(value ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\b(branch|office|site)\b/g, " ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
   const branchAliases = new Map<string, string>();
   const branchOptionSet = new Set<string>();
@@ -2053,20 +2623,25 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     if (codeKey) branchAliases.set(codeKey, preferred);
   }
 
-  const branchAccumulator = new Map<string, {
-    label: string;
-    total: number;
-    contacted: number;
-    walkins: number;
-    selected: number;
-    joined: number;
-    walkinsWithoutContact: number;
-    selectedWithoutWalkin: number;
-    joinedWithoutSelection: number;
-  }>();
+  const branchAccumulator = new Map<
+    string,
+    {
+      label: string;
+      total: number;
+      contacted: number;
+      walkins: number;
+      selected: number;
+      joined: number;
+      walkinsWithoutContact: number;
+      selectedWithoutWalkin: number;
+      joinedWithoutSelection: number;
+    }
+  >();
   for (const row of branchRows as any[]) {
     const rawLabel = String(row.label ?? "").trim() || "Unmapped";
-    const preferred = branchAliases.get(normalizeBranchKey(rawLabel)) ?? rawLabel.replace(/\s+/g, " ");
+    const preferred =
+      branchAliases.get(normalizeBranchKey(rawLabel)) ??
+      rawLabel.replace(/\s+/g, " ");
     const current = branchAccumulator.get(preferred) ?? {
       label: preferred,
       total: 0,
@@ -2089,20 +2664,25 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     branchAccumulator.set(preferred, current);
   }
 
-  const rate = (numerator: number, denominator: number) => denominator > 0
-    ? Math.round((numerator / denominator) * 1000) / 10
-    : 0;
+  const rate = (numerator: number, denominator: number) =>
+    denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
   const byBranch = Array.from(branchAccumulator.values())
     .map((row) => {
       const dataQualityIssues: string[] = [];
       if (row.walkinsWithoutContact > 0) {
-        dataQualityIssues.push(`${row.walkinsWithoutContact} walk-in record(s) not marked contacted`);
+        dataQualityIssues.push(
+          `${row.walkinsWithoutContact} walk-in record(s) not marked contacted`,
+        );
       }
       if (row.selectedWithoutWalkin > 0) {
-        dataQualityIssues.push(`${row.selectedWithoutWalkin} selected record(s) not marked walk-in`);
+        dataQualityIssues.push(
+          `${row.selectedWithoutWalkin} selected record(s) not marked walk-in`,
+        );
       }
       if (row.joinedWithoutSelection > 0) {
-        dataQualityIssues.push(`${row.joinedWithoutSelection} joined record(s) not marked selected`);
+        dataQualityIssues.push(
+          `${row.joinedWithoutSelection} joined record(s) not marked selected`,
+        );
       }
       const {
         walkinsWithoutContact: _walkinsWithoutContact,
@@ -2122,39 +2702,69 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
       };
     })
     .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
-  const branchOptions = Array.from(branchOptionSet).sort((a, b) => a.localeCompare(b));
-  const byGender    = (genderRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), count: Number(r.count) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
+  const branchOptions = Array.from(branchOptionSet).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const byGender = (genderRows as any[]).map((r) => ({
+    label: String(r.label || "Unknown"),
+    count: Number(r.count) || 0,
+    walkins: Number(r.walkins) || 0,
+    selected: Number(r.selected) || 0,
+    joined: Number(r.joined) || 0,
+  }));
   const byRecruiter = (recruiterRows as any[]).map((r) => {
     const total = Number(r.total) || 0;
-    const sel   = Number(r.selected) || 0;
+    const sel = Number(r.selected) || 0;
     const selRate = total ? Math.round((sel / total) * 1000) / 10 : 0;
-    return { label: String(r.label || 'Unknown'), total, walkins: Number(r.walkins) || 0, selected: sel, joined: Number(r.joined) || 0, selRate: Number.isFinite(selRate) ? selRate : 0 };
+    return {
+      label: String(r.label || "Unknown"),
+      total,
+      walkins: Number(r.walkins) || 0,
+      selected: sel,
+      joined: Number(r.joined) || 0,
+      selRate: Number.isFinite(selRate) ? selRate : 0,
+    };
   });
 
-  const DOW_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const dowMap = new Map<number, number>();
-  for (const r of dowRows as any[]) dowMap.set(Number(r.dow), Number(r.count) || 0);
-  const byDayOfWeek = [1,2,3,4,5,6,7].map((d) => ({ label: DOW_LABELS[d-1], count: dowMap.get(d) ?? 0 }));
+  for (const r of dowRows as any[])
+    dowMap.set(Number(r.dow), Number(r.count) || 0);
+  const byDayOfWeek = [1, 2, 3, 4, 5, 6, 7].map((d) => ({
+    label: DOW_LABELS[d - 1],
+    count: dowMap.get(d) ?? 0,
+  }));
 
   const trend = (trendRows as any[]).map((r) => ({
-    date: String(r.date ?? "").slice(0,10),
-    logged: Number(r.logged), walkins: Number(r.walkins), selected: Number(r.selected),
+    date: String(r.date ?? "").slice(0, 10),
+    logged: Number(r.logged),
+    walkins: Number(r.walkins),
+    selected: Number(r.selected),
   }));
 
   const followupDue = (followupRows as any[]).map((r) => ({
-    id: String(r.id), candidate_name: String(r.candidate_name ?? ""),
-    mobile: String(r.mobile ?? ""), followup_date: String(r.followup_date ?? ""),
+    id: String(r.id),
+    candidate_name: String(r.candidate_name ?? ""),
+    mobile: String(r.mobile ?? ""),
+    followup_date: String(r.followup_date ?? ""),
     followup_reason: String(r.followup_reason ?? ""),
   }));
-  const followupDueCount = Number((followupCountRows as any[])[0]?.total ?? followupDue.length);
+  const followupDueCount = Number(
+    (followupCountRows as any[])[0]?.total ?? followupDue.length,
+  );
 
   // ── Coverage / reconciliation ─────────────────────────────────────────────
   // Each breakdown is capped for readability. Report the cap's effect so the UI
   // can render an explicit "Other" row instead of letting a truncated chart
   // silently understate its own total.
   const card = (cardinalityRows as any[])[0] ?? {};
-  const sumBy = <T>(rows: T[], pick: (row: T) => number) => rows.reduce((acc, row) => acc + pick(row), 0);
-  const breakdown = (distinctGroups: number, shownGroups: number, shownRecords: number) => ({
+  const sumBy = <T>(rows: T[], pick: (row: T) => number) =>
+    rows.reduce((acc, row) => acc + pick(row), 0);
+  const breakdown = (
+    distinctGroups: number,
+    shownGroups: number,
+    shownRecords: number,
+  ) => ({
     distinctGroups,
     shownGroups,
     shownRecords,
@@ -2166,30 +2776,77 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     totalRecords: logged,
     breakdowns: {
       // byOutcome is a closed taxonomy (no cap), so it always reconciles exactly.
-      byOutcome:   breakdown(byOutcome.length, byOutcome.length, sumBy(byOutcome, (r) => r.count)),
-      bySource:    breakdown(Number(card.source_groups    ?? bySource.length),    bySource.length,    sumBy(bySource,    (r) => r.total)),
-      byProcess:   breakdown(Number(card.process_groups   ?? byProcess.length),   byProcess.length,   sumBy(byProcess,   (r) => r.total)),
-      byRecruiter: breakdown(Number(card.recruiter_groups ?? byRecruiter.length), byRecruiter.length, sumBy(byRecruiter, (r) => r.total)),
-      byBranch:    breakdown(Number(card.branch_groups    ?? byBranch.length),    byBranch.length,    sumBy(byBranch,    (r) => r.total)),
-      byGender:    breakdown(Number(card.gender_groups    ?? byGender.length),    byGender.length,    sumBy(byGender,    (r) => r.count)),
+      byOutcome: breakdown(
+        byOutcome.length,
+        byOutcome.length,
+        sumBy(byOutcome, (r) => r.count),
+      ),
+      bySource: breakdown(
+        Number(card.source_groups ?? bySource.length),
+        bySource.length,
+        sumBy(bySource, (r) => r.total),
+      ),
+      byProcess: breakdown(
+        Number(card.process_groups ?? byProcess.length),
+        byProcess.length,
+        sumBy(byProcess, (r) => r.total),
+      ),
+      byRecruiter: breakdown(
+        Number(card.recruiter_groups ?? byRecruiter.length),
+        byRecruiter.length,
+        sumBy(byRecruiter, (r) => r.total),
+      ),
+      byBranch: breakdown(
+        Number(card.branch_groups ?? byBranch.length),
+        byBranch.length,
+        sumBy(byBranch, (r) => r.total),
+      ),
+      byGender: breakdown(
+        Number(card.gender_groups ?? byGender.length),
+        byGender.length,
+        sumBy(byGender, (r) => r.count),
+      ),
     },
     trendWindow: {
-      distinctDates: Number((trendMetaRows as any[])[0]?.distinct_dates ?? trend.length),
+      distinctDates: Number(
+        (trendMetaRows as any[])[0]?.distinct_dates ?? trend.length,
+      ),
       shownDates: trend.length,
-      truncated: Number((trendMetaRows as any[])[0]?.distinct_dates ?? trend.length) > trend.length,
+      truncated:
+        Number((trendMetaRows as any[])[0]?.distinct_dates ?? trend.length) >
+        trend.length,
       from: trend[0]?.date ?? null,
       to: trend[trend.length - 1]?.date ?? null,
     },
   };
 
   return {
-    funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions,
-    byGender, byDayOfWeek, trend, followupDue, followupDueCount, coverage, degraded,
+    funnel,
+    byOutcome,
+    bySource,
+    byProcess,
+    byRecruiter,
+    byBranch,
+    branchOptions,
+    byGender,
+    byDayOfWeek,
+    trend,
+    followupDue,
+    followupDueCount,
+    coverage,
+    degraded,
   };
 }
 
-export async function searchInterviewers(branchName: string | null, query: string | null, roundType: string, limit = 20, userId?: string) {
-  const branch = branchName || (userId ? await getCurrentUserBranch(userId) : null);
+export async function searchInterviewers(
+  branchName: string | null,
+  query: string | null,
+  roundType: string,
+  limit = 20,
+  userId?: string,
+) {
+  const branch =
+    branchName || (userId ? await getCurrentUserBranch(userId) : null);
   const q = `%${query ?? ""}%`;
   const round = roundType || "ops_round";
   let rows: InterviewerRow[] = [];
@@ -2225,7 +2882,7 @@ export async function searchInterviewers(branchName: string | null, query: strin
           )
         ORDER BY e.first_name, e.last_name
         LIMIT ${safeLimit}`,
-      [branch, branch, branch, q, q]
+      [branch, branch, branch, q, q],
     );
   }
 
@@ -2254,7 +2911,7 @@ export async function searchInterviewers(branchName: string | null, query: strin
           )
         ORDER BY e.first_name, e.last_name
         LIMIT ${safeLimit}`,
-      [q, q, q, q]
+      [q, q, q, q],
     );
   }
 
@@ -2274,11 +2931,11 @@ export async function searchInterviewers(branchName: string | null, query: strin
 export async function readImportBatch(batchId: string) {
   const [batchRows] = await db.execute<ImportBatchRow[]>(
     `SELECT * FROM ats_recruiter_hiring_import_batch WHERE id = ? LIMIT 1`,
-    [batchId]
+    [batchId],
   );
   const [errorRows] = await db.execute<ImportBatchRow[]>(
     `SELECT * FROM ats_recruiter_hiring_import_error WHERE import_batch_id = ? ORDER BY \`row_number\` ASC`,
-    [batchId]
+    [batchId],
   );
   return {
     batch: batchRows[0] ?? null,
@@ -2325,7 +2982,12 @@ export async function buildFollowupScopeSql(
   userId: string,
   role: string | undefined,
   scope: FollowupScope,
-): Promise<{ sql: string; params: unknown[]; appliedScope: FollowupScope; branchResolved: boolean }> {
+): Promise<{
+  sql: string;
+  params: unknown[];
+  appliedScope: FollowupScope;
+  branchResolved: boolean;
+}> {
   const orgWide = ["admin", "hr", "super_admin"].includes(role ?? "");
 
   // "mine" means mine for everybody, including an admin who asked for it.
@@ -2340,7 +3002,12 @@ export async function buildFollowupScopeSql(
 
   // team + org-wide role: no branch restriction at all, matching listHiringActivity.
   if (orgWide) {
-    return { sql: "1=1", params: [], appliedScope: "team", branchResolved: true };
+    return {
+      sql: "1=1",
+      params: [],
+      appliedScope: "team",
+      branchResolved: true,
+    };
   }
 
   const branch = await getActorBranch(userId);
@@ -2404,7 +3071,8 @@ export async function listFollowups(opts: {
     scoped.sql,
   ];
   if (window === "due") base.push("arha.followup_date <= CURDATE()");
-  else if (window === "week") base.push("arha.followup_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)");
+  else if (window === "week")
+    base.push("arha.followup_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)");
   const where = base.join(" AND ");
 
   // The counts, the page of rows and the server date are independent reads — issued together.

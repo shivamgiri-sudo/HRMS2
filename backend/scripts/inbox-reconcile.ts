@@ -27,7 +27,9 @@ async function backupAffectedRows(stamp: string): Promise<number> {
     const [found] = await db.execute<any[]>(
       `SELECT id, is_read, type FROM work_inbox_item w WHERE ${rule.where}`,
     );
-    rows.push(...(found as Array<{ id: string; is_read: number; type: string }>));
+    rows.push(
+      ...(found as Array<{ id: string; is_read: number; type: string }>),
+    );
   }
 
   const dir = "./.deploy-backups";
@@ -46,7 +48,10 @@ async function backupAffectedRows(stamp: string): Promise<number> {
   for (const readFlag of [0, 1] as const) {
     const ids = byRead[readFlag];
     for (let i = 0; i < ids.length; i += 500) {
-      const chunk = ids.slice(i, i + 500).map((id) => `'${id}'`).join(",");
+      const chunk = ids
+        .slice(i, i + 500)
+        .map((id) => `'${id}'`)
+        .join(",");
       stmts.push(
         `UPDATE work_inbox_item SET is_actioned = 0, is_read = ${readFlag} WHERE id IN (${chunk});`,
       );
@@ -63,7 +68,9 @@ async function main(): Promise<void> {
     "SELECT COUNT(*) AS open_items FROM work_inbox_item WHERE is_actioned = 0",
   );
   console.log(`Open alerts before: ${before[0].open_items}`);
-  console.log(apply ? "\nMODE: APPLY (writes)\n" : "\nMODE: DRY RUN (no writes)\n");
+  console.log(
+    apply ? "\nMODE: APPLY (writes)\n" : "\nMODE: DRY RUN (no writes)\n",
+  );
 
   if (apply) {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -75,7 +82,9 @@ async function main(): Promise<void> {
 
   for (const rule of INBOX_RESOLUTION_RULES) {
     const n = result.byRule[rule.key] ?? 0;
-    console.log(`  ${String(n).padStart(6)}  ${rule.key.padEnd(30)} — resolved when ${rule.resolvedWhen}`);
+    console.log(
+      `  ${String(n).padStart(6)}  ${rule.key.padEnd(30)} — resolved when ${rule.resolvedWhen}`,
+    );
   }
   console.log(`\n  ${String(result.total).padStart(6)}  TOTAL resolved`);
 
@@ -92,11 +101,13 @@ async function main(): Promise<void> {
       [
         `-- Reverses the duplicate collapse applied at ${stamp}.`,
         `-- These rows were unread duplicates of an older open item that remains open.`,
-        ...Array.from({ length: Math.ceil(toClose.length / 500) }, (_, i) =>
-          `UPDATE work_inbox_item SET is_actioned = 0 WHERE id IN (${toClose
-            .slice(i * 500, i * 500 + 500)
-            .map((id) => `'${id}'`)
-            .join(",")});`,
+        ...Array.from(
+          { length: Math.ceil(toClose.length / 500) },
+          (_, i) =>
+            `UPDATE work_inbox_item SET is_actioned = 0 WHERE id IN (${toClose
+              .slice(i * 500, i * 500 + 500)
+              .map((id) => `'${id}'`)
+              .join(",")});`,
         ),
       ].join("\n") + "\n",
     );
@@ -111,4 +122,7 @@ async function main(): Promise<void> {
   await (db as any).end?.();
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

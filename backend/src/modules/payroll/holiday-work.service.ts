@@ -1,6 +1,9 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { EMPLOYMENT_END_DATE_SELECT, payableThrough } from "./employment-end-date.js";
+import {
+  EMPLOYMENT_END_DATE_SELECT,
+  payableThrough,
+} from "./employment-end-date.js";
 
 // ─── Internal types ───────────────────────────────────────────────────────────
 
@@ -24,7 +27,6 @@ interface HolidayRow {
 interface CostCentreRow {
   holiday_id: string;
 }
-
 
 interface ExtraPayoutRow {
   extra_payout: number;
@@ -52,8 +54,12 @@ function lastDayOfMonth(runMonth: string): number {
  */
 export async function resolveHolidaysForEmployeeV2(
   employeeId: string,
-  runMonth: string
-): Promise<{ eligibleHolidayCount: number; eligibleHolidayDates: string[]; holidayWorkExtraPayout: number }> {
+  runMonth: string,
+): Promise<{
+  eligibleHolidayCount: number;
+  eligibleHolidayDates: string[];
+  holidayWorkExtraPayout: number;
+}> {
   // ── Step 1: Employee master data ──────────────────────────────────────────
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.date_of_joining, e.salary_start_date, e.branch_id,
@@ -62,24 +68,28 @@ export async function resolveHolidaysForEmployeeV2(
      FROM employees e
      WHERE e.id = ?
      LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
 
   const emp = (empRows as EmployeeMasterRow[])[0];
   if (!emp) {
-    return { eligibleHolidayCount: 0, eligibleHolidayDates: [], holidayWorkExtraPayout: 0 };
+    return {
+      eligibleHolidayCount: 0,
+      eligibleHolidayDates: [],
+      holidayWorkExtraPayout: 0,
+    };
   }
 
   // ── Step 2: Effective salary start date ───────────────────────────────────
   const effectiveSalaryStart = new Date(
-    (emp.salary_start_date ?? emp.date_of_joining) as string
+    (emp.salary_start_date ?? emp.date_of_joining) as string,
   );
   const dateOfJoining = new Date(emp.date_of_joining);
 
   // ── Step 3: Holidays in this month ────────────────────────────────────────
-  const lastDay  = lastDayOfMonth(runMonth);
+  const lastDay = lastDayOfMonth(runMonth);
   const dateFrom = `${runMonth}-01`;
-  const dateTo   = `${runMonth}-${String(lastDay).padStart(2, "0")}`;
+  const dateTo = `${runMonth}-${String(lastDay).padStart(2, "0")}`;
 
   // Fetch eligible holidays using the same branch + cost-centre + designation
   // scope rules as attendance-engine.service.ts and leaveChargeableDays.ts.
@@ -108,12 +118,22 @@ export async function resolveHolidaysForEmployeeV2(
            WHERE hdm.holiday_id = lhm.id AND hdm.designation_id = ?
          )
        )`,
-    [dateFrom, dateTo, emp.branch_id ?? null, emp.cost_centre_id ?? null, emp.designation_id ?? null]
+    [
+      dateFrom,
+      dateTo,
+      emp.branch_id ?? null,
+      emp.cost_centre_id ?? null,
+      emp.designation_id ?? null,
+    ],
   );
 
   const holidays = holidayRows as HolidayRow[];
   if (holidays.length === 0) {
-    return { eligibleHolidayCount: 0, eligibleHolidayDates: [], holidayWorkExtraPayout: 0 };
+    return {
+      eligibleHolidayCount: 0,
+      eligibleHolidayDates: [],
+      holidayWorkExtraPayout: 0,
+    };
   }
 
   // The last date of this month the employee is payable through: their last working day when
@@ -132,7 +152,7 @@ export async function resolveHolidaysForEmployeeV2(
 
     // Date-of-joining and salary start checks
     if (holidayDate < effectiveSalaryStart) continue;
-    if (holidayDate < dateOfJoining)        continue;
+    if (holidayDate < dateOfJoining) continue;
 
     // Leaver bound. This resolver had a lower bound but no upper one, so a holiday falling AFTER
     // an employee's last working day was still granted to them: a leaver who finished on the
@@ -152,15 +172,22 @@ export async function resolveHolidaysForEmployeeV2(
       const ccParams: unknown[] = [holiday.id];
       const ccConditions: string[] = ["holiday_id = ?", "is_mandatory = 1"];
       const scopeClauses: string[] = [];
-      if (emp.branch_id)  { scopeClauses.push("branch_id = ?");  ccParams.push(emp.branch_id); }
-      if (emp.process_id) { scopeClauses.push("process_id = ?"); ccParams.push(emp.process_id); }
-      if (scopeClauses.length > 0) ccConditions.push(`(${scopeClauses.join(" OR ")})`);
+      if (emp.branch_id) {
+        scopeClauses.push("branch_id = ?");
+        ccParams.push(emp.branch_id);
+      }
+      if (emp.process_id) {
+        scopeClauses.push("process_id = ?");
+        ccParams.push(emp.process_id);
+      }
+      if (scopeClauses.length > 0)
+        ccConditions.push(`(${scopeClauses.join(" OR ")})`);
 
       const [mandatoryRows] = await db.execute<RowDataPacket[]>(
         `SELECT holiday_id FROM holiday_cost_centre_mapping
          WHERE ${ccConditions.join(" AND ")}
          LIMIT 1`,
-        ccParams
+        ccParams,
       );
       if ((mandatoryRows as CostCentreRow[]).length > 0) continue;
     }
@@ -184,11 +211,11 @@ export async function resolveHolidaysForEmployeeV2(
            WHERE holiday_date BETWEEN ? AND ?
          )
        )`,
-    [employeeId, dateFrom, dateTo]
+    [employeeId, dateFrom, dateTo],
   );
 
   const holidayWorkExtraPayout = Number(
-    (payoutRows as ExtraPayoutRow[])[0]?.extra_payout ?? 0
+    (payoutRows as ExtraPayoutRow[])[0]?.extra_payout ?? 0,
   );
 
   return { eligibleHolidayCount, eligibleHolidayDates, holidayWorkExtraPayout };
@@ -203,7 +230,7 @@ export async function resolveHolidaysForEmployeeV2(
  */
 export async function resolveHolidaysForEmployee(
   employeeId?: string,
-  runMonth?: string
+  runMonth?: string,
 ): Promise<Array<{ eligible: boolean }>> {
   if (!employeeId || !runMonth) return [];
   const result = await resolveHolidaysForEmployeeV2(employeeId, runMonth);

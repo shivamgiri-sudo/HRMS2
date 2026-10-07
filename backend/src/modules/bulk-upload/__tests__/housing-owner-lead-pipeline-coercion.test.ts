@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseDate, parseDateTime, parseDurationSeconds, parseBoolFlag, cleanText,
+  parseDate,
+  parseDateTime,
+  parseDurationSeconds,
+  parseBoolFlag,
+  cleanText,
   HOUSING_OWNER_LEAD_PIPELINE_HEADERS,
 } from "../housing-owner-lead-pipeline-bulk.service.js";
 

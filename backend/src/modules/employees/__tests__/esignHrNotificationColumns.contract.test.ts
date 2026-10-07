@@ -32,17 +32,32 @@ const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 /** auth_user's real columns, verified against live mas_hrms. */
 const AUTH_USER_COLUMNS = [
-  "id", "email", "password_hash", "is_blocked", "last_login_at", "created_at",
-  "updated_at", "must_change_password", "password_changed_at", "is_read_only",
-  "last_login_lat", "last_login_lng", "failed_login_attempts", "locked_until",
-  "last_failed_at", "session_version",
+  "id",
+  "email",
+  "password_hash",
+  "is_blocked",
+  "last_login_at",
+  "created_at",
+  "updated_at",
+  "must_change_password",
+  "password_changed_at",
+  "is_read_only",
+  "last_login_lat",
+  "last_login_lng",
+  "failed_login_attempts",
+  "locked_until",
+  "last_failed_at",
+  "session_version",
 ];
 
 describe("eSign completion HR notification", () => {
   // Scope to the recipient lookup, so an unrelated auth_user query elsewhere in
   // this 2,000-line file cannot mask a regression here.
   const start = code.indexOf("FROM auth_user u");
-  const query = code.slice(code.lastIndexOf("SELECT", start), code.indexOf("LIMIT 3", start));
+  const query = code.slice(
+    code.lastIndexOf("SELECT", start),
+    code.indexOf("LIMIT 3", start),
+  );
 
   it("locates the payroll_hr recipient query", () => {
     expect(start).toBeGreaterThan(-1);

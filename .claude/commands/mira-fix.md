@@ -38,6 +38,7 @@ In particular: never edit payroll arithmetic, migrations, RBAC or encryption to 
 complaint go away; stage files by explicit path; other sessions are editing this tree.
 
 **4. Prove it.** Real output, not assertions:
+
 - the guard failing without the fix, and passing with it
 - a scoped `tsc` (never a full backend build — it drags in orphans)
 - the relevant test files, actually run

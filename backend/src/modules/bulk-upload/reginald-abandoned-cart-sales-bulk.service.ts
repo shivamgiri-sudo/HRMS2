@@ -2,7 +2,10 @@ import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Reginald Men Abandoned Cart Dashboard's Live Sales source. Two column layouts
@@ -23,9 +26,22 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  */
 
 export const REGINALD_ABANDONED_CART_SALES_HEADERS = [
-  "Timestamp", "Order id", "Amount", "LOB", "Order Date", "Payment Type",
-  "Column 6", "Order id ", "Column 1", "EMP ID",
-  "Date", "Agent ID", "Agents status", "Shopify Order Name", "Grand Total", "Coupon Code",
+  "Timestamp",
+  "Order id",
+  "Amount",
+  "LOB",
+  "Order Date",
+  "Payment Type",
+  "Column 6",
+  "Order id ",
+  "Column 1",
+  "EMP ID",
+  "Date",
+  "Agent ID",
+  "Agents status",
+  "Shopify Order Name",
+  "Grand Total",
+  "Coupon Code",
 ] as const;
 
 export function cleanText(raw: unknown): string | null {
@@ -34,12 +50,17 @@ export function cleanText(raw: unknown): string | null {
 }
 
 export function normalizeName(raw: unknown): string | null {
-  const v = String(raw ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  const v = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
   return v || null;
 }
 
 export function parseAmount(raw: unknown): number | null {
-  const v = String(raw ?? "").replace(/,/g, "").trim();
+  const v = String(raw ?? "")
+    .replace(/,/g, "")
+    .trim();
   if (!v) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -65,7 +86,20 @@ export function parseDate(raw: unknown): string | null {
   const mDash2 = !mDash4 ? /^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/.exec(v) : null;
   const mDash = mDash4 ?? mDash2;
   if (mDash) {
-    const months: Record<string, string> = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
+    const months: Record<string, string> = {
+      jan: "01",
+      feb: "02",
+      mar: "03",
+      apr: "04",
+      may: "05",
+      jun: "06",
+      jul: "07",
+      aug: "08",
+      sep: "09",
+      oct: "10",
+      nov: "11",
+      dec: "12",
+    };
     const mon = months[mDash[2].toLowerCase()];
     const year = mDash4 ? mDash[3] : `20${mDash[3]}`;
     if (mon) return `${year}-${mon}-${mDash[1].padStart(2, "0")}`;
@@ -75,7 +109,9 @@ export function parseDate(raw: unknown): string | null {
 
 export function parseDateTime(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
-  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/.exec(v);
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/.exec(
+    v,
+  );
   if (!m) return null;
   const [, mo, d, y, h, mi, s] = m;
   return `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")} ${h.padStart(2, "0")}:${mi}:${s}`;
@@ -86,7 +122,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importReginaldAbandonedCartSalesBatch(
   batchId: string,
@@ -132,43 +170,56 @@ export async function importReginaldAbandonedCartSalesBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Reginald" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     // Shopify Order Name (#RM1152445 etc.) is the same order-number shape as the Google
     // Form's own "Order id" -- confirmed against 10,736 already-imported rows (all
     // "#RM..."). Grand Total -> Amount, Date -> Order Date are direct renames.
-    const orderId = cleanText(data["Order id"]) ?? cleanText(data["Shopify Order Name"]);
-    const amount = parseAmount(data["Amount"]) ?? parseAmount(data["Grand Total"]);
+    const orderId =
+      cleanText(data["Order id"]) ?? cleanText(data["Shopify Order Name"]);
+    const amount =
+      parseAmount(data["Amount"]) ?? parseAmount(data["Grand Total"]);
     // LOB has no equivalent column in the Shopify export at all -- inferred from Coupon
     // Code's presence, since it tracks the historical ABCD/REPT split closely (this file:
     // 994/1096 = 90.7% carry a coupon vs. the existing table's 10,161/10,736 = 94.6% ABCD).
     // This is a heuristic, not a confirmed business rule -- flagged to the owner as such.
     const lobExplicit = cleanText(data["LOB"]);
-    const lob = lobExplicit ?? (cleanText(data["Coupon Code"]) ? "ABCD" : "REPT");
+    const lob =
+      lobExplicit ?? (cleanText(data["Coupon Code"]) ? "ABCD" : "REPT");
     if (!orderId || amount === null) {
       const msg = `Row ${row.row_no}: an order number ("Order id" or "Shopify Order Name") and an amount ("Amount" or "Grand Total") are required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     // "Agents status" in the Shopify export is actually the agent's NAME (e.g. "S ABHINAV"),
     // not a status -- confirmed against the file's own real values. "Agent ID" -> EMP ID.
-    const agentName = cleanText(data["Column 6"]) ?? cleanText(data["Agents status"]);
+    const agentName =
+      cleanText(data["Column 6"]) ?? cleanText(data["Agents status"]);
     const empId = cleanText(data["EMP ID"]) ?? cleanText(data["Agent ID"]);
     const orderDate = parseDate(data["Order Date "]) ?? parseDate(data["Date"]);
-    const paymentType = cleanText(data["Payment Type "]) ?? cleanText(data["Payment Type"]);
+    const paymentType =
+      cleanText(data["Payment Type "]) ?? cleanText(data["Payment Type"]);
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, orderId,
+        randomUUID(),
+        processId,
+        orderId,
         cleanText(data["Order id "]),
         parseDateTime(data["Timestamp"]),
-        amount, lob,
+        amount,
+        lob,
         orderDate,
         paymentType,
-        agentName, normalizeName(agentName),
+        agentName,
+        normalizeName(agentName),
         cleanText(data["Column 1"]),
         empId,
         batchId,
@@ -182,7 +233,8 @@ export async function importReginaldAbandonedCartSalesBatch(
            (id, process_id, order_id, order_id_numeric, submitted_at, amount, lob, order_date,
             payment_type, agent_name, agent_name_norm, time_slot, emp_id, data_source,
             source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
             amount = VALUES(amount),
             payment_type = VALUES(payment_type),
@@ -196,22 +248,33 @@ export async function importReginaldAbandonedCartSalesBatch(
 
   if (importedRows > 0) {
     const failedRowIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
-    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
+    const successRowIds = toInsert
+      .filter((r) => !failedRowIds.has(r.rowId))
+      .map((r) => r.rowId);
     await markRowsImported(successRowIds);
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

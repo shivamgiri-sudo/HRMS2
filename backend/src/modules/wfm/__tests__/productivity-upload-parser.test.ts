@@ -1,68 +1,75 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from "vitest";
 import {
   MANDATORY_UPLOAD_FIELDS,
   checkMappingCoversMandatoryFields,
   parseUploadRow,
-} from '../productivity-upload-parser.js';
+} from "../productivity-upload-parser.js";
 
-describe('MANDATORY_UPLOAD_FIELDS', () => {
-  it('is exactly employee_code, report_date, login_minutes (criterion 17.4)', () => {
-    expect(MANDATORY_UPLOAD_FIELDS).toEqual(['employee_code', 'report_date', 'login_minutes']);
+describe("MANDATORY_UPLOAD_FIELDS", () => {
+  it("is exactly employee_code, report_date, login_minutes (criterion 17.4)", () => {
+    expect(MANDATORY_UPLOAD_FIELDS).toEqual([
+      "employee_code",
+      "report_date",
+      "login_minutes",
+    ]);
   });
 });
 
-describe('checkMappingCoversMandatoryFields', () => {
-  it('accepts a mapping that covers all three mandatory fields, plus optional ones', () => {
+describe("checkMappingCoversMandatoryFields", () => {
+  it("accepts a mapping that covers all three mandatory fields, plus optional ones", () => {
     const result = checkMappingCoversMandatoryFields({
-      'Emp Code': 'employee_code',
-      'Date': 'report_date',
-      'Login Mins': 'login_minutes',
-      'Calls': 'calls_handled',
+      "Emp Code": "employee_code",
+      Date: "report_date",
+      "Login Mins": "login_minutes",
+      Calls: "calls_handled",
     });
     expect(result).toEqual({ ok: true });
   });
 
-  it('names every missing mandatory field (criterion 17.15)', () => {
+  it("names every missing mandatory field (criterion 17.15)", () => {
     const result = checkMappingCoversMandatoryFields({
-      'Emp Code': 'employee_code',
+      "Emp Code": "employee_code",
     });
-    expect(result).toEqual({ ok: false, missingFields: ['report_date', 'login_minutes'] });
+    expect(result).toEqual({
+      ok: false,
+      missingFields: ["report_date", "login_minutes"],
+    });
   });
 
-  it('rejects an empty mapping, naming all three mandatory fields', () => {
+  it("rejects an empty mapping, naming all three mandatory fields", () => {
     const result = checkMappingCoversMandatoryFields({});
     expect(result).toEqual({
       ok: false,
-      missingFields: ['employee_code', 'report_date', 'login_minutes'],
+      missingFields: ["employee_code", "report_date", "login_minutes"],
     });
   });
 });
 
-describe('parseUploadRow', () => {
+describe("parseUploadRow", () => {
   const mapping = {
-    'Emp Code': 'employee_code',
-    'Report Date': 'report_date',
-    'Login Minutes': 'login_minutes',
-    'Calls Handled': 'calls_handled',
-    'AHT Seconds': 'aht_seconds',
+    "Emp Code": "employee_code",
+    "Report Date": "report_date",
+    "Login Minutes": "login_minutes",
+    "Calls Handled": "calls_handled",
+    "AHT Seconds": "aht_seconds",
   };
 
-  it('maps a well-formed row using the column mapping', () => {
+  it("maps a well-formed row using the column mapping", () => {
     const result = parseUploadRow(
       {
-        'Emp Code': 'MAS12345',
-        'Report Date': '2026-07-15',
-        'Login Minutes': '420',
-        'Calls Handled': '38',
-        'AHT Seconds': '245.5',
+        "Emp Code": "MAS12345",
+        "Report Date": "2026-07-15",
+        "Login Minutes": "420",
+        "Calls Handled": "38",
+        "AHT Seconds": "245.5",
       },
       mapping,
     );
     expect(result).toEqual({
       ok: true,
       row: {
-        employee_code: 'MAS12345',
-        report_date: '2026-07-15',
+        employee_code: "MAS12345",
+        report_date: "2026-07-15",
         login_minutes: 420,
         calls_handled: 38,
         aht_seconds: 245.5,
@@ -70,14 +77,14 @@ describe('parseUploadRow', () => {
     });
   });
 
-  it('omits an optional field entirely when its mapped source column is blank', () => {
+  it("omits an optional field entirely when its mapped source column is blank", () => {
     const result = parseUploadRow(
       {
-        'Emp Code': 'MAS12345',
-        'Report Date': '2026-07-15',
-        'Login Minutes': '420',
-        'Calls Handled': '',
-        'AHT Seconds': '',
+        "Emp Code": "MAS12345",
+        "Report Date": "2026-07-15",
+        "Login Minutes": "420",
+        "Calls Handled": "",
+        "AHT Seconds": "",
       },
       mapping,
     );
@@ -88,49 +95,58 @@ describe('parseUploadRow', () => {
     }
   });
 
-  it('rejects a row missing a mandatory field value, naming which one', () => {
+  it("rejects a row missing a mandatory field value, naming which one", () => {
     const result = parseUploadRow(
       {
-        'Emp Code': 'MAS12345',
-        'Report Date': '',
-        'Login Minutes': '420',
+        "Emp Code": "MAS12345",
+        "Report Date": "",
+        "Login Minutes": "420",
       },
       mapping,
     );
-    expect(result).toEqual({ ok: false, reason: 'report_date is required but blank' });
+    expect(result).toEqual({
+      ok: false,
+      reason: "report_date is required but blank",
+    });
   });
 
-  it('rejects a row where a numeric field cannot be parsed as a number', () => {
+  it("rejects a row where a numeric field cannot be parsed as a number", () => {
     const result = parseUploadRow(
       {
-        'Emp Code': 'MAS12345',
-        'Report Date': '2026-07-15',
-        'Login Minutes': 'not-a-number',
+        "Emp Code": "MAS12345",
+        "Report Date": "2026-07-15",
+        "Login Minutes": "not-a-number",
       },
       mapping,
     );
-    expect(result).toEqual({ ok: false, reason: 'login_minutes is not a valid number: "not-a-number"' });
+    expect(result).toEqual({
+      ok: false,
+      reason: 'login_minutes is not a valid number: "not-a-number"',
+    });
   });
 
-  it('rejects a negative login_minutes value', () => {
+  it("rejects a negative login_minutes value", () => {
     const result = parseUploadRow(
       {
-        'Emp Code': 'MAS12345',
-        'Report Date': '2026-07-15',
-        'Login Minutes': '-10',
+        "Emp Code": "MAS12345",
+        "Report Date": "2026-07-15",
+        "Login Minutes": "-10",
       },
       mapping,
     );
-    expect(result).toEqual({ ok: false, reason: 'login_minutes must not be negative: -10' });
+    expect(result).toEqual({
+      ok: false,
+      reason: "login_minutes must not be negative: -10",
+    });
   });
 
-  it('ignores a raw column with no mapping entry', () => {
+  it("ignores a raw column with no mapping entry", () => {
     const result = parseUploadRow(
       {
-        'Emp Code': 'MAS12345',
-        'Report Date': '2026-07-15',
-        'Login Minutes': '420',
-        'Some Unmapped Column': 'whatever',
+        "Emp Code": "MAS12345",
+        "Report Date": "2026-07-15",
+        "Login Minutes": "420",
+        "Some Unmapped Column": "whatever",
       },
       mapping,
     );
@@ -140,38 +156,55 @@ describe('parseUploadRow', () => {
   it('rejects a whitespace-only value for a mandatory field as blank, not as a present value (review finding: Number("   ") === 0 in JS)', () => {
     const result = parseUploadRow(
       {
-        'Emp Code': 'MAS12345',
-        'Report Date': '2026-07-15',
-        'Login Minutes': '   ',
+        "Emp Code": "MAS12345",
+        "Report Date": "2026-07-15",
+        "Login Minutes": "   ",
       },
       mapping,
     );
-    expect(result).toEqual({ ok: false, reason: 'login_minutes is required but blank' });
+    expect(result).toEqual({
+      ok: false,
+      reason: "login_minutes is required but blank",
+    });
   });
 
-  it('trims surrounding whitespace from an accepted value', () => {
+  it("trims surrounding whitespace from an accepted value", () => {
     const result = parseUploadRow(
       {
-        'Emp Code': '  MAS12345  ',
-        'Report Date': '2026-07-15',
-        'Login Minutes': '  420  ',
+        "Emp Code": "  MAS12345  ",
+        "Report Date": "2026-07-15",
+        "Login Minutes": "  420  ",
       },
       mapping,
     );
     expect(result).toEqual({
       ok: true,
-      row: { employee_code: 'MAS12345', report_date: '2026-07-15', login_minutes: 420 },
+      row: {
+        employee_code: "MAS12345",
+        report_date: "2026-07-15",
+        login_minutes: 420,
+      },
     });
   });
 
-  it('when two source headers map to the same target field, the later mapping entry wins', () => {
+  it("when two source headers map to the same target field, the later mapping entry wins", () => {
     const result = parseUploadRow(
-      { 'Col A': 'AAA111', 'Col B': 'BBB222', 'Report Date': '2026-07-15', 'Login Minutes': '420' },
-      { 'Col A': 'employee_code', 'Col B': 'employee_code', 'Report Date': 'report_date', 'Login Minutes': 'login_minutes' },
+      {
+        "Col A": "AAA111",
+        "Col B": "BBB222",
+        "Report Date": "2026-07-15",
+        "Login Minutes": "420",
+      },
+      {
+        "Col A": "employee_code",
+        "Col B": "employee_code",
+        "Report Date": "report_date",
+        "Login Minutes": "login_minutes",
+      },
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.row.employee_code).toBe('BBB222');
+      expect(result.row.employee_code).toBe("BBB222");
     }
   });
 });

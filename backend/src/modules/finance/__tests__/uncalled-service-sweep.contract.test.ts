@@ -35,7 +35,10 @@ function productionSource(): string {
       if (entry.isDirectory()) {
         if (entry.name === "__tests__") continue;
         walk(full);
-      } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+      } else if (
+        entry.name.endsWith(".ts") &&
+        !entry.name.endsWith(".test.ts")
+      ) {
         chunks.push(readFileSync(full, "utf8"));
       }
     }
@@ -59,15 +62,27 @@ function callSites(name: string): number {
 describe("finance services are actually invoked", () => {
   it.each([
     // [symbol, what silently does not happen when nothing calls it]
-    ["allocateMonthlyGrnNumber", "Requirement 12's MAS/MM/YY/SERIAL numbering never runs"],
-    ["resolveGrnNumberFormat", "the grn_number_format flag does nothing when flipped"],
+    [
+      "allocateMonthlyGrnNumber",
+      "Requirement 12's MAS/MM/YY/SERIAL numbering never runs",
+    ],
+    [
+      "resolveGrnNumberFormat",
+      "the grn_number_format flag does nothing when flipped",
+    ],
     ["vendorFilterClause", "vendor company/branch restrictions never restrict"],
     ["assertSufficientBalance", "an imprest float can go negative unchecked"],
-    ["postImprestVoucherDebit", "an approved imprest voucher never debits the float"],
+    [
+      "postImprestVoucherDebit",
+      "an approved imprest voucher never debits the float",
+    ],
     ["recordFinanceApprovalEvent", "approval history is never written"],
     ["writePeriodSplits", "multi-month recognition never produces a schedule"],
     ["getDetailsReport", "the Imprest Details report has no endpoint"],
-    ["listFinanceApprovalEvents", "approval history is written and can never be read back"],
+    [
+      "listFinanceApprovalEvents",
+      "approval history is written and can never be read back",
+    ],
   ])("%s has a call site — otherwise %s", (symbol) => {
     expect(
       callSites(symbol),
@@ -104,13 +119,15 @@ describe("the GRN numbering flag is genuinely switchable", () => {
 
   it("both live finance_head-approval paths go through it, so they cannot disagree", () => {
     expect(GRN_SERVICE).toContain("await resolveGrnNumberOnSubmit(grn)");
-    expect(readFileSync(at("../grn-smart.service.ts"), "utf8"))
-      .toContain("await resolveGrnNumberOnSubmit(grn)");
+    expect(readFileSync(at("../grn-smart.service.ts"), "utf8")).toContain(
+      "await resolveGrnNumberOnSubmit(grn)",
+    );
   });
 
   it("neither live submit path calls it any more", () => {
-    expect(readFileSync(at("../grn-validation-control.service.ts"), "utf8"))
-      .not.toContain("resolveGrnNumberOnSubmit(typeRows[0])");
+    expect(
+      readFileSync(at("../grn-validation-control.service.ts"), "utf8"),
+    ).not.toContain("resolveGrnNumberOnSubmit(typeRows[0])");
     const submitBlock = GRN_SERVICE.slice(
       GRN_SERVICE.indexOf("async submitForApproval("),
       GRN_SERVICE.indexOf("async submitForApproval(") + 2500,
@@ -133,7 +150,7 @@ describe("vendor applicability actually narrows the query", () => {
     // Aliased "v", not the bare table name — the vendor list query wraps vendor_master in a
     // de-duplicating subquery (Group A2) that aliases it as v; every reference inside that
     // query, including this predicate, must use the alias or MySQL rejects it.
-    expect(ERP).toContain("vendorApplicabilityService.vendorFilterClause(\"v\"");
+    expect(ERP).toContain('vendorApplicabilityService.vendorFilterClause("v"');
   });
 
   it("only narrows when a company or branch is asked for", () => {

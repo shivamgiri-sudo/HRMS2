@@ -27,8 +27,10 @@ function categoryOf(type: string): string {
   if (/(aadhaar|aadhar|pan|identity|id)/.test(normalized)) return "identity";
   if (/(bank|cheque|passbook)/.test(normalized)) return "bank";
   if (/(epf|uan|pf|esi|statutory)/.test(normalized)) return "statutory";
-  if (/(degree|education|certificate|marksheet)/.test(normalized)) return "education";
-  if (/(experience|relieving|salary slip|payslip)/.test(normalized)) return "experience";
+  if (/(degree|education|certificate|marksheet)/.test(normalized))
+    return "education";
+  if (/(experience|relieving|salary slip|payslip)/.test(normalized))
+    return "experience";
   return "general";
 }
 
@@ -39,7 +41,10 @@ function maskName(name: string): string {
   return `${name.slice(0, 4)}...${ext}`;
 }
 
-export function secureDocumentUrl(documentId: string, action: "stream" | "download" | "metadata" = "stream"): string {
+export function secureDocumentUrl(
+  documentId: string,
+  action: "stream" | "download" | "metadata" = "stream",
+): string {
   return `/api/ats/documents/${documentId}/${action}`;
 }
 
@@ -54,11 +59,23 @@ async function auditDocumentAccess(
     `INSERT INTO candidate_document_access_log
        (id, document_id, candidate_id, actor_id, access_type, purpose_code, ip_address, user_agent, outcome)
      VALUES (UUID(), ?, ?, ?, ?, 'document_review', ?, ?, ?)`,
-    [document.id, document.candidate_id, actorId, accessType, meta?.ip || null, meta?.userAgent || null, outcome],
+    [
+      document.id,
+      document.candidate_id,
+      actorId,
+      accessType,
+      meta?.ip || null,
+      meta?.userAgent || null,
+      outcome,
+    ],
   );
 }
 
-export async function listCandidateDocuments(candidateId: string, actorId: string | null, meta?: { ip?: string; userAgent?: string }) {
+export async function listCandidateDocuments(
+  candidateId: string,
+  actorId: string | null,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM (
        SELECT
@@ -103,7 +120,11 @@ export async function listCandidateDocuments(candidateId: string, actorId: strin
     [candidateId, candidateId],
   );
   const docs = rows.map((row) => normalizeDocument(row));
-  await Promise.all(docs.map((doc) => auditDocumentAccess(doc, actorId, "list", "allowed", meta)));
+  await Promise.all(
+    docs.map((doc) =>
+      auditDocumentAccess(doc, actorId, "list", "allowed", meta),
+    ),
+  );
   return docs.map(publicDocument);
 }
 
@@ -113,7 +134,9 @@ function normalizeDocument(row: RowDataPacket): CandidateDocument {
     source: row.source === "portal" ? "portal" : "onboarding",
     candidate_id: String(row.candidate_id),
     document_type: String(row.document_type || "Other"),
-    document_name: String(row.document_name || row.file_name || row.document_type || "Document"),
+    document_name: String(
+      row.document_name || row.file_name || row.document_type || "Document",
+    ),
     file_name: String(row.file_name || row.document_name || "document"),
     mime_type: row.mime_type ? String(row.mime_type) : null,
     file_size: row.file_size == null ? null : Number(row.file_size),
@@ -135,8 +158,12 @@ function publicDocument(document: CandidateDocument) {
     candidate_id: document.candidate_id,
     document_type: document.document_type,
     document_category: category,
-    document_name: document.sensitive_flag ? maskName(document.document_name) : document.document_name,
-    file_name: document.sensitive_flag ? maskName(document.file_name) : document.file_name,
+    document_name: document.sensitive_flag
+      ? maskName(document.document_name)
+      : document.document_name,
+    file_name: document.sensitive_flag
+      ? maskName(document.file_name)
+      : document.file_name,
     mime_type: document.mime_type,
     file_size: document.file_size,
     verification_status: document.verification_status,
@@ -149,7 +176,9 @@ function publicDocument(document: CandidateDocument) {
   };
 }
 
-export async function getCandidateDocument(documentId: string): Promise<CandidateDocument | null> {
+export async function getCandidateDocument(
+  documentId: string,
+): Promise<CandidateDocument | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM (
        SELECT
@@ -196,16 +225,26 @@ export async function getCandidateDocument(documentId: string): Promise<Candidat
   return rows[0] ? normalizeDocument(rows[0]) : null;
 }
 
-export async function getDocumentMetadata(documentId: string, actorId: string | null, meta?: { ip?: string; userAgent?: string }) {
+export async function getDocumentMetadata(
+  documentId: string,
+  actorId: string | null,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const document = await getCandidateDocument(documentId);
-  if (!document) throw Object.assign(new Error("Document not found"), { statusCode: 404 });
+  if (!document)
+    throw Object.assign(new Error("Document not found"), { statusCode: 404 });
   await auditDocumentAccess(document, actorId, "metadata", "allowed", meta);
   return publicDocument(document);
 }
 
-export async function getDocumentAudit(documentId: string, actorId: string | null, meta?: { ip?: string; userAgent?: string }) {
+export async function getDocumentAudit(
+  documentId: string,
+  actorId: string | null,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const document = await getCandidateDocument(documentId);
-  if (!document) throw Object.assign(new Error("Document not found"), { statusCode: 404 });
+  if (!document)
+    throw Object.assign(new Error("Document not found"), { statusCode: 404 });
   await auditDocumentAccess(document, actorId, "audit", "allowed", meta);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT access_type, actor_id, outcome, ip_address, created_at
@@ -220,7 +259,10 @@ export async function getDocumentAudit(documentId: string, actorId: string | nul
 
 export function resolveDocumentPath(document: CandidateDocument): string {
   const raw = document.raw_path || document.raw_url || "";
-  if (!raw) throw Object.assign(new Error("Document file path is missing"), { statusCode: 404 });
+  if (!raw)
+    throw Object.assign(new Error("Document file path is missing"), {
+      statusCode: 404,
+    });
 
   // Onboarding documents record an absolute file_path, so the stored value depends on
   // which machine and working directory wrote it. Verified live 2026-08-16: 25 of 470
@@ -250,21 +292,34 @@ export function resolveDocumentPath(document: CandidateDocument): string {
   return path.resolve(process.cwd(), cleaned);
 }
 
-export async function getDocumentFile(documentId: string, actorId: string | null, accessType: "stream" | "download", meta?: { ip?: string; userAgent?: string }) {
+export async function getDocumentFile(
+  documentId: string,
+  actorId: string | null,
+  accessType: "stream" | "download",
+  meta?: { ip?: string; userAgent?: string },
+) {
   const document = await getCandidateDocument(documentId);
-  if (!document) throw Object.assign(new Error("Document not found"), { statusCode: 404 });
+  if (!document)
+    throw Object.assign(new Error("Document not found"), { statusCode: 404 });
   const filePath = resolveDocumentPath(document);
   if (!fs.existsSync(filePath)) {
     await auditDocumentAccess(document, actorId, accessType, "denied", meta);
-    throw Object.assign(new Error("Document file is not available on server"), { statusCode: 404 });
+    throw Object.assign(new Error("Document file is not available on server"), {
+      statusCode: 404,
+    });
   }
   await auditDocumentAccess(document, actorId, accessType, "allowed", meta);
   return { document, filePath };
 }
 
-export async function verifyCandidateDocument(documentId: string, actorId: string, remarks?: string) {
+export async function verifyCandidateDocument(
+  documentId: string,
+  actorId: string,
+  remarks?: string,
+) {
   const document = await getCandidateDocument(documentId);
-  if (!document) throw Object.assign(new Error("Document not found"), { statusCode: 404 });
+  if (!document)
+    throw Object.assign(new Error("Document not found"), { statusCode: 404 });
   if (document.source === "onboarding") {
     await db.execute(
       `UPDATE candidate_onboarding_document
@@ -287,11 +342,16 @@ export async function verifyCandidateDocument(documentId: string, actorId: strin
   // education_status = 'not_run', which held every appointment letter behind a
   // check whose evidence was already on file.
   if (categoryOf(document.document_type) === "education") {
-    await syncEducationStatusFromDocuments(document.candidate_id).catch((err: unknown) => {
-      // Never fail the verification itself over the derived status — the document
-      // is verified either way, and this can be re-derived by verifying another.
-      console.error("[secure-documents] education BGV sync failed:", (err as Error).message);
-    });
+    await syncEducationStatusFromDocuments(document.candidate_id).catch(
+      (err: unknown) => {
+        // Never fail the verification itself over the derived status — the document
+        // is verified either way, and this can be re-derived by verifying another.
+        console.error(
+          "[secure-documents] education BGV sync failed:",
+          (err as Error).message,
+        );
+      },
+    );
   }
   return getDocumentMetadata(documentId, actorId);
 }
@@ -308,18 +368,23 @@ export async function verifyCandidateDocument(documentId: string, actorId: strin
  * Scoped to the onboarding store. Portal uploads live in ats_candidate_documents,
  * which holds no rows on live data; if that changes this needs to count both.
  */
-async function syncEducationStatusFromDocuments(candidateId: string): Promise<void> {
+async function syncEducationStatusFromDocuments(
+  candidateId: string,
+): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT doc_type, document_status
        FROM candidate_onboarding_document
       WHERE candidate_id = ? AND deleted_at IS NULL`,
     [candidateId],
   );
-  const educationDocs = (rows as Array<{ doc_type: string; document_status: string }>)
-    .filter((r) => categoryOf(String(r.doc_type ?? "")) === "education");
+  const educationDocs = (
+    rows as Array<{ doc_type: string; document_status: string }>
+  ).filter((r) => categoryOf(String(r.doc_type ?? "")) === "education");
   if (educationDocs.length === 0) return;
 
-  const verified = educationDocs.filter((r) => String(r.document_status) === "verified").length;
+  const verified = educationDocs.filter(
+    (r) => String(r.document_status) === "verified",
+  ).length;
   if (verified === 0) return;
   const next = verified === educationDocs.length ? "passed" : "partial";
 
@@ -336,10 +401,18 @@ async function syncEducationStatusFromDocuments(candidateId: string): Promise<vo
   await computeAndSaveScore(candidateId);
 }
 
-export async function rejectCandidateDocument(documentId: string, actorId: string, reason: string) {
+export async function rejectCandidateDocument(
+  documentId: string,
+  actorId: string,
+  reason: string,
+) {
   const document = await getCandidateDocument(documentId);
-  if (!document) throw Object.assign(new Error("Document not found"), { statusCode: 404 });
-  if (!reason.trim()) throw Object.assign(new Error("Rejection reason is required"), { statusCode: 400 });
+  if (!document)
+    throw Object.assign(new Error("Document not found"), { statusCode: 404 });
+  if (!reason.trim())
+    throw Object.assign(new Error("Rejection reason is required"), {
+      statusCode: 400,
+    });
   if (document.source === "onboarding") {
     await db.execute(
       `UPDATE candidate_onboarding_document
@@ -359,10 +432,19 @@ export async function rejectCandidateDocument(documentId: string, actorId: strin
   return getDocumentMetadata(documentId, actorId);
 }
 
-export async function requestDocumentReupload(documentId: string, actorId: string, reason: string, dueAt?: string) {
+export async function requestDocumentReupload(
+  documentId: string,
+  actorId: string,
+  reason: string,
+  dueAt?: string,
+) {
   const document = await getCandidateDocument(documentId);
-  if (!document) throw Object.assign(new Error("Document not found"), { statusCode: 404 });
-  if (!reason.trim()) throw Object.assign(new Error("Re-upload reason is required"), { statusCode: 400 });
+  if (!document)
+    throw Object.assign(new Error("Document not found"), { statusCode: 404 });
+  if (!reason.trim())
+    throw Object.assign(new Error("Re-upload reason is required"), {
+      statusCode: 400,
+    });
   await db.execute(
     `INSERT INTO candidate_document_reupload_request
        (id, document_id, candidate_id, requested_by, reason, due_at)

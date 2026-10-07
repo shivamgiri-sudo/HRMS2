@@ -5,7 +5,10 @@ import { db } from "../../db/mysql.js";
 // Structurally identical to the Executor interfaces in branch-budget-allocation.service.ts and
 // meter.service.ts — same dependency-injection pattern for testability.
 interface Executor {
-  execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[T, unknown]>;
 }
 
 /**
@@ -50,13 +53,13 @@ function toRecord(row: RowDataPacket): CostCentreMappingRecord {
 
 export async function getMappingHistory(
   costCentreId: string,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<CostCentreMappingRecord[]> {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT * FROM finance_cost_centre_mapping_history
       WHERE cost_centre_id = ?
       ORDER BY effective_from DESC`,
-    [costCentreId]
+    [costCentreId],
   );
   return rows.map(toRecord);
 }
@@ -71,11 +74,11 @@ export async function getMappingHistory(
  */
 export async function getCostCentreBranchId(
   costCentreId: string,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<string | null> {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT branch_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
-    [costCentreId]
+    [costCentreId],
   );
   return rows[0]?.branch_id ? String(rows[0].branch_id) : null;
 }
@@ -89,7 +92,7 @@ export async function getCostCentreBranchId(
 export async function resolveCostCentreMapping(
   costCentreId: string,
   asOfDate: string,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<{ branchId: string | null; processId: string | null } | null> {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT branch_id, process_id FROM finance_cost_centre_mapping_history
@@ -98,7 +101,7 @@ export async function resolveCostCentreMapping(
         AND (effective_to IS NULL OR effective_to >= ?)
       ORDER BY effective_from DESC
       LIMIT 1`,
-    [costCentreId, asOfDate, asOfDate]
+    [costCentreId, asOfDate, asOfDate],
   );
   if (rows[0]) {
     return {
@@ -109,7 +112,7 @@ export async function resolveCostCentreMapping(
 
   const [ccmRows] = await executor.execute<RowDataPacket[]>(
     `SELECT branch_id, process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
-    [costCentreId]
+    [costCentreId],
   );
   if (!ccmRows[0]) return null;
   return {
@@ -128,13 +131,15 @@ export async function resolveCostCentreMapping(
 export async function recordMappingChange(
   costCentreId: string,
   input: RecordMappingChangeInput,
-  actorUserId: string
+  actorUserId: string,
 ): Promise<CostCentreMappingRecord> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveFrom)) {
     throw new Error("A valid effective date (YYYY-MM-DD) is required");
   }
   if (!input.changeReason?.trim()) {
-    throw new Error("A change reason is mandatory when reassigning a cost centre's branch/process mapping");
+    throw new Error(
+      "A change reason is mandatory when reassigning a cost centre's branch/process mapping",
+    );
   }
   if (!input.branchId && !input.processId) {
     throw new Error("At least a branch or a process must be provided");
@@ -142,7 +147,7 @@ export async function recordMappingChange(
 
   const [ccmRows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, process_id, go_live_date FROM cost_centre_master WHERE id = ? LIMIT 1`,
-    [costCentreId]
+    [costCentreId],
   );
   if (!ccmRows[0]) throw new Error("Cost centre was not found");
 
@@ -154,28 +159,32 @@ export async function recordMappingChange(
     // long-running request can't race a stale application-clock check.
     const [dateCheck] = await connection.execute<RowDataPacket[]>(
       `SELECT (? < CURDATE()) AS is_past`,
-      [input.effectiveFrom]
+      [input.effectiveFrom],
     );
     if (Number(dateCheck[0]?.is_past) === 1) {
-      throw new Error("Effective date cannot be in the past — cost-centre mapping changes are forward-only and must not rewrite already-reported history");
+      throw new Error(
+        "Effective date cannot be in the past — cost-centre mapping changes are forward-only and must not rewrite already-reported history",
+      );
     }
 
     const [openRows] = await connection.execute<RowDataPacket[]>(
       `SELECT id, effective_from FROM finance_cost_centre_mapping_history
         WHERE cost_centre_id = ? AND effective_to IS NULL
         ORDER BY effective_from DESC LIMIT 1`,
-      [costCentreId]
+      [costCentreId],
     );
     const openRow = openRows[0];
     if (openRow && String(openRow.effective_from) >= input.effectiveFrom) {
-      throw new Error("Effective date must be after the current mapping's effective date");
+      throw new Error(
+        "Effective date must be after the current mapping's effective date",
+      );
     }
     if (openRow) {
       await connection.execute(
         `UPDATE finance_cost_centre_mapping_history
             SET effective_to = DATE_SUB(?, INTERVAL 1 DAY)
           WHERE id = ?`,
-        [input.effectiveFrom, String(openRow.id)]
+        [input.effectiveFrom, String(openRow.id)],
       );
     } else {
       // No history row exists yet for this cost centre (e.g. it was created after the PR 8
@@ -197,7 +206,7 @@ export async function recordMappingChange(
           input.effectiveFrom,
           "Backfilled retroactively — no prior mapping-history row existed before this change",
           null,
-        ]
+        ],
       );
     }
 
@@ -206,7 +215,15 @@ export async function recordMappingChange(
       `INSERT INTO finance_cost_centre_mapping_history
          (id, cost_centre_id, branch_id, process_id, effective_from, effective_to, change_reason, created_by)
        VALUES (?,?,?,?,?,NULL,?,?)`,
-      [id, costCentreId, input.branchId, input.processId, input.effectiveFrom, input.changeReason.trim(), actorUserId]
+      [
+        id,
+        costCentreId,
+        input.branchId,
+        input.processId,
+        input.effectiveFrom,
+        input.changeReason.trim(),
+        actorUserId,
+      ],
     );
 
     await connection.execute(
@@ -215,14 +232,14 @@ export async function recordMappingChange(
               process_id = COALESCE(?, process_id),
               updated_at = NOW()
         WHERE id = ?`,
-      [input.branchId, input.processId, costCentreId]
+      [input.branchId, input.processId, costCentreId],
     );
 
     await connection.commit();
 
     const [saved] = await connection.execute<RowDataPacket[]>(
       `SELECT * FROM finance_cost_centre_mapping_history WHERE id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     return toRecord(saved[0]);
   } catch (error) {

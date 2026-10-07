@@ -2,7 +2,7 @@
 
 **Version**: 1.0  
 **Status**: Production Ready  
-**Last Updated**: 2026-06-21  
+**Last Updated**: 2026-06-21
 
 ---
 
@@ -39,26 +39,27 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 
 ### Core SQL Queries
 
-| File | Purpose | Execution Time | Output Rows |
-|------|---------|-----------------|------------|
-| `call-quality-anomaly-detection.sql` | Complete 6-query analysis | 30-60s | 50-500 |
-| `call-quality-anomaly-quick-ref.sql` | Daily alerts (7 queries, fast) | 10-20s | 20-100 |
-| `attrition-risk-analysis.sql` | (Existing) Attrition risk + quality data | 60-90s | 100-1000 |
-| `process-team-optimization.sql` | (Existing) Process + shift optimization | 45-60s | 200-400 |
+| File                                 | Purpose                                  | Execution Time | Output Rows |
+| ------------------------------------ | ---------------------------------------- | -------------- | ----------- |
+| `call-quality-anomaly-detection.sql` | Complete 6-query analysis                | 30-60s         | 50-500      |
+| `call-quality-anomaly-quick-ref.sql` | Daily alerts (7 queries, fast)           | 10-20s         | 20-100      |
+| `attrition-risk-analysis.sql`        | (Existing) Attrition risk + quality data | 60-90s         | 100-1000    |
+| `process-team-optimization.sql`      | (Existing) Process + shift optimization  | 45-60s         | 200-400     |
 
 ### Documentation
 
-| File | Purpose | Audience |
-|------|---------|----------|
-| `CALL_QUALITY_ANOMALY_GUIDE.md` | Detailed interpretation guide | Managers, Analysts |
-| `ANOMALY_DETECTION_INTEGRATION.md` | Backend API implementation | Developers |
-| `README_ANOMALY_DETECTION.md` | This file - quick navigation | Everyone |
+| File                               | Purpose                       | Audience           |
+| ---------------------------------- | ----------------------------- | ------------------ |
+| `CALL_QUALITY_ANOMALY_GUIDE.md`    | Detailed interpretation guide | Managers, Analysts |
+| `ANOMALY_DETECTION_INTEGRATION.md` | Backend API implementation    | Developers         |
+| `README_ANOMALY_DETECTION.md`      | This file - quick navigation  | Everyone           |
 
 ---
 
 ## Anomaly Types Explained
 
 ### 1. Agent Outliers
+
 **What**: Agents whose quality is >2σ from organizational average  
 **Why**: Identifies both elite performers and underperformers  
 **Action**: Elite = replicate practices; Underperformers = coaching  
@@ -66,6 +67,7 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 **Quick Check**: Not in quick-ref (runs in full analysis only)
 
 ### 2. Fatigue Patterns
+
 **What**: Quality degradation after consecutive work days  
 **Why**: Identifies burnout risk and schedule issues  
 **Action**: Break optimization, workload adjustment, health check  
@@ -73,6 +75,7 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 **Quick Check**: `FATIGUE_PATTERN` query in quick-ref
 
 ### 3. Seasonal Patterns
+
 **What**: Systematic quality variations by day of week  
 **Why**: Identifies structural issues (weekend staffing, Friday fatigue)  
 **Action**: Team composition changes, strategic resource allocation  
@@ -80,6 +83,7 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 **Quick Check**: Not in quick-ref (part of full analysis)
 
 ### 4. Intraday Anomalies
+
 **What**: Hour-by-hour quality patterns (lunch valley, shift decline)  
 **Why**: Enables targeted break/workload optimization  
 **Action**: Break timing, reduced call complexity during valleys  
@@ -87,6 +91,7 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 **Quick Check**: `SHIFT_HOTSPOT` query in quick-ref
 
 ### 5. High Variability
+
 **What**: Agents with stddev >2x organization average  
 **Why**: Indicates lack of skill mastery or emotional instability  
 **Action**: Diagnostic assessment, individualized training  
@@ -94,6 +99,7 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 **Quick Check**: `HIGH_VARIABILITY_TODAY` in quick-ref
 
 ### 6. Sudden Performance Shifts
+
 **What**: Week-over-week changes >5%  
 **Why**: Detects crises (personal issues, attrition risk) or improvements  
 **Action**: 1-on-1 follow-up, support/recognition  
@@ -105,6 +111,7 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 ## Severity Levels
 
 ### CRITICAL
+
 - **Quality**: <60% (Agent Outliers) or Quality <60% (Fatigue)
 - **Variability**: StdDev >2x organization average
 - **Performance Shift**: >10% week-over-week change
@@ -112,12 +119,14 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 - **Action**: Manager escalation, 1-on-1, potential intervention
 
 ### HIGH
+
 - **Quality**: 2-3σ below/above mean (Agent Outliers) or 60-65% (Fatigue)
 - **Pattern**: Systematic (Friday fatigue, end-of-shift decline)
 - **Response Time**: Priority (48-72 hours)
 - **Action**: Coaching, schedule review, close monitoring
 
 ### MEDIUM
+
 - **Quality**: 1-2σ from mean or 65-70% (Fatigue)
 - **Variability**: StdDev 1.5-2x organization average
 - **Performance Shift**: 5-10% week-over-week
@@ -125,6 +134,7 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 - **Action**: Monitoring, performance conversation, training
 
 ### LOW
+
 - **Quality**: <1σ from mean
 - **Response Time**: Routine (2+ weeks)
 - **Action**: Observation, no immediate intervention
@@ -134,6 +144,7 @@ mysql -h [host] -u [user] -p mas_hrms < backend/scripts/call-quality-anomaly-det
 ## Interpretation Examples
 
 ### Example 1: Elite Performer
+
 ```
 Agent: Sarah Johnson
 Avg Quality: 87.3%
@@ -150,6 +161,7 @@ Action: Replicate practices across team
 ```
 
 ### Example 2: Underperformer
+
 ```
 Agent: John Smith
 Avg Quality: 65.2%
@@ -167,6 +179,7 @@ Action: Mandatory coaching + monitoring
 ```
 
 ### Example 3: Friday Fatigue
+
 ```
 Agent: Mike Brown
 Friday Quality: 68.5%
@@ -183,6 +196,7 @@ Action: Optimize Friday workload
 ```
 
 ### Example 4: Lunch Valley
+
 ```
 Hour: 12:00-13:00
 Avg Quality: 72.3%
@@ -199,6 +213,7 @@ Action: Optimize break timing
 ```
 
 ### Example 5: Sudden Drop
+
 ```
 Agent: Jennifer Williams
 Last Week: 81.8%
@@ -264,20 +279,24 @@ Action: Immediate intervention
 ## Integration with Other Systems
 
 ### Call Master Integration
+
 - `db_audit.call_quality_assessment` is synced from Call Master
 - Data lag: 1-4 hours (verify with your sync schedule)
 - Quality percentage: 0-100, calculated by Call Master
 
 ### Attrition Risk Analysis
+
 - Combine SUDDEN_PERFORMANCE_SHIFT with ATTRITION_RISK_ANALYSIS_SUMMARY.md
 - Quality degradation + high attrition indicators = retention urgency
 
 ### Process Optimization
+
 - Use INTRADAY_ANOMALY insights with `process-team-optimization.sql`
 - Match high-variability agents to specific processes
 - Optimize shift assignments based on performance patterns
 
 ### Training & Development
+
 - AGENT_OUTLIER_QUALITY feeds into mentor assignments
 - HIGH_VARIABILITY_ANOMALY feeds into skill gap analysis
 - SEASONAL_PATTERNS inform optimal call routing training
@@ -287,6 +306,7 @@ Action: Immediate intervention
 ## Dashboard Integration
 
 ### Quick Status Widget
+
 ```
 Organization Quality Status
 ├─ 7-Day Average: 77.2%
@@ -297,6 +317,7 @@ Organization Quality Status
 ```
 
 ### Alert Cards (Prioritized)
+
 ```
 CRITICAL: Sarah (SUDDEN_SHIFT) - Quality down 11.5% from baseline
 HIGH: John (OUTLIER) - Quality 2.1σ below org average
@@ -305,6 +326,7 @@ MEDIUM: Friday Fatigue - All agents -3.7% on Friday
 ```
 
 ### Drill-Down Views
+
 - Agent Detail: All anomalies for single agent
 - Process Detail: All anomalies for single process
 - Hour-by-Hour: Intraday pattern with recommendations
@@ -315,18 +337,21 @@ MEDIUM: Friday Fatigue - All agents -3.7% on Friday
 ## Performance & Optimization
 
 ### Query Performance
+
 - Single agent outlier: ~150ms
 - Dashboard summary: ~300ms
 - Full 6-query analysis: ~45-60s
 - Create indexes first (see ANOMALY_DETECTION_INTEGRATION.md)
 
 ### Caching Strategy
+
 - Outliers: Cache 5 minutes (update frequently)
 - Seasonal patterns: Cache 1 hour (stable)
 - Dashboard summary: Cache 15 minutes (real-time view)
 - Invalidate cache when new quality data arrives
 
 ### Database Optimization
+
 ```sql
 -- Must-have indexes for performance
 CREATE INDEX idx_quality_calldate ON db_audit.call_quality_assessment(CallDate);
@@ -340,26 +365,31 @@ CREATE INDEX idx_quality_campaign ON db_audit.call_quality_assessment(Campaign);
 ## Troubleshooting
 
 ### "No anomalies detected"
+
 - Check: Is `db_audit.call_quality_assessment` populated?
 - Verify: Call Master sync is running
 - Check date range: Last 90 days has data?
 
 ### "Query takes >60 seconds"
+
 - Check: Are indexes created? (see above)
 - Verify: MySQL not under load
 - Consider: Reduce date window to 30 days for testing
 
 ### "High variability agents don't seem problematic"
+
 - Remember: High variability doesn't mean low average quality
 - Check: Mix of call types? Different hours?
 - Action: Do call review across their shift pattern
 
 ### "I'm not seeing Friday fatigue in my data"
+
 - Check: Your organization's work schedule (Monday-Friday?)
 - Verify: Sufficient Friday data (n>30 calls)
 - Consider: Your customer base might have different patterns
 
 ### "Outlier quality seems wrong"
+
 - Verify: `org_stddev` is calculated correctly (check raw query output)
 - Check: Are there agents with <20 calls skewing the average?
 - Consider: Process-specific analysis (QUERY 1 filters by Campaign)
@@ -369,7 +399,9 @@ CREATE INDEX idx_quality_campaign ON db_audit.call_quality_assessment(Campaign);
 ## Advanced Customization
 
 ### Change Statistical Threshold
+
 In queries, modify:
+
 ```sql
 -- Default: 2σ
 WHEN ABS(avg - org_avg) > (2 * org_stddev) THEN 'HIGH'
@@ -379,7 +411,9 @@ WHEN ABS(avg - org_avg) > (1.5 * org_stddev) THEN 'HIGH'
 ```
 
 ### Extend Analysis Period
+
 In all queries, modify:
+
 ```sql
 -- Default: 90 days
 WHERE CallDate >= DATE_SUB(NOW(), INTERVAL 90 DAY)
@@ -389,14 +423,18 @@ WHERE CallDate >= DATE_SUB(NOW(), INTERVAL 180 DAY)
 ```
 
 ### Filter by Process
+
 Add to WHERE clause:
+
 ```sql
 AND Campaign = 'Billing'  -- Single process
 AND Campaign IN ('Billing', 'Collections')  -- Multiple
 ```
 
 ### Filter by Agent
+
 Add to WHERE clause:
+
 ```sql
 AND e.employee_code = 'EMP001'  -- Single agent
 AND e.employee_code IN ('EMP001', 'EMP002')  -- Multiple
@@ -407,16 +445,19 @@ AND e.employee_code IN ('EMP001', 'EMP002')  -- Multiple
 ## Compliance & Audit
 
 ### Data Privacy
+
 - Query results contain employee PII (names, codes)
 - Restrict query access to authorized roles only
 - Audit all exports for compliance
 
 ### Retention
+
 - Raw quality data: 2+ years (per regulatory requirement)
 - Analysis reports: 1 year
 - Alert logs: Permanent (audit trail)
 
 ### Audit Logging
+
 - Log all: Query executions, exports, 1-on-1 conversations
 - Track: Who accessed what data, when, for what reason
 - Report: Weekly audit summary to compliance
@@ -426,12 +467,14 @@ AND e.employee_code IN ('EMP001', 'EMP002')  -- Multiple
 ## Support & Escalation
 
 ### Getting Help
+
 1. Check `CALL_QUALITY_ANOMALY_GUIDE.md` for interpretation
 2. Review integration docs: `ANOMALY_DETECTION_INTEGRATION.md`
 3. See troubleshooting section above
 4. Contact: [Engineering Team]
 
 ### Reporting Issues
+
 - Query performance: [Database Admin]
 - Dashboard display: [Frontend Team]
 - Data accuracy: [Call Master Integration]
@@ -441,9 +484,9 @@ AND e.employee_code IN ('EMP001', 'EMP002')  -- Multiple
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-06-21 | Initial release: 6 anomaly types, quick-ref queries, full analysis guide |
+| Version | Date       | Changes                                                                  |
+| ------- | ---------- | ------------------------------------------------------------------------ |
+| 1.0     | 2026-06-21 | Initial release: 6 anomaly types, quick-ref queries, full analysis guide |
 
 ---
 
@@ -461,6 +504,7 @@ backend/scripts/
 ---
 
 **Next Steps**:
+
 1. Run quick-ref query to test connectivity
 2. Review CALL_QUALITY_ANOMALY_GUIDE.md for interpretation
 3. Set up daily monitoring with quick-ref queries

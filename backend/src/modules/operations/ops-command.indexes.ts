@@ -26,9 +26,19 @@ export interface OpsIndexSpec {
 /** Only indexes the current queries actually use (employees are loaded once and joined in memory — no employees indexes). */
 export const OPS_INDEXES: OpsIndexSpec[] = [
   // adrRows(): the whole window is read from the index alone instead of one wide-row lookup per attendance day.
-  { table: "attendance_daily_record", name: "idx_ops_adr_cover", columns: "record_date, employee_id, attendance_status, late_mark, raw_minutes, biometric_minutes, dialler_minutes, mismatch_flag, mismatch_resolved_at" },
+  {
+    table: "attendance_daily_record",
+    name: "idx_ops_adr_cover",
+    columns:
+      "record_date, employee_id, attendance_status, late_mark, raw_minutes, biometric_minutes, dialler_minutes, mismatch_flag, mismatch_resolved_at",
+  },
   // agentKpis(): per-agent daily KPI scan grouped by employee + metric.
-  { table: "kpi_daily_actual", name: "idx_ops_kda_cover", columns: "score_date, employee_id, metric_id, actual_value, numerator_value, denominator_value" },
+  {
+    table: "kpi_daily_actual",
+    name: "idx_ops_kda_cover",
+    columns:
+      "score_date, employee_id, metric_id, actual_value, numerator_value, denominator_value",
+  },
 ];
 
 /**
@@ -37,7 +47,11 @@ export const OPS_INDEXES: OpsIndexSpec[] = [
  * wide rows to find none (measured 3.6s on a 30k-row table). Deliberately no `employees` index — see above.
  */
 export const CAPACITY_INDEXES: OpsIndexSpec[] = [
-  { table: "leave_request", name: "idx_lr_capacity_cover", columns: "status, to_date, total_days, employee_id" },
+  {
+    table: "leave_request",
+    name: "idx_lr_capacity_cover",
+    columns: "status, to_date, total_days, employee_id",
+  },
 ];
 
 const BUSY_QUERY_SECONDS = 15;
@@ -52,7 +66,9 @@ export interface EnsureResult {
   failed: Array<{ name: string; reason: string }>;
 }
 
-async function indexPresent(spec: OpsIndexSpec): Promise<"present" | "missing" | "no_table"> {
+async function indexPresent(
+  spec: OpsIndexSpec,
+): Promise<"present" | "missing" | "no_table"> {
   const [t] = await db.execute<RowDataPacket[]>(
     "SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
     [spec.table],
@@ -79,11 +95,19 @@ async function tableBusy(table: string): Promise<boolean> {
   }
 }
 
-export async function ensureOpsIndexes(specs: OpsIndexSpec[] = OPS_INDEXES): Promise<EnsureResult> {
-  const out: EnsureResult = { created: [], present: [], skippedBusy: [], failed: [] };
+export async function ensureOpsIndexes(
+  specs: OpsIndexSpec[] = OPS_INDEXES,
+): Promise<EnsureResult> {
+  const out: EnsureResult = {
+    created: [],
+    present: [],
+    skippedBusy: [],
+    failed: [],
+  };
   for (const spec of specs) {
     try {
-      if (!IDENT.test(spec.table) || !IDENT.test(spec.name)) throw new Error("invalid identifier");
+      if (!IDENT.test(spec.table) || !IDENT.test(spec.name))
+        throw new Error("invalid identifier");
       const state = await indexPresent(spec);
       if (state === "no_table") {
         out.failed.push({ name: spec.name, reason: "table missing" });
@@ -100,9 +124,15 @@ export async function ensureOpsIndexes(specs: OpsIndexSpec[] = OPS_INDEXES): Pro
 
       const conn = await db.getConnection();
       try {
-        await conn.execute(`SET SESSION lock_wait_timeout = ${ALTER_LOCK_WAIT_SECONDS}`);
-        await conn.execute(`SET SESSION innodb_lock_wait_timeout = ${ALTER_LOCK_WAIT_SECONDS}`);
-        await conn.execute(`ALTER TABLE \`${spec.table}\` ADD INDEX \`${spec.name}\` (${spec.columns}), ALGORITHM=INPLACE, LOCK=NONE`);
+        await conn.execute(
+          `SET SESSION lock_wait_timeout = ${ALTER_LOCK_WAIT_SECONDS}`,
+        );
+        await conn.execute(
+          `SET SESSION innodb_lock_wait_timeout = ${ALTER_LOCK_WAIT_SECONDS}`,
+        );
+        await conn.execute(
+          `ALTER TABLE \`${spec.table}\` ADD INDEX \`${spec.name}\` (${spec.columns}), ALGORITHM=INPLACE, LOCK=NONE`,
+        );
         out.created.push(spec.name);
       } finally {
         try {
@@ -114,7 +144,10 @@ export async function ensureOpsIndexes(specs: OpsIndexSpec[] = OPS_INDEXES): Pro
         conn.release();
       }
     } catch (err) {
-      out.failed.push({ name: spec.name, reason: (err as Error).message.slice(0, 160) });
+      out.failed.push({
+        name: spec.name,
+        reason: (err as Error).message.slice(0, 160),
+      });
     }
   }
   return out;
@@ -124,12 +157,21 @@ let timer: NodeJS.Timeout | null = null;
 
 /** Starts the background retry loop. Safe to call more than once; disable with OPS_INDEXES=false. */
 export function scheduleOpsIndexes(): void {
-  if (timer || process.env.OPS_INDEXES === "false" || process.env.NODE_ENV === "test") return;
+  if (
+    timer ||
+    process.env.OPS_INDEXES === "false" ||
+    process.env.NODE_ENV === "test"
+  )
+    return;
   const tick = async () => {
     try {
       const r = await ensureOpsIndexes([...OPS_INDEXES, ...CAPACITY_INDEXES]);
-      if (r.created.length) logger.info(`[ops-command] indexes created: ${r.created.join(", ")}`);
-      if (r.failed.length) logger.warn(`[ops-command] index creation deferred: ${r.failed.map((f) => `${f.name} (${f.reason})`).join("; ")}`);
+      if (r.created.length)
+        logger.info(`[ops-command] indexes created: ${r.created.join(", ")}`);
+      if (r.failed.length)
+        logger.warn(
+          `[ops-command] index creation deferred: ${r.failed.map((f) => `${f.name} (${f.reason})`).join("; ")}`,
+        );
       if (!r.skippedBusy.length && !r.failed.length && timer) {
         clearInterval(timer);
         timer = null; // everything exists — stop retrying

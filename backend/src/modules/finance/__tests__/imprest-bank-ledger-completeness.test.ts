@@ -14,11 +14,19 @@ const { execute, getConnection } = vi.hoisted(() => ({
 }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
-const { post } = vi.hoisted(() => ({ post: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("../imprest-ledger.service.js", () => ({ imprestLedgerService: { post } }));
+const { post } = vi.hoisted(() => ({
+  post: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../imprest-ledger.service.js", () => ({
+  imprestLedgerService: { post },
+}));
 
-const { recordFinanceApprovalEvent } = vi.hoisted(() => ({ recordFinanceApprovalEvent: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("../../../shared/financeApprovalEvent.js", () => ({ recordFinanceApprovalEvent }));
+const { recordFinanceApprovalEvent } = vi.hoisted(() => ({
+  recordFinanceApprovalEvent: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../../../shared/financeApprovalEvent.js", () => ({
+  recordFinanceApprovalEvent,
+}));
 
 import { imprestService } from "../imprest.service.js";
 
@@ -36,36 +44,59 @@ const ALLOCATION_ROW = {
 };
 
 /** SQL-text-dispatching mock connection, same idiom as vendor-payment-ledger.service.test.ts. */
-function mockConnection(opts: {
-  anyBankAccountExists?: boolean;
-  companyBankAccount?: { opening_balance: number; active_status: number } | null;
-  lastLedgerBalance?: number | null;
-  allocationRow?: Record<string, unknown>;
-} = {}) {
+function mockConnection(
+  opts: {
+    anyBankAccountExists?: boolean;
+    companyBankAccount?: {
+      opening_balance: number;
+      active_status: number;
+    } | null;
+    lastLedgerBalance?: number | null;
+    allocationRow?: Record<string, unknown>;
+  } = {},
+) {
   const execute = vi.fn(async (sql: string) => {
     const text = String(sql);
     if (text.includes("FROM imprest_manager")) return [[MANAGER]];
-    if (text.includes("imprest_allocation_sequence") && text.includes("FOR UPDATE")) {
+    if (
+      text.includes("imprest_allocation_sequence") &&
+      text.includes("FOR UPDATE")
+    ) {
       return [[{ next_sequence: 1 }]];
     }
     if (text.includes("FROM imprest_allocation WHERE id")) {
       return [[opts.allocationRow ?? ALLOCATION_ROW]];
     }
-    if (text.includes("FROM company_bank_account") && text.includes("active_status = 1") && !text.includes("FOR UPDATE")) {
+    if (
+      text.includes("FROM company_bank_account") &&
+      text.includes("active_status = 1") &&
+      !text.includes("FOR UPDATE")
+    ) {
       return [opts.anyBankAccountExists ? [{ id: "any-account" }] : []];
     }
-    if (text.includes("FROM company_bank_account") && text.includes("FOR UPDATE")) {
-      const account = opts.companyBankAccount === undefined
-        ? { opening_balance: 50000, active_status: 1 }
-        : opts.companyBankAccount;
+    if (
+      text.includes("FROM company_bank_account") &&
+      text.includes("FOR UPDATE")
+    ) {
+      const account =
+        opts.companyBankAccount === undefined
+          ? { opening_balance: 50000, active_status: 1 }
+          : opts.companyBankAccount;
       return [account ? [{ id: "acct-1", ...account }] : []];
     }
     if (text.includes("FROM bank_reconciliation_period")) {
       // assertNotInClosedPeriod's own lookup — no closed period covers the test date by default.
       return [[]];
     }
-    if (text.includes("FROM bank_account_ledger_entry") && text.includes("running_balance")) {
-      return [opts.lastLedgerBalance != null ? [{ running_balance: opts.lastLedgerBalance }] : []];
+    if (
+      text.includes("FROM bank_account_ledger_entry") &&
+      text.includes("running_balance")
+    ) {
+      return [
+        opts.lastLedgerBalance != null
+          ? [{ running_balance: opts.lastLedgerBalance }]
+          : [],
+      ];
     }
     if (text.includes("FROM payable_account_master")) {
       return [[{ id: "payable-imprest-1" }]];
@@ -82,7 +113,10 @@ function mockConnection(opts: {
 }
 
 beforeEach(() => {
-  execute.mockReset(); getConnection.mockReset(); post.mockClear(); recordFinanceApprovalEvent.mockClear();
+  execute.mockReset();
+  getConnection.mockReset();
+  post.mockClear();
+  recordFinanceApprovalEvent.mockClear();
 });
 
 describe("imprestService.createAllocation bank ledger completeness (immediate disbursement)", () => {
@@ -98,13 +132,16 @@ describe("imprestService.createAllocation bank ledger completeness (immediate di
   };
 
   it("writes a bank_account_ledger_entry row when companyBankAccountId is supplied", async () => {
-    const conn = mockConnection({ anyBankAccountExists: true, lastLedgerBalance: null });
+    const conn = mockConnection({
+      anyBankAccountExists: true,
+      lastLedgerBalance: null,
+    });
     getConnection.mockResolvedValueOnce(conn);
 
     await imprestService.createAllocation(BASE_INPUT as any, "actor-1");
 
     const insertCall = conn.execute.mock.calls.find(([sql]) =>
-      String(sql).includes("INSERT INTO bank_account_ledger_entry")
+      String(sql).includes("INSERT INTO bank_account_ledger_entry"),
     );
     expect(insertCall).toBeDefined();
     const params = insertCall![1] as any[];
@@ -119,10 +156,13 @@ describe("imprestService.createAllocation bank ledger completeness (immediate di
     const conn = mockConnection({ anyBankAccountExists: true });
     getConnection.mockResolvedValueOnce(conn);
 
-    await imprestService.createAllocation({ ...BASE_INPUT, disburseImmediately: false } as any, "actor-1");
+    await imprestService.createAllocation(
+      { ...BASE_INPUT, disburseImmediately: false } as any,
+      "actor-1",
+    );
 
     const insertCall = conn.execute.mock.calls.find(([sql]) =>
-      String(sql).includes("INSERT INTO bank_account_ledger_entry")
+      String(sql).includes("INSERT INTO bank_account_ledger_entry"),
     );
     expect(insertCall).toBeUndefined();
     // Nor should the float itself be credited yet — the pre-existing guard this fix must not touch.
@@ -135,7 +175,7 @@ describe("imprestService.createAllocation bank ledger completeness (immediate di
     const { companyBankAccountId, ...withoutAccount } = BASE_INPUT;
 
     await expect(
-      imprestService.createAllocation(withoutAccount as any, "actor-1")
+      imprestService.createAllocation(withoutAccount as any, "actor-1"),
     ).rejects.toThrow("Bank account is required");
   });
 
@@ -145,20 +185,28 @@ describe("imprestService.createAllocation bank ledger completeness (immediate di
     const { companyBankAccountId, ...withoutAccount } = BASE_INPUT;
 
     await expect(
-      imprestService.createAllocation(withoutAccount as any, "actor-1")
+      imprestService.createAllocation(withoutAccount as any, "actor-1"),
     ).resolves.toBeDefined();
   });
 });
 
 describe("imprestService.reviewAllocation bank ledger completeness (approve a submitted allocation)", () => {
   it("writes the ledger row only at approval, using the bank account chosen at creation", async () => {
-    const conn = mockConnection({ anyBankAccountExists: true, lastLedgerBalance: 45000 });
+    const conn = mockConnection({
+      anyBankAccountExists: true,
+      lastLedgerBalance: 45000,
+    });
     getConnection.mockResolvedValueOnce(conn);
 
-    await imprestService.reviewAllocation("alloc-1", "approve", "actor-1", "finance_head");
+    await imprestService.reviewAllocation(
+      "alloc-1",
+      "approve",
+      "actor-1",
+      "finance_head",
+    );
 
     const insertCall = conn.execute.mock.calls.find(([sql]) =>
-      String(sql).includes("INSERT INTO bank_account_ledger_entry")
+      String(sql).includes("INSERT INTO bank_account_ledger_entry"),
     );
     expect(insertCall).toBeDefined();
     const params = insertCall![1] as any[];
@@ -173,10 +221,15 @@ describe("imprestService.reviewAllocation bank ledger completeness (approve a su
     });
     getConnection.mockResolvedValueOnce(conn);
 
-    await imprestService.reviewAllocation("alloc-1", "approve", "actor-1", "finance_head");
+    await imprestService.reviewAllocation(
+      "alloc-1",
+      "approve",
+      "actor-1",
+      "finance_head",
+    );
 
     const insertCall = conn.execute.mock.calls.find(([sql]) =>
-      String(sql).includes("INSERT INTO bank_account_ledger_entry")
+      String(sql).includes("INSERT INTO bank_account_ledger_entry"),
     );
     expect(insertCall).toBeUndefined();
   });
@@ -185,10 +238,16 @@ describe("imprestService.reviewAllocation bank ledger completeness (approve a su
     const conn = mockConnection({ anyBankAccountExists: true });
     getConnection.mockResolvedValueOnce(conn);
 
-    await imprestService.reviewAllocation("alloc-1", "reject", "actor-1", "finance_head", "not needed");
+    await imprestService.reviewAllocation(
+      "alloc-1",
+      "reject",
+      "actor-1",
+      "finance_head",
+      "not needed",
+    );
 
     const insertCall = conn.execute.mock.calls.find(([sql]) =>
-      String(sql).includes("INSERT INTO bank_account_ledger_entry")
+      String(sql).includes("INSERT INTO bank_account_ledger_entry"),
     );
     expect(insertCall).toBeUndefined();
     expect(post).not.toHaveBeenCalled();

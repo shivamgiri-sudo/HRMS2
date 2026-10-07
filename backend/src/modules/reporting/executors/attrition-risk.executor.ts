@@ -47,7 +47,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -65,7 +70,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -79,11 +84,14 @@ const MIN_DAYS_FOR_RATE = 5;
 export async function attritionRiskScore(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const windowDays = Number(filters.windowDays ?? 30) || 30;
 
-  const clauses: string[] = ["e.active_status = 1", "e.date_of_joining IS NOT NULL"];
+  const clauses: string[] = [
+    "e.active_status = 1",
+    "e.date_of_joining IS NOT NULL",
+  ];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
@@ -192,7 +200,11 @@ export async function attritionRiskScore(
     const paged = await fetchPageWithTotal(base, params, options, query, count);
     const total = paged.total;
     const rows = paged.rows as Record<string, unknown>[];
-    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+    return {
+      rows,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: total > rows.length,
+    };
   } catch (err) {
     rethrowReportSchemaError("attrition-risk-score", err, base);
   }
@@ -204,7 +216,7 @@ export async function attritionRiskScore(
 export async function leaveAttendanceReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date();
   const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -217,7 +229,11 @@ export async function leaveAttendanceReconciliation(
    * that reliably times out is worth less than a narrower one that returns, and the caller
    * can always widen the range explicitly and wait.
    */
-  const oneMonthAgo = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
+  const oneMonthAgo = new Date(
+    today.getFullYear(),
+    today.getMonth() - 1,
+    today.getDate(),
+  );
   const from = dateParam(filters.from, iso(oneMonthAgo));
   const to = dateParam(filters.to, iso(today));
 
@@ -288,10 +304,20 @@ export async function leaveAttendanceReconciliation(
   const boundParams = [from, to, ...params];
 
   try {
-    const paged = await fetchPageWithTotal(base, boundParams, options, query, count);
+    const paged = await fetchPageWithTotal(
+      base,
+      boundParams,
+      options,
+      query,
+      count,
+    );
     const total = paged.total;
     const rows = paged.rows as Record<string, unknown>[];
-    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+    return {
+      rows,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: total > rows.length,
+    };
   } catch (err) {
     rethrowReportSchemaError("leave-attendance-reconciliation", err, base);
   }

@@ -30,23 +30,55 @@
  * has one" behaviour the internal page already has.
  */
 import { db } from "../../db/mysql.js";
-import { detectLiveDashboard, type LiveDashboard } from "../process-live-dashboard/live-dashboard-keys.js";
-import { getInboundSummary, getInboundMonthly, getInboundDaily } from "../process-live-dashboard/inbound.service.js";
-import { getCartSummary, getCartMonthly, getCartDaily, getCartSales } from "../process-live-dashboard/reginald-cart.service.js";
-import { getAprSummary, getAprDaily, type EmailProcess } from "../process-live-dashboard/apr.service.js";
-import { getGs1Overview, getGs1Email, getGs1DataKart, getGs1Approval } from "../process-live-dashboard/gs1.service.js";
 import {
-  getCdrStagingSummary, getCdrStagingDaily, getCdrStagingMonthly, type CdrClientCode,
+  detectLiveDashboard,
+  type LiveDashboard,
+} from "../process-live-dashboard/live-dashboard-keys.js";
+import {
+  getInboundSummary,
+  getInboundMonthly,
+  getInboundDaily,
+} from "../process-live-dashboard/inbound.service.js";
+import {
+  getCartSummary,
+  getCartMonthly,
+  getCartDaily,
+  getCartSales,
+} from "../process-live-dashboard/reginald-cart.service.js";
+import {
+  getAprSummary,
+  getAprDaily,
+  type EmailProcess,
+} from "../process-live-dashboard/apr.service.js";
+import {
+  getGs1Overview,
+  getGs1Email,
+  getGs1DataKart,
+  getGs1Approval,
+} from "../process-live-dashboard/gs1.service.js";
+import {
+  getCdrStagingSummary,
+  getCdrStagingDaily,
+  getCdrStagingMonthly,
+  type CdrClientCode,
 } from "../process-live-dashboard/cdr-staging.service.js";
 
 const CDR_CODE_BY_DASHBOARD: Partial<Record<LiveDashboard, CdrClientCode>> = {
-  gnc: "GNC", "bella-vita": "BELLAVITA", clovia: "CLOVIA", neemans: "NEEMANS",
-  viega: "VIEGA", exicom: "EXICOM", "du-digital": "DU_BANGLADESH",
+  gnc: "GNC",
+  "bella-vita": "BELLAVITA",
+  clovia: "CLOVIA",
+  neemans: "NEEMANS",
+  viega: "VIEGA",
+  exicom: "EXICOM",
+  "du-digital": "DU_BANGLADESH",
 };
 
-const EMAIL_PROCESS_BY_DASHBOARD: Partial<Record<LiveDashboard, EmailProcess>> = {
-  "molecular-email": "molecular", "reginald-email": "reginald-email", finnable: "finnable",
-};
+const EMAIL_PROCESS_BY_DASHBOARD: Partial<Record<LiveDashboard, EmailProcess>> =
+  {
+    "molecular-email": "molecular",
+    "reginald-email": "reginald-email",
+    finnable: "finnable",
+  };
 
 export interface PortalLiveDashboard {
   dashboard: LiveDashboard;
@@ -67,26 +99,35 @@ export async function getLiveDashboardForPortal(
   processId: string,
   range: { from?: string; to?: string },
 ): Promise<PortalLiveDashboard | null> {
-  const [procRows] = await db.execute(
+  const [procRows] = (await db.execute(
     "SELECT process_name, process_code FROM process_master WHERE id = ? LIMIT 1",
-    [processId]
-  ) as unknown as [Array<{ process_name: string; process_code: string | null }>, unknown];
+    [processId],
+  )) as unknown as [
+    Array<{ process_name: string; process_code: string | null }>,
+    unknown,
+  ];
   const proc = procRows[0];
   if (!proc) return null;
 
   const dashboard = detectLiveDashboard(proc.process_name, proc.process_code);
-  if (!dashboard || dashboard === "billing" || dashboard === "dalmia") return null;
+  if (!dashboard || dashboard === "billing" || dashboard === "dalmia")
+    return null;
 
   if (dashboard === "inbound") {
     const [summary, daily, monthly] = await Promise.all([
-      getInboundSummary(range), getInboundDaily(range), getInboundMonthly(range),
+      getInboundSummary(range),
+      getInboundDaily(range),
+      getInboundMonthly(range),
     ]);
     return { dashboard, summary, daily, monthly, sales: null };
   }
 
   if (dashboard === "reginald-cart") {
     const [summary, daily, monthly, sales] = await Promise.all([
-      getCartSummary(range), getCartDaily(range), getCartMonthly(range), getCartSales(range),
+      getCartSummary(range),
+      getCartDaily(range),
+      getCartMonthly(range),
+      getCartSales(range),
     ]);
     return { dashboard, summary, daily, monthly, sales };
   }
@@ -94,7 +135,8 @@ export async function getLiveDashboardForPortal(
   const emailProcess = EMAIL_PROCESS_BY_DASHBOARD[dashboard];
   if (emailProcess) {
     const [summary, daily] = await Promise.all([
-      getAprSummary(emailProcess, range), getAprDaily(emailProcess, range),
+      getAprSummary(emailProcess, range),
+      getAprDaily(emailProcess, range),
     ]);
     return { dashboard, summary, daily, monthly: null, sales: null };
   }
@@ -104,15 +146,37 @@ export async function getLiveDashboardForPortal(
     // aggregate KPIs -- the client-safe subset is the aggregates from all four,
     // minus each one's byAnalyst/byCompany rows (per-employee/per-company PII).
     const [overview, email, dataKart, approval] = await Promise.all([
-      getGs1Overview(range), getGs1Email(range), getGs1DataKart(range), getGs1Approval(range),
+      getGs1Overview(range),
+      getGs1Email(range),
+      getGs1DataKart(range),
+      getGs1Approval(range),
     ]);
     return {
       dashboard,
       summary: {
         overview,
-        email: { tasks: email.tasks, gtin: email.gtin, images: email.images, sla15Pct: email.sla15Pct, daily: email.daily },
-        dataKart: { tasks: dataKart.tasks, gtin: dataKart.gtin, withinTatPct: dataKart.withinTatPct, avgGtinPerTask: dataKart.avgGtinPerTask, daily: dataKart.daily },
-        approval: { totalSku: approval.totalSku, auditCount: approval.auditCount, auditErrors: approval.auditErrors, errorRate: approval.errorRate, uniqueGcp: approval.uniqueGcp, daily: approval.daily },
+        email: {
+          tasks: email.tasks,
+          gtin: email.gtin,
+          images: email.images,
+          sla15Pct: email.sla15Pct,
+          daily: email.daily,
+        },
+        dataKart: {
+          tasks: dataKart.tasks,
+          gtin: dataKart.gtin,
+          withinTatPct: dataKart.withinTatPct,
+          avgGtinPerTask: dataKart.avgGtinPerTask,
+          daily: dataKart.daily,
+        },
+        approval: {
+          totalSku: approval.totalSku,
+          auditCount: approval.auditCount,
+          auditErrors: approval.auditErrors,
+          errorRate: approval.errorRate,
+          uniqueGcp: approval.uniqueGcp,
+          daily: approval.daily,
+        },
       },
       daily: [],
       monthly: null,
@@ -123,7 +187,9 @@ export async function getLiveDashboardForPortal(
   const cdrCode = CDR_CODE_BY_DASHBOARD[dashboard];
   if (cdrCode) {
     const [summary, daily, monthly] = await Promise.all([
-      getCdrStagingSummary(cdrCode, range), getCdrStagingDaily(cdrCode, range), getCdrStagingMonthly(cdrCode, range),
+      getCdrStagingSummary(cdrCode, range),
+      getCdrStagingDaily(cdrCode, range),
+      getCdrStagingMonthly(cdrCode, range),
     ]);
     return { dashboard, summary, daily, monthly, sales: null };
   }

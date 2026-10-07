@@ -27,10 +27,14 @@ import { applyCompanySeal } from "../src/modules/employees/companySeal.service.j
 
 const [nameArg, outArg] = process.argv.slice(2);
 if (!nameArg) {
-  console.error('Usage: npx tsx scripts/generate-document-pack.ts "<employee name or code>" [output dir]');
+  console.error(
+    'Usage: npx tsx scripts/generate-document-pack.ts "<employee name or code>" [output dir]',
+  );
   process.exit(1);
 }
-const OUT_DIR = path.resolve(outArg || path.join(process.cwd(), "document-pack"));
+const OUT_DIR = path.resolve(
+  outArg || path.join(process.cwd(), "document-pack"),
+);
 
 async function findEmployee(needle: string) {
   const like = `%${needle.trim()}%`;
@@ -55,10 +59,15 @@ async function main() {
   }
   if (matches.length > 1) {
     console.log(`${matches.length} employees matched — using the first:`);
-    for (const m of matches) console.log(`  ${String(m.employee_code ?? "(no code)").padEnd(12)} ${m.full_name}`);
+    for (const m of matches)
+      console.log(
+        `  ${String(m.employee_code ?? "(no code)").padEnd(12)} ${m.full_name}`,
+      );
   }
   const employee = matches[0];
-  console.log(`\nGenerating pack for ${employee.full_name} (${employee.employee_code})\n`);
+  console.log(
+    `\nGenerating pack for ${employee.full_name} (${employee.employee_code})\n`,
+  );
 
   const context = await buildSourceContext(String(employee.id));
 
@@ -96,27 +105,49 @@ async function main() {
     // database without rewriting anything.
     const storedPath = String(template.template_storage_path ?? "");
     const localPath = storedPath
-      ? path.resolve(process.cwd(), "private-storage", "document-templates", path.basename(storedPath))
+      ? path.resolve(
+          process.cwd(),
+          "private-storage",
+          "document-templates",
+          path.basename(storedPath),
+        )
       : "";
-    const templatePath = storedPath && fs.existsSync(storedPath) ? storedPath : localPath;
+    const templatePath =
+      storedPath && fs.existsSync(storedPath) ? storedPath : localPath;
     if (!templatePath || !fs.existsSync(templatePath)) {
-      console.log(`${code.padEnd(22)} SKIPPED — template file not found (${path.basename(storedPath) || "no path"})`);
-      summary.push({ document: code, status: "template file not found", storedPath });
+      console.log(
+        `${code.padEnd(22)} SKIPPED — template file not found (${path.basename(storedPath) || "no path"})`,
+      );
+      summary.push({
+        document: code,
+        status: "template file not found",
+        storedPath,
+      });
       continue;
     }
 
     try {
       let outFile: string;
       if (String(template.fill_mode) === "acroform") {
-        let content = await fillAcroFormPdf({ templatePath, fieldMaps, values, flatten: false });
+        let content = await fillAcroFormPdf({
+          templatePath,
+          fieldMaps,
+          values,
+          flatten: false,
+        });
         content = Buffer.from(await applyCompanySeal(content, code));
         outFile = path.join(OUT_DIR, `${code}.pdf`);
         fs.writeFileSync(outFile, content);
       } else {
-        const replacements = Object.fromEntries(values.map((v) => [v.field_key, v.value_text]));
+        const replacements = Object.fromEntries(
+          values.map((v) => [v.field_key, v.value_text]),
+        );
         for (const map of fieldMaps) {
-          const token = map.placeholder_token ? String(map.placeholder_token).replace(/^\{\{|\}\}$/g, "") : null;
-          if (token) replacements[token] = replacements[String(map.field_key)] ?? "";
+          const token = map.placeholder_token
+            ? String(map.placeholder_token).replace(/^\{\{|\}\}$/g, "")
+            : null;
+          if (token)
+            replacements[token] = replacements[String(map.field_key)] ?? "";
         }
         const content = await renderPlaceholderDocx(templatePath, replacements);
         outFile = path.join(OUT_DIR, `${code}.docx`);
@@ -124,8 +155,10 @@ async function main() {
       }
       console.log(
         `${code.padEnd(22)} ${path.basename(outFile).padEnd(28)} ` +
-        `${String(resolved).padStart(3)}/${String(fieldMaps.length).padEnd(3)} fields filled` +
-        (blank.length ? `  (blank with a source: ${blank.slice(0, 4).join(", ")}${blank.length > 4 ? "…" : ""})` : ""),
+          `${String(resolved).padStart(3)}/${String(fieldMaps.length).padEnd(3)} fields filled` +
+          (blank.length
+            ? `  (blank with a source: ${blank.slice(0, 4).join(", ")}${blank.length > 4 ? "…" : ""})`
+            : ""),
       );
       summary.push({
         document: code,
@@ -136,12 +169,17 @@ async function main() {
         blankWithSource: blank,
       });
     } catch (error) {
-      console.log(`${code.padEnd(22)} FAILED — ${error instanceof Error ? error.message : String(error)}`);
+      console.log(
+        `${code.padEnd(22)} FAILED — ${error instanceof Error ? error.message : String(error)}`,
+      );
       summary.push({ document: code, status: "failed", error: String(error) });
     }
   }
 
-  fs.writeFileSync(path.join(OUT_DIR, "_summary.json"), JSON.stringify(summary, null, 2));
+  fs.writeFileSync(
+    path.join(OUT_DIR, "_summary.json"),
+    JSON.stringify(summary, null, 2),
+  );
   console.log(`\nWritten to ${OUT_DIR}`);
   await db.end();
 }

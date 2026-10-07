@@ -24,7 +24,9 @@ describe("GRN reverseConsumption() — journal reversal (Journal Task 5)", () =>
   const service = read("src/modules/finance/grn.service.ts");
 
   it("imports journalService", () => {
-    expect(service).toContain('import { journalService } from "./journal.service.js"');
+    expect(service).toContain(
+      'import { journalService } from "./journal.service.js"',
+    );
   });
 
   it("looks up the live (non-reversed) journal entry for this GRN before reversing", () => {

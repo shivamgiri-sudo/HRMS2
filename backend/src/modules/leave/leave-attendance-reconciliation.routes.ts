@@ -22,13 +22,16 @@ router.get(
   async (req, res) => {
     const month = (req.query.month as string) ?? "";
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
-      return res.status(400).json({ error: "month parameter required in YYYY-MM format" });
+      return res
+        .status(400)
+        .json({ error: "month parameter required in YYYY-MM format" });
     }
     const monthStart = `${month}-01`;
 
     // Generate a series of dates for the target month using a cross-join of
     // information_schema.COLUMNS as a numbers table (safe, always >= 100 rows).
-    const [rows] = await db.execute<RowDataPacket[]>(`
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `
       WITH RECURSIVE cal AS (
         SELECT DATE(?) AS d
         UNION ALL
@@ -63,14 +66,16 @@ router.get(
         )
       )
       ORDER BY cal.d, e.employee_code
-    `, [monthStart, monthStart]);
+    `,
+      [monthStart, monthStart],
+    );
 
     return res.json({
       mismatches: rows,
       total: (rows as RowDataPacket[]).length,
       month,
     });
-  }
+  },
 );
 
 export default router;

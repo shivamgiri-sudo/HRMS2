@@ -25,8 +25,12 @@ describe("roster-gov /my-cycles and /my-roster/:cycleId route collision", () => 
   const appSource = readFileSync(resolve(process.cwd(), "src/app.ts"), "utf8");
 
   it("mounts rosterSelfSecureRouter before rosterGovRouter at the same /api/roster-gov prefix", () => {
-    const selfSecureIdx = appSource.indexOf('app.use("/api/roster-gov", rosterSelfSecureRouter)');
-    const govIdx = appSource.indexOf('app.use("/api/roster-gov", rosterGovRouter)');
+    const selfSecureIdx = appSource.indexOf(
+      'app.use("/api/roster-gov", rosterSelfSecureRouter)',
+    );
+    const govIdx = appSource.indexOf(
+      'app.use("/api/roster-gov", rosterGovRouter)',
+    );
     expect(selfSecureIdx).toBeGreaterThan(-1);
     expect(govIdx).toBeGreaterThan(-1);
     expect(selfSecureIdx).toBeLessThan(govIdx);
@@ -37,8 +41,12 @@ describe("roster-gov /my-cycles and /my-roster/:cycleId route collision", () => 
       resolve(process.cwd(), "src/modules/roster/roster.self.secure.routes.ts"),
       "utf8",
     );
-    expect(selfSecureSource).toContain('rosterSelfSecureRouter.get("/my-cycles"');
-    expect(selfSecureSource).toContain('rosterSelfSecureRouter.get("/my-roster/:cycleId"');
+    expect(selfSecureSource).toContain(
+      'rosterSelfSecureRouter.get("/my-cycles"',
+    );
+    expect(selfSecureSource).toContain(
+      'rosterSelfSecureRouter.get("/my-roster/:cycleId"',
+    );
   });
 
   it("rosterGovRouter's shadowed versions are still clearly marked as dead code", () => {
@@ -52,7 +60,11 @@ describe("roster-gov /my-cycles and /my-roster/:cycleId route collision", () => 
     // underlying collision (or the collision was actually fixed — in which
     // case this whole test file should be updated/removed, not just this
     // assertion).
-    expect(govSource).toMatch(/DEAD CODE — unreachable in production.*"\/my-cycles"/s);
-    expect(govSource).toMatch(/DEAD CODE — unreachable in production, same class of collision.*"\/my-roster/s);
+    expect(govSource).toMatch(
+      /DEAD CODE — unreachable in production.*"\/my-cycles"/s,
+    );
+    expect(govSource).toMatch(
+      /DEAD CODE — unreachable in production, same class of collision.*"\/my-roster/s,
+    );
   });
 });

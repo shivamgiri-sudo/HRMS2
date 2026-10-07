@@ -8,11 +8,18 @@
  * Fails closed on processing-hold DB error (returns DPDP_HOLD_CHECK_UNAVAILABLE).
  */
 
-import type { VaultItem, VaultAccessLevel } from "../document-vault/documentVault.service.js";
-import { findByStoredFilename, logDocumentAccess } from "../document-vault/documentVault.service.js";
+import type {
+  VaultItem,
+  VaultAccessLevel,
+} from "../document-vault/documentVault.service.js";
+import {
+  findByStoredFilename,
+  logDocumentAccess,
+} from "../document-vault/documentVault.service.js";
 import { isHoldActive } from "../privacy-engine/privacyHold.service.js";
 
-export type VaultAction = "view" | "download" | "delete" | "token_generate" | "token_consume";
+export type VaultAction =
+  "view" | "download" | "delete" | "token_generate" | "token_consume";
 
 export interface DocumentAuthOptions {
   actorUserId: string;
@@ -42,21 +49,47 @@ export interface DocumentAuthResult {
 
 // Roles considered full HRMS employees (eligible for "internal" level access)
 const HRMS_EMPLOYEE_ROLES = new Set([
-  "employee", "team_leader", "manager", "branch_head", "process_manager",
-  "hr", "hr_admin", "payroll", "payroll_hr", "recruiter",
-  "wfm", "wfm_analyst", "qa", "trainer", "finance", "ops_manager",
-  "dpo", "admin", "super_admin", "ceo",
+  "employee",
+  "team_leader",
+  "manager",
+  "branch_head",
+  "process_manager",
+  "hr",
+  "hr_admin",
+  "payroll",
+  "payroll_hr",
+  "recruiter",
+  "wfm",
+  "wfm_analyst",
+  "qa",
+  "trainer",
+  "finance",
+  "ops_manager",
+  "dpo",
+  "admin",
+  "super_admin",
+  "ceo",
   // it/branch_it upload AD provisioning evidence (accessLevel: 'internal') via
   // /api/it-provisioning/tasks/:id/upload-evidence and need to view it back.
-  "it", "branch_it",
+  "it",
+  "branch_it",
 ]);
 
 // Access level → roles allowed (beyond document owner)
 const ACCESS_LEVEL_POLICY: Record<VaultAccessLevel, Set<string>> = {
-  public:       new Set([...HRMS_EMPLOYEE_ROLES]),
-  internal:     new Set([...HRMS_EMPLOYEE_ROLES]),
-  pii:          new Set(["hr", "hr_admin", "dpo", "admin", "super_admin", "ceo"]),
-  payroll:      new Set(["payroll", "payroll_hr", "hr", "hr_admin", "dpo", "admin", "super_admin", "ceo"]),
+  public: new Set([...HRMS_EMPLOYEE_ROLES]),
+  internal: new Set([...HRMS_EMPLOYEE_ROLES]),
+  pii: new Set(["hr", "hr_admin", "dpo", "admin", "super_admin", "ceo"]),
+  payroll: new Set([
+    "payroll",
+    "payroll_hr",
+    "hr",
+    "hr_admin",
+    "dpo",
+    "admin",
+    "super_admin",
+    "ceo",
+  ]),
   confidential: new Set(["dpo", "admin", "super_admin", "ceo"]),
 };
 
@@ -66,7 +99,9 @@ function toAuditAction(action: VaultAction): "view" | "download" | "delete" {
   return "view";
 }
 
-export async function authorizeDocumentAccess(opts: DocumentAuthOptions): Promise<DocumentAuthResult> {
+export async function authorizeDocumentAccess(
+  opts: DocumentAuthOptions,
+): Promise<DocumentAuthResult> {
   const item = await findByStoredFilename(opts.storedFilename);
 
   if (!item) {
@@ -93,7 +128,11 @@ export async function authorizeDocumentAccess(opts: DocumentAuthOptions): Promis
           ipAddress: opts.ipAddress,
           userAgent: opts.userAgent,
         }).catch(() => {});
-        return { allowed: false, reasonCode: "DPDP_PROCESSING_HOLD_ACTIVE", item };
+        return {
+          allowed: false,
+          reasonCode: "DPDP_PROCESSING_HOLD_ACTIVE",
+          item,
+        };
       }
     } catch {
       // isHoldActive throws on DB error — fail closed
@@ -102,7 +141,8 @@ export async function authorizeDocumentAccess(opts: DocumentAuthOptions): Promis
   }
 
   const accessLevel: VaultAccessLevel = item.access_level ?? "internal";
-  const allowedRoles = ACCESS_LEVEL_POLICY[accessLevel] ?? ACCESS_LEVEL_POLICY.confidential;
+  const allowedRoles =
+    ACCESS_LEVEL_POLICY[accessLevel] ?? ACCESS_LEVEL_POLICY.confidential;
 
   // Owner bypass: a document's registered owner can always access their own file
   // (candidate owner access is handled upstream in the candidate file route).
@@ -111,7 +151,9 @@ export async function authorizeDocumentAccess(opts: DocumentAuthOptions): Promis
   // those two id spaces are distinct in this schema (employees.user_id is the FK
   // between them). Comparing against actorUserId here used to mean this bypass
   // could never actually match a real employee.
-  const isOwner = item.owner_employee_id != null && item.owner_employee_id === opts.actorEmployeeId;
+  const isOwner =
+    item.owner_employee_id != null &&
+    item.owner_employee_id === opts.actorEmployeeId;
 
   if (!isOwner && !allowedRoles.has(opts.actorRole)) {
     await logDocumentAccess({
@@ -125,7 +167,11 @@ export async function authorizeDocumentAccess(opts: DocumentAuthOptions): Promis
       ipAddress: opts.ipAddress,
       userAgent: opts.userAgent,
     }).catch(() => {});
-    return { allowed: false, reasonCode: "INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL", item };
+    return {
+      allowed: false,
+      reasonCode: "INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL",
+      item,
+    };
   }
 
   return { allowed: true, reasonCode: "ALLOWED", item };

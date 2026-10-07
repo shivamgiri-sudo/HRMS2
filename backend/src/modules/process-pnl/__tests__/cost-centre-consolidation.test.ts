@@ -22,9 +22,30 @@ function line(overrides: Record<string, unknown>) {
 describe("buildCostCentreConsolidation", () => {
   it("groups cost-centre-planned lines sharing head/sub-head/item and sums branch totals exactly", () => {
     const lines = [
-      line({ cost_centre_id: "cc1", cost_centre_name: "Back Office", quantity: 5, base_amount: 10000, gross_amount: 11800, pnl_cost_amount: 10000 }),
-      line({ cost_centre_id: "cc2", cost_centre_name: "Collections", quantity: 3, base_amount: 6000, gross_amount: 7080, pnl_cost_amount: 6000 }),
-      line({ cost_centre_id: "cc3", cost_centre_name: "Support", quantity: 2, base_amount: 4000, gross_amount: 4720, pnl_cost_amount: 4000 }),
+      line({
+        cost_centre_id: "cc1",
+        cost_centre_name: "Back Office",
+        quantity: 5,
+        base_amount: 10000,
+        gross_amount: 11800,
+        pnl_cost_amount: 10000,
+      }),
+      line({
+        cost_centre_id: "cc2",
+        cost_centre_name: "Collections",
+        quantity: 3,
+        base_amount: 6000,
+        gross_amount: 7080,
+        pnl_cost_amount: 6000,
+      }),
+      line({
+        cost_centre_id: "cc3",
+        cost_centre_name: "Support",
+        quantity: 2,
+        base_amount: 4000,
+        gross_amount: 4720,
+        pnl_cost_amount: 4000,
+      }),
     ];
     const result = buildCostCentreConsolidation(lines);
     expect(result).toHaveLength(1);
@@ -43,7 +64,16 @@ describe("buildCostCentreConsolidation", () => {
   it("keeps separate groups for different head/sub-head/item combinations", () => {
     const lines = [
       line({ cost_centre_id: "cc1", item_name: "Process-specific software" }),
-      line({ cost_centre_id: "cc1", item_name: "Direct travel", sub_head: "Travel", unit: "Trip", quantity: 2, base_amount: 3000, gross_amount: 3540, pnl_cost_amount: 3000 }),
+      line({
+        cost_centre_id: "cc1",
+        item_name: "Direct travel",
+        sub_head: "Travel",
+        unit: "Trip",
+        quantity: 2,
+        base_amount: 3000,
+        gross_amount: 3540,
+        pnl_cost_amount: 3000,
+      }),
     ];
     const result = buildCostCentreConsolidation(lines);
     expect(result).toHaveLength(2);

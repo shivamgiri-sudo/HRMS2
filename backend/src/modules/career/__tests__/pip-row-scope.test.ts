@@ -20,14 +20,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { hasRole, getEmployeeForUser } = vi.hoisted(() => ({
   hasRole: vi.fn(async () => false),
-  getEmployeeForUser: vi.fn(async () => ({ id: "emp-caller-1", employee_code: "E-CALLER" })),
+  getEmployeeForUser: vi.fn(async () => ({
+    id: "emp-caller-1",
+    employee_code: "E-CALLER",
+  })),
 }));
-vi.mock("../../../shared/accessGuard.js", () => ({ hasRole, getEmployeeForUser }));
+vi.mock("../../../shared/accessGuard.js", () => ({
+  hasRole,
+  getEmployeeForUser,
+}));
 
 const { dbExecute } = vi.hoisted(() => ({
   dbExecute: vi.fn(async (sql: string, params: unknown[]) => {
     // isManagerOf()'s lookup: does the target employee report to this caller?
-    if (/SELECT 1\s+FROM employees\s+WHERE id = \?\s+AND reporting_manager_id = \?/i.test(sql)) {
+    if (
+      /SELECT 1\s+FROM employees\s+WHERE id = \?\s+AND reporting_manager_id = \?/i.test(
+        sql,
+      )
+    ) {
       const [targetId, managerId] = params as [string, string];
       if (targetId === "emp-my-report" && managerId === "emp-caller-1") {
         return [[{ 1: 1 }], []];
@@ -42,9 +52,12 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 
 const { listPips, isManagerOf } = vi.hoisted(() => ({
-  listPips: vi.fn(async () => [{ id: "pip-1", employee_id: "target", reason: "confidential" }]),
-  isManagerOf: vi.fn(async (managerId: string, targetId: string) =>
-    managerId === "emp-caller-1" && targetId === "emp-my-report"
+  listPips: vi.fn(async () => [
+    { id: "pip-1", employee_id: "target", reason: "confidential" },
+  ]),
+  isManagerOf: vi.fn(
+    async (managerId: string, targetId: string) =>
+      managerId === "emp-caller-1" && targetId === "emp-my-report",
   ),
 }));
 vi.mock("../career.service.js", () => ({
@@ -59,10 +72,16 @@ vi.mock("../career.service.js", () => ({
 
 const actor = { id: "u-caller-1", role: "employee", roles: ["employee"] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
+  const original =
+    await importOriginal<
+      typeof import("../../../middleware/authMiddleware.js")
+    >();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.authUser = actor;
+      next();
+    },
   };
 });
 
@@ -77,26 +96,39 @@ function app() {
 
 beforeEach(() => {
   hasRole.mockClear().mockResolvedValue(false);
-  getEmployeeForUser.mockClear().mockResolvedValue({ id: "emp-caller-1", employee_code: "E-CALLER" });
+  getEmployeeForUser
+    .mockClear()
+    .mockResolvedValue({ id: "emp-caller-1", employee_code: "E-CALLER" });
   dbExecute.mockClear();
-  listPips.mockClear().mockResolvedValue([{ id: "pip-1", employee_id: "target", reason: "confidential" }]);
-  isManagerOf.mockClear().mockImplementation(
-    async (managerId: string, targetId: string) => managerId === "emp-caller-1" && targetId === "emp-my-report"
-  );
+  listPips
+    .mockClear()
+    .mockResolvedValue([
+      { id: "pip-1", employee_id: "target", reason: "confidential" },
+    ]);
+  isManagerOf
+    .mockClear()
+    .mockImplementation(
+      async (managerId: string, targetId: string) =>
+        managerId === "emp-caller-1" && targetId === "emp-my-report",
+    );
 });
 
 describe("GET /api/career/pip — row scope for non-privileged callers", () => {
   it("refuses an arbitrary employee_id that is not the caller's report", async () => {
-    const res = await request(app()).get("/api/career/pip?employee_id=some-other-employee");
+    const res = await request(app()).get(
+      "/api/career/pip?employee_id=some-other-employee",
+    );
     expect(res.status).toBe(403);
     expect(listPips).not.toHaveBeenCalled();
   });
 
   it("allows a manager to see PIPs for their own actual report", async () => {
-    const res = await request(app()).get("/api/career/pip?employee_id=emp-my-report");
+    const res = await request(app()).get(
+      "/api/career/pip?employee_id=emp-my-report",
+    );
     expect(res.status).toBe(200);
     expect(listPips).toHaveBeenCalledWith(
-      expect.objectContaining({ employeeId: "emp-my-report" })
+      expect.objectContaining({ employeeId: "emp-my-report" }),
     );
   });
 
@@ -109,10 +141,12 @@ describe("GET /api/career/pip — row scope for non-privileged callers", () => {
 
   it("admin/hr still see everything regardless of employee_id", async () => {
     hasRole.mockResolvedValueOnce(true);
-    const res = await request(app()).get("/api/career/pip?employee_id=anyone-at-all");
+    const res = await request(app()).get(
+      "/api/career/pip?employee_id=anyone-at-all",
+    );
     expect(res.status).toBe(200);
     expect(listPips).toHaveBeenCalledWith(
-      expect.objectContaining({ employeeId: "anyone-at-all" })
+      expect.objectContaining({ employeeId: "anyone-at-all" }),
     );
   });
 });

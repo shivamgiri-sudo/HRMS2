@@ -26,20 +26,32 @@ const ESTABLISHMENT_ID = "est-1";
 const RUN_ID = "run-1";
 const MONTH = "2026-07";
 
-const { query, execute } = vi.hoisted(() => ({ query: vi.fn(), execute: vi.fn() }));
+const { query, execute } = vi.hoisted(() => ({
+  query: vi.fn(),
+  execute: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { query, execute } }));
 
 const { resolveUanFilingReadinessForPeriod } = vi.hoisted(() => ({
   resolveUanFilingReadinessForPeriod: vi.fn(),
 }));
-vi.mock("../pf-applicability.service.js", () => ({ resolveUanFilingReadinessForPeriod }));
+vi.mock("../pf-applicability.service.js", () => ({
+  resolveUanFilingReadinessForPeriod,
+}));
 
-const { validateEpfCompliance } = vi.hoisted(() => ({ validateEpfCompliance: vi.fn() }));
-vi.mock("../../employees/epfComplianceValidation.service.js", () => ({ validateEpfCompliance }));
+const { validateEpfCompliance } = vi.hoisted(() => ({
+  validateEpfCompliance: vi.fn(),
+}));
+vi.mock("../../employees/epfComplianceValidation.service.js", () => ({
+  validateEpfCompliance,
+}));
 
 const { pfCreationService } = await import("../pf-creation.service.js");
 
-function contributor(code: string, overrides: Partial<Record<string, unknown>> = {}) {
+function contributor(
+  code: string,
+  overrides: Partial<Record<string, unknown>> = {},
+) {
   return {
     employee_code: code,
     member_name: `Employee ${code}`,
@@ -52,8 +64,12 @@ function contributor(code: string, overrides: Partial<Record<string, unknown>> =
   };
 }
 
-function readinessMap(entries: Array<[string, { uan: string | null; uanValid: boolean | null }]>) {
-  return new Map(entries.map(([code, v]) => [code, { employeeCode: code, ...v }]));
+function readinessMap(
+  entries: Array<[string, { uan: string | null; uanValid: boolean | null }]>,
+) {
+  return new Map(
+    entries.map(([code, v]) => [code, { employeeCode: code, ...v }]),
+  );
 }
 
 beforeEach(() => {
@@ -64,7 +80,14 @@ beforeEach(() => {
 
 function mockLookups(contributors: ReturnType<typeof contributor>[]) {
   query
-    .mockResolvedValueOnce([[{ establishment_code: "EST01", establishment_name: "Test Establishment" }]]) // establishment
+    .mockResolvedValueOnce([
+      [
+        {
+          establishment_code: "EST01",
+          establishment_name: "Test Establishment",
+        },
+      ],
+    ]) // establishment
     .mockResolvedValueOnce([[{ run_id: RUN_ID }]]) // run
     .mockResolvedValueOnce([contributors]); // contributor population
 }
@@ -76,7 +99,10 @@ describe("generateEcrFile — population and identity", () => {
       readinessMap([["MAS001", { uan: "123456789012", uanValid: true }]]),
     );
 
-    const result = await pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID);
+    const result = await pfCreationService.generateEcrFile(
+      MONTH,
+      ESTABLISHMENT_ID,
+    );
 
     expect(result.content).toContain("123456789012");
     expect(result.employeeCount).toBe(1);
@@ -92,10 +118,18 @@ describe("generateEcrFile — population and identity", () => {
       ]),
     );
 
-    await expect(pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID)).rejects.toMatchObject({
+    await expect(
+      pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID),
+    ).rejects.toMatchObject({
       statusCode: 409,
       code: "ECR_NOT_READY",
-      blockedEmployees: [{ employee_code: "MAS002", member_name: "Employee MAS002", reason: "MISSING_UAN" }],
+      blockedEmployees: [
+        {
+          employee_code: "MAS002",
+          member_name: "Employee MAS002",
+          reason: "MISSING_UAN",
+        },
+      ],
     });
   });
 
@@ -105,7 +139,9 @@ describe("generateEcrFile — population and identity", () => {
       readinessMap([["MAS001", { uan: "12345", uanValid: false }]]),
     );
 
-    await expect(pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID)).rejects.toMatchObject({
+    await expect(
+      pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID),
+    ).rejects.toMatchObject({
       statusCode: 409,
       code: "ECR_NOT_READY",
       blockedEmployees: [{ employee_code: "MAS001", reason: "INVALID_UAN" }],
@@ -117,12 +153,17 @@ describe("generateEcrFile — population and identity", () => {
     mockLookups([...clean, contributor("MASBAD")]);
     resolveUanFilingReadinessForPeriod.mockResolvedValue(
       readinessMap([
-        ...clean.map((c) => [c.employee_code, { uan: "123456789012", uanValid: true }] as const),
+        ...clean.map(
+          (c) =>
+            [c.employee_code, { uan: "123456789012", uanValid: true }] as const,
+        ),
         ["MASBAD", { uan: null, uanValid: null }],
       ]),
     );
 
-    await expect(pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID)).rejects.toMatchObject({
+    await expect(
+      pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID),
+    ).rejects.toMatchObject({
       code: "ECR_NOT_READY",
     });
   });
@@ -138,7 +179,9 @@ describe("generateEcrFile — population and identity", () => {
     const populationCall = query.mock.calls[2];
     expect(String(populationCall[0])).toContain("spl.pf_employee > 0");
     expect(String(populationCall[0])).toContain("e.employment_type = 'ONROLL'");
-    expect(String(populationCall[0])).not.toContain("employee_epf_compliance_profile");
+    expect(String(populationCall[0])).not.toContain(
+      "employee_epf_compliance_profile",
+    );
   });
 
   it("does not compute contribution amounts from the compliance-profile table", async () => {
@@ -158,7 +201,9 @@ describe("generateEcrFile — population and identity", () => {
 describe("generateEcrFile — statusCode, not status (errorHandler.ts only reads statusCode)", () => {
   it("Establishment not found carries statusCode 404", async () => {
     query.mockResolvedValueOnce([[]]); // no establishment row
-    await expect(pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID)).rejects.toMatchObject({
+    await expect(
+      pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID),
+    ).rejects.toMatchObject({
       statusCode: 404,
       message: "Establishment not found",
     });
@@ -166,19 +211,27 @@ describe("generateEcrFile — statusCode, not status (errorHandler.ts only reads
 
   it("No finalised salary run found carries statusCode 404", async () => {
     query
-      .mockResolvedValueOnce([[{ establishment_code: "EST01", establishment_name: "Test" }]])
+      .mockResolvedValueOnce([
+        [{ establishment_code: "EST01", establishment_name: "Test" }],
+      ])
       .mockResolvedValueOnce([[]]); // no run row
-    await expect(pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID)).rejects.toMatchObject({
+    await expect(
+      pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID),
+    ).rejects.toMatchObject({
       statusCode: 404,
     });
   });
 
   it("No employees with PF deducted carries statusCode 404", async () => {
     query
-      .mockResolvedValueOnce([[{ establishment_code: "EST01", establishment_name: "Test" }]])
+      .mockResolvedValueOnce([
+        [{ establishment_code: "EST01", establishment_name: "Test" }],
+      ])
       .mockResolvedValueOnce([[{ run_id: RUN_ID }]])
       .mockResolvedValueOnce([[]]); // no contributors
-    await expect(pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID)).rejects.toMatchObject({
+    await expect(
+      pfCreationService.generateEcrFile(MONTH, ESTABLISHMENT_ID),
+    ).rejects.toMatchObject({
       statusCode: 404,
     });
   });

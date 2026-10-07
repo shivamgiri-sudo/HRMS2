@@ -1,5 +1,5 @@
-import 'dotenv/config';
-import mysql from 'mysql2/promise';
+import "dotenv/config";
+import mysql from "mysql2/promise";
 
 function env(name: string, fallback?: string) {
   const value = process.env[name]?.trim();
@@ -13,27 +13,32 @@ function numEnv(name: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-async function scalar(conn: mysql.Connection, sql: string, params: unknown[] = []) {
+async function scalar(
+  conn: mysql.Connection,
+  sql: string,
+  params: unknown[] = [],
+) {
   const [rows] = await conn.execute<mysql.RowDataPacket[]>(sql, params);
   return rows[0] ?? {};
 }
 
 async function main() {
-  const database = env('DB_NAME', env('MYSQL_DATABASE', 'mas_hrms'));
+  const database = env("DB_NAME", env("MYSQL_DATABASE", "mas_hrms"));
   const year = Number(process.env.REPORT_YEAR ?? new Date().getFullYear());
   const yearStart = `${year}-01-01`;
   const yearEnd = `${year}-12-31`;
 
   const conn = await mysql.createConnection({
-    host: env('DB_HOST', env('MYSQL_HOST', 'localhost')),
-    port: numEnv('DB_PORT', numEnv('MYSQL_PORT', 3306)),
-    user: env('DB_USER', env('MYSQL_USER', 'root')),
-    password: env('DB_PASSWORD', process.env.MYSQL_PASSWORD ?? ''),
+    host: env("DB_HOST", env("MYSQL_HOST", "localhost")),
+    port: numEnv("DB_PORT", numEnv("MYSQL_PORT", 3306)),
+    user: env("DB_USER", env("MYSQL_USER", "root")),
+    password: env("DB_PASSWORD", process.env.MYSQL_PASSWORD ?? ""),
     database,
   });
 
   try {
-    const startOfYear = await scalar(conn,
+    const startOfYear = await scalar(
+      conn,
       `SELECT COUNT(*) AS count
          FROM employees
         WHERE (date_of_joining IS NULL OR date_of_joining <= ?)
@@ -44,14 +49,16 @@ async function main() {
       [yearStart, yearStart],
     );
 
-    const terminations = await scalar(conn,
+    const terminations = await scalar(
+      conn,
       `SELECT COUNT(*) AS count
          FROM employees
         WHERE COALESCE(date_of_exit, date_of_leaving, resignation_date) BETWEEN ? AND ?`,
       [yearStart, yearEnd],
     );
 
-    const payroll = await scalar(conn,
+    const payroll = await scalar(
+      conn,
       `SELECT COUNT(DISTINCT spr.run_month) AS months,
               COUNT(DISTINCT spl.employee_id) AS employees,
               SUM(COALESCE(spl.net_salary, 0)) AS net_salary
@@ -62,7 +69,8 @@ async function main() {
       [String(year)],
     );
 
-    const leave = await scalar(conn,
+    const leave = await scalar(
+      conn,
       `SELECT COUNT(*) AS rows_count,
               SUM(COALESCE(allocated_days,0) + COALESCE(adjusted_days,0) - COALESCE(used_days,0)) AS remaining_days
          FROM leave_balance_ledger
@@ -70,7 +78,8 @@ async function main() {
       [year],
     );
 
-    const attendance = await scalar(conn,
+    const attendance = await scalar(
+      conn,
       `SELECT COUNT(*) AS rows_count,
               COUNT(DISTINCT employee_id) AS employees,
               MIN(record_date) AS min_date,
@@ -80,24 +89,32 @@ async function main() {
       [year],
     );
 
-    console.log(JSON.stringify({
-      generatedAt: new Date().toISOString(),
-      database,
-      year,
-      checks: {
-        startOfYearActiveCount: startOfYear,
-        terminationCount: terminations,
-        payrollTrendSource: payroll,
-        leaveBalanceLedger: leave,
-        attendanceDailyRecord: attendance,
-      },
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          database,
+          year,
+          checks: {
+            startOfYearActiveCount: startOfYear,
+            terminationCount: terminations,
+            payrollTrendSource: payroll,
+            leaveBalanceLedger: leave,
+            attendanceDailyRecord: attendance,
+          },
+        },
+        null,
+        2,
+      ),
+    );
   } finally {
     await conn.end();
   }
 }
 
 main().catch((error) => {
-  console.error(JSON.stringify({ success: false, error: error.message }, null, 2));
+  console.error(
+    JSON.stringify({ success: false, error: error.message }, null, 2),
+  );
   process.exitCode = 1;
 });

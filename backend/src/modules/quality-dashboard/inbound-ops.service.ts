@@ -22,46 +22,124 @@ interface ProjectConfig {
 
 const PROJECTS: ProjectConfig[] = [
   {
-    key: "gnc", name: "GNC", icon: "\u{1F6D2}", color: "#2E86C1",
-    table: "cdr_in_4", pattern: "A",
-    campaigns: ["GNC_Order_Related", "GNC_Product_Quality", "GNC_Other_Queries", "GNC_Product_Info", "GNC_Offer_Order", "GNC_Authentication"],
-    mandate: 8, required: 6, hasFCR: false, clientId: "409",
+    key: "gnc",
+    name: "GNC",
+    icon: "\u{1F6D2}",
+    color: "#2E86C1",
+    table: "cdr_in_4",
+    pattern: "A",
+    campaigns: [
+      "GNC_Order_Related",
+      "GNC_Product_Quality",
+      "GNC_Other_Queries",
+      "GNC_Product_Info",
+      "GNC_Offer_Order",
+      "GNC_Authentication",
+    ],
+    mandate: 8,
+    required: 6,
+    hasFCR: false,
+    clientId: "409",
   },
   {
-    key: "bellavita", name: "Bellavita", icon: "\u{1F338}", color: "#E67E22",
-    table: "cdr_in_11_5", pattern: "A",
-    campaigns: ["H_Bellavita_Luxury", "E_Bellavita_Organic", "E_Bellavita_Luxury", "H_Bellavita_Organic", "H_Bevzilla_Complaint", "H_Bevzilla_CC_Agent", "E_Bevzilla_CC_Agent", "H_Bevzilla_Order", "E_Bevzilla_Order", "E_Bevzilla_Complaint", "E_Emb_Existing_Order", "H_Bevzilla_Product", "H_Emb_New_Order", "H_Emb_Existing_Order", "E_Bevzilla_Product", "E_Emb_New_Order"],
-    mandate: 14, required: 12, hasFCR: false, clientId: "375",
+    key: "bellavita",
+    name: "Bellavita",
+    icon: "\u{1F338}",
+    color: "#E67E22",
+    table: "cdr_in_11_5",
+    pattern: "A",
+    campaigns: [
+      "H_Bellavita_Luxury",
+      "E_Bellavita_Organic",
+      "E_Bellavita_Luxury",
+      "H_Bellavita_Organic",
+      "H_Bevzilla_Complaint",
+      "H_Bevzilla_CC_Agent",
+      "E_Bevzilla_CC_Agent",
+      "H_Bevzilla_Order",
+      "E_Bevzilla_Order",
+      "E_Bevzilla_Complaint",
+      "E_Emb_Existing_Order",
+      "H_Bevzilla_Product",
+      "H_Emb_New_Order",
+      "H_Emb_Existing_Order",
+      "E_Bevzilla_Product",
+      "E_Emb_New_Order",
+    ],
+    mandate: 14,
+    required: 12,
+    hasFCR: false,
+    clientId: "375",
   },
   {
-    key: "clovia", name: "Clovia", icon: "\u{1F457}", color: "#27AE60",
-    table: "cdr_in_250", pattern: "A",
+    key: "clovia",
+    name: "Clovia",
+    icon: "\u{1F457}",
+    color: "#27AE60",
+    table: "cdr_in_250",
+    pattern: "A",
     campaigns: ["Clovia_English", "Clovia_Hindi"],
-    mandate: 7, required: 6, hasFCR: false, clientId: "468",
+    mandate: 7,
+    required: 6,
+    hasFCR: false,
+    clientId: "468",
   },
   {
-    key: "neemans", name: "Neemans", icon: "\u{1F45F}", color: "#8E44AD",
-    table: "cdr_in_249", pattern: "B",
+    key: "neemans",
+    name: "Neemans",
+    icon: "\u{1F45F}",
+    color: "#8E44AD",
+    table: "cdr_in_249",
+    pattern: "B",
     campaigns: ["Neemans_IB"],
-    mandate: 10, required: 10, hasFCR: true, fcrClientId: 475, clientId: "475",
+    mandate: 10,
+    required: 10,
+    hasFCR: true,
+    fcrClientId: 475,
+    clientId: "475",
   },
   {
-    key: "viega", name: "Viega", icon: "\u{1F6B0}", color: "#E74C3C",
-    table: "cdr_in_249", pattern: "B",
+    key: "viega",
+    name: "Viega",
+    icon: "\u{1F6B0}",
+    color: "#E74C3C",
+    table: "cdr_in_249",
+    pattern: "B",
     campaigns: ["Viega"],
-    mandate: 2, required: 2, hasFCR: false, clientId: "352",
+    mandate: 2,
+    required: 2,
+    hasFCR: false,
+    clientId: "352",
   },
   {
-    key: "exicom", name: "Exicom", icon: "⚡", color: "#3498DB",
-    table: "cdr_in_9", pattern: "B",
+    key: "exicom",
+    name: "Exicom",
+    icon: "⚡",
+    color: "#3498DB",
+    table: "cdr_in_9",
+    pattern: "B",
     campaigns: ["Exicom_TC_Battery", "Exicom_EV_Battery", "EV_Charger833"],
-    mandate: 5, required: 5, hasFCR: false, clientId: "326",
+    mandate: 5,
+    required: 5,
+    hasFCR: false,
+    clientId: "326",
   },
   {
-    key: "dubangladesh", name: "DU Bangladesh", icon: "\u{1F1E7}\u{1F1E9}", color: "#F39C12",
-    table: "cdr_in_4", pattern: "B",
-    campaigns: ["DU_Bangladesh_Bangla", "DU_Bangladesh_Eng", "DU_Bangladesh_Hindi"],
-    mandate: 3, required: 3, hasFCR: false, clientId: "380",
+    key: "dubangladesh",
+    name: "DU Bangladesh",
+    icon: "\u{1F1E7}\u{1F1E9}",
+    color: "#F39C12",
+    table: "cdr_in_4",
+    pattern: "B",
+    campaigns: [
+      "DU_Bangladesh_Bangla",
+      "DU_Bangladesh_Eng",
+      "DU_Bangladesh_Hindi",
+    ],
+    mandate: 3,
+    required: 3,
+    hasFCR: false,
+    clientId: "380",
   },
   // Live on cdr_in_249 (10 language-variant campaigns), confirmed live
   // 2026-09-15: ~1,700 calls/30 days, active through today. required/mandate
@@ -69,17 +147,40 @@ const PROJECTS: ProjectConfig[] = [
   // last 14 days), not an invented target. No clientId set: not verified
   // against data_master_in, and this process has no FCR tracking anyway.
   {
-    key: "dalmia", name: "Dalmia", icon: "\u{1F3ED}", color: "#16A085",
-    table: "cdr_in_249", pattern: "B",
-    campaigns: ["Dalmia_Hindi", "Dalmia_English", "Dalmia_Kannada", "Dalmia_Tamil", "Dalmia_Bengoli", "Dalmia_Malayalam", "Dalmia_Odiya", "Dalmia_Marathi", "Dalmia_Telugu", "Dalmia_Assamese"],
-    mandate: 9, required: 9, hasFCR: false,
+    key: "dalmia",
+    name: "Dalmia",
+    icon: "\u{1F3ED}",
+    color: "#16A085",
+    table: "cdr_in_249",
+    pattern: "B",
+    campaigns: [
+      "Dalmia_Hindi",
+      "Dalmia_English",
+      "Dalmia_Kannada",
+      "Dalmia_Tamil",
+      "Dalmia_Bengoli",
+      "Dalmia_Malayalam",
+      "Dalmia_Odiya",
+      "Dalmia_Marathi",
+      "Dalmia_Telugu",
+      "Dalmia_Assamese",
+    ],
+    mandate: 9,
+    required: 9,
+    hasFCR: false,
   },
 ];
 
 export function getProjectsMeta() {
-  return PROJECTS.map(p => ({
-    key: p.key, name: p.name, icon: p.icon, color: p.color,
-    mandate: p.mandate, required: p.required, hasFCR: p.hasFCR, clientId: p.clientId,
+  return PROJECTS.map((p) => ({
+    key: p.key,
+    name: p.name,
+    icon: p.icon,
+    color: p.color,
+    mandate: p.mandate,
+    required: p.required,
+    hasFCR: p.hasFCR,
+    clientId: p.clientId,
   }));
 }
 
@@ -88,7 +189,10 @@ export function getProjectsMeta() {
 const _cache = new Map<string, { value: unknown; exp: number }>();
 function cacheGet<T>(key: string): T | null {
   const e = _cache.get(key);
-  if (!e || Date.now() > e.exp) { _cache.delete(key); return null; }
+  if (!e || Date.now() > e.exp) {
+    _cache.delete(key);
+    return null;
+  }
   return e.value as T;
 }
 function cacheSet(key: string, value: unknown, ttlMs = 120_000) {
@@ -182,7 +286,11 @@ interface RawRow {
   unique_phones: number;
 }
 
-function normalizeRow(raw: RawRow, p: ProjectConfig, fcr: number | null = null): ProjectDailyRow {
+function normalizeRow(
+  raw: RawRow,
+  p: ProjectConfig,
+  fcr: number | null = null,
+): ProjectDailyRow {
   const offered = Number(raw.offered) || 0;
   const answered = Number(raw.answered) || 0;
   const sl_num = Number(raw.sl_num) || 0;
@@ -190,43 +298,65 @@ function normalizeRow(raw: RawRow, p: ProjectConfig, fcr: number | null = null):
   const login_count = Number(raw.login_count) || 0;
   const acht = Number(raw.acht) || 0;
 
-  const al = offered > 0 ? Math.round(answered * 10000 / offered) / 100 : 0;
-  const sl = offered > 0 ? Math.round(sl_num * 10000 / offered) / 100 : 0;
-  const repeat_pct = offered > 0 ? Math.round((offered - unique_phones) * 10000 / offered) / 100 : 0;
+  const al = offered > 0 ? Math.round((answered * 10000) / offered) / 100 : 0;
+  const sl = offered > 0 ? Math.round((sl_num * 10000) / offered) / 100 : 0;
+  const repeat_pct =
+    offered > 0
+      ? Math.round(((offered - unique_phones) * 10000) / offered) / 100
+      : 0;
   const deficit = p.required - login_count;
 
   return {
-    key: p.key, name: p.name, icon: p.icon, color: p.color,
+    key: p.key,
+    name: p.name,
+    icon: p.icon,
+    color: p.color,
     date: String(raw.date),
-    offered, answered, abandoned: offered - answered,
-    al, sl, acht, repeat_pct, login_count, fcr_pct: fcr,
-    deficit, mandate: p.mandate, required: p.required,
+    offered,
+    answered,
+    abandoned: offered - answered,
+    al,
+    sl,
+    acht,
+    repeat_pct,
+    login_count,
+    fcr_pct: fcr,
+    deficit,
+    mandate: p.mandate,
+    required: p.required,
   };
 }
 
 // ─── getInboundSummary ──────────────────────────────────────────────────────────
 
 export async function getInboundSummary(
-  startDate: string, endDate: string, projectKeys?: string[]
+  startDate: string,
+  endDate: string,
+  projectKeys?: string[],
 ): Promise<ProjectDailyRow[]> {
   const cacheKey = `ib-summary:${projectKeys?.join(",") ?? "all"}:${startDate}:${endDate}`;
   const cached = cacheGet<ProjectDailyRow[]>(cacheKey);
   if (cached) return cached;
 
   const projectsToQuery = projectKeys?.length
-    ? PROJECTS.filter(p => projectKeys.includes(p.key))
+    ? PROJECTS.filter((p) => projectKeys.includes(p.key))
     : PROJECTS;
 
   const results = await Promise.all(
     projectsToQuery.map(async (p) => {
-      const sql = p.pattern === "A" ? buildPatternAQuery(p) : buildPatternBQuery(p);
+      const sql =
+        p.pattern === "A" ? buildPatternAQuery(p) : buildPatternBQuery(p);
       const params: (string | number)[] = [startDate, endDate, ...p.campaigns];
 
       try {
         const rows = await dialerQuery<RawRow>(sql, params);
 
-        let totalOffered = 0, totalAnswered = 0, totalSlNum = 0;
-        let totalUniquePhones = 0, maxLoginCount = 0, weightedAcht = 0;
+        let totalOffered = 0,
+          totalAnswered = 0,
+          totalSlNum = 0;
+        let totalUniquePhones = 0,
+          maxLoginCount = 0,
+          weightedAcht = 0;
 
         for (const r of rows) {
           const offered = Number(r.offered) || 0;
@@ -238,31 +368,58 @@ export async function getInboundSummary(
           weightedAcht += (Number(r.acht) || 0) * offered;
         }
 
-        const acht = totalOffered > 0 ? Math.round(weightedAcht / totalOffered) : 0;
+        const acht =
+          totalOffered > 0 ? Math.round(weightedAcht / totalOffered) : 0;
 
         let fcrPct: number | null = null;
         if (p.hasFCR && p.fcrClientId) {
           try {
-            const fcrRows = await dialerQuery<{ date: string; fcr_pct: number }>(
-              buildFCRQuery(), [startDate, endDate, p.fcrClientId]
-            );
+            const fcrRows = await dialerQuery<{
+              date: string;
+              fcr_pct: number;
+            }>(buildFCRQuery(), [startDate, endDate, p.fcrClientId]);
             if (fcrRows.length > 0) {
-              const total = fcrRows.reduce((s, r) => s + (Number(r.fcr_pct) || 0), 0);
+              const total = fcrRows.reduce(
+                (s, r) => s + (Number(r.fcr_pct) || 0),
+                0,
+              );
               fcrPct = Math.round((total / fcrRows.length) * 100) / 100;
             }
-          } catch { /* FCR optional */ }
+          } catch {
+            /* FCR optional */
+          }
         }
 
-        return normalizeRow({
-          date: endDate, login_count: maxLoginCount,
-          offered: totalOffered, answered: totalAnswered,
-          sl_num: totalSlNum, acht, unique_phones: totalUniquePhones,
-        }, p, fcrPct);
+        return normalizeRow(
+          {
+            date: endDate,
+            login_count: maxLoginCount,
+            offered: totalOffered,
+            answered: totalAnswered,
+            sl_num: totalSlNum,
+            acht,
+            unique_phones: totalUniquePhones,
+          },
+          p,
+          fcrPct,
+        );
       } catch (err: any) {
         console.error(`[inbound-ops] Error querying ${p.key}:`, err.message);
-        return normalizeRow({ date: endDate, login_count: 0, offered: 0, answered: 0, sl_num: 0, acht: 0, unique_phones: 0 }, p, null);
+        return normalizeRow(
+          {
+            date: endDate,
+            login_count: 0,
+            offered: 0,
+            answered: 0,
+            sl_num: 0,
+            acht: 0,
+            unique_phones: 0,
+          },
+          p,
+          null,
+        );
       }
-    })
+    }),
   );
 
   cacheSet(cacheKey, results);
@@ -283,9 +440,11 @@ export interface TrendRow {
 }
 
 export async function getInboundTrend(
-  startDate: string, endDate: string, projectKey: string
+  startDate: string,
+  endDate: string,
+  projectKey: string,
 ): Promise<TrendRow[]> {
-  const p = PROJECTS.find(proj => proj.key === projectKey);
+  const p = PROJECTS.find((proj) => proj.key === projectKey);
   if (!p) return [];
 
   const cacheKey = `ib-trend:${projectKey}:${startDate}:${endDate}`;
@@ -297,18 +456,22 @@ export async function getInboundTrend(
 
   try {
     const rows = await dialerQuery<RawRow>(sql, params);
-    const result: TrendRow[] = rows.map(r => {
+    const result: TrendRow[] = rows.map((r) => {
       const offered = Number(r.offered) || 0;
       const answered = Number(r.answered) || 0;
       const sl_num = Number(r.sl_num) || 0;
       const unique_phones = Number(r.unique_phones) || 0;
       return {
         date: String(r.date).slice(0, 10),
-        offered, answered,
-        al: offered > 0 ? Math.round(answered * 10000 / offered) / 100 : 0,
-        sl: offered > 0 ? Math.round(sl_num * 10000 / offered) / 100 : 0,
+        offered,
+        answered,
+        al: offered > 0 ? Math.round((answered * 10000) / offered) / 100 : 0,
+        sl: offered > 0 ? Math.round((sl_num * 10000) / offered) / 100 : 0,
         acht: Number(r.acht) || 0,
-        repeat_pct: offered > 0 ? Math.round((offered - unique_phones) * 10000 / offered) / 100 : 0,
+        repeat_pct:
+          offered > 0
+            ? Math.round(((offered - unique_phones) * 10000) / offered) / 100
+            : 0,
         login_count: Number(r.login_count) || 0,
       };
     });
@@ -334,24 +497,42 @@ export interface ConsolidatedTrendRow {
 }
 
 export async function getConsolidatedTrend(
-  startDate: string, endDate: string, projectKeys?: string[]
+  startDate: string,
+  endDate: string,
+  projectKeys?: string[],
 ): Promise<ConsolidatedTrendRow[]> {
   const projects = projectKeys?.length
-    ? PROJECTS.filter(p => projectKeys.includes(p.key))
+    ? PROJECTS.filter((p) => projectKeys.includes(p.key))
     : PROJECTS;
 
   const allTrends = await Promise.all(
-    projects.map(p => getInboundTrend(startDate, endDate, p.key))
+    projects.map((p) => getInboundTrend(startDate, endDate, p.key)),
   );
 
-  const dateMap = new Map<string, { offered: number; answered: number; sl_num: number; acht_weighted: number; login: number }>();
+  const dateMap = new Map<
+    string,
+    {
+      offered: number;
+      answered: number;
+      sl_num: number;
+      acht_weighted: number;
+      login: number;
+    }
+  >();
 
   for (const trend of allTrends) {
     for (const row of trend) {
-      const d = dateMap.get(row.date) ?? { offered: 0, answered: 0, sl_num: 0, acht_weighted: 0, login: 0 };
+      const d = dateMap.get(row.date) ?? {
+        offered: 0,
+        answered: 0,
+        sl_num: 0,
+        acht_weighted: 0,
+        login: 0,
+      };
       d.offered += row.offered;
       d.answered += row.answered;
-      d.sl_num += row.offered > 0 ? Math.round(row.sl * row.offered / 100) : 0;
+      d.sl_num +=
+        row.offered > 0 ? Math.round((row.sl * row.offered) / 100) : 0;
       d.acht_weighted += (row.acht || 0) * row.offered;
       d.login += row.login_count;
       dateMap.set(row.date, d);
@@ -364,8 +545,9 @@ export async function getConsolidatedTrend(
       date,
       offered: d.offered,
       answered: d.answered,
-      al: d.offered > 0 ? Math.round(d.answered * 10000 / d.offered) / 100 : 0,
-      sl: d.offered > 0 ? Math.round(d.sl_num * 10000 / d.offered) / 100 : 0,
+      al:
+        d.offered > 0 ? Math.round((d.answered * 10000) / d.offered) / 100 : 0,
+      sl: d.offered > 0 ? Math.round((d.sl_num * 10000) / d.offered) / 100 : 0,
       acht: d.offered > 0 ? Math.round(d.acht_weighted / d.offered) : 0,
       total_login: d.login,
     }));
@@ -381,8 +563,11 @@ export interface HourlyRow {
   sl: number;
 }
 
-export async function getProjectHourly(projectKey: string, date: string): Promise<HourlyRow[]> {
-  const p = PROJECTS.find(proj => proj.key === projectKey);
+export async function getProjectHourly(
+  projectKey: string,
+  date: string,
+): Promise<HourlyRow[]> {
+  const p = PROJECTS.find((proj) => proj.key === projectKey);
   if (!p) return [];
 
   const placeholders = p.campaigns.map(() => "?").join(",");
@@ -415,16 +600,22 @@ export async function getProjectHourly(projectKey: string, date: string): Promis
 
   const params: (string | number)[] = [date, date, ...p.campaigns];
   try {
-    const rows = await dialerQuery<{ hour: number; offered: number; answered: number; sl_num: number }>(sql, params);
-    return rows.map(r => {
+    const rows = await dialerQuery<{
+      hour: number;
+      offered: number;
+      answered: number;
+      sl_num: number;
+    }>(sql, params);
+    return rows.map((r) => {
       const offered = Number(r.offered) || 0;
       const answered = Number(r.answered) || 0;
       const sl_num = Number(r.sl_num) || 0;
       return {
         hour: Number(r.hour),
-        offered, answered,
-        al: offered > 0 ? Math.round(answered * 10000 / offered) / 100 : 0,
-        sl: offered > 0 ? Math.round(sl_num * 10000 / offered) / 100 : 0,
+        offered,
+        answered,
+        al: offered > 0 ? Math.round((answered * 10000) / offered) / 100 : 0,
+        sl: offered > 0 ? Math.round((sl_num * 10000) / offered) / 100 : 0,
       };
     });
   } catch (err: any) {

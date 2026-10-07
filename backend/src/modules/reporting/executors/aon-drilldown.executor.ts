@@ -21,7 +21,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -39,7 +44,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -48,28 +53,38 @@ const MIN_DAYS_FOR_RATE = 5;
 
 function aonBucketClause(bucket: unknown): string | null {
   switch (bucket) {
-    case "0-30": return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30`;
-    case "31-60": return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 31 AND 60`;
-    case "61-90": return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 61 AND 90`;
-    case "90+": return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) > 90`;
-    default: return null;
+    case "0-30":
+      return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30`;
+    case "31-60":
+      return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 31 AND 60`;
+    case "61-90":
+      return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 61 AND 90`;
+    case "90+":
+      return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) > 90`;
+    default:
+      return null;
   }
 }
 
 function aonBucketAtExitClause(bucket: unknown): string | null {
   switch (bucket) {
-    case "0-30": return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30`;
-    case "31-60": return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 31 AND 60`;
-    case "61-90": return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 61 AND 90`;
-    case "90+": return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) > 90`;
-    default: return null;
+    case "0-30":
+      return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30`;
+    case "31-60":
+      return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 31 AND 60`;
+    case "61-90":
+      return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 61 AND 90`;
+    case "90+":
+      return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) > 90`;
+    default:
+      return null;
   }
 }
 
 export async function aonDrilldownEmployees(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const metric = String(filters.metric ?? "headcount");
   const isExitContext = metric === "exits";
@@ -96,14 +111,13 @@ export async function aonDrilldownEmployees(
     clauses.push("e.reporting_manager_id = ?");
     params.push(String(filters.managerId));
   }
-  appendFilterConditions(
-    { ...filters, managerId: undefined },
-    clauses,
-    params
-  );
+  appendFilterConditions({ ...filters, managerId: undefined }, clauses, params);
 
   if (isExitContext) {
-    clauses.push("e.date_of_exit IS NOT NULL", "e.date_of_exit >= e.date_of_joining");
+    clauses.push(
+      "e.date_of_exit IS NOT NULL",
+      "e.date_of_exit >= e.date_of_joining",
+    );
     const bucketClause = aonBucketAtExitClause(filters.aonBucket);
     if (bucketClause) clauses.push(bucketClause);
 
@@ -113,7 +127,11 @@ export async function aonDrilldownEmployees(
     // against the heatmap cell's own date-windowed count.
     const today = new Date();
     const iso = (d: Date) => d.toISOString().slice(0, 10);
-    const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+    const twelveMonthsAgo = new Date(
+      today.getFullYear() - 1,
+      today.getMonth(),
+      today.getDate(),
+    );
     const from = dateParam(filters.from, iso(twelveMonthsAgo));
     const to = dateParam(filters.to, iso(today));
     clauses.push("e.date_of_exit BETWEEN ? AND ?");
@@ -124,7 +142,8 @@ export async function aonDrilldownEmployees(
     // Overview heatmap passes aonBucket (and no cohortMonth). Both may be present at once;
     // neither is mutually exclusive with the other in the SQL.
     const cohortMonth =
-      typeof filters.cohortMonth === "string" && /^\d{4}-\d{2}$/.test(filters.cohortMonth)
+      typeof filters.cohortMonth === "string" &&
+      /^\d{4}-\d{2}$/.test(filters.cohortMonth)
         ? filters.cohortMonth
         : null;
 
@@ -253,7 +272,11 @@ export async function aonDrilldownEmployees(
     const paged = await fetchPageWithTotal(base, params, options, query, count);
     const total = paged.total;
     const rows = paged.rows as Record<string, unknown>[];
-    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+    return {
+      rows,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: total > rows.length,
+    };
   } catch (err) {
     rethrowReportSchemaError("aon-drilldown-employees", err, base);
   }

@@ -23,12 +23,21 @@ describe("LMS learner progress access", () => {
 
   it("enforces ownership after role authentication and before loading progress", () => {
     const source = readFileSync(
-      resolve(process.cwd(), "src/modules/lms-integration/lms-integration.routes.ts"),
+      resolve(
+        process.cwd(),
+        "src/modules/lms-integration/lms-integration.routes.ts",
+      ),
       "utf8",
     );
-    const route = source.slice(source.indexOf('lmsIntegrationRouter.get("/learner-progress/:employeeId"'));
+    const route = source.slice(
+      source.indexOf(
+        'lmsIntegrationRouter.get("/learner-progress/:employeeId"',
+      ),
+    );
 
     expect(route.indexOf("requireLmsProgressAccess")).toBeGreaterThan(-1);
-    expect(route.indexOf("requireLmsProgressAccess")).toBeLessThan(route.indexOf("h(async"));
+    expect(route.indexOf("requireLmsProgressAccess")).toBeLessThan(
+      route.indexOf("h(async"),
+    );
   });
 });

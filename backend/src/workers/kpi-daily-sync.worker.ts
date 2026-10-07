@@ -1,5 +1,13 @@
-import { syncAprMetrics, syncAttendanceMetrics, syncConversionMetrics, syncSalesBrandMisMetrics, syncSalesOrderMetrics, syncQualityMetrics, syncQualityMetricsForDate } from '../modules/kpi/kpi-data-connector.service.js';
-import { runWeeklyCoachingEvaluation } from '../modules/quality-dashboard/weekly-coaching.service.js';
+import {
+  syncAprMetrics,
+  syncAttendanceMetrics,
+  syncConversionMetrics,
+  syncSalesBrandMisMetrics,
+  syncSalesOrderMetrics,
+  syncQualityMetrics,
+  syncQualityMetricsForDate,
+} from "../modules/kpi/kpi-data-connector.service.js";
+import { runWeeklyCoachingEvaluation } from "../modules/quality-dashboard/weekly-coaching.service.js";
 
 const DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DAILY_HOUR = 1;
@@ -9,7 +17,7 @@ let initialTimeoutRef: ReturnType<typeof setTimeout> | undefined;
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
 function pad(n: number): string {
-  return String(n).padStart(2, '0');
+  return String(n).padStart(2, "0");
 }
 
 function yesterday(): string {
@@ -39,35 +47,48 @@ async function runDailySync(): Promise<void> {
 
   try {
     const aprResult = await syncAprMetrics(date);
-    console.log(`[KpiDailySyncWorker] APR sync: ${aprResult.synced} synced, ${aprResult.skipped} skipped, ${aprResult.errors.length} errors`);
+    console.log(
+      `[KpiDailySyncWorker] APR sync: ${aprResult.synced} synced, ${aprResult.skipped} skipped, ${aprResult.errors.length} errors`,
+    );
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] APR sync failed:`, err.message);
   }
 
   try {
     const attResult = await syncAttendanceMetrics(date);
-    console.log(`[KpiDailySyncWorker] Attendance sync: ${attResult.synced} synced, ${attResult.skipped} skipped, ${attResult.errors.length} errors`);
+    console.log(
+      `[KpiDailySyncWorker] Attendance sync: ${attResult.synced} synced, ${attResult.skipped} skipped, ${attResult.errors.length} errors`,
+    );
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] Attendance sync failed:`, err.message);
   }
 
   try {
     const conversionResult = await syncConversionMetrics(date);
-    console.log(`[KpiDailySyncWorker] Conversion sync: ${conversionResult.synced} synced, ${conversionResult.skipped} skipped, ${conversionResult.errors.length} errors`);
+    console.log(
+      `[KpiDailySyncWorker] Conversion sync: ${conversionResult.synced} synced, ${conversionResult.skipped} skipped, ${conversionResult.errors.length} errors`,
+    );
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] Conversion sync failed:`, err.message);
   }
 
   try {
     const salesBrandResult = await syncSalesBrandMisMetrics(date);
-    console.log(`[KpiDailySyncWorker] Sales brand MIS sync: ${salesBrandResult.synced} synced, ${salesBrandResult.skipped} skipped, ${salesBrandResult.errors.length} errors`);
+    console.log(
+      `[KpiDailySyncWorker] Sales brand MIS sync: ${salesBrandResult.synced} synced, ${salesBrandResult.skipped} skipped, ${salesBrandResult.errors.length} errors`,
+    );
   } catch (err: any) {
-    console.error(`[KpiDailySyncWorker] Sales brand MIS sync failed:`, err.message);
+    console.error(
+      `[KpiDailySyncWorker] Sales brand MIS sync failed:`,
+      err.message,
+    );
   }
 
   try {
     const salesOrderResult = await syncSalesOrderMetrics(date);
-    console.log(`[KpiDailySyncWorker] Sales order sync: ${salesOrderResult.synced} synced, ${salesOrderResult.skipped} skipped, ${salesOrderResult.errors.length} errors`);
+    console.log(
+      `[KpiDailySyncWorker] Sales order sync: ${salesOrderResult.synced} synced, ${salesOrderResult.skipped} skipped, ${salesOrderResult.errors.length} errors`,
+    );
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] Sales order sync failed:`, err.message);
   }
@@ -78,9 +99,14 @@ async function runDailySync(): Promise<void> {
   // agent that could not be split across processes.
   try {
     const qDaily = await syncQualityMetricsForDate(date);
-    console.log(`[KpiDailySyncWorker] Quality sync (${date}): ${qDaily.synced} synced, ${qDaily.skipped} skipped, ${qDaily.errors.length} errors`);
+    console.log(
+      `[KpiDailySyncWorker] Quality sync (${date}): ${qDaily.synced} synced, ${qDaily.skipped} skipped, ${qDaily.errors.length} errors`,
+    );
   } catch (err: any) {
-    console.error(`[KpiDailySyncWorker] Quality daily sync failed:`, err.message);
+    console.error(
+      `[KpiDailySyncWorker] Quality daily sync failed:`,
+      err.message,
+    );
   }
 
   // Weekly coaching review, run nightly over the rolling ISO week rather than on
@@ -90,9 +116,11 @@ async function runDailySync(): Promise<void> {
   // duplicative.
   try {
     const coaching = await runWeeklyCoachingEvaluation(date);
-    console.log(`[KpiDailySyncWorker] Weekly coaching (${coaching.weekStart}..${coaching.weekEnd}): ` +
-      `${coaching.raised} raised, ${coaching.skippedAlreadyOpen} already open, ` +
-      `${coaching.skippedNoTrigger} no trigger, ${coaching.skippedNoCoach} no coach`);
+    console.log(
+      `[KpiDailySyncWorker] Weekly coaching (${coaching.weekStart}..${coaching.weekEnd}): ` +
+        `${coaching.raised} raised, ${coaching.skippedAlreadyOpen} already open, ` +
+        `${coaching.skippedNoTrigger} no trigger, ${coaching.skippedNoCoach} no coach`,
+    );
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] Weekly coaching failed:`, err.message);
   }
@@ -102,7 +130,9 @@ async function runDailySync(): Promise<void> {
     const ym = lastMonth();
     try {
       const qResult = await syncQualityMetrics(ym);
-      console.log(`[KpiDailySyncWorker] Quality sync (${ym}): ${qResult.synced} synced, ${qResult.skipped} skipped, ${qResult.errors.length} errors`);
+      console.log(
+        `[KpiDailySyncWorker] Quality sync (${ym}): ${qResult.synced} synced, ${qResult.skipped} skipped, ${qResult.errors.length} errors`,
+      );
     } catch (err: any) {
       console.error(`[KpiDailySyncWorker] Quality sync failed:`, err.message);
     }
@@ -110,10 +140,14 @@ async function runDailySync(): Promise<void> {
 }
 
 async function startWorker(): Promise<void> {
-  console.log(`[KpiDailySyncWorker] Starting - will run daily at ${DAILY_HOUR}:00 AM`);
+  console.log(
+    `[KpiDailySyncWorker] Starting - will run daily at ${DAILY_HOUR}:00 AM`,
+  );
 
   const delay = msUntilHour(DAILY_HOUR);
-  console.log(`[KpiDailySyncWorker] First run in ${Math.round(delay / 60000)} minutes`);
+  console.log(
+    `[KpiDailySyncWorker] First run in ${Math.round(delay / 60000)} minutes`,
+  );
 
   initialTimeoutRef = setTimeout(async () => {
     await runDailySync();
@@ -134,10 +168,14 @@ function stopWorker(): void {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  startWorker().catch(err => {
-    console.error('[KpiDailySyncWorker] Fatal error:', err);
+  startWorker().catch((err) => {
+    console.error("[KpiDailySyncWorker] Fatal error:", err);
     process.exit(1);
   });
 }
 
-export { startWorker as startKpiDailySyncWorker, stopWorker as stopKpiDailySyncWorker, runDailySync };
+export {
+  startWorker as startKpiDailySyncWorker,
+  stopWorker as stopKpiDailySyncWorker,
+  runDailySync,
+};

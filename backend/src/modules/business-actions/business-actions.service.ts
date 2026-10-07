@@ -1,17 +1,35 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import type { BusinessActionCommentInput, BusinessActionInput } from "./business-actions.types.js";
-
+import type {
+  BusinessActionCommentInput,
+  BusinessActionInput,
+} from "./business-actions.types.js";
+
 import { blankToNull } from "../../shared/sql-values.js";
-const OPEN_STATUSES = ["open", "in_progress", "blocked", "escalated", "overdue"];
+const OPEN_STATUSES = [
+  "open",
+  "in_progress",
+  "blocked",
+  "escalated",
+  "overdue",
+];
 
 function normalizeSeverity(value?: string) {
-  return ["critical", "high", "medium", "low"].includes(String(value)) ? String(value) : "medium";
+  return ["critical", "high", "medium", "low"].includes(String(value))
+    ? String(value)
+    : "medium";
 }
 
 function defaultDueDate(severity: string) {
-  const days = severity === "critical" ? 1 : severity === "high" ? 2 : severity === "medium" ? 5 : 10;
+  const days =
+    severity === "critical"
+      ? 1
+      : severity === "high"
+        ? 2
+        : severity === "medium"
+          ? 5
+          : 10;
   const date = new Date();
   date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
@@ -20,7 +38,14 @@ function defaultDueDate(severity: string) {
 function listWhere(filters: Record<string, unknown> = {}) {
   const clauses: string[] = [];
   const params: unknown[] = [];
-  const allowed = ["source_module", "risk_type", "severity", "status", "owner_user_id", "owner_role"];
+  const allowed = [
+    "source_module",
+    "risk_type",
+    "severity",
+    "status",
+    "owner_user_id",
+    "owner_role",
+  ];
 
   for (const key of allowed) {
     const value = filters[key];
@@ -30,10 +55,19 @@ function listWhere(filters: Record<string, unknown> = {}) {
     }
   }
 
-  if (filters.due === "overdue") clauses.push("a.due_date < CURDATE() AND a.status NOT IN ('completed','cancelled')");
-  if (filters.due === "today") clauses.push("a.due_date = CURDATE() AND a.status NOT IN ('completed','cancelled')");
+  if (filters.due === "overdue")
+    clauses.push(
+      "a.due_date < CURDATE() AND a.status NOT IN ('completed','cancelled')",
+    );
+  if (filters.due === "today")
+    clauses.push(
+      "a.due_date = CURDATE() AND a.status NOT IN ('completed','cancelled')",
+    );
 
-  return { sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
+  return {
+    sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",
+    params,
+  };
 }
 
 export const businessActionsService = {
@@ -49,7 +83,7 @@ export const businessActionsService = {
          ${where.sql}
         ORDER BY FIELD(a.severity, 'critical','high','medium','low'), a.due_date ASC, a.created_at DESC
         LIMIT 300`,
-      where.params
+      where.params,
     );
     return rows;
   },
@@ -67,7 +101,7 @@ export const businessActionsService = {
           SUM(CASE WHEN a.status = 'completed' AND a.completed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS completed_7d
          FROM business_action_queue a
          ${where.sql}`,
-      where.params
+      where.params,
     );
 
     const [bySource] = await db.execute<RowDataPacket[]>(
@@ -77,7 +111,7 @@ export const businessActionsService = {
         GROUP BY source_module
         ORDER BY value DESC
         LIMIT 12`,
-      OPEN_STATUSES
+      OPEN_STATUSES,
     );
 
     const [byOwner] = await db.execute<RowDataPacket[]>(
@@ -89,10 +123,15 @@ export const businessActionsService = {
         GROUP BY label
         ORDER BY value DESC
         LIMIT 12`,
-      OPEN_STATUSES
+      OPEN_STATUSES,
     );
 
-    return { ...(rows[0] ?? {}), by_source: bySource, by_owner: byOwner, generated_at: new Date().toISOString() };
+    return {
+      ...(rows[0] ?? {}),
+      by_source: bySource,
+      by_owner: byOwner,
+      generated_at: new Date().toISOString(),
+    };
   },
 
   async get(id: string) {
@@ -102,7 +141,7 @@ export const businessActionsService = {
          LEFT JOIN auth_user u ON u.id = a.owner_user_id
          LEFT JOIN employees emp_u ON emp_u.user_id = u.id
         WHERE a.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     const action = rows[0];
     if (!action) return null;
@@ -113,14 +152,16 @@ export const businessActionsService = {
          LEFT JOIN employees emp_c ON emp_c.user_id = u.id
         WHERE c.action_id = ?
         ORDER BY c.created_at ASC`,
-      [id]
+      [id],
     );
     return { ...action, comments };
   },
 
   async create(input: BusinessActionInput, actorUserId: string) {
     if (!input.title || !input.risk_type) {
-      throw Object.assign(new Error("title and risk_type are required"), { statusCode: 400 });
+      throw Object.assign(new Error("title and risk_type are required"), {
+        statusCode: 400,
+      });
     }
     const id = randomUUID();
     const severity = normalizeSeverity(input.severity);
@@ -141,13 +182,20 @@ export const businessActionsService = {
         input.due_date ?? defaultDueDate(severity),
         input.status ?? "open",
         actorUserId,
-      ]
+      ],
     );
-    await this.log(id, actorUserId, "CREATED", { severity, source_module: input.source_module ?? "manual" });
+    await this.log(id, actorUserId, "CREATED", {
+      severity,
+      source_module: input.source_module ?? "manual",
+    });
     return this.get(id);
   },
 
-  async update(id: string, input: Partial<BusinessActionInput>, actorUserId: string) {
+  async update(
+    id: string,
+    input: Partial<BusinessActionInput>,
+    actorUserId: string,
+  ) {
     await db.execute(
       `UPDATE business_action_queue SET
           severity = COALESCE(?, severity),
@@ -162,16 +210,31 @@ export const businessActionsService = {
         WHERE id = ?`,
       // due_date is a DATE column behind COALESCE; "" throws
       // ER_TRUNCATED_WRONG_VALUE and aborts the update rather than clearing it.
-      [blankToNull(input.severity), blankToNull(input.title), blankToNull(input.description), blankToNull(input.owner_user_id), blankToNull(input.owner_role), blankToNull(input.due_date), blankToNull(input.status), input.status ?? null, id]
+      [
+        blankToNull(input.severity),
+        blankToNull(input.title),
+        blankToNull(input.description),
+        blankToNull(input.owner_user_id),
+        blankToNull(input.owner_role),
+        blankToNull(input.due_date),
+        blankToNull(input.status),
+        input.status ?? null,
+        id,
+      ],
     );
     await this.log(id, actorUserId, "UPDATED", input);
     return this.get(id);
   },
 
-  async assign(id: string, ownerUserId: string | null, ownerRole: string | null, actorUserId: string) {
+  async assign(
+    id: string,
+    ownerUserId: string | null,
+    ownerRole: string | null,
+    actorUserId: string,
+  ) {
     await db.execute(
       `UPDATE business_action_queue SET owner_user_id = ?, owner_role = ?, status = CASE WHEN status = 'open' THEN 'in_progress' ELSE status END, updated_at = NOW() WHERE id = ?`,
-      [ownerUserId, ownerRole, id]
+      [ownerUserId, ownerRole, id],
     );
     await this.log(id, actorUserId, "ASSIGNED", { ownerUserId, ownerRole });
     return this.get(id);
@@ -180,7 +243,7 @@ export const businessActionsService = {
   async escalate(id: string, reason: string | null, actorUserId: string) {
     await db.execute(
       `UPDATE business_action_queue SET status = 'escalated', escalation_level = COALESCE(escalation_level, 0) + 1, updated_at = NOW() WHERE id = ?`,
-      [id]
+      [id],
     );
     await this.log(id, actorUserId, "ESCALATED", { reason });
     return this.get(id);
@@ -189,27 +252,54 @@ export const businessActionsService = {
   async complete(id: string, closureNote: string | null, actorUserId: string) {
     await db.execute(
       `UPDATE business_action_queue SET status = 'completed', closure_note = ?, completed_at = NOW(), updated_at = NOW() WHERE id = ?`,
-      [closureNote, id]
+      [closureNote, id],
     );
     await this.log(id, actorUserId, "COMPLETED", { closureNote });
     return this.get(id);
   },
 
-  async comment(id: string, actorUserId: string, input: BusinessActionCommentInput) {
-    if (!input.comment_text) throw Object.assign(new Error("comment_text is required"), { statusCode: 400 });
+  async comment(
+    id: string,
+    actorUserId: string,
+    input: BusinessActionCommentInput,
+  ) {
+    if (!input.comment_text)
+      throw Object.assign(new Error("comment_text is required"), {
+        statusCode: 400,
+      });
     const commentId = randomUUID();
     await db.execute(
       `INSERT INTO business_action_comment (id, action_id, author_user_id, comment_text, is_internal) VALUES (?, ?, ?, ?, ?)`,
-      [commentId, id, actorUserId, input.comment_text, input.is_internal ? 1 : 0]
+      [
+        commentId,
+        id,
+        actorUserId,
+        input.comment_text,
+        input.is_internal ? 1 : 0,
+      ],
     );
-    await this.log(id, actorUserId, "COMMENTED", { commentId, is_internal: !!input.is_internal });
+    await this.log(id, actorUserId, "COMMENTED", {
+      commentId,
+      is_internal: !!input.is_internal,
+    });
     return { id: commentId };
   },
 
-  async log(actionId: string, actorUserId: string, activityType: string, payload: unknown) {
+  async log(
+    actionId: string,
+    actorUserId: string,
+    activityType: string,
+    payload: unknown,
+  ) {
     await db.execute(
       `INSERT INTO business_action_activity_log (id, action_id, actor_user_id, activity_type, payload_json) VALUES (?, ?, ?, ?, ?)`,
-      [randomUUID(), actionId, actorUserId, activityType, JSON.stringify(payload ?? {})]
+      [
+        randomUUID(),
+        actionId,
+        actorUserId,
+        activityType,
+        JSON.stringify(payload ?? {}),
+      ],
     );
   },
 };

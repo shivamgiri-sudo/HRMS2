@@ -21,10 +21,14 @@ function evaluatePredicate(sql: string, row: Record<string, unknown>): boolean {
     // LOWER(COALESCE(col,'')) IN ('a','b')  →  ['a','b'].includes(String(col ?? '').toLowerCase())
     .replace(
       /LOWER\(COALESCE\((\w+),''\)\)\s+IN\s+\(([^)]*)\)/gi,
-      (_m, col, list) => `[${list}].includes(String(row[${JSON.stringify(col)}] ?? '').toLowerCase())`
+      (_m, col, list) =>
+        `[${list}].includes(String(row[${JSON.stringify(col)}] ?? '').toLowerCase())`,
     )
     // col = 1  →  Number(row.col) === 1
-    .replace(/(\w+)\s*=\s*1\b/g, (_m, col) => `Number(row[${JSON.stringify(col)}] ?? 0) === 1`)
+    .replace(
+      /(\w+)\s*=\s*1\b/g,
+      (_m, col) => `Number(row[${JSON.stringify(col)}] ?? 0) === 1`,
+    )
     .replace(/\bOR\b/gi, "||")
     .replace(/\bAND\b/gi, "&&");
 
@@ -78,12 +82,18 @@ describe("hiring funnel predicates", () => {
               recruiter_remarks: "",
             };
             const s = evalStages(row);
-            const ordered = [s.contacted, s.shortlisted, s.walkin, s.selected, s.joined].map(Number);
+            const ordered = [
+              s.contacted,
+              s.shortlisted,
+              s.walkin,
+              s.selected,
+              s.joined,
+            ].map(Number);
 
             for (let i = 1; i < ordered.length; i += 1) {
               expect(
                 ordered[i] <= ordered[i - 1],
-                `funnel inverted at index ${i} for ${JSON.stringify(row)}`
+                `funnel inverted at index ${i} for ${JSON.stringify(row)}`,
               ).toBe(true);
             }
           }
@@ -161,8 +171,15 @@ describe("hiring funnel predicates", () => {
     const aliased = funnelPredicates("arha");
     const bare = funnelPredicates("");
 
-    expect(aliased.IS_JOINED).toBe(bare.IS_JOINED.replace(/\bjoined_flag/, "arha.joined_flag"));
-    for (const key of ["IS_CONTACTED", "IS_SHORTLISTED", "IS_WALKIN", "IS_SELECTED"] as const) {
+    expect(aliased.IS_JOINED).toBe(
+      bare.IS_JOINED.replace(/\bjoined_flag/, "arha.joined_flag"),
+    );
+    for (const key of [
+      "IS_CONTACTED",
+      "IS_SHORTLISTED",
+      "IS_WALKIN",
+      "IS_SELECTED",
+    ] as const) {
       // Same structure, only the column qualifier differs.
       expect(aliased[key].replace(/arha\./g, "")).toBe(bare[key]);
     }
@@ -174,7 +191,7 @@ describe("analytics SQL shape", () => {
     // Locking down the fix for the stale-trend defect: capping an ascending
     // order returned the OLDEST 90 days and presented them as the current trend.
     const source = readServiceSource();
-    const trendBlock = extractBlock(source, "safe(\"trend\"", 1400);
+    const trendBlock = extractBlock(source, 'safe("trend"', 1400);
 
     expect(trendBlock).toMatch(/ORDER BY arha\.activity_date DESC/);
     expect(trendBlock).toMatch(/ORDER BY t\.date ASC/);
@@ -192,7 +209,11 @@ describe("analytics SQL shape", () => {
     // aggregateBy omitted the exclusion the headline summary applied, so the
     // group rows summed to more than the total displayed above them.
     const source = readServiceSource();
-    const aggregateBlock = extractBlock(source, "async function aggregateBy", 1200);
+    const aggregateBlock = extractBlock(
+      source,
+      "async function aggregateBy",
+      1200,
+    );
     expect(aggregateBlock).toMatch(/COALESCE\(is_followup_attempt, 0\) = 0/);
   });
 });
@@ -203,7 +224,10 @@ function readServiceSource(): string {
   const fs = require("node:fs") as typeof import("node:fs");
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const path = require("node:path") as typeof import("node:path");
-  return fs.readFileSync(path.resolve(__dirname, "../recruiter-hiring.service.ts"), "utf8");
+  return fs.readFileSync(
+    path.resolve(__dirname, "../recruiter-hiring.service.ts"),
+    "utf8",
+  );
 }
 
 function extractBlock(source: string, marker: string, length: number): string {

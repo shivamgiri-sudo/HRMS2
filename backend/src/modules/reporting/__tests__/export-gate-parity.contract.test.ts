@@ -26,10 +26,11 @@ import { REPORT_CATALOG } from "../report-catalog.js";
  * to be added to the other or explained here.
  */
 
-const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
+const read = (path: string) =>
+  readFileSync(resolve(process.cwd(), path), "utf8");
 
 const catalogSource = read("src/modules/reporting/reporting.routes.ts");
-const exportSource  = read("src/modules/reporting/report-suite.routes.ts");
+const exportSource = read("src/modules/reporting/report-suite.routes.ts");
 
 /** The expression assigned to a given const, flattened to single-spaced text. */
 const assignedExpression = (source: string, name: string): string => {
@@ -44,8 +45,11 @@ const assignedExpression = (source: string, name: string): string => {
 };
 
 describe("immediate-export gate parity", () => {
-  const catalogGate = assignedExpression(catalogSource, "immediateExportAllowed");
-  const exportGate  = assignedExpression(exportSource, "immediateAllowed");
+  const catalogGate = assignedExpression(
+    catalogSource,
+    "immediateExportAllowed",
+  );
+  const exportGate = assignedExpression(exportSource, "immediateAllowed");
 
   it("neither gate depends on availabilityStatus", () => {
     // Whichever way this is decided, it must be decided the same way in both places.
@@ -61,24 +65,37 @@ describe("immediate-export gate parity", () => {
   });
 
   it("both gates are built from the same two inputs: super-admin, sensitivity, export roles", () => {
-    for (const [name, gate] of [["catalog", catalogGate], ["export", exportGate]] as const) {
-      expect(gate, `${name} gate lost its super_admin branch`).toMatch(/isSuperAdmin/);
-      expect(gate, `${name} gate lost its exportAllowed term`).toMatch(/exportAllowed/);
-      expect(gate, `${name} gate lost its sensitivity term`).toMatch(/IMMEDIATE_LEVELS/);
+    for (const [name, gate] of [
+      ["catalog", catalogGate],
+      ["export", exportGate],
+    ] as const) {
+      expect(gate, `${name} gate lost its super_admin branch`).toMatch(
+        /isSuperAdmin/,
+      );
+      expect(gate, `${name} gate lost its exportAllowed term`).toMatch(
+        /exportAllowed/,
+      );
+      expect(gate, `${name} gate lost its sensitivity term`).toMatch(
+        /IMMEDIATE_LEVELS/,
+      );
     }
   });
 
   it("email delivery stays ungated by availabilityStatus, matching download", () => {
     // If email were ever gated and download were not, the asymmetry would flip the other
     // way and this comment would be the record of why.
-    expect(catalogSource).toMatch(/if \(viewAllowed\)\s+deliveryModes\.push\('email'\)/);
+    expect(catalogSource).toMatch(
+      /if \(viewAllowed\)\s+deliveryModes\.push\('email'\)/,
+    );
   });
 });
 
 describe("what the fix unblocks", () => {
   it("most of the catalog is not marked validated, and that no longer hides it", () => {
-    const enabled = REPORT_CATALOG.filter(r =>
-      ["validated", "validated_with_limitations"].includes(r.availabilityStatus ?? "under_validation"),
+    const enabled = REPORT_CATALOG.filter((r) =>
+      ["validated", "validated_with_limitations"].includes(
+        r.availabilityStatus ?? "under_validation",
+      ),
     );
 
     // Not an assertion about the right number — validation is ongoing work. It records

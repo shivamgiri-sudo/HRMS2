@@ -1,15 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import { isDeadlockError, withDeadlockRetry } from "../deadlockRetry.js";
 
-const deadlock = () => Object.assign(new Error("Deadlock found when trying to get lock"), {
-  code: "ER_LOCK_DEADLOCK", errno: 1213,
-});
-const lockWait = () => Object.assign(new Error("Lock wait timeout exceeded"), {
-  code: "ER_LOCK_WAIT_TIMEOUT", errno: 1205,
-});
-const badField = () => Object.assign(new Error("Unknown column 'nope'"), {
-  code: "ER_BAD_FIELD_ERROR", errno: 1054,
-});
+const deadlock = () =>
+  Object.assign(new Error("Deadlock found when trying to get lock"), {
+    code: "ER_LOCK_DEADLOCK",
+    errno: 1213,
+  });
+const lockWait = () =>
+  Object.assign(new Error("Lock wait timeout exceeded"), {
+    code: "ER_LOCK_WAIT_TIMEOUT",
+    errno: 1205,
+  });
+const badField = () =>
+  Object.assign(new Error("Unknown column 'nope'"), {
+    code: "ER_BAD_FIELD_ERROR",
+    errno: 1054,
+  });
 
 describe("isDeadlockError", () => {
   it("recognises deadlock and lock-wait-timeout, by code or errno", () => {
@@ -36,7 +42,8 @@ describe("withDeadlockRetry", () => {
   });
 
   it("retries a deadlock and succeeds", async () => {
-    const op = vi.fn()
+    const op = vi
+      .fn()
       .mockRejectedValueOnce(deadlock())
       .mockRejectedValueOnce(deadlock())
       .mockResolvedValue("ok");
@@ -48,13 +55,17 @@ describe("withDeadlockRetry", () => {
     // Bounded on purpose. An unbounded retry against a genuinely contended row spins for
     // ever and looks like a hang rather than a failure.
     const op = vi.fn().mockRejectedValue(deadlock());
-    await expect(withDeadlockRetry(op, { attempts: 3, delayMs: 0 })).rejects.toThrow(/Deadlock/);
+    await expect(
+      withDeadlockRetry(op, { attempts: 3, delayMs: 0 }),
+    ).rejects.toThrow(/Deadlock/);
     expect(op).toHaveBeenCalledTimes(3);
   });
 
   it("rethrows a non-deadlock error immediately, without retrying", async () => {
     const op = vi.fn().mockRejectedValue(badField());
-    await expect(withDeadlockRetry(op, { attempts: 5, delayMs: 0 })).rejects.toThrow(/Unknown column/);
+    await expect(
+      withDeadlockRetry(op, { attempts: 5, delayMs: 0 }),
+    ).rejects.toThrow(/Unknown column/);
     expect(op).toHaveBeenCalledTimes(1);
   });
 
@@ -68,11 +79,17 @@ describe("withDeadlockRetry", () => {
 
   it("backs off progressively rather than hammering the lock holder", async () => {
     const waits: number[] = [];
-    const op = vi.fn()
+    const op = vi
+      .fn()
       .mockRejectedValueOnce(deadlock())
       .mockRejectedValueOnce(deadlock())
       .mockResolvedValue("ok");
-    await withDeadlockRetry(op, { delayMs: 10, sleep: async (ms: number) => { waits.push(ms); } });
+    await withDeadlockRetry(op, {
+      delayMs: 10,
+      sleep: async (ms: number) => {
+        waits.push(ms);
+      },
+    });
     expect(waits).toEqual([10, 20]);
   });
 });

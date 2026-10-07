@@ -1,5 +1,5 @@
-import type { Request, Response } from 'express';
-import { taskService } from './task.service.js';
+import type { Request, Response } from "express";
+import { taskService } from "./task.service.js";
 
 /**
  * Create tasks for employee from template
@@ -8,12 +8,12 @@ import { taskService } from './task.service.js';
 export async function createOnboardingTasks(req: Request, res: Response) {
   try {
     const { employeeId } = req.params;
-    const { template_code = 'GENERAL_ONBOARDING' } = req.body;
+    const { template_code = "GENERAL_ONBOARDING" } = req.body;
 
     const tasks = await taskService.createTasksFromTemplate({
       employee_id: employeeId,
       template_code,
-      trigger_event: 'employee_onboarding_started',
+      trigger_event: "employee_onboarding_started",
     });
 
     return res.json({
@@ -22,7 +22,7 @@ export async function createOnboardingTasks(req: Request, res: Response) {
       data: tasks,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error creating onboarding tasks:', error);
+    console.error("[TASKS] Error creating onboarding tasks:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -46,7 +46,7 @@ export async function getEmployeeTasks(req: Request, res: Response) {
       count: tasks.length,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error getting employee tasks:', error);
+    console.error("[TASKS] Error getting employee tasks:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -69,7 +69,7 @@ export async function getOnboardingProgress(req: Request, res: Response) {
       data: progress,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error getting onboarding progress:', error);
+    console.error("[TASKS] Error getting onboarding progress:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -94,7 +94,7 @@ export async function getDepartmentTasks(req: Request, res: Response) {
       count: tasks.length,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error getting department tasks:', error);
+    console.error("[TASKS] Error getting department tasks:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -113,7 +113,7 @@ export async function getMyTasks(req: Request, res: Response) {
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: 'Unauthorized',
+        message: "Unauthorized",
       });
     }
 
@@ -125,7 +125,7 @@ export async function getMyTasks(req: Request, res: Response) {
       count: tasks.length,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error getting my tasks:', error);
+    console.error("[TASKS] Error getting my tasks:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -146,11 +146,11 @@ export async function startTask(req: Request, res: Response) {
 
     return res.json({
       success: true,
-      message: 'Task started',
+      message: "Task started",
       data: task,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error starting task:', error);
+    console.error("[TASKS] Error starting task:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -172,11 +172,11 @@ export async function completeTask(req: Request, res: Response) {
 
     return res.json({
       success: true,
-      message: 'Task completed',
+      message: "Task completed",
       data: task,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error completing task:', error);
+    console.error("[TASKS] Error completing task:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -197,11 +197,11 @@ export async function updateTask(req: Request, res: Response) {
 
     return res.json({
       success: true,
-      message: 'Task updated',
+      message: "Task updated",
       data: task,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error updating task:', error);
+    console.error("[TASKS] Error updating task:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -222,7 +222,7 @@ export async function addComment(req: Request, res: Response) {
     if (!comment_text) {
       return res.status(400).json({
         success: false,
-        message: 'comment_text is required',
+        message: "comment_text is required",
       });
     }
 
@@ -233,7 +233,7 @@ export async function addComment(req: Request, res: Response) {
       data: comment,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error adding comment:', error);
+    console.error("[TASKS] Error adding comment:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -257,7 +257,7 @@ export async function getTaskComments(req: Request, res: Response) {
       count: comments.length,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error getting comments:', error);
+    console.error("[TASKS] Error getting comments:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -279,7 +279,7 @@ export async function getOverdueTasks(req: Request, res: Response) {
       count: tasks.length,
     });
   } catch (error: any) {
-    console.error('[TASKS] Error getting overdue tasks:', error);
+    console.error("[TASKS] Error getting overdue tasks:", error);
     return res.status(500).json({
       success: false,
       message: error.message,

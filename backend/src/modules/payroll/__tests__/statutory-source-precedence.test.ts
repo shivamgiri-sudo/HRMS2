@@ -17,13 +17,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * simply leaving a key out of the versioned table.
  */
 
-const { getStatutoryConfigForPeriod, loadFlatStatutoryConfig } = vi.hoisted(() => ({
-  getStatutoryConfigForPeriod: vi.fn(),
-  loadFlatStatutoryConfig: vi.fn(),
+const { getStatutoryConfigForPeriod, loadFlatStatutoryConfig } = vi.hoisted(
+  () => ({
+    getStatutoryConfigForPeriod: vi.fn(),
+    loadFlatStatutoryConfig: vi.fn(),
+  }),
+);
+vi.mock("../statutory-config.resolver.js", () => ({
+  getStatutoryConfigForPeriod,
 }));
-vi.mock("../statutory-config.resolver.js", () => ({ getStatutoryConfigForPeriod }));
 vi.mock("../statutory-config.loader.js", () => ({ loadFlatStatutoryConfig }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(), getConnection: vi.fn() } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: vi.fn(), getConnection: vi.fn() },
+}));
 
 // The real function the payable run calls, not a restatement of it — so a change
 // to the call site is caught here rather than passing silently.
@@ -37,7 +43,9 @@ describe("statutory source precedence for a payable run", () => {
 
   it("prefers the versioned table when it is readable", async () => {
     getStatutoryConfigForPeriod.mockResolvedValue({
-      period: "2026-07", source: "versioned", missing: [],
+      period: "2026-07",
+      source: "versioned",
+      missing: [],
       values: { tds_cess_pct: 4, tds_standard_deduction: 75000 },
     });
 
@@ -54,7 +62,8 @@ describe("statutory source precedence for a payable run", () => {
     // anyone bypass the approval gate by omitting a key from the versioned
     // table — the flat row would quietly supply it instead.
     getStatutoryConfigForPeriod.mockResolvedValue({
-      period: "2026-07", source: "versioned",
+      period: "2026-07",
+      source: "versioned",
       missing: ["tds_slab_2400001_above"],
       values: { tds_cess_pct: 4 },
     });
@@ -72,9 +81,15 @@ describe("statutory source precedence for a payable run", () => {
     // is_active and effective_from, so this is the same period-resolved reading
     // payroll used before versioning existed — never a hardcoded rate.
     getStatutoryConfigForPeriod.mockResolvedValue({
-      period: "2026-07", source: "unavailable", missing: ["tds_cess_pct"], values: {},
+      period: "2026-07",
+      source: "unavailable",
+      missing: ["tds_cess_pct"],
+      values: {},
     });
-    loadFlatStatutoryConfig.mockResolvedValue({ tds_cess_pct: 4, pf_employee_pct: 12 });
+    loadFlatStatutoryConfig.mockResolvedValue({
+      tds_cess_pct: 4,
+      pf_employee_pct: 12,
+    });
 
     const config = await resolveStatConfig("2026-07");
 
@@ -86,7 +101,10 @@ describe("statutory source precedence for a payable run", () => {
     // Recalculating an earlier month must apply the rates that governed it, or
     // a reissued payslip disagrees with what was deducted and filed.
     getStatutoryConfigForPeriod.mockResolvedValue({
-      period: "2025-06", source: "versioned", missing: [], values: { tds_cess_pct: 4 },
+      period: "2025-06",
+      source: "versioned",
+      missing: [],
+      values: { tds_cess_pct: 4 },
     });
 
     await resolveStatConfig("2025-06");

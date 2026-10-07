@@ -2,7 +2,11 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { buildScopeWhereEmployees } from "../../shared/dashboardScope.js";
 import { memo } from "./ops-command.cache.js";
-import { NONE_ID, type OpsCtx, type OpsDimension } from "./ops-command.context.js";
+import {
+  NONE_ID,
+  type OpsCtx,
+  type OpsDimension,
+} from "./ops-command.context.js";
 
 /** One row per employee the caller may see (row scope enforced in SQL). Everything else joins to this in memory. */
 export interface DimEmp {
@@ -27,7 +31,11 @@ export interface DimView {
 }
 
 function toView(emps: DimEmp[]): DimView {
-  return { emps, byId: new Map(emps.map((e) => [e.id, e])), byCode: new Map(emps.map((e) => [e.code, e])) };
+  return {
+    emps,
+    byId: new Map(emps.map((e) => [e.id, e])),
+    byCode: new Map(emps.map((e) => [e.code, e])),
+  };
 }
 
 /** Scope-only employee load, cached per scope. User filters are applied afterwards in memory (narrowing only). */
@@ -44,31 +52,58 @@ async function loadScoped(ctx: OpsCtx): Promise<DimEmp[]> {
       sc.params,
     );
     return rows.map((r) => ({
-      id: String(r.id), code: String(r.code ?? ""), name: String(r.name ?? "").trim(),
-      branch: r.branch ?? null, process: r.process ?? null, lob: r.lob ?? null, mgr: r.mgr ?? null,
-      doj: r.doj ?? null, exit: r.exit_d ?? null, leaving: r.leaving ?? null, active: Number(r.active ?? 0), status: String(r.status ?? ""),
+      id: String(r.id),
+      code: String(r.code ?? ""),
+      name: String(r.name ?? "").trim(),
+      branch: r.branch ?? null,
+      process: r.process ?? null,
+      lob: r.lob ?? null,
+      mgr: r.mgr ?? null,
+      doj: r.doj ?? null,
+      exit: r.exit_d ?? null,
+      leaving: r.leaving ?? null,
+      active: Number(r.active ?? 0),
+      status: String(r.status ?? ""),
     }));
   });
 }
 
-const match = (val: string | null, want: string | undefined) => (want === undefined ? true : want === NONE_ID ? val === null : val === want);
+const match = (val: string | null, want: string | undefined) =>
+  want === undefined ? true : want === NONE_ID ? val === null : val === want;
 
-export async function loadView(ctx: OpsCtx, applyFilters = true): Promise<DimView> {
+export async function loadView(
+  ctx: OpsCtx,
+  applyFilters = true,
+): Promise<DimView> {
   const all = await loadScoped(ctx);
   if (!applyFilters) return toView(all);
   const { branchId, processId, lobId, managerId } = ctx.f;
   if (!branchId && !processId && !lobId && !managerId) return toView(all);
-  return toView(all.filter((e) => match(e.branch, branchId) && match(e.process, processId) && match(e.lob, lobId) && match(e.mgr, managerId)));
+  return toView(
+    all.filter(
+      (e) =>
+        match(e.branch, branchId) &&
+        match(e.process, processId) &&
+        match(e.lob, lobId) &&
+        match(e.mgr, managerId),
+    ),
+  );
 }
 
 export function groupKey(e: DimEmp, dim: OpsDimension): string {
   switch (dim) {
-    case "branch": return e.branch ?? NONE_ID;
-    case "process": return e.process ?? NONE_ID;
-    case "lob": return e.lob ?? NONE_ID;
-    case "manager": return e.mgr ?? NONE_ID;
-    case "employee": return e.id;
-    default: return "all";
+    case "branch":
+      return e.branch ?? NONE_ID;
+    case "process":
+      return e.process ?? NONE_ID;
+    case "lob":
+      return e.lob ?? NONE_ID;
+    case "manager":
+      return e.mgr ?? NONE_ID;
+    case "employee":
+      return e.id;
+    default:
+      return "all";
   }
 }
 

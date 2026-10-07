@@ -39,37 +39,49 @@ const REFUSED = ["admin", "branch_head", "branch_admin"];
 describe("who may override recognition", () => {
   for (const role of ALLOWED) {
     it(`${role} may override`, () => {
-      expect(() => assertMayOverrideRecognition(role, "A custom recognition split")).not.toThrow();
+      expect(() =>
+        assertMayOverrideRecognition(role, "A custom recognition split"),
+      ).not.toThrow();
     });
   }
 
   for (const role of REFUSED) {
     it(`${role} may not, though the route admits them`, () => {
-      expect(() => assertMayOverrideRecognition(role, "A custom recognition split")).toThrow(
-        /Finance Head, Accounts Head or Super Admin/,
-      );
+      expect(() =>
+        assertMayOverrideRecognition(role, "A custom recognition split"),
+      ).toThrow(/Finance Head, Accounts Head or Super Admin/);
     });
   }
 
   it("refuses with 403, not a bad request", () => {
     try {
-      assertMayOverrideRecognition("branch_admin", "Recognising an invoice across financial years");
+      assertMayOverrideRecognition(
+        "branch_admin",
+        "Recognising an invoice across financial years",
+      );
       throw new Error("should have refused");
     } catch (error) {
       expect((error as { statusCode?: number }).statusCode).toBe(403);
-      expect((error as { code?: string }).code).toBe("RECOGNITION_OVERRIDE_FORBIDDEN");
+      expect((error as { code?: string }).code).toBe(
+        "RECOGNITION_OVERRIDE_FORBIDDEN",
+      );
     }
   });
 
   it("names which override was refused", () => {
     expect(() =>
-      assertMayOverrideRecognition("admin", "Recognising an invoice across financial years"),
+      assertMayOverrideRecognition(
+        "admin",
+        "Recognising an invoice across financial years",
+      ),
     ).toThrow(/Recognising an invoice across financial years/);
   });
 
   it("treats an unknown or empty role as not permitted", () => {
     for (const role of ["", "employee", "hr", "undefined"]) {
-      expect(() => assertMayOverrideRecognition(role, "A custom recognition split")).toThrow();
+      expect(() =>
+        assertMayOverrideRecognition(role, "A custom recognition split"),
+      ).toThrow();
     }
   });
 });
@@ -88,7 +100,9 @@ describe("the gate is actually reached before anything is written", () => {
   });
 
   it("gates a custom split", () => {
-    expect(body).toMatch(/customPercentages[\s\S]{0,120}assertMayOverrideRecognition/);
+    expect(body).toMatch(
+      /customPercentages[\s\S]{0,120}assertMayOverrideRecognition/,
+    );
   });
 
   it("gates a cross-FY window", () => {
@@ -104,13 +118,18 @@ describe("the gate is actually reached before anything is written", () => {
   });
 
   it("both save paths pass the role through", () => {
-    const calls = SRC.match(/writePeriodSplits\(connection, grnId, grn, input, actorUserId[^)]*\)/g) ?? [];
+    const calls =
+      SRC.match(
+        /writePeriodSplits\(connection, grnId, grn, input, actorUserId[^)]*\)/g,
+      ) ?? [];
     expect(calls.length).toBe(2);
     for (const call of calls) expect(call).toContain("actorRole");
   });
 
   it("the routes report the refusal as 403", () => {
-    expect((ROUTES.match(/statusCode\s*\?\?\s*400/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(
+      (ROUTES.match(/statusCode\s*\?\?\s*400/g) ?? []).length,
+    ).toBeGreaterThanOrEqual(2);
   });
 });
 

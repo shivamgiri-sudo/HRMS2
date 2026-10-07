@@ -27,12 +27,14 @@ vi.mock("../../../db/mysql.js", () => ({
   db: { execute, query: execute, getConnection: vi.fn() },
 }));
 
-const { getPortfolio, listPlans, commercialList, vendorGet } = vi.hoisted(() => ({
-  getPortfolio: vi.fn(),
-  listPlans: vi.fn(),
-  commercialList: vi.fn(),
-  vendorGet: vi.fn(),
-}));
+const { getPortfolio, listPlans, commercialList, vendorGet } = vi.hoisted(
+  () => ({
+    getPortfolio: vi.fn(),
+    listPlans: vi.fn(),
+    commercialList: vi.fn(),
+    vendorGet: vi.fn(),
+  }),
+);
 
 vi.mock("../process-lob.service.js", () => ({
   processLobService: {
@@ -66,10 +68,16 @@ const OTHER_PROCESS = "process-B";
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
+  const original =
+    await importOriginal<
+      typeof import("../../../middleware/authMiddleware.js")
+    >();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.authUser = actor;
+      next();
+    },
   };
 });
 
@@ -79,7 +87,11 @@ function appFor(role: string) {
   actor = { id: `u-${role}`, role, roles: [role] };
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => { req.authUser = actor; req.userRoles = actor.roles; next(); });
+  app.use((req: any, _res, next) => {
+    req.authUser = actor;
+    req.userRoles = actor.roles;
+    next();
+  });
   app.use("/pnl/lobs", processLobRouter);
   return app;
 }
@@ -87,7 +99,10 @@ function appFor(role: string) {
 beforeEach(() => {
   execute.mockReset();
   // Whatever the scope resolvers ask the database, this caller owns branch-A / process-A.
-  execute.mockResolvedValue([[{ branch_id: OWN_BRANCH, process_id: OWN_PROCESS, id: OWN_BRANCH }], []]);
+  execute.mockResolvedValue([
+    [{ branch_id: OWN_BRANCH, process_id: OWN_PROCESS, id: OWN_BRANCH }],
+    [],
+  ]);
   getPortfolio.mockReset().mockResolvedValue([]);
   listPlans.mockReset().mockResolvedValue([]);
   commercialList.mockReset().mockResolvedValue({});
@@ -100,43 +115,56 @@ beforeEach(() => {
 
 describe("GET /portfolio", () => {
   it("pins a branch_head to their own branch when they ask for none", async () => {
-    const res = await request(appFor("branch_head")).get("/pnl/lobs/portfolio?period=2026-08");
+    const res = await request(appFor("branch_head")).get(
+      "/pnl/lobs/portfolio?period=2026-08",
+    );
     expect(res.status).toBe(200);
     // The whole defect: an absent branchId used to mean "every branch".
-    expect(getPortfolio).toHaveBeenCalledWith(expect.objectContaining({ branchId: OWN_BRANCH }));
+    expect(getPortfolio).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: OWN_BRANCH }),
+    );
   });
 
   it("refuses a branch_head who names another branch", async () => {
-    const res = await request(appFor("branch_head"))
-      .get(`/pnl/lobs/portfolio?period=2026-08&branchId=${OTHER_BRANCH}`);
+    const res = await request(appFor("branch_head")).get(
+      `/pnl/lobs/portfolio?period=2026-08&branchId=${OTHER_BRANCH}`,
+    );
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(getPortfolio).not.toHaveBeenCalled();
   });
 
   it("leaves a global finance role unrestricted", async () => {
-    const res = await request(appFor("finance_head")).get("/pnl/lobs/portfolio?period=2026-08");
+    const res = await request(appFor("finance_head")).get(
+      "/pnl/lobs/portfolio?period=2026-08",
+    );
     expect(res.status).toBe(200);
-    expect(getPortfolio).toHaveBeenCalledWith(expect.objectContaining({ branchId: undefined }));
+    expect(getPortfolio).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: undefined }),
+    );
   });
 });
 
 describe("process-scoped reads", () => {
   it("refuses a process_manager who names another process", async () => {
-    const res = await request(appFor("process_manager"))
-      .get(`/pnl/lobs/commercial?processId=${OTHER_PROCESS}&period=2026-08`);
+    const res = await request(appFor("process_manager")).get(
+      `/pnl/lobs/commercial?processId=${OTHER_PROCESS}&period=2026-08`,
+    );
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(commercialList).not.toHaveBeenCalled();
   });
 
   it("allows a process_manager their own process", async () => {
-    const res = await request(appFor("process_manager"))
-      .get(`/pnl/lobs/commercial?processId=${OWN_PROCESS}&period=2026-08`);
+    const res = await request(appFor("process_manager")).get(
+      `/pnl/lobs/commercial?processId=${OWN_PROCESS}&period=2026-08`,
+    );
     expect(res.status).toBe(200);
     expect(commercialList).toHaveBeenCalledWith(OWN_PROCESS, "2026-08");
   });
 
   it("pins a process_manager listing plans without a processId", async () => {
-    const res = await request(appFor("process_manager")).get("/pnl/lobs/plans?period=2026-08");
+    const res = await request(appFor("process_manager")).get(
+      "/pnl/lobs/plans?period=2026-08",
+    );
     expect(res.status).toBe(200);
     expect(listPlans).toHaveBeenCalledWith("2026-08", OWN_PROCESS);
   });
@@ -144,19 +172,27 @@ describe("process-scoped reads", () => {
 
 describe("GET /vendor-payment-attribution/:paymentId", () => {
   it("refuses a branch_head the record of another branch", async () => {
-    const res = await request(appFor("branch_head")).get("/pnl/lobs/vendor-payment-attribution/p1");
-    expect(res.status, "the payment belongs to branch-B; this caller owns branch-A")
-      .toBeGreaterThanOrEqual(400);
+    const res = await request(appFor("branch_head")).get(
+      "/pnl/lobs/vendor-payment-attribution/p1",
+    );
+    expect(
+      res.status,
+      "the payment belongs to branch-B; this caller owns branch-A",
+    ).toBeGreaterThanOrEqual(400);
   });
 
   it("refuses a role with no attribution grant outright", async () => {
-    const res = await request(appFor("process_manager")).get("/pnl/lobs/vendor-payment-attribution/p1");
+    const res = await request(appFor("process_manager")).get(
+      "/pnl/lobs/vendor-payment-attribution/p1",
+    );
     expect(res.status).toBe(403);
     expect(vendorGet).not.toHaveBeenCalled();
   });
 
   it("serves a global finance role", async () => {
-    const res = await request(appFor("finance_head")).get("/pnl/lobs/vendor-payment-attribution/p1");
+    const res = await request(appFor("finance_head")).get(
+      "/pnl/lobs/vendor-payment-attribution/p1",
+    );
     expect(res.status).toBe(200);
   });
 });

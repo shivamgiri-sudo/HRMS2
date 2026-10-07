@@ -1,11 +1,21 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import {
-  setMonthlyTarget, type MonthlyTargetChange,
-  loadSpanTargetContext, spanTarget, dayTargetFrom, eachDay,
-  setDailyTarget, setDailyTargetsBulk, type DailyTargetChange,
+  setMonthlyTarget,
+  type MonthlyTargetChange,
+  loadSpanTargetContext,
+  spanTarget,
+  dayTargetFrom,
+  eachDay,
+  setDailyTarget,
+  setDailyTargetsBulk,
+  type DailyTargetChange,
 } from "./dashboard-monthly-target.shared.js";
-import { getCartTargetRows, clampToToday, type CartTargetRow } from "./bellavita-auto-targets.shared.js";
+import {
+  getCartTargetRows,
+  clampToToday,
+  type CartTargetRow,
+} from "./bellavita-auto-targets.shared.js";
 
 /** dashboard_metric_target keys for this dashboard's one editable target:
  * the monthly Abandon Cart Revenue commitment (Overview tab). Set via
@@ -95,11 +105,16 @@ export interface BellavitaCartHeadline {
 
 export interface BellavitaCartTopProduct {
   product: string;
-  baseCount: number; cartValue: number;
-  uniqueAttempted: number; uniqueConnected: number; connectedPct: number;
+  baseCount: number;
+  cartValue: number;
+  uniqueAttempted: number;
+  uniqueConnected: number;
+  connectedPct: number;
   /** null when this product's bb_cart variant_title had no exact-matching
    * bb_sale.line_item_name in range -- "not matched", not "zero sales". */
-  saleCount: number | null; revenue: number | null; aov: number | null;
+  saleCount: number | null;
+  revenue: number | null;
+  aov: number | null;
 }
 
 export interface BellavitaAllocationHeadline {
@@ -110,15 +125,25 @@ export interface BellavitaAllocationHeadline {
 
 export interface BellavitaCartTrendRow {
   date: string;
-  cartCount: number; cartValue: number;
-  connectedCount: number; uniqueCustomers: number; activeAgents: number;
-  workableCases: number; dndCases: number; ncConnectCount: number;
-  uniqueCallCount: number; uniqueCallConnectedCount: number;
-  sameDayUniqueAttempt: number; sameDayUniqueConnect: number;
+  cartCount: number;
+  cartValue: number;
+  connectedCount: number;
+  uniqueCustomers: number;
+  activeAgents: number;
+  workableCases: number;
+  dndCases: number;
+  ncConnectCount: number;
+  uniqueCallCount: number;
+  uniqueCallConnectedCount: number;
+  sameDayUniqueAttempt: number;
+  sameDayUniqueConnect: number;
   /** SUM(bb_sale.amount)/COUNT(*) for this one day, same dedup as the
    * headline's abandonCartRevenue/abandonCartSaleCount. */
-  abandonCartRevenue: number; abandonCartSaleCount: number;
-  codOrderCount: number; paidOrderCount: number; rtoOrderCount: number;
+  abandonCartRevenue: number;
+  abandonCartSaleCount: number;
+  codOrderCount: number;
+  paidOrderCount: number;
+  rtoOrderCount: number;
   /** The automatic Revenue Target for this date (Allocation x Conv Tgt % x 500) -- 0 for a date with no
    * allocation or after today; drives the date-wise/week-wise Target and Achi %. */
   revenueTarget: number;
@@ -141,9 +166,18 @@ export interface BellavitaCartDashboardData {
    * multiple days is correctly counted once per day, not once overall);
    * shown as-is rather than a misleading forced reconciliation. */
   dateWiseTrend: BellavitaCartTrendRow[];
-  dispositionBreakdown: Array<{ disposition: string; count: number; pct: number }>;
+  dispositionBreakdown: Array<{
+    disposition: string;
+    count: number;
+    pct: number;
+  }>;
   discountBreakdown: Array<{ code: string; count: number }>;
-  agents: Array<{ agent: string; cartCount: number; cartValue: number; connectedPct: number }>;
+  agents: Array<{
+    agent: string;
+    cartCount: number;
+    cartValue: number;
+    connectedPct: number;
+  }>;
   allocation: { headline: BellavitaAllocationHeadline; hasData: boolean };
   /** Top 10 products by base cart count -- see BellavitaCartTopProduct's own
    * doc comment for why this is "Products" only, not "Campaigns" (bb_cart has
@@ -158,20 +192,30 @@ export interface BellavitaCartDashboardData {
   latestAvailableDate: string | null;
 }
 
-const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
+const num = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const pct = (part: number, whole: number): number =>
+  whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-function pad2(n: number): string { return String(n).padStart(2, "0"); }
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
 
 function last30DaysRange(): { from: string; to: string } {
   const now = new Date();
   const from = new Date(now);
   from.setDate(from.getDate() - 29);
-  const f = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const f = (d: Date) =>
+    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   return { from: f(from), to: f(now) };
 }
 
-function resolveRange(fromInput: string, toInput: string): { from: string; to: string } {
+function resolveRange(
+  fromInput: string,
+  toInput: string,
+): { from: string; to: string } {
   const fallback = last30DaysRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -183,7 +227,13 @@ function resolveRange(fromInput: string, toInput: string): { from: string; to: s
  * this folder for identically-formatted date columns. */
 const CART_DATE_EXPR = "STR_TO_DATE(call_date, '%e-%b-%y')";
 
-export interface BellavitaCartSummary { from: string; to: string; totalCarts: number; workableCases: number; abandonCartSaleCount: number }
+export interface BellavitaCartSummary {
+  from: string;
+  to: string;
+  totalCarts: number;
+  workableCases: number;
+  abandonCartSaleCount: number;
+}
 
 /**
  * The three headline figures the Bellavita Overall dashboard's "Abandon Cart" box shows
@@ -193,7 +243,10 @@ export interface BellavitaCartSummary { from: string; to: string; totalCarts: nu
  * definitions: total = every bb_cart row in range, workable = disposition Connect / Not Connect,
  * sale count = deduped Sale Made orders of the 'Abandon Cart' campaign.
  */
-export async function getBellavitaCartSummary(fromInput: string, toInput: string): Promise<BellavitaCartSummary> {
+export async function getBellavitaCartSummary(
+  fromInput: string,
+  toInput: string,
+): Promise<BellavitaCartSummary> {
   const { from, to } = resolveRange(fromInput, toInput);
   const [cartRes, saleRes] = await Promise.all([
     db.execute<RowDataPacket[]>(
@@ -213,21 +266,28 @@ export async function getBellavitaCartSummary(fromInput: string, toInput: string
     ),
   ]);
   return {
-    from, to,
+    from,
+    to,
     totalCarts: num(cartRes[0][0]?.total),
     workableCases: num(cartRes[0][0]?.workable_cases),
     abandonCartSaleCount: num(saleRes[0][0]?.n),
   };
 }
 
-export async function getBellavitaCartDashboard(fromInput: string, toInput: string): Promise<BellavitaCartDashboardData> {
+export async function getBellavitaCartDashboard(
+  fromInput: string,
+  toInput: string,
+): Promise<BellavitaCartDashboardData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const range = [from, to];
 
   // The queries below are independent, so they all start now and run in parallel (they used to run one
   // after another -- about 50 s in total against bb_cart's text call_date, past the browser's 30 s limit).
   const targetEndEarly = clampToToday(to);
-  const targetRowsP: Promise<CartTargetRow[]> = targetEndEarly >= from ? getCartTargetRows(from, targetEndEarly) : Promise.resolve([]);
+  const targetRowsP: Promise<CartTargetRow[]> =
+    targetEndEarly >= from
+      ? getCartTargetRows(from, targetEndEarly)
+      : Promise.resolve([]);
 
   const headlineP = db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total, SUM(amount) AS value,
@@ -300,12 +360,12 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
     range,
   );
   const productSalesP = (async (): Promise<RowDataPacket[]> => {
-  const [topProductRows] = await topProductP;
-  const topProductNames = topProductRows.map((r) => String(r.product).trim());
-  let productSaleRows: RowDataPacket[] = [];
-  if (topProductNames.length > 0) {
-    [productSaleRows] = await db.execute<RowDataPacket[]>(
-      `SELECT s.line_item_name AS product, COUNT(*) AS n, SUM(s.amount) AS revenue
+    const [topProductRows] = await topProductP;
+    const topProductNames = topProductRows.map((r) => String(r.product).trim());
+    let productSaleRows: RowDataPacket[] = [];
+    if (topProductNames.length > 0) {
+      [productSaleRows] = await db.execute<RowDataPacket[]>(
+        `SELECT s.line_item_name AS product, COUNT(*) AS n, SUM(s.amount) AS revenue
        FROM db_masmis.bb_sale s
        INNER JOIN (
          SELECT bella_vita_order_id, MAX(id) AS keep_id
@@ -316,10 +376,10 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
        ) dk ON dk.keep_id = s.id
        WHERE TRIM(s.line_item_name) IN (${topProductNames.map(() => "?").join(",")})
        GROUP BY s.line_item_name`,
-      [from, to, ...topProductNames],
-    );
-  }
-  return productSaleRows;
+        [from, to, ...topProductNames],
+      );
+    }
+    return productSaleRows;
   })();
 
   const trendP = db.execute<RowDataPacket[]>(
@@ -395,18 +455,50 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
   );
 
   const [
-    [[headlineRow]], [[abandonSaleRow]], [topProductRows], productSaleRows, [trendRows], [revenueTrendRows],
-    [dispositionRows], [discountRows], [agentRows], [[allocRow]], targetRows,
+    [[headlineRow]],
+    [[abandonSaleRow]],
+    [topProductRows],
+    productSaleRows,
+    [trendRows],
+    [revenueTrendRows],
+    [dispositionRows],
+    [discountRows],
+    [agentRows],
+    [[allocRow]],
+    targetRows,
   ] = await Promise.all([
-    headlineP, abandonSaleP, topProductP, productSalesP, trendP, revenueTrendP, dispositionP, discountP, agentP, allocP, targetRowsP,
+    headlineP,
+    abandonSaleP,
+    topProductP,
+    productSalesP,
+    trendP,
+    revenueTrendP,
+    dispositionP,
+    discountP,
+    agentP,
+    allocP,
+    targetRowsP,
   ]);
   const productSaleByName = new Map<string, { n: number; revenue: number }>(
-    productSaleRows.map((r) => [String(r.product).trim(), { n: num(r.n), revenue: num(r.revenue) }]),
+    productSaleRows.map((r) => [
+      String(r.product).trim(),
+      { n: num(r.n), revenue: num(r.revenue) },
+    ]),
   );
-  const revenueByDate = new Map<string, { n: number; revenue: number; cod: number; paid: number; rto: number }>(
-    revenueTrendRows.map((r) => [String(r.d), {
-      n: num(r.n), revenue: num(r.revenue), cod: num(r.cod_orders), paid: num(r.paid_orders), rto: num(r.rto_orders),
-    }]),
+  const revenueByDate = new Map<
+    string,
+    { n: number; revenue: number; cod: number; paid: number; rto: number }
+  >(
+    revenueTrendRows.map((r) => [
+      String(r.d),
+      {
+        n: num(r.n),
+        revenue: num(r.revenue),
+        cod: num(r.cod_orders),
+        paid: num(r.paid_orders),
+        rto: num(r.rto_orders),
+      },
+    ]),
   );
 
   const totalCarts = num(headlineRow?.total);
@@ -434,13 +526,18 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
     ? Math.round(targetRows.reduce((n, r) => n + r.revenueTarget, 0))
     : null;
 
-  const targetByDate = new Map(targetRows.map((r) => [r.date, r.revenueTarget]));
+  const targetByDate = new Map(
+    targetRows.map((r) => [r.date, r.revenueTarget]),
+  );
 
   return {
     headline: {
       totalCarts,
       cartValue: num(headlineRow?.value),
-      aov: totalCarts > 0 ? Math.round((num(headlineRow?.value) / totalCarts) * 100) / 100 : 0,
+      aov:
+        totalCarts > 0
+          ? Math.round((num(headlineRow?.value) / totalCarts) * 100) / 100
+          : 0,
       connectedCount,
       connectedPct: pct(connectedCount, totalCarts),
       uniqueCustomers: num(headlineRow?.unique_customers),
@@ -452,7 +549,10 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
       uniqueCallConnectedPct: pct(uniqueCallConnectedCount, uniqueCallCount),
       abandonCartRevenue,
       abandonCartSaleCount,
-      abandonCartAov: abandonCartSaleCount > 0 ? Math.round((abandonCartRevenue / abandonCartSaleCount) * 100) / 100 : 0,
+      abandonCartAov:
+        abandonCartSaleCount > 0
+          ? Math.round((abandonCartRevenue / abandonCartSaleCount) * 100) / 100
+          : 0,
       target,
       achievementPct: target ? pct(abandonCartRevenue, target) : null,
       ncConnectCount: num(headlineRow?.nc_connect),
@@ -463,27 +563,49 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
       paidOrderCount: num(abandonSaleRow?.paid_orders),
       rtoOrderCount: num(abandonSaleRow?.rto_orders),
     },
-    from, to,
+    from,
+    to,
     targetMonth,
     dateWiseTrend: trendRows.map((r) => {
       const d = String(r.d);
       const revenueTarget = targetByDate.get(d) ?? 0;
       const rev = revenueByDate.get(d);
       return {
-        date: d, cartCount: num(r.cart_count), cartValue: num(r.cart_value),
-        connectedCount: num(r.connected), uniqueCustomers: num(r.unique_customers), activeAgents: num(r.active_agents),
-        workableCases: num(r.workable_cases), dndCases: num(r.dnd_cases), ncConnectCount: num(r.nc_connect),
-        uniqueCallCount: num(r.unique_call_count), uniqueCallConnectedCount: num(r.unique_call_connected),
-        sameDayUniqueAttempt: num(r.same_day_attempt), sameDayUniqueConnect: num(r.same_day_connect_real),
-        abandonCartRevenue: rev?.revenue ?? 0, abandonCartSaleCount: rev?.n ?? 0,
-        codOrderCount: rev?.cod ?? 0, paidOrderCount: rev?.paid ?? 0, rtoOrderCount: rev?.rto ?? 0,
+        date: d,
+        cartCount: num(r.cart_count),
+        cartValue: num(r.cart_value),
+        connectedCount: num(r.connected),
+        uniqueCustomers: num(r.unique_customers),
+        activeAgents: num(r.active_agents),
+        workableCases: num(r.workable_cases),
+        dndCases: num(r.dnd_cases),
+        ncConnectCount: num(r.nc_connect),
+        uniqueCallCount: num(r.unique_call_count),
+        uniqueCallConnectedCount: num(r.unique_call_connected),
+        sameDayUniqueAttempt: num(r.same_day_attempt),
+        sameDayUniqueConnect: num(r.same_day_connect_real),
+        abandonCartRevenue: rev?.revenue ?? 0,
+        abandonCartSaleCount: rev?.n ?? 0,
+        codOrderCount: rev?.cod ?? 0,
+        paidOrderCount: rev?.paid ?? 0,
+        rtoOrderCount: rev?.rto ?? 0,
         revenueTarget,
       };
     }),
-    dispositionBreakdown: dispositionRows.map((r) => ({ disposition: String(r.disposition), count: num(r.n), pct: pct(num(r.n), totalCarts) })),
-    discountBreakdown: discountRows.map((r) => ({ code: String(r.code), count: num(r.n) })),
+    dispositionBreakdown: dispositionRows.map((r) => ({
+      disposition: String(r.disposition),
+      count: num(r.n),
+      pct: pct(num(r.n), totalCarts),
+    })),
+    discountBreakdown: discountRows.map((r) => ({
+      code: String(r.code),
+      count: num(r.n),
+    })),
     agents: agentRows.map((r) => ({
-      agent: String(r.agent), cartCount: num(r.n), cartValue: num(r.value), connectedPct: pct(num(r.connected), num(r.n)),
+      agent: String(r.agent),
+      cartCount: num(r.n),
+      cartValue: num(r.value),
+      connectedPct: pct(num(r.connected), num(r.n)),
     })),
     allocation: {
       headline: {
@@ -500,11 +622,18 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
       const uniqueAttempted = num(r.unique_attempted);
       const uniqueConnected = num(r.unique_connected);
       return {
-        product, baseCount, cartValue: num(r.cart_value),
-        uniqueAttempted, uniqueConnected, connectedPct: pct(uniqueConnected, baseCount),
+        product,
+        baseCount,
+        cartValue: num(r.cart_value),
+        uniqueAttempted,
+        uniqueConnected,
+        connectedPct: pct(uniqueConnected, baseCount),
         saleCount: sale ? sale.n : null,
         revenue: sale ? sale.revenue : null,
-        aov: sale && sale.n > 0 ? Math.round((sale.revenue / sale.n) * 100) / 100 : null,
+        aov:
+          sale && sale.n > 0
+            ? Math.round((sale.revenue / sale.n) * 100) / 100
+            : null,
       };
     }),
     latestAvailableDate,
@@ -513,8 +642,18 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
 
 /** Sets the Abandon Cart Revenue target for one calendar month. See
  * dashboard-monthly-target.shared.ts's header comment for the storage model. */
-export async function setBellavitaCartMonthlyTarget(month: string, value: number, actorId: string): Promise<MonthlyTargetChange> {
-  return setMonthlyTarget(CART_DASHBOARD_CODE, CART_TARGET_METRIC, month, value, actorId);
+export async function setBellavitaCartMonthlyTarget(
+  month: string,
+  value: number,
+  actorId: string,
+): Promise<MonthlyTargetChange> {
+  return setMonthlyTarget(
+    CART_DASHBOARD_CODE,
+    CART_TARGET_METRIC,
+    month,
+    value,
+    actorId,
+  );
 }
 
 /* ---------------------------- date-wise target ------------------------------ */
@@ -545,42 +684,81 @@ export async function setBellavitaCartMonthlyTarget(month: string, value: number
 const REVENUE_PER_SALE = 500;
 const round3 = (v: number): number => Math.round(v * 1000) / 1000;
 
-export interface CartDailyTargetInput { date: string; convTgtPct: number; allocation: number }
-export interface CartDailyTargetComputed extends CartDailyTargetInput { saleTarget: number; revenueTarget: number }
+export interface CartDailyTargetInput {
+  date: string;
+  convTgtPct: number;
+  allocation: number;
+}
+export interface CartDailyTargetComputed extends CartDailyTargetInput {
+  saleTarget: number;
+  revenueTarget: number;
+}
 
 /** Pure, no DB access -- lets the frontend preview Sale Target/Revenue target
  * as an admin types, using the exact same formula the upload endpoint applies. */
-export function computeCartDailyTargets(rows: CartDailyTargetInput[]): CartDailyTargetComputed[] {
+export function computeCartDailyTargets(
+  rows: CartDailyTargetInput[],
+): CartDailyTargetComputed[] {
   return rows.map((r) => {
     const saleTarget = round3(r.allocation * (r.convTgtPct / 100));
-    return { ...r, saleTarget, revenueTarget: Math.round(saleTarget * REVENUE_PER_SALE) };
+    return {
+      ...r,
+      saleTarget,
+      revenueTarget: Math.round(saleTarget * REVENUE_PER_SALE),
+    };
   });
 }
 
 function validateDailyTargetInputs(rows: CartDailyTargetInput[]): void {
   if (rows.length === 0) throw new Error("No rows to upload");
-  if (rows.length > 400) throw new Error("Too many rows in one upload (max 400)");
+  if (rows.length > 400)
+    throw new Error("Too many rows in one upload (max 400)");
   for (const r of rows) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) throw new Error(`Invalid date: "${r.date}" (expected YYYY-MM-DD)`);
-    if (!Number.isFinite(r.convTgtPct) || r.convTgtPct < 0 || r.convTgtPct > 100) throw new Error(`Conv Tgt% must be 0-100 for ${r.date}`);
-    if (!Number.isFinite(r.allocation) || r.allocation < 0) throw new Error(`Allocation must be a non-negative number for ${r.date}`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date))
+      throw new Error(`Invalid date: "${r.date}" (expected YYYY-MM-DD)`);
+    if (
+      !Number.isFinite(r.convTgtPct) ||
+      r.convTgtPct < 0 ||
+      r.convTgtPct > 100
+    )
+      throw new Error(`Conv Tgt% must be 0-100 for ${r.date}`);
+    if (!Number.isFinite(r.allocation) || r.allocation < 0)
+      throw new Error(`Allocation must be a non-negative number for ${r.date}`);
   }
 }
 
 /** The "upload" path: Date/Conv Tgt%/Allocation rows in, computed Sale
  * Target/Revenue target out, with Revenue target persisted as each date's
  * daily target. Every row is validated before anything is written. */
-export async function uploadBellavitaCartDailyTargets(rows: CartDailyTargetInput[], actorId: string): Promise<CartDailyTargetComputed[]> {
+export async function uploadBellavitaCartDailyTargets(
+  rows: CartDailyTargetInput[],
+  actorId: string,
+): Promise<CartDailyTargetComputed[]> {
   validateDailyTargetInputs(rows);
   const computed = computeCartDailyTargets(rows);
-  await setDailyTargetsBulk(CART_DASHBOARD_CODE, CART_TARGET_METRIC, computed.map((c) => ({ date: c.date, value: c.revenueTarget })), actorId);
+  await setDailyTargetsBulk(
+    CART_DASHBOARD_CODE,
+    CART_TARGET_METRIC,
+    computed.map((c) => ({ date: c.date, value: c.revenueTarget })),
+    actorId,
+  );
   return computed;
 }
 
 /** A quick single-date override, bypassing the Conv Tgt%/Allocation formula
  * -- for correcting one day's Revenue target directly without re-deriving it. */
-export async function setBellavitaCartDailyTarget(date: string, value: number, actorId: string): Promise<DailyTargetChange> {
-  return setDailyTarget(CART_DASHBOARD_CODE, CART_TARGET_METRIC, date, value, actorId);
+export async function setBellavitaCartDailyTarget(
+  date: string,
+  value: number,
+  actorId: string,
+): Promise<DailyTargetChange> {
+  return setDailyTarget(
+    CART_DASHBOARD_CODE,
+    CART_TARGET_METRIC,
+    date,
+    value,
+    actorId,
+  );
 }
 
 export interface CartDailyTargetRow {
@@ -604,12 +782,16 @@ export interface CartDailyTargetRow {
  * campaign = 'Abandon Cart', calling_status = 'Sale Made', one row per order) so it reads as
  * Target vs Actual. Dates with no allocation yet show 0, exactly like the reference sheet.
  */
-export async function getBellavitaCartDailyTargets(fromInput: string, toInput: string): Promise<{ from: string; to: string; rows: CartDailyTargetRow[] }> {
+export async function getBellavitaCartDailyTargets(
+  fromInput: string,
+  toInput: string,
+): Promise<{ from: string; to: string; rows: CartDailyTargetRow[] }> {
   const { from, to } = resolveRange(fromInput, toInput);
   const [targetRows, revenueRows] = await Promise.all([
     getCartTargetRows(from, to),
-    db.execute<RowDataPacket[]>(
-      `SELECT DATE(s.\`Date\`) AS d, SUM(s.amount) AS revenue
+    db
+      .execute<RowDataPacket[]>(
+        `SELECT DATE(s.\`Date\`) AS d, SUM(s.amount) AS revenue
        FROM db_masmis.bb_sale s
        INNER JOIN (
          SELECT bella_vita_order_id, MAX(id) AS keep_id
@@ -619,18 +801,28 @@ export async function getBellavitaCartDailyTargets(fromInput: string, toInput: s
          GROUP BY bella_vita_order_id
        ) dk ON dk.keep_id = s.id
        GROUP BY DATE(s.\`Date\`)`,
-      [from, to],
-    ).then(([rows]) => rows),
+        [from, to],
+      )
+      .then(([rows]) => rows),
   ]);
   const revenueByDate = new Map<string, number>();
-  for (const r of revenueRows) revenueByDate.set(String(r.d), Number(r.revenue) || 0);
+  for (const r of revenueRows)
+    revenueByDate.set(String(r.d), Number(r.revenue) || 0);
   const rows: CartDailyTargetRow[] = targetRows.map((t) => {
     const actualRevenue = revenueByDate.get(t.date) ?? 0;
     const hasTarget = t.convTgtPct !== null && t.revenueTarget > 0;
     return {
-      date: t.date, target: t.convTgtPct === null ? null : t.revenueTarget, source: t.convTgtPct === null ? "none" : "auto", actualRevenue,
-      convTgtPct: t.convTgtPct, allocation: t.allocation, saleTarget: t.saleTarget, revenueTarget: t.revenueTarget,
-      achievementPct: hasTarget ? Math.round((actualRevenue / t.revenueTarget) * 1000) / 10 : null,
+      date: t.date,
+      target: t.convTgtPct === null ? null : t.revenueTarget,
+      source: t.convTgtPct === null ? "none" : "auto",
+      actualRevenue,
+      convTgtPct: t.convTgtPct,
+      allocation: t.allocation,
+      saleTarget: t.saleTarget,
+      revenueTarget: t.revenueTarget,
+      achievementPct: hasTarget
+        ? Math.round((actualRevenue / t.revenueTarget) * 1000) / 10
+        : null,
     };
   });
   return { from, to, rows };

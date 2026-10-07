@@ -8,7 +8,7 @@ import { performanceFeedbackController as c } from "./performance-feedback.contr
 import {
   getEmployeeQualityMetrics,
   getEmployeeQualityTrend,
-  getTeamQualityMetrics
+  getTeamQualityMetrics,
 } from "./quality-data.service.js";
 import { importQualityRows } from "./quality-upload.service.js";
 
@@ -16,7 +16,10 @@ const router = Router();
 
 // Helper to wrap async route handlers
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 // Apply authentication middleware to all routes
 router.use(requireAuth);
@@ -29,7 +32,11 @@ router.patch("/cycles/:id", requireRole("admin", "hr"), h(c.updateCycle));
 router.post("/cycles/:id/close", requireRole("admin", "hr"), h(c.closeCycle));
 
 // ================== Request Management (4 routes) ==================
-router.post("/cycles/:cycleId/launch", requireRole("admin", "hr"), h(c.launchCycle));
+router.post(
+  "/cycles/:cycleId/launch",
+  requireRole("admin", "hr"),
+  h(c.launchCycle),
+);
 router.get("/requests", h(c.getRequests));
 router.get("/requests/:id", h(c.getRequestById));
 router.delete("/requests/:id", requireRole("admin", "hr"), h(c.deleteRequest));
@@ -37,27 +44,55 @@ router.delete("/requests/:id", requireRole("admin", "hr"), h(c.deleteRequest));
 // ================== Competency Management (4 routes) ==================
 router.get("/competencies", h(c.getCompetencies));
 router.post("/competencies", requireRole("admin", "hr"), h(c.createCompetency));
-router.patch("/competencies/:id", requireRole("admin", "hr"), h(c.updateCompetency));
-router.delete("/competencies/:id", requireRole("admin", "hr"), h(c.deactivateCompetency));
+router.patch(
+  "/competencies/:id",
+  requireRole("admin", "hr"),
+  h(c.updateCompetency),
+);
+router.delete(
+  "/competencies/:id",
+  requireRole("admin", "hr"),
+  h(c.deactivateCompetency),
+);
 
 // ================== Feedback Submission (2 routes) ==================
 router.get("/requests/:id/form", h(c.getFormTemplate));
 router.post("/requests/:id/submit", h(c.submitFeedback));
 
 // ================== Report & Development Plans (9 routes) ==================
-router.post("/requests/:id/report", requireRole("admin", "hr"), h(c.generateReport));
+router.post(
+  "/requests/:id/report",
+  requireRole("admin", "hr"),
+  h(c.generateReport),
+);
 router.get("/reports", h(c.getReports));
 router.get("/reports/:id", h(c.getReportById));
-router.post("/development-plans", requireRole("admin", "hr", "manager"), h(c.createDevelopmentPlan));
+router.post(
+  "/development-plans",
+  requireRole("admin", "hr", "manager"),
+  h(c.createDevelopmentPlan),
+);
 router.get("/development-plans", h(c.getDevelopmentPlans));
 router.get("/development-plans/:id", h(c.getDevelopmentPlanById));
-router.patch("/development-plans/:id", requireRole("admin", "hr", "manager"), h(c.updateDevelopmentPlan));
+router.patch(
+  "/development-plans/:id",
+  requireRole("admin", "hr", "manager"),
+  h(c.updateDevelopmentPlan),
+);
 // Had no requireRole at all — the frontend (NativePerformanceFeedbackDevelopmentPlan.tsx)
 // gates its Start/Mark-Complete buttons behind isManager client-side only, but the route
 // accepted the PATCH from any authenticated user. Matched to the sibling create route's
 // role list. Fixed 2026-09-01.
-router.patch("/development-plans/:planId/goals/:goalId", requireRole("admin", "hr", "manager"), h(c.updateGoal));
-router.delete("/development-plans/:id", requireRole("admin", "hr"), h(c.deleteDevelopmentPlan));
+router.patch(
+  "/development-plans/:planId/goals/:goalId",
+  requireRole("admin", "hr", "manager"),
+  h(c.updateGoal),
+);
+router.delete(
+  "/development-plans/:id",
+  requireRole("admin", "hr"),
+  h(c.deleteDevelopmentPlan),
+);
 
 // ================== Quality Data Integration (3 routes) ==================
 // These three read call-audit quality scores for arbitrary employee codes — the two
@@ -77,7 +112,15 @@ router.delete("/development-plans/:id", requireRole("admin", "hr"), h(c.deleteDe
 // decision (which relationship defines "my team") rather than a mechanical change, and no
 // caller exists yet to model it on — no frontend calls any of the three; the /quality/team
 // path in the router is a UI route that redirects to /quality-dashboard, not this API.
-const QUALITY_READ_ROLES = ["admin", "hr", "qa", "manager", "process_manager", "branch_head", "team_leader"] as const;
+const QUALITY_READ_ROLES = [
+  "admin",
+  "hr",
+  "qa",
+  "manager",
+  "process_manager",
+  "branch_head",
+  "team_leader",
+] as const;
 
 // Row scope, closing the residual the role guard above deliberately left open.
 //
@@ -88,7 +131,12 @@ const QUALITY_READ_ROLES = ["admin", "hr", "qa", "manager", "process_manager", "
 // alone would 403 real managers; relying on the manager link alone would lock out
 // branch/process owners who do not directly manage the people in their scope.
 const QUALITY_GLOBAL_ROLES = ["admin", "hr", "qa"];
-const QUALITY_SCOPED_ROLES = ["manager", "process_manager", "branch_head", "team_leader"];
+const QUALITY_SCOPED_ROLES = [
+  "manager",
+  "process_manager",
+  "branch_head",
+  "team_leader",
+];
 
 /**
  * Returns the subset of employee codes the caller may NOT read. Fail-closed: a code that
@@ -96,10 +144,16 @@ const QUALITY_SCOPED_ROLES = ["manager", "process_manager", "branch_head", "team
  * database is keyed on its own `User` column and would otherwise answer for a code that
  * exists there but not in mas_hrms.
  */
-async function deniedQualityCodes(userId: string, codes: string[]): Promise<string[]> {
-  const wanted = [...new Set(codes.map((x) => String(x).trim()).filter(Boolean))];
+async function deniedQualityCodes(
+  userId: string,
+  codes: string[],
+): Promise<string[]> {
+  const wanted = [
+    ...new Set(codes.map((x) => String(x).trim()).filter(Boolean)),
+  ];
   if (wanted.length === 0) return [];
-  if (await hasAnyRole(userId, "super_admin", ...QUALITY_GLOBAL_ROLES)) return [];
+  if (await hasAnyRole(userId, "super_admin", ...QUALITY_GLOBAL_ROLES))
+    return [];
 
   const ph = wanted.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -113,11 +167,20 @@ async function deniedQualityCodes(userId: string, codes: string[]): Promise<stri
   const allowed = new Set<string>();
   for (const r of rows as any[]) {
     const code = String(r.employee_code);
-    if (r.caller_emp_id && r.reporting_manager_id && r.reporting_manager_id === r.caller_emp_id) {
+    if (
+      r.caller_emp_id &&
+      r.reporting_manager_id &&
+      r.reporting_manager_id === r.caller_emp_id
+    ) {
       allowed.add(code);
       continue;
     }
-    if (await hasScopedAccess(userId, QUALITY_SCOPED_ROLES, { branchId: r.branch_id, processId: r.process_id })) {
+    if (
+      await hasScopedAccess(userId, QUALITY_SCOPED_ROLES, {
+        branchId: r.branch_id,
+        processId: r.process_id,
+      })
+    ) {
       allowed.add(code);
     }
   }
@@ -125,93 +188,141 @@ async function deniedQualityCodes(userId: string, codes: string[]): Promise<stri
 }
 
 // GET /api/performance-feedback/quality/:employeeCode - Get quality metrics for employee
-router.get("/quality/:employeeCode", requireRole(...QUALITY_READ_ROLES), h(async (req: any, res: any) => {
-  const { employeeCode } = req.params;
-  const { startDate, endDate } = req.query;
+router.get(
+  "/quality/:employeeCode",
+  requireRole(...QUALITY_READ_ROLES),
+  h(async (req: any, res: any) => {
+    const { employeeCode } = req.params;
+    const { startDate, endDate } = req.query;
 
-  if (!startDate || !endDate) {
-    return res.status(400).json({
-      success: false,
-      error: "startDate and endDate query parameters are required"
-    });
-  }
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: "startDate and endDate query parameters are required",
+      });
+    }
 
-  if ((await deniedQualityCodes(req.authUser!.id, [employeeCode])).length > 0) {
-    return res.status(403).json({ success: false, error: "Forbidden: employee is outside your scope" });
-  }
+    if (
+      (await deniedQualityCodes(req.authUser!.id, [employeeCode])).length > 0
+    ) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "Forbidden: employee is outside your scope",
+        });
+    }
 
-  const metrics = await getEmployeeQualityMetrics(employeeCode, startDate, endDate);
+    const metrics = await getEmployeeQualityMetrics(
+      employeeCode,
+      startDate,
+      endDate,
+    );
 
-  if (!metrics) {
-    return res.status(404).json({
-      success: false,
-      error: "No quality data found for this employee in the specified period"
-    });
-  }
+    if (!metrics) {
+      return res.status(404).json({
+        success: false,
+        error:
+          "No quality data found for this employee in the specified period",
+      });
+    }
 
-  return res.json({ success: true, data: metrics });
-}));
+    return res.json({ success: true, data: metrics });
+  }),
+);
 
 // GET /api/performance-feedback/quality/:employeeCode/trend - Get quality trend
-router.get("/quality/:employeeCode/trend", requireRole(...QUALITY_READ_ROLES), h(async (req: any, res: any) => {
-  const { employeeCode } = req.params;
-  const { startDate, endDate } = req.query;
+router.get(
+  "/quality/:employeeCode/trend",
+  requireRole(...QUALITY_READ_ROLES),
+  h(async (req: any, res: any) => {
+    const { employeeCode } = req.params;
+    const { startDate, endDate } = req.query;
 
-  if (!startDate || !endDate) {
-    return res.status(400).json({
-      success: false,
-      error: "startDate and endDate query parameters are required"
-    });
-  }
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: "startDate and endDate query parameters are required",
+      });
+    }
 
-  if ((await deniedQualityCodes(req.authUser!.id, [employeeCode])).length > 0) {
-    return res.status(403).json({ success: false, error: "Forbidden: employee is outside your scope" });
-  }
+    if (
+      (await deniedQualityCodes(req.authUser!.id, [employeeCode])).length > 0
+    ) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "Forbidden: employee is outside your scope",
+        });
+    }
 
-  const trend = await getEmployeeQualityTrend(employeeCode, startDate, endDate);
+    const trend = await getEmployeeQualityTrend(
+      employeeCode,
+      startDate,
+      endDate,
+    );
 
-  return res.json({ success: true, data: trend });
-}));
+    return res.json({ success: true, data: trend });
+  }),
+);
 
 // POST /api/performance-feedback/quality/team - Get quality metrics for multiple employees
-router.post("/quality/team", requireRole(...QUALITY_READ_ROLES), h(async (req: any, res: any) => {
-  const { employeeCodes, startDate, endDate } = req.body;
+router.post(
+  "/quality/team",
+  requireRole(...QUALITY_READ_ROLES),
+  h(async (req: any, res: any) => {
+    const { employeeCodes, startDate, endDate } = req.body;
 
-  if (!employeeCodes || !Array.isArray(employeeCodes) || !startDate || !endDate) {
-    return res.status(400).json({
-      success: false,
-      error: "employeeCodes (array), startDate, and endDate are required"
-    });
-  }
+    if (
+      !employeeCodes ||
+      !Array.isArray(employeeCodes) ||
+      !startDate ||
+      !endDate
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "employeeCodes (array), startDate, and endDate are required",
+      });
+    }
 
-  // Refuse the whole request rather than silently returning a subset: a team scorecard
-  // quietly missing three people reads as "those three have no audits", which is exactly
-  // the kind of silent wrongness this codebase keeps producing. Name the count so the
-  // caller can correct the list.
-  const denied = await deniedQualityCodes(req.authUser!.id, employeeCodes);
-  if (denied.length > 0) {
-    return res.status(403).json({
-      success: false,
-      error: `Forbidden: ${denied.length} of ${employeeCodes.length} requested employees are outside your scope`,
-    });
-  }
+    // Refuse the whole request rather than silently returning a subset: a team scorecard
+    // quietly missing three people reads as "those three have no audits", which is exactly
+    // the kind of silent wrongness this codebase keeps producing. Name the count so the
+    // caller can correct the list.
+    const denied = await deniedQualityCodes(req.authUser!.id, employeeCodes);
+    if (denied.length > 0) {
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: ${denied.length} of ${employeeCodes.length} requested employees are outside your scope`,
+      });
+    }
 
-  const metrics = await getTeamQualityMetrics(employeeCodes, startDate, endDate);
+    const metrics = await getTeamQualityMetrics(
+      employeeCodes,
+      startDate,
+      endDate,
+    );
 
-  return res.json({ success: true, data: metrics });
-}));
+    return res.json({ success: true, data: metrics });
+  }),
+);
 
 // POST /api/performance-feedback/quality/upload — batch import quality audit rows
-router.post("/quality/upload", requireRole("admin", "hr", "qa"), h(async (req: any, res: any) => {
-  const rows = req.body?.rows;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({
-      success: false,
-      error: "Body must contain a non-empty `rows` array of quality records",
-    });
-  }
-  const result = await importQualityRows(rows, req.authUser?.id ?? "system");
-  return res.json({ success: true, data: result });
-}));
+router.post(
+  "/quality/upload",
+  requireRole("admin", "hr", "qa"),
+  h(async (req: any, res: any) => {
+    const rows = req.body?.rows;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Body must contain a non-empty `rows` array of quality records",
+      });
+    }
+    const result = await importQualityRows(rows, req.authUser?.id ?? "system");
+    return res.json({ success: true, data: result });
+  }),
+);
 
 export { router as performanceFeedbackRouter };

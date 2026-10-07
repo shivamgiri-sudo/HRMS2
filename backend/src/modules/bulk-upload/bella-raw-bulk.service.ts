@@ -11,7 +11,10 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getBellaPool } from "../../db/bellaDb.js";
-import { BELLA_REPORT_CONFIGS, type BellaReportConfig } from "./bella-report-configs.js";
+import {
+  BELLA_REPORT_CONFIGS,
+  type BellaReportConfig,
+} from "./bella-report-configs.js";
 
 interface BatchRow extends RowDataPacket {
   id: string;
@@ -23,13 +26,24 @@ interface BatchRow extends RowDataPacket {
 // bella_db in the low hundreds for a day's file instead of the low thousands at 200.
 const CHUNK_SIZE = 500;
 const MONTHS: Record<string, number> = {
-  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
 };
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  for (let i = 0; i < items.length; i += size)
+    out.push(items.slice(i, i + size));
   return out;
 }
 
@@ -47,12 +61,15 @@ function parseFlexibleDate(raw: unknown): string | null {
   if (dMonY) {
     const month = MONTHS[dMonY[2].toLowerCase()];
     if (month) {
-      const year = dMonY[3].length === 2 ? 2000 + Number(dMonY[3]) : Number(dMonY[3]);
+      const year =
+        dMonY[3].length === 2 ? 2000 + Number(dMonY[3]) : Number(dMonY[3]);
       return `${year}-${String(month).padStart(2, "0")}-${dMonY[1].padStart(2, "0")}`;
     }
   }
 
-  const mdY = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+\d{1,2}:\d{2})?/.exec(value);
+  const mdY = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+\d{1,2}:\d{2})?/.exec(
+    value,
+  );
   if (mdY) {
     const year = mdY[3].length === 2 ? 2000 + Number(mdY[3]) : Number(mdY[3]);
     return `${year}-${mdY[1].padStart(2, "0")}-${mdY[2].padStart(2, "0")}`;
@@ -87,17 +104,28 @@ function parseFloatValue(raw: unknown): number | null {
 }
 
 function parseBoolYesNo(raw: unknown): 0 | 1 | null {
-  const value = String(raw ?? "").trim().toLowerCase();
+  const value = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   if (!value) return null;
-  return value === "yes" || value === "y" || value === "true" || value === "1" ? 1 : 0;
+  return value === "yes" || value === "y" || value === "true" || value === "1"
+    ? 1
+    : 0;
 }
 
-function coerce(type: "string" | "date" | "int" | "float" | "bool_yes_no", raw: unknown): unknown {
+function coerce(
+  type: "string" | "date" | "int" | "float" | "bool_yes_no",
+  raw: unknown,
+): unknown {
   switch (type) {
-    case "date": return parseFlexibleDate(raw);
-    case "int": return parseInt10(raw);
-    case "float": return parseFloatValue(raw);
-    case "bool_yes_no": return parseBoolYesNo(raw);
+    case "date":
+      return parseFlexibleDate(raw);
+    case "int":
+      return parseInt10(raw);
+    case "float":
+      return parseFloatValue(raw);
+    case "bool_yes_no":
+      return parseBoolYesNo(raw);
     default: {
       const s = String(raw ?? "").trim();
       return s === "" ? null : s.slice(0, 500);
@@ -108,13 +136,13 @@ function coerce(type: "string" | "date" | "int" | "float" | "bool_yes_no", raw: 
 export async function importBellaRawBatch(
   config: BellaReportConfig,
   batchId: string,
-  _importedByUserId: string
+  _importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
   const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
       ORDER BY row_no`,
-    [batchId]
+    [batchId],
   );
 
   if (batchRows.length === 0) {
@@ -123,7 +151,14 @@ export async function importBellaRawBatch(
 
   const bellaPool = await getBellaPool();
   const extractColumns = config.extract.map((e) => e.column);
-  const insertColumns = ["id", ...extractColumns, "raw_data", "upload_batch_id", "source_row_no", "uploaded_by"];
+  const insertColumns = [
+    "id",
+    ...extractColumns,
+    "raw_data",
+    "upload_batch_id",
+    "source_row_no",
+    "uploaded_by",
+  ];
   const placeholderOne = `(${insertColumns.map(() => "?").join(",")})`;
   const updateClause = extractColumns
     .map((c) => `${c} = COALESCE(VALUES(${c}), ${c})`)
@@ -163,13 +198,17 @@ export async function importBellaRawBatch(
     // below) does not apply to these: every row already carries all key fields.
     const rawDedupValue = config.dedupHeaders
       ? (() => {
-          const parts = config.dedupHeaders!.map((h) => String(data[h] ?? "").trim());
+          const parts = config.dedupHeaders!.map((h) =>
+            String(data[h] ?? "").trim(),
+          );
           return parts.every((p) => p !== "") ? parts.join("|") : "";
         })()
       : String(data[config.dedupHeader!] ?? "").trim();
     const dedupValue = rawDedupValue || lastDedupValue;
     if (!dedupValue) {
-      const keyLabel = config.dedupHeaders ? config.dedupHeaders.join(" + ") : config.dedupHeader;
+      const keyLabel = config.dedupHeaders
+        ? config.dedupHeaders.join(" + ")
+        : config.dedupHeader;
       const msg = `Row ${row.row_no}: "${keyLabel}" is required to dedupe this record`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
@@ -179,19 +218,32 @@ export async function importBellaRawBatch(
     lastDedupValue = dedupValue;
 
     const extractValues = config.extract.map((e) =>
-      e.column === config.dedupColumn ? coerce(e.type, dedupValue) : coerce(e.type, data[e.header])
+      e.column === config.dedupColumn
+        ? coerce(e.type, dedupValue)
+        : coerce(e.type, data[e.header]),
     );
     // id derives from the natural key (plus an occurrence suffix for a forward-filled
     // group) so a re-upload of an overlapping day upserts rather than duplicates, without a
     // round trip to look up an existing row first.
     const occurrence = (occurrenceByDedupValue.get(dedupValue) ?? 0) + 1;
     occurrenceByDedupValue.set(dedupValue, occurrence);
-    const id = `${config.table}:${dedupValue}${occurrence > 1 ? `:${occurrence}` : ""}`.slice(0, 191);
+    const id =
+      `${config.table}:${dedupValue}${occurrence > 1 ? `:${occurrence}` : ""}`.slice(
+        0,
+        191,
+      );
 
     prepared.push({
       rowId: row.id,
       rowNo: row.row_no,
-      values: [id, ...extractValues, JSON.stringify(data), batchId, row.row_no, _importedByUserId],
+      values: [
+        id,
+        ...extractValues,
+        JSON.stringify(data),
+        batchId,
+        row.row_no,
+        _importedByUserId,
+      ],
     });
   }
 
@@ -217,7 +269,7 @@ export async function importBellaRawBatch(
             `INSERT INTO ${config.table} (${insertColumns.join(",")})
              VALUES ${placeholderOne}
              ON DUPLICATE KEY UPDATE ${updateClause}`,
-            r.values as any
+            r.values as any,
           );
           importedRowIds.push(r.rowId);
           importedRows++;
@@ -245,31 +297,40 @@ export async function importBellaRawBatch(
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'imported'
        WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
-      importedRowIds
+      importedRowIds,
     );
   }
   if (errorUpdates.length > 0) {
     const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
-    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+    const caseParams = errorUpdates.flatMap((u) => [
+      u.rowId,
+      JSON.stringify([u.message]),
+    ]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids]
+      [...caseParams, ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId]
+    [finalStatus, importedRows, errorRows, batchId],
   );
 
   return { importedRows, errorRows, errors };
 }
 
-export function findBellaConfig(rpcName: string): BellaReportConfig | undefined {
+export function findBellaConfig(
+  rpcName: string,
+): BellaReportConfig | undefined {
   return BELLA_REPORT_CONFIGS.find((c) => c.rpcName === rpcName);
 }

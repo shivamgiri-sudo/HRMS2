@@ -27,14 +27,26 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Who may write at all. Row scope is then checked per process, below. */
 const WRITER_ROLES = [
-  "super_admin", "admin", "process_manager", "operations_manager",
+  "super_admin",
+  "admin",
+  "process_manager",
+  "operations_manager",
 ];
 
 /** Is this process inside the caller's own scope? A predicate, not UI state. */
-export async function assertProcessWritable(userId: string, processId: string): Promise<boolean> {
-  const scope = await buildScopeWhereClause(userId, WRITER_ROLES, {
-    processId: "p.id", branchId: "p.branch_id",
-  }, { allowAdminBypass: true });
+export async function assertProcessWritable(
+  userId: string,
+  processId: string,
+): Promise<boolean> {
+  const scope = await buildScopeWhereClause(
+    userId,
+    WRITER_ROLES,
+    {
+      processId: "p.id",
+      branchId: "p.branch_id",
+    },
+    { allowAdminBypass: true },
+  );
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT p.id FROM process_master p WHERE p.id = ? AND (${scope.sql}) LIMIT 1`,
     [processId, ...scope.params],
@@ -44,7 +56,8 @@ export async function assertProcessWritable(userId: string, processId: string): 
 
 async function processCodeFor(processId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT process_code FROM process_master WHERE id = ? LIMIT 1`, [processId],
+    `SELECT process_code FROM process_master WHERE id = ? LIMIT 1`,
+    [processId],
   );
   return rows.length ? String(rows[0].process_code) : null;
 }
@@ -102,7 +115,8 @@ export async function assertManualMetricValueValid(input: {
   metricKey: string;
   scoreDate: string;
 }): Promise<void> {
-  if (!ISO_DATE.test(input.scoreDate)) throw new Error("Date must be YYYY-MM-DD");
+  if (!ISO_DATE.test(input.scoreDate))
+    throw new Error("Date must be YYYY-MM-DD");
 
   const processCode = await processCodeFor(input.processId);
   if (!processCode) throw new Error("Unknown process");
@@ -143,8 +157,13 @@ export async function saveManualMetricValue(input: {
        note                 = VALUES(note),
        created_by           = VALUES(created_by)`,
     [
-      randomUUID(), input.processId, input.metricKey, input.scoreDate,
-      input.value, input.note?.trim() || null, input.userId,
+      randomUUID(),
+      input.processId,
+      input.metricKey,
+      input.scoreDate,
+      input.value,
+      input.note?.trim() || null,
+      input.userId,
     ],
   );
   return { ok: true };
@@ -159,7 +178,9 @@ export interface ProcessMetricRow {
 }
 
 export async function listProcessMetricValues(
-  processId: string, from: string, to: string,
+  processId: string,
+  from: string,
+  to: string,
 ): Promise<ProcessMetricRow[]> {
   // DATE_FORMAT, not the bare column: mysql2 returns a DATE as a JS Date whose
   // toString is "Fri Aug 01 2026 ...", which has already produced one live bug
@@ -247,7 +268,10 @@ export async function importMetricRows(input: {
         [input.processId],
       );
       for (const row of rows as any[]) {
-        existing.set(`${row.metric_key}|${row.d}`, row.actual_value === null ? null : Number(row.actual_value));
+        existing.set(
+          `${row.metric_key}|${row.d}`,
+          row.actual_value === null ? null : Number(row.actual_value),
+        );
       }
     } catch {
       /* hints only */
@@ -259,7 +283,10 @@ export async function importMetricRows(input: {
     const raw = row?.value;
     const trimmed = typeof raw === "string" ? raw.trim() : raw;
     const value =
-      trimmed === "" || trimmed === null || trimmed === undefined || Number.isNaN(Number(trimmed))
+      trimmed === "" ||
+      trimmed === null ||
+      trimmed === undefined ||
+      Number.isNaN(Number(trimmed))
         ? null
         : Number(trimmed);
     const metricKey = String(row?.metricKey ?? "").trim();
@@ -279,7 +306,7 @@ export async function importMetricRows(input: {
           scoreDate,
           value,
           ok: true,
-          replaces: existing.has(key) ? existing.get(key) ?? null : undefined,
+          replaces: existing.has(key) ? (existing.get(key) ?? null) : undefined,
         });
       } else {
         await saveManualMetricValue({
@@ -290,16 +317,34 @@ export async function importMetricRows(input: {
           value,
           note: row?.note ?? null,
         });
-        outcomes.push({ row: index + 1, metricKey, scoreDate, value, ok: true });
+        outcomes.push({
+          row: index + 1,
+          metricKey,
+          scoreDate,
+          value,
+          ok: true,
+        });
       }
       imported++;
     } catch (err) {
       const message = (err as Error).message;
       errors.push({ row: index + 1, message });
-      outcomes.push({ row: index + 1, metricKey, scoreDate, value, ok: false, message });
+      outcomes.push({
+        row: index + 1,
+        metricKey,
+        scoreDate,
+        value,
+        ok: false,
+        message,
+      });
     }
   }
-  return { imported: input.dryRun ? 0 : imported, errors, outcomes, dryRun: Boolean(input.dryRun) };
+  return {
+    imported: input.dryRun ? 0 : imported,
+    errors,
+    outcomes,
+    dryRun: Boolean(input.dryRun),
+  };
 }
 
 /**
@@ -323,7 +368,8 @@ async function assertEmployeeMetricValueValid(input: {
   employeeCode: string;
   scoreDate: string;
 }): Promise<{ employeeId: string }> {
-  if (!ISO_DATE.test(input.scoreDate)) throw new Error("Date must be YYYY-MM-DD");
+  if (!ISO_DATE.test(input.scoreDate))
+    throw new Error("Date must be YYYY-MM-DD");
 
   const [defRows] = await db.execute<RowDataPacket[]>(
     `SELECT ds.process_key_kind
@@ -348,7 +394,9 @@ async function assertEmployeeMetricValueValid(input: {
   );
   const employeeId = (empRows as any[])[0]?.id;
   if (!employeeId) {
-    throw new Error(`${input.employeeCode} is not an employee of this process.`);
+    throw new Error(
+      `${input.employeeCode} is not an employee of this process.`,
+    );
   }
   return { employeeId: String(employeeId) };
 }
@@ -374,8 +422,14 @@ export async function saveEmployeeMetricValue(input: {
        note         = VALUES(note),
        created_by   = VALUES(created_by)`,
     [
-      randomUUID(), input.processId, employeeId, input.metricKey, input.scoreDate,
-      input.value, input.note?.trim() || null, input.userId,
+      randomUUID(),
+      input.processId,
+      employeeId,
+      input.metricKey,
+      input.scoreDate,
+      input.value,
+      input.note?.trim() || null,
+      input.userId,
     ],
   );
   return { ok: true };
@@ -422,7 +476,10 @@ export async function importEmployeeMetricRows(input: {
     const raw = row?.value;
     const trimmed = typeof raw === "string" ? raw.trim() : raw;
     const value =
-      trimmed === "" || trimmed === null || trimmed === undefined || Number.isNaN(Number(trimmed))
+      trimmed === "" ||
+      trimmed === null ||
+      trimmed === undefined ||
+      Number.isNaN(Number(trimmed))
         ? null
         : Number(trimmed);
     const employeeCode = String(row?.employeeCode ?? "").trim();
@@ -431,22 +488,54 @@ export async function importEmployeeMetricRows(input: {
     try {
       if (input.dryRun) {
         await assertEmployeeMetricValueValid({
-          processId: input.processId, metricKey: input.metricKey, employeeCode, scoreDate,
+          processId: input.processId,
+          metricKey: input.metricKey,
+          employeeCode,
+          scoreDate,
         });
-        outcomes.push({ row: index + 1, employeeCode, scoreDate, value, ok: true });
+        outcomes.push({
+          row: index + 1,
+          employeeCode,
+          scoreDate,
+          value,
+          ok: true,
+        });
       } else {
         await saveEmployeeMetricValue({
-          userId: input.userId, processId: input.processId, metricKey: input.metricKey,
-          employeeCode, scoreDate, value, note: row?.note ?? null,
+          userId: input.userId,
+          processId: input.processId,
+          metricKey: input.metricKey,
+          employeeCode,
+          scoreDate,
+          value,
+          note: row?.note ?? null,
         });
-        outcomes.push({ row: index + 1, employeeCode, scoreDate, value, ok: true });
+        outcomes.push({
+          row: index + 1,
+          employeeCode,
+          scoreDate,
+          value,
+          ok: true,
+        });
       }
       imported++;
     } catch (err) {
       const message = (err as Error).message;
       errors.push({ row: index + 1, message });
-      outcomes.push({ row: index + 1, employeeCode, scoreDate, value, ok: false, message });
+      outcomes.push({
+        row: index + 1,
+        employeeCode,
+        scoreDate,
+        value,
+        ok: false,
+        message,
+      });
     }
   }
-  return { imported: input.dryRun ? 0 : imported, errors, outcomes, dryRun: Boolean(input.dryRun) };
+  return {
+    imported: input.dryRun ? 0 : imported,
+    errors,
+    outcomes,
+    dryRun: Boolean(input.dryRun),
+  };
 }

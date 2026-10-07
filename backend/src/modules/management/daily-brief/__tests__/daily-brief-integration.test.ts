@@ -19,7 +19,9 @@ vi.mock("../../../../db/mysql.js", () => ({
   db: { execute, query: execute, getConnection: vi.fn() },
 }));
 
-const { querySource } = vi.hoisted(() => ({ querySource: vi.fn(async () => []) }));
+const { querySource } = vi.hoisted(() => ({
+  querySource: vi.fn(async () => []),
+}));
 vi.mock("../../../../db/sourceDb.js", () => ({ querySource }));
 
 const { hasRole } = vi.hoisted(() => ({ hasRole: vi.fn(async () => false) }));
@@ -30,7 +32,15 @@ import { buildTemplateContext } from "../daily-brief-dispatch.service.js";
 import type { RecipientInfo } from "../daily-brief.types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TEMPLATE_DIR = path.join(__dirname, "..", "..", "..", "communication", "templates", "management");
+const TEMPLATE_DIR = path.join(
+  __dirname,
+  "..",
+  "..",
+  "..",
+  "communication",
+  "templates",
+  "management",
+);
 
 function baseRecipient(overrides: Partial<RecipientInfo> = {}): RecipientInfo {
   return {
@@ -51,7 +61,20 @@ function baseRecipient(overrides: Partial<RecipientInfo> = {}): RecipientInfo {
  * doesn't need to hand-mock every table this pipeline touches. */
 function defaultExecuteImpl(sql: string): unknown {
   if (sql.includes("FROM attendance_daily_record")) {
-    return [[{ total: 0, expected_to_work: 0, present: 0, attended_days: 0, half_day: 0, absent: 0, missing_punch: 0, late_count: 0 }]];
+    return [
+      [
+        {
+          total: 0,
+          expected_to_work: 0,
+          present: 0,
+          attended_days: 0,
+          half_day: 0,
+          absent: 0,
+          missing_punch: 0,
+          late_count: 0,
+        },
+      ],
+    ];
   }
   if (sql.includes("FROM attendance_reconciliation_issue")) return [[]];
   if (sql.includes("FROM work_item")) return [[]];
@@ -66,7 +89,9 @@ function defaultExecuteImpl(sql: string): unknown {
 
 describe("daily-brief integration: multi-role merge", () => {
   beforeEach(() => {
-    execute.mockReset().mockImplementation(async (sql: string) => defaultExecuteImpl(sql));
+    execute
+      .mockReset()
+      .mockImplementation(async (sql: string) => defaultExecuteImpl(sql));
     querySource.mockReset().mockResolvedValue([]);
     hasRole.mockReset().mockResolvedValue(false);
   });
@@ -76,22 +101,40 @@ describe("daily-brief integration: multi-role merge", () => {
     // A correctly-merged multi-role recipient must get the richer ("diagnostic") level —
     // proof the matrix actually unioned both roles' configs into a single resolution,
     // not just used the primary role.
-    const recipient = baseRecipient({ role: "team_leader", allRoles: ["team_leader", "qa"] });
+    const recipient = baseRecipient({
+      role: "team_leader",
+      allRoles: ["team_leader", "qa"],
+    });
 
-    const brief = await buildManagerDailyBrief(recipient, "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const brief = await buildManagerDailyBrief(
+      recipient,
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
     // Exactly one payload object — buildManagerDailyBrief's return type is a single
     // ManagerDailyBrief, not an array, so "not duplicated" is structural; the real
     // assertion is that the merge actually happened (qa's richer level won).
     expect(brief.modules?.quality?.detailLevel).toBe("diagnostic");
     // team_leader-only modules (people risk, exit) must still be present in the merge.
-    expect(brief.sourceHealth.some((h) => h.module === "people_risk")).toBe(true);
-    expect(brief.sourceHealth.some((h) => h.module === "exit_resignations")).toBe(true);
+    expect(brief.sourceHealth.some((h) => h.module === "people_risk")).toBe(
+      true,
+    );
+    expect(
+      brief.sourceHealth.some((h) => h.module === "exit_resignations"),
+    ).toBe(true);
   });
 
   it("a role with no matrix entry (or a role that maps to nothing) still gets the MVP-only payload without throwing", async () => {
-    const recipient = baseRecipient({ role: "branch_head", allRoles: ["branch_head"] });
-    const brief = await buildManagerDailyBrief(recipient, "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const recipient = baseRecipient({
+      role: "branch_head",
+      allRoles: ["branch_head"],
+    });
+    const brief = await buildManagerDailyBrief(
+      recipient,
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
     expect(brief.attendance).toBeDefined();
     expect(brief.modules?.kpi).toBeDefined(); // branch_head IS configured for kpi
   });
@@ -99,7 +142,9 @@ describe("daily-brief integration: multi-role merge", () => {
 
 describe("daily-brief integration: payroll security gate (spec §22)", () => {
   beforeEach(() => {
-    execute.mockReset().mockImplementation(async (sql: string) => defaultExecuteImpl(sql));
+    execute
+      .mockReset()
+      .mockImplementation(async (sql: string) => defaultExecuteImpl(sql));
     querySource.mockReset().mockResolvedValue([]);
   });
 
@@ -118,8 +163,15 @@ describe("daily-brief integration: payroll security gate (spec §22)", () => {
   it("a non-payroll-role recipient's ENTIRE serialized payload never contains payroll-run-detail field names", async () => {
     hasRole.mockResolvedValue(false); // team_leader is not PAYROLL_ROLES-entitled
 
-    const recipient = baseRecipient({ role: "team_leader", allRoles: ["team_leader"] });
-    const brief = await buildManagerDailyBrief(recipient, "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const recipient = baseRecipient({
+      role: "team_leader",
+      allRoles: ["team_leader"],
+    });
+    const brief = await buildManagerDailyBrief(
+      recipient,
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
     expect(brief.modules?.payrollReadinessDetail).toBeUndefined();
 
@@ -133,8 +185,15 @@ describe("daily-brief integration: payroll security gate (spec §22)", () => {
 
   it("a multi-role recipient whose UNION includes payroll:'readiness' from an entitled role, but whose actual account is NOT PAYROLL_ROLES-entitled, still never receives run-detail data", async () => {
     hasRole.mockResolvedValue(false); // the account itself is not payroll-entitled, regardless of matrix intent
-    const recipient = baseRecipient({ role: "team_leader", allRoles: ["team_leader", "payroll_head"] });
-    const brief = await buildManagerDailyBrief(recipient, "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const recipient = baseRecipient({
+      role: "team_leader",
+      allRoles: ["team_leader", "payroll_head"],
+    });
+    const brief = await buildManagerDailyBrief(
+      recipient,
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
     expect(brief.modules?.payrollReadinessDetail).toBeUndefined();
     const serialized = JSON.stringify(brief);
@@ -146,7 +205,9 @@ describe("daily-brief integration: payroll security gate (spec §22)", () => {
 
 describe("daily-brief integration: one module crashing never takes down the whole brief", () => {
   beforeEach(() => {
-    execute.mockReset().mockImplementation(async (sql: string) => defaultExecuteImpl(sql));
+    execute
+      .mockReset()
+      .mockImplementation(async (sql: string) => defaultExecuteImpl(sql));
     querySource.mockReset().mockResolvedValue([]);
     hasRole.mockReset().mockResolvedValue(false);
     vi.resetModules();
@@ -159,20 +220,34 @@ describe("daily-brief integration: one module crashing never takes down the whol
       }),
     }));
 
-    const { buildManagerDailyBrief: buildWithMockedKpi } = await import("../daily-brief-aggregator.service.js");
-    const recipient = baseRecipient({ role: "team_leader", allRoles: ["team_leader"] });
+    const { buildManagerDailyBrief: buildWithMockedKpi } =
+      await import("../daily-brief-aggregator.service.js");
+    const recipient = baseRecipient({
+      role: "team_leader",
+      allRoles: ["team_leader"],
+    });
 
-    const brief = await buildWithMockedKpi(recipient, "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const brief = await buildWithMockedKpi(
+      recipient,
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
-    const kpiHealth = brief.sourceHealth.find((h) => h.module === "kpi_performance");
+    const kpiHealth = brief.sourceHealth.find(
+      (h) => h.module === "kpi_performance",
+    );
     expect(kpiHealth?.state).toBe("ERROR");
     expect(kpiHealth?.detail).toContain("simulated kpi module crash");
 
     // Everything else must still be populated normally.
     expect(brief.attendance).toBeDefined();
     expect(brief.hygieneIssues).toEqual([]);
-    expect(brief.sourceHealth.some((h) => h.module === "attendance")).toBe(true);
-    expect(brief.sourceHealth.some((h) => h.module === "people_risk")).toBe(true);
+    expect(brief.sourceHealth.some((h) => h.module === "attendance")).toBe(
+      true,
+    );
+    expect(brief.sourceHealth.some((h) => h.module === "people_risk")).toBe(
+      true,
+    );
 
     vi.doUnmock("../daily-brief-kpi.module.js");
   });
@@ -188,24 +263,48 @@ describe("daily-brief integration: dedup collapses a same-employee duplicate in 
   it("two performance-alert rows for the same employee that alias to the same issue key collapse into one attention signal", async () => {
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM performance_alert")) {
-        return [[
-          {
-            id: "alert-critical", employee_id: "e1", employee_code: "E001", full_name: "A. Kumar",
-            alert_type: "attendance_exception", severity: "critical", message: "Critical attendance exception", created_at: "2026-08-18T09:00:00Z",
-          },
-          {
-            id: "alert-high", employee_id: "e1", employee_code: "E001", full_name: "A. Kumar",
-            alert_type: "missing_punch", severity: "high", message: "Missing punch flagged", created_at: "2026-08-18T08:00:00Z",
-          },
-        ]];
+        return [
+          [
+            {
+              id: "alert-critical",
+              employee_id: "e1",
+              employee_code: "E001",
+              full_name: "A. Kumar",
+              alert_type: "attendance_exception",
+              severity: "critical",
+              message: "Critical attendance exception",
+              created_at: "2026-08-18T09:00:00Z",
+            },
+            {
+              id: "alert-high",
+              employee_id: "e1",
+              employee_code: "E001",
+              full_name: "A. Kumar",
+              alert_type: "missing_punch",
+              severity: "high",
+              message: "Missing punch flagged",
+              created_at: "2026-08-18T08:00:00Z",
+            },
+          ],
+        ];
       }
       return defaultExecuteImpl(sql);
     });
 
-    const recipient = baseRecipient({ role: "team_leader", allRoles: ["team_leader"], teamEmployeeIds: ["e1"] });
-    const brief = await buildManagerDailyBrief(recipient, "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const recipient = baseRecipient({
+      role: "team_leader",
+      allRoles: ["team_leader"],
+      teamEmployeeIds: ["e1"],
+    });
+    const brief = await buildManagerDailyBrief(
+      recipient,
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
-    const kpiAttention = (brief.attention ?? []).filter((s) => s.source === "kpi_performance");
+    const kpiAttention = (brief.attention ?? []).filter(
+      (s) => s.source === "kpi_performance",
+    );
     expect(kpiAttention).toHaveLength(1); // two same-employee, alias-colliding signals merged into one
     expect(kpiAttention[0].priority).toBe("critical"); // the more severe of the two survives
   });
@@ -220,22 +319,77 @@ describe("daily-brief integration: display caps with overflow text (spec §48)",
 
   it("caps hygieneTop5 at 5 items and reports the overflow count", async () => {
     execute.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM attendance_reconciliation_issue") && sql.includes("SELECT id")) {
-        return [[
-          { id: "1", employee_code: "E1", issue_type: "missing_punch", severity: "blocker", issue_date: "2026-08-18" },
-          { id: "2", employee_code: "E2", issue_type: "missing_punch", severity: "blocker", issue_date: "2026-08-18" },
-          { id: "3", employee_code: "E3", issue_type: "missing_punch", severity: "warning", issue_date: "2026-08-18" },
-          { id: "4", employee_code: "E4", issue_type: "missing_punch", severity: "warning", issue_date: "2026-08-18" },
-          { id: "5", employee_code: "E5", issue_type: "missing_punch", severity: "warning", issue_date: "2026-08-18" },
-          { id: "6", employee_code: "E6", issue_type: "missing_punch", severity: "warning", issue_date: "2026-08-18" },
-          { id: "7", employee_code: "E7", issue_type: "missing_punch", severity: "warning", issue_date: "2026-08-18" },
-        ]];
+      if (
+        sql.includes("FROM attendance_reconciliation_issue") &&
+        sql.includes("SELECT id")
+      ) {
+        return [
+          [
+            {
+              id: "1",
+              employee_code: "E1",
+              issue_type: "missing_punch",
+              severity: "blocker",
+              issue_date: "2026-08-18",
+            },
+            {
+              id: "2",
+              employee_code: "E2",
+              issue_type: "missing_punch",
+              severity: "blocker",
+              issue_date: "2026-08-18",
+            },
+            {
+              id: "3",
+              employee_code: "E3",
+              issue_type: "missing_punch",
+              severity: "warning",
+              issue_date: "2026-08-18",
+            },
+            {
+              id: "4",
+              employee_code: "E4",
+              issue_type: "missing_punch",
+              severity: "warning",
+              issue_date: "2026-08-18",
+            },
+            {
+              id: "5",
+              employee_code: "E5",
+              issue_type: "missing_punch",
+              severity: "warning",
+              issue_date: "2026-08-18",
+            },
+            {
+              id: "6",
+              employee_code: "E6",
+              issue_type: "missing_punch",
+              severity: "warning",
+              issue_date: "2026-08-18",
+            },
+            {
+              id: "7",
+              employee_code: "E7",
+              issue_type: "missing_punch",
+              severity: "warning",
+              issue_date: "2026-08-18",
+            },
+          ],
+        ];
       }
       return defaultExecuteImpl(sql);
     });
 
-    const recipient = baseRecipient({ role: "team_leader", allRoles: ["team_leader"], teamEmployeeIds: ["e1", "e2", "e3", "e4", "e5", "e6", "e7"] });
-    const brief = await buildManagerDailyBrief(recipient, "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const recipient = baseRecipient({
+      role: "team_leader",
+      allRoles: ["team_leader"],
+      teamEmployeeIds: ["e1", "e2", "e3", "e4", "e5", "e6", "e7"],
+    });
+    const brief = await buildManagerDailyBrief(
+      recipient,
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
 
     expect(brief.hygieneTop5?.items).toHaveLength(5);
     expect(brief.hygieneTop5?.totalCount).toBe(7);
@@ -244,15 +398,28 @@ describe("daily-brief integration: display caps with overflow text (spec §48)",
 
   it("reports no overflow text when the list is already within the cap", async () => {
     execute.mockImplementation(async (sql: string) => defaultExecuteImpl(sql));
-    const recipient = baseRecipient({ role: "team_leader", allRoles: ["team_leader"] });
-    const brief = await buildManagerDailyBrief(recipient, "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+    const recipient = baseRecipient({
+      role: "team_leader",
+      allRoles: ["team_leader"],
+    });
+    const brief = await buildManagerDailyBrief(
+      recipient,
+      "2026-08-18",
+      "18 Aug 2026, 9:00 AM IST",
+    );
     expect(brief.hygieneTop5?.overflowText).toBeNull();
   });
 });
 
 describe("daily-brief integration: templates render for 4 role/module combinations without throwing, and escape a poisoned employee name", () => {
-  const htmlSource = fs.readFileSync(path.join(TEMPLATE_DIR, "daily-brief.hbs"), "utf-8");
-  const textSource = fs.readFileSync(path.join(TEMPLATE_DIR, "daily-brief.txt.hbs"), "utf-8");
+  const htmlSource = fs.readFileSync(
+    path.join(TEMPLATE_DIR, "daily-brief.hbs"),
+    "utf-8",
+  );
+  const textSource = fs.readFileSync(
+    path.join(TEMPLATE_DIR, "daily-brief.txt.hbs"),
+    "utf-8",
+  );
   const htmlTemplate = Handlebars.compile(htmlSource);
   const textTemplate = Handlebars.compile(textSource);
 
@@ -262,7 +429,7 @@ describe("daily-brief integration: templates render for 4 role/module combinatio
     hasRole.mockReset();
   });
 
-  const POISONED_NAME = '<img src=x onerror=alert(1)>Priya';
+  const POISONED_NAME = "<img src=x onerror=alert(1)>Priya";
 
   const roleCombos: Array<{ role: string; allRoles: string[] }> = [
     { role: "team_leader", allRoles: ["team_leader"] },
@@ -275,8 +442,21 @@ describe("daily-brief integration: templates render for 4 role/module combinatio
     it(`renders for role=${combo.role} without throwing and with no un-escaped <script/HTML from a poisoned employee name`, async () => {
       hasRole.mockResolvedValue(combo.role === "payroll_head"); // only the payroll role is entitled
       execute.mockImplementation(async (sql: string) => {
-        if (sql.includes("FROM attendance_reconciliation_issue") && sql.includes("SELECT id")) {
-          return [[{ id: "1", employee_code: POISONED_NAME, issue_type: "missing_punch", severity: "blocker", issue_date: "2026-08-18" }]];
+        if (
+          sql.includes("FROM attendance_reconciliation_issue") &&
+          sql.includes("SELECT id")
+        ) {
+          return [
+            [
+              {
+                id: "1",
+                employee_code: POISONED_NAME,
+                issue_type: "missing_punch",
+                severity: "blocker",
+                issue_date: "2026-08-18",
+              },
+            ],
+          ];
         }
         return defaultExecuteImpl(sql);
       });
@@ -287,13 +467,21 @@ describe("daily-brief integration: templates render for 4 role/module combinatio
         teamEmployeeIds: ["e1"],
         fullName: POISONED_NAME,
       });
-      const brief = await buildManagerDailyBrief(recipient, "2026-08-18", "18 Aug 2026, 9:00 AM IST");
+      const brief = await buildManagerDailyBrief(
+        recipient,
+        "2026-08-18",
+        "18 Aug 2026, 9:00 AM IST",
+      );
       const context = buildTemplateContext(brief);
 
       let html = "";
       let text = "";
-      expect(() => { html = htmlTemplate(context); }).not.toThrow();
-      expect(() => { text = textTemplate(context); }).not.toThrow();
+      expect(() => {
+        html = htmlTemplate(context);
+      }).not.toThrow();
+      expect(() => {
+        text = textTemplate(context);
+      }).not.toThrow();
 
       // Handlebars' default {{}} escaping applies the SAME HTML-entity escaping to both
       // templates (it has no separate "plaintext" mode) — the .txt.hbs template inherits

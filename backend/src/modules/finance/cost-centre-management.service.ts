@@ -142,13 +142,22 @@ async function logApprovalAction(
   fromStatus: CostCentreStatus | null,
   toStatus: CostCentreStatus,
   actor: Actor,
-  remarks?: string
+  remarks?: string,
 ): Promise<void> {
   await db.execute(
     `INSERT INTO cost_centre_approval_log
        (id, cost_centre_id, action, from_status, to_status, actor_user_id, actor_role, remarks)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [randomUUID(), costCentreId, action, fromStatus, toStatus, actor.id, actor.role, remarks ?? null]
+    [
+      randomUUID(),
+      costCentreId,
+      action,
+      fromStatus,
+      toStatus,
+      actor.id,
+      actor.role,
+      remarks ?? null,
+    ],
   );
 }
 
@@ -161,7 +170,16 @@ export const costCentreManagementService = {
    * List cost centres with filters
    */
   async list(filters: ListFilters = {}) {
-    const { q, status, active_status, client_id, client_name, branch_id, page = 1, limit = 50 } = filters;
+    const {
+      q,
+      status,
+      active_status,
+      client_id,
+      client_name,
+      branch_id,
+      page = 1,
+      limit = 50,
+    } = filters;
     // MAS Callnet only: IDC / Pikquick cost centres must not appear anywhere in HRMS.
     const where: string[] = [ownCompanyCostCentreSql("cc")];
     const params: (string | number)[] = [];
@@ -222,7 +240,9 @@ export const costCentreManagementService = {
     }
 
     if (q?.trim()) {
-      where.push("(cc.cost_centre_code LIKE ? OR cc.cost_centre_name LIKE ? OR cl.client_name LIKE ?)");
+      where.push(
+        "(cc.cost_centre_code LIKE ? OR cc.cost_centre_name LIKE ? OR cl.client_name LIKE ?)",
+      );
       params.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
     }
 
@@ -240,7 +260,10 @@ export const costCentreManagementService = {
      * survive into the SQL: a non-numeric page or limit collapses to the default rather than
      * concatenating. Every other filter stays a bound parameter.
      */
-    const safeLimit = Math.max(1, Math.min(Math.trunc(Number(limit)) || 50, 100));
+    const safeLimit = Math.max(
+      1,
+      Math.min(Math.trunc(Number(limit)) || 50, 100),
+    );
     const safePage = Math.max(1, Math.trunc(Number(page)) || 1);
     const safeOffset = (safePage - 1) * safeLimit;
 
@@ -269,7 +292,7 @@ export const costCentreManagementService = {
         ${whereClause}
         ORDER BY cc.created_at DESC
         LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-      params
+      params,
     );
 
     // Count total
@@ -278,7 +301,7 @@ export const costCentreManagementService = {
          FROM cost_centre_master cc
          LEFT JOIN client_master cl ON cl.id = cc.client_id
         ${whereClause}`,
-      params
+      params,
     );
 
     return {
@@ -313,7 +336,7 @@ export const costCentreManagementService = {
          LEFT JOIN employees l1approver ON l1approver.id = cc.l1_approved_by
          LEFT JOIN employees l2approver ON l2approver.id = cc.l2_approved_by
         WHERE cc.id = ?`,
-      [id]
+      [id],
     );
 
     if (!rows[0]) return null;
@@ -321,7 +344,7 @@ export const costCentreManagementService = {
     // Get contacts
     const [contacts] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM cost_centre_contacts WHERE cost_centre_id = ? ORDER BY contact_type, contact_sequence`,
-      [id]
+      [id],
     );
 
     // Get approval history
@@ -331,7 +354,7 @@ export const costCentreManagementService = {
          LEFT JOIN employees e ON e.id = al.actor_user_id
         WHERE al.cost_centre_id = ?
         ORDER BY al.created_at DESC`,
-      [id]
+      [id],
     );
 
     return {
@@ -432,7 +455,7 @@ export const costCentreManagementService = {
         bool(data.po_required),
         data.association_date ?? null,
         actor.id,
-      ]
+      ],
     );
 
     // Save contacts
@@ -458,12 +481,15 @@ export const costCentreManagementService = {
    */
   async update(id: string, data: Partial<CostCentreInput>, actor: Actor) {
     const existing = await this.getById(id);
-    if (!existing) throw Object.assign(new Error("Cost centre not found"), { statusCode: 404 });
+    if (!existing)
+      throw Object.assign(new Error("Cost centre not found"), {
+        statusCode: 404,
+      });
 
     if (!["draft", "revision_required"].includes(existing.status)) {
       throw Object.assign(
         new Error(`Cannot update cost centre in ${existing.status} status`),
-        { statusCode: 400 }
+        { statusCode: 400 },
       );
     }
 
@@ -531,10 +557,18 @@ export const costCentreManagementService = {
         data.shift_hours ?? existing.shift_hours,
         data.working_days_per_week ?? existing.working_days_per_week,
         data.training_days ?? existing.training_days,
-        data.incentive_allowed !== undefined ? bool(data.incentive_allowed) : existing.incentive_allowed,
-        data.deduction_allowed !== undefined ? bool(data.deduction_allowed) : existing.deduction_allowed,
-        data.revenue_flag !== undefined ? bool(data.revenue_flag) : existing.revenue_flag,
-        data.billing_flag !== undefined ? bool(data.billing_flag) : existing.billing_flag,
+        data.incentive_allowed !== undefined
+          ? bool(data.incentive_allowed)
+          : existing.incentive_allowed,
+        data.deduction_allowed !== undefined
+          ? bool(data.deduction_allowed)
+          : existing.deduction_allowed,
+        data.revenue_flag !== undefined
+          ? bool(data.revenue_flag)
+          : existing.revenue_flag,
+        data.billing_flag !== undefined
+          ? bool(data.billing_flag)
+          : existing.billing_flag,
         data.revenue_type ?? existing.revenue_type,
         data.fixed_amount ?? existing.fixed_amount,
         data.variable_base ?? existing.variable_base,
@@ -564,10 +598,12 @@ export const costCentreManagementService = {
         data.dialdee_type ?? existing.dialdee_type,
         data.jcc_no ?? existing.jcc_no,
         data.grn ?? existing.grn,
-        data.po_required !== undefined ? bool(data.po_required) : existing.po_required,
+        data.po_required !== undefined
+          ? bool(data.po_required)
+          : existing.po_required,
         data.association_date ?? existing.association_date,
         id,
-      ]
+      ],
     );
 
     // Update contacts if provided
@@ -575,7 +611,13 @@ export const costCentreManagementService = {
       await this.saveContacts(id, data.contacts);
     }
 
-    await logApprovalAction(id, "updated", existing.status, existing.status, actor);
+    await logApprovalAction(
+      id,
+      "updated",
+      existing.status,
+      existing.status,
+      actor,
+    );
 
     return this.getById(id);
   },
@@ -585,7 +627,10 @@ export const costCentreManagementService = {
    */
   async saveContacts(costCentreId: string, contacts: CostCentreContact[]) {
     // Delete existing contacts
-    await db.execute(`DELETE FROM cost_centre_contacts WHERE cost_centre_id = ?`, [costCentreId]);
+    await db.execute(
+      `DELETE FROM cost_centre_contacts WHERE cost_centre_id = ?`,
+      [costCentreId],
+    );
 
     // Insert new contacts
     for (const c of contacts) {
@@ -604,7 +649,7 @@ export const costCentreManagementService = {
           c.contact_phone ?? null,
           c.contact_designation ?? null,
           c.is_primary ? 1 : 0,
-        ]
+        ],
       );
     }
   },
@@ -614,12 +659,15 @@ export const costCentreManagementService = {
    */
   async submit(id: string, actor: Actor) {
     const existing = await this.getById(id);
-    if (!existing) throw Object.assign(new Error("Cost centre not found"), { statusCode: 404 });
+    if (!existing)
+      throw Object.assign(new Error("Cost centre not found"), {
+        statusCode: 404,
+      });
 
     if (!["draft", "revision_required"].includes(existing.status)) {
       throw Object.assign(
         new Error(`Cannot submit cost centre in ${existing.status} status`),
-        { statusCode: 400 }
+        { statusCode: 400 },
       );
     }
 
@@ -630,10 +678,16 @@ export const costCentreManagementService = {
         submitted_at = NOW(),
         updated_at = NOW()
       WHERE id = ?`,
-      [actor.id, id]
+      [actor.id, id],
     );
 
-    await logApprovalAction(id, "submitted", existing.status, "pending_l1", actor);
+    await logApprovalAction(
+      id,
+      "submitted",
+      existing.status,
+      "pending_l1",
+      actor,
+    );
 
     return this.getById(id);
   },
@@ -643,12 +697,17 @@ export const costCentreManagementService = {
    */
   async approveL1(id: string, actor: Actor, remarks?: string) {
     const existing = await this.getById(id);
-    if (!existing) throw Object.assign(new Error("Cost centre not found"), { statusCode: 404 });
+    if (!existing)
+      throw Object.assign(new Error("Cost centre not found"), {
+        statusCode: 404,
+      });
 
     if (existing.status !== "pending_l1") {
       throw Object.assign(
-        new Error(`Cannot approve L1: cost centre is in ${existing.status} status`),
-        { statusCode: 400 }
+        new Error(
+          `Cannot approve L1: cost centre is in ${existing.status} status`,
+        ),
+        { statusCode: 400 },
       );
     }
 
@@ -669,7 +728,10 @@ export const costCentreManagementService = {
     // here on. Both creator and submitter are checked, since submitting is the act that
     // puts it in front of an approver.
     const actorId = actor?.id ?? null;
-    if (actorId && (actorId === existing.created_by || actorId === existing.submitted_by)) {
+    if (
+      actorId &&
+      (actorId === existing.created_by || actorId === existing.submitted_by)
+    ) {
       throw Object.assign(
         new Error(
           "L1 approval must come from someone other than the person who raised or submitted this cost centre",
@@ -685,10 +747,17 @@ export const costCentreManagementService = {
         l1_approved_at = NOW(),
         updated_at = NOW()
       WHERE id = ?`,
-      [actor.id, id]
+      [actor.id, id],
     );
 
-    await logApprovalAction(id, "approved_l1", "pending_l1", "pending_l2", actor, remarks);
+    await logApprovalAction(
+      id,
+      "approved_l1",
+      "pending_l1",
+      "pending_l2",
+      actor,
+      remarks,
+    );
 
     return this.getById(id);
   },
@@ -698,12 +767,17 @@ export const costCentreManagementService = {
    */
   async approveL2(id: string, actor: Actor, remarks?: string) {
     const existing = await this.getById(id);
-    if (!existing) throw Object.assign(new Error("Cost centre not found"), { statusCode: 404 });
+    if (!existing)
+      throw Object.assign(new Error("Cost centre not found"), {
+        statusCode: 404,
+      });
 
     if (existing.status !== "pending_l2") {
       throw Object.assign(
-        new Error(`Cannot approve L2: cost centre is in ${existing.status} status`),
-        { statusCode: 400 }
+        new Error(
+          `Cannot approve L2: cost centre is in ${existing.status} status`,
+        ),
+        { statusCode: 400 },
       );
     }
 
@@ -720,7 +794,10 @@ export const costCentreManagementService = {
     // no existing behaviour, only closes a live-but-unexercised gap (verified live,
     // 2026-08-14).
     const actorId = actor?.id ?? null;
-    if (actorId && (actorId === existing.created_by || actorId === existing.submitted_by)) {
+    if (
+      actorId &&
+      (actorId === existing.created_by || actorId === existing.submitted_by)
+    ) {
       throw Object.assign(
         new Error(
           "L2 approval must come from someone other than the person who raised or submitted this cost centre",
@@ -736,10 +813,17 @@ export const costCentreManagementService = {
         l2_approved_at = NOW(),
         updated_at = NOW()
       WHERE id = ?`,
-      [actor.id, id]
+      [actor.id, id],
     );
 
-    await logApprovalAction(id, "approved_l2", "pending_l2", "approved", actor, remarks);
+    await logApprovalAction(
+      id,
+      "approved_l2",
+      "pending_l2",
+      "approved",
+      actor,
+      remarks,
+    );
 
     return this.getById(id);
   },
@@ -749,12 +833,15 @@ export const costCentreManagementService = {
    */
   async reject(id: string, actor: Actor, reason: string) {
     const existing = await this.getById(id);
-    if (!existing) throw Object.assign(new Error("Cost centre not found"), { statusCode: 404 });
+    if (!existing)
+      throw Object.assign(new Error("Cost centre not found"), {
+        statusCode: 404,
+      });
 
     if (!["pending_l1", "pending_l2"].includes(existing.status)) {
       throw Object.assign(
         new Error(`Cannot reject cost centre in ${existing.status} status`),
-        { statusCode: 400 }
+        { statusCode: 400 },
       );
     }
 
@@ -764,10 +851,17 @@ export const costCentreManagementService = {
         rejection_reason = ?,
         updated_at = NOW()
       WHERE id = ?`,
-      [reason, id]
+      [reason, id],
     );
 
-    await logApprovalAction(id, "rejected", existing.status, "rejected", actor, reason);
+    await logApprovalAction(
+      id,
+      "rejected",
+      existing.status,
+      "rejected",
+      actor,
+      reason,
+    );
 
     return this.getById(id);
   },
@@ -777,12 +871,17 @@ export const costCentreManagementService = {
    */
   async requestRevision(id: string, actor: Actor, reason: string) {
     const existing = await this.getById(id);
-    if (!existing) throw Object.assign(new Error("Cost centre not found"), { statusCode: 404 });
+    if (!existing)
+      throw Object.assign(new Error("Cost centre not found"), {
+        statusCode: 404,
+      });
 
     if (!["pending_l1", "pending_l2"].includes(existing.status)) {
       throw Object.assign(
-        new Error(`Cannot request revision for cost centre in ${existing.status} status`),
-        { statusCode: 400 }
+        new Error(
+          `Cannot request revision for cost centre in ${existing.status} status`,
+        ),
+        { statusCode: 400 },
       );
     }
 
@@ -793,10 +892,17 @@ export const costCentreManagementService = {
         revision_no = revision_no + 1,
         updated_at = NOW()
       WHERE id = ?`,
-      [reason, id]
+      [reason, id],
     );
 
-    await logApprovalAction(id, "revision_requested", existing.status, "revision_required", actor, reason);
+    await logApprovalAction(
+      id,
+      "revision_requested",
+      existing.status,
+      "revision_required",
+      actor,
+      reason,
+    );
 
     return this.getById(id);
   },
@@ -806,12 +912,15 @@ export const costCentreManagementService = {
    */
   async activate(id: string, actor: Actor) {
     const existing = await this.getById(id);
-    if (!existing) throw Object.assign(new Error("Cost centre not found"), { statusCode: 404 });
+    if (!existing)
+      throw Object.assign(new Error("Cost centre not found"), {
+        statusCode: 404,
+      });
 
     if (existing.status !== "approved") {
       throw Object.assign(
         new Error(`Cannot activate cost centre in ${existing.status} status`),
-        { statusCode: 400 }
+        { statusCode: 400 },
       );
     }
 
@@ -821,7 +930,7 @@ export const costCentreManagementService = {
         active_status = 1,
         updated_at = NOW()
       WHERE id = ?`,
-      [id]
+      [id],
     );
 
     await logApprovalAction(id, "activated", "approved", "active", actor);
@@ -834,12 +943,15 @@ export const costCentreManagementService = {
    */
   async close(id: string, actor: Actor, reason?: string) {
     const existing = await this.getById(id);
-    if (!existing) throw Object.assign(new Error("Cost centre not found"), { statusCode: 404 });
+    if (!existing)
+      throw Object.assign(new Error("Cost centre not found"), {
+        statusCode: 404,
+      });
 
     if (existing.status !== "active") {
       throw Object.assign(
         new Error(`Cannot close cost centre in ${existing.status} status`),
-        { statusCode: 400 }
+        { statusCode: 400 },
       );
     }
 
@@ -849,7 +961,7 @@ export const costCentreManagementService = {
         active_status = 0,
         updated_at = NOW()
       WHERE id = ?`,
-      [id]
+      [id],
     );
 
     await logApprovalAction(id, "closed", "active", "closed", actor, reason);
@@ -885,7 +997,7 @@ export const costCentreManagementService = {
          LEFT JOIN employees submitter ON submitter.id = cc.submitted_by
         WHERE cc.status IN (${placeholders})
         ORDER BY cc.submitted_at ASC`,
-      allowedStatuses
+      allowedStatuses,
     );
 
     return rows;
@@ -901,7 +1013,7 @@ export const costCentreManagementService = {
          LEFT JOIN employees e ON e.id = al.actor_user_id
         WHERE al.cost_centre_id = ?
         ORDER BY al.created_at DESC`,
-      [id]
+      [id],
     );
     return rows;
   },
@@ -919,7 +1031,7 @@ export const costCentreManagementService = {
          FROM cost_centre_master
         ${branchId ? "WHERE branch_id = ?" : ""}
         GROUP BY CASE WHEN active_status = 0 THEN 'closed' ELSE status END`,
-      branchId ? [branchId] : []
+      branchId ? [branchId] : [],
     );
     const counts: Record<string, number> = {};
     for (const row of rows) {

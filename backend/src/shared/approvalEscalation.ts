@@ -17,7 +17,9 @@ export interface EffectiveApprover {
  * Returns approverId: null when no approver is resolvable — callers must
  * fall back to HR Admin / privileged role bypass.
  */
-export async function resolveEffectiveApprover(employeeId: string): Promise<EffectiveApprover> {
+export async function resolveEffectiveApprover(
+  employeeId: string,
+): Promise<EffectiveApprover> {
   // Step 1: direct manager
   const [mgrRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(e.reporting_manager_id, e.manager_id) AS manager_id
@@ -26,7 +28,8 @@ export async function resolveEffectiveApprover(employeeId: string): Promise<Effe
       LIMIT 1`,
     [employeeId],
   );
-  const directManagerId: string | null = (mgrRows[0] as any)?.manager_id ?? null;
+  const directManagerId: string | null =
+    (mgrRows[0] as any)?.manager_id ?? null;
 
   if (!directManagerId) {
     return { approverId: null, isEscalated: false, escalationReason: null };
@@ -47,7 +50,11 @@ export async function resolveEffectiveApprover(employeeId: string): Promise<Effe
 
   if ((leaveRows as RowDataPacket[]).length === 0) {
     // Direct manager is available
-    return { approverId: directManagerId, isEscalated: false, escalationReason: null };
+    return {
+      approverId: directManagerId,
+      isEscalated: false,
+      escalationReason: null,
+    };
   }
 
   // Step 3: direct manager is on leave — resolve skip-level (manager's manager)
@@ -58,7 +65,8 @@ export async function resolveEffectiveApprover(employeeId: string): Promise<Effe
       LIMIT 1`,
     [directManagerId],
   );
-  const skipManagerId: string | null = (skipRows[0] as any)?.skip_manager_id ?? null;
+  const skipManagerId: string | null =
+    (skipRows[0] as any)?.skip_manager_id ?? null;
 
   return {
     approverId: skipManagerId,

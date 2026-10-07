@@ -40,7 +40,9 @@ let currentUser: { id: string; email: string; role?: string } = {
 // A hand-written list is how routes.integration and qa-audit broke: a source file gains an
 // import, the mock does not, and the missing binding throws inside a handler.
 vi.mock("../src/middleware/authMiddleware.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/middleware/authMiddleware.js")>()),
+  ...(await importOriginal<
+    typeof import("../src/middleware/authMiddleware.js")
+  >()),
   requireAuth: (req: any, _res: any, next: () => void) => {
     req.authUser = currentUser;
     next();
@@ -64,10 +66,13 @@ vi.mock("../src/middleware/authMiddleware.js", async (importOriginal) => ({
 vi.mock("../src/shared/accessGuard.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/shared/accessGuard.js")>()),
   hasRole: (userId: string, ...roles: string[]) => {
-    if (userId === "11111111-1111-1111-1111-111111111105") return Promise.resolve(false);
+    if (userId === "11111111-1111-1111-1111-111111111105")
+      return Promise.resolve(false);
     if (userId === "11111111-1111-1111-1111-111111111106") {
       return Promise.resolve(
-        roles.some((r) => ["manager", "process_manager", "assistant_manager"].includes(r)),
+        roles.some((r) =>
+          ["manager", "process_manager", "assistant_manager"].includes(r),
+        ),
       );
     }
     return Promise.resolve(roles.some((r) => ["admin", "hr"].includes(r)));
@@ -82,7 +87,8 @@ vi.mock("../src/shared/accessGuard.js", async (importOriginal) => ({
 // NOTE: vi.mock factories are hoisted above variable declarations, so all
 // data must be inlined inside the factory function.
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole: (...allowedRoles: string[]) =>
+  requireRole:
+    (...allowedRoles: string[]) =>
     (req: any, _res: any, next: any) => {
       // Keyed on the authenticated identity, not the raw Authorization string. The tokens
       // are now real JWTs (see the SOP note in tests/setup.ts), so there is no ".token"
@@ -153,7 +159,10 @@ beforeEach(() => {
   // Set defaults
   mockExecute.mockResolvedValue([[], []]);
   mockExecuteRun.mockResolvedValue([{ affectedRows: 0, insertId: 0 }, []]);
-  mockConnection.execute.mockResolvedValue([{ insertId: 1, affectedRows: 1 }, []]);
+  mockConnection.execute.mockResolvedValue([
+    { insertId: 1, affectedRows: 1 },
+    [],
+  ]);
   mockGetConnection.mockResolvedValue(mockConnection);
   mockExecuteRun.mockResolvedValue([{ affectedRows: 0, insertId: 0 }, []]);
 });
@@ -179,15 +188,15 @@ function mockEmployee() {
 }
 
 describe("Performance Feedback - Full Workflow Integration", () => {
-  const cycleId    = "11111111-1111-1111-1111-111111111101";
-  const requestId  = "11111111-1111-1111-1111-111111111102";
-  const reportId   = "11111111-1111-1111-1111-111111111103";
-  const planId     = "11111111-1111-1111-1111-111111111104";
+  const cycleId = "11111111-1111-1111-1111-111111111101";
+  const requestId = "11111111-1111-1111-1111-111111111102";
+  const reportId = "11111111-1111-1111-1111-111111111103";
+  const planId = "11111111-1111-1111-1111-111111111104";
   const employeeId = "11111111-1111-1111-1111-111111111105";
-  const managerId  = "11111111-1111-1111-1111-111111111106";
-  const compId1    = "11111111-1111-1111-1111-111111111107";
-  const compId2    = "11111111-1111-1111-1111-111111111108";
-  const kpiId1     = "11111111-1111-1111-1111-111111111109";
+  const managerId = "11111111-1111-1111-1111-111111111106";
+  const compId1 = "11111111-1111-1111-1111-111111111107";
+  const compId2 = "11111111-1111-1111-1111-111111111108";
+  const kpiId1 = "11111111-1111-1111-1111-111111111109";
 
   it("1. HR creates feedback cycle", async () => {
     mockHr();
@@ -230,7 +239,10 @@ describe("Performance Feedback - Full Workflow Integration", () => {
   it("2. HR launches cycle for employee (auto-creates request)", async () => {
     mockHr();
     // Check cycle exists (getCycleById)
-    mockExecute.mockResolvedValueOnce([[{ cycle_id: cycleId, status: "draft" }], []]);
+    mockExecute.mockResolvedValueOnce([
+      [{ cycle_id: cycleId, status: "draft" }],
+      [],
+    ]);
     // Per-employee: get reporting_to
     mockExecute.mockResolvedValueOnce([
       [{ emp_id: employeeId, reporting_to: managerId }],
@@ -295,7 +307,13 @@ describe("Performance Feedback - Full Workflow Integration", () => {
     ]);
     // SELECT employee info (emp_id, full_name, designation)
     mockExecute.mockResolvedValueOnce([
-      [{ emp_id: employeeId, full_name: "Test Employee", designation: "Agent" }],
+      [
+        {
+          emp_id: employeeId,
+          full_name: "Test Employee",
+          designation: "Agent",
+        },
+      ],
       [],
     ]);
     // getCompetencies — 2 active competencies
@@ -370,10 +388,21 @@ describe("Performance Feedback - Full Workflow Integration", () => {
         employeeId: employeeId,
         cycleId: cycleId,
         overallManagerRating: 3,
-        managerFinalComment: "Strong performer in integration test. Needs work on problem solving.",
+        managerFinalComment:
+          "Strong performer in integration test. Needs work on problem solving.",
         competencies: [
-          { competencyId: compId1, selfRating: 2, managerRating: 3, managerComment: "Needs improvement" },
-          { competencyId: compId2, selfRating: 4, managerRating: 4, managerComment: "Good communicator" },
+          {
+            competencyId: compId1,
+            selfRating: 2,
+            managerRating: 3,
+            managerComment: "Needs improvement",
+          },
+          {
+            competencyId: compId2,
+            selfRating: 4,
+            managerRating: 4,
+            managerComment: "Good communicator",
+          },
         ],
         // no kpis: this schema stores competency ratings only, and the endpoint now
         // says so rather than accepting them and dropping them
@@ -397,7 +426,9 @@ describe("Performance Feedback - Full Workflow Integration", () => {
             { competency_id: "comp-1", rating: 2.5 },
             { competency_id: "comp-2", rating: 4.0 },
           ]),
-          kpi_scores_json: JSON.stringify([{ kpi_id: "kpi-1", actual_value: 92 }]),
+          kpi_scores_json: JSON.stringify([
+            { kpi_id: "kpi-1", actual_value: 92 },
+          ]),
           overall_strengths: "Strong performer in integration test",
           development_areas: "Needs work on problem solving",
         },
@@ -495,7 +526,12 @@ describe("Performance Feedback - Full Workflow Integration", () => {
         overallManagerRating: 2,
         managerFinalComment: "Critical training needed",
         competencies: [
-          { competencyId: compId1, selfRating: 2, managerRating: 2, managerComment: "Low score - needs training" },
+          {
+            competencyId: compId1,
+            selfRating: 2,
+            managerRating: 2,
+            managerComment: "Low score - needs training",
+          },
         ],
         kpis: [],
       });
@@ -574,7 +610,10 @@ describe("Performance Feedback - RBAC Enforcement", () => {
 describe("Performance Feedback - Edge Cases", () => {
   it("prevents launching cycle with no employees", async () => {
     mockHr();
-    mockExecute.mockResolvedValueOnce([[{ cycle_id: "cycle-1", status: "draft" }], []]);
+    mockExecute.mockResolvedValueOnce([
+      [{ cycle_id: "cycle-1", status: "draft" }],
+      [],
+    ]);
 
     const res = await request(app)
       .post("/api/performance-feedback/cycles/cycle-1/launch")
@@ -586,7 +625,10 @@ describe("Performance Feedback - Edge Cases", () => {
 
   it("handles launching cycle with invalid employee IDs gracefully", async () => {
     mockHr();
-    mockExecute.mockResolvedValueOnce([[{ cycle_id: "cycle-1", status: "draft" }], []]);
+    mockExecute.mockResolvedValueOnce([
+      [{ cycle_id: "cycle-1", status: "draft" }],
+      [],
+    ]);
     mockExecute.mockResolvedValueOnce([[], []]); // No employees found
 
     const res = await request(app)

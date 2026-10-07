@@ -39,32 +39,55 @@ function routeBlock(source: string, path: string, span = 900): string {
 
 /** Scope is resolved in the handler, or delegated to a branch-authorising middleware. */
 function isScoped(block: string): boolean {
-  return /scopeOf\(req\)|resolveFinanceBranchScopeSet|assertFinanceRecordBranch|authorizeGrnBranch|authorizePaymentBranch|scopeVouchers/.test(block);
+  return /scopeOf\(req\)|resolveFinanceBranchScopeSet|assertFinanceRecordBranch|authorizeGrnBranch|authorizePaymentBranch|scopeVouchers/.test(
+    block,
+  );
 }
 
 describe("by-id finance reads are branch-guarded", () => {
   it.each([
     ["imprest manager by id", () => routeBlock(IMPREST, "/managers/:id")],
-    ["imprest allocation history", () => routeBlock(IMPREST, "/allocations/:id/approval-history")],
-    ["GRN approval history", () => routeBlock(GRN, "/grns/:id/approval-history")],
+    [
+      "imprest allocation history",
+      () => routeBlock(IMPREST, "/allocations/:id/approval-history"),
+    ],
+    [
+      "GRN approval history",
+      () => routeBlock(GRN, "/grns/:id/approval-history"),
+    ],
     ["vendor payment by id", () => routeBlock(PAYMENT, "/vendor-payments/:id")],
   ])("%s", (_name, get) => {
-    expect(isScoped(get()), "role alone is not a boundary — resolve the branch too").toBe(true);
+    expect(
+      isScoped(get()),
+      "role alone is not a boundary — resolve the branch too",
+    ).toBe(true);
   });
 });
 
 describe("finance list and export reads resolve scope", () => {
   it.each([
     ["imprest managers", () => routeBlock(IMPREST, "/managers")],
-    ["imprest manager candidates", () => routeBlock(IMPREST, "/manager-candidates")],
+    [
+      "imprest manager candidates",
+      () => routeBlock(IMPREST, "/manager-candidates"),
+    ],
     ["imprest allocations", () => routeBlock(IMPREST, "/allocations")],
     ["imprest ledger", () => routeBlock(IMPREST, "/ledger")],
     ["imprest balance report", () => routeBlock(IMPREST, "/reports/balance")],
     ["imprest details report", () => routeBlock(IMPREST, "/reports/details")],
-    ["imprest details export", () => routeBlock(IMPREST, "/reports/details/export")],
+    [
+      "imprest details export",
+      () => routeBlock(IMPREST, "/reports/details/export"),
+    ],
     ["salary vouchers", () => routeBlock(VOUCHER, "/runs/:runId/vouchers")],
-    ["salary voucher export", () => routeBlock(VOUCHER, "/runs/:runId/vouchers/export")],
-    ["IDC db_bill voucher", () => routeBlock(VOUCHER, "/runs/bill/:period/vouchers")],
+    [
+      "salary voucher export",
+      () => routeBlock(VOUCHER, "/runs/:runId/vouchers/export"),
+    ],
+    [
+      "IDC db_bill voucher",
+      () => routeBlock(VOUCHER, "/runs/bill/:period/vouchers"),
+    ],
   ])("%s", (_name, get) => {
     expect(isScoped(get())).toBe(true);
   });
@@ -79,7 +102,11 @@ describe("an export never returns what its list would not", () => {
     expect(detailsExport).toContain("branchScope: await scopeOf(req)");
 
     const vouchers = routeBlock(VOUCHER, "/runs/:runId/vouchers", 700);
-    const vouchersExport = routeBlock(VOUCHER, "/runs/:runId/vouchers/export", 900);
+    const vouchersExport = routeBlock(
+      VOUCHER,
+      "/runs/:runId/vouchers/export",
+      900,
+    );
     expect(vouchers).toContain("scopeVouchers(req,");
     expect(vouchersExport).toContain("scopeVouchers(req,");
   });

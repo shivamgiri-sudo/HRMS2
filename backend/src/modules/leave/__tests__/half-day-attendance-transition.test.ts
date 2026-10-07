@@ -24,7 +24,8 @@ const PAYROLL_DAY_VALUE: Record<string, number> = {
   half_day: 0.5,
   leave_approved: 1.0,
 };
-const pays = (status: string | null) => (status === null ? null : PAYROLL_DAY_VALUE[status] ?? 0);
+const pays = (status: string | null) =>
+  status === null ? null : (PAYROLL_DAY_VALUE[status] ?? 0);
 
 describe("a half day on an unpaid day makes it a half-paid day", () => {
   it.each([
@@ -63,11 +64,14 @@ describe("a half day on an existing half day completes it", () => {
 });
 
 describe("a half day on an already fully paid day is refused", () => {
-  it.each([...HALF_DAY_ALREADY_FULL])("%s is refused rather than transitioned", (existing) => {
-    // Owner decision (c). Silently allowing it would leave pay at 1.0 while still spending
-    // half a day of CL/ML balance — the employee loses balance and gains nothing.
-    expect(halfDayAttendanceTarget(existing)).toBeNull();
-  });
+  it.each([...HALF_DAY_ALREADY_FULL])(
+    "%s is refused rather than transitioned",
+    (existing) => {
+      // Owner decision (c). Silently allowing it would leave pay at 1.0 while still spending
+      // half a day of CL/ML balance — the employee loses balance and gains nothing.
+      expect(halfDayAttendanceTarget(existing)).toBeNull();
+    },
+  );
 
   it("every refused status is one that already pays a full day", () => {
     for (const status of HALF_DAY_ALREADY_FULL) expect(pays(status)).toBe(1.0);
@@ -153,8 +157,15 @@ describe("a half day costs half a day of balance, not a whole one", () => {
   });
 
   it("never charges more than the request says it is", () => {
-    for (const [totalDays, dateCount] of [[0.5, 1], [1, 1], [2, 2], [3, 3]] as const) {
-      expect(daysNeededFor(totalDays, dateCount)).toBeLessThanOrEqual(totalDays);
+    for (const [totalDays, dateCount] of [
+      [0.5, 1],
+      [1, 1],
+      [2, 2],
+      [3, 3],
+    ] as const) {
+      expect(daysNeededFor(totalDays, dateCount)).toBeLessThanOrEqual(
+        totalDays,
+      );
     }
   });
 

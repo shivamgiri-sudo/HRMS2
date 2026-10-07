@@ -23,9 +23,13 @@ async function snapshot(label: string) {
     `SELECT attendance_source, attendance_status, COUNT(*) n, SUM(lwp_value) lwp
        FROM attendance_daily_record WHERE record_date = ?
       GROUP BY attendance_source, attendance_status
-      ORDER BY attendance_source, n DESC`, [DATE]);
+      ORDER BY attendance_source, n DESC`,
+    [DATE],
+  );
   const [tot] = await db.execute<any[]>(
-    `SELECT COUNT(*) rows_, SUM(is_locked) locked FROM attendance_daily_record WHERE record_date = ?`, [DATE]);
+    `SELECT COUNT(*) rows_, SUM(is_locked) locked FROM attendance_daily_record WHERE record_date = ?`,
+    [DATE],
+  );
   console.log(`\n──── ${label} (${DATE}) ────`);
   console.table(rows);
   console.log("totals:", JSON.stringify(tot[0]));
@@ -39,7 +43,14 @@ async function snapshot(label: string) {
   console.log(`  processed = ${result.processed}`);
   console.log(`  skipped   = ${result.skipped}`);
   console.log(`  failed    = ${result.failed}`);
-  if (result.errors?.length) console.log("  first errors:", JSON.stringify(result.errors.slice(0, 5)));
+  if (result.errors?.length)
+    console.log("  first errors:", JSON.stringify(result.errors.slice(0, 5)));
   await snapshot("AFTER");
   await db.end();
-})().catch(async (e) => { console.error("ERR", e?.message ?? e); try { await db.end(); } catch { } process.exit(1); });
+})().catch(async (e) => {
+  console.error("ERR", e?.message ?? e);
+  try {
+    await db.end();
+  } catch {}
+  process.exit(1);
+});

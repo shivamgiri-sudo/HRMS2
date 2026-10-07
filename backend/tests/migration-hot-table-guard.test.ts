@@ -16,15 +16,28 @@ import path from "node:path";
 const FIRST_GUARDED = 1919;
 
 const HOT_TABLES = [
-  "employees", "attendance_daily_record", "wfm_roster_assignment", "kpi_daily_actual", "exit_request",
-  "work_inbox_item", "break_daily_summary", "wfm_attendance_session", "leave_request", "employee_salary_assignment",
-  "biometric_attendance_log", "audit_action_log", "notification", "payroll_run_employee",
+  "employees",
+  "attendance_daily_record",
+  "wfm_roster_assignment",
+  "kpi_daily_actual",
+  "exit_request",
+  "work_inbox_item",
+  "break_daily_summary",
+  "wfm_attendance_session",
+  "leave_request",
+  "employee_salary_assignment",
+  "biometric_attendance_log",
+  "audit_action_log",
+  "notification",
+  "payroll_run_employee",
 ];
 
 const MIGRATIONS_DIR = path.resolve(__dirname, "../sql/migrations");
 
 describe("migration hot-table guard", () => {
-  const files = fs.existsSync(MIGRATIONS_DIR) ? fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")) : [];
+  const files = fs.existsSync(MIGRATIONS_DIR)
+    ? fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"))
+    : [];
 
   it("finds the migrations directory", () => {
     expect(files.length).toBeGreaterThan(0);
@@ -39,9 +52,13 @@ describe("migration hot-table guard", () => {
       if (/--\s*hot-table-ok\s*:/i.test(sql)) continue;
       for (const t of HOT_TABLES) {
         // matches both plain statements and ALTERs hidden inside PREPARE '...' strings
-        if (new RegExp(`ALTER\\s+TABLE\\s+\`?${t}\`?\\b`, "i").test(sql)) offenders.push(`${f} → ALTER TABLE ${t}`);
+        if (new RegExp(`ALTER\\s+TABLE\\s+\`?${t}\`?\\b`, "i").test(sql))
+          offenders.push(`${f} → ALTER TABLE ${t}`);
       }
     }
-    expect(offenders, `Hot-table ALTERs must not run at startup:\n${offenders.join("\n")}`).toEqual([]);
+    expect(
+      offenders,
+      `Hot-table ALTERs must not run at startup:\n${offenders.join("\n")}`,
+    ).toEqual([]);
   });
 });

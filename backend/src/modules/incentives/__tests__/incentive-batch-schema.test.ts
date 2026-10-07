@@ -27,23 +27,36 @@ import { resolve } from "node:path";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 const stripComments = (s: string) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*--.*$/gm, "");
+  s
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/^\s*--.*$/gm, "");
 
-const INCENTIVES = stripComments(read("src/modules/incentives/incentives.service.ts"));
-const BI = stripComments(read("src/modules/business-intelligence/bi.service.ts"));
-const MIGRATION = stripComments(read("sql/1216_incentive_upload_batch_remarks.sql"));
+const INCENTIVES = stripComments(
+  read("src/modules/incentives/incentives.service.ts"),
+);
+const BI = stripComments(
+  read("src/modules/business-intelligence/bi.service.ts"),
+);
+const MIGRATION = stripComments(
+  read("sql/1216_incentive_upload_batch_remarks.sql"),
+);
 const MANIFEST = read("src/db/runPendingMigrations.ts");
 
 describe("createBatch can insert every column it names", () => {
   it("still writes remarks, rather than silently discarding a caller's note", () => {
     // Dropping it from the INSERT would have been the smaller diff and the worse fix: the API
     // accepts remarks, the signature declares it, and getBatchById returns it via SELECT iub.*.
-    expect(INCENTIVES).toMatch(/INSERT INTO incentive_upload_batch \(id, incentive_id, pay_month, uploaded_by, remarks\)/);
+    expect(INCENTIVES).toMatch(
+      /INSERT INTO incentive_upload_batch \(id, incentive_id, pay_month, uploaded_by, remarks\)/,
+    );
     expect(INCENTIVES).toMatch(/remarks\?: string \| null/);
   });
 
   it("has a migration creating the column that INSERT depends on", () => {
-    expect(MIGRATION).toMatch(/ALTER TABLE incentive_upload_batch ADD COLUMN remarks TEXT NULL/);
+    expect(MIGRATION).toMatch(
+      /ALTER TABLE incentive_upload_batch ADD COLUMN remarks TEXT NULL/,
+    );
   });
 
   it("adds it NULLable, so no existing row changes meaning", () => {
@@ -57,7 +70,13 @@ describe("createBatch can insert every column it names", () => {
 
   it("is guarded, so re-running is a no-op", () => {
     expect(MIGRATION).toContain("information_schema.COLUMNS");
-    expect((MIGRATION.match(/PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;/g) ?? []).length).toBe(1);
+    expect(
+      (
+        MIGRATION.match(
+          /PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;/g,
+        ) ?? []
+      ).length,
+    ).toBe(1);
   });
 
   it("is registered, or the runner never executes it", () => {
@@ -71,7 +90,10 @@ describe("the unclaimed-incentive tile reads real columns", () => {
   });
 
   it("no longer queries disbursed_at, which exists nowhere on the table", () => {
-    const stmt = BI.slice(BI.indexOf("AS unclaimed FROM incentive_upload_batch") - 120, BI.indexOf("AS unclaimed FROM incentive_upload_batch") + 200);
+    const stmt = BI.slice(
+      BI.indexOf("AS unclaimed FROM incentive_upload_batch") - 120,
+      BI.indexOf("AS unclaimed FROM incentive_upload_batch") + 200,
+    );
     expect(stmt).not.toMatch(/disbursed_at/);
   });
 

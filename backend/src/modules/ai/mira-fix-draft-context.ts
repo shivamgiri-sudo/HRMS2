@@ -11,14 +11,14 @@
  * MAX_FILE_CHARS caps how much of each one does. Read-only throughout — no state changes,
  * nothing here writes anything.
  */
-import { execFileSync } from 'child_process';
-import { readFileSync } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { execFileSync } from "child_process";
+import { readFileSync } from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // backend/src/modules/ai -> repo root is four levels up.
-const REPO_ROOT = path.resolve(HERE, '../../../..');
+const REPO_ROOT = path.resolve(HERE, "../../../..");
 
 const TOP_FILES = 5;
 const MAX_FILE_CHARS = 4000;
@@ -26,11 +26,57 @@ const MAX_FILE_CHARS = 4000;
 // Common English words plus HRMS-generic terms that would match almost every file and add
 // no signal — filtered out so keyword search stays on the specific, not the generic.
 const STOPWORDS = new Set([
-  'this', 'that', 'these', 'those', 'with', 'from', 'have', 'has', 'had', 'does', 'doesn',
-  'not', 'the', 'and', 'for', 'are', 'was', 'were', 'been', 'being', 'able', 'unable',
-  'when', 'where', 'what', 'why', 'how', 'which', 'who', 'whom', 'there', 'their', 'them',
-  'show', 'showing', 'shown', 'want', 'wanted', 'wants', 'please', 'issue', 'problem', 'error',
-  'system', 'application', 'employee', 'employees', 'user', 'users', 'hrms', 'mira',
+  "this",
+  "that",
+  "these",
+  "those",
+  "with",
+  "from",
+  "have",
+  "has",
+  "had",
+  "does",
+  "doesn",
+  "not",
+  "the",
+  "and",
+  "for",
+  "are",
+  "was",
+  "were",
+  "been",
+  "being",
+  "able",
+  "unable",
+  "when",
+  "where",
+  "what",
+  "why",
+  "how",
+  "which",
+  "who",
+  "whom",
+  "there",
+  "their",
+  "them",
+  "show",
+  "showing",
+  "shown",
+  "want",
+  "wanted",
+  "wants",
+  "please",
+  "issue",
+  "problem",
+  "error",
+  "system",
+  "application",
+  "employee",
+  "employees",
+  "user",
+  "users",
+  "hrms",
+  "mira",
 ]);
 
 export interface ContextFile {
@@ -62,7 +108,10 @@ export function extractKeywords(text: string): string[] {
  * TOP_FILES. Never throws — a keyword that matches nothing (or git grep's own "no matches"
  * exit code 1) is just an empty contribution, not an error.
  */
-export function findCandidateFiles(keywords: string[], repoRoot: string = REPO_ROOT): string[] {
+export function findCandidateFiles(
+  keywords: string[],
+  repoRoot: string = REPO_ROOT,
+): string[] {
   if (!keywords.length) return [];
   const scores = new Map<string, number>();
 
@@ -70,19 +119,24 @@ export function findCandidateFiles(keywords: string[], repoRoot: string = REPO_R
     let output: string;
     try {
       output = execFileSync(
-        'git',
-        ['grep', '-l', '-i', '-F', '-e', kw, '--', '*.ts', '*.tsx'],
-        { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+        "git",
+        ["grep", "-l", "-i", "-F", "-e", kw, "--", "*.ts", "*.tsx"],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        },
       );
     } catch {
       // git grep exits 1 with no output when nothing matches — not an error worth surfacing.
       continue;
     }
-    for (const file of output.split('\n').filter(Boolean)) {
+    for (const file of output.split("\n").filter(Boolean)) {
       // Never surface test files or the fix-draft pipeline's own code as edit targets —
       // matches mira-fix-draft-guard.ts's self-modification denial, applied earlier here so
       // a candidate that would be rejected anyway never wastes context budget.
-      if (file.includes('__tests__') || file.includes('mira-fix-draft')) continue;
+      if (file.includes("__tests__") || file.includes("mira-fix-draft"))
+        continue;
       scores.set(file, (scores.get(file) ?? 0) + 1);
     }
   }
@@ -117,8 +171,8 @@ function extractRelevantWindow(content: string, keywords: string[]): string {
   const BEFORE = 1200;
   const start = Math.max(0, matchIndex - BEFORE);
   const end = Math.min(content.length, start + MAX_FILE_CHARS);
-  const prefix = start > 0 ? '...[truncated]...\n' : '';
-  const suffix = end < content.length ? '\n...[truncated]...' : '';
+  const prefix = start > 0 ? "...[truncated]...\n" : "";
+  const suffix = end < content.length ? "\n...[truncated]..." : "";
   return prefix + content.slice(start, end) + suffix;
 }
 
@@ -128,12 +182,16 @@ function extractRelevantWindow(content: string, keywords: string[]): string {
  * grep and the read are not atomic, and a file rename or delete between the two must not
  * fail the whole draft attempt.
  */
-export function readContextFiles(filePaths: string[], keywords: string[] = [], repoRoot: string = REPO_ROOT): ContextFile[] {
+export function readContextFiles(
+  filePaths: string[],
+  keywords: string[] = [],
+  repoRoot: string = REPO_ROOT,
+): ContextFile[] {
   const out: ContextFile[] = [];
   for (const relPath of filePaths) {
     try {
       const full = path.join(repoRoot, relPath);
-      const raw = readFileSync(full, 'utf8');
+      const raw = readFileSync(full, "utf8");
       const content = extractRelevantWindow(raw, keywords);
       out.push({ path: relPath, content });
     } catch {
@@ -144,7 +202,11 @@ export function readContextFiles(filePaths: string[], keywords: string[] = [], r
 }
 
 /** Convenience: keywords -> read, size-capped context bundle, in one call. */
-export function buildContextBundle(complaintText: string, diagnosisText: string, repoRoot: string = REPO_ROOT): ContextFile[] {
+export function buildContextBundle(
+  complaintText: string,
+  diagnosisText: string,
+  repoRoot: string = REPO_ROOT,
+): ContextFile[] {
   const keywords = extractKeywords(`${complaintText} ${diagnosisText}`);
   const files = findCandidateFiles(keywords, repoRoot);
   return readContextFiles(files, keywords, repoRoot);

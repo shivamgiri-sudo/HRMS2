@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real Shopify "Order Export" -- writes into the SAME already-
@@ -25,7 +28,8 @@ function get(data: Record<string, unknown>, ...keys: string[]): string {
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
     const v = normalized[normalizeKey(k)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
@@ -54,7 +58,8 @@ export async function importBvoOrderExportMasmisBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
@@ -69,19 +74,33 @@ export async function importBvoOrderExportMasmisBatch(
     const shippingPhone = get(data, "shipping_phone", "Shipping Phone");
     if (!shippingPhone) {
       const msg = `Row ${row.row_no}: "shipping_phone" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        shippingPhone, n(data, "name"), n(data, "shipping_phone_2"), n(data, "email"),
-        n(data, "financial_status"), parseNullableDecimal(get(data, "total")),
-        n(data, "name_2"), n(data, "discount_code"), n(data, "created_at_raw"),
-        n(data, "lineitem_name"), n(data, "shipping_name"), n(data, "shipping_zip"),
-        n(data, "tags"), n(data, "shipping_city"), n(data, "shipping_province_name"),
-        n(data, "order_date"), null, batchId,
+        shippingPhone,
+        n(data, "name"),
+        n(data, "shipping_phone_2"),
+        n(data, "email"),
+        n(data, "financial_status"),
+        parseNullableDecimal(get(data, "total")),
+        n(data, "name_2"),
+        n(data, "discount_code"),
+        n(data, "created_at_raw"),
+        n(data, "lineitem_name"),
+        n(data, "shipping_name"),
+        n(data, "shipping_zip"),
+        n(data, "tags"),
+        n(data, "shipping_city"),
+        n(data, "shipping_province_name"),
+        n(data, "order_date"),
+        null,
+        batchId,
       ],
     });
   }
@@ -108,12 +127,17 @@ export async function importBvoOrderExportMasmisBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 

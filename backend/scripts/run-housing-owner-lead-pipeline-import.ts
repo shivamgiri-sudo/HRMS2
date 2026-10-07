@@ -48,17 +48,33 @@ async function main() {
       `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status)
        VALUES (?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), 'valid')
        ON DUPLICATE KEY UPDATE id = id`,
-      [randomUUID(), batchId, i + 1, JSON.stringify(rows[i]), JSON.stringify(rows[i])],
+      [
+        randomUUID(),
+        batchId,
+        i + 1,
+        JSON.stringify(rows[i]),
+        JSON.stringify(rows[i]),
+      ],
     );
     if ((i + 1) % 10000 === 0) {
-      console.log(`[IMPORT] staged ${i + 1}/${rows.length} (${Math.round((Date.now() - t0) / 1000)}s elapsed)`);
+      console.log(
+        `[IMPORT] staged ${i + 1}/${rows.length} (${Math.round((Date.now() - t0) / 1000)}s elapsed)`,
+      );
     }
   }
-  console.log("[IMPORT] batch rows staged:", rows.length, `(${Math.round((Date.now() - t0) / 1000)}s)`);
+  console.log(
+    "[IMPORT] batch rows staged:",
+    rows.length,
+    `(${Math.round((Date.now() - t0) / 1000)}s)`,
+  );
 
   const t1 = Date.now();
   const result = await importHousingOwnerLeadPipelineBatch(batchId, USER_ID);
-  console.log("[IMPORT] result:", JSON.stringify(result, null, 2), `(${Math.round((Date.now() - t1) / 1000)}s)`);
+  console.log(
+    "[IMPORT] result:",
+    JSON.stringify(result, null, 2),
+    `(${Math.round((Date.now() - t1) / 1000)}s)`,
+  );
 
   await db.execute(
     `UPDATE upload_batch SET batch_status = 'completed', imported_rows = ?, error_rows = ? WHERE id = ?`,
@@ -67,4 +83,7 @@ async function main() {
 
   process.exit(result.errorRows > 0 && result.importedRows === 0 ? 1 : 0);
 }
-main().catch((e) => { console.error("[IMPORT] FAILED", e); process.exit(1); });
+main().catch((e) => {
+  console.error("[IMPORT] FAILED", e);
+  process.exit(1);
+});

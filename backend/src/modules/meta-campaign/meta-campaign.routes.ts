@@ -16,29 +16,42 @@
  *   everything else requireAuth + requireRole.
  */
 
-import multer from 'multer';
-import { Router } from 'express';
-import type { Response, NextFunction, Request } from 'express';
-import crypto from 'crypto';
-import { requireAuth } from '../../middleware/authMiddleware.js';
-import { requireRole } from '../../middleware/requireRole.js';
-import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
-import { metaCampaignService } from './meta-campaign.service.js';
-import { ALL_BRANCH_ROLES, resolveBranchScope, canAccessLead, canMessageLead } from './meta-access.js';
-import type { BranchScope } from './meta-access.js';
+import multer from "multer";
+import { Router } from "express";
+import type { Response, NextFunction, Request } from "express";
+import crypto from "crypto";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { metaCampaignService } from "./meta-campaign.service.js";
+import {
+  ALL_BRANCH_ROLES,
+  resolveBranchScope,
+  canAccessLead,
+  canMessageLead,
+} from "./meta-access.js";
+import type { BranchScope } from "./meta-access.js";
 import {
   getEvaluations,
   filterEvaluations,
   summarise,
   toCsv,
   getLeadShortlistDetail,
-} from './shortlist-report.service.js';
-import type { ShortlistFilters } from './shortlist-report.service.js';
-import { writeAuditLog } from '../../shared/auditLog.js';
-import { notifyQualifiedLead, buildNotifyPreview, recordVoiceCallback, recordWalkInConfirmation } from './lead-outreach.service.js';
-import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
-import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
-import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
+} from "./shortlist-report.service.js";
+import type { ShortlistFilters } from "./shortlist-report.service.js";
+import { writeAuditLog } from "../../shared/auditLog.js";
+import {
+  notifyQualifiedLead,
+  buildNotifyPreview,
+  recordVoiceCallback,
+  recordWalkInConfirmation,
+} from "./lead-outreach.service.js";
+import { leadVerifyToken, isMetaConfigured } from "./meta-api.client.js";
+import {
+  parseVapiCallback,
+  isVapiConfigured,
+} from "./vapi-voicebot.provider.js";
+import type { VapiCallbackPayload } from "./vapi-voicebot.provider.js";
 import {
   isWassengerConfigured,
   parseWassengerWebhook,
@@ -47,8 +60,8 @@ import {
   sendShortlistMessage,
   sendMediaMessage,
   sendCustomMessage,
-} from './wassenger.provider.js';
-import type { WassengerWebhookPayload } from './wassenger.provider.js';
+} from "./wassenger.provider.js";
+import type { WassengerWebhookPayload } from "./wassenger.provider.js";
 import {
   saveMessage,
   updateDeliveryStatus,
@@ -57,15 +70,27 @@ import {
   getTotalUnread,
   markThreadRead,
   notifyBranchHrOfInboundMessage,
-} from './meta-messages.service.js';
-import type { MetaCampaignStatus, MetaWebhookLeadPayload } from './meta-campaign.types.js';
+} from "./meta-messages.service.js";
+import type {
+  MetaCampaignStatus,
+  MetaWebhookLeadPayload,
+} from "./meta-campaign.types.js";
 
 export const metaCampaignRouter = Router();
 
 /** Read access mirrors the requisition read roles — a campaign is a view onto a requisition. */
 const CAMPAIGN_READ_ROLES = [
-  'super_admin', 'admin', 'hr', 'recruitment_hr', 'branch_head', 'operations_manager',
-  'process_manager', 'management', 'manager', 'assistant_manager', 'recruiter',
+  "super_admin",
+  "admin",
+  "hr",
+  "recruitment_hr",
+  "branch_head",
+  "operations_manager",
+  "process_manager",
+  "management",
+  "manager",
+  "assistant_manager",
+  "recruiter",
 ] as const;
 
 /**
@@ -77,12 +102,15 @@ const CAMPAIGN_READ_ROLES = [
  */
 const INBOX_ROLES = [
   ...CAMPAIGN_READ_ROLES,
-  'payroll_hr', 'interviewer',
+  "payroll_hr",
+  "interviewer",
 ] as const;
 
 /** Every role the caller holds, falling back to the primary role. */
 function callerRoles(req: AuthenticatedRequest): string[] {
-  const roles = req.userRoles?.length ? req.userRoles : [req.authUser?.role ?? ''];
+  const roles = req.userRoles?.length
+    ? req.userRoles
+    : [req.authUser?.role ?? ""];
   return roles.filter(Boolean);
 }
 
@@ -90,11 +118,16 @@ function callerRoles(req: AuthenticatedRequest): string[] {
 async function requireLeadInScope(
   req: AuthenticatedRequest,
   res: Response,
-  leadId: string
+  leadId: string,
 ): Promise<BranchScope | null> {
   const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
   if (await canAccessLead(leadId, scope)) return scope;
-  res.status(403).json({ success: false, message: 'This conversation belongs to another branch' });
+  res
+    .status(403)
+    .json({
+      success: false,
+      message: "This conversation belongs to another branch",
+    });
   return null;
 }
 
@@ -106,29 +139,39 @@ async function requireLeadInScope(
 async function resolvebranchScope(
   userId: string,
   role: string,
-  callerBranch?: string
+  callerBranch?: string,
 ): Promise<string | undefined> {
   if (ALL_BRANCH_ROLES.includes(role)) return callerBranch;
   // Branch-scoped role: derive branch_name from employee → branch_master
-  const { db } = await import('../../db/mysql.js');
-  const [rows] = await db.execute<import('mysql2').RowDataPacket[]>(
+  const { db } = await import("../../db/mysql.js");
+  const [rows] = await db.execute<import("mysql2").RowDataPacket[]>(
     `SELECT bm.branch_name
        FROM employees e
        JOIN branch_master bm ON bm.id = e.branch_id
       WHERE e.user_id = ? AND e.active_status = 1
       LIMIT 1`,
-    [userId]
+    [userId],
   );
   return (rows[0]?.branch_name as string | null) ?? callerBranch;
 }
 
 /** Writes are narrower: linking a form ID wrongly misroutes candidates, so keep it with HR. */
-const CAMPAIGN_WRITE_ROLES = ['super_admin', 'admin', 'hr', 'recruitment_hr'] as const;
+const CAMPAIGN_WRITE_ROLES = [
+  "super_admin",
+  "admin",
+  "hr",
+  "recruitment_hr",
+] as const;
 
-type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
-const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  void fn(req, res).catch(next);
-};
+type AsyncHandler = (
+  req: AuthenticatedRequest,
+  res: Response,
+) => Promise<unknown>;
+const h =
+  (fn: AsyncHandler) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    void fn(req, res).catch(next);
+  };
 
 // ─────────────────────────── webhook: verification handshake ───────────────────────────
 
@@ -139,23 +182,28 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
  * an attacker can probe repeatedly, which is precisely the condition where a short-circuiting
  * string compare leaks length and prefix information.
  */
-metaCampaignRouter.get('/webhooks', (req: Request, res: Response) => {
-  const mode = req.query['hub.mode'];
-  const token = String(req.query['hub.verify_token'] ?? '');
-  const challenge = req.query['hub.challenge'];
+metaCampaignRouter.get("/webhooks", (req: Request, res: Response) => {
+  const mode = req.query["hub.mode"];
+  const token = String(req.query["hub.verify_token"] ?? "");
+  const challenge = req.query["hub.challenge"];
   const expected = leadVerifyToken();
 
   if (!expected) {
-    console.warn('[meta webhook] verification attempted but META_LEAD_VERIFY_TOKEN is not set');
-    return res.status(503).send('verify token not configured');
+    console.warn(
+      "[meta webhook] verification attempted but META_LEAD_VERIFY_TOKEN is not set",
+    );
+    return res.status(503).send("verify token not configured");
   }
 
   const a = Buffer.from(token);
   const b = Buffer.from(expected);
-  const ok = mode === 'subscribe' && a.length === b.length && crypto.timingSafeEqual(a, b);
+  const ok =
+    mode === "subscribe" &&
+    a.length === b.length &&
+    crypto.timingSafeEqual(a, b);
 
-  if (!ok) return res.status(403).send('verification failed');
-  return res.status(200).send(String(challenge ?? ''));
+  if (!ok) return res.status(403).send("verification failed");
+  return res.status(200).send(String(challenge ?? ""));
 });
 
 // ─────────────────────────── webhook: lead delivery ───────────────────────────
@@ -168,36 +216,42 @@ metaCampaignRouter.get('/webhooks', (req: Request, res: Response) => {
  * escaping both differ), so signature checks against it fail intermittently and inexplicably.
  */
 function verifySignature(req: Request): { ok: boolean; reason: string | null } {
-  const secret = process.env.META_APP_SECRET ?? '';
+  const secret = process.env.META_APP_SECRET ?? "";
   if (!secret) {
-    return { ok: false, reason: 'META_APP_SECRET is not configured; refusing unverified webhook' };
+    return {
+      ok: false,
+      reason: "META_APP_SECRET is not configured; refusing unverified webhook",
+    };
   }
 
-  const header = req.header('x-hub-signature-256') ?? '';
-  if (!header.startsWith('sha256=')) {
-    return { ok: false, reason: 'missing or malformed X-Hub-Signature-256' };
+  const header = req.header("x-hub-signature-256") ?? "";
+  if (!header.startsWith("sha256=")) {
+    return { ok: false, reason: "missing or malformed X-Hub-Signature-256" };
   }
 
   const raw = (req as Request & { rawBody?: Buffer | string }).rawBody;
   if (!raw) {
-    return { ok: false, reason: 'raw body unavailable; cannot verify signature' };
+    return {
+      ok: false,
+      reason: "raw body unavailable; cannot verify signature",
+    };
   }
 
   const expected = crypto
-    .createHmac('sha256', secret)
-    .update(typeof raw === 'string' ? Buffer.from(raw, 'utf8') : raw)
-    .digest('hex');
+    .createHmac("sha256", secret)
+    .update(typeof raw === "string" ? Buffer.from(raw, "utf8") : raw)
+    .digest("hex");
 
-  const got = header.slice('sha256='.length);
-  const a = Buffer.from(got, 'hex');
-  const b = Buffer.from(expected, 'hex');
+  const got = header.slice("sha256=".length);
+  const a = Buffer.from(got, "hex");
+  const b = Buffer.from(expected, "hex");
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return { ok: false, reason: 'signature mismatch' };
+    return { ok: false, reason: "signature mismatch" };
   }
   return { ok: true, reason: null };
 }
 
-metaCampaignRouter.post('/webhooks', (req: Request, res: Response) => {
+metaCampaignRouter.post("/webhooks", (req: Request, res: Response) => {
   const payload = req.body as MetaWebhookLeadPayload;
 
   const sig = verifySignature(req);
@@ -205,23 +259,29 @@ metaCampaignRouter.post('/webhooks', (req: Request, res: Response) => {
   // Log the body FIRST and unconditionally — including rejected ones, which are the interesting
   // ones when debugging a misconfigured app secret.
   void metaCampaignService
-    .logWebhook(sig.ok ? 'leadgen' : 'leadgen_rejected', payload)
+    .logWebhook(sig.ok ? "leadgen" : "leadgen_rejected", payload)
     .then(async (logId) => {
       if (!sig.ok) {
-        await metaCampaignService.markWebhookProcessed(logId, sig.reason ?? 'signature rejected');
+        await metaCampaignService.markWebhookProcessed(
+          logId,
+          sig.reason ?? "signature rejected",
+        );
         return;
       }
       // Processed after the response has already been sent. META retries any non-2xx, so a slow
       // Graph API call here would otherwise turn one form fill into a retry storm.
-      const result = await metaCampaignService.processWebhookPayload(payload, logId);
+      const result = await metaCampaignService.processWebhookPayload(
+        payload,
+        logId,
+      );
       if (result.errors.length) {
-        console.warn('[meta webhook] processed with errors', result.errors);
+        console.warn("[meta webhook] processed with errors", result.errors);
       }
     })
-    .catch((e: unknown) => console.error('[meta webhook] logging failed', e));
+    .catch((e: unknown) => console.error("[meta webhook] logging failed", e));
 
   if (!sig.ok) {
-    console.warn('[meta webhook] rejected:', sig.reason);
+    console.warn("[meta webhook] rejected:", sig.reason);
     return res.status(403).json({ success: false, message: sig.reason });
   }
 
@@ -231,30 +291,45 @@ metaCampaignRouter.post('/webhooks', (req: Request, res: Response) => {
 
 // ─────────────────────────── voice bot callback ───────────────────────────
 
-metaCampaignRouter.post('/voice-callback', (req: Request, res: Response) => {
-  const expected = process.env.VOICEBOT_CALLBACK_TOKEN ?? '';
+metaCampaignRouter.post("/voice-callback", (req: Request, res: Response) => {
+  const expected = process.env.VOICEBOT_CALLBACK_TOKEN ?? "";
   if (!expected) {
-    return res.status(503).json({ success: false, message: 'VOICEBOT_CALLBACK_TOKEN is not configured' });
+    return res
+      .status(503)
+      .json({
+        success: false,
+        message: "VOICEBOT_CALLBACK_TOKEN is not configured",
+      });
   }
-  const supplied = String(req.header('x-voicebot-token') ?? req.body?.token ?? '');
+  const supplied = String(
+    req.header("x-voicebot-token") ?? req.body?.token ?? "",
+  );
   const a = Buffer.from(supplied);
   const b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return res.status(403).json({ success: false, message: 'invalid callback token' });
+    return res
+      .status(403)
+      .json({ success: false, message: "invalid callback token" });
   }
 
-  const referenceId = String(req.body?.reference_id ?? '');
-  const status = String(req.body?.status ?? 'unknown');
+  const referenceId = String(req.body?.reference_id ?? "");
+  const status = String(req.body?.status ?? "unknown");
   const outcome = req.body?.outcome ? String(req.body.outcome) : null;
   if (!referenceId) {
-    return res.status(400).json({ success: false, message: 'reference_id is required' });
+    return res
+      .status(400)
+      .json({ success: false, message: "reference_id is required" });
   }
 
   void recordVoiceCallback(referenceId, status, outcome)
     .then((matched) => {
-      if (!matched) console.warn('[meta voice-callback] no lead matched reference_id', referenceId);
+      if (!matched)
+        console.warn(
+          "[meta voice-callback] no lead matched reference_id",
+          referenceId,
+        );
     })
-    .catch((e: unknown) => console.error('[meta voice-callback] failed', e));
+    .catch((e: unknown) => console.error("[meta voice-callback] failed", e));
 
   return res.status(200).json({ success: true });
 });
@@ -269,11 +344,14 @@ metaCampaignRouter.post('/voice-callback', (req: Request, res: Response) => {
  *
  * Vapi signs requests with HMAC, but for simplicity we also support a bearer token.
  */
-metaCampaignRouter.post('/vapi-callback', (req: Request, res: Response) => {
+metaCampaignRouter.post("/vapi-callback", (req: Request, res: Response) => {
   // Vapi can authenticate via HMAC or a simple secret header
-  const expectedSecret = process.env.VAPI_CALLBACK_SECRET ?? process.env.VAPI_API_KEY ?? '';
+  const expectedSecret =
+    process.env.VAPI_CALLBACK_SECRET ?? process.env.VAPI_API_KEY ?? "";
   const suppliedSecret = String(
-    req.header('x-vapi-secret') ?? req.header('authorization')?.replace('Bearer ', '') ?? ''
+    req.header("x-vapi-secret") ??
+      req.header("authorization")?.replace("Bearer ", "") ??
+      "",
   );
 
   // If a secret is configured, verify it
@@ -281,8 +359,10 @@ metaCampaignRouter.post('/vapi-callback', (req: Request, res: Response) => {
     const a = Buffer.from(suppliedSecret);
     const b = Buffer.from(expectedSecret);
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      console.warn('[vapi-callback] invalid secret');
-      return res.status(403).json({ success: false, message: 'invalid callback secret' });
+      console.warn("[vapi-callback] invalid secret");
+      return res
+        .status(403)
+        .json({ success: false, message: "invalid callback secret" });
     }
   }
 
@@ -290,40 +370,45 @@ metaCampaignRouter.post('/vapi-callback', (req: Request, res: Response) => {
   const parsed = parseVapiCallback(payload);
 
   if (!parsed.referenceId) {
-    console.warn('[vapi-callback] no reference_id in payload', payload);
-    return res.status(200).json({ success: true, message: 'no reference_id, ignored' });
+    console.warn("[vapi-callback] no reference_id in payload", payload);
+    return res
+      .status(200)
+      .json({ success: true, message: "no reference_id, ignored" });
   }
 
   // Map Vapi outcome to our status format
   const statusMap: Record<string, string> = {
-    interested: 'completed_interested',
-    not_interested: 'completed_not_interested',
-    no_answer: 'no_answer',
-    busy: 'busy',
-    unknown: 'completed',
+    interested: "completed_interested",
+    not_interested: "completed_not_interested",
+    no_answer: "no_answer",
+    busy: "busy",
+    unknown: "completed",
   };
 
   const outcomeText = parsed.summary
     ? `${parsed.outcome}: ${parsed.summary}`
-    : `${parsed.outcome}${parsed.duration ? ` (${parsed.duration}s)` : ''}`;
+    : `${parsed.outcome}${parsed.duration ? ` (${parsed.duration}s)` : ""}`;
 
   void recordVoiceCallback(
     parsed.referenceId,
-    statusMap[parsed.outcome] ?? 'completed',
-    outcomeText
+    statusMap[parsed.outcome] ?? "completed",
+    outcomeText,
   )
     .then((matched) => {
       if (!matched) {
-        console.warn('[vapi-callback] no lead matched reference_id', parsed.referenceId);
+        console.warn(
+          "[vapi-callback] no lead matched reference_id",
+          parsed.referenceId,
+        );
       } else {
-        console.log('[vapi-callback] recorded outcome', {
+        console.log("[vapi-callback] recorded outcome", {
           referenceId: parsed.referenceId,
           outcome: parsed.outcome,
           duration: parsed.duration,
         });
       }
     })
-    .catch((e: unknown) => console.error('[vapi-callback] failed', e));
+    .catch((e: unknown) => console.error("[vapi-callback] failed", e));
 
   return res.status(200).json({ success: true });
 });
@@ -338,20 +423,30 @@ metaCampaignRouter.post('/vapi-callback', (req: Request, res: Response) => {
  *   WASSENGER_WEBHOOK_SECRET is set we verify it; otherwise we accept all (suitable for private
  *   server without public exposure, but set the secret in production).
  */
-metaCampaignRouter.post('/wassenger-webhook', (req: Request, res: Response) => {
+metaCampaignRouter.post("/wassenger-webhook", (req: Request, res: Response) => {
   // Optional webhook secret check
-  const webhookSecret = process.env.WASSENGER_WEBHOOK_SECRET ?? '';
+  const webhookSecret = process.env.WASSENGER_WEBHOOK_SECRET ?? "";
   if (webhookSecret) {
-    const supplied = String(req.header('x-wassenger-secret') ?? req.header('x-api-key') ?? '');
+    const supplied = String(
+      req.header("x-wassenger-secret") ?? req.header("x-api-key") ?? "",
+    );
     const a = Buffer.from(supplied);
     const b = Buffer.from(webhookSecret);
-    if (a.length === 0 || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      return res.status(403).json({ success: false, message: 'invalid webhook secret' });
+    if (
+      a.length === 0 ||
+      a.length !== b.length ||
+      !crypto.timingSafeEqual(a, b)
+    ) {
+      return res
+        .status(403)
+        .json({ success: false, message: "invalid webhook secret" });
     }
   }
 
   if (!isWassengerConfigured()) {
-    return res.status(503).json({ success: false, message: 'Wassenger not configured' });
+    return res
+      .status(503)
+      .json({ success: false, message: "Wassenger not configured" });
   }
 
   const payload = req.body as WassengerWebhookPayload;
@@ -359,52 +454,77 @@ metaCampaignRouter.post('/wassenger-webhook', (req: Request, res: Response) => {
   // Delivery-state events (queued -> sent -> delivered -> read / failed) update the outbound row.
   const statusUpdate = parseWassengerStatusUpdate(payload);
   if (statusUpdate) {
-    void updateDeliveryStatus(statusUpdate.messageId, statusUpdate.status).catch((e: unknown) =>
-      console.error('[wassenger-webhook] status update failed', e instanceof Error ? e.message : e)
+    void updateDeliveryStatus(
+      statusUpdate.messageId,
+      statusUpdate.status,
+    ).catch((e: unknown) =>
+      console.error(
+        "[wassenger-webhook] status update failed",
+        e instanceof Error ? e.message : e,
+      ),
     );
-    return res.status(200).json({ success: true, action: 'status_updated' });
+    return res.status(200).json({ success: true, action: "status_updated" });
   }
 
   const { isIncoming, phone, reply, rawBody } = parseWassengerWebhook(payload);
 
   if (!isIncoming || !phone) {
     // Not an incoming candidate message — ack and ignore
-    return res.status(200).json({ success: true, action: 'ignored' });
+    return res.status(200).json({ success: true, action: "ignored" });
   }
 
   // Fire-and-forget — must return 200 fast for Wassenger
   void (async () => {
     try {
-      const messageText = rawBody ?? (reply === 'confirmed' ? '1' : reply === 'reschedule' ? '2' : reply === 'not_interested' ? '3' : '');
+      const messageText =
+        rawBody ??
+        (reply === "confirmed"
+          ? "1"
+          : reply === "reschedule"
+            ? "2"
+            : reply === "not_interested"
+              ? "3"
+              : "");
       if (!messageText) return;
 
       // Always find the lead first (needed for both unknown questions and walk-in replies)
       const result = await recordWalkInConfirmation(phone, reply);
       if (!result.found || !result.leadId) {
-        console.warn('[wassenger-webhook] no matching lead for phone', phone);
+        console.warn("[wassenger-webhook] no matching lead for phone", phone);
         return;
       }
 
       // Persist the inbound message in the thread
       await saveMessage({
         leadId: result.leadId,
-        direction: 'inbound',
+        direction: "inbound",
         messageText,
-        senderType: 'candidate',
+        senderType: "candidate",
         wassengerMessageId: payload.data?.id ?? null,
       });
 
-      if (reply === 'unknown') {
+      if (reply === "unknown") {
         // Freeform message / question — notify Branch HR to respond
-        await notifyBranchHrOfInboundMessage(result.leadId, result.name, messageText);
+        await notifyBranchHrOfInboundMessage(
+          result.leadId,
+          result.name,
+          messageText,
+        );
       } else if (result.name) {
         // Walk-in reply — send auto-ack to candidate
         await sendConfirmationAck(phone, reply, result.name);
       }
 
-      console.log('[wassenger-webhook] processed', { phone, reply, leadId: result.leadId });
+      console.log("[wassenger-webhook] processed", {
+        phone,
+        reply,
+        leadId: result.leadId,
+      });
     } catch (e: unknown) {
-      console.error('[wassenger-webhook] failed', e instanceof Error ? e.message : e);
+      console.error(
+        "[wassenger-webhook] failed",
+        e instanceof Error ? e.message : e,
+      );
     }
   })();
 
@@ -414,17 +534,17 @@ metaCampaignRouter.post('/wassenger-webhook', (req: Request, res: Response) => {
 // ─────────────────────────── authenticated API ───────────────────────────
 
 metaCampaignRouter.get(
-  '/overview',
+  "/overview",
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (_req, res) => {
     const data = await metaCampaignService.getOverview();
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 metaCampaignRouter.get(
-  '/config-status',
+  "/config-status",
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (_req, res) =>
@@ -432,7 +552,9 @@ metaCampaignRouter.get(
       success: true,
       data: {
         metaApiConfigured: isMetaConfigured(),
-        webhookVerifyTokenConfigured: Boolean(process.env.META_LEAD_VERIFY_TOKEN),
+        webhookVerifyTokenConfigured: Boolean(
+          process.env.META_LEAD_VERIFY_TOKEN,
+        ),
         webhookSignatureConfigured: Boolean(process.env.META_APP_SECRET),
         whatsappConfigured: Boolean(process.env.LOCAL_WHATSAPP_API_URL),
         wassengerConfigured: isWassengerConfigured(),
@@ -440,30 +562,30 @@ metaCampaignRouter.get(
         voicebotConfigured: Boolean(process.env.VOICEBOT_TRIGGER_URL),
         vapiConfigured: isVapiConfigured(),
       },
-    })
-  )
+    }),
+  ),
 );
 
 metaCampaignRouter.get(
-  '/filter-options',
+  "/filter-options",
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (_req, res) => {
     const data = await metaCampaignService.getFilterOptions();
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 metaCampaignRouter.get(
-  '/campaigns',
+  "/campaigns",
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
     const ar = req as AuthenticatedRequest;
     const branchName = await resolvebranchScope(
       ar.authUser.id,
-      ar.authUser.role ?? '',
-      req.query.branchName as string | undefined
+      ar.authUser.role ?? "",
+      req.query.branchName as string | undefined,
     );
     const data = await metaCampaignService.listCampaigns({
       requisitionId: req.query.requisitionId as string | undefined,
@@ -475,33 +597,39 @@ metaCampaignRouter.get(
       dateTo: req.query.dateTo as string | undefined,
     });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 metaCampaignRouter.get(
-  '/campaigns/:id',
+  "/campaigns/:id",
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
     const data = await metaCampaignService.getCampaign(req.params.id!);
-    if (!data) return res.status(404).json({ success: false, message: 'Campaign not found' });
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "Campaign not found" });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 metaCampaignRouter.get(
-  '/campaigns/:id/funnel',
+  "/campaigns/:id/funnel",
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
     const data = await metaCampaignService.getCampaignFunnel(req.params.id!);
-    if (!data) return res.status(404).json({ success: false, message: 'Campaign not found' });
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "Campaign not found" });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 metaCampaignRouter.get(
-  '/leads',
+  "/leads",
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
@@ -511,7 +639,7 @@ metaCampaignRouter.get(
       screening: req.query.screening as string | undefined,
     });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 /**
@@ -522,15 +650,15 @@ metaCampaignRouter.get(
  * name its source. Read roles, same as every other campaign read.
  */
 metaCampaignRouter.get(
-  '/leads-all',
+  "/leads-all",
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
     const ar = req as AuthenticatedRequest;
     const branchName = await resolvebranchScope(
       ar.authUser.id,
-      ar.authUser.role ?? '',
-      req.query.branchName as string | undefined
+      ar.authUser.role ?? "",
+      req.query.branchName as string | undefined,
     );
     const limit = req.query.limit ? Number(req.query.limit) : 50;
     const offset = req.query.offset ? Number(req.query.offset) : 0;
@@ -546,7 +674,7 @@ metaCampaignRouter.get(
       offset: Number.isFinite(offset) ? offset : 0,
     });
     return res.json({ success: true, data: data.rows, total: data.total });
-  })
+  }),
 );
 
 /**
@@ -554,35 +682,47 @@ metaCampaignRouter.get(
  * others are rejected, and what it could not verify. Read-only — nothing here writes to a lead.
  * Branch-scoped callers only see their own branch's requisitions.
  */
-async function shortlistFilters(req: AuthenticatedRequest): Promise<ShortlistFilters | null> {
+async function shortlistFilters(
+  req: AuthenticatedRequest,
+): Promise<ShortlistFilters | null> {
   const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
   if (!scope.all && !scope.branchName) return null; // fail closed
   const q = req.query;
   return {
-    branchName: scope.all ? (q.branchName as string | undefined) : scope.branchName!,
+    branchName: scope.all
+      ? (q.branchName as string | undefined)
+      : scope.branchName!,
     requisitionId: q.requisitionId as string | undefined,
-    proposed: (q.proposed as ShortlistFilters['proposed']) ?? 'all',
-    current: (q.current as ShortlistFilters['current']) ?? 'all',
-    changedOnly: q.changedOnly === 'true',
-    outreachEligibleOnly: q.outreachEligibleOnly === 'true',
+    proposed: (q.proposed as ShortlistFilters["proposed"]) ?? "all",
+    current: (q.current as ShortlistFilters["current"]) ?? "all",
+    changedOnly: q.changedOnly === "true",
+    outreachEligibleOnly: q.outreachEligibleOnly === "true",
     search: q.search as string | undefined,
   };
 }
 
 metaCampaignRouter.get(
-  '/shortlist/summary',
+  "/shortlist/summary",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req, res) => {
     const filters = await shortlistFilters(req);
-    const { evaluations, index } = await getEvaluations(req.query.refresh === 'true');
-    const rows = filters ? filterEvaluations(evaluations, { ...filters, proposed: 'all', current: 'all' }) : [];
+    const { evaluations, index } = await getEvaluations(
+      req.query.refresh === "true",
+    );
+    const rows = filters
+      ? filterEvaluations(evaluations, {
+          ...filters,
+          proposed: "all",
+          current: "all",
+        })
+      : [];
     return res.json({ success: true, data: summarise(rows, index) });
-  })
+  }),
 );
 
 metaCampaignRouter.get(
-  '/shortlist/leads',
+  "/shortlist/leads",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req, res) => {
@@ -591,12 +731,15 @@ metaCampaignRouter.get(
     const rows = filters ? filterEvaluations(evaluations, filters) : [];
     const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 200);
     const offset = Math.max(Number(req.query.offset ?? 0), 0);
-    return res.json({ success: true, data: { rows: rows.slice(offset, offset + limit), total: rows.length } });
-  })
+    return res.json({
+      success: true,
+      data: { rows: rows.slice(offset, offset + limit), total: rows.length },
+    });
+  }),
 );
 
 metaCampaignRouter.get(
-  '/shortlist/export.csv',
+  "/shortlist/export.csv",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
@@ -605,89 +748,114 @@ metaCampaignRouter.get(
     const rows = filters ? filterEvaluations(evaluations, filters) : [];
     await writeAuditLog({
       actor_user_id: req.authUser!.id,
-      action_type: 'META_SHORTLIST_EXPORT',
-      module_key: 'meta_campaign',
-      entity_type: 'meta_lead_raw',
+      action_type: "META_SHORTLIST_EXPORT",
+      module_key: "meta_campaign",
+      entity_type: "meta_lead_raw",
       metadata: { rows: rows.length, filters },
       req,
     });
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="meta-shortlist.csv"');
-    return res.send('\uFEFF' + toCsv(rows));
-  })
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="meta-shortlist.csv"',
+    );
+    return res.send("\uFEFF" + toCsv(rows));
+  }),
 );
 
 metaCampaignRouter.get(
-  '/shortlist/leads/:id',
+  "/shortlist/leads/:id",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req, res) => {
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const data = await getLeadShortlistDetail(req.params.id!);
-    if (!data) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 /** One lead with its full raw form answers — backs the All Leads drill-down drawer. */
 metaCampaignRouter.get(
-  '/leads/:id',
+  "/leads/:id",
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const data = await metaCampaignService.getLeadDetail(req.params.id!);
-    if (!data) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 /** Lead Gen forms on a Page, for discovery when linking a form to a requisition. */
 metaCampaignRouter.get(
-  '/page-forms/:pageId',
+  "/page-forms/:pageId",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
     if (!isMetaConfigured()) {
-      return res.status(503).json({ success: false, message: 'META Graph API token is not configured' });
+      return res
+        .status(503)
+        .json({
+          success: false,
+          message: "META Graph API token is not configured",
+        });
     }
     const data = await metaCampaignService.listPageForms(req.params.pageId!);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 metaCampaignRouter.post(
-  '/campaigns',
+  "/campaigns",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
     const { requisitionId, campaignName } = req.body ?? {};
     if (!requisitionId || !campaignName) {
-      return res.status(400).json({ success: false, message: 'requisitionId and campaignName are required' });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "requisitionId and campaignName are required",
+        });
     }
-    const data = await metaCampaignService.createCampaign(req.body, req.authUser?.id ?? null);
+    const data = await metaCampaignService.createCampaign(
+      req.body,
+      req.authUser?.id ?? null,
+    );
     return res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 metaCampaignRouter.patch(
-  '/campaigns/:id',
+  "/campaigns/:id",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
-    const data = await metaCampaignService.updateCampaign(req.params.id!, req.body ?? {});
+    const data = await metaCampaignService.updateCampaign(
+      req.params.id!,
+      req.body ?? {},
+    );
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 metaCampaignRouter.post(
-  '/campaigns/:id/sync',
+  "/campaigns/:id/sync",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (_req, res) => {
     const result = await metaCampaignService.syncAllCampaignMetrics();
     return res.json({ success: true, data: result });
-  })
+  }),
 );
 
 /**
@@ -697,133 +865,172 @@ metaCampaignRouter.post(
  * message anyone retroactively. Idempotent: re-running only imports leads not already stored.
  */
 metaCampaignRouter.post(
-  '/campaigns/:id/backfill',
+  "/campaigns/:id/backfill",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
     if (!isMetaConfigured()) {
-      return res.status(503).json({ success: false, message: 'META Graph API token is not configured' });
+      return res
+        .status(503)
+        .json({
+          success: false,
+          message: "META Graph API token is not configured",
+        });
     }
     const campaign = await metaCampaignService.getCampaign(req.params.id!);
-    if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found' });
+    if (!campaign)
+      return res
+        .status(404)
+        .json({ success: false, message: "Campaign not found" });
     if (!campaign.metaFormId) {
-      return res.status(422).json({ success: false, message: 'This campaign has no Lead Gen Form ID linked, so there is nothing to import.' });
+      return res
+        .status(422)
+        .json({
+          success: false,
+          message:
+            "This campaign has no Lead Gen Form ID linked, so there is nothing to import.",
+        });
     }
-    const result = await metaCampaignService.backfillFormLeads(campaign.metaFormId);
+    const result = await metaCampaignService.backfillFormLeads(
+      campaign.metaFormId,
+    );
     return res.json({ success: true, data: result });
-  })
+  }),
 );
 
 /** Import historical leads for every linked form at once. Super admin / HR only. */
 metaCampaignRouter.post(
-  '/backfill-all',
+  "/backfill-all",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (_req, res) => {
     if (!isMetaConfigured()) {
-      return res.status(503).json({ success: false, message: 'META Graph API token is not configured' });
+      return res
+        .status(503)
+        .json({
+          success: false,
+          message: "META Graph API token is not configured",
+        });
     }
     const result = await metaCampaignService.backfillAllLinkedForms();
     return res.json({ success: true, data: result });
-  })
+  }),
 );
 
 metaCampaignRouter.post(
-  '/leads/:id/rescreen',
+  "/leads/:id/rescreen",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
     const data = await metaCampaignService.rescreenLead(req.params.id!);
-    if (!data) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 /** Preview the WhatsApp message that would be sent — no side effects. */
 metaCampaignRouter.get(
-  '/leads/:id/notify-preview',
+  "/leads/:id/notify-preview",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES, ...INBOX_ROLES),
   h(async (req, res) => {
     const preview = await buildNotifyPreview(req.params.id!);
-    if (!preview) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!preview)
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     return res.json({ success: true, data: preview });
-  })
+  }),
 );
 
 metaCampaignRouter.post(
-  '/leads/:id/notify',
+  "/leads/:id/notify",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
-    const data = await notifyQualifiedLead(req.params.id!, { force: req.body?.force === true });
+    const data = await notifyQualifiedLead(req.params.id!, {
+      force: req.body?.force === true,
+    });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 metaCampaignRouter.post(
-  '/leads/:id/create-candidate',
+  "/leads/:id/create-candidate",
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
-    const candidateId = await metaCampaignService.createCandidateFromLead(req.params.id!);
+    const candidateId = await metaCampaignService.createCandidateFromLead(
+      req.params.id!,
+    );
     if (!candidateId) {
       return res
         .status(422)
-        .json({ success: false, message: 'Lead has no usable name/phone, so no candidate could be created' });
+        .json({
+          success: false,
+          message:
+            "Lead has no usable name/phone, so no candidate could be created",
+        });
     }
     return res.json({ success: true, data: { candidateId } });
-  })
+  }),
 );
 
 // ─────────────────────────── WhatsApp Inbox ───────────────────────────
 
 /** Conversation list — branch-scoped for Branch HR, all branches for admin/hr. */
 metaCampaignRouter.get(
-  '/inbox',
+  "/inbox",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req, res) => {
     const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
-    const data = await getInbox({ scope, search: req.query.search as string | undefined, requisitionId: req.query.requisitionId as string | undefined });
+    const data = await getInbox({
+      scope,
+      search: req.query.search as string | undefined,
+      requisitionId: req.query.requisitionId as string | undefined,
+    });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 /** Unread count badge for the nav. */
 metaCampaignRouter.get(
-  '/inbox/unread-count',
+  "/inbox/unread-count",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req, res) => {
     const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
     const count = await getTotalUnread({ scope });
     return res.json({ success: true, data: { count } });
-  })
+  }),
 );
 
 /** Full message thread for one lead. */
 metaCampaignRouter.get(
-  '/leads/:id/messages',
+  "/leads/:id/messages",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req, res) => {
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const messages = await getThread(req.params.id!);
     return res.json({ success: true, data: messages });
-  })
+  }),
 );
 
 /** Mark all inbound messages in a thread as read. */
 metaCampaignRouter.patch(
-  '/leads/:id/messages/read',
+  "/leads/:id/messages/read",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req, res) => {
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     await markThreadRead(req.params.id!);
     return res.json({ success: true });
-  })
+  }),
 );
 
 /**
@@ -831,52 +1038,70 @@ metaCampaignRouter.patch(
  * Sends via Wassenger and persists as an outbound message.
  */
 metaCampaignRouter.post(
-  '/leads/:id/reply',
+  "/leads/:id/reply",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req, res) => {
-    const text = String(req.body?.message ?? '').trim();
+    const text = String(req.body?.message ?? "").trim();
     if (!text) {
-      return res.status(400).json({ success: false, message: 'message is required' });
+      return res
+        .status(400)
+        .json({ success: false, message: "message is required" });
     }
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const gate = await canMessageLead(req.params.id!);
-    if (!gate.allowed) return res.status(409).json({ success: false, message: gate.reason });
+    if (!gate.allowed)
+      return res.status(409).json({ success: false, message: gate.reason });
     if (!isWassengerConfigured()) {
-      return res.status(503).json({ success: false, message: 'Wassenger is not configured' });
+      return res
+        .status(503)
+        .json({ success: false, message: "Wassenger is not configured" });
     }
 
     // Load the lead to get phone + name
     const lead = await metaCampaignService.getLeadDetail(req.params.id!);
-    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!lead)
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     if (!lead.parsedPhone) {
-      return res.status(422).json({ success: false, message: 'Lead has no phone number' });
+      return res
+        .status(422)
+        .json({ success: false, message: "Lead has no phone number" });
     }
 
     // Same phone normalisation and error handling as every other outbound send.
     const sent = await sendCustomMessage(lead.parsedPhone, text);
     if (!sent.success) {
-      return res.status(502).json({ success: false, message: `Wassenger send failed: ${sent.error ?? 'unknown error'}` });
+      return res
+        .status(502)
+        .json({
+          success: false,
+          message: `Wassenger send failed: ${sent.error ?? "unknown error"}`,
+        });
     }
     const wassengerMsgId = sent.messageId ?? null;
 
     // Persist as outbound message from HR
     const msgId = await saveMessage({
       leadId: req.params.id!,
-      direction: 'outbound',
+      direction: "outbound",
       messageText: text,
-      senderType: 'hr',
+      senderType: "hr",
       senderId: req.authUser!.id,
       senderName: req.authUser!.email ?? null,
       wassengerMessageId: wassengerMsgId,
     });
 
     return res.json({ success: true, data: { messageId: msgId } });
-  })
+  }),
 );
 
 /** Memory storage — files are converted to base64 immediately, never written to disk. */
-const _upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const _upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+});
 
 /**
  * POST /api/meta/leads/:id/send-file
@@ -884,30 +1109,40 @@ const _upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20
  * Multipart form field: file (required), caption (optional text).
  */
 metaCampaignRouter.post(
-  '/leads/:id/send-file',
+  "/leads/:id/send-file",
   requireAuth,
   requireRole(...INBOX_ROLES),
-  _upload.single('file'),
+  _upload.single("file"),
   h(async (req, res) => {
     const file = (req as Request & { file?: Express.Multer.File }).file;
     if (!file) {
-      return res.status(400).json({ success: false, message: 'No file attached' });
+      return res
+        .status(400)
+        .json({ success: false, message: "No file attached" });
     }
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const gate = await canMessageLead(req.params.id!);
-    if (!gate.allowed) return res.status(409).json({ success: false, message: gate.reason });
+    if (!gate.allowed)
+      return res.status(409).json({ success: false, message: gate.reason });
     if (!isWassengerConfigured()) {
-      return res.status(503).json({ success: false, message: 'Wassenger is not configured' });
+      return res
+        .status(503)
+        .json({ success: false, message: "Wassenger is not configured" });
     }
 
     const lead = await metaCampaignService.getLeadDetail(req.params.id!);
-    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!lead)
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     if (!lead.parsedPhone) {
-      return res.status(422).json({ success: false, message: 'Lead has no phone number' });
+      return res
+        .status(422)
+        .json({ success: false, message: "Lead has no phone number" });
     }
 
-    const caption = String(req.body?.caption ?? '').trim();
-    const base64 = file.buffer.toString('base64');
+    const caption = String(req.body?.caption ?? "").trim();
+    const base64 = file.buffer.toString("base64");
 
     const result = await sendMediaMessage(lead.parsedPhone, {
       base64,
@@ -917,35 +1152,40 @@ metaCampaignRouter.post(
     });
 
     if (!result.success) {
-      return res.status(502).json({ success: false, message: result.error ?? 'Send failed' });
+      return res
+        .status(502)
+        .json({ success: false, message: result.error ?? "Send failed" });
     }
 
     // Persist as outbound message from HR
     const displayName = caption || file.originalname;
     const msgId = await saveMessage({
       leadId: req.params.id!,
-      direction: 'outbound',
+      direction: "outbound",
       messageText: `📎 ${displayName}`,
-      senderType: 'hr',
+      senderType: "hr",
       senderId: (req as AuthenticatedRequest).authUser!.id,
       senderName: (req as AuthenticatedRequest).authUser!.email ?? null,
       wassengerMessageId: result.messageId ?? null,
     });
 
-    return res.json({ success: true, data: { messageId: msgId, wassengerMessageId: result.messageId } });
-  })
+    return res.json({
+      success: true,
+      data: { messageId: msgId, wassengerMessageId: result.messageId },
+    });
+  }),
 );
 
 // ── Calling Feedback — same dispositions as Hiring Entry ─────────────────────
 
 const VALID_CALLING_FEEDBACKS = [
-  'Interested',
-  'Not Interested',
-  'No Response',
-  'Rescheduled',
-  'Already Joined',
-  'Declined Offer',
-  'Wrong Number',
+  "Interested",
+  "Not Interested",
+  "No Response",
+  "Rescheduled",
+  "Already Joined",
+  "Declined Offer",
+  "Wrong Number",
 ] as const;
 
 /**
@@ -954,21 +1194,32 @@ const VALID_CALLING_FEEDBACKS = [
  * Body: { calling_feedback: string, notes?: string }
  */
 metaCampaignRouter.post(
-  '/leads/:id/calling-feedback',
+  "/leads/:id/calling-feedback",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { calling_feedback, notes } = req.body ?? {};
-    const feedback = String(calling_feedback ?? '').trim();
+    const feedback = String(calling_feedback ?? "").trim();
     if (!feedback) {
-      return res.status(400).json({ success: false, message: 'calling_feedback is required' });
+      return res
+        .status(400)
+        .json({ success: false, message: "calling_feedback is required" });
     }
-    if (!VALID_CALLING_FEEDBACKS.includes(feedback as typeof VALID_CALLING_FEEDBACKS[number])) {
-      return res.status(400).json({ success: false, message: `Invalid calling_feedback. Must be one of: ${VALID_CALLING_FEEDBACKS.join(', ')}` });
+    if (
+      !VALID_CALLING_FEEDBACKS.includes(
+        feedback as (typeof VALID_CALLING_FEEDBACKS)[number],
+      )
+    ) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: `Invalid calling_feedback. Must be one of: ${VALID_CALLING_FEEDBACKS.join(", ")}`,
+        });
     }
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
 
-    const { db: dbConn } = await import('../../db/mysql.js');
+    const { db: dbConn } = await import("../../db/mysql.js");
     await dbConn.execute(
       `UPDATE meta_lead_raw
           SET calling_feedback = ?,
@@ -976,11 +1227,16 @@ metaCampaignRouter.post(
               calling_feedback_notes = ?,
               calling_feedback_by = ?
         WHERE id = ?`,
-      [feedback, notes ? String(notes).trim() : null, req.authUser!.id, req.params.id]
+      [
+        feedback,
+        notes ? String(notes).trim() : null,
+        req.authUser!.id,
+        req.params.id,
+      ],
     );
 
-    return res.json({ success: true, message: 'Calling feedback saved' });
-  })
+    return res.json({ success: true, message: "Calling feedback saved" });
+  }),
 );
 
 /**
@@ -988,44 +1244,49 @@ metaCampaignRouter.post(
  * Get current calling feedback for a lead.
  */
 metaCampaignRouter.get(
-  '/leads/:id/calling-feedback',
+  "/leads/:id/calling-feedback",
   requireAuth,
   requireRole(...INBOX_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
 
-    const { db: dbConn } = await import('../../db/mysql.js');
-    const [rows] = await dbConn.execute<import('mysql2').RowDataPacket[]>(
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const [rows] = await dbConn.execute<import("mysql2").RowDataPacket[]>(
       `SELECT calling_feedback, calling_feedback_at, calling_feedback_notes, calling_feedback_by
          FROM meta_lead_raw WHERE id = ?`,
-      [req.params.id]
+      [req.params.id],
     );
     if (!rows.length) {
-      return res.status(404).json({ success: false, message: 'Lead not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Lead not found" });
     }
     return res.json({ success: true, data: rows[0] });
-  })
+  }),
 );
 
 // ── Job-requisition list for inbox filter dropdown ────────────────────────────
 
 metaCampaignRouter.get(
-  '/job-requisition',
+  "/job-requisition",
   requireAuth,
-  requireRole('super_admin', 'admin', 'hr', 'management', 'manager'),
+  requireRole("super_admin", "admin", "hr", "management", "manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const role = req.authUser!.role ?? '';
-    const scope = await resolveBranchScope(req.authUser!.id, role ? [role] : []);
-    const { db: dbConn } = await import('../../db/mysql.js');
+    const role = req.authUser!.role ?? "";
+    const scope = await resolveBranchScope(
+      req.authUser!.id,
+      role ? [role] : [],
+    );
+    const { db: dbConn } = await import("../../db/mysql.js");
     const params: unknown[] = [];
-    let branchFilter = '';
+    let branchFilter = "";
     if (!scope.all && scope.branchName) {
-      branchFilter = 'AND jr.branch_name = ?';
+      branchFilter = "AND jr.branch_name = ?";
       params.push(scope.branchName);
     }
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
     params.push(limit);
-    const [rows] = await dbConn.execute<import('mysql2').RowDataPacket[]>(
+    const [rows] = await dbConn.execute<import("mysql2").RowDataPacket[]>(
       `SELECT jr.id, jr.requisition_code,
               dm.designation_name,
               bm.branch_name
@@ -1039,6 +1300,5 @@ metaCampaignRouter.get(
       params,
     );
     return res.json({ success: true, data: rows });
-  })
+  }),
 );
-

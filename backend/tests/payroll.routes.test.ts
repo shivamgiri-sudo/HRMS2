@@ -5,7 +5,10 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+  pingDb: vi.fn(),
+}));
 vi.mock("../src/modules/payroll/payroll.service.js", () => ({
   payrollService: {
     listStructures: vi.fn(),
@@ -27,15 +30,22 @@ vi.mock("../src/modules/payroll/payroll.service.js", () => ({
   },
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
+  requireRole:
+    (..._roles: string[]) =>
+    (_req: any, _res: any, next: any) =>
+      next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
-  getRosterPlanScope: vi.fn().mockResolvedValue({ branchId: null, processId: null }),
-  getEmployeeForUser: vi.fn().mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
+  getRosterPlanScope: vi
+    .fn()
+    .mockResolvedValue({ branchId: null, processId: null }),
+  getEmployeeForUser: vi
+    .fn()
+    .mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
@@ -57,20 +67,42 @@ import { db } from "../src/db/mysql.js";
 import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
-const svc = payrollService as { [K in keyof typeof payrollService]: ReturnType<typeof vi.fn> };
+const svc = payrollService as {
+  [K in keyof typeof payrollService]: ReturnType<typeof vi.fn>;
+};
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 
-const fakeStructure = { id: "str-1", structure_code: "BPO_A", structure_name: "BPO Grade A" };
-const fakeComponent = { id: "cmp-1", component_code: "BASIC", component_type: "earning" };
+const fakeStructure = {
+  id: "str-1",
+  structure_code: "BPO_A",
+  structure_name: "BPO Grade A",
+};
+const fakeComponent = {
+  id: "cmp-1",
+  component_code: "BASIC",
+  component_type: "earning",
+};
 const fakeRun = { id: "run-1", run_month: "2026-05", status: "draft" };
-const fakeLine = { id: "line-1", run_id: "run-1", employee_code: "MCN001", net_salary: 22000 };
-const fakeAssignment = { id: "asgn-1", employee_id: "emp-1", ctc_annual: 300000 };
+const fakeLine = {
+  id: "line-1",
+  run_id: "run-1",
+  employee_code: "MCN001",
+  net_salary: 22000,
+};
+const fakeAssignment = {
+  id: "asgn-1",
+  employee_id: "emp-1",
+  ctc_annual: 300000,
+};
 const fakeAdvance = { id: "adv-1", employee_id: "emp-1", amount: 5000 };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetUser.mockResolvedValue({ data: { user: { id: "user-1", email: "admin@mcn.com" } }, error: null });
+  mockGetUser.mockResolvedValue({
+    data: { user: { id: "user-1", email: "admin@mcn.com" } },
+    error: null,
+  });
 });
 
 // Structures
@@ -82,7 +114,9 @@ describe("GET /api/payroll/structures", () => {
     expect(r.body.data).toHaveLength(1);
   });
   it("returns 401 without auth", async () => {
-    expect((await request(app).get("/api/payroll/structures")).status).toBe(401);
+    expect((await request(app).get("/api/payroll/structures")).status).toBe(
+      401,
+    );
   });
 });
 
@@ -90,13 +124,17 @@ describe("POST /api/payroll/structures", () => {
   it("creates structure", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     svc.createStructure.mockResolvedValueOnce(fakeStructure);
-    const r = await request(app).post("/api/payroll/structures").set(AUTH)
+    const r = await request(app)
+      .post("/api/payroll/structures")
+      .set(AUTH)
       .send({ structureCode: "BPO_A", structureName: "BPO Grade A" });
     expect(r.status).toBe(201);
   });
   it("returns 400 for empty code", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    const r = await request(app).post("/api/payroll/structures").set(AUTH)
+    const r = await request(app)
+      .post("/api/payroll/structures")
+      .set(AUTH)
       .send({ structureCode: "", structureName: "X" });
     expect(r.status).toBe(400);
   });
@@ -115,13 +153,21 @@ describe("POST /api/payroll/components", () => {
   it("creates component", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     svc.createComponent.mockResolvedValueOnce(fakeComponent);
-    const r = await request(app).post("/api/payroll/components").set(AUTH)
-      .send({ componentCode: "BASIC", componentName: "Basic Salary", componentType: "earning" });
+    const r = await request(app)
+      .post("/api/payroll/components")
+      .set(AUTH)
+      .send({
+        componentCode: "BASIC",
+        componentName: "Basic Salary",
+        componentType: "earning",
+      });
     expect(r.status).toBe(201);
   });
   it("returns 400 for invalid componentType", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    const r = await request(app).post("/api/payroll/components").set(AUTH)
+    const r = await request(app)
+      .post("/api/payroll/components")
+      .set(AUTH)
       .send({ componentCode: "X", componentName: "X", componentType: "bonus" });
     expect(r.status).toBe(400);
   });
@@ -132,22 +178,28 @@ describe("POST /api/payroll/salary-assignments", () => {
   it("assigns salary", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     svc.assignSalary.mockResolvedValueOnce(fakeAssignment);
-    const r = await request(app).post("/api/payroll/salary-assignments").set(AUTH).send({
-      employeeId: "550e8400-e29b-41d4-a716-446655440000",
-      structureId: "550e8400-e29b-41d4-a716-446655440001",
-      ctcAnnual: 300000,
-      effectiveFrom: "2026-01-01",
-    });
+    const r = await request(app)
+      .post("/api/payroll/salary-assignments")
+      .set(AUTH)
+      .send({
+        employeeId: "550e8400-e29b-41d4-a716-446655440000",
+        structureId: "550e8400-e29b-41d4-a716-446655440001",
+        ctcAnnual: 300000,
+        effectiveFrom: "2026-01-01",
+      });
     expect(r.status).toBe(201);
   });
   it("returns 400 for negative CTC", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    const r = await request(app).post("/api/payroll/salary-assignments").set(AUTH).send({
-      employeeId: "550e8400-e29b-41d4-a716-446655440000",
-      structureId: "550e8400-e29b-41d4-a716-446655440001",
-      ctcAnnual: -1,
-      effectiveFrom: "2026-01-01",
-    });
+    const r = await request(app)
+      .post("/api/payroll/salary-assignments")
+      .set(AUTH)
+      .send({
+        employeeId: "550e8400-e29b-41d4-a716-446655440000",
+        structureId: "550e8400-e29b-41d4-a716-446655440001",
+        ctcAnnual: -1,
+        effectiveFrom: "2026-01-01",
+      });
     expect(r.status).toBe(400);
   });
 });
@@ -156,14 +208,18 @@ describe("GET /api/payroll/salary-assignments/:employeeId", () => {
   it("returns assignment", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     svc.getEmployeeSalary.mockResolvedValueOnce(fakeAssignment);
-    const r = await request(app).get("/api/payroll/salary-assignments/emp-1").set(AUTH);
+    const r = await request(app)
+      .get("/api/payroll/salary-assignments/emp-1")
+      .set(AUTH);
     expect(r.status).toBe(200);
     expect(r.body.data.ctc_annual).toBe(300000);
   });
   it("returns null when no assignment", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     svc.getEmployeeSalary.mockResolvedValueOnce(null);
-    const r = await request(app).get("/api/payroll/salary-assignments/emp-nope").set(AUTH);
+    const r = await request(app)
+      .get("/api/payroll/salary-assignments/emp-nope")
+      .set(AUTH);
     expect(r.status).toBe(200);
     expect(r.body.data).toBeNull();
   });
@@ -174,14 +230,18 @@ describe("POST /api/payroll/runs", () => {
   it("creates run", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     svc.createRun.mockResolvedValueOnce(fakeRun);
-    const r = await request(app).post("/api/payroll/runs").set(AUTH)
+    const r = await request(app)
+      .post("/api/payroll/runs")
+      .set(AUTH)
       .send({ runMonth: "2026-05" });
     expect(r.status).toBe(201);
     expect(r.body.data.run_month).toBe("2026-05");
   });
   it("returns 400 for invalid runMonth format", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    const r = await request(app).post("/api/payroll/runs").set(AUTH)
+    const r = await request(app)
+      .post("/api/payroll/runs")
+      .set(AUTH)
       .send({ runMonth: "May-2026" });
     expect(r.status).toBe(400);
   });
@@ -189,7 +249,12 @@ describe("POST /api/payroll/runs", () => {
 
 describe("GET /api/payroll/runs", () => {
   it("returns paginated runs", async () => {
-    svc.listRuns.mockResolvedValueOnce({ data: [fakeRun], total: 1, page: 1, limit: 50 });
+    svc.listRuns.mockResolvedValueOnce({
+      data: [fakeRun],
+      total: 1,
+      page: 1,
+      limit: 50,
+    });
     const r = await request(app).get("/api/payroll/runs").set(AUTH);
     expect(r.status).toBe(200);
     expect(r.body.data).toHaveLength(1);
@@ -207,15 +272,22 @@ describe("GET /api/payroll/runs/:id", () => {
 describe("PATCH /api/payroll/runs/:id/status", () => {
   it("advances run status", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    svc.updateRunStatus.mockResolvedValueOnce({ ...fakeRun, status: "approved" });
-    const r = await request(app).patch("/api/payroll/runs/run-1/status").set(AUTH)
+    svc.updateRunStatus.mockResolvedValueOnce({
+      ...fakeRun,
+      status: "approved",
+    });
+    const r = await request(app)
+      .patch("/api/payroll/runs/run-1/status")
+      .set(AUTH)
       .send({ status: "approved" });
     expect(r.status).toBe(200);
     expect(r.body.data.status).toBe("approved");
   });
   it("returns 400 for invalid status", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    const r = await request(app).patch("/api/payroll/runs/run-1/status").set(AUTH)
+    const r = await request(app)
+      .patch("/api/payroll/runs/run-1/status")
+      .set(AUTH)
       .send({ status: "cancelled" });
     expect(r.status).toBe(400);
   });
@@ -235,13 +307,17 @@ describe("PATCH /api/payroll/lines/:id", () => {
   it("updates prep line", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     svc.updateLine.mockResolvedValueOnce({ ...fakeLine, lwp_days: 2 });
-    const r = await request(app).patch("/api/payroll/lines/line-1").set(AUTH)
+    const r = await request(app)
+      .patch("/api/payroll/lines/line-1")
+      .set(AUTH)
       .send({ lwpDays: 2 });
     expect(r.status).toBe(200);
   });
   it("returns 400 for negative lwpDays", async () => {
     mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    const r = await request(app).patch("/api/payroll/lines/line-1").set(AUTH)
+    const r = await request(app)
+      .patch("/api/payroll/lines/line-1")
+      .set(AUTH)
       .send({ lwpDays: -1 });
     expect(r.status).toBe(400);
   });

@@ -26,7 +26,11 @@ import { HALF_DAY_ATTENDANCE_TRANSITION } from "../../shared/halfDayLeave.js";
  * both, so comparing it directly reports ~950 "P is not present" false positives — and a detector
  * that cries wolf gets muted, which lands us back where we started.
  */
-const LEGACY_STATUS: Record<string, string> = { P: "present", A: "absent", HD: "half_day" };
+const LEGACY_STATUS: Record<string, string> = {
+  P: "present",
+  A: "absent",
+  HD: "half_day",
+};
 /** Codes with no canonical equivalent — excluded rather than guessed at. */
 const UNMAPPED = ["OD", "DH", "T"];
 /** Days whose status the calendar decides, not a correction. */
@@ -72,7 +76,9 @@ function quote(values: string[]): string {
   return values.map((v) => `'${v}'`).join(",");
 }
 
-export async function reconcileAttendanceCorrections(windowDays = 90): Promise<ReconciliationResult> {
+export async function reconcileAttendanceCorrections(
+  windowDays = 90,
+): Promise<ReconciliationResult> {
   const since = `DATE_SUB(CURDATE(), INTERVAL ${Number(windowDays)} DAY)`;
 
   const [regs] = await db.query<Row[]>(`
@@ -109,7 +115,12 @@ export async function reconcileAttendanceCorrections(windowDays = 90): Promise<R
      WHERE l.status = 'approved' AND l.from_date >= ${since} AND l.total_days = 0.50
        AND dr.attendance_status IN (${quote(HALF_DAY_SOURCES)})`);
 
-  const result: ReconciliationResult = { windowDays, confirmed: [], regraded: [], unexplained: [] };
+  const result: ReconciliationResult = {
+    windowDays,
+    confirmed: [],
+    regraded: [],
+    unexplained: [],
+  };
   const tagged: Array<[Row[], Divergence["source"]]> = [
     [regs, "regularization"],
     [wholeLeave, "leave_whole_day"],
@@ -134,7 +145,9 @@ export async function reconcileAttendanceCorrections(windowDays = 90): Promise<R
 
       const ownsIt = r.regularization_id === r.id;
       const changedAfterApproval =
-        !!r.reviewed_at && !!r.updated_at && new Date(r.updated_at) > new Date(r.reviewed_at);
+        !!r.reviewed_at &&
+        !!r.updated_at &&
+        new Date(r.updated_at) > new Date(r.reviewed_at);
 
       if (d.locked && !ownsIt) result.confirmed.push(d);
       else if (changedAfterApproval) result.regraded.push(d);

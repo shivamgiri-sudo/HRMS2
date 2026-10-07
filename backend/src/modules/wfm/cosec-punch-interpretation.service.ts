@@ -7,7 +7,13 @@ export type AggregatePunchAssessment = {
   effectiveWorkingMinutes: number;
   elapsedSeconds: number;
   state: "NO_PUNCH" | "PUNCHED_IN" | "PUNCHED_OUT";
-  reason: "no_punch" | "single_punch" | "duplicate_window" | "odd_punch_count" | "historical_odd_punch_span" | "valid_out";
+  reason:
+    | "no_punch"
+    | "single_punch"
+    | "duplicate_window"
+    | "odd_punch_count"
+    | "historical_odd_punch_span"
+    | "valid_out";
   reviewRequired: boolean;
 };
 
@@ -27,7 +33,10 @@ export function assessAggregatePunches(input: {
 }): AggregatePunchAssessment {
   const firstPunch = input.firstPunch?.trim() || null;
   const lastPunch = input.lastPunch?.trim() || null;
-  const totalPunches = Math.max(0, Math.floor(Number(input.totalPunches ?? 0) || 0));
+  const totalPunches = Math.max(
+    0,
+    Math.floor(Number(input.totalPunches ?? 0) || 0),
+  );
   const workingMinutes = Math.max(0, Number(input.workingMinutes ?? 0) || 0);
   const mode = input.mode ?? "live";
 
@@ -59,9 +68,10 @@ export function assessAggregatePunches(input: {
 
   const startMs = toTime(firstPunch);
   const endMs = toTime(lastPunch);
-  const elapsedSeconds = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs
-    ? Math.round((endMs - startMs) / 1000)
-    : 0;
+  const elapsedSeconds =
+    Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs
+      ? Math.round((endMs - startMs) / 1000)
+      : 0;
 
   if (elapsedSeconds <= DUPLICATE_PUNCH_WINDOW_SECONDS) {
     return {
@@ -82,7 +92,8 @@ export function assessAggregatePunches(input: {
     // to show "Shift Completed" mid-shift when the last NCOSEC swipe happened
     // to push the span past 9 h (e.g. cafeteria/door re-entry at end of day).
     if (mode === "historical") {
-      const spanMinutes = workingMinutes > 0 ? workingMinutes : Math.round(elapsedSeconds / 60);
+      const spanMinutes =
+        workingMinutes > 0 ? workingMinutes : Math.round(elapsedSeconds / 60);
       return {
         effectivePunchIn: firstPunch,
         effectivePunchOut: lastPunch,

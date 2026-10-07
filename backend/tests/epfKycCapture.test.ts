@@ -7,11 +7,18 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const dbMock = vi.hoisted(() => ({ execute: vi.fn().mockResolvedValue([[], []]) }));
-const fillMock = vi.hoisted(() => ({ generateChecklistDraft: vi.fn().mockResolvedValue({}) }));
+const dbMock = vi.hoisted(() => ({
+  execute: vi.fn().mockResolvedValue([[], []]),
+}));
+const fillMock = vi.hoisted(() => ({
+  generateChecklistDraft: vi.fn().mockResolvedValue({}),
+}));
 
 vi.mock("../src/db/mysql.js", () => ({ db: dbMock }));
-vi.mock("../src/modules/employees/universalDigitalFormFill.service.js", () => fillMock);
+vi.mock(
+  "../src/modules/employees/universalDigitalFormFill.service.js",
+  () => fillMock,
+);
 
 import {
   validateEpfKyc,
@@ -42,7 +49,9 @@ beforeEach(() => {
 describe("validation", () => {
   it("TC-KYC-01: bank account and IFSC are mandatory — EPFO marks them so on the form", () => {
     const errors = validateEpfKyc({ panNumber: "ABCDE1234F" });
-    expect(errors.map((e) => e.field)).toEqual(expect.arrayContaining(["bankAccountNumber", "bankIfsc"]));
+    expect(errors.map((e) => e.field)).toEqual(
+      expect.arrayContaining(["bankAccountNumber", "bankIfsc"]),
+    );
   });
 
   it("TC-KYC-02: accepts a complete, well-formed submission", () => {
@@ -50,8 +59,14 @@ describe("validation", () => {
   });
 
   it("TC-KYC-03: rejects malformed PAN and IFSC", () => {
-    const errors = validateEpfKyc({ ...VALID, panNumber: "ABCD1234F", bankIfsc: "HDFC1234567" });
-    expect(errors.map((e) => e.field)).toEqual(expect.arrayContaining(["panNumber", "bankIfsc"]));
+    const errors = validateEpfKyc({
+      ...VALID,
+      panNumber: "ABCD1234F",
+      bankIfsc: "HDFC1234567",
+    });
+    expect(errors.map((e) => e.field)).toEqual(
+      expect.arrayContaining(["panNumber", "bankIfsc"]),
+    );
   });
 
   it("TC-KYC-04: rejects an Aadhaar that fails the Verhoeff checksum", () => {
@@ -62,17 +77,31 @@ describe("validation", () => {
   });
 
   it("TC-KYC-05: rejects Aadhaar numbers starting 0 or 1, which are never issued", () => {
-    expect(validateEpfKyc({ ...VALID, aadhaarNumber: "012345678901" }).map((e) => e.field)).toContain("aadhaarNumber");
+    expect(
+      validateEpfKyc({ ...VALID, aadhaarNumber: "012345678901" }).map(
+        (e) => e.field,
+      ),
+    ).toContain("aadhaarNumber");
   });
 
   it("TC-KYC-06: tolerates spaces and hyphens as typed", () => {
-    expect(validateEpfKyc({ ...VALID, aadhaarNumber: "2341 2341 2346", bankIfsc: "hdfc0001234" })).toEqual([]);
+    expect(
+      validateEpfKyc({
+        ...VALID,
+        aadhaarNumber: "2341 2341 2346",
+        bankIfsc: "hdfc0001234",
+      }),
+    ).toEqual([]);
   });
 });
 
 describe("applying the values", () => {
   it("TC-KYC-07: passes the real values to the PDF renderer", async () => {
-    const result = await applyEpfKycAndRegenerate({ checklistId: "check-1", employeeId: "emp-1", input: VALID });
+    const result = await applyEpfKycAndRegenerate({
+      checklistId: "check-1",
+      employeeId: "emp-1",
+      input: VALID,
+    });
 
     expect(result.regenerated).toBe(true);
     const [, , transient] = fillMock.generateChecklistDraft.mock.calls[0];
@@ -85,14 +114,23 @@ describe("applying the values", () => {
   });
 
   it("TC-KYC-08: never writes a raw value into any SQL parameter", async () => {
-    await applyEpfKycAndRegenerate({ checklistId: "check-1", employeeId: "emp-1", input: VALID });
+    await applyEpfKycAndRegenerate({
+      checklistId: "check-1",
+      employeeId: "emp-1",
+      input: VALID,
+    });
 
     const everyParam = dbMock.execute.mock.calls
       .flatMap((call) => (Array.isArray(call[1]) ? call[1] : []))
       .map((p) => String(p ?? ""));
     const serialized = everyParam.join(" | ");
 
-    for (const raw of [VALID.panNumber, VALID.aadhaarNumber, VALID.uanNumber, VALID.bankAccountNumber]) {
+    for (const raw of [
+      VALID.panNumber,
+      VALID.aadhaarNumber,
+      VALID.uanNumber,
+      VALID.bankAccountNumber,
+    ]) {
       expect(serialized, `raw ${raw} must not be persisted`).not.toContain(raw);
     }
     // The masked forms are expected — that is what the profile already stores.
@@ -107,7 +145,11 @@ describe("applying the values", () => {
       return [[], []];
     });
 
-    const result = await applyEpfKycAndRegenerate({ checklistId: "check-1", employeeId: "emp-1", input: VALID });
+    const result = await applyEpfKycAndRegenerate({
+      checklistId: "check-1",
+      employeeId: "emp-1",
+      input: VALID,
+    });
     expect(result.regenerated).toBe(false);
     expect(fillMock.generateChecklistDraft).not.toHaveBeenCalled();
   });

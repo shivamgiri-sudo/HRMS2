@@ -27,8 +27,12 @@ const BRANCH_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const PROCESS_A = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 
 const {
-  execute, hasScopedAccess, hasAnyRoleAsync,
-  getOrRefresh, getSummaryForBranch, branchHeadSignOff,
+  execute,
+  hasScopedAccess,
+  hasAnyRoleAsync,
+  getOrRefresh,
+  getSummaryForBranch,
+  branchHeadSignOff,
 } = vi.hoisted(() => ({
   execute: vi.fn(),
   hasScopedAccess: vi.fn(),
@@ -38,7 +42,9 @@ const {
   branchHeadSignOff: vi.fn(),
 }));
 
-vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection: vi.fn() } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute, getConnection: vi.fn() },
+}));
 vi.mock("../../../shared/scopeAccess.js", () => ({
   hasScopedAccess,
   hasAnyRole: hasAnyRoleAsync,
@@ -61,8 +67,14 @@ vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({
   triggerPayrollAttendanceFreezeRequest: vi.fn(),
 }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    (req as express.Request & { authUser: { id: string; role: string } }).authUser = { id: AUTH_USER, role: "branch_head" };
+  requireAuth: (
+    req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    (
+      req as express.Request & { authUser: { id: string; role: string } }
+    ).authUser = { id: AUTH_USER, role: "branch_head" };
     next();
   },
 }));
@@ -70,7 +82,10 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
 // readiness-relevant role. Whether they may act on THIS branch/process is the
 // question requireScopedRole answers.
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole: () => (_q: express.Request, _s: express.Response, n: express.NextFunction) => n(),
+  requireRole:
+    () =>
+    (_q: express.Request, _s: express.Response, n: express.NextFunction) =>
+      n(),
 }));
 
 import { payrollProcessReadinessRouter } from "../payroll-process-readiness.routes.js";
@@ -85,8 +100,14 @@ function buildApp() {
 }
 
 beforeEach(() => {
-  [execute, hasScopedAccess, hasAnyRoleAsync, getOrRefresh, getSummaryForBranch, branchHeadSignOff]
-    .forEach((m) => m.mockReset());
+  [
+    execute,
+    hasScopedAccess,
+    hasAnyRoleAsync,
+    getOrRefresh,
+    getSummaryForBranch,
+    branchHeadSignOff,
+  ].forEach((m) => m.mockReset());
   hasAnyRoleAsync.mockResolvedValue(false); // not super_admin, not admin
   execute.mockResolvedValue([[], []]);
   getOrRefresh.mockResolvedValue({ readiness_status: "in_progress" });
@@ -96,12 +117,27 @@ beforeEach(() => {
 
 describe("out-of-scope branch/process ids are refused", () => {
   const CASES: Array<{ method: "get" | "post"; url: string; body?: object }> = [
-    { method: "get",  url: `/api/payroll/process-readiness/branch/${BRANCH_B}` },
-    { method: "get",  url: `/api/payroll/process-readiness/${BRANCH_B}/${PROCESS_A}` },
-    { method: "post", url: `/api/payroll/process-readiness/${BRANCH_B}/${PROCESS_A}/checklist`, body: { item: "attendance_data_ready", value: 1 } },
-    { method: "get",  url: `/api/payroll/branch-readiness/${BRANCH_B}` },
-    { method: "post", url: `/api/payroll/branch-readiness/${BRANCH_B}/signoff`, body: { remarks: "done" } },
-    { method: "post", url: `/api/payroll/branch-readiness/${BRANCH_B}/${PROCESS_A}/checklist`, body: { item: "overtime_entered", value: 1 } },
+    { method: "get", url: `/api/payroll/process-readiness/branch/${BRANCH_B}` },
+    {
+      method: "get",
+      url: `/api/payroll/process-readiness/${BRANCH_B}/${PROCESS_A}`,
+    },
+    {
+      method: "post",
+      url: `/api/payroll/process-readiness/${BRANCH_B}/${PROCESS_A}/checklist`,
+      body: { item: "attendance_data_ready", value: 1 },
+    },
+    { method: "get", url: `/api/payroll/branch-readiness/${BRANCH_B}` },
+    {
+      method: "post",
+      url: `/api/payroll/branch-readiness/${BRANCH_B}/signoff`,
+      body: { remarks: "done" },
+    },
+    {
+      method: "post",
+      url: `/api/payroll/branch-readiness/${BRANCH_B}/${PROCESS_A}/checklist`,
+      body: { item: "overtime_entered", value: 1 },
+    },
   ];
 
   for (const { method, url, body } of CASES) {
@@ -126,7 +162,9 @@ describe("an in-scope caller is still served", () => {
   it("does not 403 once the scope check passes, and the service is actually called", async () => {
     hasScopedAccess.mockResolvedValue(true);
 
-    const res = await request(buildApp()).get(`/api/payroll/branch-readiness/${BRANCH_A}`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/branch-readiness/${BRANCH_A}`,
+    );
 
     expect(res.status).not.toBe(403);
     expect(getOrRefresh).toHaveBeenCalledWith(expect.any(String), BRANCH_A);
@@ -157,14 +195,19 @@ describe("a caller with zero scope rows gets no branches, not every branch", () 
     // in hasScopedAccess and is covered by its own tests.
     hasScopedAccess.mockResolvedValue(true);
 
-    const res = await request(buildApp()).get(`/api/payroll/process-readiness/branch/${BRANCH_A}`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/process-readiness/branch/${BRANCH_A}`,
+    );
 
     expect(res.status).not.toBe(403);
     expect(hasScopedAccess).toHaveBeenCalledWith(
       AUTH_USER,
       expect.arrayContaining(["branch_head"]),
       expect.objectContaining({ branchId: BRANCH_A }),
-      expect.objectContaining({ allowAdminBypass: true, requireScopeForNonAdmin: true })
+      expect.objectContaining({
+        allowAdminBypass: true,
+        requireScopeForNonAdmin: true,
+      }),
     );
   });
 
@@ -176,7 +219,9 @@ describe("a caller with zero scope rows gets no branches, not every branch", () 
      * branch scope. Asserted on the call the route makes, so the two lists cannot drift apart again.
      */
     hasScopedAccess.mockResolvedValue(true);
-    await request(buildApp()).get(`/api/payroll/process-readiness/branch/${BRANCH_A}`);
+    await request(buildApp()).get(
+      `/api/payroll/process-readiness/branch/${BRANCH_A}`,
+    );
 
     const [, roles] = hasScopedAccess.mock.calls.at(-1)!;
     expect(roles).toContain("payroll_hr");

@@ -20,7 +20,7 @@ export async function runAccessExpirySweep(): Promise<{ expired: number }> {
      FROM user_page_access
      WHERE expires_at IS NOT NULL
        AND expires_at < NOW()
-       AND active_status = 1`
+       AND active_status = 1`,
   );
 
   if (!rows.length) {
@@ -33,7 +33,7 @@ export async function runAccessExpirySweep(): Promise<{ expired: number }> {
   await db.execute(
     `UPDATE user_page_access SET active_status = 0
      WHERE id IN (${placeholders})`,
-    ids
+    ids,
   );
 
   // Write one audit record per expired row (REVOKE + auto-expired note)
@@ -53,10 +53,13 @@ export async function runAccessExpirySweep(): Promise<{ expired: number }> {
             can_delete: row.can_delete,
             can_export: row.can_export,
           }),
-        ]
+        ],
       );
     } catch (err) {
-      console.error(`[access-expiry] audit write failed for row ${String(row.id)}:`, err);
+      console.error(
+        `[access-expiry] audit write failed for row ${String(row.id)}:`,
+        err,
+      );
     }
 
     await logSensitiveAction({

@@ -1,7 +1,13 @@
 import type { Request } from "express";
 import { db } from "../../db/mysql.js";
 
-export type OrgChartActionType = "view" | "export" | "search" | "node_detail" | "rebuild_cache" | "data_quality_check";
+export type OrgChartActionType =
+  | "view"
+  | "export"
+  | "search"
+  | "node_detail"
+  | "rebuild_cache"
+  | "data_quality_check";
 
 export interface AuditLogEntry {
   userId: string;
@@ -36,7 +42,7 @@ export async function logOrgChartAccess(entry: AuditLogEntry): Promise<void> {
         entry.exportFormat ?? null,
         entry.ipAddress ?? null,
         entry.userAgent ?? null,
-      ]
+      ],
     );
   } catch (err) {
     // Non-blocking: audit failure should not break the feature
@@ -47,10 +53,13 @@ export async function logOrgChartAccess(entry: AuditLogEntry): Promise<void> {
 /**
  * Extract audit metadata from Express request.
  */
-export function extractAuditMetadata(req: Request): Pick<AuditLogEntry, "ipAddress" | "userAgent"> {
-  const ipAddress = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
-    || req.socket.remoteAddress
-    || "unknown";
+export function extractAuditMetadata(
+  req: Request,
+): Pick<AuditLogEntry, "ipAddress" | "userAgent"> {
+  const ipAddress =
+    (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+    req.socket.remoteAddress ||
+    "unknown";
   const userAgent = req.headers["user-agent"] || "unknown";
   return { ipAddress, userAgent };
 }
@@ -64,7 +73,7 @@ export async function logChartView(
   scopeType: string,
   scopeId: string | null,
   filters: Record<string, unknown>,
-  req: Request
+  req: Request,
 ): Promise<void> {
   const { ipAddress, userAgent } = extractAuditMetadata(req);
   await logOrgChartAccess({
@@ -89,7 +98,7 @@ export async function logChartExport(
   scopeId: string | null,
   exportFormat: string,
   filters: Record<string, unknown>,
-  req: Request
+  req: Request,
 ): Promise<void> {
   const { ipAddress, userAgent } = extractAuditMetadata(req);
   await logOrgChartAccess({
@@ -114,7 +123,7 @@ export async function logChartSearch(
   scopeType: string,
   scopeId: string | null,
   searchQuery: string,
-  req: Request
+  req: Request,
 ): Promise<void> {
   const { ipAddress, userAgent } = extractAuditMetadata(req);
   await logOrgChartAccess({
@@ -136,7 +145,7 @@ export async function logNodeDetail(
   userId: string,
   employeeId: string | null,
   targetEmployeeId: string,
-  req: Request
+  req: Request,
 ): Promise<void> {
   const { ipAddress, userAgent } = extractAuditMetadata(req);
   await logOrgChartAccess({
@@ -158,7 +167,7 @@ export async function logDataQualityCheck(
   employeeId: string | null,
   scopeType: string | null,
   scopeId: string | null,
-  req: Request
+  req: Request,
 ): Promise<void> {
   const { ipAddress, userAgent } = extractAuditMetadata(req);
   await logOrgChartAccess({

@@ -12,26 +12,43 @@ export const createCycleSchema = z.object({
   startDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
   endDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
   period: z.string().regex(PERIOD_REGEX, "Period must be YYYY-MM or YYYY-Q1"),
-  selfAssessmentDeadline: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
-  managerReviewDeadline: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
+  selfAssessmentDeadline: z
+    .string()
+    .regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
+  managerReviewDeadline: z
+    .string()
+    .regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
   isPeakSeasonAllowanceApplicable: z.boolean().default(false),
 });
 
 export const updateCycleSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   description: z.string().trim().max(1000).optional(),
-  cycleType: z.enum(["Annual", "Quarterly", "Monthly", "Project-Based"]).optional(),
+  cycleType: z
+    .enum(["Annual", "Quarterly", "Monthly", "Project-Based"])
+    .optional(),
   startDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
   endDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
-  period: z.string().regex(PERIOD_REGEX, "Period must be YYYY-MM or YYYY-Q1").optional(),
-  selfAssessmentDeadline: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
-  managerReviewDeadline: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
+  period: z
+    .string()
+    .regex(PERIOD_REGEX, "Period must be YYYY-MM or YYYY-Q1")
+    .optional(),
+  selfAssessmentDeadline: z
+    .string()
+    .regex(DATE_REGEX, "Date must be YYYY-MM-DD")
+    .optional(),
+  managerReviewDeadline: z
+    .string()
+    .regex(DATE_REGEX, "Date must be YYYY-MM-DD")
+    .optional(),
   isPeakSeasonAllowanceApplicable: z.boolean().optional(),
   status: z.enum(["Draft", "Active", "Closed"]).optional(),
 });
 
 export const launchCycleSchema = z.object({
-  employeeIds: z.array(z.string().uuid()).min(1, "At least one employee required"),
+  employeeIds: z
+    .array(z.string().uuid())
+    .min(1, "At least one employee required"),
   processIds: z.array(z.string().uuid()).optional(),
   departmentIds: z.array(z.string().uuid()).optional(),
 });
@@ -90,42 +107,66 @@ export const updateCompetencySchema = z.object({
 export const createDevelopmentPlanSchema = z.object({
   employeeId: z.string().uuid(),
   cycleId: z.string().uuid(),
-  goals: z.array(
-    z.object({
-      area: z.string().trim().min(1).max(200),
-      description: z.string().trim().max(1000),
-      targetDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
-      status: z.enum(["Pending", "In Progress", "Completed", "Cancelled"]).default("Pending"),
-    })
-  ).min(1, "At least one goal required"),
+  goals: z
+    .array(
+      z.object({
+        area: z.string().trim().min(1).max(200),
+        description: z.string().trim().max(1000),
+        targetDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
+        status: z
+          .enum(["Pending", "In Progress", "Completed", "Cancelled"])
+          .default("Pending"),
+      }),
+    )
+    .min(1, "At least one goal required"),
 });
 
 export const updateDevelopmentPlanSchema = z.object({
-  goals: z.array(
-    z.object({
-      id: z.string().uuid().optional(),
-      area: z.string().trim().min(1).max(200).optional(),
-      description: z.string().trim().max(1000).optional(),
-      targetDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
-      status: z.enum(["Pending", "In Progress", "Completed", "Cancelled"]).optional(),
-    })
-  ).optional(),
+  goals: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        area: z.string().trim().min(1).max(200).optional(),
+        description: z.string().trim().max(1000).optional(),
+        targetDate: z
+          .string()
+          .regex(DATE_REGEX, "Date must be YYYY-MM-DD")
+          .optional(),
+        status: z
+          .enum(["Pending", "In Progress", "Completed", "Cancelled"])
+          .optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const updateGoalSchema = z.object({
   area: z.string().trim().min(1).max(200).optional(),
   description: z.string().trim().max(1000).optional(),
-  targetDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
-  status: z.enum(["Pending", "In Progress", "Completed", "Cancelled"]).optional(),
-  completedDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
+  targetDate: z
+    .string()
+    .regex(DATE_REGEX, "Date must be YYYY-MM-DD")
+    .optional(),
+  status: z
+    .enum(["Pending", "In Progress", "Completed", "Cancelled"])
+    .optional(),
+  completedDate: z
+    .string()
+    .regex(DATE_REGEX, "Date must be YYYY-MM-DD")
+    .optional(),
 });
 
 // ================== Query/Filter Schemas ==================
 
 export const cycleFiltersSchema = z.object({
   status: z.enum(["Draft", "Active", "Closed"]).optional(),
-  cycleType: z.enum(["Annual", "Quarterly", "Monthly", "Project-Based"]).optional(),
-  period: z.string().regex(PERIOD_REGEX, "Period must be YYYY-MM or YYYY-Q1").optional(),
+  cycleType: z
+    .enum(["Annual", "Quarterly", "Monthly", "Project-Based"])
+    .optional(),
+  period: z
+    .string()
+    .regex(PERIOD_REGEX, "Period must be YYYY-MM or YYYY-Q1")
+    .optional(),
 });
 
 export const feedbackFiltersSchema = z.object({

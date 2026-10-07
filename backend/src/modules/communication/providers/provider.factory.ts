@@ -1,20 +1,30 @@
-import type { CommunicationProvider, Attachment } from './provider.interface.js';
-import type { Channel } from '../communication.types.js';
-import type { ProviderResponse, DeliveryStatus } from '../communication.types.js';
-import { isBlocked, isBlockedSync } from './send-block.js';
-import { NodemailerProvider } from './email/nodemailer.provider.js';
-import { LocalEmailProvider } from './email/local-email.provider.js';
-import { SendGridProvider } from './email/sendgrid.provider.js';
-import { MailgunProvider } from './email/mailgun.provider.js';
-import { TwilioSMSProvider } from './sms/twilio-sms.provider.js';
-import { LocalSMSProvider } from './sms/local-sms.provider.js';
-import { MSG91Provider } from './sms/msg91.provider.js';
-import { SmartPingProvider } from './sms/smartping.provider.js';
-import { TwilioWhatsAppProvider } from './whatsapp/twilio-whatsapp.provider.js';
-import { LocalWhatsAppProvider } from './whatsapp/local-whatsapp.provider.js';
-import { MetaWhatsAppProvider } from './whatsapp/meta.provider.js';
+import type {
+  CommunicationProvider,
+  Attachment,
+} from "./provider.interface.js";
+import type { Channel } from "../communication.types.js";
+import type {
+  ProviderResponse,
+  DeliveryStatus,
+} from "../communication.types.js";
+import { isBlocked, isBlockedSync } from "./send-block.js";
+import { NodemailerProvider } from "./email/nodemailer.provider.js";
+import { LocalEmailProvider } from "./email/local-email.provider.js";
+import { SendGridProvider } from "./email/sendgrid.provider.js";
+import { MailgunProvider } from "./email/mailgun.provider.js";
+import { TwilioSMSProvider } from "./sms/twilio-sms.provider.js";
+import { LocalSMSProvider } from "./sms/local-sms.provider.js";
+import { MSG91Provider } from "./sms/msg91.provider.js";
+import { SmartPingProvider } from "./sms/smartping.provider.js";
+import { TwilioWhatsAppProvider } from "./whatsapp/twilio-whatsapp.provider.js";
+import { LocalWhatsAppProvider } from "./whatsapp/local-whatsapp.provider.js";
+import { MetaWhatsAppProvider } from "./whatsapp/meta.provider.js";
 
-type DbConfig = { provider_type: string; config: Record<string, unknown>; secrets: Record<string, string> };
+type DbConfig = {
+  provider_type: string;
+  config: Record<string, unknown>;
+  secrets: Record<string, string>;
+};
 
 /**
  * Returned instead of a real provider when an admin has explicitly paused the channel
@@ -24,19 +34,36 @@ type DbConfig = { provider_type: string; config: Record<string, unknown>; secret
  * exactly like a channel with no credentials, with no special case needed anywhere else.
  */
 class BlockedProvider implements CommunicationProvider {
-  constructor(private readonly channel: Channel, private readonly reason: string | null) {}
+  constructor(
+    private readonly channel: Channel,
+    private readonly reason: string | null,
+  ) {}
 
-  async send(_recipient: string, _subject: string, _body: string, _attachments?: Attachment[]): Promise<ProviderResponse> {
-    return { success: false, error: `${this.channel} sending is paused${this.reason ? `: ${this.reason}` : ''}` };
+  async send(
+    _recipient: string,
+    _subject: string,
+    _body: string,
+    _attachments?: Attachment[],
+  ): Promise<ProviderResponse> {
+    return {
+      success: false,
+      error: `${this.channel} sending is paused${this.reason ? `: ${this.reason}` : ""}`,
+    };
   }
 
   async getDeliveryStatus(_messageId: string): Promise<DeliveryStatus> {
-    return { status: 'failed', error: `${this.channel} sending is paused` };
+    return { status: "failed", error: `${this.channel} sending is paused` };
   }
 
-  validateRecipient(_contact: string): boolean { return true; }
-  getName(): string { return `${this.channel}-blocked`; }
-  isConfigured(): boolean { return false; }
+  validateRecipient(_contact: string): boolean {
+    return true;
+  }
+  getName(): string {
+    return `${this.channel}-blocked`;
+  }
+  isConfigured(): boolean {
+    return false;
+  }
 }
 
 class ProviderFactory {
@@ -51,12 +78,17 @@ class ProviderFactory {
    * also have to remember to call clearCache(): the very next send after a pause or unpause sees
    * the current state, cached provider or not.
    */
-  async getProviderAsync(channel: Channel, dbConfig?: DbConfig | null): Promise<CommunicationProvider> {
+  async getProviderAsync(
+    channel: Channel,
+    dbConfig?: DbConfig | null,
+  ): Promise<CommunicationProvider> {
     const block = await isBlocked(channel);
     if (block.blocked) return new BlockedProvider(channel, block.reason);
 
     if (this.cache.has(channel)) return this.cache.get(channel)!;
-    const provider = dbConfig ? this.buildFromDb(channel, dbConfig) : this.buildFromEnv(channel);
+    const provider = dbConfig
+      ? this.buildFromDb(channel, dbConfig)
+      : this.buildFromEnv(channel);
     this.cache.set(channel, provider);
     return provider;
   }
@@ -72,22 +104,25 @@ class ProviderFactory {
     return this.cache.get(channel)!;
   }
 
-  private buildFromDb(channel: Channel, { provider_type, config, secrets }: DbConfig): CommunicationProvider {
-    if (channel === 'email') {
-      if (provider_type === 'sendgrid')
+  private buildFromDb(
+    channel: Channel,
+    { provider_type, config, secrets }: DbConfig,
+  ): CommunicationProvider {
+    if (channel === "email") {
+      if (provider_type === "sendgrid")
         return new SendGridProvider(
-          secrets.sendgrid_api_key ?? '',
-          (config.sendgrid_from as string) ?? '',
-          (config.sendgrid_from_name as string) ?? 'MAS Callnet HRMS',
+          secrets.sendgrid_api_key ?? "",
+          (config.sendgrid_from as string) ?? "",
+          (config.sendgrid_from_name as string) ?? "MAS Callnet HRMS",
         );
-      if (provider_type === 'mailgun')
+      if (provider_type === "mailgun")
         return new MailgunProvider(
-          secrets.mailgun_api_key ?? '',
-          (config.mailgun_domain as string) ?? '',
-          (config.mailgun_from as string) ?? '',
-          (config.mailgun_region as 'us' | 'eu') ?? 'us',
+          secrets.mailgun_api_key ?? "",
+          (config.mailgun_domain as string) ?? "",
+          (config.mailgun_from as string) ?? "",
+          (config.mailgun_region as "us" | "eu") ?? "us",
         );
-      if (provider_type === 'local-email-tool') return new LocalEmailProvider();
+      if (provider_type === "local-email-tool") return new LocalEmailProvider();
       // default: nodemailer
       return new NodemailerProvider(
         config.smtp_host as string | undefined,
@@ -100,21 +135,21 @@ class ProviderFactory {
       );
     }
 
-    if (channel === 'sms') {
-      if (provider_type === 'msg91')
+    if (channel === "sms") {
+      if (provider_type === "msg91")
         return new MSG91Provider(
-          secrets.msg91_auth_key ?? '',
-          (config.msg91_sender_id as string) ?? '',
-          (config.msg91_template_id as string) ?? '',
+          secrets.msg91_auth_key ?? "",
+          (config.msg91_sender_id as string) ?? "",
+          (config.msg91_template_id as string) ?? "",
         );
-      if (provider_type === 'smartping')
+      if (provider_type === "smartping")
         return new SmartPingProvider(
           secrets.smartping_username,
           secrets.smartping_password,
           (config.smartping_sender_id as string) ?? undefined,
           (config.smartping_entity_id as string) ?? undefined,
         );
-      if (provider_type === 'local-sms-tool') return new LocalSMSProvider();
+      if (provider_type === "local-sms-tool") return new LocalSMSProvider();
       // default: twilio
       return new TwilioSMSProvider(
         secrets.twilio_account_sid,
@@ -123,13 +158,14 @@ class ProviderFactory {
       );
     }
 
-    if (channel === 'whatsapp') {
-      if (provider_type === 'meta')
+    if (channel === "whatsapp") {
+      if (provider_type === "meta")
         return new MetaWhatsAppProvider(
-          secrets.meta_access_token ?? '',
-          (config.meta_phone_number_id as string) ?? '',
+          secrets.meta_access_token ?? "",
+          (config.meta_phone_number_id as string) ?? "",
         );
-      if (provider_type === 'local-whatsapp-tool') return new LocalWhatsAppProvider();
+      if (provider_type === "local-whatsapp-tool")
+        return new LocalWhatsAppProvider();
       // default: twilio
       return new TwilioWhatsAppProvider(
         secrets.twilio_account_sid,
@@ -142,59 +178,61 @@ class ProviderFactory {
   }
 
   private buildFromEnv(channel: Channel): CommunicationProvider {
-    if (channel === 'email') {
-      const type = process.env.EMAIL_PROVIDER ?? 'nodemailer';
-      if (type === 'sendgrid')
+    if (channel === "email") {
+      const type = process.env.EMAIL_PROVIDER ?? "nodemailer";
+      if (type === "sendgrid")
         return new SendGridProvider(
-          process.env.SENDGRID_API_KEY ?? '',
-          process.env.SENDGRID_FROM ?? '',
+          process.env.SENDGRID_API_KEY ?? "",
+          process.env.SENDGRID_FROM ?? "",
           process.env.SENDGRID_FROM_NAME,
         );
-      if (type === 'mailgun')
+      if (type === "mailgun")
         return new MailgunProvider(
-          process.env.MAILGUN_API_KEY ?? '',
-          process.env.MAILGUN_DOMAIN ?? '',
-          process.env.MAILGUN_FROM ?? '',
-          (process.env.MAILGUN_REGION as 'us' | 'eu') ?? 'us',
+          process.env.MAILGUN_API_KEY ?? "",
+          process.env.MAILGUN_DOMAIN ?? "",
+          process.env.MAILGUN_FROM ?? "",
+          (process.env.MAILGUN_REGION as "us" | "eu") ?? "us",
         );
-      if (type === 'local-email-tool') return new LocalEmailProvider();
+      if (type === "local-email-tool") return new LocalEmailProvider();
       return new NodemailerProvider();
     }
 
-    if (channel === 'sms') {
-      const type = process.env.SMS_PROVIDER ?? 'twilio';
-      if (type === 'msg91')
+    if (channel === "sms") {
+      const type = process.env.SMS_PROVIDER ?? "twilio";
+      if (type === "msg91")
         return new MSG91Provider(
-          process.env.MSG91_AUTH_KEY ?? '',
-          process.env.MSG91_SENDER_ID ?? '',
-          process.env.MSG91_TEMPLATE_ID ?? '',
+          process.env.MSG91_AUTH_KEY ?? "",
+          process.env.MSG91_SENDER_ID ?? "",
+          process.env.MSG91_TEMPLATE_ID ?? "",
         );
-      if (type === 'smartping')
-        return new SmartPingProvider();
-      if (type === 'local-sms-tool') return new LocalSMSProvider();
+      if (type === "smartping") return new SmartPingProvider();
+      if (type === "local-sms-tool") return new LocalSMSProvider();
       return new TwilioSMSProvider();
     }
 
-    if (channel === 'whatsapp') {
-      const type = process.env.WHATSAPP_PROVIDER ?? 'twilio';
-      if (type === 'meta')
+    if (channel === "whatsapp") {
+      const type = process.env.WHATSAPP_PROVIDER ?? "twilio";
+      if (type === "meta")
         return new MetaWhatsAppProvider(
-          process.env.META_WA_ACCESS_TOKEN ?? '',
-          process.env.META_WA_PHONE_NUMBER_ID ?? '',
+          process.env.META_WA_ACCESS_TOKEN ?? "",
+          process.env.META_WA_PHONE_NUMBER_ID ?? "",
         );
       // Accepts 'local' as well as 'local-whatsapp-tool'. Only the long form was matched here,
       // but .env.example documents the value as `WHATSAPP_PROVIDER=local` — so following the
       // documentation silently selected Twilio instead, with no error anywhere. The DB-config
       // path above uses provider_type, which is separately populated, so the mismatch was
       // invisible on any environment that configures WhatsApp through the settings UI.
-      if (type === 'local' || type === 'local-whatsapp-tool') return new LocalWhatsAppProvider();
+      if (type === "local" || type === "local-whatsapp-tool")
+        return new LocalWhatsAppProvider();
       return new TwilioWhatsAppProvider();
     }
 
     throw new Error(`Unknown channel: ${channel}`);
   }
 
-  clearCache(): void { this.cache.clear(); }
+  clearCache(): void {
+    this.cache.clear();
+  }
 }
 
 export const providerFactory = new ProviderFactory();

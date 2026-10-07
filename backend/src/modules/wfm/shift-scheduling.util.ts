@@ -11,7 +11,10 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
 /** Minutes between start and end, cross-midnight-safe (e.g. 22:00-06:00 = 480). */
-export function computeScheduledMinutes(start: string, end: string): number | null {
+export function computeScheduledMinutes(
+  start: string,
+  end: string,
+): number | null {
   const [sh, sm] = start.split(":").map(Number);
   const [eh, em] = end.split(":").map(Number);
   if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return null;
@@ -21,7 +24,12 @@ export function computeScheduledMinutes(start: string, end: string): number | nu
   return endMin - startMin;
 }
 
-type Executor = { execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]> };
+type Executor = {
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[T, unknown]>;
+};
 
 // Cached at module scope, not per-call: wfm_roster_assignment's columns don't
 // change mid-process. Lets every write path degrade gracefully on a DB that
@@ -34,12 +42,16 @@ type Executor = { execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: stri
 // this also happens to be what makes the bulk-upload services' existing
 // tests (which mock only `conn.execute`, not `db.execute`) work unchanged.
 let rosterAssignmentColumnsCache: Set<string> | null = null;
-export async function rosterAssignmentColumns(executor: Executor = db): Promise<Set<string>> {
+export async function rosterAssignmentColumns(
+  executor: Executor = db,
+): Promise<Set<string>> {
   if (rosterAssignmentColumnsCache) return rosterAssignmentColumnsCache;
   const [rows] = await executor.execute<RowDataPacket[]>(
-    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_roster_assignment'`
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_roster_assignment'`,
   );
-  rosterAssignmentColumnsCache = new Set((rows as RowDataPacket[]).map((r) => String(r.COLUMN_NAME)));
+  rosterAssignmentColumnsCache = new Set(
+    (rows as RowDataPacket[]).map((r) => String(r.COLUMN_NAME)),
+  );
   return rosterAssignmentColumnsCache;
 }
 
@@ -49,12 +61,16 @@ export async function rosterAssignmentColumns(executor: Executor = db): Promise<
 // active_status=1 — any join that matches on shift_code alone becomes
 // ambiguous (silently picks an arbitrary version) unless it's version-aware.
 let shiftMasterColumnsCache: Set<string> | null = null;
-export async function shiftMasterColumns(executor: Executor = db): Promise<Set<string>> {
+export async function shiftMasterColumns(
+  executor: Executor = db,
+): Promise<Set<string>> {
   if (shiftMasterColumnsCache) return shiftMasterColumnsCache;
   const [rows] = await executor.execute<RowDataPacket[]>(
-    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master'`
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master'`,
   );
-  shiftMasterColumnsCache = new Set((rows as RowDataPacket[]).map((r) => String(r.COLUMN_NAME)));
+  shiftMasterColumnsCache = new Set(
+    (rows as RowDataPacket[]).map((r) => String(r.COLUMN_NAME)),
+  );
   return shiftMasterColumnsCache;
 }
 

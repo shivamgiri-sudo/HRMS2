@@ -24,11 +24,21 @@ vi.mock("../../../db/mysql.js", () => ({
   db: { execute, query: execute, getConnection: vi.fn() },
 }));
 
-const { list, getStatusCounts, getById, getApprovalHistory } = vi.hoisted(() => ({
-  list: vi.fn(), getStatusCounts: vi.fn(), getById: vi.fn(), getApprovalHistory: vi.fn(),
-}));
+const { list, getStatusCounts, getById, getApprovalHistory } = vi.hoisted(
+  () => ({
+    list: vi.fn(),
+    getStatusCounts: vi.fn(),
+    getById: vi.fn(),
+    getApprovalHistory: vi.fn(),
+  }),
+);
 vi.mock("../cost-centre-management.service.js", () => ({
-  costCentreManagementService: { list, getStatusCounts, getById, getApprovalHistory },
+  costCentreManagementService: {
+    list,
+    getStatusCounts,
+    getById,
+    getApprovalHistory,
+  },
 }));
 
 const OWN = "branch-A";
@@ -36,10 +46,16 @@ const OTHER = "branch-B";
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
+  const original =
+    await importOriginal<
+      typeof import("../../../middleware/authMiddleware.js")
+    >();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.authUser = actor;
+      next();
+    },
   };
 });
 
@@ -49,7 +65,11 @@ function appFor(role: string) {
   actor = { id: `u-${role}`, role, roles: [role] };
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => { req.authUser = actor; req.userRoles = actor.roles; next(); });
+  app.use((req: any, _res, next) => {
+    req.authUser = actor;
+    req.userRoles = actor.roles;
+    next();
+  });
   app.use("/api/finance/cost-centres", router);
   return app;
 }
@@ -66,35 +86,48 @@ beforeEach(() => {
 
 describe("GET / (list)", () => {
   it("pins a branch_head to their own branch when they ask for none", async () => {
-    const res = await request(appFor("branch_head")).get("/api/finance/cost-centres");
+    const res = await request(appFor("branch_head")).get(
+      "/api/finance/cost-centres",
+    );
     expect(res.status).toBe(200);
     // The defect exactly: no branch_id meant every branch.
-    expect(list).toHaveBeenCalledWith(expect.objectContaining({ branch_id: OWN }));
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ branch_id: OWN }),
+    );
   });
 
   it("refuses a branch_head who names another branch", async () => {
-    const res = await request(appFor("branch_admin"))
-      .get(`/api/finance/cost-centres?branch_id=${OTHER}`);
+    const res = await request(appFor("branch_admin")).get(
+      `/api/finance/cost-centres?branch_id=${OTHER}`,
+    );
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(list).not.toHaveBeenCalled();
   });
 
   it("leaves a global finance role unrestricted", async () => {
-    const res = await request(appFor("finance_head")).get("/api/finance/cost-centres");
+    const res = await request(appFor("finance_head")).get(
+      "/api/finance/cost-centres",
+    );
     expect(res.status).toBe(200);
-    expect(list).toHaveBeenCalledWith(expect.objectContaining({ branch_id: undefined }));
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ branch_id: undefined }),
+    );
   });
 });
 
 describe("GET /status-counts", () => {
   it("counts only the caller's branch, so the badges match the tabs", async () => {
-    const res = await request(appFor("branch_head")).get("/api/finance/cost-centres/status-counts");
+    const res = await request(appFor("branch_head")).get(
+      "/api/finance/cost-centres/status-counts",
+    );
     expect(res.status).toBe(200);
     expect(getStatusCounts).toHaveBeenCalledWith(OWN);
   });
 
   it("counts everything for a global role", async () => {
-    await request(appFor("finance")).get("/api/finance/cost-centres/status-counts");
+    await request(appFor("finance")).get(
+      "/api/finance/cost-centres/status-counts",
+    );
     expect(getStatusCounts).toHaveBeenCalledWith(undefined);
   });
 });
@@ -102,25 +135,33 @@ describe("GET /status-counts", () => {
 describe("GET /:id and /:id/history", () => {
   it("refuses a record belonging to another branch", async () => {
     // A uuid is not an access control, and the record carries client and billing rates.
-    const res = await request(appFor("branch_head")).get("/api/finance/cost-centres/cc1");
+    const res = await request(appFor("branch_head")).get(
+      "/api/finance/cost-centres/cc1",
+    );
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
 
   it("refuses that record's approval history too", async () => {
     // The history holds reviewer commentary and rejection reasons.
-    const res = await request(appFor("branch_head")).get("/api/finance/cost-centres/cc1/history");
+    const res = await request(appFor("branch_head")).get(
+      "/api/finance/cost-centres/cc1/history",
+    );
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(getApprovalHistory).not.toHaveBeenCalled();
   });
 
   it("serves a record from the caller's own branch", async () => {
     getById.mockResolvedValue({ id: "cc1", branch_id: OWN });
-    const res = await request(appFor("branch_head")).get("/api/finance/cost-centres/cc1");
+    const res = await request(appFor("branch_head")).get(
+      "/api/finance/cost-centres/cc1",
+    );
     expect(res.status).toBe(200);
   });
 
   it("serves any record to a global finance role", async () => {
-    const res = await request(appFor("finance_head")).get("/api/finance/cost-centres/cc1");
+    const res = await request(appFor("finance_head")).get(
+      "/api/finance/cost-centres/cc1",
+    );
     expect(res.status).toBe(200);
   });
 });

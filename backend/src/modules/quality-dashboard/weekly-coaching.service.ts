@@ -27,7 +27,10 @@ export function isoWeekBounds(date: string): { start: string; end: string } {
   start.setUTCDate(d.getUTCDate() - offset);
   const end = new Date(start);
   end.setUTCDate(start.getUTCDate() + 6);
-  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  };
 }
 
 type WeeklyQualityRow = {
@@ -48,7 +51,10 @@ type WeeklyQualityRow = {
  * Averaged across the days present rather than the days in the week: an agent
  * who worked two days is judged on those two, not marked down for five absences.
  */
-async function weeklyQuality(start: string, end: string): Promise<WeeklyQualityRow[]> {
+async function weeklyQuality(
+  start: string,
+  end: string,
+): Promise<WeeklyQualityRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT k.employee_id,
             k.metric_id,
@@ -135,16 +141,28 @@ export type WeeklyCoachingResult = {
    * A bare count says coaching is inert; this says where to go and fix it. The
    * dashboard and the log line both read from here.
    */
-  processesMissingTarget: Array<{ processId: string; processName: string; employeeCount: number }>;
+  processesMissingTarget: Array<{
+    processId: string;
+    processName: string;
+    employeeCount: number;
+  }>;
 };
 
-export async function runWeeklyCoachingEvaluation(referenceDate: string): Promise<WeeklyCoachingResult> {
+export async function runWeeklyCoachingEvaluation(
+  referenceDate: string,
+): Promise<WeeklyCoachingResult> {
   const { start, end } = isoWeekBounds(referenceDate);
   const rows = await weeklyQuality(start, end);
 
   const result: WeeklyCoachingResult = {
-    weekStart: start, weekEnd: end, evaluated: rows.length,
-    raised: 0, skippedNoTrigger: 0, skippedAlreadyOpen: 0, skippedNoCoach: 0, skippedMissingTarget: 0,
+    weekStart: start,
+    weekEnd: end,
+    evaluated: rows.length,
+    raised: 0,
+    skippedNoTrigger: 0,
+    skippedAlreadyOpen: 0,
+    skippedNoCoach: 0,
+    skippedMissingTarget: 0,
     processesMissingTarget: [],
   };
 
@@ -156,13 +174,18 @@ export async function runWeeklyCoachingEvaluation(referenceDate: string): Promis
       if (row.target_value === null || Number(row.target_value) <= 0) {
         result.skippedMissingTarget += 1;
         const pid = row.process_id ? String(row.process_id) : "unassigned";
-        const existing = result.processesMissingTarget.find((x) => x.processId === pid);
+        const existing = result.processesMissingTarget.find(
+          (x) => x.processId === pid,
+        );
         if (existing) existing.employeeCount += 1;
-        else result.processesMissingTarget.push({
-          processId: pid,
-          processName: row.process_name ? String(row.process_name) : "(no process assigned)",
-          employeeCount: 1,
-        });
+        else
+          result.processesMissingTarget.push({
+            processId: pid,
+            processName: row.process_name
+              ? String(row.process_name)
+              : "(no process assigned)",
+            employeeCount: 1,
+          });
         continue;
       }
       const outcome = await raiseCoachingFromQuality({
@@ -171,22 +194,28 @@ export async function runWeeklyCoachingEvaluation(referenceDate: string): Promis
         periodEnd: end,
         metricId: String(row.metric_id),
         signal: {
-          qualityPercentage: row.avg_value === null ? null : Number(row.avg_value),
+          qualityPercentage:
+            row.avg_value === null ? null : Number(row.avg_value),
           // Weekly averages cannot express a single fatal call; those are raised
           // from the audit itself, where the breach is actually known.
           fatalTriggered: false,
-          targetPercentage: row.target_value === null ? null : Number(row.target_value),
+          targetPercentage:
+            row.target_value === null ? null : Number(row.target_value),
           consecutiveShortfalls: await consecutiveShortfalls(
-            String(row.employee_id), String(row.metric_id), start,
+            String(row.employee_id),
+            String(row.metric_id),
+            start,
           ),
           // Audits assessed, not days worked — three days of one audit each is
           // not the same evidence as three days of twenty.
-          sampleSize: Number(row.audit_count ?? 0) || Number(row.sample_days ?? 0),
+          sampleSize:
+            Number(row.audit_count ?? 0) || Number(row.sample_days ?? 0),
         },
       });
 
       if (outcome.created) result.raised += 1;
-      else if (outcome.reason === "already_open") result.skippedAlreadyOpen += 1;
+      else if (outcome.reason === "already_open")
+        result.skippedAlreadyOpen += 1;
       else if (outcome.reason === "no_employee") result.skippedNoCoach += 1;
       else result.skippedNoTrigger += 1;
     } catch (err) {
@@ -204,11 +233,14 @@ export async function runWeeklyCoachingEvaluation(referenceDate: string): Promis
     logger.warn(
       result,
       `[WeeklyCoaching] ${start}..${end}: ${result.skippedMissingTarget} employee(s) across ` +
-      `${result.processesMissingTarget.length} process(es) had quality but no approved QUALITY_SCORE target, ` +
-      `so no coaching can be raised for them. Affected: ` +
-      `${result.processesMissingTarget.map((p) => `${p.processName} (${p.employeeCount})`).join(", ") || "unknown"}.`,
+        `${result.processesMissingTarget.length} process(es) had quality but no approved QUALITY_SCORE target, ` +
+        `so no coaching can be raised for them. Affected: ` +
+        `${result.processesMissingTarget.map((p) => `${p.processName} (${p.employeeCount})`).join(", ") || "unknown"}.`,
     );
   }
-  logger.info(result, `[WeeklyCoaching] ${start}..${end}: raised ${result.raised} of ${result.evaluated} evaluated`);
+  logger.info(
+    result,
+    `[WeeklyCoaching] ${start}..${end}: raised ${result.raised} of ${result.evaluated} evaluated`,
+  );
   return result;
 }

@@ -23,13 +23,16 @@ const CHUNK_SIZE = 200;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  for (let i = 0; i < items.length; i += size)
+    out.push(items.slice(i, i + size));
   return out;
 }
 
 /** "1"/"true"/"yes"/"active" → 1; "0"/"false"/"no"/"inactive" → 0; blank → default. */
 function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
-  const v = String(raw ?? "").trim().toLowerCase();
+  const v = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   if (!v) return defaultValue;
   if (["0", "false", "no", "inactive", "n"].includes(v)) return 0;
   return 1;
@@ -39,19 +42,25 @@ function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
 // rather than read from information_schema per import — this table's shape changes
 // through a migration, not at runtime.
 const VALID_WORKLOAD_TYPES = new Set([
-  "inbound_voice", "outbound_voice", "chat", "email",
-  "backoffice", "data_verification", "audit_quality", "blended",
+  "inbound_voice",
+  "outbound_voice",
+  "chat",
+  "email",
+  "backoffice",
+  "data_verification",
+  "audit_quality",
+  "blended",
 ]);
 
 export async function importProcessMasterBatch(
   batchId: string,
-  importedByUserId: string
+  importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
   const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
       ORDER BY row_no`,
-    [batchId]
+    [batchId],
   );
 
   if (batchRows.length === 0) {
@@ -81,9 +90,12 @@ export async function importProcessMasterBatch(
       continue;
     }
 
-    const workloadTypeRaw = data.workload_type ? String(data.workload_type).trim().toLowerCase() : null;
+    const workloadTypeRaw = data.workload_type
+      ? String(data.workload_type).trim().toLowerCase()
+      : null;
     if (workloadTypeRaw && !VALID_WORKLOAD_TYPES.has(workloadTypeRaw)) {
-      const msg = `Row ${row.row_no}: workload_type "${data.workload_type}" is not valid — ` +
+      const msg =
+        `Row ${row.row_no}: workload_type "${data.workload_type}" is not valid — ` +
         `valid values are ${[...VALID_WORKLOAD_TYPES].sort().join(", ")}`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
@@ -91,11 +103,17 @@ export async function importProcessMasterBatch(
       continue;
     }
 
-    const branchCode = data.branch_code ? String(data.branch_code).trim() : null;
+    const branchCode = data.branch_code
+      ? String(data.branch_code).trim()
+      : null;
     if (branchCode) branchCodes.add(branchCode);
 
     parsed.push({
-      rowId: row.id, rowNo: row.row_no, processCode, processName, branchCode,
+      rowId: row.id,
+      rowNo: row.row_no,
+      processCode,
+      processName,
+      branchCode,
       // business_lob is a free-text column on process_master, not a foreign key —
       // there is no lob_master relationship to resolve here (see fix note below).
       businessLob: data.business_lob ? String(data.business_lob).trim() : null,
@@ -112,9 +130,10 @@ export async function importProcessMasterBatch(
     const codes = Array.from(branchCodes);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, branch_code FROM branch_master WHERE branch_code IN (${codes.map(() => "?").join(",")})`,
-      codes
+      codes,
     );
-    for (const r of rows) branchIdByCode.set(r.branch_code as string, r.id as string);
+    for (const r of rows)
+      branchIdByCode.set(r.branch_code as string, r.id as string);
   }
 
   let importedRows = 0;
@@ -128,9 +147,13 @@ export async function importProcessMasterBatch(
   for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
     const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?)").join(", ");
     const params = rowsInChunk.flatMap((r) => [
-      r.processCode, r.processName,
-      r.branchCode ? branchIdByCode.get(r.branchCode) ?? null : null,
-      r.businessLob, r.clientName, r.workloadType, r.activeStatus,
+      r.processCode,
+      r.processName,
+      r.branchCode ? (branchIdByCode.get(r.branchCode) ?? null) : null,
+      r.businessLob,
+      r.clientName,
+      r.workloadType,
+      r.activeStatus,
     ]);
 
     try {
@@ -153,7 +176,7 @@ export async function importProcessMasterBatch(
            client_name = COALESCE(VALUES(client_name), client_name),
            workload_type = COALESCE(VALUES(workload_type), workload_type),
            active_status = VALUES(active_status)`,
-        params
+        params,
       );
       for (const r of rowsInChunk) {
         importedRowIds.push(r.rowId);
@@ -173,9 +196,15 @@ export async function importProcessMasterBatch(
                client_name = COALESCE(VALUES(client_name), client_name),
                workload_type = COALESCE(VALUES(workload_type), workload_type),
                active_status = VALUES(active_status)`,
-            [r.processCode, r.processName,
-             r.branchCode ? branchIdByCode.get(r.branchCode) ?? null : null,
-             r.businessLob, r.clientName, r.workloadType, r.activeStatus]
+            [
+              r.processCode,
+              r.processName,
+              r.branchCode ? (branchIdByCode.get(r.branchCode) ?? null) : null,
+              r.businessLob,
+              r.clientName,
+              r.workloadType,
+              r.activeStatus,
+            ],
           );
           importedRowIds.push(r.rowId);
           importedRows++;
@@ -193,17 +222,20 @@ export async function importProcessMasterBatch(
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'imported'
        WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
-      importedRowIds
+      importedRowIds,
     );
   }
   if (errorUpdates.length > 0) {
     const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
-    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+    const caseParams = errorUpdates.flatMap((u) => [
+      u.rowId,
+      JSON.stringify([u.message]),
+    ]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids]
+      [...caseParams, ...ids],
     );
   }
 
@@ -211,12 +243,12 @@ export async function importProcessMasterBatch(
     errorRows === 0
       ? "imported"
       : importedRows === 0
-      ? "validation_failed"
-      : "imported_with_errors";
+        ? "validation_failed"
+        : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId]
+    [finalStatus, importedRows, errorRows, batchId],
   );
 
   return { importedRows, errorRows, errors };

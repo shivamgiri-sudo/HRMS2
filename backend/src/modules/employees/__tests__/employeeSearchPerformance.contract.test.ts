@@ -34,16 +34,25 @@ beforeEach(() => {
 });
 
 function lastEmployeeSelectCall(): { sql: string; params: unknown[] } {
-  const call = execute.mock.calls.find(([s]) => /FROM employees e/i.test(String(s)));
+  const call = execute.mock.calls.find(([s]) =>
+    /FROM employees e/i.test(String(s)),
+  );
   expect(call, "no employee SELECT was issued").toBeDefined();
   return { sql: String(call![0]), params: call![1] as unknown[] };
 }
 
 describe("employee search — no leading-wildcard LIKE OR'd with MATCH", () => {
   it("term >= 3 chars: uses MATCH() alone, no OR with any LIKE", async () => {
-    await employeeService.listEmployees({ page: 1, limit: 50, search: "Naresh", includeAnalytics: false } as never);
+    await employeeService.listEmployees({
+      page: 1,
+      limit: 50,
+      search: "Naresh",
+      includeAnalytics: false,
+    } as never);
     const { sql, params } = lastEmployeeSelectCall();
-    expect(sql).toMatch(/MATCH\(e\.full_name, e\.employee_code, e\.official_email\) AGAINST/i);
+    expect(sql).toMatch(
+      /MATCH\(e\.full_name, e\.employee_code, e\.official_email\) AGAINST/i,
+    );
     // The specific regression this guards: a LIKE clause OR'd onto the same
     // predicate as MATCH() is what defeated the FULLTEXT index in production.
     expect(sql).not.toMatch(/AGAINST[^)]*\)\s*OR\b/i);
@@ -51,13 +60,25 @@ describe("employee search — no leading-wildcard LIKE OR'd with MATCH", () => {
   });
 
   it("term >= 3 chars: does not bind a leading-wildcard '%term%' anywhere", async () => {
-    await employeeService.listEmployees({ page: 1, limit: 50, search: "Naresh", includeAnalytics: false } as never);
+    await employeeService.listEmployees({
+      page: 1,
+      limit: 50,
+      search: "Naresh",
+      includeAnalytics: false,
+    } as never);
     const { params } = lastEmployeeSelectCall();
-    expect(params.some((p) => typeof p === "string" && p.startsWith("%"))).toBe(false);
+    expect(params.some((p) => typeof p === "string" && p.startsWith("%"))).toBe(
+      false,
+    );
   });
 
   it("term < 3 chars: uses prefix-only LIKE ('term%'), not leading-wildcard", async () => {
-    await employeeService.listEmployees({ page: 1, limit: 50, search: "Na", includeAnalytics: false } as never);
+    await employeeService.listEmployees({
+      page: 1,
+      limit: 50,
+      search: "Na",
+      includeAnalytics: false,
+    } as never);
     const { sql, params } = lastEmployeeSelectCall();
     expect(sql).toMatch(/e\.first_name LIKE \?/);
     expect(sql).toMatch(/e\.last_name LIKE \?/);
@@ -69,7 +90,12 @@ describe("employee search — no leading-wildcard LIKE OR'd with MATCH", () => {
   });
 
   it('"MAS..." code search: employee_code prefix only, no MATCH, no wildcard-leading LIKE', async () => {
-    await employeeService.listEmployees({ page: 1, limit: 50, search: "MAS197", includeAnalytics: false } as never);
+    await employeeService.listEmployees({
+      page: 1,
+      limit: 50,
+      search: "MAS197",
+      includeAnalytics: false,
+    } as never);
     const { sql, params } = lastEmployeeSelectCall();
     expect(sql).toMatch(/e\.employee_code LIKE \?/);
     expect(sql).not.toMatch(/MATCH\(/i);
@@ -77,7 +103,12 @@ describe("employee search — no leading-wildcard LIKE OR'd with MATCH", () => {
   });
 
   it("personal email substring search was intentionally dropped (was part of the unindexable OR-chain)", async () => {
-    await employeeService.listEmployees({ page: 1, limit: 50, search: "someone@example.com", includeAnalytics: false } as never);
+    await employeeService.listEmployees({
+      page: 1,
+      limit: 50,
+      search: "someone@example.com",
+      includeAnalytics: false,
+    } as never);
     const { sql } = lastEmployeeSelectCall();
     expect(sql).not.toMatch(/e\.email LIKE/);
   });

@@ -1,4 +1,9 @@
-import { addDays, daysBetween, type OpsCtx, type OpsDimension } from "./ops-command.context.js";
+import {
+  addDays,
+  daysBetween,
+  type OpsCtx,
+  type OpsDimension,
+} from "./ops-command.context.js";
 import { groupKey, isActiveAt, type DimView } from "./ops-command.dim.js";
 import * as F from "./ops-command.facts.js";
 import type { MetricMap } from "./ops-command.domains.js";
@@ -19,7 +24,10 @@ const round1 = (v: number) => Math.round(v * 10) / 10;
  * Composite retention-risk score per active employee, from facts already cached for the page. Formula is documented on
  * the `risk_high` metric definition; this is its only implementation.
  */
-export async function computeRiskScores(ctx: OpsCtx, view: DimView): Promise<Map<string, RiskScore>> {
+export async function computeRiskScores(
+  ctx: OpsCtx,
+  view: DimView,
+): Promise<Map<string, RiskScore>> {
   const { from, to } = ctx.f;
   const attTo = to < ctx.attThrough ? to : ctx.attThrough;
   const [adr, warnings, pips, reqs, ext, training] = await Promise.all([
@@ -31,7 +39,10 @@ export async function computeRiskScores(ctx: OpsCtx, view: DimView): Promise<Map
     F.trainingFact(),
   ]);
 
-  const att = new Map<string, { sched: number; absent: number; late: number; worked: number }>();
+  const att = new Map<
+    string,
+    { sched: number; absent: number; late: number; worked: number }
+  >();
   for (const r of adr) {
     if (!view.byId.has(r.eid)) continue;
     const a = att.get(r.eid) ?? { sched: 0, absent: 0, late: 0, worked: 0 };
@@ -55,12 +66,15 @@ export async function computeRiskScores(ctx: OpsCtx, view: DimView): Promise<Map
     if (a && a.sched >= 5 && a.absent > 0) {
       const rate = a.absent / a.sched;
       score += Math.min(40, rate * 100 * 1.6);
-      reasons.push(`Absent ${a.absent} of ${a.sched} scheduled days (${Math.round(rate * 100)}%)`);
+      reasons.push(
+        `Absent ${a.absent} of ${a.sched} scheduled days (${Math.round(rate * 100)}%)`,
+      );
     }
     if (a && a.worked >= 5 && a.late > 0) {
       const rate = a.late / a.worked;
       score += Math.min(15, rate * 100 * 0.4);
-      if (rate >= 0.2) reasons.push(`Late on ${Math.round(rate * 100)}% of days worked`);
+      if (rate >= 0.2)
+        reasons.push(`Late on ${Math.round(rate * 100)}% of days worked`);
     }
     const w = warnBy.get(e.id);
     if (w) {
@@ -81,8 +95,13 @@ export async function computeRiskScores(ctx: OpsCtx, view: DimView): Promise<Map
     }
     if (e.doj) {
       const tenure = daysBetween(e.doj, to) - 1;
-      if (tenure <= 30) { score += 12; reasons.push(`New joiner (${tenure}d)`); }
-      else if (tenure <= 90) { score += 6; reasons.push(`First 90 days (${tenure}d)`); }
+      if (tenure <= 30) {
+        score += 12;
+        reasons.push(`New joiner (${tenure}d)`);
+      } else if (tenure <= 90) {
+        score += 6;
+        reasons.push(`First 90 days (${tenure}d)`);
+      }
     }
     const qa = qaByCode.get(e.code);
     if (qa && qa.n >= 3 && qa.sum / qa.n < 70) {
@@ -94,12 +113,21 @@ export async function computeRiskScores(ctx: OpsCtx, view: DimView): Promise<Map
       reasons.push("Training risk (red)");
     }
     score = Math.min(100, Math.round(score));
-    out.set(e.id, { score, level: score >= RISK_HIGH ? "high" : score >= RISK_MEDIUM ? "medium" : "low", reasons });
+    out.set(e.id, {
+      score,
+      level:
+        score >= RISK_HIGH ? "high" : score >= RISK_MEDIUM ? "medium" : "low",
+      reasons,
+    });
   }
   return out;
 }
 
-export async function riskDomain(ctx: OpsCtx, dim: OpsDimension, view: DimView): Promise<MetricMap> {
+export async function riskDomain(
+  ctx: OpsCtx,
+  dim: OpsDimension,
+  view: DimView,
+): Promise<MetricMap> {
   const scores = await computeRiskScores(ctx, view);
   const out: MetricMap = new Map();
   const sums = new Map<string, { s: number; n: number }>();
@@ -115,6 +143,9 @@ export async function riskDomain(ctx: OpsCtx, dim: OpsDimension, view: DimView):
     s.n += 1;
     sums.set(gid, s);
   }
-  for (const [gid, s] of sums) (out.get(gid) as Record<string, number | null>).risk_avg = s.n ? Math.round((s.s / s.n) * 10) / 10 : null;
+  for (const [gid, s] of sums)
+    (out.get(gid) as Record<string, number | null>).risk_avg = s.n
+      ? Math.round((s.s / s.n) * 10) / 10
+      : null;
   return out;
 }

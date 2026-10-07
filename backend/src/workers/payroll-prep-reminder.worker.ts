@@ -34,7 +34,7 @@ function msUntilNext1st(): number {
   const now = new Date();
   const istNow = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
   const nextFirst = new Date(
-    Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth() + 1, 1, 2, 30, 0, 0)
+    Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth() + 1, 1, 2, 30, 0, 0),
   );
   // If we're already past this month's 1st 02:30 UTC, target next month
   if (nextFirst.getTime() <= now.getTime()) {
@@ -53,7 +53,9 @@ function isTodayThe1st(): boolean {
 
 async function runReminders(): Promise<void> {
   const month = previousMonthIST();
-  console.log(`[${WORKER_NAME}] Sending payroll prep reminders for ${month}...`);
+  console.log(
+    `[${WORKER_NAME}] Sending payroll prep reminders for ${month}...`,
+  );
 
   // Find all WFM / process_manager user → process assignments
   const [scopeRows] = await db.execute<RowDataPacket[]>(
@@ -62,10 +64,14 @@ async function runReminders(): Promise<void> {
       WHERE uas.active_status = 1
         AND uas.process_id IS NOT NULL
         AND uas.scope_type IN ('process', 'branch_process')
-        AND uas.role_key IN ('wfm', 'process_manager', 'branch_head', 'payroll_branch')`
+        AND uas.role_key IN ('wfm', 'process_manager', 'branch_head', 'payroll_branch')`,
   );
 
-  const scopes = scopeRows as Array<{ user_id: string; branch_id: string; process_id: string }>;
+  const scopes = scopeRows as Array<{
+    user_id: string;
+    branch_id: string;
+    process_id: string;
+  }>;
 
   let sent = 0;
   for (const scope of scopes) {
@@ -73,11 +79,14 @@ async function runReminders(): Promise<void> {
       const rec = await payrollBranchReadinessService.getOrRefresh(
         month,
         scope.branch_id,
-        scope.process_id
+        scope.process_id,
       );
 
       // Only remind if not signed off and not ready
-      if (rec.process_manager_signoff === 1 || rec.readiness_status === "ready") {
+      if (
+        rec.process_manager_signoff === 1 ||
+        rec.readiness_status === "ready"
+      ) {
         continue;
       }
 
@@ -111,7 +120,9 @@ async function runReminders(): Promise<void> {
       sent++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[${WORKER_NAME}] Failed for user ${scope.user_id} / process ${scope.process_id}: ${msg}`);
+      console.warn(
+        `[${WORKER_NAME}] Failed for user ${scope.user_id} / process ${scope.process_id}: ${msg}`,
+      );
     }
   }
 
@@ -121,7 +132,7 @@ async function runReminders(): Promise<void> {
 export async function startPayrollPrepReminderWorker(): Promise<void> {
   const delay = msUntilNext1st();
   console.log(
-    `[${WORKER_NAME}] Next run on 1st of month — in ${Math.round(delay / 3600000)}h`
+    `[${WORKER_NAME}] Next run on 1st of month — in ${Math.round(delay / 3600000)}h`,
   );
 
   scheduledTimer = setTimeout(async () => {

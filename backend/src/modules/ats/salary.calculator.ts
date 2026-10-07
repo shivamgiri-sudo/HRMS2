@@ -52,7 +52,9 @@ export async function calculateSalary(
   const estimatedGross = annualCtc * 0.88;
   const estimatedBasic = estimatedGross * (basicPct / 100);
   const pfEmployerAnnual = pfEligible ? estimatedBasic * 0.12 : 0;
-  const esicEmployerAnnual = esicApplies ? estimatedGross * (esicEmployerPct / 100) : 0;
+  const esicEmployerAnnual = esicApplies
+    ? estimatedGross * (esicEmployerPct / 100)
+    : 0;
   // Admin charges are the PF administration charge — only applicable when PF
   // is actually being deducted. Rate is 1% (0.50% admin + 0.50% EDLI); the
   // EDLI administration charge component was abolished in 2018, so the old
@@ -60,7 +62,8 @@ export async function calculateSalary(
   // matched to the live salary_package_master catalog and owner-ruled 2026-08-27.
   const adminChargesAnnual = pfEligible ? estimatedBasic * 0.01 : 0;
 
-  const gross = annualCtc - pfEmployerAnnual - esicEmployerAnnual - adminChargesAnnual;
+  const gross =
+    annualCtc - pfEmployerAnnual - esicEmployerAnnual - adminChargesAnnual;
 
   // Recompute all derived values on the actual gross
   const basic = gross * (basicPct / 100);
@@ -110,22 +113,22 @@ export async function calculateSalary(
   const m = (v: number) => Math.round((v / 12) * 100) / 100;
 
   return {
-    offered_ctc:       m(annualCtc),
-    gross:             m(gross),
-    basic:             m(basic),
-    hra:               m(hra),
-    conveyance:        m(conveyance),
-    da:                m(da),
+    offered_ctc: m(annualCtc),
+    gross: m(gross),
+    basic: m(basic),
+    hra: m(hra),
+    conveyance: m(conveyance),
+    da: m(da),
     special_allowance: Math.max(0, m(special)),
-    other_allowance:   0,
-    bonus:             m(bonus),
-    pf_employee:       m(pfEmployee),
-    pf_employer:       m(pfEmployer),
-    esic_employee:     m(esicEmployee),
-    esic_employer:     m(esicEmployer),
-    professional_tax:  m(professionalTax),
-    gratuity:          m(gratuity),
-    admin_charges:     m(adminCharges),
-    net_in_hand:       m(netInHand),
+    other_allowance: 0,
+    bonus: m(bonus),
+    pf_employee: m(pfEmployee),
+    pf_employer: m(pfEmployer),
+    esic_employee: m(esicEmployee),
+    esic_employer: m(esicEmployer),
+    professional_tax: m(professionalTax),
+    gratuity: m(gratuity),
+    admin_charges: m(adminCharges),
+    net_in_hand: m(netInHand),
   };
 }

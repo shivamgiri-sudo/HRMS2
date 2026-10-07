@@ -31,12 +31,18 @@ import {
 
 describe("a run left in 'processing' by the calculator can move forward", () => {
   it("allows processing -> approved", () => {
-    expect(validateTransition("processing", "approved")).toEqual({ valid: true });
+    expect(validateTransition("processing", "approved")).toEqual({
+      valid: true,
+    });
   });
 
   it("allows it case-insensitively, since the column is varchar and casing is not uniform", () => {
-    expect(validateTransition("PROCESSING" as any, "approved")).toEqual({ valid: true });
-    expect(validateTransition("Processing" as any, "approved")).toEqual({ valid: true });
+    expect(validateTransition("PROCESSING" as any, "approved")).toEqual({
+      valid: true,
+    });
+    expect(validateTransition("Processing" as any, "approved")).toEqual({
+      valid: true,
+    });
   });
 
   it("offers exactly one forward path — approved, nothing else", () => {
@@ -49,17 +55,31 @@ describe("processing does not become a new way to reopen or skip ahead", () => {
     expect(validateTransition("processing", "draft").valid).toBe(false);
   });
 
-  it.each(["calculating", "calculated", "under_review", "locked", "disbursed", "cancelled"])(
-    "rejects processing -> %s",
-    (target) => {
-      expect(validateTransition("processing", target as RunStatus).valid).toBe(false);
-    },
-  );
+  it.each([
+    "calculating",
+    "calculated",
+    "under_review",
+    "locked",
+    "disbursed",
+    "cancelled",
+  ])("rejects processing -> %s", (target) => {
+    expect(validateTransition("processing", target as RunStatus).valid).toBe(
+      false,
+    );
+  });
 
   it("cannot be entered from any other status — only the calculator writes it", () => {
     const everyStatus: RunStatus[] = [
-      "draft", "calculating", "calculated", "under_review",
-      "finalized", "approved", "locked", "disbursed", "cancelled", "processing",
+      "draft",
+      "calculating",
+      "calculated",
+      "under_review",
+      "finalized",
+      "approved",
+      "locked",
+      "disbursed",
+      "cancelled",
+      "processing",
     ];
     for (const from of everyStatus) {
       expect(getAllowedTransitions(from)).not.toContain("processing");
@@ -80,8 +100,12 @@ describe("editing rules for a processing run are unchanged", () => {
 
 describe("no regression to the paths that already worked", () => {
   it("finalized -> locked still works and still cannot skip to disbursed", () => {
-    expect(validateTransition("FINALIZED" as any, "locked")).toEqual({ valid: true });
-    expect(validateTransition("FINALIZED" as any, "disbursed").valid).toBe(false);
+    expect(validateTransition("FINALIZED" as any, "locked")).toEqual({
+      valid: true,
+    });
+    expect(validateTransition("FINALIZED" as any, "disbursed").valid).toBe(
+      false,
+    );
   });
 
   it("approved -> locked -> disbursed is untouched", () => {
@@ -90,12 +114,16 @@ describe("no regression to the paths that already worked", () => {
   });
 
   it("disbursed remains terminal", () => {
-    expect(validateTransition("disbursed", "locked").reason).toMatch(/terminal/);
+    expect(validateTransition("disbursed", "locked").reason).toMatch(
+      /terminal/,
+    );
   });
 
   it("the other pre-existing transitions still behave as before", () => {
     expect(validateTransition("draft", "calculating")).toEqual({ valid: true });
-    expect(validateTransition("under_review", "approved")).toEqual({ valid: true });
+    expect(validateTransition("under_review", "approved")).toEqual({
+      valid: true,
+    });
     expect(validateTransition("cancelled", "draft")).toEqual({ valid: true });
     expect(validateTransition("approved", "approved").valid).toBe(false);
   });

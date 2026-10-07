@@ -40,11 +40,21 @@ import { randomUUID } from "crypto";
 import { db } from "../src/db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 const BRANDS = [
-  { prefix: "REGINALD_MEN_EMAIL", label: "Reginald Men Email", campaignId: "EMAIL" },
-  { prefix: "MOLECULAR_EMAIL", label: "Molecular Email", campaignId: "MOEMAIL" },
+  {
+    prefix: "REGINALD_MEN_EMAIL",
+    label: "Reginald Men Email",
+    campaignId: "EMAIL",
+  },
+  {
+    prefix: "MOLECULAR_EMAIL",
+    label: "Molecular Email",
+    campaignId: "MOEMAIL",
+  },
 ] as const;
 
 async function main() {
@@ -67,32 +77,76 @@ async function main() {
                'user', 'employee_code', 'event_time', NULL, NULL, ?, 1, 'demo-super-admin-id',
                'constant', NULL, NULL, ?)`,
       [
-        sourceId, `${brand.prefix}_APR`, `${brand.label} agent activity (dialer)`,
+        sourceId,
+        `${brand.prefix}_APR`,
+        `${brand.label} agent activity (dialer)`,
         `ViciDial agent event log, campaign_id='${brand.campaignId}'. Per the real ${brand.label} Dashboard SOP's own Analyst APR tab (Exact Campaign = ${brand.label === "Reginald Men Email" ? "Email" : "MOEmail"}).`,
         processId,
       ],
     );
-    console.log(`${brand.prefix}: created data source ${brand.prefix}_APR (${sourceId})`);
+    console.log(
+      `${brand.prefix}: created data source ${brand.prefix}_APR (${sourceId})`,
+    );
 
-    const baseFilter = [{ op: "eq", value: brand.campaignId, column: "campaign_id" }];
-    const fields: Array<{ name: string; display: string; column: string; extraFilter?: unknown }> = [
+    const baseFilter = [
+      { op: "eq", value: brand.campaignId, column: "campaign_id" },
+    ];
+    const fields: Array<{
+      name: string;
+      display: string;
+      column: string;
+      extraFilter?: unknown;
+    }> = [
       { name: "wait_sec", display: "Wait seconds", column: "wait_sec" },
       { name: "talk_sec", display: "Talk seconds", column: "talk_sec" },
       { name: "dispo_sec", display: "Dispo seconds", column: "dispo_sec" },
-      { name: "pause_sec", display: "Total pause seconds", column: "pause_sec" },
-      { name: "lb_sec", display: "Lunch Break seconds", column: "pause_sec", extraFilter: { op: "eq", value: "LB", column: "sub_status" } },
-      { name: "tb_sec", display: "Tea Break seconds", column: "pause_sec", extraFilter: { op: "eq", value: "TB", column: "sub_status" } },
-      { name: "wb_sec", display: "Wash/Water/Bio Break seconds", column: "pause_sec", extraFilter: { op: "eq", value: "WB", column: "sub_status" } },
-      { name: "mb_sec", display: "Meeting Break seconds", column: "pause_sec", extraFilter: { op: "eq", value: "MB", column: "sub_status" } },
+      {
+        name: "pause_sec",
+        display: "Total pause seconds",
+        column: "pause_sec",
+      },
+      {
+        name: "lb_sec",
+        display: "Lunch Break seconds",
+        column: "pause_sec",
+        extraFilter: { op: "eq", value: "LB", column: "sub_status" },
+      },
+      {
+        name: "tb_sec",
+        display: "Tea Break seconds",
+        column: "pause_sec",
+        extraFilter: { op: "eq", value: "TB", column: "sub_status" },
+      },
+      {
+        name: "wb_sec",
+        display: "Wash/Water/Bio Break seconds",
+        column: "pause_sec",
+        extraFilter: { op: "eq", value: "WB", column: "sub_status" },
+      },
+      {
+        name: "mb_sec",
+        display: "Meeting Break seconds",
+        column: "pause_sec",
+        extraFilter: { op: "eq", value: "MB", column: "sub_status" },
+      },
     ];
     for (const f of fields) {
-      const filterJson = f.extraFilter ? [...baseFilter, f.extraFilter] : baseFilter;
+      const filterJson = f.extraFilter
+        ? [...baseFilter, f.extraFilter]
+        : baseFilter;
       await db.execute(
         `INSERT INTO kpi_studio_source_field
            (id, data_source_id, field_name, display_name, source_column, aggregate_fn,
             source_expression, filter_json, unit, description, active_status)
          VALUES (?, ?, ?, ?, ?, 'SUM', NULL, ?, 'seconds', NULL, 1)`,
-        [randomUUID(), sourceId, f.name, f.display, f.column, JSON.stringify(filterJson)],
+        [
+          randomUUID(),
+          sourceId,
+          f.name,
+          f.display,
+          f.column,
+          JSON.stringify(filterJson),
+        ],
       );
     }
     console.log(`  ${fields.length} fields created`);
@@ -104,10 +158,28 @@ async function main() {
     // whole verification window) is a real zero, not "unmeasured" -- without COALESCE these
     // three formulas returned null for Molecular even though every input was real.
     const metrics: Array<{ code: string; name: string; formula: string }> = [
-      { code: `${brand.prefix}_LOGIN_TIME_SEC`, name: `${brand.label} Login Time (sec)`, formula: "wait_sec + talk_sec + dispo_sec + pause_sec" },
-      { code: `${brand.prefix}_TOTAL_BREAK_SEC`, name: `${brand.label} Total Break (LB+TB+WB, sec)`, formula: "COALESCE(lb_sec,0) + COALESCE(tb_sec,0) + COALESCE(wb_sec,0)" },
-      { code: `${brand.prefix}_NET_LOGIN_SEC`, name: `${brand.label} Net Login Hrs+DN (sec)`, formula: "(wait_sec + talk_sec + dispo_sec + pause_sec) - (COALESCE(lb_sec,0) + COALESCE(tb_sec,0) + COALESCE(wb_sec,0))" },
-      { code: `${brand.prefix}_ACTUAL_LOGIN_SEC`, name: `${brand.label} Actual Login Hrs (sec)`, formula: "(wait_sec + talk_sec + dispo_sec + pause_sec) - (COALESCE(lb_sec,0) + COALESCE(tb_sec,0) + COALESCE(wb_sec,0)) - COALESCE(mb_sec,0)" },
+      {
+        code: `${brand.prefix}_LOGIN_TIME_SEC`,
+        name: `${brand.label} Login Time (sec)`,
+        formula: "wait_sec + talk_sec + dispo_sec + pause_sec",
+      },
+      {
+        code: `${brand.prefix}_TOTAL_BREAK_SEC`,
+        name: `${brand.label} Total Break (LB+TB+WB, sec)`,
+        formula: "COALESCE(lb_sec,0) + COALESCE(tb_sec,0) + COALESCE(wb_sec,0)",
+      },
+      {
+        code: `${brand.prefix}_NET_LOGIN_SEC`,
+        name: `${brand.label} Net Login Hrs+DN (sec)`,
+        formula:
+          "(wait_sec + talk_sec + dispo_sec + pause_sec) - (COALESCE(lb_sec,0) + COALESCE(tb_sec,0) + COALESCE(wb_sec,0))",
+      },
+      {
+        code: `${brand.prefix}_ACTUAL_LOGIN_SEC`,
+        name: `${brand.label} Actual Login Hrs (sec)`,
+        formula:
+          "(wait_sec + talk_sec + dispo_sec + pause_sec) - (COALESCE(lb_sec,0) + COALESCE(tb_sec,0) + COALESCE(wb_sec,0)) - COALESCE(mb_sec,0)",
+      },
     ];
     for (const m of metrics) {
       const metricId = randomUUID();
@@ -130,9 +202,14 @@ async function main() {
     }
   }
 
-  console.log("\nDone. 2 data sources, 16 fields, 8 metrics + definitions created.");
+  console.log(
+    "\nDone. 2 data sources, 16 fields, 8 metrics + definitions created.",
+  );
 }
 
 main()
   .then(() => process.exit(0))
-  .catch((e) => { console.error("FAILED", e); process.exit(1); });
+  .catch((e) => {
+    console.error("FAILED", e);
+    process.exit(1);
+  });

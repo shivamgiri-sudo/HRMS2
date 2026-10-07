@@ -38,12 +38,14 @@ goalsRouter.get(
 
     const emp = await getEmployeeForUser(userId);
     if (!emp) {
-      return res.status(403).json({ success: false, error: "No employee record found" });
+      return res
+        .status(403)
+        .json({ success: false, error: "No employee record found" });
     }
 
     const goals = await goalsService.listGoals({ employeeId: emp.id, period });
     return res.json({ success: true, data: goals });
-  })
+  }),
 );
 
 // POST /goals — create goal
@@ -70,10 +72,14 @@ goalsRouter.post(
     };
 
     if (!title?.trim()) {
-      return res.status(400).json({ success: false, error: "title is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "title is required" });
     }
     if (!period?.trim()) {
-      return res.status(400).json({ success: false, error: "period is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "period is required" });
     }
 
     const privileged = await hasRole(userId, "admin", "hr");
@@ -81,13 +87,17 @@ goalsRouter.post(
 
     if (privileged) {
       if (!employee_id?.trim()) {
-        return res.status(400).json({ success: false, error: "employee_id is required" });
+        return res
+          .status(400)
+          .json({ success: false, error: "employee_id is required" });
       }
       resolvedEmployeeId = employee_id.trim();
     } else {
       const emp = await getEmployeeForUser(userId);
       if (!emp) {
-        return res.status(403).json({ success: false, error: "No employee record found" });
+        return res
+          .status(403)
+          .json({ success: false, error: "No employee record found" });
       }
       resolvedEmployeeId = emp.id;
     }
@@ -104,7 +114,7 @@ goalsRouter.post(
     });
 
     return res.status(201).json({ success: true, data: goal });
-  })
+  }),
 );
 
 // PATCH /goals/:id — update goal (owner or admin/hr)
@@ -124,7 +134,9 @@ goalsRouter.patch(
     if (!privileged) {
       const emp = await getEmployeeForUser(userId);
       if (!emp) {
-        return res.status(403).json({ success: false, error: "No employee record found" });
+        return res
+          .status(403)
+          .json({ success: false, error: "No employee record found" });
       }
       const goals = await goalsService.listGoals({ employeeId: emp.id });
       const owns = goals.some((g) => g.id === id);
@@ -141,9 +153,13 @@ goalsRouter.patch(
       });
     }
 
-    const goal = await goalsService.updateGoal(id, { actual_value, status, description });
+    const goal = await goalsService.updateGoal(id, {
+      actual_value,
+      status,
+      description,
+    });
     return res.json({ success: true, data: goal });
-  })
+  }),
 );
 
 // ─── Appraisal Cycles ─────────────────────────────────────────────────────────
@@ -155,7 +171,7 @@ goalsRouter.get(
   h(async (_req, res) => {
     const cycles = await goalsService.listCycles();
     return res.json({ success: true, data: cycles });
-  })
+  }),
 );
 
 // POST /appraisal/cycles
@@ -171,19 +187,29 @@ goalsRouter.post(
     };
 
     if (!cycle_name?.trim()) {
-      return res.status(400).json({ success: false, error: "cycle_name is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "cycle_name is required" });
     }
     if (!period?.trim()) {
-      return res.status(400).json({ success: false, error: "period is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "period is required" });
     }
     if (!start_date) {
-      return res.status(400).json({ success: false, error: "start_date is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "start_date is required" });
     }
     if (!end_date) {
-      return res.status(400).json({ success: false, error: "end_date is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "end_date is required" });
     }
     if (new Date(end_date) <= new Date(start_date)) {
-      return res.status(400).json({ success: false, error: "end_date must be after start_date" });
+      return res
+        .status(400)
+        .json({ success: false, error: "end_date must be after start_date" });
     }
 
     const cycle = await goalsService.createCycle({
@@ -194,7 +220,7 @@ goalsRouter.post(
     });
 
     return res.status(201).json({ success: true, data: cycle });
-  })
+  }),
 );
 
 // PATCH /appraisal/cycles/:id — update cycle status
@@ -214,7 +240,7 @@ goalsRouter.patch(
 
     const cycle = await goalsService.updateCycleStatus(req.params.id, status);
     return res.json({ success: true, data: cycle });
-  })
+  }),
 );
 
 // ─── Appraisal Ratings ────────────────────────────────────────────────────────
@@ -226,11 +252,13 @@ goalsRouter.get(
   h(async (req, res) => {
     const { cycle_id } = req.query as { cycle_id?: string };
     if (!cycle_id) {
-      return res.status(400).json({ success: false, error: "cycle_id query param is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "cycle_id query param is required" });
     }
     const ratings = await goalsService.listRatings(cycle_id);
     return res.json({ success: true, data: ratings });
-  })
+  }),
 );
 
 // POST /appraisal/ratings/:cycleId/:employeeId/self — self rating only
@@ -245,11 +273,15 @@ goalsRouter.post(
     };
 
     if (self_rating == null) {
-      return res.status(400).json({ success: false, error: "self_rating is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "self_rating is required" });
     }
     const rating = Number(self_rating);
     if (isNaN(rating) || rating < 1 || rating > 5) {
-      return res.status(400).json({ success: false, error: "self_rating must be between 1 and 5" });
+      return res
+        .status(400)
+        .json({ success: false, error: "self_rating must be between 1 and 5" });
     }
 
     // Verify employee is submitting their own self-rating
@@ -266,7 +298,7 @@ goalsRouter.post(
       self_comments: self_comments ?? null,
     });
     return res.json({ success: true, data: record });
-  })
+  }),
 );
 
 // POST /appraisal/ratings/:cycleId/:employeeId/manager — manager/admin/hr rating
@@ -283,7 +315,9 @@ goalsRouter.post(
     };
 
     if (manager_rating == null) {
-      return res.status(400).json({ success: false, error: "manager_rating is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "manager_rating is required" });
     }
     const mRating = Number(manager_rating);
     if (isNaN(mRating) || mRating < 1 || mRating > 5) {
@@ -303,13 +337,18 @@ goalsRouter.post(
       }
     }
 
-    const record = await goalsService.submitManagerRating(cycleId, employeeId, userId, {
-      manager_rating: mRating,
-      final_rating: final_rating != null ? Number(final_rating) : null,
-      manager_comments: manager_comments ?? null,
-    });
+    const record = await goalsService.submitManagerRating(
+      cycleId,
+      employeeId,
+      userId,
+      {
+        manager_rating: mRating,
+        final_rating: final_rating != null ? Number(final_rating) : null,
+        manager_comments: manager_comments ?? null,
+      },
+    );
     return res.json({ success: true, data: record });
-  })
+  }),
 );
 
 // ─── Skills ───────────────────────────────────────────────────────────────────
@@ -320,7 +359,7 @@ goalsRouter.get(
   h(async (_req, res) => {
     const skills = await goalsService.listSkillMaster();
     return res.json({ success: true, data: skills });
-  })
+  }),
 );
 
 // POST /skills — admin/hr only
@@ -335,7 +374,9 @@ goalsRouter.post(
     };
 
     if (!skill_name?.trim()) {
-      return res.status(400).json({ success: false, error: "skill_name is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "skill_name is required" });
     }
 
     const skill = await goalsService.createSkill({
@@ -345,7 +386,7 @@ goalsRouter.post(
     });
 
     return res.status(201).json({ success: true, data: skill });
-  })
+  }),
 );
 
 // GET /skills/employee/:employeeId — self or admin/hr
@@ -365,7 +406,7 @@ goalsRouter.get(
 
     const skills = await goalsService.listEmployeeSkills(employeeId);
     return res.json({ success: true, data: skills });
-  })
+  }),
 );
 
 // POST /skills/employee/:employeeId — admin/hr: add/update employee skill
@@ -374,19 +415,27 @@ goalsRouter.post(
   requireRole("admin", "hr"),
   h(async (req, res) => {
     const { employeeId } = req.params;
-    const { skill_id, proficiency, certified, assessed_date, notes } = req.body as {
-      skill_id: string;
-      proficiency: "beginner" | "intermediate" | "advanced" | "expert";
-      certified?: number;
-      assessed_date?: string;
-      notes?: string;
-    };
+    const { skill_id, proficiency, certified, assessed_date, notes } =
+      req.body as {
+        skill_id: string;
+        proficiency: "beginner" | "intermediate" | "advanced" | "expert";
+        certified?: number;
+        assessed_date?: string;
+        notes?: string;
+      };
 
     if (!skill_id?.trim()) {
-      return res.status(400).json({ success: false, error: "skill_id is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "skill_id is required" });
     }
 
-    const validProficiencies = ["beginner", "intermediate", "advanced", "expert"];
+    const validProficiencies = [
+      "beginner",
+      "intermediate",
+      "advanced",
+      "expert",
+    ];
     if (!proficiency || !validProficiencies.includes(proficiency)) {
       return res.status(400).json({
         success: false,
@@ -403,7 +452,7 @@ goalsRouter.post(
     });
 
     return res.status(200).json({ success: true, data: empSkill });
-  })
+  }),
 );
 
 // DELETE /goals/:id — owner or admin/hr only; completed goals cannot be deleted
@@ -415,17 +464,25 @@ goalsRouter.delete(
     const privileged = await hasRole(userId, "admin", "hr");
     if (!privileged) {
       const emp = await getEmployeeForUser(userId);
-      const [rows] = await import("../../db/mysql.js").then(m =>
-        m.db.execute<import("mysql2").RowDataPacket[]>("SELECT employee_id FROM goal WHERE id = ? LIMIT 1", [id])
+      const [rows] = await import("../../db/mysql.js").then((m) =>
+        m.db.execute<import("mysql2").RowDataPacket[]>(
+          "SELECT employee_id FROM goal WHERE id = ? LIMIT 1",
+          [id],
+        ),
       );
       const goalRow = (rows as import("mysql2").RowDataPacket[])[0];
       if (!emp || !goalRow || goalRow.employee_id !== emp.id) {
-        return res.status(403).json({ success: false, error: "Forbidden — you can only delete your own goals" });
+        return res
+          .status(403)
+          .json({
+            success: false,
+            error: "Forbidden — you can only delete your own goals",
+          });
       }
     }
     await goalsService.deleteGoal(id, null);
     return res.json({ success: true });
-  })
+  }),
 );
 
 // DELETE /appraisal/ratings/:id — admin/hr only
@@ -435,7 +492,7 @@ goalsRouter.delete(
   h(async (req: AuthenticatedRequest, res: Response) => {
     await goalsService.deleteAppraisalRating(req.params.id);
     return res.json({ success: true });
-  })
+  }),
 );
 
 // DELETE /skills/employee/:employeeId/:skillId — owner or admin/hr
@@ -453,6 +510,5 @@ goalsRouter.delete(
     }
     await goalsService.deleteEmployeeSkill(employeeId, skillId);
     return res.json({ success: true });
-  })
+  }),
 );
-

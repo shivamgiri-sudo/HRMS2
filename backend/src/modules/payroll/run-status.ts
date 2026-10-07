@@ -40,7 +40,11 @@ export const CLOSED_RUN_STATUSES: ReadonlySet<string> = new Set([
  * only matches one casing is a guard that does not hold.
  */
 export function isRunClosed(status: unknown): boolean {
-  return CLOSED_RUN_STATUSES.has(String(status ?? "").trim().toLowerCase());
+  return CLOSED_RUN_STATUSES.has(
+    String(status ?? "")
+      .trim()
+      .toLowerCase(),
+  );
 }
 
 /**
@@ -86,7 +90,10 @@ export const CLOSED_RUN_STATUSES_SQL = "'locked','disbursed','finalized'";
  * Deliberately NOT part of CLOSED_RUN_STATUSES: a cancelled run is not closed to recomputation,
  * it is gone. Nothing should recompute it either.
  */
-export const VOID_RUN_STATUSES: ReadonlySet<string> = new Set(["cancelled", "rejected"]);
+export const VOID_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "cancelled",
+  "rejected",
+]);
 
 /** SQL form of VOID_RUN_STATUSES, for statements that filter in the database. */
 export const VOID_RUN_STATUSES_SQL = "'cancelled','rejected'";

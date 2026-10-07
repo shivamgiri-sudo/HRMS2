@@ -18,14 +18,19 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
-import { KIT_DOCUMENT_CODES, TERMINAL_STATUSES } from "./joiningKitAssembly.service.js";
+import {
+  KIT_DOCUMENT_CODES,
+  TERMINAL_STATUSES,
+} from "./joiningKitAssembly.service.js";
 
 /** One document's draft generation must never be allowed to stall a whole loop. */
 export const DRAFT_GENERATION_TIMEOUT_MS = 90_000;
 
 export class DraftGenerationTimeoutError extends Error {
   constructor(checklistId: string, timeoutMs: number) {
-    super(`Draft generation timed out after ${Math.round(timeoutMs / 1000)}s (checklist ${checklistId})`);
+    super(
+      `Draft generation timed out after ${Math.round(timeoutMs / 1000)}s (checklist ${checklistId})`,
+    );
     this.name = "DraftGenerationTimeoutError";
   }
 }
@@ -48,9 +53,14 @@ export async function generateDraftWithTimeout(
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new DraftGenerationTimeoutError(checklistId, timeoutMs)), timeoutMs);
+    timer = setTimeout(
+      () => reject(new DraftGenerationTimeoutError(checklistId, timeoutMs)),
+      timeoutMs,
+    );
   });
-  const generation = Promise.resolve().then(() => generateChecklistDraft(checklistId, actorUserId));
+  const generation = Promise.resolve().then(() =>
+    generateChecklistDraft(checklistId, actorUserId),
+  );
   // If the timeout wins, the abandoned generation may reject later. Swallow that
   // here so it cannot surface as an unhandled rejection and crash the process.
   generation.catch(() => undefined);
@@ -71,7 +81,9 @@ const TERMINAL_SQL = TERMINAL_STATUSES.map(() => "?").join(",");
 const KIT_CODES_SQL = KIT_DOCUMENT_CODES.map(() => "?").join(",");
 
 /** Kit documents with no file yet — the only rows this module may touch. */
-async function fileLessKitChecklistRows(employeeId: string): Promise<RowDataPacket[]> {
+async function fileLessKitChecklistRows(
+  employeeId: string,
+): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.document_code
        FROM employee_joining_document_checklist c
@@ -97,38 +109,59 @@ async function fileLessKitChecklistRows(employeeId: string): Promise<RowDataPack
            WHERE r.employee_id = c.employee_id AND r.status = 'approved'
         ))
       ORDER BY c.document_code`,
-    [employeeId, ...KIT_DOCUMENT_CODES, ...TERMINAL_STATUSES, ...TERMINAL_STATUSES],
+    [
+      employeeId,
+      ...KIT_DOCUMENT_CODES,
+      ...TERMINAL_STATUSES,
+      ...TERMINAL_STATUSES,
+    ],
   );
   return rows as RowDataPacket[];
 }
 
-async function auditRepair(employeeId: string, actorUserId: string | null, result: KitDraftRepairResult) {
-  await db.execute(
-    `INSERT INTO employee_joining_document_audit_log
+async function auditRepair(
+  employeeId: string,
+  actorUserId: string | null,
+  result: KitDraftRepairResult,
+) {
+  await db
+    .execute(
+      `INSERT INTO employee_joining_document_audit_log
        (id, employee_id, checklist_id, document_code, action_type,
         old_value, new_value, remarks, actor_user_id, actor_type)
      VALUES (?, ?, NULL, 'JOINING_KIT', 'KIT_DRAFTS_REGENERATED', NULL, CAST(? AS JSON), ?, ?, ?)`,
-    [
-      randomUUID(),
-      employeeId,
-      JSON.stringify(result),
-      "Joining kit draft repair",
-      actorUserId,
-      actorUserId ? "hr" : "system",
-    ],
-  ).catch((e: unknown) => {
-    // An audit failure must not undo a repair that already produced files.
-    console.warn("[joining-kit-repair] audit entry not written:", e instanceof Error ? e.message : e);
-  });
+      [
+        randomUUID(),
+        employeeId,
+        JSON.stringify(result),
+        "Joining kit draft repair",
+        actorUserId,
+        actorUserId ? "hr" : "system",
+      ],
+    )
+    .catch((e: unknown) => {
+      // An audit failure must not undo a repair that already produced files.
+      console.warn(
+        "[joining-kit-repair] audit entry not written:",
+        e instanceof Error ? e.message : e,
+      );
+    });
 }
 
 // Two callers (HR click + a dispatch) racing on one employee would each attach a
 // file to the same rows. Share the run that is already in flight instead.
 const inFlight = new Map<string, Promise<KitDraftRepairResult>>();
 
-async function runRepair(employeeId: string, actorUserId: string | null): Promise<KitDraftRepairResult> {
+async function runRepair(
+  employeeId: string,
+  actorUserId: string | null,
+): Promise<KitDraftRepairResult> {
   const rows = await fileLessKitChecklistRows(employeeId);
-  const result: KitDraftRepairResult = { attempted: rows.length, generated: 0, failed: [] };
+  const result: KitDraftRepairResult = {
+    attempted: rows.length,
+    generated: 0,
+    failed: [],
+  };
 
   // Sequential on purpose: the generator is heavy and the DB pool is shared.
   for (const row of rows) {
@@ -139,7 +172,12 @@ async function runRepair(employeeId: string, actorUserId: string | null): Promis
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
       result.failed.push({ code, reason });
-      console.error("[joining-kit-repair] draft regeneration failed:", { employeeId, checklistId: row.id, code, reason });
+      console.error("[joining-kit-repair] draft regeneration failed:", {
+        employeeId,
+        checklistId: row.id,
+        code,
+        reason,
+      });
     }
   }
 
@@ -158,7 +196,9 @@ export function regenerateMissingKitDrafts(
 ): Promise<KitDraftRepairResult> {
   const running = inFlight.get(employeeId);
   if (running) return running;
-  const run = runRepair(employeeId, actorUserId).finally(() => { inFlight.delete(employeeId); });
+  const run = runRepair(employeeId, actorUserId).finally(() => {
+    inFlight.delete(employeeId);
+  });
   inFlight.set(employeeId, run);
   return run;
 }

@@ -18,7 +18,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const state: { salary: Record<string, unknown> | null; employee: Record<string, unknown> | null } = {
+const state: {
+  salary: Record<string, unknown> | null;
+  employee: Record<string, unknown> | null;
+} = {
   salary: null,
   employee: null,
 };
@@ -27,40 +30,61 @@ vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: vi.fn(async (sql: string) => {
       const s = String(sql);
-      if (s.includes("employee_salary_snapshot")) return [state.salary ? [state.salary] : []];
-      if (s.includes("FROM employees")) return [state.employee ? [state.employee] : []];
+      if (s.includes("employee_salary_snapshot"))
+        return [state.salary ? [state.salary] : []];
+      if (s.includes("FROM employees"))
+        return [state.employee ? [state.employee] : []];
       return [[]];
     }),
     query: vi.fn(async () => [[]]),
   },
 }));
 
-const { buildSourceContext } = await import("../universalDigitalFormFill.service.js");
+const { buildSourceContext } =
+  await import("../universalDigitalFormFill.service.js");
 
 /** MAS63085 (Harsh Thakur), NOIDA-2 — exactly as stored in production. */
 const MAS63085_SNAPSHOT = {
-  basic: 6041.2, hra: 2416.48, conveyance: 1600, da: 0,
-  portfolio_allowance: 0, medical_allowance: 0, lta: 0, mobile_allowance: 0,
-  special_allowance: 5045.32, other_allowance: 0, bonus: 0,
-  gross: 0, net_in_hand: 0, ctc_offered: 16588,
+  basic: 6041.2,
+  hra: 2416.48,
+  conveyance: 1600,
+  da: 0,
+  portfolio_allowance: 0,
+  medical_allowance: 0,
+  lta: 0,
+  mobile_allowance: 0,
+  special_allowance: 5045.32,
+  other_allowance: 0,
+  bonus: 0,
+  gross: 0,
+  net_in_hand: 0,
+  ctc_offered: 16588,
 };
 const COMPONENT_SUM = 15103; // 6041.20 + 2416.48 + 1600 + 5045.32
 
 beforeEach(() => {
   state.salary = null;
-  state.employee = { full_name: "Harsh Thakur", gender: "Male", employee_code: "MAS63085" };
+  state.employee = {
+    full_name: "Harsh Thakur",
+    gender: "Male",
+    employee_code: "MAS63085",
+  };
 });
 
 describe("monthly remuneration on the employment contract", () => {
   it("uses the component sum when the snapshot's gross column is zero", async () => {
     state.salary = { ...MAS63085_SNAPSHOT };
-    const ctx = await buildSourceContext("f228c0c1-92b4-4e04-8ef6-36a243aa69f9");
+    const ctx = await buildSourceContext(
+      "f228c0c1-92b4-4e04-8ef6-36a243aa69f9",
+    );
     const salary = (ctx as Record<string, Record<string, unknown>>).salary;
 
     expect(salary.monthly_gross).not.toBeNull();
     expect(String(salary.monthly_gross)).toContain("15,103");
     expect(String(salary.monthly_gross_words).toLowerCase()).not.toBe("zero");
-    expect(String(salary.monthly_gross_words).toLowerCase()).toContain("fifteen thousand");
+    expect(String(salary.monthly_gross_words).toLowerCase()).toContain(
+      "fifteen thousand",
+    );
   });
 
   it("never divides ctc_offered by twelve — it is a monthly figure on this table", async () => {
@@ -73,7 +97,13 @@ describe("monthly remuneration on the employment contract", () => {
   });
 
   it("falls back to ctc_offered as-is when no component carries a figure", async () => {
-    state.salary = { ...MAS63085_SNAPSHOT, basic: 0, hra: 0, conveyance: 0, special_allowance: 0 };
+    state.salary = {
+      ...MAS63085_SNAPSHOT,
+      basic: 0,
+      hra: 0,
+      conveyance: 0,
+      special_allowance: 0,
+    };
     const ctx = await buildSourceContext("emp-2");
     const salary = (ctx as Record<string, Record<string, unknown>>).salary;
     expect(String(salary.monthly_gross)).toContain("16,588");
@@ -87,10 +117,16 @@ describe("monthly remuneration on the employment contract", () => {
     // twelvefold on a document someone signs. A blank is the safe failure.
     state.salary = {
       ...MAS63085_SNAPSHOT,
-      basic: 0, hra: 0, conveyance: 0, special_allowance: 0, ctc_offered: 625000,
+      basic: 0,
+      hra: 0,
+      conveyance: 0,
+      special_allowance: 0,
+      ctc_offered: 625000,
     };
     const ctx = await buildSourceContext("emp-annual");
-    expect((ctx as Record<string, Record<string, unknown>>).salary.monthly_gross).toBeNull();
+    expect(
+      (ctx as Record<string, Record<string, unknown>>).salary.monthly_gross,
+    ).toBeNull();
   });
 
   it("still trusts a large figure when the components corroborate it", async () => {
@@ -98,10 +134,18 @@ describe("monthly remuneration on the employment contract", () => {
     // the same thing, so there is nothing ambiguous about it.
     state.salary = {
       ...MAS63085_SNAPSHOT,
-      basic: 250000, hra: 100000, conveyance: 0, special_allowance: 0, ctc_offered: 400000,
+      basic: 250000,
+      hra: 100000,
+      conveyance: 0,
+      special_allowance: 0,
+      ctc_offered: 400000,
     };
     const ctx = await buildSourceContext("emp-senior");
-    expect(String((ctx as Record<string, Record<string, unknown>>).salary.monthly_gross)).toContain("3,50,000");
+    expect(
+      String(
+        (ctx as Record<string, Record<string, unknown>>).salary.monthly_gross,
+      ),
+    ).toContain("3,50,000");
   });
 
   it("prefers a real gross over the component sum when one is written", async () => {
@@ -113,9 +157,20 @@ describe("monthly remuneration on the employment contract", () => {
 
   it("stays null when the snapshot carries nothing at all", async () => {
     state.salary = {
-      basic: 0, hra: 0, conveyance: 0, da: 0, portfolio_allowance: 0,
-      medical_allowance: 0, lta: 0, mobile_allowance: 0, special_allowance: 0,
-      other_allowance: 0, bonus: 0, gross: 0, net_in_hand: 0, ctc_offered: 0,
+      basic: 0,
+      hra: 0,
+      conveyance: 0,
+      da: 0,
+      portfolio_allowance: 0,
+      medical_allowance: 0,
+      lta: 0,
+      mobile_allowance: 0,
+      special_allowance: 0,
+      other_allowance: 0,
+      bonus: 0,
+      gross: 0,
+      net_in_hand: 0,
+      ctc_offered: 0,
     };
     const ctx = await buildSourceContext("emp-4");
     const salary = (ctx as Record<string, Record<string, unknown>>).salary;
@@ -129,14 +184,18 @@ describe("s/o | d/o on the employment contract", () => {
     state.salary = { ...MAS63085_SNAPSHOT };
     state.employee = { full_name: "Harsh Thakur", gender: "Male" };
     const ctx = await buildSourceContext("emp-5");
-    expect((ctx as Record<string, Record<string, unknown>>).employee.relation_prefix).toBe("s/o");
+    expect(
+      (ctx as Record<string, Record<string, unknown>>).employee.relation_prefix,
+    ).toBe("s/o");
   });
 
   it("resolves to d/o for a female employee", async () => {
     state.salary = { ...MAS63085_SNAPSHOT };
     state.employee = { full_name: "Priya Sharma", gender: "Female" };
     const ctx = await buildSourceContext("emp-6");
-    expect((ctx as Record<string, Record<string, unknown>>).employee.relation_prefix).toBe("d/o");
+    expect(
+      (ctx as Record<string, Record<string, unknown>>).employee.relation_prefix,
+    ).toBe("d/o");
   });
 
   it("keeps both forms when gender is unknown, rather than guessing", async () => {
@@ -145,6 +204,8 @@ describe("s/o | d/o on the employment contract", () => {
     const ctx = await buildSourceContext("emp-7");
     // 63 employees have no usable gender. Printing "s/o" for them would assert
     // something about a real person that the record does not support.
-    expect((ctx as Record<string, Record<string, unknown>>).employee.relation_prefix).toBe("s/o | d/o");
+    expect(
+      (ctx as Record<string, Record<string, unknown>>).employee.relation_prefix,
+    ).toBe("s/o | d/o");
   });
 });

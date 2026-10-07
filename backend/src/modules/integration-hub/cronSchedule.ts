@@ -10,7 +10,9 @@ export function nextCronRun(
   return CronExpressionParser.parse(expression, {
     currentDate,
     tz: timezone,
-  }).next().toDate();
+  })
+    .next()
+    .toDate();
 }
 
 export function validateCronExpression(

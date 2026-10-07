@@ -55,7 +55,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const BACKEND_SRC = resolve(HERE, "..", "..", "..");
 const SNAPSHOT = resolve(BACKEND_SRC, "..", "sql", "schema-snapshot.json");
 
-type Snapshot = { generatedFrom: string; tableCount: number; tables: Record<string, string[]> };
+type Snapshot = {
+  generatedFrom: string;
+  tableCount: number;
+  tables: Record<string, string[]>;
+};
 
 /**
  * Identifiers that follow FROM/JOIN but are not physical tables.
@@ -66,7 +70,12 @@ type Snapshot = { generatedFrom: string; tableCount: number; tables: Record<stri
 const ALLOWED_NON_TABLES = new Set<string>([]);
 
 /** Databases other than mas_hrms, whose tables the snapshot legitimately does not cover. */
-const FOREIGN_SCHEMAS = new Set(["information_schema", "performance_schema", "mysql", "sys"]);
+const FOREIGN_SCHEMAS = new Set([
+  "information_schema",
+  "performance_schema",
+  "mysql",
+  "sys",
+]);
 
 /**
  * Strip JS block and line comments before looking for SQL.
@@ -128,7 +137,8 @@ const READ_TABLE_RE =
  * A column alias is written `expr AS name`; a CTE is `name AS (`. The trailing paren is what
  * separates them, so this cannot swallow an aliased column.
  */
-const CTE_RE = /(?:\bWITH\b(?:\s+RECURSIVE)?|,)\s*`?([a-z_][a-z0-9_]*)`?\s+AS\s*\(/gi;
+const CTE_RE =
+  /(?:\bWITH\b(?:\s+RECURSIVE)?|,)\s*`?([a-z_][a-z0-9_]*)`?\s+AS\s*\(/gi;
 
 export function readTablesIn(source: string): string[] {
   const out = new Set<string>();
@@ -160,7 +170,8 @@ function tsFilesUnder(dir: string, acc: string[] = []): string[] {
     const full = resolve(dir, name);
     if (statSync(full).isDirectory()) {
       // The tests themselves quote broken SQL as fixtures on purpose.
-      if (name === "__tests__" || name === "node_modules" || name === "dist") continue;
+      if (name === "__tests__" || name === "node_modules" || name === "dist")
+        continue;
       tsFilesUnder(full, acc);
     } else if (name.endsWith(".ts") && !name.endsWith(".d.ts")) {
       acc.push(full);
@@ -176,7 +187,12 @@ function tsFilesUnder(dir: string, acc: string[] = []): string[] {
 function journeyFiles(): string[] {
   return [
     ...tsFilesUnder(resolve(BACKEND_SRC, "modules", "exit")),
-    resolve(BACKEND_SRC, "modules", "workforce-mandate", "manpower-risk.routes.ts"),
+    resolve(
+      BACKEND_SRC,
+      "modules",
+      "workforce-mandate",
+      "manpower-risk.routes.ts",
+    ),
   ];
 }
 
@@ -213,7 +229,7 @@ describe("exit journey — every table read exists in mas_hrms", () => {
         `.catch() or a scalar() fallback, so the endpoint returns 500 or a fabricated zero ` +
         `and the UI renders it as a real empty result.\n` +
         `Check backend/sql/schema-snapshot.json for the real table name.\n` +
-        offenders.map((o) => `  - ${o}`).join("\n")
+        offenders.map((o) => `  - ${o}`).join("\n"),
     ).toEqual([]);
   });
 });
@@ -235,7 +251,10 @@ describe("exit-intelligence open-PIP predicate matches pip_record's real enum", 
   // comment directly above the query, and that comment necessarily names the wrong table it
   // replaced. Asserting against raw text would make the explanation fail the test.
   const source = stripComments(
-    readFileSync(resolve(BACKEND_SRC, "modules", "exit", "exit-intelligence.service.ts"), "utf8")
+    readFileSync(
+      resolve(BACKEND_SRC, "modules", "exit", "exit-intelligence.service.ts"),
+      "utf8",
+    ),
   );
   const PIP_ENUM_MEMBERS = ["active", "completed", "extended", "terminated"];
 
@@ -251,9 +270,15 @@ describe("exit-intelligence open-PIP predicate matches pip_record's real enum", 
   it("names no status outside the enum", () => {
     // Anything quoted next to `status` in this file must be a real member, or the condition
     // silently matches the wrong set — which is exactly how the original defect read.
-    const pipClause = /FROM pip_record[^`]*?status\s+(?:NOT\s+)?IN\s*\(([^)]*)\)/i.exec(source);
-    expect(pipClause, "expected an open-PIP predicate to be present").not.toBeNull();
-    const named = [...pipClause![1].matchAll(/'([a-z_]+)'/gi)].map((m) => m[1].toLowerCase());
+    const pipClause =
+      /FROM pip_record[^`]*?status\s+(?:NOT\s+)?IN\s*\(([^)]*)\)/i.exec(source);
+    expect(
+      pipClause,
+      "expected an open-PIP predicate to be present",
+    ).not.toBeNull();
+    const named = [...pipClause![1].matchAll(/'([a-z_]+)'/gi)].map((m) =>
+      m[1].toLowerCase(),
+    );
     expect(named.length).toBeGreaterThan(0);
     for (const s of named) expect(PIP_ENUM_MEMBERS).toContain(s);
   });
@@ -261,13 +286,19 @@ describe("exit-intelligence open-PIP predicate matches pip_record's real enum", 
 
 describe("readTablesIn scanner", () => {
   it("finds plain and aliased reads", () => {
-    expect(readTablesIn("const q = `SELECT 1 FROM exit_request er`;")).toContain("exit_request");
-    expect(readTablesIn("const q = `SELECT 1 FROM a LEFT JOIN employees e ON e.id = a.id`;"))
-      .toContain("employees");
+    expect(
+      readTablesIn("const q = `SELECT 1 FROM exit_request er`;"),
+    ).toContain("exit_request");
+    expect(
+      readTablesIn(
+        "const q = `SELECT 1 FROM a LEFT JOIN employees e ON e.id = a.id`;",
+      ),
+    ).toContain("employees");
   });
 
   it("does not mistake a derived table's alias for a table", () => {
-    const sql = "const q = `SELECT * FROM ( SELECT id FROM exit_request ) ranked`;";
+    const sql =
+      "const q = `SELECT * FROM ( SELECT id FROM exit_request ) ranked`;";
     const found = readTablesIn(sql);
     expect(found).toContain("exit_request");
     expect(found).not.toContain("ranked");
@@ -285,17 +316,21 @@ describe("readTablesIn scanner", () => {
 
   it("still treats an aliased column as a column, not a CTE", () => {
     // `AS (` is what marks a CTE; `AS name` is a column alias and must not be collected.
-    const sql = "const q = `SELECT a AS billed, b FROM exit_request JOIN billed ON 1=1`;";
+    const sql =
+      "const q = `SELECT a AS billed, b FROM exit_request JOIN billed ON 1=1`;";
     expect(readTablesIn(sql)).toContain("billed");
   });
 
   it("ignores prose in JS comments — including this file's own header", () => {
     expect(readTablesIn("// joins departments d\nconst x = 1;")).toEqual([]);
-    expect(readTablesIn("/* LEFT JOIN designations des */\nconst x = 1;")).toEqual([]);
+    expect(
+      readTablesIn("/* LEFT JOIN designations des */\nconst x = 1;"),
+    ).toEqual([]);
   });
 
   it("ignores a table named only inside a SQL line comment", () => {
-    const sql = "const q = `SELECT 1\n -- was: JOIN departments d\n FROM exit_request`;";
+    const sql =
+      "const q = `SELECT 1\n -- was: JOIN departments d\n FROM exit_request`;";
     const found = readTablesIn(sql);
     expect(found).toContain("exit_request");
     expect(found).not.toContain("departments");
@@ -306,15 +341,20 @@ describe("readTablesIn scanner", () => {
   });
 
   it("skips reads against another database", () => {
-    expect(readTablesIn("const q = `SELECT 1 FROM information_schema.tables t`;")).toEqual([]);
+    expect(
+      readTablesIn("const q = `SELECT 1 FROM information_schema.tables t`;"),
+    ).toEqual([]);
   });
 
   it("resolves a mas_hrms-qualified read to the bare table name", () => {
-    expect(readTablesIn("const q = `SELECT 1 FROM mas_hrms.pip_record pr`;")).toContain("pip_record");
+    expect(
+      readTablesIn("const q = `SELECT 1 FROM mas_hrms.pip_record pr`;"),
+    ).toContain("pip_record");
   });
 
   it("would have caught the original defect", () => {
-    const sql = "const q = `SELECT d.dept_name FROM employees e LEFT JOIN departments d ON d.id = e.department_id`;";
+    const sql =
+      "const q = `SELECT d.dept_name FROM employees e LEFT JOIN departments d ON d.id = e.department_id`;";
     expect(readTablesIn(sql)).toContain("departments");
     expect(LIVE_TABLES.has("departments")).toBe(false);
   });

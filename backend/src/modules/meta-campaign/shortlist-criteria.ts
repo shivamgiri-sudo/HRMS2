@@ -12,7 +12,7 @@
  * "Fresher and experienced both" means NO experience gate, so none is set.
  */
 
-import type { MetaScreeningConfig } from '../job-requisition/job-requisition.types.js';
+import type { MetaScreeningConfig } from "../job-requisition/job-requisition.types.js";
 
 export interface RequisitionCriteria {
   /** Value for job_requisition.education_requirement (matched on the screener's education ladder). */
@@ -22,44 +22,55 @@ export interface RequisitionCriteria {
 }
 
 const CAN_TRAVEL_NOIDA = {
-  field: 'can_travel_noida',
-  op: 'neq' as const,
-  value: 'no',
-  label: 'Can travel to Noida (yes or can relocate)',
+  field: "can_travel_noida",
+  op: "neq" as const,
+  value: "no",
+  label: "Can travel to Noida (yes or can relocate)",
 };
 
 /** By job_requisition.requisition_code. */
 export const REQUISITION_CRITERIA: Record<string, RequisitionCriteria> = {
-  'REQ-2609-DZCV': {
-    education: '12th pass',
+  "REQ-2609-DZCV": {
+    education: "12th pass",
     config: {
       custom_field_rules: [
         CAN_TRAVEL_NOIDA,
         // The education ladder reads "below_12th" as 12th, so exclude it explicitly.
-        { field: 'qualification', op: 'neq', value: 'below_12th', label: '12th pass or above' },
-      ],
-    },
-    note: '12th pass or above; can travel to Noida = yes or can relocate; freshers and experienced both.',
-  },
-  'REQ-2609-K7BK': {
-    education: null,
-    config: {
-      custom_field_rules: [
-        { field: 'are_you_a_graduate', op: 'is_yes', value: '', label: 'Graduate (must)' },
         {
-          field: 'this_role_includes_night_shifts_are_you_willing_and_able_to_work_night_shifts',
-          op: 'is_yes',
-          value: '',
-          label: 'Willing to work night shifts',
+          field: "qualification",
+          op: "neq",
+          value: "below_12th",
+          label: "12th pass or above",
         },
       ],
     },
-    note: 'Graduate must; willing to work night shifts = yes.',
+    note: "12th pass or above; can travel to Noida = yes or can relocate; freshers and experienced both.",
   },
-  'REQ-2608-6GFX': {
-    education: '12th pass',
+  "REQ-2609-K7BK": {
+    education: null,
+    config: {
+      custom_field_rules: [
+        {
+          field: "are_you_a_graduate",
+          op: "is_yes",
+          value: "",
+          label: "Graduate (must)",
+        },
+        {
+          field:
+            "this_role_includes_night_shifts_are_you_willing_and_able_to_work_night_shifts",
+          op: "is_yes",
+          value: "",
+          label: "Willing to work night shifts",
+        },
+      ],
+    },
+    note: "Graduate must; willing to work night shifts = yes.",
+  },
+  "REQ-2608-6GFX": {
+    education: "12th pass",
     config: { custom_field_rules: [CAN_TRAVEL_NOIDA] },
-    note: '12th pass or above; can travel to Noida = yes or can relocate (this form does not ask it, so it is recorded as not verified); freshers and experienced both.',
+    note: "12th pass or above; can travel to Noida = yes or can relocate (this form does not ask it, so it is recorded as not verified); freshers and experienced both.",
   },
 };
 
@@ -78,22 +89,22 @@ export interface CampaignCriteriaDef {
  */
 export const CAMPAIGN_CRITERIA: CampaignCriteriaDef[] = [
   {
-    formId: '2856996751366206',
-    campaignName: 'AHMEDABAD DRA/Collections (JR pending)',
+    formId: "2856996751366206",
+    campaignName: "AHMEDABAD DRA/Collections (JR pending)",
     config: {
-      certifications: ['DRA'],
+      certifications: ["DRA"],
       auto_notify: false,
       // Experience is deliberately NOT gated: freshers are explicitly allowed alongside experienced
       // candidates, so no custom_field_rules entry is added for the months-of-experience question.
       custom_field_rules: [
         {
-          field: 'can_you_work_from_our_ahmedabad_location',
-          op: 'is_yes',
-          value: '',
-          label: 'Can work from Ahmedabad (yes or willing to relocate)',
+          field: "can_you_work_from_our_ahmedabad_location",
+          op: "is_yes",
+          value: "",
+          label: "Can work from Ahmedabad (yes or willing to relocate)",
         },
       ],
     },
-    note: 'Valid DRA certification = yes; freshers also allowed; can work from Ahmedabad = yes or willing to relocate.',
+    note: "Valid DRA certification = yes; freshers also allowed; can work from Ahmedabad = yes or willing to relocate.",
   },
 ];

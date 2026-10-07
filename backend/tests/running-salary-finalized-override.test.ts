@@ -20,7 +20,9 @@ import { resolve } from "path";
  */
 
 const SRC = readFileSync(
-  resolve(__dirname, "..", "src/modules/payroll/running-salary.routes.ts"), "utf8");
+  resolve(__dirname, "..", "src/modules/payroll/running-salary.routes.ts"),
+  "utf8",
+);
 
 /** The `AND spr.status IN (...)` list inside getFinalizedLineForMonth. */
 function statusList(): string[] {
@@ -33,7 +35,10 @@ function statusList(): string[] {
 function closedStatuses(): string[] {
   const m = SRC.match(/CLOSED_STATUSES = new Set\(\[([^\]]*)\]\)/);
   if (!m) throw new Error("CLOSED_STATUSES set not found");
-  return m[1].split(",").map((s) => s.trim().replace(/^"|"$/g, "")).filter(Boolean);
+  return m[1]
+    .split(",")
+    .map((s) => s.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean);
 }
 
 /** The CASE ranking, as status -> rank. */
@@ -41,7 +46,9 @@ function ranking(): Record<string, number> {
   const block = SRC.match(/CASE spr\.status([\s\S]*?)END/);
   if (!block) throw new Error("ORDER BY CASE not found");
   const out: Record<string, number> = {};
-  for (const [, status, rank] of block[1].matchAll(/WHEN\s+'([a-z_]+)'\s+THEN\s+(\d+)/g)) {
+  for (const [, status, rank] of block[1].matchAll(
+    /WHEN\s+'([a-z_]+)'\s+THEN\s+(\d+)/g,
+  )) {
     out[status] = Number(rank);
   }
   return out;
@@ -63,7 +70,9 @@ describe("getFinalizedLineForMonth — which runs count as settled", () => {
     // salary_prep_run.status collates utf8mb4_unicode_ci, so the lowercase
     // literal matches. Upper-casing it here would be harmless but misleading —
     // pin the lowercase form the rest of the file uses.
-    expect(statusList().filter((s) => s.toLowerCase() === "finalized")).toEqual(["finalized"]);
+    expect(statusList().filter((s) => s.toLowerCase() === "finalized")).toEqual(
+      ["finalized"],
+    );
   });
 
   it("never reports an open month as settled", () => {
@@ -83,9 +92,12 @@ describe("getFinalizedLineForMonth — which runs count as settled", () => {
     // A month with both a settled line and a stale draft line must resolve to
     // the settled one — LIMIT 1 takes whichever the CASE ranks first.
     const rank = ranking();
-    const closed = closedStatuses().map((s) => rank[s]).filter((n) => Number.isFinite(n));
+    const closed = closedStatuses()
+      .map((s) => rank[s])
+      .filter((n) => Number.isFinite(n));
     const open = ["draft", "processing", "calculating", "calculated"]
-      .map((s) => rank[s]).filter((n) => Number.isFinite(n));
+      .map((s) => rank[s])
+      .filter((n) => Number.isFinite(n));
     expect(closed.length).toBeGreaterThan(0);
     expect(open.length).toBeGreaterThan(0);
     expect(Math.max(...closed)).toBeLessThan(Math.min(...open));
@@ -110,7 +122,10 @@ describe("getFinalizedLineForMonth — which run wins when a month has several",
   it("gives every listed status an explicit rank, so none fall into ELSE", () => {
     const r = ranking();
     for (const s of statusList()) {
-      expect(r[s], `'${s}' is selectable but unranked — it would tie in the ELSE branch`).toBeDefined();
+      expect(
+        r[s],
+        `'${s}' is selectable but unranked — it would tie in the ELSE branch`,
+      ).toBeDefined();
     }
   });
 

@@ -16,7 +16,7 @@ describe("Data Governance Register", () => {
   });
 
   it("no two domains share the same domain_code", () => {
-    const codes = DATA_GOVERNANCE_REGISTER.map(d => d.domain_code);
+    const codes = DATA_GOVERNANCE_REGISTER.map((d) => d.domain_code);
     const unique = new Set(codes);
     expect(unique.size).toBe(codes.length);
   });
@@ -48,20 +48,26 @@ describe("Data Governance Register", () => {
   });
 
   it("LMS_CURRICULUM domain is integration_only (no mas_hrms tables)", () => {
-    const lms = DATA_GOVERNANCE_REGISTER.find(d => d.domain_code === "LMS_CURRICULUM");
+    const lms = DATA_GOVERNANCE_REGISTER.find(
+      (d) => d.domain_code === "LMS_CURRICULUM",
+    );
     expect(lms?.access_pattern).toBe(ACCESS_PATTERN.INTEGRATION_ONLY);
     expect(lms?.tables).toHaveLength(0);
     expect(lms?.data_owner).toBe(DATA_OWNER.LMS_EXTERNAL);
   });
 
   it("COSEC_BIOMETRIC is read-only sync (no writeback)", () => {
-    const cosec = DATA_GOVERNANCE_REGISTER.find(d => d.domain_code === "COSEC_BIOMETRIC");
+    const cosec = DATA_GOVERNANCE_REGISTER.find(
+      (d) => d.domain_code === "COSEC_BIOMETRIC",
+    );
     expect(cosec?.access_pattern).toBe(ACCESS_PATTERN.SYNC_SNAPSHOT);
     expect(cosec?.data_owner).toBe(DATA_OWNER.COSEC);
   });
 
   it("CLIENT_PORTAL domain does not contain payroll or PII", () => {
-    const portal = DATA_GOVERNANCE_REGISTER.find(d => d.domain_code === "CLIENT_PORTAL");
+    const portal = DATA_GOVERNANCE_REGISTER.find(
+      (d) => d.domain_code === "CLIENT_PORTAL",
+    );
     expect(portal?.payroll_contains).toBe(false);
     expect(portal?.pii_contains).toBe(false);
   });

@@ -66,10 +66,7 @@ describe("analyzeSchema", () => {
   });
 
   it("marks not nullable when field present in all rows", () => {
-    const fields = analyzeSchema([
-      { emp_id: "EMP001" },
-      { emp_id: "EMP002" },
-    ]);
+    const fields = analyzeSchema([{ emp_id: "EMP001" }, { emp_id: "EMP002" }]);
     const f = fields.find((f) => f.name === "emp_id");
     expect(f?.nullable).toBe(false);
   });

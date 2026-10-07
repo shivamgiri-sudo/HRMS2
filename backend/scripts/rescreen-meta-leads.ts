@@ -38,7 +38,10 @@ const createCandidates = flag("--create-candidates");
 const limit = numArg("--limit", Number.POSITIVE_INFINITY);
 const throttleMs = numArg("--throttle-ms", 25);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const sqlStr = (v: unknown) => (v === null || v === undefined ? "NULL" : `'${String(v).replace(/\\/g, "\\\\").replace(/'/g, "''")}'`);
+const sqlStr = (v: unknown) =>
+  v === null || v === undefined
+    ? "NULL"
+    : `'${String(v).replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
 
 async function snapshot(ids: string[], stamp: string): Promise<string> {
   const rows: RowDataPacket[] = [];
@@ -48,7 +51,7 @@ async function snapshot(ids: string[], stamp: string): Promise<string> {
       `SELECT id, campaign_id, requisition_id, parsed_name, parsed_phone, parsed_email, parsed_age,
               parsed_location, parsed_education, parsed_experience_yr, screening_result, disqualification_reason
          FROM meta_lead_raw WHERE id IN (${chunk.map(() => "?").join(",")})`,
-      chunk
+      chunk,
     );
     rows.push(...found);
   }
@@ -63,20 +66,33 @@ async function snapshot(ids: string[], stamp: string): Promise<string> {
       `parsed_name=${sqlStr(r.parsed_name)}, parsed_phone=${sqlStr(r.parsed_phone)}, parsed_email=${sqlStr(r.parsed_email)}, ` +
       `parsed_age=${sqlStr(r.parsed_age)}, parsed_location=${sqlStr(r.parsed_location)}, parsed_education=${sqlStr(r.parsed_education)}, ` +
       `parsed_experience_yr=${sqlStr(r.parsed_experience_yr)}, screening_result=${sqlStr(r.screening_result)}, ` +
-      `disqualification_reason=${sqlStr(r.disqualification_reason)} WHERE id=${sqlStr(r.id)};`
+      `disqualification_reason=${sqlStr(r.disqualification_reason)} WHERE id=${sqlStr(r.id)};`,
   );
   writeFileSync(sqlPath, lines.join("\n") + "\n");
-  console.log(`rollback snapshot: ${jsonPath} and ${sqlPath} (${rows.length} leads)`);
+  console.log(
+    `rollback snapshot: ${jsonPath} and ${sqlPath} (${rows.length} leads)`,
+  );
   return sqlPath;
 }
 
 async function main(): Promise<void> {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  console.log(`mode: ${apply ? "APPLY" : "DRY RUN"}  createCandidates=${createCandidates}  db=${process.env.DB_HOST}:${process.env.DB_PORT}`);
+  console.log(
+    `mode: ${apply ? "APPLY" : "DRY RUN"}  createCandidates=${createCandidates}  db=${process.env.DB_HOST}:${process.env.DB_PORT}`,
+  );
 
   const { evaluations, index } = await evaluateAllLeads();
   const summary = summarise(evaluations, index);
-  console.log(JSON.stringify({ ...summary, byRequisition: `${summary.byRequisition.length} requisitions` }, null, 1));
+  console.log(
+    JSON.stringify(
+      {
+        ...summary,
+        byRequisition: `${summary.byRequisition.length} requisitions`,
+      },
+      null,
+      1,
+    ),
+  );
 
   const dir = "./.deploy-backups";
   mkdirSync(dir, { recursive: true });
@@ -84,34 +100,56 @@ async function main(): Promise<void> {
   writeFileSync(csvPath, "﻿" + toCsv(evaluations));
   console.log(`shortlist report: ${csvPath}`);
 
-  const targets = evaluations.filter((e) => e.changed || e.relink).slice(0, limit);
-  console.log(`leads that would be updated: ${targets.length} (of ${evaluations.length})`);
+  const targets = evaluations
+    .filter((e) => e.changed || e.relink)
+    .slice(0, limit);
+  console.log(
+    `leads that would be updated: ${targets.length} (of ${evaluations.length})`,
+  );
   if (!apply) {
     console.log("dry run only — re-run with --apply to write.");
     return;
   }
   if (!targets.length) return;
 
-  await snapshot(targets.map((t) => t.leadId), stamp);
+  await snapshot(
+    targets.map((t) => t.leadId),
+    stamp,
+  );
 
   let done = 0;
   let failed = 0;
   for (const t of targets) {
     try {
-      await metaCampaignService.rescreenLead(t.leadId, { createCandidate: createCandidates });
+      await metaCampaignService.rescreenLead(t.leadId, {
+        createCandidate: createCandidates,
+      });
       done += 1;
     } catch (err) {
       failed += 1;
-      console.warn(`lead ${t.leadId} failed: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(
+        `lead ${t.leadId} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
-    if ((done + failed) % 200 === 0) console.log(`progress ${done + failed}/${targets.length} (failed ${failed})`);
+    if ((done + failed) % 200 === 0)
+      console.log(
+        `progress ${done + failed}/${targets.length} (failed ${failed})`,
+      );
     await sleep(throttleMs);
   }
   console.log(`re-screened ${done}, failed ${failed}`);
 
   const after = await evaluateAllLeads();
-  writeFileSync(`${dir}/meta-shortlist-after-${stamp}.csv`, "﻿" + toCsv(after.evaluations));
-  console.log("after:", JSON.stringify({ current: summarise(after.evaluations, after.index).current }));
+  writeFileSync(
+    `${dir}/meta-shortlist-after-${stamp}.csv`,
+    "﻿" + toCsv(after.evaluations),
+  );
+  console.log(
+    "after:",
+    JSON.stringify({
+      current: summarise(after.evaluations, after.index).current,
+    }),
+  );
 }
 
 main()

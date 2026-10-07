@@ -75,8 +75,14 @@ describe("a passport photo is not a passport", () => {
 describe("reducing a candidate's uploads", () => {
   it("ticks exactly what a real 8-document candidate provided", () => {
     const flags = receiptFlagsFromDocuments([
-      "Aadhaar", "PAN Card", "Passport Photo", "10th Marksheet",
-      "12th Marksheet", "Bank Passbook", "Address Proof", "Other",
+      "Aadhaar",
+      "PAN Card",
+      "Passport Photo",
+      "10th Marksheet",
+      "12th Marksheet",
+      "Bank Passbook",
+      "Address Proof",
+      "Other",
     ]);
     expect(flags.aadhaar_received).toBe(true);
     expect(flags.pan_received).toBe(true);

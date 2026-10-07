@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { shiftPeriod } from "../canonical-pnl.service.js";
-import { allocateAmountByWeights, deliveryDataStatus } from "../process-lob.service.js";
+import {
+  allocateAmountByWeights,
+  deliveryDataStatus,
+} from "../process-lob.service.js";
 
 describe("Process LOB shared-cost allocation", () => {
   it("allocates a pool using contracted-seat weights and preserves the total", () => {
@@ -9,13 +12,15 @@ describe("Process LOB shared-cost allocation", () => {
       new Map([
         ["lob-a", 60],
         ["lob-b", 40],
-      ])
+      ]),
     );
 
     expect(result.allocated.get("lob-a")).toBeCloseTo(60000, 2);
     expect(result.allocated.get("lob-b")).toBeCloseTo(40000, 2);
     expect(result.unallocated).toBeCloseTo(0, 5);
-    expect([...result.allocated.values()].reduce((sum, amount) => sum + amount, 0)).toBeCloseTo(100000, 5);
+    expect(
+      [...result.allocated.values()].reduce((sum, amount) => sum + amount, 0),
+    ).toBeCloseTo(100000, 5);
   });
 
   it("retains the complete pool as an explicit exception when no driver evidence exists", () => {
@@ -24,7 +29,7 @@ describe("Process LOB shared-cost allocation", () => {
       new Map([
         ["lob-a", 0],
         ["lob-b", 0],
-      ])
+      ]),
     );
 
     expect(result.allocated.size).toBe(0);
@@ -37,7 +42,7 @@ describe("Process LOB shared-cost allocation", () => {
       new Map([
         ["lob-a", -10],
         ["lob-b", 30],
-      ])
+      ]),
     );
 
     expect(result.allocated.get("lob-a")).toBe(0);
@@ -51,7 +56,7 @@ describe("Process LOB shared-cost allocation", () => {
       new Map([
         ["lob-a", 1],
         ["lob-b", 1],
-      ])
+      ]),
     );
 
     expect(result.allocated.get("lob-a")).toBe(-2500);
@@ -71,7 +76,9 @@ describe("deliveryDataStatus", () => {
    */
 
   it("reports 'available' when the LOB has real delivery rows this period", () => {
-    expect(deliveryDataStatus(true, [{ billingModel: "per_seat" }])).toBe("available");
+    expect(deliveryDataStatus(true, [{ billingModel: "per_seat" }])).toBe(
+      "available",
+    );
   });
 
   it("reports 'missing' for a volume-billed LOB with zero delivery rows -- recognizedRevenue may be an unverified zero", () => {
@@ -79,8 +86,12 @@ describe("deliveryDataStatus", () => {
     // that period (a real validated zero-delivery day): deliveredUnits=0 AND
     // billableUnits=0 read as falsy just the same as "no rows exist at all",
     // so a real recorded zero and a missing feed were indistinguishable.
-    expect(deliveryDataStatus(false, [{ billingModel: "per_seat" }])).toBe("missing");
-    expect(deliveryDataStatus(false, [{ billingModel: "per_productive_hour" }])).toBe("missing");
+    expect(deliveryDataStatus(false, [{ billingModel: "per_seat" }])).toBe(
+      "missing",
+    );
+    expect(
+      deliveryDataStatus(false, [{ billingModel: "per_productive_hour" }]),
+    ).toBe("missing");
   });
 
   it("reports 'not_required' for a fixed_monthly-only LOB with zero delivery rows -- its revenue does not depend on delivery data", () => {
@@ -88,15 +99,19 @@ describe("deliveryDataStatus", () => {
     // constant 1 for fixed_monthly regardless of delivery data, so billableUnits
     // was always truthy and the old check said "available" -- implying delivery
     // data existed when none does, for a LOB that never needed any.
-    expect(deliveryDataStatus(false, [{ billingModel: "fixed_monthly" }])).toBe("not_required");
+    expect(deliveryDataStatus(false, [{ billingModel: "fixed_monthly" }])).toBe(
+      "not_required",
+    );
   });
 
   it("reports 'missing' when a LOB mixes fixed_monthly with a volume-based rule and has no delivery rows", () => {
     // The volume-based rule still can't be verified even though the fixed portion can.
-    expect(deliveryDataStatus(false, [
-      { billingModel: "fixed_monthly" },
-      { billingModel: "per_seat" },
-    ])).toBe("missing");
+    expect(
+      deliveryDataStatus(false, [
+        { billingModel: "fixed_monthly" },
+        { billingModel: "per_seat" },
+      ]),
+    ).toBe("missing");
   });
 
   it("reports 'not_required' when a LOB has no revenue rules at all -- dataStatus.revenue separately says 'missing_rule'", () => {

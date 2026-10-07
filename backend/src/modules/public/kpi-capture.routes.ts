@@ -80,7 +80,7 @@ kpiCaptureRouter.get("/masters", async (_req, res) => {
           AND e.employment_status = 'active'
          LEFT JOIN process_master p ON p.id = cc.process_id
         GROUP BY cc.id, cc.cost_centre_code, process_name
-        ORDER BY COUNT(e.id) DESC`
+        ORDER BY COUNT(e.id) DESC`,
     );
 
     const [designations] = await db.execute<RowDataPacket[]>(
@@ -90,14 +90,14 @@ kpiCaptureRouter.get("/masters", async (_req, res) => {
            ON e.designation_id = d.id
           AND e.employment_status = 'active'
         GROUP BY d.id, d.designation_name
-        ORDER BY COUNT(e.id) DESC`
+        ORDER BY COUNT(e.id) DESC`,
     );
 
     const [metrics] = await db.execute<RowDataPacket[]>(
       `SELECT id, metric_code, metric_name, family, unit, direction, aggregation_method
          FROM kpi_metric_master
         WHERE active_status = 1
-        ORDER BY FIELD(family, 'operations', 'quality', 'performance', 'custom'), metric_name`
+        ORDER BY FIELD(family, 'operations', 'quality', 'performance', 'custom'), metric_name`,
     );
 
     res.json({
@@ -123,7 +123,12 @@ kpiCaptureRouter.get("/masters", async (_req, res) => {
     });
   } catch (err) {
     console.error("[kpi-capture] masters failed", err);
-    res.status(500).json({ success: false, message: "Could not load the form options. Please refresh." });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Could not load the form options. Please refresh.",
+      });
   }
 });
 
@@ -156,23 +161,32 @@ kpiCaptureRouter.post("/submissions", async (req, res) => {
     if (!dataSource) errors.push("Data source is required.");
     if (!ownerName) errors.push("KPI owner is required.");
     if (isNewKpi && !newKpiName) errors.push("Name the new KPI.");
-    if (!isNewKpi && !existingMetricId) errors.push("Pick a KPI, or tick 'not in this list'.");
+    if (!isNewKpi && !existingMetricId)
+      errors.push("Pick a KPI, or tick 'not in this list'.");
     if (!UNITS.has(unit)) errors.push("Unit is not one of the allowed values.");
-    if (!DIRECTIONS.has(direction)) errors.push("Direction is not one of the allowed values.");
-    if (!AGGREGATIONS.has(aggregation)) errors.push("Roll-up method is not one of the allowed values.");
-    if (!FREQUENCIES.has(frequency)) errors.push("Frequency is not one of the allowed values.");
+    if (!DIRECTIONS.has(direction))
+      errors.push("Direction is not one of the allowed values.");
+    if (!AGGREGATIONS.has(aggregation))
+      errors.push("Roll-up method is not one of the allowed values.");
+    if (!FREQUENCIES.has(frequency))
+      errors.push("Frequency is not one of the allowed values.");
 
     const targetValue = num(b.targetValue);
     const minThreshold = num(b.minThreshold);
     const maxAchievement = num(b.maxAchievement);
     const weightage = num(b.weightage);
 
-    if (targetValue === null) errors.push("Target value is required and must be a number.");
-    if (weightage === null) errors.push("Weightage is required and must be a number.");
-    else if (weightage < 0 || weightage > 100) errors.push("Weightage must be between 0 and 100.");
+    if (targetValue === null)
+      errors.push("Target value is required and must be a number.");
+    if (weightage === null)
+      errors.push("Weightage is required and must be a number.");
+    else if (weightage < 0 || weightage > 100)
+      errors.push("Weightage must be between 0 and 100.");
 
     if (errors.length) {
-      return res.status(400).json({ success: false, message: errors.join(" "), errors });
+      return res
+        .status(400)
+        .json({ success: false, message: errors.join(" "), errors });
     }
 
     // Resolve the ids against master data. A label that no longer resolves is stored with a NULL
@@ -182,7 +196,7 @@ kpiCaptureRouter.post("/submissions", async (req, res) => {
     if (str(b.costCentreId, 36)) {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM cost_centre_master WHERE id = ? LIMIT 1`,
-        [str(b.costCentreId, 36)]
+        [str(b.costCentreId, 36)],
       );
       costCentreId = rows.length ? (rows[0].id as string) : null;
     }
@@ -191,7 +205,7 @@ kpiCaptureRouter.post("/submissions", async (req, res) => {
     if (str(b.designationId, 36)) {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM designation_master WHERE id = ? LIMIT 1`,
-        [str(b.designationId, 36)]
+        [str(b.designationId, 36)],
       );
       designationId = rows.length ? (rows[0].id as string) : null;
     }
@@ -201,12 +215,13 @@ kpiCaptureRouter.post("/submissions", async (req, res) => {
     if (!isNewKpi && existingMetricId) {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT id, metric_code FROM kpi_metric_master WHERE id = ? LIMIT 1`,
-        [existingMetricId]
+        [existingMetricId],
       );
       if (!rows.length) {
         return res.status(400).json({
           success: false,
-          message: "That KPI is no longer in the catalogue. Refresh the page and pick again.",
+          message:
+            "That KPI is no longer in the catalogue. Refresh the page and pick again.",
         });
       }
       metricId = rows[0].id as string;
@@ -248,13 +263,21 @@ kpiCaptureRouter.post("/submissions", async (req, res) => {
         ownerName,
         str(b.notes, MAX.notes) || null,
         (req.ip || "").slice(0, 64) || null,
-      ]
+      ],
     );
 
-    res.status(201).json({ success: true, id, message: "Saved. Add the next KPI for this team." });
+    res
+      .status(201)
+      .json({
+        success: true,
+        id,
+        message: "Saved. Add the next KPI for this team.",
+      });
   } catch (err) {
     console.error("[kpi-capture] submit failed", err);
-    res.status(500).json({ success: false, message: "Could not save. Please try again." });
+    res
+      .status(500)
+      .json({ success: false, message: "Could not save. Please try again." });
   }
 });
 
@@ -264,17 +287,22 @@ kpiCaptureRouter.post("/submissions", async (req, res) => {
 kpiCaptureRouter.get("/results/:token", async (req, res) => {
   try {
     const token = str(req.params.token, 128);
-    if (!token) return res.status(404).json({ success: false, message: "Not found" });
+    if (!token)
+      return res.status(404).json({ success: false, message: "Not found" });
 
     const [tokens] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM kpi_capture_access_token WHERE token = ? AND active_status = 1 LIMIT 1`,
-      [token]
+      [token],
     );
     // 404 rather than 401/403 on purpose: a wrong token should not confirm that a valid one exists.
-    if (!tokens.length) return res.status(404).json({ success: false, message: "Not found" });
+    if (!tokens.length)
+      return res.status(404).json({ success: false, message: "Not found" });
 
     await db
-      .execute(`UPDATE kpi_capture_access_token SET last_used_at = NOW() WHERE id = ?`, [tokens[0].id])
+      .execute(
+        `UPDATE kpi_capture_access_token SET last_used_at = NOW() WHERE id = ?`,
+        [tokens[0].id],
+      )
       .catch(() => undefined); // best-effort audit stamp; never fail the read for it
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -289,7 +317,7 @@ kpiCaptureRouter.get("/results/:token", async (req, res) => {
          FROM kpi_capture_submission s
          LEFT JOIN kpi_metric_master m ON m.id = s.existing_metric_id
         ORDER BY s.created_at DESC
-        LIMIT 5000`
+        LIMIT 5000`,
     );
 
     // Weightage per cost centre + designation should total 100. Surfacing where it does not is the
@@ -301,7 +329,7 @@ kpiCaptureRouter.get("/results/:token", async (req, res) => {
          FROM kpi_capture_submission
         WHERE status = 'submitted'
         GROUP BY cost_centre_label, designation_label
-        ORDER BY cost_centre_label, designation_label`
+        ORDER BY cost_centre_label, designation_label`,
     );
 
     res.json({
@@ -322,6 +350,8 @@ kpiCaptureRouter.get("/results/:token", async (req, res) => {
     });
   } catch (err) {
     console.error("[kpi-capture] results failed", err);
-    res.status(500).json({ success: false, message: "Could not load results." });
+    res
+      .status(500)
+      .json({ success: false, message: "Could not load results." });
   }
 });

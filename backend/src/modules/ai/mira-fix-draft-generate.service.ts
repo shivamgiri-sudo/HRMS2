@@ -27,22 +27,25 @@
  * string writeTriageAudit() builds — if that format ever changes, the test catches it rather
  * than this silently seeing every diagnosis as "no_diagnosis".
  */
-import { randomUUID } from 'crypto';
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { TRIAGE_AUDIT_ACTION, resolveWorkingProvider } from './mira-issue-triage.service.js';
-import { buildContextBundle } from './mira-fix-draft-context.js';
-import { createFixDraft, type FixDraft } from './mira-fix-draft.service.js';
-import { aiProviderRegistry } from './ai-provider.registry.js';
-import type { AiGenerateRequest, AiProvider } from './ai-provider.types.js';
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import {
+  TRIAGE_AUDIT_ACTION,
+  resolveWorkingProvider,
+} from "./mira-issue-triage.service.js";
+import { buildContextBundle } from "./mira-fix-draft-context.js";
+import { createFixDraft, type FixDraft } from "./mira-fix-draft.service.js";
+import { aiProviderRegistry } from "./ai-provider.registry.js";
+import type { AiGenerateRequest, AiProvider } from "./ai-provider.types.js";
 
 export type FixDraftGenerationOutcome =
-  | { status: 'no_diagnosis' }
-  | { status: 'not_eligible'; reason: string }
-  | { status: 'ai_unavailable' }
-  | { status: 'model_declined'; reason: string }
-  | { status: 'ai_error'; message: string }
-  | { status: 'drafted'; draft: FixDraft };
+  | { status: "no_diagnosis" }
+  | { status: "not_eligible"; reason: string }
+  | { status: "ai_unavailable" }
+  | { status: "model_declined"; reason: string }
+  | { status: "ai_error"; message: string }
+  | { status: "drafted"; draft: FixDraft };
 
 interface ParsedDiagnosis {
   category: string;
@@ -80,7 +83,7 @@ const DIAGNOSIS_REMARK_RE =
  */
 async function resolveCodeFixProvider(): Promise<AiProvider | null> {
   if (process.env.ANTHROPIC_API_KEY) {
-    const claude = aiProviderRegistry.get('claude');
+    const claude = aiProviderRegistry.get("claude");
     if (claude) return claude;
   }
   return resolveWorkingProvider();
@@ -92,13 +95,15 @@ export function parseDiagnosisRemark(remarks: string): ParsedDiagnosis | null {
   return {
     category: m[1],
     confidence: m[2],
-    actionable: m[3] === 'true',
+    actionable: m[3] === "true",
     rootCauseHypothesis: m[4],
     suggestedNextStep: m[5],
   };
 }
 
-async function loadLatestDiagnosis(workItemId: string): Promise<ParsedDiagnosis | null> {
+async function loadLatestDiagnosis(
+  workItemId: string,
+): Promise<ParsedDiagnosis | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT remarks FROM work_item_audit_log
       WHERE work_item_id = ? AND action = ?
@@ -110,17 +115,28 @@ async function loadLatestDiagnosis(workItemId: string): Promise<ParsedDiagnosis 
   return parseDiagnosisRemark(String(remarks));
 }
 
-export const FIX_DRAFT_AUDIT_ACTION = 'mira_fix_draft_attempt';
+export const FIX_DRAFT_AUDIT_ACTION = "mira_fix_draft_attempt";
 
-async function writeFixDraftAudit(workItemId: string, remarks: string): Promise<void> {
+async function writeFixDraftAudit(
+  workItemId: string,
+  remarks: string,
+): Promise<void> {
   try {
     await db.execute(
       `INSERT INTO work_item_audit_log (id, work_item_id, action, from_status, to_status, remarks, performed_by, performed_at)
        VALUES (?, ?, ?, 'pending', 'pending', ?, 'system-mira-fix-draft', NOW())`,
-      [randomUUID(), workItemId, FIX_DRAFT_AUDIT_ACTION, remarks.slice(0, 4000)],
+      [
+        randomUUID(),
+        workItemId,
+        FIX_DRAFT_AUDIT_ACTION,
+        remarks.slice(0, 4000),
+      ],
     );
   } catch (err) {
-    console.error('[mira-fix-draft] failed to write audit log:', err instanceof Error ? err.message : String(err));
+    console.error(
+      "[mira-fix-draft] failed to write audit log:",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
@@ -128,13 +144,16 @@ const NO_SAFE_DIFF_RE = /^NO_SAFE_DIFF:\s*(.+)$/im;
 
 /** Strips markdown fences if the model added them despite being told not to (same defensive
  * pattern as extractDiagnosisJson in the triage service) and detects an explicit refusal. */
-function extractDiffOrRefusal(answer: string): { kind: 'diff'; diffText: string } | { kind: 'declined'; reason: string } {
+function extractDiffOrRefusal(
+  answer: string,
+): { kind: "diff"; diffText: string } | { kind: "declined"; reason: string } {
   const trimmed = answer.trim();
   const declineMatch = trimmed.match(NO_SAFE_DIFF_RE);
-  if (declineMatch) return { kind: 'declined', reason: declineMatch[1].trim().slice(0, 500) };
+  if (declineMatch)
+    return { kind: "declined", reason: declineMatch[1].trim().slice(0, 500) };
 
   const fenced = trimmed.match(/```(?:diff|patch)?\s*([\s\S]*?)```/);
-  return { kind: 'diff', diffText: (fenced ? fenced[1] : trimmed).trim() };
+  return { kind: "diff", diffText: (fenced ? fenced[1] : trimmed).trim() };
 }
 
 const SYSTEM_INSTRUCTION = `You are a senior engineer proposing a MINIMAL fix for a described software bug in the MAS
@@ -159,36 +178,51 @@ reason>. Do not guess, and do not fabricate a file path you were not shown.
 
 Keep the diff as small as possible: touch only the files and lines necessary.`;
 
-export async function generateFixDraftForWorkItem(workItemId: string): Promise<FixDraftGenerationOutcome> {
+export async function generateFixDraftForWorkItem(
+  workItemId: string,
+): Promise<FixDraftGenerationOutcome> {
   const diagnosis = await loadLatestDiagnosis(workItemId);
   if (!diagnosis) {
-    await writeFixDraftAudit(workItemId, 'Fix-draft not attempted — no triage diagnosis found for this item. Run triage first.');
-    return { status: 'no_diagnosis' };
+    await writeFixDraftAudit(
+      workItemId,
+      "Fix-draft not attempted — no triage diagnosis found for this item. Run triage first.",
+    );
+    return { status: "no_diagnosis" };
   }
-  if (!diagnosis.actionable || diagnosis.category !== 'genuine_bug') {
+  if (!diagnosis.actionable || diagnosis.category !== "genuine_bug") {
     const reason = `category=${diagnosis.category}, actionable=${diagnosis.actionable}`;
-    await writeFixDraftAudit(workItemId, `Fix-draft not attempted — diagnosis not eligible (${reason}). Only genuine_bug + actionable=true items reach the fix-draft stage.`);
-    return { status: 'not_eligible', reason };
+    await writeFixDraftAudit(
+      workItemId,
+      `Fix-draft not attempted — diagnosis not eligible (${reason}). Only genuine_bug + actionable=true items reach the fix-draft stage.`,
+    );
+    return { status: "not_eligible", reason };
   }
 
   const [wiRows] = await db.execute<RowDataPacket[]>(
     `SELECT description FROM work_item WHERE id = ? LIMIT 1`,
     [workItemId],
   );
-  const complaintText = String((wiRows as RowDataPacket[])[0]?.description ?? '');
+  const complaintText = String(
+    (wiRows as RowDataPacket[])[0]?.description ?? "",
+  );
 
   const contextFiles = buildContextBundle(
     complaintText,
     `${diagnosis.rootCauseHypothesis} ${diagnosis.suggestedNextStep}`,
   );
   const contextBlock = contextFiles.length
-    ? contextFiles.map((f) => `--- FILE: ${f.path} ---\n${f.content}`).join('\n\n')
-    : '(no relevant source files were found by keyword search)';
+    ? contextFiles
+        .map((f) => `--- FILE: ${f.path} ---\n${f.content}`)
+        .join("\n\n")
+    : "(no relevant source files were found by keyword search)";
 
   const provider = await resolveCodeFixProvider();
   if (!provider) {
-    await writeFixDraftAudit(workItemId, 'Fix-draft not attempted — no usable AI provider found (checked ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY and DB default). Configure a provider key to enable fix-draft generation.');
-    return { status: 'ai_unavailable' };
+    await writeFixDraftAudit(
+      workItemId,
+      "Fix-draft not attempted — no usable AI provider found (checked ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY and DB default). Configure a provider key to enable fix-draft generation.",
+    );
+    return { status: "ai_unavailable" };
   }
 
   const userPrompt = `Bug report: ${complaintText}
@@ -201,10 +235,10 @@ ${contextBlock}`;
 
   try {
     const request: AiGenerateRequest = {
-      userId: 'system-mira-fix-draft',
-      roleKeys: ['system'],
+      userId: "system-mira-fix-draft",
+      roleKeys: ["system"],
       providerKey: provider.key,
-      requestSource: 'mira_fix_draft_generate',
+      requestSource: "mira_fix_draft_generate",
       systemInstruction: SYSTEM_INSTRUCTION,
       userQuestion: userPrompt,
       sanitizedContext: {},
@@ -216,16 +250,26 @@ ${contextBlock}`;
     }
 
     const parsed = extractDiffOrRefusal(response.answer);
-    if (parsed.kind === 'declined') {
-      await writeFixDraftAudit(workItemId, `Fix-draft declined by model: ${parsed.reason}`);
-      return { status: 'model_declined', reason: parsed.reason };
+    if (parsed.kind === "declined") {
+      await writeFixDraftAudit(
+        workItemId,
+        `Fix-draft declined by model: ${parsed.reason}`,
+      );
+      return { status: "model_declined", reason: parsed.reason };
     }
 
-    const draft = await createFixDraft({ workItemId, diffText: parsed.diffText, model: provider.key });
-    return { status: 'drafted', draft };
+    const draft = await createFixDraft({
+      workItemId,
+      diffText: parsed.diffText,
+      model: provider.key,
+    });
+    return { status: "drafted", draft };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await writeFixDraftAudit(workItemId, `Fix-draft generation error: ${message}`);
-    return { status: 'ai_error', message };
+    await writeFixDraftAudit(
+      workItemId,
+      `Fix-draft generation error: ${message}`,
+    );
+    return { status: "ai_error", message };
   }
 }

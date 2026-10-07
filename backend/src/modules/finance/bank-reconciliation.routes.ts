@@ -2,10 +2,20 @@ import { Router } from "express";
 import multer from "multer";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { BANK_ACCOUNT_READ_ROLES, BANK_ACCOUNT_WRITE_ROLES } from "./company-bank-account.routes.js";
-import { bankStatementImportService, parseStatementRows, type ColumnMapping } from "./bank-statement-import.service.js";
+import {
+  BANK_ACCOUNT_READ_ROLES,
+  BANK_ACCOUNT_WRITE_ROLES,
+} from "./company-bank-account.routes.js";
+import {
+  bankStatementImportService,
+  parseStatementRows,
+  type ColumnMapping,
+} from "./bank-statement-import.service.js";
 import { bankReconciliationMatchService } from "./bank-reconciliation-match.service.js";
 import { bankReconciliationPeriodService } from "./bank-reconciliation-period.service.js";
 
@@ -17,7 +27,10 @@ import { bankReconciliationPeriodService } from "./bank-reconciliation-period.se
  * whole reconciliation cycle (upload, match, close), per the design's single-owner decision.
  */
 export const bankReconciliationRouter = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 const h =
   (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -27,7 +40,10 @@ const h =
 function actor(req: AuthenticatedRequest) {
   const id = req.authUser?.id;
   if (!id) throw new Error("Authenticated user is required");
-  return { id, role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown") };
+  return {
+    id,
+    role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown"),
+  };
 }
 
 bankReconciliationRouter.use(requireAuth);
@@ -51,7 +67,12 @@ bankReconciliationRouter.post(
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   h(async (req, res) => {
     const { bankAccountId, fromDate, toDate } = req.body;
-    const result = await bankReconciliationPeriodService.create(bankAccountId, fromDate, toDate, actor(req).id);
+    const result = await bankReconciliationPeriodService.create(
+      bankAccountId,
+      fromDate,
+      toDate,
+      actor(req).id,
+    );
     res.status(201).json({ success: true, data: result });
   }),
 );
@@ -79,13 +100,27 @@ bankReconciliationRouter.post(
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   upload.single("file"),
   h(async (req, res) => {
-    if (!req.file) { res.status(400).json({ success: false, message: "No file uploaded." }); return; }
+    if (!req.file) {
+      res.status(400).json({ success: false, message: "No file uploaded." });
+      return;
+    }
     const bankAccountId = String(req.body.bankAccountId);
     const mapping: ColumnMapping = JSON.parse(req.body.columnMapping);
-    const { headers, rows } = bankStatementImportService.parseWorkbook(req.file.buffer);
+    const { headers, rows } = bankStatementImportService.parseWorkbook(
+      req.file.buffer,
+    );
     const lines = parseStatementRows(headers, rows, mapping);
-    const saved = await bankStatementImportService.saveImport(bankAccountId, req.params.periodId, req.file.originalname, mapping, lines, actor(req).id);
-    const matchResult = await bankReconciliationMatchService.autoMatch(saved.importId);
+    const saved = await bankStatementImportService.saveImport(
+      bankAccountId,
+      req.params.periodId,
+      req.file.originalname,
+      mapping,
+      lines,
+      actor(req).id,
+    );
+    const matchResult = await bankReconciliationMatchService.autoMatch(
+      saved.importId,
+    );
     res.status(201).json({ success: true, data: { ...saved, ...matchResult } });
   }),
 );
@@ -96,8 +131,13 @@ bankReconciliationRouter.post(
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   upload.single("file"),
   h(async (req, res) => {
-    if (!req.file) { res.status(400).json({ success: false, message: "No file uploaded." }); return; }
-    const { headers } = bankStatementImportService.parseWorkbook(req.file.buffer);
+    if (!req.file) {
+      res.status(400).json({ success: false, message: "No file uploaded." });
+      return;
+    }
+    const { headers } = bankStatementImportService.parseWorkbook(
+      req.file.buffer,
+    );
     res.json({ success: true, data: { headers } });
   }),
 );
@@ -106,7 +146,11 @@ bankReconciliationRouter.post(
   "/statement-lines/:lineId/match",
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   h(async (req, res) => {
-    await bankReconciliationMatchService.manualMatch(req.params.lineId, String(req.body.ledgerEntryId), actor(req).id);
+    await bankReconciliationMatchService.manualMatch(
+      req.params.lineId,
+      String(req.body.ledgerEntryId),
+      actor(req).id,
+    );
     res.json({ success: true });
   }),
 );
@@ -115,7 +159,10 @@ bankReconciliationRouter.post(
   "/statement-lines/:lineId/unmatch",
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   h(async (req, res) => {
-    await bankReconciliationMatchService.unmatch(req.params.lineId, actor(req).id);
+    await bankReconciliationMatchService.unmatch(
+      req.params.lineId,
+      actor(req).id,
+    );
     res.json({ success: true });
   }),
 );
@@ -126,7 +173,11 @@ bankReconciliationRouter.post(
   h(async (req, res) => {
     const { bankAccountId, payableAccountId, narration } = req.body;
     const result = await bankReconciliationMatchService.postAdjustment({
-      statementLineId: req.params.lineId, bankAccountId, payableAccountId, narration, actorUserId: actor(req).id,
+      statementLineId: req.params.lineId,
+      bankAccountId,
+      payableAccountId,
+      narration,
+      actorUserId: actor(req).id,
     });
     res.json({ success: true, data: result });
   }),
@@ -143,9 +194,16 @@ bankReconciliationRouter.get(
          JOIN bank_statement_import bsi ON bsi.id = bsl.import_id WHERE bsl.id = ?`,
       [req.params.lineId],
     );
-    if (!line) { res.status(404).json({ success: false, message: "Statement line not found." }); return; }
-    const amountClause = Number(line.debit_amount) > 0 ? "debit_amount = ?" : "credit_amount = ?";
-    const amountParam = Number(line.debit_amount) > 0 ? line.debit_amount : line.credit_amount;
+    if (!line) {
+      res
+        .status(404)
+        .json({ success: false, message: "Statement line not found." });
+      return;
+    }
+    const amountClause =
+      Number(line.debit_amount) > 0 ? "debit_amount = ?" : "credit_amount = ?";
+    const amountParam =
+      Number(line.debit_amount) > 0 ? line.debit_amount : line.credit_amount;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, entry_date, debit_amount, credit_amount, narration FROM bank_account_ledger_entry
         WHERE bank_account_id = ? AND matched_statement_line_id IS NULL AND ${amountClause}
@@ -160,7 +218,11 @@ bankReconciliationRouter.post(
   "/periods/:periodId/close",
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   h(async (req, res) => {
-    const result = await bankReconciliationPeriodService.close(req.params.periodId, Number(req.body.statementClosingBalance), actor(req).id);
+    const result = await bankReconciliationPeriodService.close(
+      req.params.periodId,
+      Number(req.body.statementClosingBalance),
+      actor(req).id,
+    );
     res.json({ success: true, data: result });
   }),
 );
@@ -169,7 +231,11 @@ bankReconciliationRouter.post(
   "/periods/:periodId/reopen",
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   h(async (req, res) => {
-    await bankReconciliationPeriodService.reopen(req.params.periodId, String(req.body.reason ?? ""), actor(req).id);
+    await bankReconciliationPeriodService.reopen(
+      req.params.periodId,
+      String(req.body.reason ?? ""),
+      actor(req).id,
+    );
     res.json({ success: true });
   }),
 );

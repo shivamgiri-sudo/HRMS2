@@ -17,7 +17,10 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 import { loadFrozenShiftAssignments } from "../roster-generation.service.js";
 
-const source = readFileSync(resolve(__dirname, "../roster-generation.service.ts"), "utf-8");
+const source = readFileSync(
+  resolve(__dirname, "../roster-generation.service.ts"),
+  "utf-8",
+);
 
 describe("loadFrozenShiftAssignments", () => {
   beforeEach(() => execute.mockReset());
@@ -31,7 +34,10 @@ describe("loadFrozenShiftAssignments", () => {
       [],
     ]);
 
-    const shifts = await loadFrozenShiftAssignments(["emp-1", "emp-2"], "2026-08-17");
+    const shifts = await loadFrozenShiftAssignments(
+      ["emp-1", "emp-2"],
+      "2026-08-17",
+    );
 
     expect(shifts.get("emp-1")).toBe("shift-ngt-001");
     expect(shifts.get("emp-2")).toBe("shift-eve-001");
@@ -68,17 +74,23 @@ describe("processEmployee's frozen branch preserves the employee's prior shift",
 
   it("reads from frozenShiftAssignments before falling back to defaultShift", () => {
     const branch = frozenBranch();
-    expect(branch).toMatch(/frozenShiftAssignments\.get\(emp\.id\) \?\? defaultShift\?\.id \?\? null/);
+    expect(branch).toMatch(
+      /frozenShiftAssignments\.get\(emp\.id\) \?\? defaultShift\?\.id \?\? null/,
+    );
   });
 
   it("no longer computes the identical defaultShift-only value the non-frozen branch does", () => {
     const branch = frozenBranch();
     // The old bug: this exact expression, unconditionally.
-    expect(branch).not.toMatch(/shiftTemplateId = defaultShift\?\.id \?\? null;\s*\n\s*ruleApplied = "frozen_rotation";/);
+    expect(branch).not.toMatch(
+      /shiftTemplateId = defaultShift\?\.id \?\? null;\s*\n\s*ruleApplied = "frozen_rotation";/,
+    );
   });
 
   it("generateForCycle loads and threads frozenShiftAssignments into processEmployee", () => {
-    expect(source).toMatch(/const frozenShiftAssignments = await loadFrozenShiftAssignments\(/);
+    expect(source).toMatch(
+      /const frozenShiftAssignments = await loadFrozenShiftAssignments\(/,
+    );
     expect(source).toMatch(/frozenShiftAssignments,\s*\n\s*shiftTemplates,/);
   });
 });

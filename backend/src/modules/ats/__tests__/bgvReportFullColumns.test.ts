@@ -27,28 +27,48 @@ const SOURCE = readFileSync(
 
 /** Confirmed present on candidate_onboarding_qualification in production. */
 const REAL_QUALIFICATION_COLUMNS = [
-  "id", "candidate_id", "qualification", "specialization_course_name",
-  "passed_out_year", "passed_out_state", "passed_out_city",
-  "passed_out_percentage", "document_id", "created_at", "updated_at",
-  "institution_name", "roll_number", "board_type",
+  "id",
+  "candidate_id",
+  "qualification",
+  "specialization_course_name",
+  "passed_out_year",
+  "passed_out_state",
+  "passed_out_city",
+  "passed_out_percentage",
+  "document_id",
+  "created_at",
+  "updated_at",
+  "institution_name",
+  "roll_number",
+  "board_type",
 ];
 
 /** Names the report code has reached for that the table does not have. */
 const ABSENT_QUALIFICATION_COLUMNS = [
-  "year_of_passing", "degree_type", "board_university", "field_of_study",
-  "marks_percentage", "marks_cgpa",
+  "year_of_passing",
+  "degree_type",
+  "board_university",
+  "field_of_study",
+  "marks_percentage",
+  "marks_cgpa",
 ];
 
 describe("/report/full qualification query", () => {
   const statement = (() => {
     const at = SOURCE.indexOf("FROM candidate_onboarding_qualification");
-    expect(at, "the qualifications query has moved or been removed").toBeGreaterThan(-1);
+    expect(
+      at,
+      "the qualifications query has moved or been removed",
+    ).toBeGreaterThan(-1);
     return SOURCE.slice(at, SOURCE.indexOf("`", at));
   })();
 
   it("orders by a column that exists", () => {
     const orderBy = statement.match(/ORDER BY\s+([a-z_]+)/i)?.[1];
-    expect(orderBy, "no ORDER BY found in the qualifications query").toBeTruthy();
+    expect(
+      orderBy,
+      "no ORDER BY found in the qualifications query",
+    ).toBeTruthy();
     expect(
       REAL_QUALIFICATION_COLUMNS,
       `ORDER BY ${orderBy} — not a column on candidate_onboarding_qualification. ` +
@@ -75,7 +95,9 @@ describe("/report/full qualification query", () => {
 describe("/report/full soft-delete filters", () => {
   it("does not filter candidate_bgv_check on deleted_at", () => {
     const at = SOURCE.indexOf("FROM candidate_bgv_check WHERE candidate_id");
-    expect(at, "the bgv check query has moved or been removed").toBeGreaterThan(-1);
+    expect(at, "the bgv check query has moved or been removed").toBeGreaterThan(
+      -1,
+    );
     const statement = SOURCE.slice(at, SOURCE.indexOf("`", at));
     expect(
       statement,

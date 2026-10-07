@@ -1,8 +1,14 @@
 import { Router } from "express";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { resolveFinanceBranchScopeSet } from "./finance-access-scope.js";
-import { salaryVoucherService, type Voucher } from "./salary-voucher.service.js";
+import {
+  salaryVoucherService,
+  type Voucher,
+} from "./salary-voucher.service.js";
 import { billSalaryVoucherService } from "./salary-voucher-bill.service.js";
 
 /**
@@ -42,19 +48,25 @@ export function parseSerial(raw: unknown): number | undefined {
   const text = String(raw ?? "").trim();
   if (!text) return undefined;
   const value = Number(text);
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) return undefined;
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1)
+    return undefined;
   return value;
 }
 
 salaryVoucherRouter.use(requireAuth);
 
 /** Filters vouchers to the caller's branch entitlement. */
-export async function scopeVouchers(req: AuthenticatedRequest, vouchers: Voucher[]): Promise<Voucher[]> {
+export async function scopeVouchers(
+  req: AuthenticatedRequest,
+  vouchers: Voucher[],
+): Promise<Voucher[]> {
   const scope = await resolveFinanceBranchScopeSet({
     userId: String(req.authUser?.id ?? ""),
     primaryRole: String(req.authUser?.role ?? ""),
     userRoles: req.userRoles ?? [],
-    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    requestedBranchId: req.query.branchId
+      ? String(req.query.branchId)
+      : undefined,
   });
   if (scope.mode === "all") return vouchers;
   const allowed = new Set(scope.branchIds);
@@ -67,7 +79,9 @@ salaryVoucherRouter.get(
   h(async (req, res) => {
     try {
       const generated = await salaryVoucherService.generate(req.params.runId, {
-        companyCode: req.query.companyCode ? String(req.query.companyCode) : undefined,
+        companyCode: req.query.companyCode
+          ? String(req.query.companyCode)
+          : undefined,
         serialFrom: parseSerial(req.query.serialFrom),
       });
       res.json({
@@ -80,7 +94,10 @@ salaryVoucherRouter.get(
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to generate the salary voucher",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to generate the salary voucher",
       });
     }
   }),
@@ -103,7 +120,9 @@ salaryVoucherRouter.get(
   h(async (req, res) => {
     try {
       const generated = await salaryVoucherService.generate(req.params.runId, {
-        companyCode: req.query.companyCode ? String(req.query.companyCode) : undefined,
+        companyCode: req.query.companyCode
+          ? String(req.query.companyCode)
+          : undefined,
         serialFrom: parseSerial(req.query.serialFrom),
       });
       const vouchers = await scopeVouchers(req, generated.vouchers);
@@ -111,13 +130,26 @@ salaryVoucherRouter.get(
       // Split columns are per company, and an export spanning two companies with different
       // cohort counts would have a ragged header. The widest wins; narrower rows pad with blanks.
       const splitCount = vouchers.reduce(
-        (max, v) => Math.max(max, v.cohort_labels.length > 1 ? v.cohort_labels.length : 0), 0);
+        (max, v) =>
+          Math.max(
+            max,
+            v.cohort_labels.length > 1 ? v.cohort_labels.length : 0,
+          ),
+        0,
+      );
 
       const header = [
-        "Vch No", "Date", "Details", "Amount",
+        "Vch No",
+        "Date",
+        "Details",
+        "Amount",
         ...Array.from({ length: splitCount }, () => ""),
-        "DebitCredit", "Cost Category", "Cost Centre",
-        "Narration for Each Entry", "Narration", "VchType",
+        "DebitCredit",
+        "Cost Category",
+        "Cost Centre",
+        "Narration for Each Entry",
+        "Narration",
+        "VchType",
       ];
 
       const rows: unknown[][] = [];
@@ -126,7 +158,14 @@ salaryVoucherRouter.get(
           // The reference prints the cohort column FIRST and the remainder second, which is the
           // reverse of how they are held internally.
           const split = splitCount
-            ? [...line.columns.slice(1), line.columns[0], ...Array.from({ length: Math.max(0, splitCount - line.columns.length) }, () => "")]
+            ? [
+                ...line.columns.slice(1),
+                line.columns[0],
+                ...Array.from(
+                  { length: Math.max(0, splitCount - line.columns.length) },
+                  () => "",
+                ),
+              ]
             : [];
           rows.push([
             voucher.voucher_no,
@@ -148,7 +187,9 @@ salaryVoucherRouter.get(
         const text = String(value ?? "");
         return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
       };
-      const csv = [header, ...rows].map((r) => r.map(escape).join(",")).join("\n");
+      const csv = [header, ...rows]
+        .map((r) => r.map(escape).join(","))
+        .join("\n");
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader(
         "Content-Disposition",
@@ -158,7 +199,10 @@ salaryVoucherRouter.get(
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to export the salary voucher",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to export the salary voucher",
       });
     }
   }),
@@ -182,19 +226,30 @@ salaryVoucherRouter.get(
   requireRole(...VOUCHER_ROLES),
   h(async (req, res) => {
     try {
-      const generated = await billSalaryVoucherService.generateForPeriod(req.params.period, {
-        companyCode: String(req.query.companyCode ?? "IDC"),
-        entityPrefix: String(req.query.entityPrefix ?? req.query.companyCode ?? "IDC"),
-        serialFrom: parseSerial(req.query.serialFrom),
-      });
+      const generated = await billSalaryVoucherService.generateForPeriod(
+        req.params.period,
+        {
+          companyCode: String(req.query.companyCode ?? "IDC"),
+          entityPrefix: String(
+            req.query.entityPrefix ?? req.query.companyCode ?? "IDC",
+          ),
+          serialFrom: parseSerial(req.query.serialFrom),
+        },
+      );
       res.json({
         success: true,
-        data: { ...generated, vouchers: await scopeVouchers(req, generated.vouchers) },
+        data: {
+          ...generated,
+          vouchers: await scopeVouchers(req, generated.vouchers),
+        },
       });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to generate the db_bill salary voucher",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to generate the db_bill salary voucher",
       });
     }
   }),

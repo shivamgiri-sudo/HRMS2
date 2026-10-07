@@ -7,7 +7,10 @@ import { grnSmartService } from "./grn-smart.service.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
 import { notifyGrnStage } from "./grn-notify.js";
 import { runInBackground } from "./grn-background.js";
-import { notifyGrnSubmittedEmail, notifyGrnAccountsHeadPendingEmail } from "./grn.notifications.js";
+import {
+  notifyGrnSubmittedEmail,
+  notifyGrnAccountsHeadPendingEmail,
+} from "./grn.notifications.js";
 import { qualifiesForHeadOfficeBypass } from "./grn-head-office-bypass.js";
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 
@@ -18,7 +21,7 @@ async function activeOverrides(grnId: string) {
     `SELECT validation_code, override_reason, approved_by, approved_at
        FROM grn_validation_override
       WHERE grn_request_id = ? AND active_status = 1`,
-    [grnId]
+    [grnId],
   );
   return new Map(rows.map((row) => [String(row.validation_code), row]));
 }
@@ -38,14 +41,14 @@ async function applyOverridesToLatestResults(grnId: string) {
         override.approved_at,
         grnId,
         code,
-      ]
+      ],
     );
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM grn_validation_result
       WHERE grn_request_id = ?
       ORDER BY is_blocking DESC, created_at`,
-    [grnId]
+    [grnId],
   );
   return rows as any[];
 }
@@ -61,7 +64,7 @@ async function addLobAttributionValidation(grnId: string) {
       WHERE a.grn_request_id = ?
         AND a.process_id IS NOT NULL
         AND a.process_lob_id IS NULL`,
-    [grnId]
+    [grnId],
   );
   for (const alloc of unresolved as RowDataPacket[]) {
     const [lobs] = await db.execute<RowDataPacket[]>(
@@ -71,13 +74,15 @@ async function addLobAttributionValidation(grnId: string) {
           AND approval_status = 'approved'
           AND (effective_to IS NULL OR effective_to >= CURDATE())
           AND effective_from <= CURDATE()`,
-      [alloc.process_id]
+      [alloc.process_id],
     );
     if ((lobs as RowDataPacket[]).length === 1) {
-      await db.execute(
-        `UPDATE grn_cost_allocation SET process_lob_id = ? WHERE id = ?`,
-        [(lobs as RowDataPacket[])[0].id, alloc.allocation_id]
-      ).catch(() => undefined);
+      await db
+        .execute(
+          `UPDATE grn_cost_allocation SET process_lob_id = ? WHERE id = ?`,
+          [(lobs as RowDataPacket[])[0].id, alloc.allocation_id],
+        )
+        .catch(() => undefined);
     }
   }
 
@@ -89,7 +94,7 @@ async function addLobAttributionValidation(grnId: string) {
         AND a.process_id IS NOT NULL
         AND a.process_lob_id IS NULL
       ORDER BY a.sequence_no`,
-    [grnId]
+    [grnId],
   );
   const missing = rows.map((row) => ({
     sequenceNo: Number(row.sequence_no),
@@ -111,7 +116,7 @@ async function addLobAttributionValidation(grnId: string) {
         ? `${missing.length} process-linked allocation(s) require an exact LOB mapping`
         : "Every process-linked allocation has an approved LOB mapping",
       JSON.stringify({ missing }),
-    ]
+    ],
   );
 }
 
@@ -165,7 +170,9 @@ async function effectiveValidation(grnId: string) {
   await addVendorAttachmentValidation(grnId);
   const results = await applyOverridesToLatestResults(grnId);
   const blocking = results.filter(
-    (item) => Number(item.is_blocking) === 1 && String(item.validation_status) === "failed"
+    (item) =>
+      Number(item.is_blocking) === 1 &&
+      String(item.validation_status) === "failed",
   );
   return {
     ...fresh,
@@ -179,7 +186,7 @@ async function audit(
   grnId: string,
   actorUserId: string,
   actorRole: string,
-  details: Record<string, unknown>
+  details: Record<string, unknown>,
 ) {
   await logSensitiveAction({
     actor_user_id: actorUserId,
@@ -198,30 +205,40 @@ export const grnValidationControlService = {
     validationCode: string,
     reason: string,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     const normalizedCode = validationCode.trim().toUpperCase();
     if (!normalizedCode) throw new Error("Validation code is required");
     if (NON_OVERRIDABLE_VALIDATIONS.has(normalizedCode)) {
-      throw new Error(`${normalizedCode} is a structural attribution control and cannot be overridden`);
+      throw new Error(
+        `${normalizedCode} is a structural attribution control and cannot be overridden`,
+      );
     }
     if (!reason.trim() || reason.trim().length < 10) {
-      throw new Error("A detailed override reason of at least 10 characters is required");
+      throw new Error(
+        "A detailed override reason of at least 10 characters is required",
+      );
     }
     const [grnRows] = await db.execute<RowDataPacket[]>(
       "SELECT id, status FROM grn_request WHERE id = ? LIMIT 1",
-      [grnId]
+      [grnId],
     );
     if (!grnRows[0]) throw new Error("GRN not found");
-    if (["paid", "approved", "cancelled", "rejected"].includes(String(grnRows[0].status))) {
-      throw new Error("Validation overrides cannot be changed after final closure");
+    if (
+      ["paid", "approved", "cancelled", "rejected"].includes(
+        String(grnRows[0].status),
+      )
+    ) {
+      throw new Error(
+        "Validation overrides cannot be changed after final closure",
+      );
     }
     const [validationRows] = await db.execute<RowDataPacket[]>(
       `SELECT validation_code, validation_status, is_blocking, message
          FROM grn_validation_result
         WHERE grn_request_id = ? AND validation_code = ?
         ORDER BY created_at DESC LIMIT 1`,
-      [grnId, normalizedCode]
+      [grnId, normalizedCode],
     );
     if (!validationRows[0]) {
       throw new Error("Run GRN validation before approving an exception");
@@ -243,14 +260,20 @@ export const grnValidationControlService = {
          revoked_by = NULL,
          revoked_at = NULL,
          revoke_reason = NULL`,
-      [randomUUID(), grnId, normalizedCode, reason.trim(), actorUserId]
+      [randomUUID(), grnId, normalizedCode, reason.trim(), actorUserId],
     );
     const results = await applyOverridesToLatestResults(grnId);
-    await audit("GRN_VALIDATION_OVERRIDE_APPROVED", grnId, actorUserId, actorRole, {
-      validation_code: normalizedCode,
-      override_reason: reason.trim(),
-      original_message: validationRows[0].message,
-    });
+    await audit(
+      "GRN_VALIDATION_OVERRIDE_APPROVED",
+      grnId,
+      actorUserId,
+      actorRole,
+      {
+        validation_code: normalizedCode,
+        override_reason: reason.trim(),
+        original_message: validationRows[0].message,
+      },
+    );
     return { success: true, validationCode: normalizedCode, results };
   },
 
@@ -259,20 +282,27 @@ export const grnValidationControlService = {
     validationCode: string,
     reason: string,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     if (!reason.trim()) throw new Error("Revoke reason is required");
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_validation_override
           SET active_status = 0, revoked_by = ?, revoked_at = NOW(), revoke_reason = ?
         WHERE grn_request_id = ? AND validation_code = ? AND active_status = 1`,
-      [actorUserId, reason.trim(), grnId, validationCode.trim().toUpperCase()]
+      [actorUserId, reason.trim(), grnId, validationCode.trim().toUpperCase()],
     );
-    if (result.affectedRows !== 1) throw new Error("Active validation override not found");
-    await audit("GRN_VALIDATION_OVERRIDE_REVOKED", grnId, actorUserId, actorRole, {
-      validation_code: validationCode.trim().toUpperCase(),
-      revoke_reason: reason.trim(),
-    });
+    if (result.affectedRows !== 1)
+      throw new Error("Active validation override not found");
+    await audit(
+      "GRN_VALIDATION_OVERRIDE_REVOKED",
+      grnId,
+      actorUserId,
+      actorRole,
+      {
+        validation_code: validationCode.trim().toUpperCase(),
+        revoke_reason: reason.trim(),
+      },
+    );
     return effectiveValidation(grnId);
   },
 
@@ -281,14 +311,14 @@ export const grnValidationControlService = {
     actorUserId: string,
     actorRole: string,
     remarks?: string,
-    userRoles?: string[]
+    userRoles?: string[],
   ) {
     // P0-2: Provision GRNs have no accounting lifecycle — fail closed before any validation.
     const [typeRows] = await db.execute<RowDataPacket[]>(
       `SELECT grn_type, grn_number, branch_id, accounting_period, financial_year,
               vendor_name, amount_with_tax, amount, budget_line_id, quantity, amount_without_tax
          FROM grn_request WHERE id = ? LIMIT 1`,
-      [grnId]
+      [grnId],
     );
     if (!typeRows[0]) throw new Error("GRN not found");
     assertGrnTypeSupported(typeRows[0].grn_type, "Submission");
@@ -297,15 +327,18 @@ export const grnValidationControlService = {
       throw new Error(
         `Resolve or obtain Finance override for: ${validation.blocking
           .map((item) => item.message)
-          .join("; ")}`
+          .join("; ")}`,
       );
     }
 
     const grn = typeRows[0] as any;
     const submittedGrnNumber = grn.grn_number ? String(grn.grn_number) : null;
     const submittedBranchId = grn.branch_id ? String(grn.branch_id) : null;
-    const submittedVendorName = grn.vendor_name ? String(grn.vendor_name) : null;
-    const submittedAmount = Number(grn.amount_with_tax ?? grn.amount ?? 0) || null;
+    const submittedVendorName = grn.vendor_name
+      ? String(grn.vendor_name)
+      : null;
+    const submittedAmount =
+      Number(grn.amount_with_tax ?? grn.amount ?? 0) || null;
 
     /*
      * HEAD OFFICE BYPASS (owner ruling, 2026-09-23):
@@ -320,12 +353,18 @@ export const grnValidationControlService = {
     const headOfficeBypass = await qualifiesForHeadOfficeBypass(
       submittedBranchId,
       actorRole,
-      userRoles
+      userRoles,
     );
 
     if (headOfficeBypass) {
       // Use grnSmartService.submit which handles allocation reservation for bypass
-      const result = await grnSmartService.submit(grnId, actorUserId, actorRole, remarks, userRoles);
+      const result = await grnSmartService.submit(
+        grnId,
+        actorUserId,
+        actorRole,
+        remarks,
+        userRoles,
+      );
       return { ...result, validation };
     }
 
@@ -340,10 +379,12 @@ export const grnValidationControlService = {
           SET status = 'submitted', submitted_by = ?, submitted_at = NOW(),
               remarks = COALESCE(?, remarks)
         WHERE id = ? AND status = 'draft'`,
-      [actorUserId, remarks?.trim() || null, grnId]
+      [actorUserId, remarks?.trim() || null, grnId],
     );
     if (result.affectedRows !== 1) {
-      throw new Error("GRN status changed before submission; refresh and try again");
+      throw new Error(
+        "GRN status changed before submission; refresh and try again",
+      );
     }
     await audit("GRN_SUBMIT", grnId, actorUserId, actorRole, {
       validation_score: validation.score,
@@ -356,9 +397,22 @@ export const grnValidationControlService = {
     // allocations rather than falling through), so it needed the same wiring grn.service.ts's
     // submit() had but this path never reached. See grn-notify.ts's header.
     runInBackground("submit-alert", () =>
-      notifyGrnStage(grnId, submittedGrnNumber, submittedBranchId, submittedVendorName, submittedAmount, "branch_head"));
+      notifyGrnStage(
+        grnId,
+        submittedGrnNumber,
+        submittedBranchId,
+        submittedVendorName,
+        submittedAmount,
+        "branch_head",
+      ),
+    );
     runInBackground("submit-email", () => notifyGrnSubmittedEmail(grnId));
-    return { success: true, newStatus: "submitted", grnNumber: grn.grn_number ?? null, validation };
+    return {
+      success: true,
+      newStatus: "submitted",
+      grnNumber: grn.grn_number ?? null,
+      validation,
+    };
   },
 
   async review(
@@ -366,7 +420,7 @@ export const grnValidationControlService = {
     decision: "approved" | "rejected",
     reviewNote: string | undefined,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     if (decision === "approved") {
       const validation = await effectiveValidation(grnId);
@@ -374,7 +428,7 @@ export const grnValidationControlService = {
         throw new Error(
           `Approval blocked by: ${validation.blocking
             .map((item) => item.message)
-            .join("; ")}`
+            .join("; ")}`,
         );
       }
     }
@@ -383,7 +437,7 @@ export const grnValidationControlService = {
       decision,
       reviewNote,
       actorUserId,
-      actorRole
+      actorRole,
     );
   },
 

@@ -32,8 +32,8 @@ describe("storeBgvCheckResult propagates identity verification (BUG FIX 2026-08-
 
   it("propagates a verified pan check to the employee record", async () => {
     mockDbExecute
-      .mockResolvedValueOnce([[], []])   // SELECT existing -> none, take INSERT branch
-      .mockResolvedValueOnce([{}, []]);  // INSERT candidate_bgv_check
+      .mockResolvedValueOnce([[], []]) // SELECT existing -> none, take INSERT branch
+      .mockResolvedValueOnce([{}, []]); // INSERT candidate_bgv_check
 
     await storeBgvCheckResult(
       "cand-1",
@@ -51,7 +51,8 @@ describe("storeBgvCheckResult propagates identity verification (BUG FIX 2026-08-
     );
 
     expect(propagateIdentityVerification).toHaveBeenCalledTimes(1);
-    const [candidateId, checkType, verifiedAt] = propagateIdentityVerification.mock.calls[0];
+    const [candidateId, checkType, verifiedAt] =
+      propagateIdentityVerification.mock.calls[0];
     expect(candidateId).toBe("cand-1");
     expect(checkType).toBe("pan");
     expect(verifiedAt).toBeInstanceOf(Date);

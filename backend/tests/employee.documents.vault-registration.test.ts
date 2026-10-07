@@ -36,23 +36,46 @@ const { dbExecute, registerUpload } = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: dbExecute } }));
-vi.mock("../src/modules/document-vault/documentVault.service.js", () => ({ registerUpload }));
+vi.mock("../src/modules/document-vault/documentVault.service.js", () => ({
+  registerUpload,
+}));
 vi.mock("../src/middleware/authMiddleware.js", () => ({
-  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = { id: USER_ID };
+  requireAuth: (
+    req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = {
+      id: USER_ID,
+    };
     next();
   },
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+  requireRole:
+    () =>
+    (
+      _req: express.Request,
+      _res: express.Response,
+      next: express.NextFunction,
+    ) =>
+      next(),
 }));
 vi.mock("../src/shared/accessGuard.js", () => ({
   // Ownership/role check is a separate concern from vault registration —
   // pass through so these tests focus on what happens after auth succeeds.
-  selfOrAdminHr: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+  selfOrAdminHr:
+    () =>
+    (
+      _req: express.Request,
+      _res: express.Response,
+      next: express.NextFunction,
+    ) =>
+      next(),
 }));
 
-const { employeeDocsRouter } = await import("../src/modules/employees/employee.documents.routes.js");
+const { employeeDocsRouter } =
+  await import("../src/modules/employees/employee.documents.routes.js");
 
 function app() {
   const a = express();
@@ -82,7 +105,9 @@ describe("POST /api/employee-docs/:employeeId/upload", () => {
     // Clean up anything this suite left behind.
     for (const f of uploadedFiles()) {
       if (!before.has(f)) {
-        try { fs.unlinkSync(join(UPLOAD_DIR, f)); } catch {}
+        try {
+          fs.unlinkSync(join(UPLOAD_DIR, f));
+        } catch {}
       }
     }
   });
@@ -90,7 +115,19 @@ describe("POST /api/employee-docs/:employeeId/upload", () => {
   it("registers the upload in the document vault with the employee as owner, access_level pii", async () => {
     registerUpload.mockResolvedValue("vault-item-1");
     dbExecute.mockResolvedValueOnce([{ insertId: 0 }] as any); // INSERT
-    dbExecute.mockResolvedValueOnce([[{ id: "doc-1", employee_id: EMPLOYEE_ID, document_type: "pan_card", document_name: "pan.pdf", file_url: "/api/files/employee-documents/x.pdf", verified: 0, uploaded_at: new Date() }]] as any); // SELECT
+    dbExecute.mockResolvedValueOnce([
+      [
+        {
+          id: "doc-1",
+          employee_id: EMPLOYEE_ID,
+          document_type: "pan_card",
+          document_name: "pan.pdf",
+          file_url: "/api/files/employee-documents/x.pdf",
+          verified: 0,
+          uploaded_at: new Date(),
+        },
+      ],
+    ] as any); // SELECT
 
     const res = await request(app())
       .post(`/api/employee-docs/${EMPLOYEE_ID}/upload`)

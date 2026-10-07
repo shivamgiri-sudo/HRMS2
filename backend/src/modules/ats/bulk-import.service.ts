@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import * as XLSX from "xlsx";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { getIstDateString } from '../../utils/dateUtils.js';
+import { getIstDateString } from "../../utils/dateUtils.js";
 import { toStoredName } from "../../shared/nameFormat.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -95,17 +95,17 @@ export interface ImportResult {
 // ── Stage Mapping ─────────────────────────────────────────────────────────────
 
 const STAGE_MAP: Record<string, string> = {
-  "arrival": "Registered",
+  arrival: "Registered",
   "interview round 1": "Interview_Round1",
   "interview - skill test": "SkillTest",
   "interview round 2": "Interview_Round2",
   "interview round 3": "Interview_Round3",
-  "rejected": "Rejected",
-  "selected": "Offer_Extended",
+  rejected: "Rejected",
+  selected: "Offer_Extended",
   "no show": "No_Show",
-  "walkout": "Walkout",
-  "hold": "Hold",
-  "callback": "Callback",
+  walkout: "Walkout",
+  hold: "Hold",
+  callback: "Callback",
 };
 
 function mapStage(raw: string | undefined): string {
@@ -114,7 +114,10 @@ function mapStage(raw: string | undefined): string {
   return STAGE_MAP[key] ?? raw.trim();
 }
 
-function mapInterviewStatus(raw: string | undefined): "selected" | "rejected" | "hold" | "callback" | "no_show" | "walkout" | null {
+function mapInterviewStatus(
+  raw: string | undefined,
+):
+  "selected" | "rejected" | "hold" | "callback" | "no_show" | "walkout" | null {
   if (!raw) return null;
   const v = raw.trim().toLowerCase();
   if (v === "selected") return "selected";
@@ -134,7 +137,10 @@ function mapInterviewStatus(raw: string | undefined): "selected" | "rejected" | 
  * believes about 453 production rows, so it is worth asserting directly rather than only
  * through the import path that calls it.
  */
-export function parseHistoricalDate(dateStr: string | undefined, timeStr?: string): string | null {
+export function parseHistoricalDate(
+  dateStr: string | undefined,
+  timeStr?: string,
+): string | null {
   if (!dateStr) return null;
   const s = String(dateStr).trim();
 
@@ -158,10 +164,12 @@ export function parseHistoricalDate(dateStr: string | undefined, timeStr?: strin
     let month: number, day: number;
     if (p2 > 12) {
       // p2 is definitely day, p1 is month (M/D/YYYY)
-      month = p1; day = p2;
+      month = p1;
+      day = p2;
     } else if (p1 > 12) {
       // p1 is definitely day, p2 is month (D/M/YYYY)
-      day = p1; month = p2;
+      day = p1;
+      month = p2;
     } else {
       /**
        * Both parts are <= 12, so the string alone cannot say which is the month.
@@ -183,24 +191,32 @@ export function parseHistoricalDate(dateStr: string | undefined, timeStr?: strin
        * in the past the string really is ambiguous and nothing here can improve on a default,
        * so M/D is kept and behaviour is unchanged for those rows.
        */
-      const asUs  = { month: p1, day: p2 };
+      const asUs = { month: p1, day: p2 };
       const asIso = { month: p2, day: p1 };
       const valid = (v: { month: number; day: number }) =>
         v.month >= 1 && v.month <= 12 && v.day >= 1 && v.day <= 31;
       const isFuture = (v: { month: number; day: number }) =>
-        new Date(`${year}-${String(v.month).padStart(2, "0")}-${String(v.day).padStart(2, "0")}T00:00:00Z`).getTime()
-          > Date.now();
+        new Date(
+          `${year}-${String(v.month).padStart(2, "0")}-${String(v.day).padStart(2, "0")}T00:00:00Z`,
+        ).getTime() > Date.now();
 
       if (valid(asUs) && isFuture(asUs) && valid(asIso) && !isFuture(asIso)) {
-        month = asIso.month; day = asIso.day;
+        month = asIso.month;
+        day = asIso.day;
       } else {
-        month = asUs.month; day = asUs.day;
+        month = asUs.month;
+        day = asUs.day;
       }
     }
     // Number.isFinite, not just a range check: "not-a-date".split(/[\/\-]/) yields three
     // parts, parseInt gives NaN, and every NaN comparison is false — so the range test passed
     // and this returned the string "NaN-NaN-NaN 00:00:00" for any three-token input.
-    if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) return null;
+    if (
+      !Number.isFinite(month) ||
+      !Number.isFinite(day) ||
+      !Number.isFinite(year)
+    )
+      return null;
     if (month < 1 || month > 12 || day < 1 || day > 31) return null;
     const time = timeStr ? ` ${String(timeStr).trim()}` : " 00:00:00";
     return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}${time}`;
@@ -226,7 +242,10 @@ function hashEmail(email: string): string {
 
 // ── File Parsing ──────────────────────────────────────────────────────────────
 
-export function parseHistoricalFile(buffer: Buffer, mimeType: string): ImportRow[] {
+export function parseHistoricalFile(
+  buffer: Buffer,
+  mimeType: string,
+): ImportRow[] {
   const opts: XLSX.ParsingOptions = { type: "buffer", raw: false };
   if (mimeType === "text/tab-separated-values" || mimeType.includes("tsv")) {
     opts.type = "buffer";
@@ -237,7 +256,11 @@ export function parseHistoricalFile(buffer: Buffer, mimeType: string): ImportRow
   // Coerce all cell values to strings — XLSX can parse numeric-looking cells as numbers
   for (const row of rows) {
     for (const key of Object.keys(row)) {
-      if (row[key] !== undefined && row[key] !== null && typeof row[key] !== "string") {
+      if (
+        row[key] !== undefined &&
+        row[key] !== null &&
+        typeof row[key] !== "string"
+      ) {
         row[key] = String(row[key]);
       }
     }
@@ -247,31 +270,57 @@ export function parseHistoricalFile(buffer: Buffer, mimeType: string): ImportRow
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-export function validateRow(row: ImportRow, rowIdx: number): { errors: ImportError[]; warnings: ImportWarning[] } {
+export function validateRow(
+  row: ImportRow,
+  rowIdx: number,
+): { errors: ImportError[]; warnings: ImportWarning[] } {
   const errors: ImportError[] = [];
   const warnings: ImportWarning[] = [];
   const cid = String(row.CandidateID ?? `row-${rowIdx}`);
 
   const fullName = String(row.FullName ?? "").trim();
   if (!fullName) {
-    errors.push({ row: rowIdx, candidateId: cid, field: "FullName", message: "FullName is required" });
+    errors.push({
+      row: rowIdx,
+      candidateId: cid,
+      field: "FullName",
+      message: "FullName is required",
+    });
   }
   const mobile = String(row.Mobile ?? "").replace(/\D/g, "");
   if (!mobile) {
-    errors.push({ row: rowIdx, candidateId: cid, field: "Mobile", message: "Mobile is required" });
+    errors.push({
+      row: rowIdx,
+      candidateId: cid,
+      field: "Mobile",
+      message: "Mobile is required",
+    });
   } else if (mobile.length !== 10) {
-    errors.push({ row: rowIdx, candidateId: cid, field: "Mobile", message: `Mobile must be 10 digits, got ${mobile.length}` });
+    errors.push({
+      row: rowIdx,
+      candidateId: cid,
+      field: "Mobile",
+      message: `Mobile must be 10 digits, got ${mobile.length}`,
+    });
   }
 
   if (row.Email) {
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRe.test(String(row.Email).trim())) {
-      warnings.push({ row: rowIdx, candidateId: cid, message: `Email '${row.Email}' looks invalid, skipping email field` });
+      warnings.push({
+        row: rowIdx,
+        candidateId: cid,
+        message: `Email '${row.Email}' looks invalid, skipping email field`,
+      });
     }
   }
 
   if (!row.CreatedDate) {
-    warnings.push({ row: rowIdx, candidateId: cid, message: "No CreatedDate, will use current timestamp" });
+    warnings.push({
+      row: rowIdx,
+      candidateId: cid,
+      message: "No CreatedDate, will use current timestamp",
+    });
   }
 
   return { errors, warnings };
@@ -280,21 +329,25 @@ export function validateRow(row: ImportRow, rowIdx: number): { errors: ImportErr
 // ── Lookup Helpers ────────────────────────────────────────────────────────────
 
 const recruiterCache = new Map<string, string | null>();
-async function lookupRecruiter(name: string | undefined, email: string | undefined): Promise<string | null> {
+async function lookupRecruiter(
+  name: string | undefined,
+  email: string | undefined,
+): Promise<string | null> {
   const key = `${name ?? ""}|${email ?? ""}`;
   if (recruiterCache.has(key)) return recruiterCache.get(key)!;
   let userId: string | null = null;
   if (email) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.user_id FROM employees e JOIN auth_user u ON u.id = e.user_id WHERE u.email = ? AND e.active_status = 1 LIMIT 1`,
-      [email.trim().toLowerCase()]
+      [email.trim().toLowerCase()],
     );
-    if ((rows as RowDataPacket[]).length) userId = (rows as RowDataPacket[])[0].user_id;
+    if ((rows as RowDataPacket[]).length)
+      userId = (rows as RowDataPacket[])[0].user_id;
   }
   if (!userId && name) {
     const [exact] = await db.execute<RowDataPacket[]>(
       `SELECT user_id FROM employees WHERE LOWER(full_name) = LOWER(?) AND active_status = 1 LIMIT 1`,
-      [name.trim()]
+      [name.trim()],
     );
     if ((exact as RowDataPacket[]).length) {
       userId = (exact as RowDataPacket[])[0].user_id;
@@ -302,7 +355,7 @@ async function lookupRecruiter(name: string | undefined, email: string | undefin
       // Partial match fallback — only assign if unambiguous (exactly 1 result)
       const [partial] = await db.execute<RowDataPacket[]>(
         `SELECT user_id FROM employees WHERE LOWER(full_name) LIKE LOWER(?) AND active_status = 1 LIMIT 2`,
-        [`%${name.trim()}%`]
+        [`%${name.trim()}%`],
       );
       if ((partial as RowDataPacket[]).length === 1) {
         userId = (partial as RowDataPacket[])[0].user_id;
@@ -320,9 +373,11 @@ async function lookupBranch(name: string | undefined): Promise<string | null> {
   if (branchCache.has(key)) return branchCache.get(key)!;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM branch_master WHERE LOWER(branch_name) LIKE LOWER(?) AND active_status = 1 LIMIT 1`,
-    [`%${name.trim()}%`]
+    [`%${name.trim()}%`],
   );
-  const id = (rows as RowDataPacket[]).length ? (rows as RowDataPacket[])[0].id : null;
+  const id = (rows as RowDataPacket[]).length
+    ? (rows as RowDataPacket[])[0].id
+    : null;
   branchCache.set(key, id);
   return id;
 }
@@ -334,9 +389,11 @@ async function lookupProcess(name: string | undefined): Promise<string | null> {
   if (processCache.has(key)) return processCache.get(key)!;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM process_master WHERE LOWER(process_name) LIKE LOWER(?) AND active_status = 1 LIMIT 1`,
-    [`%${name.trim()}%`]
+    [`%${name.trim()}%`],
   );
-  const id = (rows as RowDataPacket[]).length ? (rows as RowDataPacket[])[0].id : null;
+  const id = (rows as RowDataPacket[]).length
+    ? (rows as RowDataPacket[])[0].id
+    : null;
   processCache.set(key, id);
   return id;
 }
@@ -364,12 +421,20 @@ async function bulkPrefetch(rows: ImportRow[]): Promise<PrefetchedData> {
 
   const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
 
-  const mobiles = [...new Set(
-    rows.map(r => String(r.Mobile ?? "").replace(/\D/g, "")).filter(m => /^[6-9]\d{9}$/.test(m)),
-  )];
-  const emails = [...new Set(
-    rows.map(r => r.Email?.trim().toLowerCase()).filter((e): e is string => Boolean(e)),
-  )];
+  const mobiles = [
+    ...new Set(
+      rows
+        .map((r) => String(r.Mobile ?? "").replace(/\D/g, ""))
+        .filter((m) => /^[6-9]\d{9}$/.test(m)),
+    ),
+  ];
+  const emails = [
+    ...new Set(
+      rows
+        .map((r) => r.Email?.trim().toLowerCase())
+        .filter((e): e is string => Boolean(e)),
+    ),
+  ];
 
   if (mobiles.length === 0 && emails.length === 0) return result;
 
@@ -377,15 +442,29 @@ async function bulkPrefetch(rows: ImportRow[]): Promise<PrefetchedData> {
     (async () => {
       const conds: string[] = [];
       const vals: string[] = [];
-      if (mobiles.length) { conds.push(`mobile IN (${ph(mobiles.length)})`); vals.push(...mobiles); }
-      if (emails.length) { conds.push(`email IN (${ph(emails.length)})`); vals.push(...emails); }
+      if (mobiles.length) {
+        conds.push(`mobile IN (${ph(mobiles.length)})`);
+        vals.push(...mobiles);
+      }
+      if (emails.length) {
+        conds.push(`email IN (${ph(emails.length)})`);
+        vals.push(...emails);
+      }
       const [fetched] = await db.execute<RowDataPacket[]>(
         `SELECT id, candidate_code, mobile, email FROM ats_candidate WHERE ${conds.join(" OR ")}`,
         vals,
       );
       for (const r of fetched as any[]) {
-        if (r.mobile) result.existingByMobile.set(String(r.mobile), { id: r.id, candidate_code: r.candidate_code });
-        if (r.email) result.existingByEmail.set(String(r.email).toLowerCase(), { id: r.id, candidate_code: r.candidate_code });
+        if (r.mobile)
+          result.existingByMobile.set(String(r.mobile), {
+            id: r.id,
+            candidate_code: r.candidate_code,
+          });
+        if (r.email)
+          result.existingByEmail.set(String(r.email).toLowerCase(), {
+            id: r.id,
+            candidate_code: r.candidate_code,
+          });
       }
     })(),
     (async () => {
@@ -396,16 +475,31 @@ async function bulkPrefetch(rows: ImportRow[]): Promise<PrefetchedData> {
         conds.push(`alternate_mobile IN (${ph(mobiles.length)})`);
         vals.push(...mobiles, ...mobiles);
       }
-      if (emails.length) { conds.push(`personal_email IN (${ph(emails.length)})`); vals.push(...emails); }
+      if (emails.length) {
+        conds.push(`personal_email IN (${ph(emails.length)})`);
+        vals.push(...emails);
+      }
       if (!conds.length) return;
       const [emps] = await db.execute<RowDataPacket[]>(
         `SELECT id, employee_code, mobile, alternate_mobile, personal_email FROM employees WHERE ${conds.join(" OR ")}`,
         vals,
       );
       for (const e of emps as any[]) {
-        if (e.mobile) result.employeeByMobile.set(String(e.mobile), { id: e.id, employee_code: e.employee_code });
-        if (e.alternate_mobile) result.employeeByMobile.set(String(e.alternate_mobile), { id: e.id, employee_code: e.employee_code });
-        if (e.personal_email) result.employeeByPersonalEmail.set(String(e.personal_email).toLowerCase(), { id: e.id, employee_code: e.employee_code });
+        if (e.mobile)
+          result.employeeByMobile.set(String(e.mobile), {
+            id: e.id,
+            employee_code: e.employee_code,
+          });
+        if (e.alternate_mobile)
+          result.employeeByMobile.set(String(e.alternate_mobile), {
+            id: e.id,
+            employee_code: e.employee_code,
+          });
+        if (e.personal_email)
+          result.employeeByPersonalEmail.set(
+            String(e.personal_email).toLowerCase(),
+            { id: e.id, employee_code: e.employee_code },
+          );
       }
     })(),
   ]);
@@ -415,7 +509,11 @@ async function bulkPrefetch(rows: ImportRow[]): Promise<PrefetchedData> {
 
 // ── Core Import ───────────────────────────────────────────────────────────────
 
-async function findExistingCandidate(mobile: string, email: string | undefined, prefetched?: PrefetchedData): Promise<{ id: string; candidate_code: string } | null> {
+async function findExistingCandidate(
+  mobile: string,
+  email: string | undefined,
+  prefetched?: PrefetchedData,
+): Promise<{ id: string; candidate_code: string } | null> {
   if (prefetched) {
     if (/^[6-9]\d{9}$/.test(mobile)) {
       const hit = prefetched.existingByMobile.get(mobile);
@@ -434,22 +532,32 @@ async function findExistingCandidate(mobile: string, email: string | undefined, 
   if (/^[6-9]\d{9}$/.test(mobile)) {
     const [byMobile] = await db.execute<RowDataPacket[]>(
       `SELECT id, candidate_code FROM ats_candidate WHERE mobile = ? LIMIT 1`,
-      [mobile]
+      [mobile],
     );
-    if ((byMobile as RowDataPacket[]).length) return (byMobile as RowDataPacket[])[0] as { id: string; candidate_code: string };
+    if ((byMobile as RowDataPacket[]).length)
+      return (byMobile as RowDataPacket[])[0] as {
+        id: string;
+        candidate_code: string;
+      };
   }
 
   if (email) {
     const [byEmail] = await db.execute<RowDataPacket[]>(
       `SELECT id, candidate_code FROM ats_candidate WHERE email = ? LIMIT 1`,
-      [email.toLowerCase().trim()]
+      [email.toLowerCase().trim()],
     );
-    if ((byEmail as RowDataPacket[]).length) return (byEmail as RowDataPacket[])[0] as { id: string; candidate_code: string };
+    if ((byEmail as RowDataPacket[]).length)
+      return (byEmail as RowDataPacket[])[0] as {
+        id: string;
+        candidate_code: string;
+      };
   }
   return null;
 }
 
-function normalizeGender(raw: string | undefined): "Male" | "Female" | "Other" | undefined {
+function normalizeGender(
+  raw: string | undefined,
+): "Male" | "Female" | "Other" | undefined {
   if (!raw) return undefined;
   const v = raw.trim().toLowerCase();
   if (v === "male" || v === "m") return "Male";
@@ -464,7 +572,10 @@ async function importOneCandidate(
   dryRun: boolean,
   importBatchId: string | null = null,
   prefetched?: PrefetchedData,
-): Promise<{ action: "created" | "updated" | "skipped"; warnings: ImportWarning[] }> {
+): Promise<{
+  action: "created" | "updated" | "skipped";
+  warnings: ImportWarning[];
+}> {
   const warnings: ImportWarning[] = [];
   const cid = row.CandidateID ?? `row-${rowIdx}`;
   const mobile = String(row.Mobile ?? "").replace(/\D/g, "");
@@ -481,16 +592,33 @@ async function importOneCandidate(
    * backstop that keeps such a row out of the audit column.
    */
   const parsedCreatedAt = parseHistoricalDate(row.CreatedDate, row.CreatedTime);
-  const createdAtIsFuture = parsedCreatedAt != null && new Date(parsedCreatedAt.replace(" ", "T") + "Z").getTime() > Date.now();
+  const createdAtIsFuture =
+    parsedCreatedAt != null &&
+    new Date(parsedCreatedAt.replace(" ", "T") + "Z").getTime() > Date.now();
   if (createdAtIsFuture) {
-    warnings.push({ row: rowIdx, candidateId: cid, message: `CreatedDate '${row.CreatedDate}' resolves to ${parsedCreatedAt}, which is in the future — recorded as import time instead` });
+    warnings.push({
+      row: rowIdx,
+      candidateId: cid,
+      message: `CreatedDate '${row.CreatedDate}' resolves to ${parsedCreatedAt}, which is in the future — recorded as import time instead`,
+    });
   }
-  const createdAt = (createdAtIsFuture ? null : parsedCreatedAt) ?? getIstDateString();
+  const createdAt =
+    (createdAtIsFuture ? null : parsedCreatedAt) ?? getIstDateString();
 
   const branchId = await lookupBranch(row.Branch);
   const processId = await lookupProcess(row.Process || row.RoleApplied);
-  if (row.Branch && !branchId) warnings.push({ row: rowIdx, candidateId: cid, message: `Branch '${row.Branch}' not found in branch_master` });
-  if ((row.Process || row.RoleApplied) && !processId) warnings.push({ row: rowIdx, candidateId: cid, message: `Process '${row.Process || row.RoleApplied}' not found in process_master` });
+  if (row.Branch && !branchId)
+    warnings.push({
+      row: rowIdx,
+      candidateId: cid,
+      message: `Branch '${row.Branch}' not found in branch_master`,
+    });
+  if ((row.Process || row.RoleApplied) && !processId)
+    warnings.push({
+      row: rowIdx,
+      candidateId: cid,
+      message: `Process '${row.Process || row.RoleApplied}' not found in process_master`,
+    });
 
   const currentStage = mapStage(row["Walk-in EndStage"] || row.Status);
 
@@ -521,7 +649,7 @@ async function importOneCandidate(
         currentStage,
         row["Rejection VOC"] ?? row.Round1_VOC ?? "",
         existing.id,
-      ]
+      ],
     );
     candidateDbId = existing.id;
 
@@ -529,15 +657,24 @@ async function importOneCandidate(
     await db.execute(
       `INSERT INTO ats_candidate_stage_log (id, candidate_id, to_stage, stage_date, remarks, updated_by)
        VALUES (UUID(), ?, ?, ?, 'Historical import (update)', ?)`,
-      [candidateDbId, currentStage, createdAt, actorUserId]
+      [candidateDbId, currentStage, createdAt, actorUserId],
     );
 
     // Upsert hiring activity for updated candidates too
-    const recruiterUserId = await lookupRecruiter(row.RecruiterAssignedName, row.RecruiterEmail);
+    const recruiterUserId = await lookupRecruiter(
+      row.RecruiterAssignedName,
+      row.RecruiterEmail,
+    );
     await insertHiringActivity(
-      row, candidateDbId, recruiterUserId,
+      row,
+      candidateDbId,
+      recruiterUserId,
       row.RecruiterAssignedName?.trim() || null,
-      actorUserId, createdAt, currentStage, importBatchId, prefetched,
+      actorUserId,
+      createdAt,
+      currentStage,
+      importBatchId,
+      prefetched,
     );
 
     return { action: "updated", warnings };
@@ -554,7 +691,8 @@ async function importOneCandidate(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)`,
     [
       candidateDbId,
-      row.CandidateID?.trim() ?? `IMP-${randomUUID().slice(0, 8).toUpperCase()}`,
+      row.CandidateID?.trim() ??
+        `IMP-${randomUUID().slice(0, 8).toUpperCase()}`,
       toStoredName(row.FullName),
       mobile,
       email ?? null,
@@ -565,26 +703,58 @@ async function importOneCandidate(
       row["Rejection VOC"] ?? row.Round1_VOC ?? null,
       parseHistoricalDate(row.CreatedDate) ?? null,
       createdAt,
-    ]
+    ],
   );
 
   await db.execute(
     `INSERT INTO ats_candidate_stage_log (id, candidate_id, to_stage, stage_date, remarks, updated_by)
      VALUES (UUID(), ?, ?, ?, 'Historical import', ?)`,
-    [candidateDbId, currentStage, createdAt, actorUserId]
+    [candidateDbId, currentStage, createdAt, actorUserId],
   );
 
   // Interview results — one per round
-  const interviewRounds: Array<{ result?: string; voc?: string; remarks?: string; label: string }> = [
-    { result: row.Round1_Result, voc: row.Round1_VOC, remarks: row.Round1_Remarks, label: "Round1" },
-    { result: row.SkillTest_Result, voc: row.SkillTest_VOC, remarks: buildSkillRemarks(row), label: "SkillTest" },
-    { result: row.Round2_Result, voc: row.Round2_VOC, remarks: row.Round2_Remarks, label: "Round2" },
-    { result: row.Round3_Result, voc: row.Round3_VOC, remarks: row.Round3_Remarks, label: "Round3" },
+  const interviewRounds: Array<{
+    result?: string;
+    voc?: string;
+    remarks?: string;
+    label: string;
+  }> = [
+    {
+      result: row.Round1_Result,
+      voc: row.Round1_VOC,
+      remarks: row.Round1_Remarks,
+      label: "Round1",
+    },
+    {
+      result: row.SkillTest_Result,
+      voc: row.SkillTest_VOC,
+      remarks: buildSkillRemarks(row),
+      label: "SkillTest",
+    },
+    {
+      result: row.Round2_Result,
+      voc: row.Round2_VOC,
+      remarks: row.Round2_Remarks,
+      label: "Round2",
+    },
+    {
+      result: row.Round3_Result,
+      voc: row.Round3_VOC,
+      remarks: row.Round3_Remarks,
+      label: "Round3",
+    },
   ];
 
-  const recruiterUserId = await lookupRecruiter(row.RecruiterAssignedName, row.RecruiterEmail);
+  const recruiterUserId = await lookupRecruiter(
+    row.RecruiterAssignedName,
+    row.RecruiterEmail,
+  );
   if ((row.RecruiterAssignedName || row.RecruiterEmail) && !recruiterUserId) {
-    warnings.push({ row: rowIdx, candidateId: cid, message: `Recruiter '${row.RecruiterAssignedName}' not found or ambiguous, assignment skipped (name saved as text)` });
+    warnings.push({
+      row: rowIdx,
+      candidateId: cid,
+      message: `Recruiter '${row.RecruiterAssignedName}' not found or ambiguous, assignment skipped (name saved as text)`,
+    });
   }
 
   for (const round of interviewRounds) {
@@ -606,24 +776,28 @@ async function importOneCandidate(
         `[${round.label}] ${round.remarks ?? ""}`.trim(),
         round.voc ?? null,
         createdAt,
-      ]
+      ],
     );
   }
 
   // Always store the raw recruiter name from the sheet, even if ID lookup failed
   if (row.RecruiterAssignedName?.trim()) {
-    await db.execute(
-      `UPDATE ats_candidate SET recruiter_assigned_name = ? WHERE id = ?`,
-      [row.RecruiterAssignedName.trim(), candidateDbId]
-    ).catch(() => {});
+    await db
+      .execute(
+        `UPDATE ats_candidate SET recruiter_assigned_name = ? WHERE id = ?`,
+        [row.RecruiterAssignedName.trim(), candidateDbId],
+      )
+      .catch(() => {});
   }
 
   // Recruiter assignment
   if (recruiterUserId) {
-    await db.execute(
-      `UPDATE ats_candidate SET assigned_recruiter_id = ? WHERE id = ?`,
-      [recruiterUserId, candidateDbId]
-    ).catch(() => {}); // Column may not exist in all migrations
+    await db
+      .execute(
+        `UPDATE ats_candidate SET assigned_recruiter_id = ? WHERE id = ?`,
+        [recruiterUserId, candidateDbId],
+      )
+      .catch(() => {}); // Column may not exist in all migrations
     await db.execute(
       // Two defects, and fixing only the obvious one still fails. created_at does not exist
       // on this table (it is assigned_at) — but assignment_reason is NOT NULL with no
@@ -632,15 +806,21 @@ async function importOneCandidate(
       `INSERT INTO ats_recruiter_assignment_log
          (id, candidate_id, new_recruiter_id, assigned_by, assigned_at, assignment_reason)
        VALUES (UUID(), ?, ?, ?, ?, 'bulk_import')`,
-      [candidateDbId, recruiterUserId, actorUserId, createdAt]
+      [candidateDbId, recruiterUserId, actorUserId, createdAt],
     );
   }
 
   // Insert into recruiter hiring activity for analytics/funnel tracking
   await insertHiringActivity(
-    row, candidateDbId, recruiterUserId,
+    row,
+    candidateDbId,
+    recruiterUserId,
     row.RecruiterAssignedName?.trim() || null,
-    actorUserId, createdAt, currentStage, importBatchId, prefetched,
+    actorUserId,
+    createdAt,
+    currentStage,
+    importBatchId,
+    prefetched,
   );
 
   return { action: "created", warnings };
@@ -656,62 +836,127 @@ function buildSkillRemarks(row: ImportRow): string {
 
 // ── Employee Auto-Match ──────────────────────────────────────────────────────
 
-async function findEmployeeByMobileOrEmail(mobile: string, email?: string, prefetched?: PrefetchedData): Promise<{ id: string; employee_code: string } | null> {
+async function findEmployeeByMobileOrEmail(
+  mobile: string,
+  email?: string,
+  prefetched?: PrefetchedData,
+): Promise<{ id: string; employee_code: string } | null> {
   if (prefetched) {
-    if (mobile) { const h = prefetched.employeeByMobile.get(mobile); if (h) return h; }
-    if (email) { const h = prefetched.employeeByPersonalEmail.get(email.toLowerCase().trim()); if (h) return h; }
+    if (mobile) {
+      const h = prefetched.employeeByMobile.get(mobile);
+      if (h) return h;
+    }
+    if (email) {
+      const h = prefetched.employeeByPersonalEmail.get(
+        email.toLowerCase().trim(),
+      );
+      if (h) return h;
+    }
     return null;
   }
   if (mobile) {
     // Match by mobile (primary) or alternate_mobile
     const [byMobile] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_code FROM employees WHERE mobile = ? OR alternate_mobile = ? LIMIT 1`,
-      [mobile, mobile]
+      [mobile, mobile],
     );
-    if ((byMobile as RowDataPacket[]).length) return (byMobile as RowDataPacket[])[0] as { id: string; employee_code: string };
+    if ((byMobile as RowDataPacket[]).length)
+      return (byMobile as RowDataPacket[])[0] as {
+        id: string;
+        employee_code: string;
+      };
   }
   if (email) {
     // Match by personal_email — this is what candidates provide pre-onboarding
     // DO NOT match official_email/auth_user.email which is generated post-onboarding
     const [byEmail] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_code FROM employees WHERE personal_email = ? LIMIT 1`,
-      [email.toLowerCase().trim()]
+      [email.toLowerCase().trim()],
     );
-    if ((byEmail as RowDataPacket[]).length) return (byEmail as RowDataPacket[])[0] as { id: string; employee_code: string };
+    if ((byEmail as RowDataPacket[]).length)
+      return (byEmail as RowDataPacket[])[0] as {
+        id: string;
+        employee_code: string;
+      };
   }
   return null;
 }
 
-function deriveHiringFlags(row: ImportRow, currentStage: string): {
-  walkin_flag: number; contacted_flag: number; final_selection_flag: number; joined_flag: number;
-  current_status: string; joining_status: string | null; hr_interview_status: string | null;
+function deriveHiringFlags(
+  row: ImportRow,
+  currentStage: string,
+): {
+  walkin_flag: number;
+  contacted_flag: number;
+  final_selection_flag: number;
+  joined_flag: number;
+  current_status: string;
+  joining_status: string | null;
+  hr_interview_status: string | null;
 } {
-  const endStage = (row["Walk-in EndStage"] || row.Status || "").toLowerCase().trim();
+  const endStage = (row["Walk-in EndStage"] || row.Status || "")
+    .toLowerCase()
+    .trim();
   const finalDecision = (row.FinalDecision || "").toLowerCase().trim();
-  const joiningConfirm = (row["Joining Confirmation"] || "").toLowerCase().trim();
+  const joiningConfirm = (row["Joining Confirmation"] || "")
+    .toLowerCase()
+    .trim();
 
   // Everyone in the CSV was contacted — rejected/hold/not interested/no-show all mean we reached them
   const contacted_flag = 1;
-  const walkin_flag = endStage !== "" && !["no show", "not interested", "not reachable", ""].includes(endStage) ? 1 : 0;
-  const final_selection_flag = ["selected", "offer_extended", "joined", "offered"].includes(finalDecision) ||
-    currentStage === "Offer_Extended" || currentStage === "Onboarded" ? 1 : 0;
-  const joined_flag = joiningConfirm === "yes" || joiningConfirm === "joined" ||
-    finalDecision === "joined" || currentStage === "Onboarded" ? 1 : 0;
+  const walkin_flag =
+    endStage !== "" &&
+    !["no show", "not interested", "not reachable", ""].includes(endStage)
+      ? 1
+      : 0;
+  const final_selection_flag =
+    ["selected", "offer_extended", "joined", "offered"].includes(
+      finalDecision,
+    ) ||
+    currentStage === "Offer_Extended" ||
+    currentStage === "Onboarded"
+      ? 1
+      : 0;
+  const joined_flag =
+    joiningConfirm === "yes" ||
+    joiningConfirm === "joined" ||
+    finalDecision === "joined" ||
+    currentStage === "Onboarded"
+      ? 1
+      : 0;
 
   let current_status = "Contacted";
   if (joined_flag) current_status = "Joined";
   else if (final_selection_flag) current_status = "Selected";
-  else if (endStage.includes("reject") || finalDecision === "rejected") current_status = "Rejected";
-  else if (endStage === "hold" || finalDecision === "hold") current_status = "Hold";
+  else if (endStage.includes("reject") || finalDecision === "rejected")
+    current_status = "Rejected";
+  else if (endStage === "hold" || finalDecision === "hold")
+    current_status = "Hold";
   else if (endStage === "no show") current_status = "No Show";
   else if (endStage === "walkout") current_status = "Walkout";
-  else if (finalDecision === "not interested" || endStage.includes("not interested")) current_status = "Not Interested";
+  else if (
+    finalDecision === "not interested" ||
+    endStage.includes("not interested")
+  )
+    current_status = "Not Interested";
   else if (walkin_flag) current_status = "Walk-in Completed";
 
   const hr_interview_status = row.Round1_Result?.trim() || null;
-  const joining_status = joined_flag ? "Joined" : final_selection_flag ? "Offer Extended" : null;
+  const joining_status = joined_flag
+    ? "Joined"
+    : final_selection_flag
+      ? "Offer Extended"
+      : null;
 
-  return { walkin_flag, contacted_flag, final_selection_flag, joined_flag, current_status, joining_status, hr_interview_status };
+  return {
+    walkin_flag,
+    contacted_flag,
+    final_selection_flag,
+    joined_flag,
+    current_status,
+    joining_status,
+    hr_interview_status,
+  };
 }
 
 async function insertHiringActivity(
@@ -732,10 +977,12 @@ async function insertHiringActivity(
   // Auto-match with employee table via mobile or personal_email
   const employee = await findEmployeeByMobileOrEmail(mobile, email, prefetched);
 
-  const activityDate = parseHistoricalDate(row.CreatedDate) ?? createdAt.split(" ")[0];
+  const activityDate =
+    parseHistoricalDate(row.CreatedDate) ?? createdAt.split(" ")[0];
 
-  await db.execute(
-    `INSERT INTO ats_recruiter_hiring_activity
+  await db
+    .execute(
+      `INSERT INTO ats_recruiter_hiring_activity
       (id, activity_date, activity_month, recruiter_id, recruiter_name_snapshot,
        hiring_source, position_name, location_name, branch_name, process_name,
        candidate_name, gender, mobile, candidate_email,
@@ -747,52 +994,57 @@ async function insertHiringActivity(
        linked_candidate_id, employee_id, joined_candidate_emp_code,
        import_batch_id, source_system, created_by, created_at)
      VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      activityDate,
-      row.CreatedDate ? (row.CreatedDate.substring(0, 7) || null) : null,
-      recruiterUserId,
-      recruiterName || row.RecruiterAssignedName?.trim() || "Unknown",
-      "Bulk Import",
-      row.RoleApplied?.trim() || row.Process?.trim() || "General",
-      row.Branch?.trim() || "Not specified",
-      row.Branch?.trim() || null,
-      row.Process?.trim() || row.RoleApplied?.trim() || "General",
-      row.FullName?.trim() || "",
-      row.Gender?.trim() || null,
-      mobile,
-      row.Email?.trim() || null,
-      row.Education?.trim() || null,
-      row.Experience?.trim() || null,
-      row.Address?.trim() || null,
-      row.RecruiterSelected?.trim() || null,
-      row["Rejection VOC"]?.trim() || row.Round1_VOC?.trim() || null,
-      flags.hr_interview_status,
-      row.Round2_Result?.trim() || null,
-      flags.current_status,
-      flags.joining_status,
-      flags.walkin_flag,
-      flags.contacted_flag,
-      flags.final_selection_flag,
-      flags.joined_flag,
-      candidateDbId,
-      employee?.id || null,
-      employee?.employee_code || null,
-      importBatchId,
-      "BULK_IMPORT",
-      actorUserId,
-      createdAt,
-    ]
-  ).catch((err) => {
-    // Don't fail the whole import if hiring activity insert fails
-    console.warn(`[bulk-import] hiring activity insert failed for row ${row.CandidateID}: ${err.message}`);
-  });
+      [
+        activityDate,
+        row.CreatedDate ? row.CreatedDate.substring(0, 7) || null : null,
+        recruiterUserId,
+        recruiterName || row.RecruiterAssignedName?.trim() || "Unknown",
+        "Bulk Import",
+        row.RoleApplied?.trim() || row.Process?.trim() || "General",
+        row.Branch?.trim() || "Not specified",
+        row.Branch?.trim() || null,
+        row.Process?.trim() || row.RoleApplied?.trim() || "General",
+        row.FullName?.trim() || "",
+        row.Gender?.trim() || null,
+        mobile,
+        row.Email?.trim() || null,
+        row.Education?.trim() || null,
+        row.Experience?.trim() || null,
+        row.Address?.trim() || null,
+        row.RecruiterSelected?.trim() || null,
+        row["Rejection VOC"]?.trim() || row.Round1_VOC?.trim() || null,
+        flags.hr_interview_status,
+        row.Round2_Result?.trim() || null,
+        flags.current_status,
+        flags.joining_status,
+        flags.walkin_flag,
+        flags.contacted_flag,
+        flags.final_selection_flag,
+        flags.joined_flag,
+        candidateDbId,
+        employee?.id || null,
+        employee?.employee_code || null,
+        importBatchId,
+        "BULK_IMPORT",
+        actorUserId,
+        createdAt,
+      ],
+    )
+    .catch((err) => {
+      // Don't fail the whole import if hiring activity insert fails
+      console.warn(
+        `[bulk-import] hiring activity insert failed for row ${row.CandidateID}: ${err.message}`,
+      );
+    });
 
   // Also update ats_candidate with employee_code if found
   if (employee && candidateDbId) {
-    await db.execute(
-      `UPDATE ats_candidate SET employee_code = ? WHERE id = ? AND (employee_code IS NULL OR employee_code = '')`,
-      [employee.employee_code, candidateDbId]
-    ).catch(() => {});
+    await db
+      .execute(
+        `UPDATE ats_candidate SET employee_code = ? WHERE id = ? AND (employee_code IS NULL OR employee_code = '')`,
+        [employee.employee_code, candidateDbId],
+      )
+      .catch(() => {});
   }
 }
 
@@ -810,7 +1062,13 @@ export async function runBulkImport(params: {
   processCache.clear();
 
   const result: ImportResult = {
-    summary: { totalRows: params.rows.length, created: 0, updated: 0, skipped: 0, errors: 0 },
+    summary: {
+      totalRows: params.rows.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      errors: 0,
+    },
     errors: [],
     warnings: [],
   };
@@ -819,42 +1077,57 @@ export async function runBulkImport(params: {
 
   // Pre-fetch all existence + employee lookups in 2 parallel queries instead of 2 per row.
   // For 1000 rows this replaces ~2000 individual SELECTs with 2 bulk SELECTs.
-  const prefetched = params.dryRun ? undefined : await bulkPrefetch(params.rows);
+  const prefetched = params.dryRun
+    ? undefined
+    : await bulkPrefetch(params.rows);
 
   // Larger batches are safe because the expensive per-row SELECTs are now eliminated.
   const BATCH_SIZE = params.dryRun ? 10 : 100;
-  for (let batchStart = 0; batchStart < params.rows.length; batchStart += BATCH_SIZE) {
+  for (
+    let batchStart = 0;
+    batchStart < params.rows.length;
+    batchStart += BATCH_SIZE
+  ) {
     const batch = params.rows.slice(batchStart, batchStart + BATCH_SIZE);
-    await Promise.all(batch.map(async (row, idx) => {
-      const i = batchStart + idx;
-      const rowIdx = i + 2;
+    await Promise.all(
+      batch.map(async (row, idx) => {
+        const i = batchStart + idx;
+        const rowIdx = i + 2;
 
-      const { errors, warnings } = validateRow(row, rowIdx);
-      result.warnings.push(...warnings);
+        const { errors, warnings } = validateRow(row, rowIdx);
+        result.warnings.push(...warnings);
 
-      if (errors.length) {
-        result.errors.push(...errors);
-        result.summary.errors++;
-        return;
-      }
+        if (errors.length) {
+          result.errors.push(...errors);
+          result.summary.errors++;
+          return;
+        }
 
-      try {
-        const { action, warnings: actionWarnings } = await importOneCandidate(row, rowIdx, params.actorUserId, params.dryRun, importBatchId, prefetched);
-        result.warnings.push(...actionWarnings);
-        if (action === "created") result.summary.created++;
-        else if (action === "updated") result.summary.updated++;
-        else result.summary.skipped++;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        result.errors.push({
-          row: rowIdx,
-          candidateId: row.CandidateID ?? `row-${rowIdx}`,
-          field: "db",
-          message: msg,
-        });
-        result.summary.errors++;
-      }
-    }));
+        try {
+          const { action, warnings: actionWarnings } = await importOneCandidate(
+            row,
+            rowIdx,
+            params.actorUserId,
+            params.dryRun,
+            importBatchId,
+            prefetched,
+          );
+          result.warnings.push(...actionWarnings);
+          if (action === "created") result.summary.created++;
+          else if (action === "updated") result.summary.updated++;
+          else result.summary.skipped++;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          result.errors.push({
+            row: rowIdx,
+            candidateId: row.CandidateID ?? `row-${rowIdx}`,
+            field: "db",
+            message: msg,
+          });
+          result.summary.errors++;
+        }
+      }),
+    );
   }
 
   return result;

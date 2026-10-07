@@ -2,7 +2,7 @@
  * Verify July 2026 salary reconciliation between mas_hrms and db_bill
  * Run: node backend/scripts/verify-salary-reconciliation.mjs
  */
-import mysql from 'mysql2/promise';
+import mysql from "mysql2/promise";
 
 // The database password is read from the environment, never written here. This file was one
 // of 13 that had it as a source literal; the repository is public and the same value
@@ -10,18 +10,28 @@ import mysql from 'mysql2/promise';
 // backend/src/db/__tests__/no-hardcoded-credentials.contract.test.ts exists to catch.
 // Run: node --env-file=backend/.env <this script>
 if (!process.env.DB_PASSWORD) {
-  throw new Error('DB_PASSWORD is not set. Run with: node --env-file=backend/.env <script>');
+  throw new Error(
+    "DB_PASSWORD is not set. Run with: node --env-file=backend/.env <script>",
+  );
 }
 
 async function main() {
   const masConn = await mysql.createConnection({
-    host: '122.184.128.90', port: 3306, user: 'shivam_user',
-    password: process.env.DB_PASSWORD, database: 'mas_hrms', connectTimeout: 30000
+    host: "122.184.128.90",
+    port: 3306,
+    user: "shivam_user",
+    password: process.env.DB_PASSWORD,
+    database: "mas_hrms",
+    connectTimeout: 30000,
   });
 
   const billConn = await mysql.createConnection({
-    host: '14.97.30.236', port: 3306, user: 'shivam_user',
-    password: process.env.DB_PASSWORD, database: 'db_bill', connectTimeout: 30000
+    host: "14.97.30.236",
+    port: 3306,
+    user: "shivam_user",
+    password: process.env.DB_PASSWORD,
+    database: "db_bill",
+    connectTimeout: 30000,
   });
 
   try {
@@ -48,24 +58,29 @@ async function main() {
     const billTotal = Number(billRow.total || 0);
     const diff = masTotal - billTotal;
 
-    console.log('=== July 2026 Salary Reconciliation (Post-Fix) ===');
-    console.log('mas_hrms:   ₹' + masTotal.toLocaleString('en-IN'));
-    console.log('db_bill:    ₹' + billTotal.toLocaleString('en-IN'));
-    console.log('Difference: ₹' + diff.toLocaleString('en-IN') + ' (' + ((diff/billTotal)*100).toFixed(2) + '%)');
+    console.log("=== July 2026 Salary Reconciliation (Post-Fix) ===");
+    console.log("mas_hrms:   ₹" + masTotal.toLocaleString("en-IN"));
+    console.log("db_bill:    ₹" + billTotal.toLocaleString("en-IN"));
+    console.log(
+      "Difference: ₹" +
+        diff.toLocaleString("en-IN") +
+        " (" +
+        ((diff / billTotal) * 100).toFixed(2) +
+        "%)",
+    );
 
     if (Math.abs(diff) < 10000) {
-      console.log('\n✓ RECONCILED - Gap is negligible');
+      console.log("\n✓ RECONCILED - Gap is negligible");
     } else {
-      console.log('\n⚠ Gap still exists - investigating...');
+      console.log("\n⚠ Gap still exists - investigating...");
     }
-
   } finally {
     await masConn.end();
     await billConn.end();
   }
 }
 
-main().catch(err => {
-  console.error('Error:', err.message);
+main().catch((err) => {
+  console.error("Error:", err.message);
   process.exit(1);
 });

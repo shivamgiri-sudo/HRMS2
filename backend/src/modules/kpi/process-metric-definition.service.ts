@@ -45,9 +45,13 @@ function toDefinition(row: RowDataPacket): ProcessMetricDefinition {
     // A canonical metric's unit and direction live on kpi_metric_master; a
     // local one carries its own. Prefer the canonical values so a single edit
     // there stays authoritative.
-    unit: (row.canonical_unit as string | null) ?? (row.unit as string | null) ?? null,
+    unit:
+      (row.canonical_unit as string | null) ??
+      (row.unit as string | null) ??
+      null,
     direction:
-      ((row.canonical_direction ?? row.direction) as ProcessMetricDefinition["direction"]) ?? null,
+      ((row.canonical_direction ??
+        row.direction) as ProcessMetricDefinition["direction"]) ?? null,
     displayOrder: Number(row.display_order ?? 100),
     weightage: Number(row.weightage ?? 100),
     isFatal: Boolean(row.is_fatal),

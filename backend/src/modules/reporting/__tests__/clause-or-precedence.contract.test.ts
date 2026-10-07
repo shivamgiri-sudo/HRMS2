@@ -31,8 +31,8 @@ const files = [
   `${R}/report-suite.routes.ts`,
   `${R}/report-suite-highrisk.routes.ts`,
   ...readdirSync(resolve(ROOT, `${R}/executors`))
-    .filter(f => f.endsWith(".executor.ts"))
-    .map(f => `${R}/executors/${f}`),
+    .filter((f) => f.endsWith(".executor.ts"))
+    .map((f) => `${R}/executors/${f}`),
 ];
 
 /** True when the whole expression sits inside ONE balanced pair of parentheses. */
@@ -54,7 +54,10 @@ function fullyWrapped(expr: string): boolean {
 function topLevel(expr: string): string {
   let prev: string | null = null;
   let s = expr;
-  while (s !== prev) { prev = s; s = s.replace(/\([^()]*\)/g, " "); }
+  while (s !== prev) {
+    prev = s;
+    s = s.replace(/\([^()]*\)/g, " ");
+  }
   return s;
 }
 
@@ -62,22 +65,29 @@ describe("WHERE clause OR precedence", () => {
   it("no pushed clause contains an OR outside parentheses", () => {
     const offenders: string[] = [];
     for (const path of files) {
-      read(path).split("\n").forEach((line, i) => {
-        if (/^\s*(\/\/|\*)/.test(line)) return;
-        for (const m of line.matchAll(/clauses\.push\(\s*(["'`])([\s\S]*?)\1/g)) {
-          const expr = m[2];
-          if (!/\bOR\b/i.test(expr)) continue;
-          if (fullyWrapped(expr)) continue;
-          if (!/\bOR\b/i.test(topLevel(expr))) continue;
-          offenders.push(`${path.split("/").pop()}:${i + 1}  ${expr.slice(0, 100)}`);
-        }
-      });
+      read(path)
+        .split("\n")
+        .forEach((line, i) => {
+          if (/^\s*(\/\/|\*)/.test(line)) return;
+          for (const m of line.matchAll(
+            /clauses\.push\(\s*(["'`])([\s\S]*?)\1/g,
+          )) {
+            const expr = m[2];
+            if (!/\bOR\b/i.test(expr)) continue;
+            if (fullyWrapped(expr)) continue;
+            if (!/\bOR\b/i.test(topLevel(expr))) continue;
+            offenders.push(
+              `${path.split("/").pop()}:${i + 1}  ${expr.slice(0, 100)}`,
+            );
+          }
+        });
     }
     expect(
       offenders,
       "these join into the WHERE with AND, which binds tighter than OR, so the clause will " +
         "re-associate and take the row scope or the date filter with it. Wrap the whole " +
-        "expression in parentheses:\n" + offenders.join("\n"),
+        "expression in parentheses:\n" +
+        offenders.join("\n"),
     ).toEqual([]);
   });
 
@@ -89,12 +99,14 @@ describe("WHERE clause OR precedence", () => {
     // was promoted so its download would work. A guard that names the file would have failed on
     // that move and taught the next person to delete it; a guard that follows the clause keeps
     // testing the thing that matters.
-    const wanted = "(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))";
-    const homes = files.filter(p => read(p).includes(wanted));
+    const wanted =
+      "(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))";
+    const homes = files.filter((p) => read(p).includes(wanted));
     expect(
       homes.length,
       "the leaver predicate must exist, parenthesised, in exactly one place. Found in: " +
-        (homes.join(", ") || "nowhere — check whether it was unwrapped or renamed"),
+        (homes.join(", ") ||
+          "nowhere — check whether it was unwrapped or renamed"),
     ).toBe(1);
   });
 });

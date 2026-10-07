@@ -11,9 +11,18 @@ import fs from "fs";
 import path from "path";
 
 const MOD = path.resolve(__dirname, "..", "modules", "it-provisioning");
-const svc = fs.readFileSync(path.join(MOD, "notification-recipients.service.ts"), "utf8");
-const prov = fs.readFileSync(path.join(MOD, "it-provisioning.service.ts"), "utf8");
-const routes = fs.readFileSync(path.join(MOD, "notification-recipients.routes.ts"), "utf8");
+const svc = fs.readFileSync(
+  path.join(MOD, "notification-recipients.service.ts"),
+  "utf8",
+);
+const prov = fs.readFileSync(
+  path.join(MOD, "it-provisioning.service.ts"),
+  "utf8",
+);
+const routes = fs.readFileSync(
+  path.join(MOD, "notification-recipients.routes.ts"),
+  "utf8",
+);
 const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
 
 describe("configuration wins over inference", () => {
@@ -22,11 +31,15 @@ describe("configuration wins over inference", () => {
     const end = prov.indexOf("async function resolveUsers");
     const body = prov.slice(at, end > at ? end : undefined);
     expect(body.indexOf("getConfiguredRecipients")).toBeGreaterThan(-1);
-    expect(body.indexOf("getConfiguredRecipients")).toBeLessThan(body.indexOf("getUsersForBranchRole"));
+    expect(body.indexOf("getConfiguredRecipients")).toBeLessThan(
+      body.indexOf("getUsersForBranchRole"),
+    );
   });
 
   it("passes the event code, so config is per task not per role", () => {
-    expect(prov).toMatch(/resolveTaskRecipients\(task\.assignedRole, branchId, task\.taskCode\)/);
+    expect(prov).toMatch(
+      /resolveTaskRecipients\(task\.assignedRole, branchId, task\.taskCode\)/,
+    );
   });
 
   it("returns null rather than an empty list when nothing is configured", () => {
@@ -43,11 +56,15 @@ describe("configuration wins over inference", () => {
 
 describe("recipients that are not employees", () => {
   it("accepts a plain address as well as a linked employee", () => {
-    expect(code(svc)).toMatch(/employee_id IS NOT NULL OR email IS NOT NULL|!employeeId && !email/);
+    expect(code(svc)).toMatch(
+      /employee_id IS NOT NULL OR email IS NOT NULL|!employeeId && !email/,
+    );
   });
 
   it("resolves an employee's login email, or the free-text one", () => {
-    expect(code(svc)).toContain("COALESCE(NULLIF(TRIM(r.email), ''), au.email)");
+    expect(code(svc)).toContain(
+      "COALESCE(NULLIF(TRIM(r.email), ''), au.email)",
+    );
   });
 
   it("skips the inbox item for a mailbox with no login", () => {
@@ -65,7 +82,9 @@ describe("safety", () => {
 
   it("deactivates rather than deletes", () => {
     // Who used to receive a notification is part of the audit trail.
-    expect(code(svc)).toMatch(/UPDATE branch_notification_recipient\s*\n?\s*SET active_status = 0/);
+    expect(code(svc)).toMatch(
+      /UPDATE branch_notification_recipient\s*\n?\s*SET active_status = 0/,
+    );
   });
 
   it("restricts configuration to super admins", () => {

@@ -87,7 +87,9 @@ function numberValue(value: unknown): number {
 }
 
 /** Reused verbatim from business-actions.signal-sync.ts's syncRosterShortages. Do not invent new bands. */
-export function classifyShortageSeverity(shortage: number): RosterShortageSeverity {
+export function classifyShortageSeverity(
+  shortage: number,
+): RosterShortageSeverity {
   if (shortage > 10) return "critical";
   if (shortage > 5) return "high";
   return "medium";
@@ -101,26 +103,33 @@ function severityRank(severity: RosterShortageSeverity | null): number {
 }
 
 function hasScope(scopeIds: RosterScopeIds): boolean {
-  return Boolean(scopeIds.processIds?.length) || Boolean(scopeIds.branchIds?.length);
+  return (
+    Boolean(scopeIds.processIds?.length) || Boolean(scopeIds.branchIds?.length)
+  );
 }
 
-function buildSlotScopeClause(scopeIds: RosterScopeIds, alias: string): { sql: string; params: unknown[] } {
+function buildSlotScopeClause(
+  scopeIds: RosterScopeIds,
+  alias: string,
+): { sql: string; params: unknown[] } {
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (scopeIds.processIds?.length) {
-    clauses.push(`${alias}.process_id IN (${scopeIds.processIds.map(() => "?").join(",")})`);
+    clauses.push(
+      `${alias}.process_id IN (${scopeIds.processIds.map(() => "?").join(",")})`,
+    );
     params.push(...scopeIds.processIds);
   }
   if (scopeIds.branchIds?.length) {
-    clauses.push(`${alias}.branch_id IN (${scopeIds.branchIds.map(() => "?").join(",")})`);
+    clauses.push(
+      `${alias}.branch_id IN (${scopeIds.branchIds.map(() => "?").join(",")})`,
+    );
     params.push(...scopeIds.branchIds);
   }
   return { sql: clauses.length ? `AND ${clauses.join(" AND ")}` : "", params };
 }
 
-async function buildLookingAheadForecast(
-  scopeIds: RosterScopeIds,
-): Promise<{
+async function buildLookingAheadForecast(scopeIds: RosterScopeIds): Promise<{
   lookingAhead: RosterSlotForecast[];
   uncoveredHc: number;
   worstSeverity: RosterShortageSeverity | null;
@@ -131,7 +140,11 @@ async function buildLookingAheadForecast(
       lookingAhead: [],
       uncoveredHc: 0,
       worstSeverity: null,
-      health: { module: "roster_forecast", state: "NOT_APPLICABLE", detail: "No process/branch scope supplied" },
+      health: {
+        module: "roster_forecast",
+        state: "NOT_APPLICABLE",
+        detail: "No process/branch scope supplied",
+      },
     };
   }
   const scope = buildSlotScopeClause(scopeIds, "wsr");
@@ -152,31 +165,40 @@ async function buildLookingAheadForecast(
     );
     let uncoveredHc = 0;
     let worstSeverity: RosterShortageSeverity | null = null;
-    const lookingAhead: RosterSlotForecast[] = (rows as RowDataPacket[]).map((r) => {
-      const requiredHc = numberValue(r.required_hc);
-      const scheduledHc = numberValue(r.scheduled_hc);
-      const shortage = requiredHc - scheduledHc;
-      let severity: RosterShortageSeverity | null = null;
-      if (shortage > 0) {
-        severity = classifyShortageSeverity(shortage);
-        uncoveredHc += shortage;
-        if (severityRank(severity) > severityRank(worstSeverity)) worstSeverity = severity;
-      }
-      return {
-        requirementDate: String(r.requirement_date),
-        processId: r.process_id ? String(r.process_id) : null,
-        processName: r.process_name ? String(r.process_name) : null,
-        requiredHc,
-        scheduledHc,
-        coverageDelta: r.coverage_delta === null || r.coverage_delta === undefined ? null : numberValue(r.coverage_delta),
-        severity,
-      };
-    });
+    const lookingAhead: RosterSlotForecast[] = (rows as RowDataPacket[]).map(
+      (r) => {
+        const requiredHc = numberValue(r.required_hc);
+        const scheduledHc = numberValue(r.scheduled_hc);
+        const shortage = requiredHc - scheduledHc;
+        let severity: RosterShortageSeverity | null = null;
+        if (shortage > 0) {
+          severity = classifyShortageSeverity(shortage);
+          uncoveredHc += shortage;
+          if (severityRank(severity) > severityRank(worstSeverity))
+            worstSeverity = severity;
+        }
+        return {
+          requirementDate: String(r.requirement_date),
+          processId: r.process_id ? String(r.process_id) : null,
+          processName: r.process_name ? String(r.process_name) : null,
+          requiredHc,
+          scheduledHc,
+          coverageDelta:
+            r.coverage_delta === null || r.coverage_delta === undefined
+              ? null
+              : numberValue(r.coverage_delta),
+          severity,
+        };
+      },
+    );
     return {
       lookingAhead,
       uncoveredHc,
       worstSeverity,
-      health: { module: "roster_forecast", state: lookingAhead.length > 0 ? "AVAILABLE" : "NO_DATA" },
+      health: {
+        module: "roster_forecast",
+        state: lookingAhead.length > 0 ? "AVAILABLE" : "NO_DATA",
+      },
     };
   } catch (err) {
     return {
@@ -192,9 +214,7 @@ async function buildLookingAheadForecast(
   }
 }
 
-async function buildPendingAcknowledgement(
-  scopeIds: RosterScopeIds,
-): Promise<{
+async function buildPendingAcknowledgement(scopeIds: RosterScopeIds): Promise<{
   pending: BriefSignal | null;
   rejected: BriefSignal | null;
   health: SourceHealth;
@@ -203,7 +223,11 @@ async function buildPendingAcknowledgement(
     return {
       pending: null,
       rejected: null,
-      health: { module: "roster_acknowledgement", state: "NOT_APPLICABLE", detail: "No process/branch scope supplied" },
+      health: {
+        module: "roster_acknowledgement",
+        state: "NOT_APPLICABLE",
+        detail: "No process/branch scope supplied",
+      },
     };
   }
   const clauses: string[] = [];
@@ -233,9 +257,22 @@ async function buildPendingAcknowledgement(
     const pendingCount = numberValue(row.pending_count);
     const rejectedCount = numberValue(row.rejected_count);
     return {
-      pending: { key: "roster_pending_ack", label: "Pending roster acknowledgement/rejection (next 7 days)", value: pendingCount, unit: "count" },
-      rejected: { key: "roster_rejected_by_employee", label: "Rejected by employee, needs manager action", value: rejectedCount, unit: "count" },
-      health: { module: "roster_acknowledgement", state: pendingCount > 0 ? "AVAILABLE" : "NO_DATA" },
+      pending: {
+        key: "roster_pending_ack",
+        label: "Pending roster acknowledgement/rejection (next 7 days)",
+        value: pendingCount,
+        unit: "count",
+      },
+      rejected: {
+        key: "roster_rejected_by_employee",
+        label: "Rejected by employee, needs manager action",
+        value: rejectedCount,
+        unit: "count",
+      },
+      health: {
+        module: "roster_acknowledgement",
+        state: pendingCount > 0 ? "AVAILABLE" : "NO_DATA",
+      },
     };
   } catch (err) {
     return {
@@ -263,14 +300,22 @@ export async function buildRosterModule(
   // own data is forward-looking (next 1-7 days from *today*, not from reportingDate), but
   // the parameter is threaded through and stamped onto sourceHealth.asOfDate so the health
   // block reads consistently with the other daily-brief modules' convention.
-  const sourceHealth: SourceHealth[] = [forecastResult.health, ackResult.health].map((h) => ({
+  const sourceHealth: SourceHealth[] = [
+    forecastResult.health,
+    ackResult.health,
+  ].map((h) => ({
     ...h,
     asOfDate: h.asOfDate ?? reportingDate,
   }));
 
   return {
     lookingAhead: forecastResult.lookingAhead,
-    uncoveredHc: { key: "roster_uncovered_hc", label: "Uncovered HC (next 7 days)", value: forecastResult.uncoveredHc, unit: "count" },
+    uncoveredHc: {
+      key: "roster_uncovered_hc",
+      label: "Uncovered HC (next 7 days)",
+      value: forecastResult.uncoveredHc,
+      unit: "count",
+    },
     worstSeverity: forecastResult.worstSeverity,
     pendingAcknowledgement: ackResult.pending,
     pendingRejectedByEmployee: ackResult.rejected,

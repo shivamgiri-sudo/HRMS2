@@ -1,63 +1,94 @@
-import { Router, type Request, type Response, type NextFunction, type RequestHandler } from 'express';
-import { requireAuth } from '../../middleware/authMiddleware.js';
-import { requireRole } from '../../middleware/requireRole.js';
-import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import {
-  sendOnboardingToken, validateToken, submitProfile,
-  listOnboardingRequests, saveOffer,
-  listPendingApprovals, approveOffer, rejectOffer,
+  Router,
+  type Request,
+  type Response,
+  type NextFunction,
+  type RequestHandler,
+} from "express";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  sendOnboardingToken,
+  validateToken,
+  submitProfile,
+  listOnboardingRequests,
+  saveOffer,
+  listPendingApprovals,
+  approveOffer,
+  rejectOffer,
   sendOnboardingProgressReminder,
-  markCandidateNotJoining, clearCandidateNotJoining,
+  markCandidateNotJoining,
+  clearCandidateNotJoining,
   changeCandidateBranch,
-} from './ats.onboarding.service.js';
-import { calculateSalary } from './salary.calculator.js';
-import { parseCtcInput } from './ctc-parser.js';
-import { resolveBandPct } from './band-package-ratio.service.js';
-import { buildScopeWhereClause, hasScopedAccess, hasAnyRole } from '../../shared/scopeAccess.js';
-import { db } from '../../db/mysql.js';
-import { RowDataPacket } from 'mysql2';
-import { atsService } from './ats.service.js';
-import { resolveRecruiterForActor } from '../ats-full-parity/recruiterInterview.service.js';
-import { z } from 'zod';
+} from "./ats.onboarding.service.js";
+import { calculateSalary } from "./salary.calculator.js";
+import { parseCtcInput } from "./ctc-parser.js";
+import { resolveBandPct } from "./band-package-ratio.service.js";
+import {
+  buildScopeWhereClause,
+  hasScopedAccess,
+  hasAnyRole,
+} from "../../shared/scopeAccess.js";
+import { db } from "../../db/mysql.js";
+import { RowDataPacket } from "mysql2";
+import { atsService } from "./ats.service.js";
+import { resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
+import { z } from "zod";
 
 const router = Router();
 
 type AsyncHandler = (req: Request, res: Response) => Promise<void>;
 
-const h = (fn: AsyncHandler): RequestHandler =>
+const h =
+  (fn: AsyncHandler): RequestHandler =>
   (req: Request, res: Response, next: NextFunction) => {
     void fn(req, res).catch(next);
   };
 
 /** Resolves a branch's state name, for state-specific Professional Tax lookup. */
 async function resolveBranchState(branchId: string): Promise<string | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT state FROM branch_master WHERE id = ? LIMIT 1`,
-    [branchId],
-  ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT state FROM branch_master WHERE id = ? LIMIT 1`,
+      [branchId],
+    )
+    .catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
   return (rows as RowDataPacket[])[0]?.state ?? null;
 }
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
-router.get('/validate-token', h(async (req, res) => {
-  const token = String(req.query.token ?? '');
-  if (!token) { res.status(400).json({ error: 'token required' }); return; }
-  const data = await validateToken(token);
-  res.json({ ok: true, data });
-}));
+router.get(
+  "/validate-token",
+  h(async (req, res) => {
+    const token = String(req.query.token ?? "");
+    if (!token) {
+      res.status(400).json({ error: "token required" });
+      return;
+    }
+    const data = await validateToken(token);
+    res.json({ ok: true, data });
+  }),
+);
 
-router.post('/submit-profile', h(async (req, res) => {
-  const { token, ...profile } = req.body;
-  if (!token) { res.status(400).json({ error: 'token required' }); return; }
-  const result = await submitProfile(token, profile);
-  res.json({ ok: true, ...result });
-}));
+router.post(
+  "/submit-profile",
+  h(async (req, res) => {
+    const { token, ...profile } = req.body;
+    if (!token) {
+      res.status(400).json({ error: "token required" });
+      return;
+    }
+    const result = await submitProfile(token, profile);
+    res.json({ ok: true, ...result });
+  }),
+);
 
 // ── HR ────────────────────────────────────────────────────────────────────────
 
 router.post(
-  '/send-token/:candidateId',
+  "/send-token/:candidateId",
   requireAuth,
   // branch_hr and payroll_head added so branch payroll HR can resend an onboarding link for
   // their own branch's candidates, and payroll_head org-wide — previously neither role was
@@ -68,7 +99,20 @@ router.post(
   // designation (per the live role matrix, uat/UAT_ROLE_MATRIX.csv) can resend the onboarding
   // link, not just the base 'hr' role — previously an hr_head or hr_admin user, despite being
   // HR, would 403 the same way branch_hr/payroll_head did before the fix above.
-  requireRole('hr', 'hr_admin', 'hr_branch', 'hr_head', 'ho_hr', 'recruitment_hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
+  requireRole(
+    "hr",
+    "hr_admin",
+    "hr_branch",
+    "hr_head",
+    "ho_hr",
+    "recruitment_hr",
+    "recruiter",
+    "admin",
+    "super_admin",
+    "payroll_hr",
+    "branch_hr",
+    "payroll_head",
+  ),
   h(async (req: AuthenticatedRequest, res) => {
     const candidateId = req.params!.candidateId;
     const userId = req.authUser!.id;
@@ -76,7 +120,7 @@ router.post(
     // Row-scope: load candidate's branch/process, then verify actor has access
     const cand = await atsService.getCandidate(candidateId);
     if (cand.active_status === 0) {
-      res.status(404).json({ ok: false, error: 'Candidate not found' });
+      res.status(404).json({ ok: false, error: "Candidate not found" });
       return;
     }
     // Every HR-department designation gets org-wide access to resend onboarding links,
@@ -88,7 +132,13 @@ router.post(
     // unconditional bypass — not a branch-scoped decision the way most other row-scope checks
     // in this codebase are, because onboarding is a company-wide HR function, not a branch one.
     const isHrDepartment = await hasAnyRole(
-      userId, 'hr', 'hr_admin', 'hr_branch', 'hr_head', 'ho_hr', 'recruitment_hr',
+      userId,
+      "hr",
+      "hr_admin",
+      "hr_branch",
+      "hr_head",
+      "ho_hr",
+      "recruitment_hr",
     );
 
     // hasScopedAccess does a raw role_key match (no legacy-alias normalization, unlike
@@ -102,35 +152,53 @@ router.post(
     // Non-HR-department roles (recruiter/branch_hr/payroll_head/payroll_hr) stay properly
     // branch/process-scoped below — the org-wide bypass above is deliberately narrower than
     // requireRole's full list.
-    const allowed = isHrDepartment || await hasScopedAccess(
-      userId,
-      ['recruiter', 'branch_hr', 'payroll_head', 'payroll_hr'],
-      { branchId: cand.applied_for_branch, processId: cand.applied_for_process },
-      { allowAdminBypass: true },
-    );
+    const allowed =
+      isHrDepartment ||
+      (await hasScopedAccess(
+        userId,
+        ["recruiter", "branch_hr", "payroll_head", "payroll_hr"],
+        {
+          branchId: cand.applied_for_branch,
+          processId: cand.applied_for_process,
+        },
+        { allowAdminBypass: true },
+      ));
     const recruiterProfile = await resolveRecruiterForActor(userId);
     const candidateRecord = cand as unknown as Record<string, unknown>;
     const assignedRecruiterIds = [
       candidateRecord.recruiter_id,
       candidateRecord.recruiter_assigned_id,
       candidateRecord.assigned_recruiter_id,
-    ].filter(Boolean).map(String);
+    ]
+      .filter(Boolean)
+      .map(String);
     const isAssignedRecruiter = recruiterProfile
-      ? assignedRecruiterIds.includes(String(recruiterProfile.id))
-        || String(candidateRecord.recruiter_assigned_name ?? candidateRecord.recruiter_name ?? '').trim() === recruiterProfile.name
+      ? assignedRecruiterIds.includes(String(recruiterProfile.id)) ||
+        String(
+          candidateRecord.recruiter_assigned_name ??
+            candidateRecord.recruiter_name ??
+            "",
+        ).trim() === recruiterProfile.name
       : false;
     if (!allowed && !isAssignedRecruiter) {
-      res.status(403).json({ ok: false, error: 'Access denied' });
+      res.status(403).json({ ok: false, error: "Access denied" });
       return;
     }
 
     const rawEmail = (req.body as Record<string, unknown> | undefined)?.email;
-    const overrideEmail = typeof rawEmail === 'string' && rawEmail.trim() ? rawEmail.trim() : undefined;
+    const overrideEmail =
+      typeof rawEmail === "string" && rawEmail.trim()
+        ? rawEmail.trim()
+        : undefined;
     if (overrideEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(overrideEmail)) {
-      res.status(400).json({ ok: false, error: 'Invalid email address' });
+      res.status(400).json({ ok: false, error: "Invalid email address" });
       return;
     }
-    const result = await sendOnboardingToken(candidateId, userId, overrideEmail);
+    const result = await sendOnboardingToken(
+      candidateId,
+      userId,
+      overrideEmail,
+    );
     // ok stays true — the token itself IS generated either way, that half of the action
     // succeeded. What used to be missing is emailSent/emailError/smsSent, now included via
     // ...result: HR saw "link sent" on every SMTP failure before this, including a 30+ minute
@@ -141,17 +209,25 @@ router.post(
 );
 
 router.get(
-  '/requests',
+  "/requests",
   requireAuth,
   // Same branch_hr/payroll_head addition as POST /send-token above — this is the listing
   // endpoint the Onboarding Requests page calls, so without it here too the page would load
   // (branch_hr already has the page grant) but show an empty/403 list.
-  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
+  requireRole(
+    "hr",
+    "recruiter",
+    "admin",
+    "super_admin",
+    "payroll_hr",
+    "branch_hr",
+    "payroll_head",
+  ),
   h(async (req: AuthenticatedRequest, res) => {
     const scopeFilter = await buildScopeWhereClause(
       req.authUser!.id,
-      ['hr', 'recruiter', 'branch_hr', 'payroll_head', 'payroll_hr'],
-      { branchId: 'r.branch_id' },
+      ["hr", "recruiter", "branch_hr", "payroll_head", "payroll_hr"],
+      { branchId: "r.branch_id" },
       { allowAdminBypass: true },
     );
     const rows = await listOnboardingRequests(scopeFilter);
@@ -161,31 +237,63 @@ router.get(
 
 // ── Offer audit: all submitted/draft offers with every field, for management review ──
 router.get(
-  '/offer-audit',
+  "/offer-audit",
   requireAuth,
-  requireRole('hr', 'hr_admin', 'hr_head', 'ho_hr', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
+  requireRole(
+    "hr",
+    "hr_admin",
+    "hr_head",
+    "ho_hr",
+    "admin",
+    "super_admin",
+    "payroll_hr",
+    "branch_hr",
+    "payroll_head",
+  ),
   h(async (req: AuthenticatedRequest, res) => {
     const scopeFilter = await buildScopeWhereClause(
       req.authUser!.id,
-      ['branch_hr', 'payroll_head', 'payroll_hr'],
-      { branchId: 'r.branch_id' },
+      ["branch_hr", "payroll_head", "payroll_hr"],
+      { branchId: "r.branch_id" },
       { allowAdminBypass: true },
     );
 
     const conditions: string[] = [];
     const params: unknown[] = [];
 
-    if (scopeFilter.sql && scopeFilter.sql !== '1=1') { conditions.push(scopeFilter.sql); params.push(...(scopeFilter.params ?? [])); }
+    if (scopeFilter.sql && scopeFilter.sql !== "1=1") {
+      conditions.push(scopeFilter.sql);
+      params.push(...(scopeFilter.params ?? []));
+    }
 
-    const { branch_id, branch_name, status, from_date, to_date, search } = req.query;
-    if (branch_id)  { conditions.push('r.branch_id = ?');                               params.push(branch_id); }
-    if (branch_name) { conditions.push('b.branch_name = ?');                            params.push(branch_name); }
-    if (status)     { conditions.push('o.status = ?');                                  params.push(status); }
-    if (from_date)  { conditions.push('DATE(o.created_at) >= ?');                       params.push(from_date); }
-    if (to_date)    { conditions.push('DATE(o.created_at) <= ?');                       params.push(to_date); }
-    if (search)     { conditions.push('(c.full_name LIKE ? OR c.candidate_code LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+    const { branch_id, branch_name, status, from_date, to_date, search } =
+      req.query;
+    if (branch_id) {
+      conditions.push("r.branch_id = ?");
+      params.push(branch_id);
+    }
+    if (branch_name) {
+      conditions.push("b.branch_name = ?");
+      params.push(branch_name);
+    }
+    if (status) {
+      conditions.push("o.status = ?");
+      params.push(status);
+    }
+    if (from_date) {
+      conditions.push("DATE(o.created_at) >= ?");
+      params.push(from_date);
+    }
+    if (to_date) {
+      conditions.push("DATE(o.created_at) <= ?");
+      params.push(to_date);
+    }
+    if (search) {
+      conditions.push("(c.full_name LIKE ? OR c.candidate_code LIKE ?)");
+      params.push(`%${search}%`, `%${search}%`);
+    }
 
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -260,17 +368,24 @@ router.get(
 );
 
 router.post(
-  '/calculate-salary',
+  "/calculate-salary",
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
+  requireRole("hr", "recruiter", "admin", "super_admin", "payroll_hr"),
   h(async (req, res) => {
-    const { ctc, bandCode, isMetro, pf_eligible, esi_eligible, branch_id } = req.body;
-    if (!ctc || !bandCode) { res.status(400).json({ error: 'ctc and bandCode required' }); return; }
+    const { ctc, bandCode, isMetro, pf_eligible, esi_eligible, branch_id } =
+      req.body;
+    if (!ctc || !bandCode) {
+      res.status(400).json({ error: "ctc and bandCode required" });
+      return;
+    }
     // Defensive parse -- see ctc-parser.ts. The current frontend already sends a
     // computed number, but a comma/period-grouped string reaching this endpoint
     // directly must not silently corrupt the preview the way a bare Number() would.
     const annualCtc = parseCtcInput(ctc);
-    if (annualCtc === null || annualCtc <= 0) { res.status(400).json({ error: `ctc "${ctc}" is not a valid amount` }); return; }
+    if (annualCtc === null || annualCtc <= 0) {
+      res.status(400).json({ error: `ctc "${ctc}" is not a valid amount` });
+      return;
+    }
     // Same source as saveOffer() -- see band-package-ratio.service.ts -- so this
     // preview never disagrees with what actually gets saved a moment later.
     const band = await resolveBandPct(String(bandCode), annualCtc / 12);
@@ -278,34 +393,62 @@ router.post(
     // the field -- only an explicit false previews an opted-out candidate.
     const pfEligible = pf_eligible !== false && pf_eligible !== 0;
     const esiEligible = esi_eligible !== false && esi_eligible !== 0;
-    const stateCode = branch_id ? await resolveBranchState(String(branch_id)) : null;
-    const components = await calculateSalary(annualCtc, band.basicPct, band.hraPct, Boolean(isMetro), undefined, pfEligible, esiEligible, stateCode);
+    const stateCode = branch_id
+      ? await resolveBranchState(String(branch_id))
+      : null;
+    const components = await calculateSalary(
+      annualCtc,
+      band.basicPct,
+      band.hraPct,
+      Boolean(isMetro),
+      undefined,
+      pfEligible,
+      esiEligible,
+      stateCode,
+    );
     res.json({ ok: true, components });
   }),
 );
 
 router.post(
-  '/requests/:id/offer',
+  "/requests/:id/offer",
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
+  requireRole("hr", "recruiter", "admin", "super_admin", "payroll_hr"),
   h(async (req: AuthenticatedRequest, res) => {
     const { submit, ...offerData } = req.body;
     // Require cost_centre when submitting (not just saving draft)
     if (submit && !offerData.cost_centre) {
-      res.status(400).json({ ok: false, error: 'Cost Centre is required to submit an offer' });
+      res
+        .status(400)
+        .json({
+          ok: false,
+          error: "Cost Centre is required to submit an offer",
+        });
       return;
     }
-    const result = await saveOffer(req.params!.id, offerData, req.authUser!.id, Boolean(submit), req.authUser!.roles);
+    const result = await saveOffer(
+      req.params!.id,
+      offerData,
+      req.authUser!.id,
+      Boolean(submit),
+      req.authUser!.roles,
+    );
     res.json({ ok: true, ...result });
   }),
 );
 
 router.patch(
-  '/requests/:id/offer',
+  "/requests/:id/offer",
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
+  requireRole("hr", "recruiter", "admin", "super_admin", "payroll_hr"),
   h(async (req: AuthenticatedRequest, res) => {
-    const result = await saveOffer(req.params!.id, req.body, req.authUser!.id, false, req.authUser!.roles);
+    const result = await saveOffer(
+      req.params!.id,
+      req.body,
+      req.authUser!.id,
+      false,
+      req.authUser!.roles,
+    );
     res.json({ ok: true, ...result });
   }),
 );
@@ -313,47 +456,58 @@ router.patch(
 // ── Send onboarding link (status=selected gate) ──────────────────────────────
 
 router.post(
-  '/candidates/:id/send-onboarding-link',
+  "/candidates/:id/send-onboarding-link",
   requireAuth,
-  requireRole('recruiter', 'hr', 'admin', 'super_admin'),
+  requireRole("recruiter", "hr", "admin", "super_admin"),
   h(async (req: AuthenticatedRequest, res) => {
     const { id } = req.params!;
-    const { db: database } = await import('../../db/mysql.js');
+    const { db: database } = await import("../../db/mysql.js");
     const [rows] = await database.execute<RowDataPacket[]>(
-      'SELECT status FROM ats_candidate WHERE id = ? AND active_status = 1 LIMIT 1',
+      "SELECT status FROM ats_candidate WHERE id = ? AND active_status = 1 LIMIT 1",
       [id],
     );
     if (!Array.isArray(rows) || !rows.length) {
-      res.status(404).json({ success: false, message: 'Candidate not found' });
+      res.status(404).json({ success: false, message: "Candidate not found" });
       return;
     }
-    const currentStatus = (rows[0] as RowDataPacket & { status?: string | null }).status;
-    if (currentStatus !== 'selected') {
+    const currentStatus = (
+      rows[0] as RowDataPacket & { status?: string | null }
+    ).status;
+    if (currentStatus !== "selected") {
       res.status(400).json({
         success: false,
-        message: 'Candidate must be in selected status before sending onboarding link',
+        message:
+          "Candidate must be in selected status before sending onboarding link",
         current_status: currentStatus,
       });
       return;
     }
     // Delegate to the canonical sendOnboardingToken so ats_onboarding_request,
     // ats_onboarding_bridge, and ats_candidate.profile_status are all written correctly.
-    const { sendOnboardingToken } = await import('./ats.onboarding.service.js');
+    const { sendOnboardingToken } = await import("./ats.onboarding.service.js");
     const result = await sendOnboardingToken(id, req.authUser!.id);
-    const baseUrl = process.env.FRONTEND_URL ?? 'http://localhost:8085';
+    const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:8085";
     const link = `${baseUrl}/onboard-full?token=${result.token}`;
-    res.json({ success: true, link, token: result.token, expires_at: result.expiresAt });
+    res.json({
+      success: true,
+      link,
+      token: result.token,
+      expires_at: result.expiresAt,
+    });
   }),
 );
 
 // ── Send Progress Reminder to Candidate ──────────────────────────────────────
 
 router.post(
-  '/candidates/:id/send-reminder',
+  "/candidates/:id/send-reminder",
   requireAuth,
-  requireRole('recruiter', 'hr', 'admin', 'super_admin'),
+  requireRole("recruiter", "hr", "admin", "super_admin"),
   h(async (req: AuthenticatedRequest, res) => {
-    const result = await sendOnboardingProgressReminder(req.params!.id, req.authUser!.id);
+    const result = await sendOnboardingProgressReminder(
+      req.params!.id,
+      req.authUser!.id,
+    );
     res.json({ ok: true, ...result });
   }),
 );
@@ -365,22 +519,29 @@ router.post(
 // approve/reject/hr_review decision, since this is the same kind of
 // decisive, terminal state-change.
 router.patch(
-  '/candidates/:id/not-joining',
+  "/candidates/:id/not-joining",
   requireAuth,
-  requireRole('admin', 'super_admin', 'hr'),
+  requireRole("admin", "super_admin", "hr"),
   h(async (req: AuthenticatedRequest, res) => {
-    const reason = String(req.body?.reason ?? '');
-    const result = await markCandidateNotJoining(req.params!.id, req.authUser!.id, reason);
+    const reason = String(req.body?.reason ?? "");
+    const result = await markCandidateNotJoining(
+      req.params!.id,
+      req.authUser!.id,
+      reason,
+    );
     res.json({ ok: true, ...result });
   }),
 );
 
 router.patch(
-  '/candidates/:id/not-joining/clear',
+  "/candidates/:id/not-joining/clear",
   requireAuth,
-  requireRole('admin', 'super_admin', 'hr'),
+  requireRole("admin", "super_admin", "hr"),
   h(async (req: AuthenticatedRequest, res) => {
-    const result = await clearCandidateNotJoining(req.params!.id, req.authUser!.id);
+    const result = await clearCandidateNotJoining(
+      req.params!.id,
+      req.authUser!.id,
+    );
     res.json({ ok: true, ...result });
   }),
 );
@@ -394,14 +555,22 @@ router.patch(
 // branch HR's queue the candidate appears in, so it stays admin/super_admin/hr
 // only, mandatory reason, audited via changeCandidateBranch().
 router.patch(
-  '/candidates/:id/branch',
+  "/candidates/:id/branch",
   requireAuth,
-  requireRole('admin', 'super_admin', 'hr'),
+  requireRole("admin", "super_admin", "hr"),
   h(async (req: AuthenticatedRequest, res) => {
-    const branchId = String(req.body?.branchId ?? '');
-    const reason = String(req.body?.reason ?? '');
-    if (!branchId) { res.status(400).json({ ok: false, message: 'branchId is required' }); return; }
-    const result = await changeCandidateBranch(req.params!.id, branchId, req.authUser!.id, reason);
+    const branchId = String(req.body?.branchId ?? "");
+    const reason = String(req.body?.reason ?? "");
+    if (!branchId) {
+      res.status(400).json({ ok: false, message: "branchId is required" });
+      return;
+    }
+    const result = await changeCandidateBranch(
+      req.params!.id,
+      branchId,
+      req.authUser!.id,
+      reason,
+    );
     res.json({ ok: true, ...result });
   }),
 );
@@ -409,14 +578,14 @@ router.patch(
 // ── Branch Head ───────────────────────────────────────────────────────────────
 
 router.get(
-  '/pending-approval',
+  "/pending-approval",
   requireAuth,
-  requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
+  requireRole("branch_head", "admin", "super_admin", "hr", "payroll_hr"),
   h(async (req: AuthenticatedRequest, res) => {
     const scopeFilter = await buildScopeWhereClause(
       req.authUser!.id,
-      ['branch_head'],
-      { branchId: 'r.branch_id' },
+      ["branch_head"],
+      { branchId: "r.branch_id" },
       { allowAdminBypass: true },
     );
     const rows = await listPendingApprovals(scopeFilter);
@@ -425,21 +594,28 @@ router.get(
 );
 
 router.post(
-  '/offers/:id/approve',
+  "/offers/:id/approve",
   requireAuth,
-  requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
+  requireRole("branch_head", "admin", "super_admin", "hr", "payroll_hr"),
   h(async (req: AuthenticatedRequest, res) => {
-    const result = await approveOffer(req.params!.id, req.authUser!.id, req.body.remarks);
+    const result = await approveOffer(
+      req.params!.id,
+      req.authUser!.id,
+      req.body.remarks,
+    );
     res.json({ ok: true, ...result });
   }),
 );
 
 router.post(
-  '/offers/:id/reject',
+  "/offers/:id/reject",
   requireAuth,
-  requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
+  requireRole("branch_head", "admin", "super_admin", "hr", "payroll_hr"),
   h(async (req: AuthenticatedRequest, res) => {
-    if (!req.body.remarks) { res.status(400).json({ error: 'remarks required for rejection' }); return; }
+    if (!req.body.remarks) {
+      res.status(400).json({ error: "remarks required for rejection" });
+      return;
+    }
     await rejectOffer(req.params!.id, req.authUser!.id, req.body.remarks);
     res.json({ ok: true });
   }),

@@ -35,24 +35,24 @@
  * The password is read from MYSQL_ROOT_PASSWORD and never written to disk or logged.
  */
 
-const fs = require('node:fs');
-const path = require('node:path');
-const mysql = require('mysql2/promise');
+const fs = require("node:fs");
+const path = require("node:path");
+const mysql = require("mysql2/promise");
 
-const APPLY = process.argv.includes('--apply');
+const APPLY = process.argv.includes("--apply");
 const ROOT_PASSWORD = process.env.MYSQL_ROOT_PASSWORD;
 
 function readEnv(file) {
   const out = {};
-  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
-    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
+    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
   }
   return out;
 }
-const env = readEnv(path.join(__dirname, '..', '.env'));
+const env = readEnv(path.join(__dirname, "..", ".env"));
 
-const TRIGGER = 'trg_wfm_shift_master_protect_locked';
+const TRIGGER = "trg_wfm_shift_master_protect_locked";
 
 /**
  * Kept byte-identical to the body in sql/1213_wfm_shift_master_immutability_trigger.sql,
@@ -75,13 +75,16 @@ END`;
 
 async function main() {
   if (!ROOT_PASSWORD) {
-    console.error('MYSQL_ROOT_PASSWORD is not set. Refusing to guess.');
+    console.error("MYSQL_ROOT_PASSWORD is not set. Refusing to guess.");
     process.exit(1);
   }
 
   const root = await mysql.createConnection({
-    host: env.DB_HOST, port: Number(env.DB_PORT || 3306),
-    user: 'root', password: ROOT_PASSWORD, database: env.DB_NAME,
+    host: env.DB_HOST,
+    port: Number(env.DB_PORT || 3306),
+    user: "root",
+    password: ROOT_PASSWORD,
+    database: env.DB_NAME,
     multipleStatements: false,
   });
 
@@ -96,25 +99,29 @@ async function main() {
        (SELECT COUNT(*) FROM wfm_shift_master WHERE is_locked = 1)                    AS locked_rows`,
     [TRIGGER],
   );
-  console.log(`mode: ${APPLY ? 'APPLY' : 'DRY RUN'}`);
+  console.log(`mode: ${APPLY ? "APPLY" : "DRY RUN"}`);
   console.log(`  trigger already present : ${state.trigger_exists}`);
   console.log(`  is_locked column        : ${state.is_locked_present}`);
-  console.log(`  wfm_shift_master rows   : ${state.shift_rows} (${state.locked_rows} locked)`);
+  console.log(
+    `  wfm_shift_master rows   : ${state.shift_rows} (${state.locked_rows} locked)`,
+  );
 
   if (!state.is_locked_present) {
-    console.error('\nis_locked is missing — run migration 1200 first. Nothing done.');
+    console.error(
+      "\nis_locked is missing — run migration 1200 first. Nothing done.",
+    );
     await root.end();
     process.exit(1);
   }
   if (!APPLY) {
-    console.log('\nDry run — no DDL issued. Re-run with --apply.');
+    console.log("\nDry run — no DDL issued. Re-run with --apply.");
     await root.end();
     return;
   }
 
   await root.query(`DROP TRIGGER IF EXISTS ${TRIGGER}`);
   await root.query(CREATE_TRIGGER);
-  console.log('\ntrigger created');
+  console.log("\ntrigger created");
 
   // ── Verify it actually fires, on a row we create and remove ourselves ──────────
   //
@@ -122,7 +129,7 @@ async function main() {
   // must be rejected, and an UPDATE against live payroll-relevant data is not the
   // place to find out the trigger was written wrong. A dedicated row exercises the
   // exact same trigger.
-  const probeId = 'trg-probe-1213';
+  const probeId = "trg-probe-1213";
   let fired = false;
   let blockedRealEdit = null;
   try {
@@ -133,37 +140,52 @@ async function main() {
     await root.query(
       `INSERT INTO wfm_shift_master (id, shift_code, shift_name, start_time, end_time, required_minutes, is_locked, active_status)
        VALUES (?, ?, 'TRIGGER PROBE — safe to delete', '09:00:00', '18:00:00', 540, 1, 0)`,
-      [probeId, 'TRGPROBE1213'],
+      [probeId, "TRGPROBE1213"],
     );
     try {
-      await root.query(`UPDATE wfm_shift_master SET start_time = '10:00:00' WHERE id = ?`, [probeId]);
+      await root.query(
+        `UPDATE wfm_shift_master SET start_time = '10:00:00' WHERE id = ?`,
+        [probeId],
+      );
     } catch (err) {
-      fired = err.sqlState === '45000';
+      fired = err.sqlState === "45000";
       blockedRealEdit = err.message.slice(0, 80);
     }
     // A non-protected column must still be editable on a locked row.
-    await root.query(`UPDATE wfm_shift_master SET shift_name = 'TRIGGER PROBE — renamed' WHERE id = ?`, [probeId]);
+    await root.query(
+      `UPDATE wfm_shift_master SET shift_name = 'TRIGGER PROBE — renamed' WHERE id = ?`,
+      [probeId],
+    );
   } finally {
     await root.query(`DELETE FROM wfm_shift_master WHERE id = ?`, [probeId]);
   }
 
-  console.log(`  blocks start_time change on a locked row : ${fired ? 'YES' : 'NO'}`);
+  console.log(
+    `  blocks start_time change on a locked row : ${fired ? "YES" : "NO"}`,
+  );
   if (fired) console.log(`    -> ${blockedRealEdit}`);
-  console.log('  still allows shift_name change on locked : YES');
+  console.log("  still allows shift_name change on locked : YES");
 
   const [[after]] = await root.query(
     `SELECT COUNT(*) n FROM information_schema.TRIGGERS
-      WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = ?`, [TRIGGER]);
+      WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = ?`,
+    [TRIGGER],
+  );
   console.log(`  trigger present after run                : ${after.n}`);
   console.log(`  probe row removed                        : YES`);
 
   if (!fired) {
-    console.error('\nTrigger exists but did NOT block a protected edit. Investigate before trusting it.');
+    console.error(
+      "\nTrigger exists but did NOT block a protected edit. Investigate before trusting it.",
+    );
     await root.end();
     process.exit(1);
   }
-  console.log('\nRollback: DROP TRIGGER IF EXISTS ' + TRIGGER + ';');
+  console.log("\nRollback: DROP TRIGGER IF EXISTS " + TRIGGER + ";");
   await root.end();
 }
 
-main().catch((err) => { console.error(err.message); process.exit(1); });
+main().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

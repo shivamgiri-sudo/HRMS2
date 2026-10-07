@@ -20,13 +20,16 @@ const CHUNK_SIZE = 200;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  for (let i = 0; i < items.length; i += size)
+    out.push(items.slice(i, i + size));
   return out;
 }
 
 /** "1"/"true"/"yes"/"active" → 1; "0"/"false"/"no"/"inactive" → 0; blank → default. */
 function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
-  const v = String(raw ?? "").trim().toLowerCase();
+  const v = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   if (!v) return defaultValue;
   if (["0", "false", "no", "inactive", "n"].includes(v)) return 0;
   return 1;
@@ -34,13 +37,13 @@ function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
 
 export async function importDesignationMasterBatch(
   batchId: string,
-  importedByUserId: string
+  importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
   const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
       ORDER BY row_no`,
-    [batchId]
+    [batchId],
   );
 
   if (batchRows.length === 0) {
@@ -70,7 +73,10 @@ export async function importDesignationMasterBatch(
     }
 
     parsed.push({
-      rowId: row.id, rowNo: row.row_no, designationCode, designationName,
+      rowId: row.id,
+      rowNo: row.row_no,
+      designationCode,
+      designationName,
       grade: data.grade ? String(data.grade).trim() : null,
       activeStatus: parseActiveStatus(data.active_status),
     });
@@ -86,7 +92,12 @@ export async function importDesignationMasterBatch(
   // original per-row loop's error isolation.
   for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
     const placeholders = rowsInChunk.map(() => "(?,?,?,?)").join(", ");
-    const params = rowsInChunk.flatMap((r) => [r.designationCode, r.designationName, r.grade, r.activeStatus]);
+    const params = rowsInChunk.flatMap((r) => [
+      r.designationCode,
+      r.designationName,
+      r.grade,
+      r.activeStatus,
+    ]);
 
     try {
       await db.execute(
@@ -102,7 +113,7 @@ export async function importDesignationMasterBatch(
            designation_name = VALUES(designation_name),
            grade = COALESCE(VALUES(grade), grade),
            active_status = VALUES(active_status)`,
-        params
+        params,
       );
       for (const r of rowsInChunk) {
         importedRowIds.push(r.rowId);
@@ -118,7 +129,7 @@ export async function importDesignationMasterBatch(
                designation_name = VALUES(designation_name),
                grade = COALESCE(VALUES(grade), grade),
                active_status = VALUES(active_status)`,
-            [r.designationCode, r.designationName, r.grade, r.activeStatus]
+            [r.designationCode, r.designationName, r.grade, r.activeStatus],
           );
           importedRowIds.push(r.rowId);
           importedRows++;
@@ -136,17 +147,20 @@ export async function importDesignationMasterBatch(
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'imported'
        WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
-      importedRowIds
+      importedRowIds,
     );
   }
   if (errorUpdates.length > 0) {
     const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
-    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+    const caseParams = errorUpdates.flatMap((u) => [
+      u.rowId,
+      JSON.stringify([u.message]),
+    ]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids]
+      [...caseParams, ...ids],
     );
   }
 
@@ -154,12 +168,12 @@ export async function importDesignationMasterBatch(
     errorRows === 0
       ? "imported"
       : importedRows === 0
-      ? "validation_failed"
-      : "imported_with_errors";
+        ? "validation_failed"
+        : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId]
+    [finalStatus, importedRows, errorRows, batchId],
   );
 
   return { importedRows, errorRows, errors };

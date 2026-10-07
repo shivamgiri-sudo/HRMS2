@@ -34,7 +34,11 @@ import { logSensitiveAction } from "../src/shared/auditLog.js";
 
 const APPLY = process.argv.includes("--apply");
 
-function reminderHtml(fullName: string, employeeCode: string, link: string): string {
+function reminderHtml(
+  fullName: string,
+  employeeCode: string,
+  link: string,
+): string {
   return `
   <div style="font-family:Arial,sans-serif;background:#f6f8fc;padding:24px;color:#0f172a">
     <div style="max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;overflow:hidden">
@@ -58,7 +62,11 @@ function reminderHtml(fullName: string, employeeCode: string, link: string): str
   </div>`;
 }
 
-function reminderText(fullName: string, employeeCode: string, link: string): string {
+function reminderText(
+  fullName: string,
+  employeeCode: string,
+  link: string,
+): string {
   return `Hi ${fullName},\n\nOur records show no bank account on file for you (employee code ${employeeCode}). Salary and reimbursements cannot be released to an account we don't have on record.\n\nAdd your bank details: ${link}\n\nLog in and open Profile to submit your account details. Changes go through Payroll HO approval before taking effect. If you believe this is an error, please contact HR.`;
 }
 
@@ -107,23 +115,42 @@ const NOT_A_REAL_EMPLOYEE_SQL = `
 
   console.log(`mode=${APPLY ? "APPLY" : "DRY RUN"}`);
   console.log(`MISSING employees with an email on file: ${rows.length}`);
-  console.log(`MISSING employees with NO email on file (cannot be reminded this way): ${noEmail[0].n}`);
+  console.log(
+    `MISSING employees with NO email on file (cannot be reminded this way): ${noEmail[0].n}`,
+  );
 
-  if (!rows.length) { console.log("nothing to do"); await db.end(); return; }
+  if (!rows.length) {
+    console.log("nothing to do");
+    await db.end();
+    return;
+  }
 
   const link = `${env.FRONTEND_URL}/profile`;
 
   if (!APPLY) {
     console.log(`\n--- sample recipient list (first 15 of ${rows.length}) ---`);
-    console.table(rows.slice(0, 15).map((r) => ({ code: r.employee_code, name: r.full_name, email: r.email })));
-    console.log(`\n--- rendered email for first recipient (${rows[0].full_name}) ---`);
+    console.table(
+      rows
+        .slice(0, 15)
+        .map((r) => ({
+          code: r.employee_code,
+          name: r.full_name,
+          email: r.email,
+        })),
+    );
+    console.log(
+      `\n--- rendered email for first recipient (${rows[0].full_name}) ---`,
+    );
     console.log(reminderText(rows[0].full_name, rows[0].employee_code, link));
-    console.log(`\nDRY RUN — nothing sent. Re-run with --apply to send to all ${rows.length}.`);
+    console.log(
+      `\nDRY RUN — nothing sent. Re-run with --apply to send to all ${rows.length}.`,
+    );
     await db.end();
     return;
   }
 
-  let sent = 0, failed = 0;
+  let sent = 0,
+    failed = 0;
   for (const r of rows) {
     try {
       await emailService.send({
@@ -150,6 +177,10 @@ const NOT_A_REAL_EMPLOYEE_SQL = `
   await db.end();
 })().catch(async (e) => {
   console.error("ERR", e?.message ?? e);
-  try { await db.end(); } catch { /* ignore */ }
+  try {
+    await db.end();
+  } catch {
+    /* ignore */
+  }
   process.exit(1);
 });

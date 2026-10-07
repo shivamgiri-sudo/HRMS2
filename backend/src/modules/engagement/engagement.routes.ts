@@ -16,7 +16,10 @@ import { engagementController as c } from "./engagement.controller.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 const COMPANY_FEED_CATEGORY = "company-feed";
 const companyFeedUploadStorage = multer.diskStorage({
@@ -40,7 +43,11 @@ const companyFeedUpload = multer({
       cb(null, true);
       return;
     }
-    cb(new Error(`File type ${ext} not allowed. Allowed: .jpg, .jpeg, .png, .webp`));
+    cb(
+      new Error(
+        `File type ${ext} not allowed. Allowed: .jpg, .jpeg, .png, .webp`,
+      ),
+    );
   },
 });
 
@@ -54,7 +61,10 @@ async function requireCompanyPostCreator(
     await assertCanCreateCompanyPost(userId);
     next();
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Company post creator access is required";
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Company post creator access is required";
     return res.status(403).json({ success: false, message });
   }
 }
@@ -63,14 +73,34 @@ router.use(requireAuth);
 
 router.get("/me", h(c.getMySummary));
 router.get("/badges", h(c.listBadges));
-router.post("/badges/award", requireRole("admin", "hr", "super_admin", "payroll_hr", "process_manager", "team_leader", "manager"), h(c.awardBadge));
-router.get("/badges/:employeeId", selfOrAdminHr("employeeId"), h(c.getEmployeeBadges));
+router.post(
+  "/badges/award",
+  requireRole(
+    "admin",
+    "hr",
+    "super_admin",
+    "payroll_hr",
+    "process_manager",
+    "team_leader",
+    "manager",
+  ),
+  h(c.awardBadge),
+);
+router.get(
+  "/badges/:employeeId",
+  selfOrAdminHr("employeeId"),
+  h(c.getEmployeeBadges),
+);
 
 router.get("/leaderboard", h(c.getLeaderboard));
 router.post("/points/adjust", requireRole("admin", "hr"), h(c.adjustPoints));
 router.get("/points/:employeeId", selfOrAdminHr("employeeId"), h(c.getPoints));
 router.get("/tiers", h(c.listTiers));
-router.get("/tiers/:employeeId", selfOrAdminHr("employeeId"), h(c.getEmployeeTier));
+router.get(
+  "/tiers/:employeeId",
+  selfOrAdminHr("employeeId"),
+  h(c.getEmployeeTier),
+);
 
 router.get("/kudos/templates", h(c.listKudosTemplates));
 router.get("/kudos/limit/me", h(c.getMyKudosLimit));
@@ -80,8 +110,16 @@ router.get("/kudos/:employeeId", selfOrAdminHr("employeeId"), h(c.listKudos));
 
 router.get("/surveys", h(c.listSurveys));
 router.post("/surveys", requireRole("admin", "hr"), h(c.createSurvey));
-router.get("/surveys/:id/results", requireRole("admin", "hr"), h(c.getSurveyResults));
-router.get("/surveys/:id/enps/:questionId", requireRole("admin", "hr"), h(c.getENPS));
+router.get(
+  "/surveys/:id/results",
+  requireRole("admin", "hr"),
+  h(c.getSurveyResults),
+);
+router.get(
+  "/surveys/:id/enps/:questionId",
+  requireRole("admin", "hr"),
+  h(c.getENPS),
+);
 router.get("/surveys/:id", h(c.getSurvey));
 router.post("/surveys/:id/respond", h(c.submitSurvey));
 
@@ -95,7 +133,9 @@ router.post(
   (req: any, res: any, next: any) => {
     companyFeedUpload.single("file")(req, res, (err) => {
       if (err instanceof multer.MulterError) {
-        return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
+        return res
+          .status(400)
+          .json({ success: false, message: `Upload error: ${err.message}` });
       }
       if (err) {
         return res.status(400).json({ success: false, message: err.message });
@@ -105,7 +145,12 @@ router.post(
   },
   h(async (req: AuthenticatedRequest, res: Response) => {
     if (!req.file) {
-      return res.status(400).json({ success: false, message: "No image uploaded or file type not allowed" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "No image uploaded or file type not allowed",
+        });
     }
 
     try {
@@ -120,7 +165,10 @@ router.post(
         ownerEmployeeId: req.body?.ownerEmployeeId ?? undefined,
       });
     } catch (vaultErr) {
-      console.error("[documentVault] Failed to register company feed upload:", vaultErr);
+      console.error(
+        "[documentVault] Failed to register company feed upload:",
+        vaultErr,
+      );
     }
 
     return res.status(201).json({
@@ -137,7 +185,10 @@ router.post(
 );
 
 router.get("/company-posts/feed", h(companyPosts.listFeed));
-router.get("/company-posts/today-celebrations", h(companyPosts.todayCelebrations));
+router.get(
+  "/company-posts/today-celebrations",
+  h(companyPosts.todayCelebrations),
+);
 router.post("/company-posts", h(companyPosts.create));
 router.get("/company-posts/mine", h(companyPosts.listMine));
 router.get("/company-posts/approvals", h(companyPosts.listApprovals));
@@ -148,33 +199,51 @@ router.delete("/company-posts/:id", h(companyPosts.remove));
 router.post("/company-posts/:id/react", h(companyPosts.react));
 router.get("/company-posts/:id/comments", h(companyPosts.listComments));
 router.post("/company-posts/:id/comments", h(companyPosts.addComment));
-router.delete("/company-posts/:id/comments/:cid", h(companyPosts.removeComment));
+router.delete(
+  "/company-posts/:id/comments/:cid",
+  h(companyPosts.removeComment),
+);
 
 // Lightweight employee search for @mention — all authenticated users
-router.get("/mention-search", h(async (req: AuthenticatedRequest, res: Response) => {
-  const q = String(req.query.q ?? "").trim();
-  if (!q || q.length < 2) return res.json({ success: true, data: [] });
-  const { db } = await import("../../db/mysql.js");
-  const like = `%${q}%`;
-  const [rows] = await db.execute(
-    // `employees` has no `designation` column — it holds designation_id, with the
-    // name on designation_master. Selecting it raised ER_BAD_FIELD_ERROR, so this
-    // employee search returned 500 rather than results.
-    `SELECT e.id, e.full_name, e.employee_code, dm.designation_name AS designation
+router.get(
+  "/mention-search",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const q = String(req.query.q ?? "").trim();
+    if (!q || q.length < 2) return res.json({ success: true, data: [] });
+    const { db } = await import("../../db/mysql.js");
+    const like = `%${q}%`;
+    const [rows] = await db.execute(
+      // `employees` has no `designation` column — it holds designation_id, with the
+      // name on designation_master. Selecting it raised ER_BAD_FIELD_ERROR, so this
+      // employee search returned 500 rather than results.
+      `SELECT e.id, e.full_name, e.employee_code, dm.designation_name AS designation
        FROM employees e
        LEFT JOIN designation_master dm ON dm.id = e.designation_id
        WHERE e.active_status = 1
          AND (e.full_name LIKE ? OR e.employee_code LIKE ?)
        ORDER BY e.full_name ASC
        LIMIT 10`,
-    [like, like],
-  );
-  return res.json({ success: true, data: rows });
-}));
+      [like, like],
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
 
-router.get("/company-post-creators", requireRole("super_admin"), h(companyPosts.listCreators));
-router.post("/company-post-creators/:employeeId/grant", requireRole("super_admin"), h(companyPosts.grantCreator));
-router.post("/company-post-creators/:employeeId/revoke", requireRole("super_admin"), h(companyPosts.revokeCreator));
+router.get(
+  "/company-post-creators",
+  requireRole("super_admin"),
+  h(companyPosts.listCreators),
+);
+router.post(
+  "/company-post-creators/:employeeId/grant",
+  requireRole("super_admin"),
+  h(companyPosts.grantCreator),
+);
+router.post(
+  "/company-post-creators/:employeeId/revoke",
+  requireRole("super_admin"),
+  h(companyPosts.revokeCreator),
+);
 
 // =========================================================================
 // Daily Login & Streak
@@ -192,9 +261,21 @@ router.post("/tips/:tipId/read", h(c.markTipAsRead));
 router.get("/tips/archive", h(c.getTipArchive));
 router.get("/tips/my-history", h(c.getMyTipHistory));
 router.post("/tips", requireRole("admin", "hr", "super_admin"), h(c.createTip));
-router.put("/tips/:tipId", requireRole("admin", "hr", "super_admin"), h(c.updateTip));
-router.delete("/tips/:tipId", requireRole("admin", "hr", "super_admin"), h(c.deleteTip));
-router.get("/tips/stats", requireRole("admin", "hr", "super_admin"), h(c.getTipStats));
+router.put(
+  "/tips/:tipId",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.updateTip),
+);
+router.delete(
+  "/tips/:tipId",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.deleteTip),
+);
+router.get(
+  "/tips/stats",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.getTipStats),
+);
 
 // =========================================================================
 // Daily Trivia Quiz
@@ -202,8 +283,16 @@ router.get("/tips/stats", requireRole("admin", "hr", "super_admin"), h(c.getTipS
 router.get("/trivia/today", h(c.getTodayTrivia));
 router.post("/trivia/answer", h(c.submitTriviaAnswer));
 router.get("/trivia/leaderboard", h(c.getTriviaLeaderboard));
-router.get("/trivia/questions", requireRole("admin", "hr", "super_admin"), h(c.getTriviaQuestionBank));
-router.post("/trivia/questions", requireRole("admin", "hr", "super_admin"), h(c.createTriviaQuestion));
+router.get(
+  "/trivia/questions",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.getTriviaQuestionBank),
+);
+router.post(
+  "/trivia/questions",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.createTriviaQuestion),
+);
 
 // =========================================================================
 // Brain Teaser
@@ -211,32 +300,67 @@ router.post("/trivia/questions", requireRole("admin", "hr", "super_admin"), h(c.
 router.get("/brain-teaser/today", h(c.getTodayTeaser));
 router.post("/brain-teaser/hint", h(c.revealTeaserHint));
 router.post("/brain-teaser/answer", h(c.submitTeaserAnswer));
-router.get("/brain-teaser/bank", requireRole("admin", "hr", "super_admin"), h(c.getTeaserBank));
-router.post("/brain-teaser/bank", requireRole("admin", "hr", "super_admin"), h(c.createTeaser));
+router.get(
+  "/brain-teaser/bank",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.getTeaserBank),
+);
+router.post(
+  "/brain-teaser/bank",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.createTeaser),
+);
 
 // =========================================================================
 // Word Puzzle (Wordle-style)
 // =========================================================================
 router.get("/word-puzzle/today", h(c.getTodayPuzzle));
 router.post("/word-puzzle/guess", h(c.submitWordGuess));
-router.get("/word-puzzle/bank", requireRole("admin", "hr", "super_admin"), h(c.getWordPuzzleBank));
-router.post("/word-puzzle/bank", requireRole("admin", "hr", "super_admin"), h(c.createWordPuzzle));
+router.get(
+  "/word-puzzle/bank",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.getWordPuzzleBank),
+);
+router.post(
+  "/word-puzzle/bank",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.createWordPuzzle),
+);
 
 // =========================================================================
 // Quick Polls
 // =========================================================================
 router.get("/polls", h(c.getActivePolls));
-router.get("/polls/all", requireRole("admin", "hr", "super_admin"), h(c.getAllPolls));
-router.post("/polls", requireRole("admin", "hr", "super_admin"), h(c.createPoll));
+router.get(
+  "/polls/all",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.getAllPolls),
+);
+router.post(
+  "/polls",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.createPoll),
+);
 router.get("/polls/:pollId", h(c.getPoll));
 router.post("/polls/:pollId/vote", h(c.voteOnPoll));
-router.post("/polls/:pollId/approve", requireRole("admin", "hr", "super_admin"), h(c.approvePoll));
-router.post("/polls/:pollId/close", requireRole("admin", "hr", "super_admin"), h(c.closePoll));
+router.post(
+  "/polls/:pollId/approve",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.approvePoll),
+);
+router.post(
+  "/polls/:pollId/close",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.closePoll),
+);
 
 // =========================================================================
 // Admin Export
 // =========================================================================
-router.get("/admin/export/csv", requireRole("admin", "hr", "super_admin"), h(c.exportEngagementCsv));
+router.get(
+  "/admin/export/csv",
+  requireRole("admin", "hr", "super_admin"),
+  h(c.exportEngagementCsv),
+);
 
 export { router as engagementRouter };
-

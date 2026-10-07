@@ -18,8 +18,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const {
-  execute, getEmployeeBgvStatus, buildBankReadinessReport, createItem,
-  hasAnyRole, buildScopeWhereClause, queueJoiningKit, dispatchJoiningKit,
+  execute,
+  getEmployeeBgvStatus,
+  buildBankReadinessReport,
+  createItem,
+  hasAnyRole,
+  buildScopeWhereClause,
+  queueJoiningKit,
+  dispatchJoiningKit,
 } = vi.hoisted(() => ({
   execute: vi.fn(),
   getEmployeeBgvStatus: vi.fn(),
@@ -32,32 +38,65 @@ const {
 }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../employees/employee-bgv.service.js", () => ({ getEmployeeBgvStatus }));
-vi.mock("../../payroll/bank-payment-readiness.service.js", () => ({ buildBankReadinessReport }));
-vi.mock("../../payroll-masters/payrollMasters.service.js", () => ({ createPackage: vi.fn(), getPackageById: vi.fn() }));
-vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem } }));
-vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole, buildScopeWhereClause }));
+vi.mock("../../employees/employee-bgv.service.js", () => ({
+  getEmployeeBgvStatus,
+}));
+vi.mock("../../payroll/bank-payment-readiness.service.js", () => ({
+  buildBankReadinessReport,
+}));
+vi.mock("../../payroll-masters/payrollMasters.service.js", () => ({
+  createPackage: vi.fn(),
+  getPackageById: vi.fn(),
+}));
+vi.mock("../../inbox/inbox.service.js", () => ({
+  inboxService: { createItem },
+}));
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  hasAnyRole,
+  buildScopeWhereClause,
+}));
 // approve() now refuses a review whose salary start date differs across the employee's records.
 // These tests are about notification / kit dispatch, so the dates are stipulated consistent here;
 // the gate itself is covered in salaryStartDateGate.test.ts.
-vi.mock("../../payroll/salary-start-date.service.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../payroll/salary-start-date.service.js")>()),
-  getSalaryStartDateConsistency: vi.fn().mockResolvedValue({ consistent: true, expected: null, problems: [] }),
+vi.mock(
+  "../../payroll/salary-start-date.service.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../payroll/salary-start-date.service.js")
+    >()),
+    getSalaryStartDateConsistency: vi
+      .fn()
+      .mockResolvedValue({ consistent: true, expected: null, problems: [] }),
+  }),
+);
+vi.mock("../../employees/joiningKitDispatch.service.js", () => ({
+  queueJoiningKit,
+  dispatchJoiningKit,
 }));
-vi.mock("../../employees/joiningKitDispatch.service.js", () => ({ queueJoiningKit, dispatchJoiningKit }));
 
 import { approve } from "../payroll-head-review.service.js";
 
 /** The seven queries approve() issues, in order, for a clean pending_review -> approved run. */
 function primeApprovableReview() {
   execute
-    .mockResolvedValueOnce([[{ id: "review-1", status: "pending_review", package_accepted: 1 }]]) // getReviewRow
-    .mockResolvedValueOnce([{ affectedRows: 1 }])                                                 // UPDATE -> approved
-    .mockResolvedValueOnce(undefined)                                                             // audit
-    .mockResolvedValueOnce(undefined)                                                             // writeHistory
-    .mockResolvedValueOnce([[]])                                                                  // notify targets
-    .mockResolvedValueOnce([[{ full_name: "Jane Doe", employee_code: "E123", user_id: "user-emp-1", ctc_annual: 600000 }]])
-    .mockResolvedValueOnce([[{ id: "review-1", status: "approved" }]]);                           // final getReviewRow
+    .mockResolvedValueOnce([
+      [{ id: "review-1", status: "pending_review", package_accepted: 1 }],
+    ]) // getReviewRow
+    .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE -> approved
+    .mockResolvedValueOnce(undefined) // audit
+    .mockResolvedValueOnce(undefined) // writeHistory
+    .mockResolvedValueOnce([[]]) // notify targets
+    .mockResolvedValueOnce([
+      [
+        {
+          full_name: "Jane Doe",
+          employee_code: "E123",
+          user_id: "user-emp-1",
+          ctc_annual: 600000,
+        },
+      ],
+    ])
+    .mockResolvedValueOnce([[{ id: "review-1", status: "approved" }]]); // final getReviewRow
 }
 
 /** The dispatch is fire-and-forget, so let the microtask queue drain before asserting. */
@@ -68,7 +107,9 @@ describe("approve() releases the blocked joining kit", () => {
     execute.mockReset();
     createItem.mockClear();
     queueJoiningKit.mockReset().mockResolvedValue({ kitId: "kit-1" });
-    dispatchJoiningKit.mockReset().mockResolvedValue({ kitId: "kit-1", status: "sent" });
+    dispatchJoiningKit
+      .mockReset()
+      .mockResolvedValue({ kitId: "kit-1", status: "sent" });
   });
 
   it("queues and dispatches the kit for the approved employee", async () => {
@@ -78,11 +119,13 @@ describe("approve() releases the blocked joining kit", () => {
     await settle();
 
     expect(queueJoiningKit).toHaveBeenCalledTimes(1);
-    expect(queueJoiningKit).toHaveBeenCalledWith(expect.objectContaining({
-      employeeId: "emp-1",
-      actorUserId: "actor-1",
-      triggerSource: "payroll_head_approved",
-    }));
+    expect(queueJoiningKit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        employeeId: "emp-1",
+        actorUserId: "actor-1",
+        triggerSource: "payroll_head_approved",
+      }),
+    );
     expect(dispatchJoiningKit).toHaveBeenCalledWith("kit-1", "actor-1");
   });
 
@@ -99,7 +142,9 @@ describe("approve() releases the blocked joining kit", () => {
   });
 
   it("does not dispatch when the review is not pending_review", async () => {
-    execute.mockResolvedValueOnce([[{ id: "review-1", status: "approved", package_accepted: 1 }]]);
+    execute.mockResolvedValueOnce([
+      [{ id: "review-1", status: "approved", package_accepted: 1 }],
+    ]);
 
     await expect(approve("emp-1", "actor-1")).rejects.toThrow(/Cannot approve/);
     await settle();

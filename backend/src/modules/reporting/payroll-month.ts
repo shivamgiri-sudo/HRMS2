@@ -57,7 +57,9 @@ function currentMonth(): string {
  * A run is added once a month, so a five-minute window cannot show a stale month for long,
  * and it keeps this off the hot path of every payroll request.
  */
-export async function latestPayrollMonth(source: PayrollMonthSource = "run"): Promise<string> {
+export async function latestPayrollMonth(
+  source: PayrollMonthSource = "run",
+): Promise<string> {
   const hit = cache.get(source);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.month;
   try {
@@ -73,7 +75,10 @@ export async function latestPayrollMonth(source: PayrollMonthSource = "run"): Pr
   } catch (err) {
     // Degrade to the previous behaviour rather than failing the report, but say so — a silent
     // fallback is how the original defect stayed invisible.
-    console.warn("[payroll-month] could not resolve the latest payroll month, falling back to the current month:", err);
+    console.warn(
+      "[payroll-month] could not resolve the latest payroll month, falling back to the current month:",
+      err,
+    );
     return currentMonth();
   }
 }
@@ -85,7 +90,7 @@ export async function latestPayrollMonth(source: PayrollMonthSource = "run"): Pr
  */
 export async function resolvePayrollMonth(
   value: unknown,
-  source: PayrollMonthSource = "run"
+  source: PayrollMonthSource = "run",
 ): Promise<string> {
   const text = String(value ?? "").trim();
   if (/^\d{4}-\d{2}$/.test(text)) return text;

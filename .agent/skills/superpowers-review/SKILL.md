@@ -6,17 +6,20 @@ description: Reviews changes for correctness, edge cases, style, security, and m
 # Review Skill
 
 ## When to use this skill
+
 - before delivering final code changes
 - after implementing a planned set of steps
 - before merging or shipping
 
 ## Severity levels
+
 - **Blocker**: wrong behavior, security issue, data loss risk, broken tests/build
 - **Major**: likely bug, missing edge cases, poor reliability
 - **Minor**: style, clarity, small maintainability issues
 - **Nit**: optional polish
 
 ## Checklist
+
 1. Correctness vs requirements
 2. Edge cases & error handling
 3. Tests (adequate coverage, meaningful assertions)
@@ -26,6 +29,7 @@ description: Reviews changes for correctness, edge cases, style, security, and m
 7. Docs / comments updated if needed
 
 ## Output format
+
 - Blockers
 - Majors
 - Minors

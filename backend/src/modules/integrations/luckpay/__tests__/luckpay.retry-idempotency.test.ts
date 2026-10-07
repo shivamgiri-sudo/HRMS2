@@ -10,7 +10,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
  */
 
 const post = vi.fn();
-vi.mock("axios", () => ({ default: { post: (...a: unknown[]) => post(...a) } }));
+vi.mock("axios", () => ({
+  default: { post: (...a: unknown[]) => post(...a) },
+}));
 
 const cfg = {
   baseUrl: "https://provider.test/api/v1",
@@ -26,7 +28,9 @@ function serverError(status: number) {
   });
 }
 
-const tokenOk = { data: { data: { token: "access-token-value", expiresIn: 600 } } };
+const tokenOk = {
+  data: { data: { token: "access-token-value", expiresIn: 600 } },
+};
 
 let transport: typeof import("../luckpay.transport.js");
 
@@ -44,21 +48,31 @@ describe("luckpay retry idempotency", () => {
     const token = await transport.getLuckpayAccessToken(cfg as never);
 
     expect(token).toBe("access-token-value");
-    expect(post, "token call should have been retried once").toHaveBeenCalledTimes(2);
+    expect(
+      post,
+      "token call should have been retried once",
+    ).toHaveBeenCalledTimes(2);
   });
 
   it("does NOT retry a business POST on a 5xx — a resend duplicates the transaction", async () => {
-    post.mockResolvedValueOnce(tokenOk);           // auth
-    post.mockRejectedValueOnce(serverError(502));  // business call fails once
+    post.mockResolvedValueOnce(tokenOk); // auth
+    post.mockRejectedValueOnce(serverError(502)); // business call fails once
 
     await expect(
-      transport.luckpayPostJson(cfg as never, "/verifyPennyDrop", { clientTransactionId: "txn-1" }),
+      transport.luckpayPostJson(cfg as never, "/verifyPennyDrop", {
+        clientTransactionId: "txn-1",
+      }),
     ).rejects.toThrow();
 
     // 1 auth + exactly 1 business attempt. A second attempt would reach the
     // vendor with the same clientTransactionId and return "already exists".
-    expect(post, "business call must be attempted exactly once").toHaveBeenCalledTimes(2);
-    const businessCalls = post.mock.calls.filter(([url]) => String(url).includes("/verifyPennyDrop"));
+    expect(
+      post,
+      "business call must be attempted exactly once",
+    ).toHaveBeenCalledTimes(2);
+    const businessCalls = post.mock.calls.filter(([url]) =>
+      String(url).includes("/verifyPennyDrop"),
+    );
     expect(businessCalls).toHaveLength(1);
   });
 
@@ -68,12 +82,18 @@ describe("luckpay retry idempotency", () => {
 
     await expect(
       transport.luckpayPostMultipart(cfg as never, "/eSignWithURL", {
-        file: { buffer: Buffer.from("x"), filename: "d.pdf", contentType: "application/pdf" },
+        file: {
+          buffer: Buffer.from("x"),
+          filename: "d.pdf",
+          contentType: "application/pdf",
+        },
         request: { clientTransactionId: "txn-2" },
       } as never),
     ).rejects.toThrow();
 
-    const businessCalls = post.mock.calls.filter(([url]) => String(url).includes("/eSignWithURL"));
+    const businessCalls = post.mock.calls.filter(([url]) =>
+      String(url).includes("/eSignWithURL"),
+    );
     expect(businessCalls).toHaveLength(1);
   });
 });

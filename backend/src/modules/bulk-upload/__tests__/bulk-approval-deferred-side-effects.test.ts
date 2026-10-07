@@ -24,8 +24,14 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const bulk = fs.readFileSync(path.resolve(DIR, "..", "attendance-regularization-bulk.service.ts"), "utf8");
-const wfm = fs.readFileSync(path.resolve(DIR, "../../wfm/wfm.service.ts"), "utf8");
+const bulk = fs.readFileSync(
+  path.resolve(DIR, "..", "attendance-regularization-bulk.service.ts"),
+  "utf8",
+);
+const wfm = fs.readFileSync(
+  path.resolve(DIR, "../../wfm/wfm.service.ts"),
+  "utf8",
+);
 
 /**
  * The reviewRegularization body — bounded by the next method rather than a character count.
@@ -47,17 +53,29 @@ describe("the flag cannot be set by an API caller", () => {
      * caller could silence a notification or skip a payroll recalculation by adding a field —
      * turning an internal performance concession into a way to quietly not pay someone.
      */
-    const validation = fs.readFileSync(path.resolve(DIR, "../../wfm/wfm.validation.ts"), "utf8");
-    const schemaStart = validation.indexOf("export const reviewRegularizationSchema");
-    const schema = validation.slice(schemaStart, validation.indexOf("})", schemaStart));
+    const validation = fs.readFileSync(
+      path.resolve(DIR, "../../wfm/wfm.validation.ts"),
+      "utf8",
+    );
+    const schemaStart = validation.indexOf(
+      "export const reviewRegularizationSchema",
+    );
+    const schema = validation.slice(
+      schemaStart,
+      validation.indexOf("})", schemaStart),
+    );
     expect(schema).not.toMatch(/deferSideEffects/);
-    expect(reviewBody()).toMatch(/options\?:\s*\{\s*deferSideEffects\?:\s*boolean\s*\}/);
+    expect(reviewBody()).toMatch(
+      /options\?:\s*\{\s*deferSideEffects\?:\s*boolean\s*\}/,
+    );
   });
 
   it("defaults to doing the work, so an unaware caller loses nothing", () => {
     // Strict === true: an omitted options object, or any truthy-ish value, must not silently
     // disable notifications for the single-approval path.
-    expect(reviewBody()).toMatch(/deferSideEffects = options\?\.deferSideEffects === true/);
+    expect(reviewBody()).toMatch(
+      /deferSideEffects = options\?\.deferSideEffects === true/,
+    );
   });
 });
 
@@ -85,7 +103,9 @@ describe("the bulk path defers, then does the work itself", () => {
   it("runs the deferred work after the loop", () => {
     // Nothing may be dropped: deferring without running them would silently stop notifying
     // people and stop recalculating pay, which is far worse than being slow.
-    expect(bulk).toMatch(/await runDeferredSideEffects\(appliedRows, approverUserId\)/);
+    expect(bulk).toMatch(
+      /await runDeferredSideEffects\(appliedRows, approverUserId\)/,
+    );
   });
 
   it("keys the payroll recalculation by employee AND month", () => {
@@ -124,7 +144,10 @@ describe("a failed side effect cannot fail the batch", () => {
      * had in fact worked.
      */
     const idx = bulk.indexOf("async function runDeferredSideEffects");
-    const fn = bulk.slice(idx, bulk.indexOf("export async function applyRegularizationBatch", idx));
+    const fn = bulk.slice(
+      idx,
+      bulk.indexOf("export async function applyRegularizationBatch", idx),
+    );
     // Three independent try blocks: inbox, SMS, recalculation.
     expect(fn.match(/\btry \{/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
     expect(fn).toContain("if (applied.length === 0) return;");
@@ -132,7 +155,10 @@ describe("a failed side effect cannot fail the batch", () => {
 
   it("still queues a recalculation that failed, rather than losing it", () => {
     const idx = bulk.indexOf("async function runDeferredSideEffects");
-    const fn = bulk.slice(idx, bulk.indexOf("export async function applyRegularizationBatch", idx));
+    const fn = bulk.slice(
+      idx,
+      bulk.indexOf("export async function applyRegularizationBatch", idx),
+    );
     expect(fn).toContain("queuePayrollRecalculation");
   });
 });

@@ -21,7 +21,9 @@ function integrationTypeFromUi(value: unknown): string {
   return aliases[type] ?? type;
 }
 
-function integrationTypeToUi(value: unknown): "manual" | "api" | "db" | "scheduled" {
+function integrationTypeToUi(
+  value: unknown,
+): "manual" | "api" | "db" | "scheduled" {
   const type = String(value ?? "");
   if (type === "database") return "db";
   if (type === "rest_pull" || type === "rest_push") return "api";
@@ -29,18 +31,23 @@ function integrationTypeToUi(value: unknown): "manual" | "api" | "db" | "schedul
   return "manual";
 }
 
-function parseConfigJson(value: unknown): Record<string, unknown> | null | undefined {
+function parseConfigJson(
+  value: unknown,
+): Record<string, unknown> | null | undefined {
   if (value === undefined) return undefined;
   if (value === null || value === "") return null;
   if (typeof value === "object") return value as Record<string, unknown>;
   try {
     return JSON.parse(String(value)) as Record<string, unknown>;
   } catch {
-    throw Object.assign(new Error("config_json must be valid JSON"), { statusCode: 400 });
+    throw Object.assign(new Error("config_json must be valid JSON"), {
+      statusCode: 400,
+    });
   }
 }
 
-const SENSITIVE_CONFIG_KEY = /(password|passphrase|private[_-]?key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization)/i;
+const SENSITIVE_CONFIG_KEY =
+  /(password|passphrase|private[_-]?key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization)/i;
 
 function sanitizeConfig(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeConfig);
@@ -49,7 +56,7 @@ function sanitizeConfig(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
       .filter(([key]) => !SENSITIVE_CONFIG_KEY.test(key))
-      .map(([key, item]) => [key, sanitizeConfig(item)])
+      .map(([key, item]) => [key, sanitizeConfig(item)]),
   );
 }
 
@@ -87,15 +94,28 @@ function normalizeCreateBody(body: any) {
 
 function normalizeUpdateBody(body: any) {
   const normalized: Record<string, unknown> = {};
-  if (body.integrationName !== undefined || body.name !== undefined) normalized.integrationName = body.integrationName ?? body.name;
-  if (body.integrationType !== undefined || body.type !== undefined) normalized.integrationType = integrationTypeFromUi(body.integrationType ?? body.type);
-  if (body.vendorName !== undefined || body.vendor_name !== undefined) normalized.vendorName = body.vendorName ?? body.vendor_name;
-  if (body.baseUrl !== undefined || body.base_url !== undefined) normalized.baseUrl = body.baseUrl ?? body.base_url;
-  if (body.authType !== undefined || body.auth_type !== undefined) normalized.authType = body.authType ?? body.auth_type;
-  if (body.secretName !== undefined || body.secret_name !== undefined) normalized.secretName = body.secretName ?? body.secret_name;
-  if (body.configJson !== undefined || body.config_json !== undefined) normalized.configJson = parseConfigJson(body.configJson ?? body.config_json);
-  if (body.notes !== undefined || body.description !== undefined) normalized.notes = body.notes ?? body.description;
-  if (body.activeStatus !== undefined || body.active_status !== undefined) normalized.activeStatus = Boolean(body.activeStatus ?? body.active_status);
+  if (body.integrationName !== undefined || body.name !== undefined)
+    normalized.integrationName = body.integrationName ?? body.name;
+  if (body.integrationType !== undefined || body.type !== undefined)
+    normalized.integrationType = integrationTypeFromUi(
+      body.integrationType ?? body.type,
+    );
+  if (body.vendorName !== undefined || body.vendor_name !== undefined)
+    normalized.vendorName = body.vendorName ?? body.vendor_name;
+  if (body.baseUrl !== undefined || body.base_url !== undefined)
+    normalized.baseUrl = body.baseUrl ?? body.base_url;
+  if (body.authType !== undefined || body.auth_type !== undefined)
+    normalized.authType = body.authType ?? body.auth_type;
+  if (body.secretName !== undefined || body.secret_name !== undefined)
+    normalized.secretName = body.secretName ?? body.secret_name;
+  if (body.configJson !== undefined || body.config_json !== undefined)
+    normalized.configJson = parseConfigJson(
+      body.configJson ?? body.config_json,
+    );
+  if (body.notes !== undefined || body.description !== undefined)
+    normalized.notes = body.notes ?? body.description;
+  if (body.activeStatus !== undefined || body.active_status !== undefined)
+    normalized.activeStatus = Boolean(body.activeStatus ?? body.active_status);
   return normalized;
 }
 
@@ -116,15 +136,33 @@ export const integrationController = {
   },
 
   async create(req: AuthenticatedRequest, res: Response) {
-    const input = createIntegrationSchema.parse(normalizeCreateBody(req.body ?? {}));
+    const input = createIntegrationSchema.parse(
+      normalizeCreateBody(req.body ?? {}),
+    );
     const data = await integrationService.create(input, req.authUser!.id);
-    return res.status(201).json({ success: true, data: connectorDto(data), message: "Integration created" });
+    return res
+      .status(201)
+      .json({
+        success: true,
+        data: connectorDto(data),
+        message: "Integration created",
+      });
   },
 
   async update(req: AuthenticatedRequest, res: Response) {
-    const input = updateIntegrationSchema.parse(normalizeUpdateBody(req.body ?? {}));
-    const data = await integrationService.update(req.params.key, input, req.authUser!.id);
-    return res.json({ success: true, data: connectorDto(data), message: "Integration updated" });
+    const input = updateIntegrationSchema.parse(
+      normalizeUpdateBody(req.body ?? {}),
+    );
+    const data = await integrationService.update(
+      req.params.key,
+      input,
+      req.authUser!.id,
+    );
+    return res.json({
+      success: true,
+      data: connectorDto(data),
+      message: "Integration updated",
+    });
   },
 
   async listRuns(req: AuthenticatedRequest, res: Response) {
@@ -135,9 +173,12 @@ export const integrationController = {
       connector_key: run.integration_key,
       connector_name: run.integration_name ?? run.integration_key,
       type: integrationTypeToUi(run.integration_type),
-      status: run.status === "complete"
-        ? (Number(run.rows_failed ?? 0) > 0 ? "partial" : "success")
-        : run.status,
+      status:
+        run.status === "complete"
+          ? Number(run.rows_failed ?? 0) > 0
+            ? "partial"
+            : "success"
+          : run.status,
       records_synced: Math.max(
         Number(run.rows_promoted ?? 0),
         Number(run.rows_staged ?? 0),
@@ -146,7 +187,13 @@ export const integrationController = {
       errors: Number(run.rows_failed ?? 0),
       created_at: run.started_at,
     }));
-    return res.json({ success: true, data, total: result.total, page: result.page, limit: result.limit });
+    return res.json({
+      success: true,
+      data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+    });
   },
 
   async createRun(req: AuthenticatedRequest, res: Response) {
@@ -155,7 +202,9 @@ export const integrationController = {
       "manual",
       req.authUser!.id,
     );
-    return res.status(201).json({ success: true, data, message: "Run triggered" });
+    return res
+      .status(201)
+      .json({ success: true, data, message: "Run triggered" });
   },
 
   async listFieldMaps(req: AuthenticatedRequest, res: Response) {
@@ -187,12 +236,19 @@ export const integrationController = {
       targetTable: req.body?.targetTable ?? req.body?.target_table,
       syncMode: req.body?.syncMode ?? req.body?.sync_mode,
     });
-    const data = await integrationService.upsertTableMap(req.params.key, input, req.authUser!.id);
+    const data = await integrationService.upsertTableMap(
+      req.params.key,
+      input,
+      req.authUser!.id,
+    );
     return res.json({ success: true, data, message: "Table mapping saved" });
   },
 
   async mappingCatalog(_req: AuthenticatedRequest, res: Response) {
-    return res.json({ success: true, data: integrationService.getMappingCatalog() });
+    return res.json({
+      success: true,
+      data: integrationService.getMappingCatalog(),
+    });
   },
 
   async sourceSchema(req: AuthenticatedRequest, res: Response) {
@@ -202,13 +258,27 @@ export const integrationController = {
 
   async confirmFieldMap(req: AuthenticatedRequest, res: Response) {
     if (req.body?.suggestion_id) {
-      const data = await integrationService.confirmSuggestion(String(req.body.suggestion_id), req.authUser!.id);
-      return res.json({ success: true, data, message: "Field mapping confirmed" });
+      const data = await integrationService.confirmSuggestion(
+        String(req.body.suggestion_id),
+        req.authUser!.id,
+      );
+      return res.json({
+        success: true,
+        data,
+        message: "Field mapping confirmed",
+      });
     }
 
     const input = confirmFieldMapSchema.parse(req.body);
-    const data = await integrationService.confirmFieldMap(input, req.authUser!.id);
-    return res.json({ success: true, data, message: "Field mapping confirmed" });
+    const data = await integrationService.confirmFieldMap(
+      input,
+      req.authUser!.id,
+    );
+    return res.json({
+      success: true,
+      data,
+      message: "Field mapping confirmed",
+    });
   },
 
   async listSuggestions(req: AuthenticatedRequest, res: Response) {
@@ -218,9 +288,10 @@ export const integrationController = {
       data: data.map((suggestion: any) => ({
         ...suggestion,
         suggestion_id: suggestion.id,
-        target_field: suggestion.suggested_table && suggestion.suggested_column
-          ? `${suggestion.suggested_table}.${suggestion.suggested_column}`
-          : "",
+        target_field:
+          suggestion.suggested_table && suggestion.suggested_column
+            ? `${suggestion.suggested_table}.${suggestion.suggested_column}`
+            : "",
         confidence: Number(suggestion.confidence_score ?? 0),
         confirmed: suggestion.status === "confirmed",
       })),

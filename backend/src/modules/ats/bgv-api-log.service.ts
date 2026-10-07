@@ -46,7 +46,9 @@ export type BgvApiLogEntry = {
 const SUCCESS_OUTCOMES: BgvApiOutcome[] = ["success"];
 
 /** Never let logging break a verification flow. */
-export async function writeBgvApiLog(entry: BgvApiLogEntry): Promise<string | null> {
+export async function writeBgvApiLog(
+  entry: BgvApiLogEntry,
+): Promise<string | null> {
   const id = randomUUID();
   try {
     await db.execute(
@@ -64,7 +66,9 @@ export async function writeBgvApiLog(entry: BgvApiLogEntry): Promise<string | nu
         entry.requestRef ?? null,
         entry.requestPayloadHash ?? null,
         entry.httpStatus ?? null,
-        entry.responsePayload === undefined ? null : JSON.stringify(entry.responsePayload).slice(0, 4_000_000),
+        entry.responsePayload === undefined
+          ? null
+          : JSON.stringify(entry.responsePayload).slice(0, 4_000_000),
         entry.durationMs ?? null,
         SUCCESS_OUTCOMES.includes(entry.outcome) ? 1 : 0,
         entry.outcome,
@@ -77,7 +81,10 @@ export async function writeBgvApiLog(entry: BgvApiLogEntry): Promise<string | nu
     );
     return id;
   } catch (error) {
-    console.error(`[bgv-api-log] failed to record ${entry.endpointKey} for ${entry.candidateId}:`, (error as Error)?.message);
+    console.error(
+      `[bgv-api-log] failed to record ${entry.endpointKey} for ${entry.candidateId}:`,
+      (error as Error)?.message,
+    );
     return null;
   }
 }
@@ -108,24 +115,50 @@ export function classifyProviderError(error: unknown): {
 
   const httpStatus = e?.statusCode ?? e?.response?.status ?? null;
   const providerPayload = e?.providerPayload ?? e?.response?.data ?? null;
-  const providerCode = providerPayload && typeof providerPayload === "object"
-    ? String(providerPayload.code ?? "")
-    : "";
+  const providerCode =
+    providerPayload && typeof providerPayload === "object"
+      ? String(providerPayload.code ?? "")
+      : "";
   const transportCode = e?.code ?? e?.providerCode ?? "";
   const message = String(e?.message ?? "Unknown provider failure");
 
   if (e?.isIpWhitelistError || providerCode === "AUTH_023") {
-    return { outcome: "provider_error", errorCode: providerCode || "IP_NOT_WHITELISTED", errorMessage: message, httpStatus };
+    return {
+      outcome: "provider_error",
+      errorCode: providerCode || "IP_NOT_WHITELISTED",
+      errorMessage: message,
+      httpStatus,
+    };
   }
-  if (["ENOTFOUND", "ECONNREFUSED", "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "ECONNABORTED"].includes(String(transportCode))) {
-    return { outcome: "network_error", errorCode: String(transportCode), errorMessage: message, httpStatus };
+  if (
+    [
+      "ENOTFOUND",
+      "ECONNREFUSED",
+      "ETIMEDOUT",
+      "ECONNRESET",
+      "EAI_AGAIN",
+      "ECONNABORTED",
+    ].includes(String(transportCode))
+  ) {
+    return {
+      outcome: "network_error",
+      errorCode: String(transportCode),
+      errorMessage: message,
+      httpStatus,
+    };
   }
   if (httpStatus === 503 && /not configured|disabled/i.test(message)) {
-    return { outcome: "config_error", errorCode: "PROVIDER_NOT_CONFIGURED", errorMessage: message, httpStatus };
+    return {
+      outcome: "config_error",
+      errorCode: "PROVIDER_NOT_CONFIGURED",
+      errorMessage: message,
+      httpStatus,
+    };
   }
   return {
     outcome: "provider_error",
-    errorCode: providerCode || (httpStatus ? `HTTP_${httpStatus}` : "PROVIDER_ERROR"),
+    errorCode:
+      providerCode || (httpStatus ? `HTTP_${httpStatus}` : "PROVIDER_ERROR"),
     errorMessage: message,
     httpStatus,
   };
@@ -138,8 +171,21 @@ export function classifyProviderError(error: unknown): {
  * flow — this only guarantees the attempt leaves a trace.
  */
 export async function recordBgvApiCall<T>(
-  meta: Omit<BgvApiLogEntry, "outcome" | "durationMs" | "httpStatus" | "responsePayload" | "errorCode" | "errorMessage">
-    & { classifyResult?: (result: T) => { outcome: BgvApiOutcome; payload?: unknown; checkId?: string | null } },
+  meta: Omit<
+    BgvApiLogEntry,
+    | "outcome"
+    | "durationMs"
+    | "httpStatus"
+    | "responsePayload"
+    | "errorCode"
+    | "errorMessage"
+  > & {
+    classifyResult?: (result: T) => {
+      outcome: BgvApiOutcome;
+      payload?: unknown;
+      checkId?: string | null;
+    };
+  },
   call: () => Promise<T>,
 ): Promise<T> {
   const started = Date.now();
@@ -156,14 +202,16 @@ export async function recordBgvApiCall<T>(
     });
     return result;
   } catch (error) {
-    const { outcome, errorCode, errorMessage, httpStatus } = classifyProviderError(error);
+    const { outcome, errorCode, errorMessage, httpStatus } =
+      classifyProviderError(error);
     await writeBgvApiLog({
       ...meta,
       outcome,
       errorCode,
       errorMessage,
       httpStatus,
-      responsePayload: (error as { providerPayload?: unknown })?.providerPayload ?? null,
+      responsePayload:
+        (error as { providerPayload?: unknown })?.providerPayload ?? null,
       durationMs: Date.now() - started,
     });
     throw error;
@@ -177,14 +225,21 @@ export async function recordBgvApiCall<T>(
  * thrown error meant no row at all, which is why failed calls were invisible.
  */
 export async function withProviderFailureLogged<T>(
-  meta: { candidateId: string; endpointKey: string; providerKey: string; actorType?: string | null; actorId?: string | null },
+  meta: {
+    candidateId: string;
+    endpointKey: string;
+    providerKey: string;
+    actorType?: string | null;
+    actorId?: string | null;
+  },
   call: () => Promise<T>,
 ): Promise<T> {
   const started = Date.now();
   try {
     return await call();
   } catch (error) {
-    const { outcome, errorCode, errorMessage, httpStatus } = classifyProviderError(error);
+    const { outcome, errorCode, errorMessage, httpStatus } =
+      classifyProviderError(error);
     await writeBgvApiLog({
       candidateId: meta.candidateId,
       endpointKey: meta.endpointKey,
@@ -195,7 +250,8 @@ export async function withProviderFailureLogged<T>(
       errorCode,
       errorMessage,
       httpStatus,
-      responsePayload: (error as { providerPayload?: unknown })?.providerPayload ?? null,
+      responsePayload:
+        (error as { providerPayload?: unknown })?.providerPayload ?? null,
       durationMs: Date.now() - started,
     });
     throw error;
@@ -234,7 +290,11 @@ const ENDPOINT_TO_CHECK_TYPE: Record<string, string> = {
 export function endpointToCheckType(endpointKey: string): string {
   const direct = ENDPOINT_TO_CHECK_TYPE[endpointKey];
   if (direct) return direct;
-  return String(endpointKey).toLowerCase().replace(/^verify_/, "").replace(/_verify$/, "").replace(/_offline$/, "");
+  return String(endpointKey)
+    .toLowerCase()
+    .replace(/^verify_/, "")
+    .replace(/_verify$/, "")
+    .replace(/_offline$/, "");
 }
 
 export type BgvApiCostRow = {
@@ -272,7 +332,8 @@ export async function getBgvApiCostReport(days = 30): Promise<{
   );
   const rates: Record<string, number> = {};
   for (const row of rateRows as RowDataPacket[]) {
-    rates[String(row.setting_key).replace("bgv_api_cost_", "")] = parseFloat(String(row.setting_value)) || 0;
+    rates[String(row.setting_key).replace("bgv_api_cost_", "")] =
+      parseFloat(String(row.setting_value)) || 0;
   }
 
   const [usageRows] = await db.execute<RowDataPacket[]>(
@@ -296,7 +357,10 @@ export async function getBgvApiCostReport(days = 30): Promise<{
     const checkType = endpointToCheckType(endpointKey);
     const total = Number(row.total_calls) || 0;
     const billable = total - (Number(row.unbilled) || 0);
-    const rateConfigured = Object.prototype.hasOwnProperty.call(rates, checkType);
+    const rateConfigured = Object.prototype.hasOwnProperty.call(
+      rates,
+      checkType,
+    );
     if (!rateConfigured) unmapped.push(endpointKey);
     const unitCost = rates[checkType] ?? 0;
     const cost = billable * unitCost;

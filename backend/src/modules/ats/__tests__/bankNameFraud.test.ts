@@ -72,14 +72,20 @@ describe("bank verification outcome", () => {
 
   it("passes ordinary name variance without sending it for review", () => {
     // The bank holding a fuller name is the single most common real case.
-    for (const bankName of ["RAJESH KUMAR SINGH", "KUMAR RAJESH", "MR RAJESH KUMAR"]) {
+    for (const bankName of [
+      "RAJESH KUMAR SINGH",
+      "KUMAR RAJESH",
+      "MR RAJESH KUMAR",
+    ]) {
       const outcome = resolveBankVerificationOutcome({
         providerStatus: provider("verified"),
         candidateName: "RAJESH KUMAR",
         typedAccountHolderName: "RAJESH KUMAR",
         bankRegisteredName: bankName,
       });
-      expect(outcome.status, `${bankName} should not need review`).toBe("verified");
+      expect(outcome.status, `${bankName} should not need review`).toBe(
+        "verified",
+      );
     }
   });
 
@@ -96,7 +102,9 @@ describe("bank verification outcome", () => {
         typedAccountHolderName: candidateName,
         bankRegisteredName,
       });
-      expect(outcome.status, `${candidateName} vs ${bankRegisteredName}`).toBe("verified");
+      expect(outcome.status, `${candidateName} vs ${bankRegisteredName}`).toBe(
+        "verified",
+      );
     }
   });
 

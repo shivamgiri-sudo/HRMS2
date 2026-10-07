@@ -156,6 +156,8 @@ esiRegDocsRouter.get(
     const offset = (page - 1) * limit;
     const branchId = req.query.branch_id as string | undefined;
     const search = req.query.search as string | undefined;
+    const activeStatusParam = req.query.active_status as string | undefined;
+    const monthParam = req.query.month as string | undefined;
 
     /**
      * LIMIT/OFFSET are interpolated, not bound.
@@ -207,16 +209,28 @@ esiRegDocsRouter.get(
     // backfilled onto `employees`. Checking only `esic_number` would have shown
     // some already-registered employees as "not registered" too.
     const whereParts: string[] = [
-      `e.active_status = 1`,
       `esi.esi_eligible = 1`,
       `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
       `e.employment_status != 'terminated'`,
     ];
     const params: unknown[] = [];
 
+    // active_status filter: "1" (default active), "0" (inactive), "all" (no filter)
+    if (!activeStatusParam || activeStatusParam === "1") {
+      whereParts.push("e.active_status = 1");
+    } else if (activeStatusParam === "0") {
+      whereParts.push("e.active_status = 0");
+    }
+    // "all" → omit the active_status condition
+
     if (branchId) {
       whereParts.push("e.branch_id = ?");
       params.push(branchId);
+    }
+    // month filter: YYYY-MM format → filter by date_of_joining month
+    if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+      whereParts.push("DATE_FORMAT(e.date_of_joining, '%Y-%m') = ?");
+      params.push(monthParam);
     }
     if (search) {
       whereParts.push(
@@ -899,21 +913,33 @@ esiRegDocsRouter.get(
   h(async (req: Request, res: Response) => {
     const actorId = (req as any).authUser?.id ?? "unknown";
     const branchId = req.query.branch_id as string | undefined;
+    const activeStatusParam = req.query.active_status as string | undefined;
+    const monthParam = req.query.month as string | undefined;
 
     // Same scope as the list above, deliberately — an export that disagrees with
     // the screen it was exported from is worse than no export. See the fix note
     // on the list query above: this must select eligible-but-not-yet-registered
     // employees, not the inverted "already has a number OR eligible" population.
     const whereParts = [
-      `e.active_status = 1`,
       `esi.esi_eligible = 1`,
       `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
       `e.employment_status != 'terminated'`,
     ];
     const params: unknown[] = [];
+
+    if (!activeStatusParam || activeStatusParam === "1") {
+      whereParts.push("e.active_status = 1");
+    } else if (activeStatusParam === "0") {
+      whereParts.push("e.active_status = 0");
+    }
+
     if (branchId) {
       whereParts.push("e.branch_id = ?");
       params.push(branchId);
+    }
+    if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+      whereParts.push("DATE_FORMAT(e.date_of_joining, '%Y-%m') = ?");
+      params.push(monthParam);
     }
 
     // All ESI Form 1 fields in the same sequence used to fill the ESIC portal,

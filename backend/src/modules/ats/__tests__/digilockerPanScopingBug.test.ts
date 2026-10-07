@@ -20,7 +20,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { findMissingMandatoryDocuments } = await import("../onboarding-full.service.js");
+const { findMissingMandatoryDocuments } =
+  await import("../onboarding-full.service.js");
 
 const CANDIDATE_ID = "a7edfea8-fcfd-4744-9223-f109eefcadaf";
 
@@ -80,7 +81,10 @@ describe("findMissingMandatoryDocuments — DigiLocker per-document-type scoping
     execute.mockImplementation(async (sql: string) => {
       const s = String(sql);
       if (s.includes("candidate_onboarding_document")) {
-        return [[...OTHER_DOCS, { doc_type: "PAN Card", doc_name: "PAN Card" }], []];
+        return [
+          [...OTHER_DOCS, { doc_type: "PAN Card", doc_name: "PAN Card" }],
+          [],
+        ];
       }
       if (s.includes("candidate_bgv_check")) return [[], []]; // no digilocker verification at all
       return [[], []];

@@ -53,14 +53,22 @@ function istToday(): string {
     .slice(0, 10);
 }
 
-export async function getLiveTracker(filters: LiveTrackerFilters): Promise<LiveTrackerResult> {
+export async function getLiveTracker(
+  filters: LiveTrackerFilters,
+): Promise<LiveTrackerResult> {
   const date = filters.date ?? istToday();
 
   const conds: string[] = ["ra.roster_date = ?"];
   const params: unknown[] = [date];
 
-  if (filters.processName) { conds.push("ra.process_name = ?"); params.push(filters.processName); }
-  if (filters.branchName)  { conds.push("ra.branch_name = ?");  params.push(filters.branchName); }
+  if (filters.processName) {
+    conds.push("ra.process_name = ?");
+    params.push(filters.processName);
+  }
+  if (filters.branchName) {
+    conds.push("ra.branch_name = ?");
+    params.push(filters.branchName);
+  }
 
   const where = conds.join(" AND ");
 
@@ -97,18 +105,27 @@ export async function getLiveTracker(filters: LiveTrackerFilters): Promise<LiveT
     ...r,
     adherence_pct:
       r.required_minutes > 0
-        ? Math.min(100, Math.round((r.total_login_minutes / r.required_minutes) * 100))
+        ? Math.min(
+            100,
+            Math.round((r.total_login_minutes / r.required_minutes) * 100),
+          )
         : 0,
   }));
 
-  const total      = sessions.length;
-  const logged_in  = sessions.filter((s) => s.current_status === "Logged In").length;
-  const logged_out = sessions.filter((s) => s.current_status === "Logged Out").length;
-  const absent     = sessions.filter((s) => s.current_status === "Absent").length;
+  const total = sessions.length;
+  const logged_in = sessions.filter(
+    (s) => s.current_status === "Logged In",
+  ).length;
+  const logged_out = sessions.filter(
+    (s) => s.current_status === "Logged Out",
+  ).length;
+  const absent = sessions.filter((s) => s.current_status === "Absent").length;
 
   const overall_adherence_pct =
     total > 0
-      ? Math.round(sessions.reduce((sum, s) => sum + s.adherence_pct, 0) / total)
+      ? Math.round(
+          sessions.reduce((sum, s) => sum + s.adherence_pct, 0) / total,
+        )
       : 0;
 
   return {

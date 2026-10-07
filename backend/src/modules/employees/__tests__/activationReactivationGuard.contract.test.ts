@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { nonReactivatableSqlList, TERMINAL_EXIT_STATUSES } from "../../exit/exitEmploymentStatus.js";
+import {
+  nonReactivatableSqlList,
+  TERMINAL_EXIT_STATUSES,
+} from "../../exit/exitEmploymentStatus.js";
 import fs from "fs";
 import path from "path";
 
@@ -22,14 +25,19 @@ import { employeeService } from "../employee.service.js";
 const ACTIVATION = path.resolve(__dirname, "../employee-activation.service.ts");
 const mockExecute = db.execute as unknown as ReturnType<typeof vi.fn>;
 
-interface Captured { sql: string; params: unknown[] }
+interface Captured {
+  sql: string;
+  params: unknown[];
+}
 
 function stubEmployee(row: Record<string, unknown>): Captured[] {
   const calls: Captured[] = [];
   mockExecute.mockImplementation((sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
-    if (sql.includes("SELECT user_id FROM employees")) return Promise.resolve([[{ user_id: "user-1" }], []]);
-    if (sql.includes("FROM employees WHERE id = ?")) return Promise.resolve([[row], []]);
+    if (sql.includes("SELECT user_id FROM employees"))
+      return Promise.resolve([[{ user_id: "user-1" }], []]);
+    if (sql.includes("FROM employees WHERE id = ?"))
+      return Promise.resolve([[row], []]);
     return Promise.resolve([[{ affectedRows: 1 }], []]);
   });
   return calls;
@@ -39,7 +47,9 @@ const auditRows = (calls: Captured[]) =>
   calls.filter((c) => c.sql.includes("INSERT INTO sensitive_action_log"));
 
 const hasMarker = (calls: Captured[]) =>
-  auditRows(calls).some((c) => JSON.stringify(c.params).includes("EMPLOYEE_DEACTIVATED"));
+  auditRows(calls).some((c) =>
+    JSON.stringify(c.params).includes("EMPLOYEE_DEACTIVATED"),
+  );
 
 describe("both deactivation paths emit the canonical EMPLOYEE_DEACTIVATED marker", () => {
   beforeEach(() => {
@@ -48,32 +58,57 @@ describe("both deactivation paths emit the canonical EMPLOYEE_DEACTIVATED marker
   });
 
   it("the DELETE path writes it", async () => {
-    const calls = stubEmployee({ id: "emp-a", employment_status: "Active", active_status: 1 });
+    const calls = stubEmployee({
+      id: "emp-a",
+      employment_status: "Active",
+      active_status: 1,
+    });
 
-    await employeeService.deactivateEmployee("emp-a", "hr-user", "Absconded since 1 Aug");
+    await employeeService.deactivateEmployee(
+      "emp-a",
+      "hr-user",
+      "Absconded since 1 Aug",
+    );
 
     expect(hasMarker(calls)).toBe(true);
   });
 
   it("the profile-update path writes it too — this is the path HR actually uses", async () => {
-    const calls = stubEmployee({ id: "emp-b", employment_status: "Active", active_status: 1 });
+    const calls = stubEmployee({
+      id: "emp-b",
+      employment_status: "Active",
+      active_status: 1,
+    });
 
     await employeeService.updateEmployee(
       "emp-b",
-      { employmentStatus: "Inactive", deactivationReason: "Resigned, LWD 15 Aug" } as never,
-      "hr-user"
+      {
+        employmentStatus: "Inactive",
+        deactivationReason: "Resigned, LWD 15 Aug",
+      } as never,
+      "hr-user",
     );
 
     expect(hasMarker(calls)).toBe(true);
-    const marker = auditRows(calls).find((c) => JSON.stringify(c.params).includes("EMPLOYEE_DEACTIVATED"));
+    const marker = auditRows(calls).find((c) =>
+      JSON.stringify(c.params).includes("EMPLOYEE_DEACTIVATED"),
+    );
     // carries the reason, so the audit answers "why", not only "when"
     expect(JSON.stringify(marker?.params)).toContain("Resigned, LWD 15 Aug");
   });
 
   it("an ordinary edit does NOT write it — the marker has to stay specific", async () => {
-    const calls = stubEmployee({ id: "emp-c", employment_status: "Active", active_status: 1 });
+    const calls = stubEmployee({
+      id: "emp-c",
+      employment_status: "Active",
+      active_status: 1,
+    });
 
-    await employeeService.updateEmployee("emp-c", { city: "Noida" } as never, "hr-user");
+    await employeeService.updateEmployee(
+      "emp-c",
+      { city: "Noida" } as never,
+      "hr-user",
+    );
 
     expect(hasMarker(calls)).toBe(false);
   });
@@ -82,7 +117,9 @@ describe("both deactivation paths emit the canonical EMPLOYEE_DEACTIVATED marker
 describe("the activation job refuses to re-activate a deliberate deactivation", () => {
   const activationQuery = () => {
     const code = fs.readFileSync(ACTIVATION, "utf8");
-    const job = code.slice(code.indexOf("Find all employees due for activation"));
+    const job = code.slice(
+      code.indexOf("Find all employees due for activation"),
+    );
     return job.slice(0, job.indexOf("`,"));
   };
 

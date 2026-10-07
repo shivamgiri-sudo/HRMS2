@@ -11,22 +11,24 @@ function isValidIdentifier(name: string): boolean {
   return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
 }
 
-const INTEGRATION_TARGET_TABLES = new Set([
-  "dialer_session_log",
-]);
+const INTEGRATION_TARGET_TABLES = new Set(["dialer_session_log"]);
 
 export async function promoteRows(
   integrationKey: string,
   rows: Record<string, unknown>[],
   fieldMaps: IntegrationFieldMap[],
-  runId: string
+  runId: string,
 ): Promise<PromotionResult> {
   if (rows.length === 0) return { promoted: 0, failed: 0 };
 
   // Group maps by target table
   const byTable = new Map<string, IntegrationFieldMap[]>();
   for (const map of fieldMaps) {
-    if (!isValidIdentifier(map.target_table) || !isValidIdentifier(map.target_column) || !isValidIdentifier(map.source_field)) {
+    if (
+      !isValidIdentifier(map.target_table) ||
+      !isValidIdentifier(map.target_column) ||
+      !isValidIdentifier(map.source_field)
+    ) {
       continue; // Skip invalid identifiers instead of failing entire batch
     }
     if (!INTEGRATION_TARGET_TABLES.has(map.target_table)) continue;

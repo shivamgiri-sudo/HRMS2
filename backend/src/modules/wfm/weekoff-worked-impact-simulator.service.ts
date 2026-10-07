@@ -84,7 +84,8 @@ export async function simulateWowImpact(
   toDate?: string,
 ): Promise<WowImpactSummary> {
   const from = fromDate ?? "2026-01-01";
-  const to   = toDate   ?? new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const to =
+    toDate ?? new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 
   // All impacted attendance_daily_record rows:
   //   - roster says is_week_off = 1 (published/approved_final)
@@ -162,7 +163,8 @@ export async function simulateWowImpact(
     const days = Number(r.days_in_month ?? 30);
 
     if (lwp > 0 && gross > 0 && days > 0) {
-      r.estimated_lwp_salary_loss = Math.round((gross / days) * lwp * 100) / 100;
+      r.estimated_lwp_salary_loss =
+        Math.round((gross / days) * lwp * 100) / 100;
       totalLwpLoss += r.estimated_lwp_salary_loss;
     } else {
       r.estimated_lwp_salary_loss = null;

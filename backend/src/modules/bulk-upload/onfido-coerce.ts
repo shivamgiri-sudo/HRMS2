@@ -5,8 +5,18 @@
  */
 
 const MONTHS: Record<string, number> = {
-  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
 };
 
 /**
@@ -23,12 +33,15 @@ export function parseFlexibleDate(raw: unknown): string | null {
   if (dMonY) {
     const month = MONTHS[dMonY[2].toLowerCase()];
     if (month) {
-      const year = dMonY[3].length === 2 ? 2000 + Number(dMonY[3]) : Number(dMonY[3]);
+      const year =
+        dMonY[3].length === 2 ? 2000 + Number(dMonY[3]) : Number(dMonY[3]);
       return `${year}-${String(month).padStart(2, "0")}-${dMonY[1].padStart(2, "0")}`;
     }
   }
 
-  const mdY = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+\d{1,2}:\d{2})?/.exec(value);
+  const mdY = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+\d{1,2}:\d{2})?/.exec(
+    value,
+  );
   if (mdY) {
     const year = mdY[3].length === 2 ? 2000 + Number(mdY[3]) : Number(mdY[3]);
     return `${year}-${mdY[1].padStart(2, "0")}-${mdY[2].padStart(2, "0")}`;
@@ -79,18 +92,30 @@ export function parseRatio(raw: unknown): number | null {
 }
 
 export function parseBoolYesNo(raw: unknown): 0 | 1 | null {
-  const value = String(raw ?? "").trim().toLowerCase();
+  const value = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   if (!value) return null;
-  return value === "yes" || value === "y" || value === "true" || value === "1" ? 1 : 0;
+  return value === "yes" || value === "y" || value === "true" || value === "1"
+    ? 1
+    : 0;
 }
 
-export function coerce(type: "string" | "date" | "int" | "float" | "ratio" | "bool_yes_no", raw: unknown): unknown {
+export function coerce(
+  type: "string" | "date" | "int" | "float" | "ratio" | "bool_yes_no",
+  raw: unknown,
+): unknown {
   switch (type) {
-    case "date": return parseFlexibleDate(raw);
-    case "int": return parseInt10(raw);
-    case "float": return parseFloatValue(raw);
-    case "ratio": return parseRatio(raw);
-    case "bool_yes_no": return parseBoolYesNo(raw);
+    case "date":
+      return parseFlexibleDate(raw);
+    case "int":
+      return parseInt10(raw);
+    case "float":
+      return parseFloatValue(raw);
+    case "ratio":
+      return parseRatio(raw);
+    case "bool_yes_no":
+      return parseBoolYesNo(raw);
     default: {
       const s = String(raw ?? "").trim();
       return s === "" ? null : s.slice(0, 500);

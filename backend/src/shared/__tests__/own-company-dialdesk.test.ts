@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { notDialDeskProcessSql, ownCompanyBranchSql } from "../ownCompanyCostCentre.js";
+import {
+  notDialDeskProcessSql,
+  ownCompanyBranchSql,
+} from "../ownCompanyCostCentre.js";
 
 describe("DialDesk exclusion predicates", () => {
   it("keeps branches with no recorded company and MAS Callnet spellings, drops other companies", () => {
@@ -23,7 +26,8 @@ describe("DialDesk exclusion predicates", () => {
 
 describe("I-Spark and GRN exclusion", () => {
   it("hides I-Spark branches by name as well as company", async () => {
-    const { ownCompanyBranchSql: branchSql, ownCompanyGrnSql } = await import("../ownCompanyCostCentre.js");
+    const { ownCompanyBranchSql: branchSql, ownCompanyGrnSql } =
+      await import("../ownCompanyCostCentre.js");
     expect(branchSql("b")).toContain("NOT LIKE '%ispark%'");
     const grn = ownCompanyGrnSql("g");
     expect(grn).toContain("g.branch_id NOT IN");

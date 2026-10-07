@@ -10,8 +10,18 @@ interface QualityAnalyticsSummary {
   calibration_status: { scheduled: number; held: number; irr_score: number };
   fatal_trend: Array<{ date: string; count: number }>;
   agent_bands: { s: number; a: number; b: number; c: number; d: number };
-  tni_summary: Array<{ employee_id: number; employee_name: string; defect_pattern: string; tni_count: number }>;
-  audit_coverage: Array<{ process_name: string; calls_audited: number; total_calls: number; coverage_pct: number }>;
+  tni_summary: Array<{
+    employee_id: number;
+    employee_name: string;
+    defect_pattern: string;
+    tni_count: number;
+  }>;
+  audit_coverage: Array<{
+    process_name: string;
+    calls_audited: number;
+    total_calls: number;
+    coverage_pct: number;
+  }>;
 }
 
 export async function getQualityAnalyticsSummary(): Promise<QualityAnalyticsSummary> {
@@ -23,7 +33,7 @@ export async function getQualityAnalyticsSummary(): Promise<QualityAnalyticsSumm
        AND defect_category IS NOT NULL
      GROUP BY defect_category
      ORDER BY count DESC
-     LIMIT 5`
+     LIMIT 5`,
   );
   const totalDefects = defects.reduce((sum, r) => sum + Number(r.count), 0);
 
@@ -34,7 +44,7 @@ export async function getQualityAnalyticsSummary(): Promise<QualityAnalyticsSumm
        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as held,
        AVG(irr_score) as avg_irr
      FROM calibration_sessions
-     WHERE DATE_FORMAT(scheduled_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`
+     WHERE DATE_FORMAT(scheduled_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`,
   );
 
   // Fatal error trend (last 30 days)
@@ -44,7 +54,7 @@ export async function getQualityAnalyticsSummary(): Promise<QualityAnalyticsSumm
      WHERE audit_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
        AND is_fatal = 1
      GROUP BY DATE(audit_date)
-     ORDER BY date ASC`
+     ORDER BY date ASC`,
   );
 
   // Agent quality bands
@@ -60,7 +70,7 @@ export async function getQualityAnalyticsSummary(): Promise<QualityAnalyticsSumm
        FROM quality_audits
        WHERE audit_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
        GROUP BY employee_id
-     ) scores`
+     ) scores`,
   );
 
   // TNI summary (top 10 agents needing training)
@@ -76,7 +86,7 @@ export async function getQualityAnalyticsSummary(): Promise<QualityAnalyticsSumm
        AND q.defect_category IS NOT NULL
      GROUP BY q.employee_id, e.name
      ORDER BY tni_count DESC
-     LIMIT 10`
+     LIMIT 10`,
   );
 
   // Audit coverage by process
@@ -92,14 +102,17 @@ export async function getQualityAnalyticsSummary(): Promise<QualityAnalyticsSumm
        AND c.call_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
      WHERE p.is_active = 1
      GROUP BY p.id, p.name
-     ORDER BY p.name`
+     ORDER BY p.name`,
   );
 
   return {
     defect_breakdown: defects.map((r) => ({
       category: r.defect_category,
       count: r.count,
-      pct: totalDefects > 0 ? Math.round((Number(r.count) / totalDefects) * 100) : 0,
+      pct:
+        totalDefects > 0
+          ? Math.round((Number(r.count) / totalDefects) * 100)
+          : 0,
     })),
     calibration_status: {
       scheduled: calibration[0]?.scheduled ?? 0,

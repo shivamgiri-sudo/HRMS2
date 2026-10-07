@@ -20,7 +20,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * rest are simply not ESI-covered. That is the difference between a resolver existing and not.
  */
 
-const { billQuery, execute } = vi.hoisted(() => ({ billQuery: vi.fn(), execute: vi.fn() }));
+const { billQuery, execute } = vi.hoisted(() => ({
+  billQuery: vi.fn(),
+  execute: vi.fn(),
+}));
 vi.mock("../../../db/billDb.js", () => ({ billQuery }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
@@ -38,7 +41,9 @@ beforeEach(() => {
 
 describe("both schemes resolve from one payroll row", () => {
   it("reads PF and ESI independently off the same row", async () => {
-    billQuery.mockResolvedValue([{ EmpCode: "MAS001", PFELig: "YES", ESIElig: "NO" }]);
+    billQuery.mockResolvedValue([
+      { EmpCode: "MAS001", PFELig: "YES", ESIElig: "NO" },
+    ]);
     const all = await resolveStatutoryApplicabilityForPeriod("2026-07");
     expect(all.get("MAS001")?.pf.status).toBe("APPLICABLE");
     expect(all.get("MAS001")?.esi.status).toBe("NOT_APPLICABLE");
@@ -47,7 +52,9 @@ describe("both schemes resolve from one payroll row", () => {
   it("queries db_bill exactly once for both schemes", async () => {
     // The whole reason these share a resolver: db_bill is MySQL 5.5 across the WAN, and a
     // readiness screen asking each scheme separately would pay for the round trip twice.
-    billQuery.mockResolvedValue([{ EmpCode: "MAS001", PFELig: "YES", ESIElig: "YES" }]);
+    billQuery.mockResolvedValue([
+      { EmpCode: "MAS001", PFELig: "YES", ESIElig: "YES" },
+    ]);
     await resolveStatutoryApplicabilityForPeriod("2026-07");
     expect(billQuery).toHaveBeenCalledTimes(1);
     expect(String(billQuery.mock.calls[0][0])).toMatch(/ESIElig/);
@@ -55,8 +62,13 @@ describe("both schemes resolve from one payroll row", () => {
   });
 
   it("db_bill outranks the HRMS record — what was actually paid wins", async () => {
-    billQuery.mockResolvedValue([{ EmpCode: "MAS001", PFELig: "NO", ESIElig: "NO" }]);
-    execute.mockResolvedValue([[{ employee_code: "MAS001", pf_eligible: 1, esi_eligible: 1 }], []]);
+    billQuery.mockResolvedValue([
+      { EmpCode: "MAS001", PFELig: "NO", ESIElig: "NO" },
+    ]);
+    execute.mockResolvedValue([
+      [{ employee_code: "MAS001", pf_eligible: 1, esi_eligible: 1 }],
+      [],
+    ]);
     const all = await resolveStatutoryApplicabilityForPeriod("2026-07");
     expect(all.get("MAS001")?.pf.status).toBe("NOT_APPLICABLE");
     expect(all.get("MAS001")?.esi.source).toBe("db_bill_payroll");
@@ -66,7 +78,10 @@ describe("both schemes resolve from one payroll row", () => {
 describe("HRMS keeps working as payroll moves across", () => {
   it("falls back to the HRMS record for an employee that period never paid", async () => {
     billQuery.mockResolvedValue([]);
-    execute.mockResolvedValue([[{ employee_code: "MAS900", pf_eligible: 1, esi_eligible: 0 }], []]);
+    execute.mockResolvedValue([
+      [{ employee_code: "MAS900", pf_eligible: 1, esi_eligible: 0 }],
+      [],
+    ]);
     const all = await resolveStatutoryApplicabilityForPeriod("2026-07");
     expect(all.get("MAS900")?.pf.status).toBe("APPLICABLE");
     expect(all.get("MAS900")?.esi.status).toBe("NOT_APPLICABLE");
@@ -75,7 +90,10 @@ describe("HRMS keeps working as payroll moves across", () => {
 
   it("resolves one scheme even when the other is unreadable on the same HRMS row", async () => {
     billQuery.mockResolvedValue([]);
-    execute.mockResolvedValue([[{ employee_code: "MAS901", pf_eligible: 1, esi_eligible: null }], []]);
+    execute.mockResolvedValue([
+      [{ employee_code: "MAS901", pf_eligible: 1, esi_eligible: null }],
+      [],
+    ]);
     const all = await resolveStatutoryApplicabilityForPeriod("2026-07");
     expect(all.get("MAS901")?.pf.status).toBe("APPLICABLE");
     expect(all.get("MAS901")?.esi.status).toBe("UNRESOLVED");
@@ -83,7 +101,10 @@ describe("HRMS keeps working as payroll moves across", () => {
 
   it("drops an HRMS row where NEITHER scheme is readable rather than reporting it resolved", async () => {
     billQuery.mockResolvedValue([]);
-    execute.mockResolvedValue([[{ employee_code: "MAS902", pf_eligible: null, esi_eligible: null }], []]);
+    execute.mockResolvedValue([
+      [{ employee_code: "MAS902", pf_eligible: null, esi_eligible: null }],
+      [],
+    ]);
     const all = await resolveStatutoryApplicabilityForPeriod("2026-07");
     expect(all.has("MAS902")).toBe(false);
   });
@@ -102,7 +123,9 @@ describe("it never guesses", () => {
     // db_bill's eligibility columns are known to carry misaligned junk — one row holds an IFSC
     // code and a person's name. Reading that as "no" would silently drop a real contributor from
     // a statutory filing, which is the one direction this must never fail in.
-    billQuery.mockResolvedValue([{ EmpCode: "MAS003", PFELig: "YES", ESIElig: "CNRB0001769" }]);
+    billQuery.mockResolvedValue([
+      { EmpCode: "MAS003", PFELig: "YES", ESIElig: "CNRB0001769" },
+    ]);
     const all = await resolveStatutoryApplicabilityForPeriod("2026-07");
     expect(all.get("MAS003")?.esi.status).toBe("UNRESOLVED");
     expect(all.get("MAS003")?.pf.status).toBe("APPLICABLE"); // the good flag still resolves
@@ -111,12 +134,18 @@ describe("it never guesses", () => {
   it("THROWS when db_bill is unreachable instead of returning an empty population", async () => {
     // A statutory population that silently empties when a remote host is down would read as
     // "nobody is covered this month" — the worst possible failure for a filing.
-    billQuery.mockImplementation(async () => { throw new Error("ETIMEDOUT"); });
-    await expect(resolveStatutoryApplicabilityForPeriod("2026-07")).rejects.toThrow(/unreachable/i);
+    billQuery.mockImplementation(async () => {
+      throw new Error("ETIMEDOUT");
+    });
+    await expect(
+      resolveStatutoryApplicabilityForPeriod("2026-07"),
+    ).rejects.toThrow(/unreachable/i);
   });
 
   it("rejects a malformed period rather than scanning everything", async () => {
-    await expect(resolveStatutoryApplicabilityForPeriod("July 2026")).rejects.toThrow(/YYYY-MM/);
+    await expect(
+      resolveStatutoryApplicabilityForPeriod("July 2026"),
+    ).rejects.toThrow(/YYYY-MM/);
     expect(billQuery).not.toHaveBeenCalled();
   });
 
@@ -124,23 +153,61 @@ describe("it never guesses", () => {
     // ESI coverage is wage-linked and PF has its own rules, but deriving either from salary here
     // would be inventing statutory policy. 21000 and 15000 are the thresholds someone would most
     // plausibly hard-code.
-    const src = (await import("node:fs")).readFileSync(
-      (await import("node:path")).resolve(process.cwd(), "src/modules/payroll/statutory-applicability.service.ts"),
-      "utf8",
-    ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-    expect(src).not.toMatch(/15000|15_000|21000|21_000|basic\s*[<>]=?|gross\s*[<>]=?/i);
+    const src = (await import("node:fs"))
+      .readFileSync(
+        (await import("node:path")).resolve(
+          process.cwd(),
+          "src/modules/payroll/statutory-applicability.service.ts",
+        ),
+        "utf8",
+      )
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(src).not.toMatch(
+      /15000|15_000|21000|21_000|basic\s*[<>]=?|gross\s*[<>]=?/i,
+    );
   });
 });
 
 describe("summary keeps unresolved visible", () => {
   it("counts per scheme and does not fold unresolved into not-applicable", () => {
     const rows = [
-      { employeeCode: "A", pf: { status: "APPLICABLE" as const, source: "db_bill_payroll" as const, reason: "" },
-        esi: { status: "NOT_APPLICABLE" as const, source: "db_bill_payroll" as const, reason: "" } },
-      { employeeCode: "B", pf: { status: "UNRESOLVED" as const, source: "none" as const, reason: "" },
-        esi: { status: "APPLICABLE" as const, source: "hrms_statutory_info" as const, reason: "" } },
+      {
+        employeeCode: "A",
+        pf: {
+          status: "APPLICABLE" as const,
+          source: "db_bill_payroll" as const,
+          reason: "",
+        },
+        esi: {
+          status: "NOT_APPLICABLE" as const,
+          source: "db_bill_payroll" as const,
+          reason: "",
+        },
+      },
+      {
+        employeeCode: "B",
+        pf: {
+          status: "UNRESOLVED" as const,
+          source: "none" as const,
+          reason: "",
+        },
+        esi: {
+          status: "APPLICABLE" as const,
+          source: "hrms_statutory_info" as const,
+          reason: "",
+        },
+      },
     ];
-    expect(summariseApplicability(rows, "pf")).toMatchObject({ applicable: 1, notApplicable: 0, unresolved: 1 });
-    expect(summariseApplicability(rows, "esi")).toMatchObject({ applicable: 1, notApplicable: 1, unresolved: 0 });
+    expect(summariseApplicability(rows, "pf")).toMatchObject({
+      applicable: 1,
+      notApplicable: 0,
+      unresolved: 1,
+    });
+    expect(summariseApplicability(rows, "esi")).toMatchObject({
+      applicable: 1,
+      notApplicable: 1,
+      unresolved: 0,
+    });
   });
 });

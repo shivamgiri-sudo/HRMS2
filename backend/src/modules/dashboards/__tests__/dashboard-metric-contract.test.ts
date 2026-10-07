@@ -158,12 +158,14 @@ describe("canonical dashboard metric contract", () => {
       new Date("2026-07-23T10:00:00.000Z"),
     );
 
-    expect(() => dashboardSummarySchema.parse({
-      dashboardCode: "HR_DASHBOARD",
-      generatedAt: "2026-07-23T10:00:00.000Z",
-      scope,
-      metrics: { hc: metric },
-    })).not.toThrow();
+    expect(() =>
+      dashboardSummarySchema.parse({
+        dashboardCode: "HR_DASHBOARD",
+        generatedAt: "2026-07-23T10:00:00.000Z",
+        scope,
+        metrics: { hc: metric },
+      }),
+    ).not.toThrow();
   });
 });
 
@@ -177,12 +179,30 @@ describe("role-specific metric execution definitions", () => {
     // figure rather than a false zero, and metricUnavailableReason covers the scoped-to-nothing
     // case.
     expect(getDashboardMetricKeys("HR_DASHBOARD")).toEqual([
-      "onb", "resign", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
-      "hc", "att", "docCompliance", "training", "leaveApprovals", "hiringAlert",
+      "onb",
+      "resign",
+      "appointmentEsign",
+      "bgv",
+      "nm",
+      "joiningDocEsign",
+      "hc",
+      "att",
+      "docCompliance",
+      "training",
+      "leaveApprovals",
+      "hiringAlert",
     ]);
-    expect(getDashboardMetricKeys("WFM_DASHBOARD")).toEqual(["hc", "att", "attException", "biometric"]);
+    expect(getDashboardMetricKeys("WFM_DASHBOARD")).toEqual([
+      "hc",
+      "att",
+      "attException",
+      "biometric",
+    ]);
     expect(getDashboardMetricKeys("PAYROLL_HR_DASHBOARD")).toEqual([
-      "payroll", "incentive", "salaryComponents", "attException",
+      "payroll",
+      "incentive",
+      "salaryComponents",
+      "attException",
     ]);
     expect(getDashboardMetricKeys("QUALITY_DASHBOARD")).toEqual(["hc", "att"]);
   });
@@ -192,37 +212,65 @@ describe("role-specific metric execution definitions", () => {
     // surface. SALARY_COMPONENTS carries per-component rupee totals, so it belongs to
     // PAYROLL_HR_DASHBOARD alone — CEO and MANAGEMENT get readiness counts, not amounts.
     const dashboards = [
-      "SUPER_ADMIN_DASHBOARD", "CEO_DASHBOARD", "HR_DASHBOARD", "WFM_DASHBOARD",
-      "WFM_ATTENDANCE_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD",
-      "RECRUITER_DASHBOARD", "IT_MANAGER_DASHBOARD", "MANAGEMENT_DASHBOARD",
+      "SUPER_ADMIN_DASHBOARD",
+      "CEO_DASHBOARD",
+      "HR_DASHBOARD",
+      "WFM_DASHBOARD",
+      "WFM_ATTENDANCE_DASHBOARD",
+      "QUALITY_DASHBOARD",
+      "OPERATIONS_DASHBOARD",
+      "RECRUITER_DASHBOARD",
+      "IT_MANAGER_DASHBOARD",
+      "MANAGEMENT_DASHBOARD",
       "EMPLOYEE_SELF_DASHBOARD",
     ] as const;
     for (const code of dashboards) {
-      expect(getDashboardMetricKeys(code), `${code} must not expose salary components`)
-        .not.toContain("salaryComponents");
+      expect(
+        getDashboardMetricKeys(code),
+        `${code} must not expose salary components`,
+      ).not.toContain("salaryComponents");
     }
-    expect(getDashboardMetricKeys("PAYROLL_HR_DASHBOARD")).toContain("salaryComponents");
+    expect(getDashboardMetricKeys("PAYROLL_HR_DASHBOARD")).toContain(
+      "salaryComponents",
+    );
   });
 
   it("routes each new metric to the dashboards that own the work", () => {
     // Attendance exceptions block payroll, so WFM (who fix them) and Payroll (who are
     // blocked by them) both see the queue.
-    expect(getDashboardMetricKeys("WFM_ATTENDANCE_DASHBOARD")).toContain("attException");
-    expect(getDashboardMetricKeys("PAYROLL_HR_DASHBOARD")).toContain("attException");
+    expect(getDashboardMetricKeys("WFM_ATTENDANCE_DASHBOARD")).toContain(
+      "attException",
+    );
+    expect(getDashboardMetricKeys("PAYROLL_HR_DASHBOARD")).toContain(
+      "attException",
+    );
     expect(getDashboardMetricKeys("HR_DASHBOARD")).toContain("docCompliance");
-    expect(getDashboardMetricKeys("RECRUITER_DASHBOARD")).toContain("recruiterActivity");
+    expect(getDashboardMetricKeys("RECRUITER_DASHBOARD")).toContain(
+      "recruiterActivity",
+    );
     // Training surfaces on HR and Management; `trainer` keeps the self dashboard, so no
     // 13th dashboard is introduced for it.
-    expect(getDashboardMetricKeys("MANAGEMENT_DASHBOARD")).toContain("training");
-    expect(getDashboardMetricKeys("EMPLOYEE_SELF_DASHBOARD")).not.toContain("training");
+    expect(getDashboardMetricKeys("MANAGEMENT_DASHBOARD")).toContain(
+      "training",
+    );
+    expect(getDashboardMetricKeys("EMPLOYEE_SELF_DASHBOARD")).not.toContain(
+      "training",
+    );
   });
 
   it("gives every dashboard a non-empty metric bundle", () => {
     // SUPER_ADMIN, QUALITY and IT_MANAGER were empty arrays, so /summary returned
     // metrics:{} and SuperAdminReferenceLayout's four attendance-derived cards plus its
     // donut were permanently blank. An empty bundle is now a test failure.
-    for (const code of ["SUPER_ADMIN_DASHBOARD", "QUALITY_DASHBOARD", "IT_MANAGER_DASHBOARD"] as const) {
-      expect(getDashboardMetricKeys(code).length, `${code} has an empty metric bundle`).toBeGreaterThan(0);
+    for (const code of [
+      "SUPER_ADMIN_DASHBOARD",
+      "QUALITY_DASHBOARD",
+      "IT_MANAGER_DASHBOARD",
+    ] as const) {
+      expect(
+        getDashboardMetricKeys(code).length,
+        `${code} has an empty metric bundle`,
+      ).toBeGreaterThan(0);
     }
   });
 
@@ -236,28 +284,51 @@ describe("role-specific metric execution definitions", () => {
   it("does not add metrics whose source table is empty in production", () => {
     // task_tat_instance holds no rows, so adding "tat" to a bundle ships a blank tile.
     // It stays only where it already existed.
-    expect(getDashboardMetricKeys("SUPER_ADMIN_DASHBOARD")).not.toContain("tat");
+    expect(getDashboardMetricKeys("SUPER_ADMIN_DASHBOARD")).not.toContain(
+      "tat",
+    );
     expect(getDashboardMetricKeys("QUALITY_DASHBOARD")).not.toContain("tat");
     expect(getDashboardMetricKeys("IT_MANAGER_DASHBOARD")).not.toContain("tat");
   });
 
   it("accepts drilldown and trend metrics only when they belong to the requested dashboard", () => {
-    expect(isMetricConfiguredForDashboard("HR_DASHBOARD", "ONBOARDING")).toBe(true);
-    expect(isMetricConfiguredForDashboard("WFM_DASHBOARD", "ATTENDANCE")).toBe(true);
-    expect(isMetricConfiguredForDashboard("WFM_ATTENDANCE_DASHBOARD", "ATTENDANCE")).toBe(true);
-    expect(isMetricConfiguredForDashboard("WFM_DASHBOARD", "ONBOARDING")).toBe(false);
-    expect(isMetricConfiguredForDashboard("PAYROLL_HR_DASHBOARD", "ONBOARDING")).toBe(false);
+    expect(isMetricConfiguredForDashboard("HR_DASHBOARD", "ONBOARDING")).toBe(
+      true,
+    );
+    expect(isMetricConfiguredForDashboard("WFM_DASHBOARD", "ATTENDANCE")).toBe(
+      true,
+    );
+    expect(
+      isMetricConfiguredForDashboard("WFM_ATTENDANCE_DASHBOARD", "ATTENDANCE"),
+    ).toBe(true);
+    expect(isMetricConfiguredForDashboard("WFM_DASHBOARD", "ONBOARDING")).toBe(
+      false,
+    );
+    expect(
+      isMetricConfiguredForDashboard("PAYROLL_HR_DASHBOARD", "ONBOARDING"),
+    ).toBe(false);
   });
 
   it("enforces dashboard/metric pairing before drilldown and trend queries", () => {
-    const routes = readFileSync(resolve(process.cwd(), "src/modules/dashboards/dashboard.routes.ts"), "utf8");
+    const routes = readFileSync(
+      resolve(process.cwd(), "src/modules/dashboards/dashboard.routes.ts"),
+      "utf8",
+    );
     const drilldown = routes.slice(
-      routes.indexOf('router.get("/:dashboardCode/metric/:metricCode/drilldown"'),
+      routes.indexOf(
+        'router.get("/:dashboardCode/metric/:metricCode/drilldown"',
+      ),
       routes.indexOf('router.get("/:dashboardCode/metric/:metricCode/trend"'),
     );
-    const trend = routes.slice(routes.indexOf('router.get("/:dashboardCode/metric/:metricCode/trend"'));
+    const trend = routes.slice(
+      routes.indexOf('router.get("/:dashboardCode/metric/:metricCode/trend"'),
+    );
 
-    expect(drilldown).toContain("requireDashboardMetric(dashboardCode, req.params.metricCode)");
-    expect(trend).toContain("requireDashboardMetric(dashboardCode, req.params.metricCode)");
+    expect(drilldown).toContain(
+      "requireDashboardMetric(dashboardCode, req.params.metricCode)",
+    );
+    expect(trend).toContain(
+      "requireDashboardMetric(dashboardCode, req.params.metricCode)",
+    );
   });
 });

@@ -5,7 +5,10 @@ import { getNcosecPool } from "../../db/ncosecDb.js";
 import { env } from "../../config/env.js";
 import { nowIST } from "../../shared/timezone.js";
 import { cosecSyncService } from "./cosec-sync.service.js";
-import { buildSourceUserMaps, classifySourceUser } from "./attendance-reconciliation-mapping.js";
+import {
+  buildSourceUserMaps,
+  classifySourceUser,
+} from "./attendance-reconciliation-mapping.js";
 
 type IssueType =
   | "unmapped_cosec_user"
@@ -121,7 +124,11 @@ async function upsertIssues(issues: ReconciliationIssue[]): Promise<number> {
   return upserted;
 }
 
-async function resolveGoneIssues(from: string, to: string, activeKeys: Set<string>): Promise<number> {
+async function resolveGoneIssues(
+  from: string,
+  to: string,
+  activeKeys: Set<string>,
+): Promise<number> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT id, DATE_FORMAT(issue_date, '%Y-%m-%d') AS issue_date, issue_type, employee_id, employee_code, cosec_user_id
        FROM attendance_reconciliation_issue
@@ -153,9 +160,15 @@ async function resolveGoneIssues(from: string, to: string, activeKeys: Set<strin
 }
 
 export const attendanceReconciliationService = {
-  async audit(options: { from: string; to: string; autoFix?: boolean }): Promise<ReconciliationResult> {
+  async audit(options: {
+    from: string;
+    to: string;
+    autoFix?: boolean;
+  }): Promise<ReconciliationResult> {
     const sourceGroups = await pullSourceGroups(options.from, options.to);
-    const usableSource = sourceGroups.filter((row) => row.totalPunches > 1 && row.workingMinutes > 2);
+    const usableSource = sourceGroups.filter(
+      (row) => row.totalPunches > 1 && row.workingMinutes > 2,
+    );
 
     const [excludedRows] = await db.query<RowDataPacket[]>(
       `SELECT cosec_user_id
@@ -210,16 +223,20 @@ export const attendanceReconciliationService = {
       ),
     ]);
     const ibdByEmployeeDate = new Map<string, any>();
-    for (const row of ibdRows as any[]) ibdByEmployeeDate.set(`${row.employee_code}__${row.record_date}`, row);
+    for (const row of ibdRows as any[])
+      ibdByEmployeeDate.set(`${row.employee_code}__${row.record_date}`, row);
 
     const adrByEmployeeDate = new Map<string, any>();
-    for (const row of adrRows as any[]) adrByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
+    for (const row of adrRows as any[])
+      adrByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
 
     const aprByEmployeeDate = new Map<string, any>();
-    for (const row of aprRows as any[]) aprByEmployeeDate.set(`${row.employee_code}__${row.record_date}`, row);
+    for (const row of aprRows as any[])
+      aprByEmployeeDate.set(`${row.employee_code}__${row.record_date}`, row);
 
     const diallerByEmployeeDate = new Map<string, any>();
-    for (const row of diallerRows as any[]) diallerByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
+    for (const row of diallerRows as any[])
+      diallerByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
 
     const issues: ReconciliationIssue[] = [];
     for (const source of usableSource) {
@@ -228,7 +245,10 @@ export const attendanceReconciliationService = {
       if (sourceUser.kind === "inactive") {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: sourceUser.employee.employee_id != null ? String(sourceUser.employee.employee_id) : null,
+          employeeId:
+            sourceUser.employee.employee_id != null
+              ? String(sourceUser.employee.employee_id)
+              : null,
           employeeCode: sourceUser.employee.employee_code ?? null,
           cosecUserId: source.cosecUserId,
           issueType: "inactive_cosec_user_activity",
@@ -257,14 +277,23 @@ export const attendanceReconciliationService = {
       }
       const employee = sourceUser.employee;
 
-      const ibd = ibdByEmployeeDate.get(`${employee.employee_code}__${source.punchDate}`);
-      const adr = adrByEmployeeDate.get(`${employee.employee_id}__${source.punchDate}`);
-      const apr = aprByEmployeeDate.get(`${employee.employee_code}__${source.punchDate}`);
-      const dialler = diallerByEmployeeDate.get(`${employee.employee_id}__${source.punchDate}`);
+      const ibd = ibdByEmployeeDate.get(
+        `${employee.employee_code}__${source.punchDate}`,
+      );
+      const adr = adrByEmployeeDate.get(
+        `${employee.employee_id}__${source.punchDate}`,
+      );
+      const apr = aprByEmployeeDate.get(
+        `${employee.employee_code}__${source.punchDate}`,
+      );
+      const dialler = diallerByEmployeeDate.get(
+        `${employee.employee_id}__${source.punchDate}`,
+      );
       if (!ibd) {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: employee.employee_id != null ? String(employee.employee_id) : null,
+          employeeId:
+            employee.employee_id != null ? String(employee.employee_id) : null,
           employeeCode: employee.employee_code,
           cosecUserId: source.cosecUserId,
           issueType: "missing_ibd",
@@ -279,7 +308,8 @@ export const attendanceReconciliationService = {
       if ((ibdMinutes === 0 || adrMinutes === 0) && source.workingMinutes > 2) {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: employee.employee_id != null ? String(employee.employee_id) : null,
+          employeeId:
+            employee.employee_id != null ? String(employee.employee_id) : null,
           employeeCode: employee.employee_code,
           cosecUserId: source.cosecUserId,
           issueType: "zero_minute_attendance",
@@ -294,7 +324,8 @@ export const attendanceReconciliationService = {
       if (adr?.attendance_status === "missing_punch") {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: employee.employee_id != null ? String(employee.employee_id) : null,
+          employeeId:
+            employee.employee_id != null ? String(employee.employee_id) : null,
           employeeCode: employee.employee_code,
           cosecUserId: source.cosecUserId,
           issueType: "missing_punch_with_usable_source",
@@ -309,16 +340,17 @@ export const attendanceReconciliationService = {
       const aprMinutes = Number(apr?.apr_minutes ?? 0);
       const diallerMinutes = Number(dialler?.dialler_minutes ?? 0);
       if (
-        adr?.attendance_source === "dialler"
-        && source.workingMinutes > 2
-        && Number(adr?.biometric_minutes ?? 0) > 0
-        && Number(adr?.raw_minutes ?? 0) === 0
-        && aprMinutes === 0
-        && diallerMinutes === 0
+        adr?.attendance_source === "dialler" &&
+        source.workingMinutes > 2 &&
+        Number(adr?.biometric_minutes ?? 0) > 0 &&
+        Number(adr?.raw_minutes ?? 0) === 0 &&
+        aprMinutes === 0 &&
+        diallerMinutes === 0
       ) {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: employee.employee_id != null ? String(employee.employee_id) : null,
+          employeeId:
+            employee.employee_id != null ? String(employee.employee_id) : null,
           employeeCode: employee.employee_code,
           cosecUserId: source.cosecUserId,
           issueType: "dialler_source_without_evidence",
@@ -379,7 +411,11 @@ export const attendanceReconciliationService = {
 
     const activeKeys = new Set(issues.map(issueKey));
     const upsertedIssues = await upsertIssues(issues);
-    const resolvedIssues = await resolveGoneIssues(options.from, options.to, activeKeys);
+    const resolvedIssues = await resolveGoneIssues(
+      options.from,
+      options.to,
+      activeKeys,
+    );
     const countsByType = issues.reduce<Record<string, number>>((acc, issue) => {
       acc[issue.issueType] = (acc[issue.issueType] ?? 0) + 1;
       return acc;
@@ -398,17 +434,28 @@ export const attendanceReconciliationService = {
 
     if (options.autoFix) {
       if (cosecSyncService.isRunning()) {
-        result.autoFix = { attempted: true, status: "skipped", reason: "COSEC sync already running" };
+        result.autoFix = {
+          attempted: true,
+          status: "skipped",
+          reason: "COSEC sync already running",
+        };
       } else {
         try {
-          const sync = await cosecSyncService.sync({ from: options.from, to: options.to });
+          const sync = await cosecSyncService.sync({
+            from: options.from,
+            to: options.to,
+          });
           await db.execute(
             `UPDATE attendance_reconciliation_issue
                 SET auto_fix_status = ?
               WHERE issue_date BETWEEN ? AND ?
                 AND resolved_at IS NULL
                 AND issue_type IN ('missing_ibd','zero_minute_attendance','missing_punch_with_usable_source','missing_adr')`,
-            [sync.failed.length === 0 ? "fixed" : "failed", options.from, options.to],
+            [
+              sync.failed.length === 0 ? "fixed" : "failed",
+              options.from,
+              options.to,
+            ],
           );
           result.autoFix = {
             attempted: true,
@@ -416,7 +463,8 @@ export const attendanceReconciliationService = {
             reason: `migrated=${sync.migratedDays}; failed=${sync.failed.length}; unmapped=${sync.unmappedUsers.length}`,
           };
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
           await db.execute(
             `UPDATE attendance_reconciliation_issue
                 SET auto_fix_status = 'failed',
@@ -425,7 +473,11 @@ export const attendanceReconciliationService = {
                 AND resolved_at IS NULL`,
             [message.slice(0, 255), options.from, options.to],
           );
-          result.autoFix = { attempted: true, status: "failed", reason: message };
+          result.autoFix = {
+            attempted: true,
+            status: "failed",
+            reason: message,
+          };
         }
       }
     }
@@ -435,10 +487,18 @@ export const attendanceReconciliationService = {
 
   async auditDefaultWindow(options: { autoFix?: boolean } = {}) {
     const todayIST = nowIST().split("T")[0]!;
-    const [year, month, day] = todayIST.split("-").map(Number) as [number, number, number];
+    const [year, month, day] = todayIST.split("-").map(Number) as [
+      number,
+      number,
+      number,
+    ];
     const toDate = new Date(year, month - 1, day - 1);
     const fromDate = new Date(toDate);
-    fromDate.setDate(toDate.getDate() - Math.max(1, env.NCOSEC_RECONCILIATION_LOOKBACK_DAYS) + 1);
+    fromDate.setDate(
+      toDate.getDate() -
+        Math.max(1, env.NCOSEC_RECONCILIATION_LOOKBACK_DAYS) +
+        1,
+    );
     const to = `${toDate.getFullYear()}-${String(toDate.getMonth() + 1).padStart(2, "0")}-${String(toDate.getDate()).padStart(2, "0")}`;
     const from = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, "0")}-${String(fromDate.getDate()).padStart(2, "0")}`;
     return this.audit({ from, to, autoFix: options.autoFix });

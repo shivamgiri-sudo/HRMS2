@@ -2,7 +2,10 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { atsService } from "./ats.service.js";
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
-import { queueJoiningKit, dispatchJoiningKit } from "../employees/joiningKitDispatch.service.js";
+import {
+  queueJoiningKit,
+  dispatchJoiningKit,
+} from "../employees/joiningKitDispatch.service.js";
 
 export interface ConvertResult {
   employee_id: string;
@@ -11,7 +14,7 @@ export interface ConvertResult {
 
 export async function convertCandidateToEmployee(
   candidateId: string,
-  actorId: string
+  actorId: string,
 ): Promise<ConvertResult> {
   const candidate = await atsService.getCandidate(candidateId);
   if (!candidate.active_status) throw new Error("Candidate is not active");
@@ -23,7 +26,7 @@ export async function convertCandidateToEmployee(
      LEFT JOIN ats_onboarding_request r ON r.candidate_id = ob.candidate_id
      WHERE ob.candidate_id = ?
      LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
   const bridge = rows[0];
   if (bridge?.employee_id && bridge?.employee_code) {
@@ -33,7 +36,9 @@ export async function convertCandidateToEmployee(
         createdBy: actorId,
       });
       if (lmsResult.message) {
-        console.info(`[ATS] LMS provisioning for ${bridge.employee_code}: ${lmsResult.message}`);
+        console.info(
+          `[ATS] LMS provisioning for ${bridge.employee_code}: ${lmsResult.message}`,
+        );
       }
     } catch (err) {
       console.warn(
@@ -69,7 +74,7 @@ export async function convertCandidateToEmployee(
       employeeId: String(bridge.employee_id),
       candidateId,
       actorUserId: actorId,
-      triggerSource: 'joining_control_room',
+      triggerSource: "joining_control_room",
     })
       .then(({ kitId }) => dispatchJoiningKit(kitId, actorId))
       .then((outcome) => {
@@ -82,7 +87,7 @@ export async function convertCandidateToEmployee(
         // no_documents is the ordinary answer for someone whose documents are
         // all signed already, not a fault worth an error-level line.
         const code = (err as { code?: string })?.code;
-        console[code === 'no_documents' ? 'info' : 'error'](
+        console[code === "no_documents" ? "info" : "error"](
           `[ATS] Joining kit not sent for ${bridge.employee_code}:`,
           err instanceof Error ? err.message : String(err),
         );
@@ -95,7 +100,7 @@ export async function convertCandidateToEmployee(
   }
 
   const error = new Error(
-    "Employee creation happens automatically after the employment offer is approved. Complete onboarding, submit the offer, and obtain branch-head approval."
+    "Employee creation happens automatically after the employment offer is approved. Complete onboarding, submit the offer, and obtain branch-head approval.",
   );
   Object.assign(error, {
     statusCode: 409,

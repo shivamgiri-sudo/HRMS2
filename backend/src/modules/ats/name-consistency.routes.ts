@@ -1,14 +1,22 @@
 import { Router, type NextFunction, type Response } from "express";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
 const router = Router();
-type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
-const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  void fn(req, res).catch(next);
-};
+type AsyncHandler = (
+  req: AuthenticatedRequest,
+  res: Response,
+) => Promise<unknown>;
+const h =
+  (fn: AsyncHandler) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    void fn(req, res).catch(next);
+  };
 router.use(requireAuth);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -51,7 +59,9 @@ export interface RecalculateNameMatchResult {
  * callers (e.g. fraud-alerts' comparison endpoint) can trigger the same
  * logic inline without an HTTP round-trip.
  */
-export async function recalculateNameMatch(candidateId: string): Promise<RecalculateNameMatchResult | { success: false; message: string }> {
+export async function recalculateNameMatch(
+  candidateId: string,
+): Promise<RecalculateNameMatchResult | { success: false; message: string }> {
   // ats_candidate has no aadhar_name or pan_name column — it stores the
   // numbers (aadhar_number, pan_number) and their verification flags, never a
   // name. The name a document was actually issued to is what the provider
@@ -81,7 +91,7 @@ export async function recalculateNameMatch(candidateId: string): Promise<Recalcu
      LEFT JOIN ats_candidate ac ON ac.id = cop.candidate_id
      WHERE cop.candidate_id = ?
      LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
 
   const [bank] = await db.execute<RowDataPacket[]>(
@@ -89,7 +99,7 @@ export async function recalculateNameMatch(candidateId: string): Promise<Recalcu
      FROM candidate_onboarding_bank_detail
      WHERE candidate_id = ?
      LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
 
   // Education is deliberately not a name source.
@@ -124,27 +134,37 @@ export async function recalculateNameMatch(candidateId: string): Promise<Recalcu
   ].filter((s) => s.name);
 
   // Source 5: Employee master (if candidate converted)
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    'SELECT employee_name FROM employees WHERE ats_candidate_id = ? OR id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1) LIMIT 1',
-    [candidateId, candidateId]
-  ).catch(() => [[]]);
+  const [empRows] = await db
+    .execute<RowDataPacket[]>(
+      "SELECT employee_name FROM employees WHERE ats_candidate_id = ? OR id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1) LIMIT 1",
+      [candidateId, candidateId],
+    )
+    .catch(() => [[]]);
   if (empRows.length > 0) {
-    sources.push({ type: 'employee_master', name: String(empRows[0].employee_name ?? '') });
+    sources.push({
+      type: "employee_master",
+      name: String(empRows[0].employee_name ?? ""),
+    });
   }
 
   // Source 6: Appointment letter (if generated)
-  const [letterRows] = await db.execute<RowDataPacket[]>(
-    'SELECT candidate_name FROM appointment_letter_request WHERE candidate_id = ? LIMIT 1',
-    [candidateId]
-  ).catch(() => [[]]);
+  const [letterRows] = await db
+    .execute<RowDataPacket[]>(
+      "SELECT candidate_name FROM appointment_letter_request WHERE candidate_id = ? LIMIT 1",
+      [candidateId],
+    )
+    .catch(() => [[]]);
   if (letterRows.length > 0 && letterRows[0].candidate_name) {
-    sources.push({ type: 'appointment_letter', name: String(letterRows[0].candidate_name) });
+    sources.push({
+      type: "appointment_letter",
+      name: String(letterRows[0].candidate_name),
+    });
   }
 
   // Delete existing detail rows, then recalculate fresh
   await db.execute(
     `DELETE FROM candidate_name_match_detail WHERE candidate_id = ?`,
-    [candidateId]
+    [candidateId],
   );
 
   const mismatches: string[] = [];
@@ -156,14 +176,23 @@ export async function recalculateNameMatch(candidateId: string): Promise<Recalcu
       `INSERT INTO candidate_name_match_detail
          (id, candidate_id, source_type, source_name, normalized_name, match_score, is_match)
        VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
-      [candidateId, src.type, src.name, normalizeName(src.name), score, isMatch ? 1 : 0]
+      [
+        candidateId,
+        src.type,
+        src.name,
+        normalizeName(src.name),
+        score,
+        isMatch ? 1 : 0,
+      ],
     );
   }
 
   const overallStatus =
-    mismatches.length === 0 ? "matched"
-    : mismatches.length <= 1 ? "partial"
-    : "mismatch";
+    mismatches.length === 0
+      ? "matched"
+      : mismatches.length <= 1
+        ? "partial"
+        : "mismatch";
 
   await db.execute(
     `INSERT INTO candidate_name_match_summary
@@ -174,34 +203,51 @@ export async function recalculateNameMatch(candidateId: string): Promise<Recalcu
        mismatch_sources = VALUES(mismatch_sources),
        last_calculated_at = NOW(),
        blocks_employee_code = VALUES(blocks_employee_code)`,
-    [candidateId, overallStatus, JSON.stringify(mismatches), mismatches.length > 0 ? 1 : 0]
+    [
+      candidateId,
+      overallStatus,
+      JSON.stringify(mismatches),
+      mismatches.length > 0 ? 1 : 0,
+    ],
   );
 
   if (mismatches.length > 0) {
-    await db.execute(
-      'INSERT IGNORE INTO work_item (id,item_type,title,module_code,entity_type,entity_id,assigned_to_role,priority,status,created_at) VALUES (UUID(),\'NAME_MISMATCH\',?,\'ats\',\'candidate\',?,\'hr\',\'high\',\'pending\',NOW())',
-      ['Name mismatch: ' + candidateId, candidateId]
-    ).catch(() => {});
+    await db
+      .execute(
+        "INSERT IGNORE INTO work_item (id,item_type,title,module_code,entity_type,entity_id,assigned_to_role,priority,status,created_at) VALUES (UUID(),'NAME_MISMATCH',?,'ats','candidate',?,'hr','high','pending',NOW())",
+        ["Name mismatch: " + candidateId, candidateId],
+      )
+      .catch(() => {});
   }
 
-  return { success: true, candidateId, overallStatus, mismatches, sourcesChecked: sources.length };
+  return {
+    success: true,
+    candidateId,
+    overallStatus,
+    mismatches,
+    sourcesChecked: sources.length,
+  };
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 // POST /:candidateId/recalculate — recalculate name match for a candidate
-router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { candidateId } = req.params;
-  const result = await recalculateNameMatch(candidateId);
-  if (!result.success) {
-    return res.status(404).json(result);
-  }
-  const { candidateId: _cid, ...data } = result;
-  return res.json({ success: true, data: { candidateId, ...data } });
-}));
+router.post(
+  "/:candidateId/recalculate",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { candidateId } = req.params;
+    const result = await recalculateNameMatch(candidateId);
+    if (!result.success) {
+      return res.status(404).json(result);
+    }
+    const { candidateId: _cid, ...data } = result;
+    return res.json({ success: true, data: { candidateId, ...data } });
+  }),
+);
 
 // GET / — list all candidates with name mismatches
-  router.get(
+router.get(
   "/",
   requireRole("admin", "hr", "recruiter"),
   h(async (_req: AuthenticatedRequest, res: Response) => {
@@ -211,33 +257,41 @@ router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin
        JOIN ats_candidate ac ON ac.id = cnms.candidate_id
        WHERE cnms.overall_status != 'matched'
        ORDER BY cnms.last_calculated_at DESC
-       LIMIT 200`
+       LIMIT 200`,
     );
     return res.json({ success: true, data: rows });
-  })
+  }),
 );
 
 // GET /:candidateId — get name match summary and detail for a candidate
-router.get("/:candidateId", h(async (req: AuthenticatedRequest, res: Response) => {
-  const [summary] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_name_match_summary WHERE candidate_id = ? LIMIT 1`,
-    [req.params.candidateId]
-  );
-  const [details] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_name_match_detail WHERE candidate_id = ? ORDER BY checked_at DESC`,
-    [req.params.candidateId]
-  );
-  return res.json({ success: true, data: { summary: summary[0] ?? null, details } });
-}));
+router.get(
+  "/:candidateId",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [summary] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_name_match_summary WHERE candidate_id = ? LIMIT 1`,
+      [req.params.candidateId],
+    );
+    const [details] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_name_match_detail WHERE candidate_id = ? ORDER BY checked_at DESC`,
+      [req.params.candidateId],
+    );
+    return res.json({
+      success: true,
+      data: { summary: summary[0] ?? null, details },
+    });
+  }),
+);
 
 // POST /:candidateId/override-request — HR logs a name mismatch override request
-  router.post(
+router.post(
   "/:candidateId/override-request",
   requireRole("admin", "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { reason } = req.body as { reason?: string };
     if (!reason?.trim()) {
-      return res.status(400).json({ success: false, message: "reason is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "reason is required" });
     }
 
     await db.execute(
@@ -248,7 +302,7 @@ router.get("/:candidateId", h(async (req: AuthenticatedRequest, res: Response) =
            override_at = NOW(),
            blocks_employee_code = 0
        WHERE candidate_id = ?`,
-      [reason, req.authUser!.id, req.params.candidateId]
+      [reason, req.authUser!.id, req.params.candidateId],
     );
 
     await db.execute(
@@ -257,11 +311,11 @@ router.get("/:candidateId", h(async (req: AuthenticatedRequest, res: Response) =
        SELECT UUID(), candidate_id, 'hr_override', ?, ?, overall_status, 'override_approved'
        FROM candidate_name_match_summary
        WHERE candidate_id = ?`,
-      [reason, req.authUser!.id, req.params.candidateId]
+      [reason, req.authUser!.id, req.params.candidateId],
     );
 
     return res.json({ success: true });
-  })
+  }),
 );
 
 // POST /:candidateId/override-approve — admin/hr formally approves the override, clears block
@@ -271,7 +325,9 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { reason } = req.body as { reason?: string };
     if (!reason?.trim()) {
-      return res.status(400).json({ success: false, message: "reason is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "reason is required" });
     }
 
     await db.execute(
@@ -282,7 +338,7 @@ router.post(
            override_at = NOW(),
            blocks_employee_code = 0
        WHERE candidate_id = ?`,
-      [reason, req.authUser!.id, req.params.candidateId]
+      [reason, req.authUser!.id, req.params.candidateId],
     );
 
     await db.execute(
@@ -291,11 +347,14 @@ router.post(
        SELECT UUID(), candidate_id, 'override_approve', ?, ?, overall_status, 'override_approved'
        FROM candidate_name_match_summary
        WHERE candidate_id = ?`,
-      [reason, req.authUser!.id, req.params.candidateId]
+      [reason, req.authUser!.id, req.params.candidateId],
     );
 
-    return res.json({ success: true, message: "Override approved; employee code block removed" });
-  })
+    return res.json({
+      success: true,
+      message: "Override approved; employee code block removed",
+    });
+  }),
 );
 
 // POST /:candidateId/override-reject — admin/hr rejects the override, keeps/restores block
@@ -305,7 +364,9 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { rejection_reason } = req.body as { rejection_reason?: string };
     if (!rejection_reason?.trim()) {
-      return res.status(400).json({ success: false, message: "rejection_reason is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "rejection_reason is required" });
     }
 
     await db.execute(
@@ -316,7 +377,7 @@ router.post(
            override_at = NOW(),
            blocks_employee_code = 1
        WHERE candidate_id = ?`,
-      [rejection_reason, req.authUser!.id, req.params.candidateId]
+      [rejection_reason, req.authUser!.id, req.params.candidateId],
     );
 
     await db.execute(
@@ -325,11 +386,14 @@ router.post(
        SELECT UUID(), candidate_id, 'override_reject', ?, ?, overall_status, 'override_rejected'
        FROM candidate_name_match_summary
        WHERE candidate_id = ?`,
-      [rejection_reason, req.authUser!.id, req.params.candidateId]
+      [rejection_reason, req.authUser!.id, req.params.candidateId],
     );
 
-    return res.json({ success: true, message: "Override rejected; employee code remains blocked" });
-  })
+    return res.json({
+      success: true,
+      message: "Override rejected; employee code remains blocked",
+    });
+  }),
 );
 
 export { router as nameConsistencyRouter };

@@ -2,14 +2,23 @@ import { randomUUID } from "crypto";
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireWriteAccess,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { billabilityService } from "./billability.service.js";
-import { getCostCentreActivity, getAttributionGaps, activityWindow } from "./cost-centre-activity.service.js";
+import {
+  getCostCentreActivity,
+  getAttributionGaps,
+  activityWindow,
+} from "./cost-centre-activity.service.js";
 
 const router = Router();
-const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 /** First of the current month — matches the frontend's own monthStart() convention for a rule that governs a P&L period. */
 function monthStartDate(): string {
@@ -24,7 +33,12 @@ function monthStartDate(): string {
  * will ACCEPT. A page granted to a role whose writes the API then rejects is the worst of
  * both — it looks available and fails on save.
  */
-const BILLABILITY_ROLES = ["super_admin", "finance", "payroll_head", "payroll_branch"] as const;
+const BILLABILITY_ROLES = [
+  "super_admin",
+  "finance",
+  "payroll_head",
+  "payroll_branch",
+] as const;
 
 // ─── Employee search ────────────────────────────────────────────────────────
 
@@ -40,16 +54,21 @@ const BILLABILITY_ROLES = ["super_admin", "finance", "payroll_head", "payroll_br
  * counts but does not name: searching them here shows exactly which of process/designation/
  * cost centre is missing.
  */
-router.get("/employee-lookup", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
-  const q = String(req.query.q ?? "").trim();
-  if (q.length < 2) {
-    return res.json({ success: true, data: [] });
-  }
-  const onDate = String(req.query.date ?? "").slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const like = `%${q}%`;
+router.get(
+  "/employee-lookup",
+  requireRole(...BILLABILITY_ROLES),
+  h(async (req, res) => {
+    const q = String(req.query.q ?? "").trim();
+    if (q.length < 2) {
+      return res.json({ success: true, data: [] });
+    }
+    const onDate =
+      String(req.query.date ?? "").slice(0, 10) ||
+      new Date().toISOString().slice(0, 10);
+    const like = `%${q}%`;
 
-  const [matches] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code, e.full_name, e.active_status,
+    const [matches] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id, e.employee_code, e.full_name, e.active_status,
             e.process_id, p.process_name, p.client_name,
             e.designation_id, dm.designation_name,
             e.cost_centre_id, cc.cost_centre_name
@@ -60,19 +79,20 @@ router.get("/employee-lookup", requireRole(...BILLABILITY_ROLES), h(async (req, 
       WHERE e.employee_code LIKE ? OR e.full_name LIKE ?
       ORDER BY e.active_status DESC, e.full_name
       LIMIT 20`,
-    [like, like],
-  );
+      [like, like],
+    );
 
-  if (matches.length === 0) {
-    return res.json({ success: true, data: [] });
-  }
+    if (matches.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
 
-  // Latest known P&L bucket per matched employee — the same default resolveBillability falls
-  // back to when no explicit rule reaches this person. One batched query for all matches
-  // rather than one per row.
-  const ids = matches.map((m) => String(m.id));
-  const [buckets] = await db.execute<RowDataPacket[]>(
-    `SELECT s.employee_id, s.pnl_bucket
+    // Latest known P&L bucket per matched employee — the same default resolveBillability falls
+    // back to when no explicit rule reaches this person. One batched query for all matches
+    // rather than one per row.
+    const ids = matches.map((m) => String(m.id));
+    const [buckets] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT s.employee_id, s.pnl_bucket
        FROM pnl_running_salary_snapshot s
        INNER JOIN (
          SELECT employee_id, MAX(period_code) AS max_period
@@ -80,45 +100,64 @@ router.get("/employee-lookup", requireRole(...BILLABILITY_ROLES), h(async (req, 
           WHERE employee_id IN (${ids.map(() => "?").join(",")})
           GROUP BY employee_id
        ) latest ON latest.employee_id = s.employee_id AND latest.max_period = s.period_code`,
-    ids,
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-  const bucketByEmployee = new Map((buckets as RowDataPacket[]).map((b) => [String(b.employee_id), b.pnl_bucket as string | null]));
+        ids,
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    const bucketByEmployee = new Map(
+      (buckets as RowDataPacket[]).map((b) => [
+        String(b.employee_id),
+        b.pnl_bucket as string | null,
+      ]),
+    );
 
-  const periodCode = onDate.slice(0, 7);
-  const data = await Promise.all(matches.map(async (m) => {
-    const employeeId = String(m.id);
-    const context = {
-      employeeId,
-      processId: m.process_id ? String(m.process_id) : null,
-      designationId: m.designation_id ? String(m.designation_id) : null,
-      costCentreId: m.cost_centre_id ? String(m.cost_centre_id) : null,
-      pnlBucket: bucketByEmployee.get(employeeId) ?? null,
-    };
-    const billability = await billabilityService.resolveBillability(context, onDate);
-    const seatRate = billability.isBillable
-      ? await billabilityService.resolveSeatRate(context, onDate, periodCode)
-      : null;
-    const allocation = await billabilityService.getEmployeeAllocation(employeeId, onDate);
-    return {
-      employeeId,
-      employeeCode: m.employee_code,
-      fullName: m.full_name,
-      activeStatus: Number(m.active_status) === 1,
-      processId: context.processId,
-      processName: m.process_name,
-      clientName: m.client_name,
-      designationId: context.designationId,
-      designationName: m.designation_name,
-      costCentreId: context.costCentreId,
-      costCentreName: m.cost_centre_name,
-      billability,
-      seatRate,
-      allocation: allocation.rows.length > 0 ? allocation : null,
-    };
-  }));
+    const periodCode = onDate.slice(0, 7);
+    const data = await Promise.all(
+      matches.map(async (m) => {
+        const employeeId = String(m.id);
+        const context = {
+          employeeId,
+          processId: m.process_id ? String(m.process_id) : null,
+          designationId: m.designation_id ? String(m.designation_id) : null,
+          costCentreId: m.cost_centre_id ? String(m.cost_centre_id) : null,
+          pnlBucket: bucketByEmployee.get(employeeId) ?? null,
+        };
+        const billability = await billabilityService.resolveBillability(
+          context,
+          onDate,
+        );
+        const seatRate = billability.isBillable
+          ? await billabilityService.resolveSeatRate(
+              context,
+              onDate,
+              periodCode,
+            )
+          : null;
+        const allocation = await billabilityService.getEmployeeAllocation(
+          employeeId,
+          onDate,
+        );
+        return {
+          employeeId,
+          employeeCode: m.employee_code,
+          fullName: m.full_name,
+          activeStatus: Number(m.active_status) === 1,
+          processId: context.processId,
+          processName: m.process_name,
+          clientName: m.client_name,
+          designationId: context.designationId,
+          designationName: m.designation_name,
+          costCentreId: context.costCentreId,
+          costCentreName: m.cost_centre_name,
+          billability,
+          seatRate,
+          allocation: allocation.rows.length > 0 ? allocation : null,
+        };
+      }),
+    );
 
-  res.json({ success: true, data });
-}));
+    res.json({ success: true, data });
+  }),
+);
 
 // ─── The (process x designation) matrix ───────────────────────────────────────
 
@@ -130,11 +169,16 @@ router.get("/employee-lookup", requireRole(...BILLABILITY_ROLES), h(async (req, 
  * to them, not from a cross join of every process against every designation, which would
  * be 52 x 89 = 4,628 mostly-empty cells instead of the ~126 that exist.
  */
-router.get("/matrix", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
-  const onDate = String(req.query.date ?? "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+router.get(
+  "/matrix",
+  requireRole(...BILLABILITY_ROLES),
+  h(async (req, res) => {
+    const onDate =
+      String(req.query.date ?? "").slice(0, 10) ||
+      new Date().toISOString().slice(0, 10);
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.process_id, p.process_name, p.client_name,
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.process_id, p.process_name, p.client_name,
             e.designation_id, dm.designation_name,
             COUNT(*) AS headcount,
             r.id AS rule_id, r.is_billable, r.seat_rate_monthly, r.status AS rule_status,
@@ -155,29 +199,31 @@ router.get("/matrix", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
       GROUP BY e.process_id, p.process_name, p.client_name, e.designation_id, dm.designation_name,
                r.id, r.is_billable, r.seat_rate_monthly, r.status, r.effective_from, r.change_reason
       ORDER BY p.process_name, headcount DESC`,
-    [onDate, onDate],
-  );
+      [onDate, onDate],
+    );
 
-  res.json({
-    success: true,
-    data: rows.map((r) => ({
-      processId: r.process_id,
-      processName: r.process_name,
-      clientName: r.client_name,
-      designationId: r.designation_id,
-      designationName: r.designation_name,
-      headcount: Number(r.headcount),
-      ruleId: r.rule_id ?? null,
-      // No rule means the default applies: billable exactly when the P&L already treats
-      // this person as an agent. The UI shows that as "default", not as a blank.
-      isBillable: r.rule_id ? Number(r.is_billable) === 1 : null,
-      seatRateMonthly: r.seat_rate_monthly === null ? null : Number(r.seat_rate_monthly),
-      ruleStatus: r.rule_status ?? null,
-      effectiveFrom: r.effective_from ?? null,
-      changeReason: r.change_reason ?? null,
-    })),
-  });
-}));
+    res.json({
+      success: true,
+      data: rows.map((r) => ({
+        processId: r.process_id,
+        processName: r.process_name,
+        clientName: r.client_name,
+        designationId: r.designation_id,
+        designationName: r.designation_name,
+        headcount: Number(r.headcount),
+        ruleId: r.rule_id ?? null,
+        // No rule means the default applies: billable exactly when the P&L already treats
+        // this person as an agent. The UI shows that as "default", not as a blank.
+        isBillable: r.rule_id ? Number(r.is_billable) === 1 : null,
+        seatRateMonthly:
+          r.seat_rate_monthly === null ? null : Number(r.seat_rate_monthly),
+        ruleStatus: r.rule_status ?? null,
+        effectiveFrom: r.effective_from ?? null,
+        changeReason: r.change_reason ?? null,
+      })),
+    });
+  }),
+);
 
 /**
  * POST /api/finance/billability/matrix
@@ -188,53 +234,94 @@ router.get("/matrix", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
  * already computed against it can still be explained. That is the whole reason these
  * tables are effective-dated.
  */
-router.post("/matrix", requireRole(...BILLABILITY_ROLES), requireWriteAccess, h(async (req, res) => {
-  const { processId, designationId, isBillable, seatRateMonthly, effectiveFrom, changeReason } = req.body ?? {};
+router.post(
+  "/matrix",
+  requireRole(...BILLABILITY_ROLES),
+  requireWriteAccess,
+  h(async (req, res) => {
+    const {
+      processId,
+      designationId,
+      isBillable,
+      seatRateMonthly,
+      effectiveFrom,
+      changeReason,
+    } = req.body ?? {};
 
-  if (!processId || !designationId) {
-    return res.status(400).json({ success: false, message: "processId and designationId are required" });
-  }
-  if (typeof isBillable !== "boolean") {
-    return res.status(400).json({ success: false, message: "isBillable must be true or false" });
-  }
-  if (!effectiveFrom || !/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveFrom))) {
-    return res.status(400).json({ success: false, message: "effectiveFrom must be a YYYY-MM-DD date" });
-  }
-  if (!String(changeReason ?? "").trim()) {
-    return res.status(400).json({ success: false, message: "changeReason is required — it is what explains this number later" });
-  }
+    if (!processId || !designationId) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "processId and designationId are required",
+        });
+    }
+    if (typeof isBillable !== "boolean") {
+      return res
+        .status(400)
+        .json({ success: false, message: "isBillable must be true or false" });
+    }
+    if (!effectiveFrom || !/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveFrom))) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "effectiveFrom must be a YYYY-MM-DD date",
+        });
+    }
+    if (!String(changeReason ?? "").trim()) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "changeReason is required — it is what explains this number later",
+        });
+    }
 
-  const actorId = req.authUser!.id;
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-    await conn.execute(
-      `UPDATE process_role_billability
+    const actorId = req.authUser!.id;
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.execute(
+        `UPDATE process_role_billability
           SET effective_to = DATE_SUB(?, INTERVAL 1 DAY), updated_at = NOW()
         WHERE process_id = ? AND designation_id = ? AND employee_id IS NULL
           AND status = 'approved' AND (effective_to IS NULL OR effective_to >= ?)`,
-      [effectiveFrom, processId, designationId, effectiveFrom],
-    );
-    await conn.execute(
-      `INSERT INTO process_role_billability
+        [effectiveFrom, processId, designationId, effectiveFrom],
+      );
+      await conn.execute(
+        `INSERT INTO process_role_billability
          (id, rule_name, process_id, designation_id, is_billable, seat_rate_monthly,
           source, effective_from, status, change_reason, created_by, approved_by, approved_at)
        VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, 'approved', ?, ?, ?, NOW())`,
-      [randomUUID(), `Process x designation billability`, processId, designationId,
-       isBillable ? 1 : 0,
-       seatRateMonthly === null || seatRateMonthly === undefined || seatRateMonthly === ""
-         ? null : Number(seatRateMonthly),
-       effectiveFrom, String(changeReason).trim(), actorId, actorId],
-    );
-    await conn.commit();
-    res.json({ success: true });
-  } catch (error) {
-    await conn.rollback();
-    throw error;
-  } finally {
-    conn.release();
-  }
-}));
+        [
+          randomUUID(),
+          `Process x designation billability`,
+          processId,
+          designationId,
+          isBillable ? 1 : 0,
+          seatRateMonthly === null ||
+          seatRateMonthly === undefined ||
+          seatRateMonthly === ""
+            ? null
+            : Number(seatRateMonthly),
+          effectiveFrom,
+          String(changeReason).trim(),
+          actorId,
+          actorId,
+        ],
+      );
+      await conn.commit();
+      res.json({ success: true });
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  }),
+);
 
 /**
  * POST /api/finance/billability/matrix/apply-defaults
@@ -251,12 +338,16 @@ router.post("/matrix", requireRole(...BILLABILITY_ROLES), requireWriteAccess, h(
  * bucket (some agent_salary, some not) or when none of them have a known bucket yet — those
  * genuinely need a person to look at them, which is exactly what "exceptions" is for.
  */
-router.post("/matrix/apply-defaults", requireRole(...BILLABILITY_ROLES), requireWriteAccess, h(async (req, res) => {
-  const effectiveFrom = monthStartDate();
-  const actorId = req.authUser!.id;
+router.post(
+  "/matrix/apply-defaults",
+  requireRole(...BILLABILITY_ROLES),
+  requireWriteAccess,
+  h(async (req, res) => {
+    const effectiveFrom = monthStartDate();
+    const actorId = req.authUser!.id;
 
-  const [candidateRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.process_id, e.designation_id, p.process_name, dm.designation_name,
+    const [candidateRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.process_id, e.designation_id, p.process_name, dm.designation_name,
             COUNT(*) AS headcount,
             SUM(CASE WHEN s.pnl_bucket = 'agent_salary' THEN 1 ELSE 0 END) AS agent_count,
             SUM(CASE WHEN s.pnl_bucket IS NOT NULL AND s.pnl_bucket <> 'agent_salary' THEN 1 ELSE 0 END) AS non_agent_count
@@ -276,74 +367,101 @@ router.post("/matrix/apply-defaults", requireRole(...BILLABILITY_ROLES), require
       WHERE e.active_status = 1 AND e.process_id IS NOT NULL AND e.designation_id IS NOT NULL
         AND r.id IS NULL
       GROUP BY e.process_id, e.designation_id, p.process_name, dm.designation_name`,
-    [effectiveFrom, effectiveFrom],
-  );
+      [effectiveFrom, effectiveFrom],
+    );
 
-  const toApply: Array<{ processId: string; designationId: string; isBillable: boolean; headcount: number }> = [];
-  const skipped: Array<{ processId: string; processName: string | null; designationId: string; designationName: string | null; reason: string }> = [];
+    const toApply: Array<{
+      processId: string;
+      designationId: string;
+      isBillable: boolean;
+      headcount: number;
+    }> = [];
+    const skipped: Array<{
+      processId: string;
+      processName: string | null;
+      designationId: string;
+      designationName: string | null;
+      reason: string;
+    }> = [];
 
-  for (const row of candidateRows) {
-    const agentCount = Number(row.agent_count);
-    const nonAgentCount = Number(row.non_agent_count);
-    if (agentCount > 0 && nonAgentCount > 0) {
-      skipped.push({
-        processId: row.process_id, processName: row.process_name,
-        designationId: row.designation_id, designationName: row.designation_name,
-        reason: `Employees here disagree on P&L bucket (${agentCount} billable-shaped, ${nonAgentCount} not) — needs a person, not a bulk default.`,
+    for (const row of candidateRows) {
+      const agentCount = Number(row.agent_count);
+      const nonAgentCount = Number(row.non_agent_count);
+      if (agentCount > 0 && nonAgentCount > 0) {
+        skipped.push({
+          processId: row.process_id,
+          processName: row.process_name,
+          designationId: row.designation_id,
+          designationName: row.designation_name,
+          reason: `Employees here disagree on P&L bucket (${agentCount} billable-shaped, ${nonAgentCount} not) — needs a person, not a bulk default.`,
+        });
+        continue;
+      }
+      if (agentCount === 0 && nonAgentCount === 0) {
+        skipped.push({
+          processId: row.process_id,
+          processName: row.process_name,
+          designationId: row.designation_id,
+          designationName: row.designation_name,
+          reason:
+            "No P&L bucket known yet for anyone in this cell — nothing to apply.",
+        });
+        continue;
+      }
+      toApply.push({
+        processId: String(row.process_id),
+        designationId: String(row.designation_id),
+        isBillable: agentCount > 0,
+        headcount: Number(row.headcount),
       });
-      continue;
     }
-    if (agentCount === 0 && nonAgentCount === 0) {
-      skipped.push({
-        processId: row.process_id, processName: row.process_name,
-        designationId: row.designation_id, designationName: row.designation_name,
-        reason: "No P&L bucket known yet for anyone in this cell — nothing to apply.",
-      });
-      continue;
+
+    if (toApply.length === 0) {
+      return res.json({ success: true, applied: 0, skipped });
     }
-    toApply.push({
-      processId: String(row.process_id),
-      designationId: String(row.designation_id),
-      isBillable: agentCount > 0,
-      headcount: Number(row.headcount),
-    });
-  }
 
-  if (toApply.length === 0) {
-    return res.json({ success: true, applied: 0, skipped });
-  }
-
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-    for (const cell of toApply) {
-      await conn.execute(
-        `INSERT INTO process_role_billability
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      for (const cell of toApply) {
+        await conn.execute(
+          `INSERT INTO process_role_billability
            (id, rule_name, process_id, designation_id, is_billable, seat_rate_monthly,
             source, effective_from, status, change_reason, created_by, approved_by, approved_at)
          VALUES (?, ?, ?, ?, ?, NULL, 'manual', ?, 'approved', ?, ?, ?, NOW())`,
-        [randomUUID(), "Process x designation billability", cell.processId, cell.designationId,
-         cell.isBillable ? 1 : 0, effectiveFrom,
-         "Bulk-applied: matches the P&L bucket this role already carries (agent_salary = billable). No new information — this makes the existing default explicit and reviewable.",
-         actorId, actorId],
-      );
+          [
+            randomUUID(),
+            "Process x designation billability",
+            cell.processId,
+            cell.designationId,
+            cell.isBillable ? 1 : 0,
+            effectiveFrom,
+            "Bulk-applied: matches the P&L bucket this role already carries (agent_salary = billable). No new information — this makes the existing default explicit and reviewable.",
+            actorId,
+            actorId,
+          ],
+        );
+      }
+      await conn.commit();
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
     }
-    await conn.commit();
-  } catch (error) {
-    await conn.rollback();
-    throw error;
-  } finally {
-    conn.release();
-  }
 
-  res.json({ success: true, applied: toApply.length, skipped });
-}));
+    res.json({ success: true, applied: toApply.length, skipped });
+  }),
+);
 
 // ─── Seat rates per cost centre ───────────────────────────────────────────────
 
-router.get("/seat-rates", requireRole(...BILLABILITY_ROLES), h(async (_req, res) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT r.id, r.cost_centre_id, cc.cost_centre_code, cc.cost_centre_name,
+router.get(
+  "/seat-rates",
+  requireRole(...BILLABILITY_ROLES),
+  h(async (_req, res) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT r.id, r.cost_centre_id, cc.cost_centre_code, cc.cost_centre_name,
             r.designation_id, dm.designation_name,
             r.seat_rate_monthly, r.billing_model, r.proration_method,
             r.effective_from, r.effective_to, r.status, r.contract_reference,
@@ -354,9 +472,10 @@ router.get("/seat-rates", requireRole(...BILLABILITY_ROLES), h(async (_req, res)
        LEFT JOIN designation_master dm ON dm.id = r.designation_id
       WHERE r.status <> 'inactive'
       ORDER BY cc.cost_centre_name, (r.designation_id IS NULL) DESC, r.effective_from DESC`,
-  );
-  res.json({ success: true, data: rows });
-}));
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
 
 /**
  * Cost centres that can carry a rate.
@@ -369,35 +488,49 @@ router.get("/seat-rates", requireRole(...BILLABILITY_ROLES), h(async (_req, res)
  * `spend_only` centres are returned too, marked as such: no client pays and nobody works
  * there, but GRN spend is still landing on them and somebody has to decide where it goes.
  */
-router.get("/cost-centres", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
-  const period = /^\d{4}-\d{2}$/.test(String(req.query.period ?? ""))
-    ? String(req.query.period)
-    : new Date().toISOString().slice(0, 7);
+router.get(
+  "/cost-centres",
+  requireRole(...BILLABILITY_ROLES),
+  h(async (req, res) => {
+    const period = /^\d{4}-\d{2}$/.test(String(req.query.period ?? ""))
+      ? String(req.query.period)
+      : new Date().toISOString().slice(0, 7);
 
-  const activity = await getCostCentreActivity(period);
-  const [headcounts] = await db.execute<RowDataPacket[]>(
-    `SELECT cost_centre_id AS id, COUNT(*) AS n
+    const activity = await getCostCentreActivity(period);
+    const [headcounts] = await db.execute<RowDataPacket[]>(
+      `SELECT cost_centre_id AS id, COUNT(*) AS n
        FROM employees WHERE active_status = 1 AND cost_centre_id IS NOT NULL
       GROUP BY cost_centre_id`,
-  );
-  const staffById = new Map(headcounts.map((r) => [String(r.id), Number(r.n)]));
+    );
+    const staffById = new Map(
+      headcounts.map((r) => [String(r.id), Number(r.n)]),
+    );
 
-  const data = activity
-    .filter((c) => c.activity !== "inactive")
-    .map((c) => ({
-      id: c.costCentreId,
-      cost_centre_code: c.costCentreCode,
-      cost_centre_name: c.costCentreName,
-      activity: c.activity,
-      active_headcount: staffById.get(c.costCentreId) ?? 0,
-      revenue: c.revenue,
-      people_paid: c.peoplePaid,
-      spend: c.spend,
-    }))
-    .sort((a, b) => b.revenue - a.revenue || b.active_headcount - a.active_headcount);
+    const data = activity
+      .filter((c) => c.activity !== "inactive")
+      .map((c) => ({
+        id: c.costCentreId,
+        cost_centre_code: c.costCentreCode,
+        cost_centre_name: c.costCentreName,
+        activity: c.activity,
+        active_headcount: staffById.get(c.costCentreId) ?? 0,
+        revenue: c.revenue,
+        people_paid: c.peoplePaid,
+        spend: c.spend,
+      }))
+      .sort(
+        (a, b) =>
+          b.revenue - a.revenue || b.active_headcount - a.active_headcount,
+      );
 
-  res.json({ success: true, data, period, rule: "revenue or salary paid in the trailing 3 months" });
-}));
+    res.json({
+      success: true,
+      data,
+      period,
+      rule: "revenue or salary paid in the trailing 3 months",
+    });
+  }),
+);
 
 /**
  * GET /api/finance/billability/cost-centre-activity
@@ -405,98 +538,150 @@ router.get("/cost-centres", requireRole(...BILLABILITY_ROLES), h(async (req, res
  * The full classification, including the inactive ones, so the register can be reviewed
  * rather than only filtered.
  */
-router.get("/cost-centre-activity", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
-  const period = /^\d{4}-\d{2}$/.test(String(req.query.period ?? ""))
-    ? String(req.query.period)
-    : new Date().toISOString().slice(0, 7);
-  const [rows, attributionGaps] = await Promise.all([
-    getCostCentreActivity(period),
-    getAttributionGaps(period),
-  ]);
-  const summary = rows.reduce<Record<string, number>>((acc, r) => {
-    acc[r.activity] = (acc[r.activity] ?? 0) + 1;
-    return acc;
-  }, {});
-  res.json({
-    success: true,
-    period,
-    window: activityWindow(period),
-    summary,
-    // Spend landing on centres nobody works at and no client pays for — it has to go
-    // somewhere, and reporting only the active ones would make it disappear.
-    spendOnlyValue: rows.filter((r) => r.activity === "spend_only").reduce((s, r) => s + r.spend, 0),
-    // Where revenue and the people earning it are posted to different cost centres. A cost
-    // centre that bills but has no payroll reports a 100% margin, which reads as the best line
-    // in the report rather than as a gap, so it is returned explicitly.
-    attributionGaps,
-    attributionGapValue: {
-      revenueWithoutPeople: attributionGaps.filter((g) => g.kind === "revenue_without_people")
-        .reduce((s, g) => s + g.revenue, 0),
-      peopleWithoutRevenue: attributionGaps.filter((g) => g.kind === "people_without_revenue")
-        .reduce((s, g) => s + g.salaryCost, 0),
-    },
-    data: rows,
-  });
-}));
-
-router.post("/seat-rates", requireRole(...BILLABILITY_ROLES), requireWriteAccess, h(async (req, res) => {
-  const { costCentreId, designationId, seatRateMonthly, billingModel, prorationMethod,
-          effectiveFrom, contractReference, changeReason } = req.body ?? {};
-
-  if (!costCentreId) {
-    return res.status(400).json({ success: false, message: "costCentreId is required" });
-  }
-  if (!effectiveFrom || !/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveFrom))) {
-    return res.status(400).json({ success: false, message: "effectiveFrom must be a YYYY-MM-DD date" });
-  }
-  if (!String(changeReason ?? "").trim()) {
-    return res.status(400).json({ success: false, message: "changeReason is required" });
-  }
-  const model = billingModel ?? "per_seat";
-  if (!["per_seat", "not_seat_billed", "unknown"].includes(model)) {
-    return res.status(400).json({ success: false, message: "billingModel must be per_seat, not_seat_billed or unknown" });
-  }
-  const rate = Number(seatRateMonthly ?? 0);
-  // A per-seat rate of zero is almost always an empty form rather than a real free seat,
-  // and it would silently zero that cost centre's revenue.
-  if (model === "per_seat" && (!Number.isFinite(rate) || rate <= 0)) {
-    return res.status(400).json({
-      success: false,
-      message: "A per-seat cost centre needs a rate greater than zero. Use billingModel 'not_seat_billed' if the client does not pay per seat.",
+router.get(
+  "/cost-centre-activity",
+  requireRole(...BILLABILITY_ROLES),
+  h(async (req, res) => {
+    const period = /^\d{4}-\d{2}$/.test(String(req.query.period ?? ""))
+      ? String(req.query.period)
+      : new Date().toISOString().slice(0, 7);
+    const [rows, attributionGaps] = await Promise.all([
+      getCostCentreActivity(period),
+      getAttributionGaps(period),
+    ]);
+    const summary = rows.reduce<Record<string, number>>((acc, r) => {
+      acc[r.activity] = (acc[r.activity] ?? 0) + 1;
+      return acc;
+    }, {});
+    res.json({
+      success: true,
+      period,
+      window: activityWindow(period),
+      summary,
+      // Spend landing on centres nobody works at and no client pays for — it has to go
+      // somewhere, and reporting only the active ones would make it disappear.
+      spendOnlyValue: rows
+        .filter((r) => r.activity === "spend_only")
+        .reduce((s, r) => s + r.spend, 0),
+      // Where revenue and the people earning it are posted to different cost centres. A cost
+      // centre that bills but has no payroll reports a 100% margin, which reads as the best line
+      // in the report rather than as a gap, so it is returned explicitly.
+      attributionGaps,
+      attributionGapValue: {
+        revenueWithoutPeople: attributionGaps
+          .filter((g) => g.kind === "revenue_without_people")
+          .reduce((s, g) => s + g.revenue, 0),
+        peopleWithoutRevenue: attributionGaps
+          .filter((g) => g.kind === "people_without_revenue")
+          .reduce((s, g) => s + g.salaryCost, 0),
+      },
+      data: rows,
     });
-  }
+  }),
+);
 
-  const actorId = req.authUser!.id;
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-    await conn.execute(
-      `UPDATE cost_centre_seat_rate
+router.post(
+  "/seat-rates",
+  requireRole(...BILLABILITY_ROLES),
+  requireWriteAccess,
+  h(async (req, res) => {
+    const {
+      costCentreId,
+      designationId,
+      seatRateMonthly,
+      billingModel,
+      prorationMethod,
+      effectiveFrom,
+      contractReference,
+      changeReason,
+    } = req.body ?? {};
+
+    if (!costCentreId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "costCentreId is required" });
+    }
+    if (!effectiveFrom || !/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveFrom))) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "effectiveFrom must be a YYYY-MM-DD date",
+        });
+    }
+    if (!String(changeReason ?? "").trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "changeReason is required" });
+    }
+    const model = billingModel ?? "per_seat";
+    if (!["per_seat", "not_seat_billed", "unknown"].includes(model)) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "billingModel must be per_seat, not_seat_billed or unknown",
+        });
+    }
+    const rate = Number(seatRateMonthly ?? 0);
+    // A per-seat rate of zero is almost always an empty form rather than a real free seat,
+    // and it would silently zero that cost centre's revenue.
+    if (model === "per_seat" && (!Number.isFinite(rate) || rate <= 0)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "A per-seat cost centre needs a rate greater than zero. Use billingModel 'not_seat_billed' if the client does not pay per seat.",
+      });
+    }
+
+    const actorId = req.authUser!.id;
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.execute(
+        `UPDATE cost_centre_seat_rate
           SET effective_to = DATE_SUB(?, INTERVAL 1 DAY), updated_at = NOW()
         WHERE cost_centre_id = ? AND status = 'approved'
           AND ((designation_id IS NULL AND ? IS NULL) OR designation_id = ?)
           AND (effective_to IS NULL OR effective_to >= ?)`,
-      [effectiveFrom, costCentreId, designationId ?? null, designationId ?? null, effectiveFrom],
-    );
-    await conn.execute(
-      `INSERT INTO cost_centre_seat_rate
+        [
+          effectiveFrom,
+          costCentreId,
+          designationId ?? null,
+          designationId ?? null,
+          effectiveFrom,
+        ],
+      );
+      await conn.execute(
+        `INSERT INTO cost_centre_seat_rate
          (id, cost_centre_id, designation_id, seat_rate_monthly, billing_model,
           proration_method, contract_reference, effective_from, status, change_reason,
           created_by, approved_by, approved_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, NOW())`,
-      [randomUUID(), costCentreId, designationId ?? null, model === "not_seat_billed" ? 0 : rate,
-       model, prorationMethod ?? "payable_days", contractReference ?? null, effectiveFrom,
-       String(changeReason).trim(), actorId, actorId],
-    );
-    await conn.commit();
-    res.json({ success: true });
-  } catch (error) {
-    await conn.rollback();
-    throw error;
-  } finally {
-    conn.release();
-  }
-}));
+        [
+          randomUUID(),
+          costCentreId,
+          designationId ?? null,
+          model === "not_seat_billed" ? 0 : rate,
+          model,
+          prorationMethod ?? "payable_days",
+          contractReference ?? null,
+          effectiveFrom,
+          String(changeReason).trim(),
+          actorId,
+          actorId,
+        ],
+      );
+      await conn.commit();
+      res.json({ success: true });
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  }),
+);
 
 // ─── Support-staff cost splits ────────────────────────────────────────────────
 
@@ -504,9 +689,12 @@ router.post("/seat-rates", requireRole(...BILLABILITY_ROLES), requireWriteAccess
  * Employees who plausibly need a split: those the P&L cannot attribute to a single
  * client-facing cost centre. Everyone else is 100% direct and needs no row.
  */
-router.get("/split-candidates", requireRole(...BILLABILITY_ROLES), h(async (_req, res) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id AS employee_id, e.employee_code, e.full_name,
+router.get(
+  "/split-candidates",
+  requireRole(...BILLABILITY_ROLES),
+  h(async (_req, res) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employee_id, e.employee_code, e.full_name,
             d.dept_name, dm.designation_name, b.branch_name,
             e.cost_centre_id, cc.cost_centre_name,
             (SELECT COUNT(*) FROM employee_cost_centre_allocation a
@@ -525,33 +713,60 @@ router.get("/split-candidates", requireRole(...BILLABILITY_ROLES), h(async (_req
                                 'PROJECTS & COMPLIANCE','SALES & MARKETING','DIALER & WFM',
                                 'TRAINING AND QUALITY'))
       ORDER BY d.dept_name, e.full_name`,
-  );
-  res.json({ success: true, data: rows });
-}));
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
 
-router.get("/allocations/:employeeId", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
-  const onDate = String(req.query.date ?? "").slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const result = await billabilityService.getEmployeeAllocation(String(req.params.employeeId), onDate);
-  res.json({ success: true, data: result });
-}));
+router.get(
+  "/allocations/:employeeId",
+  requireRole(...BILLABILITY_ROLES),
+  h(async (req, res) => {
+    const onDate =
+      String(req.query.date ?? "").slice(0, 10) ||
+      new Date().toISOString().slice(0, 10);
+    const result = await billabilityService.getEmployeeAllocation(
+      String(req.params.employeeId),
+      onDate,
+    );
+    res.json({ success: true, data: result });
+  }),
+);
 
-router.post("/allocations/:employeeId", requireRole(...BILLABILITY_ROLES), requireWriteAccess, h(async (req, res) => {
-  const { effectiveFrom, allocations, changeReason } = req.body ?? {};
-  if (!effectiveFrom || !/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveFrom))) {
-    return res.status(400).json({ success: false, message: "effectiveFrom must be a YYYY-MM-DD date" });
-  }
-  if (!Array.isArray(allocations)) {
-    return res.status(400).json({ success: false, message: "allocations must be an array" });
-  }
-  if (!String(changeReason ?? "").trim()) {
-    return res.status(400).json({ success: false, message: "changeReason is required" });
-  }
-  const result = await billabilityService.replaceEmployeeAllocation(
-    String(req.params.employeeId), String(effectiveFrom), allocations,
-    req.authUser!.id, String(changeReason).trim(),
-  );
-  res.json({ success: true, data: result });
-}));
+router.post(
+  "/allocations/:employeeId",
+  requireRole(...BILLABILITY_ROLES),
+  requireWriteAccess,
+  h(async (req, res) => {
+    const { effectiveFrom, allocations, changeReason } = req.body ?? {};
+    if (!effectiveFrom || !/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveFrom))) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "effectiveFrom must be a YYYY-MM-DD date",
+        });
+    }
+    if (!Array.isArray(allocations)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "allocations must be an array" });
+    }
+    if (!String(changeReason ?? "").trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "changeReason is required" });
+    }
+    const result = await billabilityService.replaceEmployeeAllocation(
+      String(req.params.employeeId),
+      String(effectiveFrom),
+      allocations,
+      req.authUser!.id,
+      String(changeReason).trim(),
+    );
+    res.json({ success: true, data: result });
+  }),
+);
 
 // ─── Exceptions: what this configuration cannot answer ────────────────────────
 
@@ -561,21 +776,24 @@ router.post("/allocations/:employeeId", requireRole(...BILLABILITY_ROLES), requi
  * The gaps, counted rather than hidden. A configuration screen that only shows what IS
  * set lets a 13% hole look like completeness.
  */
-router.get("/exceptions", requireRole(...BILLABILITY_ROLES), h(async (_req, res) => {
-  const [[gaps]] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS active_employees,
+router.get(
+  "/exceptions",
+  requireRole(...BILLABILITY_ROLES),
+  h(async (_req, res) => {
+    const [[gaps]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS active_employees,
             SUM(process_id IS NULL)     AS no_process,
             SUM(designation_id IS NULL) AS no_designation,
             SUM(cost_centre_id IS NULL) AS no_cost_centre,
             SUM(process_id IS NULL OR designation_id IS NULL) AS unresolvable_by_matrix
        FROM employees WHERE active_status = 1`,
-  );
+    );
 
-  // Named, not just counted — a person has to be findable to be fixed. Capped at 200: this is
-  // meant to be a short worklist, not a full-table dump; if it is ever this long the count above
-  // is the more useful number anyway.
-  const [unresolvableEmployees] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id AS employee_id, e.employee_code, e.full_name, b.branch_name,
+    // Named, not just counted — a person has to be findable to be fixed. Capped at 200: this is
+    // meant to be a short worklist, not a full-table dump; if it is ever this long the count above
+    // is the more useful number anyway.
+    const [unresolvableEmployees] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employee_id, e.employee_code, e.full_name, b.branch_name,
             (e.process_id IS NULL)     AS missing_process,
             (e.designation_id IS NULL) AS missing_designation,
             (e.cost_centre_id IS NULL) AS missing_cost_centre
@@ -584,22 +802,22 @@ router.get("/exceptions", requireRole(...BILLABILITY_ROLES), h(async (_req, res)
       WHERE e.active_status = 1 AND (e.process_id IS NULL OR e.designation_id IS NULL)
       ORDER BY e.employee_code
       LIMIT 200`,
-  );
-  const [noCostCentreEmployees] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id AS employee_id, e.employee_code, e.full_name, b.branch_name
+    );
+    const [noCostCentreEmployees] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employee_id, e.employee_code, e.full_name, b.branch_name
        FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE e.active_status = 1 AND e.cost_centre_id IS NULL
       ORDER BY e.employee_code
       LIMIT 200`,
-  );
+    );
 
-  // Cost centres with staff but no current seat rate — named, plus a heuristic flag for the
-  // ones that are plainly internal overhead (Management/Finance/IT — cost_centre_code carries
-  // no "BSS/" delivery prefix) and will never have a client seat rate. Not a certainty, so
-  // labelled as a heuristic rather than silently dropped from the count.
-  const [costCentresWithoutRate] = await db.execute<RowDataPacket[]>(
-    `SELECT cc.id, cc.cost_centre_code, cc.cost_centre_name,
+    // Cost centres with staff but no current seat rate — named, plus a heuristic flag for the
+    // ones that are plainly internal overhead (Management/Finance/IT — cost_centre_code carries
+    // no "BSS/" delivery prefix) and will never have a client seat rate. Not a certainty, so
+    // labelled as a heuristic rather than silently dropped from the count.
+    const [costCentresWithoutRate] = await db.execute<RowDataPacket[]>(
+      `SELECT cc.id, cc.cost_centre_code, cc.cost_centre_name,
             (SELECT COUNT(*) FROM employees e2
               WHERE e2.cost_centre_id = cc.id AND e2.active_status = 1) AS staff_count
        FROM cost_centre_master cc
@@ -609,69 +827,76 @@ router.get("/exceptions", requireRole(...BILLABILITY_ROLES), h(async (_req, res)
                WHERE r.cost_centre_id = cc.id AND r.status = 'approved'
                  AND (r.effective_to IS NULL OR r.effective_to >= CURDATE()))
       ORDER BY staff_count DESC`,
-  );
+    );
 
-  const [[rates]] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT cc.id) AS cost_centres_with_staff,
+    const [[rates]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT cc.id) AS cost_centres_with_staff,
             COUNT(DISTINCT CASE WHEN r.id IS NOT NULL THEN cc.id END) AS cost_centres_with_rate
        FROM cost_centre_master cc
        JOIN employees e ON e.cost_centre_id = cc.id AND e.active_status = 1
        LEFT JOIN cost_centre_seat_rate r
               ON r.cost_centre_id = cc.id AND r.status = 'approved'
              AND (r.effective_to IS NULL OR r.effective_to >= CURDATE())`,
-  );
-  const [unbalanced] = await db.execute<RowDataPacket[]>(
-    `SELECT employee_id, ROUND(SUM(allocation_pct), 2) AS total
+    );
+    const [unbalanced] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, ROUND(SUM(allocation_pct), 2) AS total
        FROM employee_cost_centre_allocation
       WHERE status = 'approved' AND (effective_to IS NULL OR effective_to >= CURDATE())
       GROUP BY employee_id
      HAVING ABS(SUM(allocation_pct) - 100) > 0.01`,
-  );
+    );
 
-  const rateGapRows = (costCentresWithoutRate as RowDataPacket[]).map((r) => ({
-    costCentreId: String(r.id),
-    costCentreCode: r.cost_centre_code,
-    costCentreName: r.cost_centre_name,
-    staffCount: Number(r.staff_count),
-    // Heuristic, not a stored fact — see the comment on the query above.
-    likelyInternalOverhead: !String(r.cost_centre_code ?? "").toUpperCase().startsWith("BSS/"),
-  }));
+    const rateGapRows = (costCentresWithoutRate as RowDataPacket[]).map(
+      (r) => ({
+        costCentreId: String(r.id),
+        costCentreCode: r.cost_centre_code,
+        costCentreName: r.cost_centre_name,
+        staffCount: Number(r.staff_count),
+        // Heuristic, not a stored fact — see the comment on the query above.
+        likelyInternalOverhead: !String(r.cost_centre_code ?? "")
+          .toUpperCase()
+          .startsWith("BSS/"),
+      }),
+    );
 
-  res.json({
-    success: true,
-    data: {
-      activeEmployees: Number(gaps.active_employees),
-      noProcess: Number(gaps.no_process),
-      noDesignation: Number(gaps.no_designation),
-      noCostCentre: Number(gaps.no_cost_centre),
-      unresolvableByMatrix: Number(gaps.unresolvable_by_matrix),
-      costCentresWithStaff: Number(rates.cost_centres_with_staff),
-      costCentresWithRate: Number(rates.cost_centres_with_rate),
-      unbalancedAllocations: unbalanced.map((u) => ({
-        employeeId: String(u.employee_id),
-        total: Number(u.total),
-      })),
-      unresolvableEmployees: unresolvableEmployees.map((e) => ({
-        employeeId: String(e.employee_id),
-        employeeCode: e.employee_code,
-        fullName: e.full_name,
-        branchName: e.branch_name,
-        missingProcess: Number(e.missing_process) === 1,
-        missingDesignation: Number(e.missing_designation) === 1,
-        missingCostCentre: Number(e.missing_cost_centre) === 1,
-      })),
-      noCostCentreEmployees: noCostCentreEmployees.map((e) => ({
-        employeeId: String(e.employee_id),
-        employeeCode: e.employee_code,
-        fullName: e.full_name,
-        branchName: e.branch_name,
-      })),
-      costCentresWithoutRate: rateGapRows,
-      // The count Finance actually owes a rate for — the ones above that are not obviously
-      // internal overhead. Kept alongside the raw count so the banner can say both.
-      costCentresNeedingRealRate: rateGapRows.filter((r) => !r.likelyInternalOverhead).length,
-    },
-  });
-}));
+    res.json({
+      success: true,
+      data: {
+        activeEmployees: Number(gaps.active_employees),
+        noProcess: Number(gaps.no_process),
+        noDesignation: Number(gaps.no_designation),
+        noCostCentre: Number(gaps.no_cost_centre),
+        unresolvableByMatrix: Number(gaps.unresolvable_by_matrix),
+        costCentresWithStaff: Number(rates.cost_centres_with_staff),
+        costCentresWithRate: Number(rates.cost_centres_with_rate),
+        unbalancedAllocations: unbalanced.map((u) => ({
+          employeeId: String(u.employee_id),
+          total: Number(u.total),
+        })),
+        unresolvableEmployees: unresolvableEmployees.map((e) => ({
+          employeeId: String(e.employee_id),
+          employeeCode: e.employee_code,
+          fullName: e.full_name,
+          branchName: e.branch_name,
+          missingProcess: Number(e.missing_process) === 1,
+          missingDesignation: Number(e.missing_designation) === 1,
+          missingCostCentre: Number(e.missing_cost_centre) === 1,
+        })),
+        noCostCentreEmployees: noCostCentreEmployees.map((e) => ({
+          employeeId: String(e.employee_id),
+          employeeCode: e.employee_code,
+          fullName: e.full_name,
+          branchName: e.branch_name,
+        })),
+        costCentresWithoutRate: rateGapRows,
+        // The count Finance actually owes a rate for — the ones above that are not obviously
+        // internal overhead. Kept alongside the raw count so the banner can say both.
+        costCentresNeedingRealRate: rateGapRows.filter(
+          (r) => !r.likelyInternalOverhead,
+        ).length,
+      },
+    });
+  }),
+);
 
 export default router;

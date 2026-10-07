@@ -29,7 +29,10 @@ import { describe, expect, it, vi } from "vitest";
  * against a true 239.
  */
 
-const source = readFileSync(resolve(__dirname, "../dashboard-metric.service.ts"), "utf-8");
+const source = readFileSync(
+  resolve(__dirname, "../dashboard-metric.service.ts"),
+  "utf-8",
+);
 const governanceSource = readFileSync(
   resolve(__dirname, "../../payroll/payroll-governance.service.ts"),
   "utf-8",
@@ -48,12 +51,23 @@ const SCOPE = {
 } as never;
 
 async function capturePayrollSql(): Promise<string> {
-  const { getPayrollReadinessMetrics } = await import("../dashboard-metric.service.js");
+  const { getPayrollReadinessMetrics } =
+    await import("../dashboard-metric.service.js");
   execute.mockReset();
-  execute.mockResolvedValue([[{
-    total: 1120, readyCount: 881, missingBank: 5, missingNeftBank: 6,
-    missingPan: 232, invalidPan: 7, missingUan: 410,
-  }], []]);
+  execute.mockResolvedValue([
+    [
+      {
+        total: 1120,
+        readyCount: 881,
+        missingBank: 5,
+        missingNeftBank: 6,
+        missingPan: 232,
+        invalidPan: 7,
+        missingUan: 410,
+      },
+    ],
+    [],
+  ]);
   await getPayrollReadinessMetrics(SCOPE);
   return String(execute.mock.calls[0]?.[0] ?? "").replace(/\s+/g, " ");
 }
@@ -82,12 +96,23 @@ describe("PAYROLL_READINESS PAN gate", () => {
   });
 
   it("reports employees holding an unusable PAN separately from those holding none", async () => {
-    const { getPayrollReadinessMetrics } = await import("../dashboard-metric.service.js");
+    const { getPayrollReadinessMetrics } =
+      await import("../dashboard-metric.service.js");
     execute.mockReset();
-    execute.mockResolvedValue([[{
-      total: 1120, readyCount: 881, missingBank: 5, missingNeftBank: 6,
-      missingPan: 232, invalidPan: 7, missingUan: 410,
-    }], []]);
+    execute.mockResolvedValue([
+      [
+        {
+          total: 1120,
+          readyCount: 881,
+          missingBank: 5,
+          missingNeftBank: 6,
+          missingPan: 232,
+          invalidPan: 7,
+          missingUan: 410,
+        },
+      ],
+      [],
+    ]);
 
     const result = await getPayrollReadinessMetrics(SCOPE);
 
@@ -102,7 +127,10 @@ describe("PAYROLL_READINESS PAN gate", () => {
 
     // The readyCount branch must apply the same PAN test, otherwise the seven invalid
     // rows keep inflating the readiness percentage even once they are reported below it.
-    const readyBranch = sql.slice(sql.indexOf("AS missingUan"), sql.indexOf("AS readyCount"));
+    const readyBranch = sql.slice(
+      sql.indexOf("AS missingUan"),
+      sql.indexOf("AS readyCount"),
+    );
     expect(readyBranch).toContain("[A-Z]{5}[0-9]{4}[A-Z]");
   });
 

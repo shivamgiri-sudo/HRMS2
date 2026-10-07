@@ -13,25 +13,50 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { resolveRoleHolderUserIds } = vi.hoisted(() => ({
   resolveRoleHolderUserIds: vi.fn(async () => [] as string[]),
 }));
-vi.mock("../../../shared/recipient-resolver.js", () => ({ resolveRoleHolderUserIds }));
+vi.mock("../../../shared/recipient-resolver.js", () => ({
+  resolveRoleHolderUserIds,
+}));
 
 const mockExecute = vi.fn(async (sql: string) => {
-  if (/SELECT branch_id FROM employees/.test(sql)) return [[{ branch_id: "branch-1" }], []];
-  if (/^SELECT \* FROM helpdesk_ticket WHERE/.test(sql)) return [[{ id: "t-1", employee_id: "emp-1" }], []];
+  if (/SELECT branch_id FROM employees/.test(sql))
+    return [[{ branch_id: "branch-1" }], []];
+  if (/^SELECT \* FROM helpdesk_ticket WHERE/.test(sql))
+    return [[{ id: "t-1", employee_id: "emp-1" }], []];
   return [[], []];
 });
 vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: (...args: unknown[]) => mockExecute(...(args as [string, unknown[]])) },
+  db: {
+    execute: (...args: unknown[]) =>
+      mockExecute(...(args as [string, unknown[]])),
+  },
 }));
-vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn(async () => undefined) }));
-vi.mock("../../communication/sms.helper.js", () => ({ sendSMS: vi.fn(async () => undefined) }));
+vi.mock("../../../shared/auditLog.js", () => ({
+  logSensitiveAction: vi.fn(async () => undefined),
+}));
+vi.mock("../../communication/sms.helper.js", () => ({
+  sendSMS: vi.fn(async () => undefined),
+}));
 
-import { helpdeskService, resolveAutoAssignee, CATEGORY_OWNER_ROLES } from "../helpdesk.service.js";
+import {
+  helpdeskService,
+  resolveAutoAssignee,
+  CATEGORY_OWNER_ROLES,
+} from "../helpdesk.service.js";
 
 describe("CATEGORY_OWNER_ROLES — the mapping routing and RBAC both derive from", () => {
   it("covers every category the frontend's own filter list offers", () => {
     // Native SupportCommandCenter.tsx's hardcoded category filter list.
-    const frontendCategories = ["hr", "payroll", "it", "general", "asset", "attendance", "admin", "leave", "other"];
+    const frontendCategories = [
+      "hr",
+      "payroll",
+      "it",
+      "general",
+      "asset",
+      "attendance",
+      "admin",
+      "leave",
+      "other",
+    ];
     for (const c of frontendCategories) {
       expect(CATEGORY_OWNER_ROLES[c]).toBeDefined();
       expect(CATEGORY_OWNER_ROLES[c].length).toBeGreaterThan(0);
@@ -61,7 +86,11 @@ describe("resolveAutoAssignee", () => {
       .mockResolvedValueOnce(["it-admin-user"]);
     const result = await resolveAutoAssignee("it", "branch-1");
     expect(result).toBe("it-admin-user");
-    expect(resolveRoleHolderUserIds).toHaveBeenNthCalledWith(3, "it_admin", "branch-1");
+    expect(resolveRoleHolderUserIds).toHaveBeenNthCalledWith(
+      3,
+      "it_admin",
+      "branch-1",
+    );
   });
 
   it("routes hr, leave, and payroll categories all to the hr role", async () => {
@@ -81,7 +110,10 @@ describe("resolveAutoAssignee", () => {
 
   it("falls back to the 'other' mapping for an unrecognized category rather than throwing", async () => {
     resolveRoleHolderUserIds.mockResolvedValueOnce(["admin-user"]);
-    const result = await resolveAutoAssignee("totally_unknown_category", "branch-1");
+    const result = await resolveAutoAssignee(
+      "totally_unknown_category",
+      "branch-1",
+    );
     expect(result).toBe("admin-user");
     expect(resolveRoleHolderUserIds).toHaveBeenCalledWith("admin", "branch-1");
   });
@@ -103,10 +135,15 @@ describe("createTicket — wires auto-routing into the INSERT", () => {
     resolveRoleHolderUserIds.mockResolvedValueOnce(["assignee-1"]);
 
     await helpdeskService.createTicket({
-      employee_id: "emp-1", category: "it", subject: "Laptop won't boot", description: "…",
+      employee_id: "emp-1",
+      category: "it",
+      subject: "Laptop won't boot",
+      description: "…",
     });
 
-    const insertCall = mockExecute.mock.calls.find(([sql]) => /INSERT INTO helpdesk_ticket/.test(sql as string));
+    const insertCall = mockExecute.mock.calls.find(([sql]) =>
+      /INSERT INTO helpdesk_ticket/.test(sql as string),
+    );
     expect(insertCall).toBeDefined();
     const [sql, params] = insertCall as [string, unknown[]];
     expect(sql).toContain("assigned_to");
@@ -117,11 +154,18 @@ describe("createTicket — wires auto-routing into the INSERT", () => {
     resolveRoleHolderUserIds.mockRejectedValueOnce(new Error("boom"));
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(helpdeskService.createTicket({
-      employee_id: "emp-1", category: "it", subject: "x", description: "y",
-    })).resolves.toBeDefined();
+    await expect(
+      helpdeskService.createTicket({
+        employee_id: "emp-1",
+        category: "it",
+        subject: "x",
+        description: "y",
+      }),
+    ).resolves.toBeDefined();
 
-    const insertCall = mockExecute.mock.calls.find(([sql]) => /INSERT INTO helpdesk_ticket/.test(sql as string));
+    const insertCall = mockExecute.mock.calls.find(([sql]) =>
+      /INSERT INTO helpdesk_ticket/.test(sql as string),
+    );
     const [, params] = insertCall as [string, unknown[]];
     expect(params).toContain(null); // assigned_to fell back to null, not a thrown error
     consoleSpy.mockRestore();

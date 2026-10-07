@@ -28,11 +28,19 @@ export const inboxService = {
     const conds: string[] = ["user_id = ?", "is_actioned = 0"];
     const params: unknown[] = [filters.user_id];
 
-    if (filters.type)     { conds.push("type = ?");       params.push(filters.type); }
-    if (filters.priority) { conds.push("priority = ?");   params.push(filters.priority); }
+    if (filters.type) {
+      conds.push("type = ?");
+      params.push(filters.type);
+    }
+    if (filters.priority) {
+      conds.push("priority = ?");
+      params.push(filters.priority);
+    }
     if (filters.is_read !== undefined && filters.is_read !== "") {
       conds.push("is_read = ?");
-      params.push(filters.is_read === "true" || filters.is_read === "1" ? 1 : 0);
+      params.push(
+        filters.is_read === "true" || filters.is_read === "1" ? 1 : 0,
+      );
     }
 
     const where = `WHERE ${conds.join(" AND ")}`;
@@ -40,7 +48,7 @@ export const inboxService = {
       `SELECT * FROM work_inbox_item ${where} ORDER BY
          FIELD(priority,'urgent','high','normal','low'), created_at DESC
        LIMIT 200`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },
@@ -48,7 +56,7 @@ export const inboxService = {
   async getUnreadCount(userId: string): Promise<number> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS cnt FROM work_inbox_item WHERE user_id = ? AND is_read = 0 AND is_actioned = 0",
-      [userId]
+      [userId],
     );
     return Number((rows as RowDataPacket[])[0]?.cnt ?? 0);
   },
@@ -56,7 +64,7 @@ export const inboxService = {
   async markRead(id: string, userId: string) {
     const [result] = await db.execute(
       "UPDATE work_inbox_item SET is_read = 1 WHERE id = ? AND user_id = ?",
-      [id, userId]
+      [id, userId],
     );
     return result;
   },
@@ -64,7 +72,7 @@ export const inboxService = {
   async markActioned(id: string, userId: string) {
     const [result] = await db.execute(
       "UPDATE work_inbox_item SET is_actioned = 1, is_read = 1 WHERE id = ? AND user_id = ?",
-      [id, userId]
+      [id, userId],
     );
     return result;
   },
@@ -72,7 +80,7 @@ export const inboxService = {
   async markAllRead(userId: string) {
     const [result] = await db.execute(
       "UPDATE work_inbox_item SET is_read = 1 WHERE user_id = ? AND is_read = 0",
-      [userId]
+      [userId],
     );
     return result;
   },
@@ -163,7 +171,13 @@ export const inboxService = {
            AND action_url <=> ?
            AND is_actioned = 0
          LIMIT 1`,
-        [data.user_id, data.type, data.entity_type, data.entity_id, data.action_url ?? null]
+        [
+          data.user_id,
+          data.type,
+          data.entity_type,
+          data.entity_id,
+          data.action_url ?? null,
+        ],
       );
       const openItem = (existing as RowDataPacket[])[0];
       if (openItem) {
@@ -171,7 +185,12 @@ export const inboxService = {
         // go stale — but leave created_at alone so ageing stays honest.
         await db.execute(
           `UPDATE work_inbox_item SET title = ?, description = ?, priority = ? WHERE id = ?`,
-          [data.title, data.description ?? null, data.priority ?? "normal", openItem.id],
+          [
+            data.title,
+            data.description ?? null,
+            data.priority ?? "normal",
+            openItem.id,
+          ],
         );
         const [refreshed] = await db.execute<RowDataPacket[]>(
           "SELECT * FROM work_inbox_item WHERE id = ? LIMIT 1",
@@ -196,11 +215,11 @@ export const inboxService = {
         data.entity_id ?? null,
         data.action_url ?? null,
         data.priority ?? "normal",
-      ]
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM work_inbox_item WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return (rows as RowDataPacket[])[0];
   },
@@ -219,7 +238,10 @@ export async function bulkActioned(
 ): Promise<{ actioned: number; failed: BulkFailure[] }> {
   if (!ids.length) return { actioned: 0, failed: [] };
   if (ids.length > 500) {
-    return { actioned: 0, failed: ids.map((id) => ({ id, reason: "wrong_source" as const })) };
+    return {
+      actioned: 0,
+      failed: ids.map((id) => ({ id, reason: "wrong_source" as const })),
+    };
   }
 
   const failed: BulkFailure[] = [];
@@ -232,13 +254,24 @@ export async function bulkActioned(
       [...ids, userId],
     );
     const ownedMap = new Map<string, boolean>(
-      (owned as RowDataPacket[]).map((r) => [String(r.id), Boolean(r.is_actioned)]),
+      (owned as RowDataPacket[]).map((r) => [
+        String(r.id),
+        Boolean(r.is_actioned),
+      ]),
     );
     for (const id of ids) {
-      if (!ownedMap.has(id)) { failed.push({ id, reason: "access_denied" }); continue; }
-      if (ownedMap.get(id))  { failed.push({ id, reason: "already_actioned" }); continue; }
+      if (!ownedMap.has(id)) {
+        failed.push({ id, reason: "access_denied" });
+        continue;
+      }
+      if (ownedMap.get(id)) {
+        failed.push({ id, reason: "already_actioned" });
+        continue;
+      }
     }
-    const actionable = ids.filter((id) => ownedMap.has(id) && !ownedMap.get(id));
+    const actionable = ids.filter(
+      (id) => ownedMap.has(id) && !ownedMap.get(id),
+    );
     if (actionable.length) {
       const ph = actionable.map(() => "?").join(",");
       await db.execute(
@@ -258,9 +291,13 @@ export async function bulkActioned(
           [id, userId, userId],
         );
         const row = (rows as RowDataPacket[])[0];
-        if (!row) { failed.push({ id, reason: "access_denied" }); continue; }
+        if (!row) {
+          failed.push({ id, reason: "access_denied" });
+          continue;
+        }
         if (["completed", "cancelled"].includes(String(row.status ?? ""))) {
-          failed.push({ id, reason: "already_actioned" }); continue;
+          failed.push({ id, reason: "already_actioned" });
+          continue;
         }
         await db.execute(
           "INSERT INTO tat_task_completions (task_id, completed_by, remarks, completed_at) VALUES (?, ?, ?, NOW())",
@@ -286,9 +323,13 @@ export async function bulkActioned(
           [id, userId, userId],
         );
         const row = (rows as RowDataPacket[])[0];
-        if (!row) { failed.push({ id, reason: "access_denied" }); continue; }
+        if (!row) {
+          failed.push({ id, reason: "access_denied" });
+          continue;
+        }
         if (["completed", "cancelled"].includes(String(row.status ?? ""))) {
-          failed.push({ id, reason: "already_actioned" }); continue;
+          failed.push({ id, reason: "already_actioned" });
+          continue;
         }
         await db.execute(
           "UPDATE work_item SET status = 'completed', completed_at = NOW() WHERE id = ?",
@@ -306,7 +347,10 @@ export async function bulkActioned(
     return { actioned, failed };
   }
 
-  return { actioned: 0, failed: ids.map((id) => ({ id, reason: "wrong_source" as const })) };
+  return {
+    actioned: 0,
+    failed: ids.map((id) => ({ id, reason: "wrong_source" as const })),
+  };
 }
 
 // ── Platform-wide pending task queue ─────────────────────────────────────────
@@ -409,7 +453,10 @@ export interface TimelineEvent {
  * age-based signal "kept separate so an age is never presented as a missed
  * deadline" (shared/dashboardMetricContract.ts).
  */
-function calcRisk(deadlineStr?: string | null, createdStr?: string): "breached" | "aged" | "due_soon" | "on_track" {
+function calcRisk(
+  deadlineStr?: string | null,
+  createdStr?: string,
+): "breached" | "aged" | "due_soon" | "on_track" {
   if (!deadlineStr) {
     if (!createdStr) return "on_track";
     const ageH = (Date.now() - new Date(createdStr).getTime()) / 3_600_000;
@@ -423,7 +470,9 @@ function calcRisk(deadlineStr?: string | null, createdStr?: string): "breached" 
   return "on_track";
 }
 
-export async function getMyPending(userId: string): Promise<{ items: PendingTask[]; summary: PendingSummary }> {
+export async function getMyPending(
+  userId: string,
+): Promise<{ items: PendingTask[]; summary: PendingSummary }> {
   // Resolve caller roles + branch
   const [roleRows] = await db.execute<RowDataPacket[]>(
     "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
@@ -436,29 +485,56 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
     "SELECT branch_id FROM employees WHERE user_id = ? LIMIT 1",
     [userId],
   );
-  const callerBranchId: string | null = (empRows as RowDataPacket[])[0]?.branch_id ?? null;
+  const callerBranchId: string | null =
+    (empRows as RowDataPacket[])[0]?.branch_id ?? null;
 
   const isAdmin = roles.some((r) => ["super_admin", "admin"].includes(r));
-  const isHrAdmin = roles.some((r) => ["hr_admin", "super_admin", "admin"].includes(r));
-  const isItHead = roles.some((r) => ["it_head", "it_admin", "super_admin", "admin"].includes(r));
-  const isItSpoc = roles.some((r) => ["it_spoc", "it_executive", "it_support"].includes(r));
+  const isHrAdmin = roles.some((r) =>
+    ["hr_admin", "super_admin", "admin"].includes(r),
+  );
+  const isItHead = roles.some((r) =>
+    ["it_head", "it_admin", "super_admin", "admin"].includes(r),
+  );
+  const isItSpoc = roles.some((r) =>
+    ["it_spoc", "it_executive", "it_support"].includes(r),
+  );
   const isHr = roles.some((r) => ["hr", "hr_admin", "hr_manager"].includes(r));
-  const isFinance = roles.some((r) => ["finance", "finance_head", "payroll_admin"].includes(r));
+  const isFinance = roles.some((r) =>
+    ["finance", "finance_head", "payroll_admin"].includes(r),
+  );
   const isWfm = roles.some((r) => ["wfm", "wfm_admin"].includes(r));
-  const isOpsManager = roles.some((r) => ["operations_manager", "branch_head", "process_manager"].includes(r));
+  const isOpsManager = roles.some((r) =>
+    ["operations_manager", "branch_head", "process_manager"].includes(r),
+  );
 
   // Build role pool for TAT tasks
   const rolePool = roles.length ? roles : ["__none__"];
   const rolePlaceholders = rolePool.map(() => "?").join(",");
 
   // Branch scoping helper: determines which branches each role sees
-  const itBranchFilter = isItHead || isAdmin ? "" : (callerBranchId ? "AND e.branch_id = ?" : "AND 1=0");
-  const hrBranchFilter = isHrAdmin || isAdmin ? "" : (callerBranchId ? "AND e.branch_id = ?" : "AND 1=0");
-  const genBranchFilter = isAdmin ? "" : (callerBranchId ? "AND e.branch_id = ?" : "AND 1=0");
+  const itBranchFilter =
+    isItHead || isAdmin
+      ? ""
+      : callerBranchId
+        ? "AND e.branch_id = ?"
+        : "AND 1=0";
+  const hrBranchFilter =
+    isHrAdmin || isAdmin
+      ? ""
+      : callerBranchId
+        ? "AND e.branch_id = ?"
+        : "AND 1=0";
+  const genBranchFilter = isAdmin
+    ? ""
+    : callerBranchId
+      ? "AND e.branch_id = ?"
+      : "AND 1=0";
 
-  const itBranchParam = (!isItHead && !isAdmin && callerBranchId) ? [callerBranchId] : [];
-  const hrBranchParam = (!isHrAdmin && !isAdmin && callerBranchId) ? [callerBranchId] : [];
-  const genBranchParam = (!isAdmin && callerBranchId) ? [callerBranchId] : [];
+  const itBranchParam =
+    !isItHead && !isAdmin && callerBranchId ? [callerBranchId] : [];
+  const hrBranchParam =
+    !isHrAdmin && !isAdmin && callerBranchId ? [callerBranchId] : [];
+  const genBranchParam = !isAdmin && callerBranchId ? [callerBranchId] : [];
 
   // Query TAT tasks assigned to this user or their roles.
   // Uses migration-294 columns (entity_type, entity_id, assigned_to) as base;
@@ -487,11 +563,26 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
     ORDER BY t.due_at ASC
     LIMIT 300
   `;
-  const [tatRows] = await db.execute<RowDataPacket[]>(tatQuery, [userId, ...rolePool]);
+  const [tatRows] = await db.execute<RowDataPacket[]>(tatQuery, [
+    userId,
+    ...rolePool,
+  ]);
 
   // Filter TAT rows by module-specific branch scoping
-  const IT_MODULES = new Set(["it_provisioning", "it_asset", "it_access", "it_support"]);
-  const HR_MODULES = new Set(["onboarding", "offboarding", "exit", "bgv", "leave_approval", "regularization"]);
+  const IT_MODULES = new Set([
+    "it_provisioning",
+    "it_asset",
+    "it_access",
+    "it_support",
+  ]);
+  const HR_MODULES = new Set([
+    "onboarding",
+    "offboarding",
+    "exit",
+    "bgv",
+    "leave_approval",
+    "regularization",
+  ]);
 
   const filteredTat = (tatRows as RowDataPacket[]).filter((row) => {
     const mod = String(row.module ?? "").toLowerCase();
@@ -554,8 +645,9 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   //
   // Role-assigned items are included deliberately: approvals are addressed to a role,
   // not a person, so filtering on assigned_to_user_id alone would keep them hidden.
-  const [workItemRows] = await db.execute<RowDataPacket[]>(
-    `SELECT wi.id,
+  const [workItemRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT wi.id,
             COALESCE(NULLIF(wi.module_code, ''), wi.item_type) AS module,
             wi.item_type,
             wi.title,
@@ -575,8 +667,9 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
         AND (wi.assigned_to_user_id = ? OR wi.assigned_to_role IN (${rolePlaceholders}))
       ORDER BY FIELD(wi.priority,'urgent','high','normal','low'), wi.created_at DESC
       LIMIT 200`,
-    [userId, ...rolePool],
-  ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
+      [userId, ...rolePool],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
 
   // Fourth source: the three registry types with no producer at all, derived live from
   // their real source table by getDerivedRegistryItems (work-inbox.service.ts) — see that
@@ -587,13 +680,19 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   // comment for why primaryRole undercounts a multi-role account); leave/BGV/GRN/Budget keep
   // matching on primaryRole only, unchanged.
   const primaryRole = resolvePrimaryRole(roles);
-  const derivedRows = await getDerivedRegistryItems(userId, primaryRole, roles).catch(() => []);
+  const derivedRows = await getDerivedRegistryItems(
+    userId,
+    primaryRole,
+    roles,
+  ).catch(() => []);
 
   const now = Date.now();
   const items: PendingTask[] = [
     ...filteredTat.map((row): PendingTask => {
       const createdAt = String(row.created_at ?? "");
-      const agingH = createdAt ? (now - new Date(createdAt).getTime()) / 3_600_000 : 0;
+      const agingH = createdAt
+        ? (now - new Date(createdAt).getTime()) / 3_600_000
+        : 0;
       return {
         id: String(row.id),
         source: "tat",
@@ -606,15 +705,22 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
         tat_deadline: row.tat_deadline ? String(row.tat_deadline) : undefined,
         created_at: createdAt,
         aging_hours: Math.round(agingH * 10) / 10,
-        risk: calcRisk(row.tat_deadline ? String(row.tat_deadline) : null, createdAt),
-        employee_name: row.employee_name ? String(row.employee_name) : undefined,
+        risk: calcRisk(
+          row.tat_deadline ? String(row.tat_deadline) : null,
+          createdAt,
+        ),
+        employee_name: row.employee_name
+          ? String(row.employee_name)
+          : undefined,
         branch_name: row.branch_name ? String(row.branch_name) : undefined,
         branch_id: row.branch_id ? String(row.branch_id) : undefined,
       };
     }),
     ...(inboxRows as RowDataPacket[]).map((row): PendingTask => {
       const createdAt = String(row.created_at ?? "");
-      const agingH = createdAt ? (now - new Date(createdAt).getTime()) / 3_600_000 : 0;
+      const agingH = createdAt
+        ? (now - new Date(createdAt).getTime()) / 3_600_000
+        : 0;
       return {
         id: String(row.id),
         source: "inbox",
@@ -646,7 +752,9 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
     // not something this lookup can fix).
     ...(workItemRows as RowDataPacket[]).map((row): PendingTask => {
       const createdAt = String(row.created_at ?? "");
-      const agingH = createdAt ? (now - new Date(createdAt).getTime()) / 3_600_000 : 0;
+      const agingH = createdAt
+        ? (now - new Date(createdAt).getTime()) / 3_600_000
+        : 0;
       const dueAt = row.due_at ? String(row.due_at) : null;
       const entityId = row.entity_id ? String(row.entity_id) : undefined;
       return {
@@ -658,15 +766,23 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
         description: row.description ? String(row.description) : undefined,
         entity_type: row.entity_type ? String(row.entity_type) : undefined,
         entity_id: entityId,
-        action_url: entityId ? buildActionDeeplink(String(row.item_type ?? ""), entityId) : undefined,
+        action_url: entityId
+          ? buildActionDeeplink(String(row.item_type ?? ""), entityId)
+          : undefined,
         priority: String(row.priority ?? "normal"),
         tat_deadline: dueAt ?? undefined,
         created_at: createdAt,
         aging_hours: Math.round(agingH * 10) / 10,
         risk: calcRisk(dueAt, createdAt),
-        employee_name: row.employee_name ? String(row.employee_name) : undefined,
-        requested_by_name: row.requested_by_name ? String(row.requested_by_name) : undefined,
-        requested_by_code: row.requested_by_code ? String(row.requested_by_code) : undefined,
+        employee_name: row.employee_name
+          ? String(row.employee_name)
+          : undefined,
+        requested_by_name: row.requested_by_name
+          ? String(row.requested_by_name)
+          : undefined,
+        requested_by_code: row.requested_by_code
+          ? String(row.requested_by_code)
+          : undefined,
       };
     }),
     // Derived rows: LEAVE_APPROVAL_PENDING / FF_CLEARANCE_PENDING / BGV_PENDING, computed
@@ -676,7 +792,9 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
     // its own real page) so "Open" is always available even though "Act & Close" is not.
     ...(derivedRows as RowDataPacket[]).map((row): PendingTask => {
       const createdAt = String(row.created_at ?? "");
-      const agingH = createdAt ? (now - new Date(createdAt).getTime()) / 3_600_000 : 0;
+      const agingH = createdAt
+        ? (now - new Date(createdAt).getTime()) / 3_600_000
+        : 0;
       const dueAt = row.due_at ? String(row.due_at) : null;
       return {
         id: String(row.id),
@@ -692,7 +810,9 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
         created_at: createdAt,
         aging_hours: Math.round(agingH * 10) / 10,
         risk: calcRisk(dueAt, createdAt),
-        employee_name: row.assigned_employee_name ? String(row.assigned_employee_name) : undefined,
+        employee_name: row.assigned_employee_name
+          ? String(row.assigned_employee_name)
+          : undefined,
       };
     }),
   ];
@@ -700,7 +820,12 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   // Sort by risk then priority
   // A real missed deadline outranks a merely old item.
   const riskOrder = { breached: 0, due_soon: 1, aged: 2, on_track: 3 };
-  const prioOrder: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+  const prioOrder: Record<string, number> = {
+    urgent: 0,
+    high: 1,
+    normal: 2,
+    low: 3,
+  };
   items.sort((a, b) => {
     const rd = riskOrder[a.risk] - riskOrder[b.risk];
     if (rd !== 0) return rd;
@@ -730,7 +855,11 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   return { items, summary };
 }
 
-export async function getTimeline(referenceType: string, referenceId: string, workItemId?: string): Promise<TimelineEvent[]> {
+export async function getTimeline(
+  referenceType: string,
+  referenceId: string,
+  workItemId?: string,
+): Promise<TimelineEvent[]> {
   const events: TimelineEvent[] = [];
   // Populated by the mira_feedback/incentive blocks below so the generic workItemId block
   // at the end doesn't push the same underlying work_item_audit_log row twice — see that
@@ -744,14 +873,16 @@ export async function getTimeline(referenceType: string, referenceId: string, wo
   // .catch() below, so this source never once contributed an event, for any entity type,
   // since getTimeline was written. Real columns: acted_at, actor_user_id, entity_type,
   // entity_id, change_summary/reason (no single "details" column).
-  const [salRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, acted_at AS created_at, actor_user_id AS actor, action_type AS action,
+  const [salRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id, acted_at AS created_at, actor_user_id AS actor, action_type AS action,
             COALESCE(change_summary, reason) AS details, 'sensitive_action_log' AS src
      FROM sensitive_action_log
      WHERE entity_type = ? AND entity_id = ?
      ORDER BY acted_at DESC LIMIT 100`,
-    [referenceType, referenceId],
-  ).catch(() => [[] as RowDataPacket[]]);
+      [referenceType, referenceId],
+    )
+    .catch(() => [[] as RowDataPacket[]]);
 
   (salRows as RowDataPacket[]).forEach((r) => {
     events.push({
@@ -765,16 +896,18 @@ export async function getTimeline(referenceType: string, referenceId: string, wo
   });
 
   // task_tat_instance — use migration-294 columns; extended columns available after migration 305
-  const [tatRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, created_at,
+  const [tatRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id, created_at,
             COALESCE(assigned_to, owner_user_id)        AS actor,
             COALESCE(task_title, task_type)             AS action,
             task_description                            AS details
      FROM task_tat_instance
      WHERE entity_type = ? AND entity_id = ?
      ORDER BY created_at DESC LIMIT 50`,
-    [referenceType, referenceId],
-  ).catch(() => [[] as RowDataPacket[]]);
+      [referenceType, referenceId],
+    )
+    .catch(() => [[] as RowDataPacket[]]);
 
   (tatRows as RowDataPacket[]).forEach((r) => {
     events.push({
@@ -793,14 +926,16 @@ export async function getTimeline(referenceType: string, referenceId: string, wo
   // every resignation/exit_request timeline silently lost this entire source to the
   // .catch() below since the day this block was added.
   if (referenceType === "resignation" || referenceType === "exit_request") {
-    const [resRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, created_at, COALESCE(action_owner_user_id, created_by) AS actor,
+    const [resRows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT id, created_at, COALESCE(action_owner_user_id, created_by) AS actor,
               action_type AS action, action_summary AS details
        FROM exit_retention_action
        WHERE exit_request_id = ?
        ORDER BY created_at DESC LIMIT 50`,
-      [referenceId],
-    ).catch(() => [[] as RowDataPacket[]]);
+        [referenceId],
+      )
+      .catch(() => [[] as RowDataPacket[]]);
 
     (resRows as RowDataPacket[]).forEach((r) => {
       events.push({
@@ -820,13 +955,15 @@ export async function getTimeline(referenceType: string, referenceId: string, wo
   // source table, same query shape as the incentive-batch case just below, which this was
   // modelled on directly.
   if (referenceType === "mira_feedback") {
-    const [miraRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, performed_at AS created_at, performed_by AS actor, action AS action, remarks AS details
+    const [miraRows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT id, performed_at AS created_at, performed_by AS actor, action AS action, remarks AS details
        FROM work_item_audit_log
        WHERE work_item_id = ?
        ORDER BY performed_at DESC LIMIT 50`,
-      [referenceId],
-    ).catch(() => [[] as RowDataPacket[]]);
+        [referenceId],
+      )
+      .catch(() => [[] as RowDataPacket[]]);
 
     (miraRows as RowDataPacket[]).forEach((r) => {
       seenAuditLogIds.add(String(r.id));
@@ -843,13 +980,15 @@ export async function getTimeline(referenceType: string, referenceId: string, wo
 
   // Module-specific: work_item_audit_log for incentive batches
   if (referenceType === "incentive" || referenceType === "incentive_batch") {
-    const [incRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, performed_at AS created_at, performed_by AS actor, action AS action, remarks AS details
+    const [incRows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT id, performed_at AS created_at, performed_by AS actor, action AS action, remarks AS details
        FROM work_item_audit_log
        WHERE work_item_id = ?
        ORDER BY performed_at DESC LIMIT 50`,
-      [referenceId],
-    ).catch(() => [[] as RowDataPacket[]]);
+        [referenceId],
+      )
+      .catch(() => [[] as RowDataPacket[]]);
 
     (incRows as RowDataPacket[]).forEach((r) => {
       seenAuditLogIds.add(String(r.id));
@@ -880,13 +1019,15 @@ export async function getTimeline(referenceType: string, referenceId: string, wo
   // work_item-sourced tasks; this is the branch that uses it. Guarded by seenAuditLogIds so
   // it doesn't duplicate rows the mira_feedback/incentive blocks already added.
   if (workItemId) {
-    const [genRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, performed_at AS created_at, performed_by AS actor, action AS action, remarks AS details
+    const [genRows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT id, performed_at AS created_at, performed_by AS actor, action AS action, remarks AS details
        FROM work_item_audit_log
        WHERE work_item_id = ?
        ORDER BY performed_at DESC LIMIT 50`,
-      [workItemId],
-    ).catch(() => [[] as RowDataPacket[]]);
+        [workItemId],
+      )
+      .catch(() => [[] as RowDataPacket[]]);
 
     (genRows as RowDataPacket[]).forEach((r) => {
       if (seenAuditLogIds.has(String(r.id))) return;
@@ -902,6 +1043,9 @@ export async function getTimeline(referenceType: string, referenceId: string, wo
   }
 
   // Sort all by event_time descending
-  events.sort((a, b) => new Date(b.event_time).getTime() - new Date(a.event_time).getTime());
+  events.sort(
+    (a, b) =>
+      new Date(b.event_time).getTime() - new Date(a.event_time).getTime(),
+  );
   return events;
 }

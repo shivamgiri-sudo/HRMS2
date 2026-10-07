@@ -1,8 +1,16 @@
-import { Router, type NextFunction, type RequestHandler, type Response } from "express";
+import {
+  Router,
+  type NextFunction,
+  type RequestHandler,
+  type Response,
+} from "express";
 import multer from "multer";
 import { z } from "zod";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  requireWriteAccess,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { performanceDatasetMutationGuard } from "./performance-dataset-mutation.guard.js";
 import { performanceGovernanceAuditMiddleware } from "./performance-governance-audit.middleware.js";
@@ -23,104 +31,145 @@ const sourceReaders = [
   "qa_manager",
   "quality_lead",
 ] as const;
-const sourceManagers = ["super_admin", "admin", "process_manager", "qa_manager"] as const;
-const mappingManagers = ["super_admin", "admin", "hr", "process_manager", "qa_manager"] as const;
+const sourceManagers = [
+  "super_admin",
+  "admin",
+  "process_manager",
+  "qa_manager",
+] as const;
+const mappingManagers = [
+  "super_admin",
+  "admin",
+  "hr",
+  "process_manager",
+  "qa_manager",
+] as const;
 
-const asyncHandler = (
-  handler: (req: AuthenticatedRequest, res: Response) => Promise<unknown>,
-): RequestHandler => (req, res, next: NextFunction) =>
-  Promise.resolve(handler(req as AuthenticatedRequest, res)).catch(next);
+const asyncHandler =
+  (
+    handler: (req: AuthenticatedRequest, res: Response) => Promise<unknown>,
+  ): RequestHandler =>
+  (req, res, next: NextFunction) =>
+    Promise.resolve(handler(req as AuthenticatedRequest, res)).catch(next);
 
-const metricBindingSchema = z.object({
-  metricCode: z.string().trim().min(1).max(100),
-  valueField: z.string().trim().max(255).optional(),
-  numeratorField: z.string().trim().max(255).optional(),
-  denominatorField: z.string().trim().max(255).optional(),
-  aggregation: z.enum(["sum", "average", "weighted_average", "ratio", "latest"]).optional(),
-  ratioMultiplier: z.coerce.number().finite().optional(),
-  sourceRecordCountField: z.string().trim().max(255).optional(),
-}).superRefine((value, context) => {
-  if (!value.valueField && !value.numeratorField) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["valueField"],
-      message: "valueField or numeratorField is required",
-    });
-  }
-  if (value.aggregation === "ratio" && (!value.numeratorField || !value.denominatorField)) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["denominatorField"],
-      message: "Ratio metrics require numeratorField and denominatorField",
-    });
-  }
-});
+const metricBindingSchema = z
+  .object({
+    metricCode: z.string().trim().min(1).max(100),
+    valueField: z.string().trim().max(255).optional(),
+    numeratorField: z.string().trim().max(255).optional(),
+    denominatorField: z.string().trim().max(255).optional(),
+    aggregation: z
+      .enum(["sum", "average", "weighted_average", "ratio", "latest"])
+      .optional(),
+    ratioMultiplier: z.coerce.number().finite().optional(),
+    sourceRecordCountField: z.string().trim().max(255).optional(),
+  })
+  .superRefine((value, context) => {
+    if (!value.valueField && !value.numeratorField) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["valueField"],
+        message: "valueField or numeratorField is required",
+      });
+    }
+    if (
+      value.aggregation === "ratio" &&
+      (!value.numeratorField || !value.denominatorField)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["denominatorField"],
+        message: "Ratio metrics require numeratorField and denominatorField",
+      });
+    }
+  });
 
-const datasetSchema = z.object({
-  id: z.string().trim().max(100).optional(),
-  datasetKey: z.string().trim().min(2).max(100).regex(/^[a-z0-9][a-z0-9_-]*$/i),
-  datasetName: z.string().trim().min(2).max(255),
-  sourceType: z.enum(["mysql", "mssql", "excel", "csv", "google_sheet"]),
-  connectorKey: z.string().trim().max(100).nullable().optional(),
-  sourceEntity: z.string().trim().max(255).nullable().optional(),
-  processId: z.string().trim().max(100).nullable().optional(),
-  branchId: z.string().trim().max(100).nullable().optional(),
-  timezoneName: z.string().trim().max(64).optional(),
-  config: z.record(z.unknown()),
-  mapping: z.object({
-    employeeIdentifierField: z.string().trim().min(1).max(255),
-    employeeIdentifierType: z.string().trim().max(50).optional(),
-    eventDateField: z.string().trim().min(1).max(255),
-    sourceRecordKeyField: z.string().trim().max(255).optional(),
-    sourceEventTimestampField: z.string().trim().max(255).optional(),
-    externalProcessField: z.string().trim().max(255).optional(),
-    branchField: z.string().trim().max(255).optional(),
-    metrics: z.array(metricBindingSchema).min(1).max(100),
-  }),
-  activeStatus: z.boolean().optional(),
-}).superRefine((value, context) => {
-  if ((value.sourceType === "mysql" || value.sourceType === "mssql") && !value.connectorKey) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["connectorKey"],
-      message: "Database sources require an encrypted connector key",
-    });
-  }
-  if (value.sourceType === "mysql" && !String(value.config.queryMysql ?? "").trim()) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["config", "queryMysql"],
-      message: "MySQL sources require queryMysql",
-    });
-  }
-  if (value.sourceType === "mssql" && !String(value.config.queryMssql ?? "").trim()) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["config", "queryMssql"],
-      message: "SQL Server sources require queryMssql",
-    });
-  }
-  if (value.sourceType === "google_sheet" && !String(value.config.csvUrl ?? "").trim()) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["config", "csvUrl"],
-      message: "Google Sheet sources require a CSV export URL",
-    });
-  }
-});
+const datasetSchema = z
+  .object({
+    id: z.string().trim().max(100).optional(),
+    datasetKey: z
+      .string()
+      .trim()
+      .min(2)
+      .max(100)
+      .regex(/^[a-z0-9][a-z0-9_-]*$/i),
+    datasetName: z.string().trim().min(2).max(255),
+    sourceType: z.enum(["mysql", "mssql", "excel", "csv", "google_sheet"]),
+    connectorKey: z.string().trim().max(100).nullable().optional(),
+    sourceEntity: z.string().trim().max(255).nullable().optional(),
+    processId: z.string().trim().max(100).nullable().optional(),
+    branchId: z.string().trim().max(100).nullable().optional(),
+    timezoneName: z.string().trim().max(64).optional(),
+    config: z.record(z.unknown()),
+    mapping: z.object({
+      employeeIdentifierField: z.string().trim().min(1).max(255),
+      employeeIdentifierType: z.string().trim().max(50).optional(),
+      eventDateField: z.string().trim().min(1).max(255),
+      sourceRecordKeyField: z.string().trim().max(255).optional(),
+      sourceEventTimestampField: z.string().trim().max(255).optional(),
+      externalProcessField: z.string().trim().max(255).optional(),
+      branchField: z.string().trim().max(255).optional(),
+      metrics: z.array(metricBindingSchema).min(1).max(100),
+    }),
+    activeStatus: z.boolean().optional(),
+  })
+  .superRefine((value, context) => {
+    if (
+      (value.sourceType === "mysql" || value.sourceType === "mssql") &&
+      !value.connectorKey
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["connectorKey"],
+        message: "Database sources require an encrypted connector key",
+      });
+    }
+    if (
+      value.sourceType === "mysql" &&
+      !String(value.config.queryMysql ?? "").trim()
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["config", "queryMysql"],
+        message: "MySQL sources require queryMysql",
+      });
+    }
+    if (
+      value.sourceType === "mssql" &&
+      !String(value.config.queryMssql ?? "").trim()
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["config", "queryMssql"],
+        message: "SQL Server sources require queryMssql",
+      });
+    }
+    if (
+      value.sourceType === "google_sheet" &&
+      !String(value.config.csvUrl ?? "").trim()
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["config", "csvUrl"],
+        message: "Google Sheet sources require a CSV export URL",
+      });
+    }
+  });
 
-const runSchema = z.object({
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-}).superRefine((value, context) => {
-  if (value.from > value.to) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["from"],
-      message: "from must be on or before to",
-    });
-  }
-});
+const runSchema = z
+  .object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  })
+  .superRefine((value, context) => {
+    if (value.from > value.to) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["from"],
+        message: "from must be on or before to",
+      });
+    }
+  });
 
 const approveSchema = z.object({
   effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -128,73 +177,99 @@ const approveSchema = z.object({
 
 const datasetStatusSchema = z.object({ activeStatus: z.boolean() });
 
-const identityMapSchema = z.object({
-  sourceKey: z.string().trim().min(1).max(100),
-  externalIdentifier: z.string().trim().min(1).max(255),
-  identifierType: z.string().trim().min(1).max(50).default("client_login"),
-  employeeId: z.string().trim().min(1).max(100),
-  processId: z.string().trim().max(100).nullable().optional(),
-  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-}).superRefine((value, context) => {
-  if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["effectiveTo"],
-      message: "effectiveTo must be on or after effectiveFrom",
-    });
-  }
-});
+const identityMapSchema = z
+  .object({
+    sourceKey: z.string().trim().min(1).max(100),
+    externalIdentifier: z.string().trim().min(1).max(255),
+    identifierType: z.string().trim().min(1).max(50).default("client_login"),
+    employeeId: z.string().trim().min(1).max(100),
+    processId: z.string().trim().max(100).nullable().optional(),
+    effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    effectiveTo: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["effectiveTo"],
+        message: "effectiveTo must be on or after effectiveFrom",
+      });
+    }
+  });
 
-const processMapSchema = z.object({
-  sourceKey: z.string().trim().min(1).max(100),
-  externalProcess: z.string().trim().min(1).max(255),
-  processId: z.string().trim().min(1).max(100),
-  branchId: z.string().trim().max(100).nullable().optional(),
-  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-}).superRefine((value, context) => {
-  if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["effectiveTo"],
-      message: "effectiveTo must be on or after effectiveFrom",
-    });
-  }
-});
+const processMapSchema = z
+  .object({
+    sourceKey: z.string().trim().min(1).max(100),
+    externalProcess: z.string().trim().min(1).max(255),
+    processId: z.string().trim().min(1).max(100),
+    branchId: z.string().trim().max(100).nullable().optional(),
+    effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    effectiveTo: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["effectiveTo"],
+        message: "effectiveTo must be on or after effectiveFrom",
+      });
+    }
+  });
 
-const exceptionResolutionSchema = z.object({
-  action: z.enum(["map_employee", "map_process", "resolve", "ignore"]),
-  notes: z.string().trim().max(2000).nullable().optional(),
-  employeeId: z.string().trim().max(100).nullable().optional(),
-  processId: z.string().trim().max(100).nullable().optional(),
-  branchId: z.string().trim().max(100).nullable().optional(),
-  identifierType: z.string().trim().max(50).nullable().optional(),
-  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-  effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-}).superRefine((value, context) => {
-  if (value.action === "map_employee" && !value.employeeId) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["employeeId"],
-      message: "employeeId is required for employee mapping",
-    });
-  }
-  if (value.action === "map_process" && !value.processId) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["processId"],
-      message: "processId is required for process mapping",
-    });
-  }
-  if (value.effectiveTo && value.effectiveFrom && value.effectiveTo < value.effectiveFrom) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["effectiveTo"],
-      message: "effectiveTo must be on or after effectiveFrom",
-    });
-  }
-});
+const exceptionResolutionSchema = z
+  .object({
+    action: z.enum(["map_employee", "map_process", "resolve", "ignore"]),
+    notes: z.string().trim().max(2000).nullable().optional(),
+    employeeId: z.string().trim().max(100).nullable().optional(),
+    processId: z.string().trim().max(100).nullable().optional(),
+    branchId: z.string().trim().max(100).nullable().optional(),
+    identifierType: z.string().trim().max(50).nullable().optional(),
+    effectiveFrom: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
+    effectiveTo: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.action === "map_employee" && !value.employeeId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["employeeId"],
+        message: "employeeId is required for employee mapping",
+      });
+    }
+    if (value.action === "map_process" && !value.processId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processId"],
+        message: "processId is required for process mapping",
+      });
+    }
+    if (
+      value.effectiveTo &&
+      value.effectiveFrom &&
+      value.effectiveTo < value.effectiveFrom
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["effectiveTo"],
+        message: "effectiveTo must be on or after effectiveFrom",
+      });
+    }
+  });
 
 function validationError(res: Response, error: z.ZodError) {
   return res.status(400).json({
@@ -224,7 +299,9 @@ router.get(
   "/datasets",
   requireRole(...sourceReaders),
   asyncHandler(async (req, res) => {
-    const data = await performanceGovernanceService.listDatasets(req.authUser!.id);
+    const data = await performanceGovernanceService.listDatasets(
+      req.authUser!.id,
+    );
     return res.json({ success: true, data });
   }),
 );
@@ -233,7 +310,10 @@ router.get(
   "/datasets/:id",
   requireRole(...sourceReaders),
   asyncHandler(async (req, res) => {
-    const data = await performanceGovernanceService.getDataset(req.authUser!.id, req.params.id);
+    const data = await performanceGovernanceService.getDataset(
+      req.authUser!.id,
+      req.params.id,
+    );
     return res.json({ success: true, data });
   }),
 );
@@ -245,8 +325,13 @@ router.post(
   asyncHandler(async (req, res) => {
     const parsed = datasetSchema.safeParse(req.body);
     if (!parsed.success) return validationError(res, parsed.error);
-    const id = await performanceGovernanceService.saveDataset(req.authUser!.id, parsed.data);
-    return res.status(parsed.data.id ? 200 : 201).json({ success: true, data: { id } });
+    const id = await performanceGovernanceService.saveDataset(
+      req.authUser!.id,
+      parsed.data,
+    );
+    return res
+      .status(parsed.data.id ? 200 : 201)
+      .json({ success: true, data: { id } });
   }),
 );
 
@@ -289,7 +374,10 @@ function runRoute(mode: "preview" | "publish"): RequestHandler[] {
     asyncHandler(async (req, res) => {
       const parsed = runSchema.safeParse(req.body);
       if (!parsed.success) return validationError(res, parsed.error);
-      await performanceGovernanceService.assertDatasetAccess(req.authUser!.id, req.params.id);
+      await performanceGovernanceService.assertDatasetAccess(
+        req.authUser!.id,
+        req.params.id,
+      );
       const result = await performanceIngestionService.run({
         datasetId: req.params.id,
         mode,
@@ -334,7 +422,10 @@ router.get(
   "/runs/:runId",
   requireRole(...sourceReaders),
   asyncHandler(async (req, res) => {
-    const data = await performanceGovernanceService.runDetail(req.authUser!.id, req.params.runId);
+    const data = await performanceGovernanceService.runDetail(
+      req.authUser!.id,
+      req.params.runId,
+    );
     return res.json({ success: true, data });
   }),
 );
@@ -346,7 +437,10 @@ router.post(
   asyncHandler(async (req, res) => {
     const parsed = identityMapSchema.safeParse(req.body);
     if (!parsed.success) return validationError(res, parsed.error);
-    await performanceGovernanceService.saveIdentityMap(req.authUser!.id, parsed.data);
+    await performanceGovernanceService.saveIdentityMap(
+      req.authUser!.id,
+      parsed.data,
+    );
     return res.status(201).json({ success: true });
   }),
 );
@@ -358,7 +452,10 @@ router.post(
   asyncHandler(async (req, res) => {
     const parsed = processMapSchema.safeParse(req.body);
     if (!parsed.success) return validationError(res, parsed.error);
-    await performanceGovernanceService.saveProcessMap(req.authUser!.id, parsed.data);
+    await performanceGovernanceService.saveProcessMap(
+      req.authUser!.id,
+      parsed.data,
+    );
     return res.status(201).json({ success: true });
   }),
 );
@@ -367,16 +464,23 @@ router.get(
   "/mapping-exceptions",
   requireRole(...sourceReaders),
   asyncHandler(async (req, res) => {
-    const status = String(req.query.status ?? "open").trim().toLowerCase();
+    const status = String(req.query.status ?? "open")
+      .trim()
+      .toLowerCase();
     if (!["open", "resolved", "ignored"].includes(status)) {
-      return res.status(400).json({ success: false, error: "Invalid exception status" });
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid exception status" });
     }
-    const data = await performanceGovernanceService.listMappingExceptions(req.authUser!.id, {
-      status,
-      datasetId: req.query.datasetId ? String(req.query.datasetId) : null,
-      page: Number(req.query.page ?? 1),
-      pageSize: Number(req.query.pageSize ?? 25),
-    });
+    const data = await performanceGovernanceService.listMappingExceptions(
+      req.authUser!.id,
+      {
+        status,
+        datasetId: req.query.datasetId ? String(req.query.datasetId) : null,
+        page: Number(req.query.page ?? 1),
+        pageSize: Number(req.query.pageSize ?? 25),
+      },
+    );
     return res.json({ success: true, data });
   }),
 );

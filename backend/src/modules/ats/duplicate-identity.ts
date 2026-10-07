@@ -47,15 +47,23 @@ export function classifyDuplicateIdentity(
   existing: DuplicateParty,
 ): DuplicateIdentityVerdict {
   const fraud = (reason: string): DuplicateIdentityVerdict => ({
-    samePerson: false, alertType: "DUPLICATE_IDENTITY", severity: "critical", blocking: true, reason,
+    samePerson: false,
+    alertType: "DUPLICATE_IDENTITY",
+    severity: "critical",
+    blocking: true,
+    reason,
   });
 
   const nameMatch = classifyNameMatch(candidate.fullName, existing.fullName);
   if (nameMatch.tier === "unknown") {
-    return fraud("the other record has no name to compare, so the same person cannot be established");
+    return fraud(
+      "the other record has no name to compare, so the same person cannot be established",
+    );
   }
   if (nameMatch.suspicious) {
-    return fraud(`the identifier is shared with a different person: ${nameMatch.reason}`);
+    return fraud(
+      `the identifier is shared with a different person: ${nameMatch.reason}`,
+    );
   }
 
   // Names agree. A date of birth is the strongest available cross-check,
@@ -66,8 +74,8 @@ export function classifyDuplicateIdentity(
   const existingDob = birthDate(existing.dateOfBirth);
   if (candidateDob && existingDob && candidateDob !== existingDob) {
     return fraud(
-      `the name matches but the dates of birth differ (${candidateDob} vs ${existingDob}), `
-      + "which is what a relative using someone else's identifier looks like",
+      `the name matches but the dates of birth differ (${candidateDob} vs ${existingDob}), ` +
+        "which is what a relative using someone else's identifier looks like",
     );
   }
 
@@ -76,8 +84,9 @@ export function classifyDuplicateIdentity(
     alertType: "REPEAT_APPLICANT",
     severity: "low",
     blocking: false,
-    reason: candidateDob && existingDob
-      ? "the same person has applied before or is rejoining — name and date of birth both match"
-      : "the same person has applied before or is rejoining — the names match and no date of birth is recorded to check against",
+    reason:
+      candidateDob && existingDob
+        ? "the same person has applied before or is rejoining — name and date of birth both match"
+        : "the same person has applied before or is rejoining — the names match and no date of birth is recorded to check against",
   };
 }

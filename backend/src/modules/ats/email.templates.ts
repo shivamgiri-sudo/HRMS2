@@ -29,7 +29,10 @@ const BASE_STYLES = `
 `;
 
 function frontendUrl(path: string) {
-  const base = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
+  const base = (process.env.FRONTEND_URL || "http://localhost:5173").replace(
+    /\/+$/,
+    "",
+  );
   const suffix = path.startsWith("/") ? path : `/${path}`;
   return `${base}${suffix}`;
 }
@@ -122,7 +125,9 @@ interface RecruiterNotificationEmailData {
   metaLead?: boolean;
 }
 
-export function recruiterNotificationEmail(data: RecruiterNotificationEmailData): string {
+export function recruiterNotificationEmail(
+  data: RecruiterNotificationEmailData,
+): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -140,11 +145,11 @@ export function recruiterNotificationEmail(data: RecruiterNotificationEmailData)
     </div>
 
     <div class="content">
-      <h2 class="title">${data.metaLead ? 'META Lead Registered' : 'New Candidate Assigned'}</h2>
+      <h2 class="title">${data.metaLead ? "META Lead Registered" : "New Candidate Assigned"}</h2>
 
       <p class="text">Hi <strong>${data.recruiterName}</strong>,</p>
 
-      <p class="text">${data.metaLead ? 'A candidate from a <strong>META lead ad</strong> has come to the branch and filled the registration form. They are now in your walk-in queue and on My Candidates' : 'A new candidate has been assigned to you for interview'} at <strong>${data.branchDisplayName}</strong>.</p>
+      <p class="text">${data.metaLead ? "A candidate from a <strong>META lead ad</strong> has come to the branch and filled the registration form. They are now in your walk-in queue and on My Candidates" : "A new candidate has been assigned to you for interview"} at <strong>${data.branchDisplayName}</strong>.</p>
 
       <div class="success-badge">Token: ${data.tokenNumber}</div>
 
@@ -165,7 +170,7 @@ export function recruiterNotificationEmail(data: RecruiterNotificationEmailData)
         </p>
       </div>
 
-      <a href="${frontendUrl('/ats/recruiter/my-candidates')}" class="button">Open My Candidates</a>
+      <a href="${frontendUrl("/ats/recruiter/my-candidates")}" class="button">Open My Candidates</a>
 
       <p class="text" style="margin-top: 24px; font-size: 14px; color: #6b7280;">This is an automated notification from the ATS system.</p>
     </div>
@@ -188,7 +193,9 @@ interface SelectionEmailData {
   tempPassword?: string | null;
 }
 
-export function selectionCongratulationsEmail(data: SelectionEmailData): string {
+export function selectionCongratulationsEmail(
+  data: SelectionEmailData,
+): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -218,28 +225,36 @@ export function selectionCongratulationsEmail(data: SelectionEmailData): string 
 
       <h3 style="font-size: 18px; font-weight: 700; color: #111827; margin: 24px 0 12px 0;">Next Steps - Complete Your Onboarding</h3>
 
-      <p class="text">${data.tempPassword
-        ? "To proceed with joining, please complete your onboarding form using the credentials below:"
-        : "To proceed with joining, please complete your onboarding form. The link below is personal to you and needs no password."}</p>
+      <p class="text">${
+        data.tempPassword
+          ? "To proceed with joining, please complete your onboarding form using the credentials below:"
+          : "To proceed with joining, please complete your onboarding form. The link below is personal to you and needs no password."
+      }</p>
 
       <div class="info-card">
         <div class="info-label">Onboarding Form</div>
         <div class="info-value" style="font-size: 14px; word-break: break-all;">${data.onboardingPortalUrl}</div>
-${data.tempPassword ? `
+${
+  data.tempPassword
+    ? `
         <div class="info-label" style="margin-top: 12px;">Your Email</div>
         <div class="info-value" style="font-size: 14px;">${data.candidateEmail}</div>
 
         <div class="info-label" style="margin-top: 12px;">Temporary Password</div>
-        <div class="info-value">${data.tempPassword}</div>` : ``}
+        <div class="info-value">${data.tempPassword}</div>`
+    : ``
+}
       </div>
 
       <a href="${data.onboardingPortalUrl}" class="button">Complete Onboarding Now</a>
 
       <div class="warning-box">
         <p class="warning-text">
-          <strong>Important:</strong> Please complete your onboarding within 7 days.${data.tempPassword
-            ? " You will be prompted to change your password on first login."
-            : " You will be asked to verify your Aadhaar via DigiLocker, your PAN, and your bank account as part of the form."}
+          <strong>Important:</strong> Please complete your onboarding within 7 days.${
+            data.tempPassword
+              ? " You will be prompted to change your password on first login."
+              : " You will be asked to verify your Aadhaar via DigiLocker, your PAN, and your bank account as part of the form."
+          }
         </p>
       </div>
 
@@ -287,18 +302,21 @@ interface SelectionLetterData {
 }
 
 export function selectionLetterOfIntent(data: SelectionLetterData): string {
-  const logoUrl = `${process.env.FRONTEND_URL || 'https://mcnhrms.teammas.in'}/mcn-logo.png`;
+  const logoUrl = `${process.env.FRONTEND_URL || "https://mcnhrms.teammas.in"}/mcn-logo.png`;
 
   // Format joining details with fallbacks
-  const joiningDate = data.dateOfJoining || '<em style="color:#94a3b8">To be confirmed</em>';
-  const reportingTime = data.reportingTiming || '9:00 AM';
-  const salary = data.salaryStructure || '<em style="color:#94a3b8">As per offer discussion</em>';
+  const joiningDate =
+    data.dateOfJoining || '<em style="color:#94a3b8">To be confirmed</em>';
+  const reportingTime = data.reportingTiming || "9:00 AM";
+  const salary =
+    data.salaryStructure ||
+    '<em style="color:#94a3b8">As per offer discussion</em>';
   const hasPerks = data.otDetails || data.performanceIncentives;
 
   // Recruiter contact with fallback to HR
-  const recruiterName = data.recruiterName || 'HR Team';
-  const recruiterMobile = data.recruiterMobile || 'Contact your branch';
-  const recruiterEmail = data.recruiterEmail || 'hr@mascallnet.com';
+  const recruiterName = data.recruiterName || "HR Team";
+  const recruiterMobile = data.recruiterMobile || "Contact your branch";
+  const recruiterEmail = data.recruiterEmail || "hr@mascallnet.com";
 
   return `
 <!DOCTYPE html>
@@ -577,7 +595,7 @@ export function selectionLetterOfIntent(data: SelectionLetterData): string {
         </div>
       </div>
 
-      ${hasPerks ? '<div class="perks-badge">✨ Additional Perks: Over Time & Performance Incentive</div>' : ''}
+      ${hasPerks ? '<div class="perks-badge">✨ Additional Perks: Over Time & Performance Incentive</div>' : ""}
 
       <!-- Onboarding CTA Section -->
       <h2 class="section-title">Next Steps</h2>
@@ -647,15 +665,20 @@ export function selectionLetterOfIntent(data: SelectionLetterData): string {
 
 interface BGVCompletionEmailData {
   candidateName: string;
-  bgvStatus: 'verified' | 'negative' | 'insufficient';
+  bgvStatus: "verified" | "negative" | "insufficient";
   bgvRemarks: string;
   nextSteps: string;
 }
 
 export function bgvCompletionEmail(data: BGVCompletionEmailData): string {
-  const statusColor = data.bgvStatus === 'verified' ? '#065f46' : '#b91c1c';
-  const statusBg = data.bgvStatus === 'verified' ? '#ecfdf5' : '#fef2f2';
-  const statusText = data.bgvStatus === 'verified' ? 'Verified' : data.bgvStatus === 'negative' ? 'Issues Found' : 'Insufficient Documents';
+  const statusColor = data.bgvStatus === "verified" ? "#065f46" : "#b91c1c";
+  const statusBg = data.bgvStatus === "verified" ? "#ecfdf5" : "#fef2f2";
+  const statusText =
+    data.bgvStatus === "verified"
+      ? "Verified"
+      : data.bgvStatus === "negative"
+        ? "Issues Found"
+        : "Insufficient Documents";
 
   return `
 <!DOCTYPE html>
@@ -694,13 +717,17 @@ export function bgvCompletionEmail(data: BGVCompletionEmailData): string {
 
       <p class="text">${data.nextSteps}</p>
 
-      ${data.bgvStatus !== 'verified' ? `
+      ${
+        data.bgvStatus !== "verified"
+          ? `
       <div class="warning-box">
         <p class="warning-text">
           <strong>Action Required:</strong> Please contact HR to resolve any pending items.
         </p>
       </div>
-      ` : ''}
+      `
+          : ""
+      }
     </div>
 
     <div class="footer">
@@ -720,7 +747,9 @@ interface PayrollHRNotificationEmailData {
   roleOffered: string;
 }
 
-export function payrollHRNotificationEmail(data: PayrollHRNotificationEmailData): string {
+export function payrollHRNotificationEmail(
+  data: PayrollHRNotificationEmailData,
+): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -764,7 +793,7 @@ export function payrollHRNotificationEmail(data: PayrollHRNotificationEmailData)
         </p>
       </div>
 
-      <a href="${frontendUrl('/ats/payroll-hr-validation')}" class="button">Open Payroll HR Validation</a>
+      <a href="${frontendUrl("/ats/payroll-hr-validation")}" class="button">Open Payroll HR Validation</a>
 
       <p class="text" style="margin-top: 24px; font-size: 14px; color: #6b7280;">This is an automated notification from the ATS system.</p>
     </div>
@@ -788,7 +817,9 @@ interface BranchHeadApprovalEmailData {
   joiningDate: string;
 }
 
-export function branchHeadApprovalEmail(data: BranchHeadApprovalEmailData): string {
+export function branchHeadApprovalEmail(
+  data: BranchHeadApprovalEmailData,
+): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -838,7 +869,7 @@ export function branchHeadApprovalEmail(data: BranchHeadApprovalEmailData): stri
         </p>
       </div>
 
-      <a href="${frontendUrl('/ats/branch-head-approval')}" class="button">Review & Approve</a>
+      <a href="${frontendUrl("/ats/branch-head-approval")}" class="button">Review & Approve</a>
 
       <p class="text" style="margin-top: 24px; font-size: 14px; color: #6b7280;">Once approved, an employee code will be generated automatically.</p>
     </div>
@@ -864,9 +895,11 @@ export interface RejectionEmailData {
 }
 
 export function rejectedEmail(data: RejectionEmailData): string {
-  const company = data.companyName ?? 'MAS Callnet India Pvt. Ltd.';
-  const hrEmail = data.hrEmail ?? 'hr@mascallnet.com';
-  const ref = data.applicationRef ? `<p style="font-size:13px;color:#6b7280;margin:4px 0 0;">Ref: ${data.applicationRef}</p>` : '';
+  const company = data.companyName ?? "MAS Callnet India Pvt. Ltd.";
+  const hrEmail = data.hrEmail ?? "hr@mascallnet.com";
+  const ref = data.applicationRef
+    ? `<p style="font-size:13px;color:#6b7280;margin:4px 0 0;">Ref: ${data.applicationRef}</p>`
+    : "";
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -887,7 +920,7 @@ export function rejectedEmail(data: RejectionEmailData): string {
     </div>
     <div class="content">
       <p class="text">Dear <strong>${data.candidateName}</strong>,</p>
-      <p class="text">Thank you for your interest in joining <strong>${company}</strong> and for taking the time to attend our recruitment process at our <strong>${data.branchDisplayName}</strong> location${data.processName ? ` - <strong>${data.processName}</strong>` : ''}.</p>
+      <p class="text">Thank you for your interest in joining <strong>${company}</strong> and for taking the time to attend our recruitment process at our <strong>${data.branchDisplayName}</strong> location${data.processName ? ` - <strong>${data.processName}</strong>` : ""}.</p>
       <p class="text">After careful evaluation of all candidates, we regret to inform you that we are unable to proceed with your application at this time.</p>
       <span class="rej-badge">Application Not Progressed</span>
       ${ref}
@@ -923,7 +956,9 @@ export interface AssessmentInvitationEmailData {
   expiresAt: string;
 }
 
-export function assessmentInvitationEmail(data: AssessmentInvitationEmailData): string {
+export function assessmentInvitationEmail(
+  data: AssessmentInvitationEmailData,
+): string {
   return `
 <!DOCTYPE html>
 <html>

@@ -346,7 +346,9 @@ router.post(
             "No present address on record. Ask the candidate to fill in their current address in the onboarding profile first.",
         });
       }
-      return res.status(422).json({ success: false, message: "Could not send verification link." });
+      return res
+        .status(422)
+        .json({ success: false, message: "Could not send verification link." });
     }
 
     return res.json({ success: true, data: result });
@@ -378,12 +380,17 @@ router.post(
         if (result.sent) sent++;
         else skipped++;
       } catch (err: unknown) {
-        errors.push(`${row.id as string}: ${err instanceof Error ? err.message : String(err)}`);
+        errors.push(
+          `${row.id as string}: ${err instanceof Error ? err.message : String(err)}`,
+        );
         skipped++;
       }
     }
 
-    return res.json({ success: true, data: { total: candidates.length, sent, skipped, errors } });
+    return res.json({
+      success: true,
+      data: { total: candidates.length, sent, skipped, errors },
+    });
   }),
 );
 
@@ -407,12 +414,10 @@ router.get(
         `UPDATE candidate_bgv_address_verification SET status='expired' WHERE token=? AND status='pending'`,
         [token],
       );
-      return res
-        .status(410)
-        .json({
-          success: false,
-          message: "This link has expired. Please contact HR for a new one.",
-        });
+      return res.status(410).json({
+        success: false,
+        message: "This link has expired. Please contact HR for a new one.",
+      });
     }
     if (row.status !== "pending") {
       return res.status(409).json({
@@ -631,12 +636,10 @@ router.patch(
       notes?: string;
     };
     if (!["pass", "fail", "review"].includes(decision)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "decision must be pass, fail, or review",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "decision must be pass, fail, or review",
+      });
     }
 
     const [verRows] = await db.execute<RowDataPacket[]>(

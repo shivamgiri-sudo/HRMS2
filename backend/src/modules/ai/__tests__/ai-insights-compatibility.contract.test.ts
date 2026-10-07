@@ -17,7 +17,11 @@ describe("AI insights compatibility route", () => {
   it("gates the 3 Mira Analytics routes to super_admin/admin only", () => {
     // Mirrors the existing /providers/usage gate — an admin-only surface,
     // since it exposes aggregate usage/prompt-audit data across all users.
-    for (const path of ["/analytics/summary", "/analytics/counts", "/analytics/prompt-audit"]) {
+    for (const path of [
+      "/analytics/summary",
+      "/analytics/counts",
+      "/analytics/prompt-audit",
+    ]) {
       const routeDecl = `aiInsightsRouter.get('${path}', requireRole('super_admin', 'admin')`;
       expect(routeSource).toContain(routeDecl);
     }

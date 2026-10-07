@@ -12,7 +12,10 @@ vi.mock("../src/db/mysql.js", () => ({
     execute: (...a: unknown[]) => execute(...a),
     getConnection: async () => ({
       execute: (...a: unknown[]) => connExecute(...a),
-      beginTransaction, commit, rollback, release,
+      beginTransaction,
+      commit,
+      rollback,
+      release,
     }),
   },
 }));
@@ -20,7 +23,8 @@ vi.mock("../src/lib/logger.js", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
-const { raiseCoachingFromQuality } = await import("../src/modules/quality-dashboard/coaching-writer.service.js");
+const { raiseCoachingFromQuality } =
+  await import("../src/modules/quality-dashboard/coaching-writer.service.js");
 
 /**
  * coaching_session and training_need have both existed for months and both hold
@@ -50,8 +54,12 @@ const failing = {
 };
 
 beforeEach(() => {
-  execute.mockReset(); connExecute.mockReset();
-  beginTransaction.mockReset(); commit.mockReset(); rollback.mockReset(); release.mockReset();
+  execute.mockReset();
+  connExecute.mockReset();
+  beginTransaction.mockReset();
+  commit.mockReset();
+  rollback.mockReset();
+  release.mockReset();
   connExecute.mockResolvedValue([{ affectedRows: 1 }, []]);
   beginTransaction.mockResolvedValue(undefined);
   commit.mockResolvedValue(undefined);
@@ -110,7 +118,9 @@ describe("accountability", () => {
   it("falls back from reporting_manager_id to manager_id", async () => {
     execute.mockResolvedValueOnce(NO_ROWS).mockResolvedValueOnce(COACH);
     await raiseCoachingFromQuality(failing);
-    expect(String(execute.mock.calls[1][0])).toMatch(/COALESCE\(emp\.reporting_manager_id, emp\.manager_id\)/);
+    expect(String(execute.mock.calls[1][0])).toMatch(
+      /COALESCE\(emp\.reporting_manager_id, emp\.manager_id\)/,
+    );
   });
 
   it("stores the manager's LOGIN, not their employee id", async () => {
@@ -122,7 +132,9 @@ describe("accountability", () => {
     execute.mockResolvedValueOnce(NO_ROWS).mockResolvedValueOnce(COACH);
     await raiseCoachingFromQuality(failing);
     expect(String(execute.mock.calls[1][0])).toMatch(/mgr\.auth_user_id/);
-    const session = connExecute.mock.calls.find(([s]) => /INSERT INTO coaching_session/.test(String(s)));
+    const session = connExecute.mock.calls.find(([s]) =>
+      /INSERT INTO coaching_session/.test(String(s)),
+    );
     expect(session?.[1]?.[2]).toBe("mgr-login-1");
   });
 
@@ -157,7 +169,9 @@ describe("what gets written", () => {
     });
     if (!result.created) throw new Error("expected creation");
     expect(result.trainingNeedId).toBeNull();
-    expect(connExecute.mock.calls.some(([s]) => /training_need/.test(String(s)))).toBe(false);
+    expect(
+      connExecute.mock.calls.some(([s]) => /training_need/.test(String(s))),
+    ).toBe(false);
   });
 
   it("stores the numbers behind the decision, not just the sentence", async () => {
@@ -166,17 +180,24 @@ describe("what gets written", () => {
     execute.mockResolvedValueOnce(NO_ROWS).mockResolvedValueOnce(COACH);
     await raiseCoachingFromQuality(failing);
 
-    const session = connExecute.mock.calls.find(([s]) => /INSERT INTO coaching_session/.test(String(s)));
+    const session = connExecute.mock.calls.find(([s]) =>
+      /INSERT INTO coaching_session/.test(String(s)),
+    );
     const actionItems = JSON.parse(String(session?.[1]?.[6]));
     expect(actionItems).toMatchObject({
-      qualityPercentage: 50, targetPercentage: 80, assessedAudits: 12, priority: "high",
+      qualityPercentage: 50,
+      targetPercentage: 80,
+      assessedAudits: 12,
+      priority: "high",
     });
   });
 
   it("dates the session at the end of the period it judged", async () => {
     execute.mockResolvedValueOnce(NO_ROWS).mockResolvedValueOnce(COACH);
     await raiseCoachingFromQuality(failing);
-    const session = connExecute.mock.calls.find(([s]) => /INSERT INTO coaching_session/.test(String(s)));
+    const session = connExecute.mock.calls.find(([s]) =>
+      /INSERT INTO coaching_session/.test(String(s)),
+    );
     expect(session?.[1]?.[3]).toBe("2026-07-31");
   });
 

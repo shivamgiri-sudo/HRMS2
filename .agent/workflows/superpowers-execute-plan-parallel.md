@@ -5,14 +5,17 @@ description: Execute an approved plan with parallel execution for independent st
 # Superpowers Execute Plan (Parallel Mode)
 
 ## Overview
+
 This workflow executes an approved plan by identifying independent steps and running them in parallel using isolated subagents.
 
 ## When to use parallel mode
+
 - Plan has 2+ steps that don't depend on each other
 - Steps operate on different files or independent modules
 - You want faster execution (parallel > sequential)
 
 ## When NOT to use parallel mode
+
 - Steps have dependencies (Step 2 needs Step 1's output)
 - All steps modify the same file
 - Plan has < 2 steps
@@ -28,6 +31,7 @@ This workflow executes an approved plan by identifying independent steps and run
 2. The approved plan must exist at: `artifacts/superpowers/plan.md`
 
 If `artifacts/superpowers/plan.md` does not exist:
+
 - Stop immediately
 - Tell the user to run `/superpowers-write-plan` first
 - Do not continue
@@ -90,10 +94,12 @@ wait
    - Write batch summary to `artifacts/superpowers/execution.md`:
      ```markdown
      ## Batch N (Parallel Execution)
+
      - Step X: [SUCCESS/FAILED] - Files: [...] - Duration: Xs
      - Step Y: [SUCCESS/FAILED] - Files: [...] - Duration: Ys
 
      Verification:
+
      - Step X: [command] -> [result]
      - Step Y: [command] -> [result]
      ```
@@ -106,14 +112,14 @@ wait
 
 Choose the appropriate skill for each step:
 
-| Step Type | Skill to Use |
-|-----------|-------------|
-| Add tests, TDD cycle | `tdd` |
-| Fix bugs, investigate failures | `debug` |
-| Code review, quality check | `review` |
-| REST API work | `rest-automation` |
-| Python tooling/scripts | `python-automation` |
-| General implementation | `tdd` (default) |
+| Step Type                      | Skill to Use        |
+| ------------------------------ | ------------------- |
+| Add tests, TDD cycle           | `tdd`               |
+| Fix bugs, investigate failures | `debug`             |
+| Code review, quality check     | `review`            |
+| REST API work                  | `rest-automation`   |
+| Python tooling/scripts         | `python-automation` |
+| General implementation         | `tdd` (default)     |
 
 ---
 
@@ -148,6 +154,7 @@ After all batches complete:
 ## Example: 5-step plan with 2 batches
 
 **Plan:**
+
 1. Add retry logic to sync.py (independent)
 2. Add pagination to API client (independent)
 3. Update CLI args (independent)
@@ -157,15 +164,18 @@ After all batches complete:
 **Execution:**
 
 **Batch 1 (parallel):**
+
 - Spawn 3 subagents for steps 1, 2, 3
 - Wait for all to complete (~5 min instead of ~15 min sequential)
 - Verify each step
 
 **Batch 2 (sequential):**
+
 - Step 4: Add integration test (needs 1+2+3 complete)
 - Verify test passes
 
 **Batch 3 (sequential):**
+
 - Step 5: Update docs (needs 4 complete)
 - Verify docs are accurate
 
@@ -176,15 +186,18 @@ After all batches complete:
 ## Troubleshooting
 
 ### Subagent spawn fails
+
 - Check that `gemini` is in PATH (verify with: `gemini --version`)
 - Verify skill exists: `.agent/skills/superpowers-{skill}/SKILL.md`
 - Check subagent logs in `artifacts/superpowers/subagents/`
 
 ### Steps conflict
+
 - Falls back to sequential execution for conflicting steps
 - Mark dependent steps explicitly in plan to avoid conflicts
 
 ### Verification fails after parallel execution
+
 - Check integration - parallel steps may work individually but conflict
 - Run `/superpowers-debug` to investigate
 - Consider re-running in sequential mode: `/superpowers-execute-plan`
@@ -194,6 +207,7 @@ After all batches complete:
 ## Persist (mandatory)
 
 Write execution notes to disk:
+
 - Append batch summaries to: `artifacts/superpowers/execution.md`
 - Write final summary to: `artifacts/superpowers/finish.md`
 
@@ -205,6 +219,7 @@ Confirm files exist by listing `artifacts/superpowers/` when done.
 ## Finish
 
 After all steps complete:
+
 1. Run `/superpowers-review` (or inline review pass)
 2. Generate final summary with time savings metrics
 3. List all changed files

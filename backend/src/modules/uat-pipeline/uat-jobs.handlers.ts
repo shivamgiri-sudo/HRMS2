@@ -13,7 +13,11 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
-import { loadChecklist, persistCapabilityHits, persistEvaluations } from "./uat-checklist.repo.js";
+import {
+  loadChecklist,
+  persistCapabilityHits,
+  persistEvaluations,
+} from "./uat-checklist.repo.js";
 import {
   evaluateCapabilities,
   evaluateDbRules,
@@ -23,10 +27,21 @@ import {
 } from "./uat-checklist.service.js";
 import { enqueue, registerJobHandler, type UatJob } from "./uat-job-runner.js";
 import { recordEvent, transition } from "./uat-state-machine.js";
-import { runValidator, summariseForConsole, type ValidatorDeps } from "./uat-validator.service.js";
+import {
+  runValidator,
+  summariseForConsole,
+  type ValidatorDeps,
+} from "./uat-validator.service.js";
 import type { StaticScanResult } from "./uat-pipeline.types.js";
-import { changeTypeGate, switchEnabled, type ChangeType } from "./uat-governance.service.js";
-import { runPromptWriter, PROMPT_WRITER_TEMPLATE_VERSION } from "./uat-prompt-writer.service.js";
+import {
+  changeTypeGate,
+  switchEnabled,
+  type ChangeType,
+} from "./uat-governance.service.js";
+import {
+  runPromptWriter,
+  PROMPT_WRITER_TEMPLATE_VERSION,
+} from "./uat-prompt-writer.service.js";
 import { savePrompt } from "./uat-prompt.repo.js";
 
 interface FeedbackRow extends RowDataPacket {
@@ -117,25 +132,32 @@ export function validatorDepsFromEnv(): ValidatorDeps {
  * console sees the real risk classification rather than an empty checklist that looks like
  * nothing was assessed.
  */
-export async function handleValidateJob(job: UatJob, deps?: ValidatorDeps): Promise<void> {
+export async function handleValidateJob(
+  job: UatJob,
+  deps?: ValidatorDeps,
+): Promise<void> {
   const feedbackId = job.feedbackId;
-  if (!feedbackId) throw new TerminalJobError("validate job carries no feedback_id");
+  if (!feedbackId)
+    throw new TerminalJobError("validate job carries no feedback_id");
 
   const [fbRows] = await db.query<FeedbackRow[]>(
     `SELECT id, feedback_code, title, body_redacted, kind, page_route, status, change_type
        FROM uat_feedback WHERE id = ? LIMIT 1`,
-    [feedbackId]
+    [feedbackId],
   );
-  if (!fbRows.length) throw new TerminalJobError(`feedback ${feedbackId} no longer exists`);
+  if (!fbRows.length)
+    throw new TerminalJobError(`feedback ${feedbackId} no longer exists`);
   const fb = fbRows[0];
 
   const [scanRows] = await db.query<ScanRow[]>(
     `SELECT * FROM uat_static_scan WHERE feedback_id = ? ORDER BY created_at DESC LIMIT 1`,
-    [feedbackId]
+    [feedbackId],
   );
   if (!scanRows.length) {
     // Validation without a scan would send an unclassified item to an external model.
-    throw new TerminalJobError(`feedback ${feedbackId} has no static scan; refusing to validate`);
+    throw new TerminalJobError(
+      `feedback ${feedbackId} has no static scan; refusing to validate`,
+    );
   }
   const scan = scanFromRow(scanRows[0]);
 
@@ -155,7 +177,7 @@ export async function handleValidateJob(job: UatJob, deps?: ValidatorDeps): Prom
       scan,
       checklist,
     },
-    deps ?? validatorDepsFromEnv()
+    deps ?? validatorDepsFromEnv(),
   );
 
   const db_ = evaluateDbRules(checklist.rules, validator.supplied);
@@ -175,7 +197,8 @@ export async function handleValidateJob(job: UatJob, deps?: ValidatorDeps): Prom
     actorKind: validator.ok ? "llm" : "system",
     message: validator.ok
       ? summariseForConsole(validator)
-      : (validator.failureReason ?? "Validator did not run; deterministic layers only."),
+      : (validator.failureReason ??
+        "Validator did not run; deterministic layers only."),
     detail: {
       outcome: gate.outcome,
       effectiveRisk: gate.effectiveRisk,
@@ -203,7 +226,10 @@ export async function handleValidateJob(job: UatJob, deps?: ValidatorDeps): Prom
       actorKind: "system",
       reason: validator.failureReason ?? "The validator did not complete.",
     });
-    if (validator.terminal) throw new TerminalJobError(validator.failureReason ?? "validator refused");
+    if (validator.terminal)
+      throw new TerminalJobError(
+        validator.failureReason ?? "validator refused",
+      );
     return;
   }
   await transition(feedbackId, "checklist_passed", {
@@ -229,7 +255,7 @@ export async function handleValidateJob(job: UatJob, deps?: ValidatorDeps): Prom
  */
 export async function queueValidation(
   feedbackId: string,
-  actorUserId?: string | null
+  actorUserId?: string | null,
 ): Promise<{ queued: boolean }> {
   const { from } = await transition(feedbackId, "validating", {
     actorUserId: actorUserId ?? null,
@@ -254,33 +280,43 @@ export async function queueValidation(
  */
 export async function handlePromptWriteJob(job: UatJob): Promise<void> {
   const feedbackId = job.feedbackId;
-  if (!feedbackId) throw new TerminalJobError("prompt_write job carries no feedback_id");
+  if (!feedbackId)
+    throw new TerminalJobError("prompt_write job carries no feedback_id");
 
-  const gate = await switchEnabled("prompt_writer_enabled", process.env.UAT_PROMPT_WRITER_ENABLED);
-  if (!gate.enabled) throw new TerminalJobError(gate.reason ?? "prompt writer disabled");
+  const gate = await switchEnabled(
+    "prompt_writer_enabled",
+    process.env.UAT_PROMPT_WRITER_ENABLED,
+  );
+  if (!gate.enabled)
+    throw new TerminalJobError(gate.reason ?? "prompt writer disabled");
 
   const [fbRows] = await db.query<FeedbackRow[]>(
     `SELECT id, feedback_code, title, body_redacted, kind, page_route, status, change_type
        FROM uat_feedback WHERE id = ? LIMIT 1`,
-    [feedbackId]
+    [feedbackId],
   );
-  if (!fbRows.length) throw new TerminalJobError(`feedback ${feedbackId} no longer exists`);
-  const fb = fbRows[0] as FeedbackRow & { feedback_code: string; change_type: ChangeType | null };
+  if (!fbRows.length)
+    throw new TerminalJobError(`feedback ${feedbackId} no longer exists`);
+  const fb = fbRows[0] as FeedbackRow & {
+    feedback_code: string;
+    change_type: ChangeType | null;
+  };
 
   // CG-01/02/03. A prompt written before its approvals exist is a fait accompli, so this is
   // checked here rather than at dispatch.
   const ct = await changeTypeGate(feedbackId, fb.change_type);
   if (!ct.satisfied) {
     throw new TerminalJobError(
-      `Change-type governance is not satisfied: ${ct.reason ?? "approvals outstanding"}.`
+      `Change-type governance is not satisfied: ${ct.reason ?? "approvals outstanding"}.`,
     );
   }
 
   const [scanRows] = await db.query<ScanRow[]>(
     `SELECT * FROM uat_static_scan WHERE feedback_id = ? ORDER BY created_at DESC LIMIT 1`,
-    [feedbackId]
+    [feedbackId],
   );
-  if (!scanRows.length) throw new TerminalJobError("no static scan; refusing to plan a change");
+  if (!scanRows.length)
+    throw new TerminalJobError("no static scan; refusing to plan a change");
   const scan = scanFromRow(scanRows[0]);
 
   const attemptNo = Number(job.payload.attemptNo ?? 1);
@@ -294,7 +330,8 @@ export async function handlePromptWriteJob(job: UatJob): Promise<void> {
       restatedRequirement: String(job.payload.restatedRequirement ?? fb.title),
       scan,
       attemptNo,
-      previousFailure: (job.payload.previousFailure as string | undefined) ?? null,
+      previousFailure:
+        (job.payload.previousFailure as string | undefined) ?? null,
     },
     {
       apiKey: env.ANTHROPIC_API_KEY,
@@ -304,7 +341,7 @@ export async function handlePromptWriteJob(job: UatJob): Promise<void> {
       timeoutMs: env.ANTHROPIC_TIMEOUT_MS,
       dailyCapUsd: env.UAT_DAILY_LLM_USD_CAP,
       enabled: true,
-    }
+    },
   );
 
   if (!result.ok) {
@@ -312,9 +349,12 @@ export async function handlePromptWriteJob(job: UatJob): Promise<void> {
       actorKind: "system",
       reason: result.failureReason ?? "The prompt writer did not complete.",
     });
-    throw Object.assign(new Error(result.failureReason ?? "prompt writer failed"), {
-      terminal: Boolean(result.terminal),
-    });
+    throw Object.assign(
+      new Error(result.failureReason ?? "prompt writer failed"),
+      {
+        terminal: Boolean(result.terminal),
+      },
+    );
   }
 
   await savePrompt({
@@ -346,7 +386,8 @@ export async function handlePromptWriteJob(job: UatJob): Promise<void> {
 
   await transition(feedbackId, "prompt_ready", {
     actorKind: "llm",
-    reason: "A build prompt is ready for human review. Nothing has been dispatched.",
+    reason:
+      "A build prompt is ready for human review. Nothing has been dispatched.",
   });
 }
 

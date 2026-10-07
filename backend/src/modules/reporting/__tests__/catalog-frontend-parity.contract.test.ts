@@ -34,7 +34,9 @@ const frontendColumns = (): Map<string, Set<string>> => {
     const next = src.indexOf('code: "', codeRe.lastIndex);
     const seg = src.slice(start, next === -1 ? src.length : next);
     const cols = /columns:\s*\[([\s\S]*?)\n\s*\],/.exec(seg);
-    const keys = cols ? [...cols[1].matchAll(/key:\s*"([^"]+)"/g)].map(k => k[1]) : [];
+    const keys = cols
+      ? [...cols[1].matchAll(/key:\s*"([^"]+)"/g)].map((k) => k[1])
+      : [];
     if (!out.has(m[1])) out.set(m[1], new Set(keys));
   }
   return out;
@@ -43,13 +45,23 @@ const frontendColumns = (): Map<string, Set<string>> => {
 /** Same fact under a different spelling still counts — leave-balance uses a mandated layout. */
 const SYNONYMS: Record<string, readonly string[]> = {
   employee_code: ["employee_code", "emp_code", "candidate_code"],
-  cost_centre_code: ["cost_centre_code", "cost_center_code", "cost_center", "cost_centre"],
-  cost_centre_name: ["cost_centre_name", "cost_center_name", "cost_center", "cost_centre"],
+  cost_centre_code: [
+    "cost_centre_code",
+    "cost_center_code",
+    "cost_center",
+    "cost_centre",
+  ],
+  cost_centre_name: [
+    "cost_centre_name",
+    "cost_center_name",
+    "cost_center",
+    "cost_centre",
+  ],
   process_name: ["process_name", "process"],
 };
 
 const has = (keys: Set<string>, fact: string) =>
-  (SYNONYMS[fact] ?? [fact]).some(k => keys.has(k));
+  (SYNONYMS[fact] ?? [fact]).some((k) => keys.has(k));
 
 describe("frontend catalogue can draw what the backend returns", () => {
   const front = frontendColumns();
@@ -63,15 +75,21 @@ describe("frontend catalogue can draw what the backend returns", () => {
     const offenders: string[] = [];
 
     for (const report of REPORT_CATALOG) {
-      const backKeys = new Set((report.columns ?? []).map(c => c.key));
+      const backKeys = new Set((report.columns ?? []).map((c) => c.key));
       const frontKeys = front.get(report.code);
       // A report with no frontend entry cannot be selected in the library at all. That is a
       // separate, pre-existing gap (tracked below) — not a rendering mismatch.
       if (!frontKeys) continue;
 
-      for (const fact of ["cost_centre_code", "cost_centre_name", "process_name"]) {
+      for (const fact of [
+        "cost_centre_code",
+        "cost_centre_name",
+        "process_name",
+      ]) {
         if (has(backKeys, fact) && !has(frontKeys, fact)) {
-          offenders.push(`${report.code}: backend returns ${fact}, frontend will not draw it`);
+          offenders.push(
+            `${report.code}: backend returns ${fact}, frontend will not draw it`,
+          );
         }
       }
     }
@@ -86,7 +104,9 @@ describe("frontend catalogue can draw what the backend returns", () => {
     // Not a failure — this is the older 120-vs-87 catalogue drift, and closing it means
     // authoring real frontend entries (labels, formats, widths) per report rather than
     // copying keys. Asserted as a ceiling so it cannot quietly grow.
-    const unlistable = REPORT_CATALOG.filter(r => !front.has(r.code)).map(r => r.code);
+    const unlistable = REPORT_CATALOG.filter((r) => !front.has(r.code)).map(
+      (r) => r.code,
+    );
     expect(
       unlistable.length,
       `reports with no frontend catalogue entry (cannot be selected in the Report Library):\n${unlistable.sort().join("\n")}`,

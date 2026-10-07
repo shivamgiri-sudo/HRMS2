@@ -62,8 +62,8 @@ export const billSalaryVoucherService = {
   ) {
     if (!this.isConfigured()) {
       throw new Error(
-        "db_bill is not configured (BILL_DB_HOST is empty), so IDC payroll cannot be read. "
-        + "This voucher is sourced from db_bill, not mas_hrms.",
+        "db_bill is not configured (BILL_DB_HOST is empty), so IDC payroll cannot be read. " +
+          "This voucher is sourced from db_bill, not mas_hrms.",
       );
     }
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
@@ -79,9 +79,10 @@ export const billSalaryVoucherService = {
     // every month and needs no knowledge of month length.
     const [year, month] = period.split("-").map(Number);
     const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
-    const nextMonthStart = month === 12
-      ? `${year + 1}-01-01`
-      : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+    const nextMonthStart =
+      month === 12
+        ? `${year + 1}-01-01`
+        : `${year}-${String(month + 1).padStart(2, "0")}-01`;
 
     // READ-ONLY. billQuery rejects anything that is not SELECT/SHOW. The LIKE prefix is
     // parameterised; only this company's rows come back.
@@ -97,7 +98,9 @@ export const billSalaryVoucherService = {
     // db_bill has the branch NAME but no branch_id; the voucher buckets by id, and "HEAD OFFICE"
     // exists three times in branch_master. Resolve to the ACTIVE row's id so scope and numbering
     // are deterministic — the same resolution the mas_hrms path gets for free from the FK.
-    const branchIdByName = await resolveActiveBranchIds(rows.map((r) => String(r.Branch)));
+    const branchIdByName = await resolveActiveBranchIds(
+      rows.map((r) => String(r.Branch)),
+    );
 
     const lines = rows.map((r) => {
       const name = String(r.Branch ?? "").trim();
@@ -145,8 +148,12 @@ export const billSalaryVoucherService = {
  * same one the mas_hrms voucher lands on. A name with no branch_master row maps to nothing, and
  * that line is then excluded upstream as "no branch" rather than posted to a guess.
  */
-async function resolveActiveBranchIds(names: string[]): Promise<Map<string, string>> {
-  const wanted = [...new Set(names.map((n) => n.trim().toUpperCase()).filter(Boolean))];
+async function resolveActiveBranchIds(
+  names: string[],
+): Promise<Map<string, string>> {
+  const wanted = [
+    ...new Set(names.map((n) => n.trim().toUpperCase()).filter(Boolean)),
+  ];
   if (!wanted.length) return new Map();
   const placeholders = wanted.map(() => "?").join(", ");
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -161,7 +168,9 @@ async function resolveActiveBranchIds(names: string[]): Promise<Map<string, stri
   const map = new Map<string, string>();
   const chosenActive = new Set<string>();
   for (const row of rows as RowDataPacket[]) {
-    const key = String(row.branch_name ?? "").trim().toUpperCase();
+    const key = String(row.branch_name ?? "")
+      .trim()
+      .toUpperCase();
     const isActive = Number(row.active_status) === 1;
     if (!map.has(key) || (isActive && !chosenActive.has(key))) {
       map.set(key, String(row.id));

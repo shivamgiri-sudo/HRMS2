@@ -6,7 +6,7 @@ describe("dispute creation — cycle status gate", () => {
   it("dispute route fetches weekly_roster_cycle status before allowing dispute", () => {
     const src = readFileSync(
       resolve("src/modules/roster/roster.governance.routes.ts"),
-      "utf8"
+      "utf8",
     );
     const disputeHandlerStart = src.indexOf("assignments/:id/dispute");
     const disputeHandlerEnd = src.indexOf("}));", disputeHandlerStart) + 4;
@@ -19,7 +19,7 @@ describe("dispute creation — cycle status gate", () => {
   it("DISPUTE_LOCKED_STATUSES constant covers all three locked states", () => {
     const src = readFileSync(
       resolve("src/modules/roster/roster.governance.routes.ts"),
-      "utf8"
+      "utf8",
     );
     expect(src).toMatch(/DISPUTE_LOCKED_STATUSES/);
     expect(src).toMatch(/"attendance_locked"/);

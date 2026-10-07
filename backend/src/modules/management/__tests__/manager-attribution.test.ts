@@ -22,7 +22,10 @@ const MANAGER = "mgr-1";
 const OTHER_MANAGER = "mgr-2";
 
 /** Rows keyed by a fragment of the SQL that identifies the query. */
-function routeQueries(handlers: Array<[RegExp, unknown[]]>, fallback: unknown[] = []) {
+function routeQueries(
+  handlers: Array<[RegExp, unknown[]]>,
+  fallback: unknown[] = [],
+) {
   mocks.execute.mockImplementation(async (sql: string) => {
     for (const [pattern, rows] of handlers) {
       if (pattern.test(sql)) return [rows];
@@ -31,18 +34,30 @@ function routeQueries(handlers: Array<[RegExp, unknown[]]>, fallback: unknown[] 
   });
 }
 
-const TABLE_PRESENT: [RegExp, unknown[]] = [/information_schema\.TABLES/, [{ n: 1 }]];
-const TABLE_ABSENT: [RegExp, unknown[]] = [/information_schema\.TABLES/, [{ n: 0 }]];
+const TABLE_PRESENT: [RegExp, unknown[]] = [
+  /information_schema\.TABLES/,
+  [{ n: 1 }],
+];
+const TABLE_ABSENT: [RegExp, unknown[]] = [
+  /information_schema\.TABLES/,
+  [{ n: 0 }],
+];
 
-const ONE_LEAVER = [{
-  id: "emp-1", employee_code: "MAS001", full_name: "ASHA RANI",
-  exit_date: "2026-06-15", tenure_days: 400,
-}];
+const ONE_LEAVER = [
+  {
+    id: "emp-1",
+    employee_code: "MAS001",
+    full_name: "ASHA RANI",
+    exit_date: "2026-06-15",
+    tenure_days: 400,
+  },
+];
 
 describe("attrition attribution", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    const { __resetHistoryProbe } = await import("../manager-attribution.service.js");
+    const { __resetHistoryProbe } =
+      await import("../manager-attribution.service.js");
     __resetHistoryProbe();
   });
 
@@ -51,13 +66,17 @@ describe("attrition attribution", () => {
       TABLE_PRESENT,
       [/COALESCE\(e\.date_of_exit/, ONE_LEAVER],
       // History covers the exit date...
-      [/FROM employee_manager_history h\s+WHERE h\.employee_id = \?\s+AND h\.effective_from/, [{ 1: 1 }]],
+      [
+        /FROM employee_manager_history h\s+WHERE h\.employee_id = \?\s+AND h\.effective_from/,
+        [{ 1: 1 }],
+      ],
       // ...but the manager on that date was somebody else, so the match query finds nothing.
       [/AND h\.manager_id = \?/, []],
       [/COUNT\(\*\) AS closing/, [{ closing: 5 }]],
     ]);
 
-    const { getManagerAttrition } = await import("../manager-attribution.service.js");
+    const { getManagerAttrition } =
+      await import("../manager-attribution.service.js");
     const out = await getManagerAttrition(MANAGER, 12);
 
     // This is the entire point of the feature: the exit is NOT on this manager's record.
@@ -70,11 +89,15 @@ describe("attrition attribution", () => {
       TABLE_PRESENT,
       [/COALESCE\(e\.date_of_exit/, ONE_LEAVER],
       [/AND h\.manager_id = \?/, [{ 1: 1 }]],
-      [/FROM employee_manager_history h\s+WHERE h\.employee_id = \?\s+AND h\.effective_from/, [{ 1: 1 }]],
+      [
+        /FROM employee_manager_history h\s+WHERE h\.employee_id = \?\s+AND h\.effective_from/,
+        [{ 1: 1 }],
+      ],
       [/COUNT\(\*\) AS closing/, [{ closing: 5 }]],
     ]);
 
-    const { getManagerAttrition } = await import("../manager-attribution.service.js");
+    const { getManagerAttrition } =
+      await import("../manager-attribution.service.js");
     const out = await getManagerAttrition(MANAGER, 12);
 
     expect(out.exits_total).toBe(1);
@@ -91,7 +114,8 @@ describe("attrition attribution", () => {
       [/COUNT\(\*\) AS closing/, [{ closing: 5 }]],
     ]);
 
-    const { getManagerAttrition } = await import("../manager-attribution.service.js");
+    const { getManagerAttrition } =
+      await import("../manager-attribution.service.js");
     const out = await getManagerAttrition(MANAGER, 12);
 
     expect(out.exits_total).toBe(1);
@@ -105,14 +129,30 @@ describe("attrition attribution", () => {
   it("annualises the rate on average headcount and reports the window", async () => {
     routeQueries([
       TABLE_ABSENT,
-      [/COALESCE\(e\.date_of_exit/, [
-        { id: "e1", employee_code: "A", full_name: "A", exit_date: "2026-06-01", tenure_days: 100 },
-        { id: "e2", employee_code: "B", full_name: "B", exit_date: "2026-05-01", tenure_days: 200 },
-      ]],
+      [
+        /COALESCE\(e\.date_of_exit/,
+        [
+          {
+            id: "e1",
+            employee_code: "A",
+            full_name: "A",
+            exit_date: "2026-06-01",
+            tenure_days: 100,
+          },
+          {
+            id: "e2",
+            employee_code: "B",
+            full_name: "B",
+            exit_date: "2026-05-01",
+            tenure_days: 200,
+          },
+        ],
+      ],
       [/COUNT\(\*\) AS closing/, [{ closing: 8 }]],
     ]);
 
-    const { getManagerAttrition } = await import("../manager-attribution.service.js");
+    const { getManagerAttrition } =
+      await import("../manager-attribution.service.js");
     const out = await getManagerAttrition(MANAGER, 6);
 
     // opening = closing + exits = 10; avg = 9; 2/9 over 6 months annualises to 44.4%.
@@ -125,15 +165,37 @@ describe("attrition attribution", () => {
   it("groups exits by month for the trend", async () => {
     routeQueries([
       TABLE_ABSENT,
-      [/COALESCE\(e\.date_of_exit/, [
-        { id: "e1", employee_code: "A", full_name: "A", exit_date: "2026-06-01", tenure_days: 10 },
-        { id: "e2", employee_code: "B", full_name: "B", exit_date: "2026-06-20", tenure_days: 20 },
-        { id: "e3", employee_code: "C", full_name: "C", exit_date: "2026-05-04", tenure_days: 30 },
-      ]],
+      [
+        /COALESCE\(e\.date_of_exit/,
+        [
+          {
+            id: "e1",
+            employee_code: "A",
+            full_name: "A",
+            exit_date: "2026-06-01",
+            tenure_days: 10,
+          },
+          {
+            id: "e2",
+            employee_code: "B",
+            full_name: "B",
+            exit_date: "2026-06-20",
+            tenure_days: 20,
+          },
+          {
+            id: "e3",
+            employee_code: "C",
+            full_name: "C",
+            exit_date: "2026-05-04",
+            tenure_days: 30,
+          },
+        ],
+      ],
       [/COUNT\(\*\) AS closing/, [{ closing: 4 }]],
     ]);
 
-    const { getManagerAttrition } = await import("../manager-attribution.service.js");
+    const { getManagerAttrition } =
+      await import("../manager-attribution.service.js");
     const out = await getManagerAttrition(MANAGER, 12);
 
     expect(out.by_month).toEqual([
@@ -146,21 +208,41 @@ describe("attrition attribution", () => {
 describe("shrinkage attribution", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    const { __resetHistoryProbe } = await import("../manager-attribution.service.js");
+    const { __resetHistoryProbe } =
+      await import("../manager-attribution.service.js");
     __resetHistoryProbe();
   });
 
   it("measures the team as it stood at the START of the window, from history", async () => {
     routeQueries([
       TABLE_PRESENT,
-      [/SELECT DISTINCT h\.employee_id/, [{ employee_id: "emp-a" }, { employee_id: "emp-b" }]],
-      [/FROM attendance_daily_record/, [
-        { d: "2026-08-01", scheduled: 2, planned: 0, unplanned: 1, missing_punch: 0 },
-        { d: "2026-08-02", scheduled: 2, planned: 1, unplanned: 0, missing_punch: 0 },
-      ]],
+      [
+        /SELECT DISTINCT h\.employee_id/,
+        [{ employee_id: "emp-a" }, { employee_id: "emp-b" }],
+      ],
+      [
+        /FROM attendance_daily_record/,
+        [
+          {
+            d: "2026-08-01",
+            scheduled: 2,
+            planned: 0,
+            unplanned: 1,
+            missing_punch: 0,
+          },
+          {
+            d: "2026-08-02",
+            scheduled: 2,
+            planned: 1,
+            unplanned: 0,
+            missing_punch: 0,
+          },
+        ],
+      ],
     ]);
 
-    const { getManagerShrinkage } = await import("../manager-attribution.service.js");
+    const { getManagerShrinkage } =
+      await import("../manager-attribution.service.js");
     const out = await getManagerShrinkage(MANAGER, 30);
 
     expect(out.attribution).toBe("observed");
@@ -175,12 +257,22 @@ describe("shrinkage attribution", () => {
     routeQueries([
       TABLE_ABSENT,
       [/SELECT id FROM employees/, [{ id: "emp-a" }]],
-      [/FROM attendance_daily_record/, [
-        { d: "2026-08-01", scheduled: 1, planned: 0, unplanned: 0, missing_punch: 0 },
-      ]],
+      [
+        /FROM attendance_daily_record/,
+        [
+          {
+            d: "2026-08-01",
+            scheduled: 1,
+            planned: 0,
+            unplanned: 0,
+            missing_punch: 0,
+          },
+        ],
+      ],
     ]);
 
-    const { getManagerShrinkage } = await import("../manager-attribution.service.js");
+    const { getManagerShrinkage } =
+      await import("../manager-attribution.service.js");
     const out = await getManagerShrinkage(MANAGER, 30);
 
     expect(out.attribution).toBe("assumed_current");
@@ -190,12 +282,22 @@ describe("shrinkage attribution", () => {
     routeQueries([
       TABLE_ABSENT,
       [/SELECT id FROM employees/, [{ id: "emp-a" }]],
-      [/FROM attendance_daily_record/, [
-        { d: "2026-08-01", scheduled: 10, planned: 0, unplanned: 4, missing_punch: 3 },
-      ]],
+      [
+        /FROM attendance_daily_record/,
+        [
+          {
+            d: "2026-08-01",
+            scheduled: 10,
+            planned: 0,
+            unplanned: 4,
+            missing_punch: 3,
+          },
+        ],
+      ],
     ]);
 
-    const { getManagerShrinkage } = await import("../manager-attribution.service.js");
+    const { getManagerShrinkage } =
+      await import("../manager-attribution.service.js");
     const out = await getManagerShrinkage(MANAGER, 30);
 
     expect(out.unplanned_days).toBe(4);
@@ -207,7 +309,8 @@ describe("shrinkage attribution", () => {
   it("returns an empty summary rather than dividing by zero on an empty team", async () => {
     routeQueries([TABLE_ABSENT, [/SELECT id FROM employees/, []]]);
 
-    const { getManagerShrinkage } = await import("../manager-attribution.service.js");
+    const { getManagerShrinkage } =
+      await import("../manager-attribution.service.js");
     const out = await getManagerShrinkage(MANAGER, 30);
 
     expect(out.scheduled_days).toBe(0);
@@ -219,7 +322,8 @@ describe("shrinkage attribution", () => {
 describe("recordManagerChange", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    const { __resetHistoryProbe } = await import("../manager-attribution.service.js");
+    const { __resetHistoryProbe } =
+      await import("../manager-attribution.service.js");
     __resetHistoryProbe();
   });
 
@@ -227,59 +331,119 @@ describe("recordManagerChange", () => {
     routeQueries([
       TABLE_PRESENT,
       // An open period exists with a DIFFERENT manager, so the change is real.
-      [/SELECT manager_id, process_id, branch_id/, [{ manager_id: "mgr-old", process_id: "p1", branch_id: "b1" }]],
+      [
+        /SELECT manager_id, process_id, branch_id/,
+        [{ manager_id: "mgr-old", process_id: "p1", branch_id: "b1" }],
+      ],
     ]);
 
-    const { recordManagerChange } = await import("../manager-attribution.service.js");
-    await recordManagerChange({ employeeId: "emp-1", newManagerId: OTHER_MANAGER, changedBy: "user-1" });
+    const { recordManagerChange } =
+      await import("../manager-attribution.service.js");
+    await recordManagerChange({
+      employeeId: "emp-1",
+      newManagerId: OTHER_MANAGER,
+      changedBy: "user-1",
+    });
 
     const statements = mocks.execute.mock.calls.map(([sql]) => String(sql));
-    const closeIdx = statements.findIndex((s) => /UPDATE employee_manager_history/.test(s));
-    const insertIdx = statements.findIndex((s) => /INSERT INTO employee_manager_history/.test(s));
+    const closeIdx = statements.findIndex((s) =>
+      /UPDATE employee_manager_history/.test(s),
+    );
+    const insertIdx = statements.findIndex((s) =>
+      /INSERT INTO employee_manager_history/.test(s),
+    );
 
     expect(closeIdx).toBeGreaterThan(-1);
     expect(insertIdx).toBeGreaterThan(closeIdx);
-    expect(statements[closeIdx]).toMatch(/effective_to = DATE_SUB\(CURDATE\(\), INTERVAL 1 DAY\)/);
+    expect(statements[closeIdx]).toMatch(
+      /effective_to = DATE_SUB\(CURDATE\(\), INTERVAL 1 DAY\)/,
+    );
   });
 
   it("carries process and branch forward when only the manager is passed", async () => {
     routeQueries([
       TABLE_PRESENT,
-      [/SELECT manager_id, process_id, branch_id/, [{ manager_id: "mgr-old", process_id: "proc-9", branch_id: "br-9" }]],
+      [
+        /SELECT manager_id, process_id, branch_id/,
+        [{ manager_id: "mgr-old", process_id: "proc-9", branch_id: "br-9" }],
+      ],
     ]);
 
-    const { recordSupervisoryChange } = await import("../manager-attribution.service.js");
-    await recordSupervisoryChange({ employeeId: "emp-1", managerId: OTHER_MANAGER, changedBy: null });
+    const { recordSupervisoryChange } =
+      await import("../manager-attribution.service.js");
+    await recordSupervisoryChange({
+      employeeId: "emp-1",
+      managerId: OTHER_MANAGER,
+      changedBy: null,
+    });
 
-    const insert = mocks.execute.mock.calls.find(([sql]) => /INSERT INTO employee_manager_history/.test(String(sql)));
+    const insert = mocks.execute.mock.calls.find(([sql]) =>
+      /INSERT INTO employee_manager_history/.test(String(sql)),
+    );
     // A caller that moved only the manager must not blank the process or branch.
-    expect(insert![1]).toEqual(["emp-1", OTHER_MANAGER, "proc-9", "br-9", null, null]);
+    expect(insert![1]).toEqual([
+      "emp-1",
+      OTHER_MANAGER,
+      "proc-9",
+      "br-9",
+      null,
+      null,
+    ]);
   });
 
   it("opens a period for a PROCESS move even when the manager is unchanged", async () => {
     routeQueries([
       TABLE_PRESENT,
-      [/SELECT manager_id, process_id, branch_id/, [{ manager_id: "mgr-1", process_id: "proc-old", branch_id: "br-1" }]],
+      [
+        /SELECT manager_id, process_id, branch_id/,
+        [{ manager_id: "mgr-1", process_id: "proc-old", branch_id: "br-1" }],
+      ],
     ]);
 
-    const { recordSupervisoryChange } = await import("../manager-attribution.service.js");
-    await recordSupervisoryChange({ employeeId: "emp-1", processId: "proc-new", changedBy: null });
+    const { recordSupervisoryChange } =
+      await import("../manager-attribution.service.js");
+    await recordSupervisoryChange({
+      employeeId: "emp-1",
+      processId: "proc-new",
+      changedBy: null,
+    });
 
-    const insert = mocks.execute.mock.calls.find(([sql]) => /INSERT INTO employee_manager_history/.test(String(sql)));
+    const insert = mocks.execute.mock.calls.find(([sql]) =>
+      /INSERT INTO employee_manager_history/.test(String(sql)),
+    );
     expect(insert).toBeDefined();
-    expect(insert![1]).toEqual(["emp-1", "mgr-1", "proc-new", "br-1", null, null]);
+    expect(insert![1]).toEqual([
+      "emp-1",
+      "mgr-1",
+      "proc-new",
+      "br-1",
+      null,
+      null,
+    ]);
   });
 
   it("writes NOTHING when a save rewrites the same values", async () => {
     routeQueries([
       TABLE_PRESENT,
-      [/SELECT manager_id, process_id, branch_id/, [{ manager_id: "mgr-1", process_id: "p1", branch_id: "b1" }]],
+      [
+        /SELECT manager_id, process_id, branch_id/,
+        [{ manager_id: "mgr-1", process_id: "p1", branch_id: "b1" }],
+      ],
     ]);
 
-    const { recordSupervisoryChange } = await import("../manager-attribution.service.js");
-    await recordSupervisoryChange({ employeeId: "emp-1", managerId: "mgr-1", processId: "p1", branchId: "b1", changedBy: null });
+    const { recordSupervisoryChange } =
+      await import("../manager-attribution.service.js");
+    await recordSupervisoryChange({
+      employeeId: "emp-1",
+      managerId: "mgr-1",
+      processId: "p1",
+      branchId: "b1",
+      changedBy: null,
+    });
 
-    const wrote = mocks.execute.mock.calls.some(([sql]) => /INSERT INTO employee_manager_history/.test(String(sql)));
+    const wrote = mocks.execute.mock.calls.some(([sql]) =>
+      /INSERT INTO employee_manager_history/.test(String(sql)),
+    );
     // A no-op save must not litter the history with empty periods.
     expect(wrote).toBe(false);
   });
@@ -290,19 +454,31 @@ describe("recordManagerChange", () => {
       throw new Error("deadlock");
     });
 
-    const { recordManagerChange } = await import("../manager-attribution.service.js");
+    const { recordManagerChange } =
+      await import("../manager-attribution.service.js");
     await expect(
-      recordManagerChange({ employeeId: "emp-1", newManagerId: OTHER_MANAGER, changedBy: null }),
+      recordManagerChange({
+        employeeId: "emp-1",
+        newManagerId: OTHER_MANAGER,
+        changedBy: null,
+      }),
     ).resolves.toBeUndefined();
   });
 
   it("does nothing when the history table has not been created yet", async () => {
     routeQueries([TABLE_ABSENT]);
 
-    const { recordManagerChange } = await import("../manager-attribution.service.js");
-    await recordManagerChange({ employeeId: "emp-1", newManagerId: OTHER_MANAGER, changedBy: null });
+    const { recordManagerChange } =
+      await import("../manager-attribution.service.js");
+    await recordManagerChange({
+      employeeId: "emp-1",
+      newManagerId: OTHER_MANAGER,
+      changedBy: null,
+    });
 
-    const wrote = mocks.execute.mock.calls.some(([sql]) => /INSERT INTO employee_manager_history/.test(String(sql)));
+    const wrote = mocks.execute.mock.calls.some(([sql]) =>
+      /INSERT INTO employee_manager_history/.test(String(sql)),
+    );
     expect(wrote).toBe(false);
   });
 });

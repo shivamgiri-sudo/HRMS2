@@ -20,7 +20,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const { mockExecute } = vi.hoisted(() => ({ mockExecute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: mockExecute } }));
-vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn(async () => undefined) }));
+vi.mock("../../../shared/auditLog.js", () => ({
+  logSensitiveAction: vi.fn(async () => undefined),
+}));
 
 const { payrollService } = await import("../payroll.service.js");
 
@@ -54,7 +56,10 @@ const run = (over: Record<string, unknown> = {}) => ({
 function stub(
   row: Record<string, unknown>,
   updateAffected = 1,
-  opts: { ptBlocked?: Array<{ employee_code: string }>; canClose?: boolean } = {},
+  opts: {
+    ptBlocked?: Array<{ employee_code: string }>;
+    canClose?: boolean;
+  } = {},
 ) {
   const { ptBlocked = [], canClose = true } = opts;
   mockExecute.mockReset();
@@ -63,7 +68,8 @@ function stub(
     if (/^\s*SELECT \* FROM salary_prep_run/i.test(s)) return [[row], []];
     if (/FROM user_roles/i.test(s)) return [canClose ? [{ 1: 1 }] : [], []];
     if (/NULLIF\(TRIM\(b\.state\)/i.test(s)) return [ptBlocked, []];
-    if (/^\s*UPDATE salary_prep_run SET status/i.test(s)) return [{ affectedRows: updateAffected }, []];
+    if (/^\s*UPDATE salary_prep_run SET status/i.test(s))
+      return [{ affectedRows: updateAffected }, []];
     return [[], []];
   });
 }
@@ -74,21 +80,42 @@ describe("Finance sign-off gates the two states that move money", () => {
   it("refuses LOCK when the run has no sign-off", async () => {
     stub(run({ status: "approved" }));
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
-    ).rejects.toMatchObject({ statusCode: 409, code: "PAYROLL_FINANCE_SIGNOFF_REQUIRED" });
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "locked" } as never,
+        OUTSIDER,
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "PAYROLL_FINANCE_SIGNOFF_REQUIRED",
+    });
   });
 
   it("refuses DISBURSE when the run has no sign-off", async () => {
     stub(run({ status: "locked" }));
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "disbursed" } as never, OUTSIDER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "disbursed" } as never,
+        OUTSIDER,
+      ),
     ).rejects.toMatchObject({ code: "PAYROLL_FINANCE_SIGNOFF_REQUIRED" });
   });
 
   it("allows LOCK once Finance has signed off", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00", finance_approved_by: OUTSIDER }));
+    stub(
+      run({
+        status: "approved",
+        finance_approved_at: "2026-08-16 10:00:00",
+        finance_approved_by: OUTSIDER,
+      }),
+    );
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "locked" } as never,
+        OUTSIDER,
+      ),
     ).resolves.toBeDefined();
   });
 
@@ -97,7 +124,11 @@ describe("Finance sign-off gates the two states that move money", () => {
     // requested after approval in this workflow.
     stub(run({ status: "processing", approved_by: null }));
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "approved" } as never, APPROVER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "approved" } as never,
+        APPROVER,
+      ),
     ).resolves.toBeDefined();
   });
 });
@@ -106,21 +137,33 @@ describe("the preparer cannot approve their own run", () => {
   it("refuses when the approver is the person who created it", async () => {
     stub(run({ status: "processing", approved_by: null }));
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "approved" } as never, PREPARER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "approved" } as never,
+        PREPARER,
+      ),
     ).rejects.toMatchObject({ statusCode: 403, code: "PAYROLL_SELF_APPROVAL" });
   });
 
   it("allows a different approver", async () => {
     stub(run({ status: "processing", approved_by: null }));
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "approved" } as never, APPROVER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "approved" } as never,
+        APPROVER,
+      ),
     ).resolves.toBeDefined();
   });
 
   it("does not block a legacy run whose created_by is NULL", async () => {
     stub(run({ status: "processing", created_by: null, approved_by: null }));
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "approved" } as never, PREPARER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "approved" } as never,
+        PREPARER,
+      ),
     ).resolves.toBeDefined();
   });
 });
@@ -131,7 +174,11 @@ describe("break-glass is a third pair of hands, not a way round your own control
     await expect(
       payrollService.updateRunStatus(
         "run-1",
-        { status: "locked", breakGlassReason: "Bank cut-off in 20 minutes; CFO approved verbally on call" } as never,
+        {
+          status: "locked",
+          breakGlassReason:
+            "Bank cut-off in 20 minutes; CFO approved verbally on call",
+        } as never,
         OUTSIDER,
       ),
     ).resolves.toBeDefined();
@@ -142,10 +189,17 @@ describe("break-glass is a third pair of hands, not a way round your own control
     await expect(
       payrollService.updateRunStatus(
         "run-1",
-        { status: "locked", breakGlassReason: "Bank cut-off in 20 minutes; CFO approved verbally on call" } as never,
+        {
+          status: "locked",
+          breakGlassReason:
+            "Bank cut-off in 20 minutes; CFO approved verbally on call",
+        } as never,
         PREPARER,
       ),
-    ).rejects.toMatchObject({ statusCode: 403, code: "PAYROLL_BREAKGLASS_NOT_INDEPENDENT" });
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      code: "PAYROLL_BREAKGLASS_NOT_INDEPENDENT",
+    });
   });
 
   it("refuses break-glass by the approver", async () => {
@@ -153,7 +207,11 @@ describe("break-glass is a third pair of hands, not a way round your own control
     await expect(
       payrollService.updateRunStatus(
         "run-1",
-        { status: "locked", breakGlassReason: "Bank cut-off in 20 minutes; CFO approved verbally on call" } as never,
+        {
+          status: "locked",
+          breakGlassReason:
+            "Bank cut-off in 20 minutes; CFO approved verbally on call",
+        } as never,
         APPROVER,
       ),
     ).rejects.toMatchObject({ code: "PAYROLL_BREAKGLASS_NOT_INDEPENDENT" });
@@ -173,16 +231,35 @@ describe("break-glass is a third pair of hands, not a way round your own control
  */
 describe("preparing a run and closing it are different capabilities", () => {
   it("refuses LOCK by someone who may prepare but holds no head-level role", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, { canClose: false });
+    stub(
+      run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }),
+      1,
+      { canClose: false },
+    );
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
-    ).rejects.toMatchObject({ statusCode: 403, code: "PAYROLL_CLOSE_NOT_AUTHORISED" });
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "locked" } as never,
+        OUTSIDER,
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      code: "PAYROLL_CLOSE_NOT_AUTHORISED",
+    });
   });
 
   it("refuses DISBURSE for the same reason", async () => {
-    stub(run({ status: "locked", finance_approved_at: "2026-08-16 10:00:00" }), 1, { canClose: false });
+    stub(
+      run({ status: "locked", finance_approved_at: "2026-08-16 10:00:00" }),
+      1,
+      { canClose: false },
+    );
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "disbursed" } as never, OUTSIDER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "disbursed" } as never,
+        OUTSIDER,
+      ),
     ).rejects.toMatchObject({ code: "PAYROLL_CLOSE_NOT_AUTHORISED" });
   });
 
@@ -193,24 +270,44 @@ describe("preparing a run and closing it are different capabilities", () => {
     await expect(
       payrollService.updateRunStatus(
         "run-1",
-        { status: "locked", breakGlassReason: "Bank cut-off in 20 minutes; CFO approved verbally on call" } as never,
+        {
+          status: "locked",
+          breakGlassReason:
+            "Bank cut-off in 20 minutes; CFO approved verbally on call",
+        } as never,
         OUTSIDER,
       ),
     ).rejects.toMatchObject({ code: "PAYROLL_CLOSE_NOT_AUTHORISED" });
   });
 
   it("asks only for the heads and the two admin roles", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }));
-    await payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER);
-    const roleQuery = mockExecute.mock.calls.find(([s]) => /FROM user_roles/i.test(String(s)));
-    expect(String(roleQuery![0])).toMatch(/'finance_head','payroll_head','admin','super_admin'/);
+    stub(
+      run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }),
+    );
+    await payrollService.updateRunStatus(
+      "run-1",
+      { status: "locked" } as never,
+      OUTSIDER,
+    );
+    const roleQuery = mockExecute.mock.calls.find(([s]) =>
+      /FROM user_roles/i.test(String(s)),
+    );
+    expect(String(roleQuery![0])).toMatch(
+      /'finance_head','payroll_head','admin','super_admin'/,
+    );
     expect(roleQuery![1]).toEqual([OUTSIDER]); // the actor's own roles, not the run's
   });
 
   it("leaves preparation alone — 'approved' is not a closing step", async () => {
-    stub(run({ status: "processing", approved_by: null }), 1, { canClose: false });
+    stub(run({ status: "processing", approved_by: null }), 1, {
+      canClose: false,
+    });
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "approved" } as never, APPROVER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "approved" } as never,
+        APPROVER,
+      ),
     ).resolves.toBeDefined();
   });
 });
@@ -236,49 +333,100 @@ describe("preparing a run and closing it are different capabilities", () => {
  * all with no branch at all.)
  */
 describe("a run is no longer blocked on Professional Tax state (removed 2026-09-11)", () => {
-  const wouldHaveBlocked = [{ employee_code: "MAS63079" }, { employee_code: "MAS63080" }];
+  const wouldHaveBlocked = [
+    { employee_code: "MAS63079" },
+    { employee_code: "MAS63080" },
+  ];
 
   it("allows LOCK even when employees with no branch state exist", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, { ptBlocked: wouldHaveBlocked });
+    stub(
+      run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }),
+      1,
+      { ptBlocked: wouldHaveBlocked },
+    );
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "locked" } as never,
+        OUTSIDER,
+      ),
     ).resolves.toBeDefined();
   });
 
   it("allows DISBURSE for the same reason", async () => {
-    stub(run({ status: "locked", finance_approved_at: "2026-08-16 10:00:00" }), 1, { ptBlocked: wouldHaveBlocked });
+    stub(
+      run({ status: "locked", finance_approved_at: "2026-08-16 10:00:00" }),
+      1,
+      { ptBlocked: wouldHaveBlocked },
+    );
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "disbursed" } as never, OUTSIDER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "disbursed" } as never,
+        OUTSIDER,
+      ),
     ).resolves.toBeDefined();
   });
 
   it("allows the transition when nobody has a branch-state gap either", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, { ptBlocked: [] });
+    stub(
+      run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }),
+      1,
+      { ptBlocked: [] },
+    );
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "locked" } as never,
+        OUTSIDER,
+      ),
     ).resolves.toBeDefined();
   });
 
   it("still does not gate 'approved' — an incomplete run may still be reviewed", async () => {
-    stub(run({ status: "processing", approved_by: null }), 1, { ptBlocked: wouldHaveBlocked });
+    stub(run({ status: "processing", approved_by: null }), 1, {
+      ptBlocked: wouldHaveBlocked,
+    });
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "approved" } as never, APPROVER),
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "approved" } as never,
+        APPROVER,
+      ),
     ).resolves.toBeDefined();
   });
 });
 
 describe("two actors cannot both win the same transition", () => {
   it("refuses with 409 when the row moved between the read and the write", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 0);
+    stub(
+      run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }),
+      0,
+    );
     await expect(
-      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
-    ).rejects.toMatchObject({ statusCode: 409, code: "PAYROLL_RUN_STATE_CHANGED" });
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "locked" } as never,
+        OUTSIDER,
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "PAYROLL_RUN_STATE_CHANGED",
+    });
   });
 
   it("carries the observed status in the WHERE clause", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }));
-    await payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER);
-    const update = mockExecute.mock.calls.find(([s]) => /UPDATE salary_prep_run SET status/i.test(String(s)));
+    stub(
+      run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }),
+    );
+    await payrollService.updateRunStatus(
+      "run-1",
+      { status: "locked" } as never,
+      OUTSIDER,
+    );
+    const update = mockExecute.mock.calls.find(([s]) =>
+      /UPDATE salary_prep_run SET status/i.test(String(s)),
+    );
     expect(String(update![0])).toMatch(/WHERE id = \? AND status = \?/);
   });
 });

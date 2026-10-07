@@ -1,5 +1,5 @@
-import mysql from 'mysql2/promise';
-import { env } from '../../config/env.js';
+import mysql from "mysql2/promise";
+import { env } from "../../config/env.js";
 
 /**
  * @deprecated Use lmsQuery() from backend/src/modules/lms/lms.service.ts instead.

@@ -26,7 +26,8 @@ function get(data: Record<string, unknown>, ...keys: string[]): string {
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
     const v = normalized[normalizeKey(k)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
@@ -62,55 +63,76 @@ export async function importNeemansAgentDetailsBatch(
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
   const importedIds: string[] = [];
 
-  const outcomes = await mapWithConcurrency(batchRows, BULK_ROW_CONCURRENCY, async (row) => {
-    const data =
-      typeof row.normalized_data === "string"
-        ? JSON.parse(row.normalized_data)
-        : ((row.normalized_data ?? {}) as Record<string, unknown>);
+  const outcomes = await mapWithConcurrency(
+    batchRows,
+    BULK_ROW_CONCURRENCY,
+    async (row) => {
+      const data =
+        typeof row.normalized_data === "string"
+          ? JSON.parse(row.normalized_data)
+          : ((row.normalized_data ?? {}) as Record<string, unknown>);
 
-    const agentId = get(data, "agentId", "agent_id", "empId", "emp_id");
-    const agentName = get(data, "agentName", "agent_name", "name");
-    if (!agentId && !agentName) {
-      const msg = `Row ${row.row_no}: "agentId" or "agentName" is required`;
-      return { ok: false as const, rowId: row.id, msg };
-    }
+      const agentId = get(data, "agentId", "agent_id", "empId", "emp_id");
+      const agentName = get(data, "agentName", "agent_name", "name");
+      if (!agentId && !agentName) {
+        const msg = `Row ${row.row_no}: "agentId" or "agentName" is required`;
+        return { ok: false as const, rowId: row.id, msg };
+      }
 
-    try {
-      await addNeemansAgentDetail({
-        agent_id: agentId,
-        agent_name: agentName,
-        team: get(data, "team", "tl"),
-        doj: get(data, "doj", "dateOfJoining", "date_of_joining"),
-      });
-      return { ok: true as const, rowId: row.id };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false as const, rowId: row.id, msg: `Row ${row.row_no}: ${msg}` };
-    }
-  });
+      try {
+        await addNeemansAgentDetail({
+          agent_id: agentId,
+          agent_name: agentName,
+          team: get(data, "team", "tl"),
+          doj: get(data, "doj", "dateOfJoining", "date_of_joining"),
+        });
+        return { ok: true as const, rowId: row.id };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false as const,
+          rowId: row.id,
+          msg: `Row ${row.row_no}: ${msg}`,
+        };
+      }
+    },
+  );
 
   for (const o of outcomes) {
-    if (o.ok) { importedIds.push(o.rowId); }
-    else { errors.push(o.msg); errorUpdates.push({ rowId: o.rowId, message: o.msg.slice(0, 500) }); }
+    if (o.ok) {
+      importedIds.push(o.rowId);
+    } else {
+      errors.push(o.msg);
+      errorUpdates.push({ rowId: o.rowId, message: o.msg.slice(0, 500) });
+    }
   }
 
   if (importedIds.length) {
     await markRowsImported(importedIds);
   }
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const importedRows = importedIds.length;
   const errorRows = errorUpdates.length;
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ?,
         error_summary = ?, updated_at = NOW()

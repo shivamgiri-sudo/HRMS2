@@ -9,16 +9,24 @@ export interface BuiltInCommunicationTemplate {
   category: TemplateCategory;
 }
 
-function emailFrame(eyebrow: string, title: string, body: string, actionLabel?: string, actionUrl?: string): string {
-  const anchor = actionLabel && actionUrl
-    ? `<p style="margin:28px 0 8px"><a href="${actionUrl}" style="display:inline-block;background:#1B6AB5;color:#fff;text-decoration:none;padding:13px 22px;border-radius:10px;font-weight:700">${actionLabel}</a></p>`
-    : "";
+function emailFrame(
+  eyebrow: string,
+  title: string,
+  body: string,
+  actionLabel?: string,
+  actionUrl?: string,
+): string {
+  const anchor =
+    actionLabel && actionUrl
+      ? `<p style="margin:28px 0 8px"><a href="${actionUrl}" style="display:inline-block;background:#1B6AB5;color:#fff;text-decoration:none;padding:13px 22px;border-radius:10px;font-weight:700">${actionLabel}</a></p>`
+      : "";
   // When the URL is a handlebars value it can render empty — a caller dispatched
   // an event with no reachable target for this recipient. Guarding the button on
   // the same expression makes it disappear instead of shipping href="", which is
   // a button that silently reloads the reader's mail client.
   const boundTo = actionUrl?.match(/^\{\{\s*([\w.]+)\s*\}\}$/)?.[1];
-  const action = anchor && boundTo ? `{{#if ${boundTo}}}${anchor}{{/if}}` : anchor;
+  const action =
+    anchor && boundTo ? `{{#if ${boundTo}}}${anchor}{{/if}}` : anchor;
   return `<!doctype html>
 <html>
 <body style="margin:0;background:#f1f5f9;font-family:Arial,sans-serif;color:#172033">
@@ -86,9 +94,12 @@ _Mas Callnet India Pvt Ltd_`,
       "Track leave request",
       "/leaves",
     ),
-    body_text: "Hi {{employee.name}}, your {{leave_type}} request from {{from_date}} to {{to_date}} for {{total_days}} day(s) has been submitted and is awaiting review.",
-    whatsapp_text: "*Leave request submitted*\n\nHi {{employee.name}}, your {{leave_type}} request for {{total_days}} day(s), from {{from_date}} to {{to_date}}, is awaiting approval.\n\nTrack it in HRMS: /leaves",
-    sms_text: "MCN HRMS: {{leave_type}} leave submitted for {{total_days}} day(s), {{from_date}} to {{to_date}}. Track in HRMS.",
+    body_text:
+      "Hi {{employee.name}}, your {{leave_type}} request from {{from_date}} to {{to_date}} for {{total_days}} day(s) has been submitted and is awaiting review.",
+    whatsapp_text:
+      "*Leave request submitted*\n\nHi {{employee.name}}, your {{leave_type}} request for {{total_days}} day(s), from {{from_date}} to {{to_date}}, is awaiting approval.\n\nTrack it in HRMS: /leaves",
+    sms_text:
+      "MCN HRMS: {{leave_type}} leave submitted for {{total_days}} day(s), {{from_date}} to {{to_date}}. Track in HRMS.",
   },
   leave_status: {
     subject: "Leave request {{status}}",
@@ -102,9 +113,12 @@ _Mas Callnet India Pvt Ltd_`,
       "View leave details",
       "/leaves",
     ),
-    body_text: "Hi {{employee.name}}, your leave request has been {{status}} by {{reviewer_name}}. {{review_notes}}",
-    whatsapp_text: "*Leave request {{status}}*\n\nHi {{employee.name}}, your request was {{status}} by {{reviewer_name}}.\n{{#if review_notes}}Note: {{review_notes}}{{/if}}\n\nView details: /leaves",
-    sms_text: "MCN HRMS: Your leave request is {{status}}. Review by {{reviewer_name}}. View details in HRMS.",
+    body_text:
+      "Hi {{employee.name}}, your leave request has been {{status}} by {{reviewer_name}}. {{review_notes}}",
+    whatsapp_text:
+      "*Leave request {{status}}*\n\nHi {{employee.name}}, your request was {{status}} by {{reviewer_name}}.\n{{#if review_notes}}Note: {{review_notes}}{{/if}}\n\nView details: /leaves",
+    sms_text:
+      "MCN HRMS: Your leave request is {{status}}. Review by {{reviewer_name}}. View details in HRMS.",
   },
   employee_onboarding: {
     subject: "Welcome to Mas Callnet India Pvt Ltd",
@@ -118,9 +132,12 @@ _Mas Callnet India Pvt Ltd_`,
       "Open your profile",
       "/profile",
     ),
-    body_text: "Welcome {{employee.name}} to Mas Callnet India Pvt Ltd. Your employee profile is ready. Sign in to verify details and complete onboarding tasks.",
-    whatsapp_text: "*Welcome to Mas Callnet India Pvt Ltd*\n\nHi {{employee.name}}, your employee profile is ready. Please sign in to verify your details and complete onboarding tasks.\n\nOpen HRMS: /profile",
-    sms_text: "Welcome to Mas Callnet India Pvt Ltd, {{employee.name}}. Your HRMS profile is ready. Sign in to complete onboarding.",
+    body_text:
+      "Welcome {{employee.name}} to Mas Callnet India Pvt Ltd. Your employee profile is ready. Sign in to verify details and complete onboarding tasks.",
+    whatsapp_text:
+      "*Welcome to Mas Callnet India Pvt Ltd*\n\nHi {{employee.name}}, your employee profile is ready. Please sign in to verify your details and complete onboarding tasks.\n\nOpen HRMS: /profile",
+    sms_text:
+      "Welcome to Mas Callnet India Pvt Ltd, {{employee.name}}. Your HRMS profile is ready. Sign in to complete onboarding.",
   },
   performance_review_created: {
     subject: "Performance review update | {{review_period}}",
@@ -134,8 +151,10 @@ _Mas Callnet India Pvt Ltd_`,
       "View performance",
       "/performance",
     ),
-    body_text: "Hi {{employee.name}}, a performance review for {{review_period}} has been created by {{reviewer_name}}. Status: {{status}}.",
-    sms_text: "MCN HRMS: Performance review created for {{review_period}}. Sign in to view the latest status.",
+    body_text:
+      "Hi {{employee.name}}, a performance review for {{review_period}} has been created by {{reviewer_name}}. Status: {{status}}.",
+    sms_text:
+      "MCN HRMS: Performance review created for {{review_period}}. Sign in to view the latest status.",
   },
   performance_review_acknowledged: {
     subject: "Performance review acknowledged | {{review_period}}",
@@ -147,7 +166,9 @@ _Mas Callnet India Pvt Ltd_`,
       "Open performance workspace",
       "/performance",
     ),
-    body_text: "Performance review acknowledgement recorded for {{employee_name}}, {{review_period}}.",
-    sms_text: "MCN HRMS: Performance review acknowledgement recorded for {{review_period}}.",
+    body_text:
+      "Performance review acknowledgement recorded for {{employee_name}}, {{review_period}}.",
+    sms_text:
+      "MCN HRMS: Performance review acknowledgement recorded for {{review_period}}.",
   },
 };

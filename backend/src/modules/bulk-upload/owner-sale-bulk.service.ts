@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Housing Owner's "Owner Sale" export -- writes into the NEW db_masmis.owner_sale
@@ -25,16 +28,23 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
 function normalizeKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
-function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): string {
+function getByColumn(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string {
   const normalized: Record<string, unknown> = {};
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const col of columnNames) {
     const v = normalized[normalizeKey(col)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
-function n(data: Record<string, unknown>, ...columnNames: string[]): string | null {
+function n(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string | null {
   const v = getByColumn(data, ...columnNames);
   return v || null;
 }
@@ -63,7 +73,9 @@ function parseCount(raw: string, fallback: number): number {
 function parseDate(raw: string): string | null {
   if (!raw) return null;
   if (/^\d+(\.\d+)?$/.test(raw)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(raw)) * 86400000);
+    const d = new Date(
+      Date.UTC(1899, 11, 30) + Math.round(Number(raw)) * 86400000,
+    );
     return d.toISOString().slice(0, 10);
   }
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
@@ -89,13 +101,16 @@ export async function importOwnerSaleBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
   const toInsert: ChunkInsertRow[] = [];
 
-  const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+  const uploadedByInt = /^\d+$/.test(importedByUserId)
+    ? Number(importedByUserId)
+    : null;
 
   for (const row of batchRows) {
     const data =
@@ -106,22 +121,34 @@ export async function importOwnerSaleBatch(
     const oppId = getByColumn(data, "Opp ID", "Opp_ID", "opp_id");
     if (!oppId) {
       const msg = `Row ${row.row_no}: "Opp ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
-      rowId: row.id, rowNo: row.row_no,
+      rowId: row.id,
+      rowNo: row.row_no,
       values: [
-        oppId, parseDate(getByColumn(data, "Date", "report_date")),
-        n(data, "Agent ID", "Agent_ID", "agent_id"), n(data, "Agent Name", "Agent_Name", "agent_name"),
-        n(data, "TL Name", "TL_Name", "tl_name"), parseAmount(getByColumn(data, "Value", "value")),
+        oppId,
+        parseDate(getByColumn(data, "Date", "report_date")),
+        n(data, "Agent ID", "Agent_ID", "agent_id"),
+        n(data, "Agent Name", "Agent_Name", "agent_name"),
+        n(data, "TL Name", "TL_Name", "tl_name"),
+        parseAmount(getByColumn(data, "Value", "value")),
         parseCount(getByColumn(data, "Count", "sale_count"), 1),
         n(data, "Payment Mode", "Payment_Mode", "payment_mode"),
         n(data, "Package Name", "Package_Name", "package_name"),
         n(data, "Package Type", "Package_Type", "package_type"),
-        parseNullableAmount(getByColumn(data, "Discount %", "Discount_Pct", "discount_pct")),
-        n(data, "Week", "week"), n(data, "Month", "month"), n(data, "Day", "day"), n(data, "AM", "am"),
-        uploadedByInt, batchId,
+        parseNullableAmount(
+          getByColumn(data, "Discount %", "Discount_Pct", "discount_pct"),
+        ),
+        n(data, "Week", "week"),
+        n(data, "Month", "month"),
+        n(data, "Day", "day"),
+        n(data, "AM", "am"),
+        uploadedByInt,
+        batchId,
       ],
     });
   }
@@ -148,17 +175,26 @@ export async function importOwnerSaleBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

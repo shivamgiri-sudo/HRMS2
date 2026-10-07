@@ -20,33 +20,37 @@
  *   node scripts/attendance-sweep-month.mjs 2026-08 --from 2     # skip days already done
  *   node scripts/attendance-sweep-month.mjs 2026-08 --concurrency 3
  */
-import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
+import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 const month = process.argv[2];
 if (!month || !/^\d{4}-\d{2}$/.test(month)) {
-  console.error('usage: node scripts/attendance-sweep-month.mjs YYYY-MM [--from N] [--concurrency N]');
+  console.error(
+    "usage: node scripts/attendance-sweep-month.mjs YYYY-MM [--from N] [--concurrency N]",
+  );
   process.exit(1);
 }
 const argOf = (flag, dflt) => {
   const i = process.argv.indexOf(flag);
   return i >= 0 && process.argv[i + 1] ? Number(process.argv[i + 1]) : dflt;
 };
-const fromDay = argOf('--from', 1);
-const concurrency = Math.max(1, Math.min(8, argOf('--concurrency', 5)));
+const fromDay = argOf("--from", 1);
+const concurrency = Math.max(1, Math.min(8, argOf("--concurrency", 5)));
 
-const [year, mon] = month.split('-').map(Number);
+const [year, mon] = month.split("-").map(Number);
 const daysInMonth = new Date(Date.UTC(year, mon, 0)).getUTCDate();
 const dates = [];
 for (let d = fromDay; d <= daysInMonth; d++) {
-  dates.push(`${month}-${String(d).padStart(2, '0')}`);
+  dates.push(`${month}-${String(d).padStart(2, "0")}`);
 }
 
-const logDir = path.resolve('logs', `sweep-${month}`);
+const logDir = path.resolve("logs", `sweep-${month}`);
 mkdirSync(logDir, { recursive: true });
 
-console.log(`Rebuilding ${dates.length} date(s) for ${month}, ${concurrency} at a time.`);
+console.log(
+  `Rebuilding ${dates.length} date(s) for ${month}, ${concurrency} at a time.`,
+);
 console.log(`Per-day logs: ${logDir}\n`);
 
 const startedAt = Date.now();
@@ -56,17 +60,28 @@ let cursor = 0;
 function runDate(date) {
   return new Promise((resolve) => {
     const began = Date.now();
-    const child = spawn('npx', ['tsx', 'scripts/attendance-sweep-day.ts', date], {
-      shell: true, windowsHide: true,
+    const child = spawn(
+      "npx",
+      ["tsx", "scripts/attendance-sweep-day.ts", date],
+      {
+        shell: true,
+        windowsHide: true,
+      },
+    );
+    let out = "";
+    child.stdout.on("data", (c) => {
+      out += c.toString();
     });
-    let out = '';
-    child.stdout.on('data', (c) => { out += c.toString(); });
-    child.stderr.on('data', (c) => { out += c.toString(); });
-    child.on('close', (code) => {
+    child.stderr.on("data", (c) => {
+      out += c.toString();
+    });
+    child.on("close", (code) => {
       const mins = ((Date.now() - began) / 60000).toFixed(1);
-      writeFileSync(path.join(logDir, `${date}.log`), out, 'utf8');
+      writeFileSync(path.join(logDir, `${date}.log`), out, "utf8");
       const ok = code === 0;
-      console.log(`${ok ? 'OK  ' : 'FAIL'} ${date}  (${mins} min, exit ${code})`);
+      console.log(
+        `${ok ? "OK  " : "FAIL"} ${date}  (${mins} min, exit ${code})`,
+      );
       results.push({ date, ok, minutes: Number(mins), exitCode: code });
       resolve();
     });
@@ -84,10 +99,13 @@ await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
 results.sort((a, b) => a.date.localeCompare(b.date));
 const failed = results.filter((r) => !r.ok);
-console.log(`\nFinished in ${((Date.now() - startedAt) / 60000).toFixed(1)} min.`);
+console.log(
+  `\nFinished in ${((Date.now() - startedAt) / 60000).toFixed(1)} min.`,
+);
 console.log(`Succeeded: ${results.length - failed.length}/${results.length}`);
 if (failed.length) {
-  console.log('FAILED - re-run these dates individually:');
-  for (const f of failed) console.log(`  npx tsx scripts/attendance-sweep-day.ts ${f.date}`);
+  console.log("FAILED - re-run these dates individually:");
+  for (const f of failed)
+    console.log(`  npx tsx scripts/attendance-sweep-day.ts ${f.date}`);
   process.exitCode = 1;
 }

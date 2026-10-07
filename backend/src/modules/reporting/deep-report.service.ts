@@ -1,6 +1,9 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import type { DeepReportPack, DeepReportSourceGroup } from "./deep-report-packs.js";
+import type {
+  DeepReportPack,
+  DeepReportSourceGroup,
+} from "./deep-report-packs.js";
 
 export interface DeepReportFilters {
   branchId?: string;
@@ -47,12 +50,15 @@ export interface DeepSourceHealth {
 const IDENTIFIER = /^[A-Za-z0-9_]+$/;
 const MONTH = /^\d{4}-\d{2}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const ISSUE_STATUS = /(pending|failed|failure|error|rejected|overdue|unmapped|missing|hold|open|blocked|exception|expired|negative|mismatch)/i;
-const ACTIVE_STATUS = /^(active|approved|completed|complete|closed|paid|verified|validated|success|successful|finalized|released|locked|disbursed|present)$/i;
+const ISSUE_STATUS =
+  /(pending|failed|failure|error|rejected|overdue|unmapped|missing|hold|open|blocked|exception|expired|negative|mismatch)/i;
+const ACTIVE_STATUS =
+  /^(active|approved|completed|complete|closed|paid|verified|validated|success|successful|finalized|released|locked|disbursed|present)$/i;
 const NO_SCOPE_SENTINEL = "__NO_BRANCH_SCOPE__";
 
 function q(identifier: string) {
-  if (!IDENTIFIER.test(identifier)) throw new Error(`Unsafe SQL identifier: ${identifier}`);
+  if (!IDENTIFIER.test(identifier))
+    throw new Error(`Unsafe SQL identifier: ${identifier}`);
   return `\`${identifier}\``;
 }
 
@@ -60,10 +66,15 @@ function normalizeFilters(filters: DeepReportFilters): DeepReportFilters {
   return {
     branchId: filters.branchId ? String(filters.branchId).trim() : undefined,
     processId: filters.processId ? String(filters.processId).trim() : undefined,
-    month: filters.month && MONTH.test(filters.month) ? filters.month : undefined,
+    month:
+      filters.month && MONTH.test(filters.month) ? filters.month : undefined,
     from: filters.from && DATE.test(filters.from) ? filters.from : undefined,
     to: filters.to && DATE.test(filters.to) ? filters.to : undefined,
-    authorizedBranchIds: [...new Set((filters.authorizedBranchIds ?? []).map(String).filter(Boolean))],
+    authorizedBranchIds: [
+      ...new Set(
+        (filters.authorizedBranchIds ?? []).map(String).filter(Boolean),
+      ),
+    ],
     scopeIsGlobal: Boolean(filters.scopeIsGlobal),
   };
 }
@@ -80,29 +91,35 @@ function buildWhere(columns: Set<string>, filters: DeepReportFilters) {
   const clauses: string[] = [];
   const params: unknown[] = [];
   const applied: string[] = [];
-  const authorised = filters.scopeIsGlobal ? [] : (filters.authorizedBranchIds ?? []);
+  const authorised = filters.scopeIsGlobal
+    ? []
+    : (filters.authorizedBranchIds ?? []);
 
   if (!filters.scopeIsGlobal && authorised.includes(NO_SCOPE_SENTINEL)) {
     return {
       sql: "",
       params: [],
       applied: [],
-      unsafeReason: "The authenticated user has no authorised branch scope for reporting.",
+      unsafeReason:
+        "The authenticated user has no authorised branch scope for reporting.",
     };
   }
 
-  if (!filters.scopeIsGlobal && filters.branchId && !authorised.includes(filters.branchId)) {
+  if (
+    !filters.scopeIsGlobal &&
+    filters.branchId &&
+    !authorised.includes(filters.branchId)
+  ) {
     return {
       sql: "",
       params: [],
       applied: [],
-      unsafeReason: "The requested branch is outside the authenticated user's reporting scope.",
+      unsafeReason:
+        "The requested branch is outside the authenticated user's reporting scope.",
     };
   }
 
-  const effectiveBranches = filters.branchId
-    ? [filters.branchId]
-    : authorised;
+  const effectiveBranches = filters.branchId ? [filters.branchId] : authorised;
 
   if (effectiveBranches.length > 0) {
     if (columns.has("branch_id")) {
@@ -116,13 +133,18 @@ function buildWhere(columns: Set<string>, filters: DeepReportFilters) {
          WHERE scoped_employee.branch_id IN (${placeholders(effectiveBranches)})
       )`);
       params.push(...effectiveBranches);
-      applied.push(filters.branchId ? "branchIdThroughEmployee" : "authorisedBranchScopeThroughEmployee");
+      applied.push(
+        filters.branchId
+          ? "branchIdThroughEmployee"
+          : "authorisedBranchScopeThroughEmployee",
+      );
     } else {
       return {
         sql: "",
         params: [],
         applied: [],
-        unsafeReason: "This source cannot be safely restricted to the authenticated user's branch scope.",
+        unsafeReason:
+          "This source cannot be safely restricted to the authenticated user's branch scope.",
       };
     }
   }
@@ -145,12 +167,18 @@ function buildWhere(columns: Set<string>, filters: DeepReportFilters) {
         sql: "",
         params: [],
         applied: [],
-        unsafeReason: "This source cannot be safely restricted to the selected Process.",
+        unsafeReason:
+          "This source cannot be safely restricted to the selected Process.",
       };
     }
   }
 
-  const periodColumn = chooseColumn(columns, ["period_code", "run_month", "payroll_month", "month"]);
+  const periodColumn = chooseColumn(columns, [
+    "period_code",
+    "run_month",
+    "payroll_month",
+    "month",
+  ]);
   const dateColumn = chooseColumn(columns, [
     "record_date",
     "activity_date",
@@ -199,7 +227,7 @@ function sourceError(
   selectedTable: string | null,
   availableTables: string[],
   missingCandidates: string[],
-  message: string
+  message: string,
 ): DeepSourceHealth {
   return {
     key: group.key,
@@ -227,10 +255,14 @@ async function probeSourceGroup(
   group: DeepReportSourceGroup,
   tableMap: Map<string, TableMetadata>,
   columnMap: Map<string, ColumnMetadata[]>,
-  filters: DeepReportFilters
+  filters: DeepReportFilters,
 ): Promise<DeepSourceHealth> {
-  const availableTables = group.candidateTables.filter((table) => tableMap.has(table));
-  const missingCandidates = group.candidateTables.filter((table) => !tableMap.has(table));
+  const availableTables = group.candidateTables.filter((table) =>
+    tableMap.has(table),
+  );
+  const missingCandidates = group.candidateTables.filter(
+    (table) => !tableMap.has(table),
+  );
   const selectedTable = availableTables[0] ?? null;
 
   if (!selectedTable) {
@@ -256,10 +288,18 @@ async function probeSourceGroup(
   }
 
   try {
-    const columns = new Set((columnMap.get(selectedTable) ?? []).map((column) => column.column_name));
+    const columns = new Set(
+      (columnMap.get(selectedTable) ?? []).map((column) => column.column_name),
+    );
     const where = buildWhere(columns, filters);
     if (where.unsafeReason) {
-      return sourceError(group, selectedTable, availableTables, missingCandidates, where.unsafeReason);
+      return sourceError(
+        group,
+        selectedTable,
+        availableTables,
+        missingCandidates,
+        where.unsafeReason,
+      );
     }
 
     const statusColumn = chooseColumn(columns, [
@@ -285,7 +325,7 @@ async function probeSourceGroup(
 
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM ${q(selectedTable)}${where.sql}`,
-      where.params
+      where.params,
     );
     const rowCount = Number(countRows[0]?.total ?? 0);
 
@@ -299,14 +339,16 @@ async function probeSourceGroup(
           GROUP BY ${q(statusColumn)}
           ORDER BY count DESC
           LIMIT 20`,
-        where.params
+        where.params,
       );
       statusBreakdown = statusRows.map((row) => ({
         status: String(row.status ?? "(null)"),
         count: Number(row.count ?? 0),
       }));
       activeCount = statusBreakdown
-        .filter((item) => ACTIVE_STATUS.test(item.status) || item.status === "1")
+        .filter(
+          (item) => ACTIVE_STATUS.test(item.status) || item.status === "1",
+        )
         .reduce((total, item) => total + item.count, 0);
       issueCount = statusBreakdown
         .filter((item) => ISSUE_STATUS.test(item.status) || item.status === "0")
@@ -317,9 +359,11 @@ async function probeSourceGroup(
     if (updatedColumn) {
       const [latestRows] = await db.execute<RowDataPacket[]>(
         `SELECT MAX(${q(updatedColumn)}) AS latest FROM ${q(selectedTable)}${where.sql}`,
-        where.params
+        where.params,
       );
-      latestActivity = latestRows[0]?.latest ? String(latestRows[0].latest) : null;
+      latestActivity = latestRows[0]?.latest
+        ? String(latestRows[0].latest)
+        : null;
     }
 
     let missingBranchMappings: number | null = null;
@@ -327,7 +371,7 @@ async function probeSourceGroup(
       const [mappingRows] = await db.execute<RowDataPacket[]>(
         `SELECT SUM(CASE WHEN ${q("branch_id")} IS NULL OR CAST(${q("branch_id")} AS CHAR) = '' THEN 1 ELSE 0 END) AS missing
            FROM ${q(selectedTable)}${where.sql}`,
-        where.params
+        where.params,
       );
       missingBranchMappings = Number(mappingRows[0]?.missing ?? 0);
     }
@@ -337,7 +381,7 @@ async function probeSourceGroup(
       const [mappingRows] = await db.execute<RowDataPacket[]>(
         `SELECT SUM(CASE WHEN ${q("process_id")} IS NULL OR CAST(${q("process_id")} AS CHAR) = '' THEN 1 ELSE 0 END) AS missing
            FROM ${q(selectedTable)}${where.sql}`,
-        where.params
+        where.params,
       );
       missingProcessMappings = Number(mappingRows[0]?.missing ?? 0);
     }
@@ -367,7 +411,7 @@ async function probeSourceGroup(
       selectedTable,
       availableTables,
       missingCandidates,
-      error instanceof Error ? error.message : String(error)
+      error instanceof Error ? error.message : String(error),
     );
   }
 }
@@ -375,8 +419,9 @@ async function probeSourceGroup(
 export const deepReportService = {
   async overview(pack: DeepReportPack, inputFilters: DeepReportFilters) {
     const filters = normalizeFilters(inputFilters);
-    const candidateTables = [...new Set(pack.sourceGroups.flatMap((group) => group.candidateTables))]
-      .filter((table) => IDENTIFIER.test(table));
+    const candidateTables = [
+      ...new Set(pack.sourceGroups.flatMap((group) => group.candidateTables)),
+    ].filter((table) => IDENTIFIER.test(table));
 
     const tableMap = new Map<string, TableMetadata>();
     const columnMap = new Map<string, ColumnMetadata[]>();
@@ -395,7 +440,7 @@ export const deepReportService = {
            FROM information_schema.tables
           WHERE table_schema = DATABASE()
             AND table_name IN (${tablePlaceholders})`,
-        candidateTables
+        candidateTables,
       );
       for (const table of tables) tableMap.set(String(table.table_name), table);
 
@@ -404,7 +449,7 @@ export const deepReportService = {
            FROM information_schema.columns
           WHERE table_schema = DATABASE()
             AND table_name IN (${tablePlaceholders})`,
-        candidateTables
+        candidateTables,
       );
       for (const column of columns) {
         const tableName = String(column.table_name);
@@ -419,22 +464,41 @@ export const deepReportService = {
     }
 
     const requiredSources = sources.filter((source) => source.required);
-    const availableRequired = requiredSources.filter((source) => source.state === "available");
-    const sourceErrors = sources.filter((source) => source.state === "error");
-    const missingRequired = requiredSources.filter((source) => source.state === "missing");
-    const mappingExceptions = sources.reduce(
-      (total, source) => total + (source.missingBranchMappings ?? 0) + (source.missingProcessMappings ?? 0),
-      0
+    const availableRequired = requiredSources.filter(
+      (source) => source.state === "available",
     );
-    const knownIssueCount = sources.reduce((total, source) => total + (source.issueCount ?? 0), 0);
-    const knownRowCount = sources.reduce((total, source) => total + (source.rowCount ?? 0), 0);
+    const sourceErrors = sources.filter((source) => source.state === "error");
+    const missingRequired = requiredSources.filter(
+      (source) => source.state === "missing",
+    );
+    const mappingExceptions = sources.reduce(
+      (total, source) =>
+        total +
+        (source.missingBranchMappings ?? 0) +
+        (source.missingProcessMappings ?? 0),
+      0,
+    );
+    const knownIssueCount = sources.reduce(
+      (total, source) => total + (source.issueCount ?? 0),
+      0,
+    );
+    const knownRowCount = sources.reduce(
+      (total, source) => total + (source.rowCount ?? 0),
+      0,
+    );
     const activityValues = sources
       .map((source) => source.latestActivity)
       .filter((value): value is string => Boolean(value))
       .sort();
-    const latestActivity = activityValues.length ? activityValues[activityValues.length - 1] : null;
+    const latestActivity = activityValues.length
+      ? activityValues[activityValues.length - 1]
+      : null;
     const coveragePct = requiredSources.length
-      ? Number(((availableRequired.length / requiredSources.length) * 100).toFixed(1))
+      ? Number(
+          ((availableRequired.length / requiredSources.length) * 100).toFixed(
+            1,
+          ),
+        )
       : 100;
 
     const alerts = [
@@ -449,18 +513,24 @@ export const deepReportService = {
         message: `${source.label} could not be queried safely: ${source.error ?? "unknown error"}`,
       })),
       ...(mappingExceptions > 0
-        ? [{
-            severity: "warning" as const,
-            code: "ORG_MAPPING_GAPS",
-            message: `${mappingExceptions} branch/process mapping gaps were detected in available sources.`,
-          }]
+        ? [
+            {
+              severity: "warning" as const,
+              code: "ORG_MAPPING_GAPS",
+              message: `${mappingExceptions} branch/process mapping gaps were detected in available sources.`,
+            },
+          ]
         : []),
-      ...(pack.perspectives.flatMap((perspective) => perspective.reportCodes).length === 0
-        ? [{
-            severity: "info" as const,
-            code: "NO_DRILLDOWN_REPORTS",
-            message: "This section currently provides schema-aware control reporting but has no dedicated detailed report dataset.",
-          }]
+      ...(pack.perspectives.flatMap((perspective) => perspective.reportCodes)
+        .length === 0
+        ? [
+            {
+              severity: "info" as const,
+              code: "NO_DRILLDOWN_REPORTS",
+              message:
+                "This section currently provides schema-aware control reporting but has no dedicated detailed report dataset.",
+            },
+          ]
         : []),
     ];
 

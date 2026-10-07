@@ -30,7 +30,10 @@ import path from "path";
  * and keeps the deactivated one deactivated.
  */
 const WORKER = path.resolve(__dirname, "../auto-roster-scheduler.worker.ts");
-const SERVICE = path.resolve(__dirname, "../../modules/wfm/auto-roster-synced.service.ts");
+const SERVICE = path.resolve(
+  __dirname,
+  "../../modules/wfm/auto-roster-synced.service.ts",
+);
 
 /** The old names appear in this file's own comments; match live code only. */
 function liveCode(file: string): string {
@@ -60,7 +63,9 @@ describe("auto-roster scheduler writes columns that exist", () => {
     // deactivated last week is copied forward active again. Known consequence,
     // pinned here so it cannot be reintroduced by accident either way.
     const code = liveCode(WORKER);
-    expect(code).not.toMatch(/INSERT IGNORE INTO wfm_client_slot_requirement[\s\S]{0,400}active_status/);
+    expect(code).not.toMatch(
+      /INSERT IGNORE INTO wfm_client_slot_requirement[\s\S]{0,400}active_status/,
+    );
   });
 
   it("reads the process label from process_name", () => {
@@ -72,7 +77,11 @@ describe("auto-roster scheduler writes columns that exist", () => {
 
   it("orders roster conflicts by detected_at, the column that exists", () => {
     const code = liveCode(SERVICE);
-    expect(code).toMatch(/FROM wfm_roster_conflict_log[\s\S]{0,140}detected_at DESC/);
-    expect(code).not.toMatch(/FROM wfm_roster_conflict_log[\s\S]{0,140}created_at DESC/);
+    expect(code).toMatch(
+      /FROM wfm_roster_conflict_log[\s\S]{0,140}detected_at DESC/,
+    );
+    expect(code).not.toMatch(
+      /FROM wfm_roster_conflict_log[\s\S]{0,140}created_at DESC/,
+    );
   });
 });

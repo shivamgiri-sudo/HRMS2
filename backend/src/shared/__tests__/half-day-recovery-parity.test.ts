@@ -23,9 +23,18 @@ import {
   halfDayLwpValue,
 } from "../halfDayLeave.js";
 
-const SCRIPTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../scripts");
-const recovery = fs.readFileSync(path.join(SCRIPTS, "recover-silent-noop-leave.cjs"), "utf8");
-const detector = fs.readFileSync(path.join(SCRIPTS, "verify-attendance-corrections-applied.cjs"), "utf8");
+const SCRIPTS = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../scripts",
+);
+const recovery = fs.readFileSync(
+  path.join(SCRIPTS, "recover-silent-noop-leave.cjs"),
+  "utf8",
+);
+const detector = fs.readFileSync(
+  path.join(SCRIPTS, "verify-attendance-corrections-applied.cjs"),
+  "utf8",
+);
 
 /** Pull an object literal out of the script source and evaluate it. */
 function literal(src: string, name: string): Record<string, string> {
@@ -36,13 +45,19 @@ function literal(src: string, name: string): Record<string, string> {
 
 describe("recover-silent-noop-leave.cjs applies the same half-day rules as the app", () => {
   it("uses an identical transition table", () => {
-    expect(literal(recovery, "HALF_DAY_ATTENDANCE_TRANSITION")).toEqual(HALF_DAY_ATTENDANCE_TRANSITION);
+    expect(literal(recovery, "HALF_DAY_ATTENDANCE_TRANSITION")).toEqual(
+      HALF_DAY_ATTENDANCE_TRANSITION,
+    );
   });
 
   it("treats the same statuses as already a full paid day", () => {
-    const m = /const HALF_DAY_ALREADY_FULL = new Set\((\[[\s\S]*?\])\)/.exec(recovery);
+    const m = /const HALF_DAY_ALREADY_FULL = new Set\((\[[\s\S]*?\])\)/.exec(
+      recovery,
+    );
     expect(m).not.toBeNull();
-    expect(new Set(Function(`return ${m![1]}`)() as string[])).toEqual(HALF_DAY_ALREADY_FULL);
+    expect(new Set(Function(`return ${m![1]}`)() as string[])).toEqual(
+      HALF_DAY_ALREADY_FULL,
+    );
   });
 
   it("reaches the same answer as halfDayAttendanceTarget for every status it can meet", () => {
@@ -62,10 +77,21 @@ describe("recover-silent-noop-leave.cjs applies the same half-day rules as the a
     };
 
     for (const status of [
-      "absent", "missing_punch", "unreconciled", "half_day",
-      "present", "late", "leave_approved", "week_off", "holiday", "", null,
+      "absent",
+      "missing_punch",
+      "unreconciled",
+      "half_day",
+      "present",
+      "late",
+      "leave_approved",
+      "week_off",
+      "holiday",
+      "",
+      null,
     ]) {
-      expect(scriptTarget(status), `disagreed on '${status}'`).toBe(halfDayAttendanceTarget(status));
+      expect(scriptTarget(status), `disagreed on '${status}'`).toBe(
+        halfDayAttendanceTarget(status),
+      );
     }
   });
 

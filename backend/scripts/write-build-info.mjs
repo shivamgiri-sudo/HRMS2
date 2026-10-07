@@ -32,7 +32,10 @@ function resolveCommit() {
   const fromEnv = process.env.GITHUB_SHA || process.env.GIT_SHA;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
   try {
-    return execSync("git rev-parse HEAD", { cwd: here, stdio: ["ignore", "pipe", "ignore"] })
+    return execSync("git rev-parse HEAD", {
+      cwd: here,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
       .toString()
       .trim();
   } catch {
@@ -44,7 +47,10 @@ function resolveBranch() {
   const fromEnv = process.env.GITHUB_REF_NAME;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
   try {
-    return execSync("git rev-parse --abbrev-ref HEAD", { cwd: here, stdio: ["ignore", "pipe", "ignore"] })
+    return execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd: here,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
       .toString()
       .trim();
   } catch {
@@ -62,10 +68,14 @@ const info = {
 try {
   mkdirSync(outDir, { recursive: true });
   writeFileSync(outFile, JSON.stringify(info, null, 2) + "\n", "utf8");
-  console.log(`[build-info] ${info.commit.slice(0, 8)} on ${info.branch} at ${info.builtAt}`);
+  console.log(
+    `[build-info] ${info.commit.slice(0, 8)} on ${info.branch} at ${info.builtAt}`,
+  );
 } catch (error) {
   // Diagnostic only — never break a release over it.
-  console.warn(`[build-info] could not write ${outFile}: ${error instanceof Error ? error.message : String(error)}`);
+  console.warn(
+    `[build-info] could not write ${outFile}: ${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 
 process.exit(0);

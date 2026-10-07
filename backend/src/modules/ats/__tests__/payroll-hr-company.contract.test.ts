@@ -52,7 +52,9 @@ describe("payroll HR validation — submitting does not require a company", () =
     // The page spreads formData wholesale, so company_id: "" is always posted.
     // A plain .optional() would still reject "" — the preprocess is the point.
     expect(routes).toMatch(/const optionalUuid = z\.preprocess\(/);
-    expect(routes).toMatch(/value === ''\s*\|\|\s*value === null\s*\?\s*undefined\s*:\s*value/);
+    expect(routes).toMatch(
+      /value === ''\s*\|\|\s*value === null\s*\?\s*undefined\s*:\s*value/,
+    );
     expect(page).toContain("...formData");
   });
 
@@ -87,7 +89,9 @@ describe("payroll HR validation — reading a record does not join a missing tab
 
 describe("payroll HR validation — the page does not offer an unfillable field", () => {
   it("does not call the routeless /api/org/companies", () => {
-    const calls = [...page.matchAll(/hrmsApi\.get\('([^']+)'\)/g)].map((m) => m[1]);
+    const calls = [...page.matchAll(/hrmsApi\.get\('([^']+)'\)/g)].map(
+      (m) => m[1],
+    );
     expect(calls).not.toContain("/api/org/companies");
   });
 

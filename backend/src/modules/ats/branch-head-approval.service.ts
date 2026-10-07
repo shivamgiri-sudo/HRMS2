@@ -273,7 +273,9 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         : null;
 
       // Auto-send BGV address verification link to candidate
-      void initiateAddressBgvForCandidate(approval.candidate_id as string).catch(() => {});
+      void initiateAddressBgvForCandidate(
+        approval.candidate_id as string,
+      ).catch(() => {});
 
       // Fire-and-forget: send approval email after transaction commits
       if (!approval.offer_id && approval.email) {

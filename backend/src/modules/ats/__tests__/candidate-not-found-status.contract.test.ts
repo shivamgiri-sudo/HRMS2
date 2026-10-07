@@ -27,7 +27,9 @@ const recruiterRoutes = read("src/modules/ats/recruiter-hiring.routes.ts");
 describe("candidate lookup — missing row is a 404", () => {
   it("getCandidate tags the error with a 404 status", () => {
     const fn = atsService.slice(atsService.indexOf("async getCandidate("));
-    expect(fn).toContain('Object.assign(new Error("Candidate not found"), { statusCode: 404 })');
+    expect(fn).toContain(
+      'Object.assign(new Error("Candidate not found"), { statusCode: 404 })',
+    );
   });
 
   it("does not throw a bare Error, which would fall through to 500", () => {

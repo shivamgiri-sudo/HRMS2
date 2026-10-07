@@ -12,14 +12,21 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findByStoredFilename, logDocumentAccess, isHoldActive } = vi.hoisted(() => ({
-  findByStoredFilename: vi.fn(),
-  logDocumentAccess: vi.fn(),
-  isHoldActive: vi.fn(),
-}));
+const { findByStoredFilename, logDocumentAccess, isHoldActive } = vi.hoisted(
+  () => ({
+    findByStoredFilename: vi.fn(),
+    logDocumentAccess: vi.fn(),
+    isHoldActive: vi.fn(),
+  }),
+);
 
-vi.mock("../../document-vault/documentVault.service.js", () => ({ findByStoredFilename, logDocumentAccess }));
-vi.mock("../../privacy-engine/privacyHold.service.js", () => ({ isHoldActive }));
+vi.mock("../../document-vault/documentVault.service.js", () => ({
+  findByStoredFilename,
+  logDocumentAccess,
+}));
+vi.mock("../../privacy-engine/privacyHold.service.js", () => ({
+  isHoldActive,
+}));
 
 const { authorizeDocumentAccess } = await import("../documentVaultAuth.js");
 

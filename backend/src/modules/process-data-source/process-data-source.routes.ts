@@ -1,8 +1,14 @@
 import { Router, type NextFunction, type Response } from "express";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./process-data-source.service.js";
-import { refreshConnectorMetric, type ConnectorAggregate } from "./connector-refresh.service.js";
+import {
+  refreshConnectorMetric,
+  type ConnectorAggregate,
+} from "./connector-refresh.service.js";
 
 /**
  * Where a process supplies the figures HRMS cannot measure itself.
@@ -15,16 +21,33 @@ import { refreshConnectorMetric, type ConnectorAggregate } from "./connector-ref
  */
 
 const router = Router();
-type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
-const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  void fn(req, res).catch(next);
-};
+type AsyncHandler = (
+  req: AuthenticatedRequest,
+  res: Response,
+) => Promise<unknown>;
+const h =
+  (fn: AsyncHandler) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    void fn(req, res).catch(next);
+  };
 
 const VIEWER_ROLES = [
-  "admin", "ceo", "coo", "manager", "process_manager", "operations_manager",
-  "branch_head", "qa", "quality_analyst", "tq_head",
+  "admin",
+  "ceo",
+  "coo",
+  "manager",
+  "process_manager",
+  "operations_manager",
+  "branch_head",
+  "qa",
+  "quality_analyst",
+  "tq_head",
 ] as const;
-const WRITER_ROLES = ["admin", "process_manager", "operations_manager"] as const;
+const WRITER_ROLES = [
+  "admin",
+  "process_manager",
+  "operations_manager",
+] as const;
 
 /** Same local-date default as kpi-scorecard.routes.ts — see it for the IST/toISOString trap. */
 function readRange(req: AuthenticatedRequest): { from: string; to: string } {
@@ -38,7 +61,11 @@ function readRange(req: AuthenticatedRequest): { from: string; to: string } {
   };
 }
 
-const OUT_OF_SCOPE = { success: false, code: "OUT_OF_SCOPE", message: "That process is outside your scope." };
+const OUT_OF_SCOPE = {
+  success: false,
+  code: "OUT_OF_SCOPE",
+  message: "That process is outside your scope.",
+};
 
 /**
  * The closed set of real, already-defined metrics a manual entry may target —
@@ -47,67 +74,130 @@ const OUT_OF_SCOPE = { success: false, code: "OUT_OF_SCOPE", message: "That proc
  * declaration order; kept here anyway for the same reason the drilldown route
  * comment gives elsewhere in this codebase: readable next to what it feeds.
  */
-router.get("/metric-catalog", requireAuth, requireRole(...VIEWER_ROLES), h(async (_req, res) => {
-  res.json({ success: true, data: await svc.listMetricCatalog() });
-}));
+router.get(
+  "/metric-catalog",
+  requireAuth,
+  requireRole(...VIEWER_ROLES),
+  h(async (_req, res) => {
+    res.json({ success: true, data: await svc.listMetricCatalog() });
+  }),
+);
 
-router.get("/:processId/values", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
-  const { processId } = req.params;
-  if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
-    return res.status(403).json(OUT_OF_SCOPE);
-  }
-  const { from, to } = readRange(req);
-  res.json({ success: true, data: await svc.listProcessMetricValues(processId, from, to) });
-}));
-
-router.post("/:processId/values", requireAuth, requireRole(...WRITER_ROLES), h(async (req, res) => {
-  const { processId } = req.params;
-  if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
-    return res.status(403).json(OUT_OF_SCOPE);
-  }
-  const body = req.body as { metricKey?: string; scoreDate?: string; value?: number | string | null; note?: string };
-  if (!body.metricKey || !body.scoreDate) {
-    return res.status(400).json({ success: false, code: "MISSING_FIELDS", message: "metricKey and scoreDate are required." });
-  }
-  // An absent or blank value is a deliberate "no reading", stored as NULL.
-  const raw = body.value;
-  const value =
-    raw === undefined || raw === null || String(raw).trim() === "" || Number.isNaN(Number(raw))
-      ? null
-      : Number(raw);
-  try {
-    const out = await svc.saveManualMetricValue({
-      userId: req.authUser!.id, processId,
-      metricKey: body.metricKey, scoreDate: body.scoreDate,
-      value, note: body.note ?? null,
+router.get(
+  "/:processId/values",
+  requireAuth,
+  requireRole(...VIEWER_ROLES),
+  h(async (req, res) => {
+    const { processId } = req.params;
+    if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
+      return res.status(403).json(OUT_OF_SCOPE);
+    }
+    const { from, to } = readRange(req);
+    res.json({
+      success: true,
+      data: await svc.listProcessMetricValues(processId, from, to),
     });
-    res.json({ success: true, data: out });
-  } catch (err) {
-    res.status(400).json({ success: false, code: "INVALID_VALUE", message: (err as Error).message });
-  }
-}));
+  }),
+);
 
-router.post("/:processId/import", requireAuth, requireRole(...WRITER_ROLES), h(async (req, res) => {
-  const { processId } = req.params;
-  if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
-    return res.status(403).json(OUT_OF_SCOPE);
-  }
-  const body = req.body as { rows?: svc.ImportRow[]; dry_run?: boolean };
-  const rows = body.rows;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({ success: false, code: "NO_ROWS", message: "Send a non-empty rows array." });
-  }
-  if (rows.length > 2000) {
-    return res.status(400).json({ success: false, code: "TOO_MANY_ROWS", message: "Import at most 2000 rows at a time." });
-  }
-  // dry_run must be asked for explicitly. Defaulting to a preview would make an
-  // import that quietly did nothing look identical to one that worked.
-  const dryRun = body.dry_run === true;
-  res.json({
-    success: true,
-    data: await svc.importMetricRows({ userId: req.authUser!.id, processId, rows, dryRun }),
-  });
-}));
+router.post(
+  "/:processId/values",
+  requireAuth,
+  requireRole(...WRITER_ROLES),
+  h(async (req, res) => {
+    const { processId } = req.params;
+    if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
+      return res.status(403).json(OUT_OF_SCOPE);
+    }
+    const body = req.body as {
+      metricKey?: string;
+      scoreDate?: string;
+      value?: number | string | null;
+      note?: string;
+    };
+    if (!body.metricKey || !body.scoreDate) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          code: "MISSING_FIELDS",
+          message: "metricKey and scoreDate are required.",
+        });
+    }
+    // An absent or blank value is a deliberate "no reading", stored as NULL.
+    const raw = body.value;
+    const value =
+      raw === undefined ||
+      raw === null ||
+      String(raw).trim() === "" ||
+      Number.isNaN(Number(raw))
+        ? null
+        : Number(raw);
+    try {
+      const out = await svc.saveManualMetricValue({
+        userId: req.authUser!.id,
+        processId,
+        metricKey: body.metricKey,
+        scoreDate: body.scoreDate,
+        value,
+        note: body.note ?? null,
+      });
+      res.json({ success: true, data: out });
+    } catch (err) {
+      res
+        .status(400)
+        .json({
+          success: false,
+          code: "INVALID_VALUE",
+          message: (err as Error).message,
+        });
+    }
+  }),
+);
+
+router.post(
+  "/:processId/import",
+  requireAuth,
+  requireRole(...WRITER_ROLES),
+  h(async (req, res) => {
+    const { processId } = req.params;
+    if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
+      return res.status(403).json(OUT_OF_SCOPE);
+    }
+    const body = req.body as { rows?: svc.ImportRow[]; dry_run?: boolean };
+    const rows = body.rows;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          code: "NO_ROWS",
+          message: "Send a non-empty rows array.",
+        });
+    }
+    if (rows.length > 2000) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          code: "TOO_MANY_ROWS",
+          message: "Import at most 2000 rows at a time.",
+        });
+    }
+    // dry_run must be asked for explicitly. Defaulting to a preview would make an
+    // import that quietly did nothing look identical to one that worked.
+    const dryRun = body.dry_run === true;
+    res.json({
+      success: true,
+      data: await svc.importMetricRows({
+        userId: req.authUser!.id,
+        processId,
+        rows,
+        dryRun,
+      }),
+    });
+  }),
+);
 
 /**
  * The deepest-level manual path: per-analyst values for a metric with no
@@ -115,51 +205,108 @@ router.post("/:processId/import", requireAuth, requireRole(...WRITER_ROLES), h(a
  * takes any metric per row) because the caller is always
  * AnalystBreakdownPanel, already looking at exactly one metric.
  */
-router.post("/:processId/metric/:metricKey/employee-import", requireAuth, requireRole(...WRITER_ROLES), h(async (req, res) => {
-  const { processId, metricKey } = req.params;
-  if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
-    return res.status(403).json(OUT_OF_SCOPE);
-  }
-  const body = req.body as { rows?: svc.EmployeeImportRow[]; dry_run?: boolean };
-  const rows = body.rows;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({ success: false, code: "NO_ROWS", message: "Send a non-empty rows array." });
-  }
-  if (rows.length > 500) {
-    return res.status(400).json({ success: false, code: "TOO_MANY_ROWS", message: "Import at most 500 rows at a time." });
-  }
-  const dryRun = body.dry_run === true;
-  res.json({
-    success: true,
-    data: await svc.importEmployeeMetricRows({ userId: req.authUser!.id, processId, metricKey, rows, dryRun }),
-  });
-}));
-
-router.post("/:processId/connector-refresh", requireAuth, requireRole(...WRITER_ROLES), h(async (req, res) => {
-  const { processId } = req.params;
-  if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
-    return res.status(403).json(OUT_OF_SCOPE);
-  }
-  const b = req.body as Record<string, string | undefined>;
-  const required = ["connectorKey", "metricKey", "table", "valueColumn", "aggregate", "dateColumn", "from", "to"];
-  const missing = required.filter((k) => !b[k]);
-  if (missing.length) {
-    return res.status(400).json({ success: false, code: "MISSING_FIELDS", message: `Missing: ${missing.join(", ")}` });
-  }
-  try {
-    const out = await refreshConnectorMetric({
-      connectorKey: b.connectorKey!, processId, metricKey: b.metricKey!,
-      table: b.table!, valueColumn: b.valueColumn!,
-      aggregate: b.aggregate as ConnectorAggregate,
-      dateColumn: b.dateColumn!, from: b.from!, to: b.to!,
+router.post(
+  "/:processId/metric/:metricKey/employee-import",
+  requireAuth,
+  requireRole(...WRITER_ROLES),
+  h(async (req, res) => {
+    const { processId, metricKey } = req.params;
+    if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
+      return res.status(403).json(OUT_OF_SCOPE);
+    }
+    const body = req.body as {
+      rows?: svc.EmployeeImportRow[];
+      dry_run?: boolean;
+    };
+    const rows = body.rows;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          code: "NO_ROWS",
+          message: "Send a non-empty rows array.",
+        });
+    }
+    if (rows.length > 500) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          code: "TOO_MANY_ROWS",
+          message: "Import at most 500 rows at a time.",
+        });
+    }
+    const dryRun = body.dry_run === true;
+    res.json({
+      success: true,
+      data: await svc.importEmployeeMetricRows({
+        userId: req.authUser!.id,
+        processId,
+        metricKey,
+        rows,
+        dryRun,
+      }),
     });
-    res.json({ success: true, data: out });
-  } catch (err) {
-    // The message names the real cause (bad identifier, unreachable host,
-    // unknown column) so an ops user can fix their mapping without a log dive.
-    res.status(400).json({ success: false, code: "REFRESH_FAILED", message: (err as Error).message });
-  }
-}));
+  }),
+);
+
+router.post(
+  "/:processId/connector-refresh",
+  requireAuth,
+  requireRole(...WRITER_ROLES),
+  h(async (req, res) => {
+    const { processId } = req.params;
+    if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
+      return res.status(403).json(OUT_OF_SCOPE);
+    }
+    const b = req.body as Record<string, string | undefined>;
+    const required = [
+      "connectorKey",
+      "metricKey",
+      "table",
+      "valueColumn",
+      "aggregate",
+      "dateColumn",
+      "from",
+      "to",
+    ];
+    const missing = required.filter((k) => !b[k]);
+    if (missing.length) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          code: "MISSING_FIELDS",
+          message: `Missing: ${missing.join(", ")}`,
+        });
+    }
+    try {
+      const out = await refreshConnectorMetric({
+        connectorKey: b.connectorKey!,
+        processId,
+        metricKey: b.metricKey!,
+        table: b.table!,
+        valueColumn: b.valueColumn!,
+        aggregate: b.aggregate as ConnectorAggregate,
+        dateColumn: b.dateColumn!,
+        from: b.from!,
+        to: b.to!,
+      });
+      res.json({ success: true, data: out });
+    } catch (err) {
+      // The message names the real cause (bad identifier, unreachable host,
+      // unknown column) so an ops user can fix their mapping without a log dive.
+      res
+        .status(400)
+        .json({
+          success: false,
+          code: "REFRESH_FAILED",
+          message: (err as Error).message,
+        });
+    }
+  }),
+);
 
 export const processDataSourceRouter = router;
 export default router;

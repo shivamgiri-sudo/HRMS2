@@ -1,7 +1,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ALL_ATTENDANCE_STATUSES, PRESENT_STATUSES } from "../../../shared/attendanceStatus.js";
+import {
+  ALL_ATTENDANCE_STATUSES,
+  PRESENT_STATUSES,
+} from "../../../shared/attendanceStatus.js";
 
 /**
  * `week_off_worked` — an employee who came in on their rostered day off — is a day WORKED.
@@ -29,8 +32,13 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
 /** Files whose SQL decides worked-day membership. */
 function reportingSources(): string[] {
-  const files = [`${R}/report-suite.routes.ts`, `${R}/report-suite-highrisk.routes.ts`];
-  for (const f of readdirSync(resolve(ROOT, `${R}/executors`)).filter(f => f.endsWith(".executor.ts"))) {
+  const files = [
+    `${R}/report-suite.routes.ts`,
+    `${R}/report-suite-highrisk.routes.ts`,
+  ];
+  for (const f of readdirSync(resolve(ROOT, `${R}/executors`)).filter((f) =>
+    f.endsWith(".executor.ts"),
+  )) {
     files.push(`${R}/executors/${f}`);
   }
   return files;
@@ -54,12 +62,16 @@ describe("week_off_worked is counted as a day worked", () => {
       if (file.endsWith(ADHERENCE_EXEMPT)) continue;
       const src = stripComments(read(file));
       const hits = src.match(NARROW);
-      if (hits) offenders.push(`${file} (${hits.length} occurrence${hits.length > 1 ? "s" : ""})`);
+      if (hits)
+        offenders.push(
+          `${file} (${hits.length} occurrence${hits.length > 1 ? "s" : ""})`,
+        );
     }
     expect(
       offenders,
       "these count only present+half_day as worked, so a worked week-off would vanish from " +
-        "present counts, attendance %, shrinkage and occupancy:\n" + offenders.join("\n"),
+        "present counts, attendance %, shrinkage and occupancy:\n" +
+        offenders.join("\n"),
     ).toEqual([]);
   });
 

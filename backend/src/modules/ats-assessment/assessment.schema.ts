@@ -242,9 +242,15 @@ async function columnExists(table: string, column: string) {
   return rows[0] ?? null;
 }
 
-async function addColumnIfMissing(table: string, column: string, definition: string) {
+async function addColumnIfMissing(
+  table: string,
+  column: string,
+  definition: string,
+) {
   if (!(await columnExists(table, column))) {
-    await db.execute(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
+    await db.execute(
+      `ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`,
+    );
   }
 }
 
@@ -258,38 +264,94 @@ async function indexExists(table: string, indexName: string) {
   return rows.length > 0;
 }
 
-async function addIndexIfMissing(table: string, indexName: string, expression: string) {
+async function addIndexIfMissing(
+  table: string,
+  indexName: string,
+  expression: string,
+) {
   if (!(await indexExists(table, indexName))) {
     await db.execute(`ALTER TABLE \`${table}\` ADD ${expression}`);
   }
 }
 
 async function upgradeEarlierDraftSchema() {
-  await addColumnIfMissing("ats_assessment_template", "experience_level", "ENUM('any','fresher','experienced') NOT NULL DEFAULT 'any'");
-  await addColumnIfMissing("ats_assessment_template", "difficulty_level", "ENUM('basic','intermediate','advanced') NOT NULL DEFAULT 'intermediate'");
-  await addColumnIfMissing("ats_assessment_template", "gate_mode", "ENUM('advisory','soft_gate','hard_gate') NOT NULL DEFAULT 'advisory'");
-  await addColumnIfMissing("ats_assessment_template", "content_hash", "CHAR(64) NULL");
-  await addColumnIfMissing("ats_assessment_template", "source_type", "ENUM('built_in','custom') NOT NULL DEFAULT 'built_in'");
+  await addColumnIfMissing(
+    "ats_assessment_template",
+    "experience_level",
+    "ENUM('any','fresher','experienced') NOT NULL DEFAULT 'any'",
+  );
+  await addColumnIfMissing(
+    "ats_assessment_template",
+    "difficulty_level",
+    "ENUM('basic','intermediate','advanced') NOT NULL DEFAULT 'intermediate'",
+  );
+  await addColumnIfMissing(
+    "ats_assessment_template",
+    "gate_mode",
+    "ENUM('advisory','soft_gate','hard_gate') NOT NULL DEFAULT 'advisory'",
+  );
+  await addColumnIfMissing(
+    "ats_assessment_template",
+    "content_hash",
+    "CHAR(64) NULL",
+  );
+  await addColumnIfMissing(
+    "ats_assessment_template",
+    "source_type",
+    "ENUM('built_in','custom') NOT NULL DEFAULT 'built_in'",
+  );
   await db.execute(
     `UPDATE ats_assessment_template
      SET content_hash = SHA2(CAST(config_json AS CHAR), 256)
      WHERE content_hash IS NULL OR content_hash = ''`,
   );
 
-  await addColumnIfMissing("ats_candidate_assessment", "cycle_key", "VARCHAR(120) NULL");
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "cycle_key",
+    "VARCHAR(120) NULL",
+  );
   await db.execute(
     `UPDATE ats_candidate_assessment
      SET cycle_key = COALESCE(NULLIF(q_token_snapshot, ''), queue_token_id, id)
      WHERE cycle_key IS NULL OR cycle_key = ''`,
   );
-  await addColumnIfMissing("ats_candidate_assessment", "assignment_source", "ENUM('automatic','mapping','manual','kiosk') NOT NULL DEFAULT 'automatic'");
-  await addColumnIfMissing("ats_candidate_assessment", "assigned_by", "CHAR(36) NULL");
-  await addColumnIfMissing("ats_candidate_assessment", "manual_review_required", "TINYINT(1) NOT NULL DEFAULT 0");
-  await addColumnIfMissing("ats_candidate_assessment", "reviewed_by", "CHAR(36) NULL");
-  await addColumnIfMissing("ats_candidate_assessment", "reviewed_at", "DATETIME NULL");
-  await addColumnIfMissing("ats_candidate_assessment", "review_remarks", "VARCHAR(2000) NULL");
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "assignment_source",
+    "ENUM('automatic','mapping','manual','kiosk') NOT NULL DEFAULT 'automatic'",
+  );
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "assigned_by",
+    "CHAR(36) NULL",
+  );
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "manual_review_required",
+    "TINYINT(1) NOT NULL DEFAULT 0",
+  );
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "reviewed_by",
+    "CHAR(36) NULL",
+  );
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "reviewed_at",
+    "DATETIME NULL",
+  );
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "review_remarks",
+    "VARCHAR(2000) NULL",
+  );
 
-  await addColumnIfMissing("ats_assessment_response", "question_snapshot", "JSON NULL");
+  await addColumnIfMissing(
+    "ats_assessment_response",
+    "question_snapshot",
+    "JSON NULL",
+  );
   await db.execute(
     `UPDATE ats_assessment_response
      SET question_snapshot = JSON_OBJECT(
@@ -300,14 +362,38 @@ async function upgradeEarlierDraftSchema() {
      )
      WHERE question_snapshot IS NULL`,
   );
-  await addColumnIfMissing("ats_assessment_response", "review_remarks", "VARCHAR(2000) NULL");
+  await addColumnIfMissing(
+    "ats_assessment_response",
+    "review_remarks",
+    "VARCHAR(2000) NULL",
+  );
 
-  await addColumnIfMissing("ats_candidate_assessment", "config_snapshot", "JSON NULL");
-  await addColumnIfMissing("ats_candidate_assessment", "identity_verified", "TINYINT(1) NOT NULL DEFAULT 0");
-  await addColumnIfMissing("ats_candidate_assessment", "identity_verified_at", "DATETIME NULL");
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "config_snapshot",
+    "JSON NULL",
+  );
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "identity_verified",
+    "TINYINT(1) NOT NULL DEFAULT 0",
+  );
+  await addColumnIfMissing(
+    "ats_candidate_assessment",
+    "identity_verified_at",
+    "DATETIME NULL",
+  );
 
-  await addColumnIfMissing("ats_typing_test_attempt", "edit_distance", "INT UNSIGNED NULL");
-  await addColumnIfMissing("ats_typing_test_attempt", "passed_benchmark", "TINYINT(1) NULL");
+  await addColumnIfMissing(
+    "ats_typing_test_attempt",
+    "edit_distance",
+    "INT UNSIGNED NULL",
+  );
+  await addColumnIfMissing(
+    "ats_typing_test_attempt",
+    "passed_benchmark",
+    "TINYINT(1) NULL",
+  );
   await addColumnIfMissing(
     "ats_typing_test_attempt",
     "score_version",

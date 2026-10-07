@@ -14,8 +14,11 @@ import mysql from "mysql2/promise";
 import "dotenv/config";
 
 const conn = await mysql.createConnection({
-  host: process.env.DB_HOST, user: process.env.DB_USER, password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT || 3306, database: process.env.DB_NAME,
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT || 3306,
+  database: process.env.DB_NAME,
 });
 
 const [salesDefs] = await conn.query(
@@ -23,7 +26,7 @@ const [salesDefs] = await conn.query(
      FROM kpi_studio_definition d
      JOIN kpi_metric_master m ON m.id = d.metric_id
      JOIN process_master p ON p.id = d.process_id
-    WHERE m.metric_code = 'SALES_COUNT' AND d.active_status = 1`
+    WHERE m.metric_code = 'SALES_COUNT' AND d.active_status = 1`,
 );
 
 const results = [];
@@ -37,7 +40,10 @@ for (const def of salesDefs) {
     [def.process_id],
   );
   if (!funnelDef.length) {
-    results.push({ process: def.process_name, skipped: "no FUNNEL_SALE_PCT data source for this process to reuse" });
+    results.push({
+      process: def.process_name,
+      skipped: "no FUNNEL_SALE_PCT data source for this process to reuse",
+    });
     continue;
   }
   const funnelDataSourceId = funnelDef[0].data_source_id;
@@ -47,7 +53,10 @@ for (const def of salesDefs) {
     [funnelDataSourceId],
   );
   if (!soldField.length) {
-    results.push({ process: def.process_name, skipped: "funnel data source has no 'sold' field" });
+    results.push({
+      process: def.process_name,
+      skipped: "funnel data source has no 'sold' field",
+    });
     continue;
   }
 
@@ -58,7 +67,11 @@ for (const def of salesDefs) {
       WHERE id = ?`,
     [funnelDataSourceId, def.id],
   );
-  results.push({ process: def.process_name, fixed: true, newDataSource: funnelDataSourceId });
+  results.push({
+    process: def.process_name,
+    fixed: true,
+    newDataSource: funnelDataSourceId,
+  });
 }
 
 console.log(JSON.stringify(results, null, 2));

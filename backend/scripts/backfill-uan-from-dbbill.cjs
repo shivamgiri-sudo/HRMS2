@@ -34,34 +34,60 @@ const ACTOR = "a4a4902e-6222-11f1-adb1-00155d0ab410"; // shivam.giri@teammas.in
 
 /** employee_code -> UAN, verified against db_bill 2026-09-06. */
 const UANS = [
-  { code: "MAS63415", uan: "102165451231", sources: "masjclrentry + his_masjsclrentry (agree)" },
-  { code: "MAS63417", uan: "101949956169", sources: "masjclrentry + his_masjsclrentry (agree)" },
+  {
+    code: "MAS63415",
+    uan: "102165451231",
+    sources: "masjclrentry + his_masjsclrentry (agree)",
+  },
+  {
+    code: "MAS63417",
+    uan: "101949956169",
+    sources: "masjclrentry + his_masjsclrentry (agree)",
+  },
   { code: "MAS63423", uan: "102253534943", sources: "masjclrentry" },
   { code: "MAS63432", uan: "101983936782", sources: "masjclrentry" },
-  { code: "MAS63452", uan: "102357140495", sources: "masjclrentry + his_masjsclrentry (agree)" },
+  {
+    code: "MAS63452",
+    uan: "102357140495",
+    sources: "masjclrentry + his_masjsclrentry (agree)",
+  },
 ];
 
 const UAN_RE = /^\d{12}$/;
 
 async function main() {
   const c = await mysql.createConnection({
-    host: process.env.DB_HOST, user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
-    port: +(process.env.DB_PORT || 3306), connectTimeout: 20000,
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    port: +(process.env.DB_PORT || 3306),
+    connectTimeout: 20000,
   });
 
   const plan = [];
   const skipped = [];
 
   for (const row of UANS) {
-    if (!UAN_RE.test(row.uan)) { skipped.push({ ...row, why: "not 12 digits" }); continue; }
+    if (!UAN_RE.test(row.uan)) {
+      skipped.push({ ...row, why: "not 12 digits" });
+      continue;
+    }
 
     const [[emp]] = await c.query(
       `SELECT id, employee_code, CONCAT(first_name,' ',COALESCE(last_name,'')) nm, uan_number
-         FROM employees WHERE employee_code = ? LIMIT 1`, [row.code]);
-    if (!emp) { skipped.push({ ...row, why: "employee_code not found in HRMS" }); continue; }
+         FROM employees WHERE employee_code = ? LIMIT 1`,
+      [row.code],
+    );
+    if (!emp) {
+      skipped.push({ ...row, why: "employee_code not found in HRMS" });
+      continue;
+    }
     if (emp.uan_number && String(emp.uan_number).trim() !== "") {
-      skipped.push({ ...row, why: `HRMS already holds ${emp.uan_number} — not overwritten` });
+      skipped.push({
+        ...row,
+        why: `HRMS already holds ${emp.uan_number} — not overwritten`,
+      });
       continue;
     }
 
@@ -69,21 +95,45 @@ async function main() {
     // identity collision, not a typo to be pushed through.
     const [[clash]] = await c.query(
       `SELECT employee_code FROM employees WHERE uan_number = ? AND id <> ? LIMIT 1`,
-      [row.uan, emp.id]);
-    if (clash) { skipped.push({ ...row, why: `UAN already held by ${clash.employee_code}` }); continue; }
+      [row.uan, emp.id],
+    );
+    if (clash) {
+      skipped.push({
+        ...row,
+        why: `UAN already held by ${clash.employee_code}`,
+      });
+      continue;
+    }
 
     plan.push({ ...row, id: emp.id, name: String(emp.nm || "").trim() });
   }
 
-  console.log(`${APPLY ? "APPLY" : "DRY RUN"} — ${UANS.length} candidate(s) from db_bill`);
+  console.log(
+    `${APPLY ? "APPLY" : "DRY RUN"} — ${UANS.length} candidate(s) from db_bill`,
+  );
   console.log(`  to write: ${plan.length}   skipped: ${skipped.length}\n`);
   if (plan.length) {
-    console.table(plan.map((p) => ({ employee: p.code, name: p.name, uan: p.uan, source: p.sources })));
+    console.table(
+      plan.map((p) => ({
+        employee: p.code,
+        name: p.name,
+        uan: p.uan,
+        source: p.sources,
+      })),
+    );
   }
   for (const s of skipped) console.log(`  SKIP ${s.code}: ${s.why}`);
 
-  if (!plan.length) { console.log("\nNothing to write."); await c.end(); return; }
-  if (!APPLY) { console.log("\nNo changes written. Re-run with APPLY=1."); await c.end(); return; }
+  if (!plan.length) {
+    console.log("\nNothing to write.");
+    await c.end();
+    return;
+  }
+  if (!APPLY) {
+    console.log("\nNo changes written. Re-run with APPLY=1.");
+    await c.end();
+    return;
+  }
 
   await c.beginTransaction();
   let n = 0;
@@ -93,19 +143,29 @@ async function main() {
       const [res] = await c.execute(
         `UPDATE employees SET uan_number = ?, updated_at = NOW()
           WHERE id = ? AND (uan_number IS NULL OR uan_number = '')`,
-        [p.uan, p.id]);
+        [p.uan, p.id],
+      );
       n += res.affectedRows;
     }
     await c.execute(
       `INSERT INTO sensitive_action_log
          (id, actor_user_id, action_type, module_key, entity_type, change_summary, acted_at, reason)
        VALUES (UUID(), ?, 'UAN_BACKFILLED_FROM_DBBILL', 'employees', 'employees', ?, NOW(), ?)`,
-      [ACTOR,
-       JSON.stringify({ written: n, employees: plan.map((p) => ({ code: p.code, uan: p.uan, source: p.sources })) }),
-       "Backfilled UAN from db_bill (masjclrentry / his_masjsclrentry), verified 2026-09-06. " +
-       "Only employees whose HRMS uan_number was empty; existing values never overwritten. " +
-       "The other 412 active employees without a UAN have none in db_bill either — 207 joined " +
-       "since June 2026 and are awaiting EPFO allotment."],
+      [
+        ACTOR,
+        JSON.stringify({
+          written: n,
+          employees: plan.map((p) => ({
+            code: p.code,
+            uan: p.uan,
+            source: p.sources,
+          })),
+        }),
+        "Backfilled UAN from db_bill (masjclrentry / his_masjsclrentry), verified 2026-09-06. " +
+          "Only employees whose HRMS uan_number was empty; existing values never overwritten. " +
+          "The other 412 active employees without a UAN have none in db_bill either — 207 joined " +
+          "since June 2026 and are awaiting EPFO allotment.",
+      ],
     );
     await c.commit();
     console.log(`\nCommitted. rows updated = ${n}`);
@@ -117,4 +177,7 @@ async function main() {
   await c.end();
 }
 
-main().catch((e) => { console.error("ERR", e.message); process.exit(1); });
+main().catch((e) => {
+  console.error("ERR", e.message);
+  process.exit(1);
+});

@@ -46,7 +46,10 @@ describe("evaluateMinimumWageFloor", () => {
   });
 
   it("flags below_floor and reports the shortfall when the amount is under the configured rate", async () => {
-    mockExecute.mockResolvedValue([[{ floor_monthly: 15028, row_count: 4 }], []]);
+    mockExecute.mockResolvedValue([
+      [{ floor_monthly: 15028, row_count: 4 }],
+      [],
+    ]);
     const result = await evaluateMinimumWageFloor("Delhi", 12000);
     expect(result.status).toBe("below_floor");
     expect(result.provisional).toBe(true);
@@ -56,7 +59,10 @@ describe("evaluateMinimumWageFloor", () => {
   });
 
   it("flags not_configured — not silently allowed — when the state has no active rows", async () => {
-    mockExecute.mockResolvedValue([[{ floor_monthly: null, row_count: 0 }], []]);
+    mockExecute.mockResolvedValue([
+      [{ floor_monthly: null, row_count: 0 }],
+      [],
+    ]);
     const result = await evaluateMinimumWageFloor("Gujarat", 20000);
     expect(result.status).toBe("not_configured");
     expect(result.provisional).toBe(true);
@@ -72,7 +78,10 @@ describe("evaluateMinimumWageFloor", () => {
   });
 
   it("is not provisional when the amount clears the configured floor", async () => {
-    mockExecute.mockResolvedValue([[{ floor_monthly: 15028, row_count: 4 }], []]);
+    mockExecute.mockResolvedValue([
+      [{ floor_monthly: 15028, row_count: 4 }],
+      [],
+    ]);
     const result = await evaluateMinimumWageFloor("DL", 18000);
     expect(result.status).toBe("ok");
     expect(result.provisional).toBe(false);
@@ -92,7 +101,10 @@ describe("resolveStateForBranchName", () => {
 
   it("refuses to guess when the name matches branches that disagree on state", async () => {
     // DISTINCT state for a name like "HEAD OFFICE" returning >1 row means the name is ambiguous.
-    mockExecute.mockResolvedValue([[{ state: "Maharashtra" }, { state: "Uttar Pradesh" }], []]);
+    mockExecute.mockResolvedValue([
+      [{ state: "Maharashtra" }, { state: "Uttar Pradesh" }],
+      [],
+    ]);
     expect(await resolveStateForBranchName("Head Office")).toBeNull();
   });
 

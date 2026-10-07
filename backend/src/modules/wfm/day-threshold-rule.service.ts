@@ -4,14 +4,14 @@
 // same six Rule_Dimensions and the same resolver as attendance_source_rule. Not wired into
 // classifyMinutes() in this phase — that wiring is Phase 4.
 
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 import {
   resolveRule,
   type DimensionScopedRule,
   type EmployeeAttributes,
   type RuleDimension,
-} from './attendance-source-rule-resolver.js';
+} from "./attendance-source-rule-resolver.js";
 
 export interface DayThresholdRuleRow extends DimensionScopedRule {
   fullDayMinutes: number;
@@ -34,7 +34,9 @@ interface DimensionValueRow extends RowDataPacket {
   value_id: string;
 }
 
-async function loadActiveWindowedRules(date: string): Promise<DayThresholdRuleRow[]> {
+async function loadActiveWindowedRules(
+  date: string,
+): Promise<DayThresholdRuleRow[]> {
   const [ruleRows] = await db.execute<RuleRow[]>(
     `SELECT id, full_day_minutes, half_day_minutes, grace_minutes, effective_from, created_at
        FROM day_threshold_rule
@@ -47,7 +49,7 @@ async function loadActiveWindowedRules(date: string): Promise<DayThresholdRuleRo
   if (ruleRows.length === 0) return [];
 
   const ruleIds = ruleRows.map((r) => r.id);
-  const placeholders = ruleIds.map(() => '?').join(',');
+  const placeholders = ruleIds.map(() => "?").join(",");
   const [dimRows] = await db.execute<DimensionValueRow[]>(
     `SELECT rule_id, dimension, value_id
        FROM day_threshold_rule_dimension_value
@@ -55,7 +57,10 @@ async function loadActiveWindowedRules(date: string): Promise<DayThresholdRuleRo
     ruleIds,
   );
 
-  const dimensionsByRule = new Map<string, Partial<Record<RuleDimension, Set<string>>>>();
+  const dimensionsByRule = new Map<
+    string,
+    Partial<Record<RuleDimension, Set<string>>>
+  >();
   for (const row of dimRows) {
     const existing = dimensionsByRule.get(row.rule_id) ?? {};
     const set = existing[row.dimension] ?? new Set<string>();

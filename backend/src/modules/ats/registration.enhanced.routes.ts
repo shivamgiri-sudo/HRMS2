@@ -13,7 +13,7 @@ import {
 } from "./ats.enhanced.service.js";
 import { atsService } from "./ats.service.js";
 import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
-import { getIstDateString } from '../../utils/dateUtils.js';
+import { getIstDateString } from "../../utils/dateUtils.js";
 import { syncHiringActivityFromCandidateRegistration } from "./recruiter-hiring.service.js";
 import {
   sendCandidateSuccessEmail,
@@ -30,16 +30,21 @@ import { readRewalkinPrior, recordRewalkin } from "./rewalkin.service.js";
 export const registrationEnhancedRouter = Router();
 
 // TEMP TEST ENDPOINT - REMOVE AFTER TESTING
-registrationEnhancedRouter.post("/test-daily-report", requireAuth, requireRole("admin", "hr_admin", "super_admin"), async (req, res) => {
-  const { date, email } = req.body;
-  try {
-    const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
-    const result = await runDailyHiringReport(date, email);
-    return res.json(result);
-  } catch (error: any) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
+registrationEnhancedRouter.post(
+  "/test-daily-report",
+  requireAuth,
+  requireRole("admin", "hr_admin", "super_admin"),
+  async (req, res) => {
+    const { date, email } = req.body;
+    try {
+      const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
+      const result = await runDailyHiringReport(date, email);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
 
 interface RecruiterRow {
   id: string;
@@ -118,8 +123,14 @@ function normalizeSourceChannel(source: string | null | undefined): string {
   const value = String(source ?? "").trim();
   if (!value) return "Walk-In";
   const lowered = value.toLowerCase();
-  if (lowered === "walk-in" || lowered === "walk in" || lowered === "walkin") return "Walk-In";
-  if (lowered === "reference" || lowered === "referral" || lowered === "employee referral") return "Reference";
+  if (lowered === "walk-in" || lowered === "walk in" || lowered === "walkin")
+    return "Walk-In";
+  if (
+    lowered === "reference" ||
+    lowered === "referral" ||
+    lowered === "employee referral"
+  )
+    return "Reference";
   return value;
 }
 
@@ -129,7 +140,9 @@ registrationEnhancedRouter.get("/branch-aliases", async (_req, res) => {
     const aliases = await getBranchAliases();
     return res.json({ success: true, data: aliases });
   } catch (error: unknown) {
-    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+    return res
+      .status(500)
+      .json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -146,24 +159,31 @@ registrationEnhancedRouter.get("/recruiters/:branchName", async (req, res) => {
     return res.json({
       success: true,
       data: recruiters.map((r) => ({
-        id: r.id,                      // roster id (FK-safe for ats_candidate.recruiter_id)
-        employee_id: r.employee_id,    // actual employee UUID — frontend sends this as preferredRecruiterId
+        id: r.id, // roster id (FK-safe for ats_candidate.recruiter_id)
+        employee_id: r.employee_id, // actual employee UUID — frontend sends this as preferredRecruiterId
         employee_code: r.employee_code,
-        name: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() || r.employee_code || "Recruiter",
+        name:
+          `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() ||
+          r.employee_code ||
+          "Recruiter",
         mobile: r.mobile,
         email: r.email,
         present_today: Boolean(r.present_today),
       })),
     });
   } catch (error: unknown) {
-    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+    return res
+      .status(500)
+      .json({ success: false, message: getErrorMessage(error) });
   }
 });
 
 // ── 3. Enhanced registration submission ───────────────────────────────────────
 const enhancedRegistrationSchema = z.object({
   name: z.string().min(1),
-  mobile: z.string().regex(/^[6-9]\d{9}$/, "Valid 10-digit Indian mobile number required"),
+  mobile: z
+    .string()
+    .regex(/^[6-9]\d{9}$/, "Valid 10-digit Indian mobile number required"),
   email: z.string().email().nullable().optional(),
   branchDisplayName: z.string().min(1),
   preferredRecruiterId: z.string().uuid().optional(),
@@ -174,7 +194,11 @@ const enhancedRegistrationSchema = z.object({
   education: z.string().min(1),
   experience: z.string().min(1),
   gender: z.enum(["Male", "Female", "Other"]).nullable().optional(),
-  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  dateOfBirth: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
   preferredShift: z.string().nullable().optional(),
   rotationalShift: z.number().nullable().optional(),
   nightShiftOk: z.number().nullable().optional(),
@@ -186,96 +210,109 @@ const enhancedRegistrationSchema = z.object({
   requisitionId: z.string().uuid().optional(), // set by recruiter drive picker; absent = no change to existing behaviour
 });
 
-registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, async (req, res) => {
-  try {
-    const input = enhancedRegistrationSchema.parse(req.body);
+registrationEnhancedRouter.post(
+  "/submit-enhanced",
+  publicRegistrationLimiter,
+  async (req, res) => {
+    try {
+      const input = enhancedRegistrationSchema.parse(req.body);
 
-    // 1. Resolve branch from display name
-    const branchData = await resolveBranchFromAlias(input.branchDisplayName);
-    if (!branchData) {
-      return res.status(400).json({
-        success: false,
-        message: `Branch "${input.branchDisplayName}" not found`,
-      });
-    }
+      // 1. Resolve branch from display name
+      const branchData = await resolveBranchFromAlias(input.branchDisplayName);
+      if (!branchData) {
+        return res.status(400).json({
+          success: false,
+          message: `Branch "${input.branchDisplayName}" not found`,
+        });
+      }
 
-    const branchName = branchData.canonical_key;
-    const sourceChannel = normalizeSourceChannel(input.sourcingChannel);
-    const autoAssign = sourceChannel === "Walk-In" || sourceChannel === "Reference";
-    const walkInDate = getIstDateString();
+      const branchName = branchData.canonical_key;
+      const sourceChannel = normalizeSourceChannel(input.sourcingChannel);
+      const autoAssign =
+        sourceChannel === "Walk-In" || sourceChannel === "Reference";
+      const walkInDate = getIstDateString();
 
-    // 2. Reuse the ATS candidate when hiring-entry/calling created the lead first.
-    // Candidate registration is the walk-in continuation of that same person, not a brand-new record.
-    const [existingCandidateRows] = await db.execute<ExistingCandidateRow[]>(
-      `SELECT id, candidate_code, current_stage, profile_status, employee_code, active_status
+      // 2. Reuse the ATS candidate when hiring-entry/calling created the lead first.
+      // Candidate registration is the walk-in continuation of that same person, not a brand-new record.
+      const [existingCandidateRows] = await db.execute<ExistingCandidateRow[]>(
+        `SELECT id, candidate_code, current_stage, profile_status, employee_code, active_status
        FROM ats_candidate
        WHERE mobile = ?
        ORDER BY created_at DESC
        LIMIT 1`,
-      [input.mobile]
-    );
-    const existingCandidate = existingCandidateRows[0] ?? null;
+        [input.mobile],
+      );
+      const existingCandidate = existingCandidateRows[0] ?? null;
 
-    // A former employee coming back for an interview keeps the old candidate row, which still
-    // carries employee_code / 'onboarded'. When every employee record on this mobile has left
-    // (none active), the person is a rehire: let them re-register instead of blocking them.
-    let isRehire = false;
-    if (existingCandidate && (existingCandidate.employee_code || existingCandidate.profile_status === "onboarded")) {
-      const [rehireRows] = await db.execute<RowDataPacket[]>(
-        `SELECT 1
+      // A former employee coming back for an interview keeps the old candidate row, which still
+      // carries employee_code / 'onboarded'. When every employee record on this mobile has left
+      // (none active), the person is a rehire: let them re-register instead of blocking them.
+      let isRehire = false;
+      if (
+        existingCandidate &&
+        (existingCandidate.employee_code ||
+          existingCandidate.profile_status === "onboarded")
+      ) {
+        const [rehireRows] = await db.execute<RowDataPacket[]>(
+          `SELECT 1
            FROM employees e
           WHERE e.mobile = ?
             AND LOWER(COALESCE(e.employment_status, '')) IN (${nonReactivatableSqlList()})
             AND NOT EXISTS (SELECT 1 FROM employees e2 WHERE e2.mobile = e.mobile
                              AND LOWER(COALESCE(e2.employment_status, '')) NOT IN (${nonReactivatableSqlList()}))
           LIMIT 1`,
-        [input.mobile]
-      );
-      isRehire = rehireRows.length > 0;
-    }
+          [input.mobile],
+        );
+        isRehire = rehireRows.length > 0;
+      }
 
-    if (existingCandidate && !isRehire && (existingCandidate.employee_code || existingCandidate.profile_status === "onboarded")) {
-      return res.status(409).json({
-        success: false,
-        message: "This mobile is already linked to an onboarded candidate",
-      });
-    }
+      if (
+        existingCandidate &&
+        !isRehire &&
+        (existingCandidate.employee_code ||
+          existingCandidate.profile_status === "onboarded")
+      ) {
+        return res.status(409).json({
+          success: false,
+          message: "This mobile is already linked to an onboarded candidate",
+        });
+      }
 
-    let candidateId: string;
-    // Captured before the UPDATE below overwrites walk_in_date/stage; logged after assignment.
-    const rewalkinPrior = existingCandidate
-      ? await readRewalkinPrior(existingCandidate.id)
-      : null;
-    if (existingCandidate) {
-      await db.execute(
-        // This endpoint is unauthenticated and matches an existing candidate by
-        // mobile number alone, so anyone who knows a candidate's mobile could
-        // reach this UPDATE. It previously overwrote identity outright, which
-        // meant an attacker could replace the email address and receive that
-        // candidate's Letter of Intent and onboarding token.
-        //
-        // Identity fields are therefore fill-only: a blank is completed, an
-        // existing value is kept. A returning candidate can still refresh their
-        // preferences, branch and availability, which is what re-registration is
-        // for. Correcting a name or email is an HR action on an authenticated
-        // route, not something an anonymous request may do.
-        //
-        // record_type is forced back to 'candidate' here deliberately. This branch
-        // only runs when an existing ats_candidate row is being reused for a brand
-        // new walk-in (matched by mobile), and that row can be one of the June 2026
-        // bulk-imported employee-shaped rows whose candidate_code happens to equal
-        // an employee_code — those were correctly labelled 'legacy_employee' at
-        // import time. The moment a real person walks in and this UPDATE fires, the
-        // row stops being import noise and becomes a live application; leaving the
-        // old label in place silently hid genuine candidates from
-        // excludeEmployeeShapedCandidatesSql()'s callers, including the recruiter's
-        // own "My Candidates" queue (see ats-reporting-scope.ts).
-        //
-        // sourcing_channel is first-touch for a Meta lead: a candidate created from a Meta Lead Gen ad
-        // keeps 'Social Media' when they later fill this form, otherwise every walk-in overwrote it with
-        // 'Recruiter' / 'Walk-In' and Meta lost its conversions in every source report (50 of 89 live).
-        // The form's own answer still drives auto-assignment above; it just no longer rewrites the source.
-        `UPDATE ats_candidate
+      let candidateId: string;
+      // Captured before the UPDATE below overwrites walk_in_date/stage; logged after assignment.
+      const rewalkinPrior = existingCandidate
+        ? await readRewalkinPrior(existingCandidate.id)
+        : null;
+      if (existingCandidate) {
+        await db.execute(
+          // This endpoint is unauthenticated and matches an existing candidate by
+          // mobile number alone, so anyone who knows a candidate's mobile could
+          // reach this UPDATE. It previously overwrote identity outright, which
+          // meant an attacker could replace the email address and receive that
+          // candidate's Letter of Intent and onboarding token.
+          //
+          // Identity fields are therefore fill-only: a blank is completed, an
+          // existing value is kept. A returning candidate can still refresh their
+          // preferences, branch and availability, which is what re-registration is
+          // for. Correcting a name or email is an HR action on an authenticated
+          // route, not something an anonymous request may do.
+          //
+          // record_type is forced back to 'candidate' here deliberately. This branch
+          // only runs when an existing ats_candidate row is being reused for a brand
+          // new walk-in (matched by mobile), and that row can be one of the June 2026
+          // bulk-imported employee-shaped rows whose candidate_code happens to equal
+          // an employee_code — those were correctly labelled 'legacy_employee' at
+          // import time. The moment a real person walks in and this UPDATE fires, the
+          // row stops being import noise and becomes a live application; leaving the
+          // old label in place silently hid genuine candidates from
+          // excludeEmployeeShapedCandidatesSql()'s callers, including the recruiter's
+          // own "My Candidates" queue (see ats-reporting-scope.ts).
+          //
+          // sourcing_channel is first-touch for a Meta lead: a candidate created from a Meta Lead Gen ad
+          // keeps 'Social Media' when they later fill this form, otherwise every walk-in overwrote it with
+          // 'Recruiter' / 'Walk-In' and Meta lost its conversions in every source report (50 of 89 live).
+          // The form's own answer still drives auto-assignment above; it just no longer rewrites the source.
+          `UPDATE ats_candidate
          SET full_name = COALESCE(NULLIF(TRIM(full_name), ''), ?),
              email = COALESCE(NULLIF(TRIM(email), ''), ?),
              gender = COALESCE(gender, ?),
@@ -307,132 +344,105 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
              END,
              updated_at = NOW()
          WHERE id = ?`,
-        [
-          toStoredNameRequired(input.name),
-          input.email ?? null,
-          input.gender ?? null,
-          input.dateOfBirth ?? null,
-          input.roleApplied,
-          input.roleApplied,
-          branchName,
-          input.branchDisplayName,
-          sourceChannel,
-          input.referredBy ?? null,
-          walkInDate,
-          input.address ?? null,
-          input.education,
-          input.experience,
-          input.rotationalShift ?? null,
-          input.preferredShift ?? null,
-          input.nightShiftOk ?? null,
-          input.leavesIn3months ?? null,
-          input.ownsTwoWheeler ?? null,
-          input.idProofAvailable ?? null,
-          input.educationProofAvailable ?? null,
-          isRehire ? 1 : 0,
-          existingCandidate.id,
-        ]
-      );
-      candidateId = existingCandidate.id;
-    } else {
-      const candidate = await atsService.createCandidate({
-        fullName: input.name,
-        mobile: input.mobile,
-        email: input.email ?? null,
-        gender: input.gender ?? null,
-        dateOfBirth: input.dateOfBirth ?? null,
-        education: input.education,
-        experience: input.experience,
-        appliedForProcess: input.roleApplied,
-        appliedForBranch: branchName,
-        sourcingChannel: sourceChannel,
-        walkInDate,
-        address: input.address ?? null,
-        preferredShift: input.preferredShift ?? null,
-        profileStatus: "registered",
-      }, null);
-      candidateId = candidate.id;
-    }
-
-    // Resolve preferred recruiter to a roster UUID.
-    // preferredRecruiterId is an employee UUID (sent by both old and enhanced forms).
-    // Fallback: look up by employee name → find employee → ensureRecruiterInRoster.
-    let resolvedRecruiterId: string | null = null;
-
-    if (autoAssign) {
-      const availableRecruiters = await getAvailableRecruiters(branchName);
-      if (availableRecruiters.length > 0) {
-        const pick = availableRecruiters[Math.floor(Math.random() * availableRecruiters.length)];
-        resolvedRecruiterId = pick.id ?? null;
+          [
+            toStoredNameRequired(input.name),
+            input.email ?? null,
+            input.gender ?? null,
+            input.dateOfBirth ?? null,
+            input.roleApplied,
+            input.roleApplied,
+            branchName,
+            input.branchDisplayName,
+            sourceChannel,
+            input.referredBy ?? null,
+            walkInDate,
+            input.address ?? null,
+            input.education,
+            input.experience,
+            input.rotationalShift ?? null,
+            input.preferredShift ?? null,
+            input.nightShiftOk ?? null,
+            input.leavesIn3months ?? null,
+            input.ownsTwoWheeler ?? null,
+            input.idProofAvailable ?? null,
+            input.educationProofAvailable ?? null,
+            isRehire ? 1 : 0,
+            existingCandidate.id,
+          ],
+        );
+        candidateId = existingCandidate.id;
+      } else {
+        const candidate = await atsService.createCandidate(
+          {
+            fullName: input.name,
+            mobile: input.mobile,
+            email: input.email ?? null,
+            gender: input.gender ?? null,
+            dateOfBirth: input.dateOfBirth ?? null,
+            education: input.education,
+            experience: input.experience,
+            appliedForProcess: input.roleApplied,
+            appliedForBranch: branchName,
+            sourcingChannel: sourceChannel,
+            walkInDate,
+            address: input.address ?? null,
+            preferredShift: input.preferredShift ?? null,
+            profileStatus: "registered",
+          },
+          null,
+        );
+        candidateId = candidate.id;
       }
-    }
 
-    if (!resolvedRecruiterId && input.preferredRecruiterId && !autoAssign) {
-      const [preferredRosterRows] = await db.execute<RecruiterIdRow[]>(
-        `SELECT r.id
+      // Resolve preferred recruiter to a roster UUID.
+      // preferredRecruiterId is an employee UUID (sent by both old and enhanced forms).
+      // Fallback: look up by employee name → find employee → ensureRecruiterInRoster.
+      let resolvedRecruiterId: string | null = null;
+
+      if (autoAssign) {
+        const availableRecruiters = await getAvailableRecruiters(branchName);
+        if (availableRecruiters.length > 0) {
+          const pick =
+            availableRecruiters[
+              Math.floor(Math.random() * availableRecruiters.length)
+            ];
+          resolvedRecruiterId = pick.id ?? null;
+        }
+      }
+
+      if (!resolvedRecruiterId && input.preferredRecruiterId && !autoAssign) {
+        const [preferredRosterRows] = await db.execute<RecruiterIdRow[]>(
+          `SELECT r.id
          FROM ats_recruiter_roster r
          LEFT JOIN branch_master b ON b.branch_name = r.branch OR b.branch_code = r.branch
          WHERE r.id = ?
            AND r.active_status = 1
            AND (r.branch = ? OR r.branch = ? OR b.branch_name = ? OR b.branch_code = ?)
          LIMIT 1`,
-        [input.preferredRecruiterId, branchName, input.branchDisplayName, branchName, input.branchDisplayName]
-      );
-      if (preferredRosterRows.length > 0) {
-        resolvedRecruiterId = preferredRosterRows[0].id;
+          [
+            input.preferredRecruiterId,
+            branchName,
+            input.branchDisplayName,
+            branchName,
+            input.branchDisplayName,
+          ],
+        );
+        if (preferredRosterRows.length > 0) {
+          resolvedRecruiterId = preferredRosterRows[0].id;
+        }
       }
-    }
 
-    if (!resolvedRecruiterId && input.preferredRecruiterId && !autoAssign) {
-      // Resolve employee UUID → roster UUID (idempotent upsert)
-      const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
-        `SELECT e.id, e.first_name, e.last_name, e.mobile,
+      if (!resolvedRecruiterId && input.preferredRecruiterId && !autoAssign) {
+        // Resolve employee UUID → roster UUID (idempotent upsert)
+        const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
+          `SELECT e.id, e.first_name, e.last_name, e.mobile,
                 e.email, e.official_email, e.office_email,
                 b.branch_name
          FROM employees e
          JOIN branch_master b ON b.id = e.branch_id
          WHERE e.id = ? AND e.active_status = 1
          LIMIT 1`,
-        [input.preferredRecruiterId]
-      );
-      if (empRows.length > 0) {
-        const emp = empRows[0];
-        resolvedRecruiterId = await ensureRecruiterInRoster({
-          id: emp.id,
-          first_name: emp.first_name,
-          last_name: emp.last_name,
-          mobile: emp.mobile,
-          email: emp.email,
-          official_email: (emp as any).official_email,
-          office_email: (emp as any).office_email,
-          branch_name: emp.branch_name,
-        });
-      }
-    }
-
-    if (!resolvedRecruiterId && input.recruiterName && !autoAssign) {
-      // Fallback: look up by name — try roster first, then employees
-      const [rosterRows] = await db.execute<RecruiterIdRow[]>(
-        `SELECT r.id FROM ats_recruiter_roster r
-         WHERE r.active_status = 1 AND UPPER(r.name) = UPPER(?)
-           AND (r.branch = ? OR r.branch = ?)
-         LIMIT 1`,
-        [input.recruiterName.trim(), branchName, branchData.canonical_key]
-      );
-      if (rosterRows.length > 0) {
-        resolvedRecruiterId = rosterRows[0].id;
-      } else {
-        const fullName = input.recruiterName.trim();
-        const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
-          `SELECT e.id, e.first_name, e.last_name, e.mobile,
-                  e.email, e.official_email, e.office_email,
-                  b.branch_name
-           FROM employees e
-           JOIN branch_master b ON b.id = e.branch_id
-           WHERE e.active_status = 1
-             AND UPPER(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) = UPPER(?)
-           LIMIT 1`,
-          [fullName]
+          [input.preferredRecruiterId],
         );
         if (empRows.length > 0) {
           const emp = empRows[0];
@@ -448,51 +458,92 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
           });
         }
       }
-    }
 
-    await db.execute(
-      `UPDATE ats_candidate
+      if (!resolvedRecruiterId && input.recruiterName && !autoAssign) {
+        // Fallback: look up by name — try roster first, then employees
+        const [rosterRows] = await db.execute<RecruiterIdRow[]>(
+          `SELECT r.id FROM ats_recruiter_roster r
+         WHERE r.active_status = 1 AND UPPER(r.name) = UPPER(?)
+           AND (r.branch = ? OR r.branch = ?)
+         LIMIT 1`,
+          [input.recruiterName.trim(), branchName, branchData.canonical_key],
+        );
+        if (rosterRows.length > 0) {
+          resolvedRecruiterId = rosterRows[0].id;
+        } else {
+          const fullName = input.recruiterName.trim();
+          const [empRows] = await db.execute<RecruiterEmployeeRow[]>(
+            `SELECT e.id, e.first_name, e.last_name, e.mobile,
+                  e.email, e.official_email, e.office_email,
+                  b.branch_name
+           FROM employees e
+           JOIN branch_master b ON b.id = e.branch_id
+           WHERE e.active_status = 1
+             AND UPPER(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) = UPPER(?)
+           LIMIT 1`,
+            [fullName],
+          );
+          if (empRows.length > 0) {
+            const emp = empRows[0];
+            resolvedRecruiterId = await ensureRecruiterInRoster({
+              id: emp.id,
+              first_name: emp.first_name,
+              last_name: emp.last_name,
+              mobile: emp.mobile,
+              email: emp.email,
+              official_email: (emp as any).official_email,
+              office_email: (emp as any).office_email,
+              branch_name: emp.branch_name,
+            });
+          }
+        }
+      }
+
+      await db.execute(
+        `UPDATE ats_candidate
        SET branch_display_name = ?, preferred_recruiter_id = ?, recruiter_name = ?, referred_by = ?,
            sourcing_channel = CASE WHEN sourcing_channel = 'Social Media' THEN sourcing_channel ELSE ? END
        WHERE id = ?`,
-      [
-        input.branchDisplayName,
-        resolvedRecruiterId ?? null,
-        autoAssign ? null : input.recruiterName ?? null,
-        input.referredBy ?? null,
-        sourceChannel,
+        [
+          input.branchDisplayName,
+          resolvedRecruiterId ?? null,
+          autoAssign ? null : (input.recruiterName ?? null),
+          input.referredBy ?? null,
+          sourceChannel,
+          candidateId,
+        ],
+      );
+
+      // 4. Assign recruiter (smart assignment with fallback)
+      const assignmentResult = await assignRecruiterToCandidate(
         candidateId,
-      ]
-    );
+        resolvedRecruiterId,
+      );
 
-    // 4. Assign recruiter (smart assignment with fallback)
-    const assignmentResult = await assignRecruiterToCandidate(
-      candidateId,
-      resolvedRecruiterId
-    );
+      if (existingCandidate) {
+        await recordRewalkin(candidateId, rewalkinPrior, walkInDate);
+      }
 
-    if (existingCandidate) {
-      await recordRewalkin(candidateId, rewalkinPrior, walkInDate);
-    }
-
-    // 5. Generate token if recruiter assigned
-    let tokenNumber: string | null = null;
-    if (assignmentResult.assignedRecruiterId) {
-      const [existingTokenRows] = await db.execute<ExistingTokenRow[]>(
-        `SELECT id, token_number, recruiter_id
+      // 5. Generate token if recruiter assigned
+      let tokenNumber: string | null = null;
+      if (assignmentResult.assignedRecruiterId) {
+        const [existingTokenRows] = await db.execute<ExistingTokenRow[]>(
+          `SELECT id, token_number, recruiter_id
          FROM ats_queue_token
          WHERE candidate_id = ?
            AND (status = 'active' OR queue_status IN ('waiting', 'called', 'in_interview'))
          ORDER BY created_at DESC
          LIMIT 1`,
-        [candidateId]
-      );
-      const existingToken = existingTokenRows[0] ?? null;
+          [candidateId],
+        );
+        const existingToken = existingTokenRows[0] ?? null;
 
-      if (existingToken) {
-        tokenNumber = existingToken.token_number ?? await generateTokenNumber(branchName);
-        await db.execute(
-          `UPDATE ats_queue_token
+        if (existingToken) {
+          tokenNumber =
+            existingToken.token_number ??
+            (await generateTokenNumber(branchName));
+          await db.execute(
+            `UPDATE ats_queue_token
            SET recruiter_id = ?,
                branch_name = ?,
                token_number = ?,
@@ -500,12 +551,17 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
                queue_status = COALESCE(queue_status, 'waiting'),
                updated_at = NOW()
            WHERE id = ?`,
-          [assignmentResult.assignedRecruiterId, branchName, tokenNumber, existingToken.id]
-        );
-      } else {
-        tokenNumber = await generateTokenNumber(branchName);
-        await db.execute(
-          `INSERT INTO ats_queue_token (
+            [
+              assignmentResult.assignedRecruiterId,
+              branchName,
+              tokenNumber,
+              existingToken.id,
+            ],
+          );
+        } else {
+          tokenNumber = await generateTokenNumber(branchName);
+          await db.execute(
+            `INSERT INTO ats_queue_token (
             id, candidate_id, token, arrival_time, current_stage, status,
             branch_name, token_number, recruiter_id, queue_status
           ) VALUES (UUID(), ?, UUID(), NOW(), 'Arrived', 'active', ?, ?, ?, 'waiting')
@@ -514,15 +570,20 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
             branch_name = VALUES(branch_name),
             token_number = VALUES(token_number),
             updated_at = NOW()`,
-          [candidateId, branchName, tokenNumber, assignmentResult.assignedRecruiterId]
-        );
-      }
+            [
+              candidateId,
+              branchName,
+              tokenNumber,
+              assignmentResult.assignedRecruiterId,
+            ],
+          );
+        }
 
-      await db.execute(
-        // record_type reset here too (see the identity-refresh UPDATE above for why):
-        // a candidate reaching the queue with a real token is unambiguously live,
-        // whichever branch above created or reused the row.
-        `UPDATE ats_candidate
+        await db.execute(
+          // record_type reset here too (see the identity-refresh UPDATE above for why):
+          // a candidate reaching the queue with a real token is unambiguously live,
+          // whichever branch above created or reused the row.
+          `UPDATE ats_candidate
          SET q_token = ?,
              status = 'Waiting',
              record_type = 'candidate',
@@ -535,139 +596,154 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
              created_time = COALESCE(created_time, TIME(?)),
              updated_at = NOW()
          WHERE id = ?`,
-        [tokenNumber, walkInDate, `${walkInDate} 09:00:00`, candidateId]
-      );
-    }
+          [tokenNumber, walkInDate, `${walkInDate} 09:00:00`, candidateId],
+        );
+      }
 
-    // 6. Get recruiter details — assignedRecruiterId is a roster id, join to employees for contact info
-    const [latestTokenRows] = await db.execute<ExistingTokenRow[]>(
-      `SELECT id, token_number, recruiter_id
+      // 6. Get recruiter details — assignedRecruiterId is a roster id, join to employees for contact info
+      const [latestTokenRows] = await db.execute<ExistingTokenRow[]>(
+        `SELECT id, token_number, recruiter_id
        FROM ats_queue_token
        WHERE candidate_id = ?
        ORDER BY created_at DESC
        LIMIT 1`,
-      [candidateId]
-    );
+        [candidateId],
+      );
 
-    await syncHiringActivityFromCandidateRegistration({
-      mobile: input.mobile,
-      candidateId,
-      queueTokenId: latestTokenRows[0]?.id ?? null,
-      branchName,
-      processName: input.roleApplied,
-      activityDate: walkInDate,
-    });
+      await syncHiringActivityFromCandidateRegistration({
+        mobile: input.mobile,
+        candidateId,
+        queueTokenId: latestTokenRows[0]?.id ?? null,
+        branchName,
+        processName: input.roleApplied,
+        activityDate: walkInDate,
+      });
 
-    let recruiterDetails: { name: string | null; mobile: string | null; email: string | null; employee_code: string | null } | null = null;
-    if (assignmentResult.assignedRecruiterId) {
-      const [recRows] = await db.execute<RecruiterContactRow[]>(
-        `SELECT r.name, r.mobile, r.email, e.employee_code
+      let recruiterDetails: {
+        name: string | null;
+        mobile: string | null;
+        email: string | null;
+        employee_code: string | null;
+      } | null = null;
+      if (assignmentResult.assignedRecruiterId) {
+        const [recRows] = await db.execute<RecruiterContactRow[]>(
+          `SELECT r.name, r.mobile, r.email, e.employee_code
          FROM ats_recruiter_roster r
          LEFT JOIN employees e ON e.id = r.employee_id
          WHERE r.id = ?
          LIMIT 1`,
-        [assignmentResult.assignedRecruiterId]
-      );
+          [assignmentResult.assignedRecruiterId],
+        );
 
-      if (recRows.length > 0) {
-        const rec = recRows[0];
-        recruiterDetails = {
-          name: rec.name,
-          mobile: rec.mobile,
-          email: rec.email,
-          employee_code: rec.employee_code,
-        };
+        if (recRows.length > 0) {
+          const rec = recRows[0];
+          recruiterDetails = {
+            name: rec.name,
+            mobile: rec.mobile,
+            email: rec.email,
+            employee_code: rec.employee_code,
+          };
+        }
       }
-    }
 
-    // A candidate created from a META Lead Gen ad is only queued once they fill this form — tell
-    // their recruiter so the lead is not missed (owner ruling 2026-09-25).
-    const [metaLeadRows] = await db.execute<RowDataPacket[]>(
-      'SELECT 1 FROM meta_lead_raw WHERE ats_candidate_id = ? LIMIT 1',
-      [candidateId]
-    );
-    const isMetaLead = metaLeadRows.length > 0;
+      // A candidate created from a META Lead Gen ad is only queued once they fill this form — tell
+      // their recruiter so the lead is not missed (owner ruling 2026-09-25).
+      const [metaLeadRows] = await db.execute<RowDataPacket[]>(
+        "SELECT 1 FROM meta_lead_raw WHERE ats_candidate_id = ? LIMIT 1",
+        [candidateId],
+      );
+      const isMetaLead = metaLeadRows.length > 0;
 
-    // 7. Send emails (async, don't wait)
-    const recruiterEmail = recruiterDetails?.email ?? null;
-    const recruiterName = recruiterDetails?.name ?? "Recruiter";
-    const recruiterMobile = recruiterDetails?.mobile ?? "Not available";
+      // 7. Send emails (async, don't wait)
+      const recruiterEmail = recruiterDetails?.email ?? null;
+      const recruiterName = recruiterDetails?.name ?? "Recruiter";
+      const recruiterMobile = recruiterDetails?.mobile ?? "Not available";
 
-    if (input.email && recruiterDetails) {
-      const registrationDate = new Date().toLocaleString('en-US', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      });
+      if (input.email && recruiterDetails) {
+        const registrationDate = new Date().toLocaleString("en-US", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
 
-      // Send candidate success email
-      sendCandidateSuccessEmail({
+        // Send candidate success email
+        sendCandidateSuccessEmail({
+          candidateId,
+          to: input.email,
+          candidateName: input.name,
+          tokenNumber: tokenNumber || "Pending",
+          branchDisplayName: input.branchDisplayName,
+          recruiterName,
+          recruiterMobile,
+          registrationDate,
+        }).catch((err) =>
+          console.error("Failed to send candidate email:", err),
+        );
+      }
+
+      // Recruiter notification: as before when the candidate gave an email, and always for a META lead.
+      if (recruiterEmail && recruiterDetails && (input.email || isMetaLead)) {
+        sendRecruiterNotificationEmail({
+          candidateId,
+          to: recruiterEmail,
+          recruiterName,
+          candidateName: input.name,
+          candidateMobile: input.mobile,
+          tokenNumber: tokenNumber || "Pending",
+          branchDisplayName: input.branchDisplayName,
+          roleApplied: input.roleApplied || "Not specified",
+          metaLead: isMetaLead,
+        }).catch((err) =>
+          console.error("Failed to send recruiter email:", err),
+        );
+      }
+
+      // 8. Auto-link to requisition if recruiter set an active drive (fire-and-forget, safe)
+      if (input.requisitionId) {
+        jobRequisitionService
+          .linkCandidate(
+            input.requisitionId,
+            candidateId,
+            "system",
+            "candidate_applied",
+            "auto-linked at walk-in registration",
+          )
+          .catch((err: unknown) => {
+            // Intentionally non-blocking — registration already succeeded; link failure is not fatal
+            console.warn(
+              "[walk-in auto-link]",
+              err instanceof Error ? err.message : err,
+            );
+          });
+      }
+
+      // 9. Fetch candidate_code for the success response
+      const [codeRows] = await db.execute<CandidateCodeRow[]>(
+        "SELECT candidate_code FROM ats_candidate WHERE id = ? LIMIT 1",
+        [candidateId],
+      );
+      const candidate_code = codeRows[0]?.candidate_code ?? null;
+
+      return res.status(201).json({
+        success: true,
+        message: "Registration successful",
         candidateId,
-        to: input.email,
-        candidateName: input.name,
-        tokenNumber: tokenNumber || 'Pending',
+        candidate_code,
+        tokenNumber,
+        branchName,
         branchDisplayName: input.branchDisplayName,
-        recruiterName,
-        recruiterMobile,
-        registrationDate,
-      }).catch((err) => console.error('Failed to send candidate email:', err));
-    }
-
-    // Recruiter notification: as before when the candidate gave an email, and always for a META lead.
-    if (recruiterEmail && recruiterDetails && (input.email || isMetaLead)) {
-      sendRecruiterNotificationEmail({
-        candidateId,
-        to: recruiterEmail,
-        recruiterName,
-        candidateName: input.name,
-        candidateMobile: input.mobile,
-        tokenNumber: tokenNumber || 'Pending',
-        branchDisplayName: input.branchDisplayName,
-        roleApplied: input.roleApplied || 'Not specified',
-        metaLead: isMetaLead,
-      }).catch((err) => console.error('Failed to send recruiter email:', err));
-    }
-
-    // 8. Auto-link to requisition if recruiter set an active drive (fire-and-forget, safe)
-    if (input.requisitionId) {
-      jobRequisitionService.linkCandidate(
-        input.requisitionId,
-        candidateId,
-        'system',
-        'candidate_applied',
-        'auto-linked at walk-in registration'
-      ).catch((err: unknown) => {
-        // Intentionally non-blocking — registration already succeeded; link failure is not fatal
-        console.warn('[walk-in auto-link]', err instanceof Error ? err.message : err);
+        recruiter: recruiterDetails,
+        assignmentReason: assignmentResult.assignmentReason,
+      });
+    } catch (error: unknown) {
+      console.error("Enhanced registration error:", error);
+      const status = getErrorStatus(error);
+      return res.status(status).json({
+        success: false,
+        message: getErrorMessage(error) || "Registration failed",
       });
     }
-
-    // 9. Fetch candidate_code for the success response
-    const [codeRows] = await db.execute<CandidateCodeRow[]>(
-      'SELECT candidate_code FROM ats_candidate WHERE id = ? LIMIT 1',
-      [candidateId]
-    );
-    const candidate_code = codeRows[0]?.candidate_code ?? null;
-
-    return res.status(201).json({
-      success: true,
-      message: "Registration successful",
-      candidateId,
-      candidate_code,
-      tokenNumber,
-      branchName,
-      branchDisplayName: input.branchDisplayName,
-      recruiter: recruiterDetails,
-      assignmentReason: assignmentResult.assignmentReason,
-    });
-  } catch (error: unknown) {
-    console.error("Enhanced registration error:", error);
-    const status = getErrorStatus(error);
-    return res.status(status).json({
-      success: false,
-      message: getErrorMessage(error) || "Registration failed",
-    });
-  }
-});
+  },
+);
 
 // ── 4. Parse resume — accepts multipart file upload ──────────────────────────
 const resumeParseUpload = multer({
@@ -683,7 +759,9 @@ registrationEnhancedRouter.post(
     try {
       const file = req.file;
       if (!file) {
-        return res.status(400).json({ success: false, message: "file required" });
+        return res
+          .status(400)
+          .json({ success: false, message: "file required" });
       }
 
       const lower = file.originalname.toLowerCase();
@@ -707,7 +785,9 @@ registrationEnhancedRouter.post(
           // Dynamic import keeps startup fast when pdf-parse isn't needed
           // pdf-parse is CommonJS — use require() to avoid .default ambiguity
           // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const pdfParse: (buf: Buffer) => Promise<{ text: string }> = require("pdf-parse");
+          const pdfParse: (
+            buf: Buffer,
+          ) => Promise<{ text: string }> = require("pdf-parse");
           const data = await pdfParse(file.buffer);
           const text = data.text ?? "";
           const fields = extractFieldsFromText(text, req.body?.options);
@@ -717,17 +797,24 @@ registrationEnhancedRouter.post(
           return res.json({
             success: true,
             fields: {},
-            warning: "Could not extract text from this PDF. Please fill the form manually.",
+            warning:
+              "Could not extract text from this PDF. Please fill the form manually.",
           });
         }
       }
 
       // Unsupported format
-      return res.json({ success: true, fields: {}, warning: "Unsupported file type." });
+      return res.json({
+        success: true,
+        fields: {},
+        warning: "Unsupported file type.",
+      });
     } catch (error: unknown) {
-      return res.status(500).json({ success: false, message: getErrorMessage(error) });
+      return res
+        .status(500)
+        .json({ success: false, message: getErrorMessage(error) });
     }
-  }
+  },
 );
 
 // Words that indicate a line is a section header, not a name
@@ -774,7 +861,7 @@ function extractName(lines: string[], phone: string, email: string): string {
   const tryLine = (raw: string): string => {
     // Labelled form: "Name: Rahul Sharma" anywhere in the line
     const labelled = raw.match(
-      /(?:full\s+)?name\s*[:\-]\s*([A-Za-z][A-Za-z .'\-]{1,50})/i
+      /(?:full\s+)?name\s*[:\-]\s*([A-Za-z][A-Za-z .'\-]{1,50})/i,
     );
     if (labelled) return labelled[1].trim();
 
@@ -814,7 +901,7 @@ function extractName(lines: string[], phone: string, email: string): string {
  */
 function extractFieldsFromText(
   text: string,
-  optionsJson?: string
+  optionsJson?: string,
 ): Record<string, string> {
   let options: {
     roleOptions?: string[];
@@ -825,7 +912,9 @@ function extractFieldsFromText(
   } = {};
   try {
     if (optionsJson) options = JSON.parse(optionsJson);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   const fields: Record<string, string> = {};
   const lines = text
@@ -840,7 +929,9 @@ function extractFieldsFromText(
   if (mobileMatch) fields.mobile = mobileMatch[1];
 
   // ── Email ─────────────────────────────────────────────────────────────────
-  const emailMatch = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+  const emailMatch = text.match(
+    /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/,
+  );
   if (emailMatch) fields.email = emailMatch[0];
 
   // ── Name — contact-anchor strategy (mirrors open-resume) ─────────────────
@@ -849,7 +940,7 @@ function extractFieldsFromText(
   // ── Address ───────────────────────────────────────────────────────────────
   // 1. Labelled "Address: ..." block
   const addrLabelled = text.match(
-    /(?:address|addr|location|residence)\s*[:\-]\s*([\s\S]{5,200}?)(?=\n{2,}|\b(?:mobile|phone|email|education|experience|skills?|objective|declaration)\b|$)/i
+    /(?:address|addr|location|residence)\s*[:\-]\s*([\s\S]{5,200}?)(?=\n{2,}|\b(?:mobile|phone|email|education|experience|skills?|objective|declaration)\b|$)/i,
   );
   if (addrLabelled) {
     fields.address = addrLabelled[1].replace(/\n/g, ", ").trim();
@@ -858,9 +949,8 @@ function extractFieldsFromText(
     //    Grab that line + the one before it as the address.
     const pinIdx = lines.findIndex((l) => /\b[1-9]\d{5}\b/.test(l));
     if (pinIdx >= 0) {
-      const addrLines = pinIdx > 0
-        ? [lines[pinIdx - 1], lines[pinIdx]]
-        : [lines[pinIdx]];
+      const addrLines =
+        pinIdx > 0 ? [lines[pinIdx - 1], lines[pinIdx]] : [lines[pinIdx]];
       fields.address = addrLines.join(", ").trim();
     }
   }
@@ -874,13 +964,23 @@ function extractFieldsFromText(
 
   const matchEdu = (re: RegExp) => eduOpts.find((o) => re.test(o)) ?? "";
 
-  if (/post.?grad|m\.?tech\b|m\.?sc\b|mba\b|mca\b|m\.?com\b|master/i.test(textLower))
+  if (
+    /post.?grad|m\.?tech\b|m\.?sc\b|mba\b|mca\b|m\.?com\b|master/i.test(
+      textLower,
+    )
+  )
     fields.education = matchEdu(/post.?grad/i);
   else if (/\bdiploma\b/i.test(textLower))
     fields.education = matchEdu(/diploma/i);
-  else if (/\bb\.?tech\b|\bb\.?e\b|\bb\.?sc\b|\bb\.?com\b|\bb\.?a\b|\bgraduate\b|\bdegree\b/i.test(textLower))
+  else if (
+    /\bb\.?tech\b|\bb\.?e\b|\bb\.?sc\b|\bb\.?com\b|\bb\.?a\b|\bgraduate\b|\bdegree\b/i.test(
+      textLower,
+    )
+  )
     fields.education = matchEdu(/^graduate$/i);
-  else if (/\b12th\b|\bhsc\b|\bintermediate\b|\bpuc\b|\bplus\s*two\b/i.test(textLower))
+  else if (
+    /\b12th\b|\bhsc\b|\bintermediate\b|\bpuc\b|\bplus\s*two\b/i.test(textLower)
+  )
     fields.education = matchEdu(/12th/i);
   else if (/\b10th\b|\bssc\b|\bmatric|\bsslc\b/i.test(textLower))
     fields.education = matchEdu(/10th/i);
@@ -889,7 +989,10 @@ function extractFieldsFromText(
   if (!fields.education) {
     const sorted = [...eduOpts].sort((a, b) => b.length - a.length);
     for (const opt of sorted) {
-      if (textLower.includes(opt.toLowerCase())) { fields.education = opt; break; }
+      if (textLower.includes(opt.toLowerCase())) {
+        fields.education = opt;
+        break;
+      }
     }
   }
 
@@ -903,15 +1006,15 @@ function extractFieldsFromText(
   else {
     // Grab every year number mentioned; use the highest to represent total experience
     const allYears = [...textLower.matchAll(/(\d+)\s*(?:\+\s*)?years?\b/g)].map(
-      (m) => parseInt(m[1], 10)
+      (m) => parseInt(m[1], 10),
     );
     if (allYears.length > 0) {
       const yrs = Math.max(...allYears);
-      if (yrs === 0)     fields.experience = matchExp(/fresher|0.?1|0-1/i);
+      if (yrs === 0) fields.experience = matchExp(/fresher|0.?1|0-1/i);
       else if (yrs === 1) fields.experience = matchExp(/0.?1|0-1/i);
       else if (yrs === 2) fields.experience = matchExp(/1.?2|1-2/i);
       else if (yrs === 3) fields.experience = matchExp(/2.?3|2-3/i);
-      else               fields.experience = matchExp(/3\+|3 and above/i);
+      else fields.experience = matchExp(/3\+|3 and above/i);
     }
   }
 
@@ -919,7 +1022,10 @@ function extractFieldsFromText(
   if (!fields.experience) {
     const sorted = [...expOpts].sort((a, b) => b.length - a.length);
     for (const opt of sorted) {
-      if (textLower.includes(opt.toLowerCase())) { fields.experience = opt; break; }
+      if (textLower.includes(opt.toLowerCase())) {
+        fields.experience = opt;
+        break;
+      }
     }
   }
 
@@ -928,7 +1034,9 @@ function extractFieldsFromText(
   else if (/\bmale\b|gender\s*[:\-]\s*m\b/i.test(text)) fields.gender = "Male";
 
   // Strip empty strings so frontend normalise() doesn't try to map blanks
-  return Object.fromEntries(Object.entries(fields).filter(([, v]) => v && v.trim()));
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, v]) => v && v.trim()),
+  );
 }
 
 // ── 6. Record a walk-in's own DPDP consent ───────────────────────────────────
@@ -947,10 +1055,12 @@ function extractFieldsFromText(
 // It cannot touch any other candidate's consent or any other purpose.
 const CONSENT_WINDOW_MINUTES = 60;
 
-registrationEnhancedRouter.post('/:candidateId/consent', async (req, res) => {
-  const candidateId = String(req.params.candidateId || '').trim();
+registrationEnhancedRouter.post("/:candidateId/consent", async (req, res) => {
+  const candidateId = String(req.params.candidateId || "").trim();
   if (!candidateId) {
-    return res.status(400).json({ success: false, message: 'candidateId is required' });
+    return res
+      .status(400)
+      .json({ success: false, message: "candidateId is required" });
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -964,35 +1074,43 @@ registrationEnhancedRouter.post('/:candidateId/consent', async (req, res) => {
     // registered" is no longer a credible claim — refuse either way rather
     // than distinguishing them, so this cannot be used to probe which ids
     // exist.
-    return res.status(404).json({ success: false, message: 'Registration not found or no longer eligible for consent capture' });
+    return res
+      .status(404)
+      .json({
+        success: false,
+        message:
+          "Registration not found or no longer eligible for consent capture",
+      });
   }
 
   try {
     const data = await privacyService.recordConsent({
       principalId: candidateId,
-      principalType: 'candidate',
-      purposeCode: 'recruitment',
-      channel: 'web',
+      principalType: "candidate",
+      purposeCode: "recruitment",
+      channel: "web",
       ipAddress: req.ip,
     });
     return res.status(201).json({ success: true, data });
   } catch (error: unknown) {
-    const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error
-      ? Number((error as { statusCode?: unknown }).statusCode) || 500
-      : 500;
-    const message = error instanceof Error ? error.message : 'Failed to record consent';
+    const statusCode =
+      typeof error === "object" && error !== null && "statusCode" in error
+        ? Number((error as { statusCode?: unknown }).statusCode) || 500
+        : 500;
+    const message =
+      error instanceof Error ? error.message : "Failed to record consent";
     return res.status(statusCode).json({ success: false, message });
   }
 });
 
 // ── 7. Parse-resume capability status ────────────────────────────────────────
-registrationEnhancedRouter.get('/parse-resume/status', (_req, res) => {
+registrationEnhancedRouter.get("/parse-resume/status", (_req, res) => {
   res.json({
     success: true,
     data: {
       parsing_available: true,
-      supported_formats: ['pdf', 'jpg', 'jpeg', 'png'],
-      message: 'PDF text extraction available. Images use client-side OCR.',
+      supported_formats: ["pdf", "jpg", "jpeg", "png"],
+      message: "PDF text extraction available. Images use client-side OCR.",
     },
   });
 });

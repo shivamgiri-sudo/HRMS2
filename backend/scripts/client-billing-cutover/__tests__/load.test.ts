@@ -15,7 +15,9 @@ import {
   type StagingCreditNoteRow,
 } from "../load.js";
 
-function baseInvoiceRow(overrides: Partial<StagingInvoiceRow> = {}): StagingInvoiceRow {
+function baseInvoiceRow(
+  overrides: Partial<StagingInvoiceRow> = {},
+): StagingInvoiceRow {
   return {
     id: 1,
     src_id: 5001,
@@ -42,7 +44,9 @@ function baseInvoiceRow(overrides: Partial<StagingInvoiceRow> = {}): StagingInvo
   };
 }
 
-function baseCreditNoteRow(overrides: Partial<StagingCreditNoteRow> = {}): StagingCreditNoteRow {
+function baseCreditNoteRow(
+  overrides: Partial<StagingCreditNoteRow> = {},
+): StagingCreditNoteRow {
   return {
     id: 1,
     src_id: 6001,
@@ -167,11 +171,16 @@ describe("loadValidatedRows — invoices", () => {
     const loadDb = mockLoadDb([]);
     const result = await loadValidatedRows(
       loadDb,
-      { invoiceRows: [baseInvoiceRow({ validation_status: "error" })], creditNoteRows: [] },
+      {
+        invoiceRows: [baseInvoiceRow({ validation_status: "error" })],
+        creditNoteRows: [],
+      },
       { createdBy: "user-migration-1" },
     );
-    expect(result.invoices).toEqual([{ legacyId: 5001, outcome: "skipped_not_valid" }]);
-    expect((loadDb.getConnection as any)).not.toHaveBeenCalled();
+    expect(result.invoices).toEqual([
+      { legacyId: 5001, outcome: "skipped_not_valid" },
+    ]);
+    expect(loadDb.getConnection as any).not.toHaveBeenCalled();
   });
 
   it("re-running against an already-loaded legacy_id is idempotent: header UPDATE branch runs (affectedRows=2), no duplicate line inserted", async () => {
@@ -188,7 +197,11 @@ describe("loadValidatedRows — invoices", () => {
     );
 
     expect(result.invoices).toEqual([
-      { legacyId: 5001, outcome: "already_loaded", targetId: "invoice-target-uuid-1" },
+      {
+        legacyId: 5001,
+        outcome: "already_loaded",
+        targetId: "invoice-target-uuid-1",
+      },
     ]);
     // Only the header UPSERT ran — no line-count check, no line insert.
     expect(conn.execute).toHaveBeenCalledTimes(1);
@@ -213,7 +226,10 @@ describe("loadValidatedRows — invoices", () => {
     const result = await loadValidatedRows(
       loadDb,
       {
-        invoiceRows: [baseInvoiceRow({ src_id: 5001 }), baseInvoiceRow({ src_id: 5002, target_id: "invoice-target-uuid-2" })],
+        invoiceRows: [
+          baseInvoiceRow({ src_id: 5001 }),
+          baseInvoiceRow({ src_id: 5002, target_id: "invoice-target-uuid-2" }),
+        ],
         creditNoteRows: [],
       },
       { createdBy: "user-migration-1" },
@@ -236,12 +252,15 @@ describe("loadValidatedRows — invoices", () => {
     const loadDb = mockLoadDb([]);
     const result = await loadValidatedRows(
       loadDb,
-      { invoiceRows: [baseInvoiceRow({ target_cost_centre_id: null })], creditNoteRows: [] },
+      {
+        invoiceRows: [baseInvoiceRow({ target_cost_centre_id: null })],
+        creditNoteRows: [],
+      },
       { createdBy: "user-migration-1" },
     );
     expect(result.invoices[0].outcome).toBe("failed");
     expect(result.invoices[0].error).toMatch(/target_cost_centre_id missing/);
-    expect((loadDb.getConnection as any)).not.toHaveBeenCalled();
+    expect(loadDb.getConnection as any).not.toHaveBeenCalled();
   });
 });
 
@@ -261,7 +280,11 @@ describe("loadValidatedRows — credit notes", () => {
     );
 
     expect(result.creditNotes).toEqual([
-      { legacyId: 6001, outcome: "loaded", targetId: "credit-note-target-uuid-1" },
+      {
+        legacyId: 6001,
+        outcome: "loaded",
+        targetId: "credit-note-target-uuid-1",
+      },
     ]);
     const headerParams = conn.execute.mock.calls[0][1] as unknown[];
     expect(headerParams[0]).toBe("credit-note-target-uuid-1"); // id
@@ -273,21 +296,29 @@ describe("loadValidatedRows — credit notes", () => {
     const loadDb = mockLoadDb([]);
     const result = await loadValidatedRows(
       loadDb,
-      { invoiceRows: [], creditNoteRows: [baseCreditNoteRow({ validation_status: "error" })] },
+      {
+        invoiceRows: [],
+        creditNoteRows: [baseCreditNoteRow({ validation_status: "error" })],
+      },
       { createdBy: "user-migration-1" },
     );
-    expect(result.creditNotes).toEqual([{ legacyId: 6001, outcome: "skipped_not_valid" }]);
+    expect(result.creditNotes).toEqual([
+      { legacyId: 6001, outcome: "skipped_not_valid" },
+    ]);
   });
 
   it("fails loudly if a 'valid' credit note somehow has no target_invoice_id", async () => {
     const loadDb = mockLoadDb([]);
     const result = await loadValidatedRows(
       loadDb,
-      { invoiceRows: [], creditNoteRows: [baseCreditNoteRow({ target_invoice_id: null })] },
+      {
+        invoiceRows: [],
+        creditNoteRows: [baseCreditNoteRow({ target_invoice_id: null })],
+      },
       { createdBy: "user-migration-1" },
     );
     expect(result.creditNotes[0].outcome).toBe("failed");
-    expect((loadDb.getConnection as any)).not.toHaveBeenCalled();
+    expect(loadDb.getConnection as any).not.toHaveBeenCalled();
   });
 
   it("invoices load before credit notes (FK ordering) even when both are passed together", async () => {
@@ -315,7 +346,10 @@ describe("loadValidatedRows — credit notes", () => {
 
     await loadValidatedRows(
       loadDb,
-      { invoiceRows: [baseInvoiceRow()], creditNoteRows: [baseCreditNoteRow()] },
+      {
+        invoiceRows: [baseInvoiceRow()],
+        creditNoteRows: [baseCreditNoteRow()],
+      },
       { createdBy: "user-migration-1" },
     );
 

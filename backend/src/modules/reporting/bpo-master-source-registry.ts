@@ -36,7 +36,10 @@ let snapshotPromise: Promise<SchemaSnapshot> | null = null;
 function parseTableRef(tableRef: string) {
   const separator = tableRef.indexOf(".");
   if (separator < 0) return { schema: "__CURRENT__", table: tableRef };
-  return { schema: tableRef.slice(0, separator), table: tableRef.slice(separator + 1) };
+  return {
+    schema: tableRef.slice(0, separator),
+    table: tableRef.slice(separator + 1),
+  };
 }
 
 function key(schema: string, table: string) {
@@ -60,17 +63,29 @@ function quoteIdentifier(value: string) {
  * column is handled without anyone remembering this.
  */
 const BINARY_DATA_TYPES = new Set([
-  "binary", "varbinary", "blob", "tinyblob", "mediumblob", "longblob",
+  "binary",
+  "varbinary",
+  "blob",
+  "tinyblob",
+  "mediumblob",
+  "longblob",
 ]);
 
-export function isBinarySourceType(dataType: string | null | undefined): boolean {
+export function isBinarySourceType(
+  dataType: string | null | undefined,
+): boolean {
   return BINARY_DATA_TYPES.has(String(dataType ?? "").toLowerCase());
 }
 
 /** Reference a source column in SQL, CASTing binary types so they survive JSON. */
-export function sourceColumnReference(alias: string, column: SourceColumn): string {
+export function sourceColumnReference(
+  alias: string,
+  column: SourceColumn,
+): string {
   const reference = `${alias}.${quoteIdentifier(column.column)}`;
-  return isBinarySourceType(column.dataType) ? `CAST(${reference} AS CHAR)` : reference;
+  return isBinarySourceType(column.dataType)
+    ? `CAST(${reference} AS CHAR)`
+    : reference;
 }
 
 /**
@@ -94,7 +109,10 @@ export function sourceColumnReference(alias: string, column: SourceColumn): stri
  * Both casings are accepted rather than just switching to uppercase: the label case depends on the
  * server, and hardcoding either one moves the breakage to the other configuration.
  */
-function pick(row: Record<string, unknown>, column: string): string | undefined {
+function pick(
+  row: Record<string, unknown>,
+  column: string,
+): string | undefined {
   const value = row[column] ?? row[column.toUpperCase()];
   return value === null || value === undefined ? undefined : String(value);
 }
@@ -106,33 +124,36 @@ async function loadSnapshot(): Promise<SchemaSnapshot> {
     if (now - current.loadedAt < CACHE_TTL_MS) return current;
   }
 
-  snapshotPromise = db.execute<SchemaColumnRow[]>(
-    `SELECT DATABASE() AS current_schema, table_schema, table_name, column_name, data_type
+  snapshotPromise = db
+    .execute<SchemaColumnRow[]>(
+      `SELECT DATABASE() AS current_schema, table_schema, table_name, column_name, data_type
        FROM information_schema.columns
       WHERE table_schema IN (DATABASE(), 'db_audit')
-      ORDER BY CASE WHEN table_schema = DATABASE() THEN 0 ELSE 1 END, table_schema, table_name, ordinal_position`
-  ).then(([rows]) => {
-    const currentSchema = String(rows[0]?.current_schema ?? "mas_hrms");
-    const tables = new Map<string, Map<string, SourceColumn>>();
-    for (const row of rows) {
-      const tableSchema = pick(row, "table_schema");
-      const tableName = pick(row, "table_name");
-      const columnName = pick(row, "column_name");
-      if (!tableSchema || !tableName || !columnName) continue;
-      const tableKey = key(tableSchema, tableName);
-      if (!tables.has(tableKey)) tables.set(tableKey, new Map());
-      tables.get(tableKey)!.set(columnName.toLowerCase(), {
-        schema: tableSchema,
-        table: tableName,
-        column: columnName,
-        dataType: pick(row, "data_type") ?? "",
-      });
-    }
-    return { loadedAt: Date.now(), currentSchema, tables };
-  }).catch((error) => {
-    snapshotPromise = null;
-    throw error;
-  });
+      ORDER BY CASE WHEN table_schema = DATABASE() THEN 0 ELSE 1 END, table_schema, table_name, ordinal_position`,
+    )
+    .then(([rows]) => {
+      const currentSchema = String(rows[0]?.current_schema ?? "mas_hrms");
+      const tables = new Map<string, Map<string, SourceColumn>>();
+      for (const row of rows) {
+        const tableSchema = pick(row, "table_schema");
+        const tableName = pick(row, "table_name");
+        const columnName = pick(row, "column_name");
+        if (!tableSchema || !tableName || !columnName) continue;
+        const tableKey = key(tableSchema, tableName);
+        if (!tables.has(tableKey)) tables.set(tableKey, new Map());
+        tables.get(tableKey)!.set(columnName.toLowerCase(), {
+          schema: tableSchema,
+          table: tableName,
+          column: columnName,
+          dataType: pick(row, "data_type") ?? "",
+        });
+      }
+      return { loadedAt: Date.now(), currentSchema, tables };
+    })
+    .catch((error) => {
+      snapshotPromise = null;
+      throw error;
+    });
 
   return snapshotPromise;
 }
@@ -142,14 +163,24 @@ async function resolveTable(tableRef: string) {
   const parsed = parseTableRef(tableRef);
   if (parsed.schema !== "__CURRENT__") {
     const columns = snapshot.tables.get(key(parsed.schema, parsed.table));
-    return columns ? { schema: parsed.schema, table: parsed.table, columns } : null;
+    return columns
+      ? { schema: parsed.schema, table: parsed.table, columns }
+      : null;
   }
 
-  const currentColumns = snapshot.tables.get(key(snapshot.currentSchema, parsed.table));
-  if (currentColumns) return { schema: snapshot.currentSchema, table: parsed.table, columns: currentColumns };
+  const currentColumns = snapshot.tables.get(
+    key(snapshot.currentSchema, parsed.table),
+  );
+  if (currentColumns)
+    return {
+      schema: snapshot.currentSchema,
+      table: parsed.table,
+      columns: currentColumns,
+    };
 
   const auditColumns = snapshot.tables.get(key("db_audit", parsed.table));
-  if (auditColumns) return { schema: "db_audit", table: parsed.table, columns: auditColumns };
+  if (auditColumns)
+    return { schema: "db_audit", table: parsed.table, columns: auditColumns };
   return null;
 }
 
@@ -158,15 +189,23 @@ export async function sourceTableExists(tableRef: string) {
 }
 
 export async function sourceColumns(tableRef: string) {
-  return (await resolveTable(tableRef))?.columns ?? new Map<string, SourceColumn>();
+  return (
+    (await resolveTable(tableRef))?.columns ?? new Map<string, SourceColumn>()
+  );
 }
 
-export async function sourceHasColumns(tableRef: string, requiredColumns: string[]) {
+export async function sourceHasColumns(
+  tableRef: string,
+  requiredColumns: string[],
+) {
   const columns = await sourceColumns(tableRef);
   return requiredColumns.every((column) => columns.has(column.toLowerCase()));
 }
 
-export async function firstSourceColumn(tableRef: string, candidates: string[]) {
+export async function firstSourceColumn(
+  tableRef: string,
+  candidates: string[],
+) {
   const columns = await sourceColumns(tableRef);
   for (const candidate of candidates) {
     const column = columns.get(candidate.toLowerCase());
@@ -185,7 +224,7 @@ export async function sourceExpression(
   alias: string,
   tableRef: string,
   candidates: string[],
-  options: { transformation?: string; fallback?: string } = {}
+  options: { transformation?: string; fallback?: string } = {},
 ) {
   const column = await firstSourceColumn(tableRef, candidates);
   if (!column) {
@@ -207,7 +246,8 @@ export async function sourceExpression(
       sourceTable: column.table,
       sourceColumn: column.column,
       transformation: options.transformation ?? "DIRECT",
-      confidence: (options.transformation ? "DERIVED" : "EXACT") as "EXACT" | "DERIVED",
+      confidence: (options.transformation ? "DERIVED" : "EXACT") as
+        "EXACT" | "DERIVED",
     },
   };
 }

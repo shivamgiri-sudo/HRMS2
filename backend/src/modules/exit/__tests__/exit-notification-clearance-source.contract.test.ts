@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
+const read = (path: string) =>
+  readFileSync(resolve(process.cwd(), path), "utf8");
 
 /**
  * notifyLastWorkingDayApproaching's own doc comment explicitly says it wants to report
@@ -19,11 +20,18 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8"
  */
 describe("exit.notifications: last-working-day clearance count reads the live table", () => {
   const src = read("src/modules/exit/exit.notifications.ts");
-  const start = src.indexOf("export async function notifyLastWorkingDayApproaching");
-  const fn = src.slice(start, src.indexOf("\nexport async function", start + 1));
+  const start = src.indexOf(
+    "export async function notifyLastWorkingDayApproaching",
+  );
+  const fn = src.slice(
+    start,
+    src.indexOf("\nexport async function", start + 1),
+  );
 
   it("function exists and is found", () => {
-    expect(start, "notifyLastWorkingDayApproaching not found").toBeGreaterThan(-1);
+    expect(start, "notifyLastWorkingDayApproaching not found").toBeGreaterThan(
+      -1,
+    );
   });
 
   it("reads exit_clearance_task, not the empty exit_clearance_checklist", () => {

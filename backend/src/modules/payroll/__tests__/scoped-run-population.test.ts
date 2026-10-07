@@ -21,7 +21,10 @@ import { describe, expect, it } from "vitest";
 import { runEmployeeScopeSql } from "../payroll-governance.service.js";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const calculator = fs.readFileSync(path.resolve(DIR, "../payrollCalculate.service.ts"), "utf8");
+const calculator = fs.readFileSync(
+  path.resolve(DIR, "../payrollCalculate.service.ts"),
+  "utf8",
+);
 
 /** The clause both modules must carry, character for character. */
 const SCOPE_CLAUSE =
@@ -85,7 +88,9 @@ describe("the calculator pays exactly the population readiness checked", () => {
 describe("legacy company runs are untouched", () => {
   it("still filters by branch name", () => {
     const { where, params } = runEmployeeScopeSql(companyRun);
-    expect(where).toContain("e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)");
+    expect(where).toContain(
+      "e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)",
+    );
     expect(where).not.toContain("salary_prep_run_scope");
     expect(params).toContain("NOIDA");
   });
@@ -104,7 +109,11 @@ describe("legacy company runs are untouched", () => {
 
   it("applies no scope filter at all to a run with neither filter set", () => {
     // All 104 production runs are in this state: company-wide, every filter NULL.
-    const { where } = runEmployeeScopeSql({ id: "r", run_month: "2026-08", scope_kind: "company" });
+    const { where } = runEmployeeScopeSql({
+      id: "r",
+      run_month: "2026-08",
+      scope_kind: "company",
+    });
     expect(where).not.toContain("salary_prep_run_scope");
     expect(where).not.toContain("branch_master WHERE branch_name");
   });

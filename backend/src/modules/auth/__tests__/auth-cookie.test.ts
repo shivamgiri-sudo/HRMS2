@@ -84,7 +84,9 @@ describe("Auth Cookie Security", () => {
 
     it("should allow custom maxAge", () => {
       const customMaxAge = 60 * 1000; // 1 minute
-      setRefreshTokenCookie(mockRes as Response, "test-token", { maxAgeMs: customMaxAge });
+      setRefreshTokenCookie(mockRes as Response, "test-token", {
+        maxAgeMs: customMaxAge,
+      });
 
       const [_name, _value, options] = cookieArgs[0];
       expect(options.maxAge).toBe(customMaxAge);

@@ -1,23 +1,23 @@
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
-import type { ExecScope, DimensionScope } from './executors/types.js';
-import { demoRoleForUserId } from '../../shared/demoAuth.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import type { ExecScope, DimensionScope } from "./executors/types.js";
+import { demoRoleForUserId } from "../../shared/demoAuth.js";
 
-const NO_BRANCH_SCOPE_SENTINEL = '__NO_BRANCH_SCOPE__';
+const NO_BRANCH_SCOPE_SENTINEL = "__NO_BRANCH_SCOPE__";
 
 export interface BranchScope {
   isSuperAdmin: boolean;
-  branchIds: string[];  // empty = all only for super admin or explicit all-scope users
+  branchIds: string[]; // empty = all only for super admin or explicit all-scope users
 }
 
-const SUPER_ADMIN_ROLES = ['super_admin', 'admin', 'ceo'];
+const SUPER_ADMIN_ROLES = ["super_admin", "admin", "ceo"];
 
 export async function resolveBranchScope(userId: string): Promise<BranchScope> {
   const [roleRows] = await db.execute<RowDataPacket[]>(
     `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
-    [userId]
+    [userId],
   );
-  const dbRoles = (roleRows as { role_key: string }[]).map(r => r.role_key);
+  const dbRoles = (roleRows as { role_key: string }[]).map((r) => r.role_key);
 
   // Same demo-identity gap as resolveFullScope below: these ids exist in DEMO_TOKEN_MAP but
   // in neither user_roles nor employees, so without this the branch scope falls through to
@@ -27,7 +27,7 @@ export async function resolveBranchScope(userId: string): Promise<BranchScope> {
   const demoRole = demoRoleForUserId(userId);
   const roles = demoRole ? [...dbRoles, demoRole] : dbRoles;
 
-  if (roles.some(r => SUPER_ADMIN_ROLES.includes(r))) {
+  if (roles.some((r) => SUPER_ADMIN_ROLES.includes(r))) {
     return { isSuperAdmin: true, branchIds: [] };
   }
 
@@ -35,22 +35,25 @@ export async function resolveBranchScope(userId: string): Promise<BranchScope> {
     `SELECT scope_type, branch_id
        FROM user_assignment_scope
       WHERE user_id = ? AND active_status = 1`,
-    [userId]
+    [userId],
   );
-  const scopes = scopeRows as { scope_type: string; branch_id: string | null }[];
+  const scopes = scopeRows as {
+    scope_type: string;
+    branch_id: string | null;
+  }[];
 
-  if (scopes.some(s => s.scope_type === 'all')) {
+  if (scopes.some((s) => s.scope_type === "all")) {
     return { isSuperAdmin: false, branchIds: [] };
   }
 
   const branchIds = scopes
-    .map(s => s.branch_id)
+    .map((s) => s.branch_id)
     .filter((id): id is string => !!id);
 
   if (branchIds.length === 0) {
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-      [userId]
+      [userId],
     );
     const emp = empRows as { branch_id: string | null }[];
     if (emp[0]?.branch_id) branchIds.push(emp[0].branch_id);
@@ -68,27 +71,31 @@ export async function resolveBranchScope(userId: string): Promise<BranchScope> {
 // ---------------------------------------------------------------------------
 
 const ROLE_ALIASES: Record<string, string[]> = {
-  finance_head:    ['finance'],
-  accounts_head:   ['finance'],
-  payroll_head:    ['payroll'],
-  payroll_branch:  ['payroll'],
-  payroll_hr:      ['payroll'],
-  recruitment_hr:  ['recruiter'],
-  quality_analyst: ['quality'],
-  qa:              ['quality'],
-  branch_hr:       ['hr'],
-  hr_branch:       ['hr'],
-  team_leader:     ['manager'],
-  tl:              ['manager'],
+  finance_head: ["finance"],
+  accounts_head: ["finance"],
+  payroll_head: ["payroll"],
+  payroll_branch: ["payroll"],
+  payroll_hr: ["payroll"],
+  recruitment_hr: ["recruiter"],
+  quality_analyst: ["quality"],
+  qa: ["quality"],
+  branch_hr: ["hr"],
+  hr_branch: ["hr"],
+  team_leader: ["manager"],
+  tl: ["manager"],
 };
 
 function normRoles(raw: string[]): string[] {
-  const flat = [...raw, ...raw.flatMap(r => ROLE_ALIASES[r] ?? [])];
+  const flat = [...raw, ...raw.flatMap((r) => ROLE_ALIASES[r] ?? [])];
   return [...new Set(flat)];
 }
 
-function dimAll(): DimensionScope   { return { mode: 'all',        ids: [] }; }
-function dimRestricted(ids: string[]): DimensionScope { return { mode: 'restricted', ids }; }
+function dimAll(): DimensionScope {
+  return { mode: "all", ids: [] };
+}
+function dimRestricted(ids: string[]): DimensionScope {
+  return { mode: "restricted", ids };
+}
 
 /**
  * Resolve the complete multi-dimensional scope for a user.
@@ -99,9 +106,9 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
   // 1. Fetch roles
   const [roleRows] = await db.execute<RowDataPacket[]>(
     `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
-    [userId]
+    [userId],
   );
-  const rawRoles = (roleRows as { role_key: string }[]).map(r => r.role_key);
+  const rawRoles = (roleRows as { role_key: string }[]).map((r) => r.role_key);
 
   // A demo-bypass identity has no row in user_roles and none in employees, so the query
   // above returns nothing and this function would conclude "no roles, no scope" — which
@@ -112,15 +119,15 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
   // demoRoleForUserId returns null unless INTERNAL_DEMO_BYPASS=true and NODE_ENV is not
   // production — the identical gate requireAuth applies — so production is unaffected.
   const demoRole = demoRoleForUserId(userId);
-  const roles    = normRoles(demoRole ? [...rawRoles, demoRole] : rawRoles);
-  const isSuperAdmin = roles.some(r => SUPER_ADMIN_ROLES.includes(r));
+  const roles = normRoles(demoRole ? [...rawRoles, demoRole] : rawRoles);
+  const isSuperAdmin = roles.some((r) => SUPER_ADMIN_ROLES.includes(r));
 
   // 2. Fetch employee record for self-service and fallback branch
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code, branch_id, process_id, department_id, cost_centre_id,
             reporting_manager_id, manager_id
        FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-    [userId]
+    [userId],
   );
   const emp = (empRows as any[])[0] ?? null;
 
@@ -131,7 +138,7 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
       `SELECT scope_type, branch_id, process_id, department_id, cost_centre_id
          FROM user_assignment_scope
         WHERE user_id = ? AND active_status = 1`,
-      [userId]
+      [userId],
     );
     scopeRows = rows;
   } catch {
@@ -140,30 +147,29 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
       `SELECT scope_type, branch_id, process_id, department_id
          FROM user_assignment_scope
         WHERE user_id = ? AND active_status = 1`,
-      [userId]
+      [userId],
     );
     scopeRows = rows;
   }
   const scopes = scopeRows as {
-    scope_type:     string;
-    branch_id:      string | null;
-    process_id:     string | null;
-    department_id:  string | null;
+    scope_type: string;
+    branch_id: string | null;
+    process_id: string | null;
+    department_id: string | null;
     cost_centre_id: string | null;
   }[];
 
-  const hasAllScope = isSuperAdmin || scopes.some(s => s.scope_type === 'all');
+  const hasAllScope =
+    isSuperAdmin || scopes.some((s) => s.scope_type === "all");
 
   // 4. Build dimension scopes
   function buildDim(
-    field: 'branch_id' | 'process_id' | 'department_id' | 'cost_centre_id',
-    fallback?: string | null
+    field: "branch_id" | "process_id" | "department_id" | "cost_centre_id",
+    fallback?: string | null,
   ): DimensionScope {
     if (hasAllScope) return dimAll();
 
-    const ids = scopes
-      .map(s => s[field])
-      .filter((id): id is string => !!id);
+    const ids = scopes.map((s) => s[field]).filter((id): id is string => !!id);
 
     if (ids.length > 0) return dimRestricted(ids);
 
@@ -189,36 +195,57 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
     return dimRestricted([NO_BRANCH_SCOPE_SENTINEL]);
   }
 
-  const branchScope     = buildDim('branch_id',      emp?.branch_id);
-  const processScope    = buildDim('process_id',     emp?.process_id);
-  const departmentScope = hasAllScope ? dimAll() : (
-    scopes.some(s => s.department_id) ? dimRestricted(
-      scopes.map(s => s.department_id).filter((id): id is string => !!id)
-    ) : dimAll()
-  );
-  const costCentreScope = hasAllScope ? dimAll() : (
-    scopes.some(s => s.cost_centre_id) ? dimRestricted(
-      scopes.map(s => s.cost_centre_id).filter((id): id is string => !!id)
-    ) : dimAll()
-  );
+  const branchScope = buildDim("branch_id", emp?.branch_id);
+  const processScope = buildDim("process_id", emp?.process_id);
+  const departmentScope = hasAllScope
+    ? dimAll()
+    : scopes.some((s) => s.department_id)
+      ? dimRestricted(
+          scopes.map((s) => s.department_id).filter((id): id is string => !!id),
+        )
+      : dimAll();
+  const costCentreScope = hasAllScope
+    ? dimAll()
+    : scopes.some((s) => s.cost_centre_id)
+      ? dimRestricted(
+          scopes
+            .map((s) => s.cost_centre_id)
+            .filter((id): id is string => !!id),
+        )
+      : dimAll();
 
   // 5. Determine capabilities
-  const SENSITIVE_ROLES = ['super_admin', 'admin', 'payroll', 'payroll_head', 'hr', 'ceo', 'coo'];
-  const EXPORT_SENSITIVE_ROLES = ['super_admin', 'payroll', 'payroll_head', 'ceo'];
+  const SENSITIVE_ROLES = [
+    "super_admin",
+    "admin",
+    "payroll",
+    "payroll_head",
+    "hr",
+    "ceo",
+    "coo",
+  ];
+  const EXPORT_SENSITIVE_ROLES = [
+    "super_admin",
+    "payroll",
+    "payroll_head",
+    "ceo",
+  ];
 
   return {
-    companyId:              '1', // single-tenant; extend when multi-tenant
+    companyId: "1", // single-tenant; extend when multi-tenant
     isSuperAdmin,
     branchScope,
     processScope,
     departmentScope,
     costCentreScope,
-    managerEmployeeId:      emp ? String(emp.id) : undefined,
-    selfEmployeeId:         emp ? String(emp.id) : undefined,
+    managerEmployeeId: emp ? String(emp.id) : undefined,
+    selfEmployeeId: emp ? String(emp.id) : undefined,
     subordinateEmployeeIds: [], // populated lazily by team-report executors that need it
-    canViewAllEmployees:    hasAllScope,
-    canViewSensitiveFields: roles.some(r => SENSITIVE_ROLES.includes(r)),
-    canExportSensitiveReports: roles.some(r => EXPORT_SENSITIVE_ROLES.includes(r)),
+    canViewAllEmployees: hasAllScope,
+    canViewSensitiveFields: roles.some((r) => SENSITIVE_ROLES.includes(r)),
+    canExportSensitiveReports: roles.some((r) =>
+      EXPORT_SENSITIVE_ROLES.includes(r),
+    ),
     roles,
   };
 }

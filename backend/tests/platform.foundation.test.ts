@@ -16,7 +16,10 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   },
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+  pingDb: vi.fn(),
+}));
 
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
@@ -25,7 +28,8 @@ import { db } from "../src/db/mysql.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
-const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+const JWT_SECRET =
+  process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
 
 /**
  * A fresh subject for every authAs() call.
@@ -77,12 +81,14 @@ function authAs(
     const text = String(sql);
     // Auth queries resolve first so a test's routes can be as broad as it likes
     // without accidentally answering the role lookup.
-    if (/FROM user_roles/i.test(text)) return [roles.map((r) => ({ role_key: r })), []];
+    if (/FROM user_roles/i.test(text))
+      return [roles.map((r) => ({ role_key: r })), []];
     if (/user_assignment_scope|FROM auth_user/i.test(text)) return [[], []];
     for (const [pattern, rows] of routes) {
       if (pattern.test(text)) return [rows, []];
     }
-    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text)) return [{ affectedRows: 1 }, []];
+    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text))
+      return [{ affectedRows: 1 }, []];
     return [[], []];
   });
   return bearer(exactSubject ? userId : `${userId}-${++subjectCounter}`);
@@ -98,7 +104,11 @@ beforeEach(() => {
 
 describe("GET /api/org/branches — list branches", () => {
   it("returns 200 with branch list for authenticated user", async () => {
-    const auth = authAs("u-1", ["admin"], [[/branch/i, [{ id: "b-1", branch_name: "Mumbai", active_status: 1 }]]]);
+    const auth = authAs(
+      "u-1",
+      ["admin"],
+      [[/branch/i, [{ id: "b-1", branch_name: "Mumbai", active_status: 1 }]]],
+    );
     const r = await request(app).get("/api/org/branches").set(auth);
     expect(r.status).toBe(200);
     expect(Array.isArray(r.body.data)).toBe(true);
@@ -113,14 +123,27 @@ describe("GET /api/org/branches — list branches", () => {
 describe("POST /api/org/branches — create branch", () => {
   it("returns 403 for employee role", async () => {
     const auth = authAs("u-emp", ["employee"]);
-    const r = await request(app).post("/api/org/branches").set(auth)
+    const r = await request(app)
+      .post("/api/org/branches")
+      .set(auth)
       .send({ branch_code: "MUM", branch_name: "Mumbai" });
     expect(r.status).toBe(403);
   });
 
   it("creates branch for admin", async () => {
-    const auth = authAs("u-admin", ["admin"], [[/branch/i, [{ id: "b-new", branch_code: "MUM", branch_name: "Mumbai" }]]]);
-    const r = await request(app).post("/api/org/branches").set(auth)
+    const auth = authAs(
+      "u-admin",
+      ["admin"],
+      [
+        [
+          /branch/i,
+          [{ id: "b-new", branch_code: "MUM", branch_name: "Mumbai" }],
+        ],
+      ],
+    );
+    const r = await request(app)
+      .post("/api/org/branches")
+      .set(auth)
       .send({ branch_code: "MUM", branch_name: "Mumbai" });
     expect(r.status).toBe(201);
   });
@@ -128,7 +151,11 @@ describe("POST /api/org/branches — create branch", () => {
 
 describe("GET /api/org/grade-bands — grade band list", () => {
   it("returns 200 for authenticated user", async () => {
-    const auth = authAs("u-1", ["admin"], [[/grade/i, [{ id: "g-1", grade_code: "A", grade_name: "Grade A" }]]]);
+    const auth = authAs(
+      "u-1",
+      ["admin"],
+      [[/grade/i, [{ id: "g-1", grade_code: "A", grade_name: "Grade A" }]]],
+    );
     const r = await request(app).get("/api/org/grade-bands").set(auth);
     expect(r.status).toBe(200);
   });
@@ -138,7 +165,11 @@ describe("GET /api/org/grade-bands — grade band list", () => {
 
 describe("GET /api/workflow — list workflows", () => {
   it("returns 200 for admin", async () => {
-    const auth = authAs("u-admin", ["admin"], [[/workflow/i, [{ id: "w-1", workflow_code: "LEAVE_APPROVAL" }]]]);
+    const auth = authAs(
+      "u-admin",
+      ["admin"],
+      [[/workflow/i, [{ id: "w-1", workflow_code: "LEAVE_APPROVAL" }]]],
+    );
     const r = await request(app).get("/api/workflow").set(auth);
     expect(r.status).toBe(200);
   });
@@ -153,22 +184,45 @@ describe("GET /api/workflow — list workflows", () => {
 describe("POST /api/workflow/requests — create approval request", () => {
   it("returns 400 when required fields missing", async () => {
     const auth = authAs("u-1", ["admin"]);
-    const r = await request(app).post("/api/workflow/requests").set(auth)
+    const r = await request(app)
+      .post("/api/workflow/requests")
+      .set(auth)
       .send({ workflow_code: "LEAVE_APPROVAL" }); // missing entity fields
     expect(r.status).toBe(400);
   });
 
   it("creates request for authenticated user", async () => {
-    const auth = authAs("u-1", ["admin"], [
-      [/approval_request|workflow_request/i, [{
-        id: "r-1", workflow_id: "w-1", module_key: "LEAVE",
-        entity_type: "leave_request", entity_id: "lr-1",
-        current_step: 1, status: "pending", requested_by: "u-1",
-      }]],
-      [/workflow/i, [{ id: "w-1", workflow_code: "LEAVE_APPROVAL" }]],
-    ]);
-    const r = await request(app).post("/api/workflow/requests").set(auth)
-      .send({ workflow_code: "LEAVE_APPROVAL", module_key: "LEAVE", entity_type: "leave_request", entity_id: "lr-1" });
+    const auth = authAs(
+      "u-1",
+      ["admin"],
+      [
+        [
+          /approval_request|workflow_request/i,
+          [
+            {
+              id: "r-1",
+              workflow_id: "w-1",
+              module_key: "LEAVE",
+              entity_type: "leave_request",
+              entity_id: "lr-1",
+              current_step: 1,
+              status: "pending",
+              requested_by: "u-1",
+            },
+          ],
+        ],
+        [/workflow/i, [{ id: "w-1", workflow_code: "LEAVE_APPROVAL" }]],
+      ],
+    );
+    const r = await request(app)
+      .post("/api/workflow/requests")
+      .set(auth)
+      .send({
+        workflow_code: "LEAVE_APPROVAL",
+        module_key: "LEAVE",
+        entity_type: "leave_request",
+        entity_id: "lr-1",
+      });
     expect(r.status).toBe(201);
     expect(r.body.data.status).toBe("pending");
   });
@@ -177,19 +231,36 @@ describe("POST /api/workflow/requests — create approval request", () => {
 describe("POST /api/workflow/requests/:id/act", () => {
   it("returns 400 for invalid action", async () => {
     const auth = authAs("u-manager", ["manager"]);
-    const r = await request(app).post("/api/workflow/requests/r-1/act").set(auth)
+    const r = await request(app)
+      .post("/api/workflow/requests/r-1/act")
+      .set(auth)
       .send({ action: "invalidAction" });
     expect(r.status).toBe(400);
   });
 
   it("approves request and advances step", async () => {
-    const auth = authAs("u-tl", ["tl"], [
-      [/COUNT|total/i, [{ total: 1 }]],
-      [/approval_request|workflow_request|FROM request/i, [{
-        id: "r-1", workflow_id: "w-1", current_step: 1, status: "pending", requested_by: "u-requester",
-      }]],
-    ]);
-    const r = await request(app).post("/api/workflow/requests/r-1/act").set(auth)
+    const auth = authAs(
+      "u-tl",
+      ["tl"],
+      [
+        [/COUNT|total/i, [{ total: 1 }]],
+        [
+          /approval_request|workflow_request|FROM request/i,
+          [
+            {
+              id: "r-1",
+              workflow_id: "w-1",
+              current_step: 1,
+              status: "pending",
+              requested_by: "u-requester",
+            },
+          ],
+        ],
+      ],
+    );
+    const r = await request(app)
+      .post("/api/workflow/requests/r-1/act")
+      .set(auth)
       .send({ action: "approved", remarks: "Looks good" });
     expect(r.status).toBe(200);
   });
@@ -200,38 +271,51 @@ describe("POST /api/workflow/requests/:id/act", () => {
 describe("POST /api/access/roles/assign", () => {
   it("returns 403 for non-admin", async () => {
     const auth = authAs("u-hr", ["hr"]);
-    const r = await request(app).post("/api/access/roles/assign").set(auth)
+    const r = await request(app)
+      .post("/api/access/roles/assign")
+      .set(auth)
       .send({ user_id: "u-target", role_key: "tl" });
     expect(r.status).toBe(403);
   });
 
   it("returns 400 when fields missing", async () => {
     const auth = authAs("u-admin", ["admin"]);
-    const r = await request(app).post("/api/access/roles/assign").set(auth)
+    const r = await request(app)
+      .post("/api/access/roles/assign")
+      .set(auth)
       .send({ user_id: "u-target" }); // missing role_key
     expect(r.status).toBe(400);
   });
 
   it("assigns role and writes audit log for admin", async () => {
-    const auth = authAs("u-admin", ["admin"], [
-      [/role_catalog|role_master/i, [{ role_key: "tl" }]],
-      [/FROM auth_user|FROM users|active_status/i, [{ id: "u-target" }]],
-    ]);
-    const r = await request(app).post("/api/access/roles/assign").set(auth)
+    const auth = authAs(
+      "u-admin",
+      ["admin"],
+      [
+        [/role_catalog|role_master/i, [{ role_key: "tl" }]],
+        [/FROM auth_user|FROM users|active_status/i, [{ id: "u-target" }]],
+      ],
+    );
+    const r = await request(app)
+      .post("/api/access/roles/assign")
+      .set(auth)
       .send({ user_id: "u-target", role_key: "tl" });
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
     // Verify audit INSERT was called
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const auditCall = mockExecute.mock.calls.find(([sql]: any) =>
-      typeof sql === "string" && sql.includes("sensitive_action_log")
+    const auditCall = mockExecute.mock.calls.find(
+      ([sql]: any) =>
+        typeof sql === "string" && sql.includes("sensitive_action_log"),
     );
     expect(auditCall).toBeDefined();
   });
 
   it("prevents a normal admin from assigning super_admin", async () => {
     const auth = authAs("u-admin", ["admin"]);
-    const r = await request(app).post("/api/access/roles/assign").set(auth)
+    const r = await request(app)
+      .post("/api/access/roles/assign")
+      .set(auth)
       .send({ user_id: "u-target", role_key: "super_admin" });
     expect(r.status).toBe(403);
   });
@@ -240,12 +324,15 @@ describe("POST /api/access/roles/assign", () => {
 describe("POST /api/access/roles/revoke", () => {
   it("revokes role and writes audit log for admin", async () => {
     const auth = authAs("u-admin", ["admin"]);
-    const r = await request(app).post("/api/access/roles/revoke").set(auth)
+    const r = await request(app)
+      .post("/api/access/roles/revoke")
+      .set(auth)
       .send({ user_id: "u-target", role_key: "tl" });
     expect(r.status).toBe(200);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const auditCall = mockExecute.mock.calls.find(([sql]: any) =>
-      typeof sql === "string" && sql.includes("sensitive_action_log")
+    const auditCall = mockExecute.mock.calls.find(
+      ([sql]: any) =>
+        typeof sql === "string" && sql.includes("sensitive_action_log"),
     );
     expect(auditCall).toBeDefined();
   });
@@ -254,7 +341,9 @@ describe("POST /api/access/roles/revoke", () => {
     // The guard compares the authenticated id with the target id, so the caller
     // must actually BE user-1 for self-revocation to be what is under test.
     const auth = authAs("user-1", ["admin"], [], true);
-    const r = await request(app).post("/api/access/roles/revoke").set(auth)
+    const r = await request(app)
+      .post("/api/access/roles/revoke")
+      .set(auth)
       .send({ user_id: "user-1", role_key: "admin" });
     expect(r.status).toBe(400);
   });
@@ -286,15 +375,31 @@ describe("GET /api/access/audit-log", () => {
     const restricted = mockExecute.mock.calls.some(
       ([sql]: [unknown]) =>
         typeof sql === "string" &&
-        /module_key IN \('attendance','regularization','dispute','wfm'\)/.test(sql),
+        /module_key IN \('attendance','regularization','dispute','wfm'\)/.test(
+          sql,
+        ),
     );
     expect(restricted).toBe(true);
   });
 
   it("returns audit entries for admin", async () => {
-    const auth = authAs("u-admin", ["admin"], [[/audit/i, [
-      { id: "a-1", actor_user_id: "u-admin", action_type: "ROLE_ASSIGNED", module_key: "ACCESS_CONTROL" },
-    ]]]);
+    const auth = authAs(
+      "u-admin",
+      ["admin"],
+      [
+        [
+          /audit/i,
+          [
+            {
+              id: "a-1",
+              actor_user_id: "u-admin",
+              action_type: "ROLE_ASSIGNED",
+              module_key: "ACCESS_CONTROL",
+            },
+          ],
+        ],
+      ],
+    );
     const r = await request(app).get("/api/access/audit-log").set(auth);
     expect(r.status).toBe(200);
     expect(Array.isArray(r.body.data)).toBe(true);

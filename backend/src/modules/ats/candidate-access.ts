@@ -1,6 +1,9 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getUserRoleKeys, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
+import {
+  getUserRoleKeys,
+  getUserAssignmentScopes,
+} from "../../shared/scopeAccess.js";
 import { branchNameVariants } from "./ats-vocabulary.js";
 
 /**
@@ -25,7 +28,9 @@ export type CandidateScope = { sql: string; params: unknown[] };
 const WIDE_ROLES = ["super_admin", "admin", "hr", "manager", "ceo"];
 
 /** Resolve the actor's candidate row scope. `1=1` = all, `1=0` = none. */
-export async function resolveCandidateScope(userId: string): Promise<CandidateScope> {
+export async function resolveCandidateScope(
+  userId: string,
+): Promise<CandidateScope> {
   const roleKeys = await getUserRoleKeys(userId);
   if (roleKeys.some((r) => WIDE_ROLES.includes(r))) {
     return { sql: "1=1", params: [] };
@@ -33,10 +38,19 @@ export async function resolveCandidateScope(userId: string): Promise<CandidateSc
 
   const scopes = await getUserAssignmentScopes(userId, ["recruiter"]);
   if (scopes.length === 0) return { sql: "1=0", params: [] };
-  if (scopes.some((s) => s.scope_type === "all")) return { sql: "1=1", params: [] };
+  if (scopes.some((s) => s.scope_type === "all"))
+    return { sql: "1=1", params: [] };
 
-  const branchIds = [...new Set(scopes.filter((s) => s.branch_id).map((s) => s.branch_id as string))];
-  const processNames = [...new Set(scopes.filter((s) => s.process_id).map((s) => s.process_id as string))];
+  const branchIds = [
+    ...new Set(
+      scopes.filter((s) => s.branch_id).map((s) => s.branch_id as string),
+    ),
+  ];
+  const processNames = [
+    ...new Set(
+      scopes.filter((s) => s.process_id).map((s) => s.process_id as string),
+    ),
+  ];
 
   const sqlParts: string[] = [];
   const params: unknown[] = [];
@@ -46,22 +60,30 @@ export async function resolveCandidateScope(userId: string): Promise<CandidateSc
       `SELECT branch_name FROM branch_master WHERE id IN (${branchIds.map(() => "?").join(",")})`,
       branchIds,
     );
-    const branchNames = (bmRows as { branch_name: string }[]).map((r) => r.branch_name);
+    const branchNames = (bmRows as { branch_name: string }[]).map(
+      (r) => r.branch_name,
+    );
     // applied_for_branch is free text, and the same physical branch is recorded under
     // several spellings (e.g. 1,862 candidates as "Okaya Centre" rather than "NOIDA-2") —
     // see ats-vocabulary.ts. Matching only the canonical branch_master name silently
     // dropped every one of those candidates for a recruiter scoped to that branch.
     // branchNameVariants() only adds confirmed aliases, so this can only widen who a
     // scoped recruiter sees, never narrow it.
-    const expandedNames = [...new Set(branchNames.flatMap((n) => branchNameVariants(n)))];
+    const expandedNames = [
+      ...new Set(branchNames.flatMap((n) => branchNameVariants(n))),
+    ];
     if (expandedNames.length > 0) {
-      sqlParts.push(`applied_for_branch IN (${expandedNames.map(() => "?").join(",")})`);
+      sqlParts.push(
+        `applied_for_branch IN (${expandedNames.map(() => "?").join(",")})`,
+      );
       params.push(...expandedNames);
     }
   }
 
   if (processNames.length > 0) {
-    sqlParts.push(`applied_for_process IN (${processNames.map(() => "?").join(",")})`);
+    sqlParts.push(
+      `applied_for_process IN (${processNames.map(() => "?").join(",")})`,
+    );
     params.push(...processNames);
   }
 
@@ -75,7 +97,10 @@ export async function resolveCandidateScope(userId: string): Promise<CandidateSc
  * accidentally fetch the row first and check afterwards — the shape that leaks data through
  * error messages and timing.
  */
-export async function canAccessCandidate(userId: string, candidateId: string): Promise<boolean> {
+export async function canAccessCandidate(
+  userId: string,
+  candidateId: string,
+): Promise<boolean> {
   const scope = await resolveCandidateScope(userId);
   if (scope.sql === "1=0") return false;
 

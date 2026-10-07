@@ -1,7 +1,10 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 
 /**
@@ -12,7 +15,16 @@ import { requireRole } from "../../middleware/requireRole.js";
  * frozen on every invoice at creation time. Adding a new cost centre with a
  * new billing_client_name automatically surfaces it here with no manual sync.
  */
-const READ_ROLES = ["finance_head", "accounts_head", "super_admin", "ceo", "branch_head", "admin", "hr", "finance"] as const;
+const READ_ROLES = [
+  "finance_head",
+  "accounts_head",
+  "super_admin",
+  "ceo",
+  "branch_head",
+  "admin",
+  "hr",
+  "finance",
+] as const;
 
 export const financeClientsRouter = Router();
 

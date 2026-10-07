@@ -26,46 +26,74 @@ const OFFICIAL = "sofiya.sultan@teammas.co.in";
 
 describe("resolveEmailContact", () => {
   it("prefers a company official_email for third-party content", () => {
-    expect(resolveEmailContact({ email: PERSONAL, official_email: OFFICIAL }, true)).toBe(OFFICIAL);
+    expect(
+      resolveEmailContact({ email: PERSONAL, official_email: OFFICIAL }, true),
+    ).toBe(OFFICIAL);
   });
 
   it("leaves ordinary notifications on the normal address", () => {
     // Notifications about YOURSELF keep going where they always went. This is
     // deliberately not a blanket redirect.
-    expect(resolveEmailContact({ email: PERSONAL, official_email: OFFICIAL }, false)).toBe(PERSONAL);
-    expect(resolveEmailContact({ email: PERSONAL, official_email: OFFICIAL })).toBe(PERSONAL);
+    expect(
+      resolveEmailContact({ email: PERSONAL, official_email: OFFICIAL }, false),
+    ).toBe(PERSONAL);
+    expect(
+      resolveEmailContact({ email: PERSONAL, official_email: OFFICIAL }),
+    ).toBe(PERSONAL);
   });
 
   describe("never silences anyone — the property that makes this safe", () => {
     it("falls back when official_email is missing or blank", () => {
-      expect(resolveEmailContact({ email: PERSONAL, official_email: null }, true)).toBe(PERSONAL);
-      expect(resolveEmailContact({ email: PERSONAL, official_email: "   " }, true)).toBe(PERSONAL);
+      expect(
+        resolveEmailContact({ email: PERSONAL, official_email: null }, true),
+      ).toBe(PERSONAL);
+      expect(
+        resolveEmailContact({ email: PERSONAL, official_email: "   " }, true),
+      ).toBe(PERSONAL);
     });
 
     it("falls back when official_email is NOT a company domain", () => {
       // 519 employees have a gmail address sitting in the official_email column.
       // Preferring that would be a redirect to nowhere useful.
-      expect(resolveEmailContact({ email: PERSONAL, official_email: "someone@gmail.com" }, true))
-        .toBe(PERSONAL);
+      expect(
+        resolveEmailContact(
+          { email: PERSONAL, official_email: "someone@gmail.com" },
+          true,
+        ),
+      ).toBe(PERSONAL);
     });
 
     it("does not invent an address when there is none", () => {
-      expect(resolveEmailContact({ email: null, official_email: null }, true)).toBeNull();
+      expect(
+        resolveEmailContact({ email: null, official_email: null }, true),
+      ).toBeNull();
     });
 
     it("accepts company subdomains but not lookalike domains", () => {
-      expect(resolveEmailContact({ email: PERSONAL, official_email: "a@hr.teammas.in" }, true))
-        .toBe("a@hr.teammas.in");
+      expect(
+        resolveEmailContact(
+          { email: PERSONAL, official_email: "a@hr.teammas.in" },
+          true,
+        ),
+      ).toBe("a@hr.teammas.in");
       // `noteammas.in` must NOT pass — a bare endsWith would have accepted it.
-      expect(resolveEmailContact({ email: PERSONAL, official_email: "a@noteammas.in" }, true))
-        .toBe(PERSONAL);
+      expect(
+        resolveEmailContact(
+          { email: PERSONAL, official_email: "a@noteammas.in" },
+          true,
+        ),
+      ).toBe(PERSONAL);
     });
   });
 });
 
 describe("catalogue: which events are about a third party", () => {
   const flagged = Object.entries(NOTIFICATION_EVENT_CATALOG)
-    .filter(([, d]) => "aboutThirdParty" in d && (d as { aboutThirdParty?: boolean }).aboutThirdParty)
+    .filter(
+      ([, d]) =>
+        "aboutThirdParty" in d &&
+        (d as { aboutThirdParty?: boolean }).aboutThirdParty,
+    )
     .map(([code]) => code)
     .sort();
 
@@ -82,20 +110,34 @@ describe("catalogue: which events are about a third party", () => {
 
   it("every flagged event really does interpolate a third party", () => {
     for (const code of flagged) {
-      const d = NOTIFICATION_EVENT_CATALOG[code as keyof typeof NOTIFICATION_EVENT_CATALOG];
+      const d =
+        NOTIFICATION_EVENT_CATALOG[
+          code as keyof typeof NOTIFICATION_EVENT_CATALOG
+        ];
       const text = `${d.title} ${d.message} ${d.shortMessage}`;
-      expect(text, `${code} is flagged but names nobody`).toMatch(/\{\{employee_name\}\}|\{\{employee_code\}\}/);
+      expect(text, `${code} is flagged but names nobody`).toMatch(
+        /\{\{employee_name\}\}|\{\{employee_code\}\}/,
+      );
     }
   });
 
   it("does not flag events addressed to the person themselves", () => {
     // payslip_ready and leave_decision are about YOU; redirecting them would be
     // a behaviour change nobody asked for.
-    for (const code of ["payslip_ready", "leave_decision", "esign_reminder", "attendance_late"]) {
-      const d = NOTIFICATION_EVENT_CATALOG[code as keyof typeof NOTIFICATION_EVENT_CATALOG] as {
+    for (const code of [
+      "payslip_ready",
+      "leave_decision",
+      "esign_reminder",
+      "attendance_late",
+    ]) {
+      const d = NOTIFICATION_EVENT_CATALOG[
+        code as keyof typeof NOTIFICATION_EVENT_CATALOG
+      ] as {
         aboutThirdParty?: boolean;
       };
-      expect(Boolean(d.aboutThirdParty), `${code} should not be flagged`).toBe(false);
+      expect(Boolean(d.aboutThirdParty), `${code} should not be flagged`).toBe(
+        false,
+      );
     }
   });
 });

@@ -4,7 +4,7 @@
  * PeopleOS AI Enhancement Phase 1
  */
 
-import type { PiiCategory, PiiDetectionResult } from './ai-provider.types.js';
+import type { PiiCategory, PiiDetectionResult } from "./ai-provider.types.js";
 
 // Regex patterns for PII detection
 const AADHAAR_PATTERN = /\b\d{4}\s?\d{4}\s?\d{4}\b/g;
@@ -19,7 +19,7 @@ const UAN_PATTERN = /\b\d{12}\b/g;
 // next call, so detection flip-flops when the same pattern is reused. Detection
 // uses these stateless copies; the /g originals stay for replace().
 function detects(pattern: RegExp, value: string): boolean {
-  return new RegExp(pattern.source, pattern.flags.replace('g', '')).test(value);
+  return new RegExp(pattern.source, pattern.flags.replace("g", "")).test(value);
 }
 
 /**
@@ -29,7 +29,7 @@ function detects(pattern: RegExp, value: string): boolean {
  */
 export function fieldNameTokens(fieldName: string): string[] {
   return fieldName
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
@@ -53,7 +53,7 @@ export function fieldNameMatches(fieldName: string, pattern: string): boolean {
   if (!wanted.length || wanted.length > tokens.length) return false;
 
   return tokens.some((_, start) =>
-    wanted.every((word, offset) => tokens[start + offset] === word)
+    wanted.every((word, offset) => tokens[start + offset] === word),
   );
 }
 
@@ -63,7 +63,7 @@ class AiRedactionService {
    */
   maskAadhaar(value: string): string {
     return value.replace(AADHAAR_PATTERN, (match) => {
-      const digits = match.replace(/\s/g, '');
+      const digits = match.replace(/\s/g, "");
       return `****-****-${digits.slice(-4)}`;
     });
   }
@@ -91,8 +91,8 @@ class AiRedactionService {
    */
   maskEmail(value: string): string {
     return value.replace(EMAIL_PATTERN, (match) => {
-      const [local, domain] = match.split('@');
-      if (!local || !domain) return '****@****.***';
+      const [local, domain] = match.split("@");
+      if (!local || !domain) return "****@****.***";
       return `${local.slice(0, 2)}****@${domain}`;
     });
   }
@@ -129,7 +129,7 @@ class AiRedactionService {
    * Mask employee code (show last 3 chars only)
    */
   maskEmployeeCode(code: string): string {
-    if (!code || code.length < 4) return '***';
+    if (!code || code.length < 4) return "***";
     return `EMP****${code.slice(-3)}`;
   }
 
@@ -137,7 +137,7 @@ class AiRedactionService {
    * Mask candidate code (show last 3 chars only)
    */
   maskCandidateCode(code: string): string {
-    if (!code || code.length < 4) return '***';
+    if (!code || code.length < 4) return "***";
     return `CAND****${code.slice(-3)}`;
   }
 
@@ -145,7 +145,7 @@ class AiRedactionService {
    * Detect PII in text and return categories found
    */
   detectPii(value: string): PiiDetectionResult {
-    if (!value || typeof value !== 'string') {
+    if (!value || typeof value !== "string") {
       return {
         hasPii: false,
         categories: [],
@@ -158,32 +158,32 @@ class AiRedactionService {
     const sensitiveFields: string[] = [];
 
     if (detects(AADHAAR_PATTERN, value)) {
-      categories.push('statutory_sensitive');
-      sensitiveFields.push('aadhaar');
+      categories.push("statutory_sensitive");
+      sensitiveFields.push("aadhaar");
     }
     if (detects(PAN_PATTERN, value)) {
-      categories.push('statutory_sensitive');
-      sensitiveFields.push('pan');
+      categories.push("statutory_sensitive");
+      sensitiveFields.push("pan");
     }
     if (detects(MOBILE_PATTERN, value)) {
-      categories.push('personal_identity');
-      sensitiveFields.push('mobile');
+      categories.push("personal_identity");
+      sensitiveFields.push("mobile");
     }
     if (detects(EMAIL_PATTERN, value)) {
-      categories.push('personal_identity');
-      sensitiveFields.push('email');
+      categories.push("personal_identity");
+      sensitiveFields.push("email");
     }
     if (detects(BANK_ACCOUNT_PATTERN, value)) {
-      categories.push('bank_sensitive');
-      sensitiveFields.push('bank_account');
+      categories.push("bank_sensitive");
+      sensitiveFields.push("bank_account");
     }
     if (detects(IFSC_PATTERN, value)) {
-      categories.push('bank_sensitive');
-      sensitiveFields.push('ifsc');
+      categories.push("bank_sensitive");
+      sensitiveFields.push("ifsc");
     }
     if (detects(UAN_PATTERN, value)) {
-      categories.push('statutory_sensitive');
-      sensitiveFields.push('uan');
+      categories.push("statutory_sensitive");
+      sensitiveFields.push("uan");
     }
 
     let redactedValue = value;
@@ -203,7 +203,7 @@ class AiRedactionService {
    * Redact all known PII patterns from text
    */
   redactAll(value: string): string {
-    if (!value || typeof value !== 'string') return value;
+    if (!value || typeof value !== "string") return value;
 
     let redacted = value;
     redacted = this.maskAadhaar(redacted);
@@ -221,7 +221,7 @@ class AiRedactionService {
    * Redact PII from object (deep)
    */
   redactObject(obj: Record<string, unknown>): Record<string, unknown> {
-    if (!obj || typeof obj !== 'object') return obj;
+    if (!obj || typeof obj !== "object") return obj;
 
     const redacted: Record<string, unknown> = {};
 
@@ -239,9 +239,10 @@ class AiRedactionService {
    */
   private redactValue(value: unknown): unknown {
     if (value === null || value === undefined) return value;
-    if (typeof value === 'string') return this.redactAll(value);
-    if (Array.isArray(value)) return value.map((item) => this.redactValue(item));
-    if (typeof value === 'object') {
+    if (typeof value === "string") return this.redactAll(value);
+    if (Array.isArray(value))
+      return value.map((item) => this.redactValue(item));
+    if (typeof value === "object") {
       return this.redactObject(value as Record<string, unknown>);
     }
     return value;
@@ -253,50 +254,53 @@ class AiRedactionService {
   isSensitiveFieldName(fieldName: string): boolean {
     const lowerField = fieldName.toLowerCase();
     const sensitivePatterns = [
-      'aadhaar',
-      'aadhar',
-      'pan',
-      'password',
-      'pwd',
-      'secret',
-      'token',
-      'api_key',
-      'apikey',
-      'salary',
-      'ctc',
-      'basic_pay',
-      'gross_salary',
-      'net_salary',
-      'bank_account',
-      'account_number',
-      'ifsc',
-      'uan',
-      'esic',
-      'pf_number',
-      'mobile',
-      'phone',
-      'personal_email',
-      'date_of_birth',
-      'dob',
-      'address',
-      'medical',
-      'health',
-      'tax',
-      'tds',
-      'credit_card',
-      'debit_card',
+      "aadhaar",
+      "aadhar",
+      "pan",
+      "password",
+      "pwd",
+      "secret",
+      "token",
+      "api_key",
+      "apikey",
+      "salary",
+      "ctc",
+      "basic_pay",
+      "gross_salary",
+      "net_salary",
+      "bank_account",
+      "account_number",
+      "ifsc",
+      "uan",
+      "esic",
+      "pf_number",
+      "mobile",
+      "phone",
+      "personal_email",
+      "date_of_birth",
+      "dob",
+      "address",
+      "medical",
+      "health",
+      "tax",
+      "tds",
+      "credit_card",
+      "debit_card",
     ];
 
-    return sensitivePatterns.some((pattern) => fieldNameMatches(lowerField, pattern));
+    return sensitivePatterns.some((pattern) =>
+      fieldNameMatches(lowerField, pattern),
+    );
   }
 
   /**
    * Remove sensitive fields from object
    */
-  removeSensitiveFields(
-    obj: Record<string, unknown>
-  ): { cleaned: Record<string, unknown>; removed: string[] } {
-    if (!obj || typeof obj !== 'object') {
+  removeSensitiveFields(obj: Record<string, unknown>): {
+    cleaned: Record<string, unknown>;
+    removed: string[];
+  } {
+    if (!obj || typeof obj !== "object") {
       return { cleaned: obj, removed: [] };
     }
 
@@ -314,15 +318,19 @@ class AiRedactionService {
       } else if (Array.isArray(value)) {
         // For arrays, check if items are objects and recursively clean
         cleaned[key] = value.map((item) => {
-          if (item && typeof item === 'object') {
-            const result = this.removeSensitiveFields(item as Record<string, unknown>);
+          if (item && typeof item === "object") {
+            const result = this.removeSensitiveFields(
+              item as Record<string, unknown>,
+            );
             removed.push(...result.removed.map((r) => `${key}[].${r}`));
             return result.cleaned;
           }
           return item;
         });
-      } else if (typeof value === 'object') {
-        const result = this.removeSensitiveFields(value as Record<string, unknown>);
+      } else if (typeof value === "object") {
+        const result = this.removeSensitiveFields(
+          value as Record<string, unknown>,
+        );
         removed.push(...result.removed.map((r) => `${key}.${r}`));
         cleaned[key] = result.cleaned;
       } else {

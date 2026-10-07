@@ -2,7 +2,12 @@ import { randomUUID } from "crypto";
 import { existsSync, mkdirSync } from "fs";
 import { promises as fsp } from "fs";
 import path from "path";
-import { Router, type NextFunction, type Request, type Response } from "express";
+import {
+  Router,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import multer from "multer";
 import {
   requireWriteAccess,
@@ -35,7 +40,12 @@ const SMART_WRITE_ROLES = [
 ] as const;
 // 3-stage chain (owner ruling, 2026-09-12): Branch Head -> Accounts Head -> Finance Head. Must
 // list the same roles as GRN_REVIEW_ROLES in grn.routes.ts — see the comment there.
-const SMART_REVIEW_ROLES = ["branch_head", "accounts_head", "finance_head", "super_admin"] as const;
+const SMART_REVIEW_ROLES = [
+  "branch_head",
+  "accounts_head",
+  "finance_head",
+  "super_admin",
+] as const;
 const SMART_OVERRIDE_ROLES = ["finance_head", "super_admin"] as const;
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads", "grn-documents");
@@ -44,11 +54,19 @@ if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 const storage = multer.diskStorage({
   destination: (_req, _file, callback) => callback(null, UPLOAD_DIR),
   filename: (_req, file, callback) => {
-    callback(null, `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`);
+    callback(
+      null,
+      `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`,
+    );
   },
 });
 const ALLOWED_UPLOAD_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
-const ALLOWED_UPLOAD_MIME_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+const ALLOWED_UPLOAD_MIME_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+];
 const MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 10;
 
@@ -76,10 +94,13 @@ const upload = multer({
       ? `its extension ${extension || "(none)"} is not one of ${ALLOWED_UPLOAD_EXTENSIONS.join(", ")}`
       : `the browser sent it as "${file.mimetype}", which is not a supported document type`;
     callback(
-      Object.assign(new Error(`"${file.originalname}" was not accepted: ${reason}.`), {
-        statusCode: 400,
-        code: "UNSUPPORTED_FILE_TYPE",
-      })
+      Object.assign(
+        new Error(`"${file.originalname}" was not accepted: ${reason}.`),
+        {
+          statusCode: 400,
+          code: "UNSUPPORTED_FILE_TYPE",
+        },
+      ),
     );
   },
 });
@@ -102,10 +123,16 @@ function uploadGrnFiles(field: string, maxCount: number) {
         const message =
           error.code === "LIMIT_FILE_SIZE"
             ? `Each file must be ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB or smaller.`
-            : error.code === "LIMIT_FILE_COUNT" || error.code === "LIMIT_UNEXPECTED_FILE"
+            : error.code === "LIMIT_FILE_COUNT" ||
+                error.code === "LIMIT_UNEXPECTED_FILE"
               ? `A GRN accepts at most ${maxCount} files per upload.`
               : `Upload failed: ${error.code}.`;
-        next(Object.assign(new Error(message), { statusCode: 400, code: error.code }));
+        next(
+          Object.assign(new Error(message), {
+            statusCode: 400,
+            code: error.code,
+          }),
+        );
         return;
       }
       next(error);
@@ -127,7 +154,7 @@ type SmartRequest = AuthenticatedRequest & { financeGrn?: any };
 async function authorizeGrn(
   req: SmartRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const user = actor(req);
@@ -148,7 +175,11 @@ async function authorizeGrn(
   }
 }
 
-async function onlyWhenSmart(req: SmartRequest, _res: Response, next: NextFunction) {
+async function onlyWhenSmart(
+  req: SmartRequest,
+  _res: Response,
+  next: NextFunction,
+) {
   try {
     if (!(await grnSmartService.hasAllocations(req.params.id))) {
       next("router");
@@ -164,14 +195,19 @@ async function onlyWhenSmart(req: SmartRequest, _res: Response, next: NextFuncti
 // the GRN is incomplete, not that it should bypass Smart validations.  Return ALLOCATIONS_REQUIRED
 // rather than calling next("router"), so invoice / duplicate / statutory / budget / FY checks
 // cannot be skipped simply by omitting cost allocations.
-async function requireAllocationsForSubmit(req: SmartRequest, res: Response, next: NextFunction) {
+async function requireAllocationsForSubmit(
+  req: SmartRequest,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     if (!(await grnSmartService.hasAllocations(req.params.id))) {
       res.status(400).json({
         success: false,
         code: "ALLOCATIONS_REQUIRED",
-        error: "At least one approved budget allocation is required before submission. "
-          + "Add cost-centre allocations via the Smart GRN workspace.",
+        error:
+          "At least one approved budget allocation is required before submission. " +
+          "Add cost-centre allocations via the Smart GRN workspace.",
       });
       return;
     }
@@ -194,10 +230,13 @@ smartGrnRouter.get(
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to load GRN workspace",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to load GRN workspace",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.put(
@@ -212,7 +251,7 @@ smartGrnRouter.put(
         req.params.id,
         req.body,
         user.id,
-        user.role
+        user.role,
       );
       res.json({ success: true, data });
     } catch (error) {
@@ -220,10 +259,11 @@ smartGrnRouter.put(
       const status = (error as { statusCode?: number })?.statusCode ?? 400;
       res.status(status).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to save allocations",
+        error:
+          error instanceof Error ? error.message : "Unable to save allocations",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.put(
@@ -241,14 +281,18 @@ smartGrnRouter.put(
       if (grn?.bill_date) {
         const billDateMs = new Date(String(grn.bill_date)).getTime();
         const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        const isRestrictedRole = ["branch_admin", "branch_head"].includes(user.role)
-          && !user.roles.some((r: string) => ["finance_head", "accounts_head", "super_admin"].includes(r));
+        const isRestrictedRole =
+          ["branch_admin", "branch_head"].includes(user.role) &&
+          !user.roles.some((r: string) =>
+            ["finance_head", "accounts_head", "super_admin"].includes(r),
+          );
         if (isRestrictedRole && billDateMs < cutoffMs) {
           const lateReason = req.body?.lateInvoiceReason?.toString().trim();
           if (!lateReason) {
             res.status(400).json({
               success: false,
-              error: "LATE_INVOICE_REASON_REQUIRED: This invoice is older than 30 days. Please provide a reason in the 'lateInvoiceReason' field (e.g. 'Invoice received late from vendor').",
+              error:
+                "LATE_INVOICE_REASON_REQUIRED: This invoice is older than 30 days. Please provide a reason in the 'lateInvoiceReason' field (e.g. 'Invoice received late from vendor').",
             });
             return;
           }
@@ -277,24 +321,34 @@ smartGrnRouter.put(
       //                              a 500x allowance on invoice-total mismatches.
       // Neither is what "override the accounting period" means, and both are money controls.
       const canOverridePeriod = user.roles.some((r: string) =>
-        ["finance_head", "accounts_head", "super_admin", "branch_admin"].includes(r)
+        [
+          "finance_head",
+          "accounts_head",
+          "super_admin",
+          "branch_admin",
+        ].includes(r),
       );
-      const body = canOverridePeriod ? req.body : { ...req.body, accountingPeriod: undefined };
+      const body = canOverridePeriod
+        ? req.body
+        : { ...req.body, accountingPeriod: undefined };
       const data = await grnSmartService.saveComponentAllocations(
         req.params.id,
         body,
         user.id,
-        user.role
+        user.role,
       );
       res.json({ success: true, data });
     } catch (error) {
       const status = (error as { statusCode?: number })?.statusCode ?? 400;
       res.status(status).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to save invoice components",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to save invoice components",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.post(
@@ -307,12 +361,17 @@ smartGrnRouter.post(
     try {
       const files = (req.files as Express.Multer.File[] | undefined) ?? [];
       if (!files.length) {
-        res.status(400).json({ success: false, error: "At least one PDF or image is required" });
+        res
+          .status(400)
+          .json({
+            success: false,
+            error: "At least one PDF or image is required",
+          });
         return;
       }
       const user = actor(req);
       const type = String(req.body?.documentType ?? "invoice") as
-        | "invoice" | "receipt" | "po" | "contract" | "supporting" | "other";
+        "invoice" | "receipt" | "po" | "contract" | "supporting" | "other";
       const data = await grnSmartService.registerDocuments(
         req.params.id,
         files.map((file, index) => ({
@@ -323,16 +382,17 @@ smartGrnRouter.post(
           documentType: type,
           isPrimary: String(req.body?.primaryIndex ?? "0") === String(index),
         })),
-        user.id
+        user.id,
       );
       res.status(201).json({ success: true, data });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Document upload failed",
+        error:
+          error instanceof Error ? error.message : "Document upload failed",
       });
     }
-  }
+  },
 );
 
 /**
@@ -348,7 +408,8 @@ const CHUNK_MAX_BYTES = 8 * 1024 * 1024;
 const CHUNKED_FILE_MAX_BYTES = 150 * 1024 * 1024;
 const CHUNK_MAX_COUNT = Math.ceil(CHUNKED_FILE_MAX_BYTES / CHUNK_MAX_BYTES);
 const CHUNK_STAGING_DIR = path.join(UPLOAD_DIR, ".chunks");
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MIME_BY_EXTENSION: Record<string, string> = {
   ".pdf": "application/pdf",
   ".jpg": "image/jpeg",
@@ -371,11 +432,16 @@ function parseChunkRequest(req: SmartRequest) {
   const extension = path.extname(fileName).toLowerCase();
   if (!UUID_PATTERN.test(uploadId)) throw new Error("Invalid upload id");
   if (!Number.isInteger(total) || total < 1 || total > CHUNK_MAX_COUNT) {
-    throw new Error(`A chunked upload may have at most ${CHUNK_MAX_COUNT} parts (${CHUNKED_FILE_MAX_BYTES / (1024 * 1024)} MB)`);
+    throw new Error(
+      `A chunked upload may have at most ${CHUNK_MAX_COUNT} parts (${CHUNKED_FILE_MAX_BYTES / (1024 * 1024)} MB)`,
+    );
   }
-  if (!Number.isInteger(index) || index < 0 || index >= total) throw new Error("Invalid part number");
+  if (!Number.isInteger(index) || index < 0 || index >= total)
+    throw new Error("Invalid part number");
   if (!fileName || !MIME_BY_EXTENSION[extension]) {
-    throw new Error(`"${fileName || "file"}" was not accepted: only ${ALLOWED_UPLOAD_EXTENSIONS.join(", ")} files can be attached.`);
+    throw new Error(
+      `"${fileName || "file"}" was not accepted: only ${ALLOWED_UPLOAD_EXTENSIONS.join(", ")} files can be attached.`,
+    );
   }
   return { uploadId, index, total, fileName, extension };
 }
@@ -388,7 +454,12 @@ smartGrnRouter.post(
   (req: Request, res: Response, next: NextFunction) =>
     chunkUpload.single("chunk")(req, res, (error: unknown) => {
       if (error instanceof multer.MulterError) {
-        next(Object.assign(new Error(`Upload part rejected: ${error.code}`), { statusCode: 400, code: error.code }));
+        next(
+          Object.assign(new Error(`Upload part rejected: ${error.code}`), {
+            statusCode: 400,
+            code: error.code,
+          }),
+        );
         return;
       }
       next(error as any);
@@ -400,15 +471,21 @@ smartGrnRouter.post(
         res.status(400).json({ success: false, error: "Upload part is empty" });
         return;
       }
-      const { uploadId, index, total, fileName, extension } = parseChunkRequest(req);
+      const { uploadId, index, total, fileName, extension } =
+        parseChunkRequest(req);
       // Scoped by GRN id as well as upload id, so one GRN can never complete another's upload.
-      const stagingDir = path.join(CHUNK_STAGING_DIR, `${req.params.id}-${uploadId}`);
+      const stagingDir = path.join(
+        CHUNK_STAGING_DIR,
+        `${req.params.id}-${uploadId}`,
+      );
       await fsp.mkdir(stagingDir, { recursive: true });
       await fsp.writeFile(path.join(stagingDir, String(index)), chunk.buffer);
 
       const present = await fsp.readdir(stagingDir);
       if (present.length < total) {
-        res.status(202).json({ success: true, data: { received: present.length, total } });
+        res
+          .status(202)
+          .json({ success: true, data: { received: present.length, total } });
         return;
       }
 
@@ -416,10 +493,14 @@ smartGrnRouter.post(
       let size = 0;
       try {
         for (let part = 0; part < total; part += 1) {
-          const buffer = await fsp.readFile(path.join(stagingDir, String(part)));
+          const buffer = await fsp.readFile(
+            path.join(stagingDir, String(part)),
+          );
           size += buffer.length;
           if (size > CHUNKED_FILE_MAX_BYTES) {
-            throw new Error(`"${fileName}" is larger than ${CHUNKED_FILE_MAX_BYTES / (1024 * 1024)} MB`);
+            throw new Error(
+              `"${fileName}" is larger than ${CHUNKED_FILE_MAX_BYTES / (1024 * 1024)} MB`,
+            );
           }
           await fsp.appendFile(storedPath, buffer);
         }
@@ -432,27 +513,30 @@ smartGrnRouter.post(
 
       const user = actor(req);
       const type = String(req.body?.documentType ?? "invoice") as
-        | "invoice" | "receipt" | "po" | "contract" | "supporting" | "other";
+        "invoice" | "receipt" | "po" | "contract" | "supporting" | "other";
       const data = await grnSmartService.registerDocuments(
         req.params.id,
-        [{
-          originalName: fileName,
-          storedPath,
-          mimeType: MIME_BY_EXTENSION[extension],
-          fileSizeBytes: size,
-          documentType: type,
-          isPrimary: String(req.body?.isPrimary ?? "false") === "true",
-        }],
-        user.id
+        [
+          {
+            originalName: fileName,
+            storedPath,
+            mimeType: MIME_BY_EXTENSION[extension],
+            fileSizeBytes: size,
+            documentType: type,
+            isPrimary: String(req.body?.isPrimary ?? "false") === "true",
+          },
+        ],
+        user.id,
       );
       res.status(201).json({ success: true, data });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Document upload failed",
+        error:
+          error instanceof Error ? error.message : "Document upload failed",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.post(
@@ -466,16 +550,17 @@ smartGrnRouter.post(
       const data = await grnSmartService.analyzeDocument(
         req.params.id,
         req.params.documentId,
-        user.id
+        user.id,
       );
       res.json({ success: true, data });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Document analysis failed",
+        error:
+          error instanceof Error ? error.message : "Document analysis failed",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.post(
@@ -490,16 +575,19 @@ smartGrnRouter.post(
         req.params.id,
         req.body?.fields ?? {},
         user.id,
-        user.role
+        user.role,
       );
       res.json({ success: true, data });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to confirm extraction",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to confirm extraction",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.post(
@@ -509,7 +597,9 @@ smartGrnRouter.post(
   authorizeGrn,
   async (req: SmartRequest, res) => {
     try {
-      const data = await grnValidationControlService.effectiveValidation(req.params.id);
+      const data = await grnValidationControlService.effectiveValidation(
+        req.params.id,
+      );
       res.json({ success: true, data });
     } catch (error) {
       res.status(400).json({
@@ -517,7 +607,7 @@ smartGrnRouter.post(
         error: error instanceof Error ? error.message : "GRN validation failed",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.post(
@@ -533,16 +623,19 @@ smartGrnRouter.post(
         req.params.validationCode,
         String(req.body?.reason ?? ""),
         user.id,
-        user.role
+        user.role,
       );
       res.json({ success: true, data });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to approve validation override",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to approve validation override",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.post(
@@ -558,16 +651,19 @@ smartGrnRouter.post(
         req.params.validationCode,
         String(req.body?.reason ?? ""),
         user.id,
-        user.role
+        user.role,
       );
       res.json({ success: true, data });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to revoke validation override",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to revoke validation override",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.get(
@@ -578,25 +674,29 @@ smartGrnRouter.get(
     try {
       const workspace = await grnSmartService.getWorkspace(req.params.id);
       const document = (workspace.documents as any[]).find(
-        (item) => String(item.id) === req.params.documentId
+        (item) => String(item.id) === req.params.documentId,
       );
       if (!document || !existsSync(String(document.stored_path))) {
         res.status(404).json({ success: false, error: "Document not found" });
         return;
       }
-      res.setHeader("Content-Type", document.mime_type ?? "application/octet-stream");
+      res.setHeader(
+        "Content-Type",
+        document.mime_type ?? "application/octet-stream",
+      );
       res.setHeader(
         "Content-Disposition",
-        `inline; filename="${String(document.original_name).replace(/[\r\n"]/g, "_")}"`
+        `inline; filename="${String(document.original_name).replace(/[\r\n"]/g, "_")}"`,
       );
       res.sendFile(path.resolve(String(document.stored_path)));
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to read document",
+        error:
+          error instanceof Error ? error.message : "Unable to read document",
       });
     }
-  }
+  },
 );
 
 // P0-1: All GRN submissions go through Smart validation. Zero allocation rows are an error
@@ -630,17 +730,20 @@ smartGrnRouter.post(
         req.params.id,
         links,
         user.id,
-        user.role
+        user.role,
       );
       res.json({ success: true, data });
     } catch (error) {
       const status = (error as { statusCode?: number })?.statusCode ?? 400;
       res.status(status).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to link a budget line to this GRN",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to link a budget line to this GRN",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.post(
@@ -657,16 +760,17 @@ smartGrnRouter.post(
         user.id,
         user.role,
         req.body?.remarks ? String(req.body.remarks) : undefined,
-        user.roles // Pass all roles for Head Office bypass detection
+        user.roles, // Pass all roles for Head Office bypass detection
       );
       res.json(data);
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to submit smart GRN",
+        error:
+          error instanceof Error ? error.message : "Unable to submit smart GRN",
       });
     }
-  }
+  },
 );
 
 // requireRole runs AFTER onlyWhenSmart here, unlike the sibling routes above.
@@ -698,8 +802,9 @@ smartGrnRouter.post(
         workflow: "grn",
         grnType: req.financeGrn?.grn_type ?? null,
       });
-      const decision = String(req.body?.decision ?? "") as "approved" | "rejected";
-      if (!("approved,rejected".split(",")).includes(decision)) {
+      const decision = String(req.body?.decision ?? "") as
+        "approved" | "rejected";
+      if (!"approved,rejected".split(",").includes(decision)) {
         throw new Error("Decision must be approved or rejected");
       }
       const data = await grnValidationControlService.review(
@@ -707,13 +812,13 @@ smartGrnRouter.post(
         decision,
         req.body?.reviewNote ? String(req.body.reviewNote) : undefined,
         user.id,
-        effectiveRole
+        effectiveRole,
       );
       if (data.paymentId) {
         const createdPaymentId = data.paymentId;
         void import("./vendor-payment.service.js")
           .then(({ vendorPaymentService }) =>
-            vendorPaymentService.auditCreatedPayment(createdPaymentId, user.id)
+            vendorPaymentService.auditCreatedPayment(createdPaymentId, user.id),
           )
           .catch(() => undefined);
       }
@@ -721,10 +826,11 @@ smartGrnRouter.post(
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to review smart GRN",
+        error:
+          error instanceof Error ? error.message : "Unable to review smart GRN",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.post(
@@ -736,15 +842,20 @@ smartGrnRouter.post(
   async (req: SmartRequest, res) => {
     try {
       const user = actor(req);
-      const data = await grnSmartService.cancel(req.params.id, user.id, user.role);
+      const data = await grnSmartService.cancel(
+        req.params.id,
+        user.id,
+        user.role,
+      );
       res.json(data);
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to cancel smart GRN",
+        error:
+          error instanceof Error ? error.message : "Unable to cancel smart GRN",
       });
     }
-  }
+  },
 );
 
 smartGrnRouter.post(
@@ -756,7 +867,12 @@ smartGrnRouter.post(
   async (req: SmartRequest, res) => {
     try {
       const user = actor(req);
-      const data = await grnSmartService.reopen(req.params.id, user.id, user.role, user.roles);
+      const data = await grnSmartService.reopen(
+        req.params.id,
+        user.id,
+        user.role,
+        user.roles,
+      );
       res.json(data);
     } catch (error) {
       res.status(400).json({
@@ -764,5 +880,5 @@ smartGrnRouter.post(
         error: error instanceof Error ? error.message : "Unable to reopen GRN",
       });
     }
-  }
+  },
 );

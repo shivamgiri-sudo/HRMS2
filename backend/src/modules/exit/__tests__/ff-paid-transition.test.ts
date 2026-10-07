@@ -38,14 +38,18 @@ vi.mock("../../../db/mysql.js", () => ({
   db: { execute, getConnection: vi.fn().mockResolvedValue(conn) },
 }));
 
-const { logSensitiveAction } = vi.hoisted(() => ({ logSensitiveAction: vi.fn() }));
+const { logSensitiveAction } = vi.hoisted(() => ({
+  logSensitiveAction: vi.fn(),
+}));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../exit.notifications.js", () => ({
   notifyFullFinalReady: vi.fn(),
   notifyResignationSubmitted: vi.fn(),
   notifyResignationDecision: vi.fn(),
 }));
-vi.mock("nodemailer", () => ({ default: { createTransport: () => ({ sendMail: vi.fn() }) } }));
+vi.mock("nodemailer", () => ({
+  default: { createTransport: () => ({ sendMail: vi.fn() }) },
+}));
 
 const { ffService } = await import("../ff.service.js");
 
@@ -92,7 +96,10 @@ function stub(
       return Promise.resolve([row ? [row] : [], []]);
     }
     if (/^\s*UPDATE full_final_calculation/i.test(String(sql))) {
-      return Promise.resolve([{ affectedRows: opts.updateAffectedRows ?? 1 }, []]);
+      return Promise.resolve([
+        { affectedRows: opts.updateAffectedRows ?? 1 },
+        [],
+      ]);
     }
     // nocReleaseStatusForEmployee: kill-switch flag (payroll_config_flags) — always on for
     // these tests, then employment_status, then noc_case.
@@ -100,11 +107,17 @@ function stub(
       return Promise.resolve([[{ config_value: "true" }], []]);
     }
     if (/SELECT employment_status FROM employees/i.test(String(sql))) {
-      return Promise.resolve([[{ employment_status: opts.nocBlocked ? "Exited" : "active" }], []]);
+      return Promise.resolve([
+        [{ employment_status: opts.nocBlocked ? "Exited" : "active" }],
+        [],
+      ]);
     }
     if (/FROM noc_case/i.test(String(sql))) {
       // No case at all when nocBlocked is requested — "no NOC raised" is itself a blocked state.
-      return Promise.resolve([opts.nocBlocked ? [] : [{ status: "completed", override_at: null }], []]);
+      return Promise.resolve([
+        opts.nocBlocked ? [] : [{ status: "completed", override_at: null }],
+        [],
+      ]);
     }
     return Promise.resolve([[], []]);
   });
@@ -122,9 +135,13 @@ beforeEach(() => {
 describe("markFfPaid — the transition that did not exist", () => {
   it("marks an approved settlement paid, recording who, when and the reference", async () => {
     stub(ffRow());
-    await ffService.markFfPaid(FF_ID, PAYER, "UTR123456789").catch(() => undefined);
+    await ffService
+      .markFfPaid(FF_ID, PAYER, "UTR123456789")
+      .catch(() => undefined);
 
-    const update = execute.mock.calls.find(([s]) => String(s).includes("SET status = 'paid'"));
+    const update = execute.mock.calls.find(([s]) =>
+      String(s).includes("SET status = 'paid'"),
+    );
     expect(update, "no UPDATE to status='paid' was issued").toBeTruthy();
     expect(update![1]).toContain(PAYER);
     expect(update![1]).toContain("UTR123456789");
@@ -147,19 +164,28 @@ describe("markFfPaid — the transition that did not exist", () => {
    */
   it("writes the audit row inside the paying transaction, and commits once", async () => {
     stub(ffRow());
-    await ffService.markFfPaid(FF_ID, PAYER, "UTR123456789").catch(() => undefined);
+    await ffService
+      .markFfPaid(FF_ID, PAYER, "UTR123456789")
+      .catch(() => undefined);
 
     const auditInsert = execute.mock.calls.find(([s]) =>
-      /INSERT INTO sensitive_action_log/i.test(String(s))
+      /INSERT INTO sensitive_action_log/i.test(String(s)),
     );
-    expect(auditInsert, "FULL_FINAL_PAID audit row was not written on the connection").toBeTruthy();
+    expect(
+      auditInsert,
+      "FULL_FINAL_PAID audit row was not written on the connection",
+    ).toBeTruthy();
     expect(auditInsert![1]).toContain("FULL_FINAL_PAID");
     // The reference travels inside the JSON-bound change_summary, not as a bare parameter.
     expect(JSON.stringify(auditInsert![1])).toContain("UTR123456789");
 
     // Ordering: the audit must land before the commit, not after it.
-    const updateIdx = execute.mock.calls.findIndex(([s]) => String(s).includes("SET status = 'paid'"));
-    const auditIdx = execute.mock.calls.findIndex(([s]) => /INSERT INTO sensitive_action_log/i.test(String(s)));
+    const updateIdx = execute.mock.calls.findIndex(([s]) =>
+      String(s).includes("SET status = 'paid'"),
+    );
+    const auditIdx = execute.mock.calls.findIndex(([s]) =>
+      /INSERT INTO sensitive_action_log/i.test(String(s)),
+    );
     expect(auditIdx).toBeGreaterThan(updateIdx);
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.rollback).not.toHaveBeenCalled();
@@ -177,7 +203,9 @@ describe("markFfPaid — the transition that did not exist", () => {
       return base(sql, params);
     });
 
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR999")).rejects.toThrow(/audit sink unavailable/);
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR999")).rejects.toThrow(
+      /audit sink unavailable/,
+    );
 
     // The UPDATE was issued, but inside a transaction that was rolled back — so the settlement
     // is NOT recorded as paid, and the caller is told so rather than being given a false success.
@@ -188,32 +216,52 @@ describe("markFfPaid — the transition that did not exist", () => {
 
   it("refuses a settlement that is not approved yet", async () => {
     stub(ffRow({ status: "draft" }));
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/not 'approved'/);
-    expect(execute.mock.calls.some(([s]) => String(s).includes("SET status = 'paid'"))).toBe(false);
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(
+      /not 'approved'/,
+    );
+    expect(
+      execute.mock.calls.some(([s]) =>
+        String(s).includes("SET status = 'paid'"),
+      ),
+    ).toBe(false);
   });
 
   it("refuses to pay the same settlement twice", async () => {
     stub(ffRow({ status: "paid" }));
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/already marked paid/);
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(
+      /already marked paid/,
+    );
   });
 
   it("requires a payment reference — 'paid' without evidence is an assertion, not a record", async () => {
     stub(ffRow());
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "   ")).rejects.toThrow(/payment reference/i);
-    expect(execute.mock.calls.some(([s]) => String(s).includes("SET status = 'paid'"))).toBe(false);
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "   ")).rejects.toThrow(
+      /payment reference/i,
+    );
+    expect(
+      execute.mock.calls.some(([s]) =>
+        String(s).includes("SET status = 'paid'"),
+      ),
+    ).toBe(false);
   });
 
   it("refuses to let the approver also record the payment (maker-checker)", async () => {
     // Same guard as cost-centre approveL1/L2: approval and disbursement are two controls, and
     // one person holding both collapses them into one.
     stub(ffRow({ approved_by: PAYER }));
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/other than the person who approved/);
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(
+      /other than the person who approved/,
+    );
   });
 
   it("does not block a legacy row whose approved_by is NULL", async () => {
     stub(ffRow({ approved_by: null }));
     await ffService.markFfPaid(FF_ID, PAYER, "UTR1").catch(() => undefined);
-    expect(execute.mock.calls.some(([s]) => String(s).includes("SET status = 'paid'"))).toBe(true);
+    expect(
+      execute.mock.calls.some(([s]) =>
+        String(s).includes("SET status = 'paid'"),
+      ),
+    ).toBe(true);
   });
 
   /**
@@ -230,7 +278,7 @@ describe("markFfPaid — the transition that did not exist", () => {
     await ffService.markFfPaid(FF_ID, PAYER, "UTR999").catch(() => undefined);
 
     const insert = execute.mock.calls.find(([s]) =>
-      /INSERT INTO sensitive_action_log/i.test(String(s))
+      /INSERT INTO sensitive_action_log/i.test(String(s)),
     );
     expect(insert, "no FULL_FINAL_PAID audit insert was issued").toBeTruthy();
     const params = insert![1] as unknown[];
@@ -239,7 +287,7 @@ describe("markFfPaid — the transition that did not exist", () => {
 
     // change_summary is bound as JSON, so read it back rather than matching the raw array.
     const summary = JSON.parse(
-      params.find((p) => typeof p === "string" && p.startsWith("{")) as string
+      params.find((p) => typeof p === "string" && p.startsWith("{")) as string,
     );
     expect(summary.payment_reference).toBe("UTR999");
     expect(summary.net_payable).toBe(50000);
@@ -249,7 +297,9 @@ describe("markFfPaid — the transition that did not exist", () => {
 
   it("404s a settlement that does not exist", async () => {
     stub(null);
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/not found/i);
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(
+      /not found/i,
+    );
   });
 });
 
@@ -264,29 +314,47 @@ describe("markFfPaid — the transition that did not exist", () => {
 describe("markFfPaid — the same NOC gate the bank-transfer batch enforces, enforced here too", () => {
   it("refuses to mark paid when the employee's NOC is not cleared", async () => {
     stub(ffRow(), { nocBlocked: true });
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 409 });
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/NOC/i);
-    expect(execute.mock.calls.some(([s]) => String(s).includes("SET status = 'paid'"))).toBe(false);
+    await expect(
+      ffService.markFfPaid(FF_ID, PAYER, "UTR1"),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(
+      /NOC/i,
+    );
+    expect(
+      execute.mock.calls.some(([s]) =>
+        String(s).includes("SET status = 'paid'"),
+      ),
+    ).toBe(false);
   });
 
   it("does not silently drop the payment reference or audit trail on the NOC-blocked path", async () => {
     stub(ffRow(), { nocBlocked: true });
     await ffService.markFfPaid(FF_ID, PAYER, "UTR1").catch(() => undefined);
     // No audit entry for a payment that never happened — the refusal itself is the record.
-    expect(execute.mock.calls.some(([s]) => /INSERT INTO sensitive_action_log/i.test(String(s)))).toBe(false);
+    expect(
+      execute.mock.calls.some(([s]) =>
+        /INSERT INTO sensitive_action_log/i.test(String(s)),
+      ),
+    ).toBe(false);
   });
 
   it("still pays when the NOC is cleared — the gate does not block a legitimate settlement", async () => {
     stub(ffRow(), { nocBlocked: false });
     await ffService.markFfPaid(FF_ID, PAYER, "UTR1").catch(() => undefined);
-    expect(execute.mock.calls.some(([s]) => String(s).includes("SET status = 'paid'"))).toBe(true);
+    expect(
+      execute.mock.calls.some(([s]) =>
+        String(s).includes("SET status = 'paid'"),
+      ),
+    ).toBe(true);
   });
 
   it("checks the NOC before touching the maker-checker guard is irrelevant — NOC still blocks even for a fresh approver", async () => {
     // Confirms the two checks are independent: an otherwise-valid payer (not the approver) is
     // still refused if NOC is not cleared.
     stub(ffRow({ approved_by: "someone-else" }), { nocBlocked: true });
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/NOC/i);
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(
+      /NOC/i,
+    );
   });
 });
 
@@ -303,7 +371,9 @@ describe("markFfPaid — the same NOC gate the bank-transfer batch enforces, enf
 describe("markFfPaid — a payment that did not happen is not recorded as one", () => {
   it("refuses with 409 when another payer won the race", async () => {
     stub(ffRow(), { updateAffectedRows: 0 });
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(
+      ffService.markFfPaid(FF_ID, PAYER, "UTR1"),
+    ).rejects.toMatchObject({ statusCode: 409 });
   });
 
   it("writes NO audit entry when the transition matched no row", async () => {
@@ -316,16 +386,24 @@ describe("markFfPaid — a payment that did not happen is not recorded as one", 
     // Without one the error handler replaces the message and Finance sees a bare 500 —
     // a maker-checker refusal then reads as a broken screen instead of a control working.
     stub(ffRow({ approved_by: PAYER }));
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(
+      ffService.markFfPaid(FF_ID, PAYER, "UTR1"),
+    ).rejects.toMatchObject({ statusCode: 403 });
 
     stub(ffRow({ status: "draft" }));
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(
+      ffService.markFfPaid(FF_ID, PAYER, "UTR1"),
+    ).rejects.toMatchObject({ statusCode: 409 });
 
     stub(ffRow());
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "  ")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(
+      ffService.markFfPaid(FF_ID, PAYER, "  "),
+    ).rejects.toMatchObject({ statusCode: 400 });
 
     stub(null);
-    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 404 });
+    await expect(
+      ffService.markFfPaid(FF_ID, PAYER, "UTR1"),
+    ).rejects.toMatchObject({ statusCode: 404 });
   });
 });
 
@@ -338,7 +416,9 @@ describe("approveFF — approval is guarded on the state it was decided on", () 
     stub(ffRow({ status: "verified" }));
     await ffService.approveFF(FF_ID, APPROVER).catch(() => undefined);
 
-    const update = execute.mock.calls.find(([s]) => String(s).includes("SET status = 'approved'"));
+    const update = execute.mock.calls.find(([s]) =>
+      String(s).includes("SET status = 'approved'"),
+    );
     expect(update, "no approval UPDATE was issued").toBeTruthy();
     expect(String(update![0])).toContain("AND status = ?");
     expect(update![1]).toContain("verified");
@@ -346,18 +426,24 @@ describe("approveFF — approval is guarded on the state it was decided on", () 
 
   it("refuses with 409, and writes no audit, when the row moved first", async () => {
     stub(ffRow({ status: "verified" }), { updateAffectedRows: 0 });
-    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toMatchObject({
+      statusCode: 409,
+    });
     expect(logSensitiveAction).not.toHaveBeenCalled();
   });
 
   it("still refuses to re-approve a paid settlement", async () => {
     // Rule 8 governance — unchanged, and must stay that way.
     stub(ffRow({ status: "paid" }));
-    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(/already paid/i);
+    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(
+      /already paid/i,
+    );
   });
 
   it("still refuses a provisional calculation", async () => {
     stub(ffRow({ is_ff_provisional: 1 }));
-    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(/provisional/i);
+    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(
+      /provisional/i,
+    );
   });
 });

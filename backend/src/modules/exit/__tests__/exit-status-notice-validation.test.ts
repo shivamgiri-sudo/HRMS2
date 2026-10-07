@@ -25,7 +25,9 @@ const { updateExitStatus, dbExecute } = vi.hoisted(() => ({
   dbExecute: vi.fn(),
 }));
 
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, query: dbExecute } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: dbExecute, query: dbExecute },
+}));
 vi.mock("../exit.service.js", () => ({ exitService: { updateExitStatus } }));
 vi.mock("../../../shared/accessGuard.js", () => ({
   getEmployeeForUser: vi.fn(async () => ({ id: "emp-actor" })),
@@ -41,7 +43,10 @@ vi.mock("../../payroll/noc.service.js", () => ({
   nocValidated: vi.fn(async () => true),
 }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: ACTOR }; next(); },
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.authUser = { id: ACTOR };
+    next();
+  },
 }));
 
 const { exitSecureRouter } = await import("../exit.secure.routes.js");
@@ -58,10 +63,11 @@ beforeEach(() => {
   dbExecute.mockReset();
   // The route reads the current status for its FSM check before doing anything else.
   dbExecute.mockImplementation(async (sql: string) => {
-    if (/SELECT status FROM exit_request/.test(sql)) return [[{ status: "manager_review" }], []];
+    if (/SELECT status FROM exit_request/.test(sql))
+      return [[{ status: "manager_review" }], []];
     return [[], []];
   });
-}); 
+});
 
 const patch = (body: Record<string, unknown>) =>
   request(app()).patch(`/api/exit/${EXIT_ID}/status`).send(body);
@@ -79,8 +85,12 @@ describe("PATCH /:id/status — notice terms reach the service", () => {
     // 6th argument — the notice terms. Before the fix this call had five arguments and the
     // two values the modal collected went nowhere.
     expect(updateExitStatus).toHaveBeenCalledWith(
-      EXIT_ID, "accepted", "agreed with employee", ACTOR, "manager_review",
-      { lastWorkingDayConfirmed: "2026-10-15", noticePeriodDays: 30 }
+      EXIT_ID,
+      "accepted",
+      "agreed with employee",
+      ACTOR,
+      "manager_review",
+      { lastWorkingDayConfirmed: "2026-10-15", noticePeriodDays: 30 },
     );
   });
 
@@ -119,34 +129,49 @@ describe("PATCH /:id/status — refuses a date payroll could not use", () => {
     expect(updateExitStatus).not.toHaveBeenCalled();
   };
 
-  it("rejects a non-date string", () => rejects({ lastWorkingDayConfirmed: "next friday" }, /YYYY-MM-DD/));
+  it("rejects a non-date string", () =>
+    rejects({ lastWorkingDayConfirmed: "next friday" }, /YYYY-MM-DD/));
 
-  it("rejects a wrong-format date", () => rejects({ lastWorkingDayConfirmed: "15/10/2026" }, /YYYY-MM-DD/));
+  it("rejects a wrong-format date", () =>
+    rejects({ lastWorkingDayConfirmed: "15/10/2026" }, /YYYY-MM-DD/));
 
   it("rejects a date that does not exist on the calendar", () =>
     // The reason the check is not a bare regex: /^\d{4}-\d{2}-\d{2}$/ happily accepts this,
     // and what MySQL then does with it depends on sql_mode.
     rejects({ lastWorkingDayConfirmed: "2026-02-31" }, /real calendar date/));
 
-  it("rejects month 13", () => rejects({ lastWorkingDayConfirmed: "2026-13-01" }, /real calendar date/));
+  it("rejects month 13", () =>
+    rejects({ lastWorkingDayConfirmed: "2026-13-01" }, /real calendar date/));
 
-  it("rejects a negative notice period", () => rejects({ noticePeriodDays: -5 }, /between 0 and 365/));
+  it("rejects a negative notice period", () =>
+    rejects({ noticePeriodDays: -5 }, /between 0 and 365/));
 
-  it("rejects a fractional notice period", () => rejects({ noticePeriodDays: 30.5 }, /whole number/));
+  it("rejects a fractional notice period", () =>
+    rejects({ noticePeriodDays: 30.5 }, /whole number/));
 
-  it("rejects an absurd notice period", () => rejects({ noticePeriodDays: 10000 }, /between 0 and 365/));
+  it("rejects an absurd notice period", () =>
+    rejects({ noticePeriodDays: 10000 }, /between 0 and 365/));
 
-  it("rejects a non-numeric notice period", () => rejects({ noticePeriodDays: "thirty" }, /whole number/));
+  it("rejects a non-numeric notice period", () =>
+    rejects({ noticePeriodDays: "thirty" }, /whole number/));
 });
 
 describe("PATCH /:id/status — leap-year dates are real dates", () => {
   it("accepts 29 Feb in a leap year", async () => {
-    const res = await patch({ status: "accepted", remarks: "ok", lastWorkingDayConfirmed: "2028-02-29" });
+    const res = await patch({
+      status: "accepted",
+      remarks: "ok",
+      lastWorkingDayConfirmed: "2028-02-29",
+    });
     expect(res.status).toBe(200);
   });
 
   it("rejects 29 Feb in a non-leap year", async () => {
-    const res = await patch({ status: "accepted", remarks: "ok", lastWorkingDayConfirmed: "2027-02-29" });
+    const res = await patch({
+      status: "accepted",
+      remarks: "ok",
+      lastWorkingDayConfirmed: "2027-02-29",
+    });
     expect(res.status).toBe(400);
   });
 });

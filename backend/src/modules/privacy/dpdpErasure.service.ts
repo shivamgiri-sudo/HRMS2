@@ -21,14 +21,14 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
  */
 export async function executeErasure(
   requestId: string,
-  approvedByUserId: string
+  approvedByUserId: string,
 ): Promise<void> {
   // Resolve request and get auth_user.id (principal_id)
   const [reqRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, principal_id, status FROM data_rights_request
      WHERE id = ? AND request_type = 'erasure'
      LIMIT 1`,
-    [requestId]
+    [requestId],
   );
   if (!reqRows.length) throw new Error("Erasure request not found");
 
@@ -47,7 +47,7 @@ export async function executeErasure(
   // Resolve employees.id from auth_user.id
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM employees WHERE user_id = ? LIMIT 1`,
-    [authUserId]
+    [authUserId],
   );
   const employeeId = empRows.length ? empRows[0].id : null;
 
@@ -59,7 +59,7 @@ export async function executeErasure(
        email      = CONCAT('redacted_', id, '@deleted.invalid'),
        phone      = NULL
      WHERE id = ?`,
-    [authUserId]
+    [authUserId],
   );
 
   if (employeeId) {
@@ -75,7 +75,7 @@ export async function executeErasure(
          state             = NULL,
          pincode           = NULL
        WHERE id = ?`,
-      [employeeId]
+      [employeeId],
     );
 
     // Anonymize emergency contacts
@@ -85,7 +85,7 @@ export async function executeErasure(
          mobile  = NULL,
          address = NULL
        WHERE employee_id = ?`,
-      [employeeId]
+      [employeeId],
     );
 
     // Anonymize nominees
@@ -95,7 +95,7 @@ export async function executeErasure(
          mobile       = NULL,
          address      = NULL
        WHERE employee_id = ?`,
-      [employeeId]
+      [employeeId],
     );
   }
 
@@ -105,16 +105,16 @@ export async function executeErasure(
      SET status = 'resolved', response_notes = 'PII anonymized per DPDP §12',
          resolved_at = NOW(), assigned_to = ?
      WHERE id = ?`,
-    [approvedByUserId, requestId]
+    [approvedByUserId, requestId],
   );
 
   await logSensitiveAction({
     actor_user_id: approvedByUserId,
-    action_type:  "DPDP_ERASURE_EXECUTED",
-    module_key:   "privacy",
-    entity_type:  "data_rights_request",
-    entity_id:    requestId,
-    employee_id:  employeeId ?? undefined,
+    action_type: "DPDP_ERASURE_EXECUTED",
+    module_key: "privacy",
+    entity_type: "data_rights_request",
+    entity_id: requestId,
+    employee_id: employeeId ?? undefined,
     change_summary: {
       erasure_request_id: requestId,
       auth_user_anonymized: authUserId,
@@ -136,7 +136,7 @@ export async function getOverdueErasureRequests(): Promise<RowDataPacket[]> {
      WHERE request_type = 'erasure'
        AND status NOT IN ('resolved', 'rejected')
        AND DATEDIFF(NOW(), created_at) >= 28
-     ORDER BY created_at ASC`
+     ORDER BY created_at ASC`,
   );
   return rows;
 }

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildCdrDailySql, buildAprDailySql, formatReportDate } from "../reginald-abandoned-cart-sync.service.js";
+import {
+  buildCdrDailySql,
+  buildAprDailySql,
+  formatReportDate,
+} from "../reginald-abandoned-cart-sync.service.js";
 
 /**
  * These tests do NOT hit dialer_db directly (a live connection to it was

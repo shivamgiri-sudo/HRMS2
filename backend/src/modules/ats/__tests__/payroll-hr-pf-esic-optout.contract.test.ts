@@ -30,12 +30,17 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 
 const routes = read("src/modules/ats/payroll-hr.routes.ts");
 const service = read("src/modules/ats/payroll-hr.service.ts");
-const orchestrator = read("src/modules/employees/employee-creation-orchestrator.service.ts");
+const orchestrator = read(
+  "src/modules/employees/employee-creation-orchestrator.service.ts",
+);
 const migration = read("sql/1228_offer_esic_opt_out.sql");
 // Strip SQL comment lines before asserting on executable text — the migration's own prose
 // explains what it deliberately does NOT do (ADD COLUMN IF NOT EXISTS, DROP), which would
 // otherwise trip these same checks. Matches bankDetailColumns.contract.test.ts's convention.
-const migrationCode = migration.split("\n").filter((line) => !/^\s*--/.test(line)).join("\n");
+const migrationCode = migration
+  .split("\n")
+  .filter((line) => !/^\s*--/.test(line))
+  .join("\n");
 
 describe("migration 1228 adds esic_opt_out safely", () => {
   it("uses the information_schema-guarded PREPARE/EXECUTE pattern, not ADD COLUMN IF NOT EXISTS", () => {
@@ -83,7 +88,9 @@ describe("payroll HR validation accepts the opt-out decision", () => {
 
 describe("employee creation transfers the offer's opt-out into an approved override", () => {
   const block = orchestrator.slice(
-    orchestrator.indexOf("PF/ESIC opt-out elected by Payroll HR at offer creation"),
+    orchestrator.indexOf(
+      "PF/ESIC opt-out elected by Payroll HR at offer creation",
+    ),
   );
 
   it("reads from the offer, not the candidate's onboarding profile", () => {
@@ -116,12 +123,17 @@ describe("employee creation transfers the offer's opt-out into an approved overr
     // Both blocks must coexist — the Form 11 path is not the intended decision-maker per the
     // owner, but it isn't being removed either (do not delete existing functionality).
     expect(orchestrator).toContain("candRow?.pf_opt_out_elected");
-    expect(orchestrator).toContain("PF opt-out elected by employee on Form 11 during onboarding");
+    expect(orchestrator).toContain(
+      "PF opt-out elected by employee on Form 11 during onboarding",
+    );
   });
 });
 
 describe("the Payroll HR page lets HR set both toggles", () => {
-  const page = readFileSync(resolve(process.cwd(), "..", "src/pages/NativePayrollHRValidation.tsx"), "utf8");
+  const page = readFileSync(
+    resolve(process.cwd(), "..", "src/pages/NativePayrollHRValidation.tsx"),
+    "utf8",
+  );
 
   it("the form state and payload carry both flags", () => {
     expect(page).toMatch(/pf_opt_out:\s*boolean/);

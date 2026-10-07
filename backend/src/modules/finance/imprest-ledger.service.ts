@@ -2,7 +2,10 @@ import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
-import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
+import {
+  financeBranchFilter,
+  type FinanceBranchScope,
+} from "./finance-access-scope.js";
 
 /**
  * The imprest float ledger (Requirement 7).
@@ -21,12 +24,7 @@ import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-s
  */
 
 export type ImprestEntryType =
-  | "opening"
-  | "allocation"
-  | "voucher"
-  | "return"
-  | "adjustment"
-  | "closure";
+  "opening" | "allocation" | "voucher" | "return" | "adjustment" | "closure";
 
 export type ImprestPosting = {
   imprestManagerId: string;
@@ -89,7 +87,10 @@ export const imprestLedgerService = {
    * SUM over direction rather than SUM(amount): a signed column would give the right answer
    * right up until someone stored a negative credit, and then net silently wrong.
    */
-  async getBalance(imprestManagerId: string, asOfDate?: string): Promise<number> {
+  async getBalance(
+    imprestManagerId: string,
+    asOfDate?: string,
+  ): Promise<number> {
     const params: unknown[] = [imprestManagerId];
     let dateFilter = "";
     if (asOfDate) {
@@ -117,9 +118,14 @@ export const imprestLedgerService = {
    * balance drifts from the derived one, and the reconciliation check below starts failing for
    * a reason nobody can reproduce.
    */
-  async post(entry: ImprestPosting, connection: PoolConnection): Promise<string> {
+  async post(
+    entry: ImprestPosting,
+    connection: PoolConnection,
+  ): Promise<string> {
     if (!connection) {
-      throw new Error("An imprest ledger entry must be written inside the caller's transaction");
+      throw new Error(
+        "An imprest ledger entry must be written inside the caller's transaction",
+      );
     }
     const amount = Number(entry.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -133,10 +139,11 @@ export const imprestLedgerService = {
     // imprest.service.ts's allocation create/approve paths had no equivalent check anywhere —
     // checked here, immediately before the mutation and inside the caller's transaction, so a
     // concurrent lock cannot slip through, same as grn.service.ts's own P0-3 re-check.
-    const periodCode = (entry.overridePeriodCode?.trim() || entry.transactionDate.slice(0, 7));
+    const periodCode =
+      entry.overridePeriodCode?.trim() || entry.transactionDate.slice(0, 7);
     if (await isPeriodLocked(periodCode, connection)) {
       throw new Error(
-        `${periodCode} is locked for P&L close. This imprest entry cannot be posted against it.`
+        `${periodCode} is locked for P&L close. This imprest entry cannot be posted against it.`,
       );
     }
 
@@ -156,8 +163,10 @@ export const imprestLedgerService = {
       [entry.imprestManagerId],
     );
     const current =
-      toPaise(Number(balanceRows[0]?.credits ?? 0)) - toPaise(Number(balanceRows[0]?.debits ?? 0));
-    const delta = entry.direction === "credit" ? toPaise(amount) : -toPaise(amount);
+      toPaise(Number(balanceRows[0]?.credits ?? 0)) -
+      toPaise(Number(balanceRows[0]?.debits ?? 0));
+    const delta =
+      entry.direction === "credit" ? toPaise(amount) : -toPaise(amount);
     const balanceAfter = fromPaise(current + delta);
 
     const id = randomUUID();
@@ -206,7 +215,8 @@ export const imprestLedgerService = {
       [imprestManagerId],
     );
     const available =
-      toPaise(Number(rows[0]?.credits ?? 0)) - toPaise(Number(rows[0]?.debits ?? 0));
+      toPaise(Number(rows[0]?.credits ?? 0)) -
+      toPaise(Number(rows[0]?.debits ?? 0));
     if (toPaise(amount) > available) {
       throw new Error(
         `This voucher is ${fromPaise(toPaise(amount) - available).toFixed(2)} more than the imprest balance of ${fromPaise(available).toFixed(2)}`,
@@ -308,7 +318,8 @@ export const imprestLedgerService = {
       [filters.from, ...scopeParams],
     );
     const opening =
-      toPaise(Number(openingRows[0]?.credits ?? 0)) - toPaise(Number(openingRows[0]?.debits ?? 0));
+      toPaise(Number(openingRows[0]?.credits ?? 0)) -
+      toPaise(Number(openingRows[0]?.debits ?? 0));
 
     const [movementRows] = await db.execute<RowDataPacket[]>(
       `SELECT entry_type, direction,
@@ -385,7 +396,10 @@ export const imprestLedgerService = {
     const scope: string[] = [];
     const scopeParams: unknown[] = [];
     if (filters.branchScope) {
-      const entitlement = financeBranchFilter(filters.branchScope, "l.branch_id");
+      const entitlement = financeBranchFilter(
+        filters.branchScope,
+        "l.branch_id",
+      );
       if (entitlement.sql !== "1=1") {
         scope.push(entitlement.sql);
         scopeParams.push(...entitlement.params);
@@ -411,7 +425,8 @@ export const imprestLedgerService = {
       [filters.from, ...scopeParams],
     );
     const opening =
-      toPaise(Number(openingRows[0]?.credits ?? 0)) - toPaise(Number(openingRows[0]?.debits ?? 0));
+      toPaise(Number(openingRows[0]?.credits ?? 0)) -
+      toPaise(Number(openingRows[0]?.debits ?? 0));
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT l.id, ${EFFECTIVE_DATE("l.")} AS transaction_date, l.period_code,
@@ -435,7 +450,8 @@ export const imprestLedgerService = {
       const paise = toPaise(Number(row.amount ?? 0));
       const isCredit = String(row.direction) === "credit";
       running += isCredit ? paise : -paise;
-      if (isCredit) inflow += paise; else outflow += paise;
+      if (isCredit) inflow += paise;
+      else outflow += paise;
       return {
         serial: index + 1,
         transaction_date: String(row.transaction_date ?? "").slice(0, 10),

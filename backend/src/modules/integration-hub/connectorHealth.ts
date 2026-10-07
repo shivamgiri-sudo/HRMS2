@@ -30,8 +30,12 @@ const ALERT_EVERY = 250;
  */
 export function shouldAlertOnFailure(consecutiveFailures: number): boolean {
   if (consecutiveFailures <= 0) return false;
-  if ((ALERT_AT as readonly number[]).includes(consecutiveFailures)) return true;
-  return consecutiveFailures > ALERT_AT[ALERT_AT.length - 1] && consecutiveFailures % ALERT_EVERY === 0;
+  if ((ALERT_AT as readonly number[]).includes(consecutiveFailures))
+    return true;
+  return (
+    consecutiveFailures > ALERT_AT[ALERT_AT.length - 1] &&
+    consecutiveFailures % ALERT_EVERY === 0
+  );
 }
 
 /**
@@ -41,7 +45,9 @@ export function shouldAlertOnFailure(consecutiveFailures: number): boolean {
  * succeeded — shivamgiri_quality — correctly returns its entire failure history
  * rather than zero.
  */
-export async function countConsecutiveFailures(integrationKey: string): Promise<number> {
+export async function countConsecutiveFailures(
+  integrationKey: string,
+): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS n
        FROM integration_connector_run
@@ -76,6 +82,9 @@ export async function reportConnectorFailure(
         `promoted since its last success. This connector needs attention.`,
     );
   } catch (err) {
-    logger.warn({ integrationKey, err }, "[IntegrationHub] could not evaluate connector failure streak");
+    logger.warn(
+      { integrationKey, err },
+      "[IntegrationHub] could not evaluate connector failure streak",
+    );
   }
 }

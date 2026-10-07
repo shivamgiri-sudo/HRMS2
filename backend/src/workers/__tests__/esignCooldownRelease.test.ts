@@ -28,7 +28,9 @@ import { describe, expect, it } from "vitest";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKER = path.resolve(__dirname, "..", "esign-compliance.worker.ts");
 const source = fs.readFileSync(WORKER, "utf8");
-const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const code = source
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/^\s*\/\/.*$/gm, "");
 
 describe("the cooldown claim is still taken before dispatch", () => {
   it("keeps markSent ahead of the dispatch call", () => {

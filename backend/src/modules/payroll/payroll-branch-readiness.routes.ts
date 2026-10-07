@@ -14,11 +14,18 @@
 import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
-import { invalidateReadinessSummaryCache, cachedReadinessSummary, seedMonthGridOnce } from "./payroll-readiness-summary-cache.js";
+import {
+  invalidateReadinessSummaryCache,
+  cachedReadinessSummary,
+  seedMonthGridOnce,
+} from "./payroll-readiness-summary-cache.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { db } from "../../db/mysql.js";
 import { triggerPayrollAttendanceFreezeRequest } from "../work-inbox/work-inbox.triggers.js";
@@ -27,13 +34,16 @@ export const payrollBranchReadinessRouter = Router();
 
 // A state-changing request must not be followed by a stale cached summary (see cachedReadinessSummary).
 payrollBranchReadinessRouter.use((req, res, next) => {
-  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+  if (
+    req.method !== "GET" &&
+    req.method !== "HEAD" &&
+    req.method !== "OPTIONS"
+  ) {
     invalidateReadinessSummaryCache();
     res.on("finish", invalidateReadinessSummaryCache);
   }
   next();
 });
-
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,7 +113,12 @@ const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: true };
 // rendering identically to a real one in a payroll-facing list).
 // ---------------------------------------------------------------------------
 
-const SYNTHETIC_RUN_CREATORS = ["test-auto-gen", "codex-e2e", "smoke-test", "demo-seed"];
+const SYNTHETIC_RUN_CREATORS = [
+  "test-auto-gen",
+  "codex-e2e",
+  "smoke-test",
+  "demo-seed",
+];
 
 type OrgWideGovernanceSummary =
   | { status: "not_created" }
@@ -114,19 +129,27 @@ type OrgWideGovernanceSummary =
       canCalculate: boolean;
       blockers: number;
       warnings: number;
-      issues: Array<{ code: string; severity: string; count: number; message: string }>;
+      issues: Array<{
+        code: string;
+        severity: string;
+        count: number;
+        message: string;
+      }>;
     };
 
-async function getOrgWideGovernanceSummary(month: string): Promise<OrgWideGovernanceSummary> {
+async function getOrgWideGovernanceSummary(
+  month: string,
+): Promise<OrgWideGovernanceSummary> {
   const placeholders = SYNTHETIC_RUN_CREATORS.map(() => "?").join(", ");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM salary_prep_run
       WHERE run_month = ?
         AND LOWER(COALESCE(created_by, '')) NOT IN (${placeholders})
       ORDER BY created_at DESC LIMIT 1`,
-    [month, ...SYNTHETIC_RUN_CREATORS]
+    [month, ...SYNTHETIC_RUN_CREATORS],
   );
-  const runId = (rows[0] as RowDataPacket | undefined)?.id as string | undefined;
+  const runId = (rows[0] as RowDataPacket | undefined)?.id as
+    string | undefined;
   if (!runId) return { status: "not_created" };
 
   try {
@@ -141,7 +164,9 @@ async function getOrgWideGovernanceSummary(month: string): Promise<OrgWideGovern
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[BranchReadiness] governance readiness failed for run ${runId} — ${msg}`);
+    console.warn(
+      `[BranchReadiness] governance readiness failed for run ${runId} — ${msg}`,
+    );
     // Explicit "not checked", never silently treated as zero issues.
     return { status: "error", message: msg };
   }
@@ -207,7 +232,9 @@ payrollBranchReadinessRouter.get(
           branch.branch_head_signoff ? "Yes" : "No",
           branch.readiness_score,
           branch.readiness_status.replace("_", " "),
-          branch.projected_gross != null ? branch.projected_gross.toFixed(2) : "—",
+          branch.projected_gross != null
+            ? branch.projected_gross.toFixed(2)
+            : "—",
           branch.projected_net != null ? branch.projected_net.toFixed(2) : "—",
           branch.ho_override_ready ? "Yes" : "No",
         ];
@@ -218,14 +245,19 @@ payrollBranchReadinessRouter.get(
       const filename = `branch-readiness-${month}.csv`;
 
       res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`,
+      );
       return res.send(csv);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[BranchReadiness] GET /export error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to generate CSV export" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to generate CSV export" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -246,11 +278,13 @@ payrollBranchReadinessRouter.get(
       // on a readiness page reads as nothing being wrong. Idempotent INSERT IGNORE; a failure
       // here degrades to the previous partial view rather than failing the request.
       try {
-        await seedMonthGridOnce(month, () => payrollBranchReadinessService.ensureMonthGrid(month));
+        await seedMonthGridOnce(month, () =>
+          payrollBranchReadinessService.ensureMonthGrid(month),
+        );
       } catch (seedErr: unknown) {
         console.warn(
           "[BranchReadiness] ensureMonthGrid failed - summary may omit unvisited branch/process rows:",
-          seedErr instanceof Error ? seedErr.message : seedErr
+          seedErr instanceof Error ? seedErr.message : seedErr,
         );
       }
       const data = await payrollBranchReadinessService.getHOSummary(month);
@@ -258,8 +292,12 @@ payrollBranchReadinessRouter.get(
       // Compute summary stats
       const total = data.length;
       const ready = data.filter((b) => b.readiness_status === "ready").length;
-      const in_progress = data.filter((b) => b.readiness_status === "in_progress").length;
-      const blocked = data.filter((b) => b.readiness_status === "blocked").length;
+      const in_progress = data.filter(
+        (b) => b.readiness_status === "in_progress",
+      ).length;
+      const blocked = data.filter(
+        (b) => b.readiness_status === "blocked",
+      ).length;
       const avg_score =
         total > 0
           ? Math.round(data.reduce((s, b) => s + b.readiness_score, 0) / total)
@@ -286,9 +324,11 @@ payrollBranchReadinessRouter.get(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[BranchReadiness] GET /summary error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to fetch readiness summary" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to fetch readiness summary" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -299,24 +339,44 @@ payrollBranchReadinessRouter.get(
 payrollBranchReadinessRouter.get(
   "/:branchId",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll", "wfm"),
+  requireRole(
+    "branch_head",
+    "payroll_branch",
+    "payroll_hr",
+    "payroll_head",
+    "super_admin",
+    "payroll",
+    "wfm",
+  ),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm"],
+    [
+      "branch_head",
+      "payroll_branch",
+      "payroll_hr",
+      "payroll_head",
+      "payroll",
+      "wfm",
+    ],
     branchScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId } = req.params;
       const month = resolveMonth(req.query.month);
-      const data = await payrollBranchReadinessService.getOrRefresh(month, branchId);
+      const data = await payrollBranchReadinessService.getOrRefresh(
+        month,
+        branchId,
+      );
       return res.json({ success: true, month, branch_id: branchId, data });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[BranchReadiness] GET /:branchId error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to fetch branch readiness" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to fetch branch readiness" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -326,9 +386,9 @@ payrollBranchReadinessRouter.get(
 // ---------------------------------------------------------------------------
 
 const ALLOWED_CHECKLIST_ITEMS = [
-  "attendance_data_ready",      // WFM declaration: attendance data is complete
-  "leave_finalized",            // WFM: all leaves approved/rejected, balances synced
-  "regularization_complete",    // WFM: all attendance regularizations resolved
+  "attendance_data_ready", // WFM declaration: attendance data is complete
+  "leave_finalized", // WFM: all leaves approved/rejected, balances synced
+  "regularization_complete", // WFM: all attendance regularizations resolved
   "custom_deductions_uploaded",
   "overtime_entered",
 ] as const;
@@ -339,14 +399,21 @@ payrollBranchReadinessRouter.post(
   "/:branchId/checklist",
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm"),
-  requireScopedRole(["branch_head", "payroll_branch", "payroll_hr", "wfm"], branchScopeTarget, SCOPE_OPTIONS),
+  requireScopedRole(
+    ["branch_head", "payroll_branch", "payroll_hr", "wfm"],
+    branchScopeTarget,
+    SCOPE_OPTIONS,
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId } = req.params;
       const month = resolveMonth(req.query.month ?? req.body?.month);
       const { item, value } = req.body as { item?: string; value?: unknown };
 
-      if (!item || !(ALLOWED_CHECKLIST_ITEMS as readonly string[]).includes(item)) {
+      if (
+        !item ||
+        !(ALLOWED_CHECKLIST_ITEMS as readonly string[]).includes(item)
+      ) {
         return res.status(400).json({
           success: false,
           message: `'item' must be one of: ${ALLOWED_CHECKLIST_ITEMS.join(", ")}`,
@@ -364,11 +431,15 @@ payrollBranchReadinessRouter.post(
 
       // Determine the confirmation timestamp column
       const confirmedAtCol =
-        safeItem === "attendance_data_ready"      ? "attendance_data_ready_at"       :
-        safeItem === "leave_finalized"            ? "leave_finalized_at"             :
-        safeItem === "regularization_complete"    ? "regularization_complete_at"     :
-        safeItem === "custom_deductions_uploaded" ? "custom_deductions_confirmed_at" :
-          "overtime_confirmed_at";
+        safeItem === "attendance_data_ready"
+          ? "attendance_data_ready_at"
+          : safeItem === "leave_finalized"
+            ? "leave_finalized_at"
+            : safeItem === "regularization_complete"
+              ? "regularization_complete_at"
+              : safeItem === "custom_deductions_uploaded"
+                ? "custom_deductions_confirmed_at"
+                : "overtime_confirmed_at";
 
       // Try to update in DB; fall through gracefully if table absent
       //
@@ -393,7 +464,7 @@ payrollBranchReadinessRouter.post(
               SET ${safeItem} = ?,
                   ${confirmedAtCol} = ${value === 1 ? "NOW()" : "NULL"}
             WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-          [value, month, branchId, ""]
+          [value, month, branchId, ""],
         );
       } catch (dbErr: unknown) {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
@@ -402,7 +473,10 @@ payrollBranchReadinessRouter.post(
       }
 
       // Recompute score/status
-      const updated = await payrollBranchReadinessService.getOrRefresh(month, branchId);
+      const updated = await payrollBranchReadinessService.getOrRefresh(
+        month,
+        branchId,
+      );
 
       return res.json({
         success: true,
@@ -412,9 +486,11 @@ payrollBranchReadinessRouter.post(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[BranchReadiness] POST /:branchId/checklist error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to update checklist item" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to update checklist item" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -446,10 +522,13 @@ payrollBranchReadinessRouter.post(
         month,
         branchId,
         userId,
-        remarks.trim()
+        remarks.trim(),
       );
 
-      const updated = await payrollBranchReadinessService.getOrRefresh(month, branchId);
+      const updated = await payrollBranchReadinessService.getOrRefresh(
+        month,
+        branchId,
+      );
 
       return res.json({
         success: true,
@@ -459,9 +538,11 @@ payrollBranchReadinessRouter.post(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[BranchReadiness] POST /:branchId/signoff error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to record sign-off" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to record sign-off" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -492,10 +573,13 @@ payrollBranchReadinessRouter.post(
         month,
         branchId,
         userId,
-        reason.trim()
+        reason.trim(),
       );
 
-      const updated = await payrollBranchReadinessService.getOrRefresh(month, branchId);
+      const updated = await payrollBranchReadinessService.getOrRefresh(
+        month,
+        branchId,
+      );
 
       return res.json({
         success: true,
@@ -504,10 +588,15 @@ payrollBranchReadinessRouter.post(
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[BranchReadiness] POST /:branchId/ho-override error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to apply HO override" });
+      console.error(
+        "[BranchReadiness] POST /:branchId/ho-override error:",
+        msg,
+      );
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to apply HO override" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -521,7 +610,11 @@ payrollBranchReadinessRouter.post(
   "/:branchId/request-freeze",
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm"),
-  requireScopedRole(["branch_head", "payroll_branch", "payroll_hr", "wfm"], branchScopeTarget, SCOPE_OPTIONS),
+  requireScopedRole(
+    ["branch_head", "payroll_branch", "payroll_hr", "wfm"],
+    branchScopeTarget,
+    SCOPE_OPTIONS,
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId } = req.params;
@@ -532,10 +625,12 @@ payrollBranchReadinessRouter.post(
       try {
         const [rows] = await db.execute<any[]>(
           `SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1`,
-          [branchId]
+          [branchId],
         );
         branchName = (rows[0] as any)?.branch_name ?? branchId;
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
 
       await triggerPayrollAttendanceFreezeRequest(branchId, branchName, month);
 
@@ -545,10 +640,15 @@ payrollBranchReadinessRouter.post(
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[BranchReadiness] POST /:branchId/request-freeze error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to send freeze request" });
+      console.error(
+        "[BranchReadiness] POST /:branchId/request-freeze error:",
+        msg,
+      );
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to send freeze request" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -560,25 +660,52 @@ payrollBranchReadinessRouter.post(
 payrollBranchReadinessRouter.get(
   "/:branchId/processes",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll", "wfm"),
+  requireRole(
+    "branch_head",
+    "payroll_branch",
+    "payroll_hr",
+    "payroll_head",
+    "super_admin",
+    "payroll",
+    "wfm",
+  ),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm"],
+    [
+      "branch_head",
+      "payroll_branch",
+      "payroll_hr",
+      "payroll_head",
+      "payroll",
+      "wfm",
+    ],
     branchScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId } = req.params;
       const month = resolveMonth(req.query.month);
-      const processes = await payrollBranchReadinessService.getSummaryForBranch(month, branchId);
+      const processes = await payrollBranchReadinessService.getSummaryForBranch(
+        month,
+        branchId,
+      );
 
       const total = processes.length;
-      const ready = processes.filter((p) => p.readiness_status === "ready").length;
-      const blocked = processes.filter((p) => p.readiness_status === "blocked").length;
-      const in_progress = processes.filter((p) => p.readiness_status === "in_progress").length;
-      const avg_score = total > 0
-        ? Math.round(processes.reduce((s, p) => s + p.readiness_score, 0) / total)
-        : 0;
+      const ready = processes.filter(
+        (p) => p.readiness_status === "ready",
+      ).length;
+      const blocked = processes.filter(
+        (p) => p.readiness_status === "blocked",
+      ).length;
+      const in_progress = processes.filter(
+        (p) => p.readiness_status === "in_progress",
+      ).length;
+      const avg_score =
+        total > 0
+          ? Math.round(
+              processes.reduce((s, p) => s + p.readiness_score, 0) / total,
+            )
+          : 0;
 
       return res.json({
         success: true,
@@ -590,9 +717,11 @@ payrollBranchReadinessRouter.get(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[BranchReadiness] GET /:branchId/processes error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to fetch process readiness" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to fetch process readiness" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -605,24 +734,39 @@ payrollBranchReadinessRouter.post(
   "/:branchId/:processId/checklist",
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm"),
-  requireScopedRole(["branch_head", "payroll_branch", "payroll_hr", "wfm"], branchProcessScopeTarget, SCOPE_OPTIONS),
+  requireScopedRole(
+    ["branch_head", "payroll_branch", "payroll_hr", "wfm"],
+    branchProcessScopeTarget,
+    SCOPE_OPTIONS,
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId, processId } = req.params;
       const month = resolveMonth(req.query.month ?? req.body?.month);
       const { item, value } = req.body as { item?: string; value?: unknown };
 
-      const ALLOWED = ["custom_deductions_uploaded", "overtime_entered"] as const;
+      const ALLOWED = [
+        "custom_deductions_uploaded",
+        "overtime_entered",
+      ] as const;
       if (!item || !(ALLOWED as readonly string[]).includes(item)) {
-        return res.status(400).json({ success: false, message: `item must be one of: ${ALLOWED.join(", ")}` });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: `item must be one of: ${ALLOWED.join(", ")}`,
+          });
       }
       if (value !== 0 && value !== 1) {
-        return res.status(400).json({ success: false, message: "value must be 0 or 1" });
+        return res
+          .status(400)
+          .json({ success: false, message: "value must be 0 or 1" });
       }
 
-      const confirmedAtCol = item === "custom_deductions_uploaded"
-        ? "custom_deductions_confirmed_at"
-        : "overtime_confirmed_at";
+      const confirmedAtCol =
+        item === "custom_deductions_uploaded"
+          ? "custom_deductions_confirmed_at"
+          : "overtime_confirmed_at";
 
       try {
         await db.execute(
@@ -630,21 +774,39 @@ payrollBranchReadinessRouter.post(
               SET ${item} = ?,
                   ${confirmedAtCol} = ${value === 1 ? "NOW()" : "NULL"}
             WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-          [value, month, branchId, processId]
+          [value, month, branchId, processId],
         );
       } catch (dbErr: unknown) {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
-        console.warn(`[BranchReadiness] process checklist UPDATE failed — ${msg}`);
+        console.warn(
+          `[BranchReadiness] process checklist UPDATE failed — ${msg}`,
+        );
       }
 
-      const updated = await payrollBranchReadinessService.getOrRefresh(month, branchId, processId);
-      return res.json({ success: true, message: `${item} updated to ${value}`, data: updated });
+      const updated = await payrollBranchReadinessService.getOrRefresh(
+        month,
+        branchId,
+        processId,
+      );
+      return res.json({
+        success: true,
+        message: `${item} updated to ${value}`,
+        data: updated,
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[BranchReadiness] POST /:branchId/:processId/checklist error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to update process checklist item" });
+      console.error(
+        "[BranchReadiness] POST /:branchId/:processId/checklist error:",
+        msg,
+      );
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message: "Failed to update process checklist item",
+        });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -656,11 +818,26 @@ payrollBranchReadinessRouter.post(
 payrollBranchReadinessRouter.post(
   "/:branchId/:processId/signoff",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm", "super_admin", "payroll_head", "payroll"),
+  requireRole(
+    "branch_head",
+    "payroll_branch",
+    "payroll_hr",
+    "wfm",
+    "super_admin",
+    "payroll_head",
+    "payroll",
+  ),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "wfm", "payroll_head", "payroll"],
+    [
+      "branch_head",
+      "payroll_branch",
+      "payroll_hr",
+      "wfm",
+      "payroll_head",
+      "payroll",
+    ],
     branchProcessScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -670,7 +847,9 @@ payrollBranchReadinessRouter.post(
       const { remarks } = req.body as { remarks?: string };
 
       if (!remarks?.trim()) {
-        return res.status(400).json({ success: false, message: "Sign-off remarks are required" });
+        return res
+          .status(400)
+          .json({ success: false, message: "Sign-off remarks are required" });
       }
 
       try {
@@ -681,21 +860,36 @@ payrollBranchReadinessRouter.post(
                   process_manager_signoff_by = ?,
                   process_manager_remarks = ?
             WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-          [userId, remarks.trim(), month, branchId, processId]
+          [userId, remarks.trim(), month, branchId, processId],
         );
       } catch (dbErr: unknown) {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
-        console.warn(`[BranchReadiness] process signoff UPDATE failed — ${msg}`);
+        console.warn(
+          `[BranchReadiness] process signoff UPDATE failed — ${msg}`,
+        );
       }
 
-      const updated = await payrollBranchReadinessService.getOrRefresh(month, branchId, processId);
-      return res.json({ success: true, message: "Process sign-off recorded", data: updated });
+      const updated = await payrollBranchReadinessService.getOrRefresh(
+        month,
+        branchId,
+        processId,
+      );
+      return res.json({
+        success: true,
+        message: "Process sign-off recorded",
+        data: updated,
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[BranchReadiness] POST /:branchId/:processId/signoff error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to record process sign-off" });
+      console.error(
+        "[BranchReadiness] POST /:branchId/:processId/signoff error:",
+        msg,
+      );
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to record process sign-off" });
     }
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -707,11 +901,18 @@ payrollBranchReadinessRouter.post(
 payrollBranchReadinessRouter.get(
   "/:branchId/projection",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll"),
+  requireRole(
+    "branch_head",
+    "payroll_branch",
+    "payroll_hr",
+    "payroll_head",
+    "super_admin",
+    "payroll",
+  ),
   requireScopedRole(
     ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll"],
     branchScopeTarget,
-    SCOPE_OPTIONS
+    SCOPE_OPTIONS,
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -721,7 +922,10 @@ payrollBranchReadinessRouter.get(
       // Force a fresh projection computation
       await payrollBranchReadinessService.refreshProjection(month, branchId);
 
-      const rec = await payrollBranchReadinessService.getOrRefresh(month, branchId);
+      const rec = await payrollBranchReadinessService.getOrRefresh(
+        month,
+        branchId,
+      );
 
       return res.json({
         success: true,
@@ -736,8 +940,9 @@ payrollBranchReadinessRouter.get(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[BranchReadiness] GET /:branchId/projection error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to fetch projection" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to fetch projection" });
     }
-  }
+  },
 );
-

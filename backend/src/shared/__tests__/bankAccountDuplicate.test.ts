@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 vi.mock("../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
-const { findDuplicateAccountOwner, computeAccountBlindIndex } = await import("../bankAccountDuplicate.js");
+const { findDuplicateAccountOwner, computeAccountBlindIndex } =
+  await import("../bankAccountDuplicate.js");
 const { blindIndex } = await import("../fieldEncryption.js");
 
 const EMPLOYEE_A = "11111111-1111-1111-1111-111111111111";
@@ -12,7 +13,9 @@ const ACCOUNT = "50100234567890";
 
 describe("computeAccountBlindIndex", () => {
   it("is deterministic for the same input", () => {
-    expect(computeAccountBlindIndex(ACCOUNT)).toBe(computeAccountBlindIndex(ACCOUNT));
+    expect(computeAccountBlindIndex(ACCOUNT)).toBe(
+      computeAccountBlindIndex(ACCOUNT),
+    );
   });
 
   it("matches shared/fieldEncryption.ts's blindIndex() directly — same HMAC, no drift", () => {
@@ -20,7 +23,9 @@ describe("computeAccountBlindIndex", () => {
   });
 
   it("differs for different account numbers", () => {
-    expect(computeAccountBlindIndex(ACCOUNT)).not.toBe(computeAccountBlindIndex("99999999999999"));
+    expect(computeAccountBlindIndex(ACCOUNT)).not.toBe(
+      computeAccountBlindIndex("99999999999999"),
+    );
   });
 });
 
@@ -34,12 +39,16 @@ describe("findDuplicateAccountOwner", () => {
   });
 
   it("returns the other employee's identity when a match exists", async () => {
-    dbExecute.mockResolvedValueOnce([[{
-      bank_detail_id: "bd-1",
-      employee_id: EMPLOYEE_B,
-      employee_code: "MAS9999",
-      employee_name: "Priya Sharma",
-    }]]);
+    dbExecute.mockResolvedValueOnce([
+      [
+        {
+          bank_detail_id: "bd-1",
+          employee_id: EMPLOYEE_B,
+          employee_code: "MAS9999",
+          employee_name: "Priya Sharma",
+        },
+      ],
+    ]);
 
     const result = await findDuplicateAccountOwner(ACCOUNT, EMPLOYEE_A);
 

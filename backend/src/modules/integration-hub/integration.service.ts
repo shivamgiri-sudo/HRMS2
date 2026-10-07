@@ -54,7 +54,9 @@ const APPROVED_MAPPING_TARGETS = {
   ],
 } as const;
 
-function configObject(value: IntegrationConfig["config_json"]): Record<string, unknown> {
+function configObject(
+  value: IntegrationConfig["config_json"],
+): Record<string, unknown> {
   if (typeof value === "string") {
     try {
       return JSON.parse(value) as Record<string, unknown>;
@@ -65,15 +67,26 @@ function configObject(value: IntegrationConfig["config_json"]): Record<string, u
   return (value ?? {}) as Record<string, unknown>;
 }
 
-function configuredSourceTables(config: Record<string, unknown>, credentialTables: string[] = []): string[] {
+function configuredSourceTables(
+  config: Record<string, unknown>,
+  credentialTables: string[] = [],
+): string[] {
   const candidates = [
     config.source_tables,
     config.tables,
     config.syncTables,
     credentialTables,
   ];
-  const tables = candidates.find((value) => Array.isArray(value)) as unknown[] | undefined;
-  return [...new Set((tables ?? []).map(String).map((value) => value.trim()).filter(Boolean))];
+  const tables = candidates.find((value) => Array.isArray(value)) as
+    unknown[] | undefined;
+  return [
+    ...new Set(
+      (tables ?? [])
+        .map(String)
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 export const integrationService = {
@@ -111,18 +124,26 @@ export const integrationService = {
     );
 
     const record = (rows as IntegrationConfig[])[0];
-    if (!record) throw Object.assign(new Error("Integration not found"), { statusCode: 404 });
+    if (!record)
+      throw Object.assign(new Error("Integration not found"), {
+        statusCode: 404,
+      });
     return record;
   },
 
-  async create(input: CreateIntegrationInput, _userId: string): Promise<IntegrationConfig> {
+  async create(
+    input: CreateIntegrationInput,
+    _userId: string,
+  ): Promise<IntegrationConfig> {
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM integration_config WHERE integration_key = ? LIMIT 1",
       [input.integrationKey],
     );
 
     if ((existing as RowDataPacket[]).length > 0) {
-      throw Object.assign(new Error("Integration key already exists"), { statusCode: 409 });
+      throw Object.assign(new Error("Integration key already exists"), {
+        statusCode: 409,
+      });
     }
 
     const id = randomUUID();
@@ -158,15 +179,42 @@ export const integrationService = {
     const setClauses: string[] = [];
     const params: unknown[] = [];
 
-    if (input.integrationName !== undefined) { setClauses.push("integration_name = ?"); params.push(input.integrationName); }
-    if (input.integrationType !== undefined) { setClauses.push("integration_type = ?"); params.push(input.integrationType); }
-    if (input.vendorName !== undefined) { setClauses.push("vendor_name = ?"); params.push(input.vendorName ?? null); }
-    if (input.baseUrl !== undefined) { setClauses.push("base_url = ?"); params.push(input.baseUrl ?? null); }
-    if (input.authType !== undefined) { setClauses.push("auth_type = ?"); params.push(input.authType ?? null); }
-    if (input.secretName !== undefined) { setClauses.push("secret_name = ?"); params.push(input.secretName ?? null); }
-    if (input.notes !== undefined) { setClauses.push("notes = ?"); params.push(input.notes ?? null); }
-    if (input.activeStatus !== undefined) { setClauses.push("active_status = ?"); params.push(input.activeStatus ? 1 : 0); }
-    if (input.configJson !== undefined) { setClauses.push("config_json = ?"); params.push(input.configJson ? JSON.stringify(input.configJson) : null); }
+    if (input.integrationName !== undefined) {
+      setClauses.push("integration_name = ?");
+      params.push(input.integrationName);
+    }
+    if (input.integrationType !== undefined) {
+      setClauses.push("integration_type = ?");
+      params.push(input.integrationType);
+    }
+    if (input.vendorName !== undefined) {
+      setClauses.push("vendor_name = ?");
+      params.push(input.vendorName ?? null);
+    }
+    if (input.baseUrl !== undefined) {
+      setClauses.push("base_url = ?");
+      params.push(input.baseUrl ?? null);
+    }
+    if (input.authType !== undefined) {
+      setClauses.push("auth_type = ?");
+      params.push(input.authType ?? null);
+    }
+    if (input.secretName !== undefined) {
+      setClauses.push("secret_name = ?");
+      params.push(input.secretName ?? null);
+    }
+    if (input.notes !== undefined) {
+      setClauses.push("notes = ?");
+      params.push(input.notes ?? null);
+    }
+    if (input.activeStatus !== undefined) {
+      setClauses.push("active_status = ?");
+      params.push(input.activeStatus ? 1 : 0);
+    }
+    if (input.configJson !== undefined) {
+      setClauses.push("config_json = ?");
+      params.push(input.configJson ? JSON.stringify(input.configJson) : null);
+    }
 
     if (setClauses.length > 0) {
       setClauses.push("updated_at = NOW()");
@@ -183,23 +231,49 @@ export const integrationService = {
   async delete(integrationKey: string): Promise<void> {
     await this.getByKey(integrationKey); // throws 404 if not found
     // Cascade-delete related rows before removing the config
-    await db.execute("DELETE FROM integration_schedule WHERE integration_key = ?", [integrationKey]);
-    await db.execute("DELETE FROM integration_field_map WHERE integration_key = ?", [integrationKey]);
-    await db.execute("DELETE FROM integration_table_map WHERE integration_key = ?", [integrationKey]);
-    await db.execute("DELETE FROM integration_field_map_suggestion WHERE integration_key = ?", [integrationKey]);
-    await db.execute("DELETE FROM integration_event_log WHERE integration_key = ?", [integrationKey]);
+    await db.execute(
+      "DELETE FROM integration_schedule WHERE integration_key = ?",
+      [integrationKey],
+    );
+    await db.execute(
+      "DELETE FROM integration_field_map WHERE integration_key = ?",
+      [integrationKey],
+    );
+    await db.execute(
+      "DELETE FROM integration_table_map WHERE integration_key = ?",
+      [integrationKey],
+    );
+    await db.execute(
+      "DELETE FROM integration_field_map_suggestion WHERE integration_key = ?",
+      [integrationKey],
+    );
+    await db.execute(
+      "DELETE FROM integration_event_log WHERE integration_key = ?",
+      [integrationKey],
+    );
     // Keep run history in integration_connector_run for audit — just orphan it
-    await db.execute("DELETE FROM integration_config WHERE integration_key = ?", [integrationKey]);
+    await db.execute(
+      "DELETE FROM integration_config WHERE integration_key = ?",
+      [integrationKey],
+    );
   },
 
-  async listRuns(filters: RunFilters): Promise<PaginatedResult<IntegrationConnectorRun>> {
+  async listRuns(
+    filters: RunFilters,
+  ): Promise<PaginatedResult<IntegrationConnectorRun>> {
     const { page, limit, integrationKey, status } = filters;
     const offset = (page - 1) * limit;
     const conditions: string[] = [];
     const params: unknown[] = [];
 
-    if (integrationKey) { conditions.push("icr.integration_key = ?"); params.push(integrationKey); }
-    if (status) { conditions.push("icr.status = ?"); params.push(status); }
+    if (integrationKey) {
+      conditions.push("icr.integration_key = ?");
+      params.push(integrationKey);
+    }
+    if (status) {
+      conditions.push("icr.status = ?");
+      params.push(status);
+    }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -231,7 +305,9 @@ export const integrationService = {
   ): Promise<IntegrationConnectorRun> {
     const connector = await this.getByKey(integrationKey);
     if (!connector.active_status) {
-      throw Object.assign(new Error("Integration is inactive"), { statusCode: 400 });
+      throw Object.assign(new Error("Integration is inactive"), {
+        statusCode: 400,
+      });
     }
 
     const id = randomUUID();
@@ -257,7 +333,10 @@ export const integrationService = {
     return rows as IntegrationFieldMap[];
   },
 
-  async confirmFieldMap(input: ConfirmFieldMapInput, userId: string): Promise<IntegrationFieldMap> {
+  async confirmFieldMap(
+    input: ConfirmFieldMapInput,
+    userId: string,
+  ): Promise<IntegrationFieldMap> {
     await this.getByKey(input.integrationKey);
     await db.execute(
       `INSERT INTO integration_field_map
@@ -288,7 +367,10 @@ export const integrationService = {
     return (rows as IntegrationFieldMap[])[0];
   },
 
-  async confirmSuggestion(suggestionId: string, userId: string): Promise<IntegrationFieldMap> {
+  async confirmSuggestion(
+    suggestionId: string,
+    userId: string,
+  ): Promise<IntegrationFieldMap> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT *
          FROM integration_field_map_suggestion
@@ -298,19 +380,28 @@ export const integrationService = {
     );
     const suggestion = rows[0] as IntegrationFieldMapSuggestion | undefined;
 
-    if (!suggestion) throw Object.assign(new Error("Pending mapping suggestion not found"), { statusCode: 404 });
+    if (!suggestion)
+      throw Object.assign(new Error("Pending mapping suggestion not found"), {
+        statusCode: 404,
+      });
     if (!suggestion.suggested_table || !suggestion.suggested_column) {
-      throw Object.assign(new Error("Suggestion does not contain a complete target mapping"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("Suggestion does not contain a complete target mapping"),
+        { statusCode: 400 },
+      );
     }
 
-    const mapping = await this.confirmFieldMap({
-      integrationKey: suggestion.integration_key,
-      sourceTable: suggestion.source_table ?? "*",
-      sourceField: suggestion.source_field,
-      targetTable: suggestion.suggested_table,
-      targetColumn: suggestion.suggested_column,
-      transform: null,
-    }, userId);
+    const mapping = await this.confirmFieldMap(
+      {
+        integrationKey: suggestion.integration_key,
+        sourceTable: suggestion.source_table ?? "*",
+        sourceField: suggestion.source_field,
+        targetTable: suggestion.suggested_table,
+        targetColumn: suggestion.suggested_column,
+        transform: null,
+      },
+      userId,
+    );
 
     await db.execute(
       "UPDATE integration_field_map_suggestion SET status = 'confirmed' WHERE id = ?",
@@ -320,7 +411,9 @@ export const integrationService = {
     return mapping;
   },
 
-  async listSuggestions(integrationKey: string): Promise<IntegrationFieldMapSuggestion[]> {
+  async listSuggestions(
+    integrationKey: string,
+  ): Promise<IntegrationFieldMapSuggestion[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM integration_field_map_suggestion WHERE integration_key = ? AND status = 'pending' ORDER BY source_field ASC",
       [integrationKey],
@@ -369,7 +462,14 @@ export const integrationService = {
     );
     await db.execute(
       "UPDATE integration_config SET config_json = ?, updated_at = NOW() WHERE integration_key = ?",
-      [JSON.stringify({ ...config, source_tables: sourceTables, tables: sourceTables }), integrationKey],
+      [
+        JSON.stringify({
+          ...config,
+          source_tables: sourceTables,
+          tables: sourceTables,
+        }),
+        integrationKey,
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -401,17 +501,27 @@ export const integrationService = {
           LIMIT 1`,
         [integrationKey],
       );
-      const fields = (snapshots[0]?.detected_fields ?? []) as Array<{ name?: string; type?: string }>;
-      return [{
-        table: "*",
-        columns: fields.map((field) => ({ name: String(field.name ?? ""), type: String(field.type ?? "unknown") })),
-      }];
+      const fields = (snapshots[0]?.detected_fields ?? []) as Array<{
+        name?: string;
+        type?: string;
+      }>;
+      return [
+        {
+          table: "*",
+          columns: fields.map((field) => ({
+            name: String(field.name ?? ""),
+            type: String(field.type ?? "unknown"),
+          })),
+        },
+      ];
     }
 
     const config = configObject(connector.config_json);
     if (
-      integrationKey === "cosec_biometric"
-      && String(config.source_mode ?? process.env.NCOSEC_SOURCE_MODE ?? "mysql") !== "mssql"
+      integrationKey === "cosec_biometric" &&
+      String(
+        config.source_mode ?? process.env.NCOSEC_SOURCE_MODE ?? "mysql",
+      ) !== "mssql"
     ) {
       const tables = [
         "integration_biometric_daily",
@@ -419,7 +529,10 @@ export const integrationService = {
         "stg_legacy_attendance",
         "attendance_daily_record",
       ];
-      const result: Array<{ table: string; columns: Array<{ name: string; type: string }> }> = [];
+      const result: Array<{
+        table: string;
+        columns: Array<{ name: string; type: string }>;
+      }> = [];
       for (const table of tables) {
         const [columns] = await db.execute<RowDataPacket[]>(
           `SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type
@@ -443,42 +556,60 @@ export const integrationService = {
     }
 
     const credentials = await getCredentialsForKey(integrationKey);
-    if (!credentials) throw Object.assign(new Error("Database credentials are not configured"), { statusCode: 400 });
+    if (!credentials)
+      throw Object.assign(
+        new Error("Database credentials are not configured"),
+        { statusCode: 400 },
+      );
     const tables = configuredSourceTables(config, credentials.tables ?? []);
     if (tables.length === 0) {
-      throw Object.assign(new Error("No source tables are configured for this connector"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("No source tables are configured for this connector"),
+        { statusCode: 400 },
+      );
     }
 
-    const dialect: DbDialect = credentials.db_type === "mssql" ? "mssql" : "mysql";
-    const result: Array<{ table: string; columns: Array<{ name: string; type: string }> }> = [];
+    const dialect: DbDialect =
+      credentials.db_type === "mssql" ? "mssql" : "mysql";
+    const result: Array<{
+      table: string;
+      columns: Array<{ name: string; type: string }>;
+    }> = [];
     for (const table of tables) {
       const parts = table.split(".");
-      if (parts.some((part) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(part))) continue;
+      if (parts.some((part) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(part)))
+        continue;
       const tableName = parts.at(-1)!;
       const schemaName = parts.length > 1 ? parts.at(-2)! : null;
-      const query = dialect === "mssql"
-        ? `SELECT COLUMN_NAME AS name, DATA_TYPE AS type
+      const query =
+        dialect === "mssql"
+          ? `SELECT COLUMN_NAME AS name, DATA_TYPE AS type
              FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_NAME = '${tableName}'
               ${schemaName ? `AND TABLE_SCHEMA = '${schemaName}'` : ""}
             ORDER BY ORDINAL_POSITION`
-        : `SHOW COLUMNS FROM ${quoteIdentifier(table, dialect)}`;
-      const fetched = await fetchFromDatabase({
-        host: credentials.host,
-        port: credentials.port,
-        database: credentials.database,
-        user: credentials.username,
-        password: credentials.password,
-        db_type: dialect,
-        encrypt: credentials.encrypt,
-        trustServerCertificate: credentials.trust_server_certificate,
-      }, query);
+          : `SHOW COLUMNS FROM ${quoteIdentifier(table, dialect)}`;
+      const fetched = await fetchFromDatabase(
+        {
+          host: credentials.host,
+          port: credentials.port,
+          database: credentials.database,
+          user: credentials.username,
+          password: credentials.password,
+          db_type: dialect,
+          encrypt: credentials.encrypt,
+          trustServerCertificate: credentials.trust_server_certificate,
+        },
+        query,
+      );
       result.push({
         table,
-        columns: fetched.rows.map((row) => ({
-          name: String(row.name ?? row.Field ?? ""),
-          type: String(row.type ?? row.Type ?? "unknown"),
-        })).filter((column) => column.name),
+        columns: fetched.rows
+          .map((row) => ({
+            name: String(row.name ?? row.Field ?? ""),
+            type: String(row.type ?? row.Type ?? "unknown"),
+          }))
+          .filter((column) => column.name),
       });
     }
     return result;
@@ -502,12 +633,24 @@ export const integrationService = {
     };
   },
 
-  async previewTargetData(integrationKey: string): Promise<Array<{ table: string; rows: Record<string, unknown>[]; total: number }>> {
+  async previewTargetData(
+    integrationKey: string,
+  ): Promise<
+    Array<{ table: string; rows: Record<string, unknown>[]; total: number }>
+  > {
     // Allowed target tables — prevents arbitrary table reads
     const allowedTargets = new Set(Object.keys(APPROVED_MAPPING_TARGETS));
-    const lmsTargets = ["lms_learning_progress_snapshot", "lms_certification_snapshot", "lms_employee_mapping"];
+    const lmsTargets = [
+      "lms_learning_progress_snapshot",
+      "lms_certification_snapshot",
+      "lms_employee_mapping",
+    ];
 
-    const result: Array<{ table: string; rows: Record<string, unknown>[]; total: number }> = [];
+    const result: Array<{
+      table: string;
+      rows: Record<string, unknown>[];
+      total: number;
+    }> = [];
 
     // lms_sync connector: always preview its snapshot tables
     if (integrationKey === "lms_sync") {
@@ -522,8 +665,14 @@ export const integrationService = {
             `SELECT * FROM ${quoteIdentifier(lmsTable, "mysql")} ORDER BY id DESC LIMIT 50`,
             [],
           );
-          result.push({ table: lmsTable, rows: rows as Record<string, unknown>[], total });
-        } catch { /* table may not exist yet */ }
+          result.push({
+            table: lmsTable,
+            rows: rows as Record<string, unknown>[],
+            total,
+          });
+        } catch {
+          /* table may not exist yet */
+        }
       }
       return result;
     }
@@ -542,20 +691,34 @@ export const integrationService = {
           `SELECT * FROM ${quoteIdentifier(target, "mysql")} ORDER BY id DESC LIMIT 50`,
           [],
         );
-        result.push({ table: target, rows: rows as Record<string, unknown>[], total });
-      } catch { /* table may not exist */ }
+        result.push({
+          table: target,
+          rows: rows as Record<string, unknown>[],
+          total,
+        });
+      } catch {
+        /* table may not exist */
+      }
     }
 
     return result;
   },
 
-  async upsertSchedule(integrationKey: string, input: UpsertScheduleInput): Promise<IntegrationSchedule> {
+  async upsertSchedule(
+    integrationKey: string,
+    input: UpsertScheduleInput,
+  ): Promise<IntegrationSchedule> {
     await this.getByKey(integrationKey);
     const current = await this.getSchedule(integrationKey);
     const cronExpression = input.cronExpression ?? current.cron_expression;
-    const enabled = input.enabled !== undefined ? input.enabled : Boolean(current.enabled);
+    const enabled =
+      input.enabled !== undefined ? input.enabled : Boolean(current.enabled);
     const nextRunAt = enabled
-      ? nextCronRun(cronExpression, new Date(), env.INTEGRATION_SCHEDULER_TIMEZONE)
+      ? nextCronRun(
+          cronExpression,
+          new Date(),
+          env.INTEGRATION_SCHEDULER_TIMEZONE,
+        )
       : null;
 
     await db.execute(

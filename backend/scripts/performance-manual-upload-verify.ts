@@ -6,11 +6,15 @@ function argument(name: string): string | null {
   const direct = process.argv.find((value) => value.startsWith(`${name}=`));
   if (direct) return direct.slice(name.length + 1).trim() || null;
   const index = process.argv.indexOf(name);
-  return index >= 0 ? String(process.argv[index + 1] ?? "").trim() || null : null;
+  return index >= 0
+    ? String(process.argv[index + 1] ?? "").trim() || null
+    : null;
 }
 
 function printUsage(): void {
-  console.log("Usage: npm run performance:verify-manual-upload -- --run-id <uuid> [--json]");
+  console.log(
+    "Usage: npm run performance:verify-manual-upload -- --run-id <uuid> [--json]",
+  );
 }
 
 async function main(): Promise<void> {
@@ -25,15 +29,24 @@ async function main(): Promise<void> {
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify(certification, null, 2));
   } else {
-    console.log(`Performance manual-upload certification: ${certification.certified ? "PASS" : "FAIL"}`);
-    console.log(`Dataset: ${certification.datasetName} (${certification.datasetKey})`);
-    console.log(`Run: ${certification.runId} · ${certification.mode} · ${certification.status}`);
+    console.log(
+      `Performance manual-upload certification: ${certification.certified ? "PASS" : "FAIL"}`,
+    );
+    console.log(
+      `Dataset: ${certification.datasetName} (${certification.datasetKey})`,
+    );
+    console.log(
+      `Run: ${certification.runId} · ${certification.mode} · ${certification.status}`,
+    );
     console.log("");
     for (const item of certification.checks) {
-      const evidence = item.expected !== undefined || item.actual !== undefined
-        ? ` [expected=${String(item.expected ?? "-")}, actual=${String(item.actual ?? "-")}]`
-        : "";
-      console.log(`${item.passed ? "PASS" : "FAIL"} ${item.code}: ${item.label}${evidence}`);
+      const evidence =
+        item.expected !== undefined || item.actual !== undefined
+          ? ` [expected=${String(item.expected ?? "-")}, actual=${String(item.actual ?? "-")}]`
+          : "";
+      console.log(
+        `${item.passed ? "PASS" : "FAIL"} ${item.code}: ${item.label}${evidence}`,
+      );
       console.log(`  ${item.detail}`);
     }
     console.log("");

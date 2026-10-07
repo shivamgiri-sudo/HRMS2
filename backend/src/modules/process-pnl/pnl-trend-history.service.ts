@@ -96,17 +96,28 @@ export interface PnlTrendHistoryResult {
   caveat: string;
 }
 
-interface RevRow { period: string; revenue: string | number; n: number }
-interface CostRow { period: string; cost: string | number; headcount: number; n: number }
+interface RevRow {
+  period: string;
+  revenue: string | number;
+  n: number;
+}
+interface CostRow {
+  period: string;
+  cost: string | number;
+  headcount: number;
+  n: number;
+}
 
-export async function getDbBillHistory(excludePeriods: Set<string> = new Set()): Promise<PnlTrendHistoryResult> {
+export async function getDbBillHistory(
+  excludePeriods: Set<string> = new Set(),
+): Promise<PnlTrendHistoryResult> {
   const revRows = await billQuery<RevRow>(
     `SELECT DATE_FORMAT(invoiceDate, '%Y-%m') AS period, SUM(total) AS revenue, COUNT(*) AS n
        FROM tbl_invoice
       WHERE status = 0 AND invoiceDate IS NOT NULL
       GROUP BY period
      HAVING n >= ${REAL_REVENUE_MONTH_INVOICE_THRESHOLD}
-      ORDER BY period`
+      ORDER BY period`,
   );
   const costRows = await billQuery<CostRow>(
     `SELECT DATE_FORMAT(SalayDate, '%Y-%m') AS period,
@@ -117,7 +128,7 @@ export async function getDbBillHistory(excludePeriods: Set<string> = new Set()):
       WHERE SalayDate IS NOT NULL
       GROUP BY period
      HAVING n >= ${REAL_COST_MONTH_ROW_THRESHOLD}
-      ORDER BY period`
+      ORDER BY period`,
   );
 
   if (revRows.length === 0 || costRows.length === 0) {
@@ -126,19 +137,34 @@ export async function getDbBillHistory(excludePeriods: Set<string> = new Set()):
       revenueRealRange: null,
       costRealRange: null,
       overlapRange: null,
-      caveat: "db_bill historical revenue or cost data is not available (no month met the row-count threshold).",
+      caveat:
+        "db_bill historical revenue or cost data is not available (no month met the row-count threshold).",
     };
   }
 
-  const revenueRealRange: [string, string] = [revRows[0].period, revRows[revRows.length - 1].period];
-  const costRealRange: [string, string] = [costRows[0].period, costRows[costRows.length - 1].period];
+  const revenueRealRange: [string, string] = [
+    revRows[0].period,
+    revRows[revRows.length - 1].period,
+  ];
+  const costRealRange: [string, string] = [
+    costRows[0].period,
+    costRows[costRows.length - 1].period,
+  ];
 
   const revMap = new Map(revRows.map((r) => [r.period, n(r.revenue)]));
-  const costMap = new Map(costRows.map((r) => [r.period, { cost: n(r.cost), headcount: n(r.headcount) }]));
+  const costMap = new Map(
+    costRows.map((r) => [
+      r.period,
+      { cost: n(r.cost), headcount: n(r.headcount) },
+    ]),
+  );
 
   const overlapPeriods = revRows
     .map((r) => r.period)
-    .filter((p) => costMap.has(p) && p < MAS_HRMS_ERA_STARTS_AT && !excludePeriods.has(p))
+    .filter(
+      (p) =>
+        costMap.has(p) && p < MAS_HRMS_ERA_STARTS_AT && !excludePeriods.has(p),
+    )
     .sort();
 
   const months: PnlTrendHistoryMonth[] = overlapPeriods.map((period) => {
@@ -155,7 +181,9 @@ export async function getDbBillHistory(excludePeriods: Set<string> = new Set()):
   });
 
   const overlapRange: [string, string] | null =
-    months.length > 0 ? [months[0].period, months[months.length - 1].period] : null;
+    months.length > 0
+      ? [months[0].period, months[months.length - 1].period]
+      : null;
 
   return {
     months,
@@ -203,15 +231,22 @@ const REAL_REVENUE_MONTH_PROCESS_INVOICE_THRESHOLD = 5;
  * the same distinction process_master.process_name-matched revenue always required: never presented
  * as a full per-process margin trend for this era.
  */
-export async function getDbBillHistoryByProcess(): Promise<PnlTrendHistoryProcess[]> {
-  const rows = await billQuery<{ cost_process: string; period: string; revenue: string | number; n: number }>(
+export async function getDbBillHistoryByProcess(): Promise<
+  PnlTrendHistoryProcess[]
+> {
+  const rows = await billQuery<{
+    cost_process: string;
+    period: string;
+    revenue: string | number;
+    n: number;
+  }>(
     `SELECT TRIM(cost_process) AS cost_process, DATE_FORMAT(invoiceDate, '%Y-%m') AS period,
             SUM(total) AS revenue, COUNT(*) AS n
        FROM tbl_invoice
       WHERE status = 0 AND invoiceDate IS NOT NULL AND cost_process IS NOT NULL AND TRIM(cost_process) <> ''
       GROUP BY TRIM(cost_process), period
      HAVING n >= ${REAL_REVENUE_MONTH_PROCESS_INVOICE_THRESHOLD}
-      ORDER BY cost_process, period`
+      ORDER BY cost_process, period`,
   );
 
   const byProcess = new Map<string, PnlTrendHistoryProcessMonth[]>();
@@ -221,5 +256,8 @@ export async function getDbBillHistoryByProcess(): Promise<PnlTrendHistoryProces
     list.push({ period: row.period, revenue: n(row.revenue) });
     byProcess.set(key, list);
   }
-  return Array.from(byProcess.entries()).map(([processName, months]) => ({ processName, months }));
+  return Array.from(byProcess.entries()).map(([processName, months]) => ({
+    processName,
+    months,
+  }));
 }

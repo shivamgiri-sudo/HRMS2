@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { parseReportDate, GNC_APR_MASMIS_HEADERS } from "../gnc-apr-masmis-bulk.service.js";
+import {
+  parseReportDate,
+  GNC_APR_MASMIS_HEADERS,
+} from "../gnc-apr-masmis-bulk.service.js";
 
 describe("parseReportDate", () => {
   it("reads a real ISO sample", () => {
@@ -19,8 +22,25 @@ describe("headers", () => {
     expect(GNC_APR_MASMIS_HEADERS).toContain("report_date");
   });
   it("covers the real live table's full duration-column set, not just the retired subset", () => {
-    for (const col of ["aoc", "bio", "bre", "briefing", "down_time", "lunch", "meet", "qa", "sb",
-      "tea_break", "training_break", "wash", "tra_qa", "downtime", "capping", "login_duration", "logout_time"]) {
+    for (const col of [
+      "aoc",
+      "bio",
+      "bre",
+      "briefing",
+      "down_time",
+      "lunch",
+      "meet",
+      "qa",
+      "sb",
+      "tea_break",
+      "training_break",
+      "wash",
+      "tra_qa",
+      "downtime",
+      "capping",
+      "login_duration",
+      "logout_time",
+    ]) {
       expect(GNC_APR_MASMIS_HEADERS).toContain(col);
     }
   });

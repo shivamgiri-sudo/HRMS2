@@ -39,7 +39,9 @@ describe("what a discard does to the staged row", () => {
   it("only ever deletes a line whose batch is still pending approval", () => {
     // Once the Payroll Head has approved, the rows are locked in
     // bulk_upload_locked_entity and reversing one is the discard module's job.
-    const del = code.slice(code.indexOf("DELETE iul FROM incentive_upload_line"));
+    const del = code.slice(
+      code.indexOf("DELETE iul FROM incentive_upload_line"),
+    );
     expect(del.slice(0, 400)).toContain("iub.status = 'pending_approval'");
   });
 
@@ -51,13 +53,20 @@ describe("what a discard does to the staged row", () => {
   it("deactivates a deduction rather than deleting it", () => {
     // payroll reads status='active', so 'inactive' is already invisible — deleting would
     // throw away the evidence of what was proposed for nothing.
-    expect(code).toMatch(/UPDATE employee_deduction_entries\s+SET status = 'inactive'/);
+    expect(code).toMatch(
+      /UPDATE employee_deduction_entries\s+SET status = 'inactive'/,
+    );
     expect(code).not.toMatch(/DELETE\s+(FROM\s+)?employee_deduction_entries/);
   });
 
   it("keeps the spreadsheet row, with who discarded it, when, at which stage and why", () => {
     expect(code).toContain("row_status = 'discarded'");
-    for (const col of ["discarded_by", "discarded_at", "discard_stage", "discard_reason"]) {
+    for (const col of [
+      "discarded_by",
+      "discarded_at",
+      "discard_stage",
+      "discard_reason",
+    ]) {
       expect(code).toContain(col);
     }
   });
@@ -70,7 +79,9 @@ describe("what a discard does to the staged row", () => {
    */
   it("decrements the batch's own row count, so the queue does not show a stale number", () => {
     // imported_rows drives the ROWS column and the decision footer's "N rows will be…".
-    expect(code).toMatch(/UPDATE upload_batch[\s\S]{0,200}imported_rows = GREATEST/);
+    expect(code).toMatch(
+      /UPDATE upload_batch[\s\S]{0,200}imported_rows = GREATEST/,
+    );
     // GREATEST(..., 0): a replay must never drive the count negative.
     expect(code).toContain("GREATEST(COALESCE(imported_rows, 0) - 1, 0)");
   });
@@ -79,9 +90,15 @@ describe("what a discard does to the staged row", () => {
     // applyIncentiveBatch finds its sub-batches by joining THROUGH incentive_upload_line,
     // so one with no lines left is invisible to the approval that follows and would sit
     // at 'pending_approval' for ever with nothing able to move it.
-    const del = code.slice(code.indexOf("DELETE iul FROM incentive_upload_line"));
-    expect(del).toContain("SELECT COUNT(*) AS c FROM incentive_upload_line WHERE batch_id = ?");
-    expect(del).toMatch(/UPDATE incentive_upload_batch[\s\S]{0,160}status = 'rejected'/);
+    const del = code.slice(
+      code.indexOf("DELETE iul FROM incentive_upload_line"),
+    );
+    expect(del).toContain(
+      "SELECT COUNT(*) AS c FROM incentive_upload_line WHERE batch_id = ?",
+    );
+    expect(del).toMatch(
+      /UPDATE incentive_upload_batch[\s\S]{0,160}status = 'rejected'/,
+    );
     // Only ever closes one that is still pending — never reopens or overwrites a decision.
     expect(del).toMatch(/WHERE id = \? AND status = 'pending_approval'/);
   });
@@ -104,17 +121,24 @@ describe("what a discard does to the staged row", () => {
 describe("the reason is mandatory", () => {
   it("refuses a discard with a reason under 10 characters", async () => {
     vi.resetModules();
-    vi.doMock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(), getConnection: vi.fn() } }));
-    vi.doMock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn() }));
+    vi.doMock("../../../db/mysql.js", () => ({
+      db: { execute: vi.fn(), getConnection: vi.fn() },
+    }));
+    vi.doMock("../../../shared/auditLog.js", () => ({
+      logSensitiveAction: vi.fn(),
+    }));
     vi.doMock("../../../shared/financeApprovalEvent.js", () => ({
-      recordFinanceApprovalEvent: vi.fn(), listFinanceApprovalEvents: vi.fn(),
+      recordFinanceApprovalEvent: vi.fn(),
+      listFinanceApprovalEvents: vi.fn(),
     }));
 
     const { discardRows } = await import("../bulk-approval-review.service.js");
     await expect(
       discardRows({
         batch: {
-          id: "b1", upload_batch_no: "BATCH-1", upload_type_code: "INCENTIVE_BULK",
+          id: "b1",
+          upload_batch_no: "BATCH-1",
+          upload_type_code: "INCENTIVE_BULK",
           approval_status: "pending_branch_head",
         } as never,
         rowIds: ["r1"],
@@ -128,17 +152,24 @@ describe("the reason is mandatory", () => {
 
   it("refuses a discard on a type that has no cost-centre review", async () => {
     vi.resetModules();
-    vi.doMock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(), getConnection: vi.fn() } }));
-    vi.doMock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn() }));
+    vi.doMock("../../../db/mysql.js", () => ({
+      db: { execute: vi.fn(), getConnection: vi.fn() },
+    }));
+    vi.doMock("../../../shared/auditLog.js", () => ({
+      logSensitiveAction: vi.fn(),
+    }));
     vi.doMock("../../../shared/financeApprovalEvent.js", () => ({
-      recordFinanceApprovalEvent: vi.fn(), listFinanceApprovalEvents: vi.fn(),
+      recordFinanceApprovalEvent: vi.fn(),
+      listFinanceApprovalEvents: vi.fn(),
     }));
 
     const { discardRows } = await import("../bulk-approval-review.service.js");
     await expect(
       discardRows({
         batch: {
-          id: "b1", upload_batch_no: "BATCH-1", upload_type_code: "LEAVE_APPLICATION_BULK",
+          id: "b1",
+          upload_batch_no: "BATCH-1",
+          upload_type_code: "LEAVE_APPLICATION_BULK",
           approval_status: "pending_branch_head",
         } as never,
         rowIds: ["r1"],
@@ -155,13 +186,17 @@ describe("the route around it", () => {
   const routes = readCode("bulk-approval.routes.ts");
 
   it("re-checks the stage permission — it does not trust that the page hid the button", () => {
-    const fn = routes.slice(routes.indexOf('"/approvals/batches/:id/rows/discard"'));
+    const fn = routes.slice(
+      routes.indexOf('"/approvals/batches/:id/rows/discard"'),
+    );
     expect(fn).toContain("resolveStage(batch)");
     expect(fn).toContain("assertCanApprove(userId, batch, stage)");
   });
 
   it("refuses once the batch is no longer pending", () => {
-    const fn = routes.slice(routes.indexOf('"/approvals/batches/:id/rows/discard"'));
+    const fn = routes.slice(
+      routes.indexOf('"/approvals/batches/:id/rows/discard"'),
+    );
     expect(fn).toMatch(/if \(!stage\)/);
   });
 
@@ -188,7 +223,9 @@ describe("the creator notification", () => {
   it("reads the display name off employees, never off auth_user.full_name", () => {
     // auth_user has no full_name column (live schema). Two call sites selected it and
     // could only ever raise ER_BAD_FIELD_ERROR.
-    expect(code).not.toMatch(/au\.full_name|auth_user[\s\S]{0,120}\bfull_name\b(?![^\n]*employees)/);
+    expect(code).not.toMatch(
+      /au\.full_name|auth_user[\s\S]{0,120}\bfull_name\b(?![^\n]*employees)/,
+    );
     expect(code).toContain("LEFT JOIN employees e ON e.user_id = au.id");
   });
 

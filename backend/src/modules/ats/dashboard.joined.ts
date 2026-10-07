@@ -1,8 +1,11 @@
-import type { RowDataPacket } from 'mysql2/promise';
-import { db } from '../../db/mysql.js';
-import { candidateBecameEmployee, getEmployeeMobileJoinMap } from './analytics.unified.service.js';
-import { createSwrCache } from './dashboard.cache.js';
-import { branchDisplay, reportingScope } from './dashboard.scope.js';
+import type { RowDataPacket } from "mysql2/promise";
+import { db } from "../../db/mysql.js";
+import {
+  candidateBecameEmployee,
+  getEmployeeMobileJoinMap,
+} from "./analytics.unified.service.js";
+import { createSwrCache } from "./dashboard.cache.js";
+import { branchDisplay, reportingScope } from "./dashboard.scope.js";
 
 /**
  * Who counts as "joined". ats_candidate.current_stage is not maintained after hiring (only a handful of rows reach
@@ -18,7 +21,10 @@ export interface JoinedInfo {
   byDayBranch: Map<string, number>;
 }
 
-const cache = createSwrCache<JoinedInfo>({ freshMs: 10 * 60_000, staleMs: 60 * 60_000 });
+const cache = createSwrCache<JoinedInfo>({
+  freshMs: 10 * 60_000,
+  staleMs: 60 * 60_000,
+});
 
 async function compute(): Promise<JoinedInfo> {
   const [map, [rows]] = await Promise.all([
@@ -26,12 +32,23 @@ async function compute(): Promise<JoinedInfo> {
     db.execute<RowDataPacket[]>(
       `SELECT c.id, DATE_FORMAT(c.created_at,'%Y-%m-%d') AS d, c.created_at AS created_at, c.mobile, c.current_stage,
               COALESCE(NULLIF(c.branch_display_name,''), NULLIF(c.applied_for_branch,''), 'Unspecified') AS b
-       FROM ats_candidate c WHERE c.active_status = 1 AND ${reportingScope('c')}`),
+       FROM ats_candidate c WHERE c.active_status = 1 AND ${reportingScope("c")}`,
+    ),
   ]);
   const ids: string[] = [];
   const byDayBranch = new Map<string, number>();
   for (const r of rows) {
-    if (!candidateBecameEmployee({ current_stage: r.current_stage, mobile: r.mobile, created_at: r.created_at }, map)) continue;
+    if (
+      !candidateBecameEmployee(
+        {
+          current_stage: r.current_stage,
+          mobile: r.mobile,
+          created_at: r.created_at,
+        },
+        map,
+      )
+    )
+      continue;
     ids.push(String(r.id));
     const k = `${r.d}|${branchDisplay(r.b)}`;
     byDayBranch.set(k, (byDayBranch.get(k) ?? 0) + 1);
@@ -39,9 +56,17 @@ async function compute(): Promise<JoinedInfo> {
   return { ids, byDayBranch };
 }
 
-export const getJoinedInfo = () => cache.get('joined', compute);
+export const getJoinedInfo = () => cache.get("joined", compute);
 
 /** SQL predicate "this candidate joined" for `column` (e.g. "c.id" or "id"); a constant false when nobody has. */
-export function joinedIdSql(column: string, ids: readonly string[]): { sql: string; params: string[] } {
-  return ids.length ? { sql: `${column} IN (${ids.map(() => '?').join(',')})`, params: [...ids] } : { sql: '1=0', params: [] };
+export function joinedIdSql(
+  column: string,
+  ids: readonly string[],
+): { sql: string; params: string[] } {
+  return ids.length
+    ? {
+        sql: `${column} IN (${ids.map(() => "?").join(",")})`,
+        params: [...ids],
+      }
+    : { sql: "1=0", params: [] };
 }

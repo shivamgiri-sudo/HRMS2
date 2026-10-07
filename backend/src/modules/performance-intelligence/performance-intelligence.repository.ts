@@ -57,7 +57,10 @@ function mapFact(row: MetricFactRow): MetricFact {
     metricName: String(row.metric_name ?? row.metric_code),
     unit: String(row.unit ?? "count"),
     aggregationMethod: String(row.aggregation_method ?? "average"),
-    decimalPlaces: Math.max(0, Math.min(6, Math.trunc(numberOr(row.decimal_places, 2)))),
+    decimalPlaces: Math.max(
+      0,
+      Math.min(6, Math.trunc(numberOr(row.decimal_places, 2))),
+    ),
     displayOrder: Math.trunc(numberOr(row.display_order, 100)),
     scoreDate: String(row.score_date),
     actualValue: numberOrNull(row.actual_value),
@@ -88,11 +91,7 @@ async function listFacts(
     scoped.sql,
     "kda.score_date BETWEEN ? AND ?",
   ];
-  const params: unknown[] = [
-    ...scoped.params,
-    query.from,
-    query.to,
-  ];
+  const params: unknown[] = [...scoped.params, query.from, query.to];
 
   if (employeeIds) {
     conditions.push(`e.id IN (${employeeIds.map(() => "?").join(", ")})`);
@@ -198,8 +197,14 @@ export const performanceIntelligenceRepository: PerformanceRepository = {
       ),
     ]);
     return {
-      branches: branchRows.map((row) => ({ id: String(row.id), label: String(row.label) })),
-      processes: processRows.map((row) => ({ id: String(row.id), label: String(row.label) })),
+      branches: branchRows.map((row) => ({
+        id: String(row.id),
+        label: String(row.label),
+      })),
+      processes: processRows.map((row) => ({
+        id: String(row.id),
+        label: String(row.label),
+      })),
     };
   },
 
@@ -222,7 +227,10 @@ export const performanceIntelligenceRepository: PerformanceRepository = {
   async listPeople(scope, query) {
     const scoped = buildScopeWhereEmployees(scope, "e");
     const pageSize = Math.max(1, Math.min(100, Math.trunc(query.pageSize)));
-    const offset = Math.max(0, (Math.max(1, Math.trunc(query.page)) - 1) * pageSize);
+    const offset = Math.max(
+      0,
+      (Math.max(1, Math.trunc(query.page)) - 1) * pageSize,
+    );
     const conditions = ["e.active_status = 1", scoped.sql];
     const params = [...scoped.params];
 
@@ -258,13 +266,19 @@ export const performanceIntelligenceRepository: PerformanceRepository = {
 
     return {
       total: Number(countRows[0]?.total ?? 0),
-      rows: rows.map((row): Omit<PerformancePersonRow, "metrics" | "overallAchievementPct"> => ({
-        employeeId: String(row.employee_id),
-        employeeCode: String(row.employee_code ?? ""),
-        employeeName: String(row.employee_name ?? row.employee_code ?? "Employee"),
-        branchName: row.branch_name ? String(row.branch_name) : null,
-        processName: row.process_name ? String(row.process_name) : null,
-      })),
+      rows: rows.map(
+        (
+          row,
+        ): Omit<PerformancePersonRow, "metrics" | "overallAchievementPct"> => ({
+          employeeId: String(row.employee_id),
+          employeeCode: String(row.employee_code ?? ""),
+          employeeName: String(
+            row.employee_name ?? row.employee_code ?? "Employee",
+          ),
+          branchName: row.branch_name ? String(row.branch_name) : null,
+          processName: row.process_name ? String(row.process_name) : null,
+        }),
+      ),
     };
   },
 

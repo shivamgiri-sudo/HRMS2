@@ -12,8 +12,8 @@
  * - Candidate/employee duplication
  */
 
-import { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
+import { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
 
 // ── BGV Anomalies ──────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ export async function getBgvAutoApprovedCandidates() {
      GROUP BY r.candidate_id, c.candidate_code, c.full_name, c.mobile,
               r.overall_status, r.bgv_score, r.is_auto_approved,
               ob.employee_id, e.employee_code
-     ORDER BY auto_approved_checks DESC, r.candidate_id`
+     ORDER BY auto_approved_checks DESC, r.candidate_id`,
   );
   return rows;
 }
@@ -72,7 +72,7 @@ export async function getBgvClearWithoutMandatoryChecks() {
        )
      GROUP BY r.candidate_id, c.candidate_code, c.full_name,
               r.overall_status, r.bgv_score
-     ORDER BY r.candidate_id`
+     ORDER BY r.candidate_id`,
   );
   return rows;
 }
@@ -97,7 +97,7 @@ export async function getBgvPayrollEligibleWithPendingChecks() {
          OR r.is_auto_approved = 1
          OR r.overall_status NOT IN ('clear')
        )
-     ORDER BY pv.created_at DESC`
+     ORDER BY pv.created_at DESC`,
   );
   return rows;
 }
@@ -127,7 +127,7 @@ export async function getSalaryAnnualEqualsMonthlyGross() {
      WHERE o.gross > 0
        AND o.offered_ctc > 0
        AND ABS(o.offered_ctc - o.gross) / o.gross < 0.05
-     ORDER BY o.candidate_id`
+     ORDER BY o.candidate_id`,
   );
   return rows;
 }
@@ -151,7 +151,7 @@ export async function getSalaryJoiningAfterSalaryStart() {
      WHERE pv.salary_start_date IS NOT NULL
        AND pv.joining_date IS NOT NULL
        AND pv.salary_start_date < pv.joining_date
-     ORDER BY days_difference DESC`
+     ORDER BY days_difference DESC`,
   );
   return rows;
 }
@@ -171,7 +171,7 @@ export async function getDuplicateActiveSalaryAssignments() {
      WHERE sa.active_status = 1
      GROUP BY sa.employee_id, e.employee_code, employee_name
      HAVING active_assignments > 1
-     ORDER BY active_assignments DESC`
+     ORDER BY active_assignments DESC`,
   );
   return rows;
 }
@@ -193,7 +193,7 @@ export async function getEmployeesWithoutSalaryAssignment() {
          WHERE sa.employee_id = e.id AND sa.active_status = 1
        )
      ORDER BY e.date_of_joining DESC
-     LIMIT 200`
+     LIMIT 200`,
   );
   return rows;
 }
@@ -216,7 +216,7 @@ export async function getCandidatesOnboardedWithoutEmployee() {
      LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
      WHERE c.profile_status = 'onboarded'
        AND (ob.employee_id IS NULL OR ob.id IS NULL)
-     ORDER BY c.id`
+     ORDER BY c.id`,
   );
   return rows;
 }
@@ -239,7 +239,7 @@ export async function getOfferApprovedWithoutEmployee() {
      LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = o.candidate_id
      WHERE o.status IN ('bh_approved', 'approved')
        AND (ob.employee_id IS NULL)
-     ORDER BY o.created_at DESC`
+     ORDER BY o.created_at DESC`,
   );
   return rows;
 }
@@ -268,7 +268,7 @@ export async function getEmployeesCreatedBeforeBgvClear() {
      )
      AND e.active_status = 1
      ORDER BY e.date_of_joining DESC
-     LIMIT 200`
+     LIMIT 200`,
   );
   return rows;
 }
@@ -288,7 +288,7 @@ export async function getEmployeesActiveBeforeJoiningDate() {
      WHERE e.active_status = 1
        AND e.date_of_joining > CURDATE()
      ORDER BY e.date_of_joining ASC
-     LIMIT 100`
+     LIMIT 100`,
   );
   return rows;
 }
@@ -310,7 +310,7 @@ export async function getEmployeesCreatedWithoutProvisioning() {
      GROUP BY e.id, e.employee_code, employee_name, e.date_of_joining,
               e.employment_status, e.created_at
      HAVING task_count = 0
-     ORDER BY e.created_at DESC`
+     ORDER BY e.created_at DESC`,
   );
   return rows;
 }
@@ -319,7 +319,12 @@ export async function getEmployeesCreatedWithoutProvisioning() {
 
 export async function getProvisioningMissingMandatoryTasks() {
   // Active employees missing one or more mandatory provisioning tasks
-  const mandatoryTasks = ['IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'WFM_PROCESS_ALIGNMENT', 'APPOINTMENT_LETTER_ESIGN'];
+  const mandatoryTasks = [
+    "IT_EMAIL_DOMAIN_ASSET",
+    "ADMIN_BIOMETRIC_ID_CARD",
+    "WFM_PROCESS_ALIGNMENT",
+    "APPOINTMENT_LETTER_ESIGN",
+  ];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        e.id          AS employee_id,
@@ -348,7 +353,7 @@ export async function getProvisioningMissingMandatoryTasks() {
               e.active_status, e.employment_status
      HAVING missing_tasks IS NOT NULL
      ORDER BY e.date_of_joining DESC`,
-    mandatoryTasks
+    mandatoryTasks,
   );
   return rows;
 }
@@ -373,7 +378,7 @@ export async function getProvisioningOfficialEmailMismatch() {
          e.official_email IS NULL
          OR e.official_email != pr.official_email
        )
-     ORDER BY pr.actioned_at DESC`
+     ORDER BY pr.actioned_at DESC`,
   );
   return rows;
 }
@@ -397,7 +402,7 @@ export async function getProvisioningTasksActionedButEmployeeStillInactive() {
      GROUP BY e.id, e.employee_code, employee_name, e.date_of_joining,
               e.active_status, e.employment_status
      HAVING total_tasks > 0 AND total_tasks = completed_tasks
-     ORDER BY e.date_of_joining ASC`
+     ORDER BY e.date_of_joining ASC`,
   );
   return rows;
 }
@@ -418,7 +423,7 @@ export async function getProvisioningDuplicateTasks() {
      WHERE pr.request_type = 'join'
      GROUP BY pr.employee_id, e.employee_code, employee_name, pr.task_code
      HAVING duplicate_count > 1
-     ORDER BY duplicate_count DESC, pr.task_code`
+     ORDER BY duplicate_count DESC, pr.task_code`,
   );
   return rows;
 }
@@ -439,7 +444,7 @@ export async function getMultipleEmployeesForOneCandidate() {
      JOIN employees e ON e.id = ob.employee_id
      WHERE ob.employee_id IS NOT NULL
      GROUP BY ob.candidate_id, c.candidate_code, c.full_name
-     HAVING employee_count > 1`
+     HAVING employee_count > 1`,
   );
   return rows;
 }
@@ -459,7 +464,7 @@ export async function getEmployeeCodeMismatchBetweenBridgeAndEmployee() {
      JOIN employees e ON e.id = ob.employee_id
      WHERE c.employee_code IS NOT NULL
        AND c.employee_code != e.employee_code
-     ORDER BY c.id`
+     ORDER BY c.id`,
   );
   return rows;
 }
@@ -521,7 +526,7 @@ export async function getReconciliationSummary() {
            AND pr.official_email IS NOT NULL AND pr.official_email != ''
            AND (e.official_email IS NULL OR e.official_email != pr.official_email))
          AS it_email_sync_gap
-     `
+     `,
   );
   return result[0];
 }

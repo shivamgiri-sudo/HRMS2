@@ -24,7 +24,10 @@ async function runOne(
   key: string,
   jsonFile: string,
   uploadTypeCode: string,
-  importFn: (batchId: string, userId: string) => Promise<{ importedRows: number; errorRows: number; errors: string[] }>,
+  importFn: (
+    batchId: string,
+    userId: string,
+  ) => Promise<{ importedRows: number; errorRows: number; errors: string[] }>,
 ) {
   const rows: Record<string, unknown>[] = JSON.parse(
     fs.readFileSync(path.join(__dirname, jsonFile), "utf8"),
@@ -40,12 +43,19 @@ async function runOne(
   );
 
   for (let i = 0; i < rows.length; i++) {
-    if ((i + 1) % 2000 === 0) console.log(`[${key}] staging progress: ${i + 1}/${rows.length}`);
+    if ((i + 1) % 2000 === 0)
+      console.log(`[${key}] staging progress: ${i + 1}/${rows.length}`);
     await db.execute(
       `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status)
        VALUES (?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), 'valid')
        ON DUPLICATE KEY UPDATE id = id`,
-      [randomUUID(), batchId, i + 1, JSON.stringify(rows[i]), JSON.stringify(rows[i])],
+      [
+        randomUUID(),
+        batchId,
+        i + 1,
+        JSON.stringify(rows[i]),
+        JSON.stringify(rows[i]),
+      ],
     );
   }
   console.log(`[${key}] batch rows staged:`, rows.length);
@@ -61,28 +71,54 @@ async function runOne(
 }
 
 async function main() {
-  const results: Record<string, { importedRows: number; errorRows: number }> = {};
+  const results: Record<string, { importedRows: number; errorRows: number }> =
+    {};
   // auto_callback (47/50) and after_hour (38/42) already landed on a prior run --
   // re-running them is harmless (ON DUPLICATE KEY UPDATE) but skipped here to
   // avoid re-staging 92 rows that already succeeded while the DB is contended.
   const only = process.argv[2];
   if (!only || only === "auto_callback") {
-    results.auto_callback = await runOne("auto_callback", "_autocb.json", "BLA_BLI_BLU_AUTO_CALLBACK", importBlaBliBluAutoCallbackBatch);
+    results.auto_callback = await runOne(
+      "auto_callback",
+      "_autocb.json",
+      "BLA_BLI_BLU_AUTO_CALLBACK",
+      importBlaBliBluAutoCallbackBatch,
+    );
   }
   if (!only || only === "after_hour") {
-    results.after_hour = await runOne("after_hour", "_afterhr.json", "BLA_BLI_BLU_AFTER_HOUR", importBlaBliBluAfterHourBatch);
+    results.after_hour = await runOne(
+      "after_hour",
+      "_afterhr.json",
+      "BLA_BLI_BLU_AFTER_HOUR",
+      importBlaBliBluAfterHourBatch,
+    );
   }
   if (!only || only === "call_disposition") {
-    results.call_disposition = await runOne("call_disposition", "_bla_bli_blu_disposition.json", "BLA_BLI_BLU_CALL_DISPOSITION", importBlaBliBluCallDispositionBatch);
+    results.call_disposition = await runOne(
+      "call_disposition",
+      "_bla_bli_blu_disposition.json",
+      "BLA_BLI_BLU_CALL_DISPOSITION",
+      importBlaBliBluCallDispositionBatch,
+    );
   }
   if (!only || only === "shopify_sales") {
-    results.shopify_sales = await runOne("shopify_sales", "_bla_bli_blu_shopify_sales.json", "BLA_BLI_BLU_SHOPIFY_SALES", importBlaBliBluShopifySalesBatch);
+    results.shopify_sales = await runOne(
+      "shopify_sales",
+      "_bla_bli_blu_shopify_sales.json",
+      "BLA_BLI_BLU_SHOPIFY_SALES",
+      importBlaBliBluShopifySalesBatch,
+    );
   }
 
   console.log("\n=== SUMMARY ===");
   console.log(JSON.stringify(results, null, 2));
 
-  const anyFailed = Object.values(results).some((r) => r.errorRows > 0 && r.importedRows === 0);
+  const anyFailed = Object.values(results).some(
+    (r) => r.errorRows > 0 && r.importedRows === 0,
+  );
   process.exit(anyFailed ? 1 : 0);
 }
-main().catch((e) => { console.error("[IMPORT] FAILED", e); process.exit(1); });
+main().catch((e) => {
+  console.error("[IMPORT] FAILED", e);
+  process.exit(1);
+});

@@ -1,4 +1,9 @@
-import { Router, type NextFunction, type RequestHandler, type Response } from "express";
+import {
+  Router,
+  type NextFunction,
+  type RequestHandler,
+  type Response,
+} from "express";
 import multer from "multer";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -65,7 +70,9 @@ async function loadDataset(datasetId: string): Promise<PerformanceDataset> {
   );
   const row = rows[0];
   if (!row) {
-    throw Object.assign(new Error("Performance dataset not found"), { statusCode: 404 });
+    throw Object.assign(new Error("Performance dataset not found"), {
+      statusCode: 404,
+    });
   }
   return {
     id: String(row.id),
@@ -91,14 +98,19 @@ async function loadDataset(datasetId: string): Promise<PerformanceDataset> {
 function assertManualSource(dataset: PerformanceDataset): void {
   if (dataset.sourceType !== "excel" && dataset.sourceType !== "csv") {
     throw Object.assign(
-      new Error("Manual upload certification only applies to Excel and CSV datasets"),
+      new Error(
+        "Manual upload certification only applies to Excel and CSV datasets",
+      ),
       { statusCode: 409 },
     );
   }
 }
 
 function safeFilePart(value: string): string {
-  return value.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "performance";
+  return (
+    value.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") ||
+    "performance"
+  );
 }
 
 router.use(requireAuth);
@@ -107,7 +119,10 @@ router.use(requireRole(...sourceReaders));
 router.get(
   "/datasets/:id/manual-schema",
   asyncHandler(async (req, res) => {
-    await performanceGovernanceService.assertDatasetAccess(req.authUser!.id, req.params.id);
+    await performanceGovernanceService.assertDatasetAccess(
+      req.authUser!.id,
+      req.params.id,
+    );
     const dataset = await loadDataset(req.params.id);
     assertManualSource(dataset);
     return res.json({
@@ -117,10 +132,14 @@ router.get(
         datasetKey: dataset.datasetKey,
         datasetName: dataset.datasetName,
         sourceType: dataset.sourceType,
-        acceptedExtensions: dataset.sourceType === "csv" ? [".csv"] : [".xlsx", ".xls"],
+        acceptedExtensions:
+          dataset.sourceType === "csv" ? [".csv"] : [".xlsx", ".xls"],
         maximumFileBytes: 20 * 1024 * 1024,
         maxRows: performanceDatasetMaxRows(dataset),
-        sheetName: String((dataset.config as { sheetName?: string }).sheetName ?? "").trim() || null,
+        sheetName:
+          String(
+            (dataset.config as { sheetName?: string }).sheetName ?? "",
+          ).trim() || null,
         requiredColumns: requiredColumnsForMapping(dataset.mapping),
         mapping: dataset.mapping,
       },
@@ -131,7 +150,10 @@ router.get(
 router.get(
   "/datasets/:id/manual-template.csv",
   asyncHandler(async (req, res) => {
-    await performanceGovernanceService.assertDatasetAccess(req.authUser!.id, req.params.id);
+    await performanceGovernanceService.assertDatasetAccess(
+      req.authUser!.id,
+      req.params.id,
+    );
     const dataset = await loadDataset(req.params.id);
     assertManualSource(dataset);
     const fileName = `${safeFilePart(dataset.datasetKey)}-manual-upload-template.csv`;
@@ -146,13 +168,22 @@ router.post(
   "/datasets/:id/manual-preflight",
   upload.single("file"),
   asyncHandler(async (req, res) => {
-    await performanceGovernanceService.assertDatasetAccess(req.authUser!.id, req.params.id);
+    await performanceGovernanceService.assertDatasetAccess(
+      req.authUser!.id,
+      req.params.id,
+    );
     const dataset = await loadDataset(req.params.id);
     assertManualSource(dataset);
     if (!req.file?.buffer) {
-      return res.status(400).json({ success: false, error: "Select an Excel or CSV file" });
+      return res
+        .status(400)
+        .json({ success: false, error: "Select an Excel or CSV file" });
     }
-    const inspection = inspectManualUploadFile(dataset, req.file.buffer, req.file.originalname);
+    const inspection = inspectManualUploadFile(
+      dataset,
+      req.file.buffer,
+      req.file.originalname,
+    );
     return res.json({
       success: true,
       data: {
@@ -184,10 +215,15 @@ router.get(
       [req.params.runId],
     );
     if (!runRows[0]) {
-      throw Object.assign(new Error("Performance ingestion run not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Performance ingestion run not found"), {
+        statusCode: 404,
+      });
     }
     const datasetId = String(runRows[0].dataset_id);
-    await performanceGovernanceService.assertDatasetAccess(req.authUser!.id, datasetId);
+    await performanceGovernanceService.assertDatasetAccess(
+      req.authUser!.id,
+      datasetId,
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT vr.raw_record_id,

@@ -96,15 +96,32 @@ export interface SatyaCounts {
 
 export interface SatyaCallsData {
   headline: {
-    attempts: number; connected: number; connectedPct: number; dropped: number;
-    orderCalls: number; shops: number; agents: number; avgAttempt: number;
+    attempts: number;
+    connected: number;
+    connectedPct: number;
+    dropped: number;
+    orderCalls: number;
+    shops: number;
+    agents: number;
+    avgAttempt: number;
   };
-  daily: Array<{ date: string; attempts: number; connected: number; orderCalls: number }>;
+  daily: Array<{
+    date: string;
+    attempts: number;
+    connected: number;
+    orderCalls: number;
+  }>;
   byAttempt: Array<{ bucket: string; attempts: number; connected: number }>;
   hourly: Array<{ hour: number; attempts: number; connected: number }>;
   byScenario: Array<{ scenario: string; count: number }>;
   bySubScenario: Array<{ subScenario: string; count: number }>;
-  agents: Array<{ agentId: string; attempts: number; connected: number; orderCalls: number; avgAttempt: number }>;
+  agents: Array<{
+    agentId: string;
+    attempts: number;
+    connected: number;
+    orderCalls: number;
+    avgAttempt: number;
+  }>;
 }
 
 export interface SatyaCheck {
@@ -124,14 +141,33 @@ export interface SatyaReportFilters {
 
 export interface SatyaReportData {
   filters: SatyaReportFilters;
-  available: { minDate: string | null; maxDate: string | null; warehouses: string[] };
+  available: {
+    minDate: string | null;
+    maxDate: string | null;
+    warehouses: string[];
+  };
   headline: SatyaCounts & { agents: number; shops: number };
   byRoster: Array<{ roster: string; counts: SatyaCounts }>;
   daily: Array<{ date: string; roster: string; counts: SatyaCounts }>;
-  subDispositionDaily: Array<{ date: string; disposition: string; subDisposition: string; count: number }>;
-  agents: Array<{ agentId: string; agentName: string; daysWorked: number; counts: SatyaCounts }>;
+  subDispositionDaily: Array<{
+    date: string;
+    disposition: string;
+    subDisposition: string;
+    count: number;
+  }>;
+  agents: Array<{
+    agentId: string;
+    agentName: string;
+    daysWorked: number;
+    counts: SatyaCounts;
+  }>;
   warehouses: Array<{ warehouse: string; beats: number; counts: SatyaCounts }>;
-  beats: Array<{ beat: string; warehouse: string; shops: number; counts: SatyaCounts }>;
+  beats: Array<{
+    beat: string;
+    warehouse: string;
+    shops: number;
+    counts: SatyaCounts;
+  }>;
   calls: SatyaCallsData;
   checks: SatyaCheck[];
 }
@@ -146,18 +182,44 @@ export interface SatyaDetail {
   firstDate: string | null;
   lastDate: string | null;
   counts: SatyaCounts;
-  daily: Array<{ date: string; allocation: number; connected: number; orders: number; revenue: number }>;
-  dispositions: Array<{ disposition: string; subDisposition: string; count: number }>;
+  daily: Array<{
+    date: string;
+    allocation: number;
+    connected: number;
+    orders: number;
+    revenue: number;
+  }>;
+  dispositions: Array<{
+    disposition: string;
+    subDisposition: string;
+    count: number;
+  }>;
   /** agent -> beats, beat -> agents, warehouse -> beats */
   breakdownLabel: string;
   breakdown: Array<{ name: string; counts: SatyaCounts }>;
-  orders: Array<{ date: string; shop: string; beat: string; agent: string; roster: string; amount: number }>;
+  orders: Array<{
+    date: string;
+    shop: string;
+    beat: string;
+    agent: string;
+    roster: string;
+    amount: number;
+  }>;
   ordersTotal: number;
-  calls: { attempts: number; connected: number; orderCalls: number; avgAttempt: number };
+  calls: {
+    attempts: number;
+    connected: number;
+    orderCalls: number;
+    avgAttempt: number;
+  };
 }
 
-const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
+const num = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const pct = (part: number, whole: number): number =>
+  whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
 
 function mapCounts(r: RowDataPacket): SatyaCounts {
   const allocation = num(r.allocation);
@@ -183,16 +245,40 @@ function mapCounts(r: RowDataPacket): SatyaCounts {
 export function currentMonthRange(): { from: string; to: string } {
   const pad = (n: number) => String(n).padStart(2, "0");
   const now = new Date();
-  const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(now) };
+  const ymd = (d: Date) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return {
+    from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)),
+    to: ymd(now),
+  };
 }
 
-export function normalizeFilters(input: { from?: unknown; to?: unknown; warehouse?: unknown; roster?: unknown }): SatyaReportFilters {
+export function normalizeFilters(input: {
+  from?: unknown;
+  to?: unknown;
+  warehouse?: unknown;
+  roster?: unknown;
+}): SatyaReportFilters {
   const fallback = currentMonthRange();
-  const from = typeof input.from === "string" && DATE_RE.test(input.from) ? input.from : fallback.from;
-  const to = typeof input.to === "string" && DATE_RE.test(input.to) ? input.to : fallback.to;
-  const warehouse = typeof input.warehouse === "string" && input.warehouse.trim() && input.warehouse.length <= 60 ? input.warehouse.trim() : null;
-  const roster = typeof input.roster === "string" && (ROSTERS as readonly string[]).includes(input.roster) ? input.roster : null;
+  const from =
+    typeof input.from === "string" && DATE_RE.test(input.from)
+      ? input.from
+      : fallback.from;
+  const to =
+    typeof input.to === "string" && DATE_RE.test(input.to)
+      ? input.to
+      : fallback.to;
+  const warehouse =
+    typeof input.warehouse === "string" &&
+    input.warehouse.trim() &&
+    input.warehouse.length <= 60
+      ? input.warehouse.trim()
+      : null;
+  const roster =
+    typeof input.roster === "string" &&
+    (ROSTERS as readonly string[]).includes(input.roster)
+      ? input.roster
+      : null;
   return { from, to, warehouse, roster };
 }
 
@@ -212,21 +298,43 @@ async function allocDuplicateIds(): Promise<number[]> {
   return rows.map((r) => Number(r.id)).filter((n) => Number.isInteger(n));
 }
 
-function allocWhere(f: SatyaReportFilters, dupIds: number[], extra?: { sql: string; params: unknown[] }): { sql: string; params: unknown[] } {
+function allocWhere(
+  f: SatyaReportFilters,
+  dupIds: number[],
+  extra?: { sql: string; params: unknown[] },
+): { sql: string; params: unknown[] } {
   const parts = [`${A_DATE} >= ?`, `${A_DATE} < DATE_ADD(?, INTERVAL 1 DAY)`];
   const params: unknown[] = [f.from, f.to];
-  if (f.warehouse) { parts.push(`(${WH}) = ?`); params.push(f.warehouse); }
-  if (f.roster) { parts.push(`(${ROSTER}) = ?`); params.push(f.roster); }
+  if (f.warehouse) {
+    parts.push(`(${WH}) = ?`);
+    params.push(f.warehouse);
+  }
+  if (f.roster) {
+    parts.push(`(${ROSTER}) = ?`);
+    params.push(f.roster);
+  }
   if (dupIds.length > 0) parts.push(`id NOT IN (${dupIds.join(",")})`);
-  if (extra) { parts.push(extra.sql); params.push(...extra.params); }
+  if (extra) {
+    parts.push(extra.sql);
+    params.push(...extra.params);
+  }
   return { sql: `WHERE ${parts.join(" AND ")}`, params };
 }
 
-function cdrWhere(f: SatyaReportFilters, extra?: { sql: string; params: unknown[] }): { sql: string; params: unknown[] } {
+function cdrWhere(
+  f: SatyaReportFilters,
+  extra?: { sql: string; params: unknown[] },
+): { sql: string; params: unknown[] } {
   const parts = [`${A_DATE} >= ?`, `${A_DATE} < DATE_ADD(?, INTERVAL 1 DAY)`];
   const params: unknown[] = [f.from, f.to];
-  if (f.warehouse) { parts.push(`(${WH}) = ?`); params.push(f.warehouse); }
-  if (extra) { parts.push(extra.sql); params.push(...extra.params); }
+  if (f.warehouse) {
+    parts.push(`(${WH}) = ?`);
+    params.push(f.warehouse);
+  }
+  if (extra) {
+    parts.push(extra.sql);
+    params.push(...extra.params);
+  }
   return { sql: `WHERE ${parts.join(" AND ")}`, params };
 }
 
@@ -235,57 +343,101 @@ async function getCallsData(f: SatyaReportFilters): Promise<SatyaCallsData> {
   const dateWhere = cdrWhere(f, { sql: `${A_DATE} IS NOT NULL`, params: [] });
   const hourWhere = cdrWhere(f, { sql: `(${CDR_TS}) IS NOT NULL`, params: [] });
 
-  const [headlineR, dailyR, attemptR, hourR, scenarioR, subR, agentR] = await Promise.all([
-    db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(scenario = 'Call Dropped') AS dropped,
+  const [headlineR, dailyR, attemptR, hourR, scenarioR, subR, agentR] =
+    await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(scenario = 'Call Dropped') AS dropped,
          SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
          COUNT(DISTINCT NULLIF(number_val, '0')) AS shops, COUNT(DISTINCT NULLIF(agent_name, '')) AS agents,
          AVG(CAST(attempt AS UNSIGNED)) AS avg_attempt
-       FROM ${C} ${w.sql}`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT ${A_DATE} AS d, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls
-       FROM ${C} ${dateWhere.sql} GROUP BY d ORDER BY d`, dateWhere.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT CASE WHEN CAST(attempt AS UNSIGNED) >= 11 THEN '11+' WHEN CAST(attempt AS UNSIGNED) >= 6 THEN '6-10' ELSE CAST(CAST(attempt AS UNSIGNED) AS CHAR) END AS bucket,
+       FROM ${C} ${w.sql}`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT ${A_DATE} AS d, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls
+       FROM ${C} ${dateWhere.sql} GROUP BY d ORDER BY d`,
+        dateWhere.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT CASE WHEN CAST(attempt AS UNSIGNED) >= 11 THEN '11+' WHEN CAST(attempt AS UNSIGNED) >= 6 THEN '6-10' ELSE CAST(CAST(attempt AS UNSIGNED) AS CHAR) END AS bucket,
          MIN(CAST(attempt AS UNSIGNED)) AS sort_key, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected
-       FROM ${C} ${w.sql} AND attempt REGEXP '^[0-9]+$' GROUP BY bucket ORDER BY sort_key`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT HOUR(${CDR_TS}) AS h, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected
-       FROM ${C} ${hourWhere.sql} GROUP BY h ORDER BY h`, hourWhere.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(scenario, ''), 'Unknown') AS scenario, COUNT(*) AS n FROM ${C} ${w.sql} GROUP BY scenario ORDER BY n DESC`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(sub_scenario_1, ''), 'Not tagged') AS sub_scenario, COUNT(*) AS n FROM ${C} ${w.sql} GROUP BY sub_scenario ORDER BY n DESC LIMIT 15`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT agent_name, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
+       FROM ${C} ${w.sql} AND attempt REGEXP '^[0-9]+$' GROUP BY bucket ORDER BY sort_key`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT HOUR(${CDR_TS}) AS h, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected
+       FROM ${C} ${hourWhere.sql} GROUP BY h ORDER BY h`,
+        hourWhere.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(NULLIF(scenario, ''), 'Unknown') AS scenario, COUNT(*) AS n FROM ${C} ${w.sql} GROUP BY scenario ORDER BY n DESC`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(NULLIF(sub_scenario_1, ''), 'Not tagged') AS sub_scenario, COUNT(*) AS n FROM ${C} ${w.sql} GROUP BY sub_scenario ORDER BY n DESC LIMIT 15`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT agent_name, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
          AVG(CAST(attempt AS UNSIGNED)) AS avg_attempt
-       FROM ${C} ${w.sql} AND agent_name IS NOT NULL AND agent_name <> '' GROUP BY agent_name ORDER BY attempts DESC`, w.params),
-  ]);
+       FROM ${C} ${w.sql} AND agent_name IS NOT NULL AND agent_name <> '' GROUP BY agent_name ORDER BY attempts DESC`,
+        w.params,
+      ),
+    ]);
 
   const h = headlineR[0][0];
   const attempts = num(h?.attempts);
   const connected = num(h?.connected);
   return {
     headline: {
-      attempts, connected, connectedPct: pct(connected, attempts), dropped: num(h?.dropped),
-      orderCalls: num(h?.order_calls), shops: num(h?.shops), agents: num(h?.agents),
+      attempts,
+      connected,
+      connectedPct: pct(connected, attempts),
+      dropped: num(h?.dropped),
+      orderCalls: num(h?.order_calls),
+      shops: num(h?.shops),
+      agents: num(h?.agents),
       avgAttempt: Math.round(num(h?.avg_attempt) * 100) / 100,
     },
-    daily: dailyR[0].map((r) => ({ date: String(r.d), attempts: num(r.attempts), connected: num(r.connected), orderCalls: num(r.order_calls) })),
-    byAttempt: attemptR[0].map((r) => ({ bucket: String(r.bucket), attempts: num(r.attempts), connected: num(r.connected) })),
-    hourly: hourR[0].map((r) => ({ hour: num(r.h), attempts: num(r.attempts), connected: num(r.connected) })),
-    byScenario: scenarioR[0].map((r) => ({ scenario: String(r.scenario), count: num(r.n) })),
-    bySubScenario: subR[0].map((r) => ({ subScenario: String(r.sub_scenario), count: num(r.n) })),
+    daily: dailyR[0].map((r) => ({
+      date: String(r.d),
+      attempts: num(r.attempts),
+      connected: num(r.connected),
+      orderCalls: num(r.order_calls),
+    })),
+    byAttempt: attemptR[0].map((r) => ({
+      bucket: String(r.bucket),
+      attempts: num(r.attempts),
+      connected: num(r.connected),
+    })),
+    hourly: hourR[0].map((r) => ({
+      hour: num(r.h),
+      attempts: num(r.attempts),
+      connected: num(r.connected),
+    })),
+    byScenario: scenarioR[0].map((r) => ({
+      scenario: String(r.scenario),
+      count: num(r.n),
+    })),
+    bySubScenario: subR[0].map((r) => ({
+      subScenario: String(r.sub_scenario),
+      count: num(r.n),
+    })),
     agents: agentR[0].map((r) => ({
-      agentId: String(r.agent_name), attempts: num(r.attempts), connected: num(r.connected),
-      orderCalls: num(r.order_calls), avgAttempt: Math.round(num(r.avg_attempt) * 100) / 100,
+      agentId: String(r.agent_name),
+      attempts: num(r.attempts),
+      connected: num(r.connected),
+      orderCalls: num(r.order_calls),
+      avgAttempt: Math.round(num(r.avg_attempt) * 100) / 100,
     })),
   };
 }
 
 /** Spelling variants of one sub-disposition ("Shop Closed – Temporary" vs
  * "Shop Closed Temporary") that differ only by punctuation/case. */
-function findSpellingVariants(rows: Array<{ sub: string; n: number }>): SatyaCheck[] {
+function findSpellingVariants(
+  rows: Array<{ sub: string; n: number }>,
+): SatyaCheck[] {
   const groups = new Map<string, Array<{ sub: string; n: number }>>();
   for (const r of rows) {
     const key = r.sub.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -298,7 +450,9 @@ function findSpellingVariants(rows: Array<{ sub: string; n: number }>): SatyaChe
       id: `variant-${i}`,
       level: "warn" as const,
       title: "Same outcome spelled two ways",
-      detail: g.map((v) => `"${v.sub}" (${v.n})`).join("  vs  ") + " — reported separately, exactly as uploaded. Fix at source to merge them.",
+      detail:
+        g.map((v) => `"${v.sub}" (${v.n})`).join("  vs  ") +
+        " — reported separately, exactly as uploaded. Fix at source to merge them.",
       count: g.reduce((s, v) => s + v.n, 0),
     }));
 }
@@ -314,12 +468,17 @@ async function getChecks(dupIds: number[]): Promise<SatyaCheck[]> {
          SUM(agent_id = 'VDCL') AS vdcl,
          SUM(sub_disposition = 'Order Placed' AND (warehouse IS NULL OR warehouse = '' OR warehouse = 'Warehouse')) AS orders_no_wh,
          MAX(inserted_at) AS last_upload
-       FROM ${A}`),
-    db.execute<RowDataPacket[]>(`SELECT sub_disposition AS sub, COUNT(*) AS n FROM ${A} WHERE sub_disposition IS NOT NULL AND sub_disposition <> '' GROUP BY sub_disposition`),
+       FROM ${A}`,
+    ),
     db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total, SUM(warehouse IS NULL OR warehouse = '') AS wh_null, SUM(roster IS NULL OR roster = '') AS roster_null, MAX(inserted_at) AS last_upload FROM ${C}`),
+      `SELECT sub_disposition AS sub, COUNT(*) AS n FROM ${A} WHERE sub_disposition IS NOT NULL AND sub_disposition <> '' GROUP BY sub_disposition`,
+    ),
     db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(n - 1), 0) AS possible_dupes FROM (SELECT COUNT(*) AS n FROM ${C} GROUP BY call_id, attempt, call_date HAVING COUNT(*) > 1) x`),
+      `SELECT COUNT(*) AS total, SUM(warehouse IS NULL OR warehouse = '') AS wh_null, SUM(roster IS NULL OR roster = '') AS roster_null, MAX(inserted_at) AS last_upload FROM ${C}`,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(n - 1), 0) AS possible_dupes FROM (SELECT COUNT(*) AS n FROM ${C} GROUP BY call_id, attempt, call_date HAVING COUNT(*) > 1) x`,
+    ),
   ]);
   const t = totalsR[0][0];
   const c = cdrR[0][0];
@@ -327,79 +486,148 @@ async function getChecks(dupIds: number[]): Promise<SatyaCheck[]> {
 
   if (dupIds.length > 0) {
     checks.push({
-      id: "alloc-dupes", level: "warn", count: dupIds.length,
+      id: "alloc-dupes",
+      level: "warn",
+      count: dupIds.length,
       title: "Duplicate allocation rows excluded",
       detail: `${dupIds.length} older rows are exact copies (same date + shop + flag) of rows in a later upload — most likely an earlier test upload that was re-uploaded in full. They are left in the database and skipped here.`,
     });
   }
   if (num(t?.roster_unmapped) > 0) {
     checks.push({
-      id: "roster-unmapped", level: "warn", count: num(t?.roster_unmapped),
+      id: "roster-unmapped",
+      level: "warn",
+      count: num(t?.roster_unmapped),
       title: "Allocation rows with no Morning/Absentee roster",
-      detail: "Counted in every total but shown as 'Unmapped' by roster — the roster/warehouse/beat text on such a row is a header label (e.g. 'Roster', 'Warehouse') from the source sheet.",
+      detail:
+        "Counted in every total but shown as 'Unmapped' by roster — the roster/warehouse/beat text on such a row is a header label (e.g. 'Roster', 'Warehouse') from the source sheet.",
     });
   }
   if (num(t?.wh_unmapped) > 0) {
     checks.push({
-      id: "wh-unmapped", level: "warn", count: num(t?.wh_unmapped),
+      id: "wh-unmapped",
+      level: "warn",
+      count: num(t?.wh_unmapped),
       title: "Allocation rows with no warehouse",
       detail: `${num(t?.orders_no_wh)} order(s) sit on these rows and appear under warehouse 'Unmapped'. A workbook that hard-codes a warehouse list (GGN / AGR / GZB) will under-count orders by this amount plus any warehouse it omits (NDA, JNS).`,
     });
   }
   if (num(t?.pending) > 0) {
     checks.push({
-      id: "pending", level: "info", count: num(t?.pending),
+      id: "pending",
+      level: "info",
+      count: num(t?.pending),
       title: "Pending (not yet called) allocations",
       detail: `${num(t?.vdcl)} rows are assigned to the queue sentinel 'VDCL' rather than a person. They count in allocation and pending, but not in calls made or any agent table.`,
     });
   }
-  checks.push(...findSpellingVariants(subR[0].map((r) => ({ sub: String(r.sub), n: num(r.n) }))));
+  checks.push(
+    ...findSpellingVariants(
+      subR[0].map((r) => ({ sub: String(r.sub), n: num(r.n) })),
+    ),
+  );
   if (num(cdrDupR[0][0]?.possible_dupes) > 0) {
     checks.push({
-      id: "cdr-dupes", level: "warn", count: num(cdrDupR[0][0]?.possible_dupes),
+      id: "cdr-dupes",
+      level: "warn",
+      count: num(cdrDupR[0][0]?.possible_dupes),
       title: "Possible duplicate dial-attempt rows",
-      detail: "Rows sharing the same call id, attempt number and call time. satya_cdr has no reliable unique key, so nothing is removed — call-attempt totals are shown as uploaded.",
+      detail:
+        "Rows sharing the same call id, attempt number and call time. satya_cdr has no reliable unique key, so nothing is removed — call-attempt totals are shown as uploaded.",
     });
   }
   if (num(c?.roster_null) > 0) {
     checks.push({
-      id: "cdr-roster", level: "info", count: num(c?.roster_null),
+      id: "cdr-roster",
+      level: "info",
+      count: num(c?.roster_null),
       title: "Dial attempts with no roster",
-      detail: "The roster filter therefore applies to allocation views only, not to the Call attempts tab.",
+      detail:
+        "The roster filter therefore applies to allocation views only, not to the Call attempts tab.",
     });
   }
   checks.push({
-    id: "sources", level: "info", count: num(t?.total) + num(c?.total),
+    id: "sources",
+    level: "info",
+    count: num(t?.total) + num(c?.total),
     title: "Source rows",
-    detail: `${num(t?.total).toLocaleString("en-IN")} allocation rows (last upload ${String(t?.last_upload ?? "—").slice(0, 16).replace("T", " ")}) and ${num(c?.total).toLocaleString("en-IN")} dial-attempt rows (last upload ${String(c?.last_upload ?? "—").slice(0, 16).replace("T", " ")}).`,
+    detail: `${num(t?.total).toLocaleString("en-IN")} allocation rows (last upload ${String(
+      t?.last_upload ?? "—",
+    )
+      .slice(0, 16)
+      .replace(
+        "T",
+        " ",
+      )}) and ${num(c?.total).toLocaleString("en-IN")} dial-attempt rows (last upload ${String(
+      c?.last_upload ?? "—",
+    )
+      .slice(0, 16)
+      .replace("T", " ")}).`,
   });
   return checks;
 }
 
-export async function getSatyaReport(f: SatyaReportFilters): Promise<SatyaReportData> {
+export async function getSatyaReport(
+  f: SatyaReportFilters,
+): Promise<SatyaReportData> {
   const dupIds = await allocDuplicateIds();
   const w = allocWhere(f, dupIds);
-  const agentW = allocWhere(f, dupIds, { sql: `agent_id IS NOT NULL AND agent_id <> '' AND agent_id <> 'VDCL'`, params: [] });
+  const agentW = allocWhere(f, dupIds, {
+    sql: `agent_id IS NOT NULL AND agent_id <> '' AND agent_id <> 'VDCL'`,
+    params: [],
+  });
 
-  const [headlineR, rosterR, dailyR, subR, agentR, whR, beatR, availR, whListR, calls, checks] = await Promise.all([
+  const [
+    headlineR,
+    rosterR,
+    dailyR,
+    subR,
+    agentR,
+    whR,
+    beatR,
+    availR,
+    whListR,
+    calls,
+    checks,
+  ] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT ${COUNTERS}, COUNT(DISTINCT NULLIF(NULLIF(agent_id, ''), 'VDCL')) AS agents, COUNT(DISTINCT NULLIF(shop_phone, '')) AS shops
-       FROM ${A} ${w.sql}`, w.params),
-    db.execute<RowDataPacket[]>(`SELECT ${ROSTER} AS roster_n, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY roster_n`, w.params),
-    db.execute<RowDataPacket[]>(`SELECT ${A_DATE} AS d, ${ROSTER} AS roster_n, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY d, roster_n ORDER BY d`, w.params),
+       FROM ${A} ${w.sql}`,
+      w.params,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT ${ROSTER} AS roster_n, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY roster_n`,
+      w.params,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT ${A_DATE} AS d, ${ROSTER} AS roster_n, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY d, roster_n ORDER BY d`,
+      w.params,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT ${A_DATE} AS d, COALESCE(NULLIF(disposition, ''), 'Unknown') AS disp, COALESCE(NULLIF(sub_disposition, ''), 'Unknown') AS sub, COUNT(*) AS n
-       FROM ${A} ${w.sql} GROUP BY d, disp, sub`, w.params),
+       FROM ${A} ${w.sql} GROUP BY d, disp, sub`,
+      w.params,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT agent_id, MAX(NULLIF(agent_name_2, '')) AS agent_name, COUNT(DISTINCT ${A_DATE}) AS days_worked, ${COUNTERS}
-       FROM ${A} ${agentW.sql} GROUP BY agent_id ORDER BY allocation DESC`, agentW.params),
+       FROM ${A} ${agentW.sql} GROUP BY agent_id ORDER BY allocation DESC`,
+      agentW.params,
+    ),
     db.execute<RowDataPacket[]>(
-      `SELECT ${WH} AS wh, COUNT(DISTINCT ${BEAT}) AS beats, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY wh ORDER BY allocation DESC`, w.params),
+      `SELECT ${WH} AS wh, COUNT(DISTINCT ${BEAT}) AS beats, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY wh ORDER BY allocation DESC`,
+      w.params,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT ${BEAT} AS beat_n, MAX(${WH}) AS wh, COUNT(DISTINCT NULLIF(shop_phone, '')) AS shops, ${COUNTERS}
-       FROM ${A} ${w.sql} GROUP BY beat_n ORDER BY allocation DESC`, w.params),
-    db.execute<RowDataPacket[]>(`SELECT MIN(${A_DATE}) AS min_d, MAX(${A_DATE}) AS max_d FROM ${A}`),
-    db.execute<RowDataPacket[]>(`SELECT ${WH} AS wh FROM ${A} UNION SELECT ${WH} AS wh FROM ${C} ORDER BY wh`),
+       FROM ${A} ${w.sql} GROUP BY beat_n ORDER BY allocation DESC`,
+      w.params,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT MIN(${A_DATE}) AS min_d, MAX(${A_DATE}) AS max_d FROM ${A}`,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT ${WH} AS wh FROM ${A} UNION SELECT ${WH} AS wh FROM ${C} ORDER BY wh`,
+    ),
     getCallsData(f),
     getChecks(dupIds),
   ]);
@@ -413,88 +641,180 @@ export async function getSatyaReport(f: SatyaReportFilters): Promise<SatyaReport
       warehouses: whListR[0].map((r) => String(r.wh)),
     },
     headline: { ...mapCounts(h), agents: num(h?.agents), shops: num(h?.shops) },
-    byRoster: rosterR[0].map((r) => ({ roster: String(r.roster_n), counts: mapCounts(r) })),
-    daily: dailyR[0].map((r) => ({ date: String(r.d), roster: String(r.roster_n), counts: mapCounts(r) })),
-    subDispositionDaily: subR[0].map((r) => ({ date: String(r.d), disposition: String(r.disp), subDisposition: String(r.sub), count: num(r.n) })),
-    agents: agentR[0].map((r) => ({
-      agentId: String(r.agent_id), agentName: r.agent_name ? String(r.agent_name) : String(r.agent_id),
-      daysWorked: num(r.days_worked), counts: mapCounts(r),
+    byRoster: rosterR[0].map((r) => ({
+      roster: String(r.roster_n),
+      counts: mapCounts(r),
     })),
-    warehouses: whR[0].map((r) => ({ warehouse: String(r.wh), beats: num(r.beats), counts: mapCounts(r) })),
-    beats: beatR[0].map((r) => ({ beat: String(r.beat_n), warehouse: String(r.wh), shops: num(r.shops), counts: mapCounts(r) })),
+    daily: dailyR[0].map((r) => ({
+      date: String(r.d),
+      roster: String(r.roster_n),
+      counts: mapCounts(r),
+    })),
+    subDispositionDaily: subR[0].map((r) => ({
+      date: String(r.d),
+      disposition: String(r.disp),
+      subDisposition: String(r.sub),
+      count: num(r.n),
+    })),
+    agents: agentR[0].map((r) => ({
+      agentId: String(r.agent_id),
+      agentName: r.agent_name ? String(r.agent_name) : String(r.agent_id),
+      daysWorked: num(r.days_worked),
+      counts: mapCounts(r),
+    })),
+    warehouses: whR[0].map((r) => ({
+      warehouse: String(r.wh),
+      beats: num(r.beats),
+      counts: mapCounts(r),
+    })),
+    beats: beatR[0].map((r) => ({
+      beat: String(r.beat_n),
+      warehouse: String(r.wh),
+      shops: num(r.shops),
+      counts: mapCounts(r),
+    })),
     calls,
     checks,
   };
 }
 
-const DETAIL_DIMENSION: Record<SatyaDetailType, { alloc: string; cdr: string; breakdownLabel: string; breakdownExpr: string }> = {
-  agent: { alloc: `agent_id = ?`, cdr: `agent_name = ?`, breakdownLabel: "Beat-wise", breakdownExpr: BEAT },
-  beat: { alloc: `(${BEAT}) = ?`, cdr: `(${BEAT}) = ?`, breakdownLabel: "Agent-wise", breakdownExpr: `agent_id` },
-  warehouse: { alloc: `(${WH}) = ?`, cdr: `(${WH}) = ?`, breakdownLabel: "Beat-wise", breakdownExpr: BEAT },
+const DETAIL_DIMENSION: Record<
+  SatyaDetailType,
+  { alloc: string; cdr: string; breakdownLabel: string; breakdownExpr: string }
+> = {
+  agent: {
+    alloc: `agent_id = ?`,
+    cdr: `agent_name = ?`,
+    breakdownLabel: "Beat-wise",
+    breakdownExpr: BEAT,
+  },
+  beat: {
+    alloc: `(${BEAT}) = ?`,
+    cdr: `(${BEAT}) = ?`,
+    breakdownLabel: "Agent-wise",
+    breakdownExpr: `agent_id`,
+  },
+  warehouse: {
+    alloc: `(${WH}) = ?`,
+    cdr: `(${WH}) = ?`,
+    breakdownLabel: "Beat-wise",
+    breakdownExpr: BEAT,
+  },
 };
 
 /** One agent / beat / warehouse in full -- backs the row drill-down drawer.
  * Same date/warehouse/roster filters as the list it was opened from, so the
  * drawer's totals equal the row that was clicked. */
-export async function getSatyaDetail(type: SatyaDetailType, key: string, f: SatyaReportFilters): Promise<SatyaDetail | null> {
+export async function getSatyaDetail(
+  type: SatyaDetailType,
+  key: string,
+  f: SatyaReportFilters,
+): Promise<SatyaDetail | null> {
   const dim = DETAIL_DIMENSION[type];
   const dupIds = await allocDuplicateIds();
   const w = allocWhere(f, dupIds, { sql: dim.alloc, params: [key] });
   const cw = cdrWhere(f, { sql: dim.cdr, params: [key] });
 
-  const [totalsR, metaR, dailyR, dispR, breakR, ordersR, ordersCountR, callsR] = await Promise.all([
-    db.execute<RowDataPacket[]>(`SELECT ${COUNTERS} FROM ${A} ${w.sql}`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT MIN(${A_DATE}) AS first_d, MAX(${A_DATE}) AS last_d, MAX(NULLIF(agent_name_2, '')) AS agent_name,
+  const [totalsR, metaR, dailyR, dispR, breakR, ordersR, ordersCountR, callsR] =
+    await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT ${COUNTERS} FROM ${A} ${w.sql}`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT MIN(${A_DATE}) AS first_d, MAX(${A_DATE}) AS last_d, MAX(NULLIF(agent_name_2, '')) AS agent_name,
          MAX(${WH}) AS wh, COUNT(DISTINCT ${BEAT}) AS beats, COUNT(DISTINCT NULLIF(agent_id, '')) AS agents
-       FROM ${A} ${w.sql}`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT ${A_DATE} AS d, COUNT(*) AS allocation, SUM(disposition = 'Connected') AS connected,
+       FROM ${A} ${w.sql}`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT ${A_DATE} AS d, COUNT(*) AS allocation, SUM(disposition = 'Connected') AS connected,
          SUM(sub_disposition = 'Order Placed') AS orders, SUM(${REVENUE}) AS revenue
-       FROM ${A} ${w.sql} GROUP BY d ORDER BY d`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(disposition, ''), 'Unknown') AS disp, COALESCE(NULLIF(sub_disposition, ''), 'Unknown') AS sub, COUNT(*) AS n
-       FROM ${A} ${w.sql} GROUP BY disp, sub ORDER BY n DESC`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT ${dim.breakdownExpr} AS name, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY name ORDER BY allocation DESC LIMIT 60`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT ${A_DATE} AS d, shop_name, ${BEAT} AS beat_n, agent_id, ${ROSTER} AS roster_n, ${REVENUE} AS amount
-       FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed' ORDER BY d DESC, id DESC LIMIT 50`, w.params),
-    db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed'`, w.params),
-    db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
+       FROM ${A} ${w.sql} GROUP BY d ORDER BY d`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(NULLIF(disposition, ''), 'Unknown') AS disp, COALESCE(NULLIF(sub_disposition, ''), 'Unknown') AS sub, COUNT(*) AS n
+       FROM ${A} ${w.sql} GROUP BY disp, sub ORDER BY n DESC`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT ${dim.breakdownExpr} AS name, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY name ORDER BY allocation DESC LIMIT 60`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT ${A_DATE} AS d, shop_name, ${BEAT} AS beat_n, agent_id, ${ROSTER} AS roster_n, ${REVENUE} AS amount
+       FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed' ORDER BY d DESC, id DESC LIMIT 50`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS n FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed'`,
+        w.params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
          AVG(CAST(attempt AS UNSIGNED)) AS avg_attempt
-       FROM ${C} ${cw.sql}`, cw.params),
-  ]);
+       FROM ${C} ${cw.sql}`,
+        cw.params,
+      ),
+    ]);
 
   const counts = mapCounts(totalsR[0][0]);
   if (counts.allocation === 0) return null;
   const meta = metaR[0][0];
   const c = callsR[0][0];
 
-  const title = type === "agent" ? (meta?.agent_name ? `${meta.agent_name} (${key})` : key) : key;
-  const subtitle = type === "agent"
-    ? `${num(meta?.beats)} beat(s) · warehouse ${meta?.wh ?? "—"}`
-    : type === "beat"
-      ? `Warehouse ${meta?.wh ?? "—"} · ${num(meta?.agents)} agent(s)`
-      : `${num(meta?.beats)} beat(s) · ${num(meta?.agents)} agent(s)`;
+  const title =
+    type === "agent"
+      ? meta?.agent_name
+        ? `${meta.agent_name} (${key})`
+        : key
+      : key;
+  const subtitle =
+    type === "agent"
+      ? `${num(meta?.beats)} beat(s) · warehouse ${meta?.wh ?? "—"}`
+      : type === "beat"
+        ? `Warehouse ${meta?.wh ?? "—"} · ${num(meta?.agents)} agent(s)`
+        : `${num(meta?.beats)} beat(s) · ${num(meta?.agents)} agent(s)`;
 
   return {
-    type, key, title, subtitle,
+    type,
+    key,
+    title,
+    subtitle,
     firstDate: meta?.first_d ? String(meta.first_d) : null,
     lastDate: meta?.last_d ? String(meta.last_d) : null,
     counts,
-    daily: dailyR[0].map((r) => ({ date: String(r.d), allocation: num(r.allocation), connected: num(r.connected), orders: num(r.orders), revenue: num(r.revenue) })),
-    dispositions: dispR[0].map((r) => ({ disposition: String(r.disp), subDisposition: String(r.sub), count: num(r.n) })),
+    daily: dailyR[0].map((r) => ({
+      date: String(r.d),
+      allocation: num(r.allocation),
+      connected: num(r.connected),
+      orders: num(r.orders),
+      revenue: num(r.revenue),
+    })),
+    dispositions: dispR[0].map((r) => ({
+      disposition: String(r.disp),
+      subDisposition: String(r.sub),
+      count: num(r.n),
+    })),
     breakdownLabel: dim.breakdownLabel,
-    breakdown: breakR[0].map((r) => ({ name: String(r.name), counts: mapCounts(r) })),
+    breakdown: breakR[0].map((r) => ({
+      name: String(r.name),
+      counts: mapCounts(r),
+    })),
     orders: ordersR[0].map((r) => ({
-      date: String(r.d), shop: r.shop_name ? String(r.shop_name) : "—", beat: String(r.beat_n),
-      agent: r.agent_id ? String(r.agent_id) : "—", roster: String(r.roster_n), amount: num(r.amount),
+      date: String(r.d),
+      shop: r.shop_name ? String(r.shop_name) : "—",
+      beat: String(r.beat_n),
+      agent: r.agent_id ? String(r.agent_id) : "—",
+      roster: String(r.roster_n),
+      amount: num(r.amount),
     })),
     ordersTotal: num(ordersCountR[0][0]?.n),
     calls: {
-      attempts: num(c?.attempts), connected: num(c?.connected), orderCalls: num(c?.order_calls),
+      attempts: num(c?.attempts),
+      connected: num(c?.connected),
+      orderCalls: num(c?.order_calls),
       avgAttempt: Math.round(num(c?.avg_attempt) * 100) / 100,
     },
   };

@@ -14,14 +14,24 @@ const { computeStudioKpis, getStudioCapability } = vi.hoisted(() => ({
   computeStudioKpis: vi.fn(),
   getStudioCapability: vi.fn(),
 }));
-vi.mock("../../modules/kpi/kpi-studio.compute.js", () => ({ computeStudioKpis }));
-vi.mock("../../modules/kpi/kpi-studio.service.js", () => ({ getStudioCapability }));
+vi.mock("../../modules/kpi/kpi-studio.compute.js", () => ({
+  computeStudioKpis,
+}));
+vi.mock("../../modules/kpi/kpi-studio.service.js", () => ({
+  getStudioCapability,
+}));
 
 const worker = await import("../kpi-studio-compute.worker.js");
 
 const OUTCOME = {
-  date: "2026-09-06", definitions_considered: 2, employees_considered: 10,
-  written: 5, no_data: 1, errors: 0, source_failures: [], sample: [],
+  date: "2026-09-06",
+  definitions_considered: 2,
+  employees_considered: 10,
+  written: 5,
+  no_data: 1,
+  errors: 0,
+  source_failures: [],
+  sample: [],
 };
 
 const originalEnv = { ...process.env };
@@ -29,7 +39,10 @@ const originalEnv = { ...process.env };
 beforeEach(() => {
   computeStudioKpis.mockReset().mockResolvedValue(OUTCOME);
   getStudioCapability.mockReset().mockResolvedValue({
-    tables: true, resolution: true, processGrain: true, fieldFilters: true,
+    tables: true,
+    resolution: true,
+    processGrain: true,
+    fieldFilters: true,
   });
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -70,13 +83,17 @@ describe("runStudioCompute", () => {
   it("passes dryRun through, so an enabled worker still writes nothing by default", async () => {
     delete process.env.KPI_STUDIO_COMPUTE_DRY_RUN;
     await worker.runStudioCompute();
-    expect(computeStudioKpis).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
+    expect(computeStudioKpis).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRun: true }),
+    );
   });
 
   it("writes only when the dry-run brake is explicitly released", async () => {
     process.env.KPI_STUDIO_COMPUTE_DRY_RUN = "false";
     await worker.runStudioCompute();
-    expect(computeStudioKpis).toHaveBeenCalledWith(expect.objectContaining({ dryRun: false }));
+    expect(computeStudioKpis).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRun: false }),
+    );
   });
 
   it("computes yesterday, never today", async () => {
@@ -100,7 +117,10 @@ describe("runStudioCompute", () => {
 
   it("does nothing when the Studio schema is not installed", async () => {
     getStudioCapability.mockResolvedValue({
-      tables: false, resolution: false, processGrain: false, fieldFilters: false,
+      tables: false,
+      resolution: false,
+      processGrain: false,
+      fieldFilters: false,
     });
     await worker.runStudioCompute();
     expect(computeStudioKpis).not.toHaveBeenCalled();

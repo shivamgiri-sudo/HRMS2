@@ -25,8 +25,13 @@ const SOURCE = readFileSync(resolve(__dirname, "../wfm.routes.ts"), "utf8");
 
 /** The publish route's assignment UPDATE, isolated from the rest of the file. */
 function publishUpdateStatement(): string {
-  const start = SOURCE.indexOf("SET final_roster_status = 'pending_employee_ack'");
-  expect(start, "publish route's UPDATE not found — was it renamed or removed?").toBeGreaterThan(-1);
+  const start = SOURCE.indexOf(
+    "SET final_roster_status = 'pending_employee_ack'",
+  );
+  expect(
+    start,
+    "publish route's UPDATE not found — was it renamed or removed?",
+  ).toBeGreaterThan(-1);
   return SOURCE.slice(start, start + 400);
 }
 

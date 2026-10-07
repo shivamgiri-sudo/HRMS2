@@ -43,44 +43,50 @@ export interface PortalHowToEntry {
 
 export const PORTAL_HOWTO_CATALOG: PortalHowToEntry[] = [
   {
-    code: 'portal_overview',
-    title: 'View your process overview',
+    code: "portal_overview",
+    title: "View your process overview",
     aliases: [/\boverview\b/i, /\brag\b/i, /\bmy processes?\b/i],
     steps: [
-      '1. Open your portal overview.',
-      '2. Each of your processes is shown with a headline RAG status and key metrics.',
+      "1. Open your portal overview.",
+      "2. Each of your processes is shown with a headline RAG status and key metrics.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
   {
-    code: 'portal_kpis',
-    title: 'View your process KPIs',
-    aliases: [/\bkpis?\b/i, /\bscorecard\b/i, /\bcsat\b/i, /\baht\b/i, /\bfcr\b/i],
+    code: "portal_kpis",
+    title: "View your process KPIs",
+    aliases: [
+      /\bkpis?\b/i,
+      /\bscorecard\b/i,
+      /\bcsat\b/i,
+      /\baht\b/i,
+      /\bfcr\b/i,
+    ],
     steps: [
-      '1. Open your portal overview and select the process you want to review.',
-      '2. The KPI scorecard shows actual vs. target with a 6-month trend.',
+      "1. Open your portal overview and select the process you want to review.",
+      "2. The KPI scorecard shows actual vs. target with a 6-month trend.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
   {
-    code: 'portal_glide_paths',
-    title: 'View glide-path commitments',
+    code: "portal_glide_paths",
+    title: "View glide-path commitments",
     aliases: [/\bglide[- ]?path\b/i, /\bcommitment\b/i],
     steps: [
-      '1. Open your portal overview and select the process.',
-      '2. Glide-path commitments for that process are shown on its dashboard.',
+      "1. Open your portal overview and select the process.",
+      "2. Glide-path commitments for that process are shown on its dashboard.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
   {
-    code: 'portal_action_plans',
-    title: 'View action plans',
+    code: "portal_action_plans",
+    title: "View action plans",
     aliases: [/\baction plans?\b/i],
     steps: [
-      '1. Open your portal overview and select the process.',
-      '2. Open action plans from that process\'s dashboard.',
+      "1. Open your portal overview and select the process.",
+      "2. Open action plans from that process's dashboard.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
   {
     // Replaces a stale 'portal_governance' entry: the Governance tab it described was
@@ -90,44 +96,49 @@ export const PORTAL_HOWTO_CATALOG: PortalHowToEntry[] = [
     // reading process_metric_actual via process-operations.service.ts) and Workforce
     // (headcount vs. mandate + hiring pipeline) are the current tabs this catalog was
     // missing entirely, added here for whenever a client-facing chat surface is built.
-    code: 'portal_operations',
-    title: 'View operations metrics',
+    code: "portal_operations",
+    title: "View operations metrics",
     aliases: [/\boperations?\b/i, /\bshrinkage\b/i, /\bservice level\b/i],
     steps: [
-      '1. Open your portal overview and select the process.',
-      '2. Open the Operations tab on that process\'s dashboard.',
+      "1. Open your portal overview and select the process.",
+      "2. Open the Operations tab on that process's dashboard.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
   {
-    code: 'portal_quality',
-    title: 'View quality metrics',
+    code: "portal_quality",
+    title: "View quality metrics",
     aliases: [/\bquality\b/i, /\bfatal (call|error)s?\b/i],
     steps: [
-      '1. Open your portal overview and select the process.',
-      '2. Open the Quality tab on that process\'s dashboard.',
+      "1. Open your portal overview and select the process.",
+      "2. Open the Quality tab on that process's dashboard.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
   {
-    code: 'portal_workforce',
-    title: 'View workforce and hiring status',
-    aliases: [/\bworkforce\b/i, /\bheadcount\b/i, /\bhiring\b/i, /\bmandate\b/i],
+    code: "portal_workforce",
+    title: "View workforce and hiring status",
+    aliases: [
+      /\bworkforce\b/i,
+      /\bheadcount\b/i,
+      /\bhiring\b/i,
+      /\bmandate\b/i,
+    ],
     steps: [
-      '1. Open your portal overview and select the process.',
-      '2. Open the Workforce tab on that process\'s dashboard for headcount vs. mandate and the hiring pipeline.',
+      "1. Open your portal overview and select the process.",
+      "2. Open the Workforce tab on that process's dashboard for headcount vs. mandate and the hiring pipeline.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
   {
-    code: 'portal_attrition',
-    title: 'View attrition for your process',
+    code: "portal_attrition",
+    title: "View attrition for your process",
     aliases: [/\battrition\b/i],
     steps: [
-      '1. Open your portal overview and select the process.',
-      '2. Attrition figures for that process are shown on its dashboard.',
+      "1. Open your portal overview and select the process.",
+      "2. Attrition figures for that process are shown on its dashboard.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
   {
     // Ordered before portal_commentary on purpose: its own alias set
@@ -136,23 +147,23 @@ export const PORTAL_HOWTO_CATALOG: PortalHowToEntry[] = [
     // first purely by array position and shadow this entry — the same class
     // of bug as ai-howto-catalog.ts's resignation_raise/resignation_approve
     // shadowing found earlier, caught here by the same kind of test.
-    code: 'portal_commentary_respond',
-    title: 'Acknowledge or reply to a commentary',
+    code: "portal_commentary_respond",
+    title: "Acknowledge or reply to a commentary",
     aliases: [/\backnowledge\b/i, /\breply\b.*\bcommentary\b/i],
     steps: [
-      '1. Open the commentary on your process dashboard.',
-      '2. Use Acknowledge to confirm you have read it, or Reply to respond.',
+      "1. Open the commentary on your process dashboard.",
+      "2. Use Acknowledge to confirm you have read it, or Reply to respond.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
   {
-    code: 'portal_commentary',
-    title: 'View management commentary',
+    code: "portal_commentary",
+    title: "View management commentary",
     aliases: [/\bcommentary\b/i],
     steps: [
-      '1. Open your portal overview and select the process.',
-      '2. Management commentary for that process is shown on its dashboard.',
+      "1. Open your portal overview and select the process.",
+      "2. Management commentary for that process is shown on its dashboard.",
     ],
-    route: '/portal',
+    route: "/portal",
   },
 ];

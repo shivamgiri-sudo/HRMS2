@@ -20,7 +20,7 @@ export async function createExitHealthSnapshot(exitRequestId: string) {
        FROM exit_request er
        JOIN employees e ON e.id = er.employee_id
       WHERE er.id = ? LIMIT 1`,
-    [exitRequestId]
+    [exitRequestId],
   );
   const rec = exitRows[0] as any;
   if (!rec) throw new Error("Exit request not found");
@@ -28,11 +28,19 @@ export async function createExitHealthSnapshot(exitRequestId: string) {
   const engagement = await calculateEmployeeEngagementHealth(rec.employee_id);
   const performanceScore = engagement.performance_score ?? 70;
   const attendanceScore = engagement.attendance_score ?? 70;
-  const kudosReceived90d = Number((engagement.insight as any)?.kudosReceived90d ?? 0);
+  const kudosReceived90d = Number(
+    (engagement.insight as any)?.kudosReceived90d ?? 0,
+  );
   const pulseAvg90d = Number((engagement.insight as any)?.pulseAvg ?? 0);
 
   const tenureMonths = rec.date_of_joining
-    ? Math.max(0, Math.floor((Date.now() - new Date(rec.date_of_joining).getTime()) / (1000 * 60 * 60 * 24 * 30.4375)))
+    ? Math.max(
+        0,
+        Math.floor(
+          (Date.now() - new Date(rec.date_of_joining).getTime()) /
+            (1000 * 60 * 60 * 24 * 30.4375),
+        ),
+      )
     : 0;
 
   // pip_record, not pip_action_plan — that table does not exist in mas_hrms (the only PIP
@@ -54,11 +62,16 @@ export async function createExitHealthSnapshot(exitRequestId: string) {
   // open one, and here the consequence is whether an exit is flagged regrettable.
   const pendingDisciplinary = await scalar(
     `SELECT COUNT(*) AS cnt FROM pip_record WHERE employee_id = ? AND status IN ('active','extended')`,
-    [rec.employee_id]
+    [rec.employee_id],
   );
 
-  const regrettableExit = performanceScore >= 80 && attendanceScore >= 75 && tenureMonths >= 6 && pendingDisciplinary === 0;
-  const attritionRiskScore = Math.max(0, 100 - engagement.engagement_score) + (regrettableExit ? 25 : 0);
+  const regrettableExit =
+    performanceScore >= 80 &&
+    attendanceScore >= 75 &&
+    tenureMonths >= 6 &&
+    pendingDisciplinary === 0;
+  const attritionRiskScore =
+    Math.max(0, 100 - engagement.engagement_score) + (regrettableExit ? 25 : 0);
   const label = riskLabel(attritionRiskScore);
 
   const insight = {
@@ -71,7 +84,7 @@ export async function createExitHealthSnapshot(exitRequestId: string) {
       ? "Regrettable exit. Mandatory retention discussion should be completed before HR accepts resignation."
       : engagement.engagement_score < 50
         ? "Low engagement trend. Capture detailed exit reason and manager feedback."
-        : "Standard exit workflow can proceed with clearance and F&F controls."
+        : "Standard exit workflow can proceed with clearance and F&F controls.",
   };
 
   await db.execute(
@@ -85,10 +98,18 @@ export async function createExitHealthSnapshot(exitRequestId: string) {
        pulse_avg_90d = VALUES(pulse_avg_90d), regrettable_exit = VALUES(regrettable_exit),
        risk_label = VALUES(risk_label), insight_json = VALUES(insight_json)`,
     [
-      randomUUID(), exitRequestId, rec.employee_id, engagement.engagement_score,
-      performanceScore, attendanceScore, kudosReceived90d, pulseAvg90d,
-      regrettableExit ? 1 : 0, label, JSON.stringify(insight)
-    ]
+      randomUUID(),
+      exitRequestId,
+      rec.employee_id,
+      engagement.engagement_score,
+      performanceScore,
+      attendanceScore,
+      kudosReceived90d,
+      pulseAvg90d,
+      regrettableExit ? 1 : 0,
+      label,
+      JSON.stringify(insight),
+    ],
   );
 
   return {
@@ -105,28 +126,71 @@ export async function createExitHealthSnapshot(exitRequestId: string) {
   };
 }
 
-export async function createDefaultClearanceTasks(exitRequestId: string, employeeId: string) {
+export async function createDefaultClearanceTasks(
+  exitRequestId: string,
+  employeeId: string,
+) {
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM exit_clearance_task WHERE exit_request_id = ?`,
-    [exitRequestId]
+    [exitRequestId],
   );
   if (Number(existing[0]?.cnt ?? 0) > 0) return { created: 0, skipped: true };
 
   const tasks = [
-    ["manager", "Manager handover clearance", "Confirm KT, pending work handover, client dependency and system access handover.", "manager"],
-    ["hr", "HR resignation and exit interview", "Confirm resignation acceptance, exit reason category and exit interview completion.", "hr"],
-    ["assets", "Asset recovery clearance", "Recover laptop/desktop, headset, ID card, access card, SIM, and any company property.", "admin"],
+    [
+      "manager",
+      "Manager handover clearance",
+      "Confirm KT, pending work handover, client dependency and system access handover.",
+      "manager",
+    ],
+    [
+      "hr",
+      "HR resignation and exit interview",
+      "Confirm resignation acceptance, exit reason category and exit interview completion.",
+      "hr",
+    ],
+    [
+      "assets",
+      "Asset recovery clearance",
+      "Recover laptop/desktop, headset, ID card, access card, SIM, and any company property.",
+      "admin",
+    ],
     // owner_role retargeted 'admin' -> 'it' (owner ruling 2026-09-15): this is IT's own
     // work (disabling email/VPN/app access), not admin's, and it was never reachable by a
     // pure IT-only account — only 'admin' role held this task. Migration 1772 backfills the
     // 8 currently-open rows created before this change; cleared/waived rows are left as-is.
-    ["it", "IT access closure", "Disable email, VPN, client tools and internal application access after last working day.", "it"],
-    ["wfm", "Roster deactivation", "Remove future roster assignments and stop WFM scheduling after LWD.", "wfm"],
-    ["wfm", "Client ID deactivation", "Deactivate the employee's client system ID/login. Attach the confirmation screenshot or email received from Operations (subject: 'Update regarding analyst status in software'). Attachment is optional.", "wfm"],
-    ["payroll", "Payroll hold and F&F readiness", "Check salary hold, advances, notice recovery, leave encashment and F&F readiness.", "payroll"],
+    [
+      "it",
+      "IT access closure",
+      "Disable email, VPN, client tools and internal application access after last working day.",
+      "it",
+    ],
+    [
+      "wfm",
+      "Roster deactivation",
+      "Remove future roster assignments and stop WFM scheduling after LWD.",
+      "wfm",
+    ],
+    [
+      "wfm",
+      "Client ID deactivation",
+      "Deactivate the employee's client system ID/login. Attach the confirmation screenshot or email received from Operations (subject: 'Update regarding analyst status in software'). Attachment is optional.",
+      "wfm",
+    ],
+    [
+      "payroll",
+      "Payroll hold and F&F readiness",
+      "Check salary hold, advances, notice recovery, leave encashment and F&F readiness.",
+      "payroll",
+    ],
     // Trainer/LMS closure task removed (owner ruling 2026-09-15): trainer clearance dropped
     // from the exit process entirely. Existing open rows were waived by migration 1774.
-    ["compliance", "Compliance and NDA closure", "Confirm NDA/client confidentiality reminders and DPDP exit notice.", "hr"],
+    [
+      "compliance",
+      "Compliance and NDA closure",
+      "Confirm NDA/client confidentiality reminders and DPDP exit notice.",
+      "hr",
+    ],
   ];
 
   for (const [area, title, desc, role] of tasks) {
@@ -134,27 +198,42 @@ export async function createDefaultClearanceTasks(exitRequestId: string, employe
       `INSERT INTO exit_clearance_task
          (id, exit_request_id, employee_id, clearance_area, task_title, task_description, owner_role, due_date)
        VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(CURDATE(), INTERVAL 3 DAY))`,
-      [randomUUID(), exitRequestId, employeeId, area, title, desc, role]
+      [randomUUID(), exitRequestId, employeeId, area, title, desc, role],
     );
   }
   return { created: tasks.length, skipped: false };
 }
 
-const BYPASS_SCOPE_ROLES = new Set(['super_admin', 'payroll_head']);
+const BYPASS_SCOPE_ROLES = new Set(["super_admin", "payroll_head"]);
 
-export async function getExitCommandCenter(scope: { actorUserId: string; actorRoles: string[] }) {
-  const bypass = scope.actorRoles.some(r => BYPASS_SCOPE_ROLES.has(r));
+export async function getExitCommandCenter(scope: {
+  actorUserId: string;
+  actorRoles: string[];
+}) {
+  const bypass = scope.actorRoles.some((r) => BYPASS_SCOPE_ROLES.has(r));
 
-  let scopeWhere = '1=1';
+  let scopeWhere = "1=1";
   let scopeParams: unknown[] = [];
 
   if (!bypass) {
-    const SCOPED_ROLES = ['admin','hr','finance','payroll','ceo','manager','branch_head',
-                         'process_manager','assistant_manager','tl','wfm','it'];
+    const SCOPED_ROLES = [
+      "admin",
+      "hr",
+      "finance",
+      "payroll",
+      "ceo",
+      "manager",
+      "branch_head",
+      "process_manager",
+      "assistant_manager",
+      "tl",
+      "wfm",
+      "it",
+    ];
     const clause = await buildScopeWhereClause(
       scope.actorUserId,
       SCOPED_ROLES,
-      { branchId: 'e.branch_id', processId: 'e.process_id' }
+      { branchId: "e.branch_id", processId: "e.process_id" },
     );
     scopeWhere = clause.sql;
     scopeParams = clause.params;
@@ -333,7 +412,16 @@ export async function addRetentionAction(input: {
     `INSERT INTO exit_retention_action
        (id, exit_request_id, employee_id, action_type, action_summary, outcome, outcome_remarks, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, input.exitRequestId, input.employeeId, input.actionType, input.actionSummary, input.outcome ?? "pending", input.outcomeRemarks ?? null, input.userId]
+    [
+      id,
+      input.exitRequestId,
+      input.employeeId,
+      input.actionType,
+      input.actionSummary,
+      input.outcome ?? "pending",
+      input.outcomeRemarks ?? null,
+      input.userId,
+    ],
   );
   return { id };
 }
@@ -366,12 +454,28 @@ export async function saveExitInterview(input: {
        would_rejoin = VALUES(would_rejoin), rehire_eligible = VALUES(rehire_eligible),
        comments = VALUES(comments), captured_by = VALUES(captured_by), captured_at = NOW()`,
     [
-      id, input.exitRequestId, input.employeeId, input.primaryReason ?? null, input.secondaryReason ?? null,
-      input.managerFeedbackScore ?? null, input.processFeedbackScore ?? null, input.salaryFeedbackScore ?? null,
-      input.workLifeScore ?? null, input.wouldRejoin === null || input.wouldRejoin === undefined ? null : (input.wouldRejoin ? 1 : 0),
-      input.rehireEligible === null || input.rehireEligible === undefined ? null : (input.rehireEligible ? 1 : 0),
-      input.comments ?? null, input.userId
-    ]
+      id,
+      input.exitRequestId,
+      input.employeeId,
+      input.primaryReason ?? null,
+      input.secondaryReason ?? null,
+      input.managerFeedbackScore ?? null,
+      input.processFeedbackScore ?? null,
+      input.salaryFeedbackScore ?? null,
+      input.workLifeScore ?? null,
+      input.wouldRejoin === null || input.wouldRejoin === undefined
+        ? null
+        : input.wouldRejoin
+          ? 1
+          : 0,
+      input.rehireEligible === null || input.rehireEligible === undefined
+        ? null
+        : input.rehireEligible
+          ? 1
+          : 0,
+      input.comments ?? null,
+      input.userId,
+    ],
   );
   return { id };
 }

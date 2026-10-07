@@ -5,7 +5,10 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+  pingDb: vi.fn(),
+}));
 vi.mock("../src/modules/employees/employee.service.js", () => ({
   employeeService: {
     createEmployee: vi.fn(),
@@ -16,15 +19,22 @@ vi.mock("../src/modules/employees/employee.service.js", () => ({
   },
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
+  requireRole:
+    (..._roles: string[]) =>
+    (_req: any, _res: any, next: any) =>
+      next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
-  getRosterPlanScope: vi.fn().mockResolvedValue({ branchId: null, processId: null }),
-  getEmployeeForUser: vi.fn().mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
+  getRosterPlanScope: vi
+    .fn()
+    .mockResolvedValue({ branchId: null, processId: null }),
+  getEmployeeForUser: vi
+    .fn()
+    .mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
@@ -33,8 +43,11 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
 }));
 vi.mock("../src/shared/accessGuard.js", () => ({
   hasRole: vi.fn().mockResolvedValue(true),
-  getEmployeeForUser: vi.fn().mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
-  selfOrAdminHr: (_param?: string) => (_req: any, _res: any, next: any) => next(),
+  getEmployeeForUser: vi
+    .fn()
+    .mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
+  selfOrAdminHr: (_param?: string) => (_req: any, _res: any, next: any) =>
+    next(),
 }));
 vi.mock("../src/middleware/scopeMiddleware.js", () => ({
   requireScopedRole: () => (_req: any, _res: any, next: any) => next(),
@@ -50,7 +63,9 @@ import { db } from "../src/db/mysql.js";
 import { app } from "../src/app.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
-const svc = employeeService as { [K in keyof typeof employeeService]: ReturnType<typeof vi.fn> };
+const svc = employeeService as {
+  [K in keyof typeof employeeService]: ReturnType<typeof vi.fn>;
+};
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 const fakeEmployee = {
@@ -109,13 +124,20 @@ describe("POST /api/employees", () => {
   });
 
   it("returns 401 without auth", async () => {
-    expect((await request(app).post("/api/employees").send({})).status).toBe(401);
+    expect((await request(app).post("/api/employees").send({})).status).toBe(
+      401,
+    );
   });
 });
 
 describe("GET /api/employees", () => {
   it("returns paginated list", async () => {
-    svc.listEmployees.mockResolvedValueOnce({ data: [fakeEmployee], total: 1, page: 1, limit: 50 });
+    svc.listEmployees.mockResolvedValueOnce({
+      data: [fakeEmployee],
+      total: 1,
+      page: 1,
+      limit: 50,
+    });
     const r = await request(app).get("/api/employees").set(AUTH);
     expect(r.status).toBe(200);
     expect(r.body.data).toHaveLength(1);
@@ -134,21 +156,34 @@ describe("GET /api/employees/:id", () => {
 
 describe("PATCH /api/employees/:id", () => {
   it("updates employee fields", async () => {
-    svc.updateEmployee.mockResolvedValueOnce({ ...fakeEmployee, mobile: "8888888888" });
-    const r = await request(app).patch("/api/employees/emp-1").set(AUTH).send({ mobile: "8888888888" });
+    svc.updateEmployee.mockResolvedValueOnce({
+      ...fakeEmployee,
+      mobile: "8888888888",
+    });
+    const r = await request(app)
+      .patch("/api/employees/emp-1")
+      .set(AUTH)
+      .send({ mobile: "8888888888" });
     expect(r.status).toBe(200);
   });
 
   it("updates salary_start_date", async () => {
-    svc.updateEmployee.mockResolvedValueOnce({ ...fakeEmployee, salary_start_date: "2026-02-01" });
-    const r = await request(app).patch("/api/employees/emp-1").set(AUTH)
+    svc.updateEmployee.mockResolvedValueOnce({
+      ...fakeEmployee,
+      salary_start_date: "2026-02-01",
+    });
+    const r = await request(app)
+      .patch("/api/employees/emp-1")
+      .set(AUTH)
       .send({ salaryStartDate: "2026-02-01" });
     expect(r.status).toBe(200);
     expect(r.body.data.salary_start_date).toBe("2026-02-01");
   });
 
   it("returns 400 for invalid salaryStartDate format", async () => {
-    const r = await request(app).patch("/api/employees/emp-1").set(AUTH)
+    const r = await request(app)
+      .patch("/api/employees/emp-1")
+      .set(AUTH)
       .send({ salaryStartDate: "01/02/2026" });
     expect(r.status).toBe(400);
   });
@@ -167,31 +202,56 @@ describe("DELETE /api/employees/:id", () => {
 // / employee_statutory_info as an IFSC/account number/PAN/Aadhaar/UAN/ESI.
 describe("PUT /api/employees/:employeeId/bank-details — format validation", () => {
   it("400s on a malformed IFSC, never reaches the INSERT", async () => {
-    const r = await request(app).put("/api/employees/emp-1/bank-details").set(AUTH).send({
-      bank_name: "Test Bank", account_holder_name: "Ravi Kumar",
-      ifsc_code: "NOT-AN-IFSC", account_type: "Savings",
-    });
+    const r = await request(app)
+      .put("/api/employees/emp-1/bank-details")
+      .set(AUTH)
+      .send({
+        bank_name: "Test Bank",
+        account_holder_name: "Ravi Kumar",
+        ifsc_code: "NOT-AN-IFSC",
+        account_type: "Savings",
+      });
     expect(r.status).toBe(400);
     expect(r.body.details.some((d: any) => d.field === "ifsc_code")).toBe(true);
-    expect(mockExecute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"))).toBe(false);
+    expect(
+      mockExecute.mock.calls.some((c) =>
+        String(c[0]).includes("INSERT INTO employee_bank_detail"),
+      ),
+    ).toBe(false);
   });
 
   it("400s on a malformed account number", async () => {
-    const r = await request(app).put("/api/employees/emp-1/bank-details").set(AUTH).send({
-      bank_name: "Test Bank", account_holder_name: "Ravi Kumar",
-      ifsc_code: "HDFC0001234", account_type: "Savings", account_number: "not-digits",
-    });
+    const r = await request(app)
+      .put("/api/employees/emp-1/bank-details")
+      .set(AUTH)
+      .send({
+        bank_name: "Test Bank",
+        account_holder_name: "Ravi Kumar",
+        ifsc_code: "HDFC0001234",
+        account_type: "Savings",
+        account_number: "not-digits",
+      });
     expect(r.status).toBe(400);
-    expect(r.body.details.some((d: any) => d.field === "account_number")).toBe(true);
+    expect(r.body.details.some((d: any) => d.field === "account_number")).toBe(
+      true,
+    );
   });
 
   it("accepts a well-formed IFSC + account number, uppercasing IFSC before storage", async () => {
-    const r = await request(app).put("/api/employees/emp-1/bank-details").set(AUTH).send({
-      bank_name: "Test Bank", account_holder_name: "Ravi Kumar",
-      ifsc_code: "hdfc0001234", account_type: "Savings", account_number: "50100234567890",
-    });
+    const r = await request(app)
+      .put("/api/employees/emp-1/bank-details")
+      .set(AUTH)
+      .send({
+        bank_name: "Test Bank",
+        account_holder_name: "Ravi Kumar",
+        ifsc_code: "hdfc0001234",
+        account_type: "Savings",
+        account_number: "50100234567890",
+      });
     expect(r.status).toBe(200);
-    const insertCall = mockExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"));
+    const insertCall = mockExecute.mock.calls.find((c) =>
+      String(c[0]).includes("INSERT INTO employee_bank_detail"),
+    );
     expect(insertCall).toBeTruthy();
     expect(insertCall![1]).toContain("HDFC0001234");
   });
@@ -199,44 +259,73 @@ describe("PUT /api/employees/:employeeId/bank-details — format validation", ()
 
 describe("PUT /api/employees/:employeeId/statutory-details — format validation", () => {
   it("400s on a malformed PAN, never reaches the INSERT", async () => {
-    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
-      pan_number: "NOT-A-PAN",
-    });
+    const r = await request(app)
+      .put("/api/employees/emp-1/statutory-details")
+      .set(AUTH)
+      .send({
+        pan_number: "NOT-A-PAN",
+      });
     expect(r.status).toBe(400);
-    expect(r.body.details.some((d: any) => d.field === "pan_number")).toBe(true);
-    expect(mockExecute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO employee_statutory_info"))).toBe(false);
+    expect(r.body.details.some((d: any) => d.field === "pan_number")).toBe(
+      true,
+    );
+    expect(
+      mockExecute.mock.calls.some((c) =>
+        String(c[0]).includes("INSERT INTO employee_statutory_info"),
+      ),
+    ).toBe(false);
   });
 
   it("400s on a malformed Aadhaar", async () => {
-    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
-      aadhaar_id: "12345",
-    });
+    const r = await request(app)
+      .put("/api/employees/emp-1/statutory-details")
+      .set(AUTH)
+      .send({
+        aadhaar_id: "12345",
+      });
     expect(r.status).toBe(400);
-    expect(r.body.details.some((d: any) => d.field === "aadhaar_id")).toBe(true);
+    expect(r.body.details.some((d: any) => d.field === "aadhaar_id")).toBe(
+      true,
+    );
   });
 
   it("400s on a malformed UAN", async () => {
-    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
-      uan_number: "123",
-    });
+    const r = await request(app)
+      .put("/api/employees/emp-1/statutory-details")
+      .set(AUTH)
+      .send({
+        uan_number: "123",
+      });
     expect(r.status).toBe(400);
-    expect(r.body.details.some((d: any) => d.field === "uan_number")).toBe(true);
+    expect(r.body.details.some((d: any) => d.field === "uan_number")).toBe(
+      true,
+    );
   });
 
   it("400s on a malformed ESI number", async () => {
-    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
-      esi_number: "123",
-    });
+    const r = await request(app)
+      .put("/api/employees/emp-1/statutory-details")
+      .set(AUTH)
+      .send({
+        esi_number: "123",
+      });
     expect(r.status).toBe(400);
-    expect(r.body.details.some((d: any) => d.field === "esi_number")).toBe(true);
+    expect(r.body.details.some((d: any) => d.field === "esi_number")).toBe(
+      true,
+    );
   });
 
   it("accepts a well-formed PAN, uppercasing it before storage", async () => {
-    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
-      pan_number: "abcde1234f",
-    });
+    const r = await request(app)
+      .put("/api/employees/emp-1/statutory-details")
+      .set(AUTH)
+      .send({
+        pan_number: "abcde1234f",
+      });
     expect(r.status).toBe(200);
-    const insertCall = mockExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_statutory_info"));
+    const insertCall = mockExecute.mock.calls.find((c) =>
+      String(c[0]).includes("INSERT INTO employee_statutory_info"),
+    );
     expect(insertCall).toBeTruthy();
     expect(insertCall![1]).toContain("ABCDE1234F");
   });

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { normalizeMaritalStatus, MARITAL_STATUSES } from "../maritalStatus.util.js";
+import {
+  normalizeMaritalStatus,
+  MARITAL_STATUSES,
+} from "../maritalStatus.util.js";
 
 describe("normalizeMaritalStatus", () => {
   it("passes the four canonical statuses through unchanged", () => {

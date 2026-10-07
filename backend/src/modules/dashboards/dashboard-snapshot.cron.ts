@@ -37,7 +37,9 @@ function istHour(): number {
 
 export async function runDashboardSnapshot(): Promise<void> {
   if (_running) {
-    console.warn("[dashboard-snapshot-cron] previous run still in progress — skipping");
+    console.warn(
+      "[dashboard-snapshot-cron] previous run still in progress — skipping",
+    );
     return;
   }
   _running = true;

@@ -145,14 +145,14 @@ export interface SmartGrnComponentSplitInput {
 
 /** Above this, the raiser must fix the invoice components themselves — a bigger mismatch
  *  than ordinary invoice rounding is a real data-entry error, not something to auto-absorb. */
-const GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT = 1.00;
+const GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT = 1.0;
 /** Tolerance for the INVOICE_COMPONENT_RECONCILIATION re-check at submit time.
  *  Widened from 0.01 to 1.00 so it matches GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT above: the
  *  save path already refuses any component/declared-total gap over ₹1, so a stricter figure
  *  here only ever blocked GRNs the save path had deliberately accepted. Splitting one invoice
  *  across many cost centres rounds each cell to paise independently, so the grid sum can sit a
  *  few paise off the component total even when nothing is wrong. */
-const GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE = 1.00;
+const GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE = 1.0;
 /** Standard Indian GST slabs — kept in lockstep with src/lib/gst.ts's GST_RATES on the
  *  frontend; the dropdown there is the only way to reach this value from the UI. */
 const ALLOWED_GST_RATES = new Set([0, 5, 12, 18, 28]);
@@ -162,7 +162,8 @@ export interface RegisteredDocumentInput {
   storedPath: string;
   mimeType: string;
   fileSizeBytes: number;
-  documentType?: "invoice" | "receipt" | "po" | "contract" | "supporting" | "other";
+  documentType?:
+    "invoice" | "receipt" | "po" | "contract" | "supporting" | "other";
   isPrimary?: boolean;
 }
 
@@ -195,8 +196,15 @@ function roundQuantity(value: number) {
  * "non_gst", or any treatment with gstRate === 0 — only "exclusive"/"reverse_charge" with
  * gstRate > 0 adds tax on top of the quoted figure, so only that case needs dividing back out.
  */
-function requiredQuotedAmount(grossTarget: number, taxTreatment: string, gstRate: number): number {
-  if (["exclusive", "reverse_charge"].includes(taxTreatment) && Number(gstRate) > 0) {
+function requiredQuotedAmount(
+  grossTarget: number,
+  taxTreatment: string,
+  gstRate: number,
+): number {
+  if (
+    ["exclusive", "reverse_charge"].includes(taxTreatment) &&
+    Number(gstRate) > 0
+  ) {
     return grossTarget / (1 + Number(gstRate) / 100);
   }
   return grossTarget;
@@ -207,7 +215,10 @@ function safeJson(value: unknown) {
 }
 
 function normalizeInvoiceNumber(value: unknown) {
-  return String(value ?? "").trim().replace(/\s+/g, "").toUpperCase();
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toUpperCase();
 }
 
 function dateOrNull(value: unknown) {
@@ -218,7 +229,7 @@ function dateOrNull(value: unknown) {
 async function lockGrn(connection: PoolConnection, grnId: string) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     "SELECT * FROM grn_request WHERE id = ? FOR UPDATE",
-    [grnId]
+    [grnId],
   );
   if (!rows[0]) throw new Error("GRN not found");
   return rows[0] as any;
@@ -227,7 +238,7 @@ async function lockGrn(connection: PoolConnection, grnId: string) {
 async function lockBudgetLine(
   connection: PoolConnection,
   budgetLineId: string,
-  branchId: string
+  branchId: string,
 ) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT l.*, h.status AS budget_status, h.branch_id, h.period_code, h.financial_year,
@@ -238,10 +249,11 @@ async function lockBudgetLine(
        LEFT JOIN cost_centre_master ccm ON ccm.id = l.cost_centre_id
       WHERE l.id = ? AND h.branch_id = ?
       FOR UPDATE`,
-    [budgetLineId, branchId]
+    [budgetLineId, branchId],
   );
   const line = rows[0] as any;
-  if (!line) throw new Error("Approved budget line was not found for this branch");
+  if (!line)
+    throw new Error("Approved budget line was not found for this branch");
   if (String(line.budget_status) !== "active") {
     throw new Error("Only fully approved active budget lines can be allocated");
   }
@@ -272,13 +284,17 @@ async function resolveAttributionCostCentre(
   requestedCostCentreId: string | null | undefined,
   branchId: string,
   fallbackLine: { cost_centre_id?: unknown; cost_centre_name?: unknown } | null,
-  label: string
+  label: string,
 ): Promise<{ costCentreId: string | null; costCentreName: string | null }> {
   const requested = String(requestedCostCentreId ?? "").trim();
   if (!requested) {
     return {
-      costCentreId: fallbackLine?.cost_centre_id ? String(fallbackLine.cost_centre_id) : null,
-      costCentreName: fallbackLine?.cost_centre_name ? String(fallbackLine.cost_centre_name) : null,
+      costCentreId: fallbackLine?.cost_centre_id
+        ? String(fallbackLine.cost_centre_id)
+        : null,
+      costCentreName: fallbackLine?.cost_centre_name
+        ? String(fallbackLine.cost_centre_name)
+        : null,
     };
   }
   const [rows] = await connection.execute<RowDataPacket[]>(
@@ -286,20 +302,27 @@ async function resolveAttributionCostCentre(
        FROM cost_centre_master
       WHERE id = ? AND active_status = 1
       LIMIT 1`,
-    [requested]
+    [requested],
   );
   const costCentre = rows[0] as any;
-  if (!costCentre) throw new Error(`${label}: cost centre not found or inactive`);
+  if (!costCentre)
+    throw new Error(`${label}: cost centre not found or inactive`);
   if (String(costCentre.branch_id) !== String(branchId)) {
     throw new Error(`${label}: cost centre does not belong to this branch`);
   }
   return {
     costCentreId: String(costCentre.id),
-    costCentreName: costCentre.cost_centre_name ? String(costCentre.cost_centre_name) : null,
+    costCentreName: costCentre.cost_centre_name
+      ? String(costCentre.cost_centre_name)
+      : null,
   };
 }
 
-async function loadAllocations(connection: PoolConnection, grnId: string, forUpdate = false) {
+async function loadAllocations(
+  connection: PoolConnection,
+  grnId: string,
+  forUpdate = false,
+) {
   /*
    * LEFT JOIN, not JOIN, on the two budget tables.
    *
@@ -338,15 +361,18 @@ async function loadAllocations(connection: PoolConnection, grnId: string, forUpd
        LEFT JOIN cost_centre_master funding_ccm ON funding_ccm.id = a.funding_cost_centre_id
       WHERE a.grn_request_id = ?
       ORDER BY a.sequence_no${forUpdate ? " FOR UPDATE OF a" : ""}`,
-    [grnId]
+    [grnId],
   );
   return rows as any[];
 }
 
-async function loadInvoiceComponents(connection: PoolConnection, grnId: string) {
+async function loadInvoiceComponents(
+  connection: PoolConnection,
+  grnId: string,
+) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     "SELECT * FROM grn_invoice_component WHERE grn_request_id = ? ORDER BY sequence_no",
-    [grnId]
+    [grnId],
   );
   return rows as any[];
 }
@@ -356,7 +382,7 @@ async function writeAudit(
   grnId: string,
   actorUserId: string,
   actorRole: string,
-  changes: Record<string, unknown>
+  changes: Record<string, unknown>,
 ) {
   await logSensitiveAction({
     actor_user_id: actorUserId,
@@ -375,7 +401,7 @@ async function writeAuditInTransaction(
   grnId: string,
   actorUserId: string,
   actorRole: string,
-  changes: Record<string, unknown>
+  changes: Record<string, unknown>,
 ) {
   await connection.execute(
     `INSERT INTO sensitive_action_log
@@ -391,21 +417,29 @@ async function writeAuditInTransaction(
       grnId,
       actorRole,
       JSON.stringify(changes),
-    ]
+    ],
   );
 }
 
 function parseModelJson(text: string) {
-  const cleaned = text.trim().replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
+  const cleaned = text
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
   return JSON.parse(cleaned) as Record<string, unknown>;
 }
 
 async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
-  await connection.execute("DELETE FROM grn_duplicate_match WHERE grn_request_id = ?", [grn.id]);
+  await connection.execute(
+    "DELETE FROM grn_duplicate_match WHERE grn_request_id = ?",
+    [grn.id],
+  );
   const matches: Array<{
     matchedGrnId: string | null;
     matchedDocumentId: string | null;
-    type: "invoice_identity" | "document_hash" | "amount_date_vendor" | "possible";
+    type:
+      "invoice_identity" | "document_hash" | "amount_date_vendor" | "possible";
     confidence: number;
     details: Record<string, unknown>;
   }> = [];
@@ -420,7 +454,7 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
           AND status NOT IN ('rejected','cancelled')
           AND bill_source_id IS NULL
         LIMIT 20`,
-      [grn.id, grn.vendor_id, invoiceNumber]
+      [grn.id, grn.vendor_id, invoiceNumber],
     );
     for (const row of invoiceRows) {
       matches.push({
@@ -447,7 +481,7 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
       WHERE current_doc.grn_request_id = ? AND d.grn_request_id <> ?
         AND g.bill_source_id IS NULL
       LIMIT 20`,
-    [grn.id, grn.id]
+    [grn.id, grn.id],
   );
   for (const row of hashRows) {
     matches.push({
@@ -459,7 +493,11 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
     });
   }
 
-  if (grn.vendor_id && grn.bill_date && Number(grn.amount_with_tax || grn.amount) > 0) {
+  if (
+    grn.vendor_id &&
+    grn.bill_date &&
+    Number(grn.amount_with_tax || grn.amount) > 0
+  ) {
     const [possibleRows] = await connection.execute<RowDataPacket[]>(
       `SELECT id, grn_number, invoice_number, bill_date, amount_with_tax, status
          FROM grn_request
@@ -468,10 +506,16 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
           AND status NOT IN ('rejected','cancelled')
           AND bill_source_id IS NULL
         LIMIT 20`,
-      [grn.id, grn.vendor_id, grn.bill_date, Number(grn.amount_with_tax || grn.amount)]
+      [
+        grn.id,
+        grn.vendor_id,
+        grn.bill_date,
+        Number(grn.amount_with_tax || grn.amount),
+      ],
     );
     for (const row of possibleRows) {
-      if (matches.some((item) => item.matchedGrnId === String(row.id))) continue;
+      if (matches.some((item) => item.matchedGrnId === String(row.id)))
+        continue;
       matches.push({
         matchedGrnId: String(row.id),
         matchedDocumentId: null,
@@ -502,7 +546,7 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
         match.type,
         match.confidence,
         safeJson(match.details),
-      ]
+      ],
     );
   }
   return matches;
@@ -525,12 +569,17 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
  */
 export const VALIDATION_MESSAGE_MAX = 480; // headroom under the real VARCHAR(500) limit
 export function summarizeOverrunList(
-  overrun: Array<{ costCentreName: string; head: string; definedShare: number; totalDraw: number }>
+  overrun: Array<{
+    costCentreName: string;
+    head: string;
+    definedShare: number;
+    totalDraw: number;
+  }>,
 ): string {
   const sentences = overrun.map(
     (row) =>
-      `${row.costCentreName} has now drawn ${row.totalDraw.toFixed(2)} from the branch-common `
-      + `${row.head} line against a planned share of ${row.definedShare.toFixed(2)}`
+      `${row.costCentreName} has now drawn ${row.totalDraw.toFixed(2)} from the branch-common ` +
+      `${row.head} line against a planned share of ${row.definedShare.toFixed(2)}`,
   );
   let out = "";
   let shown = 0;
@@ -544,14 +593,17 @@ export function summarizeOverrunList(
     shown += 1;
   }
   const remaining = sentences.length - shown;
-  if (remaining > 0) out += out ? `; +${remaining} more` : `${remaining} cost centre(s) over their planned share`;
+  if (remaining > 0)
+    out += out
+      ? `; +${remaining} more`
+      : `${remaining} cost centre(s) over their planned share`;
   return out;
 }
 
 async function buildValidations(connection: PoolConnection, grnId: string) {
   const [grnRows] = await connection.execute<RowDataPacket[]>(
     "SELECT * FROM grn_request WHERE id = ? LIMIT 1",
-    [grnId]
+    [grnId],
   );
   const grn = grnRows[0] as any;
   if (!grn) throw new Error("GRN not found");
@@ -559,12 +611,12 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
   const invoiceComponents = await loadInvoiceComponents(connection, grnId);
   const [documentRows] = await connection.execute<RowDataPacket[]>(
     "SELECT * FROM grn_document WHERE grn_request_id = ? ORDER BY uploaded_at",
-    [grnId]
+    [grnId],
   );
   const [extractionRows] = await connection.execute<RowDataPacket[]>(
     `SELECT e.* FROM grn_document_extraction e
       WHERE e.grn_request_id = ? ORDER BY e.created_at DESC LIMIT 1`,
-    [grnId]
+    [grnId],
   );
   const duplicates = await refreshDuplicateMatches(connection, grn);
   const results: ValidationResult[] = [];
@@ -574,49 +626,99 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
     status: documentRows.length ? "passed" : "failed",
     severity: documentRows.length ? "info" : "error",
     blocking: !documentRows.length,
-    message: documentRows.length ? `${documentRows.length} supporting document(s) attached` : "At least one invoice or supporting proof is mandatory",
+    message: documentRows.length
+      ? `${documentRows.length} supporting document(s) attached`
+      : "At least one invoice or supporting proof is mandatory",
   });
 
   results.push({
     code: "INVOICE_NUMBER_REQUIRED",
-    status: grn.grn_type === "imprest" || normalizeInvoiceNumber(grn.invoice_number) ? "passed" : "failed",
-    severity: grn.grn_type === "imprest" || normalizeInvoiceNumber(grn.invoice_number) ? "info" : "error",
-    blocking: grn.grn_type === "vendor" && !normalizeInvoiceNumber(grn.invoice_number),
-    message: grn.grn_type === "imprest" || normalizeInvoiceNumber(grn.invoice_number)
-      ? "Invoice identity captured"
-      : "Vendor GRN requires an invoice number",
+    status:
+      grn.grn_type === "imprest" || normalizeInvoiceNumber(grn.invoice_number)
+        ? "passed"
+        : "failed",
+    severity:
+      grn.grn_type === "imprest" || normalizeInvoiceNumber(grn.invoice_number)
+        ? "info"
+        : "error",
+    blocking:
+      grn.grn_type === "vendor" && !normalizeInvoiceNumber(grn.invoice_number),
+    message:
+      grn.grn_type === "imprest" || normalizeInvoiceNumber(grn.invoice_number)
+        ? "Invoice identity captured"
+        : "Vendor GRN requires an invoice number",
   });
 
-  const totalGross = roundMoney(allocations.reduce((sum, item) => sum + Number(item.amount_with_tax || 0), 0));
-  const totalBase = roundMoney(allocations.reduce((sum, item) => sum + Number(item.amount_without_tax || 0), 0));
-  const totalTax = roundMoney(allocations.reduce((sum, item) => sum + Number(item.tax_amount || 0), 0));
-  const totalPnl = roundMoney(allocations.reduce((sum, item) => sum + Number(item.pnl_cost_amount || 0), 0));
-  const totalPercent = Math.round(allocations.reduce((sum, item) => sum + Number(item.allocation_percentage || 0), 0) * 1_000_000) / 1_000_000;
-  const parentGross = roundMoney(Number(grn.amount_with_tax || grn.amount || 0));
+  const totalGross = roundMoney(
+    allocations.reduce(
+      (sum, item) => sum + Number(item.amount_with_tax || 0),
+      0,
+    ),
+  );
+  const totalBase = roundMoney(
+    allocations.reduce(
+      (sum, item) => sum + Number(item.amount_without_tax || 0),
+      0,
+    ),
+  );
+  const totalTax = roundMoney(
+    allocations.reduce((sum, item) => sum + Number(item.tax_amount || 0), 0),
+  );
+  const totalPnl = roundMoney(
+    allocations.reduce(
+      (sum, item) => sum + Number(item.pnl_cost_amount || 0),
+      0,
+    ),
+  );
+  const totalPercent =
+    Math.round(
+      allocations.reduce(
+        (sum, item) => sum + Number(item.allocation_percentage || 0),
+        0,
+      ) * 1_000_000,
+    ) / 1_000_000;
+  const parentGross = roundMoney(
+    Number(grn.amount_with_tax || grn.amount || 0),
+  );
 
   results.push({
     code: "ALLOCATION_REQUIRED",
     status: allocations.length ? "passed" : "failed",
     severity: allocations.length ? "info" : "error",
     blocking: !allocations.length,
-    message: allocations.length ? `${allocations.length} cost allocation row(s) prepared` : "At least one approved budget allocation is required",
+    message: allocations.length
+      ? `${allocations.length} cost allocation row(s) prepared`
+      : "At least one approved budget allocation is required",
   });
   results.push({
     code: "ALLOCATION_PERCENT",
-    status: allocations.length && Math.abs(totalPercent - 100) <= 0.0001 ? "passed" : "failed",
-    severity: allocations.length && Math.abs(totalPercent - 100) <= 0.0001 ? "info" : "error",
+    status:
+      allocations.length && Math.abs(totalPercent - 100) <= 0.0001
+        ? "passed"
+        : "failed",
+    severity:
+      allocations.length && Math.abs(totalPercent - 100) <= 0.0001
+        ? "info"
+        : "error",
     blocking: !allocations.length || Math.abs(totalPercent - 100) > 0.0001,
     message: `Allocation percentage totals ${totalPercent.toFixed(6)}%`,
     details: { totalPercent },
   });
   results.push({
     code: "ALLOCATION_AMOUNT_RECONCILIATION",
-    status: allocations.length && Math.abs(totalGross - parentGross) <= 0.01 ? "passed" : "failed",
-    severity: allocations.length && Math.abs(totalGross - parentGross) <= 0.01 ? "info" : "error",
+    status:
+      allocations.length && Math.abs(totalGross - parentGross) <= 0.01
+        ? "passed"
+        : "failed",
+    severity:
+      allocations.length && Math.abs(totalGross - parentGross) <= 0.01
+        ? "info"
+        : "error",
     blocking: !allocations.length || Math.abs(totalGross - parentGross) > 0.01,
-    message: Math.abs(totalGross - parentGross) <= 0.01
-      ? "Allocation total exactly matches the GRN total"
-      : `Allocation difference is ${roundMoney(totalGross - parentGross).toFixed(2)}`,
+    message:
+      Math.abs(totalGross - parentGross) <= 0.01
+        ? "Allocation total exactly matches the GRN total"
+        : `Allocation difference is ${roundMoney(totalGross - parentGross).toFixed(2)}`,
     details: { totalBase, totalTax, totalGross, totalPnl, parentGross },
   });
 
@@ -626,67 +728,124 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
   // save time, catching any later mutation (e.g. confirmExtraction touching round_off_amount).
   if (invoiceComponents.length) {
     const componentGross = roundMoney(
-      invoiceComponents.reduce((sum, item) => sum + Number(item.amount_with_tax || 0), 0)
+      invoiceComponents.reduce(
+        (sum, item) => sum + Number(item.amount_with_tax || 0),
+        0,
+      ),
     );
-    const reconciledTotal = roundMoney(componentGross + Number(grn.round_off_amount || 0));
+    const reconciledTotal = roundMoney(
+      componentGross + Number(grn.round_off_amount || 0),
+    );
     const componentDiff = roundMoney(reconciledTotal - parentGross);
     results.push({
       code: "INVOICE_COMPONENT_RECONCILIATION",
-      status: Math.abs(componentDiff) <= GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE ? "passed" : "failed",
-      severity: Math.abs(componentDiff) <= GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE ? "info" : "error",
-      blocking: Math.abs(componentDiff) > GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE,
-      message: Math.abs(componentDiff) <= GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE
-        ? componentDiff === 0
-          ? "Invoice components plus round-off exactly match the GRN total"
-          : `Invoice components plus round-off match the GRN total within rounding (${componentDiff.toFixed(2)})`
-        : `Invoice component total (incl. round-off) differs from the GRN total by ${componentDiff.toFixed(2)}`,
-      details: { componentGross, roundOffAmount: Number(grn.round_off_amount || 0), reconciledTotal, parentGross },
+      status:
+        Math.abs(componentDiff) <=
+        GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE
+          ? "passed"
+          : "failed",
+      severity:
+        Math.abs(componentDiff) <=
+        GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE
+          ? "info"
+          : "error",
+      blocking:
+        Math.abs(componentDiff) >
+        GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE,
+      message:
+        Math.abs(componentDiff) <=
+        GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE
+          ? componentDiff === 0
+            ? "Invoice components plus round-off exactly match the GRN total"
+            : `Invoice components plus round-off match the GRN total within rounding (${componentDiff.toFixed(2)})`
+          : `Invoice component total (incl. round-off) differs from the GRN total by ${componentDiff.toFixed(2)}`,
+      details: {
+        componentGross,
+        roundOffAmount: Number(grn.round_off_amount || 0),
+        reconciledTotal,
+        parentGross,
+      },
     });
   }
 
-  const exactDuplicates = duplicates.filter((item) => item.type === "invoice_identity" || item.type === "document_hash");
+  const exactDuplicates = duplicates.filter(
+    (item) => item.type === "invoice_identity" || item.type === "document_hash",
+  );
   results.push({
     code: "DUPLICATE_INVOICE",
-    status: exactDuplicates.length ? "failed" : duplicates.length ? "warning" : "passed",
-    severity: exactDuplicates.length ? "error" : duplicates.length ? "warning" : "info",
+    status: exactDuplicates.length
+      ? "failed"
+      : duplicates.length
+        ? "warning"
+        : "passed",
+    severity: exactDuplicates.length
+      ? "error"
+      : duplicates.length
+        ? "warning"
+        : "info",
     blocking: exactDuplicates.length > 0,
     message: exactDuplicates.length
       ? `${exactDuplicates.length} exact duplicate match(es) require resolution`
       : duplicates.length
         ? `${duplicates.length} possible duplicate match(es) found`
         : "No duplicate invoice or document match found",
-    details: { matchCount: duplicates.length, exactMatchCount: exactDuplicates.length },
+    details: {
+      matchCount: duplicates.length,
+      exactMatchCount: exactDuplicates.length,
+    },
   });
 
   const latestExtraction = extractionRows[0] as any;
-  let documentMatchStatus: "not_checked" | "matched" | "near_match" | "mismatch" | "manual_review" = "not_checked";
-  if (latestExtraction?.status === "manual_review" || latestExtraction?.status === "failed") {
+  let documentMatchStatus:
+    "not_checked" | "matched" | "near_match" | "mismatch" | "manual_review" =
+    "not_checked";
+  if (
+    latestExtraction?.status === "manual_review" ||
+    latestExtraction?.status === "failed"
+  ) {
     documentMatchStatus = "manual_review";
     results.push({
       code: "DOCUMENT_EXTRACTION",
       status: "warning",
       severity: "warning",
       blocking: false,
-      message: "Automated extraction is unavailable or needs manual verification",
+      message:
+        "Automated extraction is unavailable or needs manual verification",
     });
   } else if (latestExtraction?.extracted_fields_json) {
-    const fields = typeof latestExtraction.extracted_fields_json === "string"
-      ? JSON.parse(latestExtraction.extracted_fields_json)
-      : latestExtraction.extracted_fields_json;
-    const extractedGross = Number(fields?.grossAmount ?? fields?.invoiceTotal ?? 0);
+    const fields =
+      typeof latestExtraction.extracted_fields_json === "string"
+        ? JSON.parse(latestExtraction.extracted_fields_json)
+        : latestExtraction.extracted_fields_json;
+    const extractedGross = Number(
+      fields?.grossAmount ?? fields?.invoiceTotal ?? 0,
+    );
     const difference = roundMoney(extractedGross - parentGross);
-    if (extractedGross > 0 && Math.abs(difference) <= 0.01) documentMatchStatus = "matched";
-    else if (extractedGross > 0 && Math.abs(difference) <= 1) documentMatchStatus = "near_match";
+    if (extractedGross > 0 && Math.abs(difference) <= 0.01)
+      documentMatchStatus = "matched";
+    else if (extractedGross > 0 && Math.abs(difference) <= 1)
+      documentMatchStatus = "near_match";
     else if (extractedGross > 0) documentMatchStatus = "mismatch";
     else documentMatchStatus = "manual_review";
     results.push({
       code: "DOCUMENT_AMOUNT_MATCH",
-      status: documentMatchStatus === "matched" ? "passed" : documentMatchStatus === "near_match" ? "warning" : "failed",
-      severity: documentMatchStatus === "matched" ? "info" : documentMatchStatus === "near_match" ? "warning" : "error",
+      status:
+        documentMatchStatus === "matched"
+          ? "passed"
+          : documentMatchStatus === "near_match"
+            ? "warning"
+            : "failed",
+      severity:
+        documentMatchStatus === "matched"
+          ? "info"
+          : documentMatchStatus === "near_match"
+            ? "warning"
+            : "error",
       blocking: documentMatchStatus === "mismatch",
-      message: extractedGross > 0
-        ? `Extracted invoice total ${extractedGross.toFixed(2)}; GRN total ${parentGross.toFixed(2)}`
-        : "Invoice total could not be extracted reliably",
+      message:
+        extractedGross > 0
+          ? `Extracted invoice total ${extractedGross.toFixed(2)}; GRN total ${parentGross.toFixed(2)}`
+          : "Invoice total could not be extracted reliably",
       details: { extractedGross, parentGross, difference },
     });
   } else {
@@ -779,20 +938,27 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
         AND a.cost_centre_id IS NOT NULL
       GROUP BY a.grn_request_id, a.budget_line_id, a.cost_centre_id, ccm.cost_centre_name, l.head, l.sub_head,
                pool_available, alloc.gross_amount`,
-    [grnId]
+    [grnId],
   );
   if (pooledDraws.length) {
     const overrun = pooledDraws
       .filter((row) => row.defined_share != null)
       .map((row) => ({
-        costCentreName: row.cost_centre_name ? String(row.cost_centre_name) : "This cost centre",
+        costCentreName: row.cost_centre_name
+          ? String(row.cost_centre_name)
+          : "This cost centre",
         head: `${row.head}${row.sub_head ? ` / ${row.sub_head}` : ""}`,
         definedShare: roundMoney(Number(row.defined_share)),
-        totalDraw: roundMoney(Number(row.already_drawn) + Number(row.this_grn_amount)),
+        totalDraw: roundMoney(
+          Number(row.already_drawn) + Number(row.this_grn_amount),
+        ),
       }))
       .filter((row) => row.totalDraw > row.definedShare + 0.01);
     const poolTotal = roundMoney(
-      pooledDraws.reduce((sum, row) => sum + Number(row.pool_available || 0), 0)
+      pooledDraws.reduce(
+        (sum, row) => sum + Number(row.pool_available || 0),
+        0,
+      ),
     );
     results.push({
       code: "POOLED_LINE_SHARE",
@@ -801,18 +967,23 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
       blocking: false,
       message: overrun.length
         ? summarizeOverrunList(overrun)
-        : `Funded in part from ${pooledDraws.length} branch-common budget line(s), shared across every cost centre `
-          + `(${poolTotal.toFixed(2)} remaining in the pool)`,
+        : `Funded in part from ${pooledDraws.length} branch-common budget line(s), shared across every cost centre ` +
+          `(${poolTotal.toFixed(2)} remaining in the pool)`,
       details: {
         pooledLineCount: pooledDraws.length,
         poolAvailable: poolTotal,
         overrun,
-        undefinedShareCount: pooledDraws.filter((row) => row.defined_share == null).length,
+        undefinedShareCount: pooledDraws.filter(
+          (row) => row.defined_share == null,
+        ).length,
       },
     });
   }
 
-  await connection.execute("DELETE FROM grn_validation_result WHERE grn_request_id = ?", [grnId]);
+  await connection.execute(
+    "DELETE FROM grn_validation_result WHERE grn_request_id = ?",
+    [grnId],
+  );
   for (const result of results) {
     // Second, independent line of defense: whatever a validator above produced, this never lets
     // an oversized message reach the column and abort validation entirely -- the earlier failure
@@ -827,18 +998,31 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
         is_blocking, message, details_json)
        VALUES (?,?,?,?,?,?,?,?)`,
       [
-        randomUUID(), grnId, result.code, result.severity, result.status,
-        result.blocking ? 1 : 0, message, safeJson(result.details),
-      ]
+        randomUUID(),
+        grnId,
+        result.code,
+        result.severity,
+        result.status,
+        result.blocking ? 1 : 0,
+        message,
+        safeJson(result.details),
+      ],
     );
   }
   const passed = results.filter((item) => item.status === "passed").length;
-  const score = results.length ? roundMoney((passed / results.length) * 100) : 0;
+  const score = results.length
+    ? roundMoney((passed / results.length) * 100)
+    : 0;
   await connection.execute(
     "UPDATE grn_request SET validation_score = ?, document_match_status = ? WHERE id = ?",
-    [score, documentMatchStatus, grnId]
+    [score, documentMatchStatus, grnId],
   );
-  return { results, score, documentMatchStatus, duplicateCount: duplicates.length };
+  return {
+    results,
+    score,
+    documentMatchStatus,
+    duplicateCount: duplicates.length,
+  };
 }
 
 /*
@@ -879,7 +1063,10 @@ function isRelinkable(allocation: any) {
 }
 
 function hasBudgetLine(allocation: any) {
-  return allocation.budget_line_id != null && String(allocation.budget_line_id).length > 0;
+  return (
+    allocation.budget_line_id != null &&
+    String(allocation.budget_line_id).length > 0
+  );
 }
 
 /**
@@ -904,7 +1091,10 @@ function hasBudgetLine(allocation: any) {
  * shortfall — the same answer the raiser would have got at save time, instead of a per-line
  * message about a line they never chose.
  */
-async function reserveAllocations(connection: PoolConnection, allocations: any[]) {
+async function reserveAllocations(
+  connection: PoolConnection,
+  allocations: any[],
+) {
   for (const allocation of allocations) {
     if (!hasBudgetLine(allocation)) continue;
     const amount = Number(allocation.amount_with_tax);
@@ -915,13 +1105,14 @@ async function reserveAllocations(connection: PoolConnection, allocations: any[]
         String(allocation.budget_line_id),
         amount,
         Number(allocation.quantity),
-        netAmount
+        netAmount,
       );
       continue;
     } catch (error) {
       // Only a headroom shortfall on this one line is recoverable. A closed sub-head, an
       // inactive budget or an invalid amount are real refusals and must propagate untouched.
-      if ((error as { code?: string })?.code !== "GRN_EXCEEDS_BUDGET_AMOUNT") throw error;
+      if ((error as { code?: string })?.code !== "GRN_EXCEEDS_BUDGET_AMOUNT")
+        throw error;
     }
 
     const [lineRows] = await connection.execute<RowDataPacket[]>(
@@ -929,27 +1120,37 @@ async function reserveAllocations(connection: PoolConnection, allocations: any[]
          FROM finance_budget_line l
          JOIN finance_budget_header h ON h.id = l.budget_id
         WHERE l.id = ? LIMIT 1`,
-      [String(allocation.budget_line_id)]
+      [String(allocation.budget_line_id)],
     );
     const origin = lineRows[0] as any;
-    if (!origin) throw refuse(409, "HEADROOM_EXCEEDED", "The budget line this allocation was funded from no longer exists.");
+    if (!origin)
+      throw refuse(
+        409,
+        "HEADROOM_EXCEEDED",
+        "The budget line this allocation was funded from no longer exists.",
+      );
 
     const coverage = await getHeadSubHeadCoverage(
       String(origin.branch_id),
       String(origin.period_code),
       String(origin.head),
       origin.sub_head ? String(origin.sub_head) : null,
-      connection
+      connection,
     );
     assertCoverageExists(
       coverage,
       String(origin.period_code),
       String(origin.head),
-      origin.sub_head ? String(origin.sub_head) : null
+      origin.sub_head ? String(origin.sub_head) : null,
     );
 
     // Throws HEADROOM_EXCEEDED with the exact shortfall when the whole branch cannot cover it.
-    const draws = allocateAcrossLines(String(allocation.budget_line_id), amount, coverage.lines, netAmount);
+    const draws = allocateAcrossLines(
+      String(allocation.budget_line_id),
+      amount,
+      coverage.lines,
+      netAmount,
+    );
     for (const draw of draws) {
       // Quantity and net amount are apportioned by this draw's share of the row so the ledgers
       // stay consistent with the money actually moved onto each line.
@@ -959,15 +1160,20 @@ async function reserveAllocations(connection: PoolConnection, allocations: any[]
         draw.lineId,
         draw.amount,
         roundQuantity(Number(allocation.quantity) * share),
-        netAmount == null ? undefined : roundMoney(netAmount * share)
+        netAmount == null ? undefined : roundMoney(netAmount * share),
       );
     }
     // Re-point the row at the line that carried the largest share, so the allocation still names
     // a real funding source. A row split across lines at reserve time is rare enough — and its
     // full draw set is on the audit record below — that a second allocation row is not worth
     // creating after a reviewer has already signed off on the row count they saw.
-    const primary = draws.reduce((max, draw) => (draw.amount > max.amount ? draw : max), draws[0]);
-    const primaryLine = coverage.lines.find((line) => String(line.id) === String(primary.lineId)) as any;
+    const primary = draws.reduce(
+      (max, draw) => (draw.amount > max.amount ? draw : max),
+      draws[0],
+    );
+    const primaryLine = coverage.lines.find(
+      (line) => String(line.id) === String(primary.lineId),
+    ) as any;
     await connection.execute(
       `UPDATE grn_cost_allocation
           SET budget_line_id = ?, budget_id = ?, funding_cost_centre_id = ?,
@@ -979,18 +1185,21 @@ async function reserveAllocations(connection: PoolConnection, allocations: any[]
         primaryLine?.cost_centre_id ?? null,
         ` — Re-funded at approval from branch aggregate headroom (${draws.length} line(s)); the line chosen at save time was exhausted meanwhile`,
         allocation.id,
-      ]
+      ],
     );
   }
   await connection.execute(
     `UPDATE grn_cost_allocation
         SET lifecycle_status = 'reserved', reserved_at = NOW(), released_at = NULL
       WHERE grn_request_id = ?`,
-    [allocations[0].grn_request_id]
+    [allocations[0].grn_request_id],
   );
 }
 
-async function consumeAllocations(connection: PoolConnection, allocations: any[]) {
+async function consumeAllocations(
+  connection: PoolConnection,
+  allocations: any[],
+) {
   for (const allocation of allocations) {
     if (!hasBudgetLine(allocation)) continue;
     await budgetConsumptionService.consume(
@@ -998,18 +1207,21 @@ async function consumeAllocations(connection: PoolConnection, allocations: any[]
       String(allocation.budget_line_id),
       Number(allocation.amount_with_tax),
       Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined
+      Number(allocation.amount_without_tax) || undefined,
     );
   }
   await connection.execute(
     `UPDATE grn_cost_allocation
         SET lifecycle_status = 'consumed', consumed_at = NOW()
       WHERE grn_request_id = ?`,
-    [allocations[0].grn_request_id]
+    [allocations[0].grn_request_id],
   );
 }
 
-async function releaseAllocations(connection: PoolConnection, allocations: any[]) {
+async function releaseAllocations(
+  connection: PoolConnection,
+  allocations: any[],
+) {
   for (const allocation of allocations) {
     if (String(allocation.lifecycle_status) !== "reserved") continue;
     if (!hasBudgetLine(allocation)) continue;
@@ -1018,7 +1230,7 @@ async function releaseAllocations(connection: PoolConnection, allocations: any[]
       String(allocation.budget_line_id),
       Number(allocation.amount_with_tax),
       Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined
+      Number(allocation.amount_without_tax) || undefined,
     );
   }
   if (allocations.length) {
@@ -1026,7 +1238,7 @@ async function releaseAllocations(connection: PoolConnection, allocations: any[]
       `UPDATE grn_cost_allocation
           SET lifecycle_status = 'released', released_at = NOW()
         WHERE grn_request_id = ? AND lifecycle_status = 'reserved'`,
-      [allocations[0].grn_request_id]
+      [allocations[0].grn_request_id],
     );
   }
 }
@@ -1034,7 +1246,10 @@ async function releaseAllocations(connection: PoolConnection, allocations: any[]
 /** Symmetric to releaseAllocations(), but against allocation rows already 'consumed' — for
  *  correcting a smart GRN whose Finance Head approval already moved every split allocation
  *  from reserved into consumed. */
-async function reverseConsumedAllocations(connection: PoolConnection, allocations: any[]) {
+async function reverseConsumedAllocations(
+  connection: PoolConnection,
+  allocations: any[],
+) {
   for (const allocation of allocations) {
     if (String(allocation.lifecycle_status) !== "consumed") continue;
     if (!hasBudgetLine(allocation)) continue;
@@ -1043,7 +1258,7 @@ async function reverseConsumedAllocations(connection: PoolConnection, allocation
       String(allocation.budget_line_id),
       Number(allocation.amount_with_tax),
       Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined
+      Number(allocation.amount_without_tax) || undefined,
     );
   }
   if (allocations.length) {
@@ -1051,7 +1266,7 @@ async function reverseConsumedAllocations(connection: PoolConnection, allocation
       `UPDATE grn_cost_allocation
           SET lifecycle_status = 'reversed'
         WHERE grn_request_id = ? AND lifecycle_status = 'consumed'`,
-      [allocations[0].grn_request_id]
+      [allocations[0].grn_request_id],
     );
   }
 }
@@ -1060,7 +1275,7 @@ export const grnSmartService = {
   async hasAllocations(grnId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS total FROM grn_cost_allocation WHERE grn_request_id = ?",
-      [grnId]
+      [grnId],
     );
     return Number(rows[0]?.total ?? 0) > 0;
   },
@@ -1069,7 +1284,8 @@ export const grnSmartService = {
    *  (split-allocation) GRN and already holds the row lock on grn_request. */
   async reverseConsumption(connection: PoolConnection, grnId: string) {
     const allocations = await loadAllocations(connection, grnId, true);
-    if (!allocations.length) throw new Error("Smart GRN has no saved cost allocations");
+    if (!allocations.length)
+      throw new Error("Smart GRN has no saved cost allocations");
     await reverseConsumedAllocations(connection, allocations);
   },
 
@@ -1077,19 +1293,22 @@ export const grnSmartService = {
     grnId: string,
     input: SmartGrnInvoiceInput,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     if (!Array.isArray(input.allocations) || !input.allocations.length) {
       throw new Error("At least one cost-centre allocation is required");
     }
-    if (input.allocations.length > 100) throw new Error("A GRN cannot exceed 100 allocation rows");
+    if (input.allocations.length > 100)
+      throw new Error("A GRN cannot exceed 100 allocation rows");
 
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
       if (String(grn.status) !== "draft") {
-        throw new Error("Allocations can only be changed while the GRN is a draft");
+        throw new Error(
+          "Allocations can only be changed while the GRN is a draft",
+        );
       }
       // Imprest = petty cash out of the branch float. No tax invoice, no ITC, so the funding
       // budget line's planned tax treatment must not split a GST component out of it and the
@@ -1102,9 +1321,8 @@ export const grnSmartService = {
       // the budget template.
       const _v1 = String(grn.vendor_state_code ?? "").trim();
       const _b1 = String(grn.billing_state_code ?? "").trim();
-      const grnGstType: BudgetGstType = isImprest || !_v1 || !_b1
-        ? "none"
-        : _v1 === _b1 ? "cgst_sgst" : "igst";
+      const grnGstType: BudgetGstType =
+        isImprest || !_v1 || !_b1 ? "none" : _v1 === _b1 ? "cgst_sgst" : "igst";
 
       // An UNBUDGETED row (raised via the same "no approved budget line" path the vendor
       // cascade already has — createUnbudgetedDraft/e2c8db0d) has no budget line to pick.
@@ -1121,13 +1339,19 @@ export const grnSmartService = {
           resolvedLines.push(null);
           continue;
         }
-        const line = await lockBudgetLine(connection, allocation.budgetLineId, String(grn.branch_id));
+        const line = await lockBudgetLine(
+          connection,
+          allocation.budgetLineId,
+          String(grn.branch_id),
+        );
         if (consumptionPeriodOf(grn) !== String(line.period_code)) {
-          throw new Error(`Allocation ${index + 1}: budget period ${line.period_code} does not match the accounting month`);
+          throw new Error(
+            `Allocation ${index + 1}: budget period ${line.period_code} does not match the accounting month`,
+          );
         }
         if (await isPeriodLocked(line.period_code)) {
           throw new Error(
-            `Allocation ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`
+            `Allocation ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`,
           );
         }
         resolvedLines.push(line);
@@ -1171,7 +1395,9 @@ export const grnSmartService = {
 
         if (isUnbudgetedRow) {
           if (!allocation?.costCentreId) {
-            throw new Error(`Allocation ${index + 1}: cost centre is required for an unbudgeted allocation`);
+            throw new Error(
+              `Allocation ${index + 1}: cost centre is required for an unbudgeted allocation`,
+            );
           }
           // Same branch-membership check createUnbudgetedDraft() already applied to the header's
           // own cost centre — repeated here because a raiser could still pass a different one.
@@ -1180,13 +1406,16 @@ export const grnSmartService = {
             allocation.costCentreId,
             String(grn.branch_id),
             null,
-            `Allocation ${index + 1}`
+            `Allocation ${index + 1}`,
           );
           const quantity = Number(allocation.quantity);
           if (!Number.isFinite(quantity) || quantity <= 0) {
-            throw new Error(`Allocation ${index + 1}: quantity must be greater than zero`);
+            throw new Error(
+              `Allocation ${index + 1}: quantity must be greater than zero`,
+            );
           }
-          const unitRate = allocation.unitRate == null ? 1 : Number(allocation.unitRate);
+          const unitRate =
+            allocation.unitRate == null ? 1 : Number(allocation.unitRate);
           if (!Number.isFinite(unitRate) || unitRate < 0) {
             throw new Error(`Allocation ${index + 1}: unit rate is invalid`);
           }
@@ -1195,10 +1424,18 @@ export const grnSmartService = {
           // WHOLLY unbudgeted GRN and can be stale/blank for one that started out mixed. This
           // "target" synthetic line is only used to derive grossTarget (the money this row needs
           // funded) — unlike before, it is never itself the funding line.
-          head = referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted");
-          subHead = referenceLine ? String(referenceLine.sub_head || "") : String(grn.sub_head || "");
-          const itemName = referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted Expense");
-          const gstType = referenceLine ? String(referenceLine.gst_type) : "cgst_sgst";
+          head = referenceLine
+            ? String(referenceLine.head)
+            : String(grn.head || "Unbudgeted");
+          subHead = referenceLine
+            ? String(referenceLine.sub_head || "")
+            : String(grn.sub_head || "");
+          const itemName = referenceLine
+            ? String(referenceLine.head)
+            : String(grn.head || "Unbudgeted Expense");
+          const gstType = referenceLine
+            ? String(referenceLine.gst_type)
+            : "cgst_sgst";
           const targetAmounts = calculateBudgetLine({
             head,
             subHead,
@@ -1222,14 +1459,21 @@ export const grnSmartService = {
           const line = resolvedLines[index]!;
           const quantity = Number(allocation.quantity);
           if (!Number.isFinite(quantity) || quantity <= 0) {
-            throw new Error(`Allocation ${index + 1}: quantity must be greater than zero`);
+            throw new Error(
+              `Allocation ${index + 1}: quantity must be greater than zero`,
+            );
           }
-          const unitRate = allocation.unitRate == null ? Number(line.unit_rate) : Number(allocation.unitRate);
+          const unitRate =
+            allocation.unitRate == null
+              ? Number(line.unit_rate)
+              : Number(allocation.unitRate);
           if (!Number.isFinite(unitRate) || unitRate < 0) {
             throw new Error(`Allocation ${index + 1}: unit rate is invalid`);
           }
           if (unitRate > Number(line.unit_rate) + 0.0001) {
-            throw new Error(`Allocation ${index + 1}: unit rate exceeds the approved rate`);
+            throw new Error(
+              `Allocation ${index + 1}: unit rate exceeds the approved rate`,
+            );
           }
           // Priced against the ORIGINALLY SELECTED line's own tax profile purely to derive the
           // money target (grossTarget) this row needs funded — which line(s) actually end up
@@ -1239,9 +1483,10 @@ export const grnSmartService = {
           // round — a GST component on a voucher that has none (see SmartAllocationInput
           // .grossAmount). Falls back to the quantity maths for any older caller that does not
           // send it, priced with the imprest profile so no tax is invented either way.
-          const imprestShare = isImprest && allocation.grossAmount != null
-            ? roundMoney(Number(allocation.grossAmount))
-            : null;
+          const imprestShare =
+            isImprest && allocation.grossAmount != null
+              ? roundMoney(Number(allocation.grossAmount))
+              : null;
           const targetAmounts = calculateBudgetLine({
             head: String(line.head),
             subHead: line.sub_head,
@@ -1251,15 +1496,19 @@ export const grnSmartService = {
             unitRate: imprestShare != null ? imprestShare : unitRate,
             taxTreatment: isImprest
               ? IMPREST_TAX_PROFILE.taxTreatment
-              : String(line.tax_treatment) as BudgetTaxTreatment,
-            gstRate: isImprest ? IMPREST_TAX_PROFILE.gstRate : Number(line.gst_rate),
+              : (String(line.tax_treatment) as BudgetTaxTreatment),
+            gstRate: isImprest
+              ? IMPREST_TAX_PROFILE.gstRate
+              : Number(line.gst_rate),
             gstType: isImprest
               ? IMPREST_TAX_PROFILE.gstType
-              : String(line.gst_type) as BudgetGstType,
+              : (String(line.gst_type) as BudgetGstType),
             recoverableTaxPct: isImprest
               ? IMPREST_TAX_PROFILE.recoverableTaxPct
               : Number(line.recoverable_tax_pct),
-            justification: String(line.justification || "Approved budget allocation"),
+            justification: String(
+              line.justification || "Approved budget allocation",
+            ),
           });
           grossTarget = targetAmounts.grossAmount;
           netTarget = targetAmounts.baseAmount;
@@ -1273,14 +1522,19 @@ export const grnSmartService = {
             allocation.costCentreId,
             String(grn.branch_id),
             line,
-            `Allocation ${index + 1}`
+            `Allocation ${index + 1}`,
           );
           originalCostCentreId = attribution.costCentreId;
           originalCostCentreName = attribution.costCentreName;
           preferredLineId = String(allocation.budgetLineId);
         }
 
-        const coverage = await getHeadSubHeadCoverage(String(grn.branch_id), period, head, subHead);
+        const coverage = await getHeadSubHeadCoverage(
+          String(grn.branch_id),
+          period,
+          head,
+          subHead,
+        );
         assertCoverageExists(coverage, period, head, subHead);
         // A closed head/sub-head refuses NEW spend. This used to be checked in exactly one
         // place — inside budgetConsumptionService.reserve(), which does not run until BRANCH HEAD
@@ -1288,15 +1542,25 @@ export const grnSmartService = {
         // the submission, and only refused once a reviewer pressed Approve. Checked here as well
         // so the raiser is told at the step where they can still do something about it.
         await budgetClosureService.assertSubheadOpen(
-          connection, String(coverage.budgetId), head, subHead
+          connection,
+          String(coverage.budgetId),
+          head,
+          subHead,
         );
 
         // Net out whatever earlier rows in this same save already drew against each of these
         // lines before handing them to the allocator — see drawnAmountByLineId's comment above.
         const netLines = coverage.lines.map((candidate) => {
-          const alreadyDrawn = drawnAmountByLineId.get(String(candidate.id)) ?? 0;
+          const alreadyDrawn =
+            drawnAmountByLineId.get(String(candidate.id)) ?? 0;
           return alreadyDrawn > 0
-            ? { ...candidate, available_gross_amount: Math.max(0, Number(candidate.available_gross_amount) - alreadyDrawn) }
+            ? {
+                ...candidate,
+                available_gross_amount: Math.max(
+                  0,
+                  Number(candidate.available_gross_amount) - alreadyDrawn,
+                ),
+              }
             : candidate;
         });
 
@@ -1306,14 +1570,23 @@ export const grnSmartService = {
         // taxable value, not the tax-inclusive one — see allocateAcrossLines' netAmount. Without
         // it a Rs 21,000 non-taxable line refused a Rs 21,000 invoice carrying Rs 3,204 of GST,
         // even though only Rs 17,796 of it would ever have been charged to that line.
-        const draws = allocateAcrossLines(preferredLineId, grossTarget, netLines, netTarget);
+        const draws = allocateAcrossLines(
+          preferredLineId,
+          grossTarget,
+          netLines,
+          netTarget,
+        );
         const baseRemarks = allocation.remarks?.trim() || null;
 
         for (let drawIndex = 0; drawIndex < draws.length; drawIndex += 1) {
           const draw = draws[drawIndex];
-          const fundingLine = coverage.lines.find((candidate) => String(candidate.id) === String(draw.lineId));
+          const fundingLine = coverage.lines.find(
+            (candidate) => String(candidate.id) === String(draw.lineId),
+          );
           if (!fundingLine) {
-            throw new Error(`Allocation ${index + 1}: internal error resolving funding line ${draw.lineId}`);
+            throw new Error(
+              `Allocation ${index + 1}: internal error resolving funding line ${draw.lineId}`,
+            );
           }
 
           // Reproduce exactly draw.amount as this draw's own grossAmount, from the FUNDING line's
@@ -1324,12 +1597,15 @@ export const grnSmartService = {
           const quotedAmount = isImprest
             ? draw.amount
             : requiredQuotedAmount(
-              draw.amount,
-              String(fundingLine.tax_treatment),
-              Number(fundingLine.gst_rate)
-            );
+                draw.amount,
+                String(fundingLine.tax_treatment),
+                Number(fundingLine.gst_rate),
+              );
           const fundingUnitRate = Number(fundingLine.unit_rate);
-          const drawQuantity = fundingUnitRate > 0 ? roundQuantity(quotedAmount / fundingUnitRate) : 0;
+          const drawQuantity =
+            fundingUnitRate > 0
+              ? roundQuantity(quotedAmount / fundingUnitRate)
+              : 0;
 
           // Quantity used to be a SECOND hard stop here, on top of the money split above. It no
           // longer refuses: the whole-unit count is not a spending control (see budget-consumption.service.ts's file-level banner).
@@ -1350,15 +1626,21 @@ export const grnSmartService = {
             unitRate: isImprest ? quotedAmount : fundingUnitRate,
             taxTreatment: isImprest
               ? IMPREST_TAX_PROFILE.taxTreatment
-              : String(fundingLine.tax_treatment) as BudgetTaxTreatment,
-            gstRate: isImprest ? IMPREST_TAX_PROFILE.gstRate : Number(fundingLine.gst_rate),
+              : (String(fundingLine.tax_treatment) as BudgetTaxTreatment),
+            gstRate: isImprest
+              ? IMPREST_TAX_PROFILE.gstRate
+              : Number(fundingLine.gst_rate),
             gstType: isImprest
               ? IMPREST_TAX_PROFILE.gstType
-              : (grnGstType !== "none" ? grnGstType : String(fundingLine.gst_type)) as BudgetGstType,
+              : ((grnGstType !== "none"
+                  ? grnGstType
+                  : String(fundingLine.gst_type)) as BudgetGstType),
             recoverableTaxPct: isImprest
               ? IMPREST_TAX_PROFILE.recoverableTaxPct
               : Number(fundingLine.recoverable_tax_pct),
-            justification: String(fundingLine.justification || "Approved budget allocation"),
+            justification: String(
+              fundingLine.justification || "Approved budget allocation",
+            ),
           });
           // Imprest carries no GST — the whole voucher amount is P&L cost. See applyImprestNoGst.
           const rowAmounts = isImprest ? applyImprestNoGst(amounts) : amounts;
@@ -1366,16 +1648,21 @@ export const grnSmartService = {
           // Spillover audit trail: only the first/primary draw for a row keeps the raiser's own
           // remarks verbatim. Every draw beyond it exists only because the row's own line came up
           // short, so it gets a note explaining why it is here.
-          const remarks = drawIndex === 0
-            ? baseRemarks
-            : `Auto-allocated from branch aggregate headroom for ${head}/${subHead || ""} — original line's own share was insufficient`;
+          const remarks =
+            drawIndex === 0
+              ? baseRemarks
+              : `Auto-allocated from branch aggregate headroom for ${head}/${subHead || ""} — original line's own share was insufficient`;
 
           prepared.push({
             // Funding source (budget_id/id/tax profile) is fundingLine's own; cost-centre
             // attribution is overridden to the ORIGINAL allocation row's own cost centre — the
             // GRN's cost-centre attribution reflects who incurred the spend, not which budget
             // pool paid for it.
-            line: { ...fundingLine, cost_centre_id: originalCostCentreId, cost_centre_name: originalCostCentreName },
+            line: {
+              ...fundingLine,
+              cost_centre_id: originalCostCentreId,
+              cost_centre_name: originalCostCentreName,
+            },
             quantity: drawQuantity,
             unitRate: fundingUnitRate,
             amounts: rowAmounts,
@@ -1394,28 +1681,66 @@ export const grnSmartService = {
           // available_gross_amount = planned_gross − reserved_pnl − consumed_pnl (mixed units).
           // consumptionBasis() writes the P&L cost (net) for ITC invoices, so within-save netting
           // must subtract the same unit — net — not the invoice gross. Convert: pnl = gross × (net/gross).
-          const pnlDraw = grossTarget > 0 ? roundMoney(draw.amount * (netTarget ?? grossTarget) / grossTarget) : draw.amount;
-          drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + pnlDraw);
-          drawnQuantityByLineId.set(String(fundingLine.id), (drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0) + drawQuantity);
+          const pnlDraw =
+            grossTarget > 0
+              ? roundMoney(
+                  (draw.amount * (netTarget ?? grossTarget)) / grossTarget,
+                )
+              : draw.amount;
+          drawnAmountByLineId.set(
+            String(fundingLine.id),
+            (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + pnlDraw,
+          );
+          drawnQuantityByLineId.set(
+            String(fundingLine.id),
+            (drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0) +
+              drawQuantity,
+          );
         }
       }
 
-      const totalBase = roundMoney(prepared.reduce((sum, item) => sum + item.amounts.baseAmount, 0));
-      const totalTax = roundMoney(prepared.reduce((sum, item) => sum + item.amounts.taxAmount, 0));
-      const totalGross = roundMoney(prepared.reduce((sum, item) => sum + item.amounts.grossAmount, 0));
-      const totalPnl = roundMoney(prepared.reduce((sum, item) => sum + item.amounts.pnlCostAmount, 0));
-      const totalRecoverable = roundMoney(prepared.reduce((sum, item) => sum + item.amounts.recoverableTaxAmount, 0));
-      const totalQuantity = roundQuantity(prepared.reduce((sum, item) => sum + item.quantity, 0));
-      if (input.declaredInvoiceTotal != null && Math.abs(Number(input.declaredInvoiceTotal) - totalGross) > 0.01) {
-        throw new Error(`Cost-centre splits must equal the invoice total exactly. Difference: ${roundMoney(totalGross - Number(input.declaredInvoiceTotal)).toFixed(2)}`);
+      const totalBase = roundMoney(
+        prepared.reduce((sum, item) => sum + item.amounts.baseAmount, 0),
+      );
+      const totalTax = roundMoney(
+        prepared.reduce((sum, item) => sum + item.amounts.taxAmount, 0),
+      );
+      const totalGross = roundMoney(
+        prepared.reduce((sum, item) => sum + item.amounts.grossAmount, 0),
+      );
+      const totalPnl = roundMoney(
+        prepared.reduce((sum, item) => sum + item.amounts.pnlCostAmount, 0),
+      );
+      const totalRecoverable = roundMoney(
+        prepared.reduce(
+          (sum, item) => sum + item.amounts.recoverableTaxAmount,
+          0,
+        ),
+      );
+      const totalQuantity = roundQuantity(
+        prepared.reduce((sum, item) => sum + item.quantity, 0),
+      );
+      if (
+        input.declaredInvoiceTotal != null &&
+        Math.abs(Number(input.declaredInvoiceTotal) - totalGross) > 0.01
+      ) {
+        throw new Error(
+          `Cost-centre splits must equal the invoice total exactly. Difference: ${roundMoney(totalGross - Number(input.declaredInvoiceTotal)).toFixed(2)}`,
+        );
       }
 
-      await connection.execute("DELETE FROM grn_cost_allocation WHERE grn_request_id = ?", [grnId]);
+      await connection.execute(
+        "DELETE FROM grn_cost_allocation WHERE grn_request_id = ?",
+        [grnId],
+      );
       for (let index = 0; index < prepared.length; index += 1) {
         const item = prepared[index];
-        const percentage = totalGross > 0
-          ? Math.round((item.amounts.grossAmount / totalGross) * 100 * 1_000_000) / 1_000_000
-          : 0;
+        const percentage =
+          totalGross > 0
+            ? Math.round(
+                (item.amounts.grossAmount / totalGross) * 100 * 1_000_000,
+              ) / 1_000_000
+            : 0;
         await connection.execute(
           /*
            * is_unbudgeted means ONE thing: no budget line funded this row.
@@ -1444,55 +1769,97 @@ export const grnSmartService = {
             pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
-            randomUUID(), grnId, index + 1, item.line.budget_id, item.line.id,
-            grn.branch_id, item.line.process_id ?? null, item.line.cost_centre_id ?? null,
+            randomUUID(),
+            grnId,
+            index + 1,
+            item.line.budget_id,
+            item.line.id,
+            grn.branch_id,
+            item.line.process_id ?? null,
+            item.line.cost_centre_id ?? null,
             item.fundingCostCentreId ?? null,
-            item.line.process_id || item.line.cost_centre_id ? "direct" : "indirect",
-            percentage, item.quantity, item.line.unit, item.unitRate,
-            isImprest ? IMPREST_TAX_PROFILE.taxTreatment : item.line.tax_treatment,
+            item.line.process_id || item.line.cost_centre_id
+              ? "direct"
+              : "indirect",
+            percentage,
+            item.quantity,
+            item.line.unit,
+            item.unitRate,
+            isImprest
+              ? IMPREST_TAX_PROFILE.taxTreatment
+              : item.line.tax_treatment,
             isImprest ? IMPREST_TAX_PROFILE.gstRate : item.line.gst_rate,
-            isImprest ? IMPREST_TAX_PROFILE.gstType : (grnGstType !== "none" ? grnGstType : item.line.gst_type),
-            isImprest ? IMPREST_TAX_PROFILE.recoverableTaxPct : item.line.recoverable_tax_pct,
+            isImprest
+              ? IMPREST_TAX_PROFILE.gstType
+              : grnGstType !== "none"
+                ? grnGstType
+                : item.line.gst_type,
+            isImprest
+              ? IMPREST_TAX_PROFILE.recoverableTaxPct
+              : item.line.recoverable_tax_pct,
             item.amounts.baseAmount,
-            item.amounts.taxAmount, item.amounts.cgstAmount, item.amounts.sgstAmount,
-            item.amounts.igstAmount, item.amounts.grossAmount,
-            item.amounts.recoverableTaxAmount, item.amounts.pnlCostAmount,
-            "draft", item.remarks, item.line.id == null ? 1 : 0, actorUserId,
-          ]
+            item.amounts.taxAmount,
+            item.amounts.cgstAmount,
+            item.amounts.sgstAmount,
+            item.amounts.igstAmount,
+            item.amounts.grossAmount,
+            item.amounts.recoverableTaxAmount,
+            item.amounts.pnlCostAmount,
+            "draft",
+            item.remarks,
+            item.line.id == null ? 1 : 0,
+            actorUserId,
+          ],
         );
       }
 
       // Force the percentage total to exactly 100.000000 after decimal rounding.
       const [percentageRows] = await connection.execute<RowDataPacket[]>(
         "SELECT id, allocation_percentage FROM grn_cost_allocation WHERE grn_request_id = ? ORDER BY sequence_no",
-        [grnId]
+        [grnId],
       );
-      const percentageTotal = percentageRows.reduce((sum, row) => sum + Number(row.allocation_percentage), 0);
+      const percentageTotal = percentageRows.reduce(
+        (sum, row) => sum + Number(row.allocation_percentage),
+        0,
+      );
       if (percentageRows.length && Math.abs(percentageTotal - 100) > 0.000001) {
         const last = percentageRows[percentageRows.length - 1];
         await connection.execute(
           "UPDATE grn_cost_allocation SET allocation_percentage = allocation_percentage + ? WHERE id = ?",
-          [Math.round((100 - percentageTotal) * 1_000_000) / 1_000_000, last.id]
+          [
+            Math.round((100 - percentageTotal) * 1_000_000) / 1_000_000,
+            last.id,
+          ],
         );
       }
 
-      const distinctProcesses = new Set(prepared.map((item) => item.line.process_id).filter(Boolean));
-      const distinctCostCentres = new Set(prepared.map((item) => item.line.cost_centre_id).filter(Boolean));
-      const distinctHeads = new Set(prepared.map((item) => String(item.line.head)));
-      const distinctSubHeads = new Set(prepared.map((item) => String(item.line.sub_head || "")));
+      const distinctProcesses = new Set(
+        prepared.map((item) => item.line.process_id).filter(Boolean),
+      );
+      const distinctCostCentres = new Set(
+        prepared.map((item) => item.line.cost_centre_id).filter(Boolean),
+      );
+      const distinctHeads = new Set(
+        prepared.map((item) => String(item.line.head)),
+      );
+      const distinctSubHeads = new Set(
+        prepared.map((item) => String(item.line.sub_head || "")),
+      );
       const first = prepared[0].line;
-      const weightedGstRate = totalBase > 0 ? roundMoney((totalTax / totalBase) * 100) : 0;
-      const weightedRecoverablePct = totalTax > 0 ? roundMoney((totalRecoverable / totalTax) * 100) : 0;
+      const weightedGstRate =
+        totalBase > 0 ? roundMoney((totalTax / totalBase) * 100) : 0;
+      const weightedRecoverablePct =
+        totalTax > 0 ? roundMoney((totalRecoverable / totalTax) * 100) : 0;
       const units = new Set(prepared.map((item) => String(item.line.unit)));
       const taxTreatments = new Set(
         isImprest
           ? [IMPREST_TAX_PROFILE.taxTreatment]
-          : prepared.map((item) => String(item.line.tax_treatment))
+          : prepared.map((item) => String(item.line.tax_treatment)),
       );
       const gstTypes = new Set(
         isImprest
           ? [IMPREST_TAX_PROFILE.gstType]
-          : prepared.map((item) => String(item.line.gst_type))
+          : prepared.map((item) => String(item.line.gst_type)),
       );
 
       await connection.execute(
@@ -1510,24 +1877,48 @@ export const grnSmartService = {
                 is_unbudgeted = ?
           WHERE id = ?`,
         [
-          prepared.length > 1 ? "split" : "single", first.budget_id, first.id,
+          prepared.length > 1 ? "split" : "single",
+          first.budget_id,
+          first.id,
           distinctProcesses.size === 1 ? [...distinctProcesses][0] : null,
           distinctCostCentres.size === 1 ? [...distinctCostCentres][0] : null,
-          prepared.some((item) => item.line.process_id || item.line.cost_centre_id) ? "direct" : "indirect",
+          prepared.some(
+            (item) => item.line.process_id || item.line.cost_centre_id,
+          )
+            ? "direct"
+            : "indirect",
           distinctHeads.size === 1 ? [...distinctHeads][0] : "Multiple Heads",
-          distinctSubHeads.size === 1 ? [...distinctSubHeads][0] : "Multiple Sub-Heads",
-          prepared.length === 1 ? String(first.item_name) : `Split invoice across ${prepared.length} approved budget lines`,
-          totalQuantity, units.size === 1 ? [...units][0] : "Mixed",
+          distinctSubHeads.size === 1
+            ? [...distinctSubHeads][0]
+            : "Multiple Sub-Heads",
+          prepared.length === 1
+            ? String(first.item_name)
+            : `Split invoice across ${prepared.length} approved budget lines`,
+          totalQuantity,
+          units.size === 1 ? [...units][0] : "Mixed",
           totalQuantity > 0 ? roundMoney(totalBase / totalQuantity) : 0,
           taxTreatments.size === 1 ? [...taxTreatments][0] : "exclusive",
-          weightedGstRate, grnGstType !== "none" ? grnGstType : (gstTypes.size === 1 ? [...gstTypes][0] : "none"),
-          weightedRecoverablePct, totalBase, totalTax, totalGross, totalPnl, totalGross,
+          weightedGstRate,
+          grnGstType !== "none"
+            ? grnGstType
+            : gstTypes.size === 1
+              ? [...gstTypes][0]
+              : "none",
+          weightedRecoverablePct,
+          totalBase,
+          totalTax,
+          totalGross,
+          totalPnl,
+          totalGross,
           normalizeInvoiceNumber(input.invoiceNumber) || null,
           String(input.irn ?? "").trim() || null,
           String(input.irnAckNo ?? "").trim() || null,
-          dateOrNull(input.servicePeriodStart), dateOrNull(input.servicePeriodEnd),
+          dateOrNull(input.servicePeriodStart),
+          dateOrNull(input.servicePeriodEnd),
           String(input.purchaseReference ?? "").trim() || null,
-          String(input.vendorGstin ?? "").trim().toUpperCase() || null,
+          String(input.vendorGstin ?? "")
+            .trim()
+            .toUpperCase() || null,
           String(input.placeOfSupply ?? "").trim() || null,
           roundMoney(Number(input.otherCharges ?? 0)),
           // round_off_amount is a DISCLOSURE: it records that a gap between an invoice's
@@ -1537,7 +1928,9 @@ export const grnSmartService = {
           // later save here erased the disclosure while the absorbed paise stayed in the rows.
           // Not sent now means leave it alone (the COALESCE the extraction-confirm path already
           // uses); an explicit 0 still clears it.
-          input.roundOffAmount == null ? null : roundMoney(Number(input.roundOffAmount)),
+          input.roundOffAmount == null
+            ? null
+            : roundMoney(Number(input.roundOffAmount)),
           // Derived from the rows just written, not the flag stored at create time — and now on
           // the same definition the rows use: unbudgeted means at least one rupee of this GRN has
           // no budget line behind it, NOT that the raiser declined to pick one. A GRN raised
@@ -1546,29 +1939,48 @@ export const grnSmartService = {
           // corrected here — it was stamped before any allocation existed to judge.
           prepared.some((item) => item.line.id == null) ? 1 : 0,
           grnId,
-        ]
+        ],
       );
 
       // Recognition schedule last: it reads back the allocation rows just written, and being
       // inside this transaction means a split that does not reconcile rolls the invoice back.
-      const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId, actorRole);
+      const periodSplit = await writePeriodSplits(
+        connection,
+        grnId,
+        grn,
+        input,
+        actorUserId,
+        actorRole,
+      );
 
-      await writeAuditInTransaction(connection, "ALLOCATIONS_SAVED", grnId, actorUserId, actorRole, {
-        recognition_months: periodSplit?.eligibleCount ?? 1,
-        allocation_count: prepared.length,
-        // The three facts that used to be collapsed into one is_unbudgeted flag, so an auditor
-        // asking "what did we commit to before budgeting it?" still has an answer.
-        raiser_picked_no_line_count: prepared.filter((item) => item.raiserPickedNoLine).length,
-        funded_by_other_cost_centre_count: prepared.filter(
-          (item) => item.fundingCostCentreId
-            && String(item.fundingCostCentreId) !== String(item.line.cost_centre_id ?? "")
-        ).length,
-        unfunded_count: prepared.filter((item) => item.line.id == null).length,
-        amount_without_tax: totalBase,
-        tax_amount: totalTax,
-        amount_with_tax: totalGross,
-        pnl_cost_amount: totalPnl,
-      });
+      await writeAuditInTransaction(
+        connection,
+        "ALLOCATIONS_SAVED",
+        grnId,
+        actorUserId,
+        actorRole,
+        {
+          recognition_months: periodSplit?.eligibleCount ?? 1,
+          allocation_count: prepared.length,
+          // The three facts that used to be collapsed into one is_unbudgeted flag, so an auditor
+          // asking "what did we commit to before budgeting it?" still has an answer.
+          raiser_picked_no_line_count: prepared.filter(
+            (item) => item.raiserPickedNoLine,
+          ).length,
+          funded_by_other_cost_centre_count: prepared.filter(
+            (item) =>
+              item.fundingCostCentreId &&
+              String(item.fundingCostCentreId) !==
+                String(item.line.cost_centre_id ?? ""),
+          ).length,
+          unfunded_count: prepared.filter((item) => item.line.id == null)
+            .length,
+          amount_without_tax: totalBase,
+          tax_amount: totalTax,
+          amount_with_tax: totalGross,
+          pnl_cost_amount: totalPnl,
+        },
+      );
       await connection.commit();
       return this.getWorkspace(grnId);
     } catch (error) {
@@ -1591,27 +2003,38 @@ export const grnSmartService = {
     grnId: string,
     input: SmartGrnComponentSplitInput,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     const components = Array.isArray(input.components) ? input.components : [];
-    const splits = Array.isArray(input.costCentreSplits) ? input.costCentreSplits : [];
-    if (!components.length) throw new Error("At least one invoice component is required");
-    if (components.length > 20) throw new Error("A GRN cannot exceed 20 invoice components");
+    const splits = Array.isArray(input.costCentreSplits)
+      ? input.costCentreSplits
+      : [];
+    if (!components.length)
+      throw new Error("At least one invoice component is required");
+    if (components.length > 20)
+      throw new Error("A GRN cannot exceed 20 invoice components");
     if (!splits.length) throw new Error("At least one cost centre is required");
-    if (splits.length > 100) throw new Error("A GRN cannot exceed 100 cost-centre splits");
+    if (splits.length > 100)
+      throw new Error("A GRN cannot exceed 100 cost-centre splits");
     const declaredTotal = Number(input.declaredInvoiceTotal);
     if (!Number.isFinite(declaredTotal) || declaredTotal <= 0) {
-      throw new Error("Total invoice amount (incl. GST) must be greater than zero");
+      throw new Error(
+        "Total invoice amount (incl. GST) must be greater than zero",
+      );
     }
 
     for (let index = 0; index < components.length; index += 1) {
       const component = components[index];
       const base = Number(component.amountWithoutTax);
       if (!Number.isFinite(base) || base <= 0) {
-        throw new Error(`Component ${index + 1}: amount without tax must be greater than zero`);
+        throw new Error(
+          `Component ${index + 1}: amount without tax must be greater than zero`,
+        );
       }
       if (!ALLOWED_GST_RATES.has(Number(component.gstRate))) {
-        throw new Error(`Component ${index + 1}: GST rate must be one of 0%, 5%, 12%, 18%, 28%`);
+        throw new Error(
+          `Component ${index + 1}: GST rate must be one of 0%, 5%, 12%, 18%, 28%`,
+        );
       }
     }
 
@@ -1620,15 +2043,24 @@ export const grnSmartService = {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
       if (String(grn.status) !== "draft") {
-        throw new Error("Invoice components can only be changed while the GRN is a draft");
+        throw new Error(
+          "Invoice components can only be changed while the GRN is a draft",
+        );
       }
       if (String(grn.grn_type) !== "vendor") {
-        throw new Error("Invoice-component GRNs are only supported for vendor GRNs");
+        throw new Error(
+          "Invoice-component GRNs are only supported for vendor GRNs",
+        );
       }
       // Derive GST type from state codes (same logic as saveAllocations).
-      const _v2 = String(input.vendorStateCode?.trim() || grn.vendor_state_code || "").trim();
-      const _b2 = String(input.billingStateCode?.trim() || grn.billing_state_code || "").trim();
-      const grnGstType: BudgetGstType = !_v2 || !_b2 ? "none" : _v2 === _b2 ? "cgst_sgst" : "igst";
+      const _v2 = String(
+        input.vendorStateCode?.trim() || grn.vendor_state_code || "",
+      ).trim();
+      const _b2 = String(
+        input.billingStateCode?.trim() || grn.billing_state_code || "",
+      ).trim();
+      const grnGstType: BudgetGstType =
+        !_v2 || !_b2 ? "none" : _v2 === _b2 ? "cgst_sgst" : "igst";
 
       // UNBUDGETED EXPENSES: a split row with no budgetLineId but a costCentreId is unbudgeted
       // for that cost centre only — resolved independently per row, not gated by a single
@@ -1647,19 +2079,24 @@ export const grnSmartService = {
         const split = splits[index];
         const percentage = Number(split.percentage);
         if (!Number.isFinite(percentage) || percentage <= 0) {
-          throw new Error(`Cost centre ${index + 1}: split percentage must be greater than zero`);
+          throw new Error(
+            `Cost centre ${index + 1}: split percentage must be greater than zero`,
+          );
         }
 
         if (!split?.budgetLineId) {
           // No budget line for this row: fall back to the cost centre the raiser picked directly.
-          if (!split?.costCentreId) throw new Error(`Cost centre ${index + 1}: select a budget line, or a cost centre for an unbudgeted allocation`);
+          if (!split?.costCentreId)
+            throw new Error(
+              `Cost centre ${index + 1}: select a budget line, or a cost centre for an unbudgeted allocation`,
+            );
           // Verify cost centre exists and belongs to the branch
           const cc = await resolveAttributionCostCentre(
             connection,
             split.costCentreId,
             String(grn.branch_id),
             null,
-            `Cost centre ${index + 1}`
+            `Cost centre ${index + 1}`,
           );
           percentageSum += percentage;
           resolvedSplits.push({
@@ -1671,13 +2108,19 @@ export const grnSmartService = {
             raiserPickedNoLine: true,
           });
         } else {
-          const line = await lockBudgetLine(connection, split.budgetLineId, String(grn.branch_id));
+          const line = await lockBudgetLine(
+            connection,
+            split.budgetLineId,
+            String(grn.branch_id),
+          );
           if (consumptionPeriodOf(grn) !== String(line.period_code)) {
-            throw new Error(`Cost centre ${index + 1}: budget period ${line.period_code} does not match the accounting month`);
+            throw new Error(
+              `Cost centre ${index + 1}: budget period ${line.period_code} does not match the accounting month`,
+            );
           }
           if (await isPeriodLocked(line.period_code)) {
             throw new Error(
-              `Cost centre ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`
+              `Cost centre ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`,
             );
           }
           percentageSum += percentage;
@@ -1691,7 +2134,7 @@ export const grnSmartService = {
             split.costCentreId,
             String(grn.branch_id),
             line,
-            `Cost centre ${index + 1}`
+            `Cost centre ${index + 1}`,
           );
           resolvedSplits.push({
             line: {
@@ -1706,11 +2149,14 @@ export const grnSmartService = {
         }
       }
       if (Math.abs(percentageSum - 100) > 0.5) {
-        throw new Error(`Cost-centre split percentages must total 100% (currently ${roundMoney(percentageSum)}%)`);
+        throw new Error(
+          `Cost-centre split percentages must total 100% (currently ${roundMoney(percentageSum)}%)`,
+        );
       }
       // Absorb ordinary floating-point noise from an auto-split calculation into the last row,
       // exactly like the defensive correction saveAllocations() applies after insert below.
-      resolvedSplits[resolvedSplits.length - 1].percentage += 100 - percentageSum;
+      resolvedSplits[resolvedSplits.length - 1].percentage +=
+        100 - percentageSum;
 
       // Synthetic "line" for an unbudgeted row — filled in per row (not gated by a whole-GRN
       // flag), so a mixed GRN keeps every unbudgeted row's head/sub-head matching whichever
@@ -1718,9 +2164,15 @@ export const grnSmartService = {
       // columns (those are only populated at create time for a WHOLLY unbudgeted GRN — see
       // createUnbudgetedDraft / isUnbudgetedFlow on the frontend, e2c8db0d — so they can be
       // stale/blank here for a GRN that started out mixed).
-      const referenceLine = resolvedSplits.find((item) => !item.raiserPickedNoLine)?.line;
-      const fallbackHead = referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted");
-      const fallbackSubHead = referenceLine ? (referenceLine.sub_head ?? null) : (grn.sub_head || null);
+      const referenceLine = resolvedSplits.find(
+        (item) => !item.raiserPickedNoLine,
+      )?.line;
+      const fallbackHead = referenceLine
+        ? String(referenceLine.head)
+        : String(grn.head || "Unbudgeted");
+      const fallbackSubHead = referenceLine
+        ? (referenceLine.sub_head ?? null)
+        : grn.sub_head || null;
       for (const split of resolvedSplits) {
         if (!split.raiserPickedNoLine) continue;
         split.line = {
@@ -1737,7 +2189,9 @@ export const grnSmartService = {
           quantity: declaredTotal, // Full amount as "available"
           tax_treatment: "exclusive",
           gst_rate: 0,
-          gst_type: referenceLine ? String(referenceLine.gst_type) : "cgst_sgst",
+          gst_type: referenceLine
+            ? String(referenceLine.gst_type)
+            : "cgst_sgst",
           recoverable_tax_pct: 100,
           justification: "Unbudgeted expense",
           // No budget capacity constraints for unbudgeted
@@ -1752,10 +2206,16 @@ export const grnSmartService = {
       // One Head/Sub-head classification per GRN — the split only decides how much of that one
       // spend belongs to which cost centre, not a mix of different expense categories. Runs
       // after the synthetic-line fill above so every row (budgeted or not) has a real .line.
-      const distinctHeads = new Set(resolvedSplits.map((item) => String(item.line.head)));
-      const distinctSubHeads = new Set(resolvedSplits.map((item) => String(item.line.sub_head || "")));
+      const distinctHeads = new Set(
+        resolvedSplits.map((item) => String(item.line.head)),
+      );
+      const distinctSubHeads = new Set(
+        resolvedSplits.map((item) => String(item.line.sub_head || "")),
+      );
       if (distinctHeads.size > 1 || distinctSubHeads.size > 1) {
-        throw new Error("All cost-centre splits must share the same expense head and sub-head");
+        throw new Error(
+          "All cost-centre splits must share the same expense head and sub-head",
+        );
       }
 
       // Invoice GST rates are ground truth. Budget line tax_treatment is a planning-time
@@ -1769,9 +2229,11 @@ export const grnSmartService = {
       // head/sub-head and therefore the same gst_type (intra-state vs inter-state). "cgst_sgst"
       // was hardcoded previously; that produced the correct total tax amount (taxAmount is
       // gstRate × base regardless of gstType) but wrong cgst/sgst/igst column breakdown.
-      const componentGstType: BudgetGstType = grnGstType !== "none"
-        ? grnGstType
-        : ((resolvedSplits[0]?.line?.gst_type as BudgetGstType | undefined) ?? "cgst_sgst");
+      const componentGstType: BudgetGstType =
+        grnGstType !== "none"
+          ? grnGstType
+          : ((resolvedSplits[0]?.line?.gst_type as BudgetGstType | undefined) ??
+            "cgst_sgst");
       const componentAmounts = components.map((component) =>
         calculateBudgetLine({
           head: "invoice-component",
@@ -1784,21 +2246,31 @@ export const grnSmartService = {
           gstType: componentGstType,
           recoverableTaxPct: 100,
           justification: "Invoice component",
-        })
+        }),
       );
-      const rawTotalBase = roundMoney(componentAmounts.reduce((sum, item) => sum + item.baseAmount, 0));
-      const rawTotalTax = roundMoney(componentAmounts.reduce((sum, item) => sum + item.taxAmount, 0));
+      const rawTotalBase = roundMoney(
+        componentAmounts.reduce((sum, item) => sum + item.baseAmount, 0),
+      );
+      const rawTotalTax = roundMoney(
+        componentAmounts.reduce((sum, item) => sum + item.taxAmount, 0),
+      );
       const rawTotalGross = roundMoney(rawTotalBase + rawTotalTax);
       const diff = roundMoney(declaredTotal - rawTotalGross);
       // G8: Finance Head / Accounts Head / Super Admin can accept larger round-offs (up to ₹500)
       // for invoices with legitimate rounding differences. Branch-level roles are still limited
       // to ₹1 auto-round-off.
-      const isElevatedRole = ["finance_head", "accounts_head", "super_admin"].includes(actorRole);
-      const roundoffLimit = isElevatedRole ? 500 : GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT;
+      const isElevatedRole = [
+        "finance_head",
+        "accounts_head",
+        "super_admin",
+      ].includes(actorRole);
+      const roundoffLimit = isElevatedRole
+        ? 500
+        : GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT;
       if (Math.abs(diff) > roundoffLimit) {
         throw new Error(
-          `Invoice components total ₹${rawTotalGross.toFixed(2)} does not match the declared invoice total `
-          + `₹${declaredTotal.toFixed(2)}. Difference ₹${diff.toFixed(2)} exceeds the ₹${roundoffLimit.toFixed(2)} round-off limit.`
+          `Invoice components total ₹${rawTotalGross.toFixed(2)} does not match the declared invoice total ` +
+            `₹${declaredTotal.toFixed(2)}. Difference ₹${diff.toFixed(2)} exceeds the ₹${roundoffLimit.toFixed(2)} round-off limit.`,
         );
       }
 
@@ -1829,7 +2301,10 @@ export const grnSmartService = {
             declared_invoice_total: declaredTotal,
           },
         }).catch((err: unknown) => {
-          console.error("[grn] failed to record elevated round-off:", err instanceof Error ? err.message : String(err));
+          console.error(
+            "[grn] failed to record elevated round-off:",
+            err instanceof Error ? err.message : String(err),
+          );
         });
       }
 
@@ -1839,13 +2314,19 @@ export const grnSmartService = {
       const grid: any[] = [];
       for (const split of resolvedSplits) {
         const { line, percentage } = split;
-        for (let componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
+        for (
+          let componentIndex = 0;
+          componentIndex < components.length;
+          componentIndex += 1
+        ) {
           const component = components[componentIndex];
-          const compBase = roundMoney(Number(component.amountWithoutTax) * percentage / 100);
+          const compBase = roundMoney(
+            (Number(component.amountWithoutTax) * percentage) / 100,
+          );
           const unitRate = Number(line.unit_rate);
           if (!(unitRate > 0)) {
             throw new Error(
-              `Cost centre "${line.cost_centre_name || "Unassigned"}": budget line has no approved unit rate to derive a consumed quantity from.`
+              `Cost centre "${line.cost_centre_name || "Unassigned"}": budget line has no approved unit rate to derive a consumed quantity from.`,
             );
           }
           const amounts = calculateBudgetLine({
@@ -1857,9 +2338,13 @@ export const grnSmartService = {
             unitRate: compBase,
             taxTreatment: "exclusive",
             gstRate: Number(component.gstRate),
-            gstType: (grnGstType !== "none" ? grnGstType : String(line.gst_type)) as BudgetGstType,
+            gstType: (grnGstType !== "none"
+              ? grnGstType
+              : String(line.gst_type)) as BudgetGstType,
             recoverableTaxPct: Number(line.recoverable_tax_pct),
-            justification: String(line.justification || "Approved budget allocation"),
+            justification: String(
+              line.justification || "Approved budget allocation",
+            ),
           });
           grid.push({
             line,
@@ -1868,7 +2353,10 @@ export const grnSmartService = {
             quantity: roundQuantity(compBase / unitRate),
             unitRate,
             amounts,
-            remarks: [split.remarks, component.remarks?.trim() || null].filter(Boolean).join(" — ") || null,
+            remarks:
+              [split.remarks, component.remarks?.trim() || null]
+                .filter(Boolean)
+                .join(" — ") || null,
             raiserPickedNoLine: Boolean(split.raiserPickedNoLine),
           });
         }
@@ -1881,7 +2369,11 @@ export const grnSmartService = {
       // the existing ALLOCATION_AMOUNT_RECONCILIATION check (tolerance <=0.01) keeps passing
       // unmodified; round_off_amount becomes a pure audit/disclosure figure.
       if (diff !== 0 && grid.length) {
-        const target = grid.reduce((max, item) => (item.amounts.grossAmount > max.amounts.grossAmount ? item : max), grid[0]);
+        const target = grid.reduce(
+          (max, item) =>
+            item.amounts.grossAmount > max.amounts.grossAmount ? item : max,
+          grid[0],
+        );
         target.amounts = {
           ...target.amounts,
           grossAmount: roundMoney(target.amounts.grossAmount + diff),
@@ -1903,12 +2395,20 @@ export const grnSmartService = {
       const period = consumptionPeriodOf(grn);
       const sharedHead = String(resolvedSplits[0].line.head);
       const sharedSubHead = resolvedSplits[0].line.sub_head ?? null;
-      const coverage = await getHeadSubHeadCoverage(String(grn.branch_id), period, sharedHead, sharedSubHead);
+      const coverage = await getHeadSubHeadCoverage(
+        String(grn.branch_id),
+        period,
+        sharedHead,
+        sharedSubHead,
+      );
       assertCoverageExists(coverage, period, sharedHead, sharedSubHead);
       // Same closure gate as saveAllocations(): refuse new spend on a head/sub-head Finance has
       // closed for the month, here rather than only at Branch Head approval.
       await budgetClosureService.assertSubheadOpen(
-        connection, String(coverage.budgetId), sharedHead, sharedSubHead
+        connection,
+        String(coverage.budgetId),
+        sharedHead,
+        sharedSubHead,
       );
 
       // Group grid cells by the split they came from. cell.line is the SAME OBJECT reference as
@@ -1937,39 +2437,60 @@ export const grnSmartService = {
         if (!cellsForSplit.length) continue;
 
         const splitTotalGross = roundMoney(
-          cellsForSplit.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0)
+          cellsForSplit.reduce(
+            (sum, cell) => sum + cell.amounts.grossAmount,
+            0,
+          ),
         );
         // The taxable half of the same split, for lines planned without tax. See
         // allocateAcrossLines' netAmount.
         const splitTotalNet = roundMoney(
-          cellsForSplit.reduce((sum, cell) => sum + cell.amounts.baseAmount, 0)
+          cellsForSplit.reduce((sum, cell) => sum + cell.amounts.baseAmount, 0),
         );
-        const preferredLineId = split.line.id != null ? String(split.line.id) : null;
+        const preferredLineId =
+          split.line.id != null ? String(split.line.id) : null;
 
         // Net out whatever earlier splits in this same save already drew against each of these
         // lines before handing them to the allocator — see drawnAmountByLineId's comment above.
         const netLines = coverage.lines.map((candidate) => {
-          const alreadyDrawn = drawnAmountByLineId.get(String(candidate.id)) ?? 0;
+          const alreadyDrawn =
+            drawnAmountByLineId.get(String(candidate.id)) ?? 0;
           return alreadyDrawn > 0
-            ? { ...candidate, available_gross_amount: Math.max(0, Number(candidate.available_gross_amount) - alreadyDrawn) }
+            ? {
+                ...candidate,
+                available_gross_amount: Math.max(
+                  0,
+                  Number(candidate.available_gross_amount) - alreadyDrawn,
+                ),
+              }
             : candidate;
         });
 
         // Branch-wide money split for this split's total. Can throw HEADROOM_EXCEEDED if the
         // branch aggregate (not just the one line the raiser picked) cannot cover it — let it
         // propagate.
-        const draws = allocateAcrossLines(preferredLineId, splitTotalGross, netLines, splitTotalNet);
+        const draws = allocateAcrossLines(
+          preferredLineId,
+          splitTotalGross,
+          netLines,
+          splitTotalNet,
+        );
 
         const subRowsByCell = new Map<any, any[]>();
         for (const cell of cellsForSplit) subRowsByCell.set(cell, []);
 
         for (let drawIndex = 0; drawIndex < draws.length; drawIndex += 1) {
           const draw = draws[drawIndex];
-          const fundingLine = coverage.lines.find((candidate) => String(candidate.id) === String(draw.lineId));
+          const fundingLine = coverage.lines.find(
+            (candidate) => String(candidate.id) === String(draw.lineId),
+          );
           if (!fundingLine) {
-            throw new Error(`Internal error resolving funding line ${draw.lineId}`);
+            throw new Error(
+              `Internal error resolving funding line ${draw.lineId}`,
+            );
           }
-          const drawFraction = splitTotalGross > 0 ? draw.amount / splitTotalGross : 0;
+          const drawFraction =
+            splitTotalGross > 0 ? draw.amount / splitTotalGross : 0;
           const fundingUnitRate = Number(fundingLine.unit_rate);
 
           for (const cell of cellsForSplit) {
@@ -1984,23 +2505,31 @@ export const grnSmartService = {
               cgstAmount: roundMoney(cell.amounts.cgstAmount * drawFraction),
               sgstAmount: roundMoney(cell.amounts.sgstAmount * drawFraction),
               igstAmount: roundMoney(cell.amounts.igstAmount * drawFraction),
-              recoverableTaxAmount: roundMoney(cell.amounts.recoverableTaxAmount * drawFraction),
-              pnlCostAmount: roundMoney(cell.amounts.pnlCostAmount * drawFraction),
+              recoverableTaxAmount: roundMoney(
+                cell.amounts.recoverableTaxAmount * drawFraction,
+              ),
+              pnlCostAmount: roundMoney(
+                cell.amounts.pnlCostAmount * drawFraction,
+              ),
             };
 
             // Quantity is recomputed against the FUNDING line's own unit rate — a genuine
             // behaviour difference from the pre-split per-cell quantity above (which used the
             // split's own unit_rate): a sub-row funded by a different line must measure quantity
             // against that line's own rate.
-            const subQuantity = fundingUnitRate > 0 ? roundQuantity(scaledAmounts.baseAmount / fundingUnitRate) : 0;
+            const subQuantity =
+              fundingUnitRate > 0
+                ? roundQuantity(scaledAmounts.baseAmount / fundingUnitRate)
+                : 0;
 
             // Quantity no longer refuses here either — same reasoning as the sibling draw loop
             // in saveAllocations(). See budget-consumption.service.ts's file-level banner.
 
             const existingRemarks = cell.remarks;
-            const remarks = drawIndex === 0
-              ? existingRemarks
-              : `${existingRemarks ? existingRemarks + " — " : ""}Auto-allocated from branch aggregate headroom for ${sharedHead}/${sharedSubHead || ""} — original line's own share was insufficient`;
+            const remarks =
+              drawIndex === 0
+                ? existingRemarks
+                : `${existingRemarks ? existingRemarks + " — " : ""}Auto-allocated from branch aggregate headroom for ${sharedHead}/${sharedSubHead || ""} — original line's own share was insufficient`;
 
             subRowsByCell.get(cell)!.push({
               // Funding source (budget_id/id/tax profile) is the FUNDING line's own; cost-centre
@@ -2034,13 +2563,21 @@ export const grnSmartService = {
 
             drawnQuantityByLineId.set(
               String(fundingLine.id),
-              (drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0) + subQuantity
+              (drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0) +
+                subQuantity,
             );
           }
 
           // Same unit-conversion as saveAllocations: accumulate the P&L cost, not invoice gross.
-          const pnlDrawComp = splitTotalGross > 0 ? roundMoney(draw.amount * splitTotalNet / splitTotalGross) : draw.amount;
-          drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + pnlDrawComp);
+          const pnlDrawComp =
+            splitTotalGross > 0
+              ? roundMoney((draw.amount * splitTotalNet) / splitTotalGross)
+              : draw.amount;
+          drawnAmountByLineId.set(
+            String(fundingLine.id),
+            (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) +
+              pnlDrawComp,
+          );
         }
 
         // Residual-rounding correction, per original cell: per-draw multiplication rounding can
@@ -2051,24 +2588,38 @@ export const grnSmartService = {
         for (const cell of cellsForSplit) {
           const subRows = subRowsByCell.get(cell)!;
           if (!subRows.length) continue;
-          const grossAccum = roundMoney(subRows.reduce((sum, row) => sum + row.amounts.grossAmount, 0));
-          const pnlAccum = roundMoney(subRows.reduce((sum, row) => sum + row.amounts.pnlCostAmount, 0));
-          const grossResidual = roundMoney(cell.amounts.grossAmount - grossAccum);
+          const grossAccum = roundMoney(
+            subRows.reduce((sum, row) => sum + row.amounts.grossAmount, 0),
+          );
+          const pnlAccum = roundMoney(
+            subRows.reduce((sum, row) => sum + row.amounts.pnlCostAmount, 0),
+          );
+          const grossResidual = roundMoney(
+            cell.amounts.grossAmount - grossAccum,
+          );
           const pnlResidual = roundMoney(cell.amounts.pnlCostAmount - pnlAccum);
           if (grossResidual !== 0 || pnlResidual !== 0) {
             const last = subRows[subRows.length - 1];
             last.amounts = {
               ...last.amounts,
               grossAmount: roundMoney(last.amounts.grossAmount + grossResidual),
-              pnlCostAmount: roundMoney(last.amounts.pnlCostAmount + pnlResidual),
+              pnlCostAmount: roundMoney(
+                last.amounts.pnlCostAmount + pnlResidual,
+              ),
             };
           }
           fundedGrid.push(...subRows);
         }
       }
 
-      await connection.execute("DELETE FROM grn_cost_allocation WHERE grn_request_id = ?", [grnId]);
-      await connection.execute("DELETE FROM grn_invoice_component WHERE grn_request_id = ?", [grnId]);
+      await connection.execute(
+        "DELETE FROM grn_cost_allocation WHERE grn_request_id = ?",
+        [grnId],
+      );
+      await connection.execute(
+        "DELETE FROM grn_invoice_component WHERE grn_request_id = ?",
+        [grnId],
+      );
 
       const componentIds: string[] = [];
       for (let index = 0; index < components.length; index += 1) {
@@ -2082,19 +2633,29 @@ export const grnSmartService = {
             hsn_sac_code, tax_amount, amount_with_tax, remarks, created_by)
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
           [
-            id, grnId, index + 1, amounts.baseAmount, Number(component.gstRate),
+            id,
+            grnId,
+            index + 1,
+            amounts.baseAmount,
+            Number(component.gstRate),
             component.hsnSacCode?.trim() || null,
-            amounts.taxAmount, amounts.grossAmount, component.remarks?.trim() || null, actorUserId,
-          ]
+            amounts.taxAmount,
+            amounts.grossAmount,
+            component.remarks?.trim() || null,
+            actorUserId,
+          ],
         );
       }
 
       let sequenceNo = 0;
       for (const cell of fundedGrid) {
         sequenceNo += 1;
-        const percentage = declaredTotal > 0
-          ? Math.round((cell.amounts.grossAmount / declaredTotal) * 100 * 1_000_000) / 1_000_000
-          : 0;
+        const percentage =
+          declaredTotal > 0
+            ? Math.round(
+                (cell.amounts.grossAmount / declaredTotal) * 100 * 1_000_000,
+              ) / 1_000_000
+            : 0;
         await connection.execute(
           // is_unbudgeted carries the same single meaning it does in saveAllocations(): no budget
           // line funded this row. "The raiser picked no line" is a different statement that has
@@ -2110,19 +2671,40 @@ export const grnSmartService = {
             pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
-            randomUUID(), grnId, sequenceNo, cell.line.budget_id, cell.line.id,
-            componentIds[cell.componentIndex], grn.branch_id, cell.line.process_id ?? null,
+            randomUUID(),
+            grnId,
+            sequenceNo,
+            cell.line.budget_id,
+            cell.line.id,
+            componentIds[cell.componentIndex],
+            grn.branch_id,
+            cell.line.process_id ?? null,
             cell.line.cost_centre_id ?? null,
             cell.fundingCostCentreId ?? null,
-            cell.line.process_id || cell.line.cost_centre_id ? "direct" : "indirect",
-            percentage, cell.quantity, cell.line.unit, cell.unitRate,
-            "exclusive", cell.component.gstRate, (grnGstType !== "none" ? grnGstType : cell.line.gst_type),
-            cell.line.recoverable_tax_pct, cell.amounts.baseAmount,
-            cell.amounts.taxAmount, cell.amounts.cgstAmount, cell.amounts.sgstAmount,
-            cell.amounts.igstAmount, cell.amounts.grossAmount,
-            cell.amounts.recoverableTaxAmount, cell.amounts.pnlCostAmount,
-            "draft", cell.remarks, cell.line.id == null ? 1 : 0, actorUserId,
-          ]
+            cell.line.process_id || cell.line.cost_centre_id
+              ? "direct"
+              : "indirect",
+            percentage,
+            cell.quantity,
+            cell.line.unit,
+            cell.unitRate,
+            "exclusive",
+            cell.component.gstRate,
+            grnGstType !== "none" ? grnGstType : cell.line.gst_type,
+            cell.line.recoverable_tax_pct,
+            cell.amounts.baseAmount,
+            cell.amounts.taxAmount,
+            cell.amounts.cgstAmount,
+            cell.amounts.sgstAmount,
+            cell.amounts.igstAmount,
+            cell.amounts.grossAmount,
+            cell.amounts.recoverableTaxAmount,
+            cell.amounts.pnlCostAmount,
+            "draft",
+            cell.remarks,
+            cell.line.id == null ? 1 : 0,
+            actorUserId,
+          ],
         );
       }
 
@@ -2130,28 +2712,54 @@ export const grnSmartService = {
       // percentage total to exactly 100.000000 after per-cell decimal rounding.
       const [percentageRows] = await connection.execute<RowDataPacket[]>(
         "SELECT id, allocation_percentage FROM grn_cost_allocation WHERE grn_request_id = ? ORDER BY sequence_no",
-        [grnId]
+        [grnId],
       );
-      const percentageTotal = percentageRows.reduce((sum, row) => sum + Number(row.allocation_percentage), 0);
+      const percentageTotal = percentageRows.reduce(
+        (sum, row) => sum + Number(row.allocation_percentage),
+        0,
+      );
       if (percentageRows.length && Math.abs(percentageTotal - 100) > 0.000001) {
         const last = percentageRows[percentageRows.length - 1];
         await connection.execute(
           "UPDATE grn_cost_allocation SET allocation_percentage = allocation_percentage + ? WHERE id = ?",
-          [Math.round((100 - percentageTotal) * 1_000_000) / 1_000_000, last.id]
+          [
+            Math.round((100 - percentageTotal) * 1_000_000) / 1_000_000,
+            last.id,
+          ],
         );
       }
 
-      const totalGrossFinal = roundMoney(fundedGrid.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0));
-      const totalPnlFinal = roundMoney(fundedGrid.reduce((sum, cell) => sum + cell.amounts.pnlCostAmount, 0));
-      const totalQuantity = roundQuantity(fundedGrid.reduce((sum, cell) => sum + cell.quantity, 0));
+      const totalGrossFinal = roundMoney(
+        fundedGrid.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0),
+      );
+      const totalPnlFinal = roundMoney(
+        fundedGrid.reduce((sum, cell) => sum + cell.amounts.pnlCostAmount, 0),
+      );
+      const totalQuantity = roundQuantity(
+        fundedGrid.reduce((sum, cell) => sum + cell.quantity, 0),
+      );
       const first = resolvedSplits[0].line;
-      const distinctProcesses = new Set(resolvedSplits.map((item) => item.line.process_id).filter(Boolean));
-      const distinctCostCentres = new Set(resolvedSplits.map((item) => item.line.cost_centre_id).filter(Boolean));
-      const units = new Set(resolvedSplits.map((item) => String(item.line.unit)));
-      const gstTypes = new Set(resolvedSplits.map((item) => String(item.line.gst_type)));
-      const weightedGstRate = rawTotalBase > 0 ? roundMoney((rawTotalTax / rawTotalBase) * 100) : 0;
-      const totalRecoverable = roundMoney(grid.reduce((sum, cell) => sum + cell.amounts.recoverableTaxAmount, 0));
-      const weightedRecoverablePct = rawTotalTax > 0 ? roundMoney((totalRecoverable / rawTotalTax) * 100) : 0;
+      const distinctProcesses = new Set(
+        resolvedSplits.map((item) => item.line.process_id).filter(Boolean),
+      );
+      const distinctCostCentres = new Set(
+        resolvedSplits.map((item) => item.line.cost_centre_id).filter(Boolean),
+      );
+      const units = new Set(
+        resolvedSplits.map((item) => String(item.line.unit)),
+      );
+      const gstTypes = new Set(
+        resolvedSplits.map((item) => String(item.line.gst_type)),
+      );
+      const weightedGstRate =
+        rawTotalBase > 0 ? roundMoney((rawTotalTax / rawTotalBase) * 100) : 0;
+      const totalRecoverable = roundMoney(
+        grid.reduce((sum, cell) => sum + cell.amounts.recoverableTaxAmount, 0),
+      );
+      const weightedRecoverablePct =
+        rawTotalTax > 0
+          ? roundMoney((totalRecoverable / rawTotalTax) * 100)
+          : 0;
 
       await connection.execute(
         `UPDATE grn_request
@@ -2174,26 +2782,49 @@ export const grnSmartService = {
                 is_unbudgeted = ?
           WHERE id = ?`,
         [
-          grid.length > 1 ? "split" : "single", first.budget_id, first.id,
+          grid.length > 1 ? "split" : "single",
+          first.budget_id,
+          first.id,
           distinctProcesses.size === 1 ? [...distinctProcesses][0] : null,
           distinctCostCentres.size === 1 ? [...distinctCostCentres][0] : null,
-          resolvedSplits.some((item) => item.line.process_id || item.line.cost_centre_id) ? "direct" : "indirect",
-          String(first.head), first.sub_head ?? null,
+          resolvedSplits.some(
+            (item) => item.line.process_id || item.line.cost_centre_id,
+          )
+            ? "direct"
+            : "indirect",
+          String(first.head),
+          first.sub_head ?? null,
           `${components.length} invoice component(s) across ${resolvedSplits.length} cost centre(s)`,
-          totalQuantity, units.size === 1 ? [...units][0] : "Mixed",
+          totalQuantity,
+          units.size === 1 ? [...units][0] : "Mixed",
           totalQuantity > 0 ? roundMoney(rawTotalBase / totalQuantity) : 0,
-          "exclusive", weightedGstRate, grnGstType !== "none" ? grnGstType : (gstTypes.size === 1 ? [...gstTypes][0] : "none"),
-          weightedRecoverablePct, rawTotalBase, rawTotalTax,
-          totalGrossFinal, totalPnlFinal, totalGrossFinal,
+          "exclusive",
+          weightedGstRate,
+          grnGstType !== "none"
+            ? grnGstType
+            : gstTypes.size === 1
+              ? [...gstTypes][0]
+              : "none",
+          weightedRecoverablePct,
+          rawTotalBase,
+          rawTotalTax,
+          totalGrossFinal,
+          totalPnlFinal,
+          totalGrossFinal,
           diff,
           normalizeInvoiceNumber(input.invoiceNumber) || null,
-          dateOrNull(input.servicePeriodStart), dateOrNull(input.servicePeriodEnd),
+          dateOrNull(input.servicePeriodStart),
+          dateOrNull(input.servicePeriodEnd),
           String(input.purchaseReference ?? "").trim() || null,
-          String(input.vendorGstin ?? "").trim().toUpperCase() || null,
+          String(input.vendorGstin ?? "")
+            .trim()
+            .toUpperCase() || null,
           String(input.placeOfSupply ?? "").trim() || null,
           String(input.irn ?? "").trim() || null,
           String(input.irnAckNo ?? "").trim() || null,
-          /^\d{4}-(0[1-9]|1[0-2])$/.test(String(input.accountingPeriod ?? "").trim())
+          /^\d{4}-(0[1-9]|1[0-2])$/.test(
+            String(input.accountingPeriod ?? "").trim(),
+          )
             ? String(input.accountingPeriod).trim()
             : null,
           // Late invoice fields (migration 1219 columns) — null when invoice is current
@@ -2209,30 +2840,49 @@ export const grnSmartService = {
           // branch aggregate, and calling that off-budget was the defect.
           fundedGrid.some((cell) => cell.line.id == null) ? 1 : 0,
           grnId,
-        ]
+        ],
       );
 
       // Recognition schedule last: it reads back the allocation rows just written, and being
       // inside this transaction means a split that does not reconcile rolls the invoice back.
-      const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId, actorRole);
+      const periodSplit = await writePeriodSplits(
+        connection,
+        grnId,
+        grn,
+        input,
+        actorUserId,
+        actorRole,
+      );
 
-      await writeAuditInTransaction(connection, "INVOICE_COMPONENTS_SAVED", grnId, actorUserId, actorRole, {
-        recognition_months: periodSplit?.eligibleCount ?? 1,
-        component_count: components.length,
-        cost_centre_count: resolvedSplits.length,
-        // The facts is_unbudgeted used to carry on its own, kept on the record now that the
-        // column means only "no budget line funded this".
-        raiser_picked_no_line_count: resolvedSplits.filter((item) => item.raiserPickedNoLine).length,
-        funded_by_other_cost_centre_count: fundedGrid.filter(
-          (cell) => cell.fundingCostCentreId
-            && String(cell.fundingCostCentreId) !== String(cell.line.cost_centre_id ?? "")
-        ).length,
-        unfunded_count: fundedGrid.filter((cell) => cell.line.id == null).length,
-        amount_without_tax: rawTotalBase,
-        tax_amount: rawTotalTax,
-        amount_with_tax: totalGrossFinal,
-        round_off_amount: diff,
-      });
+      await writeAuditInTransaction(
+        connection,
+        "INVOICE_COMPONENTS_SAVED",
+        grnId,
+        actorUserId,
+        actorRole,
+        {
+          recognition_months: periodSplit?.eligibleCount ?? 1,
+          component_count: components.length,
+          cost_centre_count: resolvedSplits.length,
+          // The facts is_unbudgeted used to carry on its own, kept on the record now that the
+          // column means only "no budget line funded this".
+          raiser_picked_no_line_count: resolvedSplits.filter(
+            (item) => item.raiserPickedNoLine,
+          ).length,
+          funded_by_other_cost_centre_count: fundedGrid.filter(
+            (cell) =>
+              cell.fundingCostCentreId &&
+              String(cell.fundingCostCentreId) !==
+                String(cell.line.cost_centre_id ?? ""),
+          ).length,
+          unfunded_count: fundedGrid.filter((cell) => cell.line.id == null)
+            .length,
+          amount_without_tax: rawTotalBase,
+          tax_amount: rawTotalTax,
+          amount_with_tax: totalGrossFinal,
+          round_off_amount: diff,
+        },
+      );
       await connection.commit();
       return this.getWorkspace(grnId);
     } catch (error) {
@@ -2243,17 +2893,22 @@ export const grnSmartService = {
     }
   },
 
-  async registerDocuments(grnId: string, files: RegisteredDocumentInput[], actorUserId: string) {
+  async registerDocuments(
+    grnId: string,
+    files: RegisteredDocumentInput[],
+    actorUserId: string,
+  ) {
     if (!files.length) throw new Error("At least one document is required");
     const connection = await db.getConnection();
     const inserted: any[] = [];
     try {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
-      if (String(grn.status) !== "draft") throw new Error("Documents can only be added to draft GRNs");
+      if (String(grn.status) !== "draft")
+        throw new Error("Documents can only be added to draft GRNs");
       const [countRows] = await connection.execute<RowDataPacket[]>(
         "SELECT COUNT(*) AS total FROM grn_document WHERE grn_request_id = ?",
-        [grnId]
+        [grnId],
       );
       let existingCount = Number(countRows[0]?.total ?? 0);
       for (const file of files) {
@@ -2262,7 +2917,10 @@ export const grnSmartService = {
         const id = randomUUID();
         const isPrimary = file.isPrimary === true || existingCount === 0;
         if (isPrimary) {
-          await connection.execute("UPDATE grn_document SET is_primary = 0 WHERE grn_request_id = ?", [grnId]);
+          await connection.execute(
+            "UPDATE grn_document SET is_primary = 0 WHERE grn_request_id = ?",
+            [grnId],
+          );
         }
         await connection.execute(
           `INSERT INTO grn_document
@@ -2270,10 +2928,17 @@ export const grnSmartService = {
             mime_type, file_size_bytes, sha256, is_primary, extraction_status, uploaded_by)
            VALUES (?,?,?,?,?,?,?,?,?,'pending',?)`,
           [
-            id, grnId, file.documentType ?? "invoice", file.originalName,
-            file.storedPath, file.mimeType, file.fileSizeBytes, hash,
-            isPrimary ? 1 : 0, actorUserId,
-          ]
+            id,
+            grnId,
+            file.documentType ?? "invoice",
+            file.originalName,
+            file.storedPath,
+            file.mimeType,
+            file.fileSizeBytes,
+            hash,
+            isPrimary ? 1 : 0,
+            actorUserId,
+          ],
         );
         if (isPrimary) {
           await connection.execute(
@@ -2281,7 +2946,15 @@ export const grnSmartService = {
                 SET attachment_path = ?, attachment_original_name = ?, attachment_mime = ?,
                     attachment_file_path = ?, attachment_file_name = ?, attachment_file_mime = ?
               WHERE id = ?`,
-            [file.storedPath, file.originalName, file.mimeType, file.storedPath, file.originalName, file.mimeType, grnId]
+            [
+              file.storedPath,
+              file.originalName,
+              file.mimeType,
+              file.storedPath,
+              file.originalName,
+              file.mimeType,
+              grnId,
+            ],
           );
         }
         inserted.push({ id, sha256: hash, isPrimary, ...file });
@@ -2294,27 +2967,47 @@ export const grnSmartService = {
     } finally {
       connection.release();
     }
-    await writeAudit("DOCUMENTS_UPLOADED", grnId, actorUserId, "document_uploader", {
-      documents: inserted.map((item) => ({ id: item.id, name: item.originalName, sha256: item.sha256 })),
-    });
+    await writeAudit(
+      "DOCUMENTS_UPLOADED",
+      grnId,
+      actorUserId,
+      "document_uploader",
+      {
+        documents: inserted.map((item) => ({
+          id: item.id,
+          name: item.originalName,
+          sha256: item.sha256,
+        })),
+      },
+    );
     return inserted;
   },
 
-  async analyzeDocument(grnId: string, documentId: string, actorUserId: string) {
+  async analyzeDocument(
+    grnId: string,
+    documentId: string,
+    actorUserId: string,
+  ) {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM grn_document WHERE id = ? AND grn_request_id = ? LIMIT 1",
-      [documentId, grnId]
+      [documentId, grnId],
     );
     const document = rows[0] as any;
     if (!document) throw new Error("GRN document not found");
-    await db.execute("UPDATE grn_document SET extraction_status = 'processing' WHERE id = ?", [documentId]);
+    await db.execute(
+      "UPDATE grn_document SET extraction_status = 'processing' WHERE id = ?",
+      [documentId],
+    );
 
     // Key resolution order: env first (a deployment can always pin its own key), then the
     // DB-managed provider config that the AI Provider admin screen and every other AI feature
     // already use. Reading env alone left this extractor reporting "unconfigured" on a system
     // where an active, is_default Gemini key was configured all along — the key existed, this
     // was simply the one caller that never looked where it lives.
-    let apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
+    let apiKey =
+      process.env.GEMINI_API_KEY ||
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+      "";
     let modelName = process.env.GRN_DOCUMENT_AI_MODEL || "";
     let providerSource = apiKey ? "env" : "";
     if (!apiKey) {
@@ -2328,7 +3021,10 @@ export const grnSmartService = {
       } catch (error) {
         // A decryption or lookup failure must not take the upload down — fall through to the
         // manual_review row below, which is the same outcome as having no key at all.
-        console.error("[GRN] Gemini provider config lookup failed:", error instanceof Error ? error.message : error);
+        console.error(
+          "[GRN] Gemini provider config lookup failed:",
+          error instanceof Error ? error.message : error,
+        );
       }
     }
     modelName = modelName || "gemini-1.5-flash";
@@ -2339,10 +3035,24 @@ export const grnSmartService = {
          (id, document_id, grn_request_id, provider, model_name, status,
           confidence_score, error_message)
          VALUES (?,?,?,?,?,'manual_review',0,?)`,
-        [extractionId, documentId, grnId, "unconfigured", null, "No Gemini key available — set GEMINI_API_KEY, or configure an active Gemini provider under AI Providers"]
+        [
+          extractionId,
+          documentId,
+          grnId,
+          "unconfigured",
+          null,
+          "No Gemini key available — set GEMINI_API_KEY, or configure an active Gemini provider under AI Providers",
+        ],
       );
-      await db.execute("UPDATE grn_document SET extraction_status = 'manual_review' WHERE id = ?", [documentId]);
-      return { id: extractionId, status: "manual_review", provider: "unconfigured" };
+      await db.execute(
+        "UPDATE grn_document SET extraction_status = 'manual_review' WHERE id = ?",
+        [documentId],
+      );
+      return {
+        id: extractionId,
+        status: "manual_review",
+        provider: "unconfigured",
+      };
     }
 
     try {
@@ -2372,11 +3082,19 @@ export const grnSmartService = {
 }\nUse null when uncertain. Confidence must be 0 to 100. Do not include markdown.`;
       const response = await model.generateContent([
         prompt,
-        { inlineData: { data: fileBuffer.toString("base64"), mimeType: String(document.mime_type) } },
+        {
+          inlineData: {
+            data: fileBuffer.toString("base64"),
+            mimeType: String(document.mime_type),
+          },
+        },
       ]);
       const rawText = response.response.text();
       const fields = parseModelJson(rawText);
-      const confidence = Math.max(0, Math.min(100, Number(fields.confidence ?? 0)));
+      const confidence = Math.max(
+        0,
+        Math.min(100, Number(fields.confidence ?? 0)),
+      );
       const extractionId = randomUUID();
       await db.execute(
         `INSERT INTO grn_document_extraction
@@ -2384,13 +3102,26 @@ export const grnSmartService = {
           confidence_score, raw_text, extracted_fields_json, raw_response_json)
          VALUES (?,?,?,?,?,'completed',?,?,?,?)`,
         [
-          extractionId, documentId, grnId, "google_gemini", modelName,
-          confidence, rawText, safeJson(fields), safeJson({ text: rawText }),
-        ]
+          extractionId,
+          documentId,
+          grnId,
+          "google_gemini",
+          modelName,
+          confidence,
+          rawText,
+          safeJson(fields),
+          safeJson({ text: rawText }),
+        ],
       );
-      await db.execute("UPDATE grn_document SET extraction_status = 'completed' WHERE id = ?", [documentId]);
+      await db.execute(
+        "UPDATE grn_document SET extraction_status = 'completed' WHERE id = ?",
+        [documentId],
+      );
       await writeAudit("DOCUMENT_ANALYZED", grnId, actorUserId, "document_ai", {
-        document_id: documentId, provider: "google_gemini", model: modelName, confidence,
+        document_id: documentId,
+        provider: "google_gemini",
+        model: modelName,
+        confidence,
         key_source: providerSource,
       });
       await this.revalidate(grnId);
@@ -2402,9 +3133,12 @@ export const grnSmartService = {
         `INSERT INTO grn_document_extraction
          (id, document_id, grn_request_id, provider, model_name, status, error_message)
          VALUES (?,?,?,?,?,'failed',?)`,
-        [extractionId, documentId, grnId, "google_gemini", modelName, message]
+        [extractionId, documentId, grnId, "google_gemini", modelName, message],
       );
-      await db.execute("UPDATE grn_document SET extraction_status = 'failed' WHERE id = ?", [documentId]);
+      await db.execute(
+        "UPDATE grn_document SET extraction_status = 'failed' WHERE id = ?",
+        [documentId],
+      );
       throw new Error(`Document analysis failed: ${message}`);
     }
   },
@@ -2413,13 +3147,14 @@ export const grnSmartService = {
     grnId: string,
     fields: Record<string, unknown>,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
-      if (String(grn.status) !== "draft") throw new Error("Extraction can only be confirmed on a draft GRN");
+      if (String(grn.status) !== "draft")
+        throw new Error("Extraction can only be confirmed on a draft GRN");
       await connection.execute(
         `UPDATE grn_request
             SET invoice_number = COALESCE(?, invoice_number),
@@ -2438,18 +3173,24 @@ export const grnSmartService = {
           dateOrNull(fields.servicePeriodStart),
           dateOrNull(fields.servicePeriodEnd),
           String(fields.purchaseReference ?? "").trim() || null,
-          String(fields.vendorGstin ?? "").trim().toUpperCase() || null,
+          String(fields.vendorGstin ?? "")
+            .trim()
+            .toUpperCase() || null,
           String(fields.placeOfSupply ?? "").trim() || null,
-          fields.otherCharges == null ? null : roundMoney(Number(fields.otherCharges)),
-          fields.roundOffAmount == null ? null : roundMoney(Number(fields.roundOffAmount)),
+          fields.otherCharges == null
+            ? null
+            : roundMoney(Number(fields.otherCharges)),
+          fields.roundOffAmount == null
+            ? null
+            : roundMoney(Number(fields.roundOffAmount)),
           grnId,
-        ]
+        ],
       );
       await connection.execute(
         `UPDATE grn_document_extraction
             SET confirmed_by = ?, confirmed_at = NOW()
           WHERE grn_request_id = ? AND confirmed_at IS NULL`,
-        [actorUserId, grnId]
+        [actorUserId, grnId],
       );
       await connection.commit();
     } catch (error) {
@@ -2458,7 +3199,13 @@ export const grnSmartService = {
     } finally {
       connection.release();
     }
-    await writeAudit("EXTRACTION_CONFIRMED", grnId, actorUserId, actorRole, fields);
+    await writeAudit(
+      "EXTRACTION_CONFIRMED",
+      grnId,
+      actorUserId,
+      actorRole,
+      fields,
+    );
     return this.revalidate(grnId);
   },
 
@@ -2482,18 +3229,22 @@ export const grnSmartService = {
     actorUserId: string,
     actorRole: string,
     remarks?: string,
-    userRoles?: string[]
+    userRoles?: string[],
   ) {
     const validation = await this.revalidate(grnId);
-    const blocking = validation.results.filter((item) => item.blocking && item.status === "failed");
+    const blocking = validation.results.filter(
+      (item) => item.blocking && item.status === "failed",
+    );
     if (blocking.length) {
-      throw new Error(`Resolve blocking validations before submission: ${blocking.map((item) => item.message).join("; ")}`);
+      throw new Error(
+        `Resolve blocking validations before submission: ${blocking.map((item) => item.message).join("; ")}`,
+      );
     }
 
     // Get GRN to check branch for Head Office bypass
     const [[grnRow]] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id, vendor_name, amount_with_tax, amount, grn_number FROM grn_request WHERE id = ?`,
-      [grnId]
+      [grnId],
     );
     const grnBranchId = grnRow ? String((grnRow as any).branch_id ?? "") : null;
 
@@ -2510,7 +3261,7 @@ export const grnSmartService = {
     const headOfficeBypass = await qualifiesForHeadOfficeBypass(
       grnBranchId,
       actorRole,
-      userRoles
+      userRoles,
     );
 
     if (headOfficeBypass) {
@@ -2532,10 +3283,12 @@ export const grnSmartService = {
                   branch_head_review_note = 'Auto-approved: Finance Head submission at Head Office',
                   remarks = COALESCE(?, remarks)
             WHERE id = ? AND status = 'draft'`,
-          [actorUserId, actorUserId, remarks?.trim() || null, grnId]
+          [actorUserId, actorUserId, remarks?.trim() || null, grnId],
         );
         if (result.affectedRows !== 1) {
-          throw new Error("GRN status changed before submission; refresh and try again");
+          throw new Error(
+            "GRN status changed before submission; refresh and try again",
+          );
         }
 
         await recordFinanceApprovalEvent(
@@ -2551,10 +3304,11 @@ export const grnSmartService = {
             details: {
               branchId: grnBranchId,
               headOfficeBypass: true,
-              bypassReason: "Finance Head submission at Head Office — Branch Head stage auto-approved",
+              bypassReason:
+                "Finance Head submission at Head Office — Branch Head stage auto-approved",
             },
           },
-          connection
+          connection,
         );
 
         await connection.commit();
@@ -2565,12 +3319,18 @@ export const grnSmartService = {
         connection.release();
       }
 
-      await writeAudit("SUBMIT_HEAD_OFFICE_BYPASS", grnId, actorUserId, actorRole, {
-        validation_score: validation.score,
-        allocation_mode: "smart",
-        remarks,
-        bypass_reason: "Finance Head submission at Head Office",
-      });
+      await writeAudit(
+        "SUBMIT_HEAD_OFFICE_BYPASS",
+        grnId,
+        actorUserId,
+        actorRole,
+        {
+          validation_score: validation.score,
+          allocation_mode: "smart",
+          remarks,
+          bypass_reason: "Finance Head submission at Head Office",
+        },
+      );
 
       // Notify Accounts Head instead of Branch Head
       if (grnRow) {
@@ -2579,15 +3339,26 @@ export const grnSmartService = {
             grnId,
             String((grnRow as any).grn_number ?? ""),
             grnBranchId,
-            (grnRow as any).vendor_name ? String((grnRow as any).vendor_name) : null,
-            Number((grnRow as any).amount_with_tax ?? (grnRow as any).amount ?? 0) || null,
-            "accounts_head"
-          )
+            (grnRow as any).vendor_name
+              ? String((grnRow as any).vendor_name)
+              : null,
+            Number(
+              (grnRow as any).amount_with_tax ?? (grnRow as any).amount ?? 0,
+            ) || null,
+            "accounts_head",
+          ),
         );
-        runInBackground("grn-submit-email", () => notifyGrnAccountsHeadPendingEmail(grnId));
+        runInBackground("grn-submit-email", () =>
+          notifyGrnAccountsHeadPendingEmail(grnId),
+        );
       }
 
-      return { success: true, newStatus: "branch_head_approved", validation, headOfficeBypass: true };
+      return {
+        success: true,
+        newStatus: "branch_head_approved",
+        validation,
+        headOfficeBypass: true,
+      };
     }
 
     // Normal flow: go to submitted status, pending Branch Head review
@@ -2596,9 +3367,12 @@ export const grnSmartService = {
           SET status = 'submitted', submitted_by = ?, submitted_at = NOW(),
               remarks = COALESCE(?, remarks)
         WHERE id = ? AND status = 'draft'`,
-      [actorUserId, remarks?.trim() || null, grnId]
+      [actorUserId, remarks?.trim() || null, grnId],
     );
-    if (result.affectedRows !== 1) throw new Error("GRN status changed before submission; refresh and try again");
+    if (result.affectedRows !== 1)
+      throw new Error(
+        "GRN status changed before submission; refresh and try again",
+      );
     await writeAudit("SUBMIT", grnId, actorUserId, actorRole, {
       validation_score: validation.score,
       allocation_mode: "smart",
@@ -2632,10 +3406,12 @@ export const grnSmartService = {
     grnId: string,
     links: Array<{ allocationId: string; budgetLineId: string }>,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     if (!Array.isArray(links) || !links.length) {
-      throw new Error("At least one cost-centre split must be linked to a budget line");
+      throw new Error(
+        "At least one cost-centre split must be linked to a budget line",
+      );
     }
     const connection = await db.getConnection();
     try {
@@ -2645,10 +3421,12 @@ export const grnSmartService = {
       // rupee of this GRN has no budget line at all", which after the headroom gate is almost
       // never true — so gating on it made this whole endpoint unreachable. What Finance is
       // re-pointing is a row funded from another cost centre's line, and that is a row-level fact.
-      const relinkableCandidates = (await loadAllocations(connection, grnId)).filter(isRelinkable);
+      const relinkableCandidates = (
+        await loadAllocations(connection, grnId)
+      ).filter(isRelinkable);
       if (!relinkableCandidates.length) {
         throw new Error(
-          "Every cost-centre split on this GRN is already funded by its own cost centre's budget line — there is nothing to link"
+          "Every cost-centre split on this GRN is already funded by its own cost centre's budget line — there is nothing to link",
         );
       }
       // Linking is an approval-stage action. Before submission the raiser still owns the splits
@@ -2657,56 +3435,72 @@ export const grnSmartService = {
       // accounts_head_approved included: the extra Accounts Head stage between Branch Head and
       // Finance Head (owner ruling, 2026-09-12) is still "awaiting review" for this purpose —
       // nothing consumes budget until Finance Head's own approve().
-      if (!["submitted", "branch_head_approved", "accounts_head_approved"].includes(String(grn.status))) {
+      if (
+        ![
+          "submitted",
+          "branch_head_approved",
+          "accounts_head_approved",
+        ].includes(String(grn.status))
+      ) {
         throw new Error(
-          `A budget line can only be linked while the GRN is awaiting review. Current status: ${grn.status}`
+          `A budget line can only be linked while the GRN is awaiting review. Current status: ${grn.status}`,
         );
       }
 
       const allocations = await loadAllocations(connection, grnId, true);
-      const byId = new Map(allocations.map((allocation) => [String(allocation.id), allocation]));
+      const byId = new Map(
+        allocations.map((allocation) => [String(allocation.id), allocation]),
+      );
       const period = consumptionPeriodOf(grn);
       if (await isPeriodLocked(period, connection)) {
         throw new Error(
-          `${period} is locked for P&L close. This GRN must be raised against the current open period.`
+          `${period} is locked for P&L close. This GRN must be raised against the current open period.`,
         );
       }
 
       const linked: Array<Record<string, unknown>> = [];
       for (const link of links) {
         const allocation = byId.get(String(link?.allocationId ?? ""));
-        if (!allocation) throw new Error("Cost-centre split not found on this GRN");
+        if (!allocation)
+          throw new Error("Cost-centre split not found on this GRN");
         if (!isRelinkable(allocation)) {
           throw new Error(
-            `${allocation.cost_centre_name || "This cost centre"} is already funded by its own cost centre's budget line`
+            `${allocation.cost_centre_name || "This cost centre"} is already funded by its own cost centre's budget line`,
           );
         }
         if (!link?.budgetLineId) {
           throw new Error(
-            `${allocation.cost_centre_name || "Cost centre"}: select an approved budget line`
+            `${allocation.cost_centre_name || "Cost centre"}: select an approved budget line`,
           );
         }
 
-        const line = await lockBudgetLine(connection, String(link.budgetLineId), String(grn.branch_id));
+        const line = await lockBudgetLine(
+          connection,
+          String(link.budgetLineId),
+          String(grn.branch_id),
+        );
         if (String(line.period_code) !== period) {
           throw new Error(
-            `${allocation.cost_centre_name || "Cost centre"}: budget period ${line.period_code} does not match the accounting month ${period}`
+            `${allocation.cost_centre_name || "Cost centre"}: budget period ${line.period_code} does not match the accounting month ${period}`,
           );
         }
-        if (String(line.cost_centre_id ?? "") !== String(allocation.cost_centre_id ?? "")) {
+        if (
+          String(line.cost_centre_id ?? "") !==
+          String(allocation.cost_centre_id ?? "")
+        ) {
           throw new Error(
-            `${allocation.cost_centre_name || "Cost centre"}: that budget line belongs to a different cost centre`
+            `${allocation.cost_centre_name || "Cost centre"}: that budget line belongs to a different cost centre`,
           );
         }
 
         const availableAmount = roundMoney(
-          Number(line.gross_amount || 0)
-          - Number(line.reserved_amount || 0)
-          - Number(line.consumed_amount || 0)
+          Number(line.gross_amount || 0) -
+            Number(line.reserved_amount || 0) -
+            Number(line.consumed_amount || 0),
         );
         if (Number(allocation.amount_with_tax) > availableAmount + 0.01) {
           throw new Error(
-            `${allocation.cost_centre_name || "Cost centre"}: this split of ${Number(allocation.amount_with_tax).toFixed(2)} exceeds the line's available budget of ${availableAmount.toFixed(2)}`
+            `${allocation.cost_centre_name || "Cost centre"}: this split of ${Number(allocation.amount_with_tax).toFixed(2)} exceeds the line's available budget of ${availableAmount.toFixed(2)}`,
           );
         }
 
@@ -2734,10 +3528,12 @@ export const grnSmartService = {
         const lineUnitRate = Number(line.unit_rate);
         if (!(lineUnitRate > 0)) {
           throw new Error(
-            `${allocation.cost_centre_name || "Cost centre"}: that budget line has no approved unit rate to derive a consumed quantity from`
+            `${allocation.cost_centre_name || "Cost centre"}: that budget line has no approved unit rate to derive a consumed quantity from`,
           );
         }
-        const linkedQuantity = roundQuantity(Number(allocation.amount_without_tax) / lineUnitRate);
+        const linkedQuantity = roundQuantity(
+          Number(allocation.amount_without_tax) / lineUnitRate,
+        );
         // The quantity derived here is still stored on the allocation, but it no longer decides
         // whether the link is allowed — reserve() below enforces the money. See budget-consumption.service.ts's file-level banner.
 
@@ -2761,7 +3557,7 @@ export const grnSmartService = {
             lineUnitRate,
             allocation.id,
             grnId,
-          ]
+          ],
         );
 
         /*
@@ -2784,7 +3580,7 @@ export const grnSmartService = {
               String(allocation.budget_line_id),
               Number(allocation.amount_with_tax),
               Number(allocation.quantity),
-              Number(allocation.amount_without_tax) || undefined
+              Number(allocation.amount_without_tax) || undefined,
             );
           }
           await budgetConsumptionService.reserve(
@@ -2792,7 +3588,7 @@ export const grnSmartService = {
             String(line.id),
             Number(allocation.amount_with_tax),
             linkedQuantity,
-            Number(allocation.amount_without_tax) || undefined
+            Number(allocation.amount_without_tax) || undefined,
           );
         }
 
@@ -2814,11 +3610,13 @@ export const grnSmartService = {
       // Mirror the header onto the first split exactly as saveInvoiceComponents() does, but only
       // once nothing is left unlinked — a half-linked GRN must not read as budgeted anywhere.
       const remaining = await loadAllocations(connection, grnId);
-      const stillUnlinked = remaining.filter((allocation) => !hasBudgetLine(allocation));
+      const stillUnlinked = remaining.filter(
+        (allocation) => !hasBudgetLine(allocation),
+      );
       if (!stillUnlinked.length && remaining.length) {
         await connection.execute(
           `UPDATE grn_request SET budget_id = ?, budget_line_id = ? WHERE id = ?`,
-          [remaining[0].budget_id, remaining[0].budget_line_id, grnId]
+          [remaining[0].budget_id, remaining[0].budget_line_id, grnId],
         );
       }
 
@@ -2829,7 +3627,7 @@ export const grnSmartService = {
       // with the current funding state.
       await connection.execute(
         `UPDATE grn_request SET is_unbudgeted = ? WHERE id = ?`,
-        [stillUnlinked.length ? 1 : 0, grnId]
+        [stillUnlinked.length ? 1 : 0, grnId],
       );
       await writeAuditInTransaction(
         connection,
@@ -2842,7 +3640,7 @@ export const grnSmartService = {
           still_unlinked_count: stillUnlinked.length,
           accounting_period: period,
           links: linked,
-        }
+        },
       );
       await connection.commit();
       return {
@@ -2863,7 +3661,7 @@ export const grnSmartService = {
     decision: "approved" | "rejected",
     reviewNote: string | undefined,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     if (decision === "rejected" && !reviewNote?.trim()) {
       throw new Error("Review remarks are mandatory when rejecting a GRN");
@@ -2886,7 +3684,8 @@ export const grnSmartService = {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
       const allocations = await loadAllocations(connection, grnId, true);
-      if (!allocations.length) throw new Error("Smart GRN has no saved cost allocations");
+      if (!allocations.length)
+        throw new Error("Smart GRN has no saved cost allocations");
       const role = actorRole.toLowerCase();
       notifyBranchId = grn.branch_id ? String(grn.branch_id) : null;
       notifyVendorName = grn.vendor_name ? String(grn.vendor_name) : null;
@@ -2899,48 +3698,63 @@ export const grnSmartService = {
 
       // P0-3: Re-check period lock inside the transaction immediately before the financial
       // mutation so a concurrent lock cannot slip through between API check and this UPDATE.
-      const grnPeriod = String(grn.accounting_period ?? grn.bill_date ?? "").substring(0, 7);
-      if (grnPeriod && await isPeriodLocked(grnPeriod, connection)) {
+      const grnPeriod = String(
+        grn.accounting_period ?? grn.bill_date ?? "",
+      ).substring(0, 7);
+      if (grnPeriod && (await isPeriodLocked(grnPeriod, connection))) {
         throw new Error(
-          `${grnPeriod} was locked for P&L close before this approval completed. `
-          + "Resubmit the GRN against the current open period."
+          `${grnPeriod} was locked for P&L close before this approval completed. ` +
+            "Resubmit the GRN against the current open period.",
         );
       }
 
       // P0P1-4: Enforce actor-identity maker-checker — role names alone are insufficient.
       // Applies to approvals; rejections do not create financial commitments.
       if (decision === "approved") {
-        if (role === "branch_head" && grn.submitted_by && String(grn.submitted_by) === actorUserId) {
+        if (
+          role === "branch_head" &&
+          grn.submitted_by &&
+          String(grn.submitted_by) === actorUserId
+        ) {
           throw new Error(
-            "Maker-checker violation: the same person cannot submit and Branch Head-approve the same GRN"
+            "Maker-checker violation: the same person cannot submit and Branch Head-approve the same GRN",
           );
         }
         if (role === "accounts_head") {
           if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
             throw new Error(
-              "Maker-checker violation: Accounts Head cannot be the person who submitted this GRN"
+              "Maker-checker violation: Accounts Head cannot be the person who submitted this GRN",
             );
           }
-          if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
+          if (
+            grn.branch_head_reviewed_by &&
+            String(grn.branch_head_reviewed_by) === actorUserId
+          ) {
             throw new Error(
-              "Maker-checker violation: Accounts Head cannot be the person who performed the Branch Head review"
+              "Maker-checker violation: Accounts Head cannot be the person who performed the Branch Head review",
             );
           }
         }
         if (role === "finance_head") {
           if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
             throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who submitted this GRN"
+              "Maker-checker violation: Finance Head cannot be the person who submitted this GRN",
             );
           }
-          if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
+          if (
+            grn.branch_head_reviewed_by &&
+            String(grn.branch_head_reviewed_by) === actorUserId
+          ) {
             throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review"
+              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review",
             );
           }
-          if (grn.accounts_head_reviewed_by && String(grn.accounts_head_reviewed_by) === actorUserId) {
+          if (
+            grn.accounts_head_reviewed_by &&
+            String(grn.accounts_head_reviewed_by) === actorUserId
+          ) {
             throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who performed the Accounts Head review"
+              "Maker-checker violation: Finance Head cannot be the person who performed the Accounts Head review",
             );
           }
         }
@@ -2948,7 +3762,9 @@ export const grnSmartService = {
 
       if (role === "branch_head") {
         if (String(grn.status) !== "submitted") {
-          throw new Error(`Branch Head can only review submitted GRNs. Current status: ${grn.status}`);
+          throw new Error(
+            `Branch Head can only review submitted GRNs. Current status: ${grn.status}`,
+          );
         }
         if (decision === "approved") {
           await reserveAllocations(connection, allocations);
@@ -2965,14 +3781,19 @@ export const grnSmartService = {
                   review_note = ?, rejection_reason = ?
             WHERE id = ? AND status = 'submitted'`,
           [
-            newStatus, actorUserId, reviewNote?.trim() || null, actorUserId,
-            reviewNote?.trim() || null, decision === "rejected" ? reviewNote?.trim() : null, grnId,
-          ]
+            newStatus,
+            actorUserId,
+            reviewNote?.trim() || null,
+            actorUserId,
+            reviewNote?.trim() || null,
+            decision === "rejected" ? reviewNote?.trim() : null,
+            grnId,
+          ],
         );
         if (bhUpdateResult.affectedRows !== 1) {
           throw Object.assign(
             new Error("GRN state changed concurrently; refresh and try again"),
-            { code: "STATE_CHANGED", statusCode: 409 }
+            { code: "STATE_CHANGED", statusCode: 409 },
           );
         }
       } else if (role === "accounts_head") {
@@ -2981,7 +3802,9 @@ export const grnSmartService = {
         // reserveAllocations() already ran; only Finance Head's consumeAllocations() below
         // commits it), rejecting undoes exactly what Branch Head reserved.
         if (String(grn.status) !== "branch_head_approved") {
-          throw new Error(`Accounts Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`);
+          throw new Error(
+            `Accounts Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`,
+          );
         }
 
         /*
@@ -2991,13 +3814,17 @@ export const grnSmartService = {
          * approval stage is skipped. Accounts Head approval becomes the FINAL approval:
          * consume allocations, assign GRN number, go to final status.
          */
-        const skipFinanceHead = await shouldSkipFinanceHeadOnAccountsApproval(grn);
+        const skipFinanceHead =
+          await shouldSkipFinanceHeadOnAccountsApproval(grn);
 
         if (decision === "approved") {
           if (skipFinanceHead) {
             // This is the final approval — do everything Finance Head would normally do
             await consumeAllocations(connection, allocations);
-            newStatus = grn.grn_type === "vendor" ? "pending_accounts_payment" : "approved";
+            newStatus =
+              grn.grn_type === "vendor"
+                ? "pending_accounts_payment"
+                : "approved";
 
             // Assign GRN number at final approval
             grnNumber = await resolveGrnNumberOnSubmit(grn);
@@ -3031,18 +3858,24 @@ export const grnSmartService = {
                 actorUserId,
                 grnNumber,
                 grnId,
-              ]
+              ],
             );
             if (ahFinalResult.affectedRows !== 1) {
               throw Object.assign(
-                new Error("GRN state changed concurrently; refresh and try again"),
-                { code: "STATE_CHANGED", statusCode: 409 }
+                new Error(
+                  "GRN state changed concurrently; refresh and try again",
+                ),
+                { code: "STATE_CHANGED", statusCode: 409 },
               );
             }
 
             // Create vendor payment if vendor GRN
             if (grn.grn_type === "vendor") {
-              paymentId = await vendorPaymentService.createFromGrn(grnId, actorUserId, connection);
+              paymentId = await vendorPaymentService.createFromGrn(
+                grnId,
+                actorUserId,
+                connection,
+              );
             }
 
             // Mark this as final approval so we don't notify Finance Head
@@ -3058,14 +3891,20 @@ export const grnSmartService = {
                       review_note = ?
                 WHERE id = ? AND status = 'branch_head_approved'`,
               [
-                newStatus, actorUserId, reviewNote?.trim() || null, actorUserId,
-                reviewNote?.trim() || null, grnId,
-              ]
+                newStatus,
+                actorUserId,
+                reviewNote?.trim() || null,
+                actorUserId,
+                reviewNote?.trim() || null,
+                grnId,
+              ],
             );
             if (ahUpdateResult.affectedRows !== 1) {
               throw Object.assign(
-                new Error("GRN state changed concurrently; refresh and try again"),
-                { code: "STATE_CHANGED", statusCode: 409 }
+                new Error(
+                  "GRN state changed concurrently; refresh and try again",
+                ),
+                { code: "STATE_CHANGED", statusCode: 409 },
               );
             }
           }
@@ -3085,20 +3924,28 @@ export const grnSmartService = {
                     rejection_reason = ?
               WHERE id = ? AND status = 'branch_head_approved'`,
             [
-              actorUserId, reviewNote?.trim() || null, actorUserId,
-              reviewNote?.trim() || null, reviewNote?.trim() || null, grnId,
-            ]
+              actorUserId,
+              reviewNote?.trim() || null,
+              actorUserId,
+              reviewNote?.trim() || null,
+              reviewNote?.trim() || null,
+              grnId,
+            ],
           );
           if (ahRejectResult.affectedRows !== 1) {
             throw Object.assign(
-              new Error("GRN state changed concurrently; refresh and try again"),
-              { code: "STATE_CHANGED", statusCode: 409 }
+              new Error(
+                "GRN state changed concurrently; refresh and try again",
+              ),
+              { code: "STATE_CHANGED", statusCode: 409 },
             );
           }
         }
       } else if (role === "finance_head") {
         if (String(grn.status) !== "accounts_head_approved") {
-          throw new Error(`Finance Head can only review Accounts-Head-approved GRNs. Current status: ${grn.status}`);
+          throw new Error(
+            `Finance Head can only review Accounts-Head-approved GRNs. Current status: ${grn.status}`,
+          );
         }
         if (decision === "approved") {
           /*
@@ -3120,7 +3967,8 @@ export const grnSmartService = {
            * it. Finance sees it, it hits the P&L, and no budget claims to have covered it.
            */
           await consumeAllocations(connection, allocations);
-          newStatus = grn.grn_type === "vendor" ? "pending_accounts_payment" : "approved";
+          newStatus =
+            grn.grn_type === "vendor" ? "pending_accounts_payment" : "approved";
           // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
           // submission — the number identifies a spend the company has actually committed to,
           // not merely raised. resolveGrnNumberOnSubmit's own COALESCE-style "if (existing)
@@ -3139,21 +3987,38 @@ export const grnSmartService = {
                     grn_number = COALESCE(grn_number, ?)
               WHERE id = ? AND status = 'accounts_head_approved'`,
             [
-              newStatus, grn.grn_type === "vendor" ? "pending" : "not_required",
-              actorUserId, reviewNote?.trim() || null, actorUserId,
-              reviewNote?.trim() || null, actorUserId, grnNumber, grnId,
-            ]
+              newStatus,
+              grn.grn_type === "vendor" ? "pending" : "not_required",
+              actorUserId,
+              reviewNote?.trim() || null,
+              actorUserId,
+              reviewNote?.trim() || null,
+              actorUserId,
+              grnNumber,
+              grnId,
+            ],
           );
           if (fhUpdateResult.affectedRows !== 1) {
             throw Object.assign(
-              new Error("GRN state changed concurrently; refresh and try again"),
-              { code: "STATE_CHANGED", statusCode: 409 }
+              new Error(
+                "GRN state changed concurrently; refresh and try again",
+              ),
+              { code: "STATE_CHANGED", statusCode: 409 },
             );
           }
           if (grn.grn_type === "vendor") {
-            paymentId = await vendorPaymentService.createFromGrn(grnId, actorUserId, connection);
+            paymentId = await vendorPaymentService.createFromGrn(
+              grnId,
+              actorUserId,
+              connection,
+            );
           } else if (grn.grn_type === "imprest") {
-            imprestLedgerEntryId = await postImprestVoucherDebit(connection, grnId, grn, actorUserId);
+            imprestLedgerEntryId = await postImprestVoucherDebit(
+              connection,
+              grnId,
+              grn,
+              actorUserId,
+            );
             if (imprestLedgerEntryId) {
               // Links the voucher to the exact ledger row it produced. Migration 1094 created
               // this column for it; leaving it NULL made the ledger posting untraceable from
@@ -3177,17 +4042,28 @@ export const grnSmartService = {
                     finance_head_reviewed_at = NOW(), finance_head_review_note = ?,
                     reviewed_by = ?, reviewed_at = NOW(), review_note = ?, rejection_reason = ?
               WHERE id = ? AND status = 'accounts_head_approved'`,
-            [actorUserId, reviewNote?.trim(), actorUserId, reviewNote?.trim(), reviewNote?.trim(), grnId]
+            [
+              actorUserId,
+              reviewNote?.trim(),
+              actorUserId,
+              reviewNote?.trim(),
+              reviewNote?.trim(),
+              grnId,
+            ],
           );
           if (fhRejectResult.affectedRows !== 1) {
             throw Object.assign(
-              new Error("GRN state changed concurrently; refresh and try again"),
-              { code: "STATE_CHANGED", statusCode: 409 }
+              new Error(
+                "GRN state changed concurrently; refresh and try again",
+              ),
+              { code: "STATE_CHANGED", statusCode: 409 },
             );
           }
         }
       } else {
-        throw new Error(`Role ${actorRole} is not permitted to review smart GRNs`);
+        throw new Error(
+          `Role ${actorRole} is not permitted to review smart GRNs`,
+        );
       }
 
       // The same omission as the legacy path in grn.service.ts, and the same fix. An
@@ -3208,15 +4084,22 @@ export const grnSmartService = {
           remarks: reviewNote?.trim() || null,
           details: { allocationCount: allocations.length },
         },
-        connection
+        connection,
       );
 
-      await writeAuditInTransaction(connection, decision.toUpperCase(), grnId, actorUserId, actorRole, {
-        review_note: reviewNote,
-        new_status: newStatus,
-        payment_id: paymentId,
-        allocation_aware: true,
-      });
+      await writeAuditInTransaction(
+        connection,
+        decision.toUpperCase(),
+        grnId,
+        actorUserId,
+        actorRole,
+        {
+          review_note: reviewNote,
+          new_status: newStatus,
+          payment_id: paymentId,
+          allocation_aware: true,
+        },
+      );
 
       await connection.commit();
     } catch (error) {
@@ -3229,7 +4112,9 @@ export const grnSmartService = {
     // helper is non-fatal by design, so the approver does not wait on inbox or email delivery.
     if (paymentId) {
       const pendingPaymentId = paymentId;
-      runInBackground("payment-pending", () => vendorPaymentService.notifyPaymentPending(pendingPaymentId));
+      runInBackground("payment-pending", () =>
+        vendorPaymentService.notifyPaymentPending(pendingPaymentId),
+      );
     }
     // Closing the old bell alert is one cheap UPDATE and must land before the next stage's alert
     // is raised, so it stays inline; raising the next alert and the email run in the background.
@@ -3238,12 +4123,33 @@ export const grnSmartService = {
       const clearedRole = actorRole.toLowerCase();
       if (clearedRole === "branch_head") {
         runInBackground("accounts-head-alert", () =>
-          notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "accounts_head"));
-        runInBackground("accounts-head-email", () => notifyGrnAccountsHeadPendingEmail(grnId));
-      } else if (clearedRole === "accounts_head" && !headOfficeBypassFinalApproval) {
+          notifyGrnStage(
+            grnId,
+            notifyGrnNumber,
+            notifyBranchId,
+            notifyVendorName,
+            notifyAmount,
+            "accounts_head",
+          ),
+        );
+        runInBackground("accounts-head-email", () =>
+          notifyGrnAccountsHeadPendingEmail(grnId),
+        );
+      } else if (
+        clearedRole === "accounts_head" &&
+        !headOfficeBypassFinalApproval
+      ) {
         // Don't notify Finance Head if this was a Head Office bypass final approval
         runInBackground("finance-head-alert", () =>
-          notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "finance_head"));
+          notifyGrnStage(
+            grnId,
+            notifyGrnNumber,
+            notifyBranchId,
+            notifyVendorName,
+            notifyAmount,
+            "finance_head",
+          ),
+        );
       }
     }
     return { success: true, newStatus, paymentId, grnNumber };
@@ -3254,20 +4160,36 @@ export const grnSmartService = {
     try {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
-      if (["pending_accounts_payment", "payment_scheduled", "partially_paid", "paid", "approved", "cancelled"].includes(String(grn.status))) {
+      if (
+        [
+          "pending_accounts_payment",
+          "payment_scheduled",
+          "partially_paid",
+          "paid",
+          "approved",
+          "cancelled",
+        ].includes(String(grn.status))
+      ) {
         throw new Error(`Cannot cancel a GRN with status '${grn.status}'`);
       }
       const allocations = await loadAllocations(connection, grnId, true);
       // Both pre-Finance-Head statuses are still holding a reservation — consumeAllocations()
       // only ever runs at Finance Head's own approve().
-      if (["branch_head_approved", "accounts_head_approved"].includes(String(grn.status))) {
+      if (
+        ["branch_head_approved", "accounts_head_approved"].includes(
+          String(grn.status),
+        )
+      ) {
         await releaseAllocations(connection, allocations);
       }
       const [result] = await connection.execute<ResultSetHeader>(
         "UPDATE grn_request SET status = 'cancelled', reviewed_by = ?, reviewed_at = NOW() WHERE id = ? AND status = ?",
-        [actorUserId, grnId, grn.status]
+        [actorUserId, grnId, grn.status],
       );
-      if (result.affectedRows !== 1) throw new Error("GRN status changed before cancellation; refresh and try again");
+      if (result.affectedRows !== 1)
+        throw new Error(
+          "GRN status changed before cancellation; refresh and try again",
+        );
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -3275,12 +4197,23 @@ export const grnSmartService = {
     } finally {
       connection.release();
     }
-    await writeAudit("CANCEL", grnId, actorUserId, actorRole, { allocation_aware: true });
+    await writeAudit("CANCEL", grnId, actorUserId, actorRole, {
+      allocation_aware: true,
+    });
     return { success: true };
   },
 
-  async reopen(grnId: string, actorUserId: string, actorRole: string, actorRoles: string[] = []) {
-    const REOPENABLE = new Set(["rejected", "returned_to_raiser", "returned_to_branch_head"]);
+  async reopen(
+    grnId: string,
+    actorUserId: string,
+    actorRole: string,
+    actorRoles: string[] = [],
+  ) {
+    const REOPENABLE = new Set([
+      "rejected",
+      "returned_to_raiser",
+      "returned_to_branch_head",
+    ]);
     const connection = await db.getConnection();
     let previousStatus = "";
     try {
@@ -3289,25 +4222,36 @@ export const grnSmartService = {
       if (!REOPENABLE.has(String(grn.status))) {
         throw new Error(
           `GRN cannot be reopened from status '${grn.status}'. ` +
-          `Only rejected or returned GRNs can be reopened for correction.`
+            `Only rejected or returned GRNs can be reopened for correction.`,
         );
       }
       previousStatus = String(grn.status);
       // Ownership check: original creator OR finance leadership.
       // For returned_to_branch_head, also allow branch_head role.
       const allRoles = new Set([actorRole, ...actorRoles]);
-      const isFinanceLeader = ["finance_head", "accounts_head", "super_admin", "admin"].some(r => allRoles.has(r));
+      const isFinanceLeader = [
+        "finance_head",
+        "accounts_head",
+        "super_admin",
+        "admin",
+      ].some((r) => allRoles.has(r));
       const isBranchHead = allRoles.has("branch_head");
       const isCreator = String(grn.created_by) === actorUserId;
-      if (!isFinanceLeader && !isCreator && !(previousStatus === "returned_to_branch_head" && isBranchHead)) {
-        throw new Error("Only the GRN creator, Branch Head (for returned GRNs) or Finance Head can reopen this GRN.");
+      if (
+        !isFinanceLeader &&
+        !isCreator &&
+        !(previousStatus === "returned_to_branch_head" && isBranchHead)
+      ) {
+        throw new Error(
+          "Only the GRN creator, Branch Head (for returned GRNs) or Finance Head can reopen this GRN.",
+        );
       }
       // Finance-head rejections call releaseAllocations(), setting lifecycle_status = 'released'.
       // Restore them to 'draft' so the next save can proceed normally.
       await connection.execute(
         `UPDATE grn_cost_allocation SET lifecycle_status = 'draft', updated_at = NOW()
            WHERE grn_request_id = ? AND lifecycle_status = 'released'`,
-        [grnId]
+        [grnId],
       );
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE grn_request
@@ -3321,10 +4265,12 @@ export const grnSmartService = {
                 review_note = NULL,
                 submitted_at = NULL, submitted_by = NULL
           WHERE id = ? AND status IN ('rejected','returned_to_raiser','returned_to_branch_head')`,
-        [grnId]
+        [grnId],
       );
       if (result.affectedRows !== 1) {
-        throw new Error("GRN status changed before reopen; refresh and try again");
+        throw new Error(
+          "GRN status changed before reopen; refresh and try again",
+        );
       }
       await connection.commit();
     } catch (error) {
@@ -3333,7 +4279,9 @@ export const grnSmartService = {
     } finally {
       connection.release();
     }
-    await writeAudit("REOPEN", grnId, actorUserId, actorRole, { previous_status: previousStatus });
+    await writeAudit("REOPEN", grnId, actorUserId, actorRole, {
+      previous_status: previousStatus,
+    });
     return { success: true, newStatus: "draft" as const };
   },
 
@@ -3346,7 +4294,7 @@ export const grnSmartService = {
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
          LEFT JOIN finance_budget_header h ON h.id = g.budget_id
         WHERE g.id = ? LIMIT 1`,
-      [grnId]
+      [grnId],
     );
     if (!grnRows[0]) throw new Error("GRN not found");
     const connection = await db.getConnection();
@@ -3355,22 +4303,22 @@ export const grnSmartService = {
       const invoiceComponents = await loadInvoiceComponents(connection, grnId);
       const [documents] = await connection.execute<RowDataPacket[]>(
         "SELECT * FROM grn_document WHERE grn_request_id = ? ORDER BY is_primary DESC, uploaded_at",
-        [grnId]
+        [grnId],
       );
       const [extractions] = await connection.execute<RowDataPacket[]>(
         "SELECT * FROM grn_document_extraction WHERE grn_request_id = ? ORDER BY created_at DESC",
-        [grnId]
+        [grnId],
       );
       const [validations] = await connection.execute<RowDataPacket[]>(
         "SELECT * FROM grn_validation_result WHERE grn_request_id = ? ORDER BY is_blocking DESC, created_at",
-        [grnId]
+        [grnId],
       );
       const [duplicates] = await connection.execute<RowDataPacket[]>(
         `SELECT d.*, g.grn_number AS matched_grn_number
            FROM grn_duplicate_match d
            LEFT JOIN grn_request g ON g.id = d.matched_grn_request_id
           WHERE d.grn_request_id = ? ORDER BY d.confidence_score DESC`,
-        [grnId]
+        [grnId],
       );
       // Read on the same connection, so a workspace fetched mid-save cannot show allocations
       // from before the split and period rows from after it.
@@ -3382,7 +4330,7 @@ export const grnSmartService = {
            JOIN grn_cost_allocation a ON a.id = p.cost_allocation_id
           WHERE p.grn_request_id = ?
           ORDER BY a.sequence_no, p.sequence_no`,
-        [grnId]
+        [grnId],
       );
       return {
         grn: grnRows[0],
@@ -3456,14 +4404,19 @@ function consumptionPeriodOf(grn: {
  *   to. Allowed since the ruling of 2026-08-12, which replaced a hard clamp with a
  *   warning; this keeps it allowed, but only for the roles that own the call.
  */
-const RECOGNITION_OVERRIDE_ROLES = new Set(["finance_head", "accounts_head", "super_admin"]);
+const RECOGNITION_OVERRIDE_ROLES = new Set([
+  "finance_head",
+  "accounts_head",
+  "super_admin",
+]);
 
-export function assertMayOverrideRecognition(actorRole: string, what: string): void {
+export function assertMayOverrideRecognition(
+  actorRole: string,
+  what: string,
+): void {
   if (RECOGNITION_OVERRIDE_ROLES.has(String(actorRole))) return;
   throw Object.assign(
-    new Error(
-      `${what} requires Finance Head, Accounts Head or Super Admin.`,
-    ),
+    new Error(`${what} requires Finance Head, Accounts Head or Super Admin.`),
     { statusCode: 403, code: "RECOGNITION_OVERRIDE_FORBIDDEN" },
   );
 }
@@ -3471,7 +4424,11 @@ export function assertMayOverrideRecognition(actorRole: string, what: string): v
 async function writePeriodSplits(
   connection: PoolConnection,
   grnId: string,
-  grn: { accounting_period?: unknown; recognition_start_period?: unknown; bill_date?: unknown },
+  grn: {
+    accounting_period?: unknown;
+    recognition_start_period?: unknown;
+    bill_date?: unknown;
+  },
   input: {
     recognitionStartPeriod?: string | null;
     recognitionEndPeriod?: string | null;
@@ -3485,7 +4442,10 @@ async function writePeriodSplits(
   if (!start && !end) {
     // Re-saving a previously multi-month invoice as single-month must not leave the old
     // schedule behind, or the P&L keeps recognising months the GRN no longer claims.
-    await connection.execute("DELETE FROM grn_period_allocation WHERE grn_request_id = ?", [grnId]);
+    await connection.execute(
+      "DELETE FROM grn_period_allocation WHERE grn_request_id = ?",
+      [grnId],
+    );
     await connection.execute(
       `UPDATE grn_request
           SET recognition_start_period = NULL, recognition_end_period = NULL,
@@ -3496,7 +4456,9 @@ async function writePeriodSplits(
     return null;
   }
   if (!start || !end) {
-    throw new Error("A multi-month invoice needs both a first and a last recognition month");
+    throw new Error(
+      "A multi-month invoice needs both a first and a last recognition month",
+    );
   }
 
   const [rows] = await connection.execute<RowDataPacket[]>(
@@ -3512,13 +4474,21 @@ async function writePeriodSplits(
 
   // resolveEligiblePeriods is pure, so the window can be judged before anything is
   // written rather than rolling the transaction back afterwards.
-  if (resolveEligiblePeriods({ accountingPeriod, startPeriod: start, endPeriod: end }).crossFy) {
+  if (
+    resolveEligiblePeriods({
+      accountingPeriod,
+      startPeriod: start,
+      endPeriod: end,
+    }).crossFy
+  ) {
     assertMayOverrideRecognition(
       actorRole,
       "Recognising an invoice across financial years",
     );
   }
-  let summary: Awaited<ReturnType<typeof grnPeriodAllocationService.saveSplit>> | null = null;
+  let summary: Awaited<
+    ReturnType<typeof grnPeriodAllocationService.saveSplit>
+  > | null = null;
   for (const row of rows as RowDataPacket[]) {
     summary = await grnPeriodAllocationService.saveSplit(
       {
@@ -3585,11 +4555,18 @@ async function postImprestVoucherDebit(
   }
 
   if (!managerId) {
-    await writeAudit("IMPREST_LEDGER_SKIPPED", grnId, actorUserId, "finance_head", {
-      reason: "No active imprest manager is appointed for this branch, so the float was not debited",
-      branch_id: branchId,
-      amount,
-    });
+    await writeAudit(
+      "IMPREST_LEDGER_SKIPPED",
+      grnId,
+      actorUserId,
+      "finance_head",
+      {
+        reason:
+          "No active imprest manager is appointed for this branch, so the float was not debited",
+        branch_id: branchId,
+        amount,
+      },
+    );
     return null;
   }
 
@@ -3597,15 +4574,27 @@ async function postImprestVoucherDebit(
   // shortfall is audited rather than blocking approval — same treatment as the missing-manager
   // case above.
   try {
-    await imprestLedgerService.assertSufficientBalance(managerId, amount, connection);
-  } catch (error) {
-    await writeAudit("IMPREST_LEDGER_NEGATIVE_BALANCE", grnId, actorUserId, "finance_head", {
-      reason:
-        error instanceof Error ? error.message : "Voucher amount exceeds the current imprest balance",
-      manager_id: managerId,
-      branch_id: branchId,
+    await imprestLedgerService.assertSufficientBalance(
+      managerId,
       amount,
-    });
+      connection,
+    );
+  } catch (error) {
+    await writeAudit(
+      "IMPREST_LEDGER_NEGATIVE_BALANCE",
+      grnId,
+      actorUserId,
+      "finance_head",
+      {
+        reason:
+          error instanceof Error
+            ? error.message
+            : "Voucher amount exceeds the current imprest balance",
+        manager_id: managerId,
+        branch_id: branchId,
+        amount,
+      },
+    );
   }
 
   return imprestLedgerService.post(

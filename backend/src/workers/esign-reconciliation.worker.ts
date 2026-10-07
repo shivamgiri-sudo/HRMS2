@@ -67,7 +67,13 @@ const ABANDONED_AUDIT_ACTION = "ESIGN_ABANDONED_UNRESOLVED";
 // worker from ever checking again — exactly the "signature happened, system never found out"
 // loss this worker's own header comment says it exists to prevent. A transaction that stays
 // 'failed' still ages out via GIVE_UP_AFTER_DAYS below, so this does not poll forever.
-const TERMINAL = ["signed", "completed", "expired", "cancelled", ABANDONED_STATUS];
+const TERMINAL = [
+  "signed",
+  "completed",
+  "expired",
+  "cancelled",
+  ABANDONED_STATUS,
+];
 
 function nextDelayMinutes(attempts: number) {
   return BACKOFF_MINUTES[Math.min(attempts, BACKOFF_MINUTES.length - 1)];
@@ -89,8 +95,7 @@ type AbandonedCandidateRow = RowDataPacket & {
 };
 
 /** Shared by the sweep's SELECT and its UPDATE, so the two can never drift apart. */
-const ABANDONED_PREDICATE =
-  `provider = 'luckpay'
+const ABANDONED_PREDICATE = `provider = 'luckpay'
      AND status NOT IN (${TERMINAL.map(() => "?").join(",")})
      AND initiated_at <= (NOW() - INTERVAL ? DAY)`;
 
@@ -235,7 +240,9 @@ const ERROR_MESSAGE_MAX = 1000;
 
 function truncateFailureMessage(message: string) {
   const trimmed = message.trim();
-  return trimmed.length > ERROR_MESSAGE_MAX ? trimmed.slice(0, ERROR_MESSAGE_MAX) : trimmed;
+  return trimmed.length > ERROR_MESSAGE_MAX
+    ? trimmed.slice(0, ERROR_MESSAGE_MAX)
+    : trimmed;
 }
 
 /**
@@ -249,7 +256,11 @@ function truncateFailureMessage(message: string) {
  * The ladder step is the same nextDelayMinutes(attempts) scheduleNext uses: a provider
  * outage must not burn the backoff budget faster than a real pending signature would.
  */
-async function recordPollFailure(id: string, attempts: number, message: string) {
+async function recordPollFailure(
+  id: string,
+  attempts: number,
+  message: string,
+) {
   await db.execute(
     `UPDATE employee_document_esign_transaction
         SET error_message = ?,
@@ -328,7 +339,10 @@ export async function runEsignReconciliationOnce(): Promise<{
   try {
     swept = await sweepAbandoned();
   } catch (error) {
-    console.warn("[esign-reconciliation] abandonment sweep failed, continuing with the batch:", error);
+    console.warn(
+      "[esign-reconciliation] abandonment sweep failed, continuing with the batch:",
+      error,
+    );
   }
 
   const rows = await claimBatch();
@@ -366,7 +380,9 @@ export async function runEsignReconciliationOnce(): Promise<{
       if (outcome.state === "completed" || outcome.state === "failed") {
         await clearSchedule(row.id, attempts);
         completed += 1;
-        console.log(`[esign-reconciliation] ${row.client_transaction_id} -> ${outcome.state}`);
+        console.log(
+          `[esign-reconciliation] ${row.client_transaction_id} -> ${outcome.state}`,
+        );
       } else {
         await scheduleNext(row.id, attempts);
         stillPending += 1;
@@ -381,7 +397,10 @@ export async function runEsignReconciliationOnce(): Promise<{
       await recordPollFailure(row.id, attempts, message).catch(() => undefined);
       // Kept alongside the DB row: the log serves whoever is watching the tick, the
       // row serves whoever queries the transaction later.
-      console.warn(`[esign-reconciliation] ${row.client_transaction_id} failed:`, message);
+      console.warn(
+        `[esign-reconciliation] ${row.client_transaction_id} failed:`,
+        message,
+      );
     }
   }
 
@@ -396,7 +415,13 @@ export async function runEsignReconciliationOnce(): Promise<{
   );
   // stillPending is kept under that name deliberately — the log line calls it `pending`,
   // but existing readers of the return value use `stillPending`.
-  return { examined: rows.length, completed, stillPending, errors, providerCalls };
+  return {
+    examined: rows.length,
+    completed,
+    stillPending,
+    errors,
+    providerCalls,
+  };
 }
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -406,7 +431,9 @@ export async function startEsignReconciliationWorker(): Promise<void> {
   // Default off. Turn on only once per-call billing for checkESignStatus and
   // downloadESignDocument has been confirmed with the vendor.
   if (!env.ESIGN_RECONCILIATION_ENABLED) {
-    console.log("[esign-reconciliation] disabled (ESIGN_RECONCILIATION_ENABLED is not true)");
+    console.log(
+      "[esign-reconciliation] disabled (ESIGN_RECONCILIATION_ENABLED is not true)",
+    );
     return;
   }
   if (intervalHandle) return;
@@ -416,19 +443,31 @@ export async function startEsignReconciliationWorker(): Promise<void> {
     if (running) return;
     running = true;
     void runEsignReconciliationOnce()
-      .catch((error) => console.warn("[esign-reconciliation] tick failed:", error))
+      .catch((error) =>
+        console.warn("[esign-reconciliation] tick failed:", error),
+      )
       // Appointment-letter acceptance sessions live in their own table with their own
       // small budget (see reconcileAppointmentEsigns); a failure here never affects the
       // joining-document poll above, which has already finished.
       .then(async () => {
-        const { reconcileAppointmentEsigns } = await import("../modules/letters/appointmentLetterEsign.service.js");
+        const { reconcileAppointmentEsigns } =
+          await import("../modules/letters/appointmentLetterEsign.service.js");
         await reconcileAppointmentEsigns();
       })
-      .catch((error) => console.warn("[esign-reconciliation] appointment-letter tick failed:", error))
-      .finally(() => { running = false; });
+      .catch((error) =>
+        console.warn(
+          "[esign-reconciliation] appointment-letter tick failed:",
+          error,
+        ),
+      )
+      .finally(() => {
+        running = false;
+      });
   }, TICK_MS);
 
-  console.log(`[esign-reconciliation] started (every ${TICK_MS / 60000}m, batch ${BATCH_SIZE})`);
+  console.log(
+    `[esign-reconciliation] started (every ${TICK_MS / 60000}m, batch ${BATCH_SIZE})`,
+  );
 }
 
 export function stopEsignReconciliationWorker(): void {

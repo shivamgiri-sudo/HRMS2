@@ -26,13 +26,17 @@ const argv = process.argv.slice(2);
 const dryRun = argv.includes("--dry-run");
 
 const scopeArg = argv.find((a) => a.startsWith("--scope="))?.split("=")[1];
-const kinds = (scopeArg
-  ? scopeArg.split(",").map((s) => s.trim().toUpperCase())
-  : ["ORG", "BRANCH", "PROCESS"]) as SnapshotScopeKind[];
+const kinds = (
+  scopeArg
+    ? scopeArg.split(",").map((s) => s.trim().toUpperCase())
+    : ["ORG", "BRANCH", "PROCESS"]
+) as SnapshotScopeKind[];
 
 const invalid = kinds.filter((k) => !["ORG", "BRANCH", "PROCESS"].includes(k));
 if (invalid.length) {
-  console.error(`unknown scope(s): ${invalid.join(", ")} — expected org, branch or process`);
+  console.error(
+    `unknown scope(s): ${invalid.join(", ")} — expected org, branch or process`,
+  );
   process.exit(2);
 }
 
@@ -40,18 +44,24 @@ const host = process.env.DB_HOST ?? "(unset)";
 console.log(`dashboard snapshot writer`);
 console.log(`  database : ${host} / ${process.env.DB_NAME ?? "(unset)"}`);
 console.log(`  scopes   : ${kinds.join(", ")}`);
-console.log(`  mode     : ${dryRun ? "DRY RUN — nothing will be written" : "WRITE"}`);
+console.log(
+  `  mode     : ${dryRun ? "DRY RUN — nothing will be written" : "WRITE"}`,
+);
 
 const targets = await resolveSnapshotTargets(kinds);
 const metricCount = getAllMetricCodes().length;
-console.log(`  targets  : ${targets.length} scopes x ${metricCount} metrics = ${targets.length * metricCount} computations\n`);
+console.log(
+  `  targets  : ${targets.length} scopes x ${metricCount} metrics = ${targets.length * metricCount} computations\n`,
+);
 
 if (dryRun) {
   // Show exactly which scopes would be written, so the cost and coverage are reviewable
   // before anything touches the table.
   const byKind = new Map<string, number>();
-  for (const t of targets) byKind.set(t.scopeType, (byKind.get(t.scopeType) ?? 0) + 1);
-  for (const [kind, n] of byKind) console.log(`  ${kind.padEnd(8)} ${n} scope(s)`);
+  for (const t of targets)
+    byKind.set(t.scopeType, (byKind.get(t.scopeType) ?? 0) + 1);
+  for (const [kind, n] of byKind)
+    console.log(`  ${kind.padEnd(8)} ${n} scope(s)`);
   console.log(`\nDRY RUN — no rows written.`);
   await db.end?.();
   process.exit(0);
@@ -73,14 +83,18 @@ const result = await writeDashboardSnapshots({
 const seconds = Math.round((Date.now() - started) / 1000);
 console.log(`\nsnapshot_date : ${result.snapshotDate}`);
 console.log(`written       : ${result.written}`);
-console.log(`skipped       : ${result.skippedNoValue}  (metric had no value for that scope)`);
+console.log(
+  `skipped       : ${result.skippedNoValue}  (metric had no value for that scope)`,
+);
 console.log(`failed        : ${result.failed}`);
 console.log(`elapsed       : ${seconds}s`);
 
 if (result.failures.length) {
   console.log(`\nfailures (first 15):`);
   for (const f of result.failures.slice(0, 15)) {
-    console.log(`  ${f.metricCode.padEnd(24)} ${f.scope.padEnd(34)} ${f.reason}`);
+    console.log(
+      `  ${f.metricCode.padEnd(24)} ${f.scope.padEnd(34)} ${f.reason}`,
+    );
   }
 }
 

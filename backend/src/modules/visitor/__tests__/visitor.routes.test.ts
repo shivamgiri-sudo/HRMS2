@@ -19,9 +19,18 @@ function createApp() {
   const app = express();
   app.use(express.json());
   app.use("/api/visitor/public", visitorPublicRouter);
-  app.use((error: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    return res.status(error?.issues ? 400 : error?.statusCode ?? 500).json({ success: false });
-  });
+  app.use(
+    (
+      error: any,
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction,
+    ) => {
+      return res
+        .status(error?.issues ? 400 : (error?.statusCode ?? 500))
+        .json({ success: false });
+    },
+  );
   return app;
 }
 
@@ -30,10 +39,18 @@ describe("visitor public routes", () => {
 
   it("lists only the branch payload returned by the public service", async () => {
     vi.mocked(visitorService.listPublicBranches).mockResolvedValueOnce([
-      { id: "branch-1", branch_code: "DEL", branch_name: "Delhi", city: "Delhi", state: "Delhi" },
+      {
+        id: "branch-1",
+        branch_code: "DEL",
+        branch_name: "Delhi",
+        city: "Delhi",
+        state: "Delhi",
+      },
     ] as any);
 
-    const response = await request(createApp()).get("/api/visitor/public/branches");
+    const response = await request(createApp()).get(
+      "/api/visitor/public/branches",
+    );
 
     expect(response.status).toBe(200);
     expect(response.body.data).toHaveLength(1);
@@ -54,11 +71,15 @@ describe("visitor public routes", () => {
       status: "approved",
     } as any);
 
-    const response = await request(createApp())
-      .get(`/api/visitor/public/status/${"a".repeat(64)}`);
+    const response = await request(createApp()).get(
+      `/api/visitor/public/status/${"a".repeat(64)}`,
+    );
 
     expect(response.status).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
-    expect(response.body.data).toEqual({ visit_number: "VIS-20260716-ABC12345", status: "approved" });
+    expect(response.body.data).toEqual({
+      visit_number: "VIS-20260716-ABC12345",
+      status: "approved",
+    });
   });
 });

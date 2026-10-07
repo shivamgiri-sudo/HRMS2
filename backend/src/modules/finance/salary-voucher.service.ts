@@ -87,13 +87,15 @@ type CohortRule = {
 const BRANCH_SHORT_CODE: Record<string, string> = {
   "HEAD OFFICE": "HO",
   "AHMEDABAD-JALDARSHAN": "AHM",
-  "NOIDA": "NOIDA",
+  NOIDA: "NOIDA",
   "NOIDA-2": "NOIDA-2",
   "NOIDA-DIALDESK": "NOIDA-DD",
 };
 
 export function branchShortCode(branchName: string): string {
-  return BRANCH_SHORT_CODE[branchName.trim().toUpperCase()] ?? branchName.trim();
+  return (
+    BRANCH_SHORT_CODE[branchName.trim().toUpperCase()] ?? branchName.trim()
+  );
 }
 
 /** `AHM/2606` — short code and the period as YYMM. */
@@ -103,7 +105,12 @@ export function costCentreLabel(branchName: string, period: string): string {
 }
 
 /** `HEAD OFFICE/MAS/06/26/614` — the serial is allocated by the caller. */
-export function voucherNumber(branchName: string, companyCode: string, period: string, serial: number): string {
+export function voucherNumber(
+  branchName: string,
+  companyCode: string,
+  period: string,
+  serial: number,
+): string {
   const [year, month] = period.split("-");
   return `${branchName.trim().toUpperCase()}/${companyCode}/${month}/${year.slice(-2)}/${serial}`;
 }
@@ -149,13 +156,20 @@ async function loadCohortRules(companyCode: string): Promise<CohortRule[]> {
  * whole payroll is the worse failure.
  */
 function columnFor(
-  employee: { designation_name?: string | null; employment_type?: string | null; employee_code?: string | null },
+  employee: {
+    designation_name?: string | null;
+    employment_type?: string | null;
+    employee_code?: string | null;
+  },
   rules: CohortRule[],
 ): number {
   let best: CohortRule | null = null;
   for (const rule of rules) {
-    const matchers = [rule.designation_pattern, rule.employment_type, rule.employee_code_prefix]
-      .filter((m) => m != null && String(m).trim() !== "");
+    const matchers = [
+      rule.designation_pattern,
+      rule.employment_type,
+      rule.employee_code_prefix,
+    ].filter((m) => m != null && String(m).trim() !== "");
     if (!matchers.length) continue;
 
     if (rule.designation_pattern) {
@@ -163,10 +177,19 @@ function columnFor(
       const designation = String(employee.designation_name ?? "").toUpperCase();
       if (!pattern || !designation.startsWith(pattern)) continue;
     }
-    if (rule.employment_type
-        && String(employee.employment_type ?? "").toUpperCase() !== rule.employment_type.toUpperCase()) continue;
-    if (rule.employee_code_prefix
-        && !String(employee.employee_code ?? "").toUpperCase().startsWith(rule.employee_code_prefix.toUpperCase())) continue;
+    if (
+      rule.employment_type &&
+      String(employee.employment_type ?? "").toUpperCase() !==
+        rule.employment_type.toUpperCase()
+    )
+      continue;
+    if (
+      rule.employee_code_prefix &&
+      !String(employee.employee_code ?? "")
+        .toUpperCase()
+        .startsWith(rule.employee_code_prefix.toUpperCase())
+    )
+      continue;
 
     if (!best || rule.priority > best.priority) best = rule;
   }
@@ -200,7 +223,10 @@ export const salaryVoucherService = {
    * salary into MasCallnet's books because it was the first rule in the table is exactly the
    * failure 1098 refused to risk by shipping empty.
    */
-  async generate(runId: string, options: { companyCode?: string; serialFrom?: number } = {}) {
+  async generate(
+    runId: string,
+    options: { companyCode?: string; serialFrom?: number } = {},
+  ) {
     const [runRows] = await db.execute<RowDataPacket[]>(
       // run_month is already 'YYYY-MM'; the run table has no separate month/year columns.
       `SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1`,
@@ -209,7 +235,9 @@ export const salaryVoucherService = {
     if (!runRows[0]) throw new Error("Payroll run not found");
     const period = String(runRows[0].run_month ?? "").trim();
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
-      throw new Error(`Payroll run ${runId} has no usable period (run_month = "${period}")`);
+      throw new Error(
+        `Payroll run ${runId} has no usable period (run_month = "${period}")`,
+      );
     }
 
     const [entityRules] = await db.execute<RowDataPacket[]>(
@@ -220,8 +248,8 @@ export const salaryVoucherService = {
     );
     if (!entityRules.length) {
       throw new Error(
-        "No payroll entity rule is configured, so the legal entity of each salary cannot be "
-        + "determined. Refusing to generate rather than defaulting everyone to one company.",
+        "No payroll entity rule is configured, so the legal entity of each salary cannot be " +
+          "determined. Refusing to generate rather than defaulting everyone to one company.",
       );
     }
 
@@ -239,7 +267,12 @@ export const salaryVoucherService = {
       [runId],
     );
 
-    return buildVouchersFromLines(period, lines as PrepLine[], entityRules as RowDataPacket[], options);
+    return buildVouchersFromLines(
+      period,
+      lines as PrepLine[],
+      entityRules as RowDataPacket[],
+      options,
+    );
   },
 
   /** The entity rules, exposed so an alternate line source (e.g. db_bill) reuses the same config. */
@@ -275,12 +308,21 @@ async function buildVouchersFromLines(
   lines: PrepLine[],
   entityRules: RowDataPacket[],
   options: { companyCode?: string; serialFrom?: number },
-): Promise<{ period: string; vouchers: Voucher[]; unassigned: string[]; unpaid: string[] }> {
+): Promise<{
+  period: string;
+  vouchers: Voucher[];
+  unassigned: string[];
+  unpaid: string[];
+}> {
   const entityOf = (code: string): string | null => {
     for (const rule of entityRules) {
       const prefix = String(rule.employee_code_prefix ?? "");
       if (!prefix) continue;
-      if (String(code ?? "").toUpperCase().startsWith(prefix.toUpperCase())) {
+      if (
+        String(code ?? "")
+          .toUpperCase()
+          .startsWith(prefix.toUpperCase())
+      ) {
         return String(rule.company_code);
       }
     }
@@ -288,7 +330,10 @@ async function buildVouchersFromLines(
   };
 
   const cohortCache = new Map<string, CohortRule[]>();
-  const buckets = new Map<string, { company: string; branchId: string; branchName: string; rows: PrepLine[] }>();
+  const buckets = new Map<
+    string,
+    { company: string; branchId: string; branchName: string; rows: PrepLine[] }
+  >();
   const unassigned: string[] = [];
   const unpaid: string[] = [];
 
@@ -302,14 +347,21 @@ async function buildVouchersFromLines(
     const branchId = String(raw.branch_id ?? "").trim();
     // A payroll line with no branch cannot be posted to a cost centre, and inventing one
     // would put real money against the wrong branch. Reported, not guessed.
-    if (!branchName || !branchId) { unassigned.push(raw.employee_code); continue; }
+    if (!branchName || !branchId) {
+      unassigned.push(raw.employee_code);
+      continue;
+    }
 
     // An employee who was not paid contributes nothing to the voucher. HEAD OFFICE carries three
     // inactive employees whose gross and net are both zero but who still hold a 200
     // professional-tax figure; including them adds 600 to the Professional Tax credit and pushes
     // the derived Gross Salary off the reference by exactly that.
-    const paid = toPaise(raw.gross_salary) !== 0 || toPaise(raw.net_salary) !== 0;
-    if (!paid) { unpaid.push(raw.employee_code); continue; }
+    const paid =
+      toPaise(raw.gross_salary) !== 0 || toPaise(raw.net_salary) !== 0;
+    if (!paid) {
+      unpaid.push(raw.employee_code);
+      continue;
+    }
 
     // Bucketed by branch ID, never by branch NAME. branch_master contains "HEAD OFFICE" three
     // times under three different ids; keying by name would merge them into one voucher whose
@@ -325,14 +377,17 @@ async function buildVouchersFromLines(
   const vouchers: Voucher[] = [];
   let serial = options.serialFrom ?? 1;
   for (const bucket of [...buckets.values()].sort(
-    (a, b) => a.company.localeCompare(b.company)
-      || a.branchName.localeCompare(b.branchName)
-      || a.branchId.localeCompare(b.branchId),
+    (a, b) =>
+      a.company.localeCompare(b.company) ||
+      a.branchName.localeCompare(b.branchName) ||
+      a.branchId.localeCompare(b.branchId),
   )) {
     if (!cohortCache.has(bucket.company)) {
       cohortCache.set(bucket.company, await loadCohortRules(bucket.company));
     }
-    vouchers.push(buildVoucher(bucket, cohortCache.get(bucket.company)!, period, serial++));
+    vouchers.push(
+      buildVoucher(bucket, cohortCache.get(bucket.company)!, period, serial++),
+    );
   }
 
   return {
@@ -345,20 +400,34 @@ async function buildVouchersFromLines(
 
 /** Sums one bucket into the reference voucher's ledger lines, in the reference order. */
 function buildVoucher(
-  bucket: { company: string; branchId: string; branchName: string; rows: PrepLine[] },
+  bucket: {
+    company: string;
+    branchId: string;
+    branchName: string;
+    rows: PrepLine[];
+  },
   cohorts: CohortRule[],
   period: string,
   serial: number,
 ): Voucher {
-  const columnCount = 1 + cohorts.reduce((max, c) => Math.max(max, c.column_index), 0);
+  const columnCount =
+    1 + cohorts.reduce((max, c) => Math.max(max, c.column_index), 0);
   const zero = () => Array.from({ length: columnCount }, () => 0);
 
   const acc = {
-    net: zero(), pfEmployee: zero(), pfEmployer: zero(), esicEmployee: zero(),
-    esicEmployer: zero(), professionalTax: zero(), tds: zero(), otherDeductions: zero(),
-    epfAdmin: zero(), payrollGross: 0,
+    net: zero(),
+    pfEmployee: zero(),
+    pfEmployer: zero(),
+    esicEmployee: zero(),
+    esicEmployer: zero(),
+    professionalTax: zero(),
+    tds: zero(),
+    otherDeductions: zero(),
+    epfAdmin: zero(),
+    payrollGross: 0,
   };
-  const advances: { employee_code: string; column: number; paise: number }[] = [];
+  const advances: { employee_code: string; column: number; paise: number }[] =
+    [];
 
   for (const row of bucket.rows) {
     const column = columnFor(row, cohorts);
@@ -377,7 +446,12 @@ function buildVoucher(
     const advance = toPaise(row.loan_emi);
     // One row per employee, never consolidated: the reference voucher shows three separate
     // 5,000 lines at HEAD OFFICE rather than a single 15,000.
-    if (advance > 0) advances.push({ employee_code: row.employee_code, column, paise: advance });
+    if (advance > 0)
+      advances.push({
+        employee_code: row.employee_code,
+        column,
+        paise: advance,
+      });
   }
 
   const add = (a: number[], b: number[]) => a.map((v, i) => v + b[i]);
@@ -386,7 +460,11 @@ function buildVoucher(
   const epfPayable = add(add(acc.pfEmployee, acc.pfEmployer), acc.epfAdmin);
   const esicPayable = add(acc.esicEmployee, acc.esicEmployer);
 
-  const credits: { ledger_name: string; columns: number[]; employee_code?: string }[] = [
+  const credits: {
+    ledger_name: string;
+    columns: number[];
+    employee_code?: string;
+  }[] = [
     { ledger_name: "Salary Payable A/C", columns: acc.net },
     { ledger_name: "ESIC Payable", columns: esicPayable },
     { ledger_name: "EPF Payable", columns: epfPayable },
@@ -406,18 +484,27 @@ function buildVoucher(
     // hardcoded to 0 in payrollCalculate.service.ts) but is no longer emitted
     // as a voucher line item. The gross plug below is unaffected either way,
     // since the removed line always summed to 0 going forward.
-    { ledger_name: `TDS SALARY ${financialYearLabel(period)}`, columns: acc.tds },
+    {
+      ledger_name: `TDS SALARY ${financialYearLabel(period)}`,
+      columns: acc.tds,
+    },
   ];
 
   const otherDebits = [
-    { ledger_name: "Employer's Contribution to Esic", columns: acc.esicEmployer },
+    {
+      ledger_name: "Employer's Contribution to Esic",
+      columns: acc.esicEmployer,
+    },
     { ledger_name: "Employer's Contribution to Epf", columns: acc.pfEmployer },
     { ledger_name: "EPF Admin Charges", columns: acc.epfAdmin },
   ];
 
   // Gross is the plug. Computed per column so the columns still sum to the line total.
-  const grossColumns = zero().map((_, i) =>
-    credits.reduce((s, c) => s + c.columns[i], 0) - otherDebits.reduce((s, d) => s + d.columns[i], 0));
+  const grossColumns = zero().map(
+    (_, i) =>
+      credits.reduce((s, c) => s + c.columns[i], 0) -
+      otherDebits.reduce((s, d) => s + d.columns[i], 0),
+  );
 
   const toLine = (
     entry: { ledger_name: string; columns: number[]; employee_code?: string },
@@ -436,11 +523,20 @@ function buildVoucher(
     ...credits.map((c) => toLine(c, "C")),
   ];
 
-  const debit = lines.filter((l) => l.debit_credit === "D").reduce((s, l) => s + toPaise(l.amount), 0);
-  const credit = lines.filter((l) => l.debit_credit === "C").reduce((s, l) => s + toPaise(l.amount), 0);
+  const debit = lines
+    .filter((l) => l.debit_credit === "D")
+    .reduce((s, l) => s + toPaise(l.amount), 0);
+  const credit = lines
+    .filter((l) => l.debit_credit === "C")
+    .reduce((s, l) => s + toPaise(l.amount), 0);
 
   return {
-    voucher_no: voucherNumber(bucket.branchName, bucket.company, period, serial),
+    voucher_no: voucherNumber(
+      bucket.branchName,
+      bucket.company,
+      period,
+      serial,
+    ),
     company_code: bucket.company,
     branch_id: bucket.branchId,
     branch_name: bucket.branchName,
@@ -449,21 +545,47 @@ function buildVoucher(
     voucher_type: "JRNLSAL",
     date: lastDayOf(period),
     narration: `Salary ${monthLabel(period)} Month`,
-    cohort_labels: ["Staff", ...cohorts.sort((a, b) => a.column_index - b.column_index).map((c) => c.label)],
+    cohort_labels: [
+      "Staff",
+      ...cohorts
+        .sort((a, b) => a.column_index - b.column_index)
+        .map((c) => c.label),
+    ],
     lines,
-    totals: { debit: toRupees(debit), credit: toRupees(credit), balanced: debit === credit },
+    totals: {
+      debit: toRupees(debit),
+      credit: toRupees(credit),
+      balanced: debit === credit,
+    },
     payroll_gross: toRupees(acc.payrollGross),
     employees: bucket.rows.length,
   };
 }
 
-const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-function monthLabel(period: string) { return MONTHS[Number(period.split("-")[1]) - 1]; }
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+function monthLabel(period: string) {
+  return MONTHS[Number(period.split("-")[1]) - 1];
+}
 
 /** `2026-27` — the ledger names carry the financial year, and April starts it. */
 function financialYearLabel(period: string): string {
   const [year, month] = period.split("-").map(Number);
-  return month >= 4 ? `${year}-${String(year + 1).slice(-2)}` : `${year - 1}-${String(year).slice(-2)}`;
+  return month >= 4
+    ? `${year}-${String(year + 1).slice(-2)}`
+    : `${year - 1}-${String(year).slice(-2)}`;
 }
 
 function lastDayOf(period: string): string {

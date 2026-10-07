@@ -74,48 +74,82 @@ type NormalizedDeclaration = {
 function amount(value: unknown, field: string): number {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100_000_000) {
-    throw Object.assign(new Error(`${field} must be a non-negative amount`), { statusCode: 400 });
+    throw Object.assign(new Error(`${field} must be a non-negative amount`), {
+      statusCode: 400,
+    });
   }
   return Math.round(parsed * 100) / 100;
 }
 
-function pick(input: TaxDeclarationInput, camel: keyof TaxDeclarationInput, snake: keyof TaxDeclarationInput): unknown {
+function pick(
+  input: TaxDeclarationInput,
+  camel: keyof TaxDeclarationInput,
+  snake: keyof TaxDeclarationInput,
+): unknown {
   return input[camel] ?? input[snake] ?? 0;
 }
 
 function normalizeInput(input: TaxDeclarationInput): NormalizedDeclaration {
-  const declared80c = amount(pick(input, "declared80c", "declared_80c"), "80C investment");
-  const declared80d = amount(pick(input, "declared80d", "declared_80d"), "80D premium");
+  const declared80c = amount(
+    pick(input, "declared80c", "declared_80c"),
+    "80C investment",
+  );
+  const declared80d = amount(
+    pick(input, "declared80d", "declared_80d"),
+    "80D premium",
+  );
   const declaredNps80ccd1b = amount(
     pick(input, "declaredNps80ccd1b", "declared_nps_80ccd1b"),
-    "80CCD(1B) contribution"
+    "80CCD(1B) contribution",
   );
-  const declared80e = amount(pick(input, "declared80e", "declared_80e"), "80E interest");
-  const declared80g = amount(pick(input, "declared80g", "declared_80g"), "80G donation");
+  const declared80e = amount(
+    pick(input, "declared80e", "declared_80e"),
+    "80E interest",
+  );
+  const declared80g = amount(
+    pick(input, "declared80g", "declared_80g"),
+    "80G donation",
+  );
   const declaredOtherChapterVia = amount(
     pick(input, "declaredOtherChapterVia", "declared_other_chapter_via"),
-    "other Chapter VI-A deduction"
+    "other Chapter VI-A deduction",
   );
   const calculatedInvestment =
-    declared80c + declared80d + declaredNps80ccd1b + declared80e + declared80g + declaredOtherChapterVia;
+    declared80c +
+    declared80d +
+    declaredNps80ccd1b +
+    declared80e +
+    declared80g +
+    declaredOtherChapterVia;
   const suppliedTotal = pick(input, "totalInvestment", "total_investment");
 
   return {
     regime: input.regime === "old" ? "old" : "new",
-    totalInvestment: suppliedTotal ? amount(suppliedTotal, "total investment") : calculatedInvestment,
-    declaredHra: amount(pick(input, "declaredHra", "declared_hra"), "HRA exemption"),
+    totalInvestment: suppliedTotal
+      ? amount(suppliedTotal, "total investment")
+      : calculatedInvestment,
+    declaredHra: amount(
+      pick(input, "declaredHra", "declared_hra"),
+      "HRA exemption",
+    ),
     declared80c,
     declared80d,
-    declaredLtc: amount(pick(input, "declaredLtc", "declared_ltc"), "LTC exemption"),
+    declaredLtc: amount(
+      pick(input, "declaredLtc", "declared_ltc"),
+      "LTC exemption",
+    ),
     declaredHomeLoanInterest: amount(
       pick(input, "declaredHomeLoanInterest", "declared_home_loan_interest"),
-      "home-loan interest"
+      "home-loan interest",
     ),
     declaredNps80ccd1b,
     declared80e,
     declared80g,
     declaredOtherChapterVia,
-    otherIncome: amount(pick(input, "otherIncome", "other_income"), "other income"),
+    otherIncome: amount(
+      pick(input, "otherIncome", "other_income"),
+      "other income",
+    ),
     employeeConsent: Boolean(input.employeeConsent ?? input.employee_consent),
   };
 }
@@ -136,9 +170,12 @@ export function normalizeFinancialYear(value: string): string {
     if (end === start + 1) return `${start}-${end}`;
   }
 
-  throw Object.assign(new Error("financial year must be consecutive, for example 2026-2027"), {
-    statusCode: 400,
-  });
+  throw Object.assign(
+    new Error("financial year must be consecutive, for example 2026-2027"),
+    {
+      statusCode: 400,
+    },
+  );
 }
 
 export function financialYearAliases(value: string): [string, string] {
@@ -146,7 +183,10 @@ export function financialYearAliases(value: string): [string, string] {
   return [full, `${full.slice(0, 5)}${full.slice(-2)}`];
 }
 
-function slabTax(income: number, slabs: Array<{ from: number; to: number | null; rate: number }>): number {
+function slabTax(
+  income: number,
+  slabs: Array<{ from: number; to: number | null; rate: number }>,
+): number {
   return slabs.reduce((tax, slab) => {
     if (income <= slab.from) return tax;
     const upper = slab.to === null ? income : Math.min(income, slab.to);
@@ -157,7 +197,7 @@ function slabTax(income: number, slabs: Array<{ from: number; to: number | null;
 function computeProjectedTds(
   annualGross: number,
   financialYear: string,
-  declaration: NormalizedDeclaration
+  declaration: NormalizedDeclaration,
 ): number {
   const gross = Math.max(0, annualGross + declaration.otherIncome);
   let taxable = gross;
@@ -178,7 +218,7 @@ function computeProjectedTds(
         declaration.declaredHra -
         declaration.declaredLtc -
         Math.min(declaration.declaredHomeLoanInterest, 200_000) -
-        chapterVia
+        chapterVia,
     );
     tax = slabTax(taxable, [
       { from: 0, to: 250_000, rate: 0 },
@@ -237,7 +277,7 @@ export const taxDeclarationService = {
     employeeId: string,
     financialYearInput: string,
     input: TaxDeclarationInput,
-    submittedBy: string
+    submittedBy: string,
   ): Promise<TaxDeclaration> {
     const financialYear = normalizeFinancialYear(financialYearInput);
     const aliases = financialYearAliases(financialYear);
@@ -249,7 +289,7 @@ export const taxDeclarationService = {
         WHERE employee_id = ? AND active_status = 1
         ORDER BY effective_from DESC
         LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     const ctcAnnual = Number((salRows as any[])[0]?.ctc_annual ?? 0);
     const tdsProjected = computeProjectedTds(ctcAnnual, financialYear, data);
@@ -260,9 +300,10 @@ export const taxDeclarationService = {
         WHERE employee_id = ? AND financial_year IN (?, ?)
         ORDER BY financial_year = ? DESC
         LIMIT 1`,
-      [employeeId, aliases[0], aliases[1], aliases[0]]
+      [employeeId, aliases[0], aliases[1], aliases[0]],
     );
-    const existing = existingRows[0] as { id: string; financial_year: string } | undefined;
+    const existing = existingRows[0] as
+      { id: string; financial_year: string } | undefined;
     const declarationId = existing?.id ?? randomUUID();
 
     if (existing) {
@@ -282,7 +323,7 @@ export const taxDeclarationService = {
           tdsProjected,
           submittedBy,
           declarationId,
-        ]
+        ],
       );
     } else {
       await db.execute(
@@ -301,7 +342,7 @@ export const taxDeclarationService = {
           data.declared80d,
           tdsProjected,
           submittedBy,
-        ]
+        ],
       );
     }
 
@@ -334,27 +375,36 @@ export const taxDeclarationService = {
         data.declaredOtherChapterVia,
         data.otherIncome,
         data.employeeConsent ? 1 : 0,
-      ]
+      ],
     );
 
     return this.get(employeeId, financialYear);
   },
 
-  async find(employeeId: string, financialYearInput: string): Promise<TaxDeclaration | null> {
+  async find(
+    employeeId: string,
+    financialYearInput: string,
+  ): Promise<TaxDeclaration | null> {
     const [full, short] = financialYearAliases(financialYearInput);
     const [rows] = await db.execute<RowDataPacket[]>(
       `${selectDeclaration}
         WHERE td.employee_id = ? AND td.financial_year IN (?, ?)
         ORDER BY td.financial_year = ? DESC
         LIMIT 1`,
-      [employeeId, full, short, full]
+      [employeeId, full, short, full],
     );
     return (rows[0] as TaxDeclaration | undefined) ?? null;
   },
 
-  async get(employeeId: string, financialYearInput: string): Promise<TaxDeclaration> {
+  async get(
+    employeeId: string,
+    financialYearInput: string,
+  ): Promise<TaxDeclaration> {
     const declaration = await this.find(employeeId, financialYearInput);
-    if (!declaration) throw Object.assign(new Error("Tax declaration not found"), { statusCode: 404 });
+    if (!declaration)
+      throw Object.assign(new Error("Tax declaration not found"), {
+        statusCode: 404,
+      });
     return declaration;
   },
 
@@ -363,7 +413,7 @@ export const taxDeclarationService = {
       `${selectDeclaration}
         WHERE td.employee_id = ?
         ORDER BY CAST(LEFT(td.financial_year, 4) AS UNSIGNED) DESC, td.updated_at DESC`,
-      [employeeId]
+      [employeeId],
     );
     return rows as TaxDeclaration[];
   },

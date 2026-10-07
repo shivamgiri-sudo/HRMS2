@@ -24,11 +24,11 @@
  *   cd backend && npx ts-node scripts/fix-grn-null-numbers.ts --apply   # write
  */
 
-import mysql, { type PoolConnection, type RowDataPacket } from 'mysql2/promise';
-import 'dotenv/config';
+import mysql, { type PoolConnection, type RowDataPacket } from "mysql2/promise";
+import "dotenv/config";
 
-const APPLY = process.argv.includes('--apply');
-const DEFAULT_COMPANY = 'MAS';
+const APPLY = process.argv.includes("--apply");
+const DEFAULT_COMPANY = "MAS";
 
 // ── Inline allocateMonthlyGrnNumber ──────────────────────────────────────────
 //
@@ -50,7 +50,9 @@ async function allocateMonthlyGrnNumber(input: {
   companyCode?: string | null;
 }): Promise<string> {
   const { connection, periodCode } = input;
-  const companyCode = (input.companyCode?.trim() || DEFAULT_COMPANY).toUpperCase();
+  const companyCode = (
+    input.companyCode?.trim() || DEFAULT_COMPANY
+  ).toUpperCase();
 
   // Resolve prefix from finance_company
   const [companyRows] = await connection.execute<RowDataPacket[]>(
@@ -78,7 +80,7 @@ async function allocateMonthlyGrnNumber(input: {
       FOR UPDATE`,
     [companyCode, periodCode],
   );
-  if (!seqRows[0]) throw new Error('GRN sequence row could not be initialised');
+  if (!seqRows[0]) throw new Error("GRN sequence row could not be initialised");
 
   const sequence = Number(seqRows[0].next_sequence);
   if (!Number.isSafeInteger(sequence) || sequence < 1) {
@@ -93,8 +95,8 @@ async function allocateMonthlyGrnNumber(input: {
     [companyCode, periodCode],
   );
 
-  const [yyyy, mm] = periodCode.split('-');
-  return `${prefix}/${mm}/${yyyy.slice(2, 4)}/${String(sequence).padStart(4, '0')}`;
+  const [yyyy, mm] = periodCode.split("-");
+  return `${prefix}/${mm}/${yyyy.slice(2, 4)}/${String(sequence).padStart(4, "0")}`;
 }
 
 // ── Dry-run peek: reads next_sequence WITHOUT incrementing ───────────────────
@@ -105,13 +107,17 @@ async function peekNextGrnNumber(input: {
   companyCode?: string | null;
 }): Promise<string> {
   const { connection, periodCode } = input;
-  const companyCode = (input.companyCode?.trim() || DEFAULT_COMPANY).toUpperCase();
+  const companyCode = (
+    input.companyCode?.trim() || DEFAULT_COMPANY
+  ).toUpperCase();
 
   const [companyRows] = await connection.execute<RowDataPacket[]>(
     `SELECT grn_prefix FROM finance_company WHERE company_code = ? AND active_status = 1 LIMIT 1`,
     [companyCode],
   );
-  const prefix = companyRows[0] ? String(companyRows[0].grn_prefix) : companyCode;
+  const prefix = companyRows[0]
+    ? String(companyRows[0].grn_prefix)
+    : companyCode;
 
   const [seqRows] = await connection.execute<RowDataPacket[]>(
     `SELECT next_sequence
@@ -121,8 +127,8 @@ async function peekNextGrnNumber(input: {
   );
   // If no sequence row yet, next would be 0001
   const next = seqRows[0] ? Number(seqRows[0].next_sequence) : 1;
-  const [yyyy, mm] = periodCode.split('-');
-  return `${prefix}/${mm}/${yyyy.slice(2, 4)}/${String(next).padStart(4, '0')}`;
+  const [yyyy, mm] = periodCode.split("-");
+  return `${prefix}/${mm}/${yyyy.slice(2, 4)}/${String(next).padStart(4, "0")}`;
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -137,10 +143,12 @@ async function main() {
   });
 
   try {
-    console.log('\n════════════════════════════════════════════════════════');
-    console.log(' F-01: Backfill grn_number on non-draft GRNs');
-    console.log('════════════════════════════════════════════════════════');
-    console.log(` Mode: ${APPLY ? 'APPLY (writes to DB)' : 'DRY RUN (no writes)'}\n`);
+    console.log("\n════════════════════════════════════════════════════════");
+    console.log(" F-01: Backfill grn_number on non-draft GRNs");
+    console.log("════════════════════════════════════════════════════════");
+    console.log(
+      ` Mode: ${APPLY ? "APPLY (writes to DB)" : "DRY RUN (no writes)"}\n`,
+    );
 
     // Find all non-draft GRNs missing a grn_number
     const [candidates] = await conn.execute<RowDataPacket[]>(
@@ -152,12 +160,14 @@ async function main() {
         ORDER BY created_at ASC`,
     );
 
-    console.log(` Candidates (grn_number IS NULL AND status != 'draft'): ${candidates.length}`);
+    console.log(
+      ` Candidates (grn_number IS NULL AND status != 'draft'): ${candidates.length}`,
+    );
 
     if (candidates.length === 0) {
-      console.log('\n No rows need backfilling. Nothing to do.\n');
+      console.log("\n No rows need backfilling. Nothing to do.\n");
     } else {
-      console.log('');
+      console.log("");
 
       if (!APPLY) {
         // ── DRY RUN: preview numbers without touching the sequence counter ────
@@ -169,7 +179,9 @@ async function main() {
               : null;
 
           if (!periodCode || !/^\d{4}-(0[1-9]|1[0-2])$/.test(periodCode)) {
-            console.log(`  GRN id=${row.id}  status=${row.status}  → Cannot preview: no valid period (accounting_period=${row.accounting_period ?? 'NULL'}, bill_date=${row.bill_date ?? 'NULL'})`);
+            console.log(
+              `  GRN id=${row.id}  status=${row.status}  → Cannot preview: no valid period (accounting_period=${row.accounting_period ?? "NULL"}, bill_date=${row.bill_date ?? "NULL"})`,
+            );
             continue;
           }
 
@@ -178,11 +190,15 @@ async function main() {
             periodCode,
             companyCode: row.company_code || null,
           });
-          console.log(`  GRN id=${row.id}  status=${row.status}  period=${periodCode}  → Would assign: ${preview}`);
+          console.log(
+            `  GRN id=${row.id}  status=${row.status}  period=${periodCode}  → Would assign: ${preview}`,
+          );
         }
-        console.log('\n (dry-run: numbers shown are the SAME for all rows — in --apply each transaction increments the counter and numbers will be sequential)');
-        console.log('\n DRY RUN complete — nothing written.');
-        console.log(' Re-run with --apply to execute.\n');
+        console.log(
+          "\n (dry-run: numbers shown are the SAME for all rows — in --apply each transaction increments the counter and numbers will be sequential)",
+        );
+        console.log("\n DRY RUN complete — nothing written.");
+        console.log(" Re-run with --apply to execute.\n");
       } else {
         // ── APPLY: assign numbers atomically, one transaction per GRN ─────────
         let assigned = 0;
@@ -197,7 +213,9 @@ async function main() {
               : null;
 
           if (!periodCode || !/^\d{4}-(0[1-9]|1[0-2])$/.test(periodCode)) {
-            console.warn(`  SKIP GRN id=${row.id}: no valid accounting period (accounting_period=${row.accounting_period ?? 'NULL'}, bill_date=${row.bill_date ?? 'NULL'})`);
+            console.warn(
+              `  SKIP GRN id=${row.id}: no valid accounting period (accounting_period=${row.accounting_period ?? "NULL"}, bill_date=${row.bill_date ?? "NULL"})`,
+            );
             skipped++;
             continue;
           }
@@ -223,11 +241,15 @@ async function main() {
             if (result.affectedRows === 0) {
               // Row was already assigned between our SELECT and UPDATE — safe to roll back
               await conn.rollback();
-              console.log(`  SKIP GRN id=${row.id}: grn_number already assigned (concurrent write?)`);
+              console.log(
+                `  SKIP GRN id=${row.id}: grn_number already assigned (concurrent write?)`,
+              );
               skipped++;
             } else {
               await conn.commit();
-              console.log(`  ASSIGNED GRN id=${row.id}  status=${row.status}  → ${grnNumber}`);
+              console.log(
+                `  ASSIGNED GRN id=${row.id}  status=${row.status}  → ${grnNumber}`,
+              );
               assigned++;
             }
           } catch (err) {
@@ -238,7 +260,9 @@ async function main() {
           }
         }
 
-        console.log(`\n Summary: assigned=${assigned}  skipped=${skipped}  failed=${failed}`);
+        console.log(
+          `\n Summary: assigned=${assigned}  skipped=${skipped}  failed=${failed}`,
+        );
       }
     }
 
@@ -250,18 +274,21 @@ async function main() {
           AND status != 'draft'`,
     );
     const remainingCount = Number(remaining[0]?.cnt ?? 0);
-    console.log(` Post-check: non-draft GRNs with NULL grn_number remaining = ${remainingCount}`);
+    console.log(
+      ` Post-check: non-draft GRNs with NULL grn_number remaining = ${remainingCount}`,
+    );
     if (remainingCount > 0 && APPLY) {
-      console.warn(` WARNING: ${remainingCount} row(s) still lack a grn_number after apply. Investigate manually.`);
+      console.warn(
+        ` WARNING: ${remainingCount} row(s) still lack a grn_number after apply. Investigate manually.`,
+      );
     }
-    console.log('');
-
+    console.log("");
   } finally {
     await conn.end();
   }
 }
 
-main().catch(err => {
-  console.error('\nFIX FAILED:', err instanceof Error ? err.message : err);
+main().catch((err) => {
+  console.error("\nFIX FAILED:", err instanceof Error ? err.message : err);
   process.exit(1);
 });

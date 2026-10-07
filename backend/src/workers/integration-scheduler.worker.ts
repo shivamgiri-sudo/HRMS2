@@ -21,13 +21,18 @@ function isDedicatedWorkerIntegration(integrationKey: string): boolean {
 
 function shouldDisableScheduleForError(error: unknown): boolean {
   return Boolean(
-    (error as { nonRetryable?: boolean; disableSchedule?: boolean } | null)?.nonRetryable
-    && (error as { nonRetryable?: boolean; disableSchedule?: boolean } | null)?.disableSchedule,
+    (error as { nonRetryable?: boolean; disableSchedule?: boolean } | null)
+      ?.nonRetryable &&
+    (error as { nonRetryable?: boolean; disableSchedule?: boolean } | null)
+      ?.disableSchedule,
   );
 }
 
 function lockName(integrationKey: string): string {
-  const digest = createHash("sha256").update(integrationKey).digest("hex").slice(0, 40);
+  const digest = createHash("sha256")
+    .update(integrationKey)
+    .digest("hex")
+    .slice(0, 40);
   return `hrms:integration:${digest}`;
 }
 
@@ -35,7 +40,10 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function acquireLock(connection: PoolConnection, name: string): Promise<boolean> {
+async function acquireLock(
+  connection: PoolConnection,
+  name: string,
+): Promise<boolean> {
   const [rows] = await connection.execute<RowDataPacket[]>(
     "SELECT GET_LOCK(?, 0) AS acquired",
     [name],
@@ -43,7 +51,10 @@ async function acquireLock(connection: PoolConnection, name: string): Promise<bo
   return Number(rows[0]?.acquired ?? 0) === 1;
 }
 
-async function releaseLock(connection: PoolConnection, name: string): Promise<void> {
+async function releaseLock(
+  connection: PoolConnection,
+  name: string,
+): Promise<void> {
   try {
     await connection.execute("SELECT RELEASE_LOCK(?)", [name]);
   } catch (error) {
@@ -65,7 +76,10 @@ async function recordSchedulerFailure(
       [integrationKey, message, JSON.stringify({ attempts })],
     );
   } catch (logError) {
-    console.error(`[integration-scheduler] could not record failure for ${integrationKey}:`, logError);
+    console.error(
+      `[integration-scheduler] could not record failure for ${integrationKey}:`,
+      logError,
+    );
   }
 }
 
@@ -96,7 +110,10 @@ async function disableScheduleForFailure(
       ],
     );
   } catch (logError) {
-    console.error(`[integration-scheduler] could not record disabled schedule for ${integrationKey}:`, logError);
+    console.error(
+      `[integration-scheduler] could not record disabled schedule for ${integrationKey}:`,
+      logError,
+    );
   }
 }
 
@@ -106,20 +123,30 @@ async function executeWithRetries(connector: IntegrationConfig): Promise<void> {
   // LMS sync is handled by its own dedicated service, not the generic connector.
   if (connector.integration_key === "lms_sync") {
     const result = await runFullSync("scheduler");
-    console.log(`[integration-scheduler] lms_sync complete — mapped:${result.mapped} progress:${result.progress} certs:${result.certifications} errors:${result.errors.length}`);
+    console.log(
+      `[integration-scheduler] lms_sync complete — mapped:${result.mapped} progress:${result.progress} certs:${result.certifications} errors:${result.errors.length}`,
+    );
     return;
   }
 
   if (isDedicatedWorkerIntegration(connector.integration_key)) {
-    console.log("[integration-scheduler] cosec_biometric is owned by cosec-sync worker; skipping generic scheduler run");
+    console.log(
+      "[integration-scheduler] cosec_biometric is owned by cosec-sync worker; skipping generic scheduler run",
+    );
     return;
   }
 
-  for (let attempt = 1; attempt <= env.INTEGRATION_SCHEDULER_MAX_RETRIES; attempt += 1) {
+  for (
+    let attempt = 1;
+    attempt <= env.INTEGRATION_SCHEDULER_MAX_RETRIES;
+    attempt += 1
+  ) {
     try {
       const result = await executeConnector(connector, null, {}, "schedule");
       if (result.status === "failed") {
-        const error = new Error(`Connector processing failed for run ${result.run_id}`);
+        const error = new Error(
+          `Connector processing failed for run ${result.run_id}`,
+        );
         await recordSchedulerFailure(connector.integration_key, error, attempt);
         throw Object.assign(error, { nonRetryable: true });
       }
@@ -141,7 +168,9 @@ async function executeWithRetries(connector: IntegrationConfig): Promise<void> {
   throw lastError;
 }
 
-export async function runDueIntegrationSchedule(integrationKey: string): Promise<boolean> {
+export async function runDueIntegrationSchedule(
+  integrationKey: string,
+): Promise<boolean> {
   const connection = await db.getConnection();
   const name = lockName(integrationKey);
 
@@ -182,13 +211,21 @@ export async function runDueIntegrationSchedule(integrationKey: string): Promise
 
     try {
       await executeWithRetries(schedule);
-      console.log(`[integration-scheduler] ${integrationKey} completed; next run ${nextRunAt.toISOString()}`);
+      console.log(
+        `[integration-scheduler] ${integrationKey} completed; next run ${nextRunAt.toISOString()}`,
+      );
     } catch (error) {
       if (shouldDisableScheduleForError(error)) {
         await disableScheduleForFailure(connection, integrationKey, error);
-        console.error(`[integration-scheduler] ${integrationKey} disabled after permanent configuration failure:`, error);
+        console.error(
+          `[integration-scheduler] ${integrationKey} disabled after permanent configuration failure:`,
+          error,
+        );
       } else {
-        console.error(`[integration-scheduler] ${integrationKey} failed:`, error);
+        console.error(
+          `[integration-scheduler] ${integrationKey} failed:`,
+          error,
+        );
       }
     } finally {
       await connection.execute(
@@ -246,7 +283,10 @@ export async function initializeIntegrationSchedules(): Promise<number> {
   );
 
   let initialized = 0;
-  for (const row of rows as Array<{ integration_key: string; cron_expression: string }>) {
+  for (const row of rows as Array<{
+    integration_key: string;
+    cron_expression: string;
+  }>) {
     try {
       const nextRunAt = nextCronRun(
         row.cron_expression,
@@ -260,7 +300,10 @@ export async function initializeIntegrationSchedules(): Promise<number> {
       initialized += 1;
     } catch (error) {
       await recordSchedulerFailure(row.integration_key, error, 0);
-      console.error(`[integration-scheduler] invalid schedule for ${row.integration_key}:`, error);
+      console.error(
+        `[integration-scheduler] invalid schedule for ${row.integration_key}:`,
+        error,
+      );
     }
   }
 
@@ -273,7 +316,9 @@ export function startIntegrationScheduler(): void {
   void initializeIntegrationSchedules()
     .then((initialized) => {
       if (initialized > 0) {
-        console.log(`[integration-scheduler] initialized ${initialized} next run time(s)`);
+        console.log(
+          `[integration-scheduler] initialized ${initialized} next run time(s)`,
+        );
       }
       return pollIntegrationSchedules();
     })

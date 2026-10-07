@@ -1,6 +1,9 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { exitService } from "./exit.service.js";
@@ -21,7 +24,10 @@ import { exitService } from "./exit.service.js";
 export const exitStatusGuardCompatRouter = Router();
 exitStatusGuardCompatRouter.use(requireAuth);
 
-const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 const allowedTransitions: Record<string, string[]> = {
   draft: ["submitted", "revoked"],
@@ -47,14 +53,20 @@ exitStatusGuardCompatRouter.patch(
   h(async (req, res) => {
     const nextStatus = normalize(req.body?.status);
     const remarks = String(req.body?.remarks ?? "").trim();
-    if (!remarks) return res.status(400).json({ success: false, message: "Remarks are required" });
+    if (!remarks)
+      return res
+        .status(400)
+        .json({ success: false, message: "Remarks are required" });
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, status FROM exit_request WHERE id = ? LIMIT 1`,
       [req.params.id],
     );
     const current = rows[0];
-    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+    if (!current)
+      return res
+        .status(404)
+        .json({ success: false, message: "Exit request not found" });
 
     const currentStatus = normalize(current.status);
     const allowed = allowedTransitions[currentStatus] ?? [];
@@ -82,7 +94,16 @@ exitStatusGuardCompatRouter.patch(
       }
     }
 
-    const data = await exitService.updateExitStatus(req.params.id, nextStatus, remarks, req.authUser!.id);
-    return res.json({ success: true, data, message: `Exit request moved to ${nextStatus}` });
+    const data = await exitService.updateExitStatus(
+      req.params.id,
+      nextStatus,
+      remarks,
+      req.authUser!.id,
+    );
+    return res.json({
+      success: true,
+      data,
+      message: `Exit request moved to ${nextStatus}`,
+    });
   }),
 );

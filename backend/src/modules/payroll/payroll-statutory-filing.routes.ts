@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { quarterlyTdsFilingType } from "./statutory-regime.js";
@@ -9,8 +12,10 @@ import type { RowDataPacket } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
 export const payrollStatutoryFilingRouter = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 payrollStatutoryFilingRouter.use(requireAuth);
 
@@ -30,7 +35,7 @@ function reportEnsureFailure(err: unknown): void {
       event: "ENSURE_TABLE_FAILED",
       error: err instanceof Error ? err.message : String(err),
       timestamp: new Date().toISOString(),
-    }) + "\n"
+    }) + "\n",
   );
 }
 
@@ -76,17 +81,24 @@ async function ensureTable(): Promise<void> {
 // Derive standard due dates for each filing type given a payroll month YYYY-MM
 function defaultDueDate(filingMonth: string, type: string): string {
   const [yr, mo] = filingMonth.split("-").map(Number);
-  const next = mo === 12 ? `${yr + 1}-01` : `${yr}-${String(mo + 1).padStart(2, "0")}`;
+  const next =
+    mo === 12 ? `${yr + 1}-01` : `${yr}-${String(mo + 1).padStart(2, "0")}`;
   switch (type) {
-    case "EPF":    return `${next}-15`;  // 15th of following month
-    case "ESIC":   return `${next}-15`;
+    case "EPF":
+      return `${next}-15`; // 15th of following month
+    case "ESIC":
+      return `${next}-15`;
     // Form 24Q under the 1961 Act, Form 138 from the 2025 Act (1 Apr 2026).
     // The form was renumbered; the 7th-of-following-month rule was not.
     case "TDS_24Q":
-    case "TDS_138": return `${next}-07`;
-    case "PT":     return `${next}-10`;
-    case "LWF":    return `${next}-15`;
-    default:       return `${next}-15`;
+    case "TDS_138":
+      return `${next}-07`;
+    case "PT":
+      return `${next}-10`;
+    case "LWF":
+      return `${next}-15`;
+    default:
+      return `${next}-15`;
   }
 }
 
@@ -96,22 +108,32 @@ payrollStatutoryFilingRouter.get(
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     await ensureTable().catch(reportEnsureFailure);
-    const month = typeof req.query.month === "string" ? req.query.month : new Date().toISOString().slice(0, 7);
+    const month =
+      typeof req.query.month === "string"
+        ? req.query.month
+        : new Date().toISOString().slice(0, 7);
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-      return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
+      return res
+        .status(400)
+        .json({ success: false, message: "month must be YYYY-MM" });
     }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM statutory_filing_record WHERE filing_month = ? ORDER BY filing_type ASC, state_code ASC`,
-      [month]
+      [month],
     );
     // Auto-update overdue status in the result set (don't mutate DB on every read, compute in memory)
     const today = new Date().toISOString().slice(0, 10);
-    const records = (rows as any[]).map(r => ({
+    const records = (rows as any[]).map((r) => ({
       ...r,
-      status: r.status === "filed" ? "filed" : r.due_date < today ? "overdue" : "pending",
+      status:
+        r.status === "filed"
+          ? "filed"
+          : r.due_date < today
+            ? "overdue"
+            : "pending",
     }));
     return res.json({ success: true, data: records, month });
-  })
+  }),
 );
 
 // ─── GET /api/payroll/statutory-filing/overdue ────────────────────────────────
@@ -125,10 +147,10 @@ payrollStatutoryFilingRouter.get(
       `SELECT * FROM statutory_filing_record
         WHERE status != 'filed' AND due_date < ?
         ORDER BY due_date ASC`,
-      [today]
+      [today],
     );
     return res.json({ success: true, data: rows });
-  })
+  }),
 );
 
 // ─── POST /api/payroll/statutory-filing/initialize/:month ────────────────────
@@ -140,7 +162,9 @@ payrollStatutoryFilingRouter.post(
     await ensureTable().catch(reportEnsureFailure);
     const { month } = req.params;
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-      return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
+      return res
+        .status(400)
+        .json({ success: false, message: "month must be YYYY-MM" });
     }
 
     // Derive amount_due from payroll run if exists
@@ -153,17 +177,20 @@ payrollStatutoryFilingRouter.post(
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        WHERE spr.run_month = ?`,
-      [month]
+      [month],
     );
     const amounts = (runRows as any[])[0] ?? {};
 
     const types: Array<{ type: string; amount: number | null }> = [
-      { type: "EPF",     amount: Number(amounts.epf_due)  || null },
-      { type: "ESIC",    amount: Number(amounts.esic_due) || null },
+      { type: "EPF", amount: Number(amounts.epf_due) || null },
+      { type: "ESIC", amount: Number(amounts.esic_due) || null },
       // Form 24Q for periods under the 1961 Act, Form 138 from the 2025 Act
       // (1 Apr 2026). Chosen by the period being filed, not by today's date, so
       // a late filing for an earlier month still records the form it was due on.
-      { type: quarterlyTdsFilingType(month), amount: Number(amounts.tds_due) || null },
+      {
+        type: quarterlyTdsFilingType(month),
+        amount: Number(amounts.tds_due) || null,
+      },
       // PT removed 2026-09-11: Professional Tax was explicitly discontinued
       // company-wide by stakeholder decision. No new PT filing obligation is
       // auto-created for any month going forward. amounts.pt_due is left in the
@@ -180,7 +207,7 @@ payrollStatutoryFilingRouter.post(
           `INSERT IGNORE INTO statutory_filing_record
              (id, filing_month, filing_type, due_date, amount_due, status)
            VALUES (?, ?, ?, ?, ?, 'pending')`,
-          [id, month, type, due, amount ?? null]
+          [id, month, type, due, amount ?? null],
         );
         created++;
       } catch {
@@ -199,7 +226,7 @@ payrollStatutoryFilingRouter.post(
     });
 
     return res.json({ success: true, data: { month, created, skipped } });
-  })
+  }),
 );
 
 // ─── PATCH /api/payroll/statutory-filing/:id/mark-filed ──────────────────────
@@ -209,10 +236,13 @@ payrollStatutoryFilingRouter.patch(
   h(async (req: AuthenticatedRequest, res: Response) => {
     await ensureTable().catch(reportEnsureFailure);
     const { id } = req.params;
-    const { challan_number, challan_date, remarks, amount_due } = req.body ?? {};
+    const { challan_number, challan_date, remarks, amount_due } =
+      req.body ?? {};
 
     if (!challan_number?.trim()) {
-      return res.status(400).json({ success: false, message: "challan_number is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "challan_number is required" });
     }
 
     const fields: string[] = [
@@ -223,17 +253,28 @@ payrollStatutoryFilingRouter.patch(
     ];
     const params: unknown[] = [req.authUser!.id, challan_number.trim()];
 
-    if (challan_date) { fields.push("challan_date = ?"); params.push(challan_date); }
-    if (remarks)      { fields.push("remarks = ?");      params.push(remarks); }
-    if (amount_due != null) { fields.push("amount_due = ?"); params.push(Number(amount_due)); }
+    if (challan_date) {
+      fields.push("challan_date = ?");
+      params.push(challan_date);
+    }
+    if (remarks) {
+      fields.push("remarks = ?");
+      params.push(remarks);
+    }
+    if (amount_due != null) {
+      fields.push("amount_due = ?");
+      params.push(Number(amount_due));
+    }
 
     params.push(id);
     const [result] = await db.execute(
       `UPDATE statutory_filing_record SET ${fields.join(", ")} WHERE id = ?`,
-      params
+      params,
     );
     if ((result as any).affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "Filing record not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Filing record not found" });
     }
 
     void logSensitiveAction({
@@ -247,10 +288,11 @@ payrollStatutoryFilingRouter.patch(
     });
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM statutory_filing_record WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM statutory_filing_record WHERE id = ? LIMIT 1",
+      [id],
     );
     return res.json({ success: true, data: (rows as any[])[0] ?? null });
-  })
+  }),
 );
 
 // ─── POST /api/payroll/statutory-filing ──────────────────────────────────────
@@ -260,9 +302,21 @@ payrollStatutoryFilingRouter.post(
   requireRole("admin", "super_admin", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     await ensureTable().catch(reportEnsureFailure);
-    const { filing_month, filing_type, state_code, due_date, amount_due, remarks } = req.body ?? {};
+    const {
+      filing_month,
+      filing_type,
+      state_code,
+      due_date,
+      amount_due,
+      remarks,
+    } = req.body ?? {};
     if (!filing_month || !filing_type || !due_date) {
-      return res.status(400).json({ success: false, message: "filing_month, filing_type, due_date are required" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "filing_month, filing_type, due_date are required",
+        });
     }
     // PT removed 2026-09-11: Professional Tax discontinued company-wide by
     // explicit stakeholder decision. No new filing record of type PT may be
@@ -270,20 +324,34 @@ payrollStatutoryFilingRouter.post(
     // (additive-only DB rule — the ENUM value itself is not dropped).
     const validTypes = ["EPF", "ESIC", "TDS_24Q", "TDS_138", "LWF"];
     if (!validTypes.includes(filing_type)) {
-      return res.status(400).json({ success: false, message: `filing_type must be one of: ${validTypes.join(", ")}` });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: `filing_type must be one of: ${validTypes.join(", ")}`,
+        });
     }
     const id = randomUUID();
     await db.execute(
       `INSERT INTO statutory_filing_record
          (id, filing_month, filing_type, state_code, due_date, amount_due, remarks, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [id, filing_month, filing_type, state_code ?? null, due_date, amount_due ?? null, remarks ?? null]
+      [
+        id,
+        filing_month,
+        filing_type,
+        state_code ?? null,
+        due_date,
+        amount_due ?? null,
+        remarks ?? null,
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM statutory_filing_record WHERE id = ? LIMIT 1", [id]
+      "SELECT * FROM statutory_filing_record WHERE id = ? LIMIT 1",
+      [id],
     );
     return res.status(201).json({ success: true, data: (rows as any[])[0] });
-  })
+  }),
 );
 
 // ─── DELETE /api/payroll/statutory-filing/:id ────────────────────────────────
@@ -294,11 +362,13 @@ payrollStatutoryFilingRouter.delete(
     await ensureTable().catch(reportEnsureFailure);
     const [result] = await db.execute(
       "DELETE FROM statutory_filing_record WHERE id = ? AND status = 'pending'",
-      [req.params.id]
+      [req.params.id],
     );
     if ((result as any).affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "Record not found or already filed" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Record not found or already filed" });
     }
     return res.json({ success: true });
-  })
+  }),
 );

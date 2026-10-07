@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  isErrorCode, cleanText, parseNullableDecimal, parseNullableInt, parseShopifyDateTime,
+  isErrorCode,
+  cleanText,
+  parseNullableDecimal,
+  parseNullableInt,
+  parseShopifyDateTime,
 } from "../bla-bli-blu-shopify-sales-bulk.service.js";
 
 describe("isErrorCode / cleanText", () => {
@@ -28,7 +32,9 @@ describe("parseNullableDecimal / parseNullableInt", () => {
 
 describe("parseShopifyDateTime", () => {
   it("reads the real 'Created at' sample", () => {
-    expect(parseShopifyDateTime("2026-09-09 01:07:11 +0530")).toBe("2026-09-09 01:07:11");
+    expect(parseShopifyDateTime("2026-09-09 01:07:11 +0530")).toBe(
+      "2026-09-09 01:07:11",
+    );
   });
   it("returns null for blank", () => {
     expect(parseShopifyDateTime("")).toBeNull();

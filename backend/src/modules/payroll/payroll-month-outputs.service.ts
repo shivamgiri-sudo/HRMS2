@@ -61,8 +61,13 @@ export async function resolveOutputRunIds(params: {
       `SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1`,
       [params.runId],
     );
-    if (!rows.length) throw new MonthOutputError("RUN_NOT_FOUND", "Run not found", 404);
-    return { runIds: [String(rows[0].id)], month: String(rows[0].run_month), scope: "run" };
+    if (!rows.length)
+      throw new MonthOutputError("RUN_NOT_FOUND", "Run not found", 404);
+    return {
+      runIds: [String(rows[0].id)],
+      month: String(rows[0].run_month),
+      scope: "run",
+    };
   }
 
   const month = String(params.month ?? "").trim();
@@ -71,7 +76,11 @@ export async function resolveOutputRunIds(params: {
   }
   const runIds = await getMonthRunIds(month);
   if (!runIds.length) {
-    throw new MonthOutputError("NO_RUNS", `No payroll runs exist for ${month}`, 404);
+    throw new MonthOutputError(
+      "NO_RUNS",
+      `No payroll runs exist for ${month}`,
+      404,
+    );
   }
   return { runIds, month, scope: "month" };
 }

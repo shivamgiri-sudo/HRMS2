@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's own "Feedback" sheet -- found while auditing every sheet of the
@@ -12,7 +15,14 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  */
 
 export const CLOVIA_FEEDBACK_HEADERS = [
-  "Unique", "Call Date", "Date", "Advisor Id", "Phone Number", "Language", "Option", "C-SAT/D-SAT",
+  "Unique",
+  "Call Date",
+  "Date",
+  "Advisor Id",
+  "Phone Number",
+  "Language",
+  "Option",
+  "C-SAT/D-SAT",
 ] as const;
 
 export function parseNullableFlag(raw: unknown): number | null {
@@ -31,7 +41,9 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
+    const d = new Date(
+      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
+    );
     return d.toISOString().slice(0, 10);
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
@@ -47,7 +59,9 @@ export function parseCallDate(raw: unknown): string | null {
   if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
     const days = Math.floor(raw);
     const secondsOfDay = Math.round((raw - days) * 86400);
-    const d = new Date(Date.UTC(1899, 11, 30) + days * 86400000 + secondsOfDay * 1000);
+    const d = new Date(
+      Date.UTC(1899, 11, 30) + days * 86400000 + secondsOfDay * 1000,
+    );
     return d.toISOString().slice(0, 19).replace("T", " ");
   }
   const v = String(raw ?? "").trim();
@@ -62,7 +76,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importCloviaFeedbackBatch(
   batchId: string,
@@ -113,28 +129,37 @@ export async function importCloviaFeedbackBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     const uniqueRef = String(data["Unique"] ?? "").trim();
     const callDate = parseCallDate(data["Call Date"]);
-    const reportDate = parseDate(data["Date"]) ?? callDate?.slice(0, 10) ?? null;
+    const reportDate =
+      parseDate(data["Date"]) ?? callDate?.slice(0, 10) ?? null;
     if (!uniqueRef || !callDate || !reportDate) {
       const msg = `Row ${row.row_no}: "Unique", "Call_Date" and "Date" are all required — together they are the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, reportDate, callDate, uniqueRef,
+        randomUUID(),
+        processId,
+        reportDate,
+        callDate,
+        uniqueRef,
         String(data["Advisor Id"] ?? "").trim() || null,
         String(data["Phone Number"] ?? "").trim() || null,
         String(data["Language"] ?? "").trim() || null,
         String(data["Option"] ?? "").trim() || null,
         parseNullableFlag(data["C-SAT/D-SAT"]),
-        'bulk_upload',
+        "bulk_upload",
         batchId,
         importedByUserId,
       ],
@@ -160,17 +185,26 @@ export async function importCloviaFeedbackBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

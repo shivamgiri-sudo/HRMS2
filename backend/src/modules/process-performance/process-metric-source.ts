@@ -72,7 +72,9 @@ function aggregateExpr(sumKeys: string[], exactRatio: boolean): string {
   const ratio = "SUM(rollup_numerator) / SUM(rollup_denominator)";
 
   if (!sumKeys.length) {
-    return exactRatio ? `CASE WHEN ${hasParts} THEN ${ratio} ELSE AVG(actual_value) END` : "AVG(actual_value)";
+    return exactRatio
+      ? `CASE WHEN ${hasParts} THEN ${ratio} ELSE AVG(actual_value) END`
+      : "AVG(actual_value)";
   }
 
   const list = sumKeys.map(() => "?").join(",");
@@ -155,10 +157,10 @@ export async function fetchProcessMetricValues(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT metric_key, ${agg} AS value, COUNT(actual_value) AS n${
       (await exactRatioSupported())
-        // Whether every counted day carried its parts, which is exactly the
-        // condition the exact form above requires. Reported so a caller can say
-        // which of the two numbers it is showing instead of guessing.
-        ? `, CASE WHEN COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0
+        ? // Whether every counted day carried its parts, which is exactly the
+          // condition the exact form above requires. Reported so a caller can say
+          // which of the two numbers it is showing instead of guessing.
+          `, CASE WHEN COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0
                   THEN 1 ELSE 0 END AS exact_ratio,
              CASE WHEN COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0
                   THEN SUM(rollup_numerator) END AS ratio_numerator,
@@ -188,11 +190,17 @@ export async function fetchProcessMetricValues(
     params,
   );
 
-  const trendByKey = new Map<string, Array<{ period: string; value: number | null }>>();
+  const trendByKey = new Map<
+    string,
+    Array<{ period: string; value: number | null }>
+  >();
   for (const r of trendRows) {
     const key = canonical(String(r.metric_key));
     const list = trendByKey.get(key) ?? [];
-    list.push({ period: String(r.period), value: r.value == null ? null : Number(r.value) });
+    list.push({
+      period: String(r.period),
+      value: r.value == null ? null : Number(r.value),
+    });
     trendByKey.set(key, list);
   }
 
@@ -205,8 +213,10 @@ export async function fetchProcessMetricValues(
       count: n,
       trend: trendByKey.get(key) ?? [],
       exactRatio: Number(r.exact_ratio ?? 0) === 1,
-      ratioNumerator: r.ratio_numerator == null ? null : Number(r.ratio_numerator),
-      ratioDenominator: r.ratio_denominator == null ? null : Number(r.ratio_denominator),
+      ratioNumerator:
+        r.ratio_numerator == null ? null : Number(r.ratio_numerator),
+      ratioDenominator:
+        r.ratio_denominator == null ? null : Number(r.ratio_denominator),
     });
   }
   return out;

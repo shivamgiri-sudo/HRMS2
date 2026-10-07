@@ -63,15 +63,27 @@ interface Target {
 }
 
 const TARGETS: Target[] = [
-  { table: "ats_candidate", source: "aadhar_number", encrypted: "aadhar_number_encrypted" },
-  { table: "ats_candidate", source: "pan_number", encrypted: "pan_number_encrypted" },
+  {
+    table: "ats_candidate",
+    source: "aadhar_number",
+    encrypted: "aadhar_number_encrypted",
+  },
+  {
+    table: "ats_candidate",
+    source: "pan_number",
+    encrypted: "pan_number_encrypted",
+  },
   {
     table: "employee_statutory_info",
     source: "pan_number",
     encrypted: "pan_number_encrypted",
     blindIndexColumn: "pan_blind_index",
   },
-  { table: "vendor_master", source: "pan_number", encrypted: "pan_number_encrypted" },
+  {
+    table: "vendor_master",
+    source: "pan_number",
+    encrypted: "pan_number_encrypted",
+  },
   /**
    * Not a statutory identifier, but it belongs in this pass rather than in a rival script:
    * same table, same key, same guards, and a second script would be a second thing to keep
@@ -87,12 +99,18 @@ const TARGETS: Target[] = [
    * across the entire historical candidate base at once. That is a business decision about
    * fraud review capacity, not a side effect a privacy backfill gets to cause.
    */
-  { table: "ats_candidate", source: "bank_account_no", encrypted: "bank_account_no_encrypted" },
+  {
+    table: "ats_candidate",
+    source: "bank_account_no",
+    encrypted: "bank_account_no_encrypted",
+  },
 ];
 
-const one = (rows: RowDataPacket[]): Record<string, unknown> => rows[0] as Record<string, unknown>;
+const one = (rows: RowDataPacket[]): Record<string, unknown> =>
+  rows[0] as Record<string, unknown>;
 /** This server returns information_schema labels in either case depending on config. */
-const num = (r: Record<string, unknown>, k: string): number => Number(r[k] ?? r[k.toUpperCase()]);
+const num = (r: Record<string, unknown>, k: string): number =>
+  Number(r[k] ?? r[k.toUpperCase()]);
 
 /**
  * Prove the loaded key is the one production already used, by decrypting rows in another table.
@@ -109,24 +127,26 @@ async function assertProductionKey(): Promise<void> {
   if (samples.length === 0) {
     throw new Error(
       "employees.aadhaar_number_encrypted is empty, so the key cannot be verified against anything. " +
-      "Run the employees backfill first, or verify the key by hand. Refusing to write.",
+        "Run the employees backfill first, or verify the key by hand. Refusing to write.",
     );
   }
 
   const parity = checkKeyParity(samples);
   console.log(
     `[statutory-encrypt] key parity vs employees: ${parity.decrypted}/${parity.sampled} decrypt` +
-    (isUsingDevEncryptionKey() ? "  (WARNING: using the built-in development key)" : ""),
+      (isUsingDevEncryptionKey()
+        ? "  (WARNING: using the built-in development key)"
+        : ""),
   );
   if (!parity.ok) {
     throw new Error(
       `KEY MISMATCH — only ${parity.decrypted} of ${parity.sampled} rows in employees decrypt with ` +
-      `the loaded key, so this is not the key production wrote with. Encrypting now would produce ` +
-      `ciphertext this database cannot read, and the failure would be silent. ` +
-      (isUsingDevEncryptionKey()
-        ? "FIELD_ENCRYPTION_KEY is unset, so the all-zeros development key is in use. Run this on the server."
-        : "Check FIELD_ENCRYPTION_KEY.") +
-      " Refusing to write.",
+        `the loaded key, so this is not the key production wrote with. Encrypting now would produce ` +
+        `ciphertext this database cannot read, and the failure would be silent. ` +
+        (isUsingDevEncryptionKey()
+          ? "FIELD_ENCRYPTION_KEY is unset, so the all-zeros development key is in use. Run this on the server."
+          : "Check FIELD_ENCRYPTION_KEY.") +
+        " Refusing to write.",
     );
   }
 }
@@ -200,27 +220,33 @@ async function backfill(t: Target): Promise<void> {
   );
   console.log(
     `[statutory-encrypt] ${label}: wrote ${written}; now ${num(one(check), "encrypted_rows")} encrypted, ` +
-    `${num(one(check), "orphaned")} with no plaintext left to compare`,
+      `${num(one(check), "orphaned")} with no plaintext left to compare`,
   );
 }
 
 async function run(): Promise<void> {
-  console.log(`[statutory-encrypt] DRY_RUN=${DRY_RUN} BATCH_SIZE=${BATCH_SIZE}`);
+  console.log(
+    `[statutory-encrypt] DRY_RUN=${DRY_RUN} BATCH_SIZE=${BATCH_SIZE}`,
+  );
   await assertProductionKey();
 
   const needsBlind = TARGETS.some((t) => t.blindIndexColumn);
   if (needsBlind && isUsingDevBlindIndexKey()) {
     throw new Error(
       "FIELD_BLIND_INDEX_KEY is unset, so the development blind-index key is in use. An index built " +
-      "with it matches nothing at lookup time and nothing reports an error. Run this on the " +
-      "production host. Refusing to write.",
+        "with it matches nothing at lookup time and nothing reports an error. Run this on the " +
+        "production host. Refusing to write.",
     );
   }
 
   for (const t of TARGETS) {
-    for (const col of [t.encrypted, t.blindIndexColumn].filter(Boolean) as string[]) {
+    for (const col of [t.encrypted, t.blindIndexColumn].filter(
+      Boolean,
+    ) as string[]) {
       if (!(await columnExists(t.table, col))) {
-        throw new Error(`${t.table}.${col} does not exist — apply migration 1123 first.`);
+        throw new Error(
+          `${t.table}.${col} does not exist — apply migration 1123 first.`,
+        );
       }
     }
     await backfill(t);
@@ -229,13 +255,17 @@ async function run(): Promise<void> {
   if (DRY_RUN) console.log("\n  [DRY RUN — no rows were updated]");
   console.log(
     "\n  Plaintext is deliberately untouched. Read paths keep working unchanged; retiring the " +
-    "plaintext is a separate decision that needs every equality lookup migrated first.",
+      "plaintext is a separate decision that needs every equality lookup migrated first.",
   );
   await db.end();
 }
 
 run().catch(async (e) => {
   console.error("[statutory-encrypt] FATAL", e?.message ?? e);
-  try { await db.end(); } catch { /* already closed */ }
+  try {
+    await db.end();
+  } catch {
+    /* already closed */
+  }
   process.exit(1);
 });

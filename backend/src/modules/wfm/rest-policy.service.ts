@@ -21,7 +21,12 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { hasTable } from "./schema-probe.util.js";
 
-type Executor = { execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]> };
+type Executor = {
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[T, unknown]>;
+};
 
 /**
  * Closes a real concurrency hole: rest validation is a read (resolve policy +
@@ -49,7 +54,7 @@ type Executor = { execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: stri
  */
 export async function withEmployeeRosterLock<T>(
   employeeId: string,
-  fn: (conn: Executor) => Promise<T>
+  fn: (conn: Executor) => Promise<T>,
 ): Promise<T> {
   const lockName = `roster_assign_${employeeId}`;
   const lockConn = await db.getConnection();
@@ -58,17 +63,24 @@ export async function withEmployeeRosterLock<T>(
     // matching leave.service.ts's lockConn exactly (2026-08-13). The
     // parameterized reads/writes fn() performs still go through .execute()
     // as normal; only GET_LOCK/RELEASE_LOCK use the text protocol.
-    const [lockRows] = await lockConn.query("SELECT GET_LOCK(?, 10) AS acquired", [lockName]);
+    const [lockRows] = await lockConn.query(
+      "SELECT GET_LOCK(?, 10) AS acquired",
+      [lockName],
+    );
     if (Number((lockRows as RowDataPacket[])?.[0]?.acquired) !== 1) {
       throw Object.assign(
-        new Error("Another roster change for this employee is already in progress. Please try again."),
-        { statusCode: 409, code: "ROSTER_LOCK_TIMEOUT" }
+        new Error(
+          "Another roster change for this employee is already in progress. Please try again.",
+        ),
+        { statusCode: 409, code: "ROSTER_LOCK_TIMEOUT" },
       );
     }
     try {
       return await fn(lockConn);
     } finally {
-      await lockConn.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
+      await lockConn
+        .query("SELECT RELEASE_LOCK(?)", [lockName])
+        .catch(() => {});
     }
   } finally {
     lockConn.release();
@@ -86,11 +98,14 @@ export async function withEmployeeRosterLock<T>(
  * path calls this before calling validateMinimumRest() and skips validation
  * entirely (preserving current behavior) when it returns false.
  */
-export async function isRestPolicyFeatureActive(executor: Executor = db): Promise<boolean> {
+export async function isRestPolicyFeatureActive(
+  executor: Executor = db,
+): Promise<boolean> {
   return hasTable("wfm_rest_policy", executor);
 }
 
-export type RestPolicyScopeType = "organization" | "branch" | "process" | "employee";
+export type RestPolicyScopeType =
+  "organization" | "branch" | "process" | "employee";
 
 /**
  * WARN records the shortfall and lets the roster write proceed; BLOCK refuses it.
@@ -161,7 +176,10 @@ function mapPolicyRow(row: RowDataPacket): RestPolicy {
     // Anything other than an explicit 'warn' is treated as 'block'. A database that has not
     // taken migration 1224 yet returns undefined here, and the safe reading of "I don't know
     // what mode this policy is in" is the stricter one.
-    enforcementMode: String(row.enforcement_mode ?? "").toLowerCase() === "warn" ? "warn" : "block",
+    enforcementMode:
+      String(row.enforcement_mode ?? "").toLowerCase() === "warn"
+        ? "warn"
+        : "block",
   };
 }
 
@@ -171,7 +189,10 @@ function mapPolicyRow(row: RowDataPacket): RestPolicy {
  * configured at any level for forDate. Each scope is a single indexed lookup
  * (uq_wfm_rest_policy_scope_window), not a full-table scan.
  */
-export async function resolveRestPolicy(ctx: RestPolicyContext, executor: Executor = db): Promise<RestPolicy | null> {
+export async function resolveRestPolicy(
+  ctx: RestPolicyContext,
+  executor: Executor = db,
+): Promise<RestPolicy | null> {
   if (!(await hasTable("wfm_rest_policy", executor))) return null;
 
   const scopes: { type: RestPolicyScopeType; id: string | null }[] = [];
@@ -190,7 +211,7 @@ export async function resolveRestPolicy(ctx: RestPolicyContext, executor: Execut
           AND (effective_to IS NULL OR effective_to >= ?)
         ORDER BY effective_from DESC
         LIMIT 1`,
-      [scope.type, scope.id, ctx.forDate, ctx.forDate]
+      [scope.type, scope.id, ctx.forDate, ctx.forDate],
     );
     if (rows[0]) return mapPolicyRow(rows[0]);
   }
@@ -220,7 +241,11 @@ function addDays(date: string, days: number): string {
  * 202 employees sit on 21:00-06:00 alone. Night workers are exactly the population a minimum
  * rest rule exists to protect, and they were the population it could not see.
  */
-export function shiftEndDate(rosterDate: string, startTime: string, endTime: string): string {
+export function shiftEndDate(
+  rosterDate: string,
+  startTime: string,
+  endTime: string,
+): string {
   const start = startTime.slice(0, 5);
   const end = endTime.slice(0, 5);
   return end <= start ? addDays(rosterDate, 1) : rosterDate;
@@ -245,7 +270,7 @@ export async function findAdjacentShifts(
   employeeId: string,
   rosterDate: string,
   excludeAssignmentId?: string | null,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<{ previous: ShiftTimeRef | null; next: ShiftTimeRef | null }> {
   const excludeClause = excludeAssignmentId ? "AND a.id <> ?" : "";
   const excludeParam = excludeAssignmentId ? [excludeAssignmentId] : [];
@@ -269,7 +294,7 @@ export async function findAdjacentShifts(
         AND COALESCE(a.shift_start_time, t.start_time) IS NOT NULL
         AND COALESCE(a.shift_end_time,   t.end_time)   IS NOT NULL ${excludeClause}
       ORDER BY a.roster_date DESC LIMIT 1`,
-    [employeeId, rosterDate, ...excludeParam]
+    [employeeId, rosterDate, ...excludeParam],
   );
   const [nextRows] = await executor.execute<RowDataPacket[]>(
     `SELECT a.roster_date,
@@ -279,7 +304,7 @@ export async function findAdjacentShifts(
       WHERE a.employee_id = ? AND a.roster_date > ? AND a.is_week_off = 0
         AND COALESCE(a.shift_start_time, t.start_time) IS NOT NULL ${excludeClause}
       ORDER BY a.roster_date ASC LIMIT 1`,
-    [employeeId, rosterDate, ...excludeParam]
+    [employeeId, rosterDate, ...excludeParam],
   );
 
   // The previous shift's END is dated by when it actually finished, not by its roster_date.
@@ -288,14 +313,17 @@ export async function findAdjacentShifts(
         date: shiftEndDate(
           String(prevRows[0].roster_date).slice(0, 10),
           String(prevRows[0].start_time).slice(0, 5),
-          String(prevRows[0].end_time).slice(0, 5)
+          String(prevRows[0].end_time).slice(0, 5),
         ),
         time: String(prevRows[0].end_time).slice(0, 5),
       }
     : null;
   // A shift always STARTS on its own roster_date, so no roll is needed here.
   const next = nextRows[0]
-    ? { date: String(nextRows[0].roster_date).slice(0, 10), time: String(nextRows[0].start_time).slice(0, 5) }
+    ? {
+        date: String(nextRows[0].roster_date).slice(0, 10),
+        time: String(nextRows[0].start_time).slice(0, 5),
+      }
     : null;
   return { previous: prev, next: next };
 }
@@ -313,17 +341,30 @@ export async function validateMinimumRest(
   ctx: RestPolicyContext & { employeeId: string },
   candidateShift: { startTime: string; endTime: string },
   excludeAssignmentId?: string | null,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<RestValidationResult> {
   const policy = await resolveRestPolicy(ctx, executor);
-  if (!policy) return { ok: false, reason: "REST_POLICY_MISSING", policy: null };
+  if (!policy)
+    return { ok: false, reason: "REST_POLICY_MISSING", policy: null };
 
-  const { previous, next } = await findAdjacentShifts(ctx.employeeId, ctx.forDate, excludeAssignmentId, executor);
-  const candidateStart: ShiftTimeRef = { date: ctx.forDate, time: candidateShift.startTime.slice(0, 5) };
+  const { previous, next } = await findAdjacentShifts(
+    ctx.employeeId,
+    ctx.forDate,
+    excludeAssignmentId,
+    executor,
+  );
+  const candidateStart: ShiftTimeRef = {
+    date: ctx.forDate,
+    time: candidateShift.startTime.slice(0, 5),
+  };
   // The candidate can itself run through midnight — a 22:00-07:00 shift ends the next morning,
   // which is what the following shift has to be measured against.
   const candidateEnd: ShiftTimeRef = {
-    date: shiftEndDate(ctx.forDate, candidateShift.startTime, candidateShift.endTime),
+    date: shiftEndDate(
+      ctx.forDate,
+      candidateShift.startTime,
+      candidateShift.endTime,
+    ),
     time: candidateShift.endTime.slice(0, 5),
   };
 
@@ -331,9 +372,14 @@ export async function validateMinimumRest(
     const gap = restGapMinutes(previous, candidateStart);
     if (gap < policy.minimumRestMinutes) {
       return {
-        ok: false, reason: "INSUFFICIENT_REST", against: "previous", neighborShift: previous,
-        actualRestMinutes: gap, requiredRestMinutes: policy.minimumRestMinutes,
-        policy, canOverride: policy.allowsEmergencyOverride,
+        ok: false,
+        reason: "INSUFFICIENT_REST",
+        against: "previous",
+        neighborShift: previous,
+        actualRestMinutes: gap,
+        requiredRestMinutes: policy.minimumRestMinutes,
+        policy,
+        canOverride: policy.allowsEmergencyOverride,
       };
     }
   }
@@ -341,9 +387,14 @@ export async function validateMinimumRest(
     const gap = restGapMinutes(candidateEnd, next);
     if (gap < policy.minimumRestMinutes) {
       return {
-        ok: false, reason: "INSUFFICIENT_REST", against: "next", neighborShift: next,
-        actualRestMinutes: gap, requiredRestMinutes: policy.minimumRestMinutes,
-        policy, canOverride: policy.allowsEmergencyOverride,
+        ok: false,
+        reason: "INSUFFICIENT_REST",
+        against: "next",
+        neighborShift: next,
+        actualRestMinutes: gap,
+        requiredRestMinutes: policy.minimumRestMinutes,
+        policy,
+        canOverride: policy.allowsEmergencyOverride,
       };
     }
   }
@@ -383,8 +434,10 @@ export async function applyRestDecision(
   executor: Executor = db,
 ): Promise<{ allowed: boolean; warned: boolean }> {
   if (result.ok) return { allowed: true, warned: false };
-  if (result.reason !== "INSUFFICIENT_REST") return { allowed: false, warned: false };
-  if (result.policy?.enforcementMode !== "warn") return { allowed: false, warned: false };
+  if (result.reason !== "INSUFFICIENT_REST")
+    return { allowed: false, warned: false };
+  if (result.policy?.enforcementMode !== "warn")
+    return { allowed: false, warned: false };
 
   await recordRestGapWarning(
     {
@@ -470,7 +523,7 @@ export async function recordRestGapWarning(
 
 export async function hasAnyRestPolicyConfigured(
   ctx: { processId?: string | null; branchId?: string | null; forDate: string },
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<boolean> {
   return (await resolveRestPolicy(ctx, executor)) !== null;
 }
@@ -483,7 +536,8 @@ export interface RestOverrideInput {
   actualRestMinutes: number;
   requiredRestMinutes: number;
   policyId: string | null;
-  source: "weekly_generation" | "manual_assignment" | "bulk_upload" | "shift_swap";
+  source:
+    "weekly_generation" | "manual_assignment" | "bulk_upload" | "shift_swap";
   reason: string;
   requestedBy: string;
   approvedBy: string;
@@ -492,7 +546,10 @@ export interface RestOverrideInput {
 /** Immutable audit row for an emergency rest override that was actually used
  *  to publish an assignment below the resolved minimum. Insert-only by
  *  design — no update/delete route exists or should ever be added. */
-export async function logRestOverride(input: RestOverrideInput, executor: Executor = db): Promise<void> {
+export async function logRestOverride(
+  input: RestOverrideInput,
+  executor: Executor = db,
+): Promise<void> {
   await executor.execute(
     `INSERT INTO wfm_rest_override_log
        (id, employee_id, roster_date, previous_shift_end_at, next_shift_start_at,
@@ -500,9 +557,18 @@ export async function logRestOverride(input: RestOverrideInput, executor: Execut
         requested_by, approved_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      randomUUID(), input.employeeId, input.rosterDate, input.previousShiftEndAt, input.nextShiftStartAt,
-      input.actualRestMinutes, input.requiredRestMinutes, input.policyId, input.source, input.reason,
-      input.requestedBy, input.approvedBy,
-    ]
+      randomUUID(),
+      input.employeeId,
+      input.rosterDate,
+      input.previousShiftEndAt,
+      input.nextShiftStartAt,
+      input.actualRestMinutes,
+      input.requiredRestMinutes,
+      input.policyId,
+      input.source,
+      input.reason,
+      input.requestedBy,
+      input.approvedBy,
+    ],
   );
 }

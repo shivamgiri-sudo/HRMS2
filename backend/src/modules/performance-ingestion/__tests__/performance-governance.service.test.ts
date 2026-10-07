@@ -28,18 +28,22 @@ describe("performance ingestion dataset scope", () => {
   });
 
   it("limits process roles to their assigned process ids", () => {
-    const filter = buildDatasetScopeFilter(scope("PROCESS_ALL", {
-      processIds: ["process-1", "process-2"],
-    }));
+    const filter = buildDatasetScopeFilter(
+      scope("PROCESS_ALL", {
+        processIds: ["process-1", "process-2"],
+      }),
+    );
 
     expect(filter.sql).toContain("psd.process_id IN (?, ?)");
     expect(filter.params).toEqual(["process-1", "process-2"]);
   });
 
   it("limits branch roles to direct branch sources or active processes inside their branches", () => {
-    const filter = buildDatasetScopeFilter(scope("BRANCH_ALL", {
-      branchIds: ["branch-1"],
-    }));
+    const filter = buildDatasetScopeFilter(
+      scope("BRANCH_ALL", {
+        branchIds: ["branch-1"],
+      }),
+    );
 
     expect(filter.sql).toContain("psd.branch_id IN (?)");
     expect(filter.sql).toContain("SELECT DISTINCT e.process_id");
@@ -53,12 +57,17 @@ describe("performance ingestion dataset scope", () => {
 });
 
 describe("performance ingestion governance route contract", () => {
-  const routePath = path.resolve(__dirname, "../performance-ingestion.routes.ts");
+  const routePath = path.resolve(
+    __dirname,
+    "../performance-ingestion.routes.ts",
+  );
   const routeCode = fs.readFileSync(routePath, "utf8");
 
   it("requires effective-dated approval and backend write access", () => {
     expect(routeCode).toContain("effectiveFrom");
-    expect(routeCode).toMatch(/router\.post\(\s*"\/datasets\/:id\/approve",\s*requireWriteAccess/);
+    expect(routeCode).toMatch(
+      /router\.post\(\s*"\/datasets\/:id\/approve",\s*requireWriteAccess/,
+    );
     expect(routeCode).toContain("performanceGovernanceService.approveDataset");
   });
 
@@ -66,7 +75,9 @@ describe("performance ingestion governance route contract", () => {
     expect(routeCode).toContain('"/datasets/:id/runs"');
     expect(routeCode).toContain('"/mapping-exceptions/:id/resolve"');
     expect(routeCode).toContain("performanceGovernanceService.runDetail");
-    expect(routeCode).toContain("performanceGovernanceService.resolveMappingException");
+    expect(routeCode).toContain(
+      "performanceGovernanceService.resolveMappingException",
+    );
   });
 
   it("guards every ingestion mutation with requireWriteAccess", () => {
@@ -148,7 +159,10 @@ describe("performance final governance controls", () => {
     // one still leaves the other to satisfy a `toContain`, and the assertion
     // passes while half the endpoint returns unscoped rows. Verified by removing
     // one gate and watching this fail.
-    const gates = auditServiceCode.match(/pga\.dataset_id IS NULL OR \(\$\{scoped\.sql\}\)/g) ?? [];
+    const gates =
+      auditServiceCode.match(
+        /pga\.dataset_id IS NULL OR \(\$\{scoped\.sql\}\)/g,
+      ) ?? [];
     expect(gates).toHaveLength(2);
   });
 });

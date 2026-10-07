@@ -42,14 +42,20 @@ describe("request body", () => {
   });
 
   it("uses adaptive thinking, not the removed budget_tokens form", () => {
-    const body = buildClaudeRequestBody(input()) as { thinking: { type: string } };
+    const body = buildClaudeRequestBody(input()) as {
+      thinking: { type: string };
+    };
     expect(body.thinking).toEqual({ type: "adaptive" });
     expect(JSON.stringify(body)).not.toMatch(/budget_tokens/);
   });
 
   it("puts cache_control on the system block", () => {
     const body = buildClaudeRequestBody(input()) as {
-      system: Array<{ type: string; text: string; cache_control?: { type: string } }>;
+      system: Array<{
+        type: string;
+        text: string;
+        cache_control?: { type: string };
+      }>;
     };
     expect(body.system[0].cache_control).toEqual({ type: "ephemeral" });
     expect(body.system[0].text).toBe("You are a validator.");
@@ -57,15 +63,22 @@ describe("request body", () => {
 
   it("passes a json_schema through output_config.format when one is supplied", () => {
     const schema = { type: "object", properties: { ok: { type: "boolean" } } };
-    const body = buildClaudeRequestBody(input({ jsonSchema: schema, effort: "high" })) as {
-      output_config: { effort: string; format?: { type: string; schema: unknown } };
+    const body = buildClaudeRequestBody(
+      input({ jsonSchema: schema, effort: "high" }),
+    ) as {
+      output_config: {
+        effort: string;
+        format?: { type: string; schema: unknown };
+      };
     };
     expect(body.output_config.effort).toBe("high");
     expect(body.output_config.format).toEqual({ type: "json_schema", schema });
   });
 
   it("omits format entirely when no schema is supplied", () => {
-    const body = buildClaudeRequestBody(input()) as { output_config: Record<string, unknown> };
+    const body = buildClaudeRequestBody(input()) as {
+      output_config: Record<string, unknown>;
+    };
     expect(body.output_config).not.toHaveProperty("format");
   });
 
@@ -76,7 +89,7 @@ describe("request body", () => {
           { question: "first?", text: "first answer" },
           { question: "second?", text: "second answer" },
         ],
-      })
+      }),
     ) as { messages: Array<{ role: string; content: string }> };
 
     expect(body.messages[body.messages.length - 1].role).toBe("user");
@@ -103,7 +116,9 @@ describe("request body", () => {
   });
 
   it("opts into server-side fallbacks", () => {
-    expect(buildClaudeRequestBody(input())).toMatchObject({ fallbacks: "default" });
+    expect(buildClaudeRequestBody(input())).toMatchObject({
+      fallbacks: "default",
+    });
   });
 });
 
@@ -112,7 +127,7 @@ describe("stableStringify", () => {
     // An unsorted JSON.stringify above the cache breakpoint silently invalidates the prompt
     // cache on every call, which is invisible except as a bill.
     expect(stableStringify({ a: 1, b: { y: 2, x: 3 } })).toBe(
-      stableStringify({ b: { x: 3, y: 2 }, a: 1 })
+      stableStringify({ b: { x: 3, y: 2 }, a: 1 }),
     );
   });
 
@@ -129,7 +144,11 @@ describe("call()", () => {
         content: [{ type: "text", text: "hello" }],
         stop_reason: "end_turn",
         model: "claude-opus-5",
-        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 900 },
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 900,
+        },
         ...over,
       }),
     }) as unknown as Response;
@@ -140,7 +159,10 @@ describe("call()", () => {
 
     await new ClaudeProvider().call(input());
 
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(url).toBe("https://api.anthropic.com/v1/messages");
     const headers = init.headers as Record<string, string>;
     expect(headers["x-api-key"]).toBe("sk-test");
@@ -150,7 +172,10 @@ describe("call()", () => {
   });
 
   it("surfaces cache reads so prompt-cache health is observable", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => okResponse()));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => okResponse()),
+    );
     const result = await new ClaudeProvider().call(input());
     expect(result.cacheReadTokens).toBe(900);
     expect(result.inputTokens).toBe(10);
@@ -167,12 +192,18 @@ describe("call()", () => {
         okResponse({
           content: [],
           stop_reason: "refusal",
-          stop_details: { type: "refusal", category: "harmful_content", explanation: "no" },
-        })
-      )
+          stop_details: {
+            type: "refusal",
+            category: "harmful_content",
+            explanation: "no",
+          },
+        }),
+      ),
     );
 
-    const err = await new ClaudeProvider().call(input()).catch((e: unknown) => e);
+    const err = await new ClaudeProvider()
+      .call(input())
+      .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ClaudeRefusalError);
     expect((err as ClaudeRefusalError).category).toBe("harmful_content");
     vi.unstubAllGlobals();
@@ -181,9 +212,11 @@ describe("call()", () => {
   it("does not silently return a default object on a refusal", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => okResponse({ content: [], stop_reason: "refusal" }))
+      vi.fn(async () => okResponse({ content: [], stop_reason: "refusal" })),
     );
-    await expect(new ClaudeProvider().call(input())).rejects.toThrow(ClaudeRefusalError);
+    await expect(new ClaudeProvider().call(input())).rejects.toThrow(
+      ClaudeRefusalError,
+    );
     vi.unstubAllGlobals();
   });
 
@@ -192,10 +225,16 @@ describe("call()", () => {
       "fetch",
       vi.fn(
         async () =>
-          ({ ok: false, status: 400, text: async () => "temperature: unsupported" }) as unknown as Response
-      )
+          ({
+            ok: false,
+            status: 400,
+            text: async () => "temperature: unsupported",
+          }) as unknown as Response,
+      ),
     );
-    await expect(new ClaudeProvider().call(input())).rejects.toThrow(/Claude API 400/);
+    await expect(new ClaudeProvider().call(input())).rejects.toThrow(
+      /Claude API 400/,
+    );
     vi.unstubAllGlobals();
   });
 });
@@ -212,7 +251,7 @@ describe("generateText()", () => {
             model: "claude-opus-5",
             usage: {},
           }),
-        }) as unknown as Response
+        }) as unknown as Response,
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -226,7 +265,11 @@ describe("generateText()", () => {
       model: "claude-opus-5",
     } as never);
 
-    const body = JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body));
+    const body = JSON.parse(
+      String(
+        (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+      ),
+    );
     expect(body).not.toHaveProperty("temperature");
     vi.unstubAllGlobals();
   });

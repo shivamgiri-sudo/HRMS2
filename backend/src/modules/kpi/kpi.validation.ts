@@ -21,15 +21,16 @@ export const addTemplateMetricSchema = z.object({
   weightPct: z.number().min(0).max(100),
 });
 
-export const assignTemplateSchema = z.object({
-  templateId: z.string().uuid(),
-  designationId: z.string().uuid().optional(),
-  departmentId: z.string().uuid().optional(),
-  employeeId: z.string().optional(),
-}).refine(
-  d => d.designationId || d.departmentId || d.employeeId,
-  { message: "Must specify at least one assignment target" }
-);
+export const assignTemplateSchema = z
+  .object({
+    templateId: z.string().uuid(),
+    designationId: z.string().uuid().optional(),
+    departmentId: z.string().uuid().optional(),
+    employeeId: z.string().optional(),
+  })
+  .refine((d) => d.designationId || d.departmentId || d.employeeId, {
+    message: "Must specify at least one assignment target",
+  });
 
 export const recordScoreSchema = z.object({
   employeeId: z.string().uuid(),
@@ -41,12 +42,16 @@ export const recordScoreSchema = z.object({
 
 export const bulkScoreSchema = z.object({
   period: z.string().regex(MONTH_REGEX, "period must be YYYY-MM"),
-  scores: z.array(z.object({
-    employeeId: z.string().uuid(),
-    metricId: z.string().uuid(),
-    actualValue: z.number(),
-    source: z.enum(["manual", "system", "dialer"]).optional(),
-  })).min(1),
+  scores: z
+    .array(
+      z.object({
+        employeeId: z.string().uuid(),
+        metricId: z.string().uuid(),
+        actualValue: z.number(),
+        source: z.enum(["manual", "system", "dialer"]).optional(),
+      }),
+    )
+    .min(1),
 });
 
 const KPI_FAMILY = z.enum(["operations", "quality", "performance", "custom"]);
@@ -72,7 +77,10 @@ export const metricsFiltersSchema = z.object({
  */
 export const leaderboardFiltersSchema = z
   .object({
-    period: z.union([z.string(), z.number()]).pipe(z.coerce.string()).pipe(z.string().regex(MONTH_REGEX, "period must be YYYY-MM")),
+    period: z
+      .union([z.string(), z.number()])
+      .pipe(z.coerce.string())
+      .pipe(z.string().regex(MONTH_REGEX, "period must be YYYY-MM")),
     templateId: z.string().uuid().optional(),
     template_id: z.string().uuid().optional(),
     branchId: z.string().uuid().optional(),

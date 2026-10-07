@@ -10,7 +10,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const source = readFileSync(resolve(process.cwd(), "src/db/lms-mysql.ts"), "utf8");
+const source = readFileSync(
+  resolve(process.cwd(), "src/db/lms-mysql.ts"),
+  "utf8",
+);
 
 describe("lms-mysql.ts has no hardcoded fallback credentials", () => {
   it("does not contain the leaked literal password", () => {
@@ -27,7 +30,9 @@ describe("lms-mysql.ts has no hardcoded fallback credentials", () => {
   it("getLmsPool throws when a required var is missing, rather than silently connecting", () => {
     const fnMatch = source.match(/function getLmsPool\(\)[\s\S]*?\n\}/);
     expect(fnMatch, "getLmsPool function body not found").toBeTruthy();
-    expect(fnMatch![0]).toMatch(/if\s*\(!LMS_HOST\s*\|\|\s*!LMS_USER\s*\|\|\s*!LMS_PASSWORD\s*\|\|\s*!LMS_DATABASE\)/);
+    expect(fnMatch![0]).toMatch(
+      /if\s*\(!LMS_HOST\s*\|\|\s*!LMS_USER\s*\|\|\s*!LMS_PASSWORD\s*\|\|\s*!LMS_DATABASE\)/,
+    );
     expect(fnMatch![0]).toMatch(/throw new Error/);
   });
 });

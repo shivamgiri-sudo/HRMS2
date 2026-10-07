@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import express from 'express';
-import request from 'supertest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import express from "express";
+import request from "supertest";
 
 /**
  * Approving a status change must never write NULL into attendance_daily_record.lwp_value.
@@ -17,33 +17,74 @@ import request from 'supertest';
  * because whether an unresolved punch is unpaid is a policy call rather than a derivation.
  */
 
-vi.mock('../../../middleware/authMiddleware.js', () => ({
-  requireAuth: (req: any, _res: express.Response, next: express.NextFunction) => {
-    req.authUser = { id: 'payroll-head-user', role: 'payroll_head', roles: ['payroll_head'] };
+vi.mock("../../../middleware/authMiddleware.js", () => ({
+  requireAuth: (
+    req: any,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    req.authUser = {
+      id: "payroll-head-user",
+      role: "payroll_head",
+      roles: ["payroll_head"],
+    };
     next();
   },
-  requireWriteAccess: (_req: any, _res: express.Response, next: express.NextFunction) => next(),
+  requireWriteAccess: (
+    _req: any,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => next(),
 }));
 
-const mocks = vi.hoisted(() => ({ execute: vi.fn(), hasAnyRole: vi.fn(), logSensitiveAction: vi.fn() }));
-vi.mock('../../../db/mysql.js', () => ({ db: { execute: mocks.execute } }));
-vi.mock('../../../shared/scopeAccess.js', () => ({ hasAnyRole: mocks.hasAnyRole }));
-vi.mock('../../../shared/auditLog.js', () => ({ logSensitiveAction: mocks.logSensitiveAction }));
+const mocks = vi.hoisted(() => ({
+  execute: vi.fn(),
+  hasAnyRole: vi.fn(),
+  logSensitiveAction: vi.fn(),
+}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: mocks.execute } }));
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  hasAnyRole: mocks.hasAnyRole,
+}));
+vi.mock("../../../shared/auditLog.js", () => ({
+  logSensitiveAction: mocks.logSensitiveAction,
+}));
 
 /** The pending override under approval, plus the attendance row it targets. */
-function wireDb(newStatus: string, currentLwp: string | null = '0.00') {
+function wireDb(newStatus: string, currentLwp: string | null = "0.00") {
   mocks.execute.mockImplementation(async (sql: string) => {
-    if (sql.includes('FROM attendance_manual_override amo')) {
-      return [[{
-        id: 'ovr-1', employee_id: 'emp-1', attendance_date: '2026-08-31',
-        old_status: 'present', new_status: newStatus, old_lwp: 0, new_lwp: null,
-        reason: 'Change the status to Leave', approval_status: 'pending',
-        is_payroll_month_locked: 0, higher_approval_required: 0, payroll_month: '2026-08',
-        employee_code: 'MAS47905',
-      }]];
+    if (sql.includes("FROM attendance_manual_override amo")) {
+      return [
+        [
+          {
+            id: "ovr-1",
+            employee_id: "emp-1",
+            attendance_date: "2026-08-31",
+            old_status: "present",
+            new_status: newStatus,
+            old_lwp: 0,
+            new_lwp: null,
+            reason: "Change the status to Leave",
+            approval_status: "pending",
+            is_payroll_month_locked: 0,
+            higher_approval_required: 0,
+            payroll_month: "2026-08",
+            employee_code: "MAS47905",
+          },
+        ],
+      ];
     }
-    if (sql.includes('FROM attendance_daily_record')) {
-      return [[{ id: 'adr-1', attendance_status: 'present', lwp_value: currentLwp, is_locked: 1 }]];
+    if (sql.includes("FROM attendance_daily_record")) {
+      return [
+        [
+          {
+            id: "adr-1",
+            attendance_status: "present",
+            lwp_value: currentLwp,
+            is_locked: 1,
+          },
+        ],
+      ];
     }
     return [{ affectedRows: 1 }];
   });
@@ -51,37 +92,41 @@ function wireDb(newStatus: string, currentLwp: string | null = '0.00') {
 
 /** The lwp_value bound to the UPDATE that writes attendance_daily_record. */
 function writtenLwp(): unknown {
-  const call = mocks.execute.mock.calls.find(
-    ([sql]) => String(sql).includes('UPDATE attendance_daily_record')
+  const call = mocks.execute.mock.calls.find(([sql]) =>
+    String(sql).includes("UPDATE attendance_daily_record"),
   );
   return call ? (call[1] as unknown[])[1] : undefined;
 }
 
 async function approve() {
-  const { attendanceManualOverrideRouter } = await import('../attendance.manual-override.routes.js');
+  const { attendanceManualOverrideRouter } =
+    await import("../attendance.manual-override.routes.js");
   const app = express();
   app.use(express.json());
-  app.use('/api/attendance', attendanceManualOverrideRouter);
-  return request(app).post('/api/attendance/manual-overrides/ovr-1/approve').send({});
+  app.use("/api/attendance", attendanceManualOverrideRouter);
+  return request(app)
+    .post("/api/attendance/manual-overrides/ovr-1/approve")
+    .send({});
 }
 
-describe('manual attendance override — LWP on approve', () => {
+describe("manual attendance override — LWP on approve", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mocks.hasAnyRole.mockImplementation(async (_id: string, ...roles: string[]) =>
-      roles.includes('payroll_head'));
+    mocks.hasAnyRole.mockImplementation(
+      async (_id: string, ...roles: string[]) => roles.includes("payroll_head"),
+    );
   });
 
   it.each([
-    ['leave_approved', 0],
-    ['holiday', 0],
-    ['week_off', 0],
-    ['week_off_worked', 0],
-    ['present', 0],
-    ['half_day', 0.5],
-    ['absent', 1],
-  ])('writes a real number for %s, never NULL', async (status, expected) => {
+    ["leave_approved", 0],
+    ["holiday", 0],
+    ["week_off", 0],
+    ["week_off_worked", 0],
+    ["present", 0],
+    ["half_day", 0.5],
+    ["absent", 1],
+  ])("writes a real number for %s, never NULL", async (status, expected) => {
     wireDb(String(status));
     const res = await approve();
 
@@ -92,15 +137,15 @@ describe('manual attendance override — LWP on approve', () => {
   });
 
   it("keeps the day's existing LWP for missing_punch, which is a policy call", async () => {
-    wireDb('missing_punch', '1.00');
+    wireDb("missing_punch", "1.00");
     const res = await approve();
 
     expect(res.status).toBe(200);
     expect(Number(writtenLwp())).toBe(1);
   });
 
-  it('falls back to 0 rather than NULL when the day carries no LWP at all', async () => {
-    wireDb('missing_punch', null);
+  it("falls back to 0 rather than NULL when the day carries no LWP at all", async () => {
+    wireDb("missing_punch", null);
     const res = await approve();
 
     expect(res.status).toBe(200);
@@ -108,18 +153,37 @@ describe('manual attendance override — LWP on approve', () => {
     expect(Number(writtenLwp())).toBe(0);
   });
 
-  it('still honours an explicitly supplied new_lwp', async () => {
+  it("still honours an explicitly supplied new_lwp", async () => {
     mocks.execute.mockImplementation(async (sql: string) => {
-      if (sql.includes('FROM attendance_manual_override amo')) {
-        return [[{
-          id: 'ovr-1', employee_id: 'emp-1', attendance_date: '2026-08-31',
-          old_status: 'present', new_status: 'leave_approved', new_lwp: 0.5,
-          reason: 'Half a day of unpaid leave', approval_status: 'pending',
-          is_payroll_month_locked: 0, higher_approval_required: 0,
-        }]];
+      if (sql.includes("FROM attendance_manual_override amo")) {
+        return [
+          [
+            {
+              id: "ovr-1",
+              employee_id: "emp-1",
+              attendance_date: "2026-08-31",
+              old_status: "present",
+              new_status: "leave_approved",
+              new_lwp: 0.5,
+              reason: "Half a day of unpaid leave",
+              approval_status: "pending",
+              is_payroll_month_locked: 0,
+              higher_approval_required: 0,
+            },
+          ],
+        ];
       }
-      if (sql.includes('FROM attendance_daily_record')) {
-        return [[{ id: 'adr-1', attendance_status: 'present', lwp_value: '0.00', is_locked: 0 }]];
+      if (sql.includes("FROM attendance_daily_record")) {
+        return [
+          [
+            {
+              id: "adr-1",
+              attendance_status: "present",
+              lwp_value: "0.00",
+              is_locked: 0,
+            },
+          ],
+        ];
       }
       return [{ affectedRows: 1 }];
     });

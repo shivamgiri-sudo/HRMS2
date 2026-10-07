@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
 Clovia's APR export (cl_apr.xlsx, 34 real columns). Not a
@@ -18,16 +21,23 @@ Clovia's APR export (cl_apr.xlsx, 34 real columns). Not a
 function normalizeKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
-function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): string {
+function getByColumn(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string {
   const normalized: Record<string, unknown> = {};
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const col of columnNames) {
     const v = normalized[normalizeKey(col)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
-function n(data: Record<string, unknown>, ...columnNames: string[]): string | null {
+function n(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string | null {
   const v = getByColumn(data, ...columnNames);
   return v || null;
 }
@@ -48,12 +58,15 @@ export async function importClAprBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
 
-  const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+  const uploadedByInt = /^\d+$/.test(importedByUserId)
+    ? Number(importedByUserId)
+    : null;
 
   const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
@@ -65,50 +78,58 @@ export async function importClAprBatch(
     const requiredVal = getByColumn(data, "Unique ID");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Unique ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
-    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
-      requiredVal,
-      n(data, "Date"),
-      n(data, "USER NAME"),
-      n(data, "MAS ID"),
-      n(data, "No. of Calls"),
-      n(data, "LOGIN TIME"),
-      n(data, "PARKS"),
-      n(data, "PARK TIME"),
-      n(data, "AVG PARK"),
-      n(data, "PARKS/CALL"),
-      n(data, "WAIT"),
-      n(data, "TALK"),
-      n(data, "DISPO"),
-      n(data, "PAUSE"),
-      n(data, "Bio"),
-      n(data, "Lunch"),
-      n(data, "OutCal"),
-      n(data, "Qualit"),
-      n(data, "Short"),
-      n(data, "Traini"),
-      n(data, "ACHT"),
-      n(data, "Team Briefing AUX"),
-      n(data, "Total Break"),
-      n(data, "Actual Login Hrs"),
-      n(data, "Downtime"),
-      n(data, "Net Login Hrs+DN"),
-      n(data, "Utilization"),
-      n(data, "Attendance"),
-      n(data, "Week 1"),
-      n(data, "LOB"),
-      n(data, "Chat Count"),
-      n(data, "Email Count"),
-      n(data, "Total Calls"),
-      n(data, "CSAT"),
-      uploadedByInt, batchId,
-    ] });
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        requiredVal,
+        n(data, "Date"),
+        n(data, "USER NAME"),
+        n(data, "MAS ID"),
+        n(data, "No. of Calls"),
+        n(data, "LOGIN TIME"),
+        n(data, "PARKS"),
+        n(data, "PARK TIME"),
+        n(data, "AVG PARK"),
+        n(data, "PARKS/CALL"),
+        n(data, "WAIT"),
+        n(data, "TALK"),
+        n(data, "DISPO"),
+        n(data, "PAUSE"),
+        n(data, "Bio"),
+        n(data, "Lunch"),
+        n(data, "OutCal"),
+        n(data, "Qualit"),
+        n(data, "Short"),
+        n(data, "Traini"),
+        n(data, "ACHT"),
+        n(data, "Team Briefing AUX"),
+        n(data, "Total Break"),
+        n(data, "Actual Login Hrs"),
+        n(data, "Downtime"),
+        n(data, "Net Login Hrs+DN"),
+        n(data, "Utilization"),
+        n(data, "Attendance"),
+        n(data, "Week 1"),
+        n(data, "LOB"),
+        n(data, "Chat Count"),
+        n(data, "Email Count"),
+        n(data, "Total Calls"),
+        n(data, "CSAT"),
+        uploadedByInt,
+        batchId,
+      ],
+    });
   }
   const inserted = await chunkedMasmisInsert({
     insertPrefix: `INSERT INTO db_masmis.cl_apr (unique_id, report_date, user_name, mas_id, no_of_calls, login_time, parks, park_time, avg_park, parks_per_call, wait_time, talk_time, dispo_time, pause_time, bio, lunch, outcal, qualit, short_aux, traini, acht, team_briefing_aux, total_break, actual_login_hrs, downtime, net_login_hrs_dn, utilization, attendance, week_1, lob, chat_count, email_count, total_calls, csat, uploaded_by, upload_batch_id)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: toInsert,
   });
   errorUpdates.push(...inserted.errorUpdates);
@@ -125,17 +146,26 @@ export async function importClAprBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

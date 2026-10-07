@@ -5,10 +5,22 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
-import { loadWeekoffRules, applyWeekoffRules, sortBySeniorPriority } from "./weekoff-rule.service.js";
+import {
+  loadWeekoffRules,
+  applyWeekoffRules,
+  sortBySeniorPriority,
+} from "./weekoff-rule.service.js";
 import type { WeekoffRule } from "./weekoff-rule.service.js";
-import { computeScheduledMinutes, rosterAssignmentColumns, shiftMasterColumns } from "../wfm/shift-scheduling.util.js";
-import { applyRestDecision, isRestPolicyFeatureActive, validateMinimumRest } from "../wfm/rest-policy.service.js";
+import {
+  computeScheduledMinutes,
+  rosterAssignmentColumns,
+  shiftMasterColumns,
+} from "../wfm/shift-scheduling.util.js";
+import {
+  applyRestDecision,
+  isRestPolicyFeatureActive,
+  validateMinimumRest,
+} from "../wfm/rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "./roster-lock-guard.js";
 import { stampGenerationRunRows } from "../wfm/roster-offday-apply.js";
 import {
@@ -105,17 +117,21 @@ export const rosterGenerationService = {
   async generateForCycle(
     cycleId: string,
     triggeredBy: string,
-    req?: Request
+    req?: Request,
   ): Promise<GenerationResult> {
     // 1. Load cycle
     const [cycleRows] = await db.execute<RosterCycleRow[]>(
       "SELECT * FROM weekly_roster_cycle WHERE id = ? LIMIT 1",
-      [cycleId]
+      [cycleId],
     );
     const cycle = cycleRows[0];
-    if (!cycle) throw Object.assign(new Error("Cycle not found"), { statusCode: 404 });
+    if (!cycle)
+      throw Object.assign(new Error("Cycle not found"), { statusCode: 404 });
     if (!["draft", "submitted"].includes(cycle.status)) {
-      throw Object.assign(new Error("Auto-generation only allowed on draft or submitted cycles"), { statusCode: 409 });
+      throw Object.assign(
+        new Error("Auto-generation only allowed on draft or submitted cycles"),
+        { statusCode: 409 },
+      );
     }
 
     // Roster-gov is adopted going forward only. Generation ends up in wfm_roster_assignment
@@ -123,18 +139,32 @@ export const rosterGenerationService = {
     // so a cycle dated over existing live assignments rewrites roster history from a template,
     // and attendance is derived against rosters. Checked BEFORE the run record is written, so
     // a refused generation leaves nothing behind.
-    await assertNoHistoricalRosterOverlap(String(cycle.week_start_date).slice(0, 10),
-                                          String(cycle.week_end_date).slice(0, 10));
+    await assertNoHistoricalRosterOverlap(
+      String(cycle.week_start_date).slice(0, 10),
+      String(cycle.week_end_date).slice(0, 10),
+    );
 
     const runId = randomUUID();
-    const params_json = JSON.stringify({ cycle_id: cycleId, process_id: cycle.process_id, week_start: cycle.week_start_date, week_end: cycle.week_end_date });
+    const params_json = JSON.stringify({
+      cycle_id: cycleId,
+      process_id: cycle.process_id,
+      week_start: cycle.week_start_date,
+      week_end: cycle.week_end_date,
+    });
 
     // 2. Create the generation run record (status=running)
     await db.execute(
       `INSERT INTO roster_generation_run
          (id, cycle_id, process_id, branch_id, run_type, parameters_json, status, triggered_by)
        VALUES (?, ?, ?, ?, 'manual_trigger', ?, 'running', ?)`,
-      [runId, cycleId, cycle.process_id, cycle.branch_id ?? null, params_json, triggeredBy]
+      [
+        runId,
+        cycleId,
+        cycle.process_id,
+        cycle.branch_id ?? null,
+        params_json,
+        triggeredBy,
+      ],
     );
 
     const result: GenerationResult = {
@@ -174,7 +204,9 @@ export const rosterGenerationService = {
              FROM employees e
              LEFT JOIN designation_master dm ON e.designation_id = dm.id
              WHERE e.process_id = ? AND e.active_status = 1`;
-      const empParams = cycle.branch_id ? [cycle.process_id, cycle.branch_id] : [cycle.process_id];
+      const empParams = cycle.branch_id
+        ? [cycle.process_id, cycle.branch_id]
+        : [cycle.process_id];
       const [employees] = await db.execute<EmployeeRow[]>(empQuery, empParams);
 
       // 4. Load approved week-off preferences for these employees
@@ -183,9 +215,14 @@ export const rosterGenerationService = {
         ? await loadApprovedWeekoffs(empIds)
         : new Map<string, ApprovedWeekOff>();
       const approvedLeaveDates = await loadApprovedLeaveDates(
-        empIds, cycle.week_start_date, cycle.week_end_date,
+        empIds,
+        cycle.week_start_date,
+        cycle.week_end_date,
       );
-      const frozenShiftAssignments = await loadFrozenShiftAssignments(empIds, cycle.week_start_date);
+      const frozenShiftAssignments = await loadFrozenShiftAssignments(
+        empIds,
+        cycle.week_start_date,
+      );
 
       // 5. Load active shift templates for this process
       const [shiftTemplates] = await db.execute<ShiftTemplateRow[]>(
@@ -196,17 +233,20 @@ export const rosterGenerationService = {
             AND effective_from <= ?
             AND (effective_to IS NULL OR effective_to >= ?)
           ORDER BY process_id DESC`,
-        [cycle.process_id, cycle.week_end_date, cycle.week_start_date]
+        [cycle.process_id, cycle.week_end_date, cycle.week_start_date],
       );
       const defaultShift = shiftTemplates[0] ?? null;
 
       // 6. Load public holidays in the week range
-      const holidays = await loadHolidays(cycle.week_start_date, cycle.week_end_date);
+      const holidays = await loadHolidays(
+        cycle.week_start_date,
+        cycle.week_end_date,
+      );
 
       // 7. Load roster template for this process (if any)
       const [templateRows] = await db.execute<RosterTemplateRow[]>(
         "SELECT * FROM roster_template WHERE process_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1",
-        [cycle.process_id]
+        [cycle.process_id],
       );
       const rosterTemplate = templateRows[0] ?? null;
 
@@ -218,11 +258,19 @@ export const rosterGenerationService = {
       const templatePattern: RosterTemplatePattern | null = rosterTemplate
         ? parseRosterTemplatePattern(rosterTemplate.pattern_json)
         : null;
-      const scopeDefault = await resolveWeekOffScopeDefault(cycle.process_id, cycle.branch_id);
+      const scopeDefault = await resolveWeekOffScopeDefault(
+        cycle.process_id,
+        cycle.branch_id,
+      );
 
       // 7b. Load process week-off rules (blackout, min_gap, force_sunday, senior_priority)
-      const weekoffRules = await loadWeekoffRules(cycle.process_id).catch(() => [] as WeekoffRule[]);
-      const sortedEmployees = sortBySeniorPriority(weekoffRules, employees as any[]) as EmployeeRow[];
+      const weekoffRules = await loadWeekoffRules(cycle.process_id).catch(
+        () => [] as WeekoffRule[],
+      );
+      const sortedEmployees = sortBySeniorPriority(
+        weekoffRules,
+        employees as any[],
+      ) as EmployeeRow[];
 
       // 8. Generate dates in the week
       const dates = getDatesInRange(cycle.week_start_date, cycle.week_end_date);
@@ -257,7 +305,13 @@ export const rosterGenerationService = {
             `INSERT INTO roster_decision_audit
                (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied, is_week_off)
              VALUES (UUID(), ?, ?, ?, ?, 'shift_assigned', ?, 0)`,
-            [runId, cycleId, emp.id, dates[0] ?? cycle.week_start_date, `error:${msg.slice(0, 80)}`]
+            [
+              runId,
+              cycleId,
+              emp.id,
+              dates[0] ?? cycle.week_start_date,
+              `error:${msg.slice(0, 80)}`,
+            ],
           );
         }
       }
@@ -271,7 +325,7 @@ export const rosterGenerationService = {
       if (result.weekOffPolicyMissingEmployees.length > 0) {
         for (const code of result.weekOffPolicyMissingEmployees) {
           result.errors.push(
-            `WEEK_OFF_POLICY_MISSING:emp:${code} — no employee preference, roster template, or process/branch/org default resolved a week-off day for this cycle`
+            `WEEK_OFF_POLICY_MISSING:emp:${code} — no employee preference, roster template, or process/branch/org default resolved a week-off day for this cycle`,
           );
         }
         await db.execute(
@@ -279,7 +333,12 @@ export const rosterGenerationService = {
              (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied, is_week_off)
            SELECT UUID(), ?, ?, e.id, ?, 'weekoff_denied', 'week_off_policy_missing', 0
              FROM employees e WHERE e.employee_code IN (${result.weekOffPolicyMissingEmployees.map(() => "?").join(",")})`,
-          [runId, cycleId, dates[0] ?? cycle.week_start_date, ...result.weekOffPolicyMissingEmployees]
+          [
+            runId,
+            cycleId,
+            dates[0] ?? cycle.week_start_date,
+            ...result.weekOffPolicyMissingEmployees,
+          ],
         );
       }
       // 10b. Area 2 (2026-08-13): sync the governance draft into the live ops
@@ -287,14 +346,21 @@ export const rosterGenerationService = {
       // blocked on insufficient rest is reflected in the SAME status/
       // error_details write as the week-off gap above, rather than a second
       // update after the fact. See syncGeneratedToLiveAssignments below.
-      const syncResult = await syncGeneratedToLiveAssignments(cycleId, runId, cycle);
+      const syncResult = await syncGeneratedToLiveAssignments(
+        cycleId,
+        runId,
+        cycle,
+      );
       result.restPolicyBlockedEmployees = syncResult.blockedEmployeeCodes;
       for (const entry of syncResult.blockedEmployeeCodes) {
         result.errors.push(`INSUFFICIENT_REST_OR_MISSING_POLICY:emp:${entry}`);
       }
 
-      const runStatus = (result.weekOffPolicyMissingEmployees.length > 0 || result.restPolicyBlockedEmployees.length > 0)
-        ? "partial" : "completed";
+      const runStatus =
+        result.weekOffPolicyMissingEmployees.length > 0 ||
+        result.restPolicyBlockedEmployees.length > 0
+          ? "partial"
+          : "completed";
       await db.execute(
         `UPDATE roster_generation_run SET
            status = ?,
@@ -305,14 +371,22 @@ export const rosterGenerationService = {
            error_details = ?,
            completed_at = NOW()
          WHERE id = ?`,
-        [runStatus, result.employees_processed, result.assignments_created, result.weekoffs_allocated, result.conflicts_found, result.errors.length ? JSON.stringify(result.errors) : null, runId]
+        [
+          runStatus,
+          result.employees_processed,
+          result.assignments_created,
+          result.weekoffs_allocated,
+          result.conflicts_found,
+          result.errors.length ? JSON.stringify(result.errors) : null,
+          runId,
+        ],
       );
-
     } catch (fatalErr) {
-      const msg = fatalErr instanceof Error ? fatalErr.message : String(fatalErr);
+      const msg =
+        fatalErr instanceof Error ? fatalErr.message : String(fatalErr);
       await db.execute(
         "UPDATE roster_generation_run SET status = 'failed', error_details = ?, completed_at = NOW() WHERE id = ?",
-        [JSON.stringify([msg]), runId]
+        [JSON.stringify([msg]), runId],
       );
       throw fatalErr;
     }
@@ -338,7 +412,7 @@ export const rosterGenerationService = {
   async listGenerationRuns(cycleId: string): Promise<RowDataPacket[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM roster_generation_run WHERE cycle_id = ? ORDER BY started_at DESC",
-      [cycleId]
+      [cycleId],
     );
     return rows;
   },
@@ -346,7 +420,7 @@ export const rosterGenerationService = {
   async getDecisionAudit(
     runId: string,
     page = 1,
-    limit = 100
+    limit = 100,
   ): Promise<{ rows: RowDataPacket[]; total: number }> {
     const offset = (page - 1) * limit;
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -358,11 +432,11 @@ export const rosterGenerationService = {
         WHERE rda.run_id = ?
         ORDER BY rda.roster_date ASC, e.employee_code ASC
         ${sqlLimitOffset(limit, offset)}`,
-      [runId]
+      [runId],
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS total FROM roster_decision_audit WHERE run_id = ?",
-      [runId]
+      [runId],
     );
     return { rows, total: (countRows[0] as any).total ?? 0 };
   },
@@ -390,13 +464,23 @@ export const rosterGenerationService = {
 // consolidation (single canonical table) remains a separate, deliberately
 // out-of-scope future migration — see the audit for exactly what that would
 // require.
-const EMP_PREF_DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const EMP_PREF_DAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
-async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, ApprovedWeekOff>> {
+async function loadApprovedWeekoffs(
+  empIds: string[],
+): Promise<Map<string, ApprovedWeekOff>> {
   const placeholders = empIds.map(() => "?").join(",");
   const [rows] = await db.execute<ApprovedWeekOff[]>(
     `SELECT * FROM week_off_preference WHERE employee_id IN (${placeholders}) AND approved = 1`,
-    empIds
+    empIds,
   );
   const map = new Map<string, ApprovedWeekOff>();
   for (const row of rows) map.set(row.employee_id, row);
@@ -410,14 +494,18 @@ async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, Appro
            FROM employee_roster_preference
           WHERE employee_id IN (${unresolvedPlaceholders}) AND status = 'approved'
           ORDER BY updated_at DESC`,
-        unresolved
+        unresolved,
       );
       const seen = new Set<string>();
       for (const row of empPrefRows as RowDataPacket[]) {
         const empId = String(row.employee_id);
         if (seen.has(empId)) continue; // most-recently-updated approved row wins if more than one
         seen.add(empId);
-        const dayIdx = EMP_PREF_DAY_NAMES.findIndex((d) => d.toLowerCase() === String(row.preferred_week_off ?? "").toLowerCase());
+        const dayIdx = EMP_PREF_DAY_NAMES.findIndex(
+          (d) =>
+            d.toLowerCase() ===
+            String(row.preferred_week_off ?? "").toLowerCase(),
+        );
         if (dayIdx < 0) continue; // no day recorded — cannot resolve from this row
         map.set(empId, {
           id: String(row.id),
@@ -433,7 +521,10 @@ async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, Appro
       // this file: generation must still produce a roster if this lookup is
       // briefly unreachable, logged rather than silently treated as "no
       // employee_roster_preference exists."
-      console.error("[roster] employee_roster_preference fallback lookup unavailable:", (error as Error)?.message);
+      console.error(
+        "[roster] employee_roster_preference fallback lookup unavailable:",
+        (error as Error)?.message,
+      );
     }
   }
   return map;
@@ -447,7 +538,11 @@ async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, Appro
  * filters its employee pool on the same approved/accepted leave_request condition;
  * mirrored here rather than reinvented.
  */
-export async function loadApprovedLeaveDates(empIds: string[], from: string, to: string): Promise<Set<string>> {
+export async function loadApprovedLeaveDates(
+  empIds: string[],
+  from: string,
+  to: string,
+): Promise<Set<string>> {
   const dates = new Set<string>();
   if (empIds.length === 0) return dates;
   try {
@@ -458,13 +553,19 @@ export async function loadApprovedLeaveDates(empIds: string[], from: string, to:
         WHERE employee_id IN (${placeholders})
           AND LOWER(status) IN ('approved','accepted')
           AND from_date <= ? AND to_date >= ?`,
-      [...empIds, to, from]
+      [...empIds, to, from],
     );
     for (const row of rows as RowDataPacket[]) {
       const empId = String(row.employee_id);
       // Clamp the leave range to the cycle window being generated.
-      const start = String(row.from_date).slice(0, 10) < from ? from : String(row.from_date).slice(0, 10);
-      const end = String(row.to_date).slice(0, 10) > to ? to : String(row.to_date).slice(0, 10);
+      const start =
+        String(row.from_date).slice(0, 10) < from
+          ? from
+          : String(row.from_date).slice(0, 10);
+      const end =
+        String(row.to_date).slice(0, 10) > to
+          ? to
+          : String(row.to_date).slice(0, 10);
       for (const date of getDatesInRange(start, end)) {
         dates.add(`${empId}|${date}`);
       }
@@ -473,7 +574,10 @@ export async function loadApprovedLeaveDates(empIds: string[], from: string, to:
     // Non-fatal, matching loadHolidays below: roster generation must still produce
     // a roster if the leave table is briefly unreachable, but the failure is logged
     // rather than silently treated as "nobody is on leave."
-    console.error("[roster] approved-leave lookup unavailable; generating without a leave check:", (error as Error)?.message);
+    console.error(
+      "[roster] approved-leave lookup unavailable; generating without a leave check:",
+      (error as Error)?.message,
+    );
   }
   return dates;
 }
@@ -492,7 +596,10 @@ export async function loadApprovedLeaveDates(empIds: string[], from: string, to:
  * A frozen employee with no prior assignment at all still falls back to defaultShift —
  * there is nothing yet to preserve.
  */
-export async function loadFrozenShiftAssignments(empIds: string[], beforeDate: string): Promise<Map<string, string>> {
+export async function loadFrozenShiftAssignments(
+  empIds: string[],
+  beforeDate: string,
+): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (empIds.length === 0) return map;
   try {
@@ -509,16 +616,20 @@ export async function loadFrozenShiftAssignments(empIds: string[], beforeDate: s
             GROUP BY employee_id
          ) latest ON latest.employee_id = wra.employee_id AND latest.last_date = wra.roster_date
         WHERE wra.shift_template_id IS NOT NULL`,
-      [...empIds, beforeDate]
+      [...empIds, beforeDate],
     );
     for (const row of rows as RowDataPacket[]) {
-      if (row.shift_template_id) map.set(String(row.employee_id), String(row.shift_template_id));
+      if (row.shift_template_id)
+        map.set(String(row.employee_id), String(row.shift_template_id));
     }
   } catch (error) {
     // Non-fatal: falling back to defaultShift for every frozen employee is exactly
     // today's behavior, not a regression, so a lookup failure degrades to that rather
     // than blocking generation.
-    console.error("[roster] frozen-shift lookup unavailable; frozen employees will use the default shift:", (error as Error)?.message);
+    console.error(
+      "[roster] frozen-shift lookup unavailable; frozen employees will use the default shift:",
+      (error as Error)?.message,
+    );
   }
   return map;
 }
@@ -538,13 +649,16 @@ async function loadHolidays(from: string, to: string): Promise<Set<string>> {
     const [rows] = await db.execute<HolidayRow[]>(
       `SELECT holiday_date FROM leave_holiday_master
         WHERE active_status = 1 AND holiday_date BETWEEN ? AND ?`,
-      [from, to]
+      [from, to],
     );
     for (const r of rows) set.add(String(r.holiday_date).slice(0, 10));
   } catch (error) {
     // Kept non-fatal so roster generation still produces a roster, but no longer
     // silent — a swallowed failure here means people are rostered on holidays.
-    console.error("[roster] holiday calendar unavailable; generating without holidays:", (error as Error)?.message);
+    console.error(
+      "[roster] holiday calendar unavailable; generating without holidays:",
+      (error as Error)?.message,
+    );
   }
   return set;
 }
@@ -588,7 +702,21 @@ async function processEmployee(ctx: {
   runId: string;
   result: GenerationResult;
 }): Promise<void> {
-  const { emp, dates, holidays, approvedWeekoffs, approvedLeaveDates, frozenShiftAssignments, defaultShift, templatePattern, scopeDefault, weekoffRules, cycleId, runId, result } = ctx;
+  const {
+    emp,
+    dates,
+    holidays,
+    approvedWeekoffs,
+    approvedLeaveDates,
+    frozenShiftAssignments,
+    defaultShift,
+    templatePattern,
+    scopeDefault,
+    weekoffRules,
+    cycleId,
+    runId,
+    result,
+  } = ctx;
   const weekoff = approvedWeekoffs.get(emp.id);
 
   // Part A.1 (2026-08-13): resolve which tier of the hierarchy — employee
@@ -598,7 +726,11 @@ async function processEmployee(ctx: {
   // GenerationResult.weekOffPolicyMissingEmployees), never silently treated
   // as "this employee works every day" without a trace.
   let resolvedDay: number | null = null;
-  let weekOffSource: "employee_preference" | "roster_template" | WeekOffScopeSource | "unresolved" = "unresolved";
+  let weekOffSource:
+    | "employee_preference"
+    | "roster_template"
+    | WeekOffScopeSource
+    | "unresolved" = "unresolved";
   if (weekoff) {
     resolvedDay = weekoff.preferred_day;
     weekOffSource = "employee_preference";
@@ -672,7 +804,8 @@ async function processEmployee(ctx: {
         }
       } else {
         decisionType = "weekoff_assigned";
-        ruleApplied = weekOffSource === "employee_preference" ? "fcfs" : weekOffSource;
+        ruleApplied =
+          weekOffSource === "employee_preference" ? "fcfs" : weekOffSource;
         result.weekoffs_allocated++;
         lastWeekoffDate = date;
       }
@@ -685,17 +818,27 @@ async function processEmployee(ctx: {
       // on every run. Falls back to defaultShift only when there's no prior
       // assignment yet to preserve (a newly-frozen or newly-joined employee).
       decisionType = "shift_frozen";
-      shiftTemplateId = frozenShiftAssignments.get(emp.id) ?? defaultShift?.id ?? null;
-      ruleApplied = frozenShiftAssignments.has(emp.id) ? "frozen_rotation" : "frozen_rotation_no_prior_shift";
+      shiftTemplateId =
+        frozenShiftAssignments.get(emp.id) ?? defaultShift?.id ?? null;
+      ruleApplied = frozenShiftAssignments.has(emp.id)
+        ? "frozen_rotation"
+        : "frozen_rotation_no_prior_shift";
     } else {
       // For weekly/daily/rotating — use defaultShift (template-based rotation can be enhanced later)
       decisionType = "shift_assigned";
       shiftTemplateId = defaultShift?.id ?? null;
-      ruleApplied = emp.shift_rotation_type === "weekly" ? "weekly_rotation" : emp.shift_rotation_type === "daily" ? "daily_rotation" : "rotating_cycle";
+      ruleApplied =
+        emp.shift_rotation_type === "weekly"
+          ? "weekly_rotation"
+          : emp.shift_rotation_type === "daily"
+            ? "daily_rotation"
+            : "rotating_cycle";
     }
 
     if (shiftTemplateId === null && !isHoliday && !isWeekOffDay) {
-      result.errors.push(`emp:${emp.employee_code} date:${date} — no shift template available`);
+      result.errors.push(
+        `emp:${emp.employee_code} date:${date} — no shift template available`,
+      );
       result.conflicts_found++;
       continue;
     }
@@ -709,7 +852,14 @@ async function processEmployee(ctx: {
          shift_template_id = VALUES(shift_template_id),
          is_week_off       = VALUES(is_week_off),
          is_holiday        = VALUES(is_holiday)`,
-      [cycleId, emp.id, date, shiftTemplateId, isWeekOffDay ? 1 : 0, isHoliday ? 1 : 0]
+      [
+        cycleId,
+        emp.id,
+        date,
+        shiftTemplateId,
+        isWeekOffDay ? 1 : 0,
+        isHoliday ? 1 : 0,
+      ],
     );
 
     // Audit record
@@ -719,13 +869,17 @@ async function processEmployee(ctx: {
           assigned_shift_template_id, is_week_off, preferred_day, allocated_day, rule_applied)
        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        runId, cycleId, emp.id, date, decisionType,
+        runId,
+        cycleId,
+        emp.id,
+        date,
+        decisionType,
         shiftTemplateId,
         isWeekOffDay ? 1 : 0,
         weekoff?.preferred_day ?? null,
         isWeekOffDay ? dayOfWeek : null,
         ruleApplied,
-      ]
+      ],
     );
 
     result.assignments_created++;
@@ -735,7 +889,7 @@ async function processEmployee(ctx: {
 async function syncGeneratedToLiveAssignments(
   cycleId: string,
   runId: string,
-  cycle: RosterCycleRow
+  cycle: RosterCycleRow,
 ): Promise<{ blockedEmployeeCodes: string[] }> {
   // Copy roster_daily_assignment rows into wfm_roster_assignment (the live ops table)
   // Only non-weekoff, non-holiday rows get a live assignment; week-off days are excluded
@@ -769,7 +923,7 @@ async function syncGeneratedToLiveAssignments(
        LEFT JOIN wfm_shift_template wst ON wst.id = rda.shift_template_id
        ${shiftMasterJoin}
       WHERE rda.cycle_id = ? AND rda.is_week_off = 0 AND rda.is_holiday = 0`,
-    [cycleId]
+    [cycleId],
   );
 
   // shift_version_id/scheduled_minutes only exist once migration 1200 has been
@@ -786,9 +940,30 @@ async function syncGeneratedToLiveAssignments(
   const restPolicyFeatureActive = await isRestPolicyFeatureActive();
   const blockedEmployeeCodes: string[] = [];
 
-  const insertCols = ["id", "employee_id", "shift_id", "roster_date", "shift_start_time", "shift_end_time",
-    "roster_status", "publish_status", "generation_run_id", "decision_source"];
-  const placeholders = ["UUID()", "?", "?", "?", "?", "?", "'Rostered'", "'draft'", "?", "'rule_engine'"];
+  const insertCols = [
+    "id",
+    "employee_id",
+    "shift_id",
+    "roster_date",
+    "shift_start_time",
+    "shift_end_time",
+    "roster_status",
+    "publish_status",
+    "generation_run_id",
+    "decision_source",
+  ];
+  const placeholders = [
+    "UUID()",
+    "?",
+    "?",
+    "?",
+    "?",
+    "?",
+    "'Rostered'",
+    "'draft'",
+    "?",
+    "'rule_engine'",
+  ];
   const updateClauses = [
     "shift_id          = VALUES(shift_id)",
     "shift_start_time  = VALUES(shift_start_time)",
@@ -808,8 +983,12 @@ async function syncGeneratedToLiveAssignments(
   }
 
   for (const row of rows) {
-    const shiftStart = row.shift_start_time ? String(row.shift_start_time).slice(0, 5) : null;
-    const shiftEnd = row.shift_end_time ? String(row.shift_end_time).slice(0, 5) : null;
+    const shiftStart = row.shift_start_time
+      ? String(row.shift_start_time).slice(0, 5)
+      : null;
+    const shiftEnd = row.shift_end_time
+      ? String(row.shift_end_time).slice(0, 5)
+      : null;
 
     // Round 2 follow-up (2026-08-13): this bridge is the last of the two
     // remaining P0 lock gaps — generateForCycle() only ever checked
@@ -821,16 +1000,27 @@ async function syncGeneratedToLiveAssignments(
     // write path in this program now use — checked before the rest-policy
     // validation below since a locked date is a harder stop regardless of
     // rest outcome.
-    const lockResult = await checkEmployeeDateNotLocked(db, String(row.employee_id), String(row.roster_date).slice(0, 10));
+    const lockResult = await checkEmployeeDateNotLocked(
+      db,
+      String(row.employee_id),
+      String(row.roster_date).slice(0, 10),
+    );
     if (lockResult.blocked) {
-      blockedEmployeeCodes.push(`${row.employee_code} — ${String(row.roster_date).slice(0, 10)} is already locked for payroll; this sync does not overwrite a locked date`);
+      blockedEmployeeCodes.push(
+        `${row.employee_code} — ${String(row.roster_date).slice(0, 10)} is already locked for payroll; this sync does not overwrite a locked date`,
+      );
       continue; // does not sync this row into the live table
     }
 
     if (restPolicyFeatureActive && shiftStart && shiftEnd) {
       const restCheck = await validateMinimumRest(
-        { employeeId: row.employee_id, processId: cycle.process_id, branchId: cycle.branch_id, forDate: String(row.roster_date).slice(0, 10) },
-        { startTime: shiftStart, endTime: shiftEnd }
+        {
+          employeeId: row.employee_id,
+          processId: cycle.process_id,
+          branchId: cycle.branch_id,
+          forDate: String(row.roster_date).slice(0, 10),
+        },
+        { startTime: shiftStart, endTime: shiftEnd },
       );
       // WARN mode records the shortfall and lets the row through; BLOCK refuses it. Decided by
       // the shared resolver, never by reading enforcementMode here — four write paths each
@@ -843,17 +1033,27 @@ async function syncGeneratedToLiveAssignments(
         blockedEmployeeCodes.push(
           restCheck.reason === "REST_POLICY_MISSING"
             ? `${row.employee_code} — no minimum-rest policy configured for this employee/process/branch/organization`
-            : `${row.employee_code} — only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min); this automated sync does not support emergency override`
+            : `${row.employee_code} — only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min); this automated sync does not support emergency override`,
         );
         continue; // does not sync this row into the live table
       }
     }
 
     const params: unknown[] = [
-      row.employee_id, row.shift_master_id ?? null, row.roster_date, row.shift_start_time ?? null, row.shift_end_time ?? null, runId,
+      row.employee_id,
+      row.shift_master_id ?? null,
+      row.roster_date,
+      row.shift_start_time ?? null,
+      row.shift_end_time ?? null,
+      runId,
     ];
     if (hasShiftVersionId) params.push(row.shift_master_id ?? null);
-    if (hasScheduledMinutes) params.push(shiftStart && shiftEnd ? computeScheduledMinutes(shiftStart, shiftEnd) : null);
+    if (hasScheduledMinutes)
+      params.push(
+        shiftStart && shiftEnd
+          ? computeScheduledMinutes(shiftStart, shiftEnd)
+          : null,
+      );
 
     await db.execute(
       `INSERT INTO wfm_roster_assignment
@@ -861,7 +1061,7 @@ async function syncGeneratedToLiveAssignments(
        VALUES (${placeholders.join(", ")})
        ON DUPLICATE KEY UPDATE
          ${updateClauses.join(",\n         ")}`,
-      params
+      params,
     );
   }
 

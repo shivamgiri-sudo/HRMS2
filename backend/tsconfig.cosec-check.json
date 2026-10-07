@@ -13,7 +13,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": [
-    "src/modules/wfm/cosec-sync.worker.ts"
-  ]
+  "include": ["src/modules/wfm/cosec-sync.worker.ts"]
 }

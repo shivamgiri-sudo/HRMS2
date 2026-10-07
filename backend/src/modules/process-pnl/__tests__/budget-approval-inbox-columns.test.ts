@@ -37,7 +37,9 @@ beforeEach(() => {
 
 describe("budget approval inbox selects columns that actually exist", () => {
   it("never references the three phantom columns", async () => {
-    await branchBudgetService.listPendingForReviewer("finance_head", "user-1", ["finance_head"]);
+    await branchBudgetService.listPendingForReviewer("finance_head", "user-1", [
+      "finance_head",
+    ]);
 
     expect(lastSql).not.toMatch(/h\.gross_budget\s*,/);
     expect(lastSql).not.toMatch(/h\.pnl_budget\s*,/);
@@ -45,7 +47,9 @@ describe("budget approval inbox selects columns that actually exist", () => {
   });
 
   it("selects the real finance_budget_header column names", async () => {
-    await branchBudgetService.listPendingForReviewer("finance_head", "user-1", ["finance_head"]);
+    await branchBudgetService.listPendingForReviewer("finance_head", "user-1", [
+      "finance_head",
+    ]);
 
     expect(lastSql).toContain("h.gross_budget_amount");
     expect(lastSql).toContain("h.pnl_budget_amount");
@@ -53,7 +57,9 @@ describe("budget approval inbox selects columns that actually exist", () => {
   });
 
   it("aliases them back to the field names BudgetApprovalInbox.tsx reads", async () => {
-    await branchBudgetService.listPendingForReviewer("branch_head", "user-1", ["branch_head"]);
+    await branchBudgetService.listPendingForReviewer("branch_head", "user-1", [
+      "branch_head",
+    ]);
 
     expect(lastSql).toMatch(/gross_budget_amount\s+AS\s+gross_budget/i);
     expect(lastSql).toMatch(/pnl_budget_amount\s+AS\s+pnl_budget/i);
@@ -62,23 +68,35 @@ describe("budget approval inbox selects columns that actually exist", () => {
 
   it("still maps each reviewer role to the status it is meant to action", async () => {
     // Unchanged behaviour, pinned so the column fix cannot quietly alter the queue.
-    await branchBudgetService.listPendingForReviewer("branch_head", "u", ["branch_head"]);
+    await branchBudgetService.listPendingForReviewer("branch_head", "u", [
+      "branch_head",
+    ]);
     expect(mockDb.execute.mock.calls[0][1]).toContain("submitted");
 
     vi.clearAllMocks();
     mockDb.execute.mockImplementation(async () => [[], []]);
-    await branchBudgetService.listPendingForReviewer("finance_head", "u", ["finance_head"]);
+    await branchBudgetService.listPendingForReviewer("finance_head", "u", [
+      "finance_head",
+    ]);
     expect(mockDb.execute.mock.calls[0][1]).toContain("branch_head_approved");
   });
 
   it("returns an empty queue for a role that reviews nothing, without querying", async () => {
-    const result = await branchBudgetService.listPendingForReviewer("employee", "u", ["employee"]);
+    const result = await branchBudgetService.listPendingForReviewer(
+      "employee",
+      "u",
+      ["employee"],
+    );
     expect(result).toEqual([]);
     expect(mockDb.execute).not.toHaveBeenCalled();
   });
 
   it("returns an empty queue for accounts_head, without querying — the Accounts Head stage was removed from this workflow (owner decision, 2026-08-21)", async () => {
-    const result = await branchBudgetService.listPendingForReviewer("accounts_head", "u", ["accounts_head"]);
+    const result = await branchBudgetService.listPendingForReviewer(
+      "accounts_head",
+      "u",
+      ["accounts_head"],
+    );
     expect(result).toEqual([]);
     expect(mockDb.execute).not.toHaveBeenCalled();
   });

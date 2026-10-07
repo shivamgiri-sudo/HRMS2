@@ -42,22 +42,31 @@ function assertPeriod(period: string, label: string): void {
 export function financialYearOf(period: string): string {
   assertPeriod(period, "Period");
   const [year, month] = period.split("-").map(Number);
-  return month >= 4 ? `${year}-${String(year + 1).slice(-2)}` : `${year - 1}-${String(year).slice(-2)}`;
+  return month >= 4
+    ? `${year}-${String(year + 1).slice(-2)}`
+    : `${year - 1}-${String(year).slice(-2)}`;
 }
 
 /** Every month from `from` to `to` inclusive, ascending. */
 export function monthsBetween(from: string, to: string): string[] {
   assertPeriod(from, "Start period");
   assertPeriod(to, "End period");
-  if (to < from) throw new Error("The recognition period cannot end before it starts");
+  if (to < from)
+    throw new Error("The recognition period cannot end before it starts");
   const months: string[] = [];
   let [year, month] = from.split("-").map(Number);
   const [endYear, endMonth] = to.split("-").map(Number);
   // Bounded so a malformed range cannot spin: no legitimate recognition exceeds a few years.
-  while ((year < endYear || (year === endYear && month <= endMonth)) && months.length < 120) {
+  while (
+    (year < endYear || (year === endYear && month <= endMonth)) &&
+    months.length < 120
+  ) {
     months.push(`${year}-${String(month).padStart(2, "0")}`);
     month += 1;
-    if (month > 12) { month = 1; year += 1; }
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
   }
   return months;
 }
@@ -77,12 +86,18 @@ export type PeriodSplit = {
  *   12,00,000 / 12  ->  twelve rows of 1,00,000.00
  *   10,000 / 3      ->  3,333.33 + 3,333.33 + 3,333.34  =  10,000.00
  */
-export function computeEqualSplit(amount: number, periods: string[]): PeriodSplit[] {
+export function computeEqualSplit(
+  amount: number,
+  periods: string[],
+): PeriodSplit[] {
   if (!periods.length) {
-    throw new Error("There are no months in this financial year to recognise the cost against");
+    throw new Error(
+      "There are no months in this financial year to recognise the cost against",
+    );
   }
   const totalPaise = toPaise(amount);
-  if (!Number.isFinite(totalPaise)) throw new Error("Recognition amount is not a number");
+  if (!Number.isFinite(totalPaise))
+    throw new Error("Recognition amount is not a number");
 
   // Truncation, not rounding: rounding each row up can make the residue negative, and a final
   // row smaller than the others reads as an error to whoever checks it.
@@ -110,7 +125,8 @@ export function computeCustomSplit(
 ): PeriodSplit[] {
   if (!periods.length) throw new Error("No periods for custom split");
   const totalPaise = toPaise(amount);
-  if (!Number.isFinite(totalPaise)) throw new Error("Recognition amount is not a number");
+  if (!Number.isFinite(totalPaise))
+    throw new Error("Recognition amount is not a number");
 
   let allocatedPaise = 0;
   const rows: PeriodSplit[] = periods.map((period_code, index) => {
@@ -120,15 +136,23 @@ export function computeCustomSplit(
     }
     const periodPaise = Math.trunc((totalPaise * pct) / 100);
     allocatedPaise += periodPaise;
-    return { period_code, sequence_no: index + 1, recognition_amount: toRupees(periodPaise) };
+    return {
+      period_code,
+      sequence_no: index + 1,
+      recognition_amount: toRupees(periodPaise),
+    };
   });
 
   // Absorb floating-point residue into the last row (same convention as equalSplit).
   rows[rows.length - 1].recognition_amount = toRupees(
-    toPaise(rows[rows.length - 1].recognition_amount) + (totalPaise - allocatedPaise),
+    toPaise(rows[rows.length - 1].recognition_amount) +
+      (totalPaise - allocatedPaise),
   );
 
-  const pctSum = periods.reduce((s, p) => s + Number(customPercentages[p] ?? 0), 0);
+  const pctSum = periods.reduce(
+    (s, p) => s + Number(customPercentages[p] ?? 0),
+    0,
+  );
   if (Math.abs(pctSum - 100) > 0.1) {
     throw new Error(
       `Custom split percentages must sum to 100% (currently ${pctSum.toFixed(4)}%)`,
@@ -147,7 +171,13 @@ export function resolveEligiblePeriods(input: {
   accountingPeriod: string;
   startPeriod: string;
   endPeriod: string;
-}): { periods: string[]; financialYear: string; clamped: boolean; requestedCount: number; crossFy: boolean } {
+}): {
+  periods: string[];
+  financialYear: string;
+  clamped: boolean;
+  requestedCount: number;
+  crossFy: boolean;
+} {
   const financialYear = financialYearOf(input.accountingPeriod);
   const periods = monthsBetween(input.startPeriod, input.endPeriod);
   if (!periods.length) {
@@ -192,18 +222,30 @@ export const grnPeriodAllocationService = {
     connection: PoolConnection,
   ) {
     if (!connection) {
-      throw new Error("A period split must be written inside the caller's transaction");
+      throw new Error(
+        "A period split must be written inside the caller's transaction",
+      );
     }
-    const { periods, financialYear, clamped, requestedCount, crossFy } = resolveEligiblePeriods(input);
-    const isCustom = input.customPercentages && Object.keys(input.customPercentages).length > 0;
+    const { periods, financialYear, clamped, requestedCount, crossFy } =
+      resolveEligiblePeriods(input);
+    const isCustom =
+      input.customPercentages &&
+      Object.keys(input.customPercentages).length > 0;
     const rows = isCustom
-      ? computeCustomSplit(input.recognitionAmount, periods, input.customPercentages!)
+      ? computeCustomSplit(
+          input.recognitionAmount,
+          periods,
+          input.customPercentages!,
+        )
       : computeEqualSplit(input.recognitionAmount, periods);
     const splitMethod = isCustom ? "custom" : "equal";
 
     // The invariant, asserted rather than assumed. 0.005 is half a paisa: anything larger is a
     // real discrepancy, not representation.
-    const total = rows.reduce((sum, r) => sum + toPaise(r.recognition_amount), 0);
+    const total = rows.reduce(
+      (sum, r) => sum + toPaise(r.recognition_amount),
+      0,
+    );
     if (Math.abs(total - toPaise(input.recognitionAmount)) > 0.5) {
       throw new Error(
         `Period split does not reconcile: ${toRupees(total).toFixed(2)} against ${Number(input.recognitionAmount).toFixed(2)}`,
@@ -221,8 +263,15 @@ export const grnPeriodAllocationService = {
             recognition_amount, pnl_bucket, split_method, created_by, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
-          randomUUID(), input.costAllocationId, input.grnRequestId, row.sequence_no,
-          row.period_code, row.recognition_amount, input.pnlBucket ?? null, splitMethod, input.actorUserId,
+          randomUUID(),
+          input.costAllocationId,
+          input.grnRequestId,
+          row.sequence_no,
+          row.period_code,
+          row.recognition_amount,
+          input.pnlBucket ?? null,
+          splitMethod,
+          input.actorUserId,
         ],
       );
     }
@@ -234,14 +283,22 @@ export const grnPeriodAllocationService = {
               period_allocation_mode = ?, is_multi_month = ?
         WHERE id = ?`,
       [
-        periods[0], periods[periods.length - 1],
+        periods[0],
+        periods[periods.length - 1],
         periods.length > 1 ? "deferred" : "single",
         periods.length > 1 ? 1 : 0,
         input.grnRequestId,
       ],
     );
 
-    return { periods: rows, financialYear, clamped, crossFy, requestedCount, eligibleCount: periods.length };
+    return {
+      periods: rows,
+      financialYear,
+      clamped,
+      crossFy,
+      requestedCount,
+      eligibleCount: periods.length,
+    };
   },
 
   async listSplit(grnRequestId: string) {

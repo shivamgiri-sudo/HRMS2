@@ -1,15 +1,26 @@
 import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
-import { getCachedAllocationSummary, normalizePeriod } from "./canonical-pnl.service.js";
 import {
-  getCommittedIndirectCostActuals, getDriverRevenueActuals, getIndirectCostActuals, getInvoicedRevenueActuals,
+  getCachedAllocationSummary,
+  normalizePeriod,
+} from "./canonical-pnl.service.js";
+import {
+  getCommittedIndirectCostActuals,
+  getDriverRevenueActuals,
+  getIndirectCostActuals,
+  getInvoicedRevenueActuals,
   getSeatRevenueActuals,
-  getCostCentreProcessIds, type ActualsByKey, type SeatRevenueActuals,
+  getCostCentreProcessIds,
+  type ActualsByKey,
+  type SeatRevenueActuals,
 } from "./pnl-actuals.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
-import { getRunningPeopleCost, type PeopleCostByKey } from "./pnl-running-salary.service.js";
+import {
+  getRunningPeopleCost,
+  type PeopleCostByKey,
+} from "./pnl-running-salary.service.js";
 import { processLobService } from "./process-lob.service.js";
 import { getActualPeopleCost } from "./bpo-pnl.service.js";
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
@@ -100,22 +111,29 @@ const pct = (numerator: number, denominator: number): number | null =>
 
 async function getComponents(): Promise<ComponentDefinition[]> {
   if (!(await tableExists("finance_pnl_component_master"))) {
-    throw new Error("Run the P&L component master migration first (sql/426_pnl_component_master.sql).");
+    throw new Error(
+      "Run the P&L component master migration first (sql/426_pnl_component_master.sql).",
+    );
   }
   return queryRows<ComponentDefinition>(
-    `SELECT * FROM finance_pnl_component_master WHERE active_status = 1 ORDER BY display_order`
+    `SELECT * FROM finance_pnl_component_master WHERE active_status = 1 ORDER BY display_order`,
   );
 }
 
 /** Derives a component value from a generic row object, handling the few subtotal fields
  *  (dsc/bmc) that Process/Branch rows carry pre-summed but LOB rows do not. */
-function resolveValue(row: Record<string, unknown>, component: ComponentDefinition): number | null {
+function resolveValue(
+  row: Record<string, unknown>,
+  component: ComponentDefinition,
+): number | null {
   const field = component.source_field;
   if (row[field] !== undefined && row[field] !== null) return n(row[field]);
   if (field === "dsc") return n(row.dscPeople) + n(row.dscNonPeople);
   if (field === "bmc") return n(row.bmcPeople) + n(row.bmcNonPeople);
-  if (field === "contributionMarginPct") return pct(n(row.contribution), n(row.recognizedRevenue));
-  if (field === "ebitdaMarginPct") return pct(n(row.ebitda), n(row.recognizedRevenue));
+  if (field === "contributionMarginPct")
+    return pct(n(row.contribution), n(row.recognizedRevenue));
+  if (field === "ebitdaMarginPct")
+    return pct(n(row.ebitda), n(row.recognizedRevenue));
   return null;
 }
 
@@ -124,14 +142,39 @@ function sumField(rows: Record<string, unknown>[], field: string): number {
 }
 
 const ADDITIVE_FIELDS: (keyof BpoPnlRow)[] = [
-  "contractedSeats", "activeHc", "agentHeadcount", "billableHc",
-  "grossPotentialRevenue", "baseEarnedRevenue", "minimumCommitmentTopUp", "incentiveRevenue",
-  "penalty", "slaDeduction", "creditNote", "recognizedRevenue",
-  "agentSalary", "dscPeople", "dscNonPeople", "dsc", "bmcPeople", "bmcNonPeople", "bmc",
-  "contribution", "ebitda", "depreciation", "amortization", "ebit", "financeCost", "pbt", "tax", "pat",
+  "contractedSeats",
+  "activeHc",
+  "agentHeadcount",
+  "billableHc",
+  "grossPotentialRevenue",
+  "baseEarnedRevenue",
+  "minimumCommitmentTopUp",
+  "incentiveRevenue",
+  "penalty",
+  "slaDeduction",
+  "creditNote",
+  "recognizedRevenue",
+  "agentSalary",
+  "dscPeople",
+  "dscNonPeople",
+  "dsc",
+  "bmcPeople",
+  "bmcNonPeople",
+  "bmc",
+  "contribution",
+  "ebitda",
+  "depreciation",
+  "amortization",
+  "ebit",
+  "financeCost",
+  "pbt",
+  "tax",
+  "pat",
 ];
 
-function aggregateByBranch(rows: BpoPnlRow[]): { column: StatementColumn; data: Record<string, unknown> }[] {
+function aggregateByBranch(
+  rows: BpoPnlRow[],
+): { column: StatementColumn; data: Record<string, unknown> }[] {
   const byBranch = new Map<string, BpoPnlRow[]>();
   for (const row of rows) {
     const key = row.branchId ?? "unassigned";
@@ -141,7 +184,11 @@ function aggregateByBranch(rows: BpoPnlRow[]): { column: StatementColumn; data: 
   }
   return [...byBranch.entries()].map(([branchId, bucket]) => {
     const data: Record<string, unknown> = {};
-    for (const field of ADDITIVE_FIELDS) data[field] = sumField(bucket as unknown as Record<string, unknown>[], field);
+    for (const field of ADDITIVE_FIELDS)
+      data[field] = sumField(
+        bucket as unknown as Record<string, unknown>[],
+        field,
+      );
     return {
       column: {
         id: branchId,
@@ -159,19 +206,33 @@ function aggregateByBranch(rows: BpoPnlRow[]): { column: StatementColumn; data: 
 async function buildLobColumns(
   rows: BpoPnlRow[],
   period: string,
-  deps: Pick<StatementDependencies, "getProcessSummary">
+  deps: Pick<StatementDependencies, "getProcessSummary">,
 ) {
-  const results: { column: StatementColumn; data: Record<string, unknown> }[] = [];
+  const results: { column: StatementColumn; data: Record<string, unknown> }[] =
+    [];
   for (const row of rows) {
-    const summary = await deps.getProcessSummary(row.processId, period).catch(() => null);
-    const lobRows = (summary?.rows ?? []) as Array<Record<string, unknown> & { rowType: string; lobName?: string; processLobId?: string | null }>;
+    const summary = await deps
+      .getProcessSummary(row.processId, period)
+      .catch(() => null);
+    const lobRows = (summary?.rows ?? []) as Array<
+      Record<string, unknown> & {
+        rowType: string;
+        lobName?: string;
+        processLobId?: string | null;
+      }
+    >;
     for (const lobRow of lobRows) {
-      const id = lobRow.processLobId ? `${row.processId}:${lobRow.processLobId}` : `${row.processId}:unallocated`;
+      const id = lobRow.processLobId
+        ? `${row.processId}:${lobRow.processLobId}`
+        : `${row.processId}:unallocated`;
       results.push({
         column: {
           id,
           code: id,
-          name: lobRow.rowType === "unallocated" ? `${row.processName} — Unallocated` : `${row.processName} — ${lobRow.lobName ?? "LOB"}`,
+          name:
+            lobRow.rowType === "unallocated"
+              ? `${row.processName} — Unallocated`
+              : `${row.processName} — ${lobRow.lobName ?? "LOB"}`,
           branchName: row.branchName,
           processName: row.processName,
           status: null,
@@ -235,7 +296,7 @@ function enrichColumn(
   /** Live P&L's seat-rate estimate for not-yet-billed cost centres; see the revenue block below. */
   estimate?: ActualsByKey,
   /** GRN Committed (reserved, ex-GST) — added into Indirect Cost; see indirectCostTotal below. */
-  committedIdc?: ActualsByKey
+  committedIdc?: ActualsByKey,
 ): Record<string, unknown> {
   /*
    * A6 FIX (2026-09-01): idc/seat must never inherit the WHOLE branch's total just because a
@@ -292,9 +353,11 @@ function enrichColumn(
    * "no rule configured" case (see bpoPnlService.getSummary) rather than inventing a new fallback.
    */
   const pickOwnRevenue = (source: ActualsByKey): number | undefined =>
-    key.processId ? source.byProcess.get(key.processId)
-    : key.branchId ? (source.byBranch.get(key.branchId) ?? 0)
-    : 0;
+    key.processId
+      ? source.byProcess.get(key.processId)
+      : key.branchId
+        ? (source.byBranch.get(key.branchId) ?? 0)
+        : 0;
 
   const out = { ...data };
 
@@ -351,15 +414,19 @@ function enrichColumn(
    * Recognised Revenue identical for that month. The current (running) month still shows planned
    * revenue here by design (pnl-revenue-basis.test.ts pins it) — see getStatement's revenueBasis.
    */
-  const estimated = periodOpen || !estimate ? 0 : (pickOwnRevenue(estimate) ?? 0);
+  const estimated =
+    periodOpen || !estimate ? 0 : (pickOwnRevenue(estimate) ?? 0);
   const billedPlusEstimate = invoiced + estimated;
-  const recognizedRevenue = (!periodOpen && billedPlusEstimate > 0)
-    ? billedPlusEstimate
-    : (existingRevenue > 0 ? existingRevenue : plannedRevenue);
+  const recognizedRevenue =
+    !periodOpen && billedPlusEstimate > 0
+      ? billedPlusEstimate
+      : existingRevenue > 0
+        ? existingRevenue
+        : plannedRevenue;
   out.recognizedRevenue = recognizedRevenue;
   out.plannedRevenue = plannedRevenue;
   out.invoicedRevenue = invoiced;
-  out.revenueEstimated = (!periodOpen && billedPlusEstimate > 0) ? estimated : 0;
+  out.revenueEstimated = !periodOpen && billedPlusEstimate > 0 ? estimated : 0;
   /*
    * A4: surface "no revenue rule configured" on the statement the same way bpo-pnl.service.ts's
    * REVENUE_RULE_MISSING alert already does for the per-process detail — the canonical row already
@@ -367,9 +434,12 @@ function enrichColumn(
    * "accounting_fallback") via the `...data` spread below reads from the source row; passed through
    * unchanged here for a process column so both surfaces agree on WHY a revenue figure is what it is.
    */
-  out.revenueBasis = (!periodOpen && billedPlusEstimate > 0)
-    ? "invoiced"
-    : (existingRevenue > 0 ? "row" : "planned");
+  out.revenueBasis =
+    !periodOpen && billedPlusEstimate > 0
+      ? "invoiced"
+      : existingRevenue > 0
+        ? "row"
+        : "planned";
 
   /*
    * Seat revenue: what the billable people actually on the floor are worth, as against the
@@ -386,9 +456,10 @@ function enrichColumn(
   const seatRateMissing = pick(seat.rateMissingByKey);
   out.seatRevenueEarned = seatEarned;
   out.seatRateMissingEmployees = seatRateMissing;
-  out.seatShortfall = seatRateMissing === 0 && plannedRevenue > 0 && seatEarned > 0
-    ? plannedRevenue - seatEarned
-    : null;
+  out.seatShortfall =
+    seatRateMissing === 0 && plannedRevenue > 0 && seatEarned > 0
+      ? plannedRevenue - seatEarned
+      : null;
 
   /*
    * People cost: the snapshot for an OPEN period, actual payroll for a CLOSED one.
@@ -443,12 +514,17 @@ function enrichColumn(
    * So: snapshot when present, upstream when not, never nothing. Both branches are pinned by
    * tests and mutation-verified.
    */
-  const hasSnapshot = Boolean(snapshot)
-    && (snapshot!.agent_salary + snapshot!.dsc_people + snapshot!.bmc_people) > 0;
+  const hasSnapshot =
+    Boolean(snapshot) &&
+    snapshot!.agent_salary + snapshot!.dsc_people + snapshot!.bmc_people > 0;
 
   const agentSalary = hasSnapshot ? snapshot!.agent_salary : n(out.agentSalary);
-  const dscSalary = hasSnapshot ? snapshot!.dsc_people : n(out.dscSalary ?? out.dscPeople);
-  const bmcSalary = hasSnapshot ? snapshot!.bmc_people : n(out.bmcSalary ?? out.bmcPeople);
+  const dscSalary = hasSnapshot
+    ? snapshot!.dsc_people
+    : n(out.dscSalary ?? out.dscPeople);
+  const bmcSalary = hasSnapshot
+    ? snapshot!.bmc_people
+    : n(out.bmcSalary ?? out.bmcPeople);
   out.agentSalary = agentSalary;
   /*
    * Indirect Cost = GRN Consumed + GRN Committed (reserved), both ex-GST — owner rule 2026-09-24:
@@ -523,7 +599,11 @@ function enrichColumn(
    * reconciling against the Process Detail sub-tab can see both.
    */
   const canonicalEbit = out.ebit;
-  if (trustCanonicalEbit && canonicalEbit !== undefined && canonicalEbit !== null) {
+  if (
+    trustCanonicalEbit &&
+    canonicalEbit !== undefined &&
+    canonicalEbit !== null
+  ) {
     out.canonicalEbit = n(canonicalEbit);
   }
   out.operatingProfit = recognizedRevenue - totalCost;
@@ -538,14 +618,18 @@ function enrichColumn(
   // short of: a future month legitimately has no running salary, and reporting it as "0% covered"
   // would flag a healthy period as broken.
   const coverage = people.asOfDate
-    ? (key.processId ? people.coverageByProcess.get(key.processId) : undefined)
-      ?? (key.branchId ? people.coverageByBranch.get(key.branchId) : undefined)
+    ? ((key.processId
+        ? people.coverageByProcess.get(key.processId)
+        : undefined) ??
+      (key.branchId ? people.coverageByBranch.get(key.branchId) : undefined))
     : undefined;
   if (coverage && coverage.activeEmployees > 0) {
     out.peopleCostActiveEmployees = coverage.activeEmployees;
     out.peopleCostCoveredEmployees = coverage.coveredEmployees;
     out.peopleCostCoveragePct =
-      Math.round((coverage.coveredEmployees / coverage.activeEmployees) * 1000) / 10;
+      Math.round(
+        (coverage.coveredEmployees / coverage.activeEmployees) * 1000,
+      ) / 10;
   }
 
   out.agentSalaryPct = pct(agentSalary, recognizedRevenue);
@@ -571,40 +655,74 @@ function enrichColumn(
  * is inserted twice. Labels match src/components/finance/pnl/pnlLabels.ts (GRN_CONSUMED /
  * GRN_COMMITTED), which the Statement view also applies by component key.
  */
-export const GRN_BREAKDOWN_COMPONENT_KEYS = { consumed: "grn_consumed", committed: "grn_committed" } as const;
+export const GRN_BREAKDOWN_COMPONENT_KEYS = {
+  consumed: "grn_consumed",
+  committed: "grn_committed",
+} as const;
 
-function withGrnBreakdownRows(components: ComponentDefinition[]): ComponentDefinition[] {
+function withGrnBreakdownRows(
+  components: ComponentDefinition[],
+): ComponentDefinition[] {
   const idcIndex = components.findIndex((c) => c.component_key === "total_idc");
   if (idcIndex < 0) return components;
   const present = new Set(components.map((c) => c.component_key));
   const idc = components[idcIndex];
-  const breakdown = (key: string, displayName: string, sourceField: string, offset: number) => ({
-    component_key: key,
-    display_name: displayName,
-    section_key: idc.section_key,
-    parent_component_key: "total_idc",
-    display_order: Number(idc.display_order) + offset,
-    component_type: "SOURCE_ACTUAL",
-    source_field: sourceField,
-    format_type: "CURRENCY",
-    sign_convention: "+",
-    is_subtotal: 0,
-  }) as unknown as ComponentDefinition;
+  const breakdown = (
+    key: string,
+    displayName: string,
+    sourceField: string,
+    offset: number,
+  ) =>
+    ({
+      component_key: key,
+      display_name: displayName,
+      section_key: idc.section_key,
+      parent_component_key: "total_idc",
+      display_order: Number(idc.display_order) + offset,
+      component_type: "SOURCE_ACTUAL",
+      source_field: sourceField,
+      format_type: "CURRENCY",
+      sign_convention: "+",
+      is_subtotal: 0,
+    }) as unknown as ComponentDefinition;
   const extra = [
     present.has(GRN_BREAKDOWN_COMPONENT_KEYS.consumed)
       ? null
-      : breakdown(GRN_BREAKDOWN_COMPONENT_KEYS.consumed, "GRN Consumed", "grnConsumed", 0.1),
+      : breakdown(
+          GRN_BREAKDOWN_COMPONENT_KEYS.consumed,
+          "GRN Consumed",
+          "grnConsumed",
+          0.1,
+        ),
     present.has(GRN_BREAKDOWN_COMPONENT_KEYS.committed)
       ? null
-      : breakdown(GRN_BREAKDOWN_COMPONENT_KEYS.committed, "GRN Committed (reserved)", "grnCommitted", 0.2),
+      : breakdown(
+          GRN_BREAKDOWN_COMPONENT_KEYS.committed,
+          "GRN Committed (reserved)",
+          "grnCommitted",
+          0.2,
+        ),
   ].filter((c): c is ComponentDefinition => c !== null);
-  return [...components.slice(0, idcIndex + 1), ...extra, ...components.slice(idcIndex + 1)];
+  return [
+    ...components.slice(0, idcIndex + 1),
+    ...extra,
+    ...components.slice(idcIndex + 1),
+  ];
 }
 
 export interface StatementDependencies {
   getComponents: () => Promise<ComponentDefinition[]>;
-  getSummary: (filters: Partial<PnlQueryFilters>) => Promise<{ rows: BpoPnlRow[]; generatedAt: string; calculationEngine?: string }>;
-  getProcessSummary: (processId: string, period: string) => Promise<{ rows?: unknown[] } | null>;
+  getSummary: (
+    filters: Partial<PnlQueryFilters>,
+  ) => Promise<{
+    rows: BpoPnlRow[];
+    generatedAt: string;
+    calculationEngine?: string;
+  }>;
+  getProcessSummary: (
+    processId: string,
+    period: string,
+  ) => Promise<{ rows?: unknown[] } | null>;
   /** Optional so an existing caller or test injecting only the original three keeps working —
    *  they fall back to the live readers. */
   getIndirectCost?: (period: string) => Promise<ActualsByKey>;
@@ -615,9 +733,17 @@ export interface StatementDependencies {
   /** Part B: approved-only manual adjustments, batched per process for the period. Optional for
    *  the same reason as the rest — an existing test injecting only the original deps still works,
    *  simply without a manualAdjustment field on any column. */
-  getManualAdjustments?: (period: string) => Promise<Map<string, {
-    approvedProjectedRevenue: number; approvedRewards: number; approvedPenalties: number; pendingCount: number;
-  }>>;
+  getManualAdjustments?: (period: string) => Promise<
+    Map<
+      string,
+      {
+        approvedProjectedRevenue: number;
+        approvedRewards: number;
+        approvedPenalties: number;
+        pendingCount: number;
+      }
+    >
+  >;
   /** Live P&L's seat-rate revenue estimate for not-yet-billed cost centres (see enrichColumn). */
   getRevenueEstimate?: (period: string) => Promise<ActualsByKey>;
   /** GRN Committed (reserved, ex-GST). When a caller injects getIndirectCost but not this, it is
@@ -625,10 +751,17 @@ export interface StatementDependencies {
   getCommittedIndirectCost?: (period: string) => Promise<ActualsByKey>;
 }
 
-const emptyEstimate = (): ActualsByKey => ({ byBranch: new Map(), byProcess: new Map(), byCostCentre: new Map() });
+const emptyEstimate = (): ActualsByKey => ({
+  byBranch: new Map(),
+  byProcess: new Map(),
+  byCostCentre: new Map(),
+});
 
 const LIVE_ESTIMATE_TTL_MS = 60_000;
-const liveEstimateCache = new Map<string, { at: number; value: Promise<ActualsByKey> }>();
+const liveEstimateCache = new Map<
+  string,
+  { at: number; value: Promise<ActualsByKey> }
+>();
 
 /**
  * The seat-rate estimate Live P&L adds for cost centres a month has not invoiced yet, keyed by
@@ -637,26 +770,42 @@ const liveEstimateCache = new Map<string, { at: number; value: Promise<ActualsBy
  * Process attribution uses getCostCentreProcessIds — the rule invoice revenue is attributed by.
  * Cached for 60s (same as CEO Overview): the reconciliation is not cheap.
  */
-export async function getLiveRevenueEstimate(period: string): Promise<ActualsByKey> {
+export async function getLiveRevenueEstimate(
+  period: string,
+): Promise<ActualsByKey> {
   const hit = liveEstimateCache.get(period);
   if (hit && Date.now() - hit.at < LIVE_ESTIMATE_TTL_MS) return hit.value;
   const value = (async () => {
     const out = emptyEstimate();
     const rec = await getPnlReconciliation(period);
     const estimated = rec.rows.filter((row) => row.revenueEstimated > 0);
-    const processByCc = await getCostCentreProcessIds(estimated.map((row) => row.costCentreId));
+    const processByCc = await getCostCentreProcessIds(
+      estimated.map((row) => row.costCentreId),
+    );
     for (const row of estimated) {
       const amount = row.revenueEstimated;
-      out.byCostCentre.set(row.costCentreId, (out.byCostCentre.get(row.costCentreId) ?? 0) + amount);
-      if (row.branchId) out.byBranch.set(row.branchId, (out.byBranch.get(row.branchId) ?? 0) + amount);
+      out.byCostCentre.set(
+        row.costCentreId,
+        (out.byCostCentre.get(row.costCentreId) ?? 0) + amount,
+      );
+      if (row.branchId)
+        out.byBranch.set(
+          row.branchId,
+          (out.byBranch.get(row.branchId) ?? 0) + amount,
+        );
       const processId = processByCc.get(row.costCentreId);
-      if (processId) out.byProcess.set(processId, (out.byProcess.get(processId) ?? 0) + amount);
+      if (processId)
+        out.byProcess.set(
+          processId,
+          (out.byProcess.get(processId) ?? 0) + amount,
+        );
     }
     return out;
   })();
   liveEstimateCache.set(period, { at: Date.now(), value });
   value.catch(() => liveEstimateCache.delete(period));
-  if (liveEstimateCache.size > 12) liveEstimateCache.delete(liveEstimateCache.keys().next().value as string);
+  if (liveEstimateCache.size > 12)
+    liveEstimateCache.delete(liveEstimateCache.keys().next().value as string);
   return value;
 }
 
@@ -699,7 +848,9 @@ async function getStatementSummary(filters: Partial<PnlQueryFilters>) {
  * branch matches Live P&L's. Exported so that agreement can be pinned by a test
  * (__tests__/payroll-statement-branch-view.test.ts).
  */
-export async function getStatementPeopleCost(period: string): Promise<PeopleCostByKey> {
+export async function getStatementPeopleCost(
+  period: string,
+): Promise<PeopleCostByKey> {
   const actual = await getActualPeopleCost(period);
   if (actual.byBranch.size > 0 || actual.byProcess.size > 0) return actual;
   return getRunningPeopleCost(period);
@@ -708,7 +859,8 @@ export async function getStatementPeopleCost(period: string): Promise<PeopleCost
 const defaultDependencies: StatementDependencies = {
   getComponents,
   getSummary: (filters) => getStatementSummary(filters),
-  getProcessSummary: (processId, period) => processLobService.getProcessSummary(processId, period),
+  getProcessSummary: (processId, period) =>
+    processLobService.getProcessSummary(processId, period),
   getIndirectCost: (period) => getIndirectCostActuals(period),
   getCommittedIndirectCost: (period) => getCommittedIndirectCostActuals(period),
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
@@ -733,24 +885,34 @@ const defaultDependencies: StatementDependencies = {
 export async function getStatement(
   filters: Partial<PnlQueryFilters>,
   viewBy: StatementViewBy = "process",
-  deps: StatementDependencies = defaultDependencies
+  deps: StatementDependencies = defaultDependencies,
 ) {
-  if ((viewBy as string) === "cost_centre" || (viewBy as string) === "company") {
+  if (
+    (viewBy as string) === "cost_centre" ||
+    (viewBy as string) === "company"
+  ) {
     throw new Error(
       `View by "${viewBy}" is not yet supported — cost centre and company are not independent P&L grains in this ` +
-      `data model today (cost centre resolves via a fallback join to process; company is not modelled at all). ` +
-      `Supported: process, branch, lob.`
+        `data model today (cost centre resolves via a fallback join to process; company is not modelled at all). ` +
+        `Supported: process, branch, lob.`,
     );
   }
 
-  const [components, summary] = await Promise.all([deps.getComponents(), deps.getSummary(filters)]);
+  const [components, summary] = await Promise.all([
+    deps.getComponents(),
+    deps.getSummary(filters),
+  ]);
   const rows = summary.rows as BpoPnlRow[];
 
   let columnData: { column: StatementColumn; data: Record<string, unknown> }[];
   if (viewBy === "branch") {
     columnData = aggregateByBranch(rows);
   } else if (viewBy === "lob") {
-    columnData = await buildLobColumns(rows, String(filters.period ?? summary.generatedAt).slice(0, 7), deps);
+    columnData = await buildLobColumns(
+      rows,
+      String(filters.period ?? summary.generatedAt).slice(0, 7),
+      deps,
+    );
   } else {
     columnData = rows.map((row) => ({
       column: {
@@ -770,9 +932,20 @@ export async function getStatement(
   // Resolved once for the whole statement: every column in it belongs to the same period, and
   // deciding per column would let two columns of one report use different cost sources.
   const periodOpen = isOpenPeriod(periodCode);
-  const committedReader = deps.getCommittedIndirectCost
-    ?? (deps.getIndirectCost ? async () => emptyEstimate() : getCommittedIndirectCostActuals);
-  const [idc, committedIdc, revenue, invoicedRevenue, seat, people, manualAdjustments] = await Promise.all([
+  const committedReader =
+    deps.getCommittedIndirectCost ??
+    (deps.getIndirectCost
+      ? async () => emptyEstimate()
+      : getCommittedIndirectCostActuals);
+  const [
+    idc,
+    committedIdc,
+    revenue,
+    invoicedRevenue,
+    seat,
+    people,
+    manualAdjustments,
+  ] = await Promise.all([
     (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
     committedReader(periodCode),
     (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
@@ -783,16 +956,25 @@ export async function getStatement(
   ]);
   // Only a CLOSED month still inside the estimate window can carry one (see enrichColumn). Any
   // failure degrades to "no estimate", exactly as Live P&L and CEO Overview degrade.
-  const estimateApplies = !periodOpen && isEstimateWindow(periodCode, getCurrentDateIST());
+  const estimateApplies =
+    !periodOpen && isEstimateWindow(periodCode, getCurrentDateIST());
   const estimate = estimateApplies
-    ? await (deps.getRevenueEstimate ?? getLiveRevenueEstimate)(periodCode).catch(() => emptyEstimate())
+    ? await (deps.getRevenueEstimate ?? getLiveRevenueEstimate)(
+        periodCode,
+      ).catch(() => emptyEstimate())
     : emptyEstimate();
   columnData = columnData.map((item) => {
     const data = enrichColumn(
       item.data,
       {
-        branchId: viewBy === "branch" ? item.column.id : (item.data.branchId as string | undefined),
-        processId: viewBy === "process" ? item.column.id : (item.data.processId as string | undefined),
+        branchId:
+          viewBy === "branch"
+            ? item.column.id
+            : (item.data.branchId as string | undefined),
+        processId:
+          viewBy === "process"
+            ? item.column.id
+            : (item.data.processId as string | undefined),
       },
       idc,
       revenue,
@@ -802,24 +984,31 @@ export async function getStatement(
       periodOpen,
       viewBy === "process",
       estimate,
-      committedIdc
+      committedIdc,
     );
     // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
     // column can be trusted, and a consumer must be able to see that before reading any figure in it.
-    let column = data.peopleCostCoveragePct === undefined
-      ? item.column
-      : {
-          ...item.column,
-          peopleCostCoveragePct: data.peopleCostCoveragePct as number,
-          peopleCostActiveEmployees: data.peopleCostActiveEmployees as number,
-          peopleCostCoveredEmployees: data.peopleCostCoveredEmployees as number,
-        };
+    let column =
+      data.peopleCostCoveragePct === undefined
+        ? item.column
+        : {
+            ...item.column,
+            peopleCostCoveragePct: data.peopleCostCoveragePct as number,
+            peopleCostActiveEmployees: data.peopleCostActiveEmployees as number,
+            peopleCostCoveredEmployees:
+              data.peopleCostCoveredEmployees as number,
+          };
     // Part B: manual adjustments are process-scoped (see StatementColumn.manualAdjustment doc) —
     // attached only for a "process" view column, keyed on the column id, which IS the processId there.
     if (viewBy === "process") {
       const bucket = manualAdjustments.get(item.column.id);
-      if (bucket && (bucket.approvedRewards !== 0 || bucket.approvedPenalties !== 0
-        || bucket.approvedProjectedRevenue !== 0 || bucket.pendingCount !== 0)) {
+      if (
+        bucket &&
+        (bucket.approvedRewards !== 0 ||
+          bucket.approvedPenalties !== 0 ||
+          bucket.approvedProjectedRevenue !== 0 ||
+          bucket.pendingCount !== 0)
+      ) {
         const systemRevenue = n(data.recognizedRevenue);
         column = {
           ...column,
@@ -827,7 +1016,8 @@ export async function getStatement(
             approvedProjectedRevenue: bucket.approvedProjectedRevenue,
             approvedRewards: bucket.approvedRewards,
             approvedPenalties: bucket.approvedPenalties,
-            adjustedTotal: systemRevenue + bucket.approvedRewards - bucket.approvedPenalties,
+            adjustedTotal:
+              systemRevenue + bucket.approvedRewards - bucket.approvedPenalties,
             pendingAdjustmentCount: bucket.pendingCount,
           },
         };
@@ -836,17 +1026,22 @@ export async function getStatement(
     return { column, data };
   });
 
-  const statementRows: StatementRow[] = withGrnBreakdownRows(components).map((component) => ({
-    componentKey: component.component_key,
-    displayName: component.display_name,
-    section: component.section_key,
-    parentComponentKey: component.parent_component_key ?? null,
-    format: component.format_type,
-    isSubtotal: Boolean(component.is_subtotal),
-    values: Object.fromEntries(
-      columnData.map(({ column, data }) => [column.id, resolveValue(data, component)])
-    ),
-  }));
+  const statementRows: StatementRow[] = withGrnBreakdownRows(components).map(
+    (component) => ({
+      componentKey: component.component_key,
+      displayName: component.display_name,
+      section: component.section_key,
+      parentComponentKey: component.parent_component_key ?? null,
+      format: component.format_type,
+      isSubtotal: Boolean(component.is_subtotal),
+      values: Object.fromEntries(
+        columnData.map(({ column, data }) => [
+          column.id,
+          resolveValue(data, component),
+        ]),
+      ),
+    }),
+  );
 
   return {
     viewBy,
@@ -866,7 +1061,10 @@ export async function getStatement(
     revenueBasis: periodOpen ? "planned" : "invoiced",
     periodOpen,
     /** Rs of Live P&L's seat-rate estimate included in Recognised Revenue (last month only). */
-    revenueEstimated: columnData.reduce((t, item) => t + n(item.data.revenueEstimated), 0),
+    revenueEstimated: columnData.reduce(
+      (t, item) => t + n(item.data.revenueEstimated),
+      0,
+    ),
     columns: columnData.map((item) => item.column),
     rows: statementRows,
   };

@@ -10,11 +10,11 @@
  * Points integrate with existing gamification_points_ledger
  */
 
-import { randomUUID } from 'crypto';
-import { db } from '../../db/mysql.js';
-import { checkTierUpgrade } from './gamification.service.js';
-import { awardBadge, getBadges } from './badge.service.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import { randomUUID } from "crypto";
+import { db } from "../../db/mysql.js";
+import { checkTierUpgrade } from "./gamification.service.js";
+import { awardBadge, getBadges } from "./badge.service.js";
+import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
 
 // ============================================================================
 // Types
@@ -62,10 +62,15 @@ interface TierStatusRow extends RowDataPacket {
 const BASE_POINTS = 5;
 
 const STREAK_MILESTONES = [
-  { days: 7, multiplier: 2.0, badgeName: '7-Day Streak', badgeIcon: 'flame' },
-  { days: 30, multiplier: 3.0, badgeName: '30-Day Streak', badgeIcon: 'zap' },
-  { days: 100, multiplier: 4.0, badgeName: '100-Day Streak', badgeIcon: 'trophy' },
-  { days: 365, multiplier: 5.0, badgeName: 'Year Streak', badgeIcon: 'crown' },
+  { days: 7, multiplier: 2.0, badgeName: "7-Day Streak", badgeIcon: "flame" },
+  { days: 30, multiplier: 3.0, badgeName: "30-Day Streak", badgeIcon: "zap" },
+  {
+    days: 100,
+    multiplier: 4.0,
+    badgeName: "100-Day Streak",
+    badgeIcon: "trophy",
+  },
+  { days: 365, multiplier: 5.0, badgeName: "Year Streak", badgeIcon: "crown" },
 ];
 
 // ============================================================================
@@ -75,19 +80,23 @@ const STREAK_MILESTONES = [
 /**
  * Claim daily login reward
  */
-export async function claimDailyLogin(employeeId: string): Promise<LoginRewardResult> {
+export async function claimDailyLogin(
+  employeeId: string,
+): Promise<LoginRewardResult> {
   const conn = await db.getConnection();
 
   try {
     await conn.beginTransaction();
 
-    const today = new Date().toISOString().split('T')[0];
-    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    const today = new Date().toISOString().split("T")[0];
+    const yesterday = new Date(Date.now() - 86400000)
+      .toISOString()
+      .split("T")[0];
 
     // Check if already claimed today
     const [existingRows] = await conn.query<DailyLoginRow[]>(
       `SELECT * FROM employee_daily_login WHERE employee_id = ? AND login_date = ?`,
-      [employeeId, today]
+      [employeeId, today],
     );
 
     if (existingRows.length > 0) {
@@ -109,7 +118,7 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
     const [tierRows] = await conn.query<TierStatusRow[]>(
       `SELECT current_streak, longest_streak, last_login_date
        FROM employee_tier_status WHERE employee_id = ?`,
-      [employeeId]
+      [employeeId],
     );
 
     let currentStreak = 1;
@@ -153,7 +162,7 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
     await conn.query<ResultSetHeader>(
       `INSERT INTO employee_daily_login (id, employee_id, login_date, points_awarded, streak_day, streak_multiplier)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [loginId, employeeId, today, pointsAwarded, currentStreak, multiplier]
+      [loginId, employeeId, today, pointsAwarded, currentStreak, multiplier],
     );
 
     // Update tier status (streak columns)
@@ -162,21 +171,31 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
         `UPDATE employee_tier_status
          SET current_streak = ?, longest_streak = ?, last_login_date = ?
          WHERE employee_id = ?`,
-        [currentStreak, longestStreak, today, employeeId]
+        [currentStreak, longestStreak, today, employeeId],
       );
     } else {
       // Create tier status if it doesn't exist yet
       // Use gamification_tier_master (correct table; gamification_tier is a legacy table)
       const [tierIdRows] = await conn.query<RowDataPacket[]>(
-        `SELECT tier_id FROM gamification_tier_master WHERE is_active = 1 ORDER BY min_points ASC LIMIT 1`
+        `SELECT tier_id FROM gamification_tier_master WHERE is_active = 1 ORDER BY min_points ASC LIMIT 1`,
       );
       const defaultTierId = tierIdRows[0]?.tier_id;
-      if (!defaultTierId) throw new Error('No gamification tiers configured');
+      if (!defaultTierId) throw new Error("No gamification tiers configured");
       await conn.query<ResultSetHeader>(
         `INSERT INTO employee_tier_status (status_id, employee_id, current_tier_id, current_streak, longest_streak, last_login_date)
          VALUES (?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE current_streak = ?, longest_streak = ?, last_login_date = ?`,
-        [randomUUID(), employeeId, defaultTierId, currentStreak, longestStreak, today, currentStreak, longestStreak, today]
+        [
+          randomUUID(),
+          employeeId,
+          defaultTierId,
+          currentStreak,
+          longestStreak,
+          today,
+          currentStreak,
+          longestStreak,
+          today,
+        ],
       );
     }
 
@@ -186,7 +205,7 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
     const [balanceRows] = await conn.query<RowDataPacket[]>(
       `SELECT COALESCE(SUM(points_delta), 0) AS total_points
        FROM gamification_points_ledger WHERE employee_id = ?`,
-      [employeeId]
+      [employeeId],
     );
     const currentBalance = Number(balanceRows[0]?.total_points) || 0;
     const newBalance = currentBalance + pointsAwarded;
@@ -196,8 +215,14 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
          (transaction_id, employee_id, points_delta, transaction_type,
           reference_id, description, balance_after, created_at)
        VALUES (?, ?, ?, 'daily_login', ?, ?, ?, NOW())`,
-      [transactionId, employeeId, pointsAwarded, loginId,
-       `Daily login reward (Day ${currentStreak}, ${multiplier}x multiplier)`, newBalance]
+      [
+        transactionId,
+        employeeId,
+        pointsAwarded,
+        loginId,
+        `Daily login reward (Day ${currentStreak}, ${multiplier}x multiplier)`,
+        newBalance,
+      ],
     );
     // checkTierUpgrade accepts an existing connection so it shares our transaction
     await checkTierUpgrade(employeeId, newBalance, conn);
@@ -210,14 +235,20 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
         // Award streak badge - look up badge by name using search filter
         try {
           const badges = await getBadges({ search: milestone.badgeName });
-          const badge = badges.find(b => b.badge_name === milestone.badgeName);
+          const badge = badges.find(
+            (b) => b.badge_name === milestone.badgeName,
+          );
           if (badge) {
             await awardBadge({
               employee_id: employeeId,
               badge_id: badge.badge_id,
               reason: `Achieved ${milestone.days}-day login streak`,
             });
-            newBadgeEarned = { id: badge.badge_id, name: badge.badge_name, icon: badge.badge_icon || 'award' };
+            newBadgeEarned = {
+              id: badge.badge_id,
+              name: badge.badge_name,
+              icon: badge.badge_icon || "award",
+            };
           }
         } catch (e) {
           // Badge already awarded or doesn't exist, continue
@@ -229,7 +260,7 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
     await conn.commit();
 
     // Calculate next milestone
-    const nextMilestone = STREAK_MILESTONES.find(m => m.days > currentStreak);
+    const nextMilestone = STREAK_MILESTONES.find((m) => m.days > currentStreak);
 
     return {
       alreadyClaimedToday: false,
@@ -240,9 +271,10 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
       longestStreak,
       streakBroken,
       newBadgeEarned,
-      nextMilestone: nextMilestone ? { days: nextMilestone.days, multiplier: nextMilestone.multiplier } : undefined,
+      nextMilestone: nextMilestone
+        ? { days: nextMilestone.days, multiplier: nextMilestone.multiplier }
+        : undefined,
     };
-
   } catch (error) {
     await conn.rollback();
     throw error;
@@ -254,14 +286,16 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
 /**
  * Get current streak status without claiming
  */
-export async function getStreakStatus(employeeId: string): Promise<StreakStatus> {
-  const today = new Date().toISOString().split('T')[0];
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+export async function getStreakStatus(
+  employeeId: string,
+): Promise<StreakStatus> {
+  const today = new Date().toISOString().split("T")[0];
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
 
   // Check if claimed today
   const [todayRows] = await db.query<DailyLoginRow[]>(
     `SELECT * FROM employee_daily_login WHERE employee_id = ? AND login_date = ?`,
-    [employeeId, today]
+    [employeeId, today],
   );
 
   const todayClaimed = todayRows.length > 0;
@@ -270,7 +304,7 @@ export async function getStreakStatus(employeeId: string): Promise<StreakStatus>
   const [tierRows] = await db.query<TierStatusRow[]>(
     `SELECT current_streak, longest_streak, last_login_date
      FROM employee_tier_status WHERE employee_id = ?`,
-    [employeeId]
+    [employeeId],
   );
 
   let currentStreak = 0;
@@ -289,14 +323,16 @@ export async function getStreakStatus(employeeId: string): Promise<StreakStatus>
   }
 
   // Calculate next milestone
-  const nextMilestone = STREAK_MILESTONES.find(m => m.days > currentStreak);
+  const nextMilestone = STREAK_MILESTONES.find((m) => m.days > currentStreak);
 
   return {
     currentStreak,
     longestStreak,
     lastLoginDate,
     todayClaimed,
-    nextMilestone: nextMilestone ? { days: nextMilestone.days, multiplier: nextMilestone.multiplier } : undefined,
+    nextMilestone: nextMilestone
+      ? { days: nextMilestone.days, multiplier: nextMilestone.multiplier }
+      : undefined,
   };
 }
 
@@ -305,14 +341,14 @@ export async function getStreakStatus(employeeId: string): Promise<StreakStatus>
  */
 export async function getLoginHistory(
   employeeId: string,
-  limit: number = 30
+  limit: number = 30,
 ): Promise<DailyLoginRow[]> {
   const [rows] = await db.query<DailyLoginRow[]>(
     `SELECT * FROM employee_daily_login
      WHERE employee_id = ?
      ORDER BY login_date DESC
      LIMIT ?`,
-    [employeeId, limit]
+    [employeeId, limit],
   );
   return rows;
 }
@@ -321,8 +357,15 @@ export async function getLoginHistory(
  * Get leaderboard by streak length
  */
 export async function getStreakLeaderboard(
-  limit: number = 10
-): Promise<Array<{ employeeId: string; employeeName: string; currentStreak: number; longestStreak: number }>> {
+  limit: number = 10,
+): Promise<
+  Array<{
+    employeeId: string;
+    employeeName: string;
+    currentStreak: number;
+    longestStreak: number;
+  }>
+> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT
        ts.employee_id as employeeId,
@@ -334,7 +377,7 @@ export async function getStreakLeaderboard(
      WHERE ts.current_streak > 0
      ORDER BY ts.current_streak DESC, ts.longest_streak DESC
      LIMIT ?`,
-    [limit]
+    [limit],
   );
   return rows as any[];
 }

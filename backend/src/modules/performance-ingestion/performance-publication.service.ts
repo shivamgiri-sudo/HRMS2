@@ -1,4 +1,8 @@
-import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import type {
+  PoolConnection,
+  ResultSetHeader,
+  RowDataPacket,
+} from "mysql2/promise";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import type {
@@ -8,7 +12,11 @@ import type {
 
 type FactKey = Pick<
   NormalisedMetricFact,
-  "employeeId" | "metricId" | "scoreDate" | "processIdAtEvent" | "branchIdAtEvent"
+  | "employeeId"
+  | "metricId"
+  | "scoreDate"
+  | "processIdAtEvent"
+  | "branchIdAtEvent"
 >;
 
 type PreviousFactRow = RowDataPacket & {
@@ -44,7 +52,11 @@ function numeric(value: unknown): number {
 }
 
 function uniqueNonBlank(values: Array<string | null | undefined>): string[] {
-  return [...new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean))];
+  return [
+    ...new Set(
+      values.map((value) => String(value ?? "").trim()).filter(Boolean),
+    ),
+  ];
 }
 
 function factKey(fact: FactKey): string {
@@ -58,8 +70,14 @@ function canonicalValue(rows: CurrentLineageRow[]): {
   sourceRecordCount: number;
 } {
   const method = String(rows[0]?.aggregation_method ?? "average").toLowerCase();
-  const numerator = rows.reduce((sum, row) => sum + numeric(row.numerator_value), 0);
-  const denominator = rows.reduce((sum, row) => sum + numeric(row.denominator_value), 0);
+  const numerator = rows.reduce(
+    (sum, row) => sum + numeric(row.numerator_value),
+    0,
+  );
+  const denominator = rows.reduce(
+    (sum, row) => sum + numeric(row.denominator_value),
+    0,
+  );
   const sourceRecordCount = rows.reduce(
     (sum, row) => sum + Math.max(0, numeric(row.source_record_count)),
     0,
@@ -72,21 +90,36 @@ function canonicalValue(rows: CurrentLineageRow[]): {
     const multiplier = numeric(rows[0]?.calculation_multiplier ?? 100) || 100;
     actualValue = (numerator / denominator) * multiplier;
   } else if (method === "latest") {
-    const latest = [...rows].sort((left, right) =>
-      String(left.score_date).localeCompare(String(right.score_date)) ||
-      String(left.source_event_timestamp ?? "").localeCompare(String(right.source_event_timestamp ?? "")) ||
-      String(left.source_record_key ?? "").localeCompare(String(right.source_record_key ?? "")) ||
-      String(left.created_at).localeCompare(String(right.created_at))).at(-1);
+    const latest = [...rows]
+      .sort(
+        (left, right) =>
+          String(left.score_date).localeCompare(String(right.score_date)) ||
+          String(left.source_event_timestamp ?? "").localeCompare(
+            String(right.source_event_timestamp ?? ""),
+          ) ||
+          String(left.source_record_key ?? "").localeCompare(
+            String(right.source_record_key ?? ""),
+          ) ||
+          String(left.created_at).localeCompare(String(right.created_at)),
+      )
+      .at(-1);
     actualValue = numeric(latest?.actual_value);
   } else if (method === "weighted_average") {
-    actualValue = sourceRecordCount > 0
-      ? rows.reduce(
-          (sum, row) => sum + numeric(row.actual_value) * Math.max(0, numeric(row.source_record_count)),
-          0,
-        ) / sourceRecordCount
-      : rows.reduce((sum, row) => sum + numeric(row.actual_value), 0) / Math.max(rows.length, 1);
+    actualValue =
+      sourceRecordCount > 0
+        ? rows.reduce(
+            (sum, row) =>
+              sum +
+              numeric(row.actual_value) *
+                Math.max(0, numeric(row.source_record_count)),
+            0,
+          ) / sourceRecordCount
+        : rows.reduce((sum, row) => sum + numeric(row.actual_value), 0) /
+          Math.max(rows.length, 1);
   } else {
-    actualValue = rows.reduce((sum, row) => sum + numeric(row.actual_value), 0) / Math.max(rows.length, 1);
+    actualValue =
+      rows.reduce((sum, row) => sum + numeric(row.actual_value), 0) /
+      Math.max(rows.length, 1);
   }
 
   return {
@@ -180,13 +213,16 @@ async function writeCanonicalFact(input: {
 
   const canonical = canonicalValue(rows);
   const datasetIds = uniqueNonBlank(rows.map((row) => row.source_dataset_id));
-  const mappingVersionIds = uniqueNonBlank(rows.map((row) => row.mapping_version_id));
+  const mappingVersionIds = uniqueNonBlank(
+    rows.map((row) => row.mapping_version_id),
+  );
   const datasetKeys = uniqueNonBlank(rows.map((row) => row.dataset_key));
   const processIds = uniqueNonBlank(rows.map((row) => row.process_id_at_event));
   const branchIds = uniqueNonBlank(rows.map((row) => row.branch_id_at_event));
-  const sourceSystem = datasetKeys.length === 1
-    ? datasetKeys[0].slice(0, 50)
-    : `performance_multi_source:${datasetKeys.length}`.slice(0, 50);
+  const sourceSystem =
+    datasetKeys.length === 1
+      ? datasetKeys[0].slice(0, 50)
+      : `performance_multi_source:${datasetKeys.length}`.slice(0, 50);
 
   await input.connection.execute(
     `INSERT INTO kpi_daily_actual
@@ -281,8 +317,12 @@ export async function publishPerformanceFacts(input: {
         employeeId: String(row.employee_id),
         metricId: String(row.metric_id),
         scoreDate: String(row.score_date),
-        processIdAtEvent: row.process_id_at_event ? String(row.process_id_at_event) : null,
-        branchIdAtEvent: row.branch_id_at_event ? String(row.branch_id_at_event) : null,
+        processIdAtEvent: row.process_id_at_event
+          ? String(row.process_id_at_event)
+          : null,
+        branchIdAtEvent: row.branch_id_at_event
+          ? String(row.branch_id_at_event)
+          : null,
       };
       affected.set(factKey(key), key);
     }
@@ -298,14 +338,21 @@ export async function publishPerformanceFacts(input: {
 
     const mappingVersionCache = new Map<string, string | null>();
     for (const fact of input.facts) {
-      let mappingVersionId = fact.mappingVersionId ?? mappingVersionCache.get(fact.scoreDate);
+      let mappingVersionId =
+        fact.mappingVersionId ?? mappingVersionCache.get(fact.scoreDate);
       if (mappingVersionId === undefined) {
-        mappingVersionId = await mappingVersionForDate(connection, input.dataset.id, fact.scoreDate);
+        mappingVersionId = await mappingVersionForDate(
+          connection,
+          input.dataset.id,
+          fact.scoreDate,
+        );
         mappingVersionCache.set(fact.scoreDate, mappingVersionId);
       }
       if (!mappingVersionId) {
         throw Object.assign(
-          new Error(`No approved dataset mapping is effective for ${fact.scoreDate}`),
+          new Error(
+            `No approved dataset mapping is effective for ${fact.scoreDate}`,
+          ),
           { statusCode: 409 },
         );
       }
@@ -355,7 +402,11 @@ export async function publishPerformanceFacts(input: {
       `UPDATE performance_publication_batch
           SET status = 'published', published_fact_count = ?, superseded_fact_count = ?, published_at = NOW()
         WHERE id = ?`,
-      [input.facts.length, Number(superseded.affectedRows ?? 0), publicationBatchId],
+      [
+        input.facts.length,
+        Number(superseded.affectedRows ?? 0),
+        publicationBatchId,
+      ],
     );
     await connection.commit();
     return input.facts.length;

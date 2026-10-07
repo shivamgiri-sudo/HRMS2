@@ -382,20 +382,69 @@ describe("post-selection statuses count as Selected", () => {
     "%s → selected",
     (text) => {
       expect(
-        classifyOutcome({ decision_text: text, queue_status: "completed", sub_id: "s" }),
+        classifyOutcome({
+          decision_text: text,
+          queue_status: "completed",
+          sub_id: "s",
+        }),
       ).toBe("selected");
     },
   );
   it("counts profile_submitted inside Selected and every token in exactly one outcome bucket", () => {
     const facts = [
-      fact({ token_id: "1", candidate_id: "a", decision_text: "profile_submitted", sub_id: "s", queue_status: "completed" }),
-      fact({ token_id: "2", candidate_id: "b", decision_text: "Selected", sub_id: "s", queue_status: "completed" }),
-      fact({ token_id: "3", candidate_id: "c", decision_text: "Rejected", sub_id: "s", queue_status: "completed" }),
-      fact({ token_id: "4", candidate_id: "d", decision_text: "No Show", queue_status: "no_show" }),
-      fact({ token_id: "5", candidate_id: "e", decision_text: "Hold", sub_id: "s", queue_status: "completed" }),
-      fact({ token_id: "6", candidate_id: "f", decision_text: "Client Round - Pending", sub_id: "s", queue_status: "completed" }),
-      fact({ token_id: "7", candidate_id: "g", decision_text: "Waiting", queue_status: "completed" }),
-      fact({ token_id: "8", candidate_id: "h", decision_text: "Waiting", queue_status: "waiting" }),
+      fact({
+        token_id: "1",
+        candidate_id: "a",
+        decision_text: "profile_submitted",
+        sub_id: "s",
+        queue_status: "completed",
+      }),
+      fact({
+        token_id: "2",
+        candidate_id: "b",
+        decision_text: "Selected",
+        sub_id: "s",
+        queue_status: "completed",
+      }),
+      fact({
+        token_id: "3",
+        candidate_id: "c",
+        decision_text: "Rejected",
+        sub_id: "s",
+        queue_status: "completed",
+      }),
+      fact({
+        token_id: "4",
+        candidate_id: "d",
+        decision_text: "No Show",
+        queue_status: "no_show",
+      }),
+      fact({
+        token_id: "5",
+        candidate_id: "e",
+        decision_text: "Hold",
+        sub_id: "s",
+        queue_status: "completed",
+      }),
+      fact({
+        token_id: "6",
+        candidate_id: "f",
+        decision_text: "Client Round - Pending",
+        sub_id: "s",
+        queue_status: "completed",
+      }),
+      fact({
+        token_id: "7",
+        candidate_id: "g",
+        decision_text: "Waiting",
+        queue_status: "completed",
+      }),
+      fact({
+        token_id: "8",
+        candidate_id: "h",
+        decision_text: "Waiting",
+        queue_status: "waiting",
+      }),
     ];
     const s = summarize(facts);
     expect(s.selected).toBe(2);
@@ -404,7 +453,14 @@ describe("post-selection statuses count as Selected", () => {
     expect(s.openQueueCompleted).toBe(1);
     expect(s.openWaiting).toBe(1);
     expect(
-      s.selected + s.rejected + s.noShow + s.walkout + s.clientRound + s.hold + s.otherClosed + s.open,
+      s.selected +
+        s.rejected +
+        s.noShow +
+        s.walkout +
+        s.clientRound +
+        s.hold +
+        s.otherClosed +
+        s.open,
     ).toBe(s.tokens);
   });
 });
@@ -427,11 +483,20 @@ describe("report insights", () => {
     const facts = [
       sel("a", {}),
       sel("b", { cand_status: "hr_approved", current_stage: "offer_approved" }),
-      sel("c", { cand_status: "profile_submitted", current_stage: "offer_approved" }),
+      sel("c", {
+        cand_status: "profile_submitted",
+        current_stage: "offer_approved",
+      }),
       sel("d", { current_stage: "joined" }),
     ];
-    const p = buildReport({ facts, reportDate: RD }).branches[0].insights.pipeline;
-    expect(p).toEqual({ selected: 4, offerApproved: 3, profileSubmitted: 2, joined: 1 });
+    const p = buildReport({ facts, reportDate: RD }).branches[0].insights
+      .pipeline;
+    expect(p).toEqual({
+      selected: 4,
+      offerApproved: 3,
+      profileSubmitted: 2,
+      joined: 1,
+    });
   });
 
   it("normalises the sourcing channel spellings into one bucket", () => {
@@ -441,7 +506,8 @@ describe("report insights", () => {
       sel("c", { source_channel: "Reference" }),
       sel("d", { source_channel: null }),
     ];
-    const rows = buildReport({ facts, reportDate: RD }).branches[0].insights.sources;
+    const rows = buildReport({ facts, reportDate: RD }).branches[0].insights
+      .sources;
     expect(rows.find((r) => r.source === "Walk-in")?.walkins).toBe(2);
     expect(rows.find((r) => r.source === "Reference")?.walkins).toBe(1);
     expect(rows.find((r) => r.source === "Not recorded")?.walkins).toBe(1);
@@ -452,7 +518,13 @@ describe("report insights", () => {
       sel("t", {}),
       sel("y", { arrival_date: addDays(RD, -1) }),
       sel("w", { arrival_date: addDays(RD, -7) }),
-      fact({ token_id: "n", candidate_id: "n", queue_status: "no_show", decision_text: "No Show", arrival_date: addDays(RD, -1) }),
+      fact({
+        token_id: "n",
+        candidate_id: "n",
+        queue_status: "no_show",
+        decision_text: "No Show",
+        arrival_date: addDays(RD, -1),
+      }),
     ];
     const i = buildReport({ facts, reportDate: RD }).branches[0].insights;
     expect(i.compare.map((c) => [c.label, c.selected, c.noShow])).toEqual([
@@ -475,11 +547,37 @@ describe("report insights", () => {
 describe("no interview feedback count", () => {
   it("counts tokens with no interview form, but not no-shows or walk-outs", () => {
     const facts = [
-      fact({ token_id: "1", candidate_id: "a", decision_text: "Selected", sub_id: "s", queue_status: "completed" }),
-      fact({ token_id: "2", candidate_id: "b", decision_text: "Waiting", queue_status: "completed" }),
-      fact({ token_id: "3", candidate_id: "c", decision_text: "Waiting", queue_status: "waiting" }),
-      fact({ token_id: "4", candidate_id: "d", decision_text: "No Show", queue_status: "no_show" }),
-      fact({ token_id: "5", candidate_id: "e", decision_text: "Walkout", queue_status: "walked_out" }),
+      fact({
+        token_id: "1",
+        candidate_id: "a",
+        decision_text: "Selected",
+        sub_id: "s",
+        queue_status: "completed",
+      }),
+      fact({
+        token_id: "2",
+        candidate_id: "b",
+        decision_text: "Waiting",
+        queue_status: "completed",
+      }),
+      fact({
+        token_id: "3",
+        candidate_id: "c",
+        decision_text: "Waiting",
+        queue_status: "waiting",
+      }),
+      fact({
+        token_id: "4",
+        candidate_id: "d",
+        decision_text: "No Show",
+        queue_status: "no_show",
+      }),
+      fact({
+        token_id: "5",
+        candidate_id: "e",
+        decision_text: "Walkout",
+        queue_status: "walked_out",
+      }),
     ];
     const s = summarize(facts);
     expect(s.noShow).toBe(1);

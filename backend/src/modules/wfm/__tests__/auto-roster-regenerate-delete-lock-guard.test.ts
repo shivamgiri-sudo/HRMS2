@@ -21,13 +21,18 @@ import path from "path";
  */
 
 const SOURCE = readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), "../auto-roster-synced.service.ts"),
-  "utf-8"
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../auto-roster-synced.service.ts",
+  ),
+  "utf-8",
 );
 
 describe("generateDraft's pre-regeneration DELETE respects the payroll lock", () => {
   it("the DELETE excludes rows whose attendance is locked for payroll, not just change_lock_status", () => {
-    const deleteIdx = SOURCE.indexOf("DELETE wra FROM wfm_roster_assignment wra");
+    const deleteIdx = SOURCE.indexOf(
+      "DELETE wra FROM wfm_roster_assignment wra",
+    );
     expect(deleteIdx).toBeGreaterThan(-1);
     const deleteStatement = SOURCE.slice(deleteIdx, deleteIdx + 700);
     expect(deleteStatement).toMatch(/change_lock_status/); // original guard, still present
@@ -39,7 +44,9 @@ describe("generateDraft's pre-regeneration DELETE respects the payroll lock", ()
   });
 
   it("the NOT EXISTS lock check is inside the same DELETE statement, before the later per-employee assignment loop", () => {
-    const deleteIdx = SOURCE.indexOf("DELETE wra FROM wfm_roster_assignment wra");
+    const deleteIdx = SOURCE.indexOf(
+      "DELETE wra FROM wfm_roster_assignment wra",
+    );
     const notExistsIdx = SOURCE.indexOf("NOT EXISTS", deleteIdx);
     const loopIdx = SOURCE.indexOf("for (const emp of selected) {");
     expect(notExistsIdx).toBeGreaterThan(deleteIdx);

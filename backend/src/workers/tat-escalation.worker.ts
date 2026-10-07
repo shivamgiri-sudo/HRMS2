@@ -20,25 +20,34 @@
  * Registered in BOTH all-workers.ts and server.ts. Registering in only one is how
  * ats-reminders.cron.ts came to never run in production.
  */
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../db/mysql.js';
-import { findDueEscalations, recordEscalation, markBreached } from '../modules/governance/tat.service.js';
-import type { DueEscalation } from '../modules/governance/tat.service.js';
-import { notificationGateway } from '../modules/communication/notification.gateway.js';
-import { triggerTatBreach } from '../modules/work-inbox/work-inbox.triggers.js';
-import { isWorkerEnabled, markWorkerRun } from '../shared/worker-config.js';
-import { withWorkerLock, registerTimer, unregisterTimer, recordWorkerRun } from './worker-utils.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../db/mysql.js";
+import {
+  findDueEscalations,
+  recordEscalation,
+  markBreached,
+} from "../modules/governance/tat.service.js";
+import type { DueEscalation } from "../modules/governance/tat.service.js";
+import { notificationGateway } from "../modules/communication/notification.gateway.js";
+import { triggerTatBreach } from "../modules/work-inbox/work-inbox.triggers.js";
+import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
+import {
+  withWorkerLock,
+  registerTimer,
+  unregisterTimer,
+  recordWorkerRun,
+} from "./worker-utils.js";
 
-const WORKER_NAME = 'tat-escalation';
-const POLL_MS = 15 * 60 * 1000;   // 15 minutes — SLAs are measured in hours
-const STARTUP_DELAY_MS = 90_000;  // let the API settle before the first sweep
+const WORKER_NAME = "tat-escalation";
+const POLL_MS = 15 * 60 * 1000; // 15 minutes — SLAs are measured in hours
+const STARTUP_DELAY_MS = 90_000; // let the API settle before the first sweep
 const MAX_PER_RUN = 50;
 
 /** Escalation level -> catalogue event code. */
 function eventCodeFor(level: number): string {
-  if (level <= 1) return 'task_sla_breach_l1';
-  if (level === 2) return 'task_sla_breach_l2';
-  return 'task_sla_breach_l3';
+  if (level <= 1) return "task_sla_breach_l1";
+  if (level === 2) return "task_sla_breach_l2";
+  return "task_sla_breach_l3";
 }
 
 /**
@@ -58,15 +67,23 @@ async function backfillFloor(): Promise<Date> {
     );
     const f = rows[0]?.floor;
     if (f) return new Date(f);
-  } catch { /* registry not migrated yet */ }
+  } catch {
+    /* registry not migrated yet */
+  }
   return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 }
 
 export async function runTatEscalationSweep(): Promise<{
-  scanned: number; escalated: number; skipped: number; remaining: number;
+  scanned: number;
+  escalated: number;
+  skipped: number;
+  remaining: number;
 }> {
   const floor = await backfillFloor();
-  const due = await findDueEscalations({ backfillFloor: floor, limit: MAX_PER_RUN + 1 });
+  const due = await findDueEscalations({
+    backfillFloor: floor,
+    limit: MAX_PER_RUN + 1,
+  });
 
   // Ask for one more than the cap so the leftover can be reported rather than silently
   // dropped — sla-breach-worker.ts:21 caps at 10 with no record of what it skipped.
@@ -80,7 +97,10 @@ export async function runTatEscalationSweep(): Promise<{
     try {
       // Claim the level FIRST. If another worker already logged it, stop — do not notify.
       const claimed = await recordEscalation(esc);
-      if (!claimed) { skipped++; continue; }
+      if (!claimed) {
+        skipped++;
+        continue;
+      }
 
       await markBreached(esc.tatInstanceId);
 
@@ -91,8 +111,17 @@ export async function runTatEscalationSweep(): Promise<{
       // the correct trigger point. createWorkItemIfNotExists dedupes on
       // (entityType, entityId, itemType, status='pending'), so polling this worker every
       // 15 minutes does not create a second pending item for the same instance.
-      await triggerTatBreach(esc.tatInstanceId, esc.taskType, esc.entityId, esc.notifyRole ?? undefined)
-        .catch((err) => console.error(`[${WORKER_NAME}] work-item creation failed for ${esc.tatInstanceId}:`, (err as Error).message));
+      await triggerTatBreach(
+        esc.tatInstanceId,
+        esc.taskType,
+        esc.entityId,
+        esc.notifyRole ?? undefined,
+      ).catch((err) =>
+        console.error(
+          `[${WORKER_NAME}] work-item creation failed for ${esc.tatInstanceId}:`,
+          (err as Error).message,
+        ),
+      );
 
       const result = await notificationGateway.notify({
         eventCode: eventCodeFor(esc.escalationLevel),
@@ -106,7 +135,7 @@ export async function runTatEscalationSweep(): Promise<{
           processId: esc.processId,
           tatInstanceId: esc.tatInstanceId,
         },
-        entityType: 'task_tat_instance',
+        entityType: "task_tat_instance",
         entityId: esc.tatInstanceId,
         data: {
           task_type: esc.taskType,
@@ -121,14 +150,16 @@ export async function runTatEscalationSweep(): Promise<{
         correlationId: `tat:${esc.tatInstanceId}`,
       });
 
-      if (result.outcome === 'sent' || result.outcome === 'shadow') escalated++;
+      if (result.outcome === "sent" || result.outcome === "shadow") escalated++;
       else skipped++;
     } catch (err) {
       // One bad instance must not abort the sweep: the next poll retries it, and the
       // escalation log row already written stops it double-notifying.
       skipped++;
-      console.error(`[${WORKER_NAME}] instance ${esc.tatInstanceId} level ${esc.escalationLevel}:`,
-        (err as Error).message);
+      console.error(
+        `[${WORKER_NAME}] instance ${esc.tatInstanceId} level ${esc.escalationLevel}:`,
+        (err as Error).message,
+      );
     }
   }
 
@@ -142,13 +173,15 @@ async function tick(): Promise<void> {
     const started = Date.now();
     const stats = await runTatEscalationSweep();
     await markWorkerRun(WORKER_NAME);
-    await recordWorkerRun(WORKER_NAME, 'completed', {
+    await recordWorkerRun(WORKER_NAME, "completed", {
       ...stats,
       duration_ms: Date.now() - started,
     });
     if (stats.remaining > 0) {
       // Visible backlog, not silent truncation.
-      console.warn(`[${WORKER_NAME}] CAP_REACHED — ${stats.remaining} escalations deferred to the next run`);
+      console.warn(
+        `[${WORKER_NAME}] CAP_REACHED — ${stats.remaining} escalations deferred to the next run`,
+      );
     }
   });
 }
@@ -163,11 +196,21 @@ export function startTatEscalationWorker(): void {
     registerTimer(`${WORKER_NAME}-interval`, intervalTimer);
   }, STARTUP_DELAY_MS);
   registerTimer(`${WORKER_NAME}-startup`, startupTimer);
-  console.log(`[${WORKER_NAME}] scheduled — every ${POLL_MS / 60000}m (disabled by default via worker_config)`);
+  console.log(
+    `[${WORKER_NAME}] scheduled — every ${POLL_MS / 60000}m (disabled by default via worker_config)`,
+  );
 }
 
 export function stopTatEscalationWorker(): void {
-  if (startupTimer) { clearTimeout(startupTimer); unregisterTimer(`${WORKER_NAME}-startup`); startupTimer = null; }
-  if (intervalTimer) { clearInterval(intervalTimer); unregisterTimer(`${WORKER_NAME}-interval`); intervalTimer = null; }
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    unregisterTimer(`${WORKER_NAME}-startup`);
+    startupTimer = null;
+  }
+  if (intervalTimer) {
+    clearInterval(intervalTimer);
+    unregisterTimer(`${WORKER_NAME}-interval`);
+    intervalTimer = null;
+  }
   console.log(`[${WORKER_NAME}] stopped`);
 }

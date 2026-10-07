@@ -25,7 +25,8 @@ const { stateRef } = vi.hoisted(() => ({ stateRef: { current: null as any } }));
 
 vi.mock("../../../db/mysql.js", () => ({
   db: {
-    execute: (...args: unknown[]) => stateRef.current.route(...(args as [string, unknown[]?])),
+    execute: (...args: unknown[]) =>
+      stateRef.current.route(...(args as [string, unknown[]?])),
     getConnection: async () => stateRef.current.connection,
   },
 }));
@@ -58,15 +59,27 @@ vi.mock("../../process-pnl/finance-period-lock.js", () => ({
 // Partial mock: real getHeadSubHeadCoverage/allocateAcrossLines implementation, wrapped so call
 // arguments can be inspected (used by the "does not share an aggregate across rows with
 // different head/sub-heads" test below).
-vi.mock("../../process-pnl/budget-headroom-gate.service.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../process-pnl/budget-headroom-gate.service.js")>();
-  return {
-    ...actual,
-    getHeadSubHeadCoverage: vi.fn(actual.getHeadSubHeadCoverage),
-  };
-});
+vi.mock(
+  "../../process-pnl/budget-headroom-gate.service.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../process-pnl/budget-headroom-gate.service.js")
+      >();
+    return {
+      ...actual,
+      getHeadSubHeadCoverage: vi.fn(actual.getHeadSubHeadCoverage),
+    };
+  },
+);
 
-type FakeBudgetHeader = { id: string; branch_id: string; period_code: string; status: string; financial_year?: string };
+type FakeBudgetHeader = {
+  id: string;
+  branch_id: string;
+  period_code: string;
+  status: string;
+  financial_year?: string;
+};
 type FakeBudgetLine = {
   id: string;
   budget_id: string;
@@ -91,17 +104,47 @@ type FakeBudgetLine = {
   reserved_amount: number;
   consumed_amount: number;
 };
-type FakeCostCentre = { id: string; cost_centre_code: string; cost_centre_name: string; branch_id: string; active_status: number };
+type FakeCostCentre = {
+  id: string;
+  cost_centre_code: string;
+  cost_centre_name: string;
+  branch_id: string;
+  active_status: number;
+};
 
 // funding_cost_centre_id sits beside cost_centre_id from migration 1630: WHO INCURRED the
 // spend and WHOSE BUDGET PAID it are separate facts now, so this fixture mirrors that order.
 const INSERT_COLUMNS = [
-  "id", "grn_request_id", "sequence_no", "budget_id", "budget_line_id", "branch_id",
-  "process_id", "cost_centre_id", "funding_cost_centre_id", "cost_class", "allocation_percentage",
-  "quantity", "unit", "unit_rate", "tax_treatment", "gst_rate", "gst_type",
-  "recoverable_tax_pct", "amount_without_tax", "tax_amount", "cgst_amount",
-  "sgst_amount", "igst_amount", "amount_with_tax", "recoverable_tax_amount",
-  "pnl_cost_amount", "lifecycle_status", "remarks", "is_unbudgeted", "created_by",
+  "id",
+  "grn_request_id",
+  "sequence_no",
+  "budget_id",
+  "budget_line_id",
+  "branch_id",
+  "process_id",
+  "cost_centre_id",
+  "funding_cost_centre_id",
+  "cost_class",
+  "allocation_percentage",
+  "quantity",
+  "unit",
+  "unit_rate",
+  "tax_treatment",
+  "gst_rate",
+  "gst_type",
+  "recoverable_tax_pct",
+  "amount_without_tax",
+  "tax_amount",
+  "cgst_amount",
+  "sgst_amount",
+  "igst_amount",
+  "amount_with_tax",
+  "recoverable_tax_amount",
+  "pnl_cost_amount",
+  "lifecycle_status",
+  "remarks",
+  "is_unbudgeted",
+  "created_by",
 ] as const;
 
 function makeState(opts: {
@@ -115,10 +158,15 @@ function makeState(opts: {
   let grnUpdateSql: string | null = null;
 
   function norm(v: unknown) {
-    return String(v ?? "").trim().toUpperCase();
+    return String(v ?? "")
+      .trim()
+      .toUpperCase();
   }
 
-  async function route(sql: string, params: unknown[] = []): Promise<[unknown, unknown]> {
+  async function route(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<[unknown, unknown]> {
     const s = String(sql).replace(/\s+/g, " ").trim();
 
     if (s.includes("SELECT * FROM grn_request WHERE id = ? FOR UPDATE")) {
@@ -139,22 +187,38 @@ function makeState(opts: {
     // lockBudgetLine — distinctive via its join to finance_budget_line AND process_master;
     // must be checked before the generic "LEFT JOIN process_master" match below, since
     // getWorkspace()'s own query also joins process_master.
-    if (s.includes("FROM finance_budget_line l") && s.includes("LEFT JOIN process_master")) {
+    if (
+      s.includes("FROM finance_budget_line l") &&
+      s.includes("LEFT JOIN process_master")
+    ) {
       const [budgetLineId, branchId] = params;
-      const line = opts.budgetLines.find((l) => String(l.id) === String(budgetLineId));
+      const line = opts.budgetLines.find(
+        (l) => String(l.id) === String(budgetLineId),
+      );
       if (!line) return [[], []];
-      const header = opts.budgetHeaders.find((h) => String(h.id) === String(line.budget_id));
-      if (!header || String(header.branch_id) !== String(branchId)) return [[], []];
-      const cc = opts.costCentres.find((c) => String(c.id) === String(line.cost_centre_id));
-      return [[{
-        ...line,
-        budget_status: header.status,
-        branch_id: header.branch_id,
-        period_code: header.period_code,
-        financial_year: header.financial_year ?? "2026-27",
-        process_name: null,
-        cost_centre_name: cc?.cost_centre_name ?? line.cost_centre_name ?? null,
-      }], []];
+      const header = opts.budgetHeaders.find(
+        (h) => String(h.id) === String(line.budget_id),
+      );
+      if (!header || String(header.branch_id) !== String(branchId))
+        return [[], []];
+      const cc = opts.costCentres.find(
+        (c) => String(c.id) === String(line.cost_centre_id),
+      );
+      return [
+        [
+          {
+            ...line,
+            budget_status: header.status,
+            branch_id: header.branch_id,
+            period_code: header.period_code,
+            financial_year: header.financial_year ?? "2026-27",
+            process_name: null,
+            cost_centre_name:
+              cc?.cost_centre_name ?? line.cost_centre_name ?? null,
+          },
+        ],
+        [],
+      ];
     }
 
     // getHeadSubHeadCoverage's lines query. Matched on the derived headroom column rather than
@@ -162,33 +226,59 @@ function makeState(opts: {
     // finance_expense_head_master (a budget line may store head_code where the GRN carries
     // head_name), and a matcher keyed to the old literal silently stopped matching, so the mock
     // returned nothing and every headroom test failed as NO_BUDGET_FOR_HEAD.
-    if (s.includes("FROM finance_budget_line l") && s.includes("available_gross_amount")) {
+    if (
+      s.includes("FROM finance_budget_line l") &&
+      s.includes("available_gross_amount")
+    ) {
       const [headerId, head, subHead] = params;
-      const matches = opts.budgetLines.filter((l) =>
-        String(l.budget_id) === String(headerId)
-        && norm(l.head) === norm(head)
-        && norm(l.sub_head) === norm(subHead)
+      const matches = opts.budgetLines.filter(
+        (l) =>
+          String(l.budget_id) === String(headerId) &&
+          norm(l.head) === norm(head) &&
+          norm(l.sub_head) === norm(subHead),
       );
       const rows = matches.map((l) => ({
         ...l,
-        available_quantity: Number(l.quantity) - Number(l.reserved_quantity) - Number(l.consumed_quantity),
-        available_gross_amount: Math.round((Number(l.gross_amount) - Number(l.reserved_amount) - Number(l.consumed_amount) + Number.EPSILON) * 100) / 100,
+        available_quantity:
+          Number(l.quantity) -
+          Number(l.reserved_quantity) -
+          Number(l.consumed_quantity),
+        available_gross_amount:
+          Math.round(
+            (Number(l.gross_amount) -
+              Number(l.reserved_amount) -
+              Number(l.consumed_amount) +
+              Number.EPSILON) *
+              100,
+          ) / 100,
       }));
       return [rows, []];
     }
 
     // getHeadSubHeadCoverage's header query
-    if (s.includes("FROM finance_budget_header") && s.includes("status = 'active'") && s.includes("LIMIT 1")) {
+    if (
+      s.includes("FROM finance_budget_header") &&
+      s.includes("status = 'active'") &&
+      s.includes("LIMIT 1")
+    ) {
       const [branchId, periodCode] = params;
-      const header = opts.budgetHeaders.find((h) =>
-        String(h.branch_id) === String(branchId) && String(h.period_code) === String(periodCode) && h.status === "active"
+      const header = opts.budgetHeaders.find(
+        (h) =>
+          String(h.branch_id) === String(branchId) &&
+          String(h.period_code) === String(periodCode) &&
+          h.status === "active",
       );
       return [header ? [{ id: header.id }] : [], []];
     }
 
-    if (s.includes("FROM cost_centre_master") && s.includes("active_status = 1")) {
+    if (
+      s.includes("FROM cost_centre_master") &&
+      s.includes("active_status = 1")
+    ) {
       const [ccId] = params;
-      const cc = opts.costCentres.find((c) => String(c.id) === String(ccId) && c.active_status === 1);
+      const cc = opts.costCentres.find(
+        (c) => String(c.id) === String(ccId) && c.active_status === 1,
+      );
       return [cc ? [cc] : [], []];
     }
 
@@ -199,23 +289,38 @@ function makeState(opts: {
 
     if (s.startsWith("INSERT INTO grn_cost_allocation")) {
       const record: Record<string, unknown> = {};
-      INSERT_COLUMNS.forEach((col, i) => { record[col] = params[i]; });
+      INSERT_COLUMNS.forEach((col, i) => {
+        record[col] = params[i];
+      });
       insertedAllocations.push(record);
       return [{ insertId: insertedAllocations.length, affectedRows: 1 }, []];
     }
 
-    if (s.includes("SELECT id, allocation_percentage FROM grn_cost_allocation")) {
-      return [insertedAllocations.map((r) => ({ id: r.id, allocation_percentage: r.allocation_percentage })), []];
+    if (
+      s.includes("SELECT id, allocation_percentage FROM grn_cost_allocation")
+    ) {
+      return [
+        insertedAllocations.map((r) => ({
+          id: r.id,
+          allocation_percentage: r.allocation_percentage,
+        })),
+        [],
+      ];
     }
 
     if (s.includes("UPDATE grn_cost_allocation SET allocation_percentage")) {
       const [delta, id] = params;
       const rec = insertedAllocations.find((r) => r.id === id);
-      if (rec) rec.allocation_percentage = Number(rec.allocation_percentage) + Number(delta);
+      if (rec)
+        rec.allocation_percentage =
+          Number(rec.allocation_percentage) + Number(delta);
       return [{ affectedRows: 1 }, []];
     }
 
-    if (s.startsWith("UPDATE grn_request") && s.includes("SET allocation_mode")) {
+    if (
+      s.startsWith("UPDATE grn_request") &&
+      s.includes("SET allocation_mode")
+    ) {
       grnUpdateParams = params;
       grnUpdateSql = s;
       return [{ affectedRows: 1 }, []];
@@ -224,7 +329,10 @@ function makeState(opts: {
     if (s.includes("DELETE FROM grn_period_allocation")) {
       return [{ affectedRows: 0 }, []];
     }
-    if (s.startsWith("UPDATE grn_request") && s.includes("recognition_start_period = NULL")) {
+    if (
+      s.startsWith("UPDATE grn_request") &&
+      s.includes("recognition_start_period = NULL")
+    ) {
       return [{ affectedRows: 1 }, []];
     }
     if (s.startsWith("INSERT INTO sensitive_action_log")) {
@@ -254,9 +362,15 @@ function makeState(opts: {
   return {
     route,
     connection,
-    get insertedAllocations() { return insertedAllocations; },
-    get grnUpdateParams() { return grnUpdateParams; },
-    get grnUpdateSql() { return grnUpdateSql; },
+    get insertedAllocations() {
+      return insertedAllocations;
+    },
+    get grnUpdateParams() {
+      return grnUpdateParams;
+    },
+    get grnUpdateSql() {
+      return grnUpdateSql;
+    },
   };
 }
 
@@ -289,18 +403,48 @@ beforeEach(() => {
  *  exclusive-18%. Its gross headroom is deliberately far larger than any voucher below, so every
  *  test here is exercising the money maths and nothing else. */
 const teaLine: FakeBudgetLine = {
-  id: "line-tea", budget_id: "hdr-1", head: "Staff Welfare", sub_head: "Tea, Coffee & Refreshment",
-  item_name: "Tea, Coffee & Refreshment", cost_centre_id: null, cost_centre_name: null, process_id: null,
-  unit: "Month", unit_rate: 8500, tax_treatment: "exclusive", gst_rate: 18, gst_type: "cgst_sgst",
-  recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
-  quantity: 12, reserved_quantity: 0, consumed_quantity: 0,
-  gross_amount: 120360, reserved_amount: 0, consumed_amount: 0,
+  id: "line-tea",
+  budget_id: "hdr-1",
+  head: "Staff Welfare",
+  sub_head: "Tea, Coffee & Refreshment",
+  item_name: "Tea, Coffee & Refreshment",
+  cost_centre_id: null,
+  cost_centre_name: null,
+  process_id: null,
+  unit: "Month",
+  unit_rate: 8500,
+  tax_treatment: "exclusive",
+  gst_rate: 18,
+  gst_type: "cgst_sgst",
+  recoverable_tax_pct: 100,
+  justification: "Approved",
+  period_code: "2026-08",
+  quantity: 12,
+  reserved_quantity: 0,
+  consumed_quantity: 0,
+  gross_amount: 120360,
+  reserved_amount: 0,
+  consumed_amount: 0,
 };
 
-const headers = [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }];
+const headers = [
+  { id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" },
+];
 const costCentres = [
-  { id: "cc-465", cost_centre_code: "BSS/OB/AHMH-JD/465", cost_centre_name: "Godfrey Philips India Ltd", branch_id: "br-1", active_status: 1 },
-  { id: "cc-919", cost_centre_code: "BSS/OB/AHMH-JD/919", cost_centre_name: "Bluevine Technologies", branch_id: "br-1", active_status: 1 },
+  {
+    id: "cc-465",
+    cost_centre_code: "BSS/OB/AHMH-JD/465",
+    cost_centre_name: "Godfrey Philips India Ltd",
+    branch_id: "br-1",
+    active_status: 1,
+  },
+  {
+    id: "cc-919",
+    cost_centre_code: "BSS/OB/AHMH-JD/919",
+    cost_centre_name: "Bluevine Technologies",
+    branch_id: "br-1",
+    active_status: 1,
+  },
 ];
 
 /** What the GRN form posts for one cost-centre share: the exact rupee share as `grossAmount`,
@@ -313,13 +457,17 @@ const share = (amount: number) => ({
 });
 
 const sum = (rows: Record<string, unknown>[], col: string) =>
-  Math.round(rows.reduce((total, row) => total + Number(row[col] ?? 0), 0) * 100) / 100;
+  Math.round(
+    rows.reduce((total, row) => total + Number(row[col] ?? 0), 0) * 100,
+  ) / 100;
 
 describe("imprest allocations reproduce the typed amount to the paise", () => {
   it("₹2,112 split 50/50 on an exclusive-18% line books exactly ₹2,112.00, not ₹2,112.02", async () => {
     stateRef.current = makeState({
       grn: baseGrn({ grn_type: "imprest" }),
-      budgetHeaders: headers, budgetLines: [teaLine], costCentres,
+      budgetHeaders: headers,
+      budgetLines: [teaLine],
+      costCentres,
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
@@ -327,7 +475,7 @@ describe("imprest allocations reproduce the typed amount to the paise", () => {
       "grn-1",
       { allocations: [share(1056), share(1056)], declaredInvoiceTotal: 2112 },
       "user-1",
-      "branch_head"
+      "branch_head",
     );
 
     const rows = stateRef.current.insertedAllocations;
@@ -350,7 +498,9 @@ describe("imprest allocations reproduce the typed amount to the paise", () => {
   it("the ±₹0.01 declared-total guard passes — this is what blocked the voucher from submitting", async () => {
     stateRef.current = makeState({
       grn: baseGrn({ grn_type: "imprest" }),
-      budgetHeaders: headers, budgetLines: [teaLine], costCentres,
+      budgetHeaders: headers,
+      budgetLines: [teaLine],
+      costCentres,
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
@@ -361,33 +511,42 @@ describe("imprest allocations reproduce the typed amount to the paise", () => {
         "grn-1",
         { allocations: [share(1056), share(1056)], declaredInvoiceTotal: 2112 },
         "user-1",
-        "branch_head"
-      )
+        "branch_head",
+      ),
     ).resolves.toBeDefined();
   });
 
   it("an uneven three-way split still lands on the typed total", async () => {
     stateRef.current = makeState({
       grn: baseGrn({ grn_type: "imprest" }),
-      budgetHeaders: headers, budgetLines: [teaLine], costCentres,
+      budgetHeaders: headers,
+      budgetLines: [teaLine],
+      costCentres,
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
     // 100 / 3 does not divide into paise: the form hands the residual to the last row.
     await grnSmartService.saveAllocations(
       "grn-1",
-      { allocations: [share(33.33), share(33.33), share(33.34)], declaredInvoiceTotal: 100 },
+      {
+        allocations: [share(33.33), share(33.33), share(33.34)],
+        declaredInvoiceTotal: 100,
+      },
       "user-1",
-      "branch_head"
+      "branch_head",
     );
 
-    expect(sum(stateRef.current.insertedAllocations, "amount_with_tax")).toBe(100);
+    expect(sum(stateRef.current.insertedAllocations, "amount_with_tax")).toBe(
+      100,
+    );
   });
 
   it("stores a quantity derived from the funding line's own rate — money is exact, quantity is the approximation", async () => {
     stateRef.current = makeState({
       grn: baseGrn({ grn_type: "imprest" }),
-      budgetHeaders: headers, budgetLines: [teaLine], costCentres,
+      budgetHeaders: headers,
+      budgetLines: [teaLine],
+      costCentres,
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
@@ -395,7 +554,7 @@ describe("imprest allocations reproduce the typed amount to the paise", () => {
       "grn-1",
       { allocations: [share(1056)], declaredInvoiceTotal: 1056 },
       "user-1",
-      "branch_head"
+      "branch_head",
     );
 
     const [row] = stateRef.current.insertedAllocations;
@@ -408,15 +567,21 @@ describe("imprest allocations reproduce the typed amount to the paise", () => {
   it("leaves vendor maths alone — a vendor GRN on the same line still books base + 18% GST", async () => {
     stateRef.current = makeState({
       grn: baseGrn({ grn_type: "vendor" }),
-      budgetHeaders: headers, budgetLines: [teaLine], costCentres,
+      budgetHeaders: headers,
+      budgetLines: [teaLine],
+      costCentres,
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
     await grnSmartService.saveAllocations(
       "grn-1",
-      { allocations: [{ budgetLineId: "line-tea", quantity: 1, unitRate: 8500 }] },
+      {
+        allocations: [
+          { budgetLineId: "line-tea", quantity: 1, unitRate: 8500 },
+        ],
+      },
       "user-1",
-      "branch_head"
+      "branch_head",
     );
 
     const [row] = stateRef.current.insertedAllocations;
@@ -442,16 +607,34 @@ describe("imprest allocations reproduce the typed amount to the paise", () => {
  */
 describe("saveAllocations does not erase a round-off disclosure it was not asked to change", () => {
   const line: FakeBudgetLine = {
-    ...teaLine, id: "line-plain", tax_treatment: "exclusive", gst_rate: 0, gst_type: "none",
+    ...teaLine,
+    id: "line-plain",
+    tax_treatment: "exclusive",
+    gst_rate: 0,
+    gst_type: "none",
   };
 
-  async function save(input: Record<string, unknown>, grnOverrides: Record<string, unknown> = {}) {
+  async function save(
+    input: Record<string, unknown>,
+    grnOverrides: Record<string, unknown> = {},
+  ) {
     stateRef.current = makeState({
-      grn: baseGrn({ grn_type: "vendor", round_off_amount: -0.2, ...grnOverrides }),
-      budgetHeaders: headers, budgetLines: [line], costCentres,
+      grn: baseGrn({
+        grn_type: "vendor",
+        round_off_amount: -0.2,
+        ...grnOverrides,
+      }),
+      budgetHeaders: headers,
+      budgetLines: [line],
+      costCentres,
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await grnSmartService.saveAllocations("grn-1", input, "user-1", "branch_head");
+    await grnSmartService.saveAllocations(
+      "grn-1",
+      input,
+      "user-1",
+      "branch_head",
+    );
     const sql = String(stateRef.current.grnUpdateSql);
     const params = stateRef.current.grnUpdateParams as unknown[];
     // The round-off parameter is the one immediately before is_unbudgeted/grnId at the tail.
@@ -460,7 +643,9 @@ describe("saveAllocations does not erase a round-off disclosure it was not asked
 
   it("leaves the stored value untouched when the caller does not send one", async () => {
     const { sql, roundOffParam } = await save({
-      allocations: [{ budgetLineId: "line-plain", quantity: 1, unitRate: 8500 }],
+      allocations: [
+        { budgetLineId: "line-plain", quantity: 1, unitRate: 8500 },
+      ],
     });
     expect(sql).toContain("round_off_amount = COALESCE(?, round_off_amount)");
     // null = "leave it alone". Before this change it was 0 — the disclosure was wiped.
@@ -469,13 +654,17 @@ describe("saveAllocations does not erase a round-off disclosure it was not asked
 
   it("still writes an explicit value, including an explicit zero", async () => {
     const explicit = await save({
-      allocations: [{ budgetLineId: "line-plain", quantity: 1, unitRate: 8500 }],
+      allocations: [
+        { budgetLineId: "line-plain", quantity: 1, unitRate: 8500 },
+      ],
       roundOffAmount: -0.2,
     });
     expect(explicit.roundOffParam).toBe(-0.2);
 
     const cleared = await save({
-      allocations: [{ budgetLineId: "line-plain", quantity: 1, unitRate: 8500 }],
+      allocations: [
+        { budgetLineId: "line-plain", quantity: 1, unitRate: 8500 },
+      ],
       roundOffAmount: 0,
     });
     expect(cleared.roundOffParam).toBe(0);

@@ -43,7 +43,11 @@ describe("work inbox derived approval queues", () => {
     expect(code).toContain("FROM leave_request lr");
     expect(code).toContain("FROM exit_clearance_task t");
     expect(code).toContain("FROM candidate_bgv_check b");
-    for (const type of ["LEAVE_APPROVAL_PENDING", "FF_CLEARANCE_PENDING", "BGV_PENDING"]) {
+    for (const type of [
+      "LEAVE_APPROVAL_PENDING",
+      "FF_CLEARANCE_PENDING",
+      "BGV_PENDING",
+    ]) {
       expect(code).toContain(`'${type}' AS item_type`);
     }
   });
@@ -56,7 +60,9 @@ describe("work inbox derived approval queues", () => {
     // this task's role alongside a higher-ranked one (e.g. super_admin) still matches — see
     // paddedOwnerRoleParams().
     const { code } = await capture("user-1", "hr");
-    expect(code).toContain("(t.owner_user_id = ? OR t.owner_role IN (?,?,?,?,?,?))");
+    expect(code).toContain(
+      "(t.owner_user_id = ? OR t.owner_role IN (?,?,?,?,?,?))",
+    );
   });
 
   it("carries the real due date for exit clearance", async () => {
@@ -78,7 +84,9 @@ describe("work inbox derived approval queues", () => {
     // 17 of the 58 have no surviving ats_candidate row. An INNER JOIN would hide exactly
     // the checks whose data is already damaged.
     const { code } = await capture("user-1", "hr");
-    expect(code).toContain("LEFT JOIN ats_candidate c ON c.id = b.candidate_id");
+    expect(code).toContain(
+      "LEFT JOIN ats_candidate c ON c.id = b.candidate_id",
+    );
     expect(code).toContain("CONCAT('candidate ', b.candidate_id)");
   });
 
@@ -91,13 +99,23 @@ describe("work inbox derived approval queues", () => {
     // wrong person silently rather than raising.
     const { params } = await capture("user-7", "manager");
     expect(params).toEqual([
-      "user-7", "manager",
       "user-7",
-      "user-7", "manager",
-      "user-7", "manager", "__none__", "__none__", "__none__", "__none__", "__none__",
       "manager",
-      "manager", "manager",
-      "manager", "manager",
+      "user-7",
+      "user-7",
+      "manager",
+      "user-7",
+      "manager",
+      "__none__",
+      "__none__",
+      "__none__",
+      "__none__",
+      "__none__",
+      "manager",
+      "manager",
+      "manager",
+      "manager",
+      "manager",
     ]);
   });
 
@@ -123,9 +141,17 @@ describe("work inbox derived approval queues", () => {
     expect(code).toContain("FROM finance_budget_header fb");
     expect(code).toContain("'GRN_APPROVAL_PENDING' AS item_type");
     expect(code).toContain("'BUDGET_APPROVAL_PENDING' AS item_type");
-    expect(code).toContain("g.status = 'submitted' AND ? IN ('branch_head', 'super_admin')");
-    expect(code).toContain("g.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin')");
-    expect(code).toContain("fb.status = 'submitted' AND ? IN ('branch_head', 'finance_head', 'super_admin')");
-    expect(code).toContain("fb.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin')");
+    expect(code).toContain(
+      "g.status = 'submitted' AND ? IN ('branch_head', 'super_admin')",
+    );
+    expect(code).toContain(
+      "g.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin')",
+    );
+    expect(code).toContain(
+      "fb.status = 'submitted' AND ? IN ('branch_head', 'finance_head', 'super_admin')",
+    );
+    expect(code).toContain(
+      "fb.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin')",
+    );
   });
 });

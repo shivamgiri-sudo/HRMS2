@@ -38,40 +38,53 @@
  * skipped and reported, not silently attributed to a guessed user.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import mysql from 'mysql2/promise';
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
+import mysql from "mysql2/promise";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BACKEND_ROOT = path.join(__dirname, '..');
+const BACKEND_ROOT = path.join(__dirname, "..");
 
-const APPLY = process.argv.includes('--apply');
-const codeArgIdx = process.argv.indexOf('--employee-code');
-const ONLY_EMPLOYEE_CODE = codeArgIdx !== -1 ? process.argv[codeArgIdx + 1] : null;
+const APPLY = process.argv.includes("--apply");
+const codeArgIdx = process.argv.indexOf("--employee-code");
+const ONLY_EMPLOYEE_CODE =
+  codeArgIdx !== -1 ? process.argv[codeArgIdx + 1] : null;
 
-const SKIP_DOC_TYPES = new Set(['Live Selfie']);
-const ONBOARDING_DOCUMENT_ROOT = path.join(BACKEND_ROOT, 'private-storage', 'onboarding-documents');
-const EMPLOYEE_DOCS_DIR = path.join(BACKEND_ROOT, 'uploads', 'employee-documents');
+const SKIP_DOC_TYPES = new Set(["Live Selfie"]);
+const ONBOARDING_DOCUMENT_ROOT = path.join(
+  BACKEND_ROOT,
+  "private-storage",
+  "onboarding-documents",
+);
+const EMPLOYEE_DOCS_DIR = path.join(
+  BACKEND_ROOT,
+  "uploads",
+  "employee-documents",
+);
 
 function readEnv(file) {
   const out = {};
-  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
-    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
+    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
   }
   return out;
 }
-const env = readEnv(path.join(BACKEND_ROOT, '.env'));
+const env = readEnv(path.join(BACKEND_ROOT, ".env"));
 
 function isReadableFile(p) {
-  try { return fs.existsSync(p) && fs.statSync(p).isFile(); } catch { return false; }
+  try {
+    return fs.existsSync(p) && fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /** Same fallback as backend/src/modules/ats/onboardingDocumentPath.ts. */
 function resolveOnboardingDocumentFile(storedPath) {
-  const raw = String(storedPath ?? '').trim();
+  const raw = String(storedPath ?? "").trim();
   if (!raw) return null;
   if (isReadableFile(raw)) return raw;
   const fileName = raw.split(/[\\/]/).pop();
@@ -96,11 +109,16 @@ const LOG_DDL = `
 
 async function main() {
   const db = await mysql.createConnection({
-    host: env.DB_HOST, port: Number(env.DB_PORT || 3306),
-    user: env.DB_USER, password: env.DB_PASSWORD, database: env.DB_NAME,
+    host: env.DB_HOST,
+    port: Number(env.DB_PORT || 3306),
+    user: env.DB_USER,
+    password: env.DB_PASSWORD,
+    database: env.DB_NAME,
   });
 
-  console.log(`mode: ${APPLY ? 'APPLY' : 'DRY RUN'}${ONLY_EMPLOYEE_CODE ? ` (employee_code=${ONLY_EMPLOYEE_CODE})` : ''}`);
+  console.log(
+    `mode: ${APPLY ? "APPLY" : "DRY RUN"}${ONLY_EMPLOYEE_CODE ? ` (employee_code=${ONLY_EMPLOYEE_CODE})` : ""}`,
+  );
   if (APPLY) await db.query(LOG_DDL);
 
   const [candidates] = await db.query(
@@ -112,7 +130,7 @@ async function main() {
          SELECT candidate_id, id AS employee_id FROM employees WHERE candidate_id IS NOT NULL
        ) cand ON cand.employee_id = e.id
       WHERE e.active_status = 1
-      ${ONLY_EMPLOYEE_CODE ? 'AND e.employee_code = ?' : ''}`,
+      ${ONLY_EMPLOYEE_CODE ? "AND e.employee_code = ?" : ""}`,
     ONLY_EMPLOYEE_CODE ? [ONLY_EMPLOYEE_CODE] : [],
   );
 
@@ -125,7 +143,11 @@ async function main() {
   let employeesSkippedNoActor = 0;
 
   for (const row of candidates) {
-    const { employee_id: employeeId, employee_code: employeeCode, candidate_id: candidateId } = row;
+    const {
+      employee_id: employeeId,
+      employee_code: employeeCode,
+      candidate_id: candidateId,
+    } = row;
 
     const [candidateDocs] = await db.query(
       `SELECT id, doc_type, doc_name, file_path, file_url, mime_type, file_size_bytes
@@ -142,7 +164,10 @@ async function main() {
     const alreadyPresent = new Set(existingRows.map((r) => String(r.doc_type)));
 
     const toPromote = candidateDocs.filter(
-      (d) => d.doc_type && !SKIP_DOC_TYPES.has(d.doc_type) && !alreadyPresent.has(d.doc_type),
+      (d) =>
+        d.doc_type &&
+        !SKIP_DOC_TYPES.has(d.doc_type) &&
+        !alreadyPresent.has(d.doc_type),
     );
     if (!toPromote.length) continue;
 
@@ -156,20 +181,28 @@ async function main() {
       );
       actorUserId = actorRows[0]?.actor_user_id ?? null;
       if (!actorUserId) {
-        console.warn(`  ${employeeCode}: SKIPPED — no employee_created_preboarding actor found, cannot attribute upload.`);
+        console.warn(
+          `  ${employeeCode}: SKIPPED — no employee_created_preboarding actor found, cannot attribute upload.`,
+        );
         employeesSkippedNoActor += 1;
         continue;
       }
     }
 
-    console.log(`  ${employeeCode}: ${toPromote.length} candidate document(s) missing from employee_documents`
-      + ` (${toPromote.map((d) => d.doc_type).join(', ')})`);
+    console.log(
+      `  ${employeeCode}: ${toPromote.length} candidate document(s) missing from employee_documents` +
+        ` (${toPromote.map((d) => d.doc_type).join(", ")})`,
+    );
 
     let touchedThisEmployee = false;
     for (const doc of toPromote) {
-      const sourcePath = resolveOnboardingDocumentFile(doc.file_path ?? doc.file_url);
+      const sourcePath = resolveOnboardingDocumentFile(
+        doc.file_path ?? doc.file_url,
+      );
       if (!sourcePath) {
-        console.warn(`    - "${doc.doc_type}": file missing on disk, cannot copy — skipped.`);
+        console.warn(
+          `    - "${doc.doc_type}": file missing on disk, cannot copy — skipped.`,
+        );
         docsSkippedFileMissing += 1;
         continue;
       }
@@ -181,12 +214,18 @@ async function main() {
       }
 
       fs.mkdirSync(EMPLOYEE_DOCS_DIR, { recursive: true });
-      const ext = path.extname(sourcePath) || path.extname(String(doc.file_url ?? '')) || '';
+      const ext =
+        path.extname(sourcePath) ||
+        path.extname(String(doc.file_url ?? "")) ||
+        "";
       const storedFilename = `${crypto.randomUUID()}${ext}`;
       const destPath = path.join(EMPLOYEE_DOCS_DIR, storedFilename);
       const fileBuffer = fs.readFileSync(sourcePath);
       fs.writeFileSync(destPath, fileBuffer);
-      const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+      const sha256 = crypto
+        .createHash("sha256")
+        .update(fileBuffer)
+        .digest("hex");
 
       const vaultId = crypto.randomUUID();
       await db.execute(
@@ -195,9 +234,16 @@ async function main() {
             mime_type, file_size_bytes, sha256_hash, access_level, owner_employee_id)
          VALUES (?, ?, 'employee-documents', ?, ?, ?, ?, ?, 'pii', ?)`,
         [
-          vaultId, actorUserId, storedFilename, path.basename(sourcePath),
-          doc.mime_type ?? null, doc.file_size_bytes != null ? Number(doc.file_size_bytes) : fileBuffer.length,
-          sha256, employeeId,
+          vaultId,
+          actorUserId,
+          storedFilename,
+          path.basename(sourcePath),
+          doc.mime_type ?? null,
+          doc.file_size_bytes != null
+            ? Number(doc.file_size_bytes)
+            : fileBuffer.length,
+          sha256,
+          employeeId,
         ],
       );
 
@@ -206,14 +252,29 @@ async function main() {
       await db.execute(
         `INSERT INTO employee_documents (id, employee_id, doc_type, doc_name, file_url, uploaded_by)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        [employeeDocId, employeeId, doc.doc_type, doc.doc_name ?? doc.doc_type, fileUrl, actorUserId],
+        [
+          employeeDocId,
+          employeeId,
+          doc.doc_type,
+          doc.doc_name ?? doc.doc_type,
+          fileUrl,
+          actorUserId,
+        ],
       );
 
       await db.execute(
         `INSERT INTO employee_document_promotion_backfill_log
            (employee_id, employee_code, candidate_id, employee_document_id, doc_type, source_candidate_document_id, stored_filename)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [employeeId, employeeCode, candidateId, employeeDocId, doc.doc_type, doc.id, storedFilename],
+        [
+          employeeId,
+          employeeCode,
+          candidateId,
+          employeeDocId,
+          doc.doc_type,
+          doc.id,
+          storedFilename,
+        ],
       );
 
       console.log(`    - "${doc.doc_type}": copied -> ${storedFilename}`);
@@ -224,17 +285,26 @@ async function main() {
     if (touchedThisEmployee) employeesTouched += 1;
   }
 
-  console.log('\n── Summary ──────────────────────────────────────');
-  console.log(`Employees ${APPLY ? 'updated' : 'that would be updated'}: ${employeesTouched}`);
-  console.log(`Documents ${APPLY ? 'promoted' : 'that would be promoted'}: ${docsPromoted}`);
-  console.log(`Documents skipped — file missing on disk: ${docsSkippedFileMissing}`);
-  if (APPLY) console.log(`Employees skipped — no conversion actor found: ${employeesSkippedNoActor}`);
-  if (!APPLY) console.log('\nDry run only. Re-run with --apply to write.');
+  console.log("\n── Summary ──────────────────────────────────────");
+  console.log(
+    `Employees ${APPLY ? "updated" : "that would be updated"}: ${employeesTouched}`,
+  );
+  console.log(
+    `Documents ${APPLY ? "promoted" : "that would be promoted"}: ${docsPromoted}`,
+  );
+  console.log(
+    `Documents skipped — file missing on disk: ${docsSkippedFileMissing}`,
+  );
+  if (APPLY)
+    console.log(
+      `Employees skipped — no conversion actor found: ${employeesSkippedNoActor}`,
+    );
+  if (!APPLY) console.log("\nDry run only. Re-run with --apply to write.");
 
   await db.end();
 }
 
 main().catch((err) => {
-  console.error('FATAL', err);
+  console.error("FATAL", err);
   process.exit(1);
 });

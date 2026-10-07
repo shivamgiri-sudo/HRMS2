@@ -15,7 +15,10 @@ import { describe, expect, it } from "vitest";
  * only the genuinely late-stage statuses (attendance_locked/payroll_input_ready/closed).
  */
 describe("resolve-dispute respects the cycle lifecycle", () => {
-  const source = readFileSync(resolve(__dirname, "../roster.governance.routes.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(__dirname, "../roster.governance.routes.ts"),
+    "utf-8",
+  );
 
   it("defines a locked-status set excluding only the late-stage statuses", () => {
     expect(source).toMatch(
@@ -24,7 +27,9 @@ describe("resolve-dispute respects the cycle lifecycle", () => {
   });
 
   function handler(): string {
-    const start = source.indexOf('router.post("/assignments/:id/resolve-dispute"');
+    const start = source.indexOf(
+      'router.post("/assignments/:id/resolve-dispute"',
+    );
     expect(start, "resolve-dispute handler not found").toBeGreaterThan(-1);
     const end = source.indexOf("}));", start);
     return source.slice(start, end);
@@ -50,7 +55,9 @@ describe("resolve-dispute respects the cycle lifecycle", () => {
     // raised against an already-published/acknowledged assignment, so gating on that
     // narrower set would reject the exact case this route exists for.
     const body = handler();
-    expect(body).toMatch(/if \(DISPUTE_LOCKED_STATUSES\.has\(assignment\.cycle_status\)\)/);
+    expect(body).toMatch(
+      /if \(DISPUTE_LOCKED_STATUSES\.has\(assignment\.cycle_status\)\)/,
+    );
     expect(body).not.toMatch(/if \(!?EDITABLE_ASSIGNMENT_STATUSES\.has/);
   });
 });

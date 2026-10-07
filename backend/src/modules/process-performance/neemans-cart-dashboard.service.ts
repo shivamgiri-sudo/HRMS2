@@ -33,7 +33,12 @@ export interface NeemansCartDashboardData {
   from: string;
   to: string;
   dateWiseTrend: Array<{ date: string; cartCount: number; cartValue: number }>;
-  dispositionBreakdown: Array<{ disposition: string; count: number; value: number; pct: number }>;
+  dispositionBreakdown: Array<{
+    disposition: string;
+    count: number;
+    value: number;
+    pct: number;
+  }>;
   statusBreakdown: Array<{ status: string; count: number; pct: number }>;
   agentPerformance: Array<{
     agent: string;
@@ -117,7 +122,8 @@ const num = (v: string | number | null | undefined): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
-const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
+const pct = (part: number, whole: number): number =>
+  whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -207,15 +213,17 @@ export async function getNeemansCartDashboard(
 
   const recordRows: RecordRow[] = opts.skipRecords
     ? []
-    : (await db.execute<RecordRow[]>(
-        `SELECT id, cart_id, customer_name, phone_number, email_id, line_items, amount,
+    : (
+        await db.execute<RecordRow[]>(
+          `SELECT id, cart_id, customer_name, phone_number, email_id, line_items, amount,
            agent, disposition, sub_disposition, call_date, status
          FROM db_masmis.neemans_cart
          WHERE call_date >= ? AND call_date < DATE_ADD(?, INTERVAL 1 DAY)
          ORDER BY call_date DESC, id DESC
          LIMIT ${RECORDS_LIMIT}`,
-        range,
-      ))[0];
+          range,
+        )
+      )[0];
 
   const totalCarts = num(headlineRow?.total_carts);
   const totalCartValue = num(headlineRow?.total_value);
@@ -224,7 +232,10 @@ export async function getNeemansCartDashboard(
     headline: {
       totalCarts,
       totalCartValue,
-      avgCartValue: totalCarts > 0 ? Math.round((totalCartValue / totalCarts) * 100) / 100 : 0,
+      avgCartValue:
+        totalCarts > 0
+          ? Math.round((totalCartValue / totalCarts) * 100) / 100
+          : 0,
       uniqueCustomers: num(headlineRow?.unique_customers),
       activeAgents: num(headlineRow?.active_agents),
     },

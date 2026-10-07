@@ -22,16 +22,21 @@ let employeeRow: Record<string, unknown> | undefined;
 vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: vi.fn(async (sql: string) => {
-      if (String(sql).includes("FROM branch_master")) return [branchRow ? [branchRow] : []];
-      if (String(sql).includes("FROM employees")) return [employeeRow ? [employeeRow] : []];
+      if (String(sql).includes("FROM branch_master"))
+        return [branchRow ? [branchRow] : []];
+      if (String(sql).includes("FROM employees"))
+        return [employeeRow ? [employeeRow] : []];
       return [[]];
     }),
   },
 }));
 
 const {
-  resolveBranchLetterhead, resolveEmployeeLetterhead, assertPrintableLetterhead,
-  letterheadOneLine, clearBranchLetterheadCache,
+  resolveBranchLetterhead,
+  resolveEmployeeLetterhead,
+  assertPrintableLetterhead,
+  letterheadOneLine,
+  clearBranchLetterheadCache,
 } = await import("../branchAddress.service.js");
 
 beforeEach(() => {
@@ -45,19 +50,34 @@ describe("resolving a branch letterhead", () => {
     // branch_master has one address VARCHAR(500) holding the whole postal
     // address newline-separated — there is no pincode or full_address column.
     branchRow = {
-      id: "b1", branch_name: "NOIDA-2",
+      id: "b1",
+      branch_name: "NOIDA-2",
       address: "A-45, Sector 63\nNoida, Uttar Pradesh 201301",
-      city: "Noida", state: "Uttar Pradesh", hr_contact: "hr.noida@teammas.in",
+      city: "Noida",
+      state: "Uttar Pradesh",
+      hr_contact: "hr.noida@teammas.in",
     };
     const lh = await resolveBranchLetterhead("b1");
     expect(lh.branchName).toBe("NOIDA-2");
-    expect(lh.addressLines).toEqual(["A-45, Sector 63", "Noida, Uttar Pradesh 201301"]);
+    expect(lh.addressLines).toEqual([
+      "A-45, Sector 63",
+      "Noida, Uttar Pradesh 201301",
+    ]);
     expect(lh.hasAddress).toBe(true);
-    expect(letterheadOneLine(lh)).toBe("A-45, Sector 63, Noida, Uttar Pradesh 201301");
+    expect(letterheadOneLine(lh)).toBe(
+      "A-45, Sector 63, Noida, Uttar Pradesh 201301",
+    );
   });
 
   it("falls back to city/state when the address is blank, and says so", async () => {
-    branchRow = { id: "b2", branch_name: "DELHI", address: "", city: "Delhi", state: "Delhi", hr_contact: "" };
+    branchRow = {
+      id: "b2",
+      branch_name: "DELHI",
+      address: "",
+      city: "Delhi",
+      state: "Delhi",
+      hr_contact: "",
+    };
     const lh = await resolveBranchLetterhead("b2");
     expect(lh.addressLines).toEqual(["Delhi, Delhi"]);
     // Still false: a city/state line is not a postal address.
@@ -72,7 +92,14 @@ describe("resolving a branch letterhead", () => {
 
   it("resolves through the employee", async () => {
     employeeRow = { branch_id: "b1" };
-    branchRow = { id: "b1", branch_name: "NOIDA-2", address: "A-45, Sector 63", city: "", state: "", hr_contact: "" };
+    branchRow = {
+      id: "b1",
+      branch_name: "NOIDA-2",
+      address: "A-45, Sector 63",
+      city: "",
+      state: "",
+      hr_contact: "",
+    };
     const lh = await resolveEmployeeLetterhead("emp-1");
     expect(lh.branchName).toBe("NOIDA-2");
   });
@@ -82,13 +109,22 @@ describe("refusing to print a blank letterhead", () => {
   it("blocks when the employee has no branch", async () => {
     const lh = await resolveBranchLetterhead(null);
     expect(() => assertPrintableLetterhead(lh)).toThrow();
-    try { assertPrintableLetterhead(lh); } catch (e) {
+    try {
+      assertPrintableLetterhead(lh);
+    } catch (e) {
       expect((e as { code?: string }).code).toBe("branch_not_assigned");
     }
   });
 
   it("blocks when the branch has no address on record", async () => {
-    branchRow = { id: "b2", branch_name: "HQ", address: "", city: "Mumbai", state: "MH", hr_contact: "" };
+    branchRow = {
+      id: "b2",
+      branch_name: "HQ",
+      address: "",
+      city: "Mumbai",
+      state: "MH",
+      hr_contact: "",
+    };
     const lh = await resolveBranchLetterhead("b2");
     try {
       assertPrintableLetterhead(lh);
@@ -101,7 +137,14 @@ describe("refusing to print a blank letterhead", () => {
   });
 
   it("passes a fully populated branch", async () => {
-    branchRow = { id: "b1", branch_name: "NOIDA-2", address: "A-45, Sector 63", city: "", state: "", hr_contact: "" };
+    branchRow = {
+      id: "b1",
+      branch_name: "NOIDA-2",
+      address: "A-45, Sector 63",
+      city: "",
+      state: "",
+      hr_contact: "",
+    };
     const lh = await resolveBranchLetterhead("b1");
     expect(() => assertPrintableLetterhead(lh)).not.toThrow();
   });
@@ -113,7 +156,9 @@ describe("renderers no longer hardcode an address", () => {
 
   it("the letter header and footer take the issuing branch", () => {
     const src = read("modules/letters/letters-render.service.ts");
-    expect(src).toContain("function letterHeader(logoUrl: string, d?: Record<string, string>)");
+    expect(src).toContain(
+      "function letterHeader(logoUrl: string, d?: Record<string, string>)",
+    );
     expect(src).toContain("function footer(d?: Record<string, string>)");
     expect(src).toContain("d?.branch_address");
     // No call site may still render without the branch context.
@@ -131,7 +176,9 @@ describe("renderers no longer hardcode an address", () => {
 
   it("the joining-document letterhead accepts a branch", () => {
     const src = read("modules/employees/joiningDocumentPdf.service.ts");
-    expect(src).toContain("function drawLetterhead(doc: Doc, letterhead?: PdfLetterhead)");
+    expect(src).toContain(
+      "function drawLetterhead(doc: Doc, letterhead?: PdfLetterhead)",
+    );
     expect(src).toContain("COMPANY_ADDRESS_FALLBACK");
   });
 
@@ -145,7 +192,10 @@ describe("renderers no longer hardcode an address", () => {
   });
 
   it("letters supply the branch fields to the renderer", () => {
-    for (const f of ["modules/letters/letters.service.ts", "modules/letters/letters.routes.ts"]) {
+    for (const f of [
+      "modules/letters/letters.service.ts",
+      "modules/letters/letters.routes.ts",
+    ]) {
       const src = read(f);
       expect(src).toContain("AS branch_address");
       expect(src).toContain("branch_address:    emp.branch_address");

@@ -13,8 +13,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const legacyDbSource = readFileSync(resolve(process.cwd(), "src/db/legacyDb.ts"), "utf8");
-const billDbSource = readFileSync(resolve(process.cwd(), "src/db/billDb.ts"), "utf8");
+const legacyDbSource = readFileSync(
+  resolve(process.cwd(), "src/db/legacyDb.ts"),
+  "utf8",
+);
+const billDbSource = readFileSync(
+  resolve(process.cwd(), "src/db/billDb.ts"),
+  "utf8",
+);
 
 describe("legacyDb.ts enforces the same read-only boundary as its sibling billDb.ts", () => {
   it("billDb.ts sets a read-only session pragma (the established, correct pattern)", () => {
@@ -26,7 +32,9 @@ describe("legacyDb.ts enforces the same read-only boundary as its sibling billDb
   });
 
   it("legacyDb.ts sets it inside getLegacyPool, on first connection", () => {
-    const fn = legacyDbSource.match(/export async function getLegacyPool\(\)[\s\S]*?\n\}/);
+    const fn = legacyDbSource.match(
+      /export async function getLegacyPool\(\)[\s\S]*?\n\}/,
+    );
     expect(fn, "getLegacyPool function body not found").toBeTruthy();
     expect(fn![0]).toContain("SET SESSION TRANSACTION READ ONLY");
   });

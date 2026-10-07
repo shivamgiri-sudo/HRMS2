@@ -11,7 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * They also pin the capability gate: on a database without 1680/1681 the writers
  * must NOT name columns that do not exist, or a working form starts 400ing.
  */
-const { execute, query } = vi.hoisted(() => ({ execute: vi.fn(), query: vi.fn() }));
+const { execute, query } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  query: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute, query, getConnection: vi.fn() },
 }));
@@ -25,25 +28,38 @@ vi.mock("../kpi-studio.gsheet.js", () => ({
 const svc = await import("../kpi-studio.service.js");
 
 /** Answers the capability probes, then a generated UUID for inserts. */
-function mockCapability(opts: { processGrain: boolean; fieldFilters: boolean }) {
+function mockCapability(opts: {
+  processGrain: boolean;
+  fieldFilters: boolean;
+}) {
   execute.mockImplementation((sql: string) => {
     const text = String(sql);
-    if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
-    if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+    if (text.includes("INFORMATION_SCHEMA.TABLES"))
+      return Promise.resolve([[{ n: 6 }], []]);
+    if (text.includes("kpi_employee_resolved"))
+      return Promise.resolve([[{ n: 6 }], []]);
     if (text.includes("source_cols")) {
-      return Promise.resolve([[{
-        source_cols: opts.processGrain ? 4 : 0,
-        grain_col: opts.processGrain ? 1 : 0,
-        filter_col: opts.fieldFilters ? 1 : 0,
-      }], []]);
+      return Promise.resolve([
+        [
+          {
+            source_cols: opts.processGrain ? 4 : 0,
+            grain_col: opts.processGrain ? 1 : 0,
+            filter_col: opts.fieldFilters ? 1 : 0,
+          },
+        ],
+        [],
+      ]);
     }
-    if (text.includes("SELECT UUID()")) return Promise.resolve([[{ id: "generated-id" }], []]);
+    if (text.includes("SELECT UUID()"))
+      return Promise.resolve([[{ id: "generated-id" }], []]);
     return Promise.resolve([{ affectedRows: 1 }, []]);
   });
 }
 
 const insertInto = (table: string) =>
-  execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO " + table));
+  execute.mock.calls.find(([sql]) =>
+    String(sql).includes("INSERT INTO " + table),
+  );
 
 const storedJson = (params: unknown[]) =>
   params.find((p) => typeof p === "string" && p.startsWith("["));
@@ -58,9 +74,15 @@ describe("saveDataSource stores the process mapping", () => {
   it("writes the mapping when the schema supports it", async () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await svc.saveDataSource({
-      source_code: "CLIENT_ORDERS", source_name: "Client orders", source_type: "integration_connector",
-      integration_key: "proc_abc", source_object: "orders", date_column: "order_date",
-      process_key_kind: "column", process_key_column: "client_id", process_key_value: "487",
+      source_code: "CLIENT_ORDERS",
+      source_name: "Client orders",
+      source_type: "integration_connector",
+      integration_key: "proc_abc",
+      source_object: "orders",
+      date_column: "order_date",
+      process_key_kind: "column",
+      process_key_column: "client_id",
+      process_key_value: "487",
       process_id: "p-gs1",
     } as never);
 
@@ -76,18 +98,29 @@ describe("saveDataSource stores the process mapping", () => {
   it("does not name the columns when the schema lacks them", async () => {
     mockCapability({ processGrain: false, fieldFilters: false });
     await svc.saveDataSource({
-      source_code: "X", source_name: "X", source_type: "local_query",
-      source_object: "t", date_column: "d", process_key_kind: "constant", process_id: "p1",
+      source_code: "X",
+      source_name: "X",
+      source_type: "local_query",
+      source_object: "t",
+      date_column: "d",
+      process_key_kind: "constant",
+      process_id: "p1",
     } as never);
-    expect(String(insertInto("kpi_studio_data_source")![0])).not.toContain("process_key_kind");
+    expect(String(insertInto("kpi_studio_data_source")![0])).not.toContain(
+      "process_key_kind",
+    );
   });
 
   it("refuses a mapping with no process chosen", async () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await expect(
       svc.saveDataSource({
-        source_code: "X", source_name: "X", source_type: "local_query",
-        source_object: "t", date_column: "d", process_key_kind: "constant",
+        source_code: "X",
+        source_name: "X",
+        source_type: "local_query",
+        source_object: "t",
+        date_column: "d",
+        process_key_kind: "constant",
       } as never),
     ).rejects.toThrow(/Pick the process/i);
   });
@@ -96,8 +129,13 @@ describe("saveDataSource stores the process mapping", () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await expect(
       svc.saveDataSource({
-        source_code: "X", source_name: "X", source_type: "local_query",
-        source_object: "t", date_column: "d", process_key_kind: "column", process_id: "p1",
+        source_code: "X",
+        source_name: "X",
+        source_type: "local_query",
+        source_object: "t",
+        date_column: "d",
+        process_key_kind: "column",
+        process_id: "p1",
       } as never),
     ).rejects.toThrow(/Name the column/i);
   });
@@ -106,8 +144,13 @@ describe("saveDataSource stores the process mapping", () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await expect(
       svc.saveDataSource({
-        source_code: "X", source_name: "X", source_type: "local_query",
-        source_object: "t", date_column: "d", process_key_kind: "sneaky", process_id: "p1",
+        source_code: "X",
+        source_name: "X",
+        source_type: "local_query",
+        source_object: "t",
+        date_column: "d",
+        process_key_kind: "sneaky",
+        process_id: "p1",
       } as never),
     ).rejects.toThrow(/Unknown process mapping/i);
   });
@@ -117,7 +160,10 @@ describe("saveSourceField stores filters", () => {
   it("writes filters as JSON when the schema supports it", async () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await svc.saveSourceField({
-      data_source_id: "s1", field_name: "answered", source_column: "id", aggregate_fn: "COUNT",
+      data_source_id: "s1",
+      field_name: "answered",
+      source_column: "id",
+      aggregate_fn: "COUNT",
       filter_json: [{ column: "AgentId", op: "ne", value: "VDCL" }],
     } as never);
     const call = insertInto("kpi_studio_source_field");
@@ -130,18 +176,26 @@ describe("saveSourceField stores filters", () => {
   it("splits an is-one-of list into real values", async () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await svc.saveSourceField({
-      data_source_id: "s1", field_name: "won", source_column: "amount", aggregate_fn: "SUM",
+      data_source_id: "s1",
+      field_name: "won",
+      source_column: "amount",
+      aggregate_fn: "SUM",
       filter_json: [{ column: "status", op: "in", value: "won, closed , " }],
     } as never);
     const call = insertInto("kpi_studio_source_field");
-    expect(JSON.parse(String(storedJson(call![1] as unknown[])))[0].value).toEqual(["won", "closed"]);
+    expect(
+      JSON.parse(String(storedJson(call![1] as unknown[])))[0].value,
+    ).toEqual(["won", "closed"]);
   });
 
   it("refuses an injected filter column", async () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await expect(
       svc.saveSourceField({
-        data_source_id: "s1", field_name: "x", source_column: "id", aggregate_fn: "COUNT",
+        data_source_id: "s1",
+        field_name: "x",
+        source_column: "id",
+        aggregate_fn: "COUNT",
         filter_json: [{ column: "a OR 1=1", op: "eq", value: "1" }],
       } as never),
     ).rejects.toThrow(/not a valid column name/i);
@@ -151,7 +205,10 @@ describe("saveSourceField stores filters", () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await expect(
       svc.saveSourceField({
-        data_source_id: "s1", field_name: "x", source_column: "id", aggregate_fn: "COUNT",
+        data_source_id: "s1",
+        field_name: "x",
+        source_column: "id",
+        aggregate_fn: "COUNT",
         filter_json: [{ column: "a", op: "DROP", value: "1" }],
       } as never),
     ).rejects.toThrow(/Unsupported condition/i);
@@ -161,7 +218,10 @@ describe("saveSourceField stores filters", () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await expect(
       svc.saveSourceField({
-        data_source_id: "s1", field_name: "x", source_column: "id", aggregate_fn: "COUNT",
+        data_source_id: "s1",
+        field_name: "x",
+        source_column: "id",
+        aggregate_fn: "COUNT",
         filter_json: [{ column: "a", op: "eq", value: "  " }],
       } as never),
     ).rejects.toThrow(/needs a value/i);
@@ -170,12 +230,17 @@ describe("saveSourceField stores filters", () => {
   it("allows is_null without a value", async () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await svc.saveSourceField({
-      data_source_id: "s1", field_name: "open_items", source_column: "id", aggregate_fn: "COUNT",
+      data_source_id: "s1",
+      field_name: "open_items",
+      source_column: "id",
+      aggregate_fn: "COUNT",
       filter_json: [{ column: "closed_at", op: "is_null" }],
     } as never);
     const call = insertInto("kpi_studio_source_field");
     expect(JSON.parse(String(storedJson(call![1] as unknown[])))[0]).toEqual({
-      column: "closed_at", op: "is_null", value: null,
+      column: "closed_at",
+      op: "is_null",
+      value: null,
     });
   });
 
@@ -183,7 +248,10 @@ describe("saveSourceField stores filters", () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await expect(
       svc.saveSourceField({
-        data_source_id: "s1", field_name: "x", source_column: "id", aggregate_fn: "NONE",
+        data_source_id: "s1",
+        field_name: "x",
+        source_column: "id",
+        aggregate_fn: "NONE",
         filter_json: [{ column: "a", op: "eq", value: "1" }],
       } as never),
     ).rejects.toThrow(/needs an aggregate/i);
@@ -192,10 +260,15 @@ describe("saveSourceField stores filters", () => {
   it("ignores filters entirely when the schema lacks the column", async () => {
     mockCapability({ processGrain: false, fieldFilters: false });
     await svc.saveSourceField({
-      data_source_id: "s1", field_name: "x", source_column: "id", aggregate_fn: "COUNT",
+      data_source_id: "s1",
+      field_name: "x",
+      source_column: "id",
+      aggregate_fn: "COUNT",
       filter_json: [{ column: "a", op: "eq", value: "1" }],
     } as never);
-    expect(String(insertInto("kpi_studio_source_field")![0])).not.toContain("filter_json");
+    expect(String(insertInto("kpi_studio_source_field")![0])).not.toContain(
+      "filter_json",
+    );
   });
 });
 
@@ -203,7 +276,11 @@ describe("saveDefinition stores grain", () => {
   it("refuses an unknown grain rather than defaulting silently", async () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     await expect(
-      svc.saveDefinition({ metric_id: "m1", process_id: "p1", grain: "sideways" } as never),
+      svc.saveDefinition({
+        metric_id: "m1",
+        process_id: "p1",
+        grain: "sideways",
+      } as never),
     ).rejects.toThrow(/Unknown grain/i);
   });
 });
@@ -213,13 +290,28 @@ describe("resolveStudioForEmployee excludes process-grain definitions", () => {
     mockCapability({ processGrain: true, fieldFilters: true });
     execute.mockImplementation((sql: string) => {
       const text = String(sql);
-      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
-      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("INFORMATION_SCHEMA.TABLES"))
+        return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved"))
+        return Promise.resolve([[{ n: 6 }], []]);
       if (text.includes("source_cols")) {
-        return Promise.resolve([[{ source_cols: 4, grain_col: 1, filter_col: 1 }], []]);
+        return Promise.resolve([
+          [{ source_cols: 4, grain_col: 1, filter_col: 1 }],
+          [],
+        ]);
       }
       if (text.includes("FROM employees")) {
-        return Promise.resolve([[{ id: "e1", branch_id: "b1", process_id: "p1", designation_id: "d1" }], []]);
+        return Promise.resolve([
+          [
+            {
+              id: "e1",
+              branch_id: "b1",
+              process_id: "p1",
+              designation_id: "d1",
+            },
+          ],
+          [],
+        ]);
       }
       return Promise.resolve([[], []]);
     });
@@ -227,7 +319,8 @@ describe("resolveStudioForEmployee excludes process-grain definitions", () => {
     await svc.resolveStudioForEmployee("e1", "2026-09-07");
 
     const call = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("FROM kpi_studio_definition"));
+      String(sql).includes("FROM kpi_studio_definition"),
+    );
     expect(call).toBeTruthy();
     expect(String(call![0])).toContain("= 'employee'");
   });
@@ -236,20 +329,36 @@ describe("resolveStudioForEmployee excludes process-grain definitions", () => {
     mockCapability({ processGrain: false, fieldFilters: false });
     execute.mockImplementation((sql: string) => {
       const text = String(sql);
-      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
-      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("INFORMATION_SCHEMA.TABLES"))
+        return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved"))
+        return Promise.resolve([[{ n: 6 }], []]);
       if (text.includes("source_cols")) {
-        return Promise.resolve([[{ source_cols: 0, grain_col: 0, filter_col: 0 }], []]);
+        return Promise.resolve([
+          [{ source_cols: 0, grain_col: 0, filter_col: 0 }],
+          [],
+        ]);
       }
       if (text.includes("FROM employees")) {
-        return Promise.resolve([[{ id: "e1", branch_id: null, process_id: null, designation_id: null }], []]);
+        return Promise.resolve([
+          [
+            {
+              id: "e1",
+              branch_id: null,
+              process_id: null,
+              designation_id: null,
+            },
+          ],
+          [],
+        ]);
       }
       return Promise.resolve([[], []]);
     });
 
     await svc.resolveStudioForEmployee("e1", "2026-09-07");
     const call = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("FROM kpi_studio_definition"));
+      String(sql).includes("FROM kpi_studio_definition"),
+    );
     expect(String(call![0])).not.toContain("grain");
   });
 });
@@ -268,20 +377,32 @@ describe("saveDefinition returns the row that actually exists", () => {
 
     const answer = (sql: string): unknown => {
       const text = String(sql);
-      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
-      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("INFORMATION_SCHEMA.TABLES"))
+        return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved"))
+        return Promise.resolve([[{ n: 6 }], []]);
       if (text.includes("source_cols")) {
-        return Promise.resolve([[{ source_cols: 4, grain_col: 1, filter_col: 1 }], []]);
+        return Promise.resolve([
+          [{ source_cols: 4, grain_col: 1, filter_col: 1 }],
+          [],
+        ]);
       }
-      if (text.includes("SELECT UUID()")) return Promise.resolve([[{ id: generated }], []]);
+      if (text.includes("SELECT UUID()"))
+        return Promise.resolve([[{ id: generated }], []]);
       if (text.includes("FROM kpi_metric_master")) {
-        return Promise.resolve([[{ id: "m1", unit: "percentage", direction: "higher_better" }], []]);
+        return Promise.resolve([
+          [{ id: "m1", unit: "percentage", direction: "higher_better" }],
+          [],
+        ]);
       }
       if (text.includes("FROM kpi_studio_source_field")) {
         return Promise.resolve([[{ field_name: "present" }], []]);
       }
       // The read-back that this test exists for.
-      if (text.includes("FROM kpi_studio_definition") && text.includes("effective_from = ?")) {
+      if (
+        text.includes("FROM kpi_studio_definition") &&
+        text.includes("effective_from = ?")
+      ) {
         return Promise.resolve([[{ id: surviving }], []]);
       }
       return Promise.resolve([[], []]);
@@ -300,7 +421,9 @@ describe("saveDefinition returns the row that actually exists", () => {
       }),
     };
     const dbModule = await import("../../../db/mysql.js");
-    (dbModule.db.getConnection as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(connection);
+    (
+      dbModule.db.getConnection as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValue(connection);
 
     const result = await svc.saveDefinition({
       metric_id: "m1",
@@ -315,7 +438,9 @@ describe("saveDefinition returns the row that actually exists", () => {
     expect(result.id).not.toBe(generated);
 
     // And the extra-source rewrite must target the surviving row, not the phantom.
-    const extraWrites = connectionCalls.filter(([sql]) => sql.includes("kpi_studio_definition_source"));
+    const extraWrites = connectionCalls.filter(([sql]) =>
+      sql.includes("kpi_studio_definition_source"),
+    );
     for (const [, params] of extraWrites) {
       expect(params).not.toContain(generated);
     }
@@ -327,10 +452,15 @@ describe("a process-grain definition must carry a calculation", () => {
   function studio(rest: (sql: string) => unknown) {
     execute.mockImplementation((sql: string) => {
       const text = String(sql);
-      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
-      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("INFORMATION_SCHEMA.TABLES"))
+        return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved"))
+        return Promise.resolve([[{ n: 6 }], []]);
       if (text.includes("source_cols")) {
-        return Promise.resolve([[{ source_cols: 4, grain_col: 1, filter_col: 1 }], []]);
+        return Promise.resolve([
+          [{ source_cols: 4, grain_col: 1, filter_col: 1 }],
+          [],
+        ]);
       }
       return rest(text) as never;
     });
@@ -355,7 +485,11 @@ describe("a process-grain definition must carry a calculation", () => {
   it("says which field to send, so the fix is obvious", async () => {
     studio(() => Promise.resolve([[], []]));
     await expect(
-      svc.saveDefinition({ metric_id: "m1", data_source_id: "s1", grain: "process" } as never),
+      svc.saveDefinition({
+        metric_id: "m1",
+        data_source_id: "s1",
+        grain: "process",
+      } as never),
     ).rejects.toThrow(/formula_expression/);
   });
 
@@ -364,7 +498,11 @@ describe("a process-grain definition must carry a calculation", () => {
   it("still allows an employee-grain definition with no formula", async () => {
     studio(() => Promise.resolve([[], []]));
     await expect(
-      svc.saveDefinition({ metric_id: "m1", data_source_id: "s1", grain: "employee" } as never),
+      svc.saveDefinition({
+        metric_id: "m1",
+        data_source_id: "s1",
+        grain: "employee",
+      } as never),
     ).rejects.not.toThrow(/needs a calculation/i);
   });
 });
@@ -374,10 +512,15 @@ describe("a filtered field stores no source_expression", () => {
   function studio(rest: (sql: string) => unknown) {
     execute.mockImplementation((sql: string) => {
       const text = String(sql);
-      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
-      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("INFORMATION_SCHEMA.TABLES"))
+        return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved"))
+        return Promise.resolve([[{ n: 6 }], []]);
       if (text.includes("source_cols")) {
-        return Promise.resolve([[{ source_cols: 4, grain_col: 1, filter_col: 1 }], []]);
+        return Promise.resolve([
+          [{ source_cols: 4, grain_col: 1, filter_col: 1 }],
+          [],
+        ]);
       }
       return rest(text) as never;
     });
@@ -398,8 +541,11 @@ describe("a filtered field stores no source_expression", () => {
       aggregate_fn: "COUNT",
       filter_json: [{ column: "AgentId", op: "ne", value: "VDCL" }],
     } as never);
-    const write = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("kpi_studio_source_field") && String(sql).includes("source_expression"));
+    const write = execute.mock.calls.find(
+      ([sql]) =>
+        String(sql).includes("kpi_studio_source_field") &&
+        String(sql).includes("source_expression"),
+    );
     expect(write).toBeTruthy();
     // Param order follows the SET list: field_name, display_name, source_column,
     // aggregate_fn, source_expression, ...
@@ -415,8 +561,11 @@ describe("a filtered field stores no source_expression", () => {
       source_column: "CallDate",
       aggregate_fn: "COUNT",
     } as never);
-    const write = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("kpi_studio_source_field") && String(sql).includes("source_expression"));
+    const write = execute.mock.calls.find(
+      ([sql]) =>
+        String(sql).includes("kpi_studio_source_field") &&
+        String(sql).includes("source_expression"),
+    );
     expect((write?.[1] as unknown[])[4]).toBe("COUNT(`CallDate`)");
   });
 });
@@ -426,10 +575,15 @@ describe("deleteDataSource refuses while a KPI still reads it", () => {
   function studio(rest: (sql: string) => unknown) {
     execute.mockImplementation((sql: string) => {
       const text = String(sql);
-      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
-      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("INFORMATION_SCHEMA.TABLES"))
+        return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved"))
+        return Promise.resolve([[{ n: 6 }], []]);
       if (text.includes("source_cols")) {
-        return Promise.resolve([[{ source_cols: 4, grain_col: 1, filter_col: 1 }], []]);
+        return Promise.resolve([
+          [{ source_cols: 4, grain_col: 1, filter_col: 1 }],
+          [],
+        ]);
       }
       return rest(text) as never;
     });
@@ -438,11 +592,16 @@ describe("deleteDataSource refuses while a KPI still reads it", () => {
   it("names the KPIs using it rather than breaking them silently", async () => {
     studio((text) => {
       if (text.includes("FROM kpi_studio_definition d")) {
-        return Promise.resolve([[{ metric_code: "AHT" }, { metric_code: "QUALITY_SCORE" }], []]);
+        return Promise.resolve([
+          [{ metric_code: "AHT" }, { metric_code: "QUALITY_SCORE" }],
+          [],
+        ]);
       }
       return Promise.resolve([[], []]);
     });
-    await expect(svc.deleteDataSource("s1")).rejects.toThrow(/still used by 2 KPIs/i);
+    await expect(svc.deleteDataSource("s1")).rejects.toThrow(
+      /still used by 2 KPIs/i,
+    );
     await expect(svc.deleteDataSource("s1")).rejects.toThrow(/AHT/);
   });
 
@@ -461,76 +620,114 @@ describe("deleteDataSource refuses while a KPI still reads it", () => {
 
   it("does not double-count a KPI that reads it both ways", async () => {
     studio((text) => {
-      if (text.includes("FROM kpi_studio_definition d")) return Promise.resolve([[{ metric_code: "AHT" }], []]);
-      if (text.includes("FROM kpi_studio_definition_source")) return Promise.resolve([[{ metric_code: "AHT" }], []]);
+      if (text.includes("FROM kpi_studio_definition d"))
+        return Promise.resolve([[{ metric_code: "AHT" }], []]);
+      if (text.includes("FROM kpi_studio_definition_source"))
+        return Promise.resolve([[{ metric_code: "AHT" }], []]);
       return Promise.resolve([[], []]);
     });
-    await expect(svc.deleteDataSource("s1")).rejects.toThrow("This source is still used by 1 KPI (AHT). Retire or repoint it first.");
+    await expect(svc.deleteDataSource("s1")).rejects.toThrow(
+      "This source is still used by 1 KPI (AHT). Retire or repoint it first.",
+    );
   });
 
   it("retires the source when nothing uses it", async () => {
-    studio((text) => text.includes("UPDATE")
-      ? Promise.resolve([{ affectedRows: 1 }, []])
-      : Promise.resolve([[], []]));
-    await expect(svc.deleteDataSource("s1")).resolves.toEqual({ removed: true });
-    const updates = execute.mock.calls.filter(([sql]) => String(sql).includes("SET active_status = 0"));
-    expect(updates.some(([sql]) => String(sql).includes("kpi_studio_data_source"))).toBe(true);
+    studio((text) =>
+      text.includes("UPDATE")
+        ? Promise.resolve([{ affectedRows: 1 }, []])
+        : Promise.resolve([[], []]),
+    );
+    await expect(svc.deleteDataSource("s1")).resolves.toEqual({
+      removed: true,
+    });
+    const updates = execute.mock.calls.filter(([sql]) =>
+      String(sql).includes("SET active_status = 0"),
+    );
+    expect(
+      updates.some(([sql]) => String(sql).includes("kpi_studio_data_source")),
+    ).toBe(true);
   });
 
   // Retiring used to take the fields down too, which made restoring hand back an
   // empty source and every field a retyping job. The source flag alone hides them.
   it("leaves the fields alone so a restore returns the source whole", async () => {
-    studio((text) => text.includes("UPDATE")
-      ? Promise.resolve([{ affectedRows: 1 }, []])
-      : Promise.resolve([[], []]));
+    studio((text) =>
+      text.includes("UPDATE")
+        ? Promise.resolve([{ affectedRows: 1 }, []])
+        : Promise.resolve([[], []]),
+    );
     await svc.deleteDataSource("s1");
-    const touched = execute.mock.calls.filter(([sql]) =>
-      String(sql).includes("kpi_studio_source_field") && String(sql).includes("active_status = 0"));
+    const touched = execute.mock.calls.filter(
+      ([sql]) =>
+        String(sql).includes("kpi_studio_source_field") &&
+        String(sql).includes("active_status = 0"),
+    );
     expect(touched).toHaveLength(0);
   });
 
   it("restores a retired source", async () => {
-    studio((text) => text.includes("UPDATE")
-      ? Promise.resolve([{ affectedRows: 1 }, []])
-      : Promise.resolve([[], []]));
-    await expect(svc.restoreDataSource("s1")).resolves.toEqual({ restored: true });
-    const call = execute.mock.calls.find(([sql]) => String(sql).includes("SET active_status = 1"));
+    studio((text) =>
+      text.includes("UPDATE")
+        ? Promise.resolve([{ affectedRows: 1 }, []])
+        : Promise.resolve([[], []]),
+    );
+    await expect(svc.restoreDataSource("s1")).resolves.toEqual({
+      restored: true,
+    });
+    const call = execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET active_status = 1"),
+    );
     expect(String(call?.[0])).toContain("kpi_studio_data_source");
     expect(call?.[1]).toEqual(["s1"]);
   });
 
   it("reports restored:false for an id that is not there", async () => {
-    studio((text) => text.includes("UPDATE")
-      ? Promise.resolve([{ affectedRows: 0 }, []])
-      : Promise.resolve([[], []]));
-    await expect(svc.restoreDataSource("nope")).resolves.toEqual({ restored: false });
+    studio((text) =>
+      text.includes("UPDATE")
+        ? Promise.resolve([{ affectedRows: 0 }, []])
+        : Promise.resolve([[], []]),
+    );
+    await expect(svc.restoreDataSource("nope")).resolves.toEqual({
+      restored: false,
+    });
   });
 
   it("hides retired sources by default and shows them on request", async () => {
     studio(() => Promise.resolve([[], []]));
     await svc.listDataSources();
-    const normal = execute.mock.calls.find(([sql]) => String(sql).includes("FROM kpi_studio_data_source s"));
+    const normal = execute.mock.calls.find(([sql]) =>
+      String(sql).includes("FROM kpi_studio_data_source s"),
+    );
     expect(String(normal?.[0])).toContain("s.active_status = 1");
     execute.mockClear();
     await svc.listDataSources(true);
-    const all = execute.mock.calls.find(([sql]) => String(sql).includes("FROM kpi_studio_data_source s"));
+    const all = execute.mock.calls.find(([sql]) =>
+      String(sql).includes("FROM kpi_studio_data_source s"),
+    );
     expect(String(all?.[0])).not.toContain("s.active_status = 1");
   });
 
   it("deactivates rather than deleting, so the numbers keep their explanation", async () => {
-    studio((text) => text.includes("UPDATE")
-      ? Promise.resolve([{ affectedRows: 1 }, []])
-      : Promise.resolve([[], []]));
+    studio((text) =>
+      text.includes("UPDATE")
+        ? Promise.resolve([{ affectedRows: 1 }, []])
+        : Promise.resolve([[], []]),
+    );
     await svc.deleteDataSource("s1");
-    expect(execute.mock.calls.some(([sql]) => /DELETE\s+FROM/i.test(String(sql)))).toBe(false);
+    expect(
+      execute.mock.calls.some(([sql]) => /DELETE\s+FROM/i.test(String(sql))),
+    ).toBe(false);
   });
 
   it("reports not-removed for a source that was not there", async () => {
     studio((text) => {
-      if (text.includes("UPDATE kpi_studio_data_source")) return Promise.resolve([{ affectedRows: 0 }, []]);
+      if (text.includes("UPDATE kpi_studio_data_source"))
+        return Promise.resolve([{ affectedRows: 0 }, []]);
       return Promise.resolve([[], []]);
     });
-    await expect(svc.deleteDataSource("nope")).resolves.toEqual({ removed: false });
+    await expect(svc.deleteDataSource("nope")).resolves.toEqual({
+      removed: false,
+    });
   });
 
   it("treats a missing extra-source table as no references, not as an error", async () => {
@@ -538,11 +735,16 @@ describe("deleteDataSource refuses while a KPI still reads it", () => {
     // probe, so it may legitimately be absent.
     studio((text) => {
       if (text.includes("FROM kpi_studio_definition_source")) {
-        return Promise.reject(new Error("Table 'kpi_studio_definition_source' doesn't exist"));
+        return Promise.reject(
+          new Error("Table 'kpi_studio_definition_source' doesn't exist"),
+        );
       }
-      if (text.includes("UPDATE")) return Promise.resolve([{ affectedRows: 1 }, []]);
+      if (text.includes("UPDATE"))
+        return Promise.resolve([{ affectedRows: 1 }, []]);
       return Promise.resolve([[], []]);
     });
-    await expect(svc.deleteDataSource("s1")).resolves.toEqual({ removed: true });
+    await expect(svc.deleteDataSource("s1")).resolves.toEqual({
+      removed: true,
+    });
   });
 });

@@ -58,7 +58,10 @@ function env(key) {
  * unlisted, and must not be counted as manifest entries.
  */
 function manifestEntries() {
-  const source = fs.readFileSync(path.join(BACKEND, "src/db/runPendingMigrations.ts"), "utf8");
+  const source = fs.readFileSync(
+    path.join(BACKEND, "src/db/runPendingMigrations.ts"),
+    "utf8",
+  );
   const names = source
     .split(/\r?\n/)
     .filter((line) => !/^\s*\/\//.test(line))
@@ -73,13 +76,17 @@ const notes = [];
 
 const manifest = manifestEntries();
 if (manifest.length === 0) {
-  console.error("preflight: parsed 0 manifest entries — the parser is wrong, not the manifest");
+  console.error(
+    "preflight: parsed 0 manifest entries — the parser is wrong, not the manifest",
+  );
   process.exit(2);
 }
 
 // 1. Every manifest entry must exist on disk. A missing file is skipped with a warning
 //    by the runner, never applied, and never recorded — the exact 503 above.
-const missingFiles = manifest.filter((name) => !fs.existsSync(path.join(SQL_DIR, name)));
+const missingFiles = manifest.filter(
+  (name) => !fs.existsSync(path.join(SQL_DIR, name)),
+);
 for (const name of missingFiles) {
   problems.push(`manifest names a file that does not exist on disk: ${name}`);
 }
@@ -129,13 +136,19 @@ console.log(`pending          : ${pending.length}`);
 for (const note of notes) console.log(`  - ${note}`);
 
 if (problems.length > 0) {
-  console.error(`\nPREFLIGHT FAILED — restarting now would leave /api/health at 503:`);
+  console.error(
+    `\nPREFLIGHT FAILED — restarting now would leave /api/health at 503:`,
+  );
   for (const problem of problems) console.error(`  ! ${problem}`);
   console.error(
-    `\nA manifest entry with no file is usually a renumbered migration. Check whether the`
-    + ` file was renamed upstream and pull, rather than editing the manifest here.`,
+    `\nA manifest entry with no file is usually a renumbered migration. Check whether the` +
+      ` file was renamed upstream and pull, rather than editing the manifest here.`,
   );
   process.exit(1);
 }
 
-console.log(POST ? "\nOK — schema is complete, health should be 200." : "\nOK — safe to restart.");
+console.log(
+  POST
+    ? "\nOK — schema is complete, health should be 200."
+    : "\nOK — safe to restart.",
+);

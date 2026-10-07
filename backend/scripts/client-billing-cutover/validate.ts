@@ -57,7 +57,9 @@ interface CollisionGroup {
   legacyIds: number[];
 }
 
-async function prepareCheck(conn: Awaited<ReturnType<typeof db.getConnection>>): Promise<{ invoiceOk: boolean; creditNoteOk: boolean; detail: string[] }> {
+async function prepareCheck(
+  conn: Awaited<ReturnType<typeof db.getConnection>>,
+): Promise<{ invoiceOk: boolean; creditNoteOk: boolean; detail: string[] }> {
   const detail: string[] = [];
   let invoiceOk = false;
   let creditNoteOk = false;
@@ -74,7 +76,9 @@ async function prepareCheck(conn: Awaited<ReturnType<typeof db.getConnection>>):
     );
     await conn.query(`DEALLOCATE PREPARE cims_validate_stmt`);
     invoiceOk = true;
-    detail.push("client_invoice: PREPARE compiled cleanly against the live schema (20-column shape, see this task's report).");
+    detail.push(
+      "client_invoice: PREPARE compiled cleanly against the live schema (20-column shape, see this task's report).",
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     detail.push(`client_invoice: PREPARE FAILED — ${message}`);
@@ -92,7 +96,9 @@ async function prepareCheck(conn: Awaited<ReturnType<typeof db.getConnection>>):
     );
     await conn.query(`DEALLOCATE PREPARE ccnms_validate_stmt`);
     creditNoteOk = true;
-    detail.push("client_credit_note: PREPARE compiled cleanly against the live schema (20-column shape, see this task's report).");
+    detail.push(
+      "client_credit_note: PREPARE compiled cleanly against the live schema (20-column shape, see this task's report).",
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     detail.push(`client_credit_note: PREPARE FAILED — ${message}`);
@@ -101,7 +107,9 @@ async function prepareCheck(conn: Awaited<ReturnType<typeof db.getConnection>>):
   return { invoiceOk, creditNoteOk, detail };
 }
 
-function collisionGroups(rows: Array<{ number: string; c: number; legacy_ids: string }>): CollisionGroup[] {
+function collisionGroups(
+  rows: Array<{ number: string; c: number; legacy_ids: string }>,
+): CollisionGroup[] {
   return rows.map((r) => ({
     number: r.number,
     count: r.c,
@@ -110,13 +118,23 @@ function collisionGroups(rows: Array<{ number: string; c: number; legacy_ids: st
 }
 
 async function main(): Promise<void> {
-  console.log("[validate] Client Billing Historical Cutover — Task 3 validation dry-run starting");
-  console.log("[validate] Applying 2026-08-19 design addendum A1-A4 before re-validating.");
+  console.log(
+    "[validate] Client Billing Historical Cutover — Task 3 validation dry-run starting",
+  );
+  console.log(
+    "[validate] Applying 2026-08-19 design addendum A1-A4 before re-validating.",
+  );
 
   // ── CRITICAL pre-check: client_invoice/client_credit_note row counts BEFORE ──
-  const [[ciBefore]] = await db.query<any>(`SELECT COUNT(*) AS c FROM client_invoice`);
-  const [[ccnBefore]] = await db.query<any>(`SELECT COUNT(*) AS c FROM client_credit_note`);
-  console.log(`[validate] BEFORE: client_invoice=${ciBefore.c} client_credit_note=${ccnBefore.c}`);
+  const [[ciBefore]] = await db.query<any>(
+    `SELECT COUNT(*) AS c FROM client_invoice`,
+  );
+  const [[ccnBefore]] = await db.query<any>(
+    `SELECT COUNT(*) AS c FROM client_credit_note`,
+  );
+  console.log(
+    `[validate] BEFORE: client_invoice=${ciBefore.c} client_credit_note=${ccnBefore.c}`,
+  );
 
   const conn = await db.getConnection();
   const prepare = await prepareCheck(conn);
@@ -125,13 +143,21 @@ async function main(): Promise<void> {
   for (const d of prepare.detail) console.log(`  ${d}`);
 
   // ── cost_centre_master + branch_master lookups (fresh, live) — A1/A3 ────────
-  const [ccRows] = await db.query<any>(`SELECT id, cost_centre_code, branch_id FROM cost_centre_master`);
+  const [ccRows] = await db.query<any>(
+    `SELECT id, cost_centre_code, branch_id FROM cost_centre_master`,
+  );
   const costCentre = buildCostCentreLookup(ccRows as any[]);
-  console.log(`[validate] cost_centre_master: ${(ccRows as any[]).length} rows loaded for lookup`);
+  console.log(
+    `[validate] cost_centre_master: ${(ccRows as any[]).length} rows loaded for lookup`,
+  );
 
-  const [branchRows] = await db.query<any>(`SELECT id, gst_state_code FROM branch_master`);
+  const [branchRows] = await db.query<any>(
+    `SELECT id, gst_state_code FROM branch_master`,
+  );
   const branchStateCodes = buildBranchStateCodeLookup(branchRows as any[]);
-  console.log(`[validate] branch_master: ${(branchRows as any[]).length} rows loaded for gst_state_code lookup`);
+  console.log(
+    `[validate] branch_master: ${(branchRows as any[]).length} rows loaded for gst_state_code lookup`,
+  );
 
   // ═══════════════════════ A2: category default (both tables) ════════════════
   const [catFixInv] = await db.execute<any>(
@@ -147,21 +173,38 @@ async function main(): Promise<void> {
   );
 
   // ═══════════════════════ A3: cost_centre_id resolution (both tables) ═══════
-  async function applyCostCentreResolution(table: "client_invoice_migration_staging" | "client_credit_note_migration_staging"): Promise<{ resolved: number; unresolved: number }> {
-    const [rows] = await db.query<any>(`SELECT id, src_cost_center FROM ${table}`);
+  async function applyCostCentreResolution(
+    table:
+      | "client_invoice_migration_staging"
+      | "client_credit_note_migration_staging",
+  ): Promise<{ resolved: number; unresolved: number }> {
+    const [rows] = await db.query<any>(
+      `SELECT id, src_cost_center FROM ${table}`,
+    );
     let resolved = 0;
     let unresolved = 0;
-    for (const row of rows as Array<{ id: number; src_cost_center: string | null }>) {
+    for (const row of rows as Array<{
+      id: number;
+      src_cost_center: string | null;
+    }>) {
       const code = (row.src_cost_center ?? "").trim();
-      const targetCostCentreId = code !== "" ? costCentre.get(code) ?? null : null;
+      const targetCostCentreId =
+        code !== "" ? (costCentre.get(code) ?? null) : null;
       if (targetCostCentreId) resolved += 1;
       else unresolved += 1;
-      await db.execute(`UPDATE ${table} SET target_cost_centre_id = ? WHERE id = ?`, [targetCostCentreId, row.id]);
+      await db.execute(
+        `UPDATE ${table} SET target_cost_centre_id = ? WHERE id = ?`,
+        [targetCostCentreId, row.id],
+      );
     }
     return { resolved, unresolved };
   }
-  const invCcResolution = await applyCostCentreResolution("client_invoice_migration_staging");
-  const cnCcResolution = await applyCostCentreResolution("client_credit_note_migration_staging");
+  const invCcResolution = await applyCostCentreResolution(
+    "client_invoice_migration_staging",
+  );
+  const cnCcResolution = await applyCostCentreResolution(
+    "client_credit_note_migration_staging",
+  );
   console.log(
     `[validate] A3: cost_centre_id resolved — invoices resolved=${invCcResolution.resolved} unresolved=${invCcResolution.unresolved}, credit notes resolved=${cnCcResolution.resolved} unresolved=${cnCcResolution.unresolved}`,
   );
@@ -171,10 +214,25 @@ async function main(): Promise<void> {
     `SELECT id, src_gsttype, target_gst_type, src_cost_vendorgstno, src_cost_center
      FROM client_invoice_migration_staging WHERE target_gst_type IS NULL`,
   );
-  let invIntrastate = 0, invIntegrated = 0, invNotApplicable = 0;
-  for (const row of invGstRows as Array<{ id: number; src_gsttype: string | null; src_cost_vendorgstno: string | null; src_cost_center: string | null }>) {
-    const branchStateCode = resolveBranchStateCode(row.src_cost_center, costCentre, branchStateCodes);
-    const gst = computeGstType({ gstTypeRaw: row.src_gsttype, vendorGstin: row.src_cost_vendorgstno, branchStateCode });
+  let invIntrastate = 0,
+    invIntegrated = 0,
+    invNotApplicable = 0;
+  for (const row of invGstRows as Array<{
+    id: number;
+    src_gsttype: string | null;
+    src_cost_vendorgstno: string | null;
+    src_cost_center: string | null;
+  }>) {
+    const branchStateCode = resolveBranchStateCode(
+      row.src_cost_center,
+      costCentre,
+      branchStateCodes,
+    );
+    const gst = computeGstType({
+      gstTypeRaw: row.src_gsttype,
+      vendorGstin: row.src_cost_vendorgstno,
+      branchStateCode,
+    });
     if (gst.target_gst_type === "Intrastate") invIntrastate += 1;
     else if (gst.target_gst_type === "Integrated") invIntegrated += 1;
     else invNotApplicable += 1;
@@ -193,7 +251,10 @@ async function main(): Promise<void> {
   );
   const billIndex = buildInvoiceBillNoIndex(invBillRows as any[]);
   const invoiceVendorGstinByTargetId = new Map<string, string | null>();
-  for (const r of invBillRows as Array<{ target_id: string; src_cost_vendorgstno: string | null }>) {
+  for (const r of invBillRows as Array<{
+    target_id: string;
+    src_cost_vendorgstno: string | null;
+  }>) {
     invoiceVendorGstinByTargetId.set(r.target_id, r.src_cost_vendorgstno);
   }
 
@@ -201,9 +262,20 @@ async function main(): Promise<void> {
     `SELECT id, src_proforma_bill_no, src_cost_center FROM client_credit_note_migration_staging`,
   );
   const invoiceMatchByStagingId = new Map<number, InvoiceMatchResult>();
-  let a4Resolved = 0, a4Ambiguous = 0, a4Unresolved = 0;
-  for (const row of cnMatchRows as Array<{ id: number; src_proforma_bill_no: string | null; src_cost_center: string | null }>) {
-    const match = matchCreditNoteInvoice(row.src_proforma_bill_no, row.src_cost_center, billIndex, invoiceVendorGstinByTargetId);
+  let a4Resolved = 0,
+    a4Ambiguous = 0,
+    a4Unresolved = 0;
+  for (const row of cnMatchRows as Array<{
+    id: number;
+    src_proforma_bill_no: string | null;
+    src_cost_center: string | null;
+  }>) {
+    const match = matchCreditNoteInvoice(
+      row.src_proforma_bill_no,
+      row.src_cost_center,
+      billIndex,
+      invoiceVendorGstinByTargetId,
+    );
     invoiceMatchByStagingId.set(row.id, match);
     if (match.status === "resolved") a4Resolved += 1;
     else if (match.status === "ambiguous") a4Ambiguous += 1;
@@ -213,7 +285,9 @@ async function main(): Promise<void> {
       [match.targetInvoiceId, row.id],
     );
   }
-  console.log(`[validate] A4: credit notes -> invoice matching — resolved=${a4Resolved} ambiguous=${a4Ambiguous} unresolved=${a4Unresolved}`);
+  console.log(
+    `[validate] A4: credit notes -> invoice matching — resolved=${a4Resolved} ambiguous=${a4Ambiguous} unresolved=${a4Unresolved}`,
+  );
 
   // ── A4 addendum-2 independent SQL cross-check (bill_no + cost_center join) ──
   // Re-derives the same resolved/ambiguous/unresolved split via a set-based SQL
@@ -236,10 +310,15 @@ async function main(): Promise<void> {
     `SELECT COUNT(*) AS c FROM client_credit_note_migration_staging
      WHERE src_proforma_bill_no IS NULL OR TRIM(src_proforma_bill_no) = ''`,
   );
-  const a4SqlAmbiguous = (cnMatchRows as any[]).length - a4SqlResolved.c - a4SqlUnresolvedNoBillNo.c;
+  const a4SqlAmbiguous =
+    (cnMatchRows as any[]).length - a4SqlResolved.c - a4SqlUnresolvedNoBillNo.c;
   console.log(
     `[validate] A4 SQL cross-check (independent, bill_no+cost_center join): resolved=${a4SqlResolved.c} ambiguous=${a4SqlAmbiguous} unresolved(no proforma_bill_no)=${a4SqlUnresolvedNoBillNo.c} ${
-      a4SqlResolved.c === a4Resolved && a4SqlAmbiguous === a4Ambiguous && a4SqlUnresolvedNoBillNo.c === a4Unresolved ? "MATCH" : "MISMATCH!!"
+      a4SqlResolved.c === a4Resolved &&
+      a4SqlAmbiguous === a4Ambiguous &&
+      a4SqlUnresolvedNoBillNo.c === a4Unresolved
+        ? "MATCH"
+        : "MISMATCH!!"
     }`,
   );
 
@@ -253,12 +332,26 @@ async function main(): Promise<void> {
   const [cnGstRows] = await db.query<any>(
     `SELECT id, src_gsttype, target_gst_type, src_cost_center FROM client_credit_note_migration_staging WHERE target_gst_type IS NULL`,
   );
-  let cnIntrastate = 0, cnIntegrated = 0, cnNotApplicable = 0;
-  for (const row of cnGstRows as Array<{ id: number; src_gsttype: string | null; src_cost_center: string | null }>) {
+  let cnIntrastate = 0,
+    cnIntegrated = 0,
+    cnNotApplicable = 0;
+  for (const row of cnGstRows as Array<{
+    id: number;
+    src_gsttype: string | null;
+    src_cost_center: string | null;
+  }>) {
     const match = invoiceMatchByStagingId.get(row.id);
     const vendorGstin = match?.status === "resolved" ? match.vendorGstin : null;
-    const branchStateCode = resolveBranchStateCode(row.src_cost_center, costCentre, branchStateCodes);
-    const gst = computeGstType({ gstTypeRaw: row.src_gsttype, vendorGstin, branchStateCode });
+    const branchStateCode = resolveBranchStateCode(
+      row.src_cost_center,
+      costCentre,
+      branchStateCodes,
+    );
+    const gst = computeGstType({
+      gstTypeRaw: row.src_gsttype,
+      vendorGstin,
+      branchStateCode,
+    });
     if (gst.target_gst_type === "Intrastate") cnIntrastate += 1;
     else if (gst.target_gst_type === "Integrated") cnIntegrated += 1;
     else cnNotApplicable += 1;
@@ -278,8 +371,12 @@ async function main(): Promise<void> {
             src_cgst, src_grnd, src_bill_no
      FROM client_invoice_migration_staging`,
   );
-  const invoiceStagingRows = invRows as Array<InvoiceValidationInput & { id: number; src_bill_no: string | null }>;
-  console.log(`[validate] client_invoice_migration_staging: ${invoiceStagingRows.length} rows to re-validate`);
+  const invoiceStagingRows = invRows as Array<
+    InvoiceValidationInput & { id: number; src_bill_no: string | null }
+  >;
+  console.log(
+    `[validate] client_invoice_migration_staging: ${invoiceStagingRows.length} rows to re-validate`,
+  );
 
   let invoiceValid = 0;
   let invoiceError = 0;
@@ -309,7 +406,9 @@ async function main(): Promise<void> {
       }
     }
   }
-  console.log(`[validate] invoices: valid=${invoiceValid} error=${invoiceError}`);
+  console.log(
+    `[validate] invoices: valid=${invoiceValid} error=${invoiceError}`,
+  );
 
   // bill_no collision groups (design §5.3)
   const [invCollisionRows] = await db.query<any>(
@@ -320,12 +419,16 @@ async function main(): Promise<void> {
      ORDER BY c DESC`,
   );
   const invoiceCollisions = collisionGroups(invCollisionRows as any[]);
-  console.log(`[validate] invoice bill_no collision groups: ${invoiceCollisions.length}`);
+  console.log(
+    `[validate] invoice bill_no collision groups: ${invoiceCollisions.length}`,
+  );
 
   const [[gstNullInv]] = await db.query<any>(
     `SELECT COUNT(*) AS c FROM client_invoice_migration_staging WHERE target_gst_type IS NULL`,
   );
-  console.log(`[validate] invoices with target_gst_type NULL (post-A1, should be 0): ${gstNullInv.c}`);
+  console.log(
+    `[validate] invoices with target_gst_type NULL (post-A1, should be 0): ${gstNullInv.c}`,
+  );
 
   // ═══════════════════════════ CREDIT NOTES — re-validate ═══════════════════
   const [cnRows] = await db.query<any>(
@@ -335,9 +438,15 @@ async function main(): Promise<void> {
      FROM client_credit_note_migration_staging`,
   );
   const creditNoteStagingRows = cnRows as Array<
-    CreditNoteValidationInput & { id: number; src_status: number | null; src_credit_approve: number | null }
+    CreditNoteValidationInput & {
+      id: number;
+      src_status: number | null;
+      src_credit_approve: number | null;
+    }
   >;
-  console.log(`[validate] client_credit_note_migration_staging: ${creditNoteStagingRows.length} rows to re-validate`);
+  console.log(
+    `[validate] client_credit_note_migration_staging: ${creditNoteStagingRows.length} rows to re-validate`,
+  );
 
   let cnValid = 0;
   let cnError = 0;
@@ -379,19 +488,26 @@ async function main(): Promise<void> {
      ORDER BY c DESC`,
   );
   const creditNoteCollisions = collisionGroups(cnCollisionRows as any[]);
-  console.log(`[validate] credit_no collision groups: ${creditNoteCollisions.length}`);
+  console.log(
+    `[validate] credit_no collision groups: ${creditNoteCollisions.length}`,
+  );
 
   const [[gstNullCn]] = await db.query<any>(
     `SELECT COUNT(*) AS c FROM client_credit_note_migration_staging WHERE target_gst_type IS NULL`,
   );
-  console.log(`[validate] credit notes with target_gst_type NULL (post-A1, should be 0): ${gstNullCn.c}`);
+  console.log(
+    `[validate] credit notes with target_gst_type NULL (post-A1, should be 0): ${gstNullCn.c}`,
+  );
 
   // credit-note status/credit_approve distribution — the investigation this task required
   const [statusDist] = await db.query<any>(
     `SELECT src_status, src_credit_approve, COUNT(*) AS c FROM client_credit_note_migration_staging
      GROUP BY src_status, src_credit_approve ORDER BY src_status, src_credit_approve`,
   );
-  console.log("[validate] credit note src_status x src_credit_approve distribution:", JSON.stringify(statusDist));
+  console.log(
+    "[validate] credit note src_status x src_credit_approve distribution:",
+    JSON.stringify(statusDist),
+  );
 
   // ── Set-based SQL cross-checks (independent of the per-row loop above) ──────
   const [[setInvValid]] = await db.query<any>(
@@ -408,12 +524,16 @@ async function main(): Promise<void> {
   );
   console.log(
     `[validate] set-based cross-check: invoices valid=${setInvValid.c} error=${setInvError.c} (per-row said valid=${invoiceValid} error=${invoiceError}) ${
-      setInvValid.c === invoiceValid && setInvError.c === invoiceError ? "MATCH" : "MISMATCH!!"
+      setInvValid.c === invoiceValid && setInvError.c === invoiceError
+        ? "MATCH"
+        : "MISMATCH!!"
     }`,
   );
   console.log(
     `[validate] set-based cross-check: credit notes valid=${setCnValid.c} error=${setCnError.c} (per-row said valid=${cnValid} error=${cnError}) ${
-      setCnValid.c === cnValid && setCnError.c === cnError ? "MATCH" : "MISMATCH!!"
+      setCnValid.c === cnValid && setCnError.c === cnError
+        ? "MATCH"
+        : "MISMATCH!!"
     }`,
   );
   const [[setA3InvResolved]] = await db.query<any>(
@@ -434,32 +554,50 @@ async function main(): Promise<void> {
   );
 
   // ── CRITICAL post-check: client_invoice/client_credit_note row counts AFTER ──
-  const [[ciAfter]] = await db.query<any>(`SELECT COUNT(*) AS c FROM client_invoice`);
-  const [[ccnAfter]] = await db.query<any>(`SELECT COUNT(*) AS c FROM client_credit_note`);
-  console.log(`[validate] AFTER:  client_invoice=${ciAfter.c} client_credit_note=${ccnAfter.c}`);
+  const [[ciAfter]] = await db.query<any>(
+    `SELECT COUNT(*) AS c FROM client_invoice`,
+  );
+  const [[ccnAfter]] = await db.query<any>(
+    `SELECT COUNT(*) AS c FROM client_credit_note`,
+  );
+  console.log(
+    `[validate] AFTER:  client_invoice=${ciAfter.c} client_credit_note=${ccnAfter.c}`,
+  );
   console.log(
     `[validate] client_invoice unchanged: ${ciBefore.c === ciAfter.c ? "MATCH" : "MISMATCH!!"}, ` +
       `client_credit_note unchanged: ${ccnBefore.c === ccnAfter.c ? "MATCH" : "MISMATCH!!"}`,
   );
 
   console.log("\n[validate] ══ SUMMARY (for report) ══");
-  console.log(`invoices: total=${invoiceStagingRows.length} valid=${invoiceValid} error=${invoiceError}`);
-  console.log(`credit notes: total=${creditNoteStagingRows.length} valid=${cnValid} error=${cnError}`);
+  console.log(
+    `invoices: total=${invoiceStagingRows.length} valid=${invoiceValid} error=${invoiceError}`,
+  );
+  console.log(
+    `credit notes: total=${creditNoteStagingRows.length} valid=${cnValid} error=${cnError}`,
+  );
   console.log("\ninvoice error message breakdown:");
-  for (const [msg, count] of [...invoiceErrorCounts.entries()].sort((a, b) => b[1] - a[1])) {
+  for (const [msg, count] of [...invoiceErrorCounts.entries()].sort(
+    (a, b) => b[1] - a[1],
+  )) {
     console.log(`  [${count}] ${msg}`);
   }
   console.log("\ncredit note error message breakdown:");
-  for (const [msg, count] of [...cnErrorCounts.entries()].sort((a, b) => b[1] - a[1])) {
+  for (const [msg, count] of [...cnErrorCounts.entries()].sort(
+    (a, b) => b[1] - a[1],
+  )) {
     console.log(`  [${count}] ${msg}`);
   }
   console.log("\ninvoice bill_no collision groups (all):");
   for (const g of invoiceCollisions) {
-    console.log(`  ${g.number} x${g.count} legacy_ids=[${g.legacyIds.join(",")}]`);
+    console.log(
+      `  ${g.number} x${g.count} legacy_ids=[${g.legacyIds.join(",")}]`,
+    );
   }
   console.log("\ncredit_no collision groups (all):");
   for (const g of creditNoteCollisions) {
-    console.log(`  ${g.number} x${g.count} legacy_ids=[${g.legacyIds.join(",")}]`);
+    console.log(
+      `  ${g.number} x${g.count} legacy_ids=[${g.legacyIds.join(",")}]`,
+    );
   }
 
   process.exit(0);

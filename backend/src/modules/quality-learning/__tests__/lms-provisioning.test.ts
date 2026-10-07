@@ -16,7 +16,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const SERVICE = readFileSync(
-  resolve(process.cwd(), "src/modules/quality-learning/lms-provisioning.service.ts"),
+  resolve(
+    process.cwd(),
+    "src/modules/quality-learning/lms-provisioning.service.ts",
+  ),
   "utf8",
 );
 const GAP_SERVICE = readFileSync(
@@ -24,17 +27,24 @@ const GAP_SERVICE = readFileSync(
   "utf8",
 );
 const ROUTES = readFileSync(
-  resolve(process.cwd(), "src/modules/quality-learning/quality-learning.routes.ts"),
+  resolve(
+    process.cwd(),
+    "src/modules/quality-learning/quality-learning.routes.ts",
+  ),
   "utf8",
 );
 
 describe("never writes a course/content assignment into the LMS", () => {
   it("contains no INSERT/UPDATE/DELETE against content_master, module_master, or batch_master anywhere in the service", () => {
-    expect(SERVICE).not.toMatch(/(INSERT INTO|UPDATE|DELETE FROM)\s+(content_master|module_master|batch_master)/i);
+    expect(SERVICE).not.toMatch(
+      /(INSERT INTO|UPDATE|DELETE FROM)\s+(content_master|module_master|batch_master)/i,
+    );
   });
 
   it("the only external LMS call is the existing, already-reviewed provisionLmsIdentityForEmployee", () => {
-    expect(SERVICE).toMatch(/import \{ provisionLmsIdentityForEmployee \} from "\.\.\/lms\/lms-provisioning\.service\.js";/);
+    expect(SERVICE).toMatch(
+      /import \{ provisionLmsIdentityForEmployee \} from "\.\.\/lms\/lms-provisioning\.service\.js";/,
+    );
     // No direct getLmsPool/lmsQuery usage — this module never talks to mcn_lms itself,
     // it delegates entirely to the one reviewed write path.
     expect(SERVICE).not.toMatch(/getLmsPool|lmsQuery/);
@@ -64,7 +74,9 @@ describe("provisionLmsForAssignment — best-effort, never blocks the assignment
       GAP_SERVICE.indexOf("async function createAssignmentWithTat"),
       GAP_SERVICE.indexOf("/**\n * Evaluates one active rule"),
     );
-    expect(fn).toMatch(/provisionLmsForAssignment\(\{ assignmentId, employeeCode: params\.employeeCode \}\);/);
+    expect(fn).toMatch(
+      /provisionLmsForAssignment\(\{ assignmentId, employeeCode: params\.employeeCode \}\);/,
+    );
     expect(fn).toMatch(/\} catch \(err\) \{\s*\n\s*console\.error/);
   });
 
@@ -94,7 +106,9 @@ describe("identity confirmed does not mean content is visible — status reflect
       SERVICE.indexOf("export async function provisionLmsForAssignment"),
       SERVICE.indexOf("/**\n * A training coordinator"),
     );
-    expect(fn).toMatch(/if \(result\.externalSynced && result\.lmsLearnerId\) \{[\s\S]*?status = "content_manual_pending";/);
+    expect(fn).toMatch(
+      /if \(result\.externalSynced && result\.lmsLearnerId\) \{[\s\S]*?status = "content_manual_pending";/,
+    );
   });
 
   it("the note explicitly tells a human what they still need to do", () => {
@@ -106,9 +120,15 @@ describe("identity confirmed does not mean content is visible — status reflect
   });
 
   it("confirmLmsContentAdded is the only path to the terminal content_confirmed state", () => {
-    expect(SERVICE.match(/content_confirmed/g)?.length).toBeGreaterThanOrEqual(2); // status transition target + the WHERE guard checking it's not already there
-    const confirmFn = SERVICE.slice(SERVICE.indexOf("export async function confirmLmsContentAdded"));
-    expect(confirmFn).toMatch(/SET lms_provisioning_status = 'content_confirmed'/);
+    expect(SERVICE.match(/content_confirmed/g)?.length).toBeGreaterThanOrEqual(
+      2,
+    ); // status transition target + the WHERE guard checking it's not already there
+    const confirmFn = SERVICE.slice(
+      SERVICE.indexOf("export async function confirmLmsContentAdded"),
+    );
+    expect(confirmFn).toMatch(
+      /SET lms_provisioning_status = 'content_confirmed'/,
+    );
   });
 
   it("confirmLmsContentAdded records who confirmed it and when, for the audit trail", () => {
@@ -125,7 +145,9 @@ describe("identity confirmed does not mean content is visible — status reflect
       SERVICE.indexOf("export async function confirmLmsContentAdded"),
       SERVICE.indexOf("/** Assignments still needing"),
     );
-    expect(confirmFn).toMatch(/WHERE id = \? AND lms_provisioning_status IN \('identity_provisioned', 'content_manual_pending', 'provisioning_failed'\)/);
+    expect(confirmFn).toMatch(
+      /WHERE id = \? AND lms_provisioning_status IN \('identity_provisioned', 'content_manual_pending', 'provisioning_failed'\)/,
+    );
     expect(confirmFn).toMatch(/affectedRows === 0/);
   });
 });
@@ -135,7 +157,9 @@ describe("coordinator worklist and confirm routes are correctly gated", () => {
     const start = ROUTES.indexOf("// ── LMS Provisioning");
     const end = ROUTES.indexOf("// ── Employee Self-Service", start);
     const section = ROUTES.slice(start, end);
-    const requireRoleCalls = [...section.matchAll(/requireRole\(([^)]*)\)/g)].map((m) => m[1]);
+    const requireRoleCalls = [
+      ...section.matchAll(/requireRole\(([^)]*)\)/g),
+    ].map((m) => m[1]);
     expect(requireRoleCalls.length).toBe(2);
     for (const call of requireRoleCalls) {
       expect(call).toMatch(/"trainer"/);
@@ -143,8 +167,12 @@ describe("coordinator worklist and confirm routes are correctly gated", () => {
   });
 
   it("the worklist route lists only assignments genuinely needing action, filtered in the service not the route", () => {
-    const fn = SERVICE.slice(SERVICE.indexOf("export async function listPendingLmsContentActions"));
-    expect(fn).toMatch(/lms_provisioning_status IN \('content_manual_pending', 'provisioning_failed'\)/);
+    const fn = SERVICE.slice(
+      SERVICE.indexOf("export async function listPendingLmsContentActions"),
+    );
+    expect(fn).toMatch(
+      /lms_provisioning_status IN \('content_manual_pending', 'provisioning_failed'\)/,
+    );
     expect(fn).toMatch(/t\.status NOT IN \('completed', 'cancelled'\)/);
   });
 });

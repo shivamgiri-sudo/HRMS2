@@ -45,7 +45,9 @@ describe("finalizeKitEsign auto-triggers the appointment letter", () => {
     const auditIdx = body.indexOf('"KIT_SIGNED"');
     const issueIdx = body.indexOf("issueAppointmentLetter");
     expect(auditIdx, "KIT_SIGNED audit call must exist").toBeGreaterThan(-1);
-    expect(issueIdx, "issueAppointmentLetter call must exist").toBeGreaterThan(-1);
+    expect(issueIdx, "issueAppointmentLetter call must exist").toBeGreaterThan(
+      -1,
+    );
     expect(issueIdx).toBeGreaterThan(auditIdx);
   });
 

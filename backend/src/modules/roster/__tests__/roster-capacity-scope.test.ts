@@ -20,15 +20,31 @@ const { hasRole, hasProcessScope, getEmployeeForUser } = vi.hoisted(() => ({
   hasProcessScope: vi.fn(),
   getEmployeeForUser: vi.fn(),
 }));
-vi.mock("../../../shared/accessGuard.js", () => ({ hasRole, hasProcessScope, getEmployeeForUser }));
+vi.mock("../../../shared/accessGuard.js", () => ({
+  hasRole,
+  hasProcessScope,
+  getEmployeeForUser,
+}));
 
 const {
-  updateCapacityConfig, allocateWeekOff, submitWeekOffPreference, getNotifications, markNotificationRead,
-  getCapacityConfig, checkCapacity, getAllocations,
+  updateCapacityConfig,
+  allocateWeekOff,
+  submitWeekOffPreference,
+  getNotifications,
+  markNotificationRead,
+  getCapacityConfig,
+  checkCapacity,
+  getAllocations,
 } = vi.hoisted(() => ({
   updateCapacityConfig: vi.fn().mockResolvedValue({ id: "cfg-1" }),
   allocateWeekOff: vi.fn().mockResolvedValue({ id: "alloc-1" }),
-  submitWeekOffPreference: vi.fn().mockResolvedValue({ preference_id: "pref-1", auto_approved: false, notification: "" }),
+  submitWeekOffPreference: vi
+    .fn()
+    .mockResolvedValue({
+      preference_id: "pref-1",
+      auto_approved: false,
+      notification: "",
+    }),
   getNotifications: vi.fn().mockResolvedValue([]),
   markNotificationRead: vi.fn().mockResolvedValue(undefined),
   getCapacityConfig: vi.fn().mockResolvedValue({ id: "cfg-1" }),
@@ -37,15 +53,27 @@ const {
 }));
 vi.mock("../roster-capacity.service.js", () => ({
   rosterCapacityService: {
-    updateCapacityConfig, allocateWeekOff, submitWeekOffPreference, getNotifications, markNotificationRead,
-    getCapacityConfig, checkCapacity, getAllocations,
+    updateCapacityConfig,
+    allocateWeekOff,
+    submitWeekOffPreference,
+    getNotifications,
+    markNotificationRead,
+    getCapacityConfig,
+    checkCapacity,
+    getAllocations,
   },
 }));
 
 import { rosterCapacityController } from "../roster-capacity.controller.js";
 
 function mockReq(overrides: Record<string, unknown> = {}) {
-  return { authUser: { id: "caller-1" }, params: {}, body: {}, query: {}, ...overrides } as any;
+  return {
+    authUser: { id: "caller-1" },
+    params: {},
+    body: {},
+    query: {},
+    ...overrides,
+  } as any;
 }
 function mockRes() {
   const res: any = {};
@@ -71,18 +99,29 @@ describe("roster-capacity.controller scope enforcement", () => {
   });
 
   it("self-locks preference submission to the caller's own employee id and process, ignoring any body-supplied values", async () => {
-    getEmployeeForUser.mockResolvedValue({ id: "self-emp-1", employee_code: "MAS001" });
+    getEmployeeForUser.mockResolvedValue({
+      id: "self-emp-1",
+      employee_code: "MAS001",
+    });
     execute.mockResolvedValue([[{ process_id: "self-process" }], []]);
 
     const req = mockReq({
-      body: { employee_id: "someone-elses-id", process_id: "someone-elses-process", preferred_day: 0, alternate_day: null },
+      body: {
+        employee_id: "someone-elses-id",
+        process_id: "someone-elses-process",
+        preferred_day: 0,
+        alternate_day: null,
+      },
     });
     const res = mockRes();
 
     await rosterCapacityController.submitWeekOffPreference(req, res);
 
     expect(submitWeekOffPreference).toHaveBeenCalledWith(
-      expect.objectContaining({ employee_id: "self-emp-1", process_id: "self-process" }),
+      expect.objectContaining({
+        employee_id: "self-emp-1",
+        process_id: "self-process",
+      }),
     );
     // Never the impersonated ids the body tried to supply.
     const call = submitWeekOffPreference.mock.calls[0][0];
@@ -105,7 +144,10 @@ describe("roster-capacity.controller scope enforcement", () => {
     hasRole.mockResolvedValue(false);
     hasProcessScope.mockResolvedValue(false);
 
-    const req = mockReq({ params: { processId: "not-mine", dayOfWeek: "1" }, body: { max_weekoff_count: 5 } });
+    const req = mockReq({
+      params: { processId: "not-mine", dayOfWeek: "1" },
+      body: { max_weekoff_count: 5 },
+    });
     const res = mockRes();
 
     await rosterCapacityController.updateCapacityConfig(req, res);
@@ -118,7 +160,10 @@ describe("roster-capacity.controller scope enforcement", () => {
     hasRole.mockResolvedValue(false);
     hasProcessScope.mockResolvedValue(true);
 
-    const req = mockReq({ params: { processId: "mine", dayOfWeek: "1" }, body: { max_weekoff_count: 5 } });
+    const req = mockReq({
+      params: { processId: "mine", dayOfWeek: "1" },
+      body: { max_weekoff_count: 5 },
+    });
     const res = mockRes();
 
     await rosterCapacityController.updateCapacityConfig(req, res);
@@ -129,7 +174,15 @@ describe("roster-capacity.controller scope enforcement", () => {
     hasRole.mockResolvedValue(false);
     hasProcessScope.mockResolvedValue(false);
 
-    const req = mockReq({ body: { process_id: "not-mine", day_of_week: 1, allocation_date: "2026-08-17", employee_id: "e1", preference_id: null } });
+    const req = mockReq({
+      body: {
+        process_id: "not-mine",
+        day_of_week: 1,
+        allocation_date: "2026-08-17",
+        employee_id: "e1",
+        preference_id: null,
+      },
+    });
     const res = mockRes();
 
     await rosterCapacityController.allocateWeekOff(req, res);
@@ -140,9 +193,14 @@ describe("roster-capacity.controller scope enforcement", () => {
 
   it("refuses to read another employee's notification history (no auth check existed at all before this fix)", async () => {
     hasRole.mockResolvedValue(false);
-    getEmployeeForUser.mockResolvedValue({ id: "self-emp-1", employee_code: "MAS001" });
+    getEmployeeForUser.mockResolvedValue({
+      id: "self-emp-1",
+      employee_code: "MAS001",
+    });
 
-    const req = mockReq({ params: { employeeId: "someone-elses-employee-id" } });
+    const req = mockReq({
+      params: { employeeId: "someone-elses-employee-id" },
+    });
     const res = mockRes();
 
     await rosterCapacityController.getNotifications(req, res);
@@ -153,7 +211,10 @@ describe("roster-capacity.controller scope enforcement", () => {
 
   it("allows reading the caller's own notification history", async () => {
     hasRole.mockResolvedValue(false);
-    getEmployeeForUser.mockResolvedValue({ id: "self-emp-1", employee_code: "MAS001" });
+    getEmployeeForUser.mockResolvedValue({
+      id: "self-emp-1",
+      employee_code: "MAS001",
+    });
 
     const req = mockReq({ params: { employeeId: "self-emp-1" } });
     const res = mockRes();
@@ -174,8 +235,14 @@ describe("roster-capacity.controller scope enforcement", () => {
 
   it("refuses to mark another employee's notification read", async () => {
     hasRole.mockResolvedValue(false);
-    getEmployeeForUser.mockResolvedValue({ id: "self-emp-1", employee_code: "MAS001" });
-    execute.mockResolvedValue([[{ employee_id: "someone-elses-employee-id" }], []]);
+    getEmployeeForUser.mockResolvedValue({
+      id: "self-emp-1",
+      employee_code: "MAS001",
+    });
+    execute.mockResolvedValue([
+      [{ employee_id: "someone-elses-employee-id" }],
+      [],
+    ]);
 
     const req = mockReq({ params: { notificationId: "notif-1" } });
     const res = mockRes();
@@ -188,7 +255,10 @@ describe("roster-capacity.controller scope enforcement", () => {
 
   it("allows marking the caller's own notification read", async () => {
     hasRole.mockResolvedValue(false);
-    getEmployeeForUser.mockResolvedValue({ id: "self-emp-1", employee_code: "MAS001" });
+    getEmployeeForUser.mockResolvedValue({
+      id: "self-emp-1",
+      employee_code: "MAS001",
+    });
     execute.mockResolvedValue([[{ employee_id: "self-emp-1" }], []]);
 
     const req = mockReq({ params: { notificationId: "notif-1" } });
@@ -206,7 +276,9 @@ describe("roster-capacity.controller scope enforcement", () => {
       hasRole.mockResolvedValue(false);
       hasProcessScope.mockResolvedValue(false);
 
-      const req = mockReq({ params: { processId: "not-mine", dayOfWeek: "1" } });
+      const req = mockReq({
+        params: { processId: "not-mine", dayOfWeek: "1" },
+      });
       const res = mockRes();
       await rosterCapacityController.getCapacityConfig(req, res);
 
@@ -229,7 +301,10 @@ describe("roster-capacity.controller scope enforcement", () => {
       hasRole.mockResolvedValue(false);
       hasProcessScope.mockResolvedValue(false);
 
-      const req = mockReq({ params: { processId: "not-mine" }, query: { allocationDate: "2026-08-17", dayOfWeek: "1" } });
+      const req = mockReq({
+        params: { processId: "not-mine" },
+        query: { allocationDate: "2026-08-17", dayOfWeek: "1" },
+      });
       const res = mockRes();
       await rosterCapacityController.checkCapacity(req, res);
 
@@ -251,7 +326,10 @@ describe("roster-capacity.controller scope enforcement", () => {
 
     it("getAllocations 403s when a scoped caller requests a process outside their own scope", async () => {
       hasRole.mockResolvedValue(false);
-      execute.mockResolvedValue([[{ scope_type: "process", process_id: "process-A" }], []]);
+      execute.mockResolvedValue([
+        [{ scope_type: "process", process_id: "process-A" }],
+        [],
+      ]);
 
       const req = mockReq({ query: { process_id: "process-B" } });
       const res = mockRes();
@@ -263,13 +341,18 @@ describe("roster-capacity.controller scope enforcement", () => {
 
     it("getAllocations passes the caller's own scoped process ids when none was requested", async () => {
       hasRole.mockResolvedValue(false);
-      execute.mockResolvedValue([[{ scope_type: "process", process_id: "process-A" }], []]);
+      execute.mockResolvedValue([
+        [{ scope_type: "process", process_id: "process-A" }],
+        [],
+      ]);
 
       const req = mockReq();
       const res = mockRes();
       await rosterCapacityController.getAllocations(req, res);
 
-      expect(getAllocations).toHaveBeenCalledWith(expect.objectContaining({ process_id: ["process-A"] }));
+      expect(getAllocations).toHaveBeenCalledWith(
+        expect.objectContaining({ process_id: ["process-A"] }),
+      );
     });
 
     it("getAllocations stays unrestricted for admin/hr", async () => {
@@ -277,7 +360,9 @@ describe("roster-capacity.controller scope enforcement", () => {
       const req = mockReq();
       const res = mockRes();
       await rosterCapacityController.getAllocations(req, res);
-      expect(getAllocations).toHaveBeenCalledWith(expect.objectContaining({ process_id: undefined }));
+      expect(getAllocations).toHaveBeenCalledWith(
+        expect.objectContaining({ process_id: undefined }),
+      );
     });
   });
 });

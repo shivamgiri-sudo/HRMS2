@@ -21,15 +21,23 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 20_000 });
 
-const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
+const { execute, getConnection } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  getConnection: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
 const { release } = vi.hoisted(() => ({ release: vi.fn() }));
 vi.mock("../../process-pnl/budget-consumption.service.js", () => ({
-  budgetConsumptionService: { release, reserve: vi.fn(), consume: vi.fn(), reverseConsumption: vi.fn() },
+  budgetConsumptionService: {
+    release,
+    reserve: vi.fn(),
+    consume: vi.fn(),
+    reverseConsumption: vi.fn(),
+  },
 }));
 
-let grnService: typeof import("../grn.service.js")["grnService"];
+let grnService: (typeof import("../grn.service.js"))["grnService"];
 beforeAll(async () => {
   ({ grnService } = await import("../grn.service.js"));
 }, 120_000);
@@ -41,7 +49,11 @@ function makeConnection(grn: Record<string, unknown>, affectedRows = 1) {
     statements,
     execute: vi.fn(async (sql: string) => {
       statements.push(String(sql).replace(/\s+/g, " ").trim());
-      if (/SELECT \* FROM grn_request|SELECT id, status FROM grn_request/.test(sql)) {
+      if (
+        /SELECT \* FROM grn_request|SELECT id, status FROM grn_request/.test(
+          sql,
+        )
+      ) {
         return [grn.__missing ? [] : [grn], []];
       }
       if (/^\s*UPDATE grn_request/.test(sql)) return [{ affectedRows }, []];
@@ -61,15 +73,25 @@ beforeEach(() => {
 });
 
 const APPROVED = {
-  id: "g1", status: "branch_head_approved", budget_line_id: "bl1",
-  amount_with_tax: 5000, amount: 5000, quantity: 1,
+  id: "g1",
+  status: "branch_head_approved",
+  budget_line_id: "bl1",
+  amount_with_tax: 5000,
+  amount: 5000,
+  quantity: 1,
 };
 
 describe("returnGrn", () => {
   it("sends a Finance-stage GRN back to the Branch Head", async () => {
     const conn = makeConnection(APPROVED);
     getConnection.mockResolvedValue(conn);
-    const out = await grnService.returnGrn("g1", "branch_head", "Missing invoice copy", "u1", "finance_head");
+    const out = await grnService.returnGrn(
+      "g1",
+      "branch_head",
+      "Missing invoice copy",
+      "u1",
+      "finance_head",
+    );
     expect(out.status).toBe("returned_to_branch_head");
   });
 
@@ -77,7 +99,13 @@ describe("returnGrn", () => {
     // Otherwise headroom stays frozen for as long as the GRN sits with someone.
     const conn = makeConnection(APPROVED);
     getConnection.mockResolvedValue(conn);
-    await grnService.returnGrn("g1", "branch_head", "Wrong cost centre", "u1", "finance_head");
+    await grnService.returnGrn(
+      "g1",
+      "branch_head",
+      "Wrong cost centre",
+      "u1",
+      "finance_head",
+    );
     expect(release).toHaveBeenCalledOnce();
     expect(release.mock.calls[0][1]).toBe("bl1");
     expect(release.mock.calls[0][2]).toBe(5000);
@@ -88,15 +116,29 @@ describe("returnGrn", () => {
     // give back. Releasing anyway would credit the line twice.
     const conn = makeConnection({ ...APPROVED, status: "submitted" });
     getConnection.mockResolvedValue(conn);
-    await grnService.returnGrn("g1", "raiser", "Please attach the bill", "u1", "branch_head");
+    await grnService.returnGrn(
+      "g1",
+      "raiser",
+      "Please attach the bill",
+      "u1",
+      "branch_head",
+    );
     expect(release).not.toHaveBeenCalled();
   });
 
   it("appends an approval event carrying its own reason", async () => {
     const conn = makeConnection(APPROVED);
     getConnection.mockResolvedValue(conn);
-    await grnService.returnGrn("g1", "branch_head", "Amount does not match the bill", "u1", "finance_head");
-    const event = conn.execute.mock.calls.find(([s]) => /INSERT INTO finance_approval_event/.test(String(s)));
+    await grnService.returnGrn(
+      "g1",
+      "branch_head",
+      "Amount does not match the bill",
+      "u1",
+      "finance_head",
+    );
+    const event = conn.execute.mock.calls.find(([s]) =>
+      /INSERT INTO finance_approval_event/.test(String(s)),
+    );
     expect(event, "a return must be recorded in the history").toBeTruthy();
     expect(event?.[1]).toContain("return");
     expect(event?.[1]).toContain("branch_head_approved");
@@ -107,16 +149,18 @@ describe("returnGrn", () => {
   it("insists on a reason", async () => {
     // A return with no reason is indistinguishable from a silent bounce.
     getConnection.mockResolvedValue(makeConnection(APPROVED));
-    await expect(grnService.returnGrn("g1", "branch_head", "   ", "u1", "finance_head"))
-      .rejects.toThrow(/reason is required/i);
+    await expect(
+      grnService.returnGrn("g1", "branch_head", "   ", "u1", "finance_head"),
+    ).rejects.toThrow(/reason is required/i);
   });
 
   it("refuses to reopen a GRN that has moved past review", async () => {
     for (const status of ["paid", "partially_paid", "cancelled", "draft"]) {
       const conn = makeConnection({ ...APPROVED, status });
       getConnection.mockResolvedValue(conn);
-      await expect(grnService.returnGrn("g1", "branch_head", "why", "u1", "finance_head"))
-        .rejects.toThrow(/cannot be returned/i);
+      await expect(
+        grnService.returnGrn("g1", "branch_head", "why", "u1", "finance_head"),
+      ).rejects.toThrow(/cannot be returned/i);
     }
   });
 
@@ -124,8 +168,9 @@ describe("returnGrn", () => {
     // The optimistic guard: UPDATE ... WHERE status = <what we read> matches nothing.
     const conn = makeConnection(APPROVED, 0);
     getConnection.mockResolvedValue(conn);
-    await expect(grnService.returnGrn("g1", "branch_head", "why", "u1", "finance_head"))
-      .rejects.toThrow(/changed during review/i);
+    await expect(
+      grnService.returnGrn("g1", "branch_head", "why", "u1", "finance_head"),
+    ).rejects.toThrow(/changed during review/i);
     expect(conn.rollback).toHaveBeenCalled();
   });
 
@@ -134,8 +179,16 @@ describe("returnGrn", () => {
     // there could silently rewrite its allocations after having been through approval.
     const conn = makeConnection(APPROVED);
     getConnection.mockResolvedValue(conn);
-    await grnService.returnGrn("g1", "branch_head", "why", "u1", "finance_head");
-    const update = conn.execute.mock.calls.find(([s]) => /UPDATE grn_request/.test(String(s)));
+    await grnService.returnGrn(
+      "g1",
+      "branch_head",
+      "why",
+      "u1",
+      "finance_head",
+    );
+    const update = conn.execute.mock.calls.find(([s]) =>
+      /UPDATE grn_request/.test(String(s)),
+    );
     expect(update?.[1]).not.toContain("draft");
   });
 });
@@ -143,31 +196,55 @@ describe("returnGrn", () => {
 describe("resubmitReturnedGrn", () => {
   it("returns it to 'submitted' so the Branch Head approves again", async () => {
     // Not straight to branch_head_approved: that path is what re-reserves the budget.
-    const conn = makeConnection({ id: "g1", status: "returned_to_branch_head" });
+    const conn = makeConnection({
+      id: "g1",
+      status: "returned_to_branch_head",
+    });
     getConnection.mockResolvedValue(conn);
-    const out = await grnService.resubmitReturnedGrn("g1", "u2", "branch_head", "Invoice attached");
+    const out = await grnService.resubmitReturnedGrn(
+      "g1",
+      "u2",
+      "branch_head",
+      "Invoice attached",
+    );
     expect(out.status).toBe("submitted");
-    expect(release, "resubmission must not touch the budget").not.toHaveBeenCalled();
+    expect(
+      release,
+      "resubmission must not touch the budget",
+    ).not.toHaveBeenCalled();
   });
 
   it("works from returned_to_raiser too", async () => {
     const conn = makeConnection({ id: "g1", status: "returned_to_raiser" });
     getConnection.mockResolvedValue(conn);
-    await expect(grnService.resubmitReturnedGrn("g1", "u2", "branch_admin")).resolves.toMatchObject({ status: "submitted" });
+    await expect(
+      grnService.resubmitReturnedGrn("g1", "u2", "branch_admin"),
+    ).resolves.toMatchObject({ status: "submitted" });
   });
 
   it("refuses a GRN that was never returned", async () => {
     const conn = makeConnection({ id: "g1", status: "branch_head_approved" });
     getConnection.mockResolvedValue(conn);
-    await expect(grnService.resubmitReturnedGrn("g1", "u2", "branch_head"))
-      .rejects.toThrow(/Only a returned GRN can be resubmitted/i);
+    await expect(
+      grnService.resubmitReturnedGrn("g1", "u2", "branch_head"),
+    ).rejects.toThrow(/Only a returned GRN can be resubmitted/i);
   });
 
   it("records the resubmission, so a twice-returned GRN shows both hops", async () => {
-    const conn = makeConnection({ id: "g1", status: "returned_to_branch_head" });
+    const conn = makeConnection({
+      id: "g1",
+      status: "returned_to_branch_head",
+    });
     getConnection.mockResolvedValue(conn);
-    await grnService.resubmitReturnedGrn("g1", "u2", "branch_head", "Corrected");
-    const event = conn.execute.mock.calls.find(([s]) => /INSERT INTO finance_approval_event/.test(String(s)));
+    await grnService.resubmitReturnedGrn(
+      "g1",
+      "u2",
+      "branch_head",
+      "Corrected",
+    );
+    const event = conn.execute.mock.calls.find(([s]) =>
+      /INSERT INTO finance_approval_event/.test(String(s)),
+    );
     expect(event?.[1]).toContain("resubmit");
     expect(event?.[1]).toContain("returned_to_branch_head");
   });

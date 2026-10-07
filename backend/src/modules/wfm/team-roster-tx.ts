@@ -5,7 +5,9 @@
 import { db } from "../../db/mysql.js";
 import type { SqlExecutor } from "./team-roster-types.js";
 
-export async function withTransaction<T>(fn: (conn: SqlExecutor) => Promise<T>): Promise<T> {
+export async function withTransaction<T>(
+  fn: (conn: SqlExecutor) => Promise<T>,
+): Promise<T> {
   const conn = await (db as any).getConnection();
   try {
     await conn.beginTransaction();
@@ -16,7 +18,10 @@ export async function withTransaction<T>(fn: (conn: SqlExecutor) => Promise<T>):
     try {
       await conn.rollback();
     } catch (rollbackErr) {
-      console.error("[team-roster] rollback failed:", (rollbackErr as Error)?.message);
+      console.error(
+        "[team-roster] rollback failed:",
+        (rollbackErr as Error)?.message,
+      );
     }
     throw err;
   } finally {
@@ -25,4 +30,5 @@ export async function withTransaction<T>(fn: (conn: SqlExecutor) => Promise<T>):
 }
 
 export const isDuplicateKey = (err: unknown) =>
-  (err as { code?: string; errno?: number })?.code === "ER_DUP_ENTRY" || (err as { errno?: number })?.errno === 1062;
+  (err as { code?: string; errno?: number })?.code === "ER_DUP_ENTRY" ||
+  (err as { errno?: number })?.errno === 1062;

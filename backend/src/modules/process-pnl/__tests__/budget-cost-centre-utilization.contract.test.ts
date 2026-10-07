@@ -13,7 +13,8 @@ function readFrontend(relativePath: string) {
   return fs.readFileSync(path.resolve(backendRoot, "..", relativePath), "utf8");
 }
 
-const SERVICE = "src/modules/process-pnl/budget-cost-centre-utilization.service.ts";
+const SERVICE =
+  "src/modules/process-pnl/budget-cost-centre-utilization.service.ts";
 const WORKSPACE = "src/pages/finance/BranchBudgetManagementWorkspace.tsx";
 
 /**
@@ -31,7 +32,9 @@ describe("cost-centre budget utilization", () => {
     expect(service).toContain("FROM finance_budget_line l");
     expect(service).toContain("l.cost_centre_id IS NOT NULL");
     // The half that was missing entirely.
-    expect(service).toContain("JOIN finance_budget_line_allocation a ON a.budget_line_id = l.id");
+    expect(service).toContain(
+      "JOIN finance_budget_line_allocation a ON a.budget_line_id = l.id",
+    );
     expect(service).toContain("l.cost_centre_id IS NULL");
     expect(service).toContain("UNION ALL");
   });
@@ -91,7 +94,9 @@ describe("cost-centre budget utilization", () => {
 
   it("refusals carry a statusCode so production does not mask them", () => {
     const service = read(SERVICE);
-    const code = service.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const code = service
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
     expect(code).not.toMatch(/throw new Error\(/);
     expect(service).toContain("statusCode: 404");
   });
@@ -104,8 +109,10 @@ describe("cost-centre budget utilization", () => {
     expect(workspace).toContain("toggleCostCentre");
     expect(workspace).toContain("cc.heads.map");
     // Reachable without a mouse.
-    expect(workspace).toContain('aria-expanded={isOpen}');
-    expect(workspace).toMatch(/onKeyDown=\{\(event\) => \{[\s\S]{0,200}toggleCostCentre\(rowKey\)/);
+    expect(workspace).toContain("aria-expanded={isOpen}");
+    expect(workspace).toMatch(
+      /onKeyDown=\{\(event\) => \{[\s\S]{0,200}toggleCostCentre\(rowKey\)/,
+    );
   });
 
   it("the tab reads the server rollup, not the old browser-side cost_centre_id aggregation", () => {

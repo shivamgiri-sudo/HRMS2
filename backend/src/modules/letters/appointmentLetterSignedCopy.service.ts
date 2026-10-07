@@ -25,7 +25,11 @@ export const ACCEPTED_COPY_MISSING = "ACCEPTED_COPY_MISSING";
 export const ACCEPTED_COPY_INTEGRITY = "ACCEPTED_COPY_INTEGRITY";
 
 export class AcceptedCopyError extends Error {
-  constructor(message: string, readonly statusCode: number, readonly code: string) {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+    readonly code: string,
+  ) {
     super(message);
     this.name = "AcceptedCopyError";
   }
@@ -38,7 +42,10 @@ export type AcceptedCopyRecord = {
   completedAt: string | null;
 };
 
-export type AcceptedCopyFile = AcceptedCopyRecord & { bytes: Buffer; fileName: string };
+export type AcceptedCopyFile = AcceptedCopyRecord & {
+  bytes: Buffer;
+  fileName: string;
+};
 
 const isoOrNull = (value: unknown): string | null => {
   if (!value) return null;
@@ -47,7 +54,9 @@ const isoOrNull = (value: unknown): string | null => {
 };
 
 /** Newest signed transaction of this letter that actually holds a file, or null. */
-export async function findAcceptedCopy(issueId: string): Promise<AcceptedCopyRecord | null> {
+export async function findAcceptedCopy(
+  issueId: string,
+): Promise<AcceptedCopyRecord | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, signed_file_path, signed_file_sha256, completed_at
        FROM appointment_letter_esign_transaction
@@ -61,7 +70,9 @@ export async function findAcceptedCopy(issueId: string): Promise<AcceptedCopyRec
   return {
     transactionId: String(row.id),
     filePath: String(row.signed_file_path),
-    sha256: row.signed_file_sha256 ? String(row.signed_file_sha256).toLowerCase() : null,
+    sha256: row.signed_file_sha256
+      ? String(row.signed_file_sha256).toLowerCase()
+      : null,
     completedAt: isoOrNull(row.completed_at),
   };
 }
@@ -70,7 +81,9 @@ export async function findAcceptedCopy(issueId: string): Promise<AcceptedCopyRec
 export function resolveInsideStorage(filePath: string): string | null {
   const root = path.resolve(appointmentLetterStorageRoot());
   const resolved = path.resolve(filePath);
-  return resolved !== root && resolved.startsWith(root + path.sep) ? resolved : null;
+  return resolved !== root && resolved.startsWith(root + path.sep)
+    ? resolved
+    : null;
 }
 
 const notAvailable = (letterNumber: string) =>
@@ -85,7 +98,10 @@ const notAvailable = (letterNumber: string) =>
  *  404 ACCEPTED_COPY_MISSING    no signed transaction, path outside storage, or file gone
  *  409 ACCEPTED_COPY_INTEGRITY  the bytes no longer match the recorded sha256
  */
-export async function loadAcceptedCopy(issueId: string, letterNumber: string): Promise<AcceptedCopyFile> {
+export async function loadAcceptedCopy(
+  issueId: string,
+  letterNumber: string,
+): Promise<AcceptedCopyFile> {
   const record = await findAcceptedCopy(issueId);
   if (!record) {
     throw new AcceptedCopyError(
@@ -97,7 +113,9 @@ export async function loadAcceptedCopy(issueId: string, letterNumber: string): P
 
   const inside = resolveInsideStorage(record.filePath);
   if (!inside) {
-    console.warn(`[appointment-letter] refusing signed copy of ${letterNumber}: recorded path is outside the storage root`);
+    console.warn(
+      `[appointment-letter] refusing signed copy of ${letterNumber}: recorded path is outside the storage root`,
+    );
     throw notAvailable(letterNumber);
   }
 
@@ -113,7 +131,7 @@ export async function loadAcceptedCopy(issueId: string, letterNumber: string): P
     if (actual !== record.sha256) {
       console.warn(
         `[appointment-letter] signed copy of ${letterNumber} failed its integrity check ` +
-        `(transaction ${record.transactionId}): recorded ${record.sha256}, on disk ${actual}`,
+          `(transaction ${record.transactionId}): recorded ${record.sha256}, on disk ${actual}`,
       );
       throw new AcceptedCopyError(
         `The stored signed copy of ${letterNumber} failed its integrity check and was not served. Please contact IT.`,

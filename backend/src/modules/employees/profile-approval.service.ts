@@ -22,12 +22,15 @@ const PENNY_DROP_TOKEN_TTL_HOURS = 48;
  * existing pending row's id when one exists makes the ON DUPLICATE clause
  * do real work.
  */
-async function findPendingApprovalId(employeeId: string, requestType: string): Promise<string | null> {
+async function findPendingApprovalId(
+  employeeId: string,
+  requestType: string,
+): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM profile_update_approval
      WHERE employee_id = ? AND request_type = ? AND status = 'pending'
      LIMIT 1`,
-    [employeeId, requestType]
+    [employeeId, requestType],
   );
   return (rows[0] as any)?.id ?? null;
 }
@@ -52,7 +55,7 @@ async function getPayrollEmails(): Promise<string[]> {
        AND ur.active_status = 1
        AND (e.id IS NULL OR e.active_status = 1)
        AND au.email IS NOT NULL
-       AND au.email != ''`
+       AND au.email != ''`,
   );
   return (rows as any[]).map((r) => String(r.email)).filter(Boolean);
 }
@@ -90,11 +93,11 @@ function buildPennyDropEmailHtml(opts: {
       </tr>
       <tr>
         <td style="padding:8px 12px;color:#64748b;border:1px solid #e2e8f0;font-weight:600">Process</td>
-        <td style="padding:8px 12px;border:1px solid #e2e8f0">${opts.processName || '—'}</td>
+        <td style="padding:8px 12px;border:1px solid #e2e8f0">${opts.processName || "—"}</td>
       </tr>
       <tr style="background:#f8fafc">
         <td style="padding:8px 12px;color:#64748b;border:1px solid #e2e8f0;font-weight:600">Reporting manager</td>
-        <td style="padding:8px 12px;border:1px solid #e2e8f0">${opts.reportingManagerName || '—'}</td>
+        <td style="padding:8px 12px;border:1px solid #e2e8f0">${opts.reportingManagerName || "—"}</td>
       </tr>
       <tr>
         <td style="padding:8px 12px;color:#64748b;border:1px solid #e2e8f0;font-weight:600">Bank</td>
@@ -138,13 +141,13 @@ export const profileApprovalService = {
     userId: string,
     employeeId: string,
     newValues: Record<string, any>,
-    oldValues?: Record<string, any>
+    oldValues?: Record<string, any>,
   ) {
     const [existing] = await db.execute<RowDataPacket[]>(
       `SELECT id, old_values FROM profile_update_approval
        WHERE employee_id = ? AND request_type = 'bank_details' AND status = 'pending'
        LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     const existingPendingId = (existing[0] as any)?.id ?? null;
 
@@ -159,24 +162,29 @@ export const profileApprovalService = {
          LEFT JOIN process_master pm ON pm.id = e.process_id
          LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
         WHERE e.id = ? LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     const emp = (empRow[0] as any) ?? {};
-    const employeeName: string = emp.full_name ?? '';
-    const employeeCode: string = emp.employee_code ?? '';
+    const employeeName: string = emp.full_name ?? "";
+    const employeeCode: string = emp.employee_code ?? "";
     const processName: string | null = emp.process_name ?? null;
-    const reportingManagerName: string | null = emp.reporting_manager_name ?? null;
+    const reportingManagerName: string | null =
+      emp.reporting_manager_name ?? null;
     const employeeMobile: string | null = emp.mobile ?? null;
 
     // Generate a secure one-time verification token for Payroll Branch
-    const verificationToken = randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + PENNY_DROP_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+    const verificationToken = randomBytes(32).toString("hex");
+    const expiresAt = new Date(
+      Date.now() + PENNY_DROP_TOKEN_TTL_HOURS * 60 * 60 * 1000,
+    );
 
     const pennyDropId = randomUUID();
-    const acctRaw = String(newValues.account_number ?? newValues.accountNumber ?? '').replace(/\s/g, '');
+    const acctRaw = String(
+      newValues.account_number ?? newValues.accountNumber ?? "",
+    ).replace(/\s/g, "");
     const acctHash = acctRaw
-      ? createHash('sha256').update(acctRaw.toUpperCase()).digest('hex')
-      : 'unknown';
+      ? createHash("sha256").update(acctRaw.toUpperCase()).digest("hex")
+      : "unknown";
 
     await db.execute(
       `INSERT INTO bank_penny_drop_log
@@ -187,11 +195,11 @@ export const profileApprovalService = {
         pennyDropId,
         employeeId,
         acctHash,
-        newValues.ifsc_code ?? newValues.ifscCode ?? '',
+        newValues.ifsc_code ?? newValues.ifscCode ?? "",
         verificationToken,
         expiresAt,
         employeeName,
-      ]
+      ],
     );
 
     const id = existingPendingId ?? randomUUID();
@@ -203,7 +211,13 @@ export const profileApprovalService = {
        ON DUPLICATE KEY UPDATE
          new_values = VALUES(new_values), penny_drop_log_id = VALUES(penny_drop_log_id),
          routed_to_role = 'payroll', requested_at = NOW()`,
-      [id, employeeId, JSON.stringify(oldVals), JSON.stringify(newValues), pennyDropId]
+      [
+        id,
+        employeeId,
+        JSON.stringify(oldVals),
+        JSON.stringify(newValues),
+        pennyDropId,
+      ],
     );
 
     await logSensitiveAction({
@@ -212,40 +226,55 @@ export const profileApprovalService = {
       module_key: "EMPLOYEE_PROFILE",
       entity_type: "profile_update_approval",
       entity_id: id,
-      change_summary: { fields: Object.keys(newValues), routed_to: 'payroll' },
+      change_summary: { fields: Object.keys(newValues), routed_to: "payroll" },
     });
 
     // SMS to employee (fire-and-forget)
     if (employeeMobile) {
-      sendSMS(employeeMobile, 'bank_update_submitted', { name: employeeName }).catch(() => {});
+      sendSMS(employeeMobile, "bank_update_submitted", {
+        name: employeeName,
+      }).catch(() => {});
     }
 
     // Email to all Payroll Branch users with the penny drop verification link
     const verifyUrl = `${FRONTEND_URL}/payroll/bank-verify/${verificationToken}`;
-    const expiresAtStr = expiresAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
-    const maskedAccount = acctRaw ? `****${acctRaw.slice(-4)}` : '****';
+    const expiresAtStr = expiresAt.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour12: false,
+    });
+    const maskedAccount = acctRaw ? `****${acctRaw.slice(-4)}` : "****";
 
     const payrollEmails = await getPayrollEmails().catch(() => [] as string[]);
     if (payrollEmails.length > 0) {
-      emailService.send({
-        to: payrollEmails.join(', '),
-        subject: `[Action Required] Bank Change Verification — ${employeeName} (${employeeCode})`,
-        html: buildPennyDropEmailHtml({
-          employeeName,
-          employeeCode,
-          processName,
-          reportingManagerName,
-          bankName: newValues.bank_name ?? newValues.bankName ?? '—',
-          ifscCode: (newValues.ifsc_code ?? newValues.ifscCode ?? '').toUpperCase(),
-          accountType: newValues.account_type ?? newValues.accountType ?? 'savings',
-          maskedAccount,
-          verifyUrl,
-          expiresAt: expiresAtStr,
-        }),
-        text: `Bank Account Change Request\n\nEmployee: ${employeeName} (${employeeCode})\nBank: ${newValues.bank_name ?? '—'}\nIFSC: ${newValues.ifsc_code ?? '—'}\n\nVerify via penny drop: ${verifyUrl}\n\nThis link expires in ${PENNY_DROP_TOKEN_TTL_HOURS} hours.`,
-      }).catch((err) => {
-        console.error('[bank-change] penny drop email failed:', err instanceof Error ? err.message : String(err));
-      });
+      emailService
+        .send({
+          to: payrollEmails.join(", "),
+          subject: `[Action Required] Bank Change Verification — ${employeeName} (${employeeCode})`,
+          html: buildPennyDropEmailHtml({
+            employeeName,
+            employeeCode,
+            processName,
+            reportingManagerName,
+            bankName: newValues.bank_name ?? newValues.bankName ?? "—",
+            ifscCode: (
+              newValues.ifsc_code ??
+              newValues.ifscCode ??
+              ""
+            ).toUpperCase(),
+            accountType:
+              newValues.account_type ?? newValues.accountType ?? "savings",
+            maskedAccount,
+            verifyUrl,
+            expiresAt: expiresAtStr,
+          }),
+          text: `Bank Account Change Request\n\nEmployee: ${employeeName} (${employeeCode})\nBank: ${newValues.bank_name ?? "—"}\nIFSC: ${newValues.ifsc_code ?? "—"}\n\nVerify via penny drop: ${verifyUrl}\n\nThis link expires in ${PENNY_DROP_TOKEN_TTL_HOURS} hours.`,
+        })
+        .catch((err) => {
+          console.error(
+            "[bank-change] penny drop email failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
     }
 
     return { id, status: "pending", routed_to: "payroll" };
@@ -263,12 +292,15 @@ export const profileApprovalService = {
 export async function submitStatutoryDetailsForApproval(
   userId: string,
   employeeId: string,
-  newValues: Record<string, unknown>
+  newValues: Record<string, unknown>,
 ): Promise<{ id: string; message: string }> {
   // Same fix as submitBankDetailsForApproval above: reuse an existing pending
   // request's id so ON DUPLICATE KEY UPDATE actually replaces it, instead of
   // stacking a fresh conflicting request every time this is called.
-  const existingPendingId = await findPendingApprovalId(employeeId, 'statutory_details');
+  const existingPendingId = await findPendingApprovalId(
+    employeeId,
+    "statutory_details",
+  );
   const id = existingPendingId ?? randomUUID();
 
   // Read current values before insert, same read-before-write pattern as
@@ -279,14 +311,17 @@ export async function submitStatutoryDetailsForApproval(
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT pan_number, uan_number, epf_number, esic_number, aadhaar_number, aadhaar_last4
        FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
   const [statRows] = await db.execute<RowDataPacket[]>(
     `SELECT epf_number, esi_number, uan_number, pan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date
        FROM employee_statutory_info WHERE employee_id = ? LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
-  const oldValues = { employees: empRows[0] ?? null, employee_statutory_info: statRows[0] ?? null };
+  const oldValues = {
+    employees: empRows[0] ?? null,
+    employee_statutory_info: statRows[0] ?? null,
+  };
 
   await db.execute(
     `INSERT INTO profile_update_approval
@@ -298,17 +333,17 @@ export async function submitStatutoryDetailsForApproval(
        old_values = VALUES(old_values),
        routed_to_role = 'hr',
        requested_at = NOW()`,
-    [id, employeeId, JSON.stringify(oldValues), JSON.stringify(newValues)]
+    [id, employeeId, JSON.stringify(oldValues), JSON.stringify(newValues)],
   );
 
   await logSensitiveAction({
     actor_user_id: userId,
-    action_type: 'STATUTORY_DETAILS_APPROVAL_REQUESTED',
-    module_key: 'EMPLOYEE_PROFILE',
-    entity_type: 'profile_update_approval',
+    action_type: "STATUTORY_DETAILS_APPROVAL_REQUESTED",
+    module_key: "EMPLOYEE_PROFILE",
+    entity_type: "profile_update_approval",
     entity_id: id,
-    change_summary: { fields: Object.keys(newValues), routed_to: 'hr' },
+    change_summary: { fields: Object.keys(newValues), routed_to: "hr" },
   });
 
-  return { id, message: 'Statutory details submitted for HR approval' };
+  return { id, message: "Statutory details submitted for HR approval" };
 }

@@ -41,7 +41,9 @@ interface DailyAprRow extends RowDataPacket {
   wait_seconds: number | null;
   dead_seconds: number | null;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 /** Exported so unit tests can assert on the exact SQL text without needing a live dialer_db connection. */
 export function buildCdrDailySql(): string {
@@ -85,7 +87,9 @@ export async function syncReginaldAbandonedCartDaily(
   lookbackDays = 30,
 ): Promise<{ rowsUpserted: number; error?: string }> {
   const dialerPool = await getNamedPool("dialer");
-  const sinceDate = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
+  const sinceDate = new Date(Date.now() - lookbackDays * 86400000)
+    .toISOString()
+    .slice(0, 10);
 
   const [procRows] = await db.execute<Ref[]>(
     `SELECT id FROM process_master WHERE process_name = 'Reginald' AND active_status = 1 LIMIT 1`,
@@ -96,9 +100,17 @@ export async function syncReginaldAbandonedCartDaily(
   }
 
   try {
-    const [cdrRows] = await dialerPool.query<DailyCdrRow[]>(buildCdrDailySql(), [sinceDate]);
-    const [aprRows] = await dialerPool.query<DailyAprRow[]>(buildAprDailySql(), [sinceDate]);
-    const aprByDate = new Map(aprRows.map((r) => [formatReportDate(r.report_date), r]));
+    const [cdrRows] = await dialerPool.query<DailyCdrRow[]>(
+      buildCdrDailySql(),
+      [sinceDate],
+    );
+    const [aprRows] = await dialerPool.query<DailyAprRow[]>(
+      buildAprDailySql(),
+      [sinceDate],
+    );
+    const aprByDate = new Map(
+      aprRows.map((r) => [formatReportDate(r.report_date), r]),
+    );
 
     let rowsUpserted = 0;
     for (const row of cdrRows) {
@@ -120,9 +132,16 @@ export async function syncReginaldAbandonedCartDaily(
             dead_seconds = VALUES(dead_seconds),
             synced_at = NOW()`,
         [
-          randomUUID(), processId, reportDate, row.total_cdr, row.unique_dialed,
-          apr?.login_count ?? null, apr?.talk_seconds ?? null, apr?.wrapup_seconds ?? null,
-          apr?.wait_seconds ?? null, apr?.dead_seconds ?? null,
+          randomUUID(),
+          processId,
+          reportDate,
+          row.total_cdr,
+          row.unique_dialed,
+          apr?.login_count ?? null,
+          apr?.talk_seconds ?? null,
+          apr?.wrapup_seconds ?? null,
+          apr?.wait_seconds ?? null,
+          apr?.dead_seconds ?? null,
           importedByUserId,
         ] as never[],
       );
@@ -130,6 +149,9 @@ export async function syncReginaldAbandonedCartDaily(
     }
     return { rowsUpserted };
   } catch (err: unknown) {
-    return { rowsUpserted: 0, error: err instanceof Error ? err.message : String(err) };
+    return {
+      rowsUpserted: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }

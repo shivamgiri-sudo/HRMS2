@@ -7,11 +7,30 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { AuthedImage } from "@/components/ui/AuthedImage";
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  CheckCircle2, XCircle, Download, FileText, Users,
-  AlertTriangle, Search, FileDown, Loader2, Upload, Camera,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  CheckCircle2,
+  XCircle,
+  Download,
+  FileText,
+  Users,
+  AlertTriangle,
+  Search,
+  FileDown,
+  Loader2,
+  Upload,
+  Camera,
 } from "lucide-react";
 
 interface EsiEmployee {
@@ -37,17 +56,48 @@ interface ListResponse {
   limit: number;
 }
 
-function useEsiList(params: { search: string; branchId: string; page: number }) {
+function useEsiList(params: {
+  search: string;
+  branchId: string;
+  activeStatus: string;
+  month: string;
+  page: number;
+}) {
   return useQuery<ListResponse>({
     queryKey: ["esi-reg-docs", params],
     queryFn: () => {
-      const qs = new URLSearchParams({ page: String(params.page), limit: "50" });
+      const qs = new URLSearchParams({
+        page: String(params.page),
+        limit: "50",
+      });
       if (params.search) qs.set("search", params.search);
       if (params.branchId) qs.set("branch_id", params.branchId);
+      if (params.activeStatus && params.activeStatus !== "1")
+        qs.set("active_status", params.activeStatus);
+      if (params.month) qs.set("month", params.month);
       return hrmsApi.get<ListResponse>(`/api/payroll/esi-reg-docs?${qs}`);
     },
     staleTime: 30_000,
   });
+}
+
+interface BranchOption {
+  id: string;
+  branch_name: string;
+}
+
+function useMonthOptions() {
+  return useMemo(() => {
+    const opts: { value: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleString("en-IN", { month: "short", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
 }
 
 /**
@@ -79,7 +129,9 @@ async function compressImage(file: File, maxBytes = 100 * 1024): Promise<File> {
             if (!blob) return reject(new Error("Canvas compression failed"));
             if (blob.size <= maxBytes || attempt >= 12) {
               const ext = file.name.endsWith(".png") ? ".png" : ".jpg";
-              resolve(new File([blob], `compressed${ext}`, { type: blob.type }));
+              resolve(
+                new File([blob], `compressed${ext}`, { type: blob.type }),
+              );
             } else {
               attempt++;
               if (quality > 0.2) {
@@ -98,28 +150,68 @@ async function compressImage(file: File, maxBytes = 100 * 1024): Promise<File> {
       };
       tryCompress();
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Image load failed"));
+    };
     img.src = url;
   });
 }
 
-function KpiStrip({ employees, total }: { employees: EsiEmployee[]; total: number }) {
+function KpiStrip({
+  employees,
+  total,
+}: {
+  employees: EsiEmployee[];
+  total: number;
+}) {
   const onPage = employees.length;
   const allReady = employees.filter(
-    (e) => e.pan_ready && e.photo_ready && e.bank_ready && e.bank_passbook_ready
+    (e) =>
+      e.pan_ready && e.photo_ready && e.bank_ready && e.bank_passbook_ready,
   ).length;
   const missing = onPage - allReady;
 
   const tiles = [
-    { label: "Pending ESI Registration", value: total, icon: Users, tone: "blue" as const },
-    { label: `All Docs Ready (of ${onPage} shown)`, value: allReady, icon: CheckCircle2, tone: "green" as const },
-    { label: `Docs Missing (of ${onPage} shown)`, value: missing, icon: AlertTriangle, tone: "amber" as const },
+    {
+      label: "Pending ESI Registration",
+      value: total,
+      icon: Users,
+      tone: "blue" as const,
+    },
+    {
+      label: `All Docs Ready (of ${onPage} shown)`,
+      value: allReady,
+      icon: CheckCircle2,
+      tone: "green" as const,
+    },
+    {
+      label: `Docs Missing (of ${onPage} shown)`,
+      value: missing,
+      icon: AlertTriangle,
+      tone: "amber" as const,
+    },
   ];
 
   const toneMap = {
-    blue:  { bg: "bg-[#edf4ff]", text: "text-[#0b63e5]", border: "border-[#dce8fb]", icon: "text-[#0b63e5]" },
-    green: { bg: "bg-[#eaf8ef]", text: "text-[#15803d]", border: "border-[#d7f0df]", icon: "text-[#15803d]" },
-    amber: { bg: "bg-[#fff4e8]", text: "text-[#ea580c]", border: "border-[#fee3c5]", icon: "text-[#ea580c]" },
+    blue: {
+      bg: "bg-[#edf4ff]",
+      text: "text-[#0b63e5]",
+      border: "border-[#dce8fb]",
+      icon: "text-[#0b63e5]",
+    },
+    green: {
+      bg: "bg-[#eaf8ef]",
+      text: "text-[#15803d]",
+      border: "border-[#d7f0df]",
+      icon: "text-[#15803d]",
+    },
+    amber: {
+      bg: "bg-[#fff4e8]",
+      text: "text-[#ea580c]",
+      border: "border-[#fee3c5]",
+      icon: "text-[#ea580c]",
+    },
   };
 
   return (
@@ -128,12 +220,19 @@ function KpiStrip({ employees, total }: { employees: EsiEmployee[]; total: numbe
         const c = toneMap[t.tone];
         const Icon = t.icon;
         return (
-          <div key={t.label} className={`rounded-2xl border ${c.border} ${c.bg} px-5 py-4 flex items-center gap-4`}>
-            <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${c.bg}`}>
+          <div
+            key={t.label}
+            className={`rounded-2xl border ${c.border} ${c.bg} px-5 py-4 flex items-center gap-4`}
+          >
+            <div
+              className={`w-9 h-9 rounded-lg flex items-center justify-center ${c.bg}`}
+            >
               <Icon className={`w-5 h-5 ${c.icon}`} />
             </div>
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{t.label}</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                {t.label}
+              </p>
               <p className={`text-2xl font-bold ${c.text}`}>{t.value}</p>
             </div>
           </div>
@@ -172,7 +271,8 @@ function EmployeeTable({
   onOpenDrawer: (emp: EsiEmployee) => void;
   downloading: string | null;
 }) {
-  const allSelected = employees.length > 0 && selected.size === employees.length;
+  const allSelected =
+    employees.length > 0 && selected.size === employees.length;
 
   return (
     <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm overflow-hidden">
@@ -189,8 +289,21 @@ function EmployeeTable({
                   aria-label="Select all"
                 />
               </th>
-              {["Emp Code", "Name", "Branch", "ESIC No.", "PAN", "Photo", "Bank", "Passbook", "Actions"].map((h) => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+              {[
+                "Emp Code",
+                "Name",
+                "Branch",
+                "ESIC No.",
+                "PAN",
+                "Photo",
+                "Bank",
+                "Passbook",
+                "Actions",
+              ].map((h) => (
+                <th
+                  key={h}
+                  className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400"
+                >
                   {h}
                 </th>
               ))}
@@ -199,7 +312,10 @@ function EmployeeTable({
           <tbody>
             {employees.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-8 text-center text-slate-400 text-sm">
+                <td
+                  colSpan={10}
+                  className="px-4 py-8 text-center text-slate-400 text-sm"
+                >
                   No ESI-eligible employees pending registration.
                 </td>
               </tr>
@@ -219,14 +335,28 @@ function EmployeeTable({
                     aria-label={`Select ${emp.name}`}
                   />
                 </td>
-                <td className="px-4 py-3 font-mono text-xs text-slate-600">{emp.emp_code}</td>
-                <td className="px-4 py-3 font-semibold text-slate-800">{emp.name}</td>
+                <td className="px-4 py-3 font-mono text-xs text-slate-600">
+                  {emp.emp_code}
+                </td>
+                <td className="px-4 py-3 font-semibold text-slate-800">
+                  {emp.name}
+                </td>
                 <td className="px-4 py-3 text-slate-600">{emp.branch}</td>
-                <td className="px-4 py-3 text-xs text-slate-500">{emp.esic_number ?? "—"}</td>
-                <td className="px-4 py-3"><ReadyChip ready={emp.pan_ready} label="PAN" /></td>
-                <td className="px-4 py-3"><ReadyChip ready={emp.photo_ready} label="Photo" /></td>
-                <td className="px-4 py-3"><ReadyChip ready={emp.bank_ready} label="Bank" /></td>
-                <td className="px-4 py-3"><ReadyChip ready={emp.bank_passbook_ready} label="Passbook" /></td>
+                <td className="px-4 py-3 text-xs text-slate-500">
+                  {emp.esic_number ?? "—"}
+                </td>
+                <td className="px-4 py-3">
+                  <ReadyChip ready={emp.pan_ready} label="PAN" />
+                </td>
+                <td className="px-4 py-3">
+                  <ReadyChip ready={emp.photo_ready} label="Photo" />
+                </td>
+                <td className="px-4 py-3">
+                  <ReadyChip ready={emp.bank_ready} label="Bank" />
+                </td>
+                <td className="px-4 py-3">
+                  <ReadyChip ready={emp.bank_passbook_ready} label="Passbook" />
+                </td>
                 <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   <Button
                     size="sm"
@@ -293,7 +423,9 @@ function ImageUploadBox({
       )}
 
       <p className="text-xs text-slate-400">{hint}</p>
-      <p className="text-xs text-amber-600 font-medium">Image will be compressed to ≤100 KB before upload.</p>
+      <p className="text-xs text-amber-600 font-medium">
+        Image will be compressed to ≤100 KB before upload.
+      </p>
 
       <input
         ref={inputRef}
@@ -351,7 +483,11 @@ function EsiDrawer({
 
   if (!emp) return null;
 
-  const allReady = emp.pan_ready && emp.photo_ready && emp.bank_ready && emp.bank_passbook_ready;
+  const allReady =
+    emp.pan_ready &&
+    emp.photo_ready &&
+    emp.bank_ready &&
+    emp.bank_passbook_ready;
 
   async function uploadFile(
     endpoint: string,
@@ -372,11 +508,16 @@ function EsiDrawer({
         body: formData,
       });
       const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.error ?? `HTTP ${res.status}`);
+      if (!res.ok || !json.success)
+        throw new Error(json.error ?? `HTTP ${res.status}`);
       onSuccess(json);
       toast({ title: "Upload successful", description: "Image saved." });
     } catch (err) {
-      toast({ title: "Upload failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+      toast({
+        title: "Upload failed",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
     } finally {
       setUploading(false);
     }
@@ -389,7 +530,7 @@ function EsiDrawer({
       setUploadingPhoto,
       (data) => {
         const patch = { photo_ready: true, photo_url: data.photo_url };
-        setEmp((prev) => prev ? { ...prev, ...patch } : prev);
+        setEmp((prev) => (prev ? { ...prev, ...patch } : prev));
         onUploaded(emp!.employee_id, patch);
       },
     );
@@ -401,16 +542,27 @@ function EsiDrawer({
       file,
       setUploadingPassbook,
       (data) => {
-        const patch = { bank_passbook_ready: true, bank_passbook_url: data.bank_passbook_url };
-        setEmp((prev) => prev ? { ...prev, ...patch } : prev);
+        const patch = {
+          bank_passbook_ready: true,
+          bank_passbook_url: data.bank_passbook_url,
+        };
+        setEmp((prev) => (prev ? { ...prev, ...patch } : prev));
         onUploaded(emp!.employee_id, patch);
       },
     );
   }
 
   return (
-    <Sheet open={!!emp} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className="max-w-2xl w-full overflow-y-auto p-0">
+    <Sheet
+      open={!!emp}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <SheetContent
+        side="right"
+        className="max-w-2xl w-full overflow-y-auto p-0"
+      >
         <div className="bg-gradient-to-r from-purple-600 to-violet-600 text-white px-6 py-5">
           <SheetHeader>
             <SheetTitle className="text-white text-lg font-bold">
@@ -418,8 +570,16 @@ function EsiDrawer({
             </SheetTitle>
           </SheetHeader>
           <div className="flex items-center gap-3 mt-2">
-            <span className="font-mono text-sm bg-white/20 px-2 py-0.5 rounded">{emp.emp_code}</span>
-            <Badge className={allReady ? "bg-green-400/90 text-white" : "bg-amber-400/90 text-white"}>
+            <span className="font-mono text-sm bg-white/20 px-2 py-0.5 rounded">
+              {emp.emp_code}
+            </span>
+            <Badge
+              className={
+                allReady
+                  ? "bg-green-400/90 text-white"
+                  : "bg-amber-400/90 text-white"
+              }
+            >
               {allReady ? "Docs Ready" : "Docs Incomplete"}
             </Badge>
           </div>
@@ -427,37 +587,62 @@ function EsiDrawer({
 
         <div className="px-6 py-5 space-y-5">
           <section>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">ESI Details</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">
+              ESI Details
+            </p>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
-                <p className="text-xs text-slate-400 uppercase tracking-wide">ESIC Number</p>
-                <p className="font-semibold text-slate-800">{emp.esic_number ?? "Not assigned"}</p>
+                <p className="text-xs text-slate-400 uppercase tracking-wide">
+                  ESIC Number
+                </p>
+                <p className="font-semibold text-slate-800">
+                  {emp.esic_number ?? "Not assigned"}
+                </p>
               </div>
               <div>
-                <p className="text-xs text-slate-400 uppercase tracking-wide">Branch</p>
+                <p className="text-xs text-slate-400 uppercase tracking-wide">
+                  Branch
+                </p>
                 <p className="font-semibold text-slate-800">{emp.branch}</p>
               </div>
             </div>
           </section>
 
           <section>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">Document Readiness</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">
+              Document Readiness
+            </p>
             <div className="space-y-2">
               {[
-                { label: "PAN Card", ready: emp.pan_ready, hint: "Upload in employee profile → Documents" },
-                { label: "Bank Information", ready: emp.bank_ready, hint: "Add bank details in employee profile" },
+                {
+                  label: "PAN Card",
+                  ready: emp.pan_ready,
+                  hint: "Upload in employee profile → Documents",
+                },
+                {
+                  label: "Bank Information",
+                  ready: emp.bank_ready,
+                  hint: "Add bank details in employee profile",
+                },
               ].map((d) => (
-                <div key={d.label} className="flex items-center justify-between py-2 border-b border-slate-50">
+                <div
+                  key={d.label}
+                  className="flex items-center justify-between py-2 border-b border-slate-50"
+                >
                   <div className="flex items-center gap-2">
                     {d.ready ? (
                       <CheckCircle2 className="w-4 h-4 text-green-500" />
                     ) : (
                       <XCircle className="w-4 h-4 text-red-400" />
                     )}
-                    <span className="text-sm font-medium text-slate-700">{d.label}</span>
+                    <span className="text-sm font-medium text-slate-700">
+                      {d.label}
+                    </span>
                   </div>
                   {!d.ready && (
-                    <span className="text-xs text-slate-400 italic">{d.hint}</span>
+                    <span className="text-xs text-slate-400 italic">
+                      {d.hint}
+                    </span>
                   )}
                 </div>
               ))}
@@ -465,7 +650,9 @@ function EsiDrawer({
           </section>
 
           <section>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">Upload Photos</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">
+              Upload Photos
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <ImageUploadBox
                 label="Employee Photo"
@@ -485,7 +672,9 @@ function EsiDrawer({
           </section>
 
           <section>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">Download Actions</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">
+              Download Actions
+            </p>
             <div className="flex flex-wrap gap-3">
               <Button
                 className="bg-blue-600 hover:bg-blue-700 text-white font-semibold gap-2 rounded-xl shadow-[0_4px_12px_rgba(37,99,235,0.3)] transition-all duration-200"
@@ -501,8 +690,9 @@ function EsiDrawer({
               </Button>
             </div>
             <p className="text-xs text-slate-400 mt-2">
-              ZIP includes PAN card, Aadhaar, employee photo, bank passbook, and a filled ESI Declaration Form
-              (DOB, gender, father's/husband's name, address, nominee &amp; bank details) for ESI portal upload.
+              ZIP includes PAN card, Aadhaar, employee photo, bank passbook, and
+              a filled ESI Declaration Form (DOB, gender, father's/husband's
+              name, address, nominee &amp; bank details) for ESI portal upload.
               Missing documents are noted in manifest.txt inside the ZIP.
             </p>
           </section>
@@ -517,17 +707,32 @@ export default function EsiRegDocsTab() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [page] = useState(1);
+  const [branchId, setBranchId] = useState("");
+  const [activeStatus, setActiveStatus] = useState("1");
+  const [month, setMonth] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drawerEmp, setDrawerEmp] = useState<EsiEmployee | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [bulkDownloading, setBulkDownloading] = useState(false);
 
-  const { data, isLoading } = useEsiList({ search, branchId: "", page });
+  const monthOptions = useMonthOptions();
+
+  const { data: branchesData } = useQuery<BranchOption[]>({
+    queryKey: ["org-branches-active"],
+    queryFn: () =>
+      hrmsApi
+        .get<any>("/api/org/branches?active_status=1")
+        .then((d: any) => d.data ?? d ?? []),
+    staleTime: 5 * 60_000,
+  });
+  const branches = branchesData ?? [];
+
+  const { data, isLoading } = useEsiList({ search, branchId, activeStatus, month, page });
   const employees = data?.employees ?? [];
 
   const allSelected = useMemo(
     () => employees.length > 0 && selected.size === employees.length,
-    [employees, selected]
+    [employees, selected],
   );
 
   function toggleSelect(id: string) {
@@ -558,12 +763,21 @@ export default function EsiRegDocsTab() {
   async function downloadSingle(employeeId: string) {
     setDownloading(employeeId);
     try {
-      const blob = await hrmsApi.getBlob(`/api/payroll/esi-reg-docs/${employeeId}/download`);
+      const blob = await hrmsApi.getBlob(
+        `/api/payroll/esi-reg-docs/${employeeId}/download`,
+      );
       const date = new Date().toISOString().slice(0, 10);
       const emp = employees.find((e) => e.employee_id === employeeId);
-      triggerBlobDownload(blob, `ESI_Docs_${emp?.emp_code ?? employeeId}_${date}.zip`);
+      triggerBlobDownload(
+        blob,
+        `ESI_Docs_${emp?.emp_code ?? employeeId}_${date}.zip`,
+      );
     } catch {
-      toast({ title: "Download failed", description: "Could not download ESI documents.", variant: "destructive" });
+      toast({
+        title: "Download failed",
+        description: "Could not download ESI documents.",
+        variant: "destructive",
+      });
     } finally {
       setDownloading(null);
     }
@@ -585,7 +799,10 @@ export default function EsiRegDocsTab() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
-      triggerBlobDownload(blob, `ESI_Bulk_Docs_${new Date().toISOString().slice(0, 10)}.zip`);
+      triggerBlobDownload(
+        blob,
+        `ESI_Bulk_Docs_${new Date().toISOString().slice(0, 10)}.zip`,
+      );
       setSelected(new Set());
     } catch {
       toast({ title: "Bulk download failed", variant: "destructive" });
@@ -596,8 +813,17 @@ export default function EsiRegDocsTab() {
 
   async function exportCsv() {
     try {
-      const blob = await hrmsApi.getBlob("/api/payroll/esi-reg-docs/export-csv");
-      triggerBlobDownload(blob, `ESI_Reg_${new Date().toISOString().slice(0, 10)}.csv`);
+      const qs = new URLSearchParams();
+      if (branchId) qs.set("branch_id", branchId);
+      if (activeStatus && activeStatus !== "1") qs.set("active_status", activeStatus);
+      if (month) qs.set("month", month);
+      const blob = await hrmsApi.getBlob(
+        `/api/payroll/esi-reg-docs/export-csv${qs.toString() ? `?${qs}` : ""}`,
+      );
+      triggerBlobDownload(
+        blob,
+        `ESI_Reg_${new Date().toISOString().slice(0, 10)}.csv`,
+      );
     } catch {
       toast({ title: "CSV export failed", variant: "destructive" });
     }
@@ -605,19 +831,19 @@ export default function EsiRegDocsTab() {
 
   function handleUploaded(employeeId: string, patch: Partial<EsiEmployee>) {
     queryClient.setQueryData<ListResponse>(
-      ["esi-reg-docs", { search, branchId: "", page }],
+      ["esi-reg-docs", { search, branchId, activeStatus, month, page }],
       (old) => {
         if (!old) return old;
         return {
           ...old,
           employees: old.employees.map((e) =>
-            e.employee_id === employeeId ? { ...e, ...patch } : e
+            e.employee_id === employeeId ? { ...e, ...patch } : e,
           ),
         };
-      }
+      },
     );
     if (drawerEmp?.employee_id === employeeId) {
-      setDrawerEmp((prev) => prev ? { ...prev, ...patch } : prev);
+      setDrawerEmp((prev) => (prev ? { ...prev, ...patch } : prev));
     }
   }
 
@@ -631,13 +857,19 @@ export default function EsiRegDocsTab() {
           <div>
             <h2 className="text-lg font-bold">ESI Registration Documents</h2>
             <p className="text-sm text-purple-100 mt-0.5">
-              Upload employee photo &amp; bank passbook, then download the ESI pack for portal registration.
+              Upload employee photo &amp; bank passbook, then download the ESI
+              pack for portal registration.
             </p>
           </div>
         </div>
       </div>
 
-      {!isLoading && <KpiStrip employees={employees} total={data?.total ?? employees.length} />}
+      {!isLoading && (
+        <KpiStrip
+          employees={employees}
+          total={data?.total ?? employees.length}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -649,6 +881,49 @@ export default function EsiRegDocsTab() {
             className="pl-9 rounded-xl border-blue-200"
           />
         </div>
+
+        {/* Branch filter */}
+        <Select value={branchId || "all"} onValueChange={(v) => setBranchId(v === "all" ? "" : v)}>
+          <SelectTrigger className="w-[160px] rounded-xl border-blue-200 text-sm">
+            <SelectValue placeholder="All Branches" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Branches</SelectItem>
+            {branches.map((b) => (
+              <SelectItem key={b.id} value={b.id}>
+                {b.branch_name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Active / Inactive filter */}
+        <Select value={activeStatus} onValueChange={setActiveStatus}>
+          <SelectTrigger className="w-[140px] rounded-xl border-blue-200 text-sm">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="1">Active</SelectItem>
+            <SelectItem value="0">Inactive</SelectItem>
+            <SelectItem value="all">All Status</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Joining month filter */}
+        <Select value={month || "all"} onValueChange={(v) => setMonth(v === "all" ? "" : v)}>
+          <SelectTrigger className="w-[150px] rounded-xl border-blue-200 text-sm">
+            <SelectValue placeholder="All Months" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Months</SelectItem>
+            {monthOptions.map((m) => (
+              <SelectItem key={m.value} value={m.value}>
+                {m.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <Button
           variant="outline"
           className="gap-2 rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50"
@@ -662,7 +937,11 @@ export default function EsiRegDocsTab() {
           disabled={selected.size === 0 || bulkDownloading}
           onClick={downloadBulk}
         >
-          {bulkDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          {bulkDownloading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Download className="w-4 h-4" />
+          )}
           Bulk ZIP {selected.size > 0 && `(${selected.size})`}
         </Button>
       </div>
@@ -685,7 +964,8 @@ export default function EsiRegDocsTab() {
 
       {data && (
         <p className="text-xs text-slate-400 text-right">
-          {data.total} employee{data.total !== 1 ? "s" : ""} pending ESI registration
+          {data.total} employee{data.total !== 1 ? "s" : ""} pending ESI
+          registration
         </p>
       )}
 

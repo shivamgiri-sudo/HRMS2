@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { isSchemaOrLogicDbError, describeDbError } from "../db-error-classification.js";
+import {
+  isSchemaOrLogicDbError,
+  describeDbError,
+} from "../db-error-classification.js";
 
 const err = (code: string) => Object.assign(new Error(code), { code });
 
@@ -16,7 +19,12 @@ describe("isSchemaOrLogicDbError", () => {
     expect(isSchemaOrLogicDbError(err(code))).toBe(true);
   });
 
-  it.each(["PROTOCOL_CONNECTION_LOST", "ECONNRESET", "ETIMEDOUT", "ER_CON_COUNT_ERROR"])(
+  it.each([
+    "PROTOCOL_CONNECTION_LOST",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "ER_CON_COUNT_ERROR",
+  ])(
     "does NOT classify transient %s (already retried; logging would flood)",
     (code) => {
       expect(isSchemaOrLogicDbError(err(code))).toBe(false);
@@ -44,8 +52,8 @@ describe("describeDbError", () => {
   });
 
   it("survives an error with no sql attached", () => {
-    expect(describeDbError({ code: "ER_NO_SUCH_TABLE", sqlMessage: "gone" })).toBe(
-      "ER_NO_SUCH_TABLE: gone",
-    );
+    expect(
+      describeDbError({ code: "ER_NO_SUCH_TABLE", sqlMessage: "gone" }),
+    ).toBe("ER_NO_SUCH_TABLE: gone");
   });
 });

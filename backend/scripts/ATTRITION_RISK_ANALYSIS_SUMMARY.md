@@ -13,9 +13,11 @@ A comprehensive, production-grade attrition risk detection system for MAS Callne
 ## 1. Deliverables
 
 ### 1.1 SQL Analytics Suite
+
 **File**: `backend/scripts/attrition-risk-analysis.sql` (1,000+ lines)
 
 #### Query Set 1: Performance Degradation (30-Day Rolling Average)
+
 - Identifies week-over-week quality declines
 - Thresholds: RISK (< -10%), WARNING (< -5%), WATCH
 - Output: `RISK_AGENT | DEGRADATION_RATE | ATTRITION_RISK_SCORE | INTERVENTION_PRIORITY`
@@ -23,6 +25,7 @@ A comprehensive, production-grade attrition risk detection system for MAS Callne
 - Use Case: Early detection of disengagement/burnout
 
 #### Query Set 2: Absenteeism Correlation
+
 - Correlates high absence with quality degradation
 - Risk Scoring: Attendance factor (30 pts max) + Quality factor (50 pts max)
 - Score Range: 10-80 (higher = more risk)
@@ -30,6 +33,7 @@ A comprehensive, production-grade attrition risk detection system for MAS Callne
 - Use Case: Identify combined absence + performance risk (burnout indicator)
 
 #### Query Set 3: Compound Risk Profile
+
 - Multi-factor analysis: tenure + team load + quality volatility + attendance
 - Risk Levels: CRITICAL, HIGH, MEDIUM, LOW
 - Scoring: Quality (40), Attendance (30), Tenure (15), Team Size (10), Volatility (10)
@@ -37,6 +41,7 @@ A comprehensive, production-grade attrition risk detection system for MAS Callne
 - Use Case: Holistic agent risk profile for prioritized intervention
 
 #### Query Set 4: Quality Velocity (Trend Acceleration)
+
 - Week-over-week quality delta analysis
 - Trend Patterns: RAPID_DECLINE, SUSTAINED_DECLINE, RECENT_DECLINE, STABLE
 - Rapid decline detection: Single week > -15% drop
@@ -44,18 +49,21 @@ A comprehensive, production-grade attrition risk detection system for MAS Callne
 - Use Case: Early warning before full deterioration
 
 #### Query Set 5: Early Warning Indicators
+
 - Predictive signals: absence spike, audit frequency decline, quality volatility
 - Combines leading indicators before full risk crystallization
 - Score Range: 0-75 (composite)
 - Use Case: Proactive intervention before crisis
 
 #### Query Set 6: Consolidated Risk Report
+
 - Single-view high-risk roster
 - Aggregates all risk factors
 - Filters: 5+ audits (90d), 20+ attendance records (60d), quality < 75% OR attendance < 90%
 - Output: Master list for management review
 
 ### 1.2 TypeScript Backend Service
+
 **File**: `backend/src/modules/analytics/attritionRisk.service.ts` (850+ lines)
 
 #### Exported Functions
@@ -91,29 +99,33 @@ A comprehensive, production-grade attrition risk detection system for MAS Callne
    - Response: Master list with all risk factors
 
 #### Error Handling
+
 - Consistent error response format
 - Role-based authorization enforcement
 - Database connection error handling
 - Query timeout protection
 
 ### 1.3 Express Routes
+
 **File**: `backend/src/modules/analytics/attritionRisk.routes.ts` (60+ lines)
 
 #### Endpoints Registered
 
-| Endpoint | HTTP Method | Authorization | Query Params |
-|----------|-------------|--------------|--------------|
-| `/performance-degradation` | GET | HR_ADMIN, WFM_MANAGER, OPERATIONS_MANAGER | limit, daysBack |
-| `/absenteeism-correlation` | GET | HR_ADMIN, OPERATIONS_MANAGER | limit, daysBack |
-| `/compound-risk` | GET | HR_ADMIN, WFM_MANAGER, OPERATIONS_MANAGER | limit |
-| `/quality-velocity` | GET | HR_ADMIN, WFM_MANAGER | limit |
-| `/early-warning` | GET | HR_ADMIN, OPERATIONS_MANAGER | limit |
-| `/consolidated` | GET | HR_ADMIN, WFM_MANAGER, OPERATIONS_MANAGER | limit |
+| Endpoint                   | HTTP Method | Authorization                             | Query Params    |
+| -------------------------- | ----------- | ----------------------------------------- | --------------- |
+| `/performance-degradation` | GET         | HR_ADMIN, WFM_MANAGER, OPERATIONS_MANAGER | limit, daysBack |
+| `/absenteeism-correlation` | GET         | HR_ADMIN, OPERATIONS_MANAGER              | limit, daysBack |
+| `/compound-risk`           | GET         | HR_ADMIN, WFM_MANAGER, OPERATIONS_MANAGER | limit           |
+| `/quality-velocity`        | GET         | HR_ADMIN, WFM_MANAGER                     | limit           |
+| `/early-warning`           | GET         | HR_ADMIN, OPERATIONS_MANAGER              | limit           |
+| `/consolidated`            | GET         | HR_ADMIN, WFM_MANAGER, OPERATIONS_MANAGER | limit           |
 
 ### 1.4 Comprehensive Documentation
+
 **File**: `docs/ATTRITION_RISK_ANALYSIS.md` (400+ lines)
 
 #### Sections
+
 1. Overview & 5 Analysis Dimensions (detailed metric definitions)
 2. API Endpoints with example requests/responses
 3. Error Handling
@@ -142,26 +154,28 @@ INTERVENTION_PRIORITY → Categorical: CRITICAL, HIGH_PRIORITY, MEDIUM_PRIORITY,
 ### 2.2 Risk Scoring Methodology
 
 **Standardized 0-100 Scale**:
+
 - 0-20: Low Risk (routine monitoring)
 - 21-40: Medium Risk (enhanced monitoring)
 - 41-70: High Risk (intervention required)
 - 71-100: Critical Risk (immediate action)
 
 **Multi-Factor Calculation** (Compound Risk):
+
 ```
-Total Score = Quality Factor (40) + Attendance Factor (30) + 
-              Tenure Factor (15) + Team Load Factor (10) + 
+Total Score = Quality Factor (40) + Attendance Factor (30) +
+              Tenure Factor (15) + Team Load Factor (10) +
               Volatility Factor (10)
 ```
 
 ### 2.3 Intervention Pathways
 
-| Priority Level | Timeframe | Action | Owner |
-|---|---|---|---|
-| CRITICAL | 4 hours | Alert manager + HR; schedule 1:1 | HR Admin + Manager |
-| HIGH_PRIORITY | 24 hours | Enhanced monitoring; coaching plan | Manager |
-| MEDIUM_PRIORITY | 48-72 hours | Weekly check-ins; performance support | Manager |
-| ROUTINE | Weekly | Standard monitoring | Manager |
+| Priority Level  | Timeframe   | Action                                | Owner              |
+| --------------- | ----------- | ------------------------------------- | ------------------ |
+| CRITICAL        | 4 hours     | Alert manager + HR; schedule 1:1      | HR Admin + Manager |
+| HIGH_PRIORITY   | 24 hours    | Enhanced monitoring; coaching plan    | Manager            |
+| MEDIUM_PRIORITY | 48-72 hours | Weekly check-ins; performance support | Manager            |
+| ROUTINE         | Weekly      | Standard monitoring                   | Manager            |
 
 ### 2.4 Data Privacy & Security
 
@@ -178,6 +192,7 @@ Total Score = Quality Factor (40) + Attendance Factor (30) +
 ### 3.1 Database Requirements
 
 #### Tables Used (Read-Only)
+
 - `mas_hrms.employees` — Employee master
 - `mas_hrms.attendance_daily_record` — Daily attendance
 - `mas_hrms.designation_master` — Job titles
@@ -186,6 +201,7 @@ Total Score = Quality Factor (40) + Attendance Factor (30) +
 - `db_audit.call_quality_assessment` — External quality audit data (READ from Shivamgiri APR)
 
 #### Query Complexity
+
 - Maximum result set: 100 agents per query
 - Query timeout: 30 seconds (recommend indexing on: employee_id, record_date, quality_percentage, attendance_status, CallDate)
 - Date range: Configurable (default 60-90 days for performance, 120 days for trends)
@@ -193,6 +209,7 @@ Total Score = Quality Factor (40) + Attendance Factor (30) +
 ### 3.2 Performance Considerations
 
 **Recommended Indexes**:
+
 ```sql
 -- For attendance performance
 CREATE INDEX idx_adr_emp_date ON attendance_daily_record(employee_id, record_date);
@@ -207,6 +224,7 @@ CREATE INDEX idx_emp_status ON employees(employment_status, active_status);
 ```
 
 **Cache Strategy**:
+
 - Cache consolidated report (1 hour TTL) — most expensive query
 - Cache velocity/early warning (30 min TTL) — medium cost
 - Query degradation + correlation fresh (no cache) — requires current data
@@ -214,11 +232,13 @@ CREATE INDEX idx_emp_status ON employees(employment_status, active_status);
 ### 3.3 Integration Points
 
 **Upstream Data Sources**:
+
 - Employee master: MySQL `mas_hrms.employees` (internal)
 - Attendance: MySQL `attendance_daily_record` (internal)
 - Quality scores: External `db_audit.call_quality_assessment` (read-only from Shivamgiri APR)
 
 **Downstream Consumers**:
+
 - HR Dashboard: Display consolidated risk report
 - WFM Dashboard: Display performance degradation + velocity
 - Operations Dashboard: Display early warnings
@@ -288,12 +308,14 @@ useEffect(() => {
 ## 5. Implementation Checklist
 
 ### Phase 1: Database Setup
+
 - [ ] Verify `db_audit.call_quality_assessment` connectivity (read-only)
 - [ ] Verify indexes exist on `employees`, `attendance_daily_record`
 - [ ] Test sample queries from `attrition-risk-analysis.sql`
 - [ ] Confirm data freshness (attendance records daily, quality audit records weekly+)
 
 ### Phase 2: Backend Integration
+
 - [ ] Copy `attritionRisk.service.ts` to `backend/src/modules/analytics/`
 - [ ] Copy `attritionRisk.routes.ts` to `backend/src/modules/analytics/`
 - [ ] Register routes in main `App.ts`: `app.use('/api/analytics/attrition-risk', attritionRiskRoutes);`
@@ -301,6 +323,7 @@ useEffect(() => {
 - [ ] Verify error responses and timeouts
 
 ### Phase 3: Frontend Integration
+
 - [ ] Create Attrition Risk Dashboard component
 - [ ] Add tabs for each analysis type
 - [ ] Implement CSV export functionality
@@ -308,12 +331,14 @@ useEffect(() => {
 - [ ] Create alert notifications for CRITICAL-priority agents
 
 ### Phase 4: Operations
+
 - [ ] Set up daily report scheduler (9 AM)
 - [ ] Train HR/WFM teams on interpretation
 - [ ] Create intervention workflow documentation
 - [ ] Establish escalation path (Manager → HR Admin → Operations Manager)
 
 ### Phase 5: Monitoring
+
 - [ ] Monitor query performance; add indexes if > 10s response
 - [ ] Track false-positive rate (flagged but didn't resign within 90 days)
 - [ ] Gather feedback from managers on intervention effectiveness
@@ -345,12 +370,14 @@ Documentation:
 ## 7. Known Limitations & Future Work
 
 ### Current Limitations
+
 1. **Data Lag**: Quality audits may have 24-48 hour lag; velocity analysis delayed
 2. **External Dependency**: Relies on `db_audit.call_quality_assessment` availability
 3. **Threshold Rigidity**: Risk thresholds are hardcoded; require SQL changes to customize
 4. **No Feedback Loop**: Intervention outcomes not captured; can't measure effectiveness
 
 ### Recommended Enhancements
+
 1. **ML-Based Prediction**: Train classifier on historical resignation data → predict probability
 2. **Intervention Tracking**: Log manager actions, outcomes → measure retention impact
 3. **Cohort Analysis**: Compare risk profiles by tenure band, designation, process
@@ -363,6 +390,7 @@ Documentation:
 ## 8. Support & Maintenance
 
 ### Contact Points
+
 - **Data Freshness Issues**: DBA, verify `call_quality_assessment` sync
 - **Query Performance**: Add indexes (see section 3.2)
 - **Role/Authorization Issues**: Backend security team, review `requireRole` middleware
@@ -370,7 +398,9 @@ Documentation:
 - **UI/Dashboard Issues**: Frontend team, check React components
 
 ### Rollback Plan
+
 If issues arise:
+
 1. Disable endpoint: Comment out route in `attritionRisk.routes.ts`
 2. Restore prior version: `git checkout [previous-commit]`
 3. Revert SQL changes: No persistent changes to schema (read-only)
@@ -390,9 +420,9 @@ If issues arise:
 
 ## 10. Version History
 
-| Version | Date | Status | Notes |
-|---------|------|--------|-------|
-| 1.0 | 2026-06-21 | Complete | Initial delivery: 6 analyses, REST API, full documentation |
+| Version | Date       | Status   | Notes                                                      |
+| ------- | ---------- | -------- | ---------------------------------------------------------- |
+| 1.0     | 2026-06-21 | Complete | Initial delivery: 6 analyses, REST API, full documentation |
 
 ---
 

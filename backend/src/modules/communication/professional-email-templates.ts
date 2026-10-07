@@ -34,7 +34,9 @@ export interface InterviewInvitationData {
   interviewerName: string;
 }
 
-export function interviewInvitationEmail(data: InterviewInvitationData): string {
+export function interviewInvitationEmail(
+  data: InterviewInvitationData,
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>${BASE_STYLES}</style></head>
@@ -85,7 +87,9 @@ export interface OfferAcceptanceData {
   hrContact: string;
 }
 
-export function offerAcceptanceConfirmationEmail(data: OfferAcceptanceData): string {
+export function offerAcceptanceConfirmationEmail(
+  data: OfferAcceptanceData,
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>${BASE_STYLES}</style></head>
@@ -290,7 +294,9 @@ export interface ProbationConfirmationData {
   confirmationDate: string;
 }
 
-export function probationConfirmationEmail(data: ProbationConfirmationData): string {
+export function probationConfirmationEmail(
+  data: ProbationConfirmationData,
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>${BASE_STYLES}</style></head>
@@ -531,12 +537,12 @@ export interface BirthdayGreetingData {
   employeeName: string;
   firstName?: string;
   photoUrl?: string;
-  branchName?: string;         // display_name from branch_master
+  branchName?: string; // display_name from branch_master
   designation?: string;
   department?: string;
   processName?: string;
   yearsAtCompany?: number;
-  gender?: string;             // Male / Female / Other
+  gender?: string; // Male / Female / Other
   bloodGroup?: string;
   city?: string;
   managerName?: string;
@@ -550,9 +556,10 @@ export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
   const branchLabel = data.branchName || "MAS Callnet";
 
   // Personalized sub-headline based on available context
-  const roleContext = data.designation && data.processName
-    ? `${data.designation} · ${data.processName}`
-    : data.designation || data.department || "MAS Callnet Team";
+  const roleContext =
+    data.designation && data.processName
+      ? `${data.designation} · ${data.processName}`
+      : data.designation || data.department || "MAS Callnet Team";
 
   // Build personalized message
   let personalPara = `Today, we celebrate <strong style="color:#E8231A">${firstName}</strong> — a valued ${roleContext.toLowerCase()} at our ${branchLabel} family.`;
@@ -565,11 +572,26 @@ export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
 
   // Info chips — rendered on dark navy bg so use transparent-white style
   const chips: string[] = [];
-  if (data.employeeCode) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🆔 ${data.employeeCode}</td><td width="8"></td>`);
-  if (data.designation) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">👔 ${data.designation}</td><td width="8"></td>`);
-  if (data.branchName) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">📍 ${data.branchName}</td><td width="8"></td>`);
-  if (data.processName || data.department) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">⚙️ ${data.processName || data.department}</td><td width="8"></td>`);
-  if (data.bloodGroup) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🩸 ${data.bloodGroup}</td><td width="8"></td>`);
+  if (data.employeeCode)
+    chips.push(
+      `<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🆔 ${data.employeeCode}</td><td width="8"></td>`,
+    );
+  if (data.designation)
+    chips.push(
+      `<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">👔 ${data.designation}</td><td width="8"></td>`,
+    );
+  if (data.branchName)
+    chips.push(
+      `<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">📍 ${data.branchName}</td><td width="8"></td>`,
+    );
+  if (data.processName || data.department)
+    chips.push(
+      `<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">⚙️ ${data.processName || data.department}</td><td width="8"></td>`,
+    );
+  if (data.bloodGroup)
+    chips.push(
+      `<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🩸 ${data.bloodGroup}</td><td width="8"></td>`,
+    );
 
   const avatarSection = data.photoUrl
     ? `<img src="${data.photoUrl}" width="110" height="110" alt="${data.employeeName}"
@@ -694,10 +716,14 @@ export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
           </td></tr>
         </table>
         <h2 style="margin:16px 0 4px;font-size:28px;font-weight:900;color:#ffffff;letter-spacing:-.5px">${data.employeeName}</h2>
-        ${chips.length > 0 ? `
+        ${
+          chips.length > 0
+            ? `
         <table cellpadding="0" cellspacing="0" border="0" style="margin:10px auto 0">
           <tr>${chips.join("")}</tr>
-        </table>` : ""}
+        </table>`
+            : ""
+        }
       </td></tr>
     </table>
   </td></tr>
@@ -796,7 +822,7 @@ export interface WorkAnniversaryData {
   yearsCompleted: number;
   joinDate: string;
   photoUrl?: string;
-  branchName?: string;        // display_name from branch_master
+  branchName?: string; // display_name from branch_master
   designation?: string;
   department?: string;
   processName?: string;
@@ -817,13 +843,16 @@ export function workAnniversaryEmail(data: WorkAnniversaryData): string {
   const MCN_LOGO = `<img src="https://mcnhrms.teammas.in/mcn-logo.png" width="120" height="40" alt="MAS Callnet" style="display:block;max-width:120px;height:auto" />`;
 
   // ── Journey narrative paragraphs ──
-  const joinYear = data.joinDate ? data.joinDate.split(" ").pop() || data.joinDate : "";
+  const joinYear = data.joinDate
+    ? data.joinDate.split(" ").pop() || data.joinDate
+    : "";
 
-  let journeyOpener = `${data.yearsCompleted === 1
-    ? `One year ago, <strong style="color:#073f78">${firstName}</strong> walked through the doors of MAS Callnet and everything changed — for the better.`
-    : data.yearsCompleted <= 3
-    ? `${data.yearsCompleted} years ago, <strong style="color:#073f78">${firstName}</strong> joined the MAS Callnet family${joinYear ? ` in ${joinYear}` : ""}, and since that first day, every chapter has been remarkable.`
-    : `${data.yearsCompleted} incredible years. When <strong style="color:#073f78">${firstName}</strong> first joined MAS Callnet${joinYear ? ` in ${joinYear}` : ""}, few could have predicted just how far this journey would go.`
+  let journeyOpener = `${
+    data.yearsCompleted === 1
+      ? `One year ago, <strong style="color:#073f78">${firstName}</strong> walked through the doors of MAS Callnet and everything changed — for the better.`
+      : data.yearsCompleted <= 3
+        ? `${data.yearsCompleted} years ago, <strong style="color:#073f78">${firstName}</strong> joined the MAS Callnet family${joinYear ? ` in ${joinYear}` : ""}, and since that first day, every chapter has been remarkable.`
+        : `${data.yearsCompleted} incredible years. When <strong style="color:#073f78">${firstName}</strong> first joined MAS Callnet${joinYear ? ` in ${joinYear}` : ""}, few could have predicted just how far this journey would go.`
   }`;
 
   let journeyRole = "";
@@ -841,19 +870,32 @@ export function workAnniversaryEmail(data: WorkAnniversaryData): string {
     ? ` ${firstName}'s supervisor <strong style="color:#073f78">${data.managerName}</strong> and the entire ${branchLabel} leadership team stand proud of this milestone.`
     : "";
 
-  let journeyClose = ` ${data.yearsCompleted === 1
-    ? "This is just the beginning — and what a beginning it has been!"
-    : data.yearsCompleted <= 5
-    ? `${data.yearsCompleted} years of showing up, growing, and giving your absolute best. We are honoured to have you.`
-    : `${data.yearsCompleted} years of loyalty, leadership, and love for this organisation. You are the soul of MAS Callnet.`
+  let journeyClose = ` ${
+    data.yearsCompleted === 1
+      ? "This is just the beginning — and what a beginning it has been!"
+      : data.yearsCompleted <= 5
+        ? `${data.yearsCompleted} years of showing up, growing, and giving your absolute best. We are honoured to have you.`
+        : `${data.yearsCompleted} years of loyalty, leadership, and love for this organisation. You are the soul of MAS Callnet.`
   }`;
 
   // Info chips
   const chips: string[] = [];
-  if (data.employeeCode) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🆔 ${data.employeeCode}</td><td width="8"></td>`);
-  if (data.designation) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">👔 ${data.designation}</td><td width="8"></td>`);
-  if (data.branchName) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">📍 ${data.branchName}</td><td width="8"></td>`);
-  if (data.band) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🏷️ Band ${data.band}</td><td width="8"></td>`);
+  if (data.employeeCode)
+    chips.push(
+      `<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🆔 ${data.employeeCode}</td><td width="8"></td>`,
+    );
+  if (data.designation)
+    chips.push(
+      `<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">👔 ${data.designation}</td><td width="8"></td>`,
+    );
+  if (data.branchName)
+    chips.push(
+      `<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">📍 ${data.branchName}</td><td width="8"></td>`,
+    );
+  if (data.band)
+    chips.push(
+      `<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🏷️ Band ${data.band}</td><td width="8"></td>`,
+    );
 
   const avatarSection = data.photoUrl
     ? `<img src="${data.photoUrl}" width="120" height="120" alt="${data.employeeName}" style="width:120px;height:120px;border-radius:50%;object-fit:cover;display:block" />`
@@ -951,10 +993,14 @@ export function workAnniversaryEmail(data: WorkAnniversaryData): string {
           </td></tr>
         </table>
         <h2 style="margin:16px 0 4px;font-size:26px;font-weight:900;color:#ffffff">${data.employeeName}</h2>
-        ${chips.length > 0 ? `
+        ${
+          chips.length > 0
+            ? `
         <table cellpadding="0" cellspacing="0" border="0" style="margin:10px auto 0">
           <tr>${chips.join("")}</tr>
-        </table>` : ""}
+        </table>`
+            : ""
+        }
       </td></tr>
     </table>
   </td></tr>
@@ -1040,7 +1086,9 @@ export interface PasswordResetData {
   resetLink: string;
 }
 
-export function passwordResetEmailProfessional(data: PasswordResetData): string {
+export function passwordResetEmailProfessional(
+  data: PasswordResetData,
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>${BASE_STYLES}</style></head>
@@ -1082,7 +1130,9 @@ export interface ManagerResignationNoticeData {
   reviewLink: string;
 }
 
-export function managerResignationNoticeEmail(data: ManagerResignationNoticeData): string {
+export function managerResignationNoticeEmail(
+  data: ManagerResignationNoticeData,
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>${BASE_STYLES}</style></head>
@@ -1128,13 +1178,15 @@ export function managerResignationNoticeEmail(data: ManagerResignationNoticeData
 export interface FestivalGreetingData {
   festivalName: string;
   emoji: string;
-  greetingBody: string;       // plain-text body from festival_calendar
-  recipientName?: string;     // if sending to a specific employee; blank = all-staff
+  greetingBody: string; // plain-text body from festival_calendar
+  recipientName?: string; // if sending to a specific employee; blank = all-staff
 }
 
 export function festivalGreetingEmail(data: FestivalGreetingData): string {
   const MCN_LOGO = `<img src="https://mcnhrms.teammas.in/mcn-logo.png" width="120" height="40" alt="MAS Callnet" style="display:block;max-width:120px;height:auto" />`;
-  const salutation = data.recipientName ? `Dear ${data.recipientName},` : "Dear Team,";
+  const salutation = data.recipientName
+    ? `Dear ${data.recipientName},`
+    : "Dear Team,";
 
   // Pick gradient based on festival name for variety
   const name = data.festivalName.toLowerCase();
@@ -1144,7 +1196,8 @@ export function festivalGreetingEmail(data: FestivalGreetingData): string {
     gradient = "linear-gradient(135deg,#92400e 0%,#d97706 50%,#fbbf24 100%)";
     accentColor = "#92400e";
   } else if (name.includes("holi")) {
-    gradient = "linear-gradient(135deg,#7c3aed 0%,#e8231a 40%,#16a34a 70%,#d97706 100%)";
+    gradient =
+      "linear-gradient(135deg,#7c3aed 0%,#e8231a 40%,#16a34a 70%,#d97706 100%)";
     accentColor = "#7c3aed";
   } else if (name.includes("eid") || name.includes("ramadan")) {
     gradient = "linear-gradient(135deg,#065f46 0%,#059669 60%,#34d399 100%)";
@@ -1158,7 +1211,11 @@ export function festivalGreetingEmail(data: FestivalGreetingData): string {
   } else if (name.includes("independence") || name.includes("republic")) {
     gradient = "linear-gradient(135deg,#ff6600 0%,#ffffff 50%,#138808 100%)";
     accentColor = "#ff6600";
-  } else if (name.includes("ganesh") || name.includes("navratri") || name.includes("dussehra")) {
+  } else if (
+    name.includes("ganesh") ||
+    name.includes("navratri") ||
+    name.includes("dussehra")
+  ) {
     gradient = "linear-gradient(135deg,#7c2d12 0%,#ea580c 50%,#fbbf24 100%)";
     accentColor = "#7c2d12";
   }

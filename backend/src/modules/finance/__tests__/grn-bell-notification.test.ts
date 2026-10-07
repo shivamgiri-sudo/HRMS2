@@ -13,22 +13,37 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
  * closes the alert with nothing new raised.
  */
 
-const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
+const { execute, getConnection } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  getConnection: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
 vi.mock("../../process-pnl/budget-consumption.service.js", () => ({
   budgetConsumptionService: {
-    reserve: vi.fn(), consume: vi.fn(), release: vi.fn(), reverseConsumption: vi.fn(),
+    reserve: vi.fn(),
+    consume: vi.fn(),
+    release: vi.fn(),
+    reverseConsumption: vi.fn(),
   },
 }));
 
-const { resolveRoleHolderUserIds } = vi.hoisted(() => ({ resolveRoleHolderUserIds: vi.fn() }));
-vi.mock("../../../shared/recipient-resolver.js", () => ({ resolveRoleHolderUserIds }));
+const { resolveRoleHolderUserIds } = vi.hoisted(() => ({
+  resolveRoleHolderUserIds: vi.fn(),
+}));
+vi.mock("../../../shared/recipient-resolver.js", () => ({
+  resolveRoleHolderUserIds,
+}));
 
-const { createItem, resolveItems } = vi.hoisted(() => ({ createItem: vi.fn(), resolveItems: vi.fn() }));
-vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem, resolveItems } }));
+const { createItem, resolveItems } = vi.hoisted(() => ({
+  createItem: vi.fn(),
+  resolveItems: vi.fn(),
+}));
+vi.mock("../../inbox/inbox.service.js", () => ({
+  inboxService: { createItem, resolveItems },
+}));
 
-let grnService: typeof import("../grn.service.js")["grnService"];
+let grnService: (typeof import("../grn.service.js"))["grnService"];
 beforeAll(async () => {
   ({ grnService } = await import("../grn.service.js"));
 }, 120_000);
@@ -49,15 +64,30 @@ function makeConnection(grn: Record<string, unknown>) {
 }
 
 const DRAFT_GRN = {
-  id: "grn-1", grn_number: "GRN/2026/0007", branch_id: "branch-A", status: "draft",
-  grn_type: "vendor", budget_line_id: "line-1", attachment_path: "uploads/x.pdf",
-  vendor_name: "Acme", amount_with_tax: 11800, amount: 10000, quantity: 1,
+  id: "grn-1",
+  grn_number: "GRN/2026/0007",
+  branch_id: "branch-A",
+  status: "draft",
+  grn_type: "vendor",
+  budget_line_id: "line-1",
+  attachment_path: "uploads/x.pdf",
+  vendor_name: "Acme",
+  amount_with_tax: 11800,
+  amount: 10000,
+  quantity: 1,
 };
 
 const SUBMITTED_GRN = {
-  id: "g1", grn_number: "GRN/2026/0010", branch_id: "branch-A", status: "submitted",
-  budget_line_id: "bl1", vendor_name: "Acme", amount_with_tax: 5000, amount: 5000,
-  quantity: 1, grn_type: "expense",
+  id: "g1",
+  grn_number: "GRN/2026/0010",
+  branch_id: "branch-A",
+  status: "submitted",
+  budget_line_id: "bl1",
+  vendor_name: "Acme",
+  amount_with_tax: 5000,
+  amount: 5000,
+  quantity: 1,
+  grn_type: "expense",
 };
 
 const BH_APPROVED_GRN = { ...SUBMITTED_GRN, status: "branch_head_approved" };
@@ -67,7 +97,9 @@ const AH_APPROVED_GRN = { ...SUBMITTED_GRN, status: "accounts_head_approved" };
 beforeEach(() => {
   execute.mockReset();
   getConnection.mockReset();
-  resolveRoleHolderUserIds.mockReset().mockResolvedValue(["user-bh-1", "user-bh-2"]);
+  resolveRoleHolderUserIds
+    .mockReset()
+    .mockResolvedValue(["user-bh-1", "user-bh-2"]);
   createItem.mockReset().mockResolvedValue(undefined);
   resolveItems.mockReset().mockResolvedValue(0);
 });
@@ -75,34 +107,51 @@ beforeEach(() => {
 describe("submitForApproval raises a branch_head bell alert", () => {
   it("creates one item per branch_head-role holder in the GRN's branch", async () => {
     execute.mockImplementation(async (sql: string) => {
-      if (/FROM grn_request/i.test(sql) && /SELECT/i.test(sql)) return [[DRAFT_GRN], []];
+      if (/FROM grn_request/i.test(sql) && /SELECT/i.test(sql))
+        return [[DRAFT_GRN], []];
       if (/UPDATE grn_request/i.test(sql)) return [{ affectedRows: 1 }, []];
       return [[], []];
     });
 
-    await grnService.submitForApproval("grn-1", { remarks: "please approve" } as any, "user-1", "branch_admin");
+    await grnService.submitForApproval(
+      "grn-1",
+      { remarks: "please approve" } as any,
+      "user-1",
+      "branch_admin",
+    );
 
-    expect(resolveRoleHolderUserIds).toHaveBeenCalledWith("branch_head", "branch-A");
+    expect(resolveRoleHolderUserIds).toHaveBeenCalledWith(
+      "branch_head",
+      "branch-A",
+    );
     expect(createItem).toHaveBeenCalledTimes(2);
-    expect(createItem).toHaveBeenCalledWith(expect.objectContaining({
-      user_id: "user-bh-1",
-      type: "grn_approval_pending",
-      entity_type: "grn_request",
-      entity_id: "grn-1",
-      action_url: "/finance/grn",
-    }));
+    expect(createItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: "user-bh-1",
+        type: "grn_approval_pending",
+        entity_type: "grn_request",
+        entity_id: "grn-1",
+        action_url: "/finance/grn",
+      }),
+    );
   });
 
   it("does not block submission when the notification helper itself throws", async () => {
     execute.mockImplementation(async (sql: string) => {
-      if (/FROM grn_request/i.test(sql) && /SELECT/i.test(sql)) return [[DRAFT_GRN], []];
+      if (/FROM grn_request/i.test(sql) && /SELECT/i.test(sql))
+        return [[DRAFT_GRN], []];
       if (/UPDATE grn_request/i.test(sql)) return [{ affectedRows: 1 }, []];
       return [[], []];
     });
     resolveRoleHolderUserIds.mockRejectedValue(new Error("db exploded"));
 
     await expect(
-      grnService.submitForApproval("grn-1", {} as any, "user-1", "branch_admin")
+      grnService.submitForApproval(
+        "grn-1",
+        {} as any,
+        "user-1",
+        "branch_admin",
+      ),
     ).resolves.toMatchObject({ success: true, newStatus: "submitted" });
   });
 });
@@ -112,26 +161,45 @@ describe("reviewGrn's bell alerts follow the stage", () => {
     const conn = makeConnection(SUBMITTED_GRN);
     getConnection.mockResolvedValue(conn);
 
-    await grnService.reviewGrn("g1", { decision: "approved" }, "u1", "branch_head");
+    await grnService.reviewGrn(
+      "g1",
+      { decision: "approved" },
+      "u1",
+      "branch_head",
+    );
 
     expect(resolveItems).toHaveBeenCalledWith({
-      entity_type: "grn_request", entity_id: "g1", types: ["grn_approval_pending"],
-    });
-    expect(resolveRoleHolderUserIds).toHaveBeenCalledWith("accounts_head", "branch-A");
-    expect(createItem).toHaveBeenCalledWith(expect.objectContaining({
-      type: "grn_approval_pending",
+      entity_type: "grn_request",
       entity_id: "g1",
-    }));
+      types: ["grn_approval_pending"],
+    });
+    expect(resolveRoleHolderUserIds).toHaveBeenCalledWith(
+      "accounts_head",
+      "branch-A",
+    );
+    expect(createItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "grn_approval_pending",
+        entity_id: "g1",
+      }),
+    );
   });
 
   it("branch_head rejection closes the alert and raises nothing new", async () => {
     const conn = makeConnection(SUBMITTED_GRN);
     getConnection.mockResolvedValue(conn);
 
-    await grnService.reviewGrn("g1", { decision: "rejected", reviewNote: "wrong amount" }, "u1", "branch_head");
+    await grnService.reviewGrn(
+      "g1",
+      { decision: "rejected", reviewNote: "wrong amount" },
+      "u1",
+      "branch_head",
+    );
 
     expect(resolveItems).toHaveBeenCalledWith({
-      entity_type: "grn_request", entity_id: "g1", types: ["grn_approval_pending"],
+      entity_type: "grn_request",
+      entity_id: "g1",
+      types: ["grn_approval_pending"],
     });
     expect(createItem).not.toHaveBeenCalled();
   });
@@ -140,26 +208,45 @@ describe("reviewGrn's bell alerts follow the stage", () => {
     const conn = makeConnection(BH_APPROVED_GRN);
     getConnection.mockResolvedValue(conn);
 
-    await grnService.reviewGrn("g1", { decision: "approved" }, "u2", "accounts_head");
+    await grnService.reviewGrn(
+      "g1",
+      { decision: "approved" },
+      "u2",
+      "accounts_head",
+    );
 
     expect(resolveItems).toHaveBeenCalledWith({
-      entity_type: "grn_request", entity_id: "g1", types: ["grn_approval_pending"],
-    });
-    expect(resolveRoleHolderUserIds).toHaveBeenCalledWith("finance_head", "branch-A");
-    expect(createItem).toHaveBeenCalledWith(expect.objectContaining({
-      type: "grn_approval_pending",
+      entity_type: "grn_request",
       entity_id: "g1",
-    }));
+      types: ["grn_approval_pending"],
+    });
+    expect(resolveRoleHolderUserIds).toHaveBeenCalledWith(
+      "finance_head",
+      "branch-A",
+    );
+    expect(createItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "grn_approval_pending",
+        entity_id: "g1",
+      }),
+    );
   });
 
   it("finance_head's own decision closes the alert and raises nothing new (chain ends)", async () => {
     const conn = makeConnection(AH_APPROVED_GRN);
     getConnection.mockResolvedValue(conn);
 
-    await grnService.reviewGrn("g1", { decision: "approved" }, "u2", "finance_head");
+    await grnService.reviewGrn(
+      "g1",
+      { decision: "approved" },
+      "u2",
+      "finance_head",
+    );
 
     expect(resolveItems).toHaveBeenCalledWith({
-      entity_type: "grn_request", entity_id: "g1", types: ["grn_approval_pending"],
+      entity_type: "grn_request",
+      entity_id: "g1",
+      types: ["grn_approval_pending"],
     });
     expect(createItem).not.toHaveBeenCalled();
   });

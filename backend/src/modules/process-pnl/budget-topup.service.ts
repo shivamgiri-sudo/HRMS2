@@ -8,7 +8,10 @@ import {
   type BudgetGstType,
   type BudgetTaxTreatment,
 } from "./branch-budget.service.js";
-import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
+import {
+  financeBranchFilter,
+  type FinanceBranchScope,
+} from "../finance/finance-access-scope.js";
 import { resolvePendingWith } from "../finance/finance-workflow-role.js";
 import { lockActiveBudgetLine } from "./budget-consumption.service.js";
 import { resyncLineAllocations } from "./branch-budget-allocation.service.js";
@@ -85,7 +88,10 @@ type TopupSplit = { costCentreId: string; quantity: number };
  * the rows beneath them however many top-ups a budget takes. Production confirms the two are
  * currently exact to the rupee, which is the invariant worth preserving.
  */
-async function resummarizeHeaderTotals(connection: PoolConnection, budgetId: string) {
+async function resummarizeHeaderTotals(
+  connection: PoolConnection,
+  budgetId: string,
+) {
   await connection.execute(
     `UPDATE finance_budget_header h
         SET h.gross_budget_amount = (
@@ -93,7 +99,7 @@ async function resummarizeHeaderTotals(connection: PoolConnection, budgetId: str
             h.pnl_budget_amount = (
               SELECT COALESCE(SUM(l.pnl_cost_amount), 0) FROM finance_budget_line l WHERE l.budget_id = h.id)
       WHERE h.id = ?`,
-    [budgetId]
+    [budgetId],
   );
 }
 
@@ -108,29 +114,34 @@ async function resummarizeHeaderTotals(connection: PoolConnection, budgetId: str
  * the line's total gross_amount, which every existing row's percentage is a share of — an
  * untouched row's percentage is just as stale as a touched one's after the total moves.
  */
-async function renormalizeAllocationPercentages(connection: PoolConnection, budgetLineId: string) {
+async function renormalizeAllocationPercentages(
+  connection: PoolConnection,
+  budgetLineId: string,
+) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT id, gross_amount FROM finance_budget_line_allocation WHERE budget_line_id = ?`,
-    [budgetLineId]
+    [budgetLineId],
   );
   if (!rows.length) return;
   const total = rows.reduce((sum, row) => sum + Number(row.gross_amount), 0);
   let runningTotal = 0;
   for (const row of rows) {
-    const percentage = total > 0
-      ? Math.round((Number(row.gross_amount) / total) * 100 * 1_000_000) / 1_000_000
-      : 0;
+    const percentage =
+      total > 0
+        ? Math.round((Number(row.gross_amount) / total) * 100 * 1_000_000) /
+          1_000_000
+        : 0;
     runningTotal += percentage;
     await connection.execute(
       `UPDATE finance_budget_line_allocation SET allocation_percentage = ? WHERE id = ?`,
-      [percentage, row.id]
+      [percentage, row.id],
     );
   }
   if (total > 0 && Math.abs(runningTotal - 100) > 0.000001) {
     const last = rows[rows.length - 1];
     await connection.execute(
       `UPDATE finance_budget_line_allocation SET allocation_percentage = allocation_percentage + ? WHERE id = ?`,
-      [Math.round((100 - runningTotal) * 1_000_000) / 1_000_000, last.id]
+      [Math.round((100 - runningTotal) * 1_000_000) / 1_000_000, last.id],
     );
   }
 }
@@ -158,7 +169,7 @@ async function upsertAllocationSplits(
     recoverableTaxPct?: number;
   },
   splits: TopupSplit[],
-  actorId: string
+  actorId: string,
 ) {
   for (const split of splits) {
     const amounts = calculateBudgetLine({
@@ -188,10 +199,16 @@ async function upsertAllocationSplits(
          updated_by = VALUES(created_by),
          updated_at = NOW()`,
       [
-        randomUUID(), budgetLineId, split.costCentreId,
-        split.quantity, amounts.baseAmount, amounts.taxAmount,
-        amounts.grossAmount, amounts.pnlCostAmount, actorId,
-      ]
+        randomUUID(),
+        budgetLineId,
+        split.costCentreId,
+        split.quantity,
+        amounts.baseAmount,
+        amounts.taxAmount,
+        amounts.grossAmount,
+        amounts.pnlCostAmount,
+        actorId,
+      ],
     );
   }
   await renormalizeAllocationPercentages(connection, budgetLineId);
@@ -240,16 +257,17 @@ async function applyTopupToLine(
    * a stale driver or stayed empty. When one is given here, it is written onto the line FIRST, so
    * the top-up's choice is also the line's from this point forward, not a one-time detour.
    */
-  allocationDriver: string | null | undefined
+  allocationDriver: string | null | undefined,
 ) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT id, budget_id, head, item_name, quantity, unit, unit_rate,
             tax_treatment, gst_rate, gst_type, recoverable_tax_pct
        FROM finance_budget_line WHERE id = ?`,
-    [budgetLineId]
+    [budgetLineId],
   );
   const line = rows[0];
-  if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
+  if (!line)
+    throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
 
   const recomputed = calculateBudgetLine({
     head: String(line.head),
@@ -260,7 +278,10 @@ async function applyTopupToLine(
     taxTreatment: String(line.tax_treatment) as BudgetTaxTreatment,
     gstRate: Number(line.gst_rate ?? 0),
     gstType: (line.gst_type ?? undefined) as BudgetGstType | undefined,
-    recoverableTaxPct: line.recoverable_tax_pct == null ? undefined : Number(line.recoverable_tax_pct),
+    recoverableTaxPct:
+      line.recoverable_tax_pct == null
+        ? undefined
+        : Number(line.recoverable_tax_pct),
     justification: "",
   });
 
@@ -287,7 +308,7 @@ async function applyTopupToLine(
       recomputed.sgstAmount,
       recomputed.igstAmount,
       budgetLineId,
-    ]
+    ],
   );
 
   if (splits?.length) {
@@ -302,10 +323,13 @@ async function applyTopupToLine(
         taxTreatment: String(line.tax_treatment) as BudgetTaxTreatment,
         gstRate: Number(line.gst_rate ?? 0),
         gstType: (line.gst_type ?? undefined) as BudgetGstType | undefined,
-        recoverableTaxPct: line.recoverable_tax_pct == null ? undefined : Number(line.recoverable_tax_pct),
+        recoverableTaxPct:
+          line.recoverable_tax_pct == null
+            ? undefined
+            : Number(line.recoverable_tax_pct),
       },
       splits,
-      actorId
+      actorId,
     );
   } else {
     /*
@@ -334,7 +358,7 @@ async function applyTopupToLine(
     if (chosenDriver) {
       await connection.execute(
         `UPDATE finance_budget_line SET allocation_driver = ? WHERE id = ?`,
-        [chosenDriver, budgetLineId]
+        [chosenDriver, budgetLineId],
       );
     }
     await resyncLineAllocations(connection, budgetLineId, actorId);
@@ -361,12 +385,13 @@ async function applyTopupAsNewLine(
   connection: PoolConnection,
   request: RowDataPacket,
   splits: TopupSplit[],
-  actorId: string
+  actorId: string,
 ) {
   const head = String(request.head);
-  const subHead = request.sub_head != null && String(request.sub_head).trim() !== ""
-    ? String(request.sub_head)
-    : null;
+  const subHead =
+    request.sub_head != null && String(request.sub_head).trim() !== ""
+      ? String(request.sub_head)
+      : null;
   const unit = String(request.unit);
   const unitRate = Number(request.unit_rate);
   const quantity = Number(request.requested_quantity);
@@ -406,12 +431,25 @@ async function applyTopupAsNewLine(
              ?,
              ?, 0, 0, 0, 0)`,
     [
-      lineId, String(request.budget_id), head, subHead, head, quantity, unit, unitRate,
-      amounts.cgstAmount, amounts.sgstAmount, amounts.igstAmount, amounts.baseAmount, amounts.taxAmount,
-      amounts.grossAmount, amounts.recoverableTaxAmount, amounts.pnlCostAmount,
+      lineId,
+      String(request.budget_id),
+      head,
+      subHead,
+      head,
+      quantity,
+      unit,
+      unitRate,
+      amounts.cgstAmount,
+      amounts.sgstAmount,
+      amounts.igstAmount,
+      amounts.baseAmount,
+      amounts.taxAmount,
+      amounts.grossAmount,
+      amounts.recoverableTaxAmount,
+      amounts.pnlCostAmount,
       String(request.allocation_driver ?? "").trim() || null,
       reason,
-    ]
+    ],
   );
 
   for (const split of splits) {
@@ -433,10 +471,16 @@ async function applyTopupAsNewLine(
           gross_amount, pnl_cost_amount, entry_source, is_manual_override, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', 1, ?)`,
       [
-        randomUUID(), lineId, split.costCentreId, split.quantity,
-        splitAmounts.baseAmount, splitAmounts.taxAmount, splitAmounts.grossAmount,
-        splitAmounts.pnlCostAmount, actorId,
-      ]
+        randomUUID(),
+        lineId,
+        split.costCentreId,
+        split.quantity,
+        splitAmounts.baseAmount,
+        splitAmounts.taxAmount,
+        splitAmounts.grossAmount,
+        splitAmounts.pnlCostAmount,
+        actorId,
+      ],
     );
   }
   if (!splits.length) {
@@ -463,7 +507,9 @@ async function applyTopupAsNewLine(
  * happens to reconcile can still hide one split whose own amount and quantity disagree.
  */
 function validateCostCentreSplits(
-  splits: Array<{ costCentreId: string; amount: number; quantity: number }> | undefined,
+  splits:
+    | Array<{ costCentreId: string; amount: number; quantity: number }>
+    | undefined,
   requestedAmount: number,
   requestedQuantity: number,
   unitRate: number,
@@ -481,54 +527,78 @@ function validateCostCentreSplits(
    * comments for why deferring to apply time, not request time, is deliberate (the branch's
    * driver data can change between submission and approval).
    */
-  allocationDriverChosen = false
+  allocationDriverChosen = false,
 ): Array<{ costCentreId: string; amount: number; quantity: number }> {
   if (!Array.isArray(splits) || !splits.length) {
     if (allocationDriverChosen) return [];
-    throw refuse(400, "TOPUP_SPLIT_REQUIRED", "At least one cost-centre split is required");
+    throw refuse(
+      400,
+      "TOPUP_SPLIT_REQUIRED",
+      "At least one cost-centre split is required",
+    );
   }
   const tolerance = Math.max(1, unitRate * 0.0001);
   let splitAmountTotal = 0;
   let splitQuantityTotal = 0;
-  const normalized: Array<{ costCentreId: string; amount: number; quantity: number }> = [];
+  const normalized: Array<{
+    costCentreId: string;
+    amount: number;
+    quantity: number;
+  }> = [];
   splits.forEach((split, index) => {
     const label = `Cost-centre split ${index + 1}`;
     if (!split?.costCentreId) {
-      throw refuse(400, "TOPUP_SPLIT_COST_CENTRE_REQUIRED", `${label}: a cost centre is required`);
+      throw refuse(
+        400,
+        "TOPUP_SPLIT_COST_CENTRE_REQUIRED",
+        `${label}: a cost centre is required`,
+      );
     }
     const splitAmount = roundMoney(Number(split.amount));
     const splitQuantity = roundQuantity(Number(split.quantity));
     if (!Number.isFinite(splitAmount) || splitAmount <= 0) {
-      throw refuse(400, "TOPUP_SPLIT_AMOUNT_INVALID", `${label}: amount must be greater than zero`);
+      throw refuse(
+        400,
+        "TOPUP_SPLIT_AMOUNT_INVALID",
+        `${label}: amount must be greater than zero`,
+      );
     }
     if (!Number.isFinite(splitQuantity) || splitQuantity <= 0) {
-      throw refuse(400, "TOPUP_SPLIT_QUANTITY_INVALID", `${label}: quantity must be greater than zero`);
+      throw refuse(
+        400,
+        "TOPUP_SPLIT_QUANTITY_INVALID",
+        `${label}: quantity must be greater than zero`,
+      );
     }
     const impliedSplitAmount = roundMoney(splitQuantity * unitRate);
     if (Math.abs(impliedSplitAmount - splitAmount) > tolerance) {
       throw refuse(
         400,
         "TOPUP_SPLIT_AMOUNT_QUANTITY_MISMATCH",
-        `${label}: amount and quantity disagree: ${splitQuantity} x ${unitRate} = ${impliedSplitAmount}, `
-          + `but ${splitAmount} was requested.`
+        `${label}: amount and quantity disagree: ${splitQuantity} x ${unitRate} = ${impliedSplitAmount}, ` +
+          `but ${splitAmount} was requested.`,
       );
     }
     splitAmountTotal = roundMoney(splitAmountTotal + splitAmount);
     splitQuantityTotal = roundQuantity(splitQuantityTotal + splitQuantity);
-    normalized.push({ costCentreId: String(split.costCentreId), amount: splitAmount, quantity: splitQuantity });
+    normalized.push({
+      costCentreId: String(split.costCentreId),
+      amount: splitAmount,
+      quantity: splitQuantity,
+    });
   });
   if (Math.abs(splitAmountTotal - requestedAmount) > tolerance) {
     throw refuse(
       400,
       "TOPUP_SPLIT_TOTAL_AMOUNT_MISMATCH",
-      `Cost-centre splits total ${splitAmountTotal} but the requested amount is ${requestedAmount}`
+      `Cost-centre splits total ${splitAmountTotal} but the requested amount is ${requestedAmount}`,
     );
   }
   if (Math.abs(splitQuantityTotal - requestedQuantity) > 0.0005) {
     throw refuse(
       400,
       "TOPUP_SPLIT_TOTAL_QUANTITY_MISMATCH",
-      `Cost-centre splits total ${splitQuantityTotal} units but the requested quantity is ${requestedQuantity}`
+      `Cost-centre splits total ${splitQuantityTotal} units but the requested quantity is ${requestedQuantity}`,
     );
   }
   return normalized;
@@ -540,17 +610,26 @@ function validateCostCentreSplits(
 async function assertCostCentresBelongToBranch(
   connection: PoolConnection,
   branchId: string,
-  costCentreIds: string[]
+  costCentreIds: string[],
 ) {
   for (const costCentreId of costCentreIds) {
     const [rows] = await connection.execute<RowDataPacket[]>(
       `SELECT id, branch_id FROM cost_centre_master WHERE id = ? AND active_status = 1 LIMIT 1`,
-      [costCentreId]
+      [costCentreId],
     );
     const cc = rows[0];
-    if (!cc) throw refuse(404, "TOPUP_COST_CENTRE_NOT_FOUND", `Cost centre ${costCentreId} not found or inactive`);
+    if (!cc)
+      throw refuse(
+        404,
+        "TOPUP_COST_CENTRE_NOT_FOUND",
+        `Cost centre ${costCentreId} not found or inactive`,
+      );
     if (String(cc.branch_id) !== String(branchId)) {
-      throw refuse(400, "TOPUP_COST_CENTRE_BRANCH_MISMATCH", `Cost centre ${costCentreId} does not belong to this branch`);
+      throw refuse(
+        400,
+        "TOPUP_COST_CENTRE_BRANCH_MISMATCH",
+        `Cost centre ${costCentreId} does not belong to this branch`,
+      );
     }
   }
 }
@@ -564,9 +643,10 @@ export const budgetTopupService = {
          FROM finance_budget_line l
          JOIN finance_budget_header h ON h.id = l.budget_id
         WHERE l.id = ?`,
-      [budgetLineId]
+      [budgetLineId],
     );
-    if (!rows[0]) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
+    if (!rows[0])
+      throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
     return String(rows[0].branch_id);
   },
 
@@ -575,7 +655,7 @@ export const budgetTopupService = {
   async getBudgetBranch(budgetId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id FROM finance_budget_header WHERE id = ?`,
-      [budgetId]
+      [budgetId],
     );
     if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
     return String(rows[0].branch_id);
@@ -601,21 +681,37 @@ export const budgetTopupService = {
       requestedAmount: number;
       requestedQuantity: number;
       reason: string;
-      costCentreSplits: Array<{ costCentreId: string; amount: number; quantity: number }>;
+      costCentreSplits: Array<{
+        costCentreId: string;
+        amount: number;
+        quantity: number;
+      }>;
     },
     actorId: string,
-    _actorRole: string
+    _actorRole: string,
   ) {
     const requestedAmount = roundMoney(input.requestedAmount);
     const requestedQuantity = roundQuantity(input.requestedQuantity);
     if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
-      throw refuse(400, "TOPUP_AMOUNT_INVALID", "Requested amount must be greater than zero");
+      throw refuse(
+        400,
+        "TOPUP_AMOUNT_INVALID",
+        "Requested amount must be greater than zero",
+      );
     }
     if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
-      throw refuse(400, "TOPUP_QUANTITY_INVALID", "Requested quantity cannot be negative");
+      throw refuse(
+        400,
+        "TOPUP_QUANTITY_INVALID",
+        "Requested quantity cannot be negative",
+      );
     }
     if (!input.reason?.trim()) {
-      throw refuse(400, "TOPUP_REASON_REQUIRED", "A reason is required to request a budget increase");
+      throw refuse(
+        400,
+        "TOPUP_REASON_REQUIRED",
+        "A reason is required to request a budget increase",
+      );
     }
 
     const isNewLine = Boolean(input.isNewLine);
@@ -637,18 +733,27 @@ export const budgetTopupService = {
 
       if (isNewLine) {
         if (!input.budgetId) {
-          throw refuse(400, "TOPUP_BUDGET_ID_REQUIRED", "A budget is required to raise a new budget-line request");
+          throw refuse(
+            400,
+            "TOPUP_BUDGET_ID_REQUIRED",
+            "A budget is required to raise a new budget-line request",
+          );
         }
-        if (!input.head?.trim() || !input.subHead?.trim() || !input.unit?.trim() || !(Number(input.unitRate) > 0)) {
+        if (
+          !input.head?.trim() ||
+          !input.subHead?.trim() ||
+          !input.unit?.trim() ||
+          !(Number(input.unitRate) > 0)
+        ) {
           throw refuse(
             400,
             "TOPUP_NEW_LINE_FIELDS_REQUIRED",
-            "Head, sub-head, unit and a positive unit rate are required to request a brand-new budget line"
+            "Head, sub-head, unit and a positive unit rate are required to request a brand-new budget line",
           );
         }
         const [headerRows] = await connection.execute<RowDataPacket[]>(
           `SELECT id, status, branch_id, period_code FROM finance_budget_header WHERE id = ?`,
-          [input.budgetId]
+          [input.budgetId],
         );
         const header = headerRows[0];
         if (!header) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
@@ -656,7 +761,7 @@ export const budgetTopupService = {
           throw refuse(
             409,
             "BUDGET_NOT_ACTIVE",
-            `A new-line top-up can only be requested against an active budget (this budget is '${header.status}')`
+            `A new-line top-up can only be requested against an active budget (this budget is '${header.status}')`,
           );
         }
         budgetId = String(header.id);
@@ -665,7 +770,11 @@ export const budgetTopupService = {
         unitRate = Number(input.unitRate);
       } else {
         if (!input.budgetLineId) {
-          throw refuse(400, "TOPUP_LINE_ID_REQUIRED", "A budget line is required");
+          throw refuse(
+            400,
+            "TOPUP_LINE_ID_REQUIRED",
+            "A budget line is required",
+          );
         }
         const [lineRows] = await connection.execute<RowDataPacket[]>(
           `SELECT l.id, l.budget_id, l.unit_rate, l.planning_level, l.allocation_driver,
@@ -673,16 +782,17 @@ export const budgetTopupService = {
              FROM finance_budget_line l
              JOIN finance_budget_header h ON h.id = l.budget_id
             WHERE l.id = ?`,
-          [input.budgetLineId]
+          [input.budgetLineId],
         );
         const line = lineRows[0];
-        if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
+        if (!line)
+          throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
         existingLine = line;
         if (String(line.budget_status) !== "active") {
           throw refuse(
             409,
             "BUDGET_NOT_ACTIVE",
-            `A top-up can only be requested against an active budget line (this budget is '${line.budget_status}')`
+            `A top-up can only be requested against an active budget line (this budget is '${line.budget_status}')`,
           );
         }
 
@@ -701,7 +811,7 @@ export const budgetTopupService = {
           throw refuse(
             409,
             "TOPUP_LINE_HAS_NO_UNIT_RATE",
-            "This budget line has no unit rate, so an increase cannot be sized in units"
+            "This budget line has no unit rate, so an increase cannot be sized in units",
           );
         }
         budgetId = String(line.budget_id);
@@ -713,7 +823,7 @@ export const budgetTopupService = {
         throw refuse(
           400,
           "TOPUP_QUANTITY_INVALID",
-          "Requested quantity must be greater than zero — a top-up of zero units raises no headroom"
+          "Requested quantity must be greater than zero — a top-up of zero units raises no headroom",
         );
       }
       // Cross-checked here rather than recomputed from the amount, so a mismatch is refused and
@@ -727,8 +837,8 @@ export const budgetTopupService = {
         throw refuse(
           400,
           "TOPUP_AMOUNT_QUANTITY_MISMATCH",
-          `Requested amount and quantity disagree: ${requestedQuantity} x ${unitRate} = ${impliedAmount}, `
-            + `but ${requestedAmount} was requested. The approved amount must be the amount applied.`
+          `Requested amount and quantity disagree: ${requestedQuantity} x ${unitRate} = ${impliedAmount}, ` +
+            `but ${requestedAmount} was requested. The approved amount must be the amount applied.`,
         );
       }
 
@@ -743,15 +853,25 @@ export const budgetTopupService = {
        * this at all; existingLine.planning_level guards against treating it as one.
        */
       const lineAlreadyShared = Boolean(
-        existingLine
-        && String(existingLine.planning_level) === "branch"
-        && String(existingLine.allocation_driver ?? "").trim()
+        existingLine &&
+        String(existingLine.planning_level) === "branch" &&
+        String(existingLine.allocation_driver ?? "").trim(),
       );
-      const allocationDriverChosen = Boolean(String(input.allocationDriver ?? "").trim()) || lineAlreadyShared;
+      const allocationDriverChosen =
+        Boolean(String(input.allocationDriver ?? "").trim()) ||
+        lineAlreadyShared;
       const normalizedSplits = validateCostCentreSplits(
-        input.costCentreSplits, requestedAmount, requestedQuantity, unitRate, allocationDriverChosen
+        input.costCentreSplits,
+        requestedAmount,
+        requestedQuantity,
+        unitRate,
+        allocationDriverChosen,
       );
-      await assertCostCentresBelongToBranch(connection, branchId, normalizedSplits.map((s) => s.costCentreId));
+      await assertCostCentresBelongToBranch(
+        connection,
+        branchId,
+        normalizedSplits.map((s) => s.costCentreId),
+      );
 
       // The lock is re-checked inside review()'s transaction before anything is applied, but
       // refusing here too means a closed month is refused by the person who can still do
@@ -760,7 +880,7 @@ export const budgetTopupService = {
         throw refuse(
           409,
           "FINANCE_PERIOD_LOCKED",
-          `${periodCode} is locked for P&L close, so its budget cannot be topped up.`
+          `${periodCode} is locked for P&L close, so its budget cannot be topped up.`,
         );
       }
 
@@ -772,10 +892,18 @@ export const budgetTopupService = {
               status, is_new_line, head, sub_head, unit, unit_rate, allocation_driver)
            VALUES (?, NULL, ?, ?, ?, ?, ?, 'submitted', 1, ?, ?, ?, ?, ?)`,
           [
-            id, budgetId, actorId, requestedAmount, requestedQuantity, input.reason.trim(),
-            input.head!.trim(), input.subHead!.trim(), input.unit!.trim(), unitRate,
+            id,
+            budgetId,
+            actorId,
+            requestedAmount,
+            requestedQuantity,
+            input.reason.trim(),
+            input.head!.trim(),
+            input.subHead!.trim(),
+            input.unit!.trim(),
+            unitRate,
             String(input.allocationDriver ?? "").trim() || null,
-          ]
+          ],
         );
       } else {
         await connection.execute(
@@ -784,9 +912,15 @@ export const budgetTopupService = {
               allocation_driver)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', ?)`,
           [
-            id, input.budgetLineId, budgetId, actorId, requestedAmount, requestedQuantity,
-            input.reason.trim(), String(input.allocationDriver ?? "").trim() || null,
-          ]
+            id,
+            input.budgetLineId,
+            budgetId,
+            actorId,
+            requestedAmount,
+            requestedQuantity,
+            input.reason.trim(),
+            String(input.allocationDriver ?? "").trim() || null,
+          ],
         );
       }
 
@@ -795,7 +929,7 @@ export const budgetTopupService = {
           `INSERT INTO finance_budget_topup_request_split
              (id, topup_request_id, cost_centre_id, amount, quantity)
            VALUES (?, ?, ?, ?, ?)`,
-          [randomUUID(), id, split.costCentreId, split.amount, split.quantity]
+          [randomUUID(), id, split.costCentreId, split.amount, split.quantity],
         );
       }
 
@@ -821,7 +955,7 @@ export const budgetTopupService = {
             costCentreSplits: normalizedSplits,
           },
         },
-        connection
+        connection,
       );
 
       await connection.commit();
@@ -856,9 +990,10 @@ export const budgetTopupService = {
          JOIN finance_budget_header h ON h.id = t.budget_id
          LEFT JOIN branch_master bm ON bm.id = h.branch_id
         WHERE t.id = ?`,
-      [id]
+      [id],
     );
-    if (!rows[0]) throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
+    if (!rows[0])
+      throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
     return rows[0];
   },
 
@@ -954,10 +1089,12 @@ export const budgetTopupService = {
          ${where}
         ORDER BY t.created_at DESC
         LIMIT 200`,
-      params
+      params,
     );
 
-    const decorated = (rows as RowDataPacket[]).map((row) => decorateTopup(row));
+    const decorated = (rows as RowDataPacket[]).map((row) =>
+      decorateTopup(row),
+    );
     const visible = filters.pendingWithRole
       ? decorated.filter((r) => r.pending_with_role === filters.pendingWithRole)
       : decorated;
@@ -966,8 +1103,12 @@ export const budgetTopupService = {
     // more widely than the list beneath it would advertise other branches' requests.
     const counts = {
       all: decorated.length,
-      pending_branch_head: decorated.filter((r) => r.pending_with_role === "branch_head").length,
-      pending_finance_head: decorated.filter((r) => r.pending_with_role === "finance_head").length,
+      pending_branch_head: decorated.filter(
+        (r) => r.pending_with_role === "branch_head",
+      ).length,
+      pending_finance_head: decorated.filter(
+        (r) => r.pending_with_role === "finance_head",
+      ).length,
       applied: decorated.filter((r) => String(r.status) === "applied").length,
       rejected: decorated.filter((r) => String(r.status) === "rejected").length,
     };
@@ -978,7 +1119,13 @@ export const budgetTopupService = {
   /** Two-stage chain, identical shape to GRN review: branch_head at 'submitted',
    *  finance_head at 'branch_head_approved'. Approval at finance_head atomically applies
    *  the increase to the budget line under the same row lock GRN consumption already uses. */
-  async review(id: string, decision: "approve" | "reject", actorId: string, effectiveRole: string, remarks?: string) {
+  async review(
+    id: string,
+    decision: "approve" | "reject",
+    actorId: string,
+    effectiveRole: string,
+    remarks?: string,
+  ) {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
@@ -989,10 +1136,11 @@ export const budgetTopupService = {
            JOIN finance_budget_header h ON h.id = t.budget_id
           WHERE t.id = ?
           FOR UPDATE`,
-        [id]
+        [id],
       );
       const request = rows[0];
-      if (!request) throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
+      if (!request)
+        throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
       const status = String(request.status);
 
       // P0P1-4: Maker-checker — the approver cannot be the person who raised the request,
@@ -1002,25 +1150,34 @@ export const budgetTopupService = {
         throw refuse(
           409,
           "TOPUP_MAKER_CHECKER",
-          "You submitted this top-up request, so you cannot review it. A different reviewer must approve or reject it."
+          "You submitted this top-up request, so you cannot review it. A different reviewer must approve or reject it.",
         );
       }
 
       if (decision === "reject") {
         if (!["submitted", "branch_head_approved"].includes(status)) {
-          throw refuse(409, "TOPUP_WRONG_STAGE", `Cannot reject a top-up request in status ${status}`);
+          throw refuse(
+            409,
+            "TOPUP_WRONG_STAGE",
+            `Cannot reject a top-up request in status ${status}`,
+          );
         }
         if (!remarks?.trim()) {
-          throw refuse(400, "TOPUP_REJECT_REASON_REQUIRED", "A reason is required to reject a top-up request");
+          throw refuse(
+            400,
+            "TOPUP_REJECT_REASON_REQUIRED",
+            "A reason is required to reject a top-up request",
+          );
         }
-        const reviewedColumn = effectiveRole === "branch_head" ? "branch_head" : "finance_head";
+        const reviewedColumn =
+          effectiveRole === "branch_head" ? "branch_head" : "finance_head";
         await connection.execute(
           `UPDATE finance_budget_topup_request
               SET status = 'rejected', rejection_reason = ?,
                   ${reviewedColumn}_reviewed_by = ?, ${reviewedColumn}_reviewed_at = NOW(),
                   ${reviewedColumn}_review_note = ?
             WHERE id = ?`,
-          [remarks.trim(), actorId, remarks.trim(), id]
+          [remarks.trim(), actorId, remarks.trim(), id],
         );
         // Same connection as the UPDATE, so the event and the transition commit or roll back
         // together — a history row for an approval that rolled back is worse than none.
@@ -1041,7 +1198,7 @@ export const budgetTopupService = {
               requestedAmount: Number(request.requested_amount),
             },
           },
-          connection
+          connection,
         );
         await connection.commit();
         return this.get(id);
@@ -1052,7 +1209,7 @@ export const budgetTopupService = {
           throw refuse(
             409,
             "TOPUP_WRONG_STAGE",
-            `Top-up request is not awaiting branch_head review (status: ${status})`
+            `Top-up request is not awaiting branch_head review (status: ${status})`,
           );
         }
         await connection.execute(
@@ -1060,7 +1217,7 @@ export const budgetTopupService = {
               SET status = 'branch_head_approved',
                   branch_head_reviewed_by = ?, branch_head_reviewed_at = NOW(), branch_head_review_note = ?
             WHERE id = ?`,
-          [actorId, remarks?.trim() || null, id]
+          [actorId, remarks?.trim() || null, id],
         );
         await recordFinanceApprovalEvent(
           {
@@ -1079,7 +1236,7 @@ export const budgetTopupService = {
               requestedAmount: Number(request.requested_amount),
             },
           },
-          connection
+          connection,
         );
         await connection.commit();
         return this.get(id);
@@ -1090,7 +1247,7 @@ export const budgetTopupService = {
           throw refuse(
             409,
             "TOPUP_WRONG_STAGE",
-            `Top-up request is not awaiting finance_head review (status: ${status})`
+            `Top-up request is not awaiting finance_head review (status: ${status})`,
           );
         }
         // P0-3: Re-check period lock inside the transaction before mutating the budget line.
@@ -1098,7 +1255,7 @@ export const budgetTopupService = {
           throw refuse(
             409,
             "FINANCE_PERIOD_LOCKED",
-            `${request.period_code} is locked for P&L close. This top-up cannot be applied.`
+            `${request.period_code} is locked for P&L close. This top-up cannot be applied.`,
           );
         }
 
@@ -1106,7 +1263,7 @@ export const budgetTopupService = {
         // the same split set the requester raised.
         const [splitRows] = await connection.execute<RowDataPacket[]>(
           `SELECT cost_centre_id, quantity FROM finance_budget_topup_request_split WHERE topup_request_id = ?`,
-          [id]
+          [id],
         );
         const splits: TopupSplit[] = splitRows.map((row) => ({
           costCentreId: String(row.cost_centre_id),
@@ -1119,15 +1276,25 @@ export const budgetTopupService = {
         } else {
           // Same lock GRN reserve()/consume() already use — a top-up and a GRN cannot race
           // against the same line's headroom.
-          await lockActiveBudgetLine(connection, String(request.budget_line_id));
-          await applyTopupToLine(connection, String(request.budget_line_id), Number(request.requested_quantity), splits, actorId, request.allocation_driver);
+          await lockActiveBudgetLine(
+            connection,
+            String(request.budget_line_id),
+          );
+          await applyTopupToLine(
+            connection,
+            String(request.budget_line_id),
+            Number(request.requested_quantity),
+            splits,
+            actorId,
+            request.allocation_driver,
+          );
         }
         await connection.execute(
           `UPDATE finance_budget_topup_request
               SET status = 'applied', applied_at = NOW(),
                   finance_head_reviewed_by = ?, finance_head_reviewed_at = NOW(), finance_head_review_note = ?
             WHERE id = ?`,
-          [actorId, remarks?.trim() || null, id]
+          [actorId, remarks?.trim() || null, id],
         );
         // The one event that records money actually moving: this stage recomputes the budget
         // line and re-sums the header. The quantity is recorded alongside the amount because
@@ -1150,7 +1317,7 @@ export const budgetTopupService = {
               appliedQuantity: Number(request.requested_quantity),
             },
           },
-          connection
+          connection,
         );
         await connection.commit();
         return this.get(id);
@@ -1161,7 +1328,7 @@ export const budgetTopupService = {
       throw refuse(
         403,
         "TOPUP_NO_REVIEW_ROLE",
-        `Your role (${effectiveRole || "none"}) cannot review a top-up request in status ${status}`
+        `Your role (${effectiveRole || "none"}) cannot review a top-up request in status ${status}`,
       );
     } catch (error) {
       await connection.rollback();
@@ -1198,17 +1365,29 @@ export const budgetTopupService = {
       additionalQuantity: number;
       reason: string;
       allocationDriver?: string | null;
-      costCentreSplits: Array<{ costCentreId: string; amount: number; quantity: number }>;
+      costCentreSplits: Array<{
+        costCentreId: string;
+        amount: number;
+        quantity: number;
+      }>;
     },
     actorId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     const additionalQuantity = roundQuantity(input.additionalQuantity);
     if (!Number.isFinite(additionalQuantity) || additionalQuantity <= 0) {
-      throw refuse(400, "TOPUP_QUANTITY_INVALID", "Additional quantity must be greater than zero");
+      throw refuse(
+        400,
+        "TOPUP_QUANTITY_INVALID",
+        "Additional quantity must be greater than zero",
+      );
     }
     if (!input.reason?.trim()) {
-      throw refuse(400, "TOPUP_REASON_REQUIRED", "A reason is required for a direct budget increase");
+      throw refuse(
+        400,
+        "TOPUP_REASON_REQUIRED",
+        "A reason is required for a direct budget increase",
+      );
     }
 
     const connection = await db.getConnection();
@@ -1220,15 +1399,16 @@ export const budgetTopupService = {
            JOIN finance_budget_header h ON h.id = l.budget_id
           WHERE l.id = ?
           FOR UPDATE`,
-        [input.budgetLineId]
+        [input.budgetLineId],
       );
       const line = lineRows[0];
-      if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
+      if (!line)
+        throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
       if (String(line.budget_status) !== "active") {
         throw refuse(
           409,
           "BUDGET_NOT_ACTIVE",
-          `A direct increase can only be applied to an active budget line (this budget is '${line.budget_status}')`
+          `A direct increase can only be applied to an active budget line (this budget is '${line.budget_status}')`,
         );
       }
       const unitRate = Number(line.unit_rate);
@@ -1236,29 +1416,46 @@ export const budgetTopupService = {
         throw refuse(
           409,
           "TOPUP_LINE_HAS_NO_UNIT_RATE",
-          "This budget line has no unit rate, so an increase cannot be sized in units"
+          "This budget line has no unit rate, so an increase cannot be sized in units",
         );
       }
 
       const requestedAmount = roundMoney(additionalQuantity * unitRate);
-      const allocationDriverChosen = Boolean(String(input.allocationDriver ?? "").trim());
-      const normalizedSplits = validateCostCentreSplits(
-        input.costCentreSplits, requestedAmount, additionalQuantity, unitRate, allocationDriverChosen
+      const allocationDriverChosen = Boolean(
+        String(input.allocationDriver ?? "").trim(),
       );
-      await assertCostCentresBelongToBranch(connection, String(line.branch_id), normalizedSplits.map((s) => s.costCentreId));
+      const normalizedSplits = validateCostCentreSplits(
+        input.costCentreSplits,
+        requestedAmount,
+        additionalQuantity,
+        unitRate,
+        allocationDriverChosen,
+      );
+      await assertCostCentresBelongToBranch(
+        connection,
+        String(line.branch_id),
+        normalizedSplits.map((s) => s.costCentreId),
+      );
 
       if (await isPeriodLocked(String(line.period_code), connection)) {
         throw refuse(
           409,
           "FINANCE_PERIOD_LOCKED",
-          `${line.period_code} is locked for P&L close, so its budget cannot be increased.`
+          `${line.period_code} is locked for P&L close, so its budget cannot be increased.`,
         );
       }
 
       // Same row lock GRN reserve()/consume() and the review() finance_head branch above use —
       // a direct increase and a GRN (or another top-up) cannot race against the same line.
       await lockActiveBudgetLine(connection, String(line.id));
-      await applyTopupToLine(connection, String(line.id), additionalQuantity, normalizedSplits, actorId, input.allocationDriver);
+      await applyTopupToLine(
+        connection,
+        String(line.id),
+        additionalQuantity,
+        normalizedSplits,
+        actorId,
+        input.allocationDriver,
+      );
 
       const requestId = randomUUID();
       await connection.execute(
@@ -1270,11 +1467,18 @@ export const budgetTopupService = {
             applied_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'applied', ?, NOW(), ?, ?, NOW(), ?, NOW())`,
         [
-          requestId, line.id, line.budget_id, actorId, requestedAmount, additionalQuantity,
+          requestId,
+          line.id,
+          line.budget_id,
+          actorId,
+          requestedAmount,
+          additionalQuantity,
           input.reason.trim(),
-          actorId, "Direct increase — Finance Head",
-          actorId, "Direct increase — Finance Head",
-        ]
+          actorId,
+          "Direct increase — Finance Head",
+          actorId,
+          "Direct increase — Finance Head",
+        ],
       );
 
       for (const split of normalizedSplits) {
@@ -1282,7 +1486,13 @@ export const budgetTopupService = {
           `INSERT INTO finance_budget_topup_request_split
              (id, topup_request_id, cost_centre_id, amount, quantity)
            VALUES (?, ?, ?, ?, ?)`,
-          [randomUUID(), requestId, split.costCentreId, split.amount, split.quantity]
+          [
+            randomUUID(),
+            requestId,
+            split.costCentreId,
+            split.amount,
+            split.quantity,
+          ],
         );
       }
 
@@ -1294,7 +1504,7 @@ export const budgetTopupService = {
         "active",
         actorId,
         actorRole,
-        `${input.reason.trim()} — line ${line.id}, +${additionalQuantity} units (+${money2(requestedAmount)})`
+        `${input.reason.trim()} — line ${line.id}, +${additionalQuantity} units (+${money2(requestedAmount)})`,
       );
       await recordFinanceApprovalEvent(
         {
@@ -1316,7 +1526,7 @@ export const budgetTopupService = {
             costCentreSplits: normalizedSplits,
           },
         },
-        connection
+        connection,
       );
 
       await connection.commit();
@@ -1335,7 +1545,6 @@ export const budgetTopupService = {
 function money2(value: number) {
   return `₹${Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
-
 
 /**
  * Adds the derived pendency fields Requirement 1 asks for.
@@ -1360,16 +1569,25 @@ function decorateTopup(row: RowDataPacket): DecoratedTopup {
   const status = String(row.status ?? "");
   const pending = resolvePendingWith(status, "topup");
 
-  const stageStartedAt =
-    row.branch_head_reviewed_at ?? row.created_at ?? null;
+  const stageStartedAt = row.branch_head_reviewed_at ?? row.created_at ?? null;
   const lastActionAt =
-    row.applied_at ?? row.finance_head_reviewed_at ?? row.branch_head_reviewed_at ?? null;
+    row.applied_at ??
+    row.finance_head_reviewed_at ??
+    row.branch_head_reviewed_at ??
+    null;
   const lastActionBy =
     row.finance_head_reviewed_by ?? row.branch_head_reviewed_by ?? null;
 
-  const ageDays = pending.isPending && stageStartedAt
-    ? Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000))
-    : null;
+  const ageDays =
+    pending.isPending && stageStartedAt
+      ? Math.max(
+          0,
+          Math.floor(
+            (Date.now() - new Date(String(stageStartedAt)).getTime()) /
+              86_400_000,
+          ),
+        )
+      : null;
 
   return {
     ...row,
@@ -1378,10 +1596,20 @@ function decorateTopup(row: RowDataPacket): DecoratedTopup {
     is_pending: pending.isPending,
     pending_since: pending.isPending ? stageStartedAt : null,
     ageing_days: ageDays,
-    age_bucket: ageDays === null ? null : ageDays <= 2 ? "0-2" : ageDays <= 7 ? "3-7" : "7+",
+    age_bucket:
+      ageDays === null
+        ? null
+        : ageDays <= 2
+          ? "0-2"
+          : ageDays <= 7
+            ? "3-7"
+            : "7+",
     last_action_by: lastActionBy,
     last_action_at: lastActionAt,
     approval_remarks:
-      row.finance_head_review_note ?? row.branch_head_review_note ?? row.rejection_reason ?? null,
+      row.finance_head_review_note ??
+      row.branch_head_review_note ??
+      row.rejection_reason ??
+      null,
   } as DecoratedTopup;
 }

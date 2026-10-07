@@ -6,7 +6,10 @@ import {
 import { appendSignature, basePdf } from "./esignFixtures.js";
 
 const COMPANY = { cn: "Mas Callnet India Pvt. Ltd." };
-const EMPLOYEE = { cn: "SUJEET VISHWAKARMA", issuerCn: "e-Mudhra Sub CA for eKYC" };
+const EMPLOYEE = {
+  cn: "SUJEET VISHWAKARMA",
+  issuerCn: "e-Mudhra Sub CA for eKYC",
+};
 const OTHER = { cn: "Shivam Shiv Giri", issuerCn: "e-Mudhra Sub CA for eKYC" };
 
 const companySigned = () => appendSignature(basePdf(), COMPANY);
@@ -20,7 +23,9 @@ describe("extractLatestEsignCertificateIdentity", () => {
   });
 
   it("the old first-signature extractor really does return the company here (the bug)", () => {
-    expect(extractEsignCertificateIdentity(twoSignature())?.commonName).toBe("Mas Callnet India Pvt. Ltd.");
+    expect(extractEsignCertificateIdentity(twoSignature())?.commonName).toBe(
+      "Mas Callnet India Pvt. Ltd.",
+    );
   });
 
   it("returns null for a company-only file, so the caller reports 'unverifiable'", () => {
@@ -28,25 +33,46 @@ describe("extractLatestEsignCertificateIdentity", () => {
   });
 
   it("skips a named company CN even when its certificate is CA-issued", () => {
-    const caCompany = { cn: "Mas Callnet India Pvt. Ltd.", issuerCn: "Some Licensed CA" };
-    const pdf = appendSignature(appendSignature(basePdf(), caCompany), EMPLOYEE);
-    expect(extractLatestEsignCertificateIdentity(pdf, { excludeCommonNames: ["mas callnet india pvt. ltd."] })?.commonName)
-      .toBe("SUJEET VISHWAKARMA");
-    expect(extractLatestEsignCertificateIdentity(appendSignature(basePdf(), caCompany), {
-      excludeCommonNames: ["Mas Callnet India Pvt. Ltd."],
-    })).toBeNull();
+    const caCompany = {
+      cn: "Mas Callnet India Pvt. Ltd.",
+      issuerCn: "Some Licensed CA",
+    };
+    const pdf = appendSignature(
+      appendSignature(basePdf(), caCompany),
+      EMPLOYEE,
+    );
+    expect(
+      extractLatestEsignCertificateIdentity(pdf, {
+        excludeCommonNames: ["mas callnet india pvt. ltd."],
+      })?.commonName,
+    ).toBe("SUJEET VISHWAKARMA");
+    expect(
+      extractLatestEsignCertificateIdentity(
+        appendSignature(basePdf(), caCompany),
+        {
+          excludeCommonNames: ["Mas Callnet India Pvt. Ltd."],
+        },
+      ),
+    ).toBeNull();
   });
 
   it("picks the signature covering the most bytes, not the one earliest in the file", () => {
     // Employee signature sits first in the file but its /ByteRange reaches furthest.
     const first = appendSignature(basePdf(), OTHER, { coversUpTo: 900_000 });
     const pdf = appendSignature(first, EMPLOYEE, { coversUpTo: 500_000 });
-    expect(extractLatestEsignCertificateIdentity(pdf)?.commonName).toBe("Shivam Shiv Giri");
+    expect(extractLatestEsignCertificateIdentity(pdf)?.commonName).toBe(
+      "Shivam Shiv Giri",
+    );
   });
 
   it("falls back to file order when there is no usable /ByteRange", () => {
-    const pdf = twoSignature().toString("latin1").replace(/\/ByteRange \[[^\]]*\]/g, "/ByteRange [x]");
-    expect(extractLatestEsignCertificateIdentity(Buffer.from(pdf, "latin1"))?.commonName).toBe("SUJEET VISHWAKARMA");
+    const pdf = twoSignature()
+      .toString("latin1")
+      .replace(/\/ByteRange \[[^\]]*\]/g, "/ByteRange [x]");
+    expect(
+      extractLatestEsignCertificateIdentity(Buffer.from(pdf, "latin1"))
+        ?.commonName,
+    ).toBe("SUJEET VISHWAKARMA");
   });
 
   it("never throws on malformed input", () => {
@@ -66,8 +92,12 @@ describe("extractLatestEsignCertificateIdentity", () => {
 describe("extractEsignCertificateIdentity (joining kit) is unchanged", () => {
   it("a single-signature PDF returns that signer", () => {
     const pdf = appendSignature(basePdf(), OTHER);
-    expect(extractEsignCertificateIdentity(pdf)?.commonName).toBe("Shivam Shiv Giri");
-    expect(extractLatestEsignCertificateIdentity(pdf)?.commonName).toBe("Shivam Shiv Giri");
+    expect(extractEsignCertificateIdentity(pdf)?.commonName).toBe(
+      "Shivam Shiv Giri",
+    );
+    expect(extractLatestEsignCertificateIdentity(pdf)?.commonName).toBe(
+      "Shivam Shiv Giri",
+    );
   });
 
   it("returns null for an unsigned PDF and for garbage", () => {

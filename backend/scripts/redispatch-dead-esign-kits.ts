@@ -50,11 +50,18 @@ function csvField(value: string): string {
 }
 
 function toCsv(entries: RedispatchReportEntry[]): string {
-  const columns: (keyof RedispatchReportEntry)[] = ["employee_id", "employee_code", "status", "message"];
+  const columns: (keyof RedispatchReportEntry)[] = [
+    "employee_id",
+    "employee_code",
+    "status",
+    "message",
+  ];
   return (
     [
       columns.join(","),
-      ...entries.map((e) => columns.map((c) => csvField(String(e[c] ?? ""))).join(",")),
+      ...entries.map((e) =>
+        columns.map((c) => csvField(String(e[c] ?? ""))).join(","),
+      ),
     ].join("\n") + "\n"
   );
 }
@@ -104,7 +111,8 @@ async function main(): Promise<void> {
   }
 
   const { db } = await import("../src/db/mysql.js");
-  const { redispatchDeadKit } = await import("../src/modules/employees/joiningKitDispatch.service.js");
+  const { redispatchDeadKit } =
+    await import("../src/modules/employees/joiningKitDispatch.service.js");
 
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -122,13 +130,21 @@ async function main(): Promise<void> {
       employeeCode: String(r.employee_code),
     }));
 
-    console.log(args.confirm ? "MODE: CONFIRMED (will redispatch — bills the provider)" : "MODE: LIST ONLY (nothing will be dispatched)");
+    console.log(
+      args.confirm
+        ? "MODE: CONFIRMED (will redispatch — bills the provider)"
+        : "MODE: LIST ONLY (nothing will be dispatched)",
+    );
     console.log(`Actor: ${args.actorUserId}`);
     console.log(`Eligible employees: ${targets.length}`);
 
     if (!args.confirm) {
-      targets.forEach((t) => console.log(`  ${t.employeeCode}  ${t.employeeId}`));
-      console.log("\nLIST ONLY — nothing was dispatched. Re-run with --confirm to actually redispatch.");
+      targets.forEach((t) =>
+        console.log(`  ${t.employeeCode}  ${t.employeeId}`),
+      );
+      console.log(
+        "\nLIST ONLY — nothing was dispatched. Re-run with --confirm to actually redispatch.",
+      );
       return;
     }
 
@@ -137,8 +153,12 @@ async function main(): Promise<void> {
     let failed = 0;
     for (const target of targets) {
       try {
-        const result = await redispatchDeadKit(target.employeeId, args.actorUserId.trim());
-        if (result.status === "sent") sent++; else failed++;
+        const result = await redispatchDeadKit(
+          target.employeeId,
+          args.actorUserId.trim(),
+        );
+        if (result.status === "sent") sent++;
+        else failed++;
         entries.push({
           employee_id: target.employeeId,
           employee_code: target.employeeCode,
@@ -156,8 +176,14 @@ async function main(): Promise<void> {
       }
     }
 
-    console.log(`\nDone: ${sent} redispatched, ${failed} not sent, out of ${targets.length}.\n`);
-    entries.forEach((e) => console.log(`  ${e.status === "sent" ? "SENT " : "SKIP "} ${e.employee_code}  ${e.message}`));
+    console.log(
+      `\nDone: ${sent} redispatched, ${failed} not sent, out of ${targets.length}.\n`,
+    );
+    entries.forEach((e) =>
+      console.log(
+        `  ${e.status === "sent" ? "SENT " : "SKIP "} ${e.employee_code}  ${e.message}`,
+      ),
+    );
 
     if (args.reportPath) {
       const resolved = path.resolve(args.reportPath);
@@ -172,7 +198,10 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && /redispatch-dead-esign-kits\.(ts|js)$/.test(process.argv[1])) {
+if (
+  process.argv[1] &&
+  /redispatch-dead-esign-kits\.(ts|js)$/.test(process.argv[1])
+) {
   main().catch((e) => {
     console.error(e);
     process.exit(1);

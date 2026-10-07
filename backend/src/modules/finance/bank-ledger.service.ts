@@ -17,8 +17,14 @@ export interface LedgerReportFilters {
 async function fetchRows(filters: LedgerReportFilters) {
   const conditions: string[] = ["bale.bank_account_id = ?"];
   const params: unknown[] = [filters.bankAccountId];
-  if (filters.from) { conditions.push("bale.entry_date >= ?"); params.push(filters.from); }
-  if (filters.to) { conditions.push("bale.entry_date <= ?"); params.push(filters.to); }
+  if (filters.from) {
+    conditions.push("bale.entry_date >= ?");
+    params.push(filters.from);
+  }
+  if (filters.to) {
+    conditions.push("bale.entry_date <= ?");
+    params.push(filters.to);
+  }
   const limit = Math.min(5000, Math.max(1, filters.limit ?? 2000));
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -82,9 +88,19 @@ export const bankLedgerService = {
   async toCsv(filters: LedgerReportFilters): Promise<string> {
     const report = await this.getReport(filters);
     const columns = [
-      "Date", "Voucher No.", "Type", "Ledger Head", "Party/Vendor",
-      "Debit", "Credit", "Running Balance", "Instrument/UTR", "Narration",
-      "Raised By", "CEO Approved By", "Released By",
+      "Date",
+      "Voucher No.",
+      "Type",
+      "Ledger Head",
+      "Party/Vendor",
+      "Debit",
+      "Credit",
+      "Running Balance",
+      "Instrument/UTR",
+      "Narration",
+      "Raised By",
+      "CEO Approved By",
+      "Released By",
     ];
     const money = (value: number) => (value === 0 ? "" : value.toFixed(2));
     const escape = (value: unknown) => {
@@ -92,13 +108,27 @@ export const bankLedgerService = {
       // Formula-injection guard, same as gst-export.routes.ts: a cell opening with =, +, - or @
       // is prefixed so a spreadsheet never executes it as a formula.
       const guarded = /^[=+\-@]/.test(text) ? `'${text}` : text;
-      return /[",\r\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
+      return /[",\r\n]/.test(guarded)
+        ? `"${guarded.replace(/"/g, '""')}"`
+        : guarded;
     };
     const body = report.map((r) => [
-      r.entry_date, r.voucher_number ?? "", r.type, r.ledger_head ?? "", r.party ?? "",
-      money(r.debit), money(r.credit), r.running_balance.toFixed(2), r.instrument_ref ?? "",
-      r.narration ?? "", r.raised_by ?? "", r.ceo_approved_by ?? "", r.released_by ?? "",
+      r.entry_date,
+      r.voucher_number ?? "",
+      r.type,
+      r.ledger_head ?? "",
+      r.party ?? "",
+      money(r.debit),
+      money(r.credit),
+      r.running_balance.toFixed(2),
+      r.instrument_ref ?? "",
+      r.narration ?? "",
+      r.raised_by ?? "",
+      r.ceo_approved_by ?? "",
+      r.released_by ?? "",
     ]);
-    return [columns, ...body].map((row) => row.map(escape).join(",")).join("\n");
+    return [columns, ...body]
+      .map((row) => row.map(escape).join(","))
+      .join("\n");
   },
 };

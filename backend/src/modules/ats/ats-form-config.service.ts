@@ -1,36 +1,268 @@
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { listActiveProcessNames } from './process-options.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { listActiveProcessNames } from "./process-options.js";
 
 const DEFAULT_FIELDS = [
-  { k:'name',       lb:'Full Name',       t:'text',     ic:'👤', ph:'Enter your full name',    ok:null,                      section:'Basic Details', visible:true, required:true,  sort_order:1  },
-  { k:'mobile',     lb:'Mobile Number',   t:'tel',      ic:'📞', ph:'10-digit mobile number',  ok:null,                      section:'Basic Details', visible:true, required:true,  sort_order:2  },
-  { k:'email',      lb:'Email Address',   t:'email',    ic:'✉️', ph:'your.email@example.com',  ok:null,                      section:'Basic Details', visible:true, required:false, sort_order:3  },
-  { k:'address',    lb:'Address',         t:'textarea', ic:'📍', ph:'Your residential address', ok:null,                     section:'Basic Details', visible:true, required:true,  sort_order:4  },
-  { k:'education',  lb:'Education',       t:'select',   ic:'🎓', ph:null, ok:'educationOptions',  section:'Basic Details', visible:true, required:true,  sort_order:5  },
-  { k:'experience', lb:'Experience',      t:'select',   ic:'💼', ph:null, ok:'experienceOptions', section:'Basic Details', visible:true, required:true,  sort_order:6  },
-  { k:'gender',     lb:'Gender',          t:'select',   ic:'🧑', ph:null, ok:'genderOptions',     section:'Basic Details', visible:true, required:true,  sort_order:7  },
-  { k:'roleApplied',      lb:'Role Applied',             t:'select', ic:'🗂️', ph:null, ok:'roleOptions',           section:'Job Details', visible:true, required:true,  sort_order:8  },
-  { k:'recruiterName',    lb:'Recruiter Name',           t:'select', ic:'🤝', ph:null, ok:'recruiterOptions',      section:'Job Details', visible:true, required:true,  sort_order:9  },
-  { k:'branch',           lb:'Branch',                   t:'select', ic:'🏢', ph:null, ok:'branchOptions',         section:'Job Details', visible:true, required:true,  sort_order:10 },
-  { k:'rotationalShift',  lb:'Rotational Shift',         t:'select', ic:'🔄', ph:null, ok:'yesNoOptions',          section:'Job Details', visible:true, required:true,  sort_order:11 },
-  { k:'preferredShift',   lb:'Preferred Shift',          t:'select', ic:'🕐', ph:null, ok:'preferredShiftOptions', section:'Job Details', visible:true, required:true,  sort_order:12 },
-  { k:'nightShiftComfort', lb:'Night Shift Comfort',     t:'select', ic:'🌙', ph:null, ok:'nightShiftComfortOptions', section:'Job Details', visible:true, required:true, sort_order:13 },
-  { k:'leavesRequired',   lb:'Leaves Required in 3 Months', t:'select', ic:'📅', ph:null, ok:'yesNoOptions', section:'Job Details', visible:true, required:true, sort_order:14 },
-  { k:'ownTwoWheeler',         lb:'Own 2 Wheeler',               t:'select', ic:'🛵', ph:null, ok:'yesNoOptions', section:'Verification', visible:true, required:true,  sort_order:15 },
-  { k:'idProofAvailable',      lb:'ID Proof Available',          t:'select', ic:'🪪', ph:null, ok:'yesNoOptions', section:'Verification', visible:true, required:true,  sort_order:16 },
-  { k:'educationProofAvailable', lb:'Education Proof Available', t:'select', ic:'📄', ph:null, ok:'yesNoOptions', section:'Verification', visible:true, required:true,  sort_order:17 },
-  { k:'resumeFile', lb:'Upload Resume',            t:'file',   ic:'📎', ph:null, ok:null, section:'Verification', visible:true, required:false, sort_order:18 },
-  { k:'selfieFile', lb:'Capture Selfie (Optional)', t:'camera', ic:'📷', ph:null, ok:null, section:'Verification', visible:true, required:false, sort_order:19 },
+  {
+    k: "name",
+    lb: "Full Name",
+    t: "text",
+    ic: "👤",
+    ph: "Enter your full name",
+    ok: null,
+    section: "Basic Details",
+    visible: true,
+    required: true,
+    sort_order: 1,
+  },
+  {
+    k: "mobile",
+    lb: "Mobile Number",
+    t: "tel",
+    ic: "📞",
+    ph: "10-digit mobile number",
+    ok: null,
+    section: "Basic Details",
+    visible: true,
+    required: true,
+    sort_order: 2,
+  },
+  {
+    k: "email",
+    lb: "Email Address",
+    t: "email",
+    ic: "✉️",
+    ph: "your.email@example.com",
+    ok: null,
+    section: "Basic Details",
+    visible: true,
+    required: false,
+    sort_order: 3,
+  },
+  {
+    k: "address",
+    lb: "Address",
+    t: "textarea",
+    ic: "📍",
+    ph: "Your residential address",
+    ok: null,
+    section: "Basic Details",
+    visible: true,
+    required: true,
+    sort_order: 4,
+  },
+  {
+    k: "education",
+    lb: "Education",
+    t: "select",
+    ic: "🎓",
+    ph: null,
+    ok: "educationOptions",
+    section: "Basic Details",
+    visible: true,
+    required: true,
+    sort_order: 5,
+  },
+  {
+    k: "experience",
+    lb: "Experience",
+    t: "select",
+    ic: "💼",
+    ph: null,
+    ok: "experienceOptions",
+    section: "Basic Details",
+    visible: true,
+    required: true,
+    sort_order: 6,
+  },
+  {
+    k: "gender",
+    lb: "Gender",
+    t: "select",
+    ic: "🧑",
+    ph: null,
+    ok: "genderOptions",
+    section: "Basic Details",
+    visible: true,
+    required: true,
+    sort_order: 7,
+  },
+  {
+    k: "roleApplied",
+    lb: "Role Applied",
+    t: "select",
+    ic: "🗂️",
+    ph: null,
+    ok: "roleOptions",
+    section: "Job Details",
+    visible: true,
+    required: true,
+    sort_order: 8,
+  },
+  {
+    k: "recruiterName",
+    lb: "Recruiter Name",
+    t: "select",
+    ic: "🤝",
+    ph: null,
+    ok: "recruiterOptions",
+    section: "Job Details",
+    visible: true,
+    required: true,
+    sort_order: 9,
+  },
+  {
+    k: "branch",
+    lb: "Branch",
+    t: "select",
+    ic: "🏢",
+    ph: null,
+    ok: "branchOptions",
+    section: "Job Details",
+    visible: true,
+    required: true,
+    sort_order: 10,
+  },
+  {
+    k: "rotationalShift",
+    lb: "Rotational Shift",
+    t: "select",
+    ic: "🔄",
+    ph: null,
+    ok: "yesNoOptions",
+    section: "Job Details",
+    visible: true,
+    required: true,
+    sort_order: 11,
+  },
+  {
+    k: "preferredShift",
+    lb: "Preferred Shift",
+    t: "select",
+    ic: "🕐",
+    ph: null,
+    ok: "preferredShiftOptions",
+    section: "Job Details",
+    visible: true,
+    required: true,
+    sort_order: 12,
+  },
+  {
+    k: "nightShiftComfort",
+    lb: "Night Shift Comfort",
+    t: "select",
+    ic: "🌙",
+    ph: null,
+    ok: "nightShiftComfortOptions",
+    section: "Job Details",
+    visible: true,
+    required: true,
+    sort_order: 13,
+  },
+  {
+    k: "leavesRequired",
+    lb: "Leaves Required in 3 Months",
+    t: "select",
+    ic: "📅",
+    ph: null,
+    ok: "yesNoOptions",
+    section: "Job Details",
+    visible: true,
+    required: true,
+    sort_order: 14,
+  },
+  {
+    k: "ownTwoWheeler",
+    lb: "Own 2 Wheeler",
+    t: "select",
+    ic: "🛵",
+    ph: null,
+    ok: "yesNoOptions",
+    section: "Verification",
+    visible: true,
+    required: true,
+    sort_order: 15,
+  },
+  {
+    k: "idProofAvailable",
+    lb: "ID Proof Available",
+    t: "select",
+    ic: "🪪",
+    ph: null,
+    ok: "yesNoOptions",
+    section: "Verification",
+    visible: true,
+    required: true,
+    sort_order: 16,
+  },
+  {
+    k: "educationProofAvailable",
+    lb: "Education Proof Available",
+    t: "select",
+    ic: "📄",
+    ph: null,
+    ok: "yesNoOptions",
+    section: "Verification",
+    visible: true,
+    required: true,
+    sort_order: 17,
+  },
+  {
+    k: "resumeFile",
+    lb: "Upload Resume",
+    t: "file",
+    ic: "📎",
+    ph: null,
+    ok: null,
+    section: "Verification",
+    visible: true,
+    required: false,
+    sort_order: 18,
+  },
+  {
+    k: "selfieFile",
+    lb: "Capture Selfie (Optional)",
+    t: "camera",
+    ic: "📷",
+    ph: null,
+    ok: null,
+    section: "Verification",
+    visible: true,
+    required: false,
+    sort_order: 19,
+  },
 ];
 
 const DEFAULT_OPTIONS: Record<string, string[]> = {
-  roleOptions:            ['Inbound Agent','Outbound Agent','Back Office','Team Leader','Quality Analyst'],
-  educationOptions:       ['10th Pass','12th Pass','Graduate','Post Graduate','Diploma'],
-  experienceOptions:      ['Fresher','0-1 Year','1-2 Years','2-3 Years','3+ Years'],
-  preferredShiftOptions:  ['Morning (6AM-2PM)','Afternoon (2PM-10PM)','Night (10PM-6AM)','Rotational'],
-  nightShiftComfortOptions: ['Comfortable','Not Comfortable','On Request'],
-  genderOptions:          ['Male','Female','Other'],
+  roleOptions: [
+    "Inbound Agent",
+    "Outbound Agent",
+    "Back Office",
+    "Team Leader",
+    "Quality Analyst",
+  ],
+  educationOptions: [
+    "10th Pass",
+    "12th Pass",
+    "Graduate",
+    "Post Graduate",
+    "Diploma",
+  ],
+  experienceOptions: [
+    "Fresher",
+    "0-1 Year",
+    "1-2 Years",
+    "2-3 Years",
+    "3+ Years",
+  ],
+  preferredShiftOptions: [
+    "Morning (6AM-2PM)",
+    "Afternoon (2PM-10PM)",
+    "Night (10PM-6AM)",
+    "Rotational",
+  ],
+  nightShiftComfortOptions: ["Comfortable", "Not Comfortable", "On Request"],
+  genderOptions: ["Male", "Female", "Other"],
 };
 
 interface ConfigRow extends RowDataPacket {
@@ -81,10 +313,10 @@ export const atsFormConfigService = {
       rosterResult,
     ] = await Promise.all([
       db.execute<ConfigRow[]>(
-        'SELECT config_key, config_value FROM ats_form_config WHERE 1=1'
+        "SELECT config_key, config_value FROM ats_form_config WHERE 1=1",
       ),
       db.execute<BranchRow[]>(
-        'SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
+        "SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC",
       ),
       // Process names come from process_master, the single place a process exists.
       listActiveProcessNames(),
@@ -94,15 +326,17 @@ export const atsFormConfigService = {
          FROM ats_branch_alias_master
          WHERE active_status = 1
          GROUP BY canonical_key
-         ORDER BY display_name ASC`
+         ORDER BY display_name ASC`,
       ),
       db.execute<RecruiterRow[]>(
-        'SELECT name FROM ats_recruiter WHERE active_status = 1 ORDER BY sort_order ASC, name ASC'
+        "SELECT name FROM ats_recruiter WHERE active_status = 1 ORDER BY sort_order ASC, name ASC",
       ),
       // Try to fetch contact details from ats_recruiter_roster (if available)
-      db.execute<RecruiterRow[]>(
-        'SELECT name, email, mobile FROM ats_recruiter_roster WHERE active_status = 1'
-      ).catch(() => null),
+      db
+        .execute<RecruiterRow[]>(
+          "SELECT name, email, mobile FROM ats_recruiter_roster WHERE active_status = 1",
+        )
+        .catch(() => null),
     ]);
     const configMap: Record<string, unknown> = {};
     for (const row of rows) {
@@ -112,11 +346,11 @@ export const atsFormConfigService = {
     const branchAliases = aliasRows.map((r) => ({
       canonical: r.canonical_key,
       display: r.display_name,
-      alias: r.alias_text
+      alias: r.alias_text,
     }));
     let recruiterOptions = recruiterRows.map((r) => r.name);
     const rosterRows: RecruiterRow[] = rosterResult ? rosterResult[0] : [];
-    const recruiterDetails = recruiterOptions.map(name => {
+    const recruiterDetails = recruiterOptions.map((name) => {
       const roster = rosterRows.find((r) => r.name === name);
       return {
         name,
@@ -138,14 +372,18 @@ export const atsFormConfigService = {
          WHERE ur.active_status = 1
            AND ur.role_key IN ('hr', 'recruitment_hr', 'recruiter', 'branch_head')
            AND e.active_status = 1
-         ORDER BY name`
+         ORDER BY name`,
       );
       const roleRows = roleRecruiters as RecruiterRow[];
       if (roleRows.length > 0) {
         recruiterOptions = roleRows.map((r) => String(r.name));
         recruiterDetails.length = 0;
         for (const r of roleRows) {
-          recruiterDetails.push({ name: String(r.name), email: r.email || null, mobile: r.mobile || null });
+          recruiterDetails.push({
+            name: String(r.name),
+            email: r.email || null,
+            mobile: r.mobile || null,
+          });
         }
       } else {
         // Fallback: designation-name match
@@ -163,70 +401,99 @@ export const atsFormConfigService = {
                OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr%'
                OR LOWER(COALESCE(des.designation_name,'')) LIKE '%team leader%'
              )
-           ORDER BY name`
+           ORDER BY name`,
         );
         const empRows = employeeRecruiters as RecruiterRow[];
         recruiterOptions = empRows.map((r) => String(r.name));
         recruiterDetails.length = 0;
         for (const r of empRows) {
-          recruiterDetails.push({ name: String(r.name), email: r.email || null, mobile: r.mobile || null });
+          recruiterDetails.push({
+            name: String(r.name),
+            email: r.email || null,
+            mobile: r.mobile || null,
+          });
         }
       }
     }
 
     return {
-      fields:                   configMap['formFields']             ?? DEFAULT_FIELDS,
+      fields: configMap["formFields"] ?? DEFAULT_FIELDS,
       recruiterOptions,
       recruiterDetails,
-      branchOptions:            branchOptions.length > 0 ? branchOptions : ['Mumbai','Delhi','Bangalore'],
+      branchOptions:
+        branchOptions.length > 0
+          ? branchOptions
+          : ["Mumbai", "Delhi", "Bangalore"],
       branchAliases,
-      roleOptions:              configMap['roleOptions']             ?? DEFAULT_OPTIONS.roleOptions,
-      educationOptions:         configMap['educationOptions']        ?? DEFAULT_OPTIONS.educationOptions,
-      experienceOptions:        configMap['experienceOptions']       ?? DEFAULT_OPTIONS.experienceOptions,
-      preferredShiftOptions:    configMap['preferredShiftOptions']   ?? DEFAULT_OPTIONS.preferredShiftOptions,
-      nightShiftComfortOptions: configMap['nightShiftComfortOptions'] ?? DEFAULT_OPTIONS.nightShiftComfortOptions,
-      genderOptions:            configMap['genderOptions']           ?? DEFAULT_OPTIONS.genderOptions,
-      yesNoOptions:             ['Yes','No'],
-      companyName:              'Mas Callnet India Pvt Ltd',
+      roleOptions: configMap["roleOptions"] ?? DEFAULT_OPTIONS.roleOptions,
+      educationOptions:
+        configMap["educationOptions"] ?? DEFAULT_OPTIONS.educationOptions,
+      experienceOptions:
+        configMap["experienceOptions"] ?? DEFAULT_OPTIONS.experienceOptions,
+      preferredShiftOptions:
+        configMap["preferredShiftOptions"] ??
+        DEFAULT_OPTIONS.preferredShiftOptions,
+      nightShiftComfortOptions:
+        configMap["nightShiftComfortOptions"] ??
+        DEFAULT_OPTIONS.nightShiftComfortOptions,
+      genderOptions:
+        configMap["genderOptions"] ?? DEFAULT_OPTIONS.genderOptions,
+      yesNoOptions: ["Yes", "No"],
+      companyName: "Mas Callnet India Pvt Ltd",
       // From process_master, not ats_form_config — see listActiveProcessNames(). The
       // stored hiringProcessOptions list is deliberately no longer read: it was a second,
       // hand-maintained set of short names for the same clients.
-      hiringProcessOptions:     processOptions,
-      hiringSourceOptions:      Array.isArray(configMap['hiringSourceOptions'])      ? configMap['hiringSourceOptions']      as string[] : [],
-      hiringPositionOptions:    Array.isArray(configMap['hiringPositionOptions'])    ? configMap['hiringPositionOptions']    as string[] : [],
-      hiringWpGroupOptions:     Array.isArray(configMap['hiringWpGroupOptions'])     ? configMap['hiringWpGroupOptions']     as string[] : [],
-      hiringCallingOutcomeOptions: Array.isArray(configMap['hiringCallingOutcomeOptions']) ? configMap['hiringCallingOutcomeOptions'] as string[] : [],
+      hiringProcessOptions: processOptions,
+      hiringSourceOptions: Array.isArray(configMap["hiringSourceOptions"])
+        ? (configMap["hiringSourceOptions"] as string[])
+        : [],
+      hiringPositionOptions: Array.isArray(configMap["hiringPositionOptions"])
+        ? (configMap["hiringPositionOptions"] as string[])
+        : [],
+      hiringWpGroupOptions: Array.isArray(configMap["hiringWpGroupOptions"])
+        ? (configMap["hiringWpGroupOptions"] as string[])
+        : [],
+      hiringCallingOutcomeOptions: Array.isArray(
+        configMap["hiringCallingOutcomeOptions"],
+      )
+        ? (configMap["hiringCallingOutcomeOptions"] as string[])
+        : [],
     };
   },
 
   async getAllConfigs() {
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id, config_key, config_label, config_type, config_value, sort_order, updated_at FROM ats_form_config ORDER BY sort_order ASC'
+      "SELECT id, config_key, config_label, config_type, config_value, sort_order, updated_at FROM ats_form_config ORDER BY sort_order ASC",
     );
     return rows as RowDataPacket[];
   },
 
-  async updateOptionList(configKey: string, values: string[], updatedBy: string) {
-    if (configKey === 'formFields') throw new Error('Use the fields endpoint to update field schema');
+  async updateOptionList(
+    configKey: string,
+    values: string[],
+    updatedBy: string,
+  ) {
+    if (configKey === "formFields")
+      throw new Error("Use the fields endpoint to update field schema");
     await db.execute(
       `INSERT INTO ats_form_config (id, config_key, config_label, config_type, config_value, updated_by)
        VALUES (UUID(), ?, ?, 'option_list', ?, ?)
        ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_by = VALUES(updated_by), updated_at = NOW()`,
-      [configKey, configKey, JSON.stringify(values), updatedBy]
+      [configKey, configKey, JSON.stringify(values), updatedBy],
     );
   },
 
   async updateFieldSchema(fields: FieldSchemaItem[], updatedBy: string) {
     const safe = fields.map((f) => {
-      if (f.k === 'name' || f.k === 'mobile') return { ...f, visible: true };
-      if (f.t === 'file' || f.t === 'camera') return { ...f, required: false };
+      if (f.k === "name" || f.k === "mobile") return { ...f, visible: true };
+      if (f.t === "file" || f.t === "camera") return { ...f, required: false };
       return f;
     });
     await db.execute(
       `INSERT INTO ats_form_config (id, config_key, config_label, config_type, config_value, updated_by)
        VALUES (UUID(), 'formFields', 'Form Field Schema', 'field_schema', ?, ?)
        ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_by = VALUES(updated_by), updated_at = NOW()`,
-      [JSON.stringify(safe), updatedBy]
+      [JSON.stringify(safe), updatedBy],
     );
   },
 
@@ -238,7 +505,7 @@ export const atsFormConfigService = {
        WHERE active_status = 1
          AND (display_name = ? OR alias_text = ? OR canonical_key = ?)
        LIMIT 1`,
-      [branchDisplayName, branchDisplayName, branchDisplayName]
+      [branchDisplayName, branchDisplayName, branchDisplayName],
     );
     const alias = aliasRows[0] ?? null;
     const canonicalKey: string = alias?.canonical_key ?? branchDisplayName;
@@ -257,7 +524,7 @@ export const atsFormConfigService = {
        WHERE active_status = 1
          AND (branch_name IN (${branchPlaceholders}) OR branch_code IN (${branchPlaceholders}))
        LIMIT 1`,
-      [...branchLookupValues, ...branchLookupValues]
+      [...branchLookupValues, ...branchLookupValues],
     );
     const branchRow = branchRows[0] ?? null;
     const branchName: string = branchRow?.branch_name ?? canonicalKey;
@@ -280,14 +547,15 @@ export const atsFormConfigService = {
       )
     `;
 
-    const mapRecruiterRows = (rows: RecruiterRow[]) => rows.map((r) => ({
-      id: r.id || null,
-      name: String(r.name),
-      employee_code: r.employee_code || null,
-      email: r.email || null,
-      mobile: r.mobile || null,
-      employee_id: r.employee_id || null,
-    }));
+    const mapRecruiterRows = (rows: RecruiterRow[]) =>
+      rows.map((r) => ({
+        id: r.id || null,
+        name: String(r.name),
+        employee_code: r.employee_code || null,
+        email: r.email || null,
+        mobile: r.mobile || null,
+        employee_id: r.employee_id || null,
+      }));
 
     // 1. Prefer active employees at the resolved branch so inactive roster rows do not leak through.
     // Roster membership is the explicit authorization; department filter kept but designation
@@ -309,7 +577,7 @@ export const atsFormConfigService = {
            AND e.branch_id = ?
            AND ${recruiterDepartmentPredicate}
          ORDER BY name ASC`,
-        [branchRow.id]
+        [branchRow.id],
       );
       if (empRows.length > 0) {
         return mapRecruiterRows(empRows);
@@ -336,7 +604,7 @@ export const atsFormConfigService = {
          AND ${recruiterDepartmentPredicate}
          AND ${recruiterDesignationPredicate}
        ORDER BY name ASC`,
-      [branchRow?.id ?? ""]
+      [branchRow?.id ?? ""],
     );
     if (roleRows.length > 0) {
       return mapRecruiterRows(roleRows);
@@ -367,7 +635,7 @@ export const atsFormConfigService = {
            AND r.branch IN (${rosterPlaceholders})
            AND ${recruiterDepartmentPredicate}
          ORDER BY name ASC`,
-        rosterLookupValues
+        rosterLookupValues,
       );
       if (rosterRows.length > 0) {
         return mapRecruiterRows(rosterRows);
@@ -390,42 +658,60 @@ export const atsFormConfigService = {
          AND ${recruiterDepartmentPredicate}
          AND ${recruiterDesignationPredicate}
        ORDER BY name ASC`,
-      [branchRow?.id ?? ""]
+      [branchRow?.id ?? ""],
     );
     return mapRecruiterRows(empRows);
   },
 
   async listRecruiters() {
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id, name, active_status, sort_order, created_at FROM ats_recruiter ORDER BY sort_order ASC, name ASC'
+      "SELECT id, name, active_status, sort_order, created_at FROM ats_recruiter ORDER BY sort_order ASC, name ASC",
     );
     return rows as RowDataPacket[];
   },
 
   async createRecruiter(name: string) {
     await db.execute<ResultSetHeader>(
-      'INSERT INTO ats_recruiter (id, name) VALUES (UUID(), ?)',
-      [name.trim()]
+      "INSERT INTO ats_recruiter (id, name) VALUES (UUID(), ?)",
+      [name.trim()],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id, name, active_status, sort_order FROM ats_recruiter ORDER BY created_at DESC LIMIT 1'
+      "SELECT id, name, active_status, sort_order FROM ats_recruiter ORDER BY created_at DESC LIMIT 1",
     );
     return (rows as RowDataPacket[])[0];
   },
 
-  async updateRecruiter(id: string, data: { name?: string; active_status?: number; sort_order?: number }) {
+  async updateRecruiter(
+    id: string,
+    data: { name?: string; active_status?: number; sort_order?: number },
+  ) {
     const sets: string[] = [];
     const params: unknown[] = [];
-    if (data.name          !== undefined) { sets.push('name = ?');          params.push(data.name.trim()); }
-    if (data.active_status !== undefined) { sets.push('active_status = ?'); params.push(data.active_status); }
-    if (data.sort_order    !== undefined) { sets.push('sort_order = ?');    params.push(data.sort_order); }
+    if (data.name !== undefined) {
+      sets.push("name = ?");
+      params.push(data.name.trim());
+    }
+    if (data.active_status !== undefined) {
+      sets.push("active_status = ?");
+      params.push(data.active_status);
+    }
+    if (data.sort_order !== undefined) {
+      sets.push("sort_order = ?");
+      params.push(data.sort_order);
+    }
     if (sets.length === 0) return;
     params.push(id);
-    await db.execute(`UPDATE ats_recruiter SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`, params);
+    await db.execute(
+      `UPDATE ats_recruiter SET ${sets.join(", ")}, updated_at = NOW() WHERE id = ?`,
+      params,
+    );
   },
 
   async deleteRecruiter(id: string) {
-    await db.execute('UPDATE ats_recruiter SET active_status = 0, updated_at = NOW() WHERE id = ?', [id]);
+    await db.execute(
+      "UPDATE ats_recruiter SET active_status = 0, updated_at = NOW() WHERE id = ?",
+      [id],
+    );
   },
 
   /*
@@ -444,41 +730,68 @@ export const atsFormConfigService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, canonical_key, display_name, alias_text, active_status
        FROM ats_branch_alias_master
-       ORDER BY display_name ASC`
+       ORDER BY display_name ASC`,
     );
     return rows as RowDataPacket[];
   },
 
-  async createBranchAlias(canonical: string, display: string, alias: string | null) {
+  async createBranchAlias(
+    canonical: string,
+    display: string,
+    alias: string | null,
+  ) {
     // The id is generated here rather than by UUID() in the INSERT so the new row can be read back
     // by its own id. The previous "ORDER BY created_at DESC LIMIT 1" both referenced the missing
     // column and, on a table with no insertion order to sort by, could return another row entirely.
-    const [idRows] = await db.execute<RowDataPacket[]>('SELECT UUID() AS id');
+    const [idRows] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
     const id = String((idRows as RowDataPacket[])[0].id);
     await db.execute<ResultSetHeader>(
-      'INSERT INTO ats_branch_alias_master (id, canonical_key, display_name, alias_text) VALUES (?, ?, ?, ?)',
-      [id, canonical.trim(), display.trim(), alias?.trim() || null]
+      "INSERT INTO ats_branch_alias_master (id, canonical_key, display_name, alias_text) VALUES (?, ?, ?, ?)",
+      [id, canonical.trim(), display.trim(), alias?.trim() || null],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id, canonical_key, display_name, alias_text, active_status FROM ats_branch_alias_master WHERE id = ?',
-      [id]
+      "SELECT id, canonical_key, display_name, alias_text, active_status FROM ats_branch_alias_master WHERE id = ?",
+      [id],
     );
     return (rows as RowDataPacket[])[0];
   },
 
-  async updateBranchAlias(id: string, data: { canonical_key?: string; display_name?: string; alias_text?: string; active_status?: number }) {
+  async updateBranchAlias(
+    id: string,
+    data: {
+      canonical_key?: string;
+      display_name?: string;
+      alias_text?: string;
+      active_status?: number;
+    },
+  ) {
     const sets: string[] = [];
     const params: unknown[] = [];
-    if (data.canonical_key !== undefined) { sets.push('canonical_key = ?'); params.push(data.canonical_key.trim()); }
-    if (data.display_name  !== undefined) { sets.push('display_name = ?');  params.push(data.display_name.trim()); }
-    if (data.alias_text    !== undefined) { sets.push('alias_text = ?');    params.push(data.alias_text?.trim() || null); }
-    if (data.active_status !== undefined) { sets.push('active_status = ?'); params.push(data.active_status); }
+    if (data.canonical_key !== undefined) {
+      sets.push("canonical_key = ?");
+      params.push(data.canonical_key.trim());
+    }
+    if (data.display_name !== undefined) {
+      sets.push("display_name = ?");
+      params.push(data.display_name.trim());
+    }
+    if (data.alias_text !== undefined) {
+      sets.push("alias_text = ?");
+      params.push(data.alias_text?.trim() || null);
+    }
+    if (data.active_status !== undefined) {
+      sets.push("active_status = ?");
+      params.push(data.active_status);
+    }
     if (sets.length === 0) return;
     params.push(id);
-    await db.execute(`UPDATE ats_branch_alias_master SET ${sets.join(', ')} WHERE id = ?`, params);
+    await db.execute(
+      `UPDATE ats_branch_alias_master SET ${sets.join(", ")} WHERE id = ?`,
+      params,
+    );
   },
 
   async deleteBranchAlias(id: string) {
-    await db.execute('DELETE FROM ats_branch_alias_master WHERE id = ?', [id]);
+    await db.execute("DELETE FROM ats_branch_alias_master WHERE id = ?", [id]);
   },
 };

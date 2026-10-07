@@ -1,141 +1,366 @@
 import "dotenv/config";
 import { readBuildInfo } from "../shared/buildInfo.js";
 
-import { startAccessExpiryScheduler, stopAccessExpiryScheduler } from "./access-expiry.worker.js";
-import { startMobilityTransferWorker, stopMobilityTransferWorker } from "./mobility-transfer.worker.js";
-import { startIntegrationScheduler, stopIntegrationScheduler } from "./integration-scheduler.worker.js";
-import { startKpiDailySyncWorker, stopKpiDailySyncWorker } from "./kpi-daily-sync.worker.js";
-import { startKpiStudioComputeWorker, stopKpiStudioComputeWorker } from "./kpi-studio-compute.worker.js";
-import { startAnnualLeaveWorker, stopAnnualLeaveWorker } from "./leave-annual-el-credit.worker.js";
-import { startLeaveMonthlyWorker, stopLeaveMonthlyWorker } from "./leave-monthly-credit.worker.js";
-import { startOfficialEmailComplianceScheduler, stopOfficialEmailComplianceScheduler } from "./official-email-compliance.worker.js";
-import { startSLABreachWorker, stopSLABreachWorker } from "./sla-breach-worker.js";
-import { startInterviewDelayAlertWorker, stopInterviewDelayAlertWorker } from "./interview-delay-alert.worker.js";
+import {
+  startAccessExpiryScheduler,
+  stopAccessExpiryScheduler,
+} from "./access-expiry.worker.js";
+import {
+  startMobilityTransferWorker,
+  stopMobilityTransferWorker,
+} from "./mobility-transfer.worker.js";
+import {
+  startIntegrationScheduler,
+  stopIntegrationScheduler,
+} from "./integration-scheduler.worker.js";
+import {
+  startKpiDailySyncWorker,
+  stopKpiDailySyncWorker,
+} from "./kpi-daily-sync.worker.js";
+import {
+  startKpiStudioComputeWorker,
+  stopKpiStudioComputeWorker,
+} from "./kpi-studio-compute.worker.js";
+import {
+  startAnnualLeaveWorker,
+  stopAnnualLeaveWorker,
+} from "./leave-annual-el-credit.worker.js";
+import {
+  startLeaveMonthlyWorker,
+  stopLeaveMonthlyWorker,
+} from "./leave-monthly-credit.worker.js";
+import {
+  startOfficialEmailComplianceScheduler,
+  stopOfficialEmailComplianceScheduler,
+} from "./official-email-compliance.worker.js";
+import {
+  startSLABreachWorker,
+  stopSLABreachWorker,
+} from "./sla-breach-worker.js";
+import {
+  startInterviewDelayAlertWorker,
+  stopInterviewDelayAlertWorker,
+} from "./interview-delay-alert.worker.js";
 import { startLmsSyncWorker, stopLmsSyncWorker } from "./lms-sync.worker.js";
-import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./payroll-nightly-recalc.worker.js";
-import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./payroll-recalc-drainer.worker.js";
+import {
+  startPayrollNightlyRecalcWorker,
+  stopPayrollNightlyRecalcWorker,
+} from "./payroll-nightly-recalc.worker.js";
+import {
+  startPayrollRecalcDrainerWorker,
+  stopPayrollRecalcDrainerWorker,
+} from "./payroll-recalc-drainer.worker.js";
 // NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the WORKERS
 // array below for what is missing and how to restore it.
-import { startCostCentreProcessResolverWorker, stopCostCentreProcessResolverWorker } from "./cost-centre-process-resolver.worker.js";
-import { startPnlRunningSalaryRefreshWorker, stopPnlRunningSalaryRefreshWorker } from "./pnl-running-salary-refresh.worker.js";
-import { startGstExportAutoWorker, stopGstExportAutoWorker } from "./gst-export-auto.worker.js";
-import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
-import { startMolecularEmailSyncWorker, stopMolecularEmailSyncWorker } from "./molecular-email-sync.worker.js";
-import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
-import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
-import { startDeadKitRedispatchWorker, stopDeadKitRedispatchWorker } from "./esign-dead-kit-redispatch.worker.js";
-import { startMcnmeetCron, stopMcnmeetCron } from "../modules/mcnmeet/mcnmeet.cron.js";
+import {
+  startCostCentreProcessResolverWorker,
+  stopCostCentreProcessResolverWorker,
+} from "./cost-centre-process-resolver.worker.js";
+import {
+  startPnlRunningSalaryRefreshWorker,
+  stopPnlRunningSalaryRefreshWorker,
+} from "./pnl-running-salary-refresh.worker.js";
+import {
+  startGstExportAutoWorker,
+  stopGstExportAutoWorker,
+} from "./gst-export-auto.worker.js";
+import {
+  startAprVicidialSyncWorker,
+  stopAprVicidialSyncWorker,
+} from "./apr-vicidial-sync.worker.js";
+import {
+  startMolecularEmailSyncWorker,
+  stopMolecularEmailSyncWorker,
+} from "./molecular-email-sync.worker.js";
+import {
+  startEsignComplianceWorker,
+  stopEsignComplianceWorker,
+} from "./esign-compliance.worker.js";
+import {
+  startEsignReconciliationWorker,
+  stopEsignReconciliationWorker,
+} from "./esign-reconciliation.worker.js";
+import {
+  startDeadKitRedispatchWorker,
+  stopDeadKitRedispatchWorker,
+} from "./esign-dead-kit-redispatch.worker.js";
+import {
+  startMcnmeetCron,
+  stopMcnmeetCron,
+} from "../modules/mcnmeet/mcnmeet.cron.js";
 import { startSocialFeedCron } from "../modules/social-feed/social-feed.cron.js";
-import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from "../modules/engagement/tenure.cron.js";
-import { startCelebrationScheduler, stopCelebrationScheduler } from "../modules/engagement/celebration.cron.js";
-import { startFestivalGreetingScheduler, stopFestivalGreetingScheduler } from "../modules/engagement/festival-greeting.cron.js";
-import { startDailyGamesScheduler, stopDailyGamesScheduler } from "../modules/engagement/daily-games.cron.js";
-import { startCommunicationCleanup, stopCommunicationCleanup } from "../modules/communication/cleanup.cron.js";
-import { startAttendanceEngineScheduler, stopAttendanceEngineScheduler } from "../modules/wfm/attendance-engine.cron.js";
-import { startITProvisioningLockScheduler, stopITProvisioningLockScheduler } from "../modules/it-provisioning/it-provisioning.cron.js";
-import { startPortalSessionCleanupScheduler, stopPortalSessionCleanupScheduler } from "../modules/portal/portal-session-cleanup.cron.js";
-import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./employee-lifecycle.worker.js";
+import {
+  startTenureBadgeScheduler,
+  stopTenureBadgeScheduler,
+} from "../modules/engagement/tenure.cron.js";
+import {
+  startCelebrationScheduler,
+  stopCelebrationScheduler,
+} from "../modules/engagement/celebration.cron.js";
+import {
+  startFestivalGreetingScheduler,
+  stopFestivalGreetingScheduler,
+} from "../modules/engagement/festival-greeting.cron.js";
+import {
+  startDailyGamesScheduler,
+  stopDailyGamesScheduler,
+} from "../modules/engagement/daily-games.cron.js";
+import {
+  startCommunicationCleanup,
+  stopCommunicationCleanup,
+} from "../modules/communication/cleanup.cron.js";
+import {
+  startAttendanceEngineScheduler,
+  stopAttendanceEngineScheduler,
+} from "../modules/wfm/attendance-engine.cron.js";
+import {
+  startITProvisioningLockScheduler,
+  stopITProvisioningLockScheduler,
+} from "../modules/it-provisioning/it-provisioning.cron.js";
+import {
+  startPortalSessionCleanupScheduler,
+  stopPortalSessionCleanupScheduler,
+} from "../modules/portal/portal-session-cleanup.cron.js";
+import {
+  startEmployeeLifecycleWorker,
+  stopEmployeeLifecycleWorker,
+} from "./employee-lifecycle.worker.js";
 // These five were registered in server.ts ONLY. Production runs both processes
 // with WORKERS_PROCESS unset, so the API was starting every worker alongside this
 // process — 20 of them running twice. Turning that guard on without adding these
 // here first would have silently stopped all five, exactly as happened to
 // ats-reminders when it lived in one file only.
-import { initBusinessActionSyncJobs, stopBusinessActionSyncJobs } from "../cron/business-action-sync.cron.js";
-import { startEmployeeMasterSnapshotScheduler, stopEmployeeMasterSnapshotScheduler } from "../cron/employee-master-snapshot.cron.js";
+import {
+  initBusinessActionSyncJobs,
+  stopBusinessActionSyncJobs,
+} from "../cron/business-action-sync.cron.js";
+import {
+  startEmployeeMasterSnapshotScheduler,
+  stopEmployeeMasterSnapshotScheduler,
+} from "../cron/employee-master-snapshot.cron.js";
 import { startDbbillMigrationReportCron } from "../cron/dbbill-migration-report.cron.js";
-import { startDashboardSnapshotScheduler, stopDashboardSnapshotScheduler } from "../modules/dashboards/dashboard-snapshot.cron.js";
+import {
+  startDashboardSnapshotScheduler,
+  stopDashboardSnapshotScheduler,
+} from "../modules/dashboards/dashboard-snapshot.cron.js";
 import {
   startPerformanceScorecardSnapshotScheduler,
   stopPerformanceScorecardSnapshotScheduler,
 } from "../modules/performance-scorecard/performance-scorecard-snapshot.cron.js";
-import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker } from "../modules/wfm/attendance-reconciliation.worker.js";
+import {
+  startAttendanceReconciliationWorker,
+  stopAttendanceReconciliationWorker,
+} from "../modules/wfm/attendance-reconciliation.worker.js";
 // D-1 Daily Manager Intelligence Briefing Engine — dual-registered here AND in
 // server.ts (see the "These five were registered in server.ts ONLY" note above for
 // why a single-file registration silently never runs in one of the two worker
 // topologies). No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true.
-import { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } from "../modules/management/daily-brief/daily-brief.cron.js";
-import { startRosterUploadEscalationScheduler, stopRosterUploadEscalationScheduler } from "../modules/wfm/roster-upload-escalation.cron.js";
-import { startInterventionRecommendationScheduler, stopInterventionRecommendationScheduler } from "../modules/analytics/intervention-recommendation.cron.js";
-import { startMetaCampaignSyncScheduler, stopMetaCampaignSyncScheduler } from "../modules/meta-campaign/meta-campaign.cron.js";
+import {
+  startManagerDailyBriefScheduler,
+  stopManagerDailyBriefScheduler,
+} from "../modules/management/daily-brief/daily-brief.cron.js";
+import {
+  startRosterUploadEscalationScheduler,
+  stopRosterUploadEscalationScheduler,
+} from "../modules/wfm/roster-upload-escalation.cron.js";
+import {
+  startInterventionRecommendationScheduler,
+  stopInterventionRecommendationScheduler,
+} from "../modules/analytics/intervention-recommendation.cron.js";
+import {
+  startMetaCampaignSyncScheduler,
+  stopMetaCampaignSyncScheduler,
+} from "../modules/meta-campaign/meta-campaign.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
-import { startAtsDailyReportScheduler, stopAtsDailyReportScheduler } from "../modules/ats/ats-daily-report.cron.js";
-import { startBranchActivityReportScheduler, stopBranchActivityReportScheduler } from "../modules/ats/branch-activity-report/scheduler.js";
-import { startBranchHealthReportScheduler, stopBranchHealthReportScheduler } from "../modules/branch-health-report/scheduler.js";
-import { startPayrollWindowClosureScheduler, stopPayrollWindowClosureScheduler } from "../modules/payroll/payroll-window.cron.js";
+import {
+  startAtsDailyReportScheduler,
+  stopAtsDailyReportScheduler,
+} from "../modules/ats/ats-daily-report.cron.js";
+import {
+  startBranchActivityReportScheduler,
+  stopBranchActivityReportScheduler,
+} from "../modules/ats/branch-activity-report/scheduler.js";
+import {
+  startBranchHealthReportScheduler,
+  stopBranchHealthReportScheduler,
+} from "../modules/branch-health-report/scheduler.js";
+import {
+  startPayrollWindowClosureScheduler,
+  stopPayrollWindowClosureScheduler,
+} from "../modules/payroll/payroll-window.cron.js";
 import { startPerformanceIngestionScheduler } from "../modules/performance-ingestion/performance-scheduler.service.js";
-import { startBreachSlaCron, stopBreachSlaCron } from "../modules/privacy/dpdp-breach-sla.cron.js";
-import { startCosecSyncWorker, stopCosecSyncWorker } from "../modules/wfm/cosec-sync.worker.js";
-import { startRtaNightlyCron, stopRtaNightlyCron } from "../modules/rta/rta-nightly.cron.js";
+import {
+  startBreachSlaCron,
+  stopBreachSlaCron,
+} from "../modules/privacy/dpdp-breach-sla.cron.js";
+import {
+  startCosecSyncWorker,
+  stopCosecSyncWorker,
+} from "../modules/wfm/cosec-sync.worker.js";
+import {
+  startRtaNightlyCron,
+  stopRtaNightlyCron,
+} from "../modules/rta/rta-nightly.cron.js";
 import { startWalkinSlaCron, stopWalkinSlaCron } from "./walkin-sla.cron.js";
-import { startHelpdeskSlaCron, stopHelpdeskSlaCron } from "../modules/helpdesk/helpdesk-sla.cron.js";
-import { startInboxReconciliationWorker, stopInboxReconciliationWorker } from "./inbox-reconciliation.worker.js";
-import { startAttendanceCorrectionReconciliationWorker, stopAttendanceCorrectionReconciliationWorker } from "./attendance-correction-reconciliation.worker.js";
-import { startBulkUploadStaleBatchWorker, stopBulkUploadStaleBatchWorker } from "./bulk-upload-stale-batch.worker.js";
-import { startBulkImportWorker, stopBulkImportWorker } from "./bulk-import.worker.js";
-import { startReportGenerationWorker, stopReportGenerationWorker } from "./report-generation.worker.js";
-import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
-import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
-import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
-import { startQualityGapDetectorWorker, stopQualityGapDetectorWorker } from "./quality-gap-detector.worker.js";
-import { startLeaveApprovalReminderWorker, stopLeaveApprovalReminderWorker } from "./leave-approval-reminder.worker.js";
-import { startGrnApprovalReminderWorker, stopGrnApprovalReminderWorker } from "./grn-approval-reminder.worker.js";
-import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
+import {
+  startHelpdeskSlaCron,
+  stopHelpdeskSlaCron,
+} from "../modules/helpdesk/helpdesk-sla.cron.js";
+import {
+  startInboxReconciliationWorker,
+  stopInboxReconciliationWorker,
+} from "./inbox-reconciliation.worker.js";
+import {
+  startAttendanceCorrectionReconciliationWorker,
+  stopAttendanceCorrectionReconciliationWorker,
+} from "./attendance-correction-reconciliation.worker.js";
+import {
+  startBulkUploadStaleBatchWorker,
+  stopBulkUploadStaleBatchWorker,
+} from "./bulk-upload-stale-batch.worker.js";
+import {
+  startBulkImportWorker,
+  stopBulkImportWorker,
+} from "./bulk-import.worker.js";
+import {
+  startReportGenerationWorker,
+  stopReportGenerationWorker,
+} from "./report-generation.worker.js";
+import {
+  startReportEmailDeliveryWorker,
+  stopReportEmailDeliveryWorker,
+} from "./report-email-delivery.worker.js";
+import {
+  startReportStaleRecoveryWorker,
+  stopReportStaleRecoveryWorker,
+} from "./report-stale-recovery.worker.js";
+import {
+  startTatEscalationWorker,
+  stopTatEscalationWorker,
+} from "./tat-escalation.worker.js";
+import {
+  startQualityGapDetectorWorker,
+  stopQualityGapDetectorWorker,
+} from "./quality-gap-detector.worker.js";
+import {
+  startLeaveApprovalReminderWorker,
+  stopLeaveApprovalReminderWorker,
+} from "./leave-approval-reminder.worker.js";
+import {
+  startGrnApprovalReminderWorker,
+  stopGrnApprovalReminderWorker,
+} from "./grn-approval-reminder.worker.js";
+import {
+  startReportSubscriptionWorker,
+  stopReportSubscriptionWorker,
+} from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
-import { startPayrollPrepReminderWorker, stopPayrollPrepReminderWorker } from "./payroll-prep-reminder.worker.js";
-import { startBudgetClosureReminderWorker, stopBudgetClosureReminderWorker } from "./budget-closure-reminder.worker.js";
-import { startPayrollReadinessRefreshWorker, stopPayrollReadinessRefreshWorker } from "./payroll-readiness-refresh.worker.js";
-import { startAutoRosterSchedulerWorker, stopAutoRosterSchedulerWorker } from "./auto-roster-scheduler.worker.js";
-import { startUatJobRunner, stopUatJobRunner } from "../modules/uat-pipeline/uat-job-runner.js";
+import {
+  startPayrollPrepReminderWorker,
+  stopPayrollPrepReminderWorker,
+} from "./payroll-prep-reminder.worker.js";
+import {
+  startBudgetClosureReminderWorker,
+  stopBudgetClosureReminderWorker,
+} from "./budget-closure-reminder.worker.js";
+import {
+  startPayrollReadinessRefreshWorker,
+  stopPayrollReadinessRefreshWorker,
+} from "./payroll-readiness-refresh.worker.js";
+import {
+  startAutoRosterSchedulerWorker,
+  stopAutoRosterSchedulerWorker,
+} from "./auto-roster-scheduler.worker.js";
+import {
+  startUatJobRunner,
+  stopUatJobRunner,
+} from "../modules/uat-pipeline/uat-job-runner.js";
 import { registerUatJobHandlers } from "../modules/uat-pipeline/uat-jobs.handlers.js";
 import { startMiraTriageScheduler } from "../modules/ai/mira-triage-scheduler.js";
-import { startHcGapAlertScheduler, stopHcGapAlertScheduler } from "../modules/workforce-mandate/hc-gap-alert.cron.js";
-import { startCostCentreDriftAlertScheduler, stopCostCentreDriftAlertScheduler } from "../modules/workforce-mandate/cost-centre-drift-alert.cron.js";
+import {
+  startHcGapAlertScheduler,
+  stopHcGapAlertScheduler,
+} from "../modules/workforce-mandate/hc-gap-alert.cron.js";
+import {
+  startCostCentreDriftAlertScheduler,
+  stopCostCentreDriftAlertScheduler,
+} from "../modules/workforce-mandate/cost-centre-drift-alert.cron.js";
 import { registerRosterIntelligenceCrons } from "../modules/wfm/roster-intelligence.cron.js";
 import { clearAllTimers } from "./worker-utils.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "official-email-compliance",
-    start: () => { startOfficialEmailComplianceScheduler(); return Promise.resolve(); },
+    start: () => {
+      startOfficialEmailComplianceScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "integration-scheduler",
-    start: () => { startIntegrationScheduler(); return Promise.resolve(); },
+    start: () => {
+      startIntegrationScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "access-expiry",
-    start: () => { startAccessExpiryScheduler(); return Promise.resolve(); },
+    start: () => {
+      startAccessExpiryScheduler();
+      return Promise.resolve();
+    },
   },
   {
     // Applies approved transfers on their effective_date. Registered here AND in server.ts:
     // a worker present in only one of the two never runs in the deployment that uses the other.
     name: "mobility-transfer",
-    start: () => { startMobilityTransferWorker(); return Promise.resolve(); },
+    start: () => {
+      startMobilityTransferWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "tenure-badge",
-    start: () => { startTenureBadgeScheduler(); return Promise.resolve(); },
+    start: () => {
+      startTenureBadgeScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "celebration",
-    start: () => { startCelebrationScheduler(); return Promise.resolve(); },
+    start: () => {
+      startCelebrationScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "festival-greetings",
-    start: () => { startFestivalGreetingScheduler(); return Promise.resolve(); },
+    start: () => {
+      startFestivalGreetingScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "daily-games",
-    start: () => { startDailyGamesScheduler(); return Promise.resolve(); },
+    start: () => {
+      startDailyGamesScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "communication-cleanup",
-    start: () => { startCommunicationCleanup(); return Promise.resolve(); },
+    start: () => {
+      startCommunicationCleanup();
+      return Promise.resolve();
+    },
   },
   {
     name: "attendance-engine",
-    start: () => { startAttendanceEngineScheduler(); return Promise.resolve(); },
+    start: () => {
+      startAttendanceEngineScheduler();
+      return Promise.resolve();
+    },
   },
   {
     // Both were started at app.ts module scope and registered in no worker file,
@@ -144,19 +369,31 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // reminders every 5 minutes and self-disables unless MCNMEET_ENABLED=true,
     // which is the only reason it has not already behaved like esign-compliance.
     name: "social-feed",
-    start: () => { startSocialFeedCron(); return Promise.resolve(); },
+    start: () => {
+      startSocialFeedCron();
+      return Promise.resolve();
+    },
   },
   {
     name: "mcnmeet",
-    start: () => { startMcnmeetCron(); return Promise.resolve(); },
+    start: () => {
+      startMcnmeetCron();
+      return Promise.resolve();
+    },
   },
   {
     name: "it-provisioning-lock",
-    start: () => { startITProvisioningLockScheduler(); return Promise.resolve(); },
+    start: () => {
+      startITProvisioningLockScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "portal-session-cleanup",
-    start: () => { startPortalSessionCleanupScheduler(); return Promise.resolve(); },
+    start: () => {
+      startPortalSessionCleanupScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "leave-monthly-credit",
@@ -168,11 +405,17 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   },
   {
     name: "payroll-window-closure",
-    start: () => { startPayrollWindowClosureScheduler(); return Promise.resolve(); },
+    start: () => {
+      startPayrollWindowClosureScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "performance-ingestion",
-    start: () => { startPerformanceIngestionScheduler(); return Promise.resolve(); },
+    start: () => {
+      startPerformanceIngestionScheduler();
+      return Promise.resolve();
+    },
   },
   {
     // Self-populates cost_centre_master.process_id for cost centres the (removed) db-bill-finance-sync just
@@ -180,7 +423,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // branch_id (user-confirmed out of scope for MAS Callnet's P&L, 2026-09-11) regardless of
     // that branch's own (partly mislabelled) company_name.
     name: "cost-centre-process-resolver",
-    start: () => { startCostCentreProcessResolverWorker(); return Promise.resolve(); },
+    start: () => {
+      startCostCentreProcessResolverWorker();
+      return Promise.resolve();
+    },
   },
   {
     // Keeps the accrued-payroll fallback Live P&L already reads (readPayroll() in
@@ -189,7 +435,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // except a manual button, so every open month showed real revenue with payrollCost=0 and
     // margin NA until someone clicked it. See pnl-running-salary-refresh.worker.ts.
     name: "pnl-running-salary-refresh",
-    start: () => { startPnlRunningSalaryRefreshWorker(); return Promise.resolve(); },
+    start: () => {
+      startPnlRunningSalaryRefreshWorker();
+      return Promise.resolve();
+    },
   },
   {
     // Builds the outward GST batch and its exception worklist for every registration before
@@ -199,7 +448,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // server.ts-only registration is exactly what silently never runs under
     // WORKERS_PROCESS=external.
     name: "gst-export-auto",
-    start: () => { startGstExportAutoWorker(); return Promise.resolve(); },
+    start: () => {
+      startGstExportAutoWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "payroll-nightly-recalc",
@@ -211,7 +463,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // 200-row call at the tail of a COSEC sync, so it backlogged by construction: 912 pending for
     // 270 active employees when this was written, oldest 12 days.
     name: "payroll-recalc-drainer",
-    start: () => { startPayrollRecalcDrainerWorker(); return Promise.resolve(); },
+    start: () => {
+      startPayrollRecalcDrainerWorker();
+      return Promise.resolve();
+    },
   },
   // "lms-reminders" is PARKED here, matching server.ts. 4128d4d6 added this registration to
   // restore parity with the server.ts start call — but the module both sides import,
@@ -233,7 +488,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // KPI_STUDIO_COMPUTE_DRY_RUN=false. It writes to kpi_daily_actual, so it
     // does not start computing on its own the night it is deployed.
     name: "kpi-studio-compute",
-    start: () => { startKpiStudioComputeWorker(); return Promise.resolve(); },
+    start: () => {
+      startKpiStudioComputeWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "sla-breach",
@@ -241,7 +499,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   },
   {
     name: "interview-delay-alert",
-    start: () => { startInterviewDelayAlertWorker(); return Promise.resolve(); },
+    start: () => {
+      startInterviewDelayAlertWorker();
+      return Promise.resolve();
+    },
   },
   // ── Previously server.ts-only (see the import block above) ──
   {
@@ -257,9 +518,11 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // effect rather than being silently bypassed.
     name: "ats-reminders",
     start: () => {
-      if (process.env.ATS_REMINDERS_ENABLED === "true") startAtsRemindersScheduler();
+      if (process.env.ATS_REMINDERS_ENABLED === "true")
+        startAtsRemindersScheduler();
       // Separate switch — see ats-daily-report.cron.ts for why it is not the one above.
-      if (process.env.ATS_DAILY_REPORT_ENABLED === "true") startAtsDailyReportScheduler();
+      if (process.env.ATS_DAILY_REPORT_ENABLED === "true")
+        startAtsDailyReportScheduler();
       // No-op unless ATS_BRANCH_ACTIVITY_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
       startBranchActivityReportScheduler();
       // No-op unless BRANCH_HEALTH_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
@@ -269,45 +532,72 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   },
   {
     name: "attendance-reconciliation",
-    start: () => { startAttendanceReconciliationWorker(); return Promise.resolve(); },
+    start: () => {
+      startAttendanceReconciliationWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "manager-daily-brief",
-    start: () => { startManagerDailyBriefScheduler(); return Promise.resolve(); },
+    start: () => {
+      startManagerDailyBriefScheduler();
+      return Promise.resolve();
+    },
   },
   {
     // Off by default: ROSTER_UPLOAD_ESCALATION_ENABLED must be "true"; dry-run unless
     // ROSTER_UPLOAD_ESCALATION_DRY_RUN=false — see roster-upload-escalation.cron.ts.
     name: "roster-upload-escalation",
-    start: () => { startRosterUploadEscalationScheduler(); return Promise.resolve(); },
+    start: () => {
+      startRosterUploadEscalationScheduler();
+      return Promise.resolve();
+    },
   },
   {
     // Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly
     // "true" — see intervention-recommendation.cron.ts's header.
     name: "intervention-recommendation-generation",
-    start: () => { startInterventionRecommendationScheduler(); return Promise.resolve(); },
+    start: () => {
+      startInterventionRecommendationScheduler();
+      return Promise.resolve();
+    },
   },
   {
     // Off by default twice over: META_CAMPAIGN_SYNC_ENABLED must be "true", AND the sync itself
     // no-ops without META_MARKETING_ACCESS_TOKEN — see meta-campaign.cron.ts's header.
     name: "meta-campaign-metrics-sync",
-    start: () => { startMetaCampaignSyncScheduler(); return Promise.resolve(); },
+    start: () => {
+      startMetaCampaignSyncScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "dashboard-snapshot",
-    start: () => { startDashboardSnapshotScheduler(); return Promise.resolve(); },
+    start: () => {
+      startDashboardSnapshotScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "performance-scorecard-snapshot",
-    start: () => { startPerformanceScorecardSnapshotScheduler(); return Promise.resolve(); },
+    start: () => {
+      startPerformanceScorecardSnapshotScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "privacy-retention",
-    start: () => { startRetentionCron(); return Promise.resolve(); },
+    start: () => {
+      startRetentionCron();
+      return Promise.resolve();
+    },
   },
   {
     name: "business-action-sync",
-    start: () => { initBusinessActionSyncJobs(); return Promise.resolve(); },
+    start: () => {
+      initBusinessActionSyncJobs();
+      return Promise.resolve();
+    },
   },
   {
     // Registered in server.ts too, same convention as every other scheduler in this
@@ -325,7 +615,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   },
   {
     name: "cosec-sync",
-    start: () => { startCosecSyncWorker(); return Promise.resolve(); },
+    start: () => {
+      startCosecSyncWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "apr-vicidial-sync",
@@ -357,46 +650,73 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   },
   {
     name: "dpdp-breach-sla",
-    start: () => { startBreachSlaCron(); return Promise.resolve(); },
+    start: () => {
+      startBreachSlaCron();
+      return Promise.resolve();
+    },
   },
   {
     name: "employee-lifecycle",
-    start: () => { startEmployeeLifecycleWorker(); return Promise.resolve(); },
+    start: () => {
+      startEmployeeLifecycleWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "rta-nightly",
-    start: () => { startRtaNightlyCron(); return Promise.resolve(); },
+    start: () => {
+      startRtaNightlyCron();
+      return Promise.resolve();
+    },
   },
   {
     name: "walkin-sla",
-    start: () => { startWalkinSlaCron(); return Promise.resolve(); },
+    start: () => {
+      startWalkinSlaCron();
+      return Promise.resolve();
+    },
   },
   {
     // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from
     // GET /helpdesk/dashboard in 4829f0a6 — without this, sla_breached flags
     // and the Support Command Center's breach badges never update.
     name: "helpdesk-sla",
-    start: () => { startHelpdeskSlaCron(); return Promise.resolve(); },
+    start: () => {
+      startHelpdeskSlaCron();
+      return Promise.resolve();
+    },
   },
   {
     name: "inbox-reconciliation",
-    start: () => { startInboxReconciliationWorker(); return Promise.resolve(); },
+    start: () => {
+      startInboxReconciliationWorker();
+      return Promise.resolve();
+    },
   },
   {
     // Notices bulk-upload batches whose job was lost to a restart and left them 'importing'
     // forever. Marks them failed with a row count, so a dead import is visible instead of silent.
     name: "bulk-import",
-    start: () => { startBulkImportWorker(); return Promise.resolve(); },
+    start: () => {
+      startBulkImportWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "bulk-upload-stale-batch",
-    start: () => { startBulkUploadStaleBatchWorker(); return Promise.resolve(); },
+    start: () => {
+      startBulkUploadStaleBatchWorker();
+      return Promise.resolve();
+    },
   },
   {
     // Notices approved attendance changes that never reached the record. Read-only; the write
     // guard prevents the known causes, this catches causes we do not know about yet.
     name: "attendance-correction-reconciliation",
-    start: () => { startAttendanceCorrectionReconciliationWorker(); return Promise.resolve(); },
+    start: () => {
+      startAttendanceCorrectionReconciliationWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "report-generation",
@@ -415,14 +735,20 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // all, and every SLA event ships dispatch_mode='shadow' so even when it runs it
     // resolves and claims without delivering.
     name: "tat-escalation",
-    start: () => { startTatEscalationWorker(); return Promise.resolve(); },
+    start: () => {
+      startTatEscalationWorker();
+      return Promise.resolve();
+    },
   },
   {
     // Produces training_assignment + task_tat_instance rows for QA skill gaps (Quality-
     // Learning Governance). Sends no notification itself — tat-escalation above (same
     // WORKERS array) drives TAT/escalation for the task_type this worker creates.
     name: "quality-gap-detector",
-    start: () => { startQualityGapDetectorWorker(); return Promise.resolve(); },
+    start: () => {
+      startQualityGapDetectorWorker();
+      return Promise.resolve();
+    },
   },
   {
     // Owner directive 2026-09-16: every pending/actionable item must generate a reminder
@@ -431,14 +757,20 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // function was never imported anywhere and so has never run despite a real seeded
     // worker_config row.
     name: "leave-approval-reminder",
-    start: () => { startLeaveApprovalReminderWorker(); return Promise.resolve(); },
+    start: () => {
+      startLeaveApprovalReminderWorker();
+      return Promise.resolve();
+    },
   },
   {
     // Owner directive 2026-09-17: GRN approvals had no email at any stage. Registered in
     // BOTH this file and server.ts from the start, same reasoning as leave-approval-reminder
     // above.
     name: "grn-approval-reminder",
-    start: () => { startGrnApprovalReminderWorker(); return Promise.resolve(); },
+    start: () => {
+      startGrnApprovalReminderWorker();
+      return Promise.resolve();
+    },
   },
   {
     // Was registered in NEITHER this file nor server.ts. The worker existed and
@@ -447,7 +779,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // topology. Gated the same way: worker_config.enabled = 0 (migration 1025) and every
     // subscription is_active = 0.
     name: "report-subscription",
-    start: () => { startReportSubscriptionWorker(); return Promise.resolve(); },
+    start: () => {
+      startReportSubscriptionWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "payroll-prep-reminder",
@@ -466,7 +801,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   },
   {
     name: "auto-roster-scheduler",
-    start: () => { startAutoRosterSchedulerWorker(); return Promise.resolve(); },
+    start: () => {
+      startAutoRosterSchedulerWorker();
+      return Promise.resolve();
+    },
   },
   {
     // Registered HERE AND ONLY HERE. A worker present in only one of server.ts /
@@ -476,7 +814,11 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "uat-job-runner",
     // Handlers register before the runner starts: a claimed job whose type has no handler
     // goes straight to `dead`, so registering afterwards would kill the first tick's work.
-    start: () => { registerUatJobHandlers(); startUatJobRunner(); return Promise.resolve(); },
+    start: () => {
+      registerUatJobHandlers();
+      startUatJobRunner();
+      return Promise.resolve();
+    },
   },
   {
     // Was in server.ts only, never in this file. Production runs WORKERS_PROCESS=external,
@@ -485,14 +827,20 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // The scheduler fires once immediately on startup (so queued complaints get triaged
     // without waiting a full interval), then every 15 minutes thereafter.
     name: "mira-triage",
-    start: () => { startMiraTriageScheduler(); return Promise.resolve(); },
+    start: () => {
+      startMiraTriageScheduler();
+      return Promise.resolve();
+    },
   },
   {
     // Daily at 06:30 IST: checks workforce mandates where coverage_pct < alert_threshold_pct
     // and fires push notifications to HR Admin + Branch Head. Deduplicates via audit_log
     // (same scope alerted in last 24h is skipped).
     name: "hc-gap-alert",
-    start: () => { startHcGapAlertScheduler(); return Promise.resolve(); },
+    start: () => {
+      startHcGapAlertScheduler();
+      return Promise.resolve();
+    },
   },
   {
     // Daily at 07:15 IST: diffs employees.cost_center_code against db_bill.masjclrentry.CostCenter
@@ -501,18 +849,27 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // keys the correction into db_bill themselves; this only makes the drift visible instead of
     // silently persisting the way the Onfido/NOIDA-2 audit found it doing (2026-09-07).
     name: "cost-centre-drift-alert",
-    start: () => { startCostCentreDriftAlertScheduler(); return Promise.resolve(); },
+    start: () => {
+      startCostCentreDriftAlertScheduler();
+      return Promise.resolve();
+    },
   },
   {
     // Roster Intelligence: Manager daily digest (7 AM), branch dashboard (8 AM), and
     // unplanned absence alerts (every 30 min 8 AM - 8 PM). Controlled via
     // ROSTER_INTELLIGENCE_CRON env var (default enabled).
     name: "roster-intelligence",
-    start: () => { registerRosterIntelligenceCrons(); return Promise.resolve(); },
+    start: () => {
+      registerRosterIntelligenceCrons();
+      return Promise.resolve();
+    },
   },
   {
     name: "dbbill-migration-report",
-    start: () => { startDbbillMigrationReportCron(); return Promise.resolve(); },
+    start: () => {
+      startDbbillMigrationReportCron();
+      return Promise.resolve();
+    },
   },
 ];
 
@@ -521,16 +878,20 @@ async function startAllWorkers(): Promise<void> {
   registerNotificationDeliverer();
   console.log("\n================================================");
   console.log("  HRMS Unified Worker Runner");
-  console.log(`  Workers: ${WORKERS.map(w => w.name).join(", ")}`);
+  console.log(`  Workers: ${WORKERS.map((w) => w.name).join(", ")}`);
   // Which code this process is actually running. The release certificate has to prove the
   // worker's SHA, not infer it from having restarted alongside the API — a worker left on a
   // stale artifact satisfies that inference silently. Same loader the API /health/version
   // uses, so the two cannot disagree about what "the build" is. "unknown" here is a
   // certificate FAILURE, not a cosmetic gap.
   const build = readBuildInfo();
-  console.log(`  Build: commit=${build.commit} branch=${build.branch} builtAt=${build.builtAt}`);
+  console.log(
+    `  Build: commit=${build.commit} branch=${build.branch} builtAt=${build.builtAt}`,
+  );
   console.log("================================================\n");
-  console.log("[workers] biometric attendance sync uses cosec-sync worker; legacy migrate-ncosec script is manual-only");
+  console.log(
+    "[workers] biometric attendance sync uses cosec-sync worker; legacy migrate-ncosec script is manual-only",
+  );
 
   for (const worker of WORKERS) {
     try {
@@ -623,7 +984,7 @@ function shutdown(): void {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
-startAllWorkers().catch(err => {
+startAllWorkers().catch((err) => {
   console.error("[workers] Fatal startup error:", err);
   process.exit(1);
 });

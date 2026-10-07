@@ -20,7 +20,9 @@ const PROPOSAL_ID = process.env.TEST_PROPOSAL_ID ?? "";
 const SLAB_CTC = Number(process.env.TEST_SLAB_CTC ?? "120000");
 
 if (!TOKEN || !STRUCTURE_ID || !EMPLOYEE_ID) {
-  console.error("HRMS_TEST_TOKEN, TEST_STRUCTURE_ID, and TEST_EMPLOYEE_ID must be set.");
+  console.error(
+    "HRMS_TEST_TOKEN, TEST_STRUCTURE_ID, and TEST_EMPLOYEE_ID must be set.",
+  );
   process.exit(1);
 }
 
@@ -41,7 +43,10 @@ interface ApiResponse {
 
 const results: TestResult[] = [];
 
-async function post(path: string, body: object): Promise<{ status: number; json: ApiResponse }> {
+async function post(
+  path: string,
+  body: object,
+): Promise<{ status: number; json: ApiResponse }> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers: {
@@ -59,17 +64,22 @@ function record(
   passed: boolean,
   expected: string,
   actual: string,
-  detail?: string
+  detail?: string,
 ) {
   results.push({ name, passed, expected, actual, detail });
   const icon = passed ? "✓" : "✗";
   console.log(`${icon} [${passed ? "PASS" : "FAIL"}] ${name}`);
-  if (!passed) console.log(`       Expected: ${expected}\n       Actual:   ${actual}${detail ? `\n       Detail:   ${detail}` : ""}`);
+  if (!passed)
+    console.log(
+      `       Expected: ${expected}\n       Actual:   ${actual}${detail ? `\n       Detail:   ${detail}` : ""}`,
+    );
 }
 
 // ─── NEGATIVE TESTS ───────────────────────────────────────────────────────────
 
-console.log("\n=== NEGATIVE TESTS (must all fail with SALARY_BYPASS_BLOCKED) ===\n");
+console.log(
+  "\n=== NEGATIVE TESTS (must all fail with SALARY_BYPASS_BLOCKED) ===\n",
+);
 
 // Negative 1: Custom ctcAnnual with no salarySlabId and no approvalReferenceId
 {
@@ -80,13 +90,14 @@ console.log("\n=== NEGATIVE TESTS (must all fail with SALARY_BYPASS_BLOCKED) ===
     effectiveFrom: "2026-07-01",
     // No salarySlabId, no salaryProposalId
   });
-  const gotBlocked = r.status === 400 && r.json?.code === "SALARY_BYPASS_BLOCKED";
+  const gotBlocked =
+    r.status === 400 && r.json?.code === "SALARY_BYPASS_BLOCKED";
   record(
     "NEG-1: Custom ctcAnnual without slab or approval → 400 SALARY_BYPASS_BLOCKED",
     gotBlocked,
     "HTTP 400, code=SALARY_BYPASS_BLOCKED",
     `HTTP ${r.status}, code=${r.json?.code ?? "none"}`,
-    r.json?.message
+    r.json?.message,
   );
 }
 
@@ -100,13 +111,14 @@ if (SLAB_ID) {
     effectiveFrom: "2026-07-01",
     salarySlabId: SLAB_ID,
   });
-  const gotBlocked = r.status === 400 && r.json?.code === "SALARY_BYPASS_BLOCKED";
+  const gotBlocked =
+    r.status === 400 && r.json?.code === "SALARY_BYPASS_BLOCKED";
   record(
     "NEG-2: Valid slab but ctcAnnual mismatch → 400 SALARY_BYPASS_BLOCKED",
     gotBlocked,
     "HTTP 400, code=SALARY_BYPASS_BLOCKED",
     `HTTP ${r.status}, code=${r.json?.code ?? "none"}`,
-    r.json?.message
+    r.json?.message,
   );
 } else {
   console.log("  SKIP NEG-2: TEST_SLAB_ID not set");
@@ -122,13 +134,14 @@ if (SLAB_ID) {
     effectiveFrom: "2026-07-01",
     salaryProposalId: fakeProposalId,
   });
-  const gotBlocked = r.status === 400 && r.json?.code === "SALARY_BYPASS_BLOCKED";
+  const gotBlocked =
+    r.status === 400 && r.json?.code === "SALARY_BYPASS_BLOCKED";
   record(
     "NEG-3: Non-existent proposal ID → 400 SALARY_BYPASS_BLOCKED",
     gotBlocked,
     "HTTP 400, code=SALARY_BYPASS_BLOCKED",
     `HTTP ${r.status}, code=${r.json?.code ?? "none"}`,
-    r.json?.message
+    r.json?.message,
   );
 }
 
@@ -151,7 +164,7 @@ if (SLAB_ID) {
     passed,
     "HTTP 201, data.id present",
     `HTTP ${r.status}, data.id=${r.json?.data?.id ?? "none"}`,
-    r.json?.message ?? r.json?.error
+    r.json?.message ?? r.json?.error,
   );
 } else {
   console.log("  SKIP POS-1: TEST_SLAB_ID not set");
@@ -172,10 +185,12 @@ if (PROPOSAL_ID) {
     passed,
     "HTTP 201, data.id present",
     `HTTP ${r.status}, data.id=${r.json?.data?.id ?? "none"}`,
-    r.json?.message ?? r.json?.error
+    r.json?.message ?? r.json?.error,
   );
 } else {
-  console.log("  SKIP POS-2: TEST_PROPOSAL_ID not set (requires approved proposal in DB)");
+  console.log(
+    "  SKIP POS-2: TEST_PROPOSAL_ID not set (requires approved proposal in DB)",
+  );
 }
 
 // Positive 3: Super admin migration mode with reason
@@ -191,20 +206,21 @@ if (PROPOSAL_ID) {
   });
   // May fail if token is not super_admin — that is correct behavior
   const passed = r.status === 201 && r.json?.data?.id;
-  const blockedCorrectly = r.status === 400 && r.json?.code === "SALARY_BYPASS_BLOCKED";
+  const blockedCorrectly =
+    r.status === 400 && r.json?.code === "SALARY_BYPASS_BLOCKED";
   if (passed) {
     record(
       "POS-3: Super admin migration mode + reason → 201 success",
       true,
       "HTTP 201",
-      `HTTP ${r.status}`
+      `HTTP ${r.status}`,
     );
   } else if (blockedCorrectly) {
     record(
       "POS-3: Migration mode blocked (token not super_admin) → gate working correctly",
       true,
       "HTTP 400 SALARY_BYPASS_BLOCKED (non-super-admin token)",
-      `HTTP ${r.status}, code=${r.json?.code}`
+      `HTTP ${r.status}, code=${r.json?.code}`,
     );
   } else {
     record(
@@ -212,7 +228,7 @@ if (PROPOSAL_ID) {
       false,
       "HTTP 201 or HTTP 400 SALARY_BYPASS_BLOCKED",
       `HTTP ${r.status}, code=${r.json?.code ?? "none"}`,
-      r.json?.message ?? r.json?.error
+      r.json?.message ?? r.json?.error,
     );
   }
 }
@@ -220,11 +236,13 @@ if (PROPOSAL_ID) {
 // ─── SUMMARY ──────────────────────────────────────────────────────────────────
 
 console.log("\n=== SUMMARY ===\n");
-const passed = results.filter(r => r.passed).length;
-const failed = results.filter(r => !r.passed).length;
+const passed = results.filter((r) => r.passed).length;
+const failed = results.filter((r) => !r.passed).length;
 console.log(`Total: ${results.length}  Pass: ${passed}  Fail: ${failed}`);
 if (failed === 0) {
-  console.log("\n✓ ALL TESTS PASSED — salary bypass gate is enforced correctly at API level.");
+  console.log(
+    "\n✓ ALL TESTS PASSED — salary bypass gate is enforced correctly at API level.",
+  );
 } else {
   console.log("\n✗ SOME TESTS FAILED — review failures above.");
   process.exit(1);

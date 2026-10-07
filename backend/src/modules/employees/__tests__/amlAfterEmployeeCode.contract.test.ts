@@ -24,7 +24,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const SOURCE = readFileSync(
-  resolve(process.cwd(), "src/modules/employees/employee-creation-orchestrator.service.ts"),
+  resolve(
+    process.cwd(),
+    "src/modules/employees/employee-creation-orchestrator.service.ts",
+  ),
   "utf8",
 );
 
@@ -47,7 +50,10 @@ describe("AML is triggered after the employee exists", () => {
   it("it cannot fail the hire", () => {
     const at = SOURCE.indexOf("await queueAmlScreening");
     const around = SOURCE.slice(Math.max(0, at - 300), at + 300);
-    expect(around, "an AML failure must not surface as a failed employee creation").toMatch(/catch|\.catch\(/);
+    expect(
+      around,
+      "an AML failure must not surface as a failed employee creation",
+    ).toMatch(/catch|\.catch\(/);
   });
 });
 

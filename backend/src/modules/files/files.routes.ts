@@ -5,7 +5,10 @@ import fs from "fs";
 import { randomUUID } from "crypto";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, verifyAuthenticatedActor } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  verifyAuthenticatedActor,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
@@ -26,7 +29,10 @@ import {
 import { authorizeDocumentAccess } from "./documentVaultAuth.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
-import { HUB_ROLES, restrictLobOnlyFileCategory } from "../bulk-upload/bulk-role-restriction.js";
+import {
+  HUB_ROLES,
+  restrictLobOnlyFileCategory,
+} from "../bulk-upload/bulk-role-restriction.js";
 import { verifyPhotoAccessToken } from "./photo-access-token.js";
 
 // SECURITY: Document authorization is ALWAYS enforced.
@@ -81,8 +87,11 @@ fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: (req, _file, cb) => {
-    const category = ((req.query.category as string) || "misc")
-      .replace(/[^a-zA-Z0-9_-]/g, "") || "misc";
+    const category =
+      ((req.query.category as string) || "misc").replace(
+        /[^a-zA-Z0-9_-]/g,
+        "",
+      ) || "misc";
     const dir = path.join(UPLOADS_ROOT, category);
     fs.mkdirSync(dir, { recursive: true });
     cb(null, dir);
@@ -94,9 +103,20 @@ const storage = multer.diskStorage({
 });
 
 const ALLOWED_EXTENSIONS = new Set([
-  ".pdf", ".jpg", ".jpeg", ".png", ".webp",
-  ".doc", ".docx", ".xls", ".xlsx", ".xlsb", ".csv", ".txt",
-  ".eml", ".msg",
+  ".pdf",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".xlsb",
+  ".csv",
+  ".txt",
+  ".eml",
+  ".msg",
 ]);
 
 const upload = multer({
@@ -112,18 +132,37 @@ const upload = multer({
     if (ALLOWED_EXTENSIONS.has(ext)) {
       cb(null, true);
     } else {
-      cb(new Error(`File type ${ext} not allowed. Allowed: ${[...ALLOWED_EXTENSIONS].join(", ")}`));
+      cb(
+        new Error(
+          `File type ${ext} not allowed. Allowed: ${[...ALLOWED_EXTENSIONS].join(", ")}`,
+        ),
+      );
     }
   },
 });
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
-async function resolveCandidateFileActor(req: AuthenticatedRequest): Promise<
-  | { actorType: "candidate"; candidateId: string; actorUserId: null; actorRole: null }
-  | { actorType: "employee"; candidateId?: string; actorUserId: string; actorRole: string | null }
+async function resolveCandidateFileActor(
+  req: AuthenticatedRequest,
+): Promise<
+  | {
+      actorType: "candidate";
+      candidateId: string;
+      actorUserId: null;
+      actorRole: null;
+    }
+  | {
+      actorType: "employee";
+      candidateId?: string;
+      actorUserId: string;
+      actorRole: string | null;
+    }
   | null
 > {
   const authHeader = req.headers.authorization;
@@ -145,7 +184,16 @@ async function resolveCandidateFileActor(req: AuthenticatedRequest): Promise<
   if (!user) return null;
   const ctx = await getUserRoleContext(user.id).catch(() => null);
   const role = ctx?.primaryRole ?? null;
-  const allowedRoles = new Set(["admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo", "super_admin"]);
+  const allowedRoles = new Set([
+    "admin",
+    "hr",
+    "recruiter",
+    "manager",
+    "branch_head",
+    "process_manager",
+    "ceo",
+    "super_admin",
+  ]);
   if (!role || !allowedRoles.has(role)) return null;
 
   return {
@@ -165,9 +213,11 @@ router.get(
 
     const actor = await resolveCandidateFileActor(req);
     const actorAny = actor as any;
-    const candidateActor = actorAny?.actorType === "candidate" ? actorAny : null;
+    const candidateActor =
+      actorAny?.actorType === "candidate" ? actorAny : null;
     const employeeActor = actorAny?.actorType === "employee" ? actorAny : null;
-    const isCandidateOwner = !!candidateActor && candidateActor.candidateId === file.candidate_id;
+    const isCandidateOwner =
+      !!candidateActor && candidateActor.candidateId === file.candidate_id;
     const isHrmsEmployee = !!employeeActor;
 
     if (!isCandidateOwner && !isHrmsEmployee) {
@@ -221,11 +271,14 @@ router.get(
       res.type(file.mime_type);
     }
     if (String(req.query.download ?? "") === "1") {
-      res.set("Content-Disposition", `attachment; filename="${path.basename(file.stored_filename)}"`);
+      res.set(
+        "Content-Disposition",
+        `attachment; filename="${path.basename(file.stored_filename)}"`,
+      );
     }
     res.set("Cache-Control", "private, no-store, max-age=0");
     res.sendFile(resolvedPath);
-  })
+  }),
 );
 
 // SECURITY: Employee photos now require authentication.
@@ -255,7 +308,10 @@ router.get(
     // used by pages with no logged-in session to attach a Bearer header from
     // (e.g. the public employee-verify page), see photo-access-token.ts.
     let viaScopedToken = false;
-    if (!actorUserId && verifyPhotoAccessToken(safeFile, String(req.query.t ?? ""))) {
+    if (
+      !actorUserId &&
+      verifyPhotoAccessToken(safeFile, String(req.query.t ?? ""))
+    ) {
       viaScopedToken = true;
     }
 
@@ -300,7 +356,7 @@ router.get(
     // SECURITY: Reduced cache time, no public caching
     res.set("Cache-Control", "private, max-age=3600");
     res.sendFile(filePath);
-  })
+  }),
 );
 
 // POST /api/files/upload?category=employee-documents
@@ -323,10 +379,16 @@ router.post(
     });
   },
   h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded or file type not allowed" });
+    if (!req.file)
+      return res
+        .status(400)
+        .json({ error: "No file uploaded or file type not allowed" });
 
-    const category = ((req.query.category as string) || req.body?.category || "misc")
-      .replace(/[^a-zA-Z0-9_-]/g, "") || "misc";
+    const category =
+      ((req.query.category as string) || req.body?.category || "misc").replace(
+        /[^a-zA-Z0-9_-]/g,
+        "",
+      ) || "misc";
     const filePath = req.file.path;
     const ext = path.extname(req.file.originalname).toLowerCase();
 
@@ -334,8 +396,12 @@ router.post(
     const magicValid = validateFileMagicBytes(filePath, ext);
     if (!magicValid) {
       // Delete the uploaded file immediately
-      try { fs.unlinkSync(filePath); } catch {}
-      console.warn(`[upload] Magic-byte validation failed for ${req.file.originalname} (${ext})`);
+      try {
+        fs.unlinkSync(filePath);
+      } catch {}
+      console.warn(
+        `[upload] Magic-byte validation failed for ${req.file.originalname} (${ext})`,
+      );
       return res.status(400).json({
         error: "File content does not match its extension. Upload rejected.",
         code: "MAGIC_BYTE_MISMATCH",
@@ -361,8 +427,13 @@ router.post(
       });
     } catch (vaultErr) {
       // Registration failed - delete physical file and return error
-      console.error("[documentVault] Failed to register upload in inventory:", vaultErr);
-      try { fs.unlinkSync(filePath); } catch {}
+      console.error(
+        "[documentVault] Failed to register upload in inventory:",
+        vaultErr,
+      );
+      try {
+        fs.unlinkSync(filePath);
+      } catch {}
       return res.status(500).json({
         error: "Failed to register file in document vault. Upload rolled back.",
         code: "VAULT_REGISTRATION_FAILED",
@@ -377,7 +448,7 @@ router.post(
       size: req.file.size,
       mimetype: req.file.mimetype,
     });
-  })
+  }),
 );
 
 // POST /api/files/download-token — issue a short-lived download token for a vault item
@@ -388,10 +459,15 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { storedFilename, category, ttlMinutes, issuedFor } = req.body ?? {};
     if (!storedFilename || !category) {
-      return res.status(400).json({ error: "storedFilename and category required" });
+      return res
+        .status(400)
+        .json({ error: "storedFilename and category required" });
     }
     const item = await findByStoredFilename(storedFilename);
-    if (!item || item.category !== (category as string).replace(/[^a-zA-Z0-9_-]/g, "")) {
+    if (
+      !item ||
+      item.category !== (category as string).replace(/[^a-zA-Z0-9_-]/g, "")
+    ) {
       return res.status(404).json({ error: "File not found in vault" });
     }
 
@@ -400,7 +476,12 @@ router.post(
     const ctx = await getUserRoleContext(req.authUser!.id).catch(() => null);
     const actorRole = ctx?.primaryRole ?? "";
     if (!actorRole) {
-      return res.status(403).json({ error: "Access denied - unable to verify role", code: "ROLE_LOOKUP_FAILED" });
+      return res
+        .status(403)
+        .json({
+          error: "Access denied - unable to verify role",
+          code: "ROLE_LOOKUP_FAILED",
+        });
     }
     const authResult = await authorizeDocumentAccess({
       actorUserId: req.authUser!.id,
@@ -411,7 +492,9 @@ router.post(
       userAgent: req.get("user-agent") ?? undefined,
     });
     if (!authResult.allowed) {
-      return res.status(403).json({ error: "Access denied", code: authResult.reasonCode });
+      return res
+        .status(403)
+        .json({ error: "Access denied", code: authResult.reasonCode });
     }
 
     const result = await issueDownloadToken({
@@ -424,7 +507,7 @@ router.post(
       token: result.rawToken,
       expiresAt: result.expiresAt.toISOString(),
     });
-  })
+  }),
 );
 
 // Public categories — no auth required (approved published content only)
@@ -436,7 +519,7 @@ const PUBLIC_FILE_CATEGORIES = new Set(["company-feed"]);
 router.get(
   "/:category/:filename",
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const safe = (req.params.category.replace(/[^a-zA-Z0-9_-]/g, "")) || "misc";
+    const safe = req.params.category.replace(/[^a-zA-Z0-9_-]/g, "") || "misc";
     const safeFile = path.basename(req.params.filename);
     const filePath = path.join(UPLOADS_ROOT, safe, safeFile);
 
@@ -447,7 +530,9 @@ router.get(
           .status(200)
           .type("image/svg+xml")
           .set("Cache-Control", "public, max-age=300")
-          .send(`<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360" role="img" aria-label="Image unavailable"><rect width="640" height="360" fill="#f1f5f9"/><path d="M236 212l52-64 45 52 28-32 43 44H236z" fill="#cbd5e1"/><circle cx="392" cy="130" r="26" fill="#cbd5e1"/><text x="320" y="264" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#64748b">Image unavailable</text></svg>`);
+          .send(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360" role="img" aria-label="Image unavailable"><rect width="640" height="360" fill="#f1f5f9"/><path d="M236 212l52-64 45 52 28-32 43 44H236z" fill="#cbd5e1"/><circle cx="392" cy="130" r="26" fill="#cbd5e1"/><text x="320" y="264" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#64748b">Image unavailable</text></svg>`,
+          );
         return;
       }
       return res.sendFile(filePath);
@@ -471,7 +556,9 @@ router.get(
           ipAddress: req.ip,
           userAgent: req.get("user-agent") ?? undefined,
         });
-        return res.status(403).json({ error: "Invalid or expired download token" });
+        return res
+          .status(403)
+          .json({ error: "Invalid or expired download token" });
       }
       actorUserId = resolved.issuedTo ?? undefined;
       tokenId = resolved.tokenId;
@@ -481,7 +568,9 @@ router.get(
       if (!authHeader?.startsWith("Bearer ")) {
         return res.status(401).json({ error: "Authentication required" });
       }
-      const user = await verifyAuthenticatedActor(authHeader.replace("Bearer ", "").trim());
+      const user = await verifyAuthenticatedActor(
+        authHeader.replace("Bearer ", "").trim(),
+      );
       if (!user) {
         return res.status(401).json({ error: "Invalid session" });
       }
@@ -509,7 +598,9 @@ router.get(
           denialReason: "Could not determine actor role for authorization",
           ipAddress: req.ip,
           userAgent: req.get("user-agent") ?? undefined,
-        }).catch(err => console.error("[documentVault] audit log failed:", err));
+        }).catch((err) =>
+          console.error("[documentVault] audit log failed:", err),
+        );
         return res.status(403).json({
           error: "Access denied - unable to verify authorization",
           code: "ROLE_LOOKUP_FAILED",
@@ -521,7 +612,9 @@ router.get(
       // viewing/downloading their own document. Best-effort: a caller with no
       // employee record (service account, admin-only user) just gets undefined
       // and falls through to the role check.
-      const actorEmployeeId = (await getEmployeeForUser(actorUserId).catch(() => null))?.id;
+      const actorEmployeeId = (
+        await getEmployeeForUser(actorUserId).catch(() => null)
+      )?.id;
 
       const authResult = await authorizeDocumentAccess({
         actorUserId,
@@ -553,7 +646,7 @@ router.get(
       ipAddress: req.ip,
       userAgent: req.get("user-agent") ?? undefined,
       tokenId,
-    }).catch(err => console.error("[documentVault] audit log failed:", err));
+    }).catch((err) => console.error("[documentVault] audit log failed:", err));
 
     res.set("Cache-Control", "private, no-store, max-age=0");
     if (req.query.download === "1") {
@@ -562,7 +655,7 @@ router.get(
     }
     if (item?.mime_type) res.type(item.mime_type);
     res.sendFile(filePath);
-  })
+  }),
 );
 
 // DELETE /api/files/:category/:filename — soft-delete with retention/legal-hold protection
@@ -571,7 +664,7 @@ router.delete(
   requireAuth,
   requireRole("admin", "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const safe = (req.params.category.replace(/[^a-zA-Z0-9_-]/g, "")) || "misc";
+    const safe = req.params.category.replace(/[^a-zA-Z0-9_-]/g, "") || "misc";
     const safeFile = path.basename(req.params.filename);
     const filePath = path.join(UPLOADS_ROOT, safe, safeFile);
     if (!fs.existsSync(filePath)) {
@@ -582,17 +675,21 @@ router.delete(
     const item = await findByStoredFilename(safeFile).catch(() => null);
     if (!item) {
       // Untracked file - still allow deletion but log warning
-      console.warn(`[documentVault] DELETE requested for untracked file: ${safeFile}`);
+      console.warn(
+        `[documentVault] DELETE requested for untracked file: ${safeFile}`,
+      );
     }
 
     // SECURITY: Check retention policy and legal hold BEFORE deletion
     if (item) {
       // Check legal hold - category-level or item-level
-      const [legalHolds] = await db.execute<RowDataPacket[]>(
-        `SELECT id, hold_reason FROM document_legal_hold
+      const [legalHolds] = await db
+        .execute<RowDataPacket[]>(
+          `SELECT id, hold_reason FROM document_legal_hold
          WHERE is_active = 1 AND (vault_item_id = ? OR category = ?)`,
-        [item.id, safe]
-      ).catch(() => [[]]);
+          [item.id, safe],
+        )
+        .catch(() => [[]]);
 
       if (legalHolds.length > 0) {
         await logDocumentAccess({
@@ -614,19 +711,23 @@ router.delete(
       }
 
       // Check retention policy - document must be past retention period
-      const [retentionRows] = await db.execute<RowDataPacket[]>(
-        `SELECT p.retention_days, p.deletion_requires_approval, i.created_at
+      const [retentionRows] = await db
+        .execute<RowDataPacket[]>(
+          `SELECT p.retention_days, p.deletion_requires_approval, i.created_at
          FROM document_retention_policy p
          JOIN document_vault_inventory i ON i.category = p.category
          WHERE i.stored_filename = ? AND p.category = ?`,
-        [safeFile, safe]
-      ).catch(() => [[]]);
+          [safeFile, safe],
+        )
+        .catch(() => [[]]);
 
       if (retentionRows.length > 0) {
         const policy = retentionRows[0] as any;
         const createdAt = new Date(policy.created_at);
         const retentionExpiry = new Date(createdAt);
-        retentionExpiry.setDate(retentionExpiry.getDate() + policy.retention_days);
+        retentionExpiry.setDate(
+          retentionExpiry.getDate() + policy.retention_days,
+        );
 
         if (new Date() < retentionExpiry) {
           await logDocumentAccess({
@@ -649,11 +750,13 @@ router.delete(
 
         // If deletion requires approval, check for approved deletion request
         if (policy.deletion_requires_approval) {
-          const [approvalRows] = await db.execute<RowDataPacket[]>(
-            `SELECT id FROM document_deletion_request
+          const [approvalRows] = await db
+            .execute<RowDataPacket[]>(
+              `SELECT id FROM document_deletion_request
              WHERE vault_item_id = ? AND status = 'approved'`,
-            [item.id]
-          ).catch(() => [[]]);
+              [item.id],
+            )
+            .catch(() => [[]]);
 
           if (approvalRows.length === 0) {
             await logDocumentAccess({
@@ -668,7 +771,8 @@ router.delete(
             }).catch(() => {});
 
             return res.status(403).json({
-              error: "Deletion requires approval - submit a deletion request first",
+              error:
+                "Deletion requires approval - submit a deletion request first",
               code: "APPROVAL_REQUIRED",
             });
           }
@@ -677,8 +781,11 @@ router.delete(
     }
 
     // Soft-delete in vault inventory
-    await softDelete(safeFile, req.authUser!.id).catch(err =>
-      console.error("[documentVault] soft-delete inventory update failed:", err)
+    await softDelete(safeFile, req.authUser!.id).catch((err) =>
+      console.error(
+        "[documentVault] soft-delete inventory update failed:",
+        err,
+      ),
     );
 
     // Log successful deletion
@@ -695,7 +802,7 @@ router.delete(
     // Physical delete — still performed after soft-delete is recorded
     fs.unlinkSync(filePath);
     res.json({ success: true });
-  })
+  }),
 );
 
 export { router as filesRouter };

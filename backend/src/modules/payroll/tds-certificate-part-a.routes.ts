@@ -9,7 +9,10 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import { registerUpload, issueDownloadToken } from "../document-vault/documentVault.service.js";
+import {
+  registerUpload,
+  issueDownloadToken,
+} from "../document-vault/documentVault.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   getPartAAvailability,
@@ -33,13 +36,22 @@ import {
  */
 
 export const tdsCertificatePartARouter = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 tdsCertificatePartARouter.use(requireAuth);
 
 /** Roles that may file and verify certificates on someone else's behalf. */
-const PAYROLL_ROLES = ["admin", "super_admin", "payroll_head", "payroll", "payroll_hr", "finance"] as const;
+const PAYROLL_ROLES = [
+  "admin",
+  "super_admin",
+  "payroll_head",
+  "payroll",
+  "payroll_hr",
+  "finance",
+] as const;
 
 const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
 
@@ -66,7 +78,12 @@ const partAUpload = multer({
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (ALLOWED_EXT.has(ext)) cb(null, true);
-    else cb(new Error(`Part A must be a PDF as issued by TRACES; received ${ext || "no extension"}`));
+    else
+      cb(
+        new Error(
+          `Part A must be a PDF as issued by TRACES; received ${ext || "no extension"}`,
+        ),
+      );
   },
 });
 
@@ -87,9 +104,14 @@ tdsCertificatePartARouter.post(
   (req: any, res: any, next: any) => {
     partAUpload.single("file")(req, res, (err: unknown) => {
       if (err instanceof multer.MulterError) {
-        return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
+        return res
+          .status(400)
+          .json({ success: false, message: `Upload error: ${err.message}` });
       }
-      if (err) return res.status(400).json({ success: false, message: (err as Error).message });
+      if (err)
+        return res
+          .status(400)
+          .json({ success: false, message: (err as Error).message });
       return next();
     });
   },
@@ -97,15 +119,26 @@ tdsCertificatePartARouter.post(
     const { employeeId } = req.params;
     const financialYear = parseFinancialYear(req.params.financialYear);
     if (financialYear === null) {
-      return res.status(400).json({ success: false, message: "financialYear must be a four-digit year, e.g. 2026 for FY 2026-27" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "financialYear must be a four-digit year, e.g. 2026 for FY 2026-27",
+        });
     }
 
     const file = (req as unknown as { file?: Express.Multer.File }).file;
-    if (!file) return res.status(400).json({ success: false, message: "A PDF file is required" });
+    if (!file)
+      return res
+        .status(400)
+        .json({ success: false, message: "A PDF file is required" });
 
     // Hash the stored bytes so a re-upload of the identical document is
     // detectable, and so the vault row can prove what was filed.
-    const sha256 = createHash("sha256").update(fs.readFileSync(file.path)).digest("hex");
+    const sha256 = createHash("sha256")
+      .update(fs.readFileSync(file.path))
+      .digest("hex");
 
     const vaultDocumentId = await registerUpload({
       uploadedByUser: req.authUser!.id,
@@ -128,8 +161,14 @@ tdsCertificatePartARouter.post(
       storedFilename: path.basename(file.path),
       storageCategory: "tds-certificates",
       uploadedBy: req.authUser!.id,
-      certificateNumber: typeof req.body?.certificate_number === "string" ? req.body.certificate_number.trim() : null,
-      coversQuarters: typeof req.body?.covers_quarters === "string" ? req.body.covers_quarters.trim() : null,
+      certificateNumber:
+        typeof req.body?.certificate_number === "string"
+          ? req.body.certificate_number.trim()
+          : null,
+      coversQuarters:
+        typeof req.body?.covers_quarters === "string"
+          ? req.body.covers_quarters.trim()
+          : null,
       notes: typeof req.body?.notes === "string" ? req.body.notes.trim() : null,
     });
 
@@ -139,13 +178,23 @@ tdsCertificatePartARouter.post(
       module_key: "payroll",
       entity_type: "tds_certificate_part_a",
       entity_id: id,
-      change_summary: { employeeId, financialYear, formNumber, vaultDocumentId },
+      change_summary: {
+        employeeId,
+        financialYear,
+        formNumber,
+        vaultDocumentId,
+      },
       req,
     });
 
     return res.status(201).json({
       success: true,
-      data: { id, financial_year: financialYear, form_number: formNumber, verified: false },
+      data: {
+        id,
+        financial_year: financialYear,
+        form_number: formNumber,
+        verified: false,
+      },
       message: `Form ${formNumber} Part A filed. It must be verified before the employee can see it.`,
     });
   }),
@@ -165,12 +214,22 @@ tdsCertificatePartARouter.post(
     const { employeeId } = req.params;
     const financialYear = parseFinancialYear(req.params.financialYear);
     if (financialYear === null) {
-      return res.status(400).json({ success: false, message: "financialYear must be a four-digit year" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "financialYear must be a four-digit year",
+        });
     }
 
     const ok = await verifyPartA(employeeId, financialYear, req.authUser!.id);
     if (!ok) {
-      return res.status(404).json({ success: false, message: "No Part A on file for this employee and year" });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "No Part A on file for this employee and year",
+        });
     }
 
     void logSensitiveAction({
@@ -183,7 +242,14 @@ tdsCertificatePartARouter.post(
       req,
     });
 
-    return res.json({ success: true, data: { employee_id: employeeId, financial_year: financialYear, verified: true } });
+    return res.json({
+      success: true,
+      data: {
+        employee_id: employeeId,
+        financial_year: financialYear,
+        verified: true,
+      },
+    });
   }),
 );
 
@@ -193,10 +259,17 @@ tdsCertificatePartARouter.post(
  * Payroll roles act on anyone; everyone else only on themselves, resolved from
  * their own employee record rather than from a URL they control.
  */
-async function resolveAccess(req: AuthenticatedRequest, targetEmployeeId: string) {
-  if (await hasAnyRole(req.authUser!.id, ...PAYROLL_ROLES)) return { allowed: true, privileged: true };
+async function resolveAccess(
+  req: AuthenticatedRequest,
+  targetEmployeeId: string,
+) {
+  if (await hasAnyRole(req.authUser!.id, ...PAYROLL_ROLES))
+    return { allowed: true, privileged: true };
   const own = await getEmployeeForUser(req.authUser!.id);
-  return { allowed: Boolean(own && own.id === targetEmployeeId), privileged: false };
+  return {
+    allowed: Boolean(own && own.id === targetEmployeeId),
+    privileged: false,
+  };
 }
 
 /** GET /:employeeId/:financialYear — status of a year's Part A. */
@@ -206,12 +279,19 @@ tdsCertificatePartARouter.get(
     const { employeeId } = req.params;
     const financialYear = parseFinancialYear(req.params.financialYear);
     if (financialYear === null) {
-      return res.status(400).json({ success: false, message: "financialYear must be a four-digit year" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "financialYear must be a four-digit year",
+        });
     }
 
     const access = await resolveAccess(req, employeeId);
     if (!access.allowed) {
-      return res.status(403).json({ success: false, message: "Forbidden: not your certificate" });
+      return res
+        .status(403)
+        .json({ success: false, message: "Forbidden: not your certificate" });
     }
 
     const availability = await getPartAAvailability(employeeId, financialYear);
@@ -232,12 +312,19 @@ tdsCertificatePartARouter.post(
     const { employeeId } = req.params;
     const financialYear = parseFinancialYear(req.params.financialYear);
     if (financialYear === null) {
-      return res.status(400).json({ success: false, message: "financialYear must be a four-digit year" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "financialYear must be a four-digit year",
+        });
     }
 
     const access = await resolveAccess(req, employeeId);
     if (!access.allowed) {
-      return res.status(403).json({ success: false, message: "Forbidden: not your certificate" });
+      return res
+        .status(403)
+        .json({ success: false, message: "Forbidden: not your certificate" });
     }
 
     const availability = await getPartAAvailability(employeeId, financialYear);

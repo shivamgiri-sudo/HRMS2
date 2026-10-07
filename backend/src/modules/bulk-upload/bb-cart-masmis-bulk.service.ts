@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real "Cart" (abandoned cart follow-up) export -- writes into
@@ -11,10 +14,28 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  */
 
 export const BB_CART_HEADERS = [
-  "CC", "Source", "SNo", "Cart ID", "Created At", "Updated At", "Customer Name",
-  "Customer Address", "Phone Number", "Email ID", "Line Items", "Variant Title",
-  "Abandoned Cart Link", "Amount", "Phone (10 Digit)", "Dates", "Agent",
-  "Disposition", "Sub Disposition", "Call Date", "Same Day Connect", "Status",
+  "CC",
+  "Source",
+  "SNo",
+  "Cart ID",
+  "Created At",
+  "Updated At",
+  "Customer Name",
+  "Customer Address",
+  "Phone Number",
+  "Email ID",
+  "Line Items",
+  "Variant Title",
+  "Abandoned Cart Link",
+  "Amount",
+  "Phone (10 Digit)",
+  "Dates",
+  "Agent",
+  "Disposition",
+  "Sub Disposition",
+  "Call Date",
+  "Same Day Connect",
+  "Status",
 ] as const;
 
 /** Lowercase, strip everything but letters/digits -- same convention as every other importer
@@ -29,7 +50,8 @@ function get(data: Record<string, unknown>, ...keys: string[]): string {
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
     const v = normalized[normalizeKey(k)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
@@ -93,7 +115,9 @@ export async function importBbCartMasmisBatch(
     const cartId = get(data, "Cart ID", "cart_id");
     if (!cartId) {
       const msg = `Row ${row.row_no}: "Cart ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
@@ -122,7 +146,8 @@ export async function importBbCartMasmisBatch(
         get(data, "Call Date", "call_date") || null,
         get(data, "Same Day Connect", "same_day_connect") || null,
         get(data, "Status", "status") || null,
-        null, batchId,
+        null,
+        batchId,
       ],
     });
   }
@@ -133,7 +158,8 @@ export async function importBbCartMasmisBatch(
         phone_number, email_id, line_items, variant_title, abandoned_cart_link, amount,
         phone_10_digit, dates, agent, disposition, sub_disposition, call_date,
         same_day_connect, status, uploaded_by, upload_batch_id)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: toInsert,
   });
   errorUpdates.push(...inserted.errorUpdates);
@@ -142,7 +168,9 @@ export async function importBbCartMasmisBatch(
   const errorRows = errorUpdates.length;
 
   const failedIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
-  const importedIds = toInsert.filter((r) => !failedIds.has(r.rowId)).map((r) => r.rowId);
+  const importedIds = toInsert
+    .filter((r) => !failedIds.has(r.rowId))
+    .map((r) => r.rowId);
   for (let i = 0; i < importedIds.length; i += 1000) {
     const slice = importedIds.slice(i, i + 1000);
     await db.execute(
@@ -160,17 +188,26 @@ export async function importBbCartMasmisBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

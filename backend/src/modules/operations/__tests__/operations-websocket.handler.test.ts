@@ -37,7 +37,8 @@ vi.mock("../operations-live.service.js", () => ({
 const { authService } = await import("../../auth/auth.service.js");
 const { isAccountRevoked } = await import("../../../shared/accountStatus.js");
 const { getUserRoleContext } = await import("../../../shared/roleResolver.js");
-const { operationsWebSocketHandler } = await import("../operations-websocket.handler.js");
+const { operationsWebSocketHandler } =
+  await import("../operations-websocket.handler.js");
 
 const mockVerify = authService.verifyAccessToken as ReturnType<typeof vi.fn>;
 const mockRevoked = isAccountRevoked as ReturnType<typeof vi.fn>;
@@ -63,7 +64,9 @@ beforeEach(() => {
   mockRevoked.mockResolvedValue(false);
   // Drain any clients left registered by a previous (successful-connection) test —
   // getStats() is the only externally visible read of the private clients map.
-  (operationsWebSocketHandler as unknown as { clients: Map<string, unknown> }).clients.clear();
+  (
+    operationsWebSocketHandler as unknown as { clients: Map<string, unknown> }
+  ).clients.clear();
 });
 
 describe("OperationsWebSocketHandler auth gate", () => {
@@ -78,14 +81,27 @@ describe("OperationsWebSocketHandler auth gate", () => {
     mockVerify.mockReturnValue(null);
     const ws = fakeWs();
     await operationsWebSocketHandler.handleConnection(ws, fakeReq("garbage"));
-    expect(ws.close).toHaveBeenCalledWith(1008, "Invalid, expired, or unauthorized token");
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "Invalid, expired, or unauthorized token",
+    );
   });
 
   it("closes the socket for a pre_auth (2FA-pending) token — the same gate requireAuth applies to every HTTP route", async () => {
-    mockVerify.mockReturnValue({ id: "u1", email: "a@b.com", scope: "pre_auth" });
+    mockVerify.mockReturnValue({
+      id: "u1",
+      email: "a@b.com",
+      scope: "pre_auth",
+    });
     const ws = fakeWs();
-    await operationsWebSocketHandler.handleConnection(ws, fakeReq("pre-auth-token"));
-    expect(ws.close).toHaveBeenCalledWith(1008, "Invalid, expired, or unauthorized token");
+    await operationsWebSocketHandler.handleConnection(
+      ws,
+      fakeReq("pre-auth-token"),
+    );
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "Invalid, expired, or unauthorized token",
+    );
     expect(mockRevoked).not.toHaveBeenCalled();
   });
 
@@ -93,23 +109,46 @@ describe("OperationsWebSocketHandler auth gate", () => {
     mockVerify.mockReturnValue({ id: "u1", email: "a@b.com" });
     mockRevoked.mockResolvedValue(true);
     const ws = fakeWs();
-    await operationsWebSocketHandler.handleConnection(ws, fakeReq("valid-token"));
-    expect(ws.close).toHaveBeenCalledWith(1008, "Invalid, expired, or unauthorized token");
+    await operationsWebSocketHandler.handleConnection(
+      ws,
+      fakeReq("valid-token"),
+    );
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "Invalid, expired, or unauthorized token",
+    );
   });
 
   it("closes the socket for a role not authorized on the equivalent HTTP endpoints", async () => {
     mockVerify.mockReturnValue({ id: "u1", email: "a@b.com" });
-    mockRoleContext.mockResolvedValue({ roleKeys: ["employee"], primaryRole: "employee", isSuperAdmin: false });
+    mockRoleContext.mockResolvedValue({
+      roleKeys: ["employee"],
+      primaryRole: "employee",
+      isSuperAdmin: false,
+    });
     const ws = fakeWs();
-    await operationsWebSocketHandler.handleConnection(ws, fakeReq("valid-token"));
-    expect(ws.close).toHaveBeenCalledWith(1008, "Invalid, expired, or unauthorized token");
+    await operationsWebSocketHandler.handleConnection(
+      ws,
+      fakeReq("valid-token"),
+    );
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "Invalid, expired, or unauthorized token",
+    );
   });
 
   it("accepts the connection for a role the equivalent HTTP endpoints already allow", async () => {
     mockVerify.mockReturnValue({ id: "u1", email: "a@b.com" });
-    mockRoleContext.mockResolvedValue({ roleKeys: ["operations"], primaryRole: "operations", isSuperAdmin: false });
+    mockRoleContext.mockResolvedValue({
+      roleKeys: ["operations"],
+      primaryRole: "operations",
+      isSuperAdmin: false,
+    });
     const ws = fakeWs();
-    await operationsWebSocketHandler.handleConnection(ws, fakeReq("valid-token"));
+    await operationsWebSocketHandler.handleConnection(
+      ws,
+      fakeReq("valid-token"),
+    );
     expect(ws.close).not.toHaveBeenCalled();
     expect(ws.send).toHaveBeenCalled();
     expect(operationsWebSocketHandler.getStats().connectedClients).toBe(1);
@@ -117,9 +156,16 @@ describe("OperationsWebSocketHandler auth gate", () => {
 
   it("accepts super_admin regardless of the explicit allowed-role list", async () => {
     mockVerify.mockReturnValue({ id: "u1", email: "a@b.com" });
-    mockRoleContext.mockResolvedValue({ roleKeys: ["super_admin"], primaryRole: "super_admin", isSuperAdmin: true });
+    mockRoleContext.mockResolvedValue({
+      roleKeys: ["super_admin"],
+      primaryRole: "super_admin",
+      isSuperAdmin: true,
+    });
     const ws = fakeWs();
-    await operationsWebSocketHandler.handleConnection(ws, fakeReq("valid-token"));
+    await operationsWebSocketHandler.handleConnection(
+      ws,
+      fakeReq("valid-token"),
+    );
     expect(ws.close).not.toHaveBeenCalled();
   });
 
@@ -127,7 +173,13 @@ describe("OperationsWebSocketHandler auth gate", () => {
     mockVerify.mockReturnValue({ id: "u1", email: "a@b.com" });
     mockRoleContext.mockRejectedValue(new Error("db down"));
     const ws = fakeWs();
-    await operationsWebSocketHandler.handleConnection(ws, fakeReq("valid-token"));
-    expect(ws.close).toHaveBeenCalledWith(1008, "Invalid, expired, or unauthorized token");
+    await operationsWebSocketHandler.handleConnection(
+      ws,
+      fakeReq("valid-token"),
+    );
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "Invalid, expired, or unauthorized token",
+    );
   });
 });

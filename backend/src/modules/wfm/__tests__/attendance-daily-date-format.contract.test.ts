@@ -25,16 +25,18 @@ function read(file: string): string {
 
 /** The `SELECT ... FROM attendance_daily_record` blocks in a file. */
 function adrSelects(source: string): string[] {
-  return [...source.matchAll(/SELECT[\s\S]{0,2000}?FROM\s+attendance_daily_record/gi)].map(
-    (m) => m[0],
-  );
+  return [
+    ...source.matchAll(/SELECT[\s\S]{0,2000}?FROM\s+attendance_daily_record/gi),
+  ].map((m) => m[0]);
 }
 
 describe("record_date is returned in a canonical YYYY-MM-DD shape", () => {
   it("wfm.routes.ts /attendance/daily formats record_date", () => {
     const sql = read("wfm.routes.ts");
     expect(sql).toContain("DATE_FORMAT(record_date, '%Y-%m-%d') AS date");
-    expect(sql).toContain("DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date");
+    expect(sql).toContain(
+      "DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date",
+    );
   });
 
   it("no query selects a bare record_date column for a client response", () => {

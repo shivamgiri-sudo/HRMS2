@@ -3,7 +3,7 @@
 **File**: `call-quality-anomaly-detection.sql`  
 **Database**: `mas_hrms` + `db_audit`  
 **Data Window**: 90 days (configurable)  
-**Last Updated**: 2026-06-21  
+**Last Updated**: 2026-06-21
 
 ---
 
@@ -26,6 +26,7 @@ This comprehensive analysis identifies five categories of quality anomalies in c
 **Purpose**: Identify agents whose performance is statistically significantly different from the organization average.
 
 **Key Metrics**:
+
 - `agent_avg_quality` - Agent's 90-day average quality percentage
 - `org_avg_quality` - Organization-wide 90-day average
 - `stddev_distance` - Number of standard deviations from mean (σ)
@@ -33,12 +34,12 @@ This comprehensive analysis identifies five categories of quality anomalies in c
 
 **Severity Levels**:
 
-| Severity | Threshold | Action |
-|----------|-----------|--------|
-| CRITICAL | >3σ from mean | Immediate intervention (elite recognition or urgent coaching) |
-| HIGH | 2-3σ from mean | Priority coaching program or elite replication |
-| MEDIUM | 1-2σ from mean | Structured monitoring with performance conversation |
-| LOW | <1σ from mean | Standard monitoring |
+| Severity | Threshold      | Action                                                        |
+| -------- | -------------- | ------------------------------------------------------------- |
+| CRITICAL | >3σ from mean  | Immediate intervention (elite recognition or urgent coaching) |
+| HIGH     | 2-3σ from mean | Priority coaching program or elite replication                |
+| MEDIUM   | 1-2σ from mean | Structured monitoring with performance conversation           |
+| LOW      | <1σ from mean  | Standard monitoring                                           |
 
 **Performance Categories**:
 
@@ -51,6 +52,7 @@ This comprehensive analysis identifies five categories of quality anomalies in c
   - Root cause analysis, individual improvement plan, potential reassignment
 
 **Interpretation Example**:
+
 ```
 Agent: JOHN_SMITH
 Agent Avg Quality: 65.2%
@@ -72,6 +74,7 @@ Interpretation:
 **Purpose**: Detect quality degradation patterns correlated with consecutive work days, suggesting agent fatigue or burnout.
 
 **Key Metrics**:
+
 - `daily_quality` - Agent's average quality on specific day
 - `prev_day_quality` - Previous day's average quality
 - `quality_change` - Quality difference day-over-day (negative = degradation)
@@ -80,24 +83,25 @@ Interpretation:
 
 **Fatigue Pattern Types**:
 
-| Pattern | Indicator | Severity | Recommended Action |
-|---------|-----------|----------|-------------------|
-| FRIDAY_FATIGUE | Quality <70% on Friday | MEDIUM-HIGH | Optimize Friday workload distribution, advance break times |
-| WEEKEND_FATIGUE | Quality <70% on Sat/Sun | MEDIUM-HIGH | Consider incentive for weekend shifts or temporary staffing |
-| SHARP_DECLINE | >5% day-over-day drop | HIGH | Immediate check-in to identify acute stressor |
-| SUSTAINED_LOW_QUALITY | Quality <70% consistently | HIGH-CRITICAL | Escalate for health/personal issue assessment |
+| Pattern               | Indicator                 | Severity      | Recommended Action                                          |
+| --------------------- | ------------------------- | ------------- | ----------------------------------------------------------- |
+| FRIDAY_FATIGUE        | Quality <70% on Friday    | MEDIUM-HIGH   | Optimize Friday workload distribution, advance break times  |
+| WEEKEND_FATIGUE       | Quality <70% on Sat/Sun   | MEDIUM-HIGH   | Consider incentive for weekend shifts or temporary staffing |
+| SHARP_DECLINE         | >5% day-over-day drop     | HIGH          | Immediate check-in to identify acute stressor               |
+| SUSTAINED_LOW_QUALITY | Quality <70% consistently | HIGH-CRITICAL | Escalate for health/personal issue assessment               |
 
 **Daily Severity Scale**:
 
-| Quality Range | Severity | Classification |
-|---------------|----------|-----------------|
-| <60% | CRITICAL | Immediate relief from calls required |
-| 60-65% | HIGH | Reduce workload, offer break, manager check-in |
-| 65-70% | MEDIUM | Increased monitoring, coaching offer |
-| 70-75% | LOW | Monitor for continuation |
-| >75% | ACCEPTABLE | No action |
+| Quality Range | Severity   | Classification                                 |
+| ------------- | ---------- | ---------------------------------------------- |
+| <60%          | CRITICAL   | Immediate relief from calls required           |
+| 60-65%        | HIGH       | Reduce workload, offer break, manager check-in |
+| 65-70%        | MEDIUM     | Increased monitoring, coaching offer           |
+| 70-75%        | LOW        | Monitor for continuation                       |
+| >75%          | ACCEPTABLE | No action                                      |
 
 **Interpretation Example**:
+
 ```
 Agent: SARAH_JONES | 2026-06-20 (Friday)
 Daily Quality: 68.5%
@@ -119,6 +123,7 @@ Interpretation:
 **Purpose**: Identify systematic weekly patterns indicating predictable quality variations by day of week.
 
 **Key Metrics**:
+
 - `day_of_week` - Monday through Sunday
 - `avg_day_quality` - Average quality for that day across all weeks
 - `quality_delta` - Deviation from organization average
@@ -126,12 +131,12 @@ Interpretation:
 
 **Seasonal Pattern Types**:
 
-| Pattern | Day(s) | Root Cause | Strategic Action |
-|---------|--------|-----------|------------------|
-| WEEKEND_DEGRADATION | Sat-Sun | Staffing model, reduced oversight, voluntary shifts | Adjust team composition, increase supervision, review incentives |
-| FRIDAY_FATIGUE | Friday | Cumulative weekly stress, reduced energy | Reduce Friday complexity, early weekend wind-down |
-| MONDAY_BLUES | Monday | Post-rest ramp-up, distraction | Structured Monday re-engagement, easier call routing |
-| MIDWEEK_STABILITY | Tue-Wed-Thu | Peak energy and focus | Allocate complex/high-value calls to midweek |
+| Pattern             | Day(s)      | Root Cause                                          | Strategic Action                                                 |
+| ------------------- | ----------- | --------------------------------------------------- | ---------------------------------------------------------------- |
+| WEEKEND_DEGRADATION | Sat-Sun     | Staffing model, reduced oversight, voluntary shifts | Adjust team composition, increase supervision, review incentives |
+| FRIDAY_FATIGUE      | Friday      | Cumulative weekly stress, reduced energy            | Reduce Friday complexity, early weekend wind-down                |
+| MONDAY_BLUES        | Monday      | Post-rest ramp-up, distraction                      | Structured Monday re-engagement, easier call routing             |
+| MIDWEEK_STABILITY   | Tue-Wed-Thu | Peak energy and focus                               | Allocate complex/high-value calls to midweek                     |
 
 **Analysis Approach**:
 
@@ -141,6 +146,7 @@ Interpretation:
 4. Recommend resource or workload adjustments accordingly
 
 **Interpretation Example**:
+
 ```
 Day of Week Analysis:
 Monday:    76.2% (org_avg: 78.5%, delta: -2.3%)
@@ -165,6 +171,7 @@ Interpretation:
 **Purpose**: Identify specific hours where quality consistently degrades, enabling targeted break scheduling and workload optimization.
 
 **Key Metrics**:
+
 - `hour_of_day` - 0-23 hour (24-hour format)
 - `shift_phase` - Morning Peak | Lunch Valley | Afternoon Peak | Evening | Off-Peak
 - `hourly_quality` - Average quality for that hour
@@ -174,24 +181,25 @@ Interpretation:
 
 **Intraday Pattern Types**:
 
-| Pattern | Hours | Root Cause | Action |
-|---------|-------|-----------|--------|
-| LUNCH_VALLEY_DIP | 12-13 | Hunger, digestion, post-lunch lethargy | Adjust break timing, provide nutrition, rotate easier calls |
-| END_OF_SHIFT_DECLINE | 17+ | Fatigue, attention to departure time | Wind-down protocol, reduce volume/complexity in final hours |
-| MORNING_RAMP_ISSUE | 8-9 | Slow startup, focus lag | Warm-up activities, simpler call routing first, caffeine consideration |
-| SECONDARY_PEAK_DIP | 15-16 | Post-lunch energy lag continuation | Strategic break, hydration stations, energy snacks |
+| Pattern              | Hours | Root Cause                             | Action                                                                 |
+| -------------------- | ----- | -------------------------------------- | ---------------------------------------------------------------------- |
+| LUNCH_VALLEY_DIP     | 12-13 | Hunger, digestion, post-lunch lethargy | Adjust break timing, provide nutrition, rotate easier calls            |
+| END_OF_SHIFT_DECLINE | 17+   | Fatigue, attention to departure time   | Wind-down protocol, reduce volume/complexity in final hours            |
+| MORNING_RAMP_ISSUE   | 8-9   | Slow startup, focus lag                | Warm-up activities, simpler call routing first, caffeine consideration |
+| SECONDARY_PEAK_DIP   | 15-16 | Post-lunch energy lag continuation     | Strategic break, hydration stations, energy snacks                     |
 
 **Shift Phase Definitions**:
 
-| Phase | Hours | Typical Quality | Notes |
-|-------|-------|-----------------|-------|
-| Morning Peak | 8-11 | High | Best performance window for complex calls |
-| Lunch Valley | 12-13 | Lower | Predictable dip, manageable with optimization |
-| Afternoon Peak | 14-17 | High-Medium | Good for routine calls, energy recovery period |
-| Evening | 18-20 | Medium-Low | Fatigue evident, reduced volume appropriate |
-| Off-Peak | Others | Variable | Low volume, maintenance mode |
+| Phase          | Hours  | Typical Quality | Notes                                          |
+| -------------- | ------ | --------------- | ---------------------------------------------- |
+| Morning Peak   | 8-11   | High            | Best performance window for complex calls      |
+| Lunch Valley   | 12-13  | Lower           | Predictable dip, manageable with optimization  |
+| Afternoon Peak | 14-17  | High-Medium     | Good for routine calls, energy recovery period |
+| Evening        | 18-20  | Medium-Low      | Fatigue evident, reduced volume appropriate    |
+| Off-Peak       | Others | Variable        | Low volume, maintenance mode                   |
 
 **Interpretation Example**:
+
 ```
 Hourly Quality Analysis:
 Hour  Phase             Quality  Delta    Poor%  Action
@@ -226,6 +234,7 @@ Interpretation:
 **Purpose**: Identify agents with unusually unstable performance (high standard deviation), indicating lack of skill mastery or emotional instability.
 
 **Key Metrics**:
+
 - `agent_stddev` - Agent's individual standard deviation across 90 days
 - `org_avg_stddev` - Organization average standard deviation
 - `variability_ratio` - Agent StdDev / Org StdDev
@@ -234,15 +243,16 @@ Interpretation:
 
 **Variability Ratio Interpretation**:
 
-| Ratio | Classification | Meaning | Action |
-|-------|-----------------|---------|--------|
-| >2.0 | HIGHLY_UNPREDICTABLE | Agent's performance is 2x more variable than org average | Diagnostic + Individual coaching |
-| 1.5-2.0 | MODERATELY_INCONSISTENT | 50% more variable than org average | Structured training + monitoring |
-| <1.5 | ACCEPTABLE_VARIANCE | Normal variability | Standard monitoring |
+| Ratio   | Classification          | Meaning                                                  | Action                           |
+| ------- | ----------------------- | -------------------------------------------------------- | -------------------------------- |
+| >2.0    | HIGHLY_UNPREDICTABLE    | Agent's performance is 2x more variable than org average | Diagnostic + Individual coaching |
+| 1.5-2.0 | MODERATELY_INCONSISTENT | 50% more variable than org average                       | Structured training + monitoring |
+| <1.5    | ACCEPTABLE_VARIANCE     | Normal variability                                       | Standard monitoring              |
 
 **Root Cause Analysis**:
 
 Agents with high variability may experience:
+
 - **Skill Issues**: Inconsistent technique, situational knowledge gaps
 - **Emotional Factors**: Stress, anxiety, personal problems affecting focus
 - **Environmental Factors**: Call type distribution, equipment issues, team dynamics
@@ -257,6 +267,7 @@ Agents with high variability may experience:
 5. Consider environmental factors (workspace, tools, team)
 
 **Interpretation Example**:
+
 ```
 Agent: MIKE_BROWN
 Average Quality: 76.5%
@@ -289,6 +300,7 @@ Interpretation:
 **Purpose**: Detect agents with significant week-over-week changes, indicating potential crises, improvements, or attrition risks.
 
 **Key Metrics**:
+
 - `current_week_quality` - Most recent complete week's average
 - `previous_4week_avg` - Average of previous 4 weeks (baseline)
 - `quality_change` - Absolute percentage point change
@@ -297,45 +309,48 @@ Interpretation:
 
 **Shift Severity Scale**:
 
-| Severity | Threshold | Timeframe | Response |
-|----------|-----------|-----------|----------|
-| CRITICAL | >10% change | 1 week | Immediate 1-on-1 with manager + skip-level |
-| HIGH | 5-10% change | 1 week | Priority follow-up within 24-48 hours |
-| MEDIUM | 2-5% change | 1 week | Close monitoring + end-of-week check-in |
-| LOW | <2% change | 1 week | Routine monitoring |
+| Severity | Threshold    | Timeframe | Response                                   |
+| -------- | ------------ | --------- | ------------------------------------------ |
+| CRITICAL | >10% change  | 1 week    | Immediate 1-on-1 with manager + skip-level |
+| HIGH     | 5-10% change | 1 week    | Priority follow-up within 24-48 hours      |
+| MEDIUM   | 2-5% change  | 1 week    | Close monitoring + end-of-week check-in    |
+| LOW      | <2% change   | 1 week    | Routine monitoring                         |
 
 **Direction-Specific Actions**:
 
 **PERFORMANCE_DEGRADATION** (Quality drops):
+
 - Potential causes:
-  * Personal crisis (health, family, financial)
-  * Work-related stress or conflict
-  * Skill regression from new call types
-  * Fatigue/burnout accumulation
-  * Job dissatisfaction / attrition signal
+  - Personal crisis (health, family, financial)
+  - Work-related stress or conflict
+  - Skill regression from new call types
+  - Fatigue/burnout accumulation
+  - Job dissatisfaction / attrition signal
 - Recommended Response:
-  * Immediate manager conversation (within 24 hours)
-  * Assess for safety/wellness concerns
-  * Identify specific trigger (call type, timing, context)
-  * Provide support resources
-  * Create recovery plan with daily check-ins
-  * Monitor for continued decline (attrition risk)
+  - Immediate manager conversation (within 24 hours)
+  - Assess for safety/wellness concerns
+  - Identify specific trigger (call type, timing, context)
+  - Provide support resources
+  - Create recovery plan with daily check-ins
+  - Monitor for continued decline (attrition risk)
 
 **PERFORMANCE_IMPROVEMENT** (Quality rises):
+
 - Potential causes:
-  * Recent training effectiveness
-  * Renewed motivation
-  * Call type specialization
-  * Team or schedule changes
-  * Reduced personal stress
+  - Recent training effectiveness
+  - Renewed motivation
+  - Call type specialization
+  - Team or schedule changes
+  - Reduced personal stress
 - Recommended Response:
-  * Positive recognition and praise
-  * Understand what's working (coaching others?)
-  * Consider for advanced opportunities
-  * Maintain momentum through continued support
-  * Extract best practices for team replication
+  - Positive recognition and praise
+  - Understand what's working (coaching others?)
+  - Consider for advanced opportunities
+  - Maintain momentum through continued support
+  - Extract best practices for team replication
 
 **Interpretation Example**:
+
 ```
 Agent: JENNIFER_WILLIAMS
 Current Week (Week 25): 72.4%
@@ -403,24 +418,28 @@ Risk Assessment:
 **Report Generated**: [Date]  
 **Analysis Window**: 90 days  
 **Organization**: [Name]  
-**Total Agents Analyzed**: [N]  
+**Total Agents Analyzed**: [N]
 
 ### Key Findings
 
 **Elite Performers** (Quality >85%, Stable)
+
 - [Agent names] - Consider for training/mentoring roles
 - Best practices documented for team replication
 
 **Underperformers** (Quality <70%)
+
 - [Agent names] - Immediate intervention plans required
 - Root causes: [skill gap / fatigue / personal issues / etc]
 
 **Fatigue Signals**
+
 - Friday quality degradation: [Yes/No] - [magnitude]
 - Weekend staffing impact: [Yes/No] - [magnitude]
 - End-of-shift decline: [Hours affected] - [impact]
 
 **Process Opportunities**
+
 - Lunch Valley dip: [Yes/No] - Break optimization opportunity
 - Optimal shift window: [Hours] - High-complexity call routing
 - Process-wide variability: [High/Medium/Low] - Training effectiveness assessment
@@ -474,6 +493,7 @@ A: Yes, Friday fatigue is common. But it's still actionable—optimize schedules
 
 **Q: "How do I distinguish between skill gaps and personal issues in high-variability agents?"**
 A: Review call patterns:
+
 - If variability correlates with specific call types → likely skill gap
 - If variability correlates with specific hours/days → likely fatigue/stress
 - If variability is random → likely personal stress affecting focus

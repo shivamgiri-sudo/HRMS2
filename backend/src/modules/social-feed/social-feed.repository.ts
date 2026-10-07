@@ -1,17 +1,26 @@
-import { v4 as uuidv4 } from 'uuid';
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket, OkPacket } from 'mysql2';
-import type { SocialPost, PlatformConfig, FetchedPost, SocialPlatform, SaveConfigInput, SocialProfileLink, SaveProfileLinkInput } from './social-feed.types.js';
-import { SOCIAL_LINK_DEFAULTS } from './social-feed.types.js';
+import { v4 as uuidv4 } from "uuid";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket, OkPacket } from "mysql2";
+import type {
+  SocialPost,
+  PlatformConfig,
+  FetchedPost,
+  SocialPlatform,
+  SaveConfigInput,
+  SocialProfileLink,
+  SaveProfileLinkInput,
+} from "./social-feed.types.js";
+import { SOCIAL_LINK_DEFAULTS } from "./social-feed.types.js";
 
 export async function getPosts(
-  platform: SocialPlatform | 'all',
+  platform: SocialPlatform | "all",
   page: number,
   limit: number,
 ): Promise<{ posts: SocialPost[]; total: number }> {
   const offset = (page - 1) * limit;
-  const wherePlatform = platform !== 'all' ? 'AND platform = ?' : '';
-  const params: unknown[] = platform !== 'all' ? [platform, limit, offset] : [limit, offset];
+  const wherePlatform = platform !== "all" ? "AND platform = ?" : "";
+  const params: unknown[] =
+    platform !== "all" ? [platform, limit, offset] : [limit, offset];
 
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT id, platform, platform_post_id, content_text, media_url, post_url,
@@ -23,7 +32,7 @@ export async function getPosts(
     params,
   );
 
-  const countParams: unknown[] = platform !== 'all' ? [platform] : [];
+  const countParams: unknown[] = platform !== "all" ? [platform] : [];
   const [countRows] = await db.query<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM social_feed_post WHERE is_active = 1 ${wherePlatform}`,
     countParams,
@@ -35,7 +44,10 @@ export async function getPosts(
   };
 }
 
-export async function upsertPost(platform: SocialPlatform, post: FetchedPost): Promise<void> {
+export async function upsertPost(
+  platform: SocialPlatform,
+  post: FetchedPost,
+): Promise<void> {
   const id = uuidv4();
   await db.query<OkPacket>(
     `INSERT INTO social_feed_post
@@ -67,10 +79,15 @@ export async function getAllConfigs(): Promise<PlatformConfig[]> {
      FROM social_platform_config
      ORDER BY platform`,
   );
-  return rows.map((r) => ({ ...r, enabled: Boolean(r.enabled) })) as PlatformConfig[];
+  return rows.map((r) => ({
+    ...r,
+    enabled: Boolean(r.enabled),
+  })) as PlatformConfig[];
 }
 
-export async function getConfig(platform: SocialPlatform): Promise<PlatformConfig | null> {
+export async function getConfig(
+  platform: SocialPlatform,
+): Promise<PlatformConfig | null> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT id, platform, page_id, access_token, token_expiry, enabled, last_synced_at
      FROM social_platform_config
@@ -120,7 +137,7 @@ export async function getPostCount(platform: SocialPlatform): Promise<number> {
 // ── Public profile links (social_profile_link, migration 1656) ─────────────
 
 const PROFILE_LINK_COLUMNS =
-  'platform, label, profile_url, handle, display_order, enabled';
+  "platform, label, profile_url, handle, display_order, enabled";
 
 /**
  * Reads the six public company social URLs.
@@ -144,7 +161,9 @@ export async function getProfileLinks(): Promise<SocialProfileLink[]> {
     })) as SocialProfileLink[];
   } catch (err) {
     if ((err as { errno?: number }).errno === 1146) {
-      console.warn('[social-feed] social_profile_link missing — migration 1656 not applied; serving bundle defaults');
+      console.warn(
+        "[social-feed] social_profile_link missing — migration 1656 not applied; serving bundle defaults",
+      );
       return [];
     }
     throw err;

@@ -26,7 +26,9 @@ let running = false;
 
 async function sweep(): Promise<void> {
   if (running) {
-    console.log("[inbox-reconciliation] previous sweep still running; skipping");
+    console.log(
+      "[inbox-reconciliation] previous sweep still running; skipping",
+    );
     return;
   }
   running = true;
@@ -37,7 +39,9 @@ async function sweep(): Promise<void> {
         .filter(([, n]) => n > 0)
         .map(([k, n]) => `${k}=${n}`)
         .join(" ");
-      console.log(`[inbox-reconciliation] closed ${result.total} resolved alert(s): ${detail}`);
+      console.log(
+        `[inbox-reconciliation] closed ${result.total} resolved alert(s): ${detail}`,
+      );
     }
 
     // Runs after the rules, so anything they closed is already out of the way
@@ -61,9 +65,15 @@ async function sweep(): Promise<void> {
 
 export function startInboxReconciliationWorker(): void {
   if (intervalRef) return;
-  console.log(`[inbox-reconciliation] Starting — interval: ${CHECK_INTERVAL_MS / 60000}min`);
-  startupRef = setTimeout(() => { void sweep(); }, STARTUP_DELAY_MS);
-  intervalRef = setInterval(() => { void sweep(); }, CHECK_INTERVAL_MS);
+  console.log(
+    `[inbox-reconciliation] Starting — interval: ${CHECK_INTERVAL_MS / 60000}min`,
+  );
+  startupRef = setTimeout(() => {
+    void sweep();
+  }, STARTUP_DELAY_MS);
+  intervalRef = setInterval(() => {
+    void sweep();
+  }, CHECK_INTERVAL_MS);
 }
 
 export function stopInboxReconciliationWorker(): void {

@@ -3,7 +3,11 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { flushDalmiaRows } from "./dalmia-chunk-import.js";
 import type { ChunkInsertRow } from "./masmis-chunked-insert.js";
-import { canonicalizeRow, parseFlexibleDate, parseFlexibleDateTime } from "./dalmia-import-helpers.js";
+import {
+  canonicalizeRow,
+  parseFlexibleDate,
+  parseFlexibleDateTime,
+} from "./dalmia-import-helpers.js";
 
 /**
  * Dalmia Cement's own "Outbound " sheet -- website/careers enquiry log for
@@ -12,8 +16,17 @@ import { canonicalizeRow, parseFlexibleDate, parseFlexibleDateTime } from "./dal
  */
 
 export const DALMIA_OUTBOUND_HEADERS = [
-  "ID", "Name", "Email", "Mobile", "Enquiry For", "Message", "Date", "Status", "Remarks",
-  "Calling Date", "Source of lead",
+  "ID",
+  "Name",
+  "Email",
+  "Mobile",
+  "Enquiry For",
+  "Message",
+  "Date",
+  "Status",
+  "Remarks",
+  "Calling Date",
+  "Source of lead",
 ] as const;
 
 /** Accepts ISO, Excel serials and displayed text ("9/2/2026", "31-08-2026") -- see dalmia-import-helpers.ts. */
@@ -37,7 +50,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importDalmiaOutboundBatch(
   batchId: string,
@@ -85,21 +100,28 @@ export async function importDalmiaOutboundBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Dalmia Cement" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     const sourceRowId = parseNullableInt(data["ID"]);
     const callingDate = parseDate(data["Calling Date"]);
     if (sourceRowId === null || !callingDate) {
       const msg = `Row ${row.row_no}: "ID" and "Calling Date" are both required -- ID is this row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     insertRows.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, sourceRowId, callingDate,
+        randomUUID(),
+        processId,
+        sourceRowId,
+        callingDate,
         cleanText(data["Name"]),
         cleanText(data["Email"]),
         cleanText(data["Mobile"]),
@@ -109,15 +131,38 @@ export async function importDalmiaOutboundBatch(
         cleanText(data["Status"]),
         cleanText(data["Remarks"]),
         cleanText(data["Source of lead"]),
-        "bulk_upload", batchId, importedByUserId,
+        "bulk_upload",
+        batchId,
+        importedByUserId,
       ],
     });
   }
 
   return flushDalmiaRows({
-    batchId, table: "dalmia_outbound_raw",
-    columns: ["id","process_id","source_row_id","report_date","customer_name","email","mobile","enquiry_for","message","enquiry_date","status","remarks","source_of_lead","data_source","source_reference","created_by"],
-    suffix: "ON DUPLICATE KEY UPDATE status = VALUES(status), remarks = VALUES(remarks)",
-    rows: insertRows, errorUpdates, errors,
+    batchId,
+    table: "dalmia_outbound_raw",
+    columns: [
+      "id",
+      "process_id",
+      "source_row_id",
+      "report_date",
+      "customer_name",
+      "email",
+      "mobile",
+      "enquiry_for",
+      "message",
+      "enquiry_date",
+      "status",
+      "remarks",
+      "source_of_lead",
+      "data_source",
+      "source_reference",
+      "created_by",
+    ],
+    suffix:
+      "ON DUPLICATE KEY UPDATE status = VALUES(status), remarks = VALUES(remarks)",
+    rows: insertRows,
+    errorUpdates,
+    errors,
   });
 }

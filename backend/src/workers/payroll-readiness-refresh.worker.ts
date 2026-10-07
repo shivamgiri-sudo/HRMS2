@@ -32,7 +32,11 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import { payrollBranchReadinessService } from "../modules/payroll/payroll-branch-readiness.service.js";
-import { withWorkerLock, registerTimer, unregisterTimer } from "./worker-utils.js";
+import {
+  withWorkerLock,
+  registerTimer,
+  unregisterTimer,
+} from "./worker-utils.js";
 
 const WORKER_NAME = "payroll-readiness-refresh";
 const INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours — live active-branch count is 7, cheap at this cadence
@@ -40,17 +44,19 @@ const INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours — live active-branch count 
 let intervalTimer: NodeJS.Timeout | null = null;
 
 function isMissingTableError(error: unknown): boolean {
-  return typeof error === "object"
-    && error !== null
-    && "code" in error
-    && String((error as { code?: unknown }).code ?? "") === "ER_NO_SUCH_TABLE";
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    String((error as { code?: unknown }).code ?? "") === "ER_NO_SUCH_TABLE"
+  );
 }
 
 async function getOpenPayrollMonths(): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT run_month FROM salary_prep_run
       WHERE LOWER(COALESCE(status, '')) IN ('draft', 'processing')
-      ORDER BY run_month DESC`
+      ORDER BY run_month DESC`,
   );
   return (rows as RowDataPacket[]).map((r) => String(r.run_month));
 }
@@ -61,14 +67,18 @@ async function runRefresh(): Promise<void> {
     months = await getOpenPayrollMonths();
   } catch (err: unknown) {
     if (isMissingTableError(err)) {
-      console.warn(`[${WORKER_NAME}] salary_prep_run missing — skipping until migrated`);
+      console.warn(
+        `[${WORKER_NAME}] salary_prep_run missing — skipping until migrated`,
+      );
       return;
     }
     throw err;
   }
 
   if (months.length === 0) {
-    console.log(`[${WORKER_NAME}] No draft/processing payroll months — nothing to refresh`);
+    console.log(
+      `[${WORKER_NAME}] No draft/processing payroll months — nothing to refresh`,
+    );
     return;
   }
 
@@ -84,7 +94,7 @@ async function runRefresh(): Promise<void> {
   }
 
   console.log(
-    `[${WORKER_NAME}] Refreshed ${months.length} open month(s) [${months.join(", ")}], ${branchesRefreshed} branch-record(s) total`
+    `[${WORKER_NAME}] Refreshed ${months.length} open month(s) [${months.join(", ")}], ${branchesRefreshed} branch-record(s) total`,
   );
 }
 
@@ -98,7 +108,9 @@ async function runGuarded(): Promise<void> {
 }
 
 export async function startPayrollReadinessRefreshWorker(): Promise<void> {
-  console.log(`[${WORKER_NAME}] Starting (interval: ${INTERVAL_MS / 3600000}h)`);
+  console.log(
+    `[${WORKER_NAME}] Starting (interval: ${INTERVAL_MS / 3600000}h)`,
+  );
   void runGuarded();
   intervalTimer = setInterval(() => void runGuarded(), INTERVAL_MS);
   registerTimer(`${WORKER_NAME}-interval`, intervalTimer);

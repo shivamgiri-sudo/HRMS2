@@ -10,10 +10,14 @@ import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 // one in-flight query (no TTL: the entry is dropped the moment it settles, so nothing is ever
 // served stale). Each caller receives its own copy of the map.
 const statConfigInflight = new Map<string, Promise<Record<string, number>>>();
-function loadStatConfigShared(runMonth: string): Promise<Record<string, number>> {
+function loadStatConfigShared(
+  runMonth: string,
+): Promise<Record<string, number>> {
   let p = statConfigInflight.get(runMonth);
   if (!p) {
-    p = loadFlatStatutoryConfig(runMonth).finally(() => statConfigInflight.delete(runMonth));
+    p = loadFlatStatutoryConfig(runMonth).finally(() =>
+      statConfigInflight.delete(runMonth),
+    );
     statConfigInflight.set(runMonth, p);
   }
   return p.then((cfg) => ({ ...cfg }));
@@ -59,7 +63,8 @@ export async function computeRunningSalary(
 }> {
   // Use IST date so month boundaries align with stored dates (DB datetimes are UTC-shifted)
   const istOffset = 5.5 * 60 * 60 * 1000;
-  const today = asOfDate ?? new Date(Date.now() + istOffset).toISOString().slice(0, 10);
+  const today =
+    asOfDate ?? new Date(Date.now() + istOffset).toISOString().slice(0, 10);
   const monthStart = runMonth;
   const [y, m] = runMonth.split("-").map(Number);
   // `new Date(y, m, 0)` is a LOCAL instant; .toISOString() serialises it as UTC. On any host
@@ -101,7 +106,7 @@ export async function computeRunningSalary(
       LIMIT 1`,
     [employeeId],
   );
-  const emp = (empRows[0] as any);
+  const emp = empRows[0] as any;
   if (!emp) return _zeroResult();
 
   // Primary salary source: salary_component_assignments (latest active record)
@@ -126,7 +131,7 @@ export async function computeRunningSalary(
   );
   const compAmounts: Record<string, number> = {};
   for (const c of compRows as any[]) {
-    if (c.calc_type === 'fixed' || c.calc_type === 'pct_of_ctc') {
+    if (c.calc_type === "fixed" || c.calc_type === "pct_of_ctc") {
       compAmounts[c.component_code] = Number(c.value) || 0;
     }
   }
@@ -140,16 +145,24 @@ export async function computeRunningSalary(
   if (scaRow && Number(scaRow.gross) > 0) {
     hasFixedComponents = true;
     fixedBasic = Number(scaRow.basic) || 0;
-    fixedHRA   = Number(scaRow.hra)   || 0;
+    fixedHRA = Number(scaRow.hra) || 0;
     fixedGross = Number(scaRow.gross);
   } else {
-    hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
+    hasFixedComponents =
+      compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
     fixedBasic = compAmounts.BASIC || 0;
-    fixedHRA   = compAmounts.HRA   || 0;
+    fixedHRA = compAmounts.HRA || 0;
     fixedGross = hasFixedComponents
-      ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
-         (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
-         (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
+      ? fixedBasic +
+        fixedHRA +
+        (compAmounts.BONUS || 0) +
+        (compAmounts.CONV || 0) +
+        (compAmounts.PORTFOLIO || 0) +
+        (compAmounts.MEDICAL || 0) +
+        (compAmounts.LTA || 0) +
+        (compAmounts.SPECIAL || 0) +
+        (compAmounts.OTHER_ALLOW || 0) +
+        (compAmounts.PLI || 0)
       : 0;
   }
 
@@ -157,17 +170,17 @@ export async function computeRunningSalary(
   // rate dated next quarter must not change what this month's running salary
   // reads as earned so far.
   const statConfig = await loadStatConfigShared(runMonth);
-  const pfEmployeePct  = statConfig["pf_employee_pct"]   ?? 12;
-  const esicEmpPct     = statConfig["esic_employee_pct"] ?? 0.75;
-  const esicEmrPct     = statConfig["esic_employer_pct"] ?? 3.25;
-  const esicWageLimit  = statConfig["esic_wage_limit"]   ?? 21000;
-  const pfWageLimit    = statConfig["pf_wage_limit"]     ?? 15000;
+  const pfEmployeePct = statConfig["pf_employee_pct"] ?? 12;
+  const esicEmpPct = statConfig["esic_employee_pct"] ?? 0.75;
+  const esicEmrPct = statConfig["esic_employer_pct"] ?? 3.25;
+  const esicWageLimit = statConfig["esic_wage_limit"] ?? 21000;
+  const pfWageLimit = statConfig["pf_wage_limit"] ?? 15000;
   // PT removed 2026-09-11 per user decision — full company-wide removal, all
   // states, go-forward only. Previously this fell back to statConfig's
   // professional_tax key (never actually set in production) when the branch had
   // no state; now it is hardcoded 0 so a leftover config row cannot revive a PT
   // deduction here, matching payrollCalculate.service.ts's buildStatutoryRow.
-  const defaultPt      = 0;
+  const defaultPt = 0;
 
   // Check PF / ESI opt-outs
   const [overrideRows] = await db.execute<RowDataPacket[]>(
@@ -175,8 +188,12 @@ export async function computeRunningSalary(
      WHERE employee_id = ? AND status = 'approved'`,
     [employeeId],
   );
-  const pfOptOut   = (overrideRows as any[]).some((r: any) => r.override_type === "pf_opt_out");
-  const esicOptOut = (overrideRows as any[]).some((r: any) => r.override_type === "esic_opt_out");
+  const pfOptOut = (overrideRows as any[]).some(
+    (r: any) => r.override_type === "pf_opt_out",
+  );
+  const esicOptOut = (overrideRows as any[]).some(
+    (r: any) => r.override_type === "esic_opt_out",
+  );
 
   // Professional tax from slab if state is known
   const { getPtFromSlab } = await import("./payrollCalculate.service.js");
@@ -216,15 +233,17 @@ export async function computeRunningSalary(
   // are absent from the dialler feed would be marked absent, lwp 1.00, every day.
   // That fallback is correct for pay and invisible on screen, which is what these
   // counters exist to fix. They change no arithmetic.
-  let fallbackPaidDays = 0;   // paid day value with no positive APR evidence behind it
-  let aprNoDataDays = 0;      // neither source had anything (missing_punch)
+  let fallbackPaidDays = 0; // paid day value with no positive APR evidence behind it
+  let aprNoDataDays = 0; // neither source had anything (missing_punch)
 
   for (const r of attRows as any[]) {
     const sourceSystem = String(r.source_system ?? "");
     // Paid day value this row contributes, mirroring the switch below.
     const paidValue =
-      r.attendance_status === "present" || r.attendance_status === "late" ? 1
-        : r.attendance_status === "half_day" ? 0.5
+      r.attendance_status === "present" || r.attendance_status === "late"
+        ? 1
+        : r.attendance_status === "half_day"
+          ? 0.5
           : 0;
     // Verified means POSITIVE APR evidence, not merely "labelled dialler".
     //
@@ -241,18 +260,34 @@ export async function computeRunningSalary(
     //
     // leave_approved never reaches here — paidValue is 0 for it — so an HR-approved
     // absence is not counted as unverified.
-    const aprEvidenced = sourceSystem.startsWith("apr") && sourceSystem !== "apr_no_activity";
+    const aprEvidenced =
+      sourceSystem.startsWith("apr") && sourceSystem !== "apr_no_activity";
     if (paidValue > 0 && !aprEvidenced) fallbackPaidDays += paidValue;
     if (sourceSystem === "apr_no_activity") aprNoDataDays += 1;
 
     switch (r.attendance_status) {
-      case "present":        presentTillDate += 1; break;
-      case "late":           presentTillDate += 1; break;
-      case "half_day":       presentTillDate += 0.5; lwpTillDate += 0.5; break;
-      case "leave_approved": paidLeaveTillDate += 1; break;
-      case "week_off":       weekoffRosteredTillDate += 1; break;
-      case "absent":         lwpTillDate += 1; break;
-      case "missing_punch":  lwpTillDate += Number(r.lwp_value ?? 1); break;
+      case "present":
+        presentTillDate += 1;
+        break;
+      case "late":
+        presentTillDate += 1;
+        break;
+      case "half_day":
+        presentTillDate += 0.5;
+        lwpTillDate += 0.5;
+        break;
+      case "leave_approved":
+        paidLeaveTillDate += 1;
+        break;
+      case "week_off":
+        weekoffRosteredTillDate += 1;
+        break;
+      case "absent":
+        lwpTillDate += 1;
+        break;
+      case "missing_punch":
+        lwpTillDate += Number(r.lwp_value ?? 1);
+        break;
     }
   }
 
@@ -264,7 +299,10 @@ export async function computeRunningSalary(
   // The FULL-month count is the right input even mid-month, because availableWorkingDays is
   // itself a full-month figure — the final engine compares against the same denominator.
   const runMonthYM = `${y}-${String(m).padStart(2, "0")}`;
-  const { eligibleHolidayDates } = await resolveHolidaysForEmployeeV2(employeeId, runMonthYM);
+  const { eligibleHolidayDates } = await resolveHolidaysForEmployeeV2(
+    employeeId,
+    runMonthYM,
+  );
   const eligibleHolidayCountMonth = eligibleHolidayDates.length;
 
   // Eligible week-offs till date — use the same slab logic as final payroll
@@ -285,10 +323,13 @@ export async function computeRunningSalary(
   // holiday for any employee, ever. Fixed by resolving the month's eligible holiday
   // dates once, correctly, and filtering by date range instead of re-querying per day.
   const eligibleHolidaysTillDate = eligibleHolidayDates.filter(
-    (d) => d >= monthStart && d <= tillDate
+    (d) => d >= monthStart && d <= tillDate,
   ).length;
 
-  const earnedPayableDays = presentTillDate + paidLeaveTillDate + eligibleWeekoffTillDate +
+  const earnedPayableDays =
+    presentTillDate +
+    paidLeaveTillDate +
+    eligibleWeekoffTillDate +
     eligibleHolidaysTillDate;
   const cappedEarned = Math.min(Math.max(0, earnedPayableDays), activeCalDays);
 
@@ -306,7 +347,9 @@ export async function computeRunningSalary(
         AND ibu.status = 'approved'`,
     [employeeId, runMonth.slice(0, 7)],
   );
-  const approvedIncentivesEarned = Number((incentiveRowsEarned[0] as any)?.total_incentives ?? 0);
+  const approvedIncentivesEarned = Number(
+    (incentiveRowsEarned[0] as any)?.total_incentives ?? 0,
+  );
 
   // Advance recovery — same query as payrollCalculate.service.ts step 5d
   let advanceRecoveryEarned = 0;
@@ -318,7 +361,9 @@ export async function computeRunningSalary(
       [employeeId],
     );
     advanceRecoveryEarned = Number((advRows[0] as any)?.monthly_recovery ?? 0);
-  } catch { /* table may not exist in all environments */ }
+  } catch {
+    /* table may not exist in all environments */
+  }
 
   // Loan EMI recovery
   let loanEmiEarned = 0;
@@ -332,7 +377,9 @@ export async function computeRunningSalary(
       [employeeId, monthStartStr, monthStartStr],
     );
     loanEmiEarned = Number((loanRows[0] as any)?.loan_emi ?? 0);
-  } catch { /* employee_loans may not exist */ }
+  } catch {
+    /* employee_loans may not exist */
+  }
 
   // PT removed 2026-09-11 per user decision — getPtFromSlab now always resolves to 0
   // (see payrollCalculate.service.ts), so ptEarned is always 0 regardless of state_code.
@@ -355,18 +402,29 @@ export async function computeRunningSalary(
     grossMonthlyCTC: earnedStructureSalary,
     workingDays: Math.max(1, cappedEarned),
     lwpDays: 0, // LWP already baked into cappedEarned
-    pfEmployeePct, esicEmployeePct: esicEmpPct, esicEmployerPct: esicEmrPct, esicWageLimit, pfWageLimit,
+    pfEmployeePct,
+    esicEmployeePct: esicEmpPct,
+    esicEmployerPct: esicEmrPct,
+    esicWageLimit,
+    pfWageLimit,
     professionalTax: ptEarned,
     tds: 0,
     basicPct: effectiveBasicPct,
     hraPct: effectiveHraPct,
-    pfOptOut, esicOptOut,
+    pfOptOut,
+    esicOptOut,
   });
   // Add incentive to net after statutory deductions, matching payrollCalculate.service.ts.
   // Subtract advance recovery and loan EMI last, same as the locked payroll run.
   const earnedCalc = {
     ...earnedCalcRaw,
-    net_salary: Math.max(0, earnedCalcRaw.net_salary + approvedIncentivesEarned - advanceRecoveryEarned - loanEmiEarned),
+    net_salary: Math.max(
+      0,
+      earnedCalcRaw.net_salary +
+        approvedIncentivesEarned -
+        advanceRecoveryEarned -
+        loanEmiEarned,
+    ),
   };
   // earned_salary_till_date shown in UI = structure gross + incentive (total take-home basis)
   const earnedSalaryTillDate = earnedStructureSalary + approvedIncentivesEarned;
@@ -391,7 +449,7 @@ export async function computeRunningSalary(
   tomorrowD.setDate(tomorrowD.getDate() + 1);
   const tomorrowStr = tomorrowD.toISOString().slice(0, 10);
   const futureHolidays = eligibleHolidayDates.filter(
-    (d) => d >= tomorrowStr && d <= monthEnd
+    (d) => d >= tomorrowStr && d <= monthEnd,
   ).length;
 
   // Week-off eligibility for the projection uses the EARNED paid base only.
@@ -408,11 +466,19 @@ export async function computeRunningSalary(
     eligibleHolidayCountMonth,
   );
 
-  const projectedPayableDaysRaw = presentTillDate + paidLeaveTillDate +
-    projectedEligibleWeekoffs + eligibleHolidaysTillDate + futureHolidays +
+  const projectedPayableDaysRaw =
+    presentTillDate +
+    paidLeaveTillDate +
+    projectedEligibleWeekoffs +
+    eligibleHolidaysTillDate +
+    futureHolidays +
     futurePresent;
-  const projectedPayableDays = Math.min(Math.max(0, projectedPayableDaysRaw), activeCalDays);
-  const projectedStructureSalary = (monthlyGross / daysInMonth) * projectedPayableDays;
+  const projectedPayableDays = Math.min(
+    Math.max(0, projectedPayableDaysRaw),
+    activeCalDays,
+  );
+  const projectedStructureSalary =
+    (monthlyGross / daysInMonth) * projectedPayableDays;
 
   // PT removed 2026-09-11 per user decision — always 0, same as ptEarned above.
   const ptProjected = emp.state_code
@@ -422,12 +488,17 @@ export async function computeRunningSalary(
     grossMonthlyCTC: projectedStructureSalary,
     workingDays: Math.max(1, projectedPayableDays),
     lwpDays: 0,
-    pfEmployeePct, esicEmployeePct: esicEmpPct, esicEmployerPct: esicEmrPct, esicWageLimit, pfWageLimit,
+    pfEmployeePct,
+    esicEmployeePct: esicEmpPct,
+    esicEmployerPct: esicEmrPct,
+    esicWageLimit,
+    pfWageLimit,
     professionalTax: ptProjected,
     tds: 0,
     basicPct: effectiveBasicPct,
     hraPct: effectiveHraPct,
-    pfOptOut, esicOptOut,
+    pfOptOut,
+    esicOptOut,
   });
   // Incentive added to net after deductions, matching payrollCalculate.service.ts.
   const projectedCalc = {
@@ -448,7 +519,8 @@ export async function computeRunningSalary(
   // disagree with each other; a fourth would be the worst of both.
   let aprEligible = false;
   try {
-    const { attendanceEngineService } = await import("../wfm/attendance-engine.service.js");
+    const { attendanceEngineService } =
+      await import("../wfm/attendance-engine.service.js");
     aprEligible = await attendanceEngineService.isAprEligible(
       emp.designation_id ?? null,
       emp.department_id ?? null,
@@ -487,9 +559,13 @@ export async function computeRunningSalary(
       ? Math.round(Math.max(0, cappedEarned - fallbackPaidDays) * 10) / 10
       : null,
     apr_verified_salary_till_date: aprEligible
-      ? Math.round(Math.max(0, earnedSalaryTillDate - fallbackSalaryTillDate) * 100) / 100
+      ? Math.round(
+          Math.max(0, earnedSalaryTillDate - fallbackSalaryTillDate) * 100,
+        ) / 100
       : null,
-    fallback_payable_days: aprEligible ? Math.round(fallbackPaidDays * 10) / 10 : null,
+    fallback_payable_days: aprEligible
+      ? Math.round(fallbackPaidDays * 10) / 10
+      : null,
     fallback_salary_till_date: aprEligible
       ? Math.round(fallbackSalaryTillDate * 100) / 100
       : null,
@@ -497,7 +573,10 @@ export async function computeRunningSalary(
   };
 }
 
-async function _activeCalendarDays(employeeId: string, runMonth: string): Promise<number> {
+async function _activeCalendarDays(
+  employeeId: string,
+  runMonth: string,
+): Promise<number> {
   const [y, m] = runMonth.split("-").map(Number);
   const lastDay = new Date(y, m, 0).getDate();
 
@@ -505,15 +584,19 @@ async function _activeCalendarDays(employeeId: string, runMonth: string): Promis
     `SELECT salary_start_date, date_of_leaving FROM employees WHERE id = ? LIMIT 1`,
     [employeeId],
   );
-  const emp = (rows[0] as any);
+  const emp = rows[0] as any;
   const monthStart = runMonth;
   const monthEnd = `${runMonth.slice(0, 7)}-${String(lastDay).padStart(2, "0")}`;
 
   const effectiveStart = emp?.salary_start_date
-    ? (emp.salary_start_date > monthStart ? emp.salary_start_date : monthStart)
+    ? emp.salary_start_date > monthStart
+      ? emp.salary_start_date
+      : monthStart
     : monthStart;
   const effectiveEnd = emp?.date_of_leaving
-    ? (emp.date_of_leaving < monthEnd ? emp.date_of_leaving : monthEnd)
+    ? emp.date_of_leaving < monthEnd
+      ? emp.date_of_leaving
+      : monthEnd
     : monthEnd;
 
   const start = new Date(effectiveStart);

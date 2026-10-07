@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { parseCoverageDate, COVERAGE_SOURCES } from "../upload-coverage.service.js";
+import {
+  parseCoverageDate,
+  COVERAGE_SOURCES,
+} from "../upload-coverage.service.js";
 
 describe("parseCoverageDate", () => {
   it("reads every spelling the tables actually hold", () => {
@@ -25,7 +28,9 @@ describe("parseCoverageDate", () => {
     expect(parseCoverageDate("12345")).toBeNull();
   });
   it("covers every TPZ upload type", async () => {
-    const { TPZ_UPLOAD_TYPES } = await import("../../tpz-access/tpz-access.catalog.js");
-    for (const code of TPZ_UPLOAD_TYPES.keys()) expect(code in COVERAGE_SOURCES).toBe(true);
+    const { TPZ_UPLOAD_TYPES } =
+      await import("../../tpz-access/tpz-access.catalog.js");
+    for (const code of TPZ_UPLOAD_TYPES.keys())
+      expect(code in COVERAGE_SOURCES).toBe(true);
   });
 });

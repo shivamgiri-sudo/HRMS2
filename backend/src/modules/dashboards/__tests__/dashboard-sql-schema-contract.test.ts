@@ -37,8 +37,10 @@ describe("dashboard SQL schema contract", () => {
       (dep) => !dep.optional && !hasTable(snapshot, dep.table),
     ).map((dep) => `${dep.table} (read by ${dep.usedBy})`);
 
-    expect(missing, `Tables referenced by dashboard code but never created:\n  ${missing.join("\n  ")}`)
-      .toEqual([]);
+    expect(
+      missing,
+      `Tables referenced by dashboard code but never created:\n  ${missing.join("\n  ")}`,
+    ).toEqual([]);
   });
 
   it("every column the dashboard SQL reads exists in some migration", () => {

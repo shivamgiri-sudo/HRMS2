@@ -87,7 +87,7 @@ export const workforceMandateService = {
        WHERE ${conds.join(" AND ")}
        ORDER BY wm.effective_from DESC, wm.role_group ASC
        LIMIT 500`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },
@@ -109,7 +109,7 @@ export const workforceMandateService = {
       effectiveFrom: string;
       effectiveTo?: string;
     },
-    userId: string
+    userId: string,
   ): Promise<RowDataPacket> {
     const id = randomUUID();
     const branchId = input.branchId ?? null;
@@ -145,7 +145,7 @@ export const workforceMandateService = {
         input.effectiveFrom,
         effectiveTo,
         userId,
-      ]
+      ],
     );
 
     await logSensitiveAction({
@@ -154,7 +154,10 @@ export const workforceMandateService = {
       module_key: "WORKFORCE_MANDATE",
       entity_type: "workforce_mandate",
       entity_id: input.processId,
-      change_summary: { role_group: input.roleGroup, mandated_hc: input.mandatedHc },
+      change_summary: {
+        role_group: input.roleGroup,
+        mandated_hc: input.mandatedHc,
+      },
     });
 
     // Fetch actual row (ON DUPLICATE KEY may have returned existing id)
@@ -162,7 +165,7 @@ export const workforceMandateService = {
       `SELECT * FROM workforce_mandate
        WHERE process_id = ? AND (branch_id <=> ?) AND role_group = ? AND effective_from = ?
        LIMIT 1`,
-      [input.processId, branchId, input.roleGroup, input.effectiveFrom]
+      [input.processId, branchId, input.roleGroup, input.effectiveFrom],
     );
     return (rows as RowDataPacket[])[0];
   },
@@ -172,7 +175,7 @@ export const workforceMandateService = {
    */
   async getCapacitySnapshot(
     processId: string,
-    branchId?: string
+    branchId?: string,
   ): Promise<CapacitySnapshot[]> {
     // 1. Fetch mandates
     const mandateConds = ["wm.process_id = ?", "wm.active_status = 1"];
@@ -184,7 +187,7 @@ export const workforceMandateService = {
 
     const [mandateRows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM workforce_mandate WHERE ${mandateConds.join(" AND ")}`,
-      mandateParams
+      mandateParams,
     );
     const mandates = mandateRows as MandateRecord[];
 
@@ -198,7 +201,7 @@ export const workforceMandateService = {
     const [activeRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM employees e
        WHERE e.process_id = ?${branchCond} AND e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active'`,
-      [processId, ...branchParams]
+      [processId, ...branchParams],
     );
     const activeEligibleHc = toNum((activeRows as RowDataPacket[])[0]?.cnt);
 
@@ -209,7 +212,7 @@ export const workforceMandateService = {
        JOIN employees e ON e.id = er.employee_id
        WHERE e.process_id = ?${branchCond}
          AND er.status IN ('accepted','notice_serving')`,
-      [processId, ...branchParams]
+      [processId, ...branchParams],
     );
     const onNoticeHc = toNum((noticeRows as RowDataPacket[])[0]?.cnt);
 
@@ -222,7 +225,7 @@ export const workforceMandateService = {
          AND lr.status = 'approved'
          AND lr.to_date >= CURDATE()
          AND lr.total_days >= 5`,
-      [processId, ...branchParams]
+      [processId, ...branchParams],
     );
     const longLeaveHc = toNum((llRows as RowDataPacket[])[0]?.cnt);
 
@@ -232,7 +235,7 @@ export const workforceMandateService = {
        FROM ats_candidate ac
        WHERE ac.applied_for_process = ?
          AND ac.current_stage IN ('Applied','Screened','Selected','Onboarding')`,
-      [processId]
+      [processId],
     );
     const trainingPipeline = toNum((pipelineRows as RowDataPacket[])[0]?.cnt);
 
@@ -244,7 +247,7 @@ export const workforceMandateService = {
        WHERE e.process_id = ?${branchCond}
          AND aob.status = 'joined'
          AND aob.bridge_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
-      [processId, ...branchParams]
+      [processId, ...branchParams],
     );
     const joiningConfirmed = toNum((joiningRows as RowDataPacket[])[0]?.cnt);
 
@@ -255,7 +258,7 @@ export const workforceMandateService = {
        WHERE (process_id = ? OR process_id IS NULL)
          AND active_status = 1
        ORDER BY process_id DESC`,
-      [processId]
+      [processId],
     );
 
     const supportSplit: Record<string, number> = {};
@@ -270,7 +273,7 @@ export const workforceMandateService = {
          WHERE e.process_id = ?${branchCond}
            AND e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
            AND dm.designation_name = ?`,
-        [processId, ...branchParams, role]
+        [processId, ...branchParams, role],
       );
       supportSplit[role] = toNum((empRows as RowDataPacket[])[0]?.cnt);
     }
@@ -282,7 +285,8 @@ export const workforceMandateService = {
         (1 + mandate.buffer_pct / 100 + mandate.shrinkage_pct / 100);
 
       const shortageOrSurplus = activeEligibleHc - targetHc;
-      const coveragePct = targetHc > 0 ? (activeEligibleHc / targetHc) * 100 : 0;
+      const coveragePct =
+        targetHc > 0 ? (activeEligibleHc / targetHc) * 100 : 0;
 
       return {
         mandate,
@@ -329,7 +333,7 @@ export const workforceMandateService = {
        GROUP BY p.id, p.process_name
        ORDER BY
          FIELD(staffing_risk, 'red', 'amber', 'green'),
-         p.process_name ASC`
+         p.process_name ASC`,
     );
     return rows as RowDataPacket[];
   },
@@ -348,7 +352,7 @@ export const workforceMandateService = {
       `SELECT * FROM support_role_ratio
        WHERE ${conds.join(" AND ")}
        ORDER BY support_role, process_id IS NULL`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },

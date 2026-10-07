@@ -14,15 +14,28 @@ import {
   type RevenueComponentInput,
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
-import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
-import { isOpenPeriod, getLiveRevenueEstimate } from "./pnl-statement.service.js";
+import {
+  PROCESS_BY_COST_CENTRE,
+  getInvoicedRevenueActuals,
+  getApprovedCostCentreSplits,
+} from "./pnl-actuals.service.js";
+import {
+  isOpenPeriod,
+  getLiveRevenueEstimate,
+} from "./pnl-statement.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
-import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
-import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
+import type {
+  PeopleCostByKey,
+  PnlPeopleBucket,
+} from "./pnl-running-salary.service.js";
+import {
+  processPnlService,
+  getClosedBranchIds,
+} from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
 
 type NumericMap = Map<string, number>;
@@ -295,8 +308,12 @@ const toNumber = (value: unknown, fallback = 0): number => {
 };
 const pct = (numerator: number, denominator: number): number | null =>
   denominator > 0 ? (numerator / denominator) * 100 : null;
-const placeholders = (values: unknown[]): string => values.map(() => "?").join(",");
-const lower = (value: unknown): string => String(value ?? "").trim().toLowerCase();
+const placeholders = (values: unknown[]): string =>
+  values.map(() => "?").join(",");
+const lower = (value: unknown): string =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase();
 
 function defaultPeriod(): string {
   const now = new Date();
@@ -305,7 +322,10 @@ function defaultPeriod(): string {
 
 function normalizeFilters(filters: Partial<PnlQueryFilters>): PnlQueryFilters {
   return {
-    period: filters.period && /^\d{4}-\d{2}$/.test(filters.period) ? filters.period : defaultPeriod(),
+    period:
+      filters.period && /^\d{4}-\d{2}$/.test(filters.period)
+        ? filters.period
+        : defaultPeriod(),
     branchId: filters.branchId,
     branchIds: filters.branchIds,
     processId: filters.processId,
@@ -346,13 +366,20 @@ async function listColumns(tableName: string): Promise<Set<string>> {
            FROM information_schema.columns
           WHERE table_schema = DATABASE()
             AND table_name = ?`,
-        [tableName]
+        [tableName],
       )
-        .then((rows) => new Set(rows.map((row) => String(row.column_name ?? (row as any).COLUMN_NAME))))
+        .then(
+          (rows) =>
+            new Set(
+              rows.map((row) =>
+                String(row.column_name ?? (row as any).COLUMN_NAME),
+              ),
+            ),
+        )
         .catch((error) => {
           columnCache.delete(tableName);
           throw error;
-        })
+        }),
     );
   }
   return columnCache.get(tableName)!;
@@ -380,7 +407,10 @@ const TOLERATED_QUERY_ERRORS = new Set(["ER_NO_SUCH_TABLE"]);
  * that looks plausible. So a missing table still yields no rows, loudly; anything else now
  * propagates and the endpoint fails honestly.
  */
-export async function safeRows<T extends RowDataPacket>(sql: string, params: unknown[] = []): Promise<T[]> {
+export async function safeRows<T extends RowDataPacket>(
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
   try {
     return await queryRows<T>(sql, params);
   } catch (error) {
@@ -392,46 +422,69 @@ export async function safeRows<T extends RowDataPacket>(sql: string, params: unk
       return [];
     }
     console.error(
-      `[bpo-pnl] query failed (${code ?? "no code"}), refusing to report it as zero: ${excerpt}`
+      `[bpo-pnl] query failed (${code ?? "no code"}), refusing to report it as zero: ${excerpt}`,
     );
     throw error;
   }
 }
 
-function normalizeBillingModel(value: string | null | undefined): BpoBillingModel {
+function normalizeBillingModel(
+  value: string | null | undefined,
+): BpoBillingModel {
   switch (lower(value)) {
-    case "per_fte": return "per_fte";
+    case "per_fte":
+      return "per_fte";
     case "per_hour":
-    case "per_productive_hour": return "per_productive_hour";
-    case "per_login_hour": return "per_login_hour";
-    case "per_talk_minute": return "per_talk_minute";
-    case "per_transaction": return "per_transaction";
-    case "per_mandate": return "per_mandate";
-    case "per_case": return "per_case";
-    case "fixed_monthly": return "fixed_monthly";
-    case "outcome_based": return "outcome_based";
-    default: return "per_seat";
+    case "per_productive_hour":
+      return "per_productive_hour";
+    case "per_login_hour":
+      return "per_login_hour";
+    case "per_talk_minute":
+      return "per_talk_minute";
+    case "per_transaction":
+      return "per_transaction";
+    case "per_mandate":
+      return "per_mandate";
+    case "per_case":
+      return "per_case";
+    case "fixed_monthly":
+      return "fixed_monthly";
+    case "outcome_based":
+      return "outcome_based";
+    default:
+      return "per_seat";
   }
 }
 
 function metricKeyForModel(model: BpoBillingModel): string {
   switch (model) {
-    case "per_productive_hour": return "productive_hours";
-    case "per_login_hour": return "login_hours";
-    case "per_talk_minute": return "talk_minutes";
-    case "per_transaction": return "transactions";
-    case "per_mandate": return "mandates";
-    case "per_case": return "cases";
-    case "fixed_monthly": return "fixed_monthly";
-    case "outcome_based": return "outcomes";
-    case "per_fte": return "billable_fte";
-    default: return "billable_seats";
+    case "per_productive_hour":
+      return "productive_hours";
+    case "per_login_hour":
+      return "login_hours";
+    case "per_talk_minute":
+      return "talk_minutes";
+    case "per_transaction":
+      return "transactions";
+    case "per_mandate":
+      return "mandates";
+    case "per_case":
+      return "cases";
+    case "fixed_monthly":
+      return "fixed_monthly";
+    case "outcome_based":
+      return "outcomes";
+    case "per_fte":
+      return "billable_fte";
+    default:
+      return "billable_seats";
   }
 }
 
 async function getRevenueRules(processIds: string[], period: string) {
   const result = new Map<string, RevenueRuleRow[]>();
-  if (processIds.length === 0 || !(await tableExists("process_revenue_rule"))) return result;
+  if (processIds.length === 0 || !(await tableExists("process_revenue_rule")))
+    return result;
   const { start, end } = monthRange(period);
   const rows = await safeRows<RevenueRuleRow>(
     `SELECT *
@@ -441,7 +494,7 @@ async function getRevenueRules(processIds: string[], period: string) {
         AND effective_from <= ?
         AND (effective_to IS NULL OR effective_to >= ?)
       ORDER BY process_id, effective_from DESC, created_at DESC`,
-    [...processIds, end, start]
+    [...processIds, end, start],
   );
   for (const row of rows) {
     const items = result.get(String(row.process_id)) ?? [];
@@ -453,7 +506,11 @@ async function getRevenueRules(processIds: string[], period: string) {
 
 async function getDeliveryActuals(processIds: string[], period: string) {
   const result = new Map<string, DeliveryRow[]>();
-  if (processIds.length === 0 || !(await tableExists("process_delivery_actual"))) return result;
+  if (
+    processIds.length === 0 ||
+    !(await tableExists("process_delivery_actual"))
+  )
+    return result;
   const rows = await safeRows<DeliveryRow>(
     `SELECT
         MIN(id) AS id,
@@ -479,7 +536,7 @@ async function getDeliveryActuals(processIds: string[], period: string) {
         AND period_code = ?
         AND status IN ('validated','locked')
       GROUP BY process_id, period_code, metric_key`,
-    [...processIds, period]
+    [...processIds, period],
   );
   for (const row of rows) {
     const items = result.get(String(row.process_id)) ?? [];
@@ -491,7 +548,11 @@ async function getDeliveryActuals(processIds: string[], period: string) {
 
 async function getRevenueComponents(processIds: string[], period: string) {
   const result = new Map<string, RevenueComponentRow[]>();
-  if (processIds.length === 0 || !(await tableExists("process_revenue_component"))) return result;
+  if (
+    processIds.length === 0 ||
+    !(await tableExists("process_revenue_component"))
+  )
+    return result;
   const rows = await safeRows<RevenueComponentRow>(
     `SELECT *
        FROM process_revenue_component
@@ -499,7 +560,7 @@ async function getRevenueComponents(processIds: string[], period: string) {
         AND period_code = ?
         AND status = 'approved'
       ORDER BY process_id, recognition_date, created_at`,
-    [...processIds, period]
+    [...processIds, period],
   );
   for (const row of rows) {
     const items = result.get(String(row.process_id)) ?? [];
@@ -509,9 +570,12 @@ async function getRevenueComponents(processIds: string[], period: string) {
   return result;
 }
 
-async function getRewardPenaltyForPeriod(period: string): Promise<Map<string, { rewards: number; penalties: number }>> {
+async function getRewardPenaltyForPeriod(
+  period: string,
+): Promise<Map<string, { rewards: number; penalties: number }>> {
   const result = new Map<string, { rewards: number; penalties: number }>();
-  if (!period || !(await tableExists("cost_centre_reward_penalty"))) return result;
+  if (!period || !(await tableExists("cost_centre_reward_penalty")))
+    return result;
   const rows = await safeRows<RowDataPacket>(
     `SELECT pc.process_id,
             SUM(CASE WHEN rp.entry_type = 'reward' THEN rp.amount_inr ELSE 0 END) AS rewards,
@@ -521,7 +585,7 @@ async function getRewardPenaltyForPeriod(period: string): Promise<Map<string, { 
        LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
       WHERE rp.period_code = ? AND rp.approval_status = 'approved'
       GROUP BY pc.process_id`,
-    [period]
+    [period],
   );
   for (const row of rows) {
     if (row.process_id) {
@@ -536,7 +600,8 @@ async function getRewardPenaltyForPeriod(period: string): Promise<Map<string, { 
 
 async function getMonthlyPlans(processIds: string[], period: string) {
   const result = new Map<string, RowDataPacket>();
-  if (processIds.length === 0 || !(await tableExists("process_monthly_plan"))) return result;
+  if (processIds.length === 0 || !(await tableExists("process_monthly_plan")))
+    return result;
   const columns = await listColumns("process_monthly_plan");
   const optional = [
     "planned_delivery_metric",
@@ -552,7 +617,7 @@ async function getMonthlyPlans(processIds: string[], period: string) {
       WHERE process_id IN (${placeholders(processIds)})
         AND period_code = ?
       ORDER BY FIELD(status, 'locked', 'approved', 'draft'), updated_at DESC`,
-    [...processIds, period]
+    [...processIds, period],
   );
   for (const row of rows) {
     const key = String(row.process_id);
@@ -561,7 +626,9 @@ async function getMonthlyPlans(processIds: string[], period: string) {
   return result;
 }
 
-async function getAllocationPolicies(period: string): Promise<AllocationPolicyRow[]> {
+async function getAllocationPolicies(
+  period: string,
+): Promise<AllocationPolicyRow[]> {
   if (!(await tableExists("pnl_allocation_policy"))) return [];
   const { start, end } = monthRange(period);
   return safeRows<AllocationPolicyRow>(
@@ -571,11 +638,13 @@ async function getAllocationPolicies(period: string): Promise<AllocationPolicyRo
         AND effective_from <= ?
         AND (effective_to IS NULL OR effective_to >= ?)
       ORDER BY branch_id, pool_type, process_id`,
-    [end, start]
+    [end, start],
   );
 }
 
-async function getClassificationRules(period: string): Promise<ClassificationRuleRow[]> {
+async function getClassificationRules(
+  period: string,
+): Promise<ClassificationRuleRow[]> {
   if (!(await tableExists("pnl_cost_classification_rule"))) return [];
   const { start, end } = monthRange(period);
   return safeRows<ClassificationRuleRow>(
@@ -585,7 +654,7 @@ async function getClassificationRules(period: string): Promise<ClassificationRul
         AND effective_from <= ?
         AND (effective_to IS NULL OR effective_to >= ?)
       ORDER BY priority ASC, created_at ASC`,
-    [end, start]
+    [end, start],
   );
 }
 
@@ -606,7 +675,7 @@ async function getPayrollRunAsOfDate(period: string): Promise<string | null> {
     `SELECT MAX(COALESCE(disbursed_at, auto_closed_at, finance_approved_at, updated_at, created_at)) AS as_of
        FROM salary_prep_run
       WHERE run_month = ?`,
-    [period]
+    [period],
   );
   const asOf = rows[0]?.as_of;
   return asOf ? new Date(asOf).toISOString() : null;
@@ -615,12 +684,19 @@ async function getPayrollRunAsOfDate(period: string): Promise<string | null> {
 function isSupportRole(person: PayrollPersonRow): boolean {
   const department = lower(person.department_name);
   const designation = lower(person.designation_name);
-  const supportDepartment = /(quality|training|learning|wfm|workforce|mis|human resource|\bhr\b|admin|information technology|\bit\b|finance|accounts|recruit|facility|security|maintenance|compliance|payroll)/;
-  const supportDesignation = /(team leader|\btl\b|assistant manager|\bam\b|manager|supervisor|trainer|quality|auditor|wfm|mis|hr|recruiter|admin|it support|engineer|accounts|finance|facility|security|coach|sme|subject matter)/;
-  return supportDepartment.test(department) || supportDesignation.test(designation);
+  const supportDepartment =
+    /(quality|training|learning|wfm|workforce|mis|human resource|\bhr\b|admin|information technology|\bit\b|finance|accounts|recruit|facility|security|maintenance|compliance|payroll)/;
+  const supportDesignation =
+    /(team leader|\btl\b|assistant manager|\bam\b|manager|supervisor|trainer|quality|auditor|wfm|mis|hr|recruiter|admin|it support|engineer|accounts|finance|facility|security|coach|sme|subject matter)/;
+  return (
+    supportDepartment.test(department) || supportDesignation.test(designation)
+  );
 }
 
-function matchClassification(person: PayrollPersonRow, rules: ClassificationRuleRow[]) {
+function matchClassification(
+  person: PayrollPersonRow,
+  rules: ClassificationRuleRow[],
+) {
   const values: Record<string, string[]> = {
     employee: [lower(person.employee_id), lower(person.employee_code)],
     designation: [lower(person.designation_id), lower(person.designation_name)],
@@ -628,17 +704,34 @@ function matchClassification(person: PayrollPersonRow, rules: ClassificationRule
   };
   // Rules match the person's HOME process/branch (who they are), not where a cost-centre mapping
   // sends their pay — see getPayrollPeople.
-  const processId = person.home_process_id !== undefined ? person.home_process_id : person.process_id;
-  const branchId = person.home_branch_id !== undefined ? person.home_branch_id : person.branch_id;
-  return rules.find((rule) => {
-    if (rule.process_id && String(rule.process_id) !== String(processId ?? "")) return false;
-    if (rule.branch_id && String(rule.branch_id) !== String(branchId ?? "")) return false;
-    return (values[rule.scope_type] ?? []).includes(lower(rule.scope_key));
-  }) ?? null;
+  const processId =
+    person.home_process_id !== undefined
+      ? person.home_process_id
+      : person.process_id;
+  const branchId =
+    person.home_branch_id !== undefined
+      ? person.home_branch_id
+      : person.branch_id;
+  return (
+    rules.find((rule) => {
+      if (
+        rule.process_id &&
+        String(rule.process_id) !== String(processId ?? "")
+      )
+        return false;
+      if (rule.branch_id && String(rule.branch_id) !== String(branchId ?? ""))
+        return false;
+      return (values[rule.scope_type] ?? []).includes(lower(rule.scope_key));
+    }) ?? null
+  );
 }
 
 async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
-  if (!(await tableExists("salary_prep_run")) || !(await tableExists("salary_prep_line"))) return [];
+  if (
+    !(await tableExists("salary_prep_run")) ||
+    !(await tableExists("salary_prep_line"))
+  )
+    return [];
   /*
    * EVERY run in the month. Two separate faults were compounding here.
    *
@@ -662,7 +755,7 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
     `SELECT id
        FROM salary_prep_run
       WHERE run_month = ?`,
-    [period]
+    [period],
   );
   if (!runs.length) return [];
   const runIds = runs.map((row) => String(row.id));
@@ -674,7 +767,9 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
     : new Set<string>();
   const designationExists = await tableExists("designation_master");
   const departmentExists = await tableExists("department_master");
-  const departmentColumns = departmentExists ? await listColumns("department_master") : new Set<string>();
+  const departmentColumns = departmentExists
+    ? await listColumns("department_master")
+    : new Set<string>();
 
   // People Cost per line (owner rule 2026-09-24, pnl-people-cost.ts): CTC paid less other/loan/
   // advance/LWP deductions; a missing column contributes 0 as before.
@@ -690,14 +785,20 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
    * Without this, those employees could not be allocated to any process (allocation policies
    * table is empty) and their salary was silently excluded from the canonical P&L.
    */
-  const hasCostCentreId = employeeColumns.has("cost_centre_id") && costCentreColumns.has("process_id");
+  const hasCostCentreId =
+    employeeColumns.has("cost_centre_id") &&
+    costCentreColumns.has("process_id");
   const ccJoin = hasCostCentreId
     ? "LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id"
     : "";
   const homeProcessExpr = employeeColumns.has("process_id")
-    ? (hasCostCentreId ? "COALESCE(e.process_id, ccm.process_id)" : "e.process_id")
+    ? hasCostCentreId
+      ? "COALESCE(e.process_id, ccm.process_id)"
+      : "e.process_id"
     : "NULL";
-  const homeBranchExpr = employeeColumns.has("branch_id") ? "e.branch_id" : "NULL";
+  const homeBranchExpr = employeeColumns.has("branch_id")
+    ? "e.branch_id"
+    : "NULL";
   /*
    * WHERE a person's pay is counted (owner rule 2026-09-23, aligned with Live P&L, CEO Overview,
    * trend and the drilldown via payrollAttributionSql): the EFFECTIVE cost centre — the payroll cost
@@ -720,24 +821,34 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
         homeBranchExpr,
         homeProcessExpr,
       })
-    : { join: "", effectiveBranchExpr: homeBranchExpr, effectiveProcessExpr: homeProcessExpr };
+    : {
+        join: "",
+        effectiveBranchExpr: homeBranchExpr,
+        effectiveProcessExpr: homeProcessExpr,
+      };
   const processExpr = attribution.effectiveProcessExpr;
   const branchExpr = attribution.effectiveBranchExpr;
-  const designationIdExpr = employeeColumns.has("designation_id") ? "e.designation_id" : "NULL";
-  const departmentIdExpr = employeeColumns.has("department_id") ? "e.department_id" : "NULL";
-  const designationJoin = designationExists && employeeColumns.has("designation_id")
-    ? "LEFT JOIN designation_master d ON d.id = e.designation_id"
-    : "";
-  const departmentJoin = departmentExists && employeeColumns.has("department_id")
-    ? "LEFT JOIN department_master dep ON dep.id = e.department_id"
-    : "";
+  const designationIdExpr = employeeColumns.has("designation_id")
+    ? "e.designation_id"
+    : "NULL";
+  const departmentIdExpr = employeeColumns.has("department_id")
+    ? "e.department_id"
+    : "NULL";
+  const designationJoin =
+    designationExists && employeeColumns.has("designation_id")
+      ? "LEFT JOIN designation_master d ON d.id = e.designation_id"
+      : "";
+  const departmentJoin =
+    departmentExists && employeeColumns.has("department_id")
+      ? "LEFT JOIN department_master dep ON dep.id = e.department_id"
+      : "";
   const designationNameExpr = designationJoin ? "d.designation_name" : "NULL";
   const departmentNameExpr = departmentJoin
     ? departmentColumns.has("dept_name")
       ? "dep.dept_name"
       : departmentColumns.has("department_name")
-      ? "dep.department_name"
-      : "NULL"
+        ? "dep.department_name"
+        : "NULL"
     : "NULL";
 
   // ONE ROW PER EMPLOYEE, grouped on e.id alone. Every join here is 1:1 with the employee (cost
@@ -768,7 +879,7 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
        ${departmentJoin}
       WHERE spl.run_id IN (${runIds.map(() => "?").join(", ")})
       GROUP BY e.id`,
-    runIds
+    runIds,
   );
 }
 
@@ -776,12 +887,15 @@ function policyFor(
   policies: AllocationPolicyRow[],
   branchId: string,
   poolType: string,
-  processId?: string
+  processId?: string,
 ) {
-  return policies.find((policy) =>
-    String(policy.branch_id) === branchId
-    && policy.pool_type === poolType
-    && (processId ? String(policy.process_id ?? "") === processId : !policy.process_id)
+  return policies.find(
+    (policy) =>
+      String(policy.branch_id) === branchId &&
+      policy.pool_type === poolType &&
+      (processId
+        ? String(policy.process_id ?? "") === processId
+        : !policy.process_id),
   );
 }
 
@@ -796,26 +910,40 @@ function policyFor(
  * per COST CENTRE per period, for branch budgets — a different grain, not usable here.)
  */
 export const SUPPORTED_ALLOCATION_DRIVERS = [
-  "direct", "active_hc", "billable_hc", "contracted_seats", "revenue", "equal", "manual",
+  "direct",
+  "active_hc",
+  "billable_hc",
+  "contracted_seats",
+  "revenue",
+  "equal",
+  "manual",
 ] as const;
 
 export function isSupportedAllocationDriver(driver: string): boolean {
   return (SUPPORTED_ALLOCATION_DRIVERS as readonly string[]).includes(driver);
 }
 
-function allocationDriverValue(row: ProcessPnlRecord, driver: AllocationDriver): number {
+function allocationDriverValue(
+  row: ProcessPnlRecord,
+  driver: AllocationDriver,
+): number {
   switch (driver) {
-    case "billable_hc": return toNumber(row.billableHc);
-    case "contracted_seats": return toNumber(row.contractedSeats);
-    case "revenue": return toNumber(row.revenueMtd);
-    case "equal": return 1;
+    case "billable_hc":
+      return toNumber(row.billableHc);
+    case "contracted_seats":
+      return toNumber(row.contractedSeats);
+    case "revenue":
+      return toNumber(row.revenueMtd);
+    case "equal":
+      return 1;
     // Named explicitly rather than left to `default`, so the substitution is a visible decision in
     // the code instead of an accident. New policies using these are refused at save time; this
     // path only exists for rows saved before that validation.
     case "floor_area":
     case "device_count":
     case "active_hc":
-    default: return toNumber(row.activeHc);
+    default:
+      return toNumber(row.activeHc);
   }
 }
 
@@ -824,7 +952,7 @@ export function allocateBranchPools<T extends { amount: number }>(
   pools: ReadonlyMap<string, T>,
   policies: AllocationPolicyRow[],
   poolType: string,
-  warnings?: ManualAllocationWarning[]
+  warnings?: ManualAllocationWarning[],
 ): NumericMap {
   const result = new Map<string, number>();
   const byBranch = new Map<string, ProcessPnlRecord[]>();
@@ -839,23 +967,36 @@ export function allocateBranchPools<T extends { amount: number }>(
     const poolAmount = toNumber(pools.get(branchId)?.amount);
     if (poolAmount <= 0 || rows.length === 0) continue;
     const branchPolicy = policyFor(policies, branchId, poolType);
-    const processPolicies = rows.map((row) => policyFor(policies, branchId, poolType, row.processId));
-    const usesManual = processPolicies.some((policy) => policy?.allocation_driver === "manual");
+    const processPolicies = rows.map((row) =>
+      policyFor(policies, branchId, poolType, row.processId),
+    );
+    const usesManual = processPolicies.some(
+      (policy) => policy?.allocation_driver === "manual",
+    );
 
     if (usesManual) {
       const shares: AllocationShare[] = rows.map((row, index) => ({
         key: row.processId,
         weight: toNumber(processPolicies[index]?.manual_allocation_pct),
       }));
-      const outcome = allocatePoolAmount(poolAmount, shares, "manual_percentage");
+      const outcome = allocatePoolAmount(
+        poolAmount,
+        shares,
+        "manual_percentage",
+      );
       if (!outcome.balanced) {
         console.warn(
           `[bpo-pnl] manual allocation for branch ${branchId} / pool ${poolType} sums to ` +
-          `${outcome.percentTotal}% (expected 100%) — amounts are applied as configured, not rebalanced.`
+            `${outcome.percentTotal}% (expected 100%) — amounts are applied as configured, not rebalanced.`,
         );
-        warnings?.push({ branchId, poolType, percentTotal: outcome.percentTotal ?? 0 });
+        warnings?.push({
+          branchId,
+          poolType,
+          percentTotal: outcome.percentTotal ?? 0,
+        });
       }
-      for (const [processId, amount] of outcome.amounts) result.set(processId, amount);
+      for (const [processId, amount] of outcome.amounts)
+        result.set(processId, amount);
       continue;
     }
 
@@ -864,8 +1005,13 @@ export function allocateBranchPools<T extends { amount: number }>(
       key: row.processId,
       weight: allocationDriverValue(row, driver),
     }));
-    const outcome = allocatePoolAmount(poolAmount, shares, driver === "equal" ? "equal" : "weighted");
-    for (const [processId, amount] of outcome.amounts) result.set(processId, amount);
+    const outcome = allocatePoolAmount(
+      poolAmount,
+      shares,
+      driver === "equal" ? "equal" : "weighted",
+    );
+    for (const [processId, amount] of outcome.amounts)
+      result.set(processId, amount);
   }
   return result;
 }
@@ -895,7 +1041,9 @@ export function allocateBranchPools<T extends { amount: number }>(
  * coverage is 100% wherever payroll ran. That is not a way of hiding the gap — the gap WAS the
  * snapshot's partial population, and reading payroll directly removes it.
  */
-export async function getActualPeopleCost(period: string): Promise<PeopleCostByKey> {
+export async function getActualPeopleCost(
+  period: string,
+): Promise<PeopleCostByKey> {
   const out: PeopleCostByKey = {
     byBranch: new Map(),
     byProcess: new Map(),
@@ -905,7 +1053,10 @@ export async function getActualPeopleCost(period: string): Promise<PeopleCostByK
   };
   if (!/^\d{4}-\d{2}$/.test(period)) return out;
 
-  const [people, rules] = await Promise.all([getPayrollPeople(period), getClassificationRules(period)]);
+  const [people, rules] = await Promise.all([
+    getPayrollPeople(period),
+    getClassificationRules(period),
+  ]);
   if (people.length === 0) return out;
   /*
    * A5 FIX (2026-09-01): stamp a real asOfDate whenever real salary_prep_line payroll data is
@@ -916,23 +1067,35 @@ export async function getActualPeopleCost(period: string): Promise<PeopleCostByK
    * no data existed at all. getPayrollRunAsOfDate() falls back to NOW() only if the period's runs
    * somehow carry no date at all, so this is never null again once real rows are present.
    */
-  out.asOfDate = (await getPayrollRunAsOfDate(period)) ?? new Date().toISOString();
+  out.asOfDate =
+    (await getPayrollRunAsOfDate(period)) ?? new Date().toISOString();
 
-  const empty = (): Record<PnlPeopleBucket, number> =>
-    ({ agent_salary: 0, dsc_people: 0, bmc_people: 0 });
+  const empty = (): Record<PnlPeopleBucket, number> => ({
+    agent_salary: 0,
+    dsc_people: 0,
+    bmc_people: 0,
+  });
 
   for (const person of people) {
     const cost = toNumber(person.loaded_cost);
     const configured = matchClassification(person, rules)?.pnl_bucket;
-    const bucket: PnlBucket = configured
-      ?? (person.process_id ? (isSupportRole(person) ? "dsc_people" : "agent_salary") : "bmc_people");
+    const bucket: PnlBucket =
+      configured ??
+      (person.process_id
+        ? isSupportRole(person)
+          ? "dsc_people"
+          : "agent_salary"
+        : "bmc_people");
 
     if (person.branch_id) {
       const key = String(person.branch_id);
       const bucketsForBranch = out.byBranch.get(key) ?? empty();
       bucketsForBranch[bucket] += cost;
       out.byBranch.set(key, bucketsForBranch);
-      const cov = out.coverageByBranch.get(key) ?? { activeEmployees: 0, coveredEmployees: 0 };
+      const cov = out.coverageByBranch.get(key) ?? {
+        activeEmployees: 0,
+        coveredEmployees: 0,
+      };
       cov.activeEmployees += 1;
       cov.coveredEmployees += 1;
       out.coverageByBranch.set(key, cov);
@@ -942,7 +1105,10 @@ export async function getActualPeopleCost(period: string): Promise<PeopleCostByK
       const bucketsForProcess = out.byProcess.get(key) ?? empty();
       bucketsForProcess[bucket] += cost;
       out.byProcess.set(key, bucketsForProcess);
-      const cov = out.coverageByProcess.get(key) ?? { activeEmployees: 0, coveredEmployees: 0 };
+      const cov = out.coverageByProcess.get(key) ?? {
+        activeEmployees: 0,
+        coveredEmployees: 0,
+      };
       cov.activeEmployees += 1;
       cov.coveredEmployees += 1;
       out.coverageByProcess.set(key, cov);
@@ -955,12 +1121,14 @@ async function getPeopleCosts(
   baseRows: ProcessPnlRecord[],
   period: string,
   policies: AllocationPolicyRow[],
-  warnings?: ManualAllocationWarning[]
+  warnings?: ManualAllocationWarning[],
 ) {
   const processMap = new Map<string, PeopleCostMeta>();
   const branchPool = new Map<string, { amount: number; headcount: number }>();
   const [people, rules, splits] = await Promise.all([
-    getPayrollPeople(period), getClassificationRules(period), getApprovedCostCentreSplits(period),
+    getPayrollPeople(period),
+    getClassificationRules(period),
+    getApprovedCostCentreSplits(period),
   ]);
   /** BMC cost posted straight to a process by an approved split, bypassing the branch pool. */
   const directBmcByProcess = new Map<string, number>();
@@ -968,10 +1136,18 @@ async function getPeopleCosts(
   for (const person of people) {
     const cost = toNumber(person.loaded_cost);
     const configuredBucket = matchClassification(person, rules)?.pnl_bucket;
-    const bucket: PnlBucket = configuredBucket
-      ?? (person.process_id ? (isSupportRole(person) ? "dsc_people" : "agent_salary") : "bmc_people");
+    const bucket: PnlBucket =
+      configuredBucket ??
+      (person.process_id
+        ? isSupportRole(person)
+          ? "dsc_people"
+          : "agent_salary"
+        : "bmc_people");
 
-    if (person.process_id && (bucket === "agent_salary" || bucket === "dsc_people")) {
+    if (
+      person.process_id &&
+      (bucket === "agent_salary" || bucket === "dsc_people")
+    ) {
       const key = String(person.process_id);
       const current = processMap.get(key) ?? {
         agentSalary: 0,
@@ -1008,11 +1184,14 @@ async function getPeopleCosts(
         const outcome = allocatePoolAmount(
           cost,
           split.map((s) => ({ key: s.processId, weight: s.pct })),
-          "manual_percentage"
+          "manual_percentage",
         );
         let posted = 0;
         for (const [processId, amount] of outcome.amounts.entries()) {
-          directBmcByProcess.set(processId, (directBmcByProcess.get(processId) ?? 0) + amount);
+          directBmcByProcess.set(
+            processId,
+            (directBmcByProcess.get(processId) ?? 0) + amount,
+          );
           posted += amount;
         }
         if (!outcome.balanced && warnings) {
@@ -1065,9 +1244,18 @@ async function getPeopleCosts(
     processMap.set(row.processId, current);
   }
 
-  const bmcPeopleByProcess = allocateBranchPools(baseRows, branchPool, policies, "bmc_people", warnings);
+  const bmcPeopleByProcess = allocateBranchPools(
+    baseRows,
+    branchPool,
+    policies,
+    "bmc_people",
+    warnings,
+  );
   for (const [processId, amount] of directBmcByProcess.entries()) {
-    bmcPeopleByProcess.set(processId, (bmcPeopleByProcess.get(processId) ?? 0) + amount);
+    bmcPeopleByProcess.set(
+      processId,
+      (bmcPeopleByProcess.get(processId) ?? 0) + amount,
+    );
   }
 
   return {
@@ -1092,18 +1280,41 @@ function emptyCostComponent(): CostComponentMeta {
   };
 }
 
-function addCostComponent(target: CostComponentMeta, type: string, amount: number) {
+function addCostComponent(
+  target: CostComponentMeta,
+  type: string,
+  amount: number,
+) {
   switch (type) {
-    case "depreciation": target.depreciation += amount; break;
-    case "amortization": target.amortization += amount; break;
-    case "finance_cost": target.financeCost += amount; break;
-    case "tax": target.tax += amount; break;
-    case "other_operating_cost": target.otherOperatingCost += amount; break;
-    case "other_operating_income": target.otherOperatingIncome += amount; break;
-    case "non_operating_income": target.nonOperatingIncome += amount; break;
-    case "exceptional_cost": target.exceptionalCost += amount; break;
-    case "exceptional_income": target.exceptionalIncome += amount; break;
-    default: break;
+    case "depreciation":
+      target.depreciation += amount;
+      break;
+    case "amortization":
+      target.amortization += amount;
+      break;
+    case "finance_cost":
+      target.financeCost += amount;
+      break;
+    case "tax":
+      target.tax += amount;
+      break;
+    case "other_operating_cost":
+      target.otherOperatingCost += amount;
+      break;
+    case "other_operating_income":
+      target.otherOperatingIncome += amount;
+      break;
+    case "non_operating_income":
+      target.nonOperatingIncome += amount;
+      break;
+    case "exceptional_cost":
+      target.exceptionalCost += amount;
+      break;
+    case "exceptional_income":
+      target.exceptionalIncome += amount;
+      break;
+    default:
+      break;
   }
 }
 
@@ -1111,7 +1322,7 @@ async function getCostComponents(
   baseRows: ProcessPnlRecord[],
   period: string,
   policies: AllocationPolicyRow[],
-  warnings?: ManualAllocationWarning[]
+  warnings?: ManualAllocationWarning[],
 ) {
   const result = new Map<string, CostComponentMeta>();
   if (!(await tableExists("process_pnl_cost_component"))) return result;
@@ -1120,7 +1331,7 @@ async function getCostComponents(
        FROM process_pnl_cost_component
       WHERE period_code = ?
         AND status = 'approved'`,
-    [period]
+    [period],
   );
   const branchPools = new Map<string, { amount: number }>();
   const branchTypes = new Set<string>();
@@ -1149,7 +1360,13 @@ async function getCostComponents(
       const costType = key.slice(separator + 1);
       if (costType === type) pools.set(branchId, value);
     }
-    const allocated = allocateBranchPools(baseRows, pools, policies, "shared_service", warnings);
+    const allocated = allocateBranchPools(
+      baseRows,
+      pools,
+      policies,
+      "shared_service",
+      warnings,
+    );
     for (const [processId, amount] of allocated.entries()) {
       const current = result.get(processId) ?? emptyCostComponent();
       addCostComponent(current, type, amount);
@@ -1163,12 +1380,20 @@ async function getBudgets(
   baseRows: ProcessPnlRecord[],
   period: string,
   policies: AllocationPolicyRow[],
-  warnings?: ManualAllocationWarning[]
+  warnings?: ManualAllocationWarning[],
 ): Promise<Map<string, BudgetMeta>> {
   const result = new Map<string, BudgetMeta>();
-  if (!(await tableExists("finance_budget_header")) || !(await tableExists("finance_budget_line"))) return result;
-  const costCentreColumns = await listColumns("cost_centre_master").catch(() => new Set<string>());
-  const processExpr = costCentreColumns.has("process_id") ? "COALESCE(fbl.process_id, ccm.process_id)" : "fbl.process_id";
+  if (
+    !(await tableExists("finance_budget_header")) ||
+    !(await tableExists("finance_budget_line"))
+  )
+    return result;
+  const costCentreColumns = await listColumns("cost_centre_master").catch(
+    () => new Set<string>(),
+  );
+  const processExpr = costCentreColumns.has("process_id")
+    ? "COALESCE(fbl.process_id, ccm.process_id)"
+    : "fbl.process_id";
   const rows = await safeRows<RowDataPacket>(
     `SELECT
         fbh.branch_id,
@@ -1189,7 +1414,7 @@ async function getBudgets(
       WHERE fbh.period_code = ?
         AND fbh.status IN ('finance_head_approved','accounts_head_approved','active')
       GROUP BY fbh.branch_id, process_id`,
-    [period]
+    [period],
   );
 
   const branchApproved = new Map<string, { amount: number }>();
@@ -1212,8 +1437,11 @@ async function getBudgets(
        * which is why it has never been visible.
        */
       const processId = String(row.process_id);
-      const current = result.get(processId)
-        ?? { approvedBudget: 0, reservedBudget: 0, consumedBudget: 0 };
+      const current = result.get(processId) ?? {
+        approvedBudget: 0,
+        reservedBudget: 0,
+        consumedBudget: 0,
+      };
       current.approvedBudget += toNumber(row.approved_budget);
       current.reservedBudget += toNumber(row.reserved_budget);
       current.consumedBudget += toNumber(row.consumed_budget);
@@ -1226,11 +1454,33 @@ async function getBudgets(
     }
   }
 
-  const allocatedApproved = allocateBranchPools(baseRows, branchApproved, policies, "bmc_non_people", warnings);
-  const allocatedReserved = allocateBranchPools(baseRows, branchReserved, policies, "bmc_non_people", warnings);
-  const allocatedConsumed = allocateBranchPools(baseRows, branchConsumed, policies, "bmc_non_people", warnings);
+  const allocatedApproved = allocateBranchPools(
+    baseRows,
+    branchApproved,
+    policies,
+    "bmc_non_people",
+    warnings,
+  );
+  const allocatedReserved = allocateBranchPools(
+    baseRows,
+    branchReserved,
+    policies,
+    "bmc_non_people",
+    warnings,
+  );
+  const allocatedConsumed = allocateBranchPools(
+    baseRows,
+    branchConsumed,
+    policies,
+    "bmc_non_people",
+    warnings,
+  );
   for (const row of baseRows) {
-    const current = result.get(row.processId) ?? { approvedBudget: 0, reservedBudget: 0, consumedBudget: 0 };
+    const current = result.get(row.processId) ?? {
+      approvedBudget: 0,
+      reservedBudget: 0,
+      consumedBudget: 0,
+    };
     current.approvedBudget += allocatedApproved.get(row.processId) ?? 0;
     current.reservedBudget += allocatedReserved.get(row.processId) ?? 0;
     current.consumedBudget += allocatedConsumed.get(row.processId) ?? 0;
@@ -1251,15 +1501,18 @@ async function getGrnVendorActuals(
   baseRows: ProcessPnlRecord[],
   period: string,
   policies: AllocationPolicyRow[],
-  warnings?: ManualAllocationWarning[]
+  warnings?: ManualAllocationWarning[],
 ): Promise<Map<string, GrnVendorMeta>> {
   const direct = new Map<string, { amount: number; count: number }>();
   const branchPools = new Map<string, { amount: number }>();
   const branchCounts = new Map<string, number>();
-  const costCentreColumns = await listColumns("cost_centre_master").catch(() => new Set<string>());
-  const resolveProcess = (alias: string) => costCentreColumns.has("process_id")
-    ? `COALESCE(${alias}.process_id, ccm.process_id)`
-    : `${alias}.process_id`;
+  const costCentreColumns = await listColumns("cost_centre_master").catch(
+    () => new Set<string>(),
+  );
+  const resolveProcess = (alias: string) =>
+    costCentreColumns.has("process_id")
+      ? `COALESCE(${alias}.process_id, ccm.process_id)`
+      : `${alias}.process_id`;
 
   if (await tableExists("vendor_payment_tracking")) {
     const columns = await listColumns("vendor_payment_tracking");
@@ -1299,10 +1552,11 @@ async function getGrnVendorActuals(
               AND ${actualVendorStatusExpr(columns)}
          ) x
         GROUP BY branch_id, process_id, pnl_bucket`,
-      [period]
+      [period],
     );
     for (const row of rows) {
-      const isDirect = String(row.pnl_bucket) === "dsc_non_people" || Boolean(row.process_id);
+      const isDirect =
+        String(row.pnl_bucket) === "dsc_non_people" || Boolean(row.process_id);
       if (isDirect && row.process_id) {
         const key = String(row.process_id);
         const current = direct.get(key) ?? { amount: 0, count: 0 };
@@ -1314,7 +1568,10 @@ async function getGrnVendorActuals(
         const current = branchPools.get(key) ?? { amount: 0 };
         current.amount += toNumber(row.amount);
         branchPools.set(key, current);
-        branchCounts.set(key, (branchCounts.get(key) ?? 0) + toNumber(row.item_count));
+        branchCounts.set(
+          key,
+          (branchCounts.get(key) ?? 0) + toNumber(row.item_count),
+        );
       }
     }
   }
@@ -1356,10 +1613,11 @@ async function getGrnVendorActuals(
               AND vpt.id IS NULL
          ) x
         GROUP BY branch_id, process_id, pnl_bucket`,
-      [period]
+      [period],
     );
     for (const row of rows) {
-      const isDirect = String(row.pnl_bucket) === "dsc_non_people" || Boolean(row.process_id);
+      const isDirect =
+        String(row.pnl_bucket) === "dsc_non_people" || Boolean(row.process_id);
       if (isDirect && row.process_id) {
         const key = String(row.process_id);
         const current = direct.get(key) ?? { amount: 0, count: 0 };
@@ -1371,19 +1629,30 @@ async function getGrnVendorActuals(
         const current = branchPools.get(key) ?? { amount: 0 };
         current.amount += toNumber(row.amount);
         branchPools.set(key, current);
-        branchCounts.set(key, (branchCounts.get(key) ?? 0) + toNumber(row.item_count));
+        branchCounts.set(
+          key,
+          (branchCounts.get(key) ?? 0) + toNumber(row.item_count),
+        );
       }
     }
   }
 
-  const allocatedBmc = allocateBranchPools(baseRows, branchPools, policies, "bmc_non_people", warnings);
+  const allocatedBmc = allocateBranchPools(
+    baseRows,
+    branchPools,
+    policies,
+    "bmc_non_people",
+    warnings,
+  );
   const result = new Map<string, GrnVendorMeta>();
   for (const row of baseRows) {
     const directMeta = direct.get(row.processId) ?? { amount: 0, count: 0 };
     result.set(row.processId, {
       directActual: directMeta.amount,
       bmcAllocatedActual: allocatedBmc.get(row.processId) ?? 0,
-      itemCount: directMeta.count + (row.branchId ? branchCounts.get(row.branchId) ?? 0 : 0),
+      itemCount:
+        directMeta.count +
+        (row.branchId ? (branchCounts.get(row.branchId) ?? 0) : 0),
     });
   }
   return result;
@@ -1391,10 +1660,15 @@ async function getGrnVendorActuals(
 
 async function getCostCentres(processIds: string[]) {
   const result = new Map<string, { id: string; code: string | null }>();
-  if (processIds.length === 0 || !(await tableExists("cost_centre_master"))) return result;
+  if (processIds.length === 0 || !(await tableExists("cost_centre_master")))
+    return result;
   const columns = await listColumns("cost_centre_master");
   if (!columns.has("process_id")) return result;
-  const codeExpr = columns.has("cost_centre_code") ? "cost_centre_code" : columns.has("code") ? "code" : "NULL";
+  const codeExpr = columns.has("cost_centre_code")
+    ? "cost_centre_code"
+    : columns.has("code")
+      ? "code"
+      : "NULL";
   const orderExpr = columns.has("updated_at") ? "updated_at DESC" : "id";
   const rows = await safeRows<RowDataPacket>(
     `SELECT id, process_id, ${codeExpr} AS cost_centre_code
@@ -1402,7 +1676,7 @@ async function getCostCentres(processIds: string[]) {
       WHERE process_id IN (${placeholders(processIds)})
         AND COALESCE(active_status, 1) = 1
       ORDER BY ${orderExpr}`,
-    processIds
+    processIds,
   );
   for (const row of rows) {
     const key = String(row.process_id);
@@ -1416,43 +1690,71 @@ async function getCostCentres(processIds: string[]) {
   return result;
 }
 
-function componentAmount(rows: RevenueComponentRow[], type: string, direction?: "increase" | "decrease") {
+function componentAmount(
+  rows: RevenueComponentRow[],
+  type: string,
+  direction?: "increase" | "decrease",
+) {
   return rows
-    .filter((row) => row.component_type === type && (!direction || row.direction === direction))
+    .filter(
+      (row) =>
+        row.component_type === type &&
+        (!direction || row.direction === direction),
+    )
     .reduce((sum, row) => sum + toNumber(row.amount_inr), 0);
 }
 
 function otherComponentAmount(
   rows: RevenueComponentRow[],
   direction: "increase" | "decrease",
-  excluded: string[]
+  excluded: string[],
 ) {
   return rows
-    .filter((row) => row.direction === direction && !excluded.includes(row.component_type))
+    .filter(
+      (row) =>
+        row.direction === direction && !excluded.includes(row.component_type),
+    )
     .reduce((sum, row) => sum + toNumber(row.amount_inr), 0);
 }
 
-function potentialRevenue(rules: RevenueRuleInput[], deliveries: DeliveryMetricInput[]) {
-  const deliveryMap = new Map(deliveries.map((delivery) => [delivery.metricKey, delivery]));
+function potentialRevenue(
+  rules: RevenueRuleInput[],
+  deliveries: DeliveryMetricInput[],
+) {
+  const deliveryMap = new Map(
+    deliveries.map((delivery) => [delivery.metricKey, delivery]),
+  );
   return rules.reduce((sum, rule) => {
     const fx = toNumber(rule.fxToInr, 1) || 1;
     const rate = toNumber(rule.rateAmount) * fx;
     if (rule.billingModel === "fixed_monthly") {
       return sum + Math.max(rate, toNumber(rule.monthlyMinimumCommitment) * fx);
     }
-    const planned = toNumber(deliveryMap.get(rule.metricKey)?.plannedUnits || rule.mandatedSeats);
+    const planned = toNumber(
+      deliveryMap.get(rule.metricKey)?.plannedUnits || rule.mandatedSeats,
+    );
     const included = toNumber(rule.includedUnits);
-    const overageRate = toNumber(rule.overageRate) > 0 ? toNumber(rule.overageRate) * fx : rate;
-    const calculated = included > 0 && planned > included
-      ? included * rate + (planned - included) * overageRate
-      : planned * rate;
-    return sum + Math.max(calculated, toNumber(rule.monthlyMinimumCommitment) * fx);
+    const overageRate =
+      toNumber(rule.overageRate) > 0 ? toNumber(rule.overageRate) * fx : rate;
+    const calculated =
+      included > 0 && planned > included
+        ? included * rate + (planned - included) * overageRate
+        : planned * rate;
+    return (
+      sum + Math.max(calculated, toNumber(rule.monthlyMinimumCommitment) * fx)
+    );
   }, 0);
 }
 
-function averageNullable(values: Array<number | null | undefined>): number | null {
-  const usable = values.filter((value): value is number => value != null && Number.isFinite(value));
-  return usable.length > 0 ? usable.reduce((sum, value) => sum + value, 0) / usable.length : null;
+function averageNullable(
+  values: Array<number | null | undefined>,
+): number | null {
+  const usable = values.filter(
+    (value): value is number => value != null && Number.isFinite(value),
+  );
+  return usable.length > 0
+    ? usable.reduce((sum, value) => sum + value, 0) / usable.length
+    : null;
 }
 
 function statusFrom(row: {
@@ -1463,10 +1765,11 @@ function statusFrom(row: {
 }) {
   if (row.ebitda < 0) return "loss-making" as const;
   if (
-    row.recognizedRevenue <= 0
-    || row.revenueAtRisk > 0
-    || (row.deliveryAttainmentPct != null && row.deliveryAttainmentPct < 90)
-  ) return "at-risk" as const;
+    row.recognizedRevenue <= 0 ||
+    row.revenueAtRisk > 0 ||
+    (row.deliveryAttainmentPct != null && row.deliveryAttainmentPct < 90)
+  )
+    return "at-risk" as const;
   return "profitable" as const;
 }
 
@@ -1477,16 +1780,21 @@ function statusFrom(row: {
  * ago does not reappear in dropdowns built from these rows. Runs AFTER allocation, so no pool is
  * ever re-spread because of it. The open period is already filtered in SQL.
  */
-async function dropDormantClosedBranchRows(rows: BpoPnlRow[], period: string): Promise<BpoPnlRow[]> {
+async function dropDormantClosedBranchRows(
+  rows: BpoPnlRow[],
+  period: string,
+): Promise<BpoPnlRow[]> {
   if (isOpenPeriod(period)) return rows;
   const closed = await getClosedBranchIds().catch(() => new Set<string>());
   if (closed.size === 0) return rows;
   return rows.filter((row) => {
     if (!row.branchId || !closed.has(String(row.branchId))) return true;
-    return row.recognizedRevenue !== 0
-      || row.totalOperatingCost !== 0
-      || row.grnVendorActual !== 0
-      || row.pat !== 0;
+    return (
+      row.recognizedRevenue !== 0 ||
+      row.totalOperatingCost !== 0 ||
+      row.grnVendorActual !== 0 ||
+      row.pat !== 0
+    );
   });
 }
 
@@ -1504,7 +1812,20 @@ async function computeBranchRows(scope: PnlQueryFilters) {
    * cost — leaving Rs 241.97 lakh of cost against no revenue and an EBITDA of MINUS Rs 242 lakh.
    * A plausible-looking catastrophe is worse than an obvious blank.
    */
-  const [rulesMap, deliveryMap, componentsMap, plans, people, costComponents, budgets, grnActuals, costCentres, invoiced, rpByProcess, actualPeople] = await Promise.all([
+  const [
+    rulesMap,
+    deliveryMap,
+    componentsMap,
+    plans,
+    people,
+    costComponents,
+    budgets,
+    grnActuals,
+    costCentres,
+    invoiced,
+    rpByProcess,
+    actualPeople,
+  ] = await Promise.all([
     getRevenueRules(processIds, scope.period),
     getDeliveryActuals(processIds, scope.period),
     getRevenueComponents(processIds, scope.period),
@@ -1539,9 +1860,11 @@ async function computeBranchRows(scope: PnlQueryFilters) {
   // Live P&L's seat-rate estimate for not-yet-billed cost centres — only for the month just
   // closed (closed per isOpenPeriod, still inside isEstimateWindow). Same figure the Statement,
   // Live P&L and CEO Overview add; see pnl-statement.service.ts enrichColumn. Degrades to none.
-  const lastMonthEstimate = !isOpenPeriod(scope.period ?? "") && isEstimateWindow(scope.period ?? "", getCurrentDateIST())
-    ? await getLiveRevenueEstimate(scope.period ?? "").catch(() => null)
-    : null;
+  const lastMonthEstimate =
+    !isOpenPeriod(scope.period ?? "") &&
+    isEstimateWindow(scope.period ?? "", getCurrentDateIST())
+      ? await getLiveRevenueEstimate(scope.period ?? "").catch(() => null)
+      : null;
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
     const configuredRules = rulesMap.get(base.processId) ?? [];
@@ -1570,20 +1893,32 @@ async function computeBranchRows(scope: PnlQueryFilters) {
      * process_id mapping anywhere (edge case) → agent cost = 0, same as before this fix. BMC
      * allocation for those employees still requires allocation policies to be configured.
      */
-    const fromActual = base.processId ? actualPeople.byProcess.get(base.processId) : undefined;
+    const fromActual = base.processId
+      ? actualPeople.byProcess.get(base.processId)
+      : undefined;
     const peopleMeta = people.processMap.get(base.processId) ?? {
       agentSalary: fromActual?.agent_salary ?? base.directPeopleCost,
-      dscPeople:   fromActual?.dsc_people   ?? 0,
+      dscPeople: fromActual?.dsc_people ?? 0,
       agentHeadcount: Math.max(1, base.activeHc),
       dscHeadcount: 0,
       unclassifiedPeopleCost: 0,
     };
-    const bmcPeople = people.bmcPeopleByProcess.get(base.processId)
-      ?? fromActual?.bmc_people
-      ?? 0;
-    const otherCosts = costComponents.get(base.processId) ?? emptyCostComponent();
-    const budget = budgets.get(base.processId) ?? { approvedBudget: 0, reservedBudget: 0, consumedBudget: 0 };
-    const grn = grnActuals.get(base.processId) ?? { directActual: 0, bmcAllocatedActual: 0, itemCount: 0 };
+    const bmcPeople =
+      people.bmcPeopleByProcess.get(base.processId) ??
+      fromActual?.bmc_people ??
+      0;
+    const otherCosts =
+      costComponents.get(base.processId) ?? emptyCostComponent();
+    const budget = budgets.get(base.processId) ?? {
+      approvedBudget: 0,
+      reservedBudget: 0,
+      consumedBudget: 0,
+    };
+    const grn = grnActuals.get(base.processId) ?? {
+      directActual: 0,
+      bmcAllocatedActual: 0,
+      itemCount: 0,
+    };
     const costCentre = costCentres.get(base.processId);
 
     const fallbackModel = normalizeBillingModel(base.billingModel);
@@ -1595,20 +1930,23 @@ async function computeBranchRows(scope: PnlQueryFilters) {
       monthlyMinimumCommitment: 0,
       mandatedSeats: toNumber(base.contractedSeats),
     };
-    const rules: RevenueRuleInput[] = configuredRules.length > 0
-      ? configuredRules.map((rule) => ({
-          billingModel: normalizeBillingModel(rule.billing_model),
-          metricKey: rule.metric_key,
-          rateAmount: toNumber(rule.rate_amount),
-          fxToInr: toNumber(rule.fx_to_inr, 1),
-          monthlyMinimumCommitment: toNumber(rule.monthly_minimum_commitment),
-          includedUnits: toNumber(rule.included_units),
-          overageRate: toNumber(rule.overage_rate),
-          mandatedSeats: toNumber(rule.mandated_seats || base.contractedSeats),
-        }))
-      : toNumber(base.resolvedRate) > 0
-      ? [fallbackRule]
-      : [];
+    const rules: RevenueRuleInput[] =
+      configuredRules.length > 0
+        ? configuredRules.map((rule) => ({
+            billingModel: normalizeBillingModel(rule.billing_model),
+            metricKey: rule.metric_key,
+            rateAmount: toNumber(rule.rate_amount),
+            fxToInr: toNumber(rule.fx_to_inr, 1),
+            monthlyMinimumCommitment: toNumber(rule.monthly_minimum_commitment),
+            includedUnits: toNumber(rule.included_units),
+            overageRate: toNumber(rule.overage_rate),
+            mandatedSeats: toNumber(
+              rule.mandated_seats || base.contractedSeats,
+            ),
+          }))
+        : toNumber(base.resolvedRate) > 0
+          ? [fallbackRule]
+          : [];
 
     const deliveries: DeliveryMetricInput[] = deliveryRows.map((delivery) => ({
       metricKey: delivery.metric_key,
@@ -1620,24 +1958,32 @@ async function computeBranchRows(scope: PnlQueryFilters) {
       productiveHours: toNumber(delivery.productive_hours),
       loginHours: toNumber(delivery.login_hours),
       talkMinutes: toNumber(delivery.talk_minutes),
-      qualityScore: delivery.quality_score == null ? null : toNumber(delivery.quality_score),
-      slaScore: delivery.sla_score == null ? null : toNumber(delivery.sla_score),
+      qualityScore:
+        delivery.quality_score == null
+          ? null
+          : toNumber(delivery.quality_score),
+      slaScore:
+        delivery.sla_score == null ? null : toNumber(delivery.sla_score),
     }));
     if (deliveries.length === 0 && rules.length > 0) {
       deliveries.push({
         metricKey: rules[0].metricKey,
-        plannedUnits: toNumber(plan?.planned_delivery_units || base.contractedSeats),
+        plannedUnits: toNumber(
+          plan?.planned_delivery_units || base.contractedSeats,
+        ),
         deliveredUnits: toNumber(base.billableHc || base.deployedHc),
         acceptedUnits: toNumber(base.billableHc || base.deployedHc),
         billableUnits: toNumber(base.billableHc || base.deployedHc),
       });
     }
 
-    const revenueComponents: RevenueComponentInput[] = componentRows.map((component) => ({
-      type: component.component_type,
-      direction: component.direction,
-      amountInr: toNumber(component.amount_inr),
-    }));
+    const revenueComponents: RevenueComponentInput[] = componentRows.map(
+      (component) => ({
+        type: component.component_type,
+        direction: component.direction,
+        amountInr: toNumber(component.amount_inr),
+      }),
+    );
     const revenue = calculateRevenue(rules, deliveries, revenueComponents);
     /*
      * Revenue source, matching pnl-statement.service.ts's periodOpen rule so this tile and the
@@ -1652,12 +1998,18 @@ async function computeBranchRows(scope: PnlQueryFilters) {
      */
     // + last month's seat estimate for this process's unbilled cost centres (zero otherwise), so
     // header KPIs / Full Waterfall agree with the Statement and Live P&L for the default month.
-    const invoicedForProcess = (invoiced.byProcess.get(base.processId) ?? 0)
-      + (lastMonthEstimate?.byProcess.get(base.processId) ?? 0);
-    const ruleRevenue = toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
+    const invoicedForProcess =
+      (invoiced.byProcess.get(base.processId) ?? 0) +
+      (lastMonthEstimate?.byProcess.get(base.processId) ?? 0);
+    const ruleRevenue =
+      toNumber(base.revenueMtd) > 0
+        ? toNumber(base.revenueMtd)
+        : revenue.earnedRevenue;
     const periodOpen = isOpenPeriod(scope.period ?? "");
     const usedInvoicedFallback = !periodOpen && invoicedForProcess > 0;
-    const recognizedRevenue = usedInvoicedFallback ? invoicedForProcess : ruleRevenue;
+    const recognizedRevenue = usedInvoicedFallback
+      ? invoicedForProcess
+      : ruleRevenue;
     const cost = calculateBpoCostWaterfall({
       revenue: recognizedRevenue,
       agentSalary: peopleMeta.agentSalary,
@@ -1680,17 +2032,49 @@ async function computeBranchRows(scope: PnlQueryFilters) {
       billableSeats: base.billableHc,
     });
 
-    const incentiveRevenue = componentAmount(componentRows, "incentive", "increase");
+    const incentiveRevenue = componentAmount(
+      componentRows,
+      "incentive",
+      "increase",
+    );
     const rpEntry = rpByProcess.get(base.processId);
-    const rewardRevenue = componentAmount(componentRows, "reward", "increase") + (rpEntry?.rewards ?? 0);
-    const trainingRevenue = componentAmount(componentRows, "training_revenue", "increase");
-    const penalty = componentAmount(componentRows, "penalty", "decrease") + (rpEntry?.penalties ?? 0);
-    const slaDeduction = componentAmount(componentRows, "sla_deduction", "decrease");
-    const creditNote = componentAmount(componentRows, "credit_note", "decrease");
-    const otherRevenueIncrease = otherComponentAmount(componentRows, "increase", ["incentive", "reward", "training_revenue"]);
-    const otherRevenueDecrease = otherComponentAmount(componentRows, "decrease", ["penalty", "sla_deduction", "credit_note"]);
-    const availableBudget = budget.approvedBudget - budget.reservedBudget - budget.consumedBudget;
-    const freshnessValues = [base.freshness, ...deliveryRows.map((delivery) => delivery.updated_at)]
+    const rewardRevenue =
+      componentAmount(componentRows, "reward", "increase") +
+      (rpEntry?.rewards ?? 0);
+    const trainingRevenue = componentAmount(
+      componentRows,
+      "training_revenue",
+      "increase",
+    );
+    const penalty =
+      componentAmount(componentRows, "penalty", "decrease") +
+      (rpEntry?.penalties ?? 0);
+    const slaDeduction = componentAmount(
+      componentRows,
+      "sla_deduction",
+      "decrease",
+    );
+    const creditNote = componentAmount(
+      componentRows,
+      "credit_note",
+      "decrease",
+    );
+    const otherRevenueIncrease = otherComponentAmount(
+      componentRows,
+      "increase",
+      ["incentive", "reward", "training_revenue"],
+    );
+    const otherRevenueDecrease = otherComponentAmount(
+      componentRows,
+      "decrease",
+      ["penalty", "sla_deduction", "credit_note"],
+    );
+    const availableBudget =
+      budget.approvedBudget - budget.reservedBudget - budget.consumedBudget;
+    const freshnessValues = [
+      base.freshness,
+      ...deliveryRows.map((delivery) => delivery.updated_at),
+    ]
       .filter((value): value is string => Boolean(value))
       .sort();
     const deliveryAttainmentPct = revenue.deliveryAttainmentPct;
@@ -1705,11 +2089,18 @@ async function computeBranchRows(scope: PnlQueryFilters) {
       branchName: base.branchName,
       costCentreId: costCentre?.id ?? null,
       costCentreCode: costCentre?.code ?? null,
-      billingModels: Array.from(new Set(rules.map((rule) => rule.billingModel))),
+      billingModels: Array.from(
+        new Set(rules.map((rule) => rule.billingModel)),
+      ),
       primaryBillingModel: rules[0]?.billingModel ?? base.billingModel,
-      revenueDataStatus: configuredRules.length > 0
-        ? deliveryRows.length > 0 ? "configured" : "configured_no_delivery"
-        : usedInvoicedFallback ? "invoiced_fallback" : "accounting_fallback",
+      revenueDataStatus:
+        configuredRules.length > 0
+          ? deliveryRows.length > 0
+            ? "configured"
+            : "configured_no_delivery"
+          : usedInvoicedFallback
+            ? "invoiced_fallback"
+            : "accounting_fallback",
       mandatedSeats: configuredRules[0]?.mandated_seats ?? base.contractedSeats,
       contractedSeats: base.contractedSeats,
       requiredProductiveHc: base.requiredProductiveHc,
@@ -1719,17 +2110,33 @@ async function computeBranchRows(scope: PnlQueryFilters) {
       supportHeadcount: peopleMeta.dscHeadcount,
       billableHc: base.billableHc,
       seatFillPct: pct(base.activeHc, toNumber(base.contractedSeats)),
-      billableSeatUtilizationPct: pct(toNumber(base.billableHc), toNumber(base.contractedSeats)),
+      billableSeatUtilizationPct: pct(
+        toNumber(base.billableHc),
+        toNumber(base.contractedSeats),
+      ),
       plannedDeliveryUnits: revenue.plannedUnits,
       deliveredUnits: revenue.deliveredUnits,
       acceptedUnits: revenue.acceptedUnits,
       rejectedUnits: revenue.rejectedUnits,
       billableUnits: revenue.billableUnits,
-      productiveHours: deliveries.reduce((sum, delivery) => sum + toNumber(delivery.productiveHours), 0),
-      loginHours: deliveries.reduce((sum, delivery) => sum + toNumber(delivery.loginHours), 0),
-      talkMinutes: deliveries.reduce((sum, delivery) => sum + toNumber(delivery.talkMinutes), 0),
-      qualityScore: averageNullable(deliveries.map((delivery) => delivery.qualityScore)),
-      slaScore: averageNullable(deliveries.map((delivery) => delivery.slaScore)),
+      productiveHours: deliveries.reduce(
+        (sum, delivery) => sum + toNumber(delivery.productiveHours),
+        0,
+      ),
+      loginHours: deliveries.reduce(
+        (sum, delivery) => sum + toNumber(delivery.loginHours),
+        0,
+      ),
+      talkMinutes: deliveries.reduce(
+        (sum, delivery) => sum + toNumber(delivery.talkMinutes),
+        0,
+      ),
+      qualityScore: averageNullable(
+        deliveries.map((delivery) => delivery.qualityScore),
+      ),
+      slaScore: averageNullable(
+        deliveries.map((delivery) => delivery.slaScore),
+      ),
       deliveryAttainmentPct,
       acceptancePct: revenue.acceptancePct,
       grossPotentialRevenue: potentialRevenue(rules, deliveries),
@@ -1748,13 +2155,22 @@ async function computeBranchRows(scope: PnlQueryFilters) {
       invoicedRevenue: toNumber(base.invoicedRevenueMtd),
       collectedRevenue: toNumber(base.collectedRevenueMtd),
       outstandingReceivable: toNumber(base.outstandingReceivable),
-      unbilledRevenue: Math.max(0, revenue.earnedRevenue - toNumber(base.invoicedRevenueMtd)),
-      deferredRevenue: Math.max(0, toNumber(base.invoicedRevenueMtd) - revenue.earnedRevenue),
+      unbilledRevenue: Math.max(
+        0,
+        revenue.earnedRevenue - toNumber(base.invoicedRevenueMtd),
+      ),
+      deferredRevenue: Math.max(
+        0,
+        toNumber(base.invoicedRevenueMtd) - revenue.earnedRevenue,
+      ),
       revenueLeakage: toNumber(base.revenueLeakage),
       revenueAtRisk: toNumber(base.revenueAtRisk),
       revenueAtRiskUnavailable: base.revenueAtRiskUnavailable,
       revenueBudget: base.revenueBudget,
-      revenueVariance: base.revenueBudget == null ? null : recognizedRevenue - base.revenueBudget,
+      revenueVariance:
+        base.revenueBudget == null
+          ? null
+          : recognizedRevenue - base.revenueBudget,
       agentSalary: cost.agentSalary,
       averageAgentSalary: cost.averageAgentSalary,
       agentSalaryPctRevenue: cost.agentSalaryPctRevenue,
@@ -1792,9 +2208,16 @@ async function computeBranchRows(scope: PnlQueryFilters) {
       reservedBudget: budget.reservedBudget,
       consumedBudget: budget.consumedBudget,
       availableBudget,
-      budgetUtilizationPct: pct(budget.reservedBudget + budget.consumedBudget, budget.approvedBudget),
-      ebitdaBudget: plan?.ebitda_budget == null ? null : toNumber(plan.ebitda_budget),
-      ebitdaVariance: plan?.ebitda_budget == null ? null : ebitda - toNumber(plan.ebitda_budget),
+      budgetUtilizationPct: pct(
+        budget.reservedBudget + budget.consumedBudget,
+        budget.approvedBudget,
+      ),
+      ebitdaBudget:
+        plan?.ebitda_budget == null ? null : toNumber(plan.ebitda_budget),
+      ebitdaVariance:
+        plan?.ebitda_budget == null
+          ? null
+          : ebitda - toNumber(plan.ebitda_budget),
       processStatus: statusFrom({
         ebitda,
         recognizedRevenue,
@@ -1854,11 +2277,14 @@ async function computeBranchRows(scope: PnlQueryFilters) {
  * change is visible here within 5s regardless.
  */
 const BRANCH_ROWS_CACHE_TTL_MS = 5_000;
-const branchRowsCache = new Map<string, {
-  expiresAt: number;
-  value?: Awaited<ReturnType<typeof computeBranchRows>>;
-  promise?: Promise<Awaited<ReturnType<typeof computeBranchRows>>>;
-}>();
+const branchRowsCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value?: Awaited<ReturnType<typeof computeBranchRows>>;
+    promise?: Promise<Awaited<ReturnType<typeof computeBranchRows>>>;
+  }
+>();
 
 function branchRowsCacheKey(scope: PnlQueryFilters): string {
   return [
@@ -1878,10 +2304,16 @@ async function getCachedBranchRows(scope: PnlQueryFilters) {
   if (cached?.promise) return cached.promise;
 
   const promise = computeBranchRows(scope);
-  branchRowsCache.set(key, { expiresAt: now + BRANCH_ROWS_CACHE_TTL_MS, promise });
+  branchRowsCache.set(key, {
+    expiresAt: now + BRANCH_ROWS_CACHE_TTL_MS,
+    promise,
+  });
   try {
     const value = await promise;
-    branchRowsCache.set(key, { expiresAt: Date.now() + BRANCH_ROWS_CACHE_TTL_MS, value });
+    branchRowsCache.set(key, {
+      expiresAt: Date.now() + BRANCH_ROWS_CACHE_TTL_MS,
+      value,
+    });
     return value;
   } catch (error) {
     const current = branchRowsCache.get(key);
@@ -1906,15 +2338,25 @@ function sum(rows: BpoPnlRow[], field: keyof BpoPnlRow): number {
   return rows.reduce((total, row) => total + toNumber(row[field]), 0);
 }
 
-function ratio(rows: BpoPnlRow[], numerator: keyof BpoPnlRow, denominator: keyof BpoPnlRow) {
+function ratio(
+  rows: BpoPnlRow[],
+  numerator: keyof BpoPnlRow,
+  denominator: keyof BpoPnlRow,
+) {
   return pct(sum(rows, numerator), sum(rows, denominator));
 }
 
 /** Pre-read the row a config save is about to touch, so the audit entry can carry a real
  *  before/after diff instead of just "something changed". Returns null for a genuine create
  *  (no existing id) — that absence is itself meaningful, not a failure. */
-async function readExistingConfigRow(table: string, id: string): Promise<RowDataPacket | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+async function readExistingConfigRow(
+  table: string,
+  id: string,
+): Promise<RowDataPacket | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM ${table} WHERE id = ?`,
+    [id],
+  );
   return rows[0] ?? null;
 }
 
@@ -1924,7 +2366,7 @@ async function auditConfigSave(
   id: string,
   before: RowDataPacket | null,
   payload: Record<string, unknown>,
-  userId: string
+  userId: string,
 ) {
   await writeAuditLog({
     actor_user_id: userId,
@@ -2031,7 +2473,11 @@ export const bpoPnlService = {
         .map((rule) => rule.sla_gate_pct)
         .filter((value): value is number => value != null)
         .sort((a, b) => b - a)[0];
-      if (qualityGate != null && row.qualityScore != null && row.qualityScore < qualityGate) {
+      if (
+        qualityGate != null &&
+        row.qualityScore != null &&
+        row.qualityScore < qualityGate
+      ) {
         alerts.push({
           type: "warning",
           code: "QUALITY_GATE_BREACH",
@@ -2064,7 +2510,8 @@ export const bpoPnlService = {
         type: "critical",
         code: "MANUAL_ALLOCATION_NOT_BALANCED",
         title: "Manual allocation not balanced",
-        detail: `Branch ${warning.branchId} manual allocation policy for ${warning.poolType} sums to ` +
+        detail:
+          `Branch ${warning.branchId} manual allocation policy for ${warning.poolType} sums to ` +
           `${warning.percentTotal.toFixed(2)}% (expected 100%). Amounts are applied as configured, not rebalanced.`,
       });
     }
@@ -2078,8 +2525,17 @@ export const bpoPnlService = {
         [period],
       );
       if (payrollRuns.length > 0) {
-        const FINALIZED = new Set(["approved", "paid", "disbursed", "finalized", "final", "completed"]);
-        const allFinalized = payrollRuns.every((r) => FINALIZED.has(String(r.status ?? "").toLowerCase()));
+        const FINALIZED = new Set([
+          "approved",
+          "paid",
+          "disbursed",
+          "finalized",
+          "final",
+          "completed",
+        ]);
+        const allFinalized = payrollRuns.every((r) =>
+          FINALIZED.has(String(r.status ?? "").toLowerCase()),
+        );
         if (!allFinalized) {
           alerts.push({
             type: "warning",
@@ -2092,7 +2548,11 @@ export const bpoPnlService = {
     }
 
     const severity = { critical: 0, warning: 1, info: 2 } as const;
-    alerts.sort((left, right) => severity[left.type] - severity[right.type] || toNumber(right.impact) - toNumber(left.impact));
+    alerts.sort(
+      (left, right) =>
+        severity[left.type] - severity[right.type] ||
+        toNumber(right.impact) - toNumber(left.impact),
+    );
 
     const payrollRunPending = (() => {
       const a = alerts.find((al) => al.code === "PAYROLL_RUN_DRAFT");
@@ -2121,7 +2581,11 @@ export const bpoPnlService = {
         grnVendorActual: sum(rows, "grnVendorActual"),
         grnCommitted: sum(rows, "grnCommitted"),
         totalPeopleCost: sum(rows, "totalPeopleCost"),
-        peopleCostPctRevenue: ratio(rows, "totalPeopleCost", "recognizedRevenue"),
+        peopleCostPctRevenue: ratio(
+          rows,
+          "totalPeopleCost",
+          "recognizedRevenue",
+        ),
         contribution: sum(rows, "contribution"),
         ebitda,
         ebitdaMarginPct: pct(ebitda, recognizedRevenue),
@@ -2135,21 +2599,34 @@ export const bpoPnlService = {
         availableBudget: sum(rows, "availableBudget"),
         activeHeadcount: sum(rows, "activeHc"),
         agentHeadcount: sum(rows, "agentHeadcount"),
-        configuredProcesses: rows.filter((row) => row.revenueDataStatus === "configured" || row.revenueDataStatus === "configured_no_delivery").length,
+        configuredProcesses: rows.filter(
+          (row) =>
+            row.revenueDataStatus === "configured" ||
+            row.revenueDataStatus === "configured_no_delivery",
+        ).length,
         totalProcesses: rows.length,
         revenueModelCoveragePct: pct(
-          rows.filter((row) => row.revenueDataStatus === "configured" || row.revenueDataStatus === "configured_no_delivery").length,
-          rows.length
+          rows.filter(
+            (row) =>
+              row.revenueDataStatus === "configured" ||
+              row.revenueDataStatus === "configured_no_delivery",
+          ).length,
+          rows.length,
         ),
-        lossMakingProcesses: rows.filter((row) => row.processStatus === "loss-making").length,
+        lossMakingProcesses: rows.filter(
+          (row) => row.processStatus === "loss-making",
+        ).length,
       },
       revenueMix: {
         baseRevenue: sum(rows, "baseEarnedRevenue"),
         minimumCommitment: sum(rows, "minimumCommitmentTopUp"),
-        incentivesAndRewards: sum(rows, "incentiveRevenue") + sum(rows, "rewardRevenue"),
-        trainingAndOtherRevenue: sum(rows, "trainingRevenue") + sum(rows, "otherRevenueIncrease"),
+        incentivesAndRewards:
+          sum(rows, "incentiveRevenue") + sum(rows, "rewardRevenue"),
+        trainingAndOtherRevenue:
+          sum(rows, "trainingRevenue") + sum(rows, "otherRevenueIncrease"),
         penaltiesAndSla: sum(rows, "penalty") + sum(rows, "slaDeduction"),
-        creditNotesAndOtherDeductions: sum(rows, "creditNote") + sum(rows, "otherRevenueDecrease"),
+        creditNotesAndOtherDeductions:
+          sum(rows, "creditNote") + sum(rows, "otherRevenueDecrease"),
       },
       costMix: {
         agentSalary: sum(rows, "agentSalary"),
@@ -2195,7 +2672,11 @@ export const bpoPnlService = {
         financeCost: row.financeCost,
         tax: row.tax,
       },
-      budget: bundle.budgets.get(processId) ?? { approvedBudget: 0, reservedBudget: 0, consumedBudget: 0 },
+      budget: bundle.budgets.get(processId) ?? {
+        approvedBudget: 0,
+        reservedBudget: 0,
+        consumedBudget: 0,
+      },
       generatedAt: new Date().toISOString(),
     };
   },
@@ -2203,55 +2684,91 @@ export const bpoPnlService = {
   async exportCsv(filters: Partial<PnlQueryFilters>) {
     const summary = await this.getSummary(filters);
     const headers = [
-      "Process", "Client", "Branch", "Cost Centre", "Billing Model", "Mandated Seats", "Active HC", "Agent HC",
-      "Planned Units", "Delivered Units", "Billable Units", "Delivery %", "Potential Revenue", "Earned Revenue",
-      "Recognized Revenue", "Invoiced Revenue", "Collected Revenue", "Outstanding", "Unbilled Revenue",
-      "Agent Salary", "Agent Salary %", "DSC", "DSC %", "BMC", "BMC %", "GRN/Vendor Actual",
-      "EBITDA", "EBITDA %", "EBIT", "Operating Profit %", "PBT", "PAT", "Approved Budget",
-      "Reserved Budget", "Consumed Budget", "Available Budget", "Status",
+      "Process",
+      "Client",
+      "Branch",
+      "Cost Centre",
+      "Billing Model",
+      "Mandated Seats",
+      "Active HC",
+      "Agent HC",
+      "Planned Units",
+      "Delivered Units",
+      "Billable Units",
+      "Delivery %",
+      "Potential Revenue",
+      "Earned Revenue",
+      "Recognized Revenue",
+      "Invoiced Revenue",
+      "Collected Revenue",
+      "Outstanding",
+      "Unbilled Revenue",
+      "Agent Salary",
+      "Agent Salary %",
+      "DSC",
+      "DSC %",
+      "BMC",
+      "BMC %",
+      "GRN/Vendor Actual",
+      "EBITDA",
+      "EBITDA %",
+      "EBIT",
+      "Operating Profit %",
+      "PBT",
+      "PAT",
+      "Approved Budget",
+      "Reserved Budget",
+      "Consumed Budget",
+      "Available Budget",
+      "Status",
     ];
-    const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const escape = (value: unknown) =>
+      `"${String(value ?? "").replace(/"/g, '""')}"`;
     return [
       headers.map(escape).join(","),
-      ...summary.rows.map((row) => [
-        row.processName,
-        row.clientName,
-        row.branchName,
-        row.costCentreCode,
-        row.billingModels.join(" + "),
-        row.mandatedSeats,
-        row.activeHc,
-        row.agentHeadcount,
-        row.plannedDeliveryUnits,
-        row.deliveredUnits,
-        row.billableUnits,
-        row.deliveryAttainmentPct?.toFixed(2),
-        row.grossPotentialRevenue.toFixed(2),
-        row.earnedRevenue.toFixed(2),
-        row.recognizedRevenue.toFixed(2),
-        row.invoicedRevenue.toFixed(2),
-        row.collectedRevenue.toFixed(2),
-        row.outstandingReceivable.toFixed(2),
-        row.unbilledRevenue.toFixed(2),
-        row.agentSalary.toFixed(2),
-        row.agentSalaryPctRevenue?.toFixed(2),
-        row.dsc.toFixed(2),
-        row.dscPctRevenue?.toFixed(2),
-        row.bmc.toFixed(2),
-        row.bmcPctRevenue?.toFixed(2),
-        row.grnVendorActual.toFixed(2),
-        row.ebitda.toFixed(2),
-        row.ebitdaMarginPct?.toFixed(2),
-        row.ebit.toFixed(2),
-        row.operatingProfitPct?.toFixed(2),
-        row.pbt.toFixed(2),
-        row.pat.toFixed(2),
-        row.approvedBudget.toFixed(2),
-        row.reservedBudget.toFixed(2),
-        row.consumedBudget.toFixed(2),
-        row.availableBudget.toFixed(2),
-        row.processStatus,
-      ].map(escape).join(",")),
+      ...summary.rows.map((row) =>
+        [
+          row.processName,
+          row.clientName,
+          row.branchName,
+          row.costCentreCode,
+          row.billingModels.join(" + "),
+          row.mandatedSeats,
+          row.activeHc,
+          row.agentHeadcount,
+          row.plannedDeliveryUnits,
+          row.deliveredUnits,
+          row.billableUnits,
+          row.deliveryAttainmentPct?.toFixed(2),
+          row.grossPotentialRevenue.toFixed(2),
+          row.earnedRevenue.toFixed(2),
+          row.recognizedRevenue.toFixed(2),
+          row.invoicedRevenue.toFixed(2),
+          row.collectedRevenue.toFixed(2),
+          row.outstandingReceivable.toFixed(2),
+          row.unbilledRevenue.toFixed(2),
+          row.agentSalary.toFixed(2),
+          row.agentSalaryPctRevenue?.toFixed(2),
+          row.dsc.toFixed(2),
+          row.dscPctRevenue?.toFixed(2),
+          row.bmc.toFixed(2),
+          row.bmcPctRevenue?.toFixed(2),
+          row.grnVendorActual.toFixed(2),
+          row.ebitda.toFixed(2),
+          row.ebitdaMarginPct?.toFixed(2),
+          row.ebit.toFixed(2),
+          row.operatingProfitPct?.toFixed(2),
+          row.pbt.toFixed(2),
+          row.pat.toFixed(2),
+          row.approvedBudget.toFixed(2),
+          row.reservedBudget.toFixed(2),
+          row.consumedBudget.toFixed(2),
+          row.availableBudget.toFixed(2),
+          row.processStatus,
+        ]
+          .map(escape)
+          .join(","),
+      ),
     ].join("\n");
   },
 
@@ -2262,7 +2779,7 @@ export const bpoPnlService = {
          FROM process_revenue_rule
          ${processId ? "WHERE process_id = ?" : ""}
         ORDER BY process_id, effective_from DESC`,
-      processId ? [processId] : []
+      processId ? [processId] : [],
     );
   },
 
@@ -2280,11 +2797,13 @@ export const bpoPnlService = {
     // process_lob_id NULL rather than guessing which one -- same discipline as the manual
     // fix this replaces.
     let processLobId: string | null =
-      typeof payload.processLobId === "string" && payload.processLobId ? payload.processLobId : null;
+      typeof payload.processLobId === "string" && payload.processLobId
+        ? payload.processLobId
+        : null;
     if (!processLobId && payload.processId) {
       const [lobRows] = await db.execute<RowDataPacket[]>(
         "SELECT id FROM process_lob_master WHERE process_id = ? LIMIT 2",
-        [payload.processId]
+        [payload.processId],
       );
       if (lobRows.length === 1) {
         processLobId = String(lobRows[0].id);
@@ -2333,9 +2852,16 @@ export const bpoPnlService = {
         payload.approvalReference ?? null,
         userId,
         userId,
-      ]
+      ],
     );
-    await auditConfigSave("revenue_rule_saved", "process_revenue_rule", id, before, payload, userId);
+    await auditConfigSave(
+      "revenue_rule_saved",
+      "process_revenue_rule",
+      id,
+      before,
+      payload,
+      userId,
+    );
     return { id };
   },
 
@@ -2380,9 +2906,16 @@ export const bpoPnlService = {
         validated ? new Date() : null,
         userId,
         userId,
-      ]
+      ],
     );
-    await auditConfigSave("delivery_actual_saved", "process_delivery_actual", id, before, payload, userId);
+    await auditConfigSave(
+      "delivery_actual_saved",
+      "process_delivery_actual",
+      id,
+      before,
+      payload,
+      userId,
+    );
     return { id };
   },
 
@@ -2417,16 +2950,26 @@ export const bpoPnlService = {
         status === "approved" ? userId : null,
         status === "approved" ? new Date() : null,
         userId,
-      ]
+      ],
     );
-    await auditConfigSave("revenue_component_saved", "process_revenue_component", id, before, payload, userId);
+    await auditConfigSave(
+      "revenue_component_saved",
+      "process_revenue_component",
+      id,
+      before,
+      payload,
+      userId,
+    );
     return { id };
   },
 
   async saveCostComponent(payload: Record<string, unknown>, userId: string) {
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
-    const before = await readExistingConfigRow("process_pnl_cost_component", id);
+    const before = await readExistingConfigRow(
+      "process_pnl_cost_component",
+      id,
+    );
     await db.execute(
       `INSERT INTO process_pnl_cost_component
         (id, process_id, branch_id, period_code, cost_type, description, amount_inr, allocation_driver,
@@ -2452,20 +2995,29 @@ export const bpoPnlService = {
         status === "approved" ? userId : null,
         status === "approved" ? new Date() : null,
         userId,
-      ]
+      ],
     );
-    await auditConfigSave("cost_component_saved", "process_pnl_cost_component", id, before, payload, userId);
+    await auditConfigSave(
+      "cost_component_saved",
+      "process_pnl_cost_component",
+      id,
+      before,
+      payload,
+      userId,
+    );
     return { id };
   },
 
   async saveAllocationPolicy(payload: Record<string, unknown>, userId: string) {
     // Nothing validated the driver, so a policy could be saved with one the allocator cannot
     // satisfy and would quietly split by headcount instead.
-    const driver = String(payload.allocationDriver ?? payload.allocation_driver ?? "");
+    const driver = String(
+      payload.allocationDriver ?? payload.allocation_driver ?? "",
+    );
     if (driver && !isSupportedAllocationDriver(driver)) {
       throw new Error(
-        `Allocation driver "${driver}" is not supported for Process P&L. `
-        + `Supported drivers: ${SUPPORTED_ALLOCATION_DRIVERS.join(", ")}.`
+        `Allocation driver "${driver}" is not supported for Process P&L. ` +
+          `Supported drivers: ${SUPPORTED_ALLOCATION_DRIVERS.join(", ")}.`,
       );
     }
     const id = String(payload.id ?? randomUUID());
@@ -2495,9 +3047,16 @@ export const bpoPnlService = {
         status === "approved" ? new Date() : null,
         userId,
         userId,
-      ]
+      ],
     );
-    await auditConfigSave("allocation_policy_saved", "pnl_allocation_policy", id, before, payload, userId);
+    await auditConfigSave(
+      "allocation_policy_saved",
+      "pnl_allocation_policy",
+      id,
+      before,
+      payload,
+      userId,
+    );
     return { id };
   },
 };

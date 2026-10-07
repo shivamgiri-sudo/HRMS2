@@ -15,7 +15,10 @@ import { describe, expect, it } from "vitest";
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(path.resolve(here, "../process-pnl.routes.ts"), "utf8");
+const source = readFileSync(
+  path.resolve(here, "../process-pnl.routes.ts"),
+  "utf8",
+);
 
 function routeBlock(routePath: string): string {
   const start = source.indexOf(`"${routePath}"`);
@@ -25,7 +28,11 @@ function routeBlock(routePath: string): string {
 }
 
 describe("P&L page routes resolve role scope from one source", () => {
-  for (const route of ["/pnl/ceo-overview", "/pnl/ytd-summary", "/pnl/reconciliation"]) {
+  for (const route of [
+    "/pnl/ceo-overview",
+    "/pnl/ytd-summary",
+    "/pnl/reconciliation",
+  ]) {
     it(`${route} reads roles through actor(req), never req.userRoles directly`, () => {
       const block = routeBlock(route);
       expect(block).toContain("requireRole(...PNL_READ_ROLES)");
@@ -37,10 +44,14 @@ describe("P&L page routes resolve role scope from one source", () => {
 
 describe("/pnl/statement access gate", () => {
   it("is registered after the /pnl prefix requireRole(...PNL_READ_ROLES) gate", () => {
-    const gate = source.indexOf(`router.use("/pnl", requireRole(...PNL_READ_ROLES))`);
+    const gate = source.indexOf(
+      `router.use("/pnl", requireRole(...PNL_READ_ROLES))`,
+    );
     const statement = source.indexOf(`router.get("/pnl/statement"`);
     expect(gate, "prefix gate missing").toBeGreaterThan(-1);
     expect(statement, "statement route missing").toBeGreaterThan(-1);
-    expect(gate, "the prefix gate must run before /pnl/statement").toBeLessThan(statement);
+    expect(gate, "the prefix gate must run before /pnl/statement").toBeLessThan(
+      statement,
+    );
   });
 });

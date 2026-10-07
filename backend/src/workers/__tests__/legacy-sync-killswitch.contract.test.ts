@@ -28,12 +28,14 @@ describe("legacy-sync manual-trigger kill switch", () => {
   const worker = read("src/workers/legacy-sync-worker.ts");
 
   it("checks LEGACY_SYNC_ENABLED before running a sync cycle", () => {
-    const body = worker.match(/async triggerManualSync\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
+    const body =
+      worker.match(/async triggerManualSync\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
     expect(body).toContain("env.LEGACY_SYNC_ENABLED");
   });
 
   it("guards before the sync runs, not after it", () => {
-    const body = worker.match(/async triggerManualSync\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
+    const body =
+      worker.match(/async triggerManualSync\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
     const guardAt = body.indexOf("env.LEGACY_SYNC_ENABLED");
     const runAt = body.indexOf("this.runSyncCycle()");
     expect(guardAt).toBeGreaterThanOrEqual(0);
@@ -41,8 +43,10 @@ describe("legacy-sync manual-trigger kill switch", () => {
   });
 
   it("start() and triggerManualSync() use the identical flag, not a copy that can drift", () => {
-    const startBody = worker.match(/start\(\): void \{[\s\S]*?\n  \}/)?.[0] ?? "";
-    const triggerBody = worker.match(/async triggerManualSync\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
+    const startBody =
+      worker.match(/start\(\): void \{[\s\S]*?\n  \}/)?.[0] ?? "";
+    const triggerBody =
+      worker.match(/async triggerManualSync\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
     expect(startBody).toContain("env.LEGACY_SYNC_ENABLED");
     expect(triggerBody).toContain("env.LEGACY_SYNC_ENABLED");
   });

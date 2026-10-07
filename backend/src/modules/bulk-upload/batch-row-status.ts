@@ -9,7 +9,9 @@ import { db } from "../../db/mysql.js";
 export const ROW_STATUS_CHUNK_SIZE = 1000;
 
 /** Flags staged rows as imported, one short statement per chunk. */
-export async function markRowsImported(rowIds: readonly string[]): Promise<void> {
+export async function markRowsImported(
+  rowIds: readonly string[],
+): Promise<void> {
   for (let i = 0; i < rowIds.length; i += ROW_STATUS_CHUNK_SIZE) {
     const chunk = rowIds.slice(i, i + ROW_STATUS_CHUNK_SIZE);
     await db.execute(
@@ -36,16 +38,19 @@ export async function deleteBatchRowsChunked(
   batchId: string,
   statuses?: readonly string[],
 ): Promise<number> {
-  const statusSql = statuses && statuses.length
-    ? ` AND row_status IN (${statuses.map(() => "?").join(",")})`
-    : "";
+  const statusSql =
+    statuses && statuses.length
+      ? ` AND row_status IN (${statuses.map(() => "?").join(",")})`
+      : "";
   let total = 0;
   for (;;) {
     const [result] = await db.query(
       `DELETE FROM upload_batch_row WHERE upload_batch_id = ?${statusSql} ORDER BY row_no LIMIT ${ROW_DELETE_CHUNK_SIZE}`,
       [batchId, ...(statuses ?? [])],
     );
-    const affected = Number((result as { affectedRows?: number } | undefined)?.affectedRows ?? 0);
+    const affected = Number(
+      (result as { affectedRows?: number } | undefined)?.affectedRows ?? 0,
+    );
     total += affected;
     if (affected < ROW_DELETE_CHUNK_SIZE) return total;
     await new Promise((r) => setTimeout(r, ROW_DELETE_PAUSE_MS));

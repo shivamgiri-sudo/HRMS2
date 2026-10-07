@@ -197,15 +197,18 @@ interface RunStats {
   legalHoldDescriptionCount: number;
 }
 
-function countCastFailures(row: {
-  legacy_id: number;
-  total: string | null;
-  tax: string | null;
-  igst: string | null;
-  sgst: string | null;
-  cgst: string | null;
-  grnd: string | null;
-}, stats: RunStats): void {
+function countCastFailures(
+  row: {
+    legacy_id: number;
+    total: string | null;
+    tax: string | null;
+    igst: string | null;
+    sgst: string | null;
+    cgst: string | null;
+    grnd: string | null;
+  },
+  stats: RunStats,
+): void {
   const fields: Array<[string, string | null]> = [
     ["total", row.total],
     ["tax", row.tax],
@@ -217,15 +220,31 @@ function countCastFailures(row: {
   for (const [column, raw] of fields) {
     const parsed = parseLegacyDecimal(raw);
     if (!parsed.ok) {
-      stats.castFailures.push({ legacy_id: row.legacy_id, column, raw: raw ?? "" });
+      stats.castFailures.push({
+        legacy_id: row.legacy_id,
+        column,
+        raw: raw ?? "",
+      });
     }
   }
 }
 
-function recordCategoryNormalization(rawCategory: string | null, normalized: string | null, stats: RunStats): void {
-  const rawKey = rawCategory === null ? "<NULL>" : rawCategory === "" ? "<EMPTY>" : rawCategory;
+function recordCategoryNormalization(
+  rawCategory: string | null,
+  normalized: string | null,
+  stats: RunStats,
+): void {
+  const rawKey =
+    rawCategory === null
+      ? "<NULL>"
+      : rawCategory === ""
+        ? "<EMPTY>"
+        : rawCategory;
   if (rawCategory !== normalized) {
-    const entry = stats.categoryNormalized.get(rawKey) ?? { to: normalized, count: 0 };
+    const entry = stats.categoryNormalized.get(rawKey) ?? {
+      to: normalized,
+      count: 0,
+    };
     entry.count += 1;
     stats.categoryNormalized.set(rawKey, entry);
   }
@@ -338,43 +357,133 @@ async function extractInvoices(stats: RunStats): Promise<void> {
           target_id = VALUES(target_id), target_gst_type = VALUES(target_gst_type),
           target_apply_gst = VALUES(target_apply_gst), validation_status = 'pending', validation_error = NULL`,
         [
-          row.id, row.invoiceType, normalizedCategory, row.branch_name, row.cost_center,
-          row.finance_year, row.month, row.invoiceDate, row.app_tax_cal, row.invoiceDescription,
-          row.jcc_no, row.proforma_bill_no, row.proforma_approve, row.bill_no, row.po_no,
-          sanitizeLegacyDatetime(row.po_createdate), row.ser_tax_no, row.ser_tax_category, row.pan_no, row.grn,
-          sanitizeLegacyDatetime(row.grn_createdate), row.total, row.tax, row.igst, row.sgst,
-          row.cgst, row.grnd, row.approve_po, row.approve_grn, row.username,
-          row.view_ahmedabad, row.filepath, row.status, sanitizeLegacyDatetime(row.createdate), row.sbctax,
-          row.krishi_tax, row.apply_krishi_tax, row.apply_service_tax, row.apply_gst, row.ReceiptStatus,
-          sanitizeLegacyDatetime(row.po_date), row.po_remarks, sanitizeLegacyDatetime(row.grn_date), row.grn_remarks, row.GSTType,
-          row.bill_finance_year, row.BillNoChange, row.state_code, row.PaymentStatus, row.RequestInvoiceType,
-          row.CurrentInvoiceType, row.InvoiceTypeApproval, row.InvoiceTypeApproveBy, sanitizeLegacyDatetime(row.InvoiceTypeApproveDate), row.InvoiceTypeRemarks,
-          row.InvoiceRejectRequest, row.InvoiceDeleteRemarks, row.InvoiceRejectBy, sanitizeLegacyDatetime(row.InvoiceRejectDate), row.eptp_act_date,
-          row.eptp_act_remarks, row.his_eptp_act_date, row.his_eptp_act_remarks, row.due_date, row.subs_start_date,
-          row.subs_end_date, row.plan_id, row.cost_company_name, row.cost_branch, row.cost_OPBranch,
-          row.cost_stream, row.cost_process, row.cost_process_name, row.cost_TallyHead, row.cost_client,
-          row.cost_bill_to, row.cost_as_client, row.cost_b_Address1, row.cost_b_Address2, row.cost_b_Address3,
-          row.cost_b_Address4, row.cost_b_Address5, row.cost_ship_to, row.cost_as_bill_to, row.cost_a_address1,
-          row.cost_a_address2, row.cost_a_address3, row.cost_a_address4, row.cost_a_address5, row.cost_GSTType,
-          row.cost_ServiceTaxNo, row.cost_VendorGSTNo, row.cost_HSNCode, row.cost_SACCode, row.cost_VendorHSNCode,
-          row.cost_VendorSACCode, row.cost_VendorGSTState, row.cost_VendorStateCode, row.cost_OwnerName, row.cost_statecodecost,
-          row.cost_statenamecost, row.cost_client_tally_name, row.cost_group_cost_center, row.cost_cost_center_type, row.carry_forward,
+          row.id,
+          row.invoiceType,
+          normalizedCategory,
+          row.branch_name,
+          row.cost_center,
+          row.finance_year,
+          row.month,
+          row.invoiceDate,
+          row.app_tax_cal,
+          row.invoiceDescription,
+          row.jcc_no,
+          row.proforma_bill_no,
+          row.proforma_approve,
+          row.bill_no,
+          row.po_no,
+          sanitizeLegacyDatetime(row.po_createdate),
+          row.ser_tax_no,
+          row.ser_tax_category,
+          row.pan_no,
+          row.grn,
+          sanitizeLegacyDatetime(row.grn_createdate),
+          row.total,
+          row.tax,
+          row.igst,
+          row.sgst,
+          row.cgst,
+          row.grnd,
+          row.approve_po,
+          row.approve_grn,
+          row.username,
+          row.view_ahmedabad,
+          row.filepath,
+          row.status,
+          sanitizeLegacyDatetime(row.createdate),
+          row.sbctax,
+          row.krishi_tax,
+          row.apply_krishi_tax,
+          row.apply_service_tax,
+          row.apply_gst,
+          row.ReceiptStatus,
+          sanitizeLegacyDatetime(row.po_date),
+          row.po_remarks,
+          sanitizeLegacyDatetime(row.grn_date),
+          row.grn_remarks,
+          row.GSTType,
+          row.bill_finance_year,
+          row.BillNoChange,
+          row.state_code,
+          row.PaymentStatus,
+          row.RequestInvoiceType,
+          row.CurrentInvoiceType,
+          row.InvoiceTypeApproval,
+          row.InvoiceTypeApproveBy,
+          sanitizeLegacyDatetime(row.InvoiceTypeApproveDate),
+          row.InvoiceTypeRemarks,
+          row.InvoiceRejectRequest,
+          row.InvoiceDeleteRemarks,
+          row.InvoiceRejectBy,
+          sanitizeLegacyDatetime(row.InvoiceRejectDate),
+          row.eptp_act_date,
+          row.eptp_act_remarks,
+          row.his_eptp_act_date,
+          row.his_eptp_act_remarks,
+          row.due_date,
+          row.subs_start_date,
+          row.subs_end_date,
+          row.plan_id,
+          row.cost_company_name,
+          row.cost_branch,
+          row.cost_OPBranch,
+          row.cost_stream,
+          row.cost_process,
+          row.cost_process_name,
+          row.cost_TallyHead,
+          row.cost_client,
+          row.cost_bill_to,
+          row.cost_as_client,
+          row.cost_b_Address1,
+          row.cost_b_Address2,
+          row.cost_b_Address3,
+          row.cost_b_Address4,
+          row.cost_b_Address5,
+          row.cost_ship_to,
+          row.cost_as_bill_to,
+          row.cost_a_address1,
+          row.cost_a_address2,
+          row.cost_a_address3,
+          row.cost_a_address4,
+          row.cost_a_address5,
+          row.cost_GSTType,
+          row.cost_ServiceTaxNo,
+          row.cost_VendorGSTNo,
+          row.cost_HSNCode,
+          row.cost_SACCode,
+          row.cost_VendorHSNCode,
+          row.cost_VendorSACCode,
+          row.cost_VendorGSTState,
+          row.cost_VendorStateCode,
+          row.cost_OwnerName,
+          row.cost_statecodecost,
+          row.cost_statenamecost,
+          row.cost_client_tally_name,
+          row.cost_group_cost_center,
+          row.cost_cost_center_type,
+          row.carry_forward,
           row.finance_monthYear,
-          targetId, gst.target_gst_type, gst.target_apply_gst,
+          targetId,
+          gst.target_gst_type,
+          gst.target_apply_gst,
         ],
       );
       stats.written += 1;
     } catch (err) {
       // A single row's own DB error must never abort the whole extraction run.
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[extract-invoices] row legacy_id=${row.id} failed to write: ${message}`);
+      console.error(
+        `[extract-invoices] row legacy_id=${row.id} failed to write: ${message}`,
+      );
       stats.skipped += 1;
     }
   }
 }
 
 async function extractCreditNotes(stats: RunStats): Promise<void> {
-  const rows = await billQuery<LegacyCreditNoteRow>(`SELECT * FROM tbl_credit_note`);
+  const rows = await billQuery<LegacyCreditNoteRow>(
+    `SELECT * FROM tbl_credit_note`,
+  );
   stats.read += rows.length;
 
   for (const row of rows) {
@@ -432,41 +541,96 @@ async function extractCreditNotes(stats: RunStats): Promise<void> {
           target_id = VALUES(target_id), target_gst_type = VALUES(target_gst_type),
           target_apply_gst = VALUES(target_apply_gst), validation_status = 'pending', validation_error = NULL`,
         [
-          row.id, normalizedCategory, row.branch_name, row.cost_center, row.finance_year,
-          row.month, row.creditDate, row.app_tax_cal, row.creditDescription, row.credit_no,
-          row.proforma_bill_no, row.credit_approve, row.credit_approved_by, sanitizeLegacyDatetime(row.credit_approved_date), row.total,
-          row.tax, row.igst, row.sgst, row.cgst, row.grnd,
-          row.username, row.status, sanitizeLegacyDatetime(row.createdate), row.sbctax, row.krishi_tax,
-          row.apply_krishi_tax, row.apply_service_tax, row.apply_gst, row.ReceiptStatus, row.GSTType,
-          row.bill_finance_year, row.BillNoChange, row.state_code, row.PaymentStatus, row.subs_start_date,
-          row.subs_end_date, row.plan_id, sanitizeLegacyDatetime(row.updated_at), row.updated_by,
-          targetId, gst.target_gst_type, gst.target_apply_gst,
+          row.id,
+          normalizedCategory,
+          row.branch_name,
+          row.cost_center,
+          row.finance_year,
+          row.month,
+          row.creditDate,
+          row.app_tax_cal,
+          row.creditDescription,
+          row.credit_no,
+          row.proforma_bill_no,
+          row.credit_approve,
+          row.credit_approved_by,
+          sanitizeLegacyDatetime(row.credit_approved_date),
+          row.total,
+          row.tax,
+          row.igst,
+          row.sgst,
+          row.cgst,
+          row.grnd,
+          row.username,
+          row.status,
+          sanitizeLegacyDatetime(row.createdate),
+          row.sbctax,
+          row.krishi_tax,
+          row.apply_krishi_tax,
+          row.apply_service_tax,
+          row.apply_gst,
+          row.ReceiptStatus,
+          row.GSTType,
+          row.bill_finance_year,
+          row.BillNoChange,
+          row.state_code,
+          row.PaymentStatus,
+          row.subs_start_date,
+          row.subs_end_date,
+          row.plan_id,
+          sanitizeLegacyDatetime(row.updated_at),
+          row.updated_by,
+          targetId,
+          gst.target_gst_type,
+          gst.target_apply_gst,
         ],
       );
       stats.written += 1;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[extract-credit-notes] row legacy_id=${row.id} failed to write: ${message}`);
+      console.error(
+        `[extract-credit-notes] row legacy_id=${row.id} failed to write: ${message}`,
+      );
       stats.skipped += 1;
     }
   }
 }
 
 async function main(): Promise<void> {
-  console.log("[extract] Client Billing Historical Cutover — Task 2 extraction starting");
-  console.log("[extract] db_bill access is READ-ONLY throughout (billQuery blocks non-SELECT).");
+  console.log(
+    "[extract] Client Billing Historical Cutover — Task 2 extraction starting",
+  );
+  console.log(
+    "[extract] db_bill access is READ-ONLY throughout (billQuery blocks non-SELECT).",
+  );
 
   // ── db_bill row-count proof, BEFORE ─────────────────────────────────────────
-  const [invBefore] = await billQuery<RowDataPacket & { c: number }>(`SELECT COUNT(*) AS c FROM tbl_invoice`);
-  const [cnBefore] = await billQuery<RowDataPacket & { c: number }>(`SELECT COUNT(*) AS c FROM tbl_credit_note`);
-  console.log(`[extract] BEFORE: tbl_invoice=${invBefore.c} tbl_credit_note=${cnBefore.c}`);
+  const [invBefore] = await billQuery<RowDataPacket & { c: number }>(
+    `SELECT COUNT(*) AS c FROM tbl_invoice`,
+  );
+  const [cnBefore] = await billQuery<RowDataPacket & { c: number }>(
+    `SELECT COUNT(*) AS c FROM tbl_credit_note`,
+  );
+  console.log(
+    `[extract] BEFORE: tbl_invoice=${invBefore.c} tbl_credit_note=${cnBefore.c}`,
+  );
 
   const invoiceStats: RunStats = {
-    read: 0, written: 0, skipped: 0, castFailures: [], categoryNormalized: new Map(), gstNullCount: 0,
+    read: 0,
+    written: 0,
+    skipped: 0,
+    castFailures: [],
+    categoryNormalized: new Map(),
+    gstNullCount: 0,
     legalHoldDescriptionCount: 0,
   };
   const creditNoteStats: RunStats = {
-    read: 0, written: 0, skipped: 0, castFailures: [], categoryNormalized: new Map(), gstNullCount: 0,
+    read: 0,
+    written: 0,
+    skipped: 0,
+    castFailures: [],
+    categoryNormalized: new Map(),
+    gstNullCount: 0,
     legalHoldDescriptionCount: 0,
   };
 
@@ -474,9 +638,15 @@ async function main(): Promise<void> {
   await extractCreditNotes(creditNoteStats);
 
   // ── db_bill row-count proof, AFTER — proves nothing was written back ───────
-  const [invAfter] = await billQuery<RowDataPacket & { c: number }>(`SELECT COUNT(*) AS c FROM tbl_invoice`);
-  const [cnAfter] = await billQuery<RowDataPacket & { c: number }>(`SELECT COUNT(*) AS c FROM tbl_credit_note`);
-  console.log(`[extract] AFTER:  tbl_invoice=${invAfter.c} tbl_credit_note=${cnAfter.c}`);
+  const [invAfter] = await billQuery<RowDataPacket & { c: number }>(
+    `SELECT COUNT(*) AS c FROM tbl_invoice`,
+  );
+  const [cnAfter] = await billQuery<RowDataPacket & { c: number }>(
+    `SELECT COUNT(*) AS c FROM tbl_credit_note`,
+  );
+  console.log(
+    `[extract] AFTER:  tbl_invoice=${invAfter.c} tbl_credit_note=${cnAfter.c}`,
+  );
   console.log(
     `[extract] db_bill unchanged: tbl_invoice ${invBefore.c === invAfter.c ? "MATCH" : "MISMATCH!!"}, ` +
       `tbl_credit_note ${cnBefore.c === cnAfter.c ? "MATCH" : "MISMATCH!!"}`,
@@ -487,33 +657,47 @@ async function main(): Promise<void> {
     console.log(`  read:    ${stats.read}`);
     console.log(`  written: ${stats.written}`);
     console.log(`  skipped: ${stats.skipped}`);
-    console.log(`  GSTType null/empty (target_gst_type=NULL): ${stats.gstNullCount}`);
-    console.log(`  §5.6 legal-hold description note applicable (src_invoicedeleteremarks present, composition deferred to load): ${stats.legalHoldDescriptionCount}`);
+    console.log(
+      `  GSTType null/empty (target_gst_type=NULL): ${stats.gstNullCount}`,
+    );
+    console.log(
+      `  §5.6 legal-hold description note applicable (src_invoicedeleteremarks present, composition deferred to load): ${stats.legalHoldDescriptionCount}`,
+    );
     console.log(`  category normalizations applied:`);
     if (stats.categoryNormalized.size === 0) {
       console.log(`    (none)`);
     } else {
       for (const [from, { to, count }] of stats.categoryNormalized) {
-        console.log(`    "${from}" -> ${to === null ? "NULL" : `"${to}"`}  (${count} rows)`);
+        console.log(
+          `    "${from}" -> ${to === null ? "NULL" : `"${to}"`}  (${count} rows)`,
+        );
       }
     }
     console.log(`  amount-column cast failures: ${stats.castFailures.length}`);
     if (stats.castFailures.length > 0) {
       const byColumn = new Map<string, number>();
-      for (const f of stats.castFailures) byColumn.set(f.column, (byColumn.get(f.column) ?? 0) + 1);
+      for (const f of stats.castFailures)
+        byColumn.set(f.column, (byColumn.get(f.column) ?? 0) + 1);
       for (const [col, count] of byColumn) console.log(`    ${col}: ${count}`);
       console.log(`  sample cast failures (up to 10):`);
       for (const f of stats.castFailures.slice(0, 10)) {
-        console.log(`    legacy_id=${f.legacy_id} column=${f.column} raw=${JSON.stringify(f.raw)}`);
+        console.log(
+          `    legacy_id=${f.legacy_id} column=${f.column} raw=${JSON.stringify(f.raw)}`,
+        );
       }
     }
   }
 
   printStats("tbl_invoice -> client_invoice_migration_staging", invoiceStats);
-  printStats("tbl_credit_note -> client_credit_note_migration_staging", creditNoteStats);
+  printStats(
+    "tbl_credit_note -> client_credit_note_migration_staging",
+    creditNoteStats,
+  );
 
   await closeBillPool();
-  console.log("\n[extract] Done. Zero rows written to client_invoice/client_credit_note (staging only).");
+  console.log(
+    "\n[extract] Done. Zero rows written to client_invoice/client_credit_note (staging only).",
+  );
 }
 
 main()

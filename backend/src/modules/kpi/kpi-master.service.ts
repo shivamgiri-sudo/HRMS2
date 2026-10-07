@@ -1,9 +1,10 @@
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { calculateMetricScore } from './kpi-score-engine.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { calculateMetricScore } from "./kpi-score-engine.js";
 
-export type OrgUnitType = 'department' | 'designation' | 'process' | 'cost_centre';
-export type Period = 'day' | 'wtd' | 'mtd' | 'past_month';
+export type OrgUnitType =
+  "department" | "designation" | "process" | "cost_centre";
+export type Period = "day" | "wtd" | "mtd" | "past_month";
 
 export interface KpiMasterConfigInput {
   metric_id: string;
@@ -29,15 +30,16 @@ export interface DateRange {
 
 export function getDateRange(period: Period, anchorDate?: string): DateRange {
   const now = anchorDate ? new Date(`${anchorDate}T12:00:00`) : new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const today = fmt(now);
 
-  if (period === 'day') {
+  if (period === "day") {
     return { start: today, end: today };
   }
 
-  if (period === 'wtd') {
+  if (period === "wtd") {
     const day = now.getDay(); // 0=Sun, 1=Mon
     const diff = day === 0 ? 6 : day - 1; // days since Monday
     const mon = new Date(now);
@@ -45,8 +47,11 @@ export function getDateRange(period: Period, anchorDate?: string): DateRange {
     return { start: fmt(mon), end: today };
   }
 
-  if (period === 'mtd') {
-    return { start: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`, end: today };
+  if (period === "mtd") {
+    return {
+      start: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`,
+      end: today,
+    };
   }
 
   // past_month
@@ -65,15 +70,15 @@ export async function listKpiMasterConfig(filters: {
   const params: unknown[] = [];
 
   if (filters.org_unit_type) {
-    conditions.push('kmc.org_unit_type = ?');
+    conditions.push("kmc.org_unit_type = ?");
     params.push(filters.org_unit_type);
   }
   if (filters.is_active !== undefined) {
-    conditions.push('kmc.is_active = ?');
+    conditions.push("kmc.is_active = ?");
     params.push(filters.is_active);
   }
 
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const sql = `
     SELECT
@@ -164,7 +169,12 @@ export async function clearKpiMasterConfigCell(input: {
         AND org_unit_type = ?
         AND org_unit_id = ?
         AND COALESCE(designation_id, '~ANY~') = COALESCE(?, '~ANY~')`,
-    [input.metric_id, input.org_unit_type, input.org_unit_id, input.designation_id ?? null],
+    [
+      input.metric_id,
+      input.org_unit_type,
+      input.org_unit_id,
+      input.designation_id ?? null,
+    ],
   );
   return result;
 }
@@ -173,8 +183,8 @@ export async function clearKpiMasterConfigCell(input: {
 
 export async function deleteKpiMasterConfig(id: string) {
   const [result] = await db.execute<ResultSetHeader>(
-    'UPDATE kpi_master_config SET is_active = 0 WHERE id = ?',
-    [id]
+    "UPDATE kpi_master_config SET is_active = 0 WHERE id = ?",
+    [id],
   );
   return result;
 }
@@ -227,7 +237,7 @@ async function effectiveDatingPredicate(): Promise<string> {
   // independently: a target with no start date has always applied.
   return effectiveDatingSupported
     ? "AND (kmc.effective_from IS NULL OR kmc.effective_from <= CURDATE()) " +
-      "AND (kmc.effective_to IS NULL OR kmc.effective_to >= CURDATE())"
+        "AND (kmc.effective_to IS NULL OR kmc.effective_to >= CURDATE())"
     : "";
 }
 
@@ -241,7 +251,7 @@ export async function resolveEmployeeKpis(employeeId: string): Promise<number> {
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT department_id, designation_id, process_id, cost_centre_id
      FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
   const emp = (empRows as any[])[0];
   if (!emp) throw new Error(`Employee not found: ${employeeId}`);
@@ -254,29 +264,36 @@ export async function resolveEmployeeKpis(employeeId: string): Promise<number> {
 
   if (process_id && designation_id) {
     orClauses.push(
-      `(kmc.org_unit_type = 'process' AND kmc.org_unit_id = ? AND kmc.designation_id = ?)`
+      `(kmc.org_unit_type = 'process' AND kmc.org_unit_id = ? AND kmc.designation_id = ?)`,
     );
     params.push(process_id, designation_id);
   }
   if (process_id) {
-    orClauses.push(`(kmc.org_unit_type = 'process' AND kmc.org_unit_id = ? AND kmc.designation_id IS NULL)`);
+    orClauses.push(
+      `(kmc.org_unit_type = 'process' AND kmc.org_unit_id = ? AND kmc.designation_id IS NULL)`,
+    );
     params.push(process_id);
   }
   if (cost_centre_id) {
-    orClauses.push(`(kmc.org_unit_type = 'cost_centre' AND kmc.org_unit_id = ? AND kmc.designation_id IS NULL)`);
+    orClauses.push(
+      `(kmc.org_unit_type = 'cost_centre' AND kmc.org_unit_id = ? AND kmc.designation_id IS NULL)`,
+    );
     params.push(cost_centre_id);
   }
   if (designation_id) {
-    orClauses.push(`(kmc.org_unit_type = 'designation' AND kmc.org_unit_id = ?)`);
+    orClauses.push(
+      `(kmc.org_unit_type = 'designation' AND kmc.org_unit_id = ?)`,
+    );
     params.push(designation_id);
   }
   if (department_id) {
-    orClauses.push(`(kmc.org_unit_type = 'department' AND kmc.org_unit_id = ? AND kmc.designation_id IS NULL)`);
+    orClauses.push(
+      `(kmc.org_unit_type = 'department' AND kmc.org_unit_id = ? AND kmc.designation_id IS NULL)`,
+    );
     params.push(department_id);
   }
 
   if (!orClauses.length) return 0;
-
 
   const sql = `
     SELECT
@@ -294,7 +311,7 @@ export async function resolveEmployeeKpis(employeeId: string): Promise<number> {
         WHEN kmc.org_unit_type = 'department'  THEN 4
       END AS priority
     FROM kpi_master_config kmc
-    WHERE kmc.is_active = 1 AND (${orClauses.join(' OR ')})
+    WHERE kmc.is_active = 1 AND (${orClauses.join(" OR ")})
       ${await effectiveDatingPredicate()}
     ORDER BY kmc.metric_id, priority ASC
   `;
@@ -327,11 +344,11 @@ export async function resolveEmployeeKpis(employeeId: string): Promise<number> {
   `;
 
   const PRIORITY_LABEL: Record<number, string> = {
-    0: 'process_designation',
-    1: 'process',
-    2: 'cost_centre',
-    3: 'designation',
-    4: 'department',
+    0: "process_designation",
+    1: "process",
+    2: "cost_centre",
+    3: "designation",
+    4: "department",
   };
 
   for (const row of bestByMetric.values()) {
@@ -373,7 +390,7 @@ export async function getResolvedKpis(employeeId: string) {
      JOIN kpi_metric_master kmm ON kmm.id = ker.metric_id
      WHERE ker.employee_id = ?
      ORDER BY kmm.category, kmm.metric_name`,
-    [employeeId]
+    [employeeId],
   );
   return rows;
 }
@@ -383,13 +400,17 @@ export async function getResolvedKpis(employeeId: string) {
  * before. min_threshold sits on the worse side of the target — below it when higher is
  * better, above it when lower is better — so the direction picks which gate applies.
  */
-function scoringTypeFor(kpi: { direction?: string | null; scoring_type?: string | null }): string {
-  const lowerBetter = kpi.direction === 'lower_is_better';
+function scoringTypeFor(kpi: {
+  direction?: string | null;
+  scoring_type?: string | null;
+}): string {
+  const lowerBetter = kpi.direction === "lower_is_better";
   if (kpi.scoring_type) {
-    if (kpi.scoring_type === 'floor_gated') return lowerBetter ? 'floor_gated_lower' : 'floor_gated_higher';
+    if (kpi.scoring_type === "floor_gated")
+      return lowerBetter ? "floor_gated_lower" : "floor_gated_higher";
     return kpi.scoring_type;
   }
-  return lowerBetter ? 'lower_better' : 'higher_better';
+  return lowerBetter ? "lower_better" : "higher_better";
 }
 
 /**
@@ -400,15 +421,25 @@ function scoringTypeFor(kpi: { direction?: string | null; scoring_type?: string 
  * the slowest on the team. Returns null when there's no meaningful peer set
  * (fewer than 2 peers) rather than a misleading 0/100.
  */
-export function computePercentile(myValue: number, peerValues: number[], lowerIsBetter: boolean): number | null {
+export function computePercentile(
+  myValue: number,
+  peerValues: number[],
+  lowerIsBetter: boolean,
+): number | null {
   if (peerValues.length < 2) return null;
-  const beatenOrTied = peerValues.filter(v => (lowerIsBetter ? v >= myValue : v <= myValue)).length;
+  const beatenOrTied = peerValues.filter((v) =>
+    lowerIsBetter ? v >= myValue : v <= myValue,
+  ).length;
   return Math.round((beatenOrTied / peerValues.length) * 100);
 }
 
 // ─── Live KPI performance ──────────────────────────────────────────────────────
 
-export async function getLiveKpiPerformance(employeeId: string, period: Period, anchorDate?: string) {
+export async function getLiveKpiPerformance(
+  employeeId: string,
+  period: Period,
+  anchorDate?: string,
+) {
   // Keep the employee cache aligned with the current process/designation/
   // department configuration before reading source facts.
   await resolveEmployeeKpis(employeeId);
@@ -417,8 +448,8 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
 
   const { start, end } = getDateRange(period, anchorDate);
 
-  const metricIds = (resolved as any[]).map(r => r.metric_id);
-  const placeholders = metricIds.map(() => '?').join(',');
+  const metricIds = (resolved as any[]).map((r) => r.metric_id);
+  const placeholders = metricIds.map(() => "?").join(",");
 
   // Get daily actuals in date range
   const [actuals] = await db.execute<RowDataPacket[]>(
@@ -428,7 +459,7 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
        AND score_date BETWEEN ? AND ?
        AND metric_id IN (${placeholders})
      ORDER BY score_date ASC`,
-    [employeeId, start, end, ...metricIds]
+    [employeeId, start, end, ...metricIds],
   );
 
   // Peer comparison: same job/process peer group, same date range, same metrics.
@@ -438,30 +469,41 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
   // "exclude automated test records" pattern kpi.service.ts's leaderboard query
   // uses — a Codex E2E synthetic employee sharing a process would otherwise
   // silently distort a real employee's peer average.
-  const peerAverages = new Map<string, { peer_avg: number; peer_count: number }>();
-  const peerValuesByMetric = new Map<string, Array<{ employee_id: string; avg_value: number }>>();
+  const peerAverages = new Map<
+    string,
+    { peer_avg: number; peer_count: number }
+  >();
+  const peerValuesByMetric = new Map<
+    string,
+    Array<{ employee_id: string; avg_value: number }>
+  >();
   try {
     const [empOrgRows] = await db.execute<RowDataPacket[]>(
       `SELECT department_id, designation_id, process_id FROM employees WHERE id = ? LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     const empOrg = (empOrgRows as any[])[0];
     let peerClause: string | null = null;
     let peerParam: string | null = null;
     if (empOrg?.process_id && empOrg?.designation_id) {
-      peerClause = 'e.process_id = ? AND e.designation_id = ?';
+      peerClause = "e.process_id = ? AND e.designation_id = ?";
     } else if (empOrg?.process_id) {
-      peerClause = 'e.process_id = ?';
+      peerClause = "e.process_id = ?";
     } else if (empOrg?.designation_id) {
-      peerClause = 'e.designation_id = ?';
+      peerClause = "e.designation_id = ?";
     } else if (empOrg?.department_id) {
-      peerClause = 'e.department_id = ?';
+      peerClause = "e.department_id = ?";
     }
 
     if (peerClause && metricIds.length) {
-      const peerParams: unknown[] = empOrg?.process_id && empOrg?.designation_id
-        ? [empOrg.process_id, empOrg.designation_id]
-        : [empOrg?.process_id ?? empOrg?.designation_id ?? empOrg?.department_id];
+      const peerParams: unknown[] =
+        empOrg?.process_id && empOrg?.designation_id
+          ? [empOrg.process_id, empOrg.designation_id]
+          : [
+              empOrg?.process_id ??
+                empOrg?.designation_id ??
+                empOrg?.department_id,
+            ];
 
       const [peerRows] = await db.execute<RowDataPacket[]>(
         `SELECT kda.metric_id, kda.employee_id, AVG(kda.actual_value) AS avg_value
@@ -473,14 +515,17 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
            AND e.employee_code NOT LIKE 'CODEX\\_E2E%'
            AND COALESCE(e.full_name, '') NOT LIKE '%Codex E2E%'
          GROUP BY kda.metric_id, kda.employee_id`,
-        [...metricIds, start, end, ...peerParams]
+        [...metricIds, start, end, ...peerParams],
       );
 
       for (const row of peerRows as any[]) {
         const avgValue = Number(row.avg_value);
         if (isNaN(avgValue)) continue;
-        if (!peerValuesByMetric.has(row.metric_id)) peerValuesByMetric.set(row.metric_id, []);
-        peerValuesByMetric.get(row.metric_id)!.push({ employee_id: row.employee_id, avg_value: avgValue });
+        if (!peerValuesByMetric.has(row.metric_id))
+          peerValuesByMetric.set(row.metric_id, []);
+        peerValuesByMetric
+          .get(row.metric_id)!
+          .push({ employee_id: row.employee_id, avg_value: avgValue });
       }
       for (const [metricId, values] of peerValuesByMetric) {
         // Include self in both the average and the count — "peer average" reads
@@ -513,40 +558,48 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
         employeeId,
         error: err instanceof Error ? err.message : String(err),
         timestamp: new Date().toISOString(),
-      }) + "\n"
+      }) + "\n",
     );
   }
 
   // Get rating config (S/A/B/C/D)
   const [ratingRows] = await db.execute<RowDataPacket[]>(
     `SELECT rating_label, min_score_pct, max_score_pct, color_code
-     FROM kpi_rating_config WHERE process_id IS NULL ORDER BY min_score_pct DESC`
+     FROM kpi_rating_config WHERE process_id IS NULL ORDER BY min_score_pct DESC`,
   );
   const ratingBands = ratingRows as any[];
 
   function getRating(scorePct: number) {
     for (const band of ratingBands) {
-      if (scorePct >= Number(band.min_score_pct) && scorePct <= Number(band.max_score_pct)) {
+      if (
+        scorePct >= Number(band.min_score_pct) &&
+        scorePct <= Number(band.max_score_pct)
+      ) {
         return { label: band.rating_label, color: band.color_code };
       }
     }
-    return { label: 'D', color: '#dc2626' };
+    return { label: "D", color: "#dc2626" };
   }
 
   // Group daily actuals by metric_id
   const actualsByMetric = new Map<string, any[]>();
   for (const row of actuals as any[]) {
-    if (!actualsByMetric.has(row.metric_id)) actualsByMetric.set(row.metric_id, []);
+    if (!actualsByMetric.has(row.metric_id))
+      actualsByMetric.set(row.metric_id, []);
     actualsByMetric.get(row.metric_id)!.push(row);
   }
 
-  const metrics = (resolved as any[]).map(kpi => {
+  const metrics = (resolved as any[]).map((kpi) => {
     const dailyRows = actualsByMetric.get(kpi.metric_id) ?? [];
-    const values = dailyRows.map(r => Number(r.actual_value)).filter(v => !isNaN(v));
-    const avgActual = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+    const values = dailyRows
+      .map((r) => Number(r.actual_value))
+      .filter((v) => !isNaN(v));
+    const avgActual = values.length
+      ? values.reduce((a, b) => a + b, 0) / values.length
+      : null;
 
     let scorePct = 0;
-    let scoreStatus: string = 'missing_source';
+    let scoreStatus: string = "missing_source";
 
     if (avgActual !== null) {
       const scored = calculateMetricScore({
@@ -568,13 +621,16 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
     // metric like AHT, beating more peers means having a LOWER average than
     // more of them, not a higher one.
     const peerInfo = peerAverages.get(kpi.metric_id) ?? null;
-    const percentile = avgActual !== null && peerInfo
-      ? computePercentile(
-          avgActual,
-          (peerValuesByMetric.get(kpi.metric_id) ?? []).map(v => v.avg_value),
-          kpi.direction === 'lower_is_better'
-        )
-      : null;
+    const percentile =
+      avgActual !== null && peerInfo
+        ? computePercentile(
+            avgActual,
+            (peerValuesByMetric.get(kpi.metric_id) ?? []).map(
+              (v) => v.avg_value,
+            ),
+            kpi.direction === "lower_is_better",
+          )
+        : null;
 
     return {
       metric_id: kpi.metric_id,
@@ -595,10 +651,11 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
       peer_avg: peerInfo?.peer_avg ?? null,
       peer_count: peerInfo?.peer_count ?? null,
       percentile,
-      trend_data: dailyRows.map(r => ({
-        date: r.score_date instanceof Date
-          ? r.score_date.toISOString().split('T')[0]
-          : String(r.score_date).split('T')[0],
+      trend_data: dailyRows.map((r) => ({
+        date:
+          r.score_date instanceof Date
+            ? r.score_date.toISOString().split("T")[0]
+            : String(r.score_date).split("T")[0],
         value: Number(r.actual_value),
         source: r.source,
       })),
@@ -606,18 +663,39 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
   });
 
   // Overall weighted score
-  const scored = metrics.filter(m => m.actual_value !== null);
-  const totalWeight = scored.reduce((s, m) => s + (Number(m.score_pct) * Number((resolved as any[]).find(r => r.metric_id === m.metric_id)?.weightage ?? 100) / 100), 0);
-  const weightSum = scored.reduce((s, m) => s + Number((resolved as any[]).find(r => r.metric_id === m.metric_id)?.weightage ?? 100), 0);
-  const overallScore = weightSum > 0 ? totalWeight / weightSum * 100 : 0;
+  const scored = metrics.filter((m) => m.actual_value !== null);
+  const totalWeight = scored.reduce(
+    (s, m) =>
+      s +
+      (Number(m.score_pct) *
+        Number(
+          (resolved as any[]).find((r) => r.metric_id === m.metric_id)
+            ?.weightage ?? 100,
+        )) /
+        100,
+    0,
+  );
+  const weightSum = scored.reduce(
+    (s, m) =>
+      s +
+      Number(
+        (resolved as any[]).find((r) => r.metric_id === m.metric_id)
+          ?.weightage ?? 100,
+      ),
+    0,
+  );
+  const overallScore = weightSum > 0 ? (totalWeight / weightSum) * 100 : 0;
   const overallRating = scored.length ? getRating(overallScore) : null;
 
-  const resolvedByMetric = new Map((resolved as any[]).map((row) => [row.metric_id, row]));
+  const resolvedByMetric = new Map(
+    (resolved as any[]).map((row) => [row.metric_id, row]),
+  );
   const dailyActuals = new Map<string, any[]>();
   for (const row of actuals as any[]) {
-    const date = row.score_date instanceof Date
-      ? row.score_date.toISOString().split('T')[0]
-      : String(row.score_date).split('T')[0];
+    const date =
+      row.score_date instanceof Date
+        ? row.score_date.toISOString().split("T")[0]
+        : String(row.score_date).split("T")[0];
     if (!dailyActuals.has(date)) dailyActuals.set(date, []);
     dailyActuals.get(date)!.push(row);
   }
@@ -627,32 +705,34 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
     .map(([date, rows]) => {
       let weightedScore = 0;
       let dailyWeight = 0;
-      const dailyMetrics = rows.map((row) => {
-        const kpi = resolvedByMetric.get(row.metric_id);
-        if (!kpi) return null;
-        const actualValue = Number(row.actual_value);
-        const result = calculateMetricScore({
-          scoringType: scoringTypeFor(kpi),
-          actualValue,
-          targetValue: Number(kpi.target_value),
-          minValue: kpi.min_threshold,
-          maxValue: Number(kpi.max_achievement),
-          weightage: Number(kpi.weightage),
-        });
-        const weight = Number(kpi.weightage ?? 100);
-        weightedScore += result.metricScore * weight;
-        dailyWeight += weight;
-        return {
-          metric_id: row.metric_id,
-          metric_code: kpi.metric_code,
-          metric_name: kpi.metric_name,
-          unit: kpi.unit,
-          actual_value: actualValue,
-          target_value: Number(kpi.target_value),
-          score_pct: result.metricScore,
-          source: row.source,
-        };
-      }).filter(Boolean);
+      const dailyMetrics = rows
+        .map((row) => {
+          const kpi = resolvedByMetric.get(row.metric_id);
+          if (!kpi) return null;
+          const actualValue = Number(row.actual_value);
+          const result = calculateMetricScore({
+            scoringType: scoringTypeFor(kpi),
+            actualValue,
+            targetValue: Number(kpi.target_value),
+            minValue: kpi.min_threshold,
+            maxValue: Number(kpi.max_achievement),
+            weightage: Number(kpi.weightage),
+          });
+          const weight = Number(kpi.weightage ?? 100);
+          weightedScore += result.metricScore * weight;
+          dailyWeight += weight;
+          return {
+            metric_id: row.metric_id,
+            metric_code: kpi.metric_code,
+            metric_name: kpi.metric_name,
+            unit: kpi.unit,
+            actual_value: actualValue,
+            target_value: Number(kpi.target_value),
+            score_pct: result.metricScore,
+            source: row.source,
+          };
+        })
+        .filter(Boolean);
       const score = dailyWeight > 0 ? weightedScore / dailyWeight : 0;
       const rating = dailyMetrics.length ? getRating(score) : null;
       return {
@@ -685,15 +765,45 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
 // Only pairs with active headcount are returned. The full cross product is 55 processes ×
 // 42 designations = 2,310 cells, of which 133 exist in reality.
 
-export type CellSource = 'explicit' | 'process' | 'cost_centre' | 'designation' | 'department' | 'none';
+export type CellSource =
+  | "explicit"
+  | "process"
+  | "cost_centre"
+  | "designation"
+  | "department"
+  | "none";
 
 /** Mirrors resolveEmployeeKpis()'s priority. Kept adjacent so the two cannot drift apart. */
-const MATRIX_TIERS: ReadonlyArray<{ source: CellSource; key: (pair: MatrixPair) => string | null }> = [
-  { source: 'explicit',    key: (p) => (p.process_id && p.designation_id ? `process|${p.process_id}|${p.designation_id}` : null) },
-  { source: 'process',     key: (p) => (p.process_id ? `process|${p.process_id}|~ANY~` : null) },
-  { source: 'cost_centre', key: (p) => (p.cost_centre_id ? `cost_centre|${p.cost_centre_id}|~ANY~` : null) },
-  { source: 'designation', key: (p) => (p.designation_id ? `designation|${p.designation_id}|~ANY~` : null) },
-  { source: 'department',  key: (p) => (p.department_id ? `department|${p.department_id}|~ANY~` : null) },
+const MATRIX_TIERS: ReadonlyArray<{
+  source: CellSource;
+  key: (pair: MatrixPair) => string | null;
+}> = [
+  {
+    source: "explicit",
+    key: (p) =>
+      p.process_id && p.designation_id
+        ? `process|${p.process_id}|${p.designation_id}`
+        : null,
+  },
+  {
+    source: "process",
+    key: (p) => (p.process_id ? `process|${p.process_id}|~ANY~` : null),
+  },
+  {
+    source: "cost_centre",
+    key: (p) =>
+      p.cost_centre_id ? `cost_centre|${p.cost_centre_id}|~ANY~` : null,
+  },
+  {
+    source: "designation",
+    key: (p) =>
+      p.designation_id ? `designation|${p.designation_id}|~ANY~` : null,
+  },
+  {
+    source: "department",
+    key: (p) =>
+      p.department_id ? `department|${p.department_id}|~ANY~` : null,
+  },
 ];
 
 export interface MatrixPair {
@@ -728,7 +838,7 @@ export async function getKpiTargetMatrix() {
      LEFT JOIN designation_master d ON d.id = e.designation_id
      WHERE e.active_status = 1 AND e.employment_status = 'active'
      GROUP BY e.process_id, p.process_name, e.designation_id, d.designation_name
-     ORDER BY headcount DESC`
+     ORDER BY headcount DESC`,
   );
 
   // A metric earns a column if it can actually be scored — it already receives actuals — or
@@ -744,14 +854,14 @@ export async function getKpiTargetMatrix() {
      LEFT JOIN (SELECT metric_id, COUNT(*) AS n FROM kpi_master_config WHERE is_active = 1 GROUP BY metric_id) c
             ON c.metric_id = m.id
      WHERE COALESCE(a.n, 0) > 0 OR COALESCE(c.n, 0) > 0
-     ORDER BY m.category, m.metric_name`
+     ORDER BY m.category, m.metric_name`,
   );
 
   const [configRows] = await db.execute<RowDataPacket[]>(
     `SELECT metric_id, org_unit_type, org_unit_id, designation_id,
             target_value, min_threshold, max_achievement, weightage
        FROM kpi_master_config
-      WHERE is_active = 1`
+      WHERE is_active = 1`,
   );
 
   // Which metrics each process actually produces. Processes do not share a metric set:
@@ -764,7 +874,7 @@ export async function getKpiTargetMatrix() {
        FROM kpi_daily_actual a
        JOIN employees e ON e.id = a.employee_id
       WHERE e.process_id IS NOT NULL
-      GROUP BY e.process_id, a.metric_id`
+      GROUP BY e.process_id, a.metric_id`,
   );
   const producedByProcess = new Set(
     (producedRows as any[]).map((row) => `${row.process_id}|${row.metric_id}`),
@@ -774,8 +884,13 @@ export async function getKpiTargetMatrix() {
   // overwrite the previous one and the whole grid would show a single metric's targets.
   const configIndex = new Map<string, any>();
   for (const row of configRows as any[]) {
-    const designation = row.designation_id ? String(row.designation_id) : '~ANY~';
-    configIndex.set(`${row.metric_id}|${row.org_unit_type}|${row.org_unit_id}|${designation}`, row);
+    const designation = row.designation_id
+      ? String(row.designation_id)
+      : "~ANY~";
+    configIndex.set(
+      `${row.metric_id}|${row.org_unit_type}|${row.org_unit_id}|${designation}`,
+      row,
+    );
   }
 
   const pairs: MatrixPair[] = (pairRows as any[]).map((row) => ({
@@ -786,21 +901,26 @@ export async function getKpiTargetMatrix() {
     headcount: Number(row.headcount),
     department_id: row.department_id ? String(row.department_id) : null,
     cost_centre_id: row.cost_centre_id ? String(row.cost_centre_id) : null,
-    inherit_varies: Number(row.department_variants) > 1 || Number(row.cost_centre_variants) > 1,
+    inherit_varies:
+      Number(row.department_variants) > 1 ||
+      Number(row.cost_centre_variants) > 1,
   }));
 
-  const cells: Record<string, {
-    target_value: number | null;
-    min_threshold: number | null;
-    max_achievement: number | null;
-    weightage: number | null;
-    source: CellSource;
-    /**
-     * Whether this metric is measured for this process at all. False means no employee on
-     * the process has ever produced the metric and nobody has configured it.
-     */
-    applicable: boolean;
-  }> = {};
+  const cells: Record<
+    string,
+    {
+      target_value: number | null;
+      min_threshold: number | null;
+      max_achievement: number | null;
+      weightage: number | null;
+      source: CellSource;
+      /**
+       * Whether this metric is measured for this process at all. False means no employee on
+       * the process has ever produced the metric and nobody has configured it.
+       */
+      applicable: boolean;
+    }
+  > = {};
 
   for (const pair of pairs) {
     for (const metric of metricRows as any[]) {
@@ -809,23 +929,45 @@ export async function getKpiTargetMatrix() {
         const scopeKey = tier.key(pair);
         if (!scopeKey) continue;
         const match = configIndex.get(`${metric.id}|${scopeKey}`);
-        if (match) { resolved = { row: match, source: tier.source }; break; }
+        if (match) {
+          resolved = { row: match, source: tier.source };
+          break;
+        }
       }
-      const cellKey = `${pair.process_id ?? '~'}|${pair.designation_id ?? '~'}|${metric.id}`;
+      const cellKey = `${pair.process_id ?? "~"}|${pair.designation_id ?? "~"}|${metric.id}`;
       // An existing target counts as applicable even without data — somebody deliberately
       // set it, and hiding it would make a live configuration invisible.
-      const applicable = Boolean(resolved)
-        || (pair.process_id ? producedByProcess.has(`${pair.process_id}|${metric.id}`) : false);
+      const applicable =
+        Boolean(resolved) ||
+        (pair.process_id
+          ? producedByProcess.has(`${pair.process_id}|${metric.id}`)
+          : false);
       cells[cellKey] = resolved
         ? {
             target_value: Number(resolved.row.target_value),
-            min_threshold: resolved.row.min_threshold === null ? null : Number(resolved.row.min_threshold),
-            max_achievement: resolved.row.max_achievement === null ? null : Number(resolved.row.max_achievement),
-            weightage: resolved.row.weightage === null ? null : Number(resolved.row.weightage),
+            min_threshold:
+              resolved.row.min_threshold === null
+                ? null
+                : Number(resolved.row.min_threshold),
+            max_achievement:
+              resolved.row.max_achievement === null
+                ? null
+                : Number(resolved.row.max_achievement),
+            weightage:
+              resolved.row.weightage === null
+                ? null
+                : Number(resolved.row.weightage),
             source: resolved.source,
             applicable,
           }
-        : { target_value: null, min_threshold: null, max_achievement: null, weightage: null, source: 'none', applicable };
+        : {
+            target_value: null,
+            min_threshold: null,
+            max_achievement: null,
+            weightage: null,
+            source: "none",
+            applicable,
+          };
     }
   }
 
@@ -848,11 +990,22 @@ export async function getKpiTargetMatrix() {
 // ─── Org unit options for dropdown ────────────────────────────────────────────
 
 export async function getOrgUnitOptions(type: OrgUnitType) {
-  const tableMap: Record<OrgUnitType, { table: string; id: string; name: string }> = {
-    department:  { table: 'department_master',  id: 'id', name: 'dept_name' },
-    designation: { table: 'designation_master', id: 'id', name: 'designation_name' },
-    process:     { table: 'process_master',     id: 'id', name: 'process_name' },
-    cost_centre: { table: 'cost_centre_master', id: 'id', name: 'cost_centre_name' },
+  const tableMap: Record<
+    OrgUnitType,
+    { table: string; id: string; name: string }
+  > = {
+    department: { table: "department_master", id: "id", name: "dept_name" },
+    designation: {
+      table: "designation_master",
+      id: "id",
+      name: "designation_name",
+    },
+    process: { table: "process_master", id: "id", name: "process_name" },
+    cost_centre: {
+      table: "cost_centre_master",
+      id: "id",
+      name: "cost_centre_name",
+    },
   };
 
   const { table, id, name } = tableMap[type];
@@ -861,14 +1014,18 @@ export async function getOrgUnitOptions(type: OrgUnitType) {
        FROM \`${table}\`
       WHERE active_status = 1 AND TRIM(COALESCE(\`${name}\`, '')) <> ''
       GROUP BY LOWER(TRIM(\`${name}\`))
-      ORDER BY name`
+      ORDER BY name`,
   );
   return rows;
 }
 
 // ─── Team KPI summary (for manager view) ─────────────────────────────────────
 
-export async function getTeamKpiSummary(managerEmployeeId: string, period: Period, anchorDate?: string) {
+export async function getTeamKpiSummary(
+  managerEmployeeId: string,
+  period: Period,
+  anchorDate?: string,
+) {
   // Fetch direct reports
   const [teamRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code,
@@ -878,7 +1035,7 @@ export async function getTeamKpiSummary(managerEmployeeId: string, period: Perio
      LEFT JOIN process_master pm ON pm.id = e.process_id
      WHERE e.reporting_manager_id = ? AND e.active_status = 1
      ORDER BY full_name`,
-    [managerEmployeeId]
+    [managerEmployeeId],
   );
   const teamMembers = teamRows as any[];
 
@@ -900,15 +1057,19 @@ export async function getTeamKpiSummary(managerEmployeeId: string, period: Perio
   // Get rating config for labelling
   const [ratingRows] = await db.execute<RowDataPacket[]>(
     `SELECT rating_label, min_score_pct, max_score_pct, color_code
-     FROM kpi_rating_config WHERE process_id IS NULL ORDER BY min_score_pct DESC`
+     FROM kpi_rating_config WHERE process_id IS NULL ORDER BY min_score_pct DESC`,
   );
   const ratingBands = ratingRows as any[];
 
   function getRatingLabel(score: number): string {
     for (const band of ratingBands) {
-      if (score >= Number(band.min_score_pct) && score <= Number(band.max_score_pct)) return band.rating_label;
+      if (
+        score >= Number(band.min_score_pct) &&
+        score <= Number(band.max_score_pct)
+      )
+        return band.rating_label;
     }
-    return 'D';
+    return "D";
   }
 
   // Fetch per-member live performance in parallel
@@ -922,24 +1083,42 @@ export async function getTeamKpiSummary(managerEmployeeId: string, period: Perio
         process_name: m.process_name ?? null,
         ...perf,
       };
-    })
+    }),
   );
 
   // Aggregate
-  const dist: Record<string, number> = { S: 0, A: 0, B: 0, C: 0, D: 0, no_data: 0 };
+  const dist: Record<string, number> = {
+    S: 0,
+    A: 0,
+    B: 0,
+    C: 0,
+    D: 0,
+    no_data: 0,
+  };
   let totalScore = 0;
   let scoredCount = 0;
   let membersOnTarget = 0;
   let membersAtRisk = 0;
 
   // Per-metric aggregation across team
-  const metricAccum = new Map<string, {
-    metric_code: string; metric_name: string; unit: string; direction: string; category: string;
-    values: number[]; scores: number[]; target: number;
-  }>();
+  const metricAccum = new Map<
+    string,
+    {
+      metric_code: string;
+      metric_name: string;
+      unit: string;
+      direction: string;
+      category: string;
+      values: number[];
+      scores: number[];
+      target: number;
+    }
+  >();
 
   for (const member of memberResults) {
-    const hasData = (member.metrics as any[]).some(m => m.actual_value !== null);
+    const hasData = (member.metrics as any[]).some(
+      (m) => m.actual_value !== null,
+    );
     if (!hasData) {
       dist.no_data++;
       continue;
@@ -975,18 +1154,27 @@ export async function getTeamKpiSummary(managerEmployeeId: string, period: Perio
     }
   }
 
-  const teamAvgScore = scoredCount > 0 ? Math.round((totalScore / scoredCount) * 100) / 100 : 0;
+  const teamAvgScore =
+    scoredCount > 0 ? Math.round((totalScore / scoredCount) * 100) / 100 : 0;
   const teamRating = scoredCount > 0 ? getRatingLabel(teamAvgScore) : null;
 
-  const perMetricAverages = Array.from(metricAccum.values()).map(acc => ({
+  const perMetricAverages = Array.from(metricAccum.values()).map((acc) => ({
     metric_code: acc.metric_code,
     metric_name: acc.metric_name,
     unit: acc.unit,
     direction: acc.direction,
     category: acc.category,
-    team_avg_actual: Math.round((acc.values.reduce((a, b) => a + b, 0) / acc.values.length) * 100) / 100,
-    team_avg_score_pct: Math.round((acc.scores.reduce((a, b) => a + b, 0) / acc.scores.length) * 100) / 100,
-    team_avg_rating: getRatingLabel(acc.scores.reduce((a, b) => a + b, 0) / acc.scores.length),
+    team_avg_actual:
+      Math.round(
+        (acc.values.reduce((a, b) => a + b, 0) / acc.values.length) * 100,
+      ) / 100,
+    team_avg_score_pct:
+      Math.round(
+        (acc.scores.reduce((a, b) => a + b, 0) / acc.scores.length) * 100,
+      ) / 100,
+    team_avg_rating: getRatingLabel(
+      acc.scores.reduce((a, b) => a + b, 0) / acc.scores.length,
+    ),
     target_value: acc.target,
     members_with_data: acc.values.length,
   }));

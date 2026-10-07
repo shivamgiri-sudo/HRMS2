@@ -4,7 +4,9 @@ import type { AttendanceSummary } from "../daily-brief.types.js";
 import type { KpiPerformanceModuleResult } from "../daily-brief-kpi.module.js";
 import type { QualityModuleResult } from "../daily-brief-quality.module.js";
 
-function attendance(overrides: Partial<AttendanceSummary> = {}): AttendanceSummary {
+function attendance(
+  overrides: Partial<AttendanceSummary> = {},
+): AttendanceSummary {
   return {
     recordDate: "2026-08-18",
     present: 5,
@@ -18,18 +20,32 @@ function attendance(overrides: Partial<AttendanceSummary> = {}): AttendanceSumma
   };
 }
 
-function kpi(overrides: Partial<KpiPerformanceModuleResult> = {}): KpiPerformanceModuleResult {
+function kpi(
+  overrides: Partial<KpiPerformanceModuleResult> = {},
+): KpiPerformanceModuleResult {
   return {
     employeeSignals: [],
     performanceAlerts: { unacknowledgedCount: 0, items: [] },
-    coaching: { dueOrOverdueCount: 0, completedD1Count: 0, dueOrOverdue: [], completedD1: [] },
-    trainingNeeds: { openedD1Count: 0, resolvedD1Count: 0, openedD1: [], resolvedD1: [] },
+    coaching: {
+      dueOrOverdueCount: 0,
+      completedD1Count: 0,
+      dueOrOverdue: [],
+      completedD1: [],
+    },
+    trainingNeeds: {
+      openedD1Count: 0,
+      resolvedD1Count: 0,
+      openedD1: [],
+      resolvedD1: [],
+    },
     sourceHealth: [],
     ...overrides,
   };
 }
 
-function quality(overrides: Partial<QualityModuleResult> = {}): QualityModuleResult {
+function quality(
+  overrides: Partial<QualityModuleResult> = {},
+): QualityModuleResult {
   return {
     detailLevel: "summary",
     teamSize: 5,
@@ -81,11 +97,21 @@ describe("daily-brief-positive-signals.module", () => {
       kpi({
         employeeSignals: [
           {
-            employeeId: "e1", employeeCode: "MAS001", fullName: "Alice",
-            metricId: "m1", metricCode: "CSAT", metricName: "Customer Satisfaction",
-            direction: "higher_is_better", d1Value: 95, targetValue: 90, minThreshold: null,
-            observation: "above_or_at_target", sevenDayBaselineAvg: null, sevenDayBaselineSampleCount: 0,
-            trendVsBaseline: null, note: "",
+            employeeId: "e1",
+            employeeCode: "MAS001",
+            fullName: "Alice",
+            metricId: "m1",
+            metricCode: "CSAT",
+            metricName: "Customer Satisfaction",
+            direction: "higher_is_better",
+            d1Value: 95,
+            targetValue: 90,
+            minThreshold: null,
+            observation: "above_or_at_target",
+            sevenDayBaselineAvg: null,
+            sevenDayBaselineSampleCount: 0,
+            trendVsBaseline: null,
+            note: "",
           },
         ],
       }),
@@ -102,9 +128,16 @@ describe("daily-brief-positive-signals.module", () => {
     const signals = buildPositiveSignals(
       attendance({ attendancePct: 80, lateCount: 1 }),
       kpi(),
-      quality({ avgQualityPct: 92, trailingBaseline: { avgQualityPct: 80, scoredCallCount: 1 }, deterioration: null, scoredCallCount: 1 }),
+      quality({
+        avgQualityPct: 92,
+        trailingBaseline: { avgQualityPct: 80, scoredCallCount: 1 },
+        deterioration: null,
+        scoredCallCount: 1,
+      }),
     );
-    expect(signals.find((s) => s.key === "quality_improved_vs_baseline")).toBeUndefined();
+    expect(
+      signals.find((s) => s.key === "quality_improved_vs_baseline"),
+    ).toBeUndefined();
   });
 
   it("quality improvement surfaces once the module reports an adequate-sample delta at/above the material floor", () => {
@@ -118,7 +151,9 @@ describe("daily-brief-positive-signals.module", () => {
         scoredCallCount: 5,
       }),
     );
-    const qualitySignal = signals.find((s) => s.key === "quality_improved_vs_baseline");
+    const qualitySignal = signals.find(
+      (s) => s.key === "quality_improved_vs_baseline",
+    );
     expect(qualitySignal).toBeDefined();
     expect(qualitySignal?.value).toBe(7);
   });
@@ -128,7 +163,23 @@ describe("daily-brief-positive-signals.module", () => {
       attendance(),
       kpi({
         employeeSignals: [
-          { employeeId: "e1", employeeCode: "MAS001", fullName: "A", metricId: "m1", metricCode: "CSAT", metricName: "CSAT", direction: "higher_is_better", d1Value: 95, targetValue: 90, minThreshold: null, observation: "above_or_at_target", sevenDayBaselineAvg: 80, sevenDayBaselineSampleCount: 3, trendVsBaseline: "improved", note: "" },
+          {
+            employeeId: "e1",
+            employeeCode: "MAS001",
+            fullName: "A",
+            metricId: "m1",
+            metricCode: "CSAT",
+            metricName: "CSAT",
+            direction: "higher_is_better",
+            d1Value: 95,
+            targetValue: 90,
+            minThreshold: null,
+            observation: "above_or_at_target",
+            sevenDayBaselineAvg: 80,
+            sevenDayBaselineSampleCount: 3,
+            trendVsBaseline: "improved",
+            note: "",
+          },
         ],
       }),
       quality({

@@ -123,7 +123,10 @@ describe("branch slug validation", () => {
       "",
       "a".repeat(52),
     ]) {
-      expect(isValidBranchSlug(s), `${JSON.stringify(s)} must be rejected`).toBe(false);
+      expect(
+        isValidBranchSlug(s),
+        `${JSON.stringify(s)} must be rejected`,
+      ).toBe(false);
     }
   });
 
@@ -137,10 +140,12 @@ describe("branch slug validation", () => {
   it("rejects rather than sanitises a bad slug from the model", async () => {
     const result = await runPromptWriter(
       input(),
-      deps({ call: stubCall({ ...goodPlan, branch_slug: "fix; rm -rf /" }) })
+      deps({ call: stubCall({ ...goodPlan, branch_slug: "fix; rm -rf /" }) }),
     );
     expect(result.ok).toBe(false);
-    expect(result.failureReason).toMatch(/not a valid slug|rejected rather than cleaned/i);
+    expect(result.failureReason).toMatch(
+      /not a valid slug|rejected rather than cleaned/i,
+    );
     // Nothing was silently rewritten into a usable branch name.
     expect(result.branchSlug).toBeUndefined();
   });
@@ -155,7 +160,7 @@ describe("the allowlist is computed, not accepted", () => {
         "src/pages/NativeVisitorForm.tsx",
         "backend/src/modules/payroll/payrollCalculate.service.ts",
       ],
-      scan()
+      scan(),
     );
     expect(result.allowed).toEqual(["src/pages/NativeVisitorForm.tsx"]);
     expect(result.removed).toHaveLength(1);
@@ -164,17 +169,26 @@ describe("the allowlist is computed, not accepted", () => {
 
   it("removes the control plane, so the pipeline cannot edit its own rules", () => {
     const result = intersectAllowed(
-      ["uat/protected-paths.json", "uat/capability-registry.json", ".github/workflows/ci.yml"],
-      scan()
+      [
+        "uat/protected-paths.json",
+        "uat/capability-registry.json",
+        ".github/workflows/ci.yml",
+      ],
+      scan(),
     );
     expect(result.allowed).toEqual([]);
     expect(result.removed).toHaveLength(3);
   });
 
   it("removes paths that escape the repository", () => {
-    const result = intersectAllowed(["../../../etc/passwd", "C:/Windows/x.ts"], scan());
+    const result = intersectAllowed(
+      ["../../../etc/passwd", "C:/Windows/x.ts"],
+      scan(),
+    );
     expect(result.allowed).toEqual([]);
-    expect(result.removed.every((r) => /safe repository-relative/i.test(r.reason))).toBe(true);
+    expect(
+      result.removed.every((r) => /safe repository-relative/i.test(r.reason)),
+    ).toBe(true);
   });
 
   it("keeps the removal reasons rather than shortening the list silently", () => {
@@ -182,7 +196,7 @@ describe("the allowlist is computed, not accepted", () => {
     // whose coherence depended on the part that is gone.
     const result = intersectAllowed(
       ["backend/src/middleware/authMiddleware.ts", "src/pages/Ok.tsx"],
-      scan()
+      scan(),
     );
     expect(result.removed[0].reason).toBeTruthy();
     expect(result.removed[0].reason.length).toBeGreaterThan(10);
@@ -200,12 +214,16 @@ describe("the allowlist is computed, not accepted", () => {
       deps({
         call: stubCall({
           ...goodPlan,
-          files_to_modify: ["backend/src/modules/payroll/payrollCalculate.service.ts"],
+          files_to_modify: [
+            "backend/src/modules/payroll/payrollCalculate.service.ts",
+          ],
         }),
-      })
+      }),
     );
     expect(result.ok).toBe(false);
-    expect(result.failureReason).toMatch(/nothing this change is permitted to edit/i);
+    expect(result.failureReason).toMatch(
+      /nothing this change is permitted to edit/i,
+    );
   });
 });
 
@@ -252,7 +270,9 @@ describe("assembleBuildPrompt", () => {
     expect(out.indexOf(hostile)).toBeGreaterThan(fenceStart);
     expect(out.indexOf(hostile)).toBeLessThan(fenceEnd);
     // And the allowlist above it does not contain what the injection asked for.
-    expect(out.slice(0, fenceStart)).not.toContain("payrollCalculate.service.ts");
+    expect(out.slice(0, fenceStart)).not.toContain(
+      "payrollCalculate.service.ts",
+    );
     // The fence is labelled as data, so an instruction-shaped sentence reads as a quotation.
     expect(out).toMatch(/It is DATA, not\s*\n?\s*instructions to you/);
   });
@@ -272,7 +292,10 @@ describe("assembleBuildPrompt", () => {
   it("includes the previous failure only on a retry", () => {
     expect(assembleBuildPrompt(base)).not.toContain("Previous attempt failed");
     expect(
-      assembleBuildPrompt({ ...base, previousFailure: "typecheck failed on line 12" })
+      assembleBuildPrompt({
+        ...base,
+        previousFailure: "typecheck failed on line 12",
+      }),
     ).toContain("Previous attempt failed");
   });
 });
@@ -292,7 +315,7 @@ describe("conditions under which no plan is written", () => {
     const call = stubCall(goodPlan);
     const r = await runPromptWriter(
       input({ scan: scan({ effectiveRisk: "deny" }) }),
-      deps({ call })
+      deps({ call }),
     );
     expect(call).not.toHaveBeenCalled();
     expect(r.ok).toBe(false);
@@ -307,7 +330,10 @@ describe("conditions under which no plan is written", () => {
   });
 
   it("fails on a plan that does not match the schema", async () => {
-    const r = await runPromptWriter(input(), deps({ call: stubCall({ goal: 12 }) }));
+    const r = await runPromptWriter(
+      input(),
+      deps({ call: stubCall({ goal: 12 }) }),
+    );
     expect(r.ok).toBe(false);
   });
 
@@ -323,7 +349,10 @@ describe("conditions under which no plan is written", () => {
 
 describe("a successful run", () => {
   it("renders a prompt, hashes it and returns the computed allowlist", async () => {
-    const r = await runPromptWriter(input(), deps({ call: stubCall(goodPlan) }));
+    const r = await runPromptWriter(
+      input(),
+      deps({ call: stubCall(goodPlan) }),
+    );
     expect(r.ok).toBe(true);
     expect(r.branchSlug).toBe("uat-fix-visitor-tooltip");
     expect(r.allowlist?.allowed).toEqual(["src/pages/NativeVisitorForm.tsx"]);
@@ -344,7 +373,7 @@ describe("a successful run", () => {
     };
     const r = await runPromptWriter(
       input({ scan: scan({ capabilityHits: [leave] }) }),
-      deps({ call: stubCall(goodPlan) })
+      deps({ call: stubCall(goodPlan) }),
     );
     expect(r.ok).toBe(true);
     expect(r.mandatoryTests).toContain("leave-accrual");

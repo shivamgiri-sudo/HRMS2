@@ -26,9 +26,12 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 // through the module's own internal binding, which a partial mock does not replace.
 // resolvePrimaryRole is kept real so the tests exercise the actual ROLE_PRIORITY
 // ordering — that ordering is what elevated `hr` over `branch_head` in the leak.
-const { getUserRoleContext } = vi.hoisted(() => ({ getUserRoleContext: vi.fn() }));
+const { getUserRoleContext } = vi.hoisted(() => ({
+  getUserRoleContext: vi.fn(),
+}));
 vi.mock("../../../shared/roleResolver.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../shared/roleResolver.js")>();
+  const actual =
+    await importOriginal<typeof import("../../../shared/roleResolver.js")>();
   return { ...actual, getUserRoleContext };
 });
 
@@ -45,13 +48,18 @@ import { normalizeDashboardRole } from "../../../shared/dashboardAccessRegistry.
  * reproduce it.
  */
 function withRoles(roleKeys: string[]) {
-  const normalized = Array.from(new Set(roleKeys.map((r) => normalizeDashboardRole(r))));
+  const normalized = Array.from(
+    new Set(roleKeys.map((r) => normalizeDashboardRole(r))),
+  );
   const primaryRole = resolvePrimaryRole(normalized);
   getUserRoleContext.mockResolvedValue({
     roleKeys: normalized,
     primaryRole,
-    isSuperAdmin: normalized.includes("super_admin") || normalized.includes("admin"),
-    isHO: normalized.some((r) => r.startsWith("ho_") || ["ceo", "coo", "management"].includes(r)),
+    isSuperAdmin:
+      normalized.includes("super_admin") || normalized.includes("admin"),
+    isHO: normalized.some(
+      (r) => r.startsWith("ho_") || ["ceo", "coo", "management"].includes(r),
+    ),
   });
   return primaryRole;
 }
@@ -71,15 +79,22 @@ type ScopeRow = {
  * employee record. `employeeBranchId` is set on every case on purpose — it is what the
  * old logic would have keyed off, so leaving it populated keeps the test honest.
  */
-function wireDb(assignments: ScopeRow[], employeeBranchId = "branch-own-office") {
+function wireDb(
+  assignments: ScopeRow[],
+  employeeBranchId = "branch-own-office",
+) {
   execute.mockReset();
   execute.mockImplementation(async (sql: string) => {
     if (sql.includes("user_assignment_scope")) return [assignments, []];
     if (sql.includes("FROM employees") && sql.includes("user_id")) {
-      return [[{ id: "emp-1", branch_id: employeeBranchId, process_id: null }], []];
+      return [
+        [{ id: "emp-1", branch_id: employeeBranchId, process_id: null }],
+        [],
+      ];
     }
     // branchesForProcesses
-    if (sql.includes("SELECT DISTINCT branch_id")) return [[{ branch_id: "branch-from-process" }], []];
+    if (sql.includes("SELECT DISTINCT branch_id"))
+      return [[{ branch_id: "branch-from-process" }], []];
     return [[], []];
   });
 }
@@ -105,7 +120,10 @@ describe("head office vs branch scope", () => {
 
     const scope = await resolveDashboardScope("user-sofiya", "hr");
 
-    expect(scope.level, "an explicitly branch-assigned HR user must not be ORG_ALL").toBe("BRANCH_ALL");
+    expect(
+      scope.level,
+      "an explicitly branch-assigned HR user must not be ORG_ALL",
+    ).toBe("BRANCH_ALL");
     expect(scope.branchIds).toEqual(["branch-noida-2"]);
     // The assignment is the grant: their own office must not widen it.
     expect(scope.branchIds).not.toContain("branch-own-office");
@@ -120,9 +138,15 @@ describe("head office vs branch scope", () => {
       withRoles([role, "employee"]);
       wireDb([]);
 
-      const scope = await resolveDashboardScope(`user-unprovisioned-${role}`, role);
+      const scope = await resolveDashboardScope(
+        `user-unprovisioned-${role}`,
+        role,
+      );
 
-      expect(scope.level, `${role} with no scope row must not open the whole org`).toBe("BRANCH_ALL");
+      expect(
+        scope.level,
+        `${role} with no scope row must not open the whole org`,
+      ).toBe("BRANCH_ALL");
       expect(scope.branchIds).toEqual(["branch-own-office"]);
     }
   });
@@ -133,7 +157,10 @@ describe("head office vs branch scope", () => {
 
     const scope = await resolveDashboardScope("user-ho-hr", "hr");
 
-    expect(scope.level, "an explicit scope_type='all' row is how head office is declared").toBe("ORG_ALL");
+    expect(
+      scope.level,
+      "an explicit scope_type='all' row is how head office is declared",
+    ).toBe("ORG_ALL");
     expect(scope.branchIds).toEqual([]);
   });
 
@@ -150,7 +177,9 @@ describe("head office vs branch scope", () => {
       return [[], []];
     });
 
-    await expect(resolveDashboardScope("user-no-branch", "payroll")).rejects.toThrow(
+    await expect(
+      resolveDashboardScope("user-no-branch", "payroll"),
+    ).rejects.toThrow(
       /No active branch or scope_type='all' scope is configured/,
     );
   });
@@ -178,7 +207,13 @@ describe("head office vs branch scope", () => {
 
   it("scopes to process when the assignment names a process", async () => {
     withRoles(["employee", "hr"]);
-    wireDb([row({ scope_type: "process", branch_id: null, process_id: "process-back-office" })]);
+    wireDb([
+      row({
+        scope_type: "process",
+        branch_id: null,
+        process_id: "process-back-office",
+      }),
+    ]);
 
     const scope = await resolveDashboardScope("user-process-hr", "hr");
 
@@ -190,13 +225,23 @@ describe("head office vs branch scope", () => {
     // Head office is itself a branch in branch_master — three of them (CORP, HQ,
     // HEAD_OFFICE), each ~12 employees. Narrowing by assignment alone scoped the real
     // CEO account (MAS00001) to the 13 people sitting at head office.
-    for (const role of ["ceo", "coo", "management", "ho_hr", "operations_head", "finance_head"]) {
+    for (const role of [
+      "ceo",
+      "coo",
+      "management",
+      "ho_hr",
+      "operations_head",
+      "finance_head",
+    ]) {
       withRoles([role, "employee"]);
       wireDb([row({ role_key: role, branch_id: "branch-head-office" })]);
 
       const scope = await resolveDashboardScope(`user-${role}`, role);
 
-      expect(scope.level, `${role} is a head-office title and must stay org-wide`).toBe("ORG_ALL");
+      expect(
+        scope.level,
+        `${role} is a head-office title and must stay org-wide`,
+      ).toBe("ORG_ALL");
       expect(scope.branchIds).toEqual([]);
     }
   });
@@ -206,13 +251,23 @@ describe("head office vs branch scope", () => {
     // the assignment row is the only evidence of which a given user is. If any of them
     // were added to HEAD_OFFICE_ROLES the original leak would return for the 14 real
     // branch-assigned users who hold them.
-    for (const role of ["hr", "hr_admin", "payroll", "payroll_hr", "payroll_admin", "finance"]) {
+    for (const role of [
+      "hr",
+      "hr_admin",
+      "payroll",
+      "payroll_hr",
+      "payroll_admin",
+      "finance",
+    ]) {
       withRoles([role, "employee"]);
       wireDb([row({ role_key: role })]);
 
       const scope = await resolveDashboardScope(`user-${role}`, role);
 
-      expect(scope.level, `${role} is ambiguous and must narrow to its assigned branch`).toBe("BRANCH_ALL");
+      expect(
+        scope.level,
+        `${role} is ambiguous and must narrow to its assigned branch`,
+      ).toBe("BRANCH_ALL");
       expect(scope.branchIds).toEqual(["branch-noida-2"]);
     }
   });
@@ -236,7 +291,10 @@ describe("head office vs branch scope", () => {
 
     const scope = await resolveDashboardScope("user-naresh", "payroll");
 
-    expect(scope.level, "an 'all' grant keyed by an alias role must still be honoured").toBe("ORG_ALL");
+    expect(
+      scope.level,
+      "an 'all' grant keyed by an alias role must still be honoured",
+    ).toBe("ORG_ALL");
     expect(scope.branchIds).toEqual([]);
   });
 
@@ -262,14 +320,29 @@ describe("head office vs branch scope", () => {
     execute.mockReset();
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("user_assignment_scope")) {
-        return [[row({ role_key: "branch_head", branch_id: "branch-mohali" })], []];
+        return [
+          [row({ role_key: "branch_head", branch_id: "branch-mohali" })],
+          [],
+        ];
       }
       if (sql.includes("FROM employees") && sql.includes("user_id")) {
-        return [[{ id: "emp-1", branch_id: "branch-mohali", process_id: "process-back-office" }], []];
+        return [
+          [
+            {
+              id: "emp-1",
+              branch_id: "branch-mohali",
+              process_id: "process-back-office",
+            },
+          ],
+          [],
+        ];
       }
       // branchesForProcesses — the other branches running BACK OFFICE.
       if (sql.includes("SELECT DISTINCT branch_id")) {
-        return [[{ branch_id: "branch-noida-2" }, { branch_id: "branch-delhi" }], []];
+        return [
+          [{ branch_id: "branch-noida-2" }, { branch_id: "branch-delhi" }],
+          [],
+        ];
       }
       return [[], []];
     });
@@ -277,8 +350,10 @@ describe("head office vs branch scope", () => {
     const scope = await resolveDashboardScope("user-vijay", "branch_head");
 
     expect(scope.level).toBe("BRANCH_ALL");
-    expect(scope.branchIds, "a branch role sees its assigned branch and nothing else")
-      .toEqual(["branch-mohali"]);
+    expect(
+      scope.branchIds,
+      "a branch role sees its assigned branch and nothing else",
+    ).toEqual(["branch-mohali"]);
     expect(scope.branchIds).not.toContain("branch-noida-2");
   });
 
@@ -289,13 +364,26 @@ describe("head office vs branch scope", () => {
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("user_assignment_scope")) return [[], []];
       if (sql.includes("FROM employees") && sql.includes("user_id")) {
-        return [[{ id: "emp-1", branch_id: "branch-own-office", process_id: "process-back-office" }], []];
+        return [
+          [
+            {
+              id: "emp-1",
+              branch_id: "branch-own-office",
+              process_id: "process-back-office",
+            },
+          ],
+          [],
+        ];
       }
-      if (sql.includes("SELECT DISTINCT branch_id")) return [[{ branch_id: "branch-noida-2" }], []];
+      if (sql.includes("SELECT DISTINCT branch_id"))
+        return [[{ branch_id: "branch-noida-2" }], []];
       return [[], []];
     });
 
-    const scope = await resolveDashboardScope("user-unassigned-bh", "branch_head");
+    const scope = await resolveDashboardScope(
+      "user-unassigned-bh",
+      "branch_head",
+    );
 
     expect(scope.level).toBe("BRANCH_ALL");
     expect(scope.branchIds).toEqual(["branch-own-office"]);

@@ -152,7 +152,9 @@ export async function changeSalary(params: {
   // change-log entry.
   const conn = await db.getConnection();
   try {
-    await (conn as unknown as { beginTransaction(): Promise<void> }).beginTransaction();
+    await (
+      conn as unknown as { beginTransaction(): Promise<void> }
+    ).beginTransaction();
 
     await conn.execute(
       `INSERT INTO salary_component_assignments
@@ -209,7 +211,9 @@ export async function changeSalary(params: {
 
     await (conn as unknown as { commit(): Promise<void> }).commit();
   } catch (err) {
-    await (conn as unknown as { rollback(): Promise<void> }).rollback().catch(() => {});
+    await (conn as unknown as { rollback(): Promise<void> })
+      .rollback()
+      .catch(() => {});
     throw err;
   } finally {
     (conn as unknown as { release(): void }).release();

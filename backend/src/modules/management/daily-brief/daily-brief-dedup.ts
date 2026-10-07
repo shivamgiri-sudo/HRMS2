@@ -68,7 +68,9 @@ const CATEGORY_ALIASES: Readonly<Record<string, string>> = {
 };
 
 function normalizeIssueKey(signal: DedupableSignal): string {
-  const raw = String(signal.category ?? signal.key ?? "").trim().toLowerCase();
+  const raw = String(signal.category ?? signal.key ?? "")
+    .trim()
+    .toLowerCase();
   return CATEGORY_ALIASES[raw] ?? raw;
 }
 
@@ -105,14 +107,20 @@ function mergeTwo(a: DedupableSignal, b: DedupableSignal): DedupableSignal {
   if (addsInformation(winner.label, other.label)) {
     merged.label = `${winner.label} (${other.label})`;
   }
-  if (merged.value === null || merged.value === undefined || merged.value === "") {
+  if (
+    merged.value === null ||
+    merged.value === undefined ||
+    merged.value === ""
+  ) {
     merged.value = other.value;
   }
   merged.actionUrl = winner.actionUrl ?? other.actionUrl ?? null;
   merged.priority = winner.priority ?? other.priority;
   merged.employeeId = winner.employeeId ?? other.employeeId;
   merged.category = winner.category ?? other.category;
-  merged.source = winner.actionUrl ? winner.source : (winner.source ?? other.source);
+  merged.source = winner.actionUrl
+    ? winner.source
+    : (winner.source ?? other.source);
   merged.kind = winner.kind ?? other.kind;
   merged.isPositive = winner.isPositive ?? other.isPositive;
 
@@ -176,10 +184,16 @@ export function dedupeSignals(signals: BriefSignal[]): BriefSignal[] {
  * classified one. This inference is flagged in the module report as an
  * invented default, not a specified business rule.
  */
-function inferKind(signal: DedupableSignal): NonNullable<DedupableSignal["kind"]> {
+function inferKind(
+  signal: DedupableSignal,
+): NonNullable<DedupableSignal["kind"]> {
   if (signal.kind) return signal.kind;
   if (signal.isPositive) return "positive";
-  if (signal.actionUrl && (signal.priority === "critical" || signal.priority === "high")) return "action";
+  if (
+    signal.actionUrl &&
+    (signal.priority === "critical" || signal.priority === "high")
+  )
+    return "action";
   return "info";
 }
 
@@ -189,12 +203,27 @@ interface RankBucket {
 }
 
 const RANK_BUCKETS: readonly RankBucket[] = [
-  { label: "critical action", test: (s) => inferKind(s) === "action" && s.priority === "critical" },
-  { label: "high action", test: (s) => inferKind(s) === "action" && s.priority === "high" },
-  { label: "critical business/staffing/people risk", test: (s) => inferKind(s) === "business_risk" && s.priority === "critical" },
+  {
+    label: "critical action",
+    test: (s) => inferKind(s) === "action" && s.priority === "critical",
+  },
+  {
+    label: "high action",
+    test: (s) => inferKind(s) === "action" && s.priority === "high",
+  },
+  {
+    label: "critical business/staffing/people risk",
+    test: (s) => inferKind(s) === "business_risk" && s.priority === "critical",
+  },
   { label: "material D-1 anomaly", test: (s) => inferKind(s) === "anomaly" },
-  { label: "repeated hygiene/discipline", test: (s) => inferKind(s) === "hygiene" },
-  { label: "positive major improvement", test: (s) => inferKind(s) === "positive" },
+  {
+    label: "repeated hygiene/discipline",
+    test: (s) => inferKind(s) === "hygiene",
+  },
+  {
+    label: "positive major improvement",
+    test: (s) => inferKind(s) === "positive",
+  },
   { label: "normal metric", test: (s) => inferKind(s) === "metric" },
   { label: "informational", test: () => true }, // catch-all — always matches, must stay last
 ];

@@ -4,25 +4,38 @@ import { describe, expect, it } from "vitest";
 import { BPO_MASTER_REPORTS } from "../bpo-master-report-registry.js";
 
 function source(relativePath: string) {
-  return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8");
+  return readFileSync(
+    fileURLToPath(new URL(relativePath, import.meta.url)),
+    "utf8",
+  );
 }
 
 describe("report role and scope contracts", () => {
   it("every report declares view roles and export roles", () => {
     for (const report of BPO_MASTER_REPORTS) {
-      expect(report.viewRoles.length, `${report.code} has no view roles`).toBeGreaterThan(0);
-      expect(report.exportRoles.length, `${report.code} has no export roles`).toBeGreaterThan(0);
+      expect(
+        report.viewRoles.length,
+        `${report.code} has no view roles`,
+      ).toBeGreaterThan(0);
+      expect(
+        report.exportRoles.length,
+        `${report.code} has no export roles`,
+      ).toBeGreaterThan(0);
     }
   });
 
   it("payroll master report excludes general employee from view roles", () => {
-    const payrollReport = BPO_MASTER_REPORTS.find((r) => r.code === "bpo-payroll-statutory-master")!;
+    const payrollReport = BPO_MASTER_REPORTS.find(
+      (r) => r.code === "bpo-payroll-statutory-master",
+    )!;
     expect(payrollReport.viewRoles).not.toContain("employee");
     expect(payrollReport.viewRoles).not.toContain("general_employee");
   });
 
   it("finance master report excludes general employee from view roles", () => {
-    const financeReport = BPO_MASTER_REPORTS.find((r) => r.code === "bpo-finance-pnl-profitability-master")!;
+    const financeReport = BPO_MASTER_REPORTS.find(
+      (r) => r.code === "bpo-finance-pnl-profitability-master",
+    )!;
     expect(financeReport.viewRoles).not.toContain("employee");
     expect(financeReport.viewRoles).not.toContain("general_employee");
   });
@@ -41,7 +54,7 @@ describe("report role and scope contracts", () => {
 
   it("sensitive columns are marked sensitive and use appropriate display format", () => {
     const reportsWithSensitive = BPO_MASTER_REPORTS.filter((r) =>
-      r.columns.some((c) => c.sensitive)
+      r.columns.some((c) => c.sensitive),
     );
     expect(reportsWithSensitive.length).toBeGreaterThan(0);
     // Sensitive flag must be set; format must NOT override the actual data type
@@ -49,11 +62,20 @@ describe("report role and scope contracts", () => {
       const sensitiveColumns = report.columns.filter((c) => c.sensitive);
       for (const col of sensitiveColumns) {
         // Opaque identifiers use masked format; financial/operational fields retain their type
-        const isOpaqueId = /ACCOUNT_NUMBER|IFSC|SERIAL_NUMBER|USER_ID|IP_ADDRESS|ACCESS_CARD_NUMBER|UAN_NUMBER|PAN_NUMBER|ESIC_NUMBER/i.test(col.key);
+        const isOpaqueId =
+          /ACCOUNT_NUMBER|IFSC|SERIAL_NUMBER|USER_ID|IP_ADDRESS|ACCESS_CARD_NUMBER|UAN_NUMBER|PAN_NUMBER|ESIC_NUMBER/i.test(
+            col.key,
+          );
         if (isOpaqueId) {
-          expect(col.format, `${report.code}.${col.key} opaque id should be masked`).toBe("masked");
+          expect(
+            col.format,
+            `${report.code}.${col.key} opaque id should be masked`,
+          ).toBe("masked");
         } else {
-          expect(col.format, `${report.code}.${col.key} non-id sensitive should not be masked`).not.toBe("masked");
+          expect(
+            col.format,
+            `${report.code}.${col.key} non-id sensitive should not be masked`,
+          ).not.toBe("masked");
         }
       }
     }

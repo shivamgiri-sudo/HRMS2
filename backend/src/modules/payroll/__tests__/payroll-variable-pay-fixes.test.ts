@@ -27,13 +27,17 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
  */
 function stripComments(src: string): string {
   return src
-    .replace(/\/\*[\s\S]*?\*\//g, "")   // block comments
-    .replace(/^\s*\/\/.*$/gm, "")        // whole-line // comments
-    .replace(/^\s*--.*$/gm, "");         // whole-line SQL comments
+    .replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+    .replace(/^\s*\/\/.*$/gm, "") // whole-line // comments
+    .replace(/^\s*--.*$/gm, ""); // whole-line SQL comments
 }
 
-const CALC = stripComments(read("src/modules/payroll/payrollCalculate.service.ts"));
-const INCENTIVES = stripComments(read("src/modules/incentives/incentives.service.ts"));
+const CALC = stripComments(
+  read("src/modules/payroll/payrollCalculate.service.ts"),
+);
+const INCENTIVES = stripComments(
+  read("src/modules/incentives/incentives.service.ts"),
+);
 
 describe("reimbursement read targets a column that exists", () => {
   it("no longer selects the phantom claim_amount column", () => {
@@ -44,14 +48,18 @@ describe("reimbursement read targets a column that exists", () => {
   });
 
   it("reads amount_approved, the figure the approver actually authorised", () => {
-    expect(CALC).toContain("COALESCE(SUM(amount_approved), 0) AS total_reimbursements");
+    expect(CALC).toContain(
+      "COALESCE(SUM(amount_approved), 0) AS total_reimbursements",
+    );
   });
 
   it("does not fall back to amount_claimed when no approved amount was recorded", () => {
     // Paying the claimed figure where an approver reduced it, or recorded nothing, would pay
     // an amount nobody authorised. Unpaid-and-visible beats paid-and-guessed.
     expect(CALC).toContain("AND amount_approved IS NOT NULL");
-    expect(CALC).not.toMatch(/COALESCE\(\s*amount_approved\s*,\s*amount_claimed\s*\)/);
+    expect(CALC).not.toMatch(
+      /COALESCE\(\s*amount_approved\s*,\s*amount_claimed\s*\)/,
+    );
   });
 
   it("no longer swallows the failure silently", () => {
@@ -108,7 +116,9 @@ describe("applyToRun no longer adds incentive money to payroll", () => {
 });
 
 describe("salary_prep_run.incentives_applied_at is created by a migration that MySQL 8 accepts", () => {
-  const MIGRATION_RAW = read("sql/1211_salary_prep_run_incentives_applied_at.sql");
+  const MIGRATION_RAW = read(
+    "sql/1211_salary_prep_run_incentives_applied_at.sql",
+  );
   // The header explains the defect and therefore quotes the broken syntax; strip it, or the
   // test would demand that the explanation be deleted to pass.
   const MIGRATION = stripComments(MIGRATION_RAW);
@@ -122,7 +132,13 @@ describe("salary_prep_run.incentives_applied_at is created by a migration that M
   it("guards both statements on information_schema so it is a true no-op on re-run", () => {
     expect(MIGRATION).toContain("information_schema.COLUMNS");
     expect(MIGRATION).toContain("information_schema.STATISTICS");
-    expect((MIGRATION.match(/PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;/g) ?? []).length).toBe(2);
+    expect(
+      (
+        MIGRATION.match(
+          /PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;/g,
+        ) ?? []
+      ).length,
+    ).toBe(2);
   });
 
   it("adds the column nullable with no default, so no existing run changes meaning", () => {
@@ -132,6 +148,8 @@ describe("salary_prep_run.incentives_applied_at is created by a migration that M
   });
 
   it("is registered in the manifest, or the runner never executes it", () => {
-    expect(MANIFEST).toContain('"1211_salary_prep_run_incentives_applied_at.sql"');
+    expect(MANIFEST).toContain(
+      '"1211_salary_prep_run_incentives_applied_at.sql"',
+    );
   });
 });

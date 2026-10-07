@@ -29,7 +29,9 @@ const source = fs.readFileSync(
   path.resolve(__dirname, "../esign-compliance.worker.ts"),
   "utf8",
 );
-const codeOnly = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const codeOnly = source
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/^\s*\/\/.*$/gm, "");
 
 describe("esign-compliance worker startup", () => {
   it("DOES schedule a first run at boot — it must not wait a full interval", () => {
@@ -45,12 +47,16 @@ describe("esign-compliance worker startup", () => {
     // rather than textual — the calls inside the setTimeout and setInterval
     // callbacks are the correct ones, so simply grepping for the call name
     // flags working code.
-    const start = codeOnly.slice(codeOnly.indexOf("export async function startEsignComplianceWorker"));
+    const start = codeOnly.slice(
+      codeOnly.indexOf("export async function startEsignComplianceWorker"),
+    );
     const body = start.slice(0, start.indexOf("\n}"));
 
     const firstCall = body.indexOf("processEsignCompliance(");
     const firstSchedule = Math.min(
-      ...[body.indexOf("setTimeout("), body.indexOf("setInterval(")].filter((i) => i > -1),
+      ...[body.indexOf("setTimeout("), body.indexOf("setInterval(")].filter(
+        (i) => i > -1,
+      ),
     );
 
     expect(firstCall, "the worker never invokes a cycle").toBeGreaterThan(-1);
@@ -70,7 +76,9 @@ describe("esign-compliance worker startup", () => {
   });
 
   it("cancels the pending first run on shutdown", () => {
-    const stop = codeOnly.slice(codeOnly.indexOf("export function stopEsignComplianceWorker"));
+    const stop = codeOnly.slice(
+      codeOnly.indexOf("export function stopEsignComplianceWorker"),
+    );
     expect(stop).toContain("clearTimeout");
     expect(stop).toContain("clearInterval");
   });
@@ -87,10 +95,15 @@ describe("esign-compliance worker startup", () => {
 
   it("claims the cooldown BEFORE dispatching, not after", () => {
     // An unrecorded successful send repeats on the next cycle.
-    const claimAt = codeOnly.indexOf('markSent(item.employee_id, item.checklist_id, "reminder")');
+    const claimAt = codeOnly.indexOf(
+      'markSent(item.employee_id, item.checklist_id, "reminder")',
+    );
     const sendAt = codeOnly.indexOf('eventCode: "esign_reminder"');
     expect(claimAt).toBeGreaterThan(-1);
     expect(sendAt).toBeGreaterThan(-1);
-    expect(claimAt, "cooldown must be claimed before the dispatch").toBeLessThan(sendAt);
+    expect(
+      claimAt,
+      "cooldown must be claimed before the dispatch",
+    ).toBeLessThan(sendAt);
   });
 });

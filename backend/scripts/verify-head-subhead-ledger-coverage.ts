@@ -23,8 +23,11 @@ import mysql from "mysql2/promise";
 
 async function main() {
   const conn = await mysql.createConnection({
-    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
   });
 
   const [gaps] = await conn.query<any[]>(
@@ -50,19 +53,34 @@ async function main() {
 
   console.log(`\n=== Head/Sub-head ledger coverage check ===\n`);
   if ((gaps as any[]).length === 0) {
-    console.log("No gaps — every active budget line's head/sub_head resolves to a ledger master row.");
+    console.log(
+      "No gaps — every active budget line's head/sub_head resolves to a ledger master row.",
+    );
   } else {
-    console.log(`${(gaps as any[]).length} head/sub_head combination(s) on ACTIVE budget lines have no matching ledger head:\n`);
+    console.log(
+      `${(gaps as any[]).length} head/sub_head combination(s) on ACTIVE budget lines have no matching ledger head:\n`,
+    );
     for (const g of gaps as any[]) {
-      console.log(`  "${g.head}" / "${g.sub_head}"  —  ${g.budget_line_count} budget line(s), Rs.${Number(g.total_approved_amount).toFixed(2)} approved`);
+      console.log(
+        `  "${g.head}" / "${g.sub_head}"  —  ${g.budget_line_count} budget line(s), Rs.${Number(g.total_approved_amount).toFixed(2)} approved`,
+      );
     }
-    console.log(`\nAdd these to Finance → Ledger Heads (finance_expense_head_master / finance_expense_sub_head_master) — or correct the budget line's head/sub_head text to match an existing one — before enabling Journal Task 2's GRN posting for these lines.`);
+    console.log(
+      `\nAdd these to Finance → Ledger Heads (finance_expense_head_master / finance_expense_sub_head_master) — or correct the budget line's head/sub_head text to match an existing one — before enabling Journal Task 2's GRN posting for these lines.`,
+    );
   }
 
   console.log(`\n=== Imprest Float account check ===\n`);
-  console.log((imprestFloat as any[]).length > 0 ? "OK — an active 'Imprest Float' row exists in payable_account_master." : "MISSING — imprest GRN approvals will refuse with IMPREST_FLOAT_ACCOUNT_NOT_FOUND until an active 'Imprest Float' row exists in payable_account_master.");
+  console.log(
+    (imprestFloat as any[]).length > 0
+      ? "OK — an active 'Imprest Float' row exists in payable_account_master."
+      : "MISSING — imprest GRN approvals will refuse with IMPREST_FLOAT_ACCOUNT_NOT_FOUND until an active 'Imprest Float' row exists in payable_account_master.",
+  );
 
   await conn.end();
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

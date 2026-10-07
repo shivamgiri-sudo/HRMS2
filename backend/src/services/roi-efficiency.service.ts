@@ -8,9 +8,9 @@
  *          operational efficiency trends for strategic planning.
  */
 
-import { Router, Request, Response } from 'express';
-import type { RowDataPacket } from 'mysql2/promise';
-import { db } from '../db/mysql.js';
+import { Router, Request, Response } from "express";
+import type { RowDataPacket } from "mysql2/promise";
+import { db } from "../db/mysql.js";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -41,7 +41,7 @@ export interface LOBEfficiencyMetrics {
   avgTalkTimeSec: number;
   avgQualityScore: number;
   callsPerAgentPerDay: number;
-  efficiencyTier: 'HIGH' | 'MEDIUM' | 'LOW';
+  efficiencyTier: "HIGH" | "MEDIUM" | "LOW";
 }
 
 export interface ProcessROIAnalysis {
@@ -57,7 +57,7 @@ export interface ProcessROIAnalysis {
 }
 
 export interface PerformanceCategory {
-  category: 'TOP_PERFORMER' | 'IMPROVEMENT_TARGET';
+  category: "TOP_PERFORMER" | "IMPROVEMENT_TARGET";
   process: string;
   agents: number;
   roiScore: number;
@@ -172,7 +172,9 @@ class ROIEfficiencyService {
     `;
 
     const [rows] = await db.query(query);
-    return this.mapQueryResults<ProcessEfficiencyMetrics>(rows as RowDataPacket[]);
+    return this.mapQueryResults<ProcessEfficiencyMetrics>(
+      rows as RowDataPacket[],
+    );
   }
 
   /**
@@ -435,7 +437,7 @@ class ROIEfficiencyService {
    * Helper: Map snake_case query results to camelCase
    */
   private mapQueryResults<T>(rows: any[]): T[] {
-    return rows.map(row => this.toCamelCase(row));
+    return rows.map((row) => this.toCamelCase(row));
   }
 
   /**
@@ -444,7 +446,9 @@ class ROIEfficiencyService {
   private toCamelCase(obj: any): any {
     const camelCased: any = {};
     for (const key in obj) {
-      const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+      const camelKey = key.replace(/_([a-z])/g, (_, letter) =>
+        letter.toUpperCase(),
+      );
       camelCased[camelKey[0].toLowerCase() + camelKey.slice(1)] = obj[key];
     }
     return camelCased;
@@ -462,7 +466,7 @@ const service = new ROIEfficiencyService();
  * GET /api/analytics/roi-efficiency/process-matrix
  * Fetch process efficiency matrix with ROI index
  */
-router.get('/process-matrix', async (req: Request, res: Response) => {
+router.get("/process-matrix", async (req: Request, res: Response) => {
   try {
     const metrics = await service.getProcessEfficiencyMatrix();
     res.json({
@@ -471,10 +475,10 @@ router.get('/process-matrix', async (req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error fetching process efficiency matrix:', error);
+    console.error("Error fetching process efficiency matrix:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch process efficiency metrics',
+      error: "Failed to fetch process efficiency metrics",
     });
   }
 });
@@ -483,7 +487,7 @@ router.get('/process-matrix', async (req: Request, res: Response) => {
  * GET /api/analytics/roi-efficiency/lob-breakdown
  * Fetch LOB-level efficiency breakdown
  */
-router.get('/lob-breakdown', async (req: Request, res: Response) => {
+router.get("/lob-breakdown", async (req: Request, res: Response) => {
   try {
     const metrics = await service.getLOBEfficiencyBreakdown();
     res.json({
@@ -492,10 +496,10 @@ router.get('/lob-breakdown', async (req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error fetching LOB efficiency breakdown:', error);
+    console.error("Error fetching LOB efficiency breakdown:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch LOB efficiency metrics',
+      error: "Failed to fetch LOB efficiency metrics",
     });
   }
 });
@@ -504,7 +508,7 @@ router.get('/lob-breakdown', async (req: Request, res: Response) => {
  * GET /api/analytics/roi-efficiency/process-roi
  * Fetch detailed ROI analysis by process
  */
-router.get('/process-roi', async (req: Request, res: Response) => {
+router.get("/process-roi", async (req: Request, res: Response) => {
   try {
     const metrics = await service.getProcessROIAnalysis();
     res.json({
@@ -513,10 +517,10 @@ router.get('/process-roi', async (req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error fetching process ROI analysis:', error);
+    console.error("Error fetching process ROI analysis:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch ROI analysis',
+      error: "Failed to fetch ROI analysis",
     });
   }
 });
@@ -525,7 +529,7 @@ router.get('/process-roi', async (req: Request, res: Response) => {
  * GET /api/analytics/roi-efficiency/performance-categories
  * Fetch top performers and improvement targets
  */
-router.get('/performance-categories', async (req: Request, res: Response) => {
+router.get("/performance-categories", async (req: Request, res: Response) => {
   try {
     const categories = await service.getPerformanceCategories();
     res.json({
@@ -534,10 +538,10 @@ router.get('/performance-categories', async (req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error fetching performance categories:', error);
+    console.error("Error fetching performance categories:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch performance categories',
+      error: "Failed to fetch performance categories",
     });
   }
 });

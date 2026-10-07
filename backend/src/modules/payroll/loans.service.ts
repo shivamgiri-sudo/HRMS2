@@ -39,12 +39,15 @@ interface ActiveLoanRow extends RowDataPacket {
  * Deliberately isolated: a failure here must never fail the disbursal transition
  * itself. Call sites should log and continue on throw, not propagate.
  */
-export async function applyPayrollDeductions(runId: string, actorUserId: string): Promise<void> {
+export async function applyPayrollDeductions(
+  runId: string,
+  actorUserId: string,
+): Promise<void> {
   const [lines] = await db.execute<LoanEmiLine[]>(
     `SELECT employee_id, loan_emi
        FROM salary_prep_line
       WHERE run_id = ? AND loan_emi > 0`,
-    [runId]
+    [runId],
   );
   if (lines.length === 0) return;
 
@@ -56,14 +59,14 @@ export async function applyPayrollDeductions(runId: string, actorUserId: string)
       let remaining = Number(line.loan_emi);
       if (!remaining || Number.isNaN(remaining) || remaining <= 0) continue;
 
-      const [loans] = await conn.execute(
+      const [loans] = (await conn.execute(
         `SELECT id, deducted_amount, pending_amount, status
            FROM employee_loans
           WHERE employee_id = ? AND status = 'active'
           ORDER BY start_date ASC
           FOR UPDATE`,
-        [line.employee_id]
-      ) as [ActiveLoanRow[], unknown];
+        [line.employee_id],
+      )) as [ActiveLoanRow[], unknown];
 
       for (const loan of loans) {
         if (remaining <= 0) break;
@@ -79,7 +82,7 @@ export async function applyPayrollDeductions(runId: string, actorUserId: string)
 
         await conn.execute(
           `UPDATE employee_loans SET deducted_amount = ?, pending_amount = ?, status = ? WHERE id = ?`,
-          [newDeducted, newPending, newStatus, loan.id]
+          [newDeducted, newPending, newStatus, loan.id],
         );
 
         void logSensitiveAction({

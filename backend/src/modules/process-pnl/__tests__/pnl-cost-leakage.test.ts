@@ -23,7 +23,10 @@ const { execute, tableExists } = vi.hoisted(() => ({
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists }));
 
-import { financeYearBounds, getCostLeakageReview } from "../pnl-cost-leakage.service.js";
+import {
+  financeYearBounds,
+  getCostLeakageReview,
+} from "../pnl-cost-leakage.service.js";
 
 beforeEach(() => {
   execute.mockReset();
@@ -34,11 +37,27 @@ beforeEach(() => {
 
 describe("financeYearBounds", () => {
   it("runs April to March, not January to December", () => {
-    expect(financeYearBounds("2026-09")).toEqual({ label: "FY2026-27", from: "2026-04", to: "2027-03" });
+    expect(financeYearBounds("2026-09")).toEqual({
+      label: "FY2026-27",
+      from: "2026-04",
+      to: "2027-03",
+    });
     // A January period belongs to the financial year that opened the previous April.
-    expect(financeYearBounds("2027-01")).toEqual({ label: "FY2026-27", from: "2026-04", to: "2027-03" });
-    expect(financeYearBounds("2026-04")).toEqual({ label: "FY2026-27", from: "2026-04", to: "2027-03" });
-    expect(financeYearBounds("2026-03")).toEqual({ label: "FY2025-26", from: "2025-04", to: "2026-03" });
+    expect(financeYearBounds("2027-01")).toEqual({
+      label: "FY2026-27",
+      from: "2026-04",
+      to: "2027-03",
+    });
+    expect(financeYearBounds("2026-04")).toEqual({
+      label: "FY2026-27",
+      from: "2026-04",
+      to: "2027-03",
+    });
+    expect(financeYearBounds("2026-03")).toEqual({
+      label: "FY2025-26",
+      from: "2025-04",
+      to: "2026-03",
+    });
   });
 });
 
@@ -47,7 +66,10 @@ describe("scoping", () => {
     await getCostLeakageReview("2026-09");
 
     const ranged = execute.mock.calls
-      .map(([sql, params]) => ({ sql: String(sql), params: (params ?? []) as unknown[] }))
+      .map(([sql, params]) => ({
+        sql: String(sql),
+        params: (params ?? []) as unknown[],
+      }))
       .filter((c) => c.sql.includes("accounting_period BETWEEN"));
 
     expect(ranged.length).toBeGreaterThan(0);
@@ -60,7 +82,10 @@ describe("scoping", () => {
   it("asks for legacy records strictly before the financial year opened", async () => {
     await getCostLeakageReview("2026-09");
     const legacy = execute.mock.calls
-      .map(([sql, params]) => ({ sql: String(sql), params: (params ?? []) as unknown[] }))
+      .map(([sql, params]) => ({
+        sql: String(sql),
+        params: (params ?? []) as unknown[],
+      }))
       .find((c) => c.sql.includes("accounting_period <"));
     expect(legacy?.params).toEqual(["2026-04"]);
   });
@@ -81,23 +106,65 @@ describe("actionable total", () => {
     execute.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
       if (text.includes("FROM cost_centre_master")) {
-        return [[{ id: "cc-1", cost_centre_code: "CC1", cost_centre_name: "Head Office",
-                   branch_name: "HO", grn_count: 3, amount: "500000.00" }], []];
+        return [
+          [
+            {
+              id: "cc-1",
+              cost_centre_code: "CC1",
+              cost_centre_name: "Head Office",
+              branch_name: "HO",
+              grn_count: 3,
+              amount: "500000.00",
+            },
+          ],
+          [],
+        ];
       }
       if (text.includes("THEN 'no_cost_centre'")) {
-        return [[{ accounting_period: "2026-08", kind: "no_cost_centre", grn_count: 4,
-                   amount: "200000.00" }], []];
+        return [
+          [
+            {
+              accounting_period: "2026-08",
+              kind: "no_cost_centre",
+              grn_count: 4,
+              amount: "200000.00",
+            },
+          ],
+          [],
+        ];
       }
       if (text.includes("finance_expense_sub_head_master")) {
-        return [[{ sub_head_name: "Computers - Cost", pnl_treatment: "excluded", grn_count: 1,
-                   amount: "100000.00" }], []];
+        return [
+          [
+            {
+              sub_head_name: "Computers - Cost",
+              pnl_treatment: "excluded",
+              grn_count: 1,
+              amount: "100000.00",
+            },
+          ],
+          [],
+        ];
       }
       if (text.includes("accounting_period <")) {
-        return [[{ yr: "2019", grn_count: 22236, amount: "1010000000.00" }], []];
+        return [
+          [{ yr: "2019", grn_count: 22236, amount: "1010000000.00" }],
+          [],
+        ];
       }
       if (text.includes("FROM expense_claim")) {
-        return [[{ status: "submitted", claim_count: 5634, amount: "124868847.00",
-                   no_cost_centre: 5634, latest: "2026-06-25" }], []];
+        return [
+          [
+            {
+              status: "submitted",
+              claim_count: 5634,
+              amount: "124868847.00",
+              no_cost_centre: 5634,
+              latest: "2026-06-25",
+            },
+          ],
+          [],
+        ];
       }
       return [[], []];
     });
@@ -126,7 +193,9 @@ describe("actionable total", () => {
   it("stays at zero, and non-critical, when nothing is leaking", async () => {
     const result = await getCostLeakageReview("2026-09");
     expect(result.actionableAmount).toBe(0);
-    const staffless = result.buckets.find((b) => b.code === "STAFFLESS_COST_CENTRE");
+    const staffless = result.buckets.find(
+      (b) => b.code === "STAFFLESS_COST_CENTRE",
+    );
     expect(staffless?.severity).toBe("info");
   });
 });
@@ -136,7 +205,9 @@ describe("resilience", () => {
     tableExists.mockResolvedValue(false);
     const result = await getCostLeakageReview("2026-09");
     expect(result.buckets).toHaveLength(5);
-    expect(result.buckets.every((b) => b.count === 0 && b.amount === 0)).toBe(true);
+    expect(result.buckets.every((b) => b.count === 0 && b.amount === 0)).toBe(
+      true,
+    );
     expect(execute).not.toHaveBeenCalled();
   });
 });

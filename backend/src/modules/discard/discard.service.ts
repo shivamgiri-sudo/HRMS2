@@ -91,7 +91,11 @@ export interface DiscardPreview {
     ledgerRowExists: boolean;
   };
   attendance: DateRestorePlan[];
-  payroll: Array<{ month: string; runStatus: string | null; isClosed: boolean }>;
+  payroll: Array<{
+    month: string;
+    runStatus: string | null;
+    isClosed: boolean;
+  }>;
   unrecoverableFields: string[];
 }
 
@@ -136,7 +140,13 @@ export interface DiscardResult {
  * therefore silently revert its sign-off. 80 approved leaves sit in such months;
  * they need a payroll adjustment rather than a discard.
  */
-export const PAYROLL_CLOSED_STATUSES = ["published", "disbursed", "locked", "finalized", "approved"];
+export const PAYROLL_CLOSED_STATUSES = [
+  "published",
+  "disbursed",
+  "locked",
+  "finalized",
+  "approved",
+];
 
 function httpError(message: string, statusCode: number, code?: string): Error {
   return Object.assign(new Error(message), { statusCode, code });
@@ -156,17 +166,21 @@ function monthsInRange(from: string, to: string): string[] {
  * `wfm` must hold an assignment scope covering the employee. An employee with no
  * branch fails closed for wfm rather than being treated as in-scope.
  */
-async function checkScope(actor: DiscardActor, employeeId: string): Promise<DiscardBlocker | null> {
+async function checkScope(
+  actor: DiscardActor,
+  employeeId: string,
+): Promise<DiscardBlocker | null> {
   // payroll_head is org-wide, like super_admin: payroll owns every branch's salary, and
   // hasScopedAccess would fail it closed for having no user_assignment_scope row rather
   // than for being out of scope. Checked before the employee lookup because the answer
   // does not depend on the employee.
-  if (actor.roles?.includes("payroll_head") || actor.role === "payroll_head") return null;
+  if (actor.roles?.includes("payroll_head") || actor.role === "payroll_head")
+    return null;
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, process_id, lob_id, department_id, reporting_manager_id, manager_id
        FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
   const emp = rows[0] as any;
   const allowed = await hasScopedAccess(
@@ -180,27 +194,34 @@ async function checkScope(actor: DiscardActor, employeeId: string): Promise<Disc
       managerEmployeeId: emp?.reporting_manager_id ?? emp?.manager_id ?? null,
       employeeId,
     },
-    { allowAdminBypass: false, requireScopeForNonAdmin: true }
+    { allowAdminBypass: false, requireScopeForNonAdmin: true },
   );
   return allowed
     ? null
-    : { code: "OUT_OF_SCOPE", message: "This employee is outside your assigned branch scope." };
+    : {
+        code: "OUT_OF_SCOPE",
+        message: "This employee is outside your assigned branch scope.",
+      };
 }
 
 /** Payroll status for each month, and whether it blocks the discard. */
 async function checkPayrollMonths(
-  months: string[]
-): Promise<{ payroll: DiscardPreview["payroll"]; blocker: DiscardBlocker | null }> {
+  months: string[],
+): Promise<{
+  payroll: DiscardPreview["payroll"];
+  blocker: DiscardBlocker | null;
+}> {
   if (months.length === 0) return { payroll: [], blocker: null };
   const placeholders = months.map(() => "?").join(", ");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT run_month, status FROM salary_prep_run WHERE run_month IN (${placeholders})`,
-    months
+    months,
   );
 
   const closedSet = new Set(PAYROLL_CLOSED_STATUSES);
   const byMonth = new Map<string, { statuses: string[]; closed: boolean }>();
-  for (const month of months) byMonth.set(month, { statuses: [], closed: false });
+  for (const month of months)
+    byMonth.set(month, { statuses: [], closed: false });
   for (const row of rows as RowDataPacket[]) {
     const month = String((row as any).run_month);
     const status = String((row as any).status ?? "");
@@ -245,16 +266,15 @@ async function recalcPayroll(
   months: string[],
   sourceEventType: string,
   sourceEventId: string,
-  actorUserId: string
+  actorUserId: string,
 ): Promise<{ status: string | null; outcomes: string[]; warnings: string[] }> {
   const warnings: string[] = [];
   const statuses: string[] = [];
   const outcomes: string[] = [];
   for (const month of months) {
     try {
-      const { recalculateOpenPayrollForEmployee } = await import(
-        "../payroll/payroll-targeted-recalculation.service.js"
-      );
+      const { recalculateOpenPayrollForEmployee } =
+        await import("../payroll/payroll-targeted-recalculation.service.js");
       const res = await recalculateOpenPayrollForEmployee({
         employeeId,
         payrollMonth: month,
@@ -274,15 +294,21 @@ async function recalcPayroll(
       if (res.status !== "recalculated") {
         warnings.push(
           `Payroll was NOT recalculated for ${month} (${res.status}): ${res.message} ` +
-          `Nothing processes the recalculation queue automatically — this needs a manual payroll run.`
+            `Nothing processes the recalculation queue automatically — this needs a manual payroll run.`,
         );
       }
     } catch (err: any) {
       outcomes.push("failed");
-      warnings.push(`Payroll recalculation failed for ${month}: ${err?.message ?? String(err)}`);
+      warnings.push(
+        `Payroll recalculation failed for ${month}: ${err?.message ?? String(err)}`,
+      );
     }
   }
-  return { status: statuses.length ? statuses.join(", ") : null, outcomes, warnings };
+  return {
+    status: statuses.length ? statuses.join(", ") : null,
+    outcomes,
+    warnings,
+  };
 }
 
 /**
@@ -317,19 +343,22 @@ function aggregateRecalcStatus(outcomes: string[]): string | null {
  * Isolated like every other post-commit effect: the discard is already durable and
  * a failed annotation must not be reported as a failed discard.
  */
-async function recordRecalcStatus(discardId: string, outcomes: string[]): Promise<string[]> {
+async function recordRecalcStatus(
+  discardId: string,
+  outcomes: string[],
+): Promise<string[]> {
   const status = aggregateRecalcStatus(outcomes);
   if (!status) return [];
   try {
     await db.execute(
       `UPDATE approval_discard_log SET payroll_recalc_status = ? WHERE id = ?`,
-      [status, discardId]
+      [status, discardId],
     );
     return [];
   } catch (err: any) {
     return [
       `Payroll recalculation outcome '${status}' could not be recorded on the discard ` +
-      `ledger: ${err?.message ?? String(err)}. The discard itself is complete.`,
+        `ledger: ${err?.message ?? String(err)}. The discard itself is complete.`,
     ];
   }
 }
@@ -344,7 +373,7 @@ async function recordRecalcStatus(discardId: string, outcomes: string[]): Promis
  */
 async function refreshDerivedStores(
   employeeId: string,
-  months: string[]
+  months: string[],
 ): Promise<string[]> {
   const warnings: string[] = [];
 
@@ -352,10 +381,13 @@ async function refreshDerivedStores(
   // so the Attendance Hub would keep showing pre-discard present_days / lwp_days
   // even on a forced refetch.
   try {
-    const { invalidateHrHubCache } = await import("../employees/employee.routes.js");
+    const { invalidateHrHubCache } =
+      await import("../employees/employee.routes.js");
     invalidateHrHubCache();
   } catch (err: any) {
-    warnings.push(`Attendance Hub cache could not be cleared: ${err?.message ?? String(err)}`);
+    warnings.push(
+      `Attendance Hub cache could not be cleared: ${err?.message ?? String(err)}`,
+    );
   }
 
   // pnl_running_salary_snapshot feeds the P&L Agent/DSC/BMC people-cost lines and
@@ -363,14 +395,13 @@ async function refreshDerivedStores(
   // employee (~1.4s); a whole-branch refresh would take minutes.
   for (const month of months) {
     try {
-      const { refreshRunningSalarySnapshot } = await import(
-        "../process-pnl/pnl-running-salary.service.js"
-      );
+      const { refreshRunningSalarySnapshot } =
+        await import("../process-pnl/pnl-running-salary.service.js");
       await refreshRunningSalarySnapshot(month, { employeeId });
     } catch (err: any) {
       warnings.push(
         `P&L running-salary snapshot not refreshed for ${month}: ${err?.message ?? String(err)}. ` +
-        `People-cost figures will show the pre-discard amount until the next manual refresh.`
+          `People-cost figures will show the pre-discard amount until the next manual refresh.`,
       );
     }
   }
@@ -379,7 +410,7 @@ async function refreshDerivedStores(
   // daily cron. Not triggered here — it is a lookback sweep across all employees.
   warnings.push(
     "Attendance reconciliation issues are recalculated by a daily job, so the " +
-    "control tower may lag this change by up to a day."
+      "control tower may lag this change by up to a day.",
   );
 
   return warnings;
@@ -396,12 +427,16 @@ async function loadLeave(id: string, conn?: PoolConnection, forUpdate = false) {
        LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
        LEFT JOIN employees e ON e.id = lr.employee_id
       WHERE lr.id = ? LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
-    [id]
+    [id],
   );
   return (rows as RowDataPacket[])[0] as any;
 }
 
-async function loadRegularization(id: string, conn?: PoolConnection, forUpdate = false) {
+async function loadRegularization(
+  id: string,
+  conn?: PoolConnection,
+  forUpdate = false,
+) {
   const runner = conn ?? db;
   const [rows] = await (runner as any).execute(
     `SELECT ar.*, e.employee_code,
@@ -409,7 +444,7 @@ async function loadRegularization(id: string, conn?: PoolConnection, forUpdate =
        FROM attendance_regularization ar
        LEFT JOIN employees e ON e.id = ar.employee_id
       WHERE ar.id = ? LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
-    [id]
+    [id],
   );
   return (rows as RowDataPacket[])[0] as any;
 }
@@ -418,7 +453,7 @@ async function loadAttendanceRows(
   runner: PoolConnection | typeof db,
   employeeId: string,
   dates: string[],
-  forUpdate = false
+  forUpdate = false,
 ): Promise<Map<string, any>> {
   const out = new Map<string, any>();
   if (dates.length === 0) return out;
@@ -426,7 +461,7 @@ async function loadAttendanceRows(
   const [rows] = await (runner as any).execute(
     `SELECT * FROM attendance_daily_record
       WHERE employee_id = ? AND record_date IN (${placeholders})${forUpdate ? " FOR UPDATE" : ""}`,
-    [employeeId, ...dates]
+    [employeeId, ...dates],
   );
   for (const row of rows as RowDataPacket[]) {
     out.set(String((row as any).record_date).slice(0, 10), row);
@@ -463,8 +498,10 @@ async function bulkUploadLockBlocker(
   entityId: string,
   allowedBatchId?: string,
 ): Promise<DiscardBlocker | null> {
-  const { getEntityLock } = await import("../bulk-upload/bulk-approval.service.js");
-  const lockedType = entityType === "leave" ? "leave_request" : "attendance_regularization";
+  const { getEntityLock } =
+    await import("../bulk-upload/bulk-approval.service.js");
+  const lockedType =
+    entityType === "leave" ? "leave_request" : "attendance_regularization";
   const lock = await getEntityLock(lockedType, entityId);
   if (!lock) return null;
   if (allowedBatchId && lock.upload_batch_id === allowedBatchId) return null;
@@ -491,13 +528,14 @@ async function assertNotBulkLocked(
   entityId: string,
   allowedBatchId?: string,
 ): Promise<void> {
-  const { getEntityLock } = await import("../bulk-upload/bulk-approval.service.js");
+  const { getEntityLock } =
+    await import("../bulk-upload/bulk-approval.service.js");
   const lock = await getEntityLock(entityType, entityId);
   if (!lock) return;
   if (allowedBatchId && lock.upload_batch_id === allowedBatchId) return;
   throw httpError(
     `This row was applied by approved bulk upload ${lock.upload_batch_no ?? "(batch number unavailable)"} ` +
-    `and is locked. Reverse it through that batch rather than discarding the row on its own.`,
+      `and is locked. Reverse it through that batch rather than discarding the row on its own.`,
     409,
     "LOCKED_BY_BULK_UPLOAD",
   );
@@ -506,7 +544,11 @@ async function assertNotBulkLocked(
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 export const discardService = {
-  async previewLeave(id: string, actor: DiscardActor, viaBatchId?: string): Promise<DiscardPreview> {
+  async previewLeave(
+    id: string,
+    actor: DiscardActor,
+    viaBatchId?: string,
+  ): Promise<DiscardPreview> {
     const leave = await loadLeave(id);
     if (!leave) throw httpError("Leave request not found", 404, "NOT_FOUND");
 
@@ -520,20 +562,35 @@ export const discardService = {
       });
     }
     if (leave.status === "lapsed") {
-      blockers.push({ code: "LEAVE_LAPSED", message: "This leave lapsed at payroll close and cannot be discarded." });
+      blockers.push({
+        code: "LEAVE_LAPSED",
+        message: "This leave lapsed at payroll close and cannot be discarded.",
+      });
     }
     if (!leave.leave_type_id) {
-      blockers.push({ code: "NO_LEAVE_TYPE", message: "This leave has no leave type, so no balance can be credited back." });
+      blockers.push({
+        code: "NO_LEAVE_TYPE",
+        message:
+          "This leave has no leave type, so no balance can be credited back.",
+      });
     }
 
     const scopeBlocker = await checkScope(actor, leave.employee_id);
     if (scopeBlocker) blockers.push(scopeBlocker);
 
-    const leaveLockBlocker = await bulkUploadLockBlocker("leave", id, viaBatchId);
+    const leaveLockBlocker = await bulkUploadLockBlocker(
+      "leave",
+      id,
+      viaBatchId,
+    );
     if (leaveLockBlocker) blockers.push(leaveLockBlocker);
 
-    const months = monthsInRange(String(leave.from_date), String(leave.to_date));
-    const { payroll, blocker: payrollBlocker } = await checkPayrollMonths(months);
+    const months = monthsInRange(
+      String(leave.from_date),
+      String(leave.to_date),
+    );
+    const { payroll, blocker: payrollBlocker } =
+      await checkPayrollMonths(months);
     if (payrollBlocker) blockers.push(payrollBlocker);
 
     // Balance
@@ -545,35 +602,45 @@ export const discardService = {
       const [balRows] = await db.execute<RowDataPacket[]>(
         `SELECT allocated_days, adjusted_days, used_days FROM leave_balance_ledger
           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ? LIMIT 1`,
-        [leave.employee_id, leave.leave_type_id, year]
+        [leave.employee_id, leave.leave_type_id, year],
       );
       const bal = balRows[0] as any;
       if (bal) {
         ledgerRowExists = true;
         balanceBefore =
-          Number(bal.allocated_days ?? 0) + Number(bal.adjusted_days ?? 0) - Number(bal.used_days ?? 0);
+          Number(bal.allocated_days ?? 0) +
+          Number(bal.adjusted_days ?? 0) -
+          Number(bal.used_days ?? 0);
       } else {
         warnings.push(
-          `No leave balance row exists for ${leave.leave_name ?? "this leave type"} / ${year}; there is nothing to credit back.`
+          `No leave balance row exists for ${leave.leave_name ?? "this leave type"} / ${year}; there is nothing to credit back.`,
         );
       }
     }
 
     // Attendance
-    const dates = enumerateDates(String(leave.from_date), String(leave.to_date));
+    const dates = enumerateDates(
+      String(leave.from_date),
+      String(leave.to_date),
+    );
     const [adrRows, snapshots] = await Promise.all([
       loadAttendanceRows(db, leave.employee_id, dates),
       readAttendanceSnapshots(db as any, "leave", id),
     ]);
-    const attendance = dates.map((d) => planLeaveRestore(d, adrRows.get(d), snapshots.get(d)));
+    const attendance = dates.map((d) =>
+      planLeaveRestore(d, adrRows.get(d), snapshots.get(d)),
+    );
 
     for (const p of attendance) {
-      if (p.mode === "skip_locked") warnings.push(`${p.date}: attendance row is locked and was left unchanged.`);
+      if (p.mode === "skip_locked")
+        warnings.push(
+          `${p.date}: attendance row is locked and was left unchanged.`,
+        );
     }
     const hasRederive = attendance.some((p) => p.mode === "rederive");
     if (hasRederive) {
       warnings.push(
-        "This leave was approved before pre-state snapshots existed. Affected days are recomputed by the attendance engine rather than restored exactly."
+        "This leave was approved before pre-state snapshots existed. Affected days are recomputed by the attendance engine rather than restored exactly.",
       );
     }
 
@@ -604,7 +671,11 @@ export const discardService = {
     };
   },
 
-  async previewRegularization(id: string, actor: DiscardActor, viaBatchId?: string): Promise<DiscardPreview> {
+  async previewRegularization(
+    id: string,
+    actor: DiscardActor,
+    viaBatchId?: string,
+  ): Promise<DiscardPreview> {
     const reg = await loadRegularization(id);
     if (!reg) throw httpError("Regularization not found", 404, "NOT_FOUND");
 
@@ -622,25 +693,39 @@ export const discardService = {
     const scopeBlocker = await checkScope(actor, reg.employee_id);
     if (scopeBlocker) blockers.push(scopeBlocker);
 
-    const regLockBlocker = await bulkUploadLockBlocker(isDispute ? "dispute" : "regularization", id, viaBatchId);
+    const regLockBlocker = await bulkUploadLockBlocker(
+      isDispute ? "dispute" : "regularization",
+      id,
+      viaBatchId,
+    );
     if (regLockBlocker) blockers.push(regLockBlocker);
 
     const sessionDate = String(reg.session_date).slice(0, 10);
-    const { payroll, blocker: payrollBlocker } = await checkPayrollMonths([sessionDate.slice(0, 7)]);
+    const { payroll, blocker: payrollBlocker } = await checkPayrollMonths([
+      sessionDate.slice(0, 7),
+    ]);
     if (payrollBlocker) blockers.push(payrollBlocker);
 
-    const sourceType: SnapshotSourceType = isDispute ? "dispute" : "regularization";
+    const sourceType: SnapshotSourceType = isDispute
+      ? "dispute"
+      : "regularization";
     const [adrRows, snapshots] = await Promise.all([
       loadAttendanceRows(db, reg.employee_id, [sessionDate]),
       readAttendanceSnapshots(db as any, sourceType, id),
     ]);
-    const plan = planRegularizationRestore(id, sessionDate, adrRows.get(sessionDate), snapshots.get(sessionDate));
+    const plan = planRegularizationRestore(
+      id,
+      sessionDate,
+      adrRows.get(sessionDate),
+      snapshots.get(sessionDate),
+    );
 
-    if (plan.mode === "skip_locked" || plan.mode === "skip_owned") warnings.push(plan.note!);
+    if (plan.mode === "skip_locked" || plan.mode === "skip_owned")
+      warnings.push(plan.note!);
     const degraded = plan.mode === "partial" || plan.mode === "rederive";
     if (degraded) {
       warnings.push(
-        `This ${isDispute ? "dispute" : "regularization"} was approved before pre-state snapshots existed, so the restore is partial.`
+        `This ${isDispute ? "dispute" : "regularization"} was approved before pre-state snapshots existed, so the restore is partial.`,
       );
     }
 
@@ -661,11 +746,20 @@ export const discardService = {
     };
   },
 
-  async discardLeave(id: string, actor: DiscardActor, reason: string, viaBatchId?: string): Promise<DiscardResult> {
+  async discardLeave(
+    id: string,
+    actor: DiscardActor,
+    reason: string,
+    viaBatchId?: string,
+  ): Promise<DiscardResult> {
     const preview = await this.previewLeave(id, actor, viaBatchId);
     if (preview.blockers.length > 0) {
       const first = preview.blockers[0];
-      throw httpError(first.message, first.code === "OUT_OF_SCOPE" ? 403 : 409, first.code);
+      throw httpError(
+        first.message,
+        first.code === "OUT_OF_SCOPE" ? 403 : 409,
+        first.code,
+      );
     }
 
     const warnings = [...preview.warnings];
@@ -690,7 +784,7 @@ export const discardService = {
         throw httpError(
           `Only an approved leave can be discarded (current status: ${leave.status}).`,
           409,
-          "NOT_APPROVED"
+          "NOT_APPROVED",
         );
       }
       await assertNotBulkLocked("leave_request", id, viaBatchId);
@@ -698,7 +792,10 @@ export const discardService = {
       employeeId = String(leave.employee_id);
       const days = Number(leave.total_days ?? 0);
       const year = new Date(String(leave.from_date)).getFullYear();
-      const dates = enumerateDates(String(leave.from_date), String(leave.to_date));
+      const dates = enumerateDates(
+        String(leave.from_date),
+        String(leave.to_date),
+      );
       months = monthsInRange(String(leave.from_date), String(leave.to_date));
 
       // 1. Balance back. Same (employee, type, YEAR(from_date)) key the deduction
@@ -706,48 +803,65 @@ export const discardService = {
       const [balRows] = await conn.execute<RowDataPacket[]>(
         `SELECT allocated_days, adjusted_days, used_days FROM leave_balance_ledger
           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ? FOR UPDATE`,
-        [employeeId, leave.leave_type_id, year]
+        [employeeId, leave.leave_type_id, year],
       );
       const bal = balRows[0] as any;
       if (bal) {
         balanceBefore =
-          Number(bal.allocated_days ?? 0) + Number(bal.adjusted_days ?? 0) - Number(bal.used_days ?? 0);
+          Number(bal.allocated_days ?? 0) +
+          Number(bal.adjusted_days ?? 0) -
+          Number(bal.used_days ?? 0);
         await conn.execute(
           `UPDATE leave_balance_ledger
               SET used_days = GREATEST(0, used_days - ?)
             WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [days, employeeId, leave.leave_type_id, year]
+          [days, employeeId, leave.leave_type_id, year],
         );
         const [afterRows] = await conn.execute<RowDataPacket[]>(
           `SELECT allocated_days, adjusted_days, used_days FROM leave_balance_ledger
             WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ? LIMIT 1`,
-          [employeeId, leave.leave_type_id, year]
+          [employeeId, leave.leave_type_id, year],
         );
         const after = afterRows[0] as any;
         balanceAfter =
-          Number(after.allocated_days ?? 0) + Number(after.adjusted_days ?? 0) - Number(after.used_days ?? 0);
+          Number(after.allocated_days ?? 0) +
+          Number(after.adjusted_days ?? 0) -
+          Number(after.used_days ?? 0);
       }
 
       // 2. Status off 'approved' BEFORE attendance, so the post-commit engine
       //    re-derive no longer resolves these days to leave_approved.
       const [statusResult] = await conn.execute(
         `UPDATE leave_request SET status = 'discarded' WHERE id = ? AND status = 'approved'`,
-        [id]
+        [id],
       );
       if (Number((statusResult as any).affectedRows ?? 0) !== 1) {
-        throw httpError("Leave status changed concurrently; discard aborted.", 409, "CONCURRENT_CHANGE");
+        throw httpError(
+          "Leave status changed concurrently; discard aborted.",
+          409,
+          "CONCURRENT_CHANGE",
+        );
       }
       await conn.execute(
         `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
          VALUES (UUID(), ?, 'discarded', ?, ?)`,
-        [id, actor.userId, reason]
+        [id, actor.userId, reason],
       );
 
       // 3. Attendance, planned again under the row locks.
       const adrRows = await loadAttendanceRows(conn, employeeId, dates, true);
       const snapshots = await readAttendanceSnapshots(conn, "leave", id);
-      plans = dates.map((d) => planLeaveRestore(d, adrRows.get(d), snapshots.get(d)));
-      await applyRestore(conn, employeeId, plans, snapshots, actor.userId, reasonText);
+      plans = dates.map((d) =>
+        planLeaveRestore(d, adrRows.get(d), snapshots.get(d)),
+      );
+      await applyRestore(
+        conn,
+        employeeId,
+        plans,
+        snapshots,
+        actor.userId,
+        reasonText,
+      );
 
       // 4. Ledger row.
       await conn.execute(
@@ -757,13 +871,23 @@ export const discardService = {
             affected_dates, before_state_json, after_state_json, payroll_month)
          VALUES (?, 'leave', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          discardId, id, employeeId, actor.userId, actor.role ?? null, reason,
-          summariseModes(plans), leave.leave_type_id, year, days, balanceBefore, balanceAfter,
+          discardId,
+          id,
+          employeeId,
+          actor.userId,
+          actor.role ?? null,
+          reason,
+          summariseModes(plans),
+          leave.leave_type_id,
+          year,
+          days,
+          balanceBefore,
+          balanceAfter,
           JSON.stringify(plans.map((p) => p.date)),
           JSON.stringify({ status: "approved", balance: balanceBefore, plans }),
           JSON.stringify({ status: "discarded", balance: balanceAfter }),
           months[0] ?? null,
-        ]
+        ],
       );
 
       await conn.commit();
@@ -777,9 +901,17 @@ export const discardService = {
     // Post-commit side effects, each isolated: the discard is already durable and
     // must not be undone by a notification or payroll hiccup.
     warnings.push(...(await rederiveDates(employeeId, plans)));
-    const payrollResult = await recalcPayroll(employeeId, months, "leave_discarded", id, actor.userId);
+    const payrollResult = await recalcPayroll(
+      employeeId,
+      months,
+      "leave_discarded",
+      id,
+      actor.userId,
+    );
     warnings.push(...payrollResult.warnings);
-    warnings.push(...(await recordRecalcStatus(discardId, payrollResult.outcomes)));
+    warnings.push(
+      ...(await recordRecalcStatus(discardId, payrollResult.outcomes)),
+    );
     warnings.push(...(await refreshDerivedStores(employeeId, months)));
 
     await logSensitiveAction({
@@ -792,10 +924,18 @@ export const discardService = {
       actor_role: actor.role ?? undefined,
       reason,
       old_value_json: { status: "approved", balance: balanceBefore },
-      new_value_json: { status: "discarded", balance: balanceAfter, dates: plans.map((p) => p.date) },
-    }).catch(() => { /* auditLog never throws, but do not let it matter */ });
+      new_value_json: {
+        status: "discarded",
+        balance: balanceAfter,
+        dates: plans.map((p) => p.date),
+      },
+    }).catch(() => {
+      /* auditLog never throws, but do not let it matter */
+    });
 
-    await notifyEmployee(employeeId, id, "leave", reason).catch(() => { /* non-fatal */ });
+    await notifyEmployee(employeeId, id, "leave", reason).catch(() => {
+      /* non-fatal */
+    });
 
     return buildResult(discardId, "leave", id, employeeId, plans, warnings, {
       daysRestored: preview.leave?.daysToRestore ?? null,
@@ -805,16 +945,28 @@ export const discardService = {
     });
   },
 
-  async discardRegularization(id: string, actor: DiscardActor, reason: string, viaBatchId?: string): Promise<DiscardResult> {
+  async discardRegularization(
+    id: string,
+    actor: DiscardActor,
+    reason: string,
+    viaBatchId?: string,
+  ): Promise<DiscardResult> {
     const preview = await this.previewRegularization(id, actor, viaBatchId);
     if (preview.blockers.length > 0) {
       const first = preview.blockers[0];
-      throw httpError(first.message, first.code === "OUT_OF_SCOPE" ? 403 : 409, first.code);
+      throw httpError(
+        first.message,
+        first.code === "OUT_OF_SCOPE" ? 403 : 409,
+        first.code,
+      );
     }
 
     const warnings = [...preview.warnings];
     const entityType = preview.entityType as "regularization" | "dispute";
-    const reasonText = `Approved ${entityType} discarded: ${reason}`.slice(0, 500);
+    const reasonText = `Approved ${entityType} discarded: ${reason}`.slice(
+      0,
+      500,
+    );
     const discardId = randomUUID();
     let plans: DateRestorePlan[] = [];
     let employeeId = "";
@@ -830,7 +982,7 @@ export const discardService = {
         throw httpError(
           `Only an approved ${entityType} can be discarded (current status: ${reg.status}).`,
           409,
-          "NOT_APPROVED"
+          "NOT_APPROVED",
         );
       }
       await assertNotBulkLocked("attendance_regularization", id, viaBatchId);
@@ -838,7 +990,8 @@ export const discardService = {
       employeeId = String(reg.employee_id);
       const sessionDate = String(reg.session_date).slice(0, 10);
       month = sessionDate.slice(0, 7);
-      const sourceType: SnapshotSourceType = entityType === "dispute" ? "dispute" : "regularization";
+      const sourceType: SnapshotSourceType =
+        entityType === "dispute" ? "dispute" : "regularization";
 
       // Status first: payroll reconciliation and the attendance engine both key on
       // status = 'approved'. Reverting attendance while it still says approved
@@ -848,16 +1001,39 @@ export const discardService = {
             SET status = 'discarded',
                 reviewer_note = CONCAT(COALESCE(reviewer_note, ''), ' | DISCARDED: ', ?)
           WHERE id = ? AND status = 'approved'`,
-        [reason, id]
+        [reason, id],
       );
       if (Number((statusResult as any).affectedRows ?? 0) !== 1) {
-        throw httpError("Regularization status changed concurrently; discard aborted.", 409, "CONCURRENT_CHANGE");
+        throw httpError(
+          "Regularization status changed concurrently; discard aborted.",
+          409,
+          "CONCURRENT_CHANGE",
+        );
       }
 
-      const adrRows = await loadAttendanceRows(conn, employeeId, [sessionDate], true);
+      const adrRows = await loadAttendanceRows(
+        conn,
+        employeeId,
+        [sessionDate],
+        true,
+      );
       const snapshots = await readAttendanceSnapshots(conn, sourceType, id);
-      plans = [planRegularizationRestore(id, sessionDate, adrRows.get(sessionDate), snapshots.get(sessionDate))];
-      await applyRestore(conn, employeeId, plans, snapshots, actor.userId, reasonText);
+      plans = [
+        planRegularizationRestore(
+          id,
+          sessionDate,
+          adrRows.get(sessionDate),
+          snapshots.get(sessionDate),
+        ),
+      ];
+      await applyRestore(
+        conn,
+        employeeId,
+        plans,
+        snapshots,
+        actor.userId,
+        reasonText,
+      );
 
       await conn.execute(
         `INSERT INTO approval_discard_log
@@ -865,13 +1041,34 @@ export const discardService = {
             restore_mode, affected_dates, before_state_json, after_state_json, payroll_month)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          discardId, entityType, id, employeeId, actor.userId, actor.role ?? null, reason,
+          discardId,
+          entityType,
+          id,
+          employeeId,
+          actor.userId,
+          actor.role ?? null,
+          reason,
           summariseModes(plans),
           JSON.stringify([sessionDate]),
-          JSON.stringify({ status: "approved", attendance: plans.map((p) => ({ date: p.date, status: p.currentStatus, lwp: p.currentLwp })) }),
-          JSON.stringify({ status: "discarded", attendance: plans.map((p) => ({ date: p.date, status: p.restoredStatus, lwp: p.restoredLwp, mode: p.mode })) }),
+          JSON.stringify({
+            status: "approved",
+            attendance: plans.map((p) => ({
+              date: p.date,
+              status: p.currentStatus,
+              lwp: p.currentLwp,
+            })),
+          }),
+          JSON.stringify({
+            status: "discarded",
+            attendance: plans.map((p) => ({
+              date: p.date,
+              status: p.restoredStatus,
+              lwp: p.restoredLwp,
+              mode: p.mode,
+            })),
+          }),
           month,
-        ]
+        ],
       );
 
       await conn.commit();
@@ -884,10 +1081,16 @@ export const discardService = {
 
     warnings.push(...(await rederiveDates(employeeId, plans)));
     const payrollResult = await recalcPayroll(
-      employeeId, [month], "attendance_regularization_discarded", id, actor.userId
+      employeeId,
+      [month],
+      "attendance_regularization_discarded",
+      id,
+      actor.userId,
     );
     warnings.push(...payrollResult.warnings);
-    warnings.push(...(await recordRecalcStatus(discardId, payrollResult.outcomes)));
+    warnings.push(
+      ...(await recordRecalcStatus(discardId, payrollResult.outcomes)),
+    );
     warnings.push(...(await refreshDerivedStores(employeeId, [month])));
 
     // Two audit rows, mirroring the approval pair: one on the request, one on the
@@ -895,7 +1098,10 @@ export const discardService = {
     // dispute audit timeline picks it up.
     await logSensitiveAction({
       actor_user_id: actor.userId,
-      action_type: entityType === "dispute" ? "DISPUTE_APPROVAL_DISCARDED" : "REGULARIZATION_APPROVAL_DISCARDED",
+      action_type:
+        entityType === "dispute"
+          ? "DISPUTE_APPROVAL_DISCARDED"
+          : "REGULARIZATION_APPROVAL_DISCARDED",
       module_key: "attendance",
       entity_type: "attendance_regularization",
       entity_id: id,
@@ -927,7 +1133,11 @@ export const discardService = {
       employee_id: employeeId,
       actor_role: actor.role ?? undefined,
       reason,
-      old_value_json: { record_date: plans[0]?.date, attendance_status: plans[0]?.currentStatus, lwp_value: plans[0]?.currentLwp },
+      old_value_json: {
+        record_date: plans[0]?.date,
+        attendance_status: plans[0]?.currentStatus,
+        lwp_value: plans[0]?.currentLwp,
+      },
       new_value_json: {
         record_date: plans[0]?.date,
         attendance_status: plans[0]?.restoredStatus,
@@ -970,13 +1180,22 @@ export const discardService = {
     actor: DiscardActor,
     reason: string,
   ): Promise<Array<{ entityId: string; success: boolean; message: string }>> {
-    const results: Array<{ entityId: string; success: boolean; message: string }> = [];
+    const results: Array<{
+      entityId: string;
+      success: boolean;
+      message: string;
+    }> = [];
     for (const entityId of entityIds) {
       try {
         const data =
           entityType === "leave"
             ? await this.discardLeave(entityId, actor, reason, batchId)
-            : await this.discardRegularization(entityId, actor, reason, batchId);
+            : await this.discardRegularization(
+                entityId,
+                actor,
+                reason,
+                batchId,
+              );
         results.push({
           entityId,
           success: true,
@@ -1008,15 +1227,27 @@ export const discardService = {
   }): Promise<{ data: unknown[]; total: number; page: number; limit: number }> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.entityType) { conds.push("adl.entity_type = ?"); params.push(filters.entityType); }
-    if (filters.employeeId) { conds.push("adl.employee_id = ?"); params.push(filters.employeeId); }
-    if (filters.fromDate) { conds.push("DATE(adl.discarded_at) >= ?"); params.push(filters.fromDate); }
-    if (filters.toDate) { conds.push("DATE(adl.discarded_at) <= ?"); params.push(filters.toDate); }
+    if (filters.entityType) {
+      conds.push("adl.entity_type = ?");
+      params.push(filters.entityType);
+    }
+    if (filters.employeeId) {
+      conds.push("adl.employee_id = ?");
+      params.push(filters.employeeId);
+    }
+    if (filters.fromDate) {
+      conds.push("DATE(adl.discarded_at) >= ?");
+      params.push(filters.fromDate);
+    }
+    if (filters.toDate) {
+      conds.push("DATE(adl.discarded_at) <= ?");
+      params.push(filters.toDate);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM approval_discard_log adl ${where}`,
-      params
+      params,
     );
     const total = Number((countRows[0] as any)?.total ?? 0);
 
@@ -1032,10 +1263,15 @@ export const discardService = {
          ${where}
         ORDER BY adl.discarded_at DESC
         LIMIT ${filters.limit} OFFSET ${offset}`,
-      params
+      params,
     );
 
-    return { data: rows as unknown[], total, page: filters.page, limit: filters.limit };
+    return {
+      data: rows as unknown[],
+      total,
+      page: filters.page,
+      limit: filters.limit,
+    };
   },
 };
 
@@ -1053,7 +1289,7 @@ function buildResult(
     balanceBefore: number | null;
     balanceAfter: number | null;
     payrollRecalcStatus: string | null;
-  }
+  },
 ): DiscardResult {
   return {
     discardId,
@@ -1068,10 +1304,18 @@ function buildResult(
     // discard once reported "1 date deleted" while the row was still present,
     // because the DELETE matched nothing and nobody checked.
     datesRestored: plans.filter(
-      (p) => (p.mode === "snapshot" || p.mode === "partial" || p.mode === "rederive") && (p.appliedRows ?? 0) > 0
+      (p) =>
+        (p.mode === "snapshot" ||
+          p.mode === "partial" ||
+          p.mode === "rederive") &&
+        (p.appliedRows ?? 0) > 0,
     ).length,
-    datesDeleted: plans.filter((p) => p.mode === "delete" && (p.appliedRows ?? 0) > 0).length,
-    datesSkipped: plans.filter((p) => p.mode === "skip_locked" || p.mode === "skip_owned").length,
+    datesDeleted: plans.filter(
+      (p) => p.mode === "delete" && (p.appliedRows ?? 0) > 0,
+    ).length,
+    datesSkipped: plans.filter(
+      (p) => p.mode === "skip_locked" || p.mode === "skip_owned",
+    ).length,
     attendance: plans,
     warnings,
     payrollRecalcStatus: extra.payrollRecalcStatus,
@@ -1083,11 +1327,11 @@ async function notifyEmployee(
   employeeId: string,
   entityId: string,
   entityType: "leave" | "regularization" | "dispute",
-  reason: string
+  reason: string,
 ): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT user_id FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
   const userId = (rows[0] as any)?.user_id;
   if (!userId) return;
@@ -1096,12 +1340,14 @@ async function notifyEmployee(
   const { inboxService } = await import("../inbox/inbox.service.js");
   await inboxService.createItem({
     user_id: userId,
-    type: entityType === "leave" ? "leave_request" : "attendance_regularization",
+    type:
+      entityType === "leave" ? "leave_request" : "attendance_regularization",
     title: `Approved ${label} was discarded`,
     description: `A previously approved ${label} request was discarded by an administrator. Reason: ${reason}`,
     entity_type: entityType === "leave" ? "leave" : "attendance",
     entity_id: entityId,
-    action_url: entityType === "leave" ? "/leaves" : "/attendance-regularization",
+    action_url:
+      entityType === "leave" ? "/leaves" : "/attendance-regularization",
     priority: "high",
   });
 }

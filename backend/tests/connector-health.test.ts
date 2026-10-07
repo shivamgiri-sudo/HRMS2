@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { shouldAlertOnFailure, ALERT_AT } from "../src/modules/integration-hub/connectorHealth.js";
+import {
+  shouldAlertOnFailure,
+  ALERT_AT,
+} from "../src/modules/integration-hub/connectorHealth.js";
 
 /**
  * dialer_1 failed 1,047 consecutive times over 36 days, hourly, and nothing
@@ -28,7 +31,9 @@ describe("connector failure alerting", () => {
   it("does not alert on every failure, which is how alerts get muted", () => {
     // An hourly connector firing 24 identical alerts a day gets filtered to
     // trash within a week — and then 1,047 failures are invisible again.
-    const noisy = [4, 5, 6, 7, 8, 9, 11, 12, 26, 99, 101, 400].filter(shouldAlertOnFailure);
+    const noisy = [4, 5, 6, 7, 8, 9, 11, 12, 26, 99, 101, 400].filter(
+      shouldAlertOnFailure,
+    );
     expect(noisy).toEqual([]);
   });
 

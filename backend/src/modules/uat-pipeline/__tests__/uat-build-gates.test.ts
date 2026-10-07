@@ -24,7 +24,11 @@ const mockQuery = db.query as unknown as ReturnType<typeof vi.fn>;
 const ALL_GATES = ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"];
 
 function gateRows(met: string[]) {
-  return ALL_GATES.map((g) => ({ gate_key: g, title: `gate ${g}`, met: met.includes(g) ? 1 : 0 }));
+  return ALL_GATES.map((g) => ({
+    gate_key: g,
+    title: `gate ${g}`,
+    met: met.includes(g) ? 1 : 0,
+  }));
 }
 
 const token: VerifiedToken = {
@@ -33,7 +37,8 @@ const token: VerifiedToken = {
   runId: "999",
   runAttempt: 1,
   sha: "b".repeat(40),
-  jobWorkflowRef: "shivamgiri-sudo/HRMS2/.github/workflows/uat-build.yml@refs/heads/main",
+  jobWorkflowRef:
+    "shivamgiri-sudo/HRMS2/.github/workflows/uat-build.yml@refs/heads/main",
 };
 
 beforeEach(() => {
@@ -73,14 +78,19 @@ describe("the gates hold the feature shut", () => {
       ]);
       await expect(
         assertDispatchAllowed("fb-1"),
-        `dispatch must refuse while ${missing} is unmet`
+        `dispatch must refuse while ${missing} is unmet`,
       ).rejects.toThrow(DispatchError);
     }
   });
 
   it("names the unmet gates in the refusal, so the reason is actionable", async () => {
-    mockQuery.mockResolvedValueOnce([gateRows(["G3", "G4", "G5", "G6", "G7", "G8"]), []]);
-    await expect(assertDispatchAllowed("fb-1")).rejects.toThrow(/G1.*G2|G2.*G1/s);
+    mockQuery.mockResolvedValueOnce([
+      gateRows(["G3", "G4", "G5", "G6", "G7", "G8"]),
+      [],
+    ]);
+    await expect(assertDispatchAllowed("fb-1")).rejects.toThrow(
+      /G1.*G2|G2.*G1/s,
+    );
   });
 
   it("refuses dispatch on the switch even with every gate met", async () => {
@@ -106,16 +116,22 @@ describe("Job D can only relay what Job C produced", () => {
     await expect(
       recordResult(
         { buildRunId: "run-1", result, gatesSha256: "0".repeat(64) },
-        token
-      )
+        token,
+      ),
     ).rejects.toThrow(/does not hash to the value supplied/i);
   });
 
   it("rejects a tampered gate map even when the hash is of the ORIGINAL map", async () => {
     const honest = sha256(JSON.stringify(gates));
-    const tampered: GateResult = { ...result, gates: { ...gates, tsc_frontend: 1 } };
+    const tampered: GateResult = {
+      ...result,
+      gates: { ...gates, tsc_frontend: 1 },
+    };
     await expect(
-      recordResult({ buildRunId: "run-1", result: tampered, gatesSha256: honest }, token)
+      recordResult(
+        { buildRunId: "run-1", result: tampered, gatesSha256: honest },
+        token,
+      ),
     ).rejects.toThrow(DispatchError);
   });
 
@@ -126,7 +142,7 @@ describe("Job D can only relay what Job C produced", () => {
     expect(sha256(JSON.stringify(gates))).toMatch(/^[0-9a-f]{64}$/);
     expect(sha256(JSON.stringify(gates))).toBe(sha256(JSON.stringify(gates)));
     expect(sha256(JSON.stringify(gates))).not.toBe(
-      sha256(JSON.stringify({ ...gates, tsc_frontend: 1 }))
+      sha256(JSON.stringify({ ...gates, tsc_frontend: 1 })),
     );
   });
 });
@@ -136,11 +152,23 @@ describe("the seeded control plane keeps the feature off", () => {
     const { readFileSync } = await import("node:fs");
     const { join, dirname } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const sqlDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "sql");
-    const sql = readFileSync(join(sqlDir, "1104_uat_prompt_governance.sql"), "utf8");
+    const sqlDir = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "..",
+      "..",
+      "sql",
+    );
+    const sql = readFileSync(
+      join(sqlDir, "1104_uat_prompt_governance.sql"),
+      "utf8",
+    );
 
     // Pull the seeded VALUES rows for uat_pipeline_config and assert none says 'true'.
-    const seed = sql.slice(sql.indexOf("INSERT IGNORE INTO uat_pipeline_config"));
+    const seed = sql.slice(
+      sql.indexOf("INSERT IGNORE INTO uat_pipeline_config"),
+    );
     const block = seed.slice(0, seed.indexOf(";"));
     for (const key of [
       "pipeline_enabled",
@@ -158,9 +186,21 @@ describe("the seeded control plane keeps the feature off", () => {
     const { readFileSync } = await import("node:fs");
     const { join, dirname } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const sqlDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "sql");
-    const sql = readFileSync(join(sqlDir, "1104_uat_prompt_governance.sql"), "utf8");
-    const row = sql.split("\n").find((l) => l.includes("'allowlisted_modules'"));
+    const sqlDir = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "..",
+      "..",
+      "sql",
+    );
+    const sql = readFileSync(
+      join(sqlDir, "1104_uat_prompt_governance.sql"),
+      "utf8",
+    );
+    const row = sql
+      .split("\n")
+      .find((l) => l.includes("'allowlisted_modules'"));
     expect(row).toBeTruthy();
     expect(row).toMatch(/'allowlisted_modules',\s*''/);
   });
@@ -169,14 +209,23 @@ describe("the seeded control plane keeps the feature off", () => {
     const { readFileSync } = await import("node:fs");
     const { join, dirname } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const sqlDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "sql");
+    const sqlDir = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "..",
+      "..",
+      "sql",
+    );
     const sql = readFileSync(join(sqlDir, "1106_uat_build_run.sql"), "utf8");
 
     // `met` defaults to 0 and the seed supplies only (gate_key, title, requirement), so no
     // row can arrive attested. Assert both halves.
     expect(sql).toMatch(/met\s+TINYINT\(1\)\s+NOT NULL DEFAULT 0/);
     const insert = sql.slice(sql.indexOf("INSERT IGNORE INTO uat_gate_status"));
-    expect(insert.slice(0, insert.indexOf("VALUES"))).toContain("(gate_key, title, requirement)");
+    expect(insert.slice(0, insert.indexOf("VALUES"))).toContain(
+      "(gate_key, title, requirement)",
+    );
     for (const g of ALL_GATES) expect(insert).toContain(`('${g}'`);
   });
 });

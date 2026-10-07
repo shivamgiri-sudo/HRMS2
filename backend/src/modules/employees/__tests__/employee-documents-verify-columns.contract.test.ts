@@ -27,12 +27,27 @@ import { describe, expect, it } from "vitest";
  * The allow-list below is the live schema. A write to a column outside it fails
  * here instead of at runtime.
  */
-const SRC = readFileSync(resolve(__dirname, "../employee.documents.routes.ts"), "utf8");
+const SRC = readFileSync(
+  resolve(__dirname, "../employee.documents.routes.ts"),
+  "utf8",
+);
 
 const LIVE_COLUMNS = new Set([
-  "id", "employee_id", "doc_type", "doc_category", "legacy_source", "legacy_ref_id",
-  "doc_name", "file_url", "verified", "uploaded_by", "created_at", "expiry_date",
-  "verified_by", "verification_date", "verification_remarks",
+  "id",
+  "employee_id",
+  "doc_type",
+  "doc_category",
+  "legacy_source",
+  "legacy_ref_id",
+  "doc_name",
+  "file_url",
+  "verified",
+  "uploaded_by",
+  "created_at",
+  "expiry_date",
+  "verified_by",
+  "verification_date",
+  "verification_remarks",
 ]);
 
 /** Columns assigned in any UPDATE employee_documents ... SET ... in this file. */
@@ -40,7 +55,8 @@ function updatedColumns(src: string): string[] {
   const found = new Set<string>();
   const re = /UPDATE\s+employee_documents\s+SET\s+([\s\S]*?)\s+WHERE/gi;
   for (const m of src.matchAll(re)) {
-    for (const a of m[1].matchAll(/([a-z_][a-z0-9_]*)\s*=/gi)) found.add(a[1].toLowerCase());
+    for (const a of m[1].matchAll(/([a-z_][a-z0-9_]*)\s*=/gi))
+      found.add(a[1].toLowerCase());
   }
   return [...found];
 }
@@ -57,7 +73,7 @@ describe("employee_documents writes match the live schema", () => {
       unknown.length === 0
         ? ""
         : `\nemployee_documents has no such column(s): ${unknown.join(", ")}\n` +
-          `Live columns: ${[...LIVE_COLUMNS].join(", ")}\n`,
+            `Live columns: ${[...LIVE_COLUMNS].join(", ")}\n`,
     ).toEqual([]);
   });
 

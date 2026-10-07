@@ -15,11 +15,11 @@
  * that migration's own comment for why it isn't decomposed per analyst).
  */
 
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { n, pct, round, parseRange } from './dialler-utils.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { n, pct, round, parseRange } from "./dialler-utils.js";
 
-export type EmailDashboard = 'MOLECULAR' | 'REGINALD_MEN';
+export type EmailDashboard = "MOLECULAR" | "REGINALD_MEN";
 
 export interface EmailTicketRow {
   date: string;
@@ -59,7 +59,8 @@ export async function getEmailTickets(
 ): Promise<EmailTicketSummary> {
   const { from, to } = parseRange(rawFilters);
 
-  const [rows] = await db.execute<RowDataPacket[]>(`
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `
     SELECT
       report_date                   AS date,
       total_tickets                 AS totalTickets,
@@ -71,18 +72,21 @@ export async function getEmailTickets(
     WHERE dashboard_label = ?
       AND report_date >= ? AND report_date <= ?
     ORDER BY report_date
-  `, [dashboard, from, to]);
+  `,
+    [dashboard, from, to],
+  );
 
-  const daily: EmailTicketRow[] = rows.map(r => {
+  const daily: EmailTicketRow[] = rows.map((r) => {
     const total = n(r.totalTickets);
     const closed = n(r.emailClosed);
     const opening = r.openingPending != null ? n(r.openingPending) : null;
     const reopen = n(r.emailReopen);
     // GAS closure% = closed / (opening_pending + received + reopen)
     const denominator = (opening ?? 0) + total + reopen;
-    const closurePct = denominator > 0 ? round(closed * 100 / denominator, 2) : 0;
+    const closurePct =
+      denominator > 0 ? round((closed * 100) / denominator, 2) : 0;
     return {
-      date: String(r.date ?? ''),
+      date: String(r.date ?? ""),
       totalTickets: total,
       emailClosed: closed,
       openPending: n(r.openPending),
@@ -102,11 +106,13 @@ export async function getEmailTickets(
     { totalTickets: 0, emailClosed: 0, openPending: 0, emailReopen: 0 },
   );
 
-  const avgClosurePct = daily.length > 0
-    ? round(daily.reduce((s, d) => s + d.closurePct, 0) / daily.length, 2)
-    : 0;
+  const avgClosurePct =
+    daily.length > 0
+      ? round(daily.reduce((s, d) => s + d.closurePct, 0) / daily.length, 2)
+      : 0;
 
-  const [analystRows] = await db.execute<RowDataPacket[]>(`
+  const [analystRows] = await db.execute<RowDataPacket[]>(
+    `
     SELECT
       analyst_name                  AS analyst,
       SUM(tickets_received)         AS ticketsReceived,
@@ -119,14 +125,16 @@ export async function getEmailTickets(
       AND report_date >= ? AND report_date <= ?
     GROUP BY analyst_user_id, analyst_name, tickets_open_pending, report_date
     ORDER BY report_date DESC
-  `, [dashboard, from, to]);
+  `,
+    [dashboard, from, to],
+  );
 
   // tickets_open_pending is a same-day snapshot (see molecular-email-sync.service.ts), so it
   // cannot be summed across days like the other three counters — only the latest day per
   // analyst is meaningful, same convention the day-wise "Open/Pending" total already uses.
   const byAnalystMap = new Map<string, EmailTicketAnalystRow>();
   for (const r of analystRows) {
-    const name = String(r.analyst ?? '');
+    const name = String(r.analyst ?? "");
     const existing = byAnalystMap.get(name);
     if (existing) {
       existing.ticketsReceived += n(r.ticketsReceived);
@@ -142,7 +150,9 @@ export async function getEmailTickets(
       });
     }
   }
-  const byAnalyst = Array.from(byAnalystMap.values()).sort((a, b) => b.ticketsReceived - a.ticketsReceived);
+  const byAnalyst = Array.from(byAnalystMap.values()).sort(
+    (a, b) => b.ticketsReceived - a.ticketsReceived,
+  );
 
   return {
     dashboard,

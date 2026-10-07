@@ -7,7 +7,10 @@ const routes = readFileSync(
   "utf8",
 );
 const drilldowns = readFileSync(
-  resolve(process.cwd(), "src/modules/dashboards/dashboard-drilldown.service.ts"),
+  resolve(
+    process.cwd(),
+    "src/modules/dashboards/dashboard-drilldown.service.ts",
+  ),
   "utf8",
 );
 
@@ -29,7 +32,9 @@ describe("dashboard source error semantics", () => {
   });
 
   it("does not convert shared dashboard endpoint failures to zero or empty arrays", () => {
-    const sharedRoutes = routes.slice(routes.indexOf('router.get("/:dashboardCode/summary"'));
+    const sharedRoutes = routes.slice(
+      routes.indexOf('router.get("/:dashboardCode/summary"'),
+    );
 
     expect(sharedRoutes).not.toMatch(/\.catch\(\(\) => \[\[/);
     expect(sharedRoutes).not.toContain("pending_count: 0, overdue_count: 0");

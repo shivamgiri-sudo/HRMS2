@@ -1,4 +1,4 @@
-import { dialerQuery } from '../../db/dialerDb.js';
+import { dialerQuery } from "../../db/dialerDb.js";
 
 export interface AgentStatus {
   employee_code: string;
@@ -33,8 +33,11 @@ export class AgentStatusSync {
   /**
    * Get current agent status from dialer
    */
-  async getCurrentAgentStatus(employeeCode: string): Promise<AgentStatus | null> {
-    const results = await dialerQuery<AgentStatus>(`
+  async getCurrentAgentStatus(
+    employeeCode: string,
+  ): Promise<AgentStatus | null> {
+    const results = await dialerQuery<AgentStatus>(
+      `
       SELECT
         user as employee_code,
         event_time as last_activity,
@@ -47,7 +50,9 @@ export class AgentStatusSync {
       WHERE user = ?
       ORDER BY event_time DESC
       LIMIT 1
-    `, [employeeCode]);
+    `,
+      [employeeCode],
+    );
 
     return results[0] || null;
   }
@@ -77,9 +82,10 @@ export class AgentStatusSync {
   async getAgentActivity(
     employeeCode: string,
     startDate: string,
-    endDate: string
+    endDate: string,
   ): Promise<AgentActivity[]> {
-    return dialerQuery<AgentActivity>(`
+    return dialerQuery<AgentActivity>(
+      `
       SELECT
         event_time,
         status,
@@ -95,14 +101,17 @@ export class AgentStatusSync {
         AND event_time BETWEEN ? AND ?
         AND event_time >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
       ORDER BY event_time ASC
-    `, [employeeCode, startDate, endDate]);
+    `,
+      [employeeCode, startDate, endDate],
+    );
   }
 
   /**
    * Get daily agent summary (last 3 months only)
    */
   async getDailySummary(employeeCode: string, date: string) {
-    const results = await dialerQuery(`
+    const results = await dialerQuery(
+      `
       SELECT
         user as employee_code,
         DATE(event_time) as activity_date,
@@ -119,7 +128,9 @@ export class AgentStatusSync {
         AND DATE(event_time) = DATE(?)
         AND event_time >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
       GROUP BY user, DATE(event_time)
-    `, [employeeCode, date]);
+    `,
+      [employeeCode, date],
+    );
 
     return results[0] || null;
   }
@@ -128,14 +139,17 @@ export class AgentStatusSync {
    * Check if agent is currently active (activity in last 5 minutes, last 3 months data)
    */
   async isAgentActive(employeeCode: string): Promise<boolean> {
-    const results = await dialerQuery(`
+    const results = await dialerQuery(
+      `
       SELECT 1
       FROM vicidial_agent_log_11_5
       WHERE user = ?
         AND event_time >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)
         AND event_time >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
       LIMIT 1
-    `, [employeeCode]);
+    `,
+      [employeeCode],
+    );
 
     return results.length > 0;
   }

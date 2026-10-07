@@ -22,10 +22,15 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(path.resolve(__dirname, "../peopleos.service.ts"), "utf8");
+const source = fs.readFileSync(
+  path.resolve(__dirname, "../peopleos.service.ts"),
+  "utf8",
+);
 // Strip comments: the explanation above the fix names biometric_punch as the thing that
 // was wrong, and a scan of raw source would read that prose as the bug itself.
-const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const code = source
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/^\s*\/\/.*$/gm, "");
 
 /** Biometric tables that genuinely exist in mas_hrms, verified against live. */
 const REAL_TABLES = [
@@ -49,7 +54,9 @@ describe("COSEC monitoring — latest punches", () => {
   it("guards on the same table it then queries", () => {
     // A tableExists() naming one table while the query reads another is how this became
     // permanently empty without an error.
-    const guard = code.match(/tableExists\("([a-z_]+)"\)\s*\n?\s*\.then\(\(exists\) =>/);
+    const guard = code.match(
+      /tableExists\("([a-z_]+)"\)\s*\n?\s*\.then\(\(exists\) =>/,
+    );
     expect(guard?.[1]).toBe("biometric_attendance_log");
   });
 
@@ -57,7 +64,10 @@ describe("COSEC monitoring — latest punches", () => {
     // Slice from the SELECT, not from the FROM: employee_name is in the select list,
     // which sits before the table name. Slicing at FROM made this assertion
     // unsatisfiable, and it failed against correct code until the slice was fixed.
-    const start = code.lastIndexOf("SELECT", code.indexOf("FROM biometric_attendance_log"));
+    const start = code.lastIndexOf(
+      "SELECT",
+      code.indexOf("FROM biometric_attendance_log"),
+    );
     const query = code.slice(start, code.indexOf("LIMIT 100", start));
     expect(query).toContain("LEFT JOIN employees e ON e.id = bal.employee_id");
     expect(query).toContain("employee_name");

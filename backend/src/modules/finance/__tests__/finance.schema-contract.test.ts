@@ -16,7 +16,9 @@ describe("finance database and API contract", () => {
   it("preserves legacy GRN and vendor payment status values", () => {
     const sql310 = read("sql/310_vendor_payment_tracking.sql");
     expect(sql310).toContain("CREATE TABLE IF NOT EXISTS grn_request");
-    expect(sql310).toContain("CREATE TABLE IF NOT EXISTS vendor_payment_tracking");
+    expect(sql310).toContain(
+      "CREATE TABLE IF NOT EXISTS vendor_payment_tracking",
+    );
     for (const status of [
       "Payment Pending",
       "Partially Paid",
@@ -40,7 +42,9 @@ describe("finance database and API contract", () => {
 
   it("adds quantity-aware budget controls without replacing legacy tables", () => {
     const sql411 = read("sql/411_branch_budget_grn_approval_flow.sql");
-    expect(sql411).toContain("CREATE TABLE IF NOT EXISTS finance_budget_header");
+    expect(sql411).toContain(
+      "CREATE TABLE IF NOT EXISTS finance_budget_header",
+    );
     expect(sql411).toContain("CREATE TABLE IF NOT EXISTS finance_budget_line");
     expect(sql411).toContain("reserved_quantity");
     expect(sql411).toContain("consumed_quantity");
@@ -64,7 +68,9 @@ describe("finance database and API contract", () => {
   it("preserves every payment installment in an additive transaction ledger", () => {
     const sql413 = read("sql/413_vendor_payment_transaction_ledger.sql");
     const runner = read("src/db/runPendingMigrations.ts");
-    expect(sql413).toContain("CREATE TABLE IF NOT EXISTS vendor_payment_transaction");
+    expect(sql413).toContain(
+      "CREATE TABLE IF NOT EXISTS vendor_payment_transaction",
+    );
     expect(sql413).toContain("vendor_payment_id");
     expect(sql413).toContain("sequence_no");
     expect(sql413).toContain("transaction_id");
@@ -99,14 +105,20 @@ describe("finance database and API contract", () => {
   });
 
   it("adds allocation-aware GRNs without replacing the legacy parent record", () => {
-    const sql416 = read("sql/416_smart_grn_allocation_document_intelligence.sql");
+    const sql416 = read(
+      "sql/416_smart_grn_allocation_document_intelligence.sql",
+    );
     const runner = read("src/db/runPendingMigrations.ts");
     const manual = read("sql/000_finance_supplemental.sql");
 
     expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_cost_allocation");
     expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_document");
-    expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_document_extraction");
-    expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_validation_result");
+    expect(sql416).toContain(
+      "CREATE TABLE IF NOT EXISTS grn_document_extraction",
+    );
+    expect(sql416).toContain(
+      "CREATE TABLE IF NOT EXISTS grn_validation_result",
+    );
     expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_duplicate_match");
     expect(sql416).toContain("allocation_percentage");
     expect(sql416).toContain("lifecycle_status");
@@ -114,8 +126,12 @@ describe("finance database and API contract", () => {
     expect(sql416).toContain("document_match_status");
     expect(sql416).not.toMatch(/DROP\s+TABLE/i);
     expect(sql416).not.toMatch(/TRUNCATE\s+TABLE/i);
-    expect(runner).toContain('"416_smart_grn_allocation_document_intelligence.sql"');
-    expect(manual).toContain("SOURCE sql/416_smart_grn_allocation_document_intelligence.sql;");
+    expect(runner).toContain(
+      '"416_smart_grn_allocation_document_intelligence.sql"',
+    );
+    expect(manual).toContain(
+      "SOURCE sql/416_smart_grn_allocation_document_intelligence.sql;",
+    );
   });
 
   it("recalculates and controls every smart GRN allocation on the backend", () => {
@@ -130,8 +146,12 @@ describe("finance database and API contract", () => {
     // budget-consumption.service.ts's file-level banner — so "exceeds available quantity" is
     // gone on purpose and must stay gone, not merely renamed.
     expect(service).toContain("HEADROOM_EXCEEDED");
-    expect(service).not.toContain("split allocation exceeds available quantity");
-    expect(service).toContain("Cost-centre splits must equal the invoice total exactly");
+    expect(service).not.toContain(
+      "split allocation exceeds available quantity",
+    );
+    expect(service).toContain(
+      "Cost-centre splits must equal the invoice total exactly",
+    );
     expect(service).toContain("allocation_percentage");
     expect(service).toContain("budgetConsumptionService.reserve");
     expect(service).toContain("budgetConsumptionService.consume");
@@ -179,15 +199,21 @@ describe("finance database and API contract", () => {
 
   it("locks payment attribution to the Finance-approved GRN", () => {
     const service = read("src/modules/finance/vendor-payment.service.ts");
-    expect(service).toContain("Process mapping is locked from the approved GRN");
-    expect(service).toContain("Cost centre mapping is locked from the approved GRN");
+    expect(service).toContain(
+      "Process mapping is locked from the approved GRN",
+    );
+    expect(service).toContain(
+      "Cost centre mapping is locked from the approved GRN",
+    );
     expect(service).toContain("Payment Pending");
     expect(service).toContain("transaction ID / UTR");
   });
 
   it("uses installment dispatch APIs instead of overwriting aggregate UTR fields", () => {
     const routes = read("src/modules/finance/vendor-payment.routes.ts");
-    const ledgerService = read("src/modules/finance/vendor-payment-ledger.service.ts");
+    const ledgerService = read(
+      "src/modules/finance/vendor-payment-ledger.service.ts",
+    );
     // The dispatch/transactions calls live in the sheet, not the page that opens it — moved
     // there when the dispatch UI was extracted into its own component (PaymentDispatchSheet.tsx
     // now owns the mutation; the page just renders the sheet and passes it a payment). This
@@ -196,7 +222,9 @@ describe("finance database and API contract", () => {
     // its own comment says as much ("the earlier contract test only covered
     // VendorPaymentDispatchPage") — but this one was never repointed, so it had been silently
     // checking a file with none of these strings in it.
-    const sheet = read("../src/components/finance/vendor/PaymentDispatchSheet.tsx");
+    const sheet = read(
+      "../src/components/finance/vendor/PaymentDispatchSheet.tsx",
+    );
     expect(routes).toContain('"/vendor-payments/:id/dispatch"');
     expect(routes).toContain('"/vendor-payments/:id/transactions"');
     expect(routes).toContain("Aggregate payment updates are retired");
@@ -228,23 +256,37 @@ describe("finance database and API contract", () => {
       // through that prose. The test then failed on every run, reporting the sheet as
       // calling an unmounted path while the code was right. An API path never spans a
       // line, so confining the match to one line both fixes it and tightens the check.
-      const paths = source.match(/["'`][^"'`\n]*vendor-payments\/[^"'`\n]*["'`]/g) ?? [];
-      expect(paths.length, `${caller} should call the vendor-payment API`).toBeGreaterThan(0);
+      const paths =
+        source.match(/["'`][^"'`\n]*vendor-payments\/[^"'`\n]*["'`]/g) ?? [];
+      expect(
+        paths.length,
+        `${caller} should call the vendor-payment API`,
+      ).toBeGreaterThan(0);
       for (const path of paths) {
-        expect(path, `${caller} must call the mounted /api/finance path`).toContain("/api/finance/vendor-payments/");
+        expect(
+          path,
+          `${caller} must call the mounted /api/finance path`,
+        ).toContain("/api/finance/vendor-payments/");
       }
       // Scoped to the dispatch call's own body. Checking the whole file would flag the snake_case
       // VendorPayment interface and draft state, which mirror the API's response and are correct.
-      const dispatchBody = source.match(/vendor-payments\/[^`]*\/dispatch`,\s*\{([\s\S]*?)\n\s*\}\)/);
+      const dispatchBody = source.match(
+        /vendor-payments\/[^`]*\/dispatch`,\s*\{([\s\S]*?)\n\s*\}\)/,
+      );
       if (dispatchBody) {
         const body = dispatchBody[1];
         // The exact keys DispatchPaymentPayload reads. A snake_case body still compiles, then fails
         // at runtime as "Invalid payment mode", so the names are pinned here.
         for (const key of ["paymentMode", "paymentDate", "paymentAmount"]) {
-          expect(body, `${caller} dispatch body must send ${key}`).toContain(`${key}:`);
+          expect(body, `${caller} dispatch body must send ${key}`).toContain(
+            `${key}:`,
+          );
         }
-        expect(body, `${caller} dispatch body must not use snake_case keys`).not.toMatch(
-          /\b(payment_mode|payment_date|installment_amount|transaction_id|bank_id)\s*:/
+        expect(
+          body,
+          `${caller} dispatch body must not use snake_case keys`,
+        ).not.toMatch(
+          /\b(payment_mode|payment_date|installment_amount|transaction_id|bank_id)\s*:/,
         );
       }
     }
@@ -260,19 +302,28 @@ describe("finance database and API contract", () => {
     // The one genuine server fault: the aggregate update failing is a broken write, not bad input.
     const serverFaults = ["Vendor payment aggregate could not be updated"];
 
-    const bareThrows = (source.match(/throw new Error\([\s\S]{0,90}?\)/g) ?? [])
-      .filter((thrown) => !serverFaults.some((fault) => thrown.includes(fault)));
+    const bareThrows = (
+      source.match(/throw new Error\([\s\S]{0,90}?\)/g) ?? []
+    ).filter((thrown) => !serverFaults.some((fault) => thrown.includes(fault)));
     expect(
       bareThrows,
-      "these throws reach the user as opaque 500s -- raise them via requestError(status, message)"
+      "these throws reach the user as opaque 500s -- raise them via requestError(status, message)",
     ).toEqual([]);
 
     // Spot-check the classification, so a later edit cannot quietly downgrade these to 500.
-    expect(source).toMatch(/requestError\(\s*404,\s*"Vendor payment record not found"/);
+    expect(source).toMatch(
+      /requestError\(\s*404,\s*"Vendor payment record not found"/,
+    );
     expect(source).toMatch(/requestError\(\s*400,\s*"Invalid payment mode"/);
-    expect(source).toMatch(/requestError\(\s*400,[\s\S]{0,80}exceeds outstanding balance/);
-    expect(source).toMatch(/requestError\(\s*409,\s*`Payment is locked in status/);
-    expect(source).toMatch(/requestError\(\s*409,\s*"This transaction reference is already recorded"/);
+    expect(source).toMatch(
+      /requestError\(\s*400,[\s\S]{0,80}exceeds outstanding balance/,
+    );
+    expect(source).toMatch(
+      /requestError\(\s*409,\s*`Payment is locked in status/,
+    );
+    expect(source).toMatch(
+      /requestError\(\s*409,\s*"This transaction reference is already recorded"/,
+    );
     // The helper must set statusCode, or errorHandler will not forward the message.
     expect(source).toContain("error.statusCode = statusCode");
   });
@@ -288,18 +339,28 @@ describe("finance database and API contract", () => {
     expect(sql421).toContain("employee_lob_assignment");
     expect(sql421).toContain("pnl_period_snapshot");
     expect(sql421).toContain("ADD COLUMN process_lob_id");
-    expect(sql422).toContain("CREATE OR REPLACE VIEW vw_vendor_payment_lob_allocation");
+    expect(sql422).toContain(
+      "CREATE OR REPLACE VIEW vw_vendor_payment_lob_allocation",
+    );
     expect(sql421).not.toMatch(/DROP\s+TABLE/i);
     expect(sql422).not.toMatch(/DROP\s+TABLE/i);
   });
 
   it("requires non-overridable LOB attribution before smart-GRN submission", () => {
-    const validation = read("src/modules/finance/grn-validation-control.service.ts");
-    const attribution = read("src/modules/finance/grn-lob-attribution.service.ts");
+    const validation = read(
+      "src/modules/finance/grn-validation-control.service.ts",
+    );
+    const attribution = read(
+      "src/modules/finance/grn-lob-attribution.service.ts",
+    );
     const routes = read("src/modules/process-pnl/process-lob.routes.ts");
-    expect(validation).toContain('NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"])');
+    expect(validation).toContain(
+      'NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"])',
+    );
     expect(validation).toContain("a.process_lob_id IS NULL");
-    expect(validation).toContain("Every process-linked allocation has an approved LOB mapping");
+    expect(validation).toContain(
+      "Every process-linked allocation has an approved LOB mapping",
+    );
     expect(attribution).toContain("FOR UPDATE");
     expect(attribution).toContain("process has");
     expect(attribution).toContain("Select the exact LOB before submission");
@@ -315,25 +376,31 @@ describe("finance database and API contract", () => {
   });
 
   it("resolves approval ownership from every assigned role", () => {
-    expect(resolveFinanceStageRole({
-      primaryRole: "employee",
-      userRoles: ["branch_head"],
-      currentStatus: "submitted",
-      workflow: "grn",
-    })).toBe("branch_head");
-    expect(resolveFinanceStageRole({
-      primaryRole: "admin",
-      userRoles: ["finance_head"],
-      currentStatus: "branch_head_approved",
-      workflow: "budget",
-    })).toBe("finance_head");
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "employee",
+        userRoles: ["branch_head"],
+        currentStatus: "submitted",
+        workflow: "grn",
+      }),
+    ).toBe("branch_head");
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "admin",
+        userRoles: ["finance_head"],
+        currentStatus: "branch_head_approved",
+        workflow: "budget",
+      }),
+    ).toBe("finance_head");
     // The Accounts Head stage was removed from the budget workflow (owner decision, 2026-08-21):
     // a budget can no longer rest at finance_head_approved, so that status has no stage owner.
-    expect(() => resolveFinanceStageRole({
-      primaryRole: "super_admin",
-      userRoles: [],
-      currentStatus: "finance_head_approved",
-      workflow: "budget",
-    })).toThrow(/No approval role is valid/i);
+    expect(() =>
+      resolveFinanceStageRole({
+        primaryRole: "super_admin",
+        userRoles: [],
+        currentStatus: "finance_head_approved",
+        workflow: "budget",
+      }),
+    ).toThrow(/No approval role is valid/i);
   });
 });

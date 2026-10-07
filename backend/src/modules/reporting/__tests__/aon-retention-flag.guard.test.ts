@@ -8,7 +8,9 @@ import request from "supertest";
 // previously had `requireAuth` only, so any authenticated employee could flag ANY employee.id in
 // ANY branch/process with no row-scope check at all.
 
-const { upsertOpenWorkItem } = vi.hoisted(() => ({ upsertOpenWorkItem: vi.fn() }));
+const { upsertOpenWorkItem } = vi.hoisted(() => ({
+  upsertOpenWorkItem: vi.fn(),
+}));
 vi.mock("../../../shared/workItem.js", () => ({ upsertOpenWorkItem }));
 
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
@@ -16,10 +18,14 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
 let currentUser: { id: string; role: string } = { id: "u1", role: "hr" };
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => { req.authUser = currentUser; next(); },
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.authUser = currentUser;
+    next();
+  },
 }));
 
-const { aonRetentionFlagRouter } = await import("../aon-retention-flag.routes.js");
+const { aonRetentionFlagRouter } =
+  await import("../aon-retention-flag.routes.js");
 
 const app = express();
 app.use(express.json());

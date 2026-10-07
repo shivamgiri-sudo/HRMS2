@@ -1,7 +1,11 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { getProjectOverview } from "../call-master/inbound.service.js";
-import { getNeemansCartDashboard, currentMonthRange, type NeemansCartDashboardData } from "./neemans-cart-dashboard.service.js";
+import {
+  getNeemansCartDashboard,
+  currentMonthRange,
+  type NeemansCartDashboardData,
+} from "./neemans-cart-dashboard.service.js";
 
 /**
  * Neemans' combined Sale/Allocation/Chat/Productivity dashboard -- live
@@ -89,12 +93,27 @@ export interface NeemansOverviewHeadline {
 
 export interface NeemansSaleData {
   headline: {
-    revenue: number; saleCount: number; aov: number;
-    prepaidPct: number; codPct: number; rtoPct: number;
-    activeAgents: number; target: number; achievementPct: number;
+    revenue: number;
+    saleCount: number;
+    aov: number;
+    prepaidPct: number;
+    codPct: number;
+    rtoPct: number;
+    activeAgents: number;
+    target: number;
+    achievementPct: number;
   };
-  dateWiseTrend: Array<{ date: string; saleCount: number; revenue: number; rtoCount: number }>;
-  paymentBreakdown: Array<{ paymentStatus: string; count: number; revenue: number }>;
+  dateWiseTrend: Array<{
+    date: string;
+    saleCount: number;
+    revenue: number;
+    rtoCount: number;
+  }>;
+  paymentBreakdown: Array<{
+    paymentStatus: string;
+    count: number;
+    revenue: number;
+  }>;
   /** neemans_sale_raw.current_status -- the order-fulfilment status (Delivered/RTO/
    * Dispatched/Cancelled/Unfulfilled/...), NOT `final_status` (which only ever carries
    * "-" or "RTO" in the live data, already used for the RTO KPIs above). Matches the
@@ -105,31 +124,75 @@ export interface NeemansSaleData {
    * export, shown as-is rather than merged), Delivered 880, RTO 137, Dispatched 48,
    * Cancelled 28, Processing 1, OTHER 1. Not previously surfaced anywhere in this
    * dashboard. */
-  orderStatusBreakdown: Array<{ status: string; count: number; revenue: number; pct: number }>;
-  byTl: Array<{ tlName: string; saleCount: number; revenue: number; rtoPct: number; target: number; achievementPct: number }>;
-  agents: Array<{ empId: string; name: string; tlName: string; saleCount: number; revenue: number; rtoPct: number; prepaidPct: number; target: number; achievementPct: number }>;
+  orderStatusBreakdown: Array<{
+    status: string;
+    count: number;
+    revenue: number;
+    pct: number;
+  }>;
+  byTl: Array<{
+    tlName: string;
+    saleCount: number;
+    revenue: number;
+    rtoPct: number;
+    target: number;
+    achievementPct: number;
+  }>;
+  agents: Array<{
+    empId: string;
+    name: string;
+    tlName: string;
+    saleCount: number;
+    revenue: number;
+    rtoPct: number;
+    prepaidPct: number;
+    target: number;
+    achievementPct: number;
+  }>;
 }
 
 export interface NeemansAllocationData {
   headline: {
-    totalAllocation: number; connected: number; connectedPct: number;
-    notConnected: number; pending: number; uniquePhones: number; activeAgents: number;
+    totalAllocation: number;
+    connected: number;
+    connectedPct: number;
+    notConnected: number;
+    pending: number;
+    uniquePhones: number;
+    activeAgents: number;
   };
   typeBreakdown: Array<{ type: string; count: number; connectedPct: number }>;
   statusBreakdown: Array<{ status: string; count: number; pct: number }>;
   /** neemans_allocation.sub_scenario1 -- the granular reason behind each
    * calling_status (why a call wasn't connected, or what happened when it
    * was), not previously surfaced anywhere in this dashboard. */
-  subScenarioBreakdown: Array<{ subScenario: string; count: number; pct: number }>;
+  subScenarioBreakdown: Array<{
+    subScenario: string;
+    count: number;
+    pct: number;
+  }>;
   /** Newly possible now that ALLOC_DATE_EXPR reliably parses `date` --
    * this view had no date-wise trend at all before. */
-  dateWiseTrend: Array<{ date: string; allocationCount: number; connectedPct: number }>;
-  agents: Array<{ agent: string; allocation: number; connected: number; connectedPct: number }>;
+  dateWiseTrend: Array<{
+    date: string;
+    allocationCount: number;
+    connectedPct: number;
+  }>;
+  agents: Array<{
+    agent: string;
+    allocation: number;
+    connected: number;
+    connectedPct: number;
+  }>;
 }
 
 export interface NeemansChatData {
   headline: {
-    totalTickets: number; resolvedPct: number; avgFrtHrs: number; avgResolutionHrs: number; avgCsat: number;
+    totalTickets: number;
+    resolvedPct: number;
+    avgFrtHrs: number;
+    avgResolutionHrs: number;
+    avgCsat: number;
     /** Share of tickets tagged "IN TAT" on frt_tat/resolution_tat -- real
      * columns already written by the uploader, not computed from a
      * threshold this app invented. */
@@ -145,24 +208,42 @@ export interface NeemansChatData {
    * this dashboard. Only 4 live rows across 2 channels right now (db_masmis.neemans_chat
    * is genuinely thin, same caveat as the rest of this Chat tab) -- real, not fabricated,
    * and will fill out as more chat exports are uploaded. */
-  channelBreakdown: Array<{ channel: string; tickets: number; resolvedPct: number }>;
+  channelBreakdown: Array<{
+    channel: string;
+    tickets: number;
+    resolvedPct: number;
+  }>;
   /** neemans_chat.ticket_status (open/waiting/closed/...), not previously
    * surfaced -- only the coarser is_resolved flag was. */
   statusBreakdown: Array<{ status: string; count: number; pct: number }>;
   /** Newly possible now that CHAT_DATE_EXPR parses report_date. */
   dateWiseTrend: Array<{ date: string; tickets: number; resolvedPct: number }>;
-  agents: Array<{ agent: string; empId: string; tickets: number; resolvedPct: number; avgCsat: number }>;
+  agents: Array<{
+    agent: string;
+    empId: string;
+    tickets: number;
+    resolvedPct: number;
+    avgCsat: number;
+  }>;
 }
 
 export interface NeemansProductivityData {
   headline: {
-    totalCalls: number; activeAgents: number; avgOccupancyPct: number; attendanceDays: number;
+    totalCalls: number;
+    activeAgents: number;
+    avgOccupancyPct: number;
+    attendanceDays: number;
     /** neemans_apr.net_login/total_break averaged in seconds via SQL
      * TIME_TO_SEC(), not previously surfaced. */
     avgNetLoginSec: number;
     avgTotalBreakSec: number;
   };
-  dateWiseTrend: Array<{ date: string; calls: number; avgOccupancyPct: number; loginAgents: number }>;
+  dateWiseTrend: Array<{
+    date: string;
+    calls: number;
+    avgOccupancyPct: number;
+    loginAgents: number;
+  }>;
   /** neemans_apr.lob -- confirmed live 2026-09-20: every one of the 403 rows currently
    * in db_masmis.neemans_apr carries lob='Cart'. The reference workbook (Neeman's
    * Billing Sep 26.xlsb, sheet "APR Raw") shows this table is meant to carry Chat/
@@ -172,8 +253,21 @@ export interface NeemansProductivityData {
    * all-LOB productivity as its combined placement here implies. This breakdown is
    * real and will pick up the other LOBs automatically the moment their APR files are
    * uploaded -- nothing here is invented to fill that gap. */
-  lobBreakdown: Array<{ lob: string; calls: number; agents: number; avgOccupancyPct: number }>;
-  agents: Array<{ empId: string; name: string; calls: number; loginTimeSec: number; talkTimeSec: number; occupancyPct: number; attendanceDays: number }>;
+  lobBreakdown: Array<{
+    lob: string;
+    calls: number;
+    agents: number;
+    avgOccupancyPct: number;
+  }>;
+  agents: Array<{
+    empId: string;
+    name: string;
+    calls: number;
+    loginTimeSec: number;
+    talkTimeSec: number;
+    occupancyPct: number;
+    attendanceDays: number;
+  }>;
 }
 
 export type NeemansCartOverview = Pick<
@@ -183,12 +277,23 @@ export type NeemansCartOverview = Pick<
 
 export interface NeemansInboundOverview {
   headline: {
-    offered: number; answered: number; abandoned: number;
-    answerPct: number; abandonPct: number; slPct: number;
-    ahtSec: number; loginCount: number; uniquePhones: number;
+    offered: number;
+    answered: number;
+    abandoned: number;
+    answerPct: number;
+    abandonPct: number;
+    slPct: number;
+    ahtSec: number;
+    loginCount: number;
+    uniquePhones: number;
     fcrPct: number | null;
   };
-  dateWiseTrend: Array<{ date: string; offered: number; answered: number; slPct: number }>;
+  dateWiseTrend: Array<{
+    date: string;
+    offered: number;
+    answered: number;
+    slPct: number;
+  }>;
 }
 
 export interface NeemansPerformanceDashboardData {
@@ -204,10 +309,16 @@ export interface NeemansPerformanceDashboardData {
   inboundError: string | null;
 }
 
-const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
+const num = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const pct = (part: number, whole: number): number =>
+  whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
 function timeToSec(v: unknown): number {
-  const m = String(v ?? "").trim().match(/^(\d{1,3}):(\d{2}):(\d{2})$/);
+  const m = String(v ?? "")
+    .trim()
+    .match(/^(\d{1,3}):(\d{2}):(\d{2})$/);
   if (!m) return 0;
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
@@ -218,9 +329,17 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * fragment plus its bound params, or an empty fragment when from/to are
  * absent/malformed -- so every query below stays a plain "show everything
  * uploaded" query unless a real range was actually requested. */
-function dateFilter(expr: string, from?: string, to?: string): { sql: string; params: string[] } {
-  if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to)) return { sql: "", params: [] };
-  return { sql: ` AND ${expr} >= ? AND ${expr} < DATE_ADD(?, INTERVAL 1 DAY)`, params: [from, to] };
+function dateFilter(
+  expr: string,
+  from?: string,
+  to?: string,
+): { sql: string; params: string[] } {
+  if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to))
+    return { sql: "", params: [] };
+  return {
+    sql: ` AND ${expr} >= ? AND ${expr} < DATE_ADD(?, INTERVAL 1 DAY)`,
+    params: [from, to],
+  };
 }
 
 /** `date` on both neemans_sale_raw and neemans_apr is NOT one consistent
@@ -267,7 +386,10 @@ const CHAT_DATE_EXPR = `STR_TO_DATE(report_date, '%e-%b-%y')`;
 const ONE_ROW_PER_ORDER = ` AND (order_id IS NULL OR order_id = '' OR id IN (
   SELECT MIN(id) FROM db_masmis.neemans_sale_raw WHERE order_id IS NOT NULL AND order_id != '' GROUP BY order_id))`;
 
-async function getSaleData(from?: string, to?: string): Promise<NeemansSaleData> {
+async function getSaleData(
+  from?: string,
+  to?: string,
+): Promise<NeemansSaleData> {
   const f0 = dateFilter(SALE_DATE_EXPR, from, to);
   const f = { sql: f0.sql + ONE_ROW_PER_ORDER, params: f0.params };
 
@@ -341,8 +463,22 @@ async function getSaleData(from?: string, to?: string): Promise<NeemansSaleData>
     f.params,
   );
 
-  const [[[headlineRow]], [rosterRows], [trendRows], [paymentRows], [tlRows], [agentRows], [orderStatusRows]] = await Promise.all([
-    headlineP, rosterP, trendP, paymentP, tlP, agentP, orderStatusP,
+  const [
+    [[headlineRow]],
+    [rosterRows],
+    [trendRows],
+    [paymentRows],
+    [tlRows],
+    [agentRows],
+    [orderStatusRows],
+  ] = await Promise.all([
+    headlineP,
+    rosterP,
+    trendP,
+    paymentP,
+    tlP,
+    agentP,
+    orderStatusP,
   ]);
 
   const targetByEmpId = new Map<string, number>();
@@ -363,7 +499,8 @@ async function getSaleData(from?: string, to?: string): Promise<NeemansSaleData>
 
   return {
     headline: {
-      revenue, saleCount,
+      revenue,
+      saleCount,
       aov: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
       prepaidPct: pct(num(headlineRow?.prepaid_count), saleCount),
       codPct: pct(num(headlineRow?.cod_count), saleCount),
@@ -373,21 +510,33 @@ async function getSaleData(from?: string, to?: string): Promise<NeemansSaleData>
       achievementPct: pct(revenue, target),
     },
     dateWiseTrend: trendRows.map((r) => ({
-      date: String(r.d), saleCount: num(r.sale_count), revenue: num(r.revenue), rtoCount: num(r.rto_count),
+      date: String(r.d),
+      saleCount: num(r.sale_count),
+      revenue: num(r.revenue),
+      rtoCount: num(r.rto_count),
     })),
     paymentBreakdown: paymentRows.map((r) => ({
-      paymentStatus: String(r.payment_status), count: num(r.n), revenue: num(r.revenue),
+      paymentStatus: String(r.payment_status),
+      count: num(r.n),
+      revenue: num(r.revenue),
     })),
     orderStatusBreakdown: orderStatusRows.map((r) => ({
-      status: String(r.current_status), count: num(r.n), revenue: num(r.revenue), pct: pct(num(r.n), saleCount),
+      status: String(r.current_status),
+      count: num(r.n),
+      revenue: num(r.revenue),
+      pct: pct(num(r.n), saleCount),
     })),
     byTl: tlRows.map((r) => {
       const tlRevenue = num(r.revenue);
       const tlName = String(r.tl_name);
       const tlTarget = targetByTl.get(tlName) ?? 0;
       return {
-        tlName, saleCount: num(r.sale_count), revenue: tlRevenue,
-        rtoPct: pct(num(r.rto_count), num(r.sale_count)), target: tlTarget, achievementPct: pct(tlRevenue, tlTarget),
+        tlName,
+        saleCount: num(r.sale_count),
+        revenue: tlRevenue,
+        rtoPct: pct(num(r.rto_count), num(r.sale_count)),
+        target: tlTarget,
+        achievementPct: pct(tlRevenue, tlTarget),
       };
     }),
     agents: agentRows.map((r) => {
@@ -395,16 +544,24 @@ async function getSaleData(from?: string, to?: string): Promise<NeemansSaleData>
       const empId = String(r.emp_id);
       const agentTarget = targetByEmpId.get(empId) ?? 0;
       return {
-        empId, name: String(r.name || empId), tlName: String(r.tl_name || "Unassigned"),
-        saleCount: num(r.sale_count), revenue: agentRevenue,
-        rtoPct: pct(num(r.rto_count), num(r.sale_count)), prepaidPct: pct(num(r.prepaid_count), num(r.sale_count)),
-        target: agentTarget, achievementPct: pct(agentRevenue, agentTarget),
+        empId,
+        name: String(r.name || empId),
+        tlName: String(r.tl_name || "Unassigned"),
+        saleCount: num(r.sale_count),
+        revenue: agentRevenue,
+        rtoPct: pct(num(r.rto_count), num(r.sale_count)),
+        prepaidPct: pct(num(r.prepaid_count), num(r.sale_count)),
+        target: agentTarget,
+        achievementPct: pct(agentRevenue, agentTarget),
       };
     }),
   };
 }
 
-async function getAllocationData(from?: string, to?: string): Promise<NeemansAllocationData> {
+async function getAllocationData(
+  from?: string,
+  to?: string,
+): Promise<NeemansAllocationData> {
   const f = dateFilter(ALLOC_DATE_EXPR, from, to);
 
   const headlineP = db.execute<RowDataPacket[]>(
@@ -450,8 +607,20 @@ async function getAllocationData(from?: string, to?: string): Promise<NeemansAll
     f.params,
   );
 
-  const [[[headlineRow]], [typeRows], [statusRows], [subScenarioRows], [trendRows], [agentRows]] = await Promise.all([
-    headlineP, typeP, statusP, subScenarioP, trendP, agentP,
+  const [
+    [[headlineRow]],
+    [typeRows],
+    [statusRows],
+    [subScenarioRows],
+    [trendRows],
+    [agentRows],
+  ] = await Promise.all([
+    headlineP,
+    typeP,
+    statusP,
+    subScenarioP,
+    trendP,
+    agentP,
   ]);
 
   const total = num(headlineRow?.total);
@@ -465,17 +634,39 @@ async function getAllocationData(from?: string, to?: string): Promise<NeemansAll
       uniquePhones: num(headlineRow?.unique_phones),
       activeAgents: num(headlineRow?.active_agents),
     },
-    typeBreakdown: typeRows.map((r) => ({ type: String(r.type), count: num(r.n), connectedPct: pct(num(r.connected), num(r.n)) })),
-    statusBreakdown: statusRows.map((r) => ({ status: String(r.calling_status), count: num(r.n), pct: pct(num(r.n), total) })),
-    subScenarioBreakdown: subScenarioRows.map((r) => ({ subScenario: String(r.sub_scenario1), count: num(r.n), pct: pct(num(r.n), total) })),
-    dateWiseTrend: trendRows.map((r) => ({
-      date: String(r.d), allocationCount: num(r.n), connectedPct: pct(num(r.connected), num(r.n)),
+    typeBreakdown: typeRows.map((r) => ({
+      type: String(r.type),
+      count: num(r.n),
+      connectedPct: pct(num(r.connected), num(r.n)),
     })),
-    agents: agentRows.map((r) => ({ agent: String(r.agent), allocation: num(r.n), connected: num(r.connected), connectedPct: pct(num(r.connected), num(r.n)) })),
+    statusBreakdown: statusRows.map((r) => ({
+      status: String(r.calling_status),
+      count: num(r.n),
+      pct: pct(num(r.n), total),
+    })),
+    subScenarioBreakdown: subScenarioRows.map((r) => ({
+      subScenario: String(r.sub_scenario1),
+      count: num(r.n),
+      pct: pct(num(r.n), total),
+    })),
+    dateWiseTrend: trendRows.map((r) => ({
+      date: String(r.d),
+      allocationCount: num(r.n),
+      connectedPct: pct(num(r.connected), num(r.n)),
+    })),
+    agents: agentRows.map((r) => ({
+      agent: String(r.agent),
+      allocation: num(r.n),
+      connected: num(r.connected),
+      connectedPct: pct(num(r.connected), num(r.n)),
+    })),
   };
 }
 
-export async function getChatData(from?: string, to?: string): Promise<NeemansChatData> {
+export async function getChatData(
+  from?: string,
+  to?: string,
+): Promise<NeemansChatData> {
   const f = dateFilter(CHAT_DATE_EXPR, from, to);
 
   const headlineP = db.execute<RowDataPacket[]>(
@@ -526,9 +717,14 @@ export async function getChatData(from?: string, to?: string): Promise<NeemansCh
     f.params,
   );
 
-  const [[[headlineRow]], [lobRows], [statusRows], [channelRows], [trendRows], [agentRows]] = await Promise.all([
-    headlineP, lobP, statusP, channelP, trendP, agentP,
-  ]);
+  const [
+    [[headlineRow]],
+    [lobRows],
+    [statusRows],
+    [channelRows],
+    [trendRows],
+    [agentRows],
+  ] = await Promise.all([headlineP, lobP, statusP, channelP, trendP, agentP]);
 
   const total = num(headlineRow?.total);
   return {
@@ -536,23 +732,52 @@ export async function getChatData(from?: string, to?: string): Promise<NeemansCh
       totalTickets: total,
       resolvedPct: pct(num(headlineRow?.resolved), total),
       avgFrtHrs: Math.round(num(headlineRow?.avg_frt) * 100) / 100,
-      avgResolutionHrs: Math.round(num(headlineRow?.avg_resolution) * 100) / 100,
+      avgResolutionHrs:
+        Math.round(num(headlineRow?.avg_resolution) * 100) / 100,
       avgCsat: Math.round(num(headlineRow?.avg_csat) * 100) / 100,
-      frtTatCompliancePct: pct(num(headlineRow?.frt_in_tat), num(headlineRow?.frt_tat_known)),
-      resolutionTatCompliancePct: pct(num(headlineRow?.resolution_in_tat), num(headlineRow?.resolution_tat_known)),
+      frtTatCompliancePct: pct(
+        num(headlineRow?.frt_in_tat),
+        num(headlineRow?.frt_tat_known),
+      ),
+      resolutionTatCompliancePct: pct(
+        num(headlineRow?.resolution_in_tat),
+        num(headlineRow?.resolution_tat_known),
+      ),
     },
-    byLob: lobRows.map((r) => ({ lob: String(r.lob), tickets: num(r.n), resolvedPct: pct(num(r.resolved), num(r.n)) })),
-    channelBreakdown: channelRows.map((r) => ({ channel: String(r.inbox_name), tickets: num(r.n), resolvedPct: pct(num(r.resolved), num(r.n)) })),
-    statusBreakdown: statusRows.map((r) => ({ status: String(r.ticket_status), count: num(r.n), pct: pct(num(r.n), total) })),
-    dateWiseTrend: trendRows.map((r) => ({ date: String(r.d), tickets: num(r.n), resolvedPct: pct(num(r.resolved), num(r.n)) })),
+    byLob: lobRows.map((r) => ({
+      lob: String(r.lob),
+      tickets: num(r.n),
+      resolvedPct: pct(num(r.resolved), num(r.n)),
+    })),
+    channelBreakdown: channelRows.map((r) => ({
+      channel: String(r.inbox_name),
+      tickets: num(r.n),
+      resolvedPct: pct(num(r.resolved), num(r.n)),
+    })),
+    statusBreakdown: statusRows.map((r) => ({
+      status: String(r.ticket_status),
+      count: num(r.n),
+      pct: pct(num(r.n), total),
+    })),
+    dateWiseTrend: trendRows.map((r) => ({
+      date: String(r.d),
+      tickets: num(r.n),
+      resolvedPct: pct(num(r.resolved), num(r.n)),
+    })),
     agents: agentRows.map((r) => ({
-      agent: String(r.agent_name), empId: String(r.emp_id || ""), tickets: num(r.n),
-      resolvedPct: pct(num(r.resolved), num(r.n)), avgCsat: Math.round(num(r.avg_csat) * 100) / 100,
+      agent: String(r.agent_name),
+      empId: String(r.emp_id || ""),
+      tickets: num(r.n),
+      resolvedPct: pct(num(r.resolved), num(r.n)),
+      avgCsat: Math.round(num(r.avg_csat) * 100) / 100,
     })),
   };
 }
 
-async function getProductivityData(from?: string, to?: string): Promise<NeemansProductivityData> {
+async function getProductivityData(
+  from?: string,
+  to?: string,
+): Promise<NeemansProductivityData> {
   const f = dateFilter(SALE_DATE_EXPR, from, to);
 
   const headlineP = db.execute<RowDataPacket[]>(
@@ -588,7 +813,8 @@ async function getProductivityData(from?: string, to?: string): Promise<NeemansP
     f.params,
   );
 
-  const [[[headlineRow]], [trendRows], [rawAgentRows], [lobRows]] = await Promise.all([headlineP, trendP, agentP, lobP]);
+  const [[[headlineRow]], [trendRows], [rawAgentRows], [lobRows]] =
+    await Promise.all([headlineP, trendP, agentP, lobP]);
 
   return {
     headline: {
@@ -600,16 +826,28 @@ async function getProductivityData(from?: string, to?: string): Promise<NeemansP
       avgTotalBreakSec: Math.round(num(headlineRow?.avg_total_break_sec)),
     },
     dateWiseTrend: trendRows.map((r) => ({
-      date: String(r.d), calls: num(r.calls), avgOccupancyPct: Math.round(num(r.avg_occupancy) * 100) / 100, loginAgents: num(r.login_agents),
+      date: String(r.d),
+      calls: num(r.calls),
+      avgOccupancyPct: Math.round(num(r.avg_occupancy) * 100) / 100,
+      loginAgents: num(r.login_agents),
     })),
     lobBreakdown: lobRows.map((r) => ({
-      lob: String(r.lob), calls: num(r.calls), agents: num(r.agents), avgOccupancyPct: Math.round(num(r.avg_occupancy) * 100) / 100,
+      lob: String(r.lob),
+      calls: num(r.calls),
+      agents: num(r.agents),
+      avgOccupancyPct: Math.round(num(r.avg_occupancy) * 100) / 100,
     })),
     agents: rawAgentRows.map((r) => {
-      const loginSecs = String(r.login_times ?? "").split("|").map(timeToSec);
-      const talkSecs = String(r.talk_times ?? "").split("|").map(timeToSec);
+      const loginSecs = String(r.login_times ?? "")
+        .split("|")
+        .map(timeToSec);
+      const talkSecs = String(r.talk_times ?? "")
+        .split("|")
+        .map(timeToSec);
       return {
-        empId: String(r.emp_id), name: String(r.emp_name || r.emp_id), calls: num(r.calls),
+        empId: String(r.emp_id),
+        name: String(r.emp_name || r.emp_id),
+        calls: num(r.calls),
         loginTimeSec: loginSecs.reduce((s, v) => s + v, 0),
         talkTimeSec: talkSecs.reduce((s, v) => s + v, 0),
         occupancyPct: Math.round(num(r.avg_occupancy) * 100) / 100,
@@ -619,8 +857,14 @@ async function getProductivityData(from?: string, to?: string): Promise<NeemansP
   };
 }
 
-async function getInboundOverview(from: string, to: string): Promise<NeemansInboundOverview> {
-  const { summary: s, trend: daily } = await getProjectOverview({ startDate: from, endDate: to }, "neemans");
+async function getInboundOverview(
+  from: string,
+  to: string,
+): Promise<NeemansInboundOverview> {
+  const { summary: s, trend: daily } = await getProjectOverview(
+    { startDate: from, endDate: to },
+    "neemans",
+  );
 
   return {
     headline: {
@@ -633,7 +877,8 @@ async function getInboundOverview(from: string, to: string): Promise<NeemansInbo
       ahtSec: num(s?.avg_handle),
       loginCount: num(s?.login_count),
       uniquePhones: num(s?.unique_phones),
-      fcrPct: s?.fcr_pct === null || s?.fcr_pct === undefined ? null : num(s.fcr_pct),
+      fcrPct:
+        s?.fcr_pct === null || s?.fcr_pct === undefined ? null : num(s.fcr_pct),
     },
     dateWiseTrend: daily
       .map((r) => ({
@@ -646,23 +891,41 @@ async function getInboundOverview(from: string, to: string): Promise<NeemansInbo
   };
 }
 
-export async function getNeemansPerformanceDashboard(from?: string, to?: string): Promise<NeemansPerformanceDashboardData> {
+export async function getNeemansPerformanceDashboard(
+  from?: string,
+  to?: string,
+): Promise<NeemansPerformanceDashboardData> {
   const validFrom = from && DATE_RE.test(from) ? from : null;
   const validTo = to && DATE_RE.test(to) ? to : null;
-  const range = validFrom && validTo ? [validFrom, validTo] as const : [undefined, undefined] as const;
-  const concrete = validFrom && validTo ? { from: validFrom, to: validTo } : currentMonthRange();
+  const range =
+    validFrom && validTo
+      ? ([validFrom, validTo] as const)
+      : ([undefined, undefined] as const);
+  const concrete =
+    validFrom && validTo
+      ? { from: validFrom, to: validTo }
+      : currentMonthRange();
 
-  const [sale, allocation, chat, productivity, cartFull, inboundResult] = await Promise.all([
-    getSaleData(...range), getAllocationData(...range), getChatData(...range), getProductivityData(...range),
-    getNeemansCartDashboard(concrete.from, concrete.to, { skipRecords: true }),
-    getInboundOverview(concrete.from, concrete.to).then(
-      (value) => ({ ok: true as const, value }),
-      (err: unknown) => {
-        console.error("[neemans-performance-dashboard] inbound overview failed:", err);
-        return { ok: false as const };
-      },
-    ),
-  ]);
+  const [sale, allocation, chat, productivity, cartFull, inboundResult] =
+    await Promise.all([
+      getSaleData(...range),
+      getAllocationData(...range),
+      getChatData(...range),
+      getProductivityData(...range),
+      getNeemansCartDashboard(concrete.from, concrete.to, {
+        skipRecords: true,
+      }),
+      getInboundOverview(concrete.from, concrete.to).then(
+        (value) => ({ ok: true as const, value }),
+        (err: unknown) => {
+          console.error(
+            "[neemans-performance-dashboard] inbound overview failed:",
+            err,
+          );
+          return { ok: false as const };
+        },
+      ),
+    ]);
 
   const cart: NeemansCartOverview = {
     headline: cartFull.headline,
@@ -680,12 +943,24 @@ export async function getNeemansPerformanceDashboard(from?: string, to?: string)
     totalChatTickets: chat.headline.totalTickets,
     chatResolvedPct: chat.headline.resolvedPct,
     avgOccupancyPct: productivity.headline.avgOccupancyPct,
-    conversionPct: pct(sale.headline.saleCount, allocation.headline.totalAllocation),
+    conversionPct: pct(
+      sale.headline.saleCount,
+      allocation.headline.totalAllocation,
+    ),
   };
 
   return {
-    from: validFrom, to: validTo, overview, sale, allocation, chat, productivity, cart,
+    from: validFrom,
+    to: validTo,
+    overview,
+    sale,
+    allocation,
+    chat,
+    productivity,
+    cart,
     inbound: inboundResult.ok ? inboundResult.value : null,
-    inboundError: inboundResult.ok ? null : "Inbound call data (dialer_db) is temporarily unavailable.",
+    inboundError: inboundResult.ok
+      ? null
+      : "Inbound call data (dialer_db) is temporarily unavailable.",
   };
 }

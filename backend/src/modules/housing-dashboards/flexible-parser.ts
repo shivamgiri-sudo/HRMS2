@@ -16,7 +16,9 @@ import * as XLSX from "xlsx";
  * everything but letters/digits so "Agent_Name", "Agent Name", "AGENT
  * NAME", "agent  name" all collapse to "agentname". */
 export function normalizeHeader(raw: unknown): string {
-  return String(raw ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return String(raw ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 export interface FieldSpec {
@@ -61,13 +63,22 @@ export function parseFlexibleSheet(
 ): ParsedSheet {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, blankrows: false });
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+    header: 1,
+    defval: null,
+    blankrows: false,
+  });
 
   if (raw.length === 0) {
     return {
-      totalRows: 0, validRows: 0, duplicateRows: 0,
-      recognizedColumns: [], additionalColumns: [], missingOptionalColumns: fields.map((f) => f.key),
-      rows: [], previewRaw: [],
+      totalRows: 0,
+      validRows: 0,
+      duplicateRows: 0,
+      recognizedColumns: [],
+      additionalColumns: [],
+      missingOptionalColumns: fields.map((f) => f.key),
+      rows: [],
+      previewRaw: [],
     };
   }
 
@@ -88,8 +99,12 @@ export function parseFlexibleSheet(
     }
   });
 
-  const recognizedColumns = fields.filter((f) => colIndex.has(f.key)).map((f) => f.key);
-  const missingOptionalColumns = fields.filter((f) => !colIndex.has(f.key)).map((f) => f.key);
+  const recognizedColumns = fields
+    .filter((f) => colIndex.has(f.key))
+    .map((f) => f.key);
+  const missingOptionalColumns = fields
+    .filter((f) => !colIndex.has(f.key))
+    .map((f) => f.key);
 
   const dataRows = raw.slice(1);
   const seen = new Set<string>();
@@ -98,15 +113,28 @@ export function parseFlexibleSheet(
 
   for (const r of dataRows) {
     const arr = r as unknown[];
-    if (!arr || arr.every((c) => c === null || c === undefined || String(c).trim() === "")) continue;
+    if (
+      !arr ||
+      arr.every((c) => c === null || c === undefined || String(c).trim() === "")
+    )
+      continue;
     const rec: Record<string, unknown> = {};
     for (const f of fields) {
       const i = colIndex.get(f.key);
       rec[f.key] = i !== undefined ? arr[i] : null;
     }
-    const dedupeKey = dedupeKeyFields.map((k) => String(rec[k] ?? "").trim().toLowerCase()).join("|");
+    const dedupeKey = dedupeKeyFields
+      .map((k) =>
+        String(rec[k] ?? "")
+          .trim()
+          .toLowerCase(),
+      )
+      .join("|");
     if (dedupeKeyFields.length > 0 && dedupeKey.replace(/\|/g, "") !== "") {
-      if (seen.has(dedupeKey)) { duplicateRows++; continue; }
+      if (seen.has(dedupeKey)) {
+        duplicateRows++;
+        continue;
+      }
       seen.add(dedupeKey);
     }
     rows.push(rec);
@@ -115,12 +143,18 @@ export function parseFlexibleSheet(
   const previewRaw = dataRows.slice(0, 20).map((r) => {
     const arr = r as unknown[];
     const rec: Record<string, unknown> = {};
-    headerRow.forEach((h, i) => { rec[String(h ?? `col${i}`)] = arr?.[i] ?? null; });
+    headerRow.forEach((h, i) => {
+      rec[String(h ?? `col${i}`)] = arr?.[i] ?? null;
+    });
     return rec;
   });
 
   return {
-    totalRows: dataRows.filter((r) => (r as unknown[])?.some((c) => c !== null && c !== undefined && String(c).trim() !== "")).length,
+    totalRows: dataRows.filter((r) =>
+      (r as unknown[])?.some(
+        (c) => c !== null && c !== undefined && String(c).trim() !== "",
+      ),
+    ).length,
     validRows: rows.length,
     duplicateRows,
     recognizedColumns,
@@ -144,8 +178,18 @@ export function normalizeDate(raw: unknown): string | null {
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
   const MONTHS: Record<string, string> = {
-    jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
-    jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+    jan: "01",
+    feb: "02",
+    mar: "03",
+    apr: "04",
+    may: "05",
+    jun: "06",
+    jul: "07",
+    aug: "08",
+    sep: "09",
+    oct: "10",
+    nov: "11",
+    dec: "12",
   };
   m = /^(\d{1,2})[-\/]([A-Za-z]{3})[-\/]?(\d{2,4})$/.exec(v);
   if (m && MONTHS[m[2].toLowerCase()]) {
@@ -198,6 +242,8 @@ export function normalizeText(raw: unknown): string | null {
 /** lowercase, trim, collapse internal whitespace -- the exact normalization
  * both prompts specify for agent/TL name matching. */
 export function normalizeName(raw: unknown): string | null {
-  const v = String(raw ?? "").trim().replace(/\s+/g, " ");
+  const v = String(raw ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
   return v ? v.toLowerCase() : null;
 }

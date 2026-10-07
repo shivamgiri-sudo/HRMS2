@@ -38,7 +38,7 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
      WHERE DATE_FORMAT(resignation_date, '%Y-%m') = ?
        AND exit_type = 'resignation'
        AND status != 'cancelled'`,
-    [currentMonth]
+    [currentMonth],
   );
 
   // Resignations YTD
@@ -48,7 +48,7 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
      WHERE YEAR(resignation_date) = ?
        AND exit_type = 'resignation'
        AND status != 'cancelled'`,
-    [currentYear]
+    [currentYear],
   );
 
   // Avg notice period (resignation_date to LWD)
@@ -60,7 +60,7 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
        AND lwd IS NOT NULL
        AND status != 'cancelled'
        AND YEAR(resignation_date) = ?`,
-    [currentYear]
+    [currentYear],
   );
 
   // F&F pending count
@@ -68,7 +68,7 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
     `SELECT COUNT(*) as count
      FROM exit_requests
      WHERE status IN ('clearance_pending', 'clearance_in_progress', 'f&f_pending')
-       AND lwd < CURDATE()`
+       AND lwd < CURDATE()`,
   );
 
   // F&F pending > 45 days
@@ -76,7 +76,7 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
     `SELECT COUNT(*) as count
      FROM exit_requests
      WHERE status IN ('clearance_pending', 'clearance_in_progress', 'f&f_pending')
-       AND lwd < DATE_SUB(CURDATE(), INTERVAL 45 DAY)`
+       AND lwd < DATE_SUB(CURDATE(), INTERVAL 45 DAY)`,
   );
 
   // Avg clearance TAT (LWD to clearance_completed_at)
@@ -86,7 +86,7 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
      WHERE clearance_completed_at IS NOT NULL
        AND lwd IS NOT NULL
        AND YEAR(lwd) = ?`,
-    [currentYear]
+    [currentYear],
   );
 
   // Exits by month (last 12 months)
@@ -98,7 +98,7 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
      WHERE lwd >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
        AND status != 'cancelled'
      GROUP BY month
-     ORDER BY month ASC`
+     ORDER BY month ASC`,
   );
 
   // F&F aging buckets
@@ -109,7 +109,7 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
        SUM(CASE WHEN DATEDIFF(CURDATE(), lwd) > 45 THEN 1 ELSE 0 END) as over_45
      FROM exit_requests
      WHERE status IN ('clearance_pending', 'clearance_in_progress', 'f&f_pending')
-       AND lwd < CURDATE()`
+       AND lwd < CURDATE()`,
   );
 
   return {

@@ -4,15 +4,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import jwt from "jsonwebtoken";
-vi.mock("../src/db/supabaseAdmin.js", () => ({ supabaseAdmin: {}, supabaseAuthClient: { auth: { getUser: vi.fn() } } }));
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+vi.mock("../src/db/supabaseAdmin.js", () => ({
+  supabaseAdmin: {},
+  supabaseAuthClient: { auth: { getUser: vi.fn() } },
+}));
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+  pingDb: vi.fn(),
+}));
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
 // supabaseAdmin stays mocked above (app.ts imports it); authMiddleware no
 // longer calls it — auth is MySQL JWT now.
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
-const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+const JWT_SECRET =
+  process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
 
 /**
  * Real JWTs replace the retired "<role>.token" placeholders — jwt.verify throws
@@ -25,7 +32,11 @@ const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!
 let subjectCounter = 0;
 const bearer = (sub: string) => ({
   Authorization: `Bearer ${jwt.sign(
-    { sub: `${sub}-${++subjectCounter}`, email: `${sub}@mcn.com`, iat: Math.floor(Date.now() / 1000) },
+    {
+      sub: `${sub}-${++subjectCounter}`,
+      email: `${sub}@mcn.com`,
+      iat: Math.floor(Date.now() / 1000),
+    },
     JWT_SECRET,
     { expiresIn: "1h" },
   )}`,
@@ -43,15 +54,19 @@ const bearer = (sub: string) => ({
  * answered by shape, outside the queue.
  */
 let selectQueue: unknown[][] = [];
-function selectRows(rows: unknown[]) { selectQueue.push(rows); }
+function selectRows(rows: unknown[]) {
+  selectQueue.push(rows);
+}
 
 function authAs(sub: string, roles: string[]) {
   selectQueue = [];
   mockExecute.mockImplementation(async (sql: unknown) => {
     const text = String(sql);
-    if (/FROM user_roles/i.test(text)) return [roles.map((r) => ({ role_key: r })), []];
+    if (/FROM user_roles/i.test(text))
+      return [roles.map((r) => ({ role_key: r })), []];
     if (/user_assignment_scope|FROM auth_user/i.test(text)) return [[], []];
-    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text)) return [{ affectedRows: 1 }, []];
+    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text))
+      return [{ affectedRows: 1 }, []];
     return [selectQueue.length ? selectQueue.shift()! : [], []];
   });
   return bearer(sub);
@@ -82,7 +97,15 @@ describe("GET /api/management/team-kpi", () => {
     // resolveTeamScope hasRole check — admin is a wide role
     // getTeamKpiSummary db.execute
     selectRows([
-      { id: "k1", employee_id: "e1", employee_code: "MCN001", full_name: "Alice", period: "2026-05", overall_score: 92.5, rank_position: 1 },
+      {
+        id: "k1",
+        employee_id: "e1",
+        employee_code: "MCN001",
+        full_name: "Alice",
+        period: "2026-05",
+        overall_score: 92.5,
+        rank_position: 1,
+      },
     ]);
     const r = await request(app).get("/api/management/team-kpi").set(auth);
     expect(r.status).toBe(200);
@@ -107,8 +130,22 @@ describe("GET /api/management/coaching", () => {
     // hasRole call: SELECT role_key FROM user_roles
     // listCoachingSessions db.execute
     selectRows([
-      { id: "cs-1", employee_id: "e1", employee_code: "MCN001", full_name: "Alice", session_type: "performance", status: "scheduled" },
-      { id: "cs-2", employee_id: "e2", employee_code: "MCN002", full_name: "Bob",   session_type: "quality",     status: "completed" },
+      {
+        id: "cs-1",
+        employee_id: "e1",
+        employee_code: "MCN001",
+        full_name: "Alice",
+        session_type: "performance",
+        status: "scheduled",
+      },
+      {
+        id: "cs-2",
+        employee_id: "e2",
+        employee_code: "MCN002",
+        full_name: "Bob",
+        session_type: "quality",
+        status: "completed",
+      },
     ]);
     const r = await request(app).get("/api/management/coaching").set(auth);
     expect(r.status).toBe(200);
@@ -125,7 +162,14 @@ describe("GET /api/management/coaching", () => {
     selectRows([]);
     // listCoachingSessions filtered by employee_id=emp-1
     selectRows([
-      { id: "cs-3", employee_id: "emp-1", employee_code: "MCN003", full_name: "Carol", session_type: "coaching", status: "scheduled" },
+      {
+        id: "cs-3",
+        employee_id: "emp-1",
+        employee_code: "MCN003",
+        full_name: "Carol",
+        session_type: "coaching",
+        status: "scheduled",
+      },
     ]);
     const r = await request(app).get("/api/management/coaching").set(auth);
     expect(r.status).toBe(200);
@@ -140,17 +184,29 @@ describe("POST /api/management/coaching", () => {
   it("returns 201 for admin, creates session and calls audit", async () => {
     const auth = mockAdmin();
     // createCoachingSession: INSERT + logSensitiveAction INSERT + SELECT
-    selectRows([{ id: "cs-new-1", employee_id: "emp-uuid-1", session_type: "performance", session_date: "2026-06-01", status: "scheduled" }]); // SELECT
+    selectRows([
+      {
+        id: "cs-new-1",
+        employee_id: "emp-uuid-1",
+        session_type: "performance",
+        session_date: "2026-06-01",
+        status: "scheduled",
+      },
+    ]); // SELECT
     const r = await request(app)
       .post("/api/management/coaching")
       .set(auth)
-      .send({ employee_id: "emp-uuid-1", session_date: "2026-06-01", session_type: "performance" });
+      .send({
+        employee_id: "emp-uuid-1",
+        session_date: "2026-06-01",
+        session_type: "performance",
+      });
     expect(r.status).toBe(201);
     expect(r.body.data).toBeDefined();
     // Audit INSERT was called (mockExecute called >=3 times beyond requireRole)
     expect(mockExecute).toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO sensitive_action_log"),
-      expect.any(Array)
+      expect.any(Array),
     );
   });
 
@@ -159,7 +215,11 @@ describe("POST /api/management/coaching", () => {
     const r = await request(app)
       .post("/api/management/coaching")
       .set(auth)
-      .send({ employee_id: "emp-uuid-1", session_date: "2026-06-01", session_type: "performance" });
+      .send({
+        employee_id: "emp-uuid-1",
+        session_date: "2026-06-01",
+        session_type: "performance",
+      });
     expect(r.status).toBe(403);
   });
 
@@ -181,7 +241,14 @@ describe("GET /api/management/alerts", () => {
     // resolveTeamScope hasRole check — admin is a wide role
     // listAlerts db.execute
     selectRows([
-      { id: "a1", employee_id: "e1", employee_code: "MCN001", full_name: "Alice", severity: "critical", acknowledged: 0 },
+      {
+        id: "a1",
+        employee_id: "e1",
+        employee_code: "MCN001",
+        full_name: "Alice",
+        severity: "critical",
+        acknowledged: 0,
+      },
     ]);
     const r = await request(app).get("/api/management/alerts").set(auth);
     expect(r.status).toBe(200);
@@ -209,7 +276,7 @@ describe("POST /api/management/alerts/:id/acknowledge", () => {
     expect(r.body.ok).toBe(true);
     expect(mockExecute).toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO sensitive_action_log"),
-      expect.any(Array)
+      expect.any(Array),
     );
   });
 
@@ -251,7 +318,9 @@ describe("GET /api/management/dashboard", () => {
     });
     expect(r.body.data.attrition_rate).toBeGreaterThan(0);
     const flatKeys = Object.keys(r.body.data ?? {});
-    const payrollFields = flatKeys.filter(k => /salary|payroll|gross|net_pay|tds|pf|esi|ctc|bank/i.test(k));
+    const payrollFields = flatKeys.filter((k) =>
+      /salary|payroll|gross|net_pay|tds|pf|esi|ctc|bank/i.test(k),
+    );
     expect(payrollFields).toHaveLength(0);
   });
 
@@ -283,7 +352,7 @@ describe("SECURITY — Manager scope", () => {
     expect(r.body.data).toEqual([]);
     expect(mockExecute).toHaveBeenCalledWith(
       expect.stringContaining("e.id IN (?,?)"),
-      expect.arrayContaining(["rep-1", "mgr-emp"])
+      expect.arrayContaining(["rep-1", "mgr-emp"]),
     );
   });
 
@@ -298,7 +367,7 @@ describe("SECURITY — Manager scope", () => {
     expect(r.body.data).toEqual([]);
     expect(mockExecute).toHaveBeenCalledWith(
       expect.stringContaining("pa.employee_id IN (?,?)"),
-      expect.arrayContaining(["rep-1", "mgr-emp"])
+      expect.arrayContaining(["rep-1", "mgr-emp"]),
     );
   });
 
@@ -307,14 +376,24 @@ describe("SECURITY — Manager scope", () => {
     selectRows([{ id: "mgr-emp", employee_code: "MGR001" }]);
     selectRows([{ id: "rep-1" }]);
     for (let i = 0; i < 6; i += 1) {
-      selectRows([{ headcount: 0, exits_30d: 0, pending_leaves: 0, open_tickets: 0, total: 0, present: 0, half_day: 0 }]);
+      selectRows([
+        {
+          headcount: 0,
+          exits_30d: 0,
+          pending_leaves: 0,
+          open_tickets: 0,
+          total: 0,
+          present: 0,
+          half_day: 0,
+        },
+      ]);
     }
 
     const r = await request(app).get("/api/management/dashboard").set(auth);
     expect(r.status).toBe(200);
     expect(mockExecute).toHaveBeenCalledWith(
       expect.stringContaining("e.id IN (?,?)"),
-      expect.arrayContaining(["rep-1", "mgr-emp"])
+      expect.arrayContaining(["rep-1", "mgr-emp"]),
     );
   });
   it("employee sees own coaching (200) via server-side mapping", async () => {

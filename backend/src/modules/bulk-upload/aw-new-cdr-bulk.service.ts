@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Appreciate Health's "New CDR" export -- writes into the SAME already-live
@@ -18,16 +21,23 @@ function normalizeKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): string {
+function getByColumn(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string {
   const normalized: Record<string, unknown> = {};
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const col of columnNames) {
     const v = normalized[normalizeKey(col)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
-function n(data: Record<string, unknown>, ...columnNames: string[]): string | null {
+function n(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string | null {
   const v = getByColumn(data, ...columnNames);
   return v || null;
 }
@@ -48,13 +58,16 @@ export async function importAwNewCdrBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
   const insertRows: ChunkInsertRow[] = [];
 
-  const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+  const uploadedByInt = /^\d+$/.test(importedByUserId)
+    ? Number(importedByUserId)
+    : null;
 
   for (const row of batchRows) {
     const data =
@@ -65,25 +78,55 @@ export async function importAwNewCdrBatch(
     const callId = getByColumn(data, "call_id");
     if (!callId) {
       const msg = `Row ${row.row_no}: "call_id" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     insertRows.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        callId, n(data, "call_type"), n(data, "campaign"), n(data, "location"),
-        n(data, "caller_no"), n(data, "skill"), n(data, "call_date"), n(data, "start_time"),
-        n(data, "time_to_answer"), n(data, "end_time"), n(data, "talk_time"), n(data, "hold_time"),
-        n(data, "duration"), n(data, "call_flow"), n(data, "dialed_number"), n(data, "agent"),
-        n(data, "disposition"), n(data, "wrapup_duration"), n(data, "handling_time"),
-        n(data, "status"), n(data, "dial_status"), n(data, "customer_dial_status"),
-        n(data, "agent_dial_status"), n(data, "hangup_by"), n(data, "transfer_details"),
-        n(data, "uui"), n(data, "comments"), n(data, "feedback"), n(data, "customer_ring_time"),
-        n(data, "recording_url"), n(data, "agent_id"), n(data, "ratings"),
-        n(data, "rating_comments"), n(data, "dynamic_did"), n(data, "did"), n(data, "sub_lob"),
-        n(data, "partner"), n(data, "slot"),
-        uploadedByInt, batchId,
+        callId,
+        n(data, "call_type"),
+        n(data, "campaign"),
+        n(data, "location"),
+        n(data, "caller_no"),
+        n(data, "skill"),
+        n(data, "call_date"),
+        n(data, "start_time"),
+        n(data, "time_to_answer"),
+        n(data, "end_time"),
+        n(data, "talk_time"),
+        n(data, "hold_time"),
+        n(data, "duration"),
+        n(data, "call_flow"),
+        n(data, "dialed_number"),
+        n(data, "agent"),
+        n(data, "disposition"),
+        n(data, "wrapup_duration"),
+        n(data, "handling_time"),
+        n(data, "status"),
+        n(data, "dial_status"),
+        n(data, "customer_dial_status"),
+        n(data, "agent_dial_status"),
+        n(data, "hangup_by"),
+        n(data, "transfer_details"),
+        n(data, "uui"),
+        n(data, "comments"),
+        n(data, "feedback"),
+        n(data, "customer_ring_time"),
+        n(data, "recording_url"),
+        n(data, "agent_id"),
+        n(data, "ratings"),
+        n(data, "rating_comments"),
+        n(data, "dynamic_did"),
+        n(data, "did"),
+        n(data, "sub_lob"),
+        n(data, "partner"),
+        n(data, "slot"),
+        uploadedByInt,
+        batchId,
       ],
     });
   }
@@ -96,7 +139,8 @@ export async function importAwNewCdrBatch(
         customer_dial_status, agent_dial_status, hangup_by, transfer_details, uui, comments,
         feedback, customer_ring_time, recording_url, agent_id, ratings, rating_comments,
         dynamic_did, did, sub_lob, partner, slot, uploaded_by, upload_batch_id)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: insertRows,
   });
   const importedRows = inserted.importedRows;
@@ -113,17 +157,26 @@ export async function importAwNewCdrBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

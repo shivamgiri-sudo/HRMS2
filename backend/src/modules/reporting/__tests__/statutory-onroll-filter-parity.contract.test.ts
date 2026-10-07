@@ -58,17 +58,23 @@ describe("ONROLL filter parity across the payroll-driven statutory registers", (
     "pfEcrFormat",
   ];
 
-  it.each(registersRequiringOnroll)("%s restricts to e.employment_type = 'ONROLL'", (fnName) => {
-    const body = functionBody(source, fnName);
-    expect(body, `${fnName} is missing the ONROLL filter its sibling registers already have`).toMatch(
-      /e\.employment_type\s*=\s*'ONROLL'/
-    );
-  });
+  it.each(registersRequiringOnroll)(
+    "%s restricts to e.employment_type = 'ONROLL'",
+    (fnName) => {
+      const body = functionBody(source, fnName);
+      expect(
+        body,
+        `${fnName} is missing the ONROLL filter its sibling registers already have`,
+      ).toMatch(/e\.employment_type\s*=\s*'ONROLL'/);
+    },
+  );
 
   it("all five populations are still scoped to the same run_month + non-draft/cancelled basis (no accidental widening)", () => {
     for (const fnName of registersRequiringOnroll) {
       const body = functionBody(source, fnName);
-      expect(body, `${fnName} should still filter on run_month`).toMatch(/run_month/);
+      expect(body, `${fnName} should still filter on run_month`).toMatch(
+        /run_month/,
+      );
     }
   });
 });

@@ -29,7 +29,9 @@ const SOURCE = readFileSync(
 );
 
 function approveBlock(): string {
-  const start = SOURCE.indexOf("async approve(planId: string, actorId: string, remarks?: string) {");
+  const start = SOURCE.indexOf(
+    "async approve(planId: string, actorId: string, remarks?: string) {",
+  );
   expect(start, "approve() not found").toBeGreaterThan(-1);
   const end = SOURCE.indexOf("async reject(", start);
   expect(end, "end of approve() not found").toBeGreaterThan(start);
@@ -62,10 +64,16 @@ describe("ROSTER_PUBLISH_PENDING wiring in auto-roster-synced.service.ts::approv
   });
 
   it("is not called from createPlan, submitForApproval, or generateDraft (fires only on the approve transition)", () => {
-    const createPlanStart = SOURCE.indexOf("async createPlan(input: CreateAutoRosterPlanInput");
+    const createPlanStart = SOURCE.indexOf(
+      "async createPlan(input: CreateAutoRosterPlanInput",
+    );
     const submitStart = SOURCE.indexOf("async submitForApproval(");
-    const generateStart = SOURCE.indexOf("async generateDraft(planId: string, actorId: string) {");
-    const approveStart = SOURCE.indexOf("async approve(planId: string, actorId: string, remarks?: string) {");
+    const generateStart = SOURCE.indexOf(
+      "async generateDraft(planId: string, actorId: string) {",
+    );
+    const approveStart = SOURCE.indexOf(
+      "async approve(planId: string, actorId: string, remarks?: string) {",
+    );
 
     const createPlanBlock = SOURCE.slice(createPlanStart, submitStart);
     const submitBlock = SOURCE.slice(submitStart, approveStart);
@@ -79,7 +87,8 @@ describe("ROSTER_PUBLISH_PENDING wiring in auto-roster-synced.service.ts::approv
 
 describe("registers ROSTER_PUBLISH_PENDING with the expected shape", () => {
   it("matches the registry entry", async () => {
-    const { resolveActionItemDef } = await import("../../work-inbox/action-item-registry.js");
+    const { resolveActionItemDef } =
+      await import("../../work-inbox/action-item-registry.js");
     const def = resolveActionItemDef("ROSTER_PUBLISH_PENDING");
     expect(def).toBeTruthy();
     expect(def?.module).toBe("ROSTER");
@@ -95,14 +104,21 @@ describe("triggerRosterPublishPending", () => {
     vi.resetModules();
     const dbExecute = vi.fn();
     vi.doMock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
-    const { triggerRosterPublishPending } = await import("../../work-inbox/work-inbox.triggers.js");
+    const { triggerRosterPublishPending } =
+      await import("../../work-inbox/work-inbox.triggers.js");
 
     dbExecute.mockResolvedValueOnce([[]]); // no existing pending item
     dbExecute.mockResolvedValueOnce([{ insertId: 1 }]); // insert
 
-    await triggerRosterPublishPending("plan-1", "Week 34 - Process A", "branch-9");
+    await triggerRosterPublishPending(
+      "plan-1",
+      "Week 34 - Process A",
+      "branch-9",
+    );
 
-    const insertCall = dbExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO work_item"));
+    const insertCall = dbExecute.mock.calls.find((c) =>
+      String(c[0]).includes("INSERT INTO work_item"),
+    );
     expect(insertCall).toBeTruthy();
     const params = insertCall![1] as any[];
     expect(params).toContain("ROSTER_PUBLISH_PENDING");

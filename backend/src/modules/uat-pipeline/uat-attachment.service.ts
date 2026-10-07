@@ -30,7 +30,13 @@
  * FILE FORMAT (self-describing, so no schema change is needed to hold the key):
  *   magic "UATA1" | u16 wrappedKeyLen | wrappedKey | 12-byte IV | 16-byte GCM tag | ciphertext
  */
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
 import { mkdirSync, existsSync } from "node:fs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -43,7 +49,7 @@ import { recordEvent } from "./uat-state-machine.js";
 export const UAT_ATTACHMENT_ROOT = path.resolve(
   process.cwd(),
   "private-storage",
-  "uat-attachments"
+  "uat-attachments",
 );
 
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -66,7 +72,7 @@ const KEY_SCHEME = "aes-256-gcm:v1";
 export class AttachmentError extends Error {
   constructor(
     message: string,
-    readonly statusCode: number = 400
+    readonly statusCode: number = 400,
   ) {
     super(message);
     this.name = "AttachmentError";
@@ -81,12 +87,20 @@ export class AttachmentError extends Error {
  */
 export function sniffMime(buf: Buffer): string | null {
   if (buf.length < 12) return null;
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
-  if (buf.subarray(0, 6).toString("ascii") === "GIF87a" || buf.subarray(0, 6).toString("ascii") === "GIF89a") {
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
+    return "image/png";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
+    return "image/jpeg";
+  if (
+    buf.subarray(0, 6).toString("ascii") === "GIF87a" ||
+    buf.subarray(0, 6).toString("ascii") === "GIF89a"
+  ) {
     return "image/gif";
   }
-  if (buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") {
+  if (
+    buf.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buf.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
     return "image/webp";
   }
   return null;
@@ -108,7 +122,10 @@ export function encryptAttachment(plain: Buffer): Buffer {
 
 export function decryptAttachment(blob: Buffer): Buffer {
   if (blob.subarray(0, MAGIC.length).compare(MAGIC) !== 0) {
-    throw new AttachmentError("Stored attachment is not in the expected format", 500);
+    throw new AttachmentError(
+      "Stored attachment is not in the expected format",
+      500,
+    );
   }
   let off = MAGIC.length;
   const wrappedLen = blob.readUInt16BE(off);
@@ -144,11 +161,12 @@ export async function storeAttachment(input: {
   buffer: Buffer;
   retentionDays?: number;
 }): Promise<StoredAttachment> {
-  if (input.buffer.length === 0) throw new AttachmentError("The file is empty.");
+  if (input.buffer.length === 0)
+    throw new AttachmentError("The file is empty.");
   if (input.buffer.length > MAX_ATTACHMENT_BYTES) {
     throw new AttachmentError(
       `That file is ${(input.buffer.length / 1024 / 1024).toFixed(1)} MB. The limit is 5 MB.`,
-      413
+      413,
     );
   }
 
@@ -157,12 +175,16 @@ export async function storeAttachment(input: {
   if (!sniffed || !ALLOWED_MIME.has(sniffed)) {
     throw new AttachmentError(
       "Only screenshots are accepted (PNG, JPEG, WebP or GIF). The file's actual contents did " +
-        "not match any of those."
+        "not match any of those.",
     );
   }
-  if (input.declaredMime && ALLOWED_MIME.has(input.declaredMime) && input.declaredMime !== sniffed) {
+  if (
+    input.declaredMime &&
+    ALLOWED_MIME.has(input.declaredMime) &&
+    input.declaredMime !== sniffed
+  ) {
     throw new AttachmentError(
-      `This file is declared as ${input.declaredMime} but its contents are ${sniffed}.`
+      `This file is declared as ${input.declaredMime} but its contents are ${sniffed}.`,
     );
   }
 
@@ -194,7 +216,7 @@ export async function storeAttachment(input: {
       sha256,
       KEY_SCHEME,
       retentionDays,
-    ]
+    ],
   );
 
   await recordEvent(input.feedbackId, "attachment", {
@@ -230,14 +252,16 @@ interface AttachmentRow extends RowDataPacket {
   created_at: Date;
 }
 
-export async function listAttachments(feedbackId: string): Promise<AttachmentRow[]> {
+export async function listAttachments(
+  feedbackId: string,
+): Promise<AttachmentRow[]> {
   const [rows] = await db.execute<AttachmentRow[]>(
     `SELECT id, feedback_id, original_filename, mime_type, size_bytes,
             malware_scan_status, pii_scan_status, created_at
        FROM uat_feedback_attachment
       WHERE feedback_id = ? AND deleted_at IS NULL
       ORDER BY created_at`,
-    [feedbackId]
+    [feedbackId],
   );
   return rows;
 }
@@ -251,7 +275,7 @@ export async function listAttachments(feedbackId: string): Promise<AttachmentRow
  */
 export async function readAttachment(
   attachmentId: string,
-  viewer: { employeeId: string; isTriage: boolean }
+  viewer: { employeeId: string; isTriage: boolean },
 ): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.id, a.storage_key, a.mime_type, a.original_filename, a.malware_scan_status,
@@ -259,7 +283,7 @@ export async function readAttachment(
        FROM uat_feedback_attachment a
        JOIN uat_feedback f ON f.id = a.feedback_id
       WHERE a.id = ? AND a.deleted_at IS NULL`,
-    [attachmentId]
+    [attachmentId],
   );
   if (rows.length === 0) throw new AttachmentError("Attachment not found", 404);
   const r = rows[0] as AttachmentRow & { submitted_by_employee_id: string };
@@ -273,7 +297,10 @@ export async function readAttachment(
   // Fail closed on scanning. An unscanned file is not a safe file, and "we will scan it
   // later" must not mean "serve it in the meantime".
   if (r.malware_scan_status === "infected") {
-    throw new AttachmentError("This attachment was quarantined by the malware scan.", 403);
+    throw new AttachmentError(
+      "This attachment was quarantined by the malware scan.",
+      403,
+    );
   }
 
   const absolute = path.join(UAT_ATTACHMENT_ROOT, r.storage_key);
@@ -283,7 +310,8 @@ export async function readAttachment(
   if (!resolved.startsWith(path.resolve(UAT_ATTACHMENT_ROOT) + path.sep)) {
     throw new AttachmentError("Invalid attachment path", 400);
   }
-  if (!existsSync(resolved)) throw new AttachmentError("Attachment file is missing", 410);
+  if (!existsSync(resolved))
+    throw new AttachmentError("Attachment file is missing", 410);
 
   return {
     buffer: decryptAttachment(await readFile(resolved)),
@@ -299,17 +327,21 @@ export async function readAttachment(
  */
 export async function deleteAttachment(
   attachmentId: string,
-  actor: { userId: string; employeeId: string; isTriage: boolean }
+  actor: { userId: string; employeeId: string; isTriage: boolean },
 ): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.storage_key, a.feedback_id, f.submitted_by_employee_id
        FROM uat_feedback_attachment a
        JOIN uat_feedback f ON f.id = a.feedback_id
       WHERE a.id = ? AND a.deleted_at IS NULL`,
-    [attachmentId]
+    [attachmentId],
   );
   if (rows.length === 0) throw new AttachmentError("Attachment not found", 404);
-  const r = rows[0] as { storage_key: string; feedback_id: string; submitted_by_employee_id: string };
+  const r = rows[0] as {
+    storage_key: string;
+    feedback_id: string;
+    submitted_by_employee_id: string;
+  };
 
   if (r.submitted_by_employee_id !== actor.employeeId && !actor.isTriage) {
     throw new AttachmentError("Attachment not found", 404);
@@ -324,7 +356,7 @@ export async function deleteAttachment(
 
   await db.execute(
     `UPDATE uat_feedback_attachment SET deleted_at = NOW(), deleted_by = ? WHERE id = ?`,
-    [actor.userId, attachmentId]
+    [actor.userId, attachmentId],
   );
   await recordEvent(r.feedback_id, "attachment", {
     actorUserId: actor.userId,

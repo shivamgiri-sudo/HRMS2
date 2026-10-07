@@ -1,9 +1,12 @@
-import { PAN_REGEX } from '../ats/bgv-config.js';
-import { getBillPool } from '../../db/billDb.js';
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
-import { logSensitiveAction } from '../../shared/auditLog.js';
-import { encryptPanForSync, blindIndexPan } from '../../shared/syncPiiEncryption.js';
+import { PAN_REGEX } from "../ats/bgv-config.js";
+import { getBillPool } from "../../db/billDb.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import {
+  encryptPanForSync,
+  blindIndexPan,
+} from "../../shared/syncPiiEncryption.js";
 
 interface SyncOptions {
   dryRun?: boolean;
@@ -53,7 +56,12 @@ interface MasjclrEntry extends RowDataPacket {
 }
 
 function isEmpty(value: string | null | undefined): boolean {
-  return value === null || value === undefined || String(value).trim() === '' || value === '0';
+  return (
+    value === null ||
+    value === undefined ||
+    String(value).trim() === "" ||
+    value === "0"
+  );
 }
 
 /**
@@ -84,8 +92,28 @@ function isEmpty(value: string | null | undefined): boolean {
  * alone — a much larger behaviour change than declining to import junk.
  */
 const PLACEHOLDER_VALUES = new Set([
-  '0', '-', '--', '.', ',', 'NA', 'N/A', 'N.A.', 'NAN', 'NIL', 'NONE', 'NOT APPLICABLE',
-  'NOTAPPLICABLE', 'NULL', 'X', 'XX', 'XXX', 'XXXX', 'ABC', 'TEST', 'PENDING', 'NOTAVAILABLE',
+  "0",
+  "-",
+  "--",
+  ".",
+  ",",
+  "NA",
+  "N/A",
+  "N.A.",
+  "NAN",
+  "NIL",
+  "NONE",
+  "NOT APPLICABLE",
+  "NOTAPPLICABLE",
+  "NULL",
+  "X",
+  "XX",
+  "XXX",
+  "XXXX",
+  "ABC",
+  "TEST",
+  "PENDING",
+  "NOTAVAILABLE",
 ]);
 
 export function isUsable(value: string | null | undefined): boolean {
@@ -117,16 +145,24 @@ export function isUsable(value: string | null | undefined): boolean {
  *
  * A blank name on either side fails closed: unverifiable is not the same as verified.
  */
-export function namesCorroborate(a: string | null | undefined, b: string | null | undefined): boolean {
+export function namesCorroborate(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
   const clean = (value: string | null | undefined) =>
-    String(value ?? '').toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+    String(value ?? "")
+      .toUpperCase()
+      .replace(/[^A-Z ]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
   const left = clean(a);
   const right = clean(b);
   if (!left || !right) return false;
   if (left === right) return true;
 
-  const words = (value: string) => new Set(value.split(' ').filter((w) => w.length > 2));
+  const words = (value: string) =>
+    new Set(value.split(" ").filter((w) => w.length > 2));
   const rightWords = words(right);
   for (const word of words(left)) {
     if (rightWords.has(word)) return true;
@@ -134,7 +170,9 @@ export function namesCorroborate(a: string | null | undefined, b: string | null 
   return false;
 }
 
-export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<SyncResult> {
+export async function syncEmployeeStatutoryData(
+  options: SyncOptions,
+): Promise<SyncResult> {
   const { dryRun = false, employeeCodeFilter, actorUserId } = options;
 
   const result: SyncResult = {
@@ -150,23 +188,27 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
     const billPool = await getBillPool();
 
     // Fetch all active employees from mas_hrms
-    let employeeQuery = 'SELECT id, employee_code, full_name, uan_number, epf_number, pan_number, esic_number, bank_account_number, bank_name, ifsc_code, account_holder_name FROM employees WHERE active_status = 1';
+    let employeeQuery =
+      "SELECT id, employee_code, full_name, uan_number, epf_number, pan_number, esic_number, bank_account_number, bank_name, ifsc_code, account_holder_name FROM employees WHERE active_status = 1";
     const params: any[] = [];
 
     if (employeeCodeFilter) {
-      employeeQuery += ' AND employee_code = ?';
+      employeeQuery += " AND employee_code = ?";
       params.push(employeeCodeFilter);
     }
 
-    const [employees] = await db.execute<MasHrmsEmployee[]>(employeeQuery, params);
+    const [employees] = await db.execute<MasHrmsEmployee[]>(
+      employeeQuery,
+      params,
+    );
     result.scanned = employees.length;
 
     for (const employee of employees) {
       try {
         // Query masjclrentry for this employee
         const [legacyRows] = await billPool.execute<MasjclrEntry[]>(
-          'SELECT EmpCode, EmpName, UAN, NewEpfNo, EPFNo, PanNo, ESICNo, AcNo, AcBank, IFSCCode, AccHolder FROM masjclrentry WHERE EmpCode = ? LIMIT 1',
-          [employee.employee_code]
+          "SELECT EmpCode, EmpName, UAN, NewEpfNo, EPFNo, PanNo, ESICNo, AcNo, AcBank, IFSCCode, AccHolder FROM masjclrentry WHERE EmpCode = ? LIMIT 1",
+          [employee.employee_code],
         );
 
         if (!legacyRows.length) {
@@ -193,7 +235,7 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
         if (!namesCorroborate(employee.full_name, legacy.EmpName)) {
           result.skipped++;
           result.errors.push(
-            `${employee.employee_code}: name mismatch — mas_hrms "${employee.full_name ?? ''}" vs db_bill "${legacy.EmpName ?? ''}"; skipped, EmpCode appears to be reused`,
+            `${employee.employee_code}: name mismatch — mas_hrms "${employee.full_name ?? ""}" vs db_bill "${legacy.EmpName ?? ""}"; skipped, EmpCode appears to be reused`,
           );
           continue;
         }
@@ -208,15 +250,17 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
 
         // Check UAN
         if (isEmpty(employee.uan_number) && isUsable(legacy.UAN)) {
-          fieldsToUpdate.push('uan_number');
+          fieldsToUpdate.push("uan_number");
           updateData.uan_number = String(legacy.UAN).trim();
         }
 
         // Check EPF (prefer NewEpfNo, fallback to EPFNo)
         if (isEmpty(employee.epf_number)) {
-          const epfValue = isUsable(legacy.NewEpfNo) ? legacy.NewEpfNo : legacy.EPFNo;
+          const epfValue = isUsable(legacy.NewEpfNo)
+            ? legacy.NewEpfNo
+            : legacy.EPFNo;
           if (isUsable(epfValue)) {
-            fieldsToUpdate.push('epf_number');
+            fieldsToUpdate.push("epf_number");
             updateData.epf_number = String(epfValue).trim();
           }
         }
@@ -231,7 +275,7 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
         if (isEmpty(employee.pan_number) && isUsable(legacy.PanNo)) {
           const pan = String(legacy.PanNo).trim().toUpperCase();
           if (PAN_REGEX.test(pan)) {
-            fieldsToUpdate.push('pan_number');
+            fieldsToUpdate.push("pan_number");
             updateData.pan_number = pan;
 
             // employees is the ONE table whose PAN ciphertext is fully backfilled —
@@ -249,40 +293,46 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
             // production could never decrypt; the plaintext write still lands, so the
             // degradation is safe. The plaintext write stays regardless — the
             // duplicate-employee guard still reads e.pan_number by equality.
-            fieldsToUpdate.push('pan_number_encrypted');
-            updateData.pan_number_encrypted = encryptPanForSync(pan, 'statutory-migration');
+            fieldsToUpdate.push("pan_number_encrypted");
+            updateData.pan_number_encrypted = encryptPanForSync(
+              pan,
+              "statutory-migration",
+            );
 
-            fieldsToUpdate.push('pan_blind_index');
-            updateData.pan_blind_index = blindIndexPan(pan, 'statutory-migration');
+            fieldsToUpdate.push("pan_blind_index");
+            updateData.pan_blind_index = blindIndexPan(
+              pan,
+              "statutory-migration",
+            );
 
             // Pinned to the version encryptPanForSync writes, so the row stays
             // self-consistent rather than relying on the column default.
-            fieldsToUpdate.push('pan_enc_key_version');
+            fieldsToUpdate.push("pan_enc_key_version");
             updateData.pan_enc_key_version = 1;
           }
         }
 
         // Check ESIC
         if (isEmpty(employee.esic_number) && isUsable(legacy.ESICNo)) {
-          fieldsToUpdate.push('esic_number');
+          fieldsToUpdate.push("esic_number");
           updateData.esic_number = String(legacy.ESICNo).trim();
         }
 
         // Check Bank Account
         if (isEmpty(employee.bank_account_number) && isUsable(legacy.AcNo)) {
-          fieldsToUpdate.push('bank_account_number');
+          fieldsToUpdate.push("bank_account_number");
           updateData.bank_account_number = String(legacy.AcNo).trim();
 
           if (isUsable(legacy.AcBank)) {
-            fieldsToUpdate.push('bank_name');
+            fieldsToUpdate.push("bank_name");
             updateData.bank_name = String(legacy.AcBank).trim();
           }
           if (isUsable(legacy.IFSCCode)) {
-            fieldsToUpdate.push('ifsc_code');
+            fieldsToUpdate.push("ifsc_code");
             updateData.ifsc_code = String(legacy.IFSCCode).trim().toUpperCase();
           }
           if (isUsable(legacy.AccHolder)) {
-            fieldsToUpdate.push('account_holder_name');
+            fieldsToUpdate.push("account_holder_name");
             updateData.account_holder_name = String(legacy.AccHolder).trim();
           }
         }
@@ -293,28 +343,28 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
         }
 
         // Build UPDATE query
-        const setClauses = fieldsToUpdate.map(f => `${f} = ?`).join(', ');
-        const values = fieldsToUpdate.map(f => updateData[f]);
+        const setClauses = fieldsToUpdate.map((f) => `${f} = ?`).join(", ");
+        const values = fieldsToUpdate.map((f) => updateData[f]);
 
         if (!dryRun) {
           await db.execute(
             `UPDATE employees SET ${setClauses}, updated_at = NOW() WHERE id = ?`,
-            [...values, employee.id]
+            [...values, employee.id],
           );
 
           // Audit log
           if (actorUserId) {
             await logSensitiveAction({
               actor_user_id: actorUserId,
-              action_type: 'EMPLOYEE_STATUTORY_DATA_SYNCED',
-              module_key: 'migration',
-              entity_type: 'employee',
+              action_type: "EMPLOYEE_STATUTORY_DATA_SYNCED",
+              module_key: "migration",
+              entity_type: "employee",
               entity_id: employee.id,
               employee_id: employee.id,
               change_summary: {
                 employee_code: employee.employee_code,
                 fields_updated: fieldsToUpdate,
-                source: 'db_bill.masjclrentry',
+                source: "db_bill.masjclrentry",
               },
             }).catch(() => {}); // Non-blocking
           }

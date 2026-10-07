@@ -60,41 +60,51 @@ async function main() {
        FROM auth_user au
        JOIN user_roles ur ON ur.user_id = au.id
        WHERE ur.role_key = 'super_admin' AND ur.active_status = 1 AND au.is_blocked = 0
-       ORDER BY au.id LIMIT 1`
+       ORDER BY au.id LIMIT 1`,
     );
     if (!actorRow) {
-      throw new Error("No super_admin auth_user row found to attribute migrated records to — resolve manually.");
+      throw new Error(
+        "No super_admin auth_user row found to attribute migrated records to — resolve manually.",
+      );
     }
-    console.log(`Attributing migrated rows to created_by = ${actorRow.id} (${actorRow.email}). Ctrl+C now if wrong.`);
+    console.log(
+      `Attributing migrated rows to created_by = ${actorRow.id} (${actorRow.email}). Ctrl+C now if wrong.`,
+    );
 
     const [invoiceRows] = await pool.query(
       `SELECT id, src_id, target_id, target_cost_centre_id, target_gst_type, target_apply_gst,
               src_category, src_finance_year, src_month, src_invoicedate,
               src_invoicedescription, src_invoicedeleteremarks, src_proforma_bill_no, src_bill_no,
               src_total, src_tax, src_igst, src_sgst, src_cgst, src_grnd, validation_status
-       FROM client_invoice_migration_staging WHERE validation_status = 'valid'`
+       FROM client_invoice_migration_staging WHERE validation_status = 'valid'`,
     );
     const [creditNoteRows] = await pool.query(
       `SELECT id, src_id, target_id, target_cost_centre_id, target_invoice_id, target_gst_type, target_apply_gst,
               src_category, src_finance_year, src_month, src_creditdate,
               src_creditdescription, src_credit_no, src_credit_approve,
               src_total, src_tax, src_igst, src_sgst, src_cgst, src_grnd, validation_status
-       FROM client_credit_note_migration_staging WHERE validation_status = 'valid'`
+       FROM client_credit_note_migration_staging WHERE validation_status = 'valid'`,
     );
 
-    console.log(`Loading ${invoiceRows.length} invoice rows and ${creditNoteRows.length} credit-note rows...`);
+    console.log(
+      `Loading ${invoiceRows.length} invoice rows and ${creditNoteRows.length} credit-note rows...`,
+    );
 
     const stats = await loadValidatedRows(
       loadDb,
       { invoiceRows, creditNoteRows },
-      { createdBy: actorRow.id }
+      { createdBy: actorRow.id },
     );
 
     const summarize = (label, results) => {
       const loaded = results.filter((r) => r.outcome === "loaded").length;
-      const already = results.filter((r) => r.outcome === "already_loaded").length;
+      const already = results.filter(
+        (r) => r.outcome === "already_loaded",
+      ).length;
       const failed = results.filter((r) => r.outcome === "failed");
-      console.log(`${label}: loaded=${loaded} already_loaded=${already} failed=${failed.length}`);
+      console.log(
+        `${label}: loaded=${loaded} already_loaded=${already} failed=${failed.length}`,
+      );
       for (const f of failed) {
         console.log(`  FAILED legacy_id=${f.legacyId}: ${f.error}`);
       }
@@ -102,10 +112,18 @@ async function main() {
     summarize("Invoices", stats.invoices);
     summarize("Credit notes", stats.creditNotes);
 
-    const [[invCount]] = await pool.query("SELECT COUNT(*) c FROM client_invoice");
-    const [[cnCount]] = await pool.query("SELECT COUNT(*) c FROM client_credit_note");
-    const [[invLineCount]] = await pool.query("SELECT COUNT(*) c FROM client_invoice_line");
-    const [[cnLineCount]] = await pool.query("SELECT COUNT(*) c FROM client_credit_note_line");
+    const [[invCount]] = await pool.query(
+      "SELECT COUNT(*) c FROM client_invoice",
+    );
+    const [[cnCount]] = await pool.query(
+      "SELECT COUNT(*) c FROM client_credit_note",
+    );
+    const [[invLineCount]] = await pool.query(
+      "SELECT COUNT(*) c FROM client_invoice_line",
+    );
+    const [[cnLineCount]] = await pool.query(
+      "SELECT COUNT(*) c FROM client_credit_note_line",
+    );
     console.log("Post-load real counts:", {
       client_invoice: invCount.c,
       client_invoice_line: invLineCount.c,

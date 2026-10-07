@@ -154,25 +154,28 @@ async function queryPeriodMetrics(
   );
 
   const r = rows[0] ?? {};
-  const walkin   = Number(r.total_walkin ?? 0);
+  const walkin = Number(r.total_walkin ?? 0);
   const selected = Number(r.selected ?? 0);
   return {
     walkin,
     selected,
-    rejected:           Number(r.rejected ?? 0),
-    waiting:            Number(r.waiting ?? 0),
+    rejected: Number(r.rejected ?? 0),
+    waiting: Number(r.waiting ?? 0),
     clientRoundPending: Number(r.client_round_pending ?? 0),
-    noShow:             Number(r.no_show ?? 0),
-    slaBreachCount:     Number(r.sla_breach ?? 0),
-    pending:            Number(r.pending ?? 0),
-    selectionPct:       fmtPct(selected, walkin),
-    avgWaitMinutes:     r.avg_wait != null ? Number(r.avg_wait) : null,
+    noShow: Number(r.no_show ?? 0),
+    slaBreachCount: Number(r.sla_breach ?? 0),
+    pending: Number(r.pending ?? 0),
+    selectionPct: fmtPct(selected, walkin),
+    avgWaitMinutes: r.avg_wait != null ? Number(r.avg_wait) : null,
   };
 }
 
 // -- process-wise FTD -------------------------------------------------------
 
-async function queryProcessFtd(branchName: string, forDate: string): Promise<ProcessRow[]> {
+async function queryProcessFtd(
+  branchName: string,
+  forDate: string,
+): Promise<ProcessRow[]> {
   const today = forDate;
   // Same alias widening as queryPeriodMetrics — and since several spellings now match,
   // GROUP BY can no longer include applied_for_branch itself (that would split one
@@ -222,27 +225,30 @@ async function queryProcessFtd(branchName: string, forDate: string): Promise<Pro
   );
 
   return rows.map((r) => {
-    const walkin   = Number(r.total_walkin ?? 0);
+    const walkin = Number(r.total_walkin ?? 0);
     const selected = Number(r.selected ?? 0);
     return {
-      branch:             branchName,
-      process:            String(r.process ?? "Unknown"),
+      branch: branchName,
+      process: String(r.process ?? "Unknown"),
       walkin,
       selected,
-      rejected:           Number(r.rejected ?? 0),
-      waiting:            Number(r.waiting ?? 0),
+      rejected: Number(r.rejected ?? 0),
+      waiting: Number(r.waiting ?? 0),
       clientRoundPending: Number(r.client_round_pending ?? 0),
-      noShow:             Number(r.no_show ?? 0),
-      pending:            Number(r.pending ?? 0),
-      selectionPct:       fmtPct(selected, walkin),
-      avgWaitMinutes:     r.avg_wait != null ? Number(r.avg_wait) : null,
+      noShow: Number(r.no_show ?? 0),
+      pending: Number(r.pending ?? 0),
+      selectionPct: fmtPct(selected, walkin),
+      avgWaitMinutes: r.avg_wait != null ? Number(r.avg_wait) : null,
     };
   });
 }
 
 // -- recruiter FTD ----------------------------------------------------------
 
-async function queryRecruiterFtd(branchName: string, forDate: string): Promise<RecruiterRow[]> {
+async function queryRecruiterFtd(
+  branchName: string,
+  forDate: string,
+): Promise<RecruiterRow[]> {
   const today = forDate;
   // Same alias widening + GROUP BY fix as queryProcessFtd above.
   const branchVariants = branchNameVariants(branchName);
@@ -283,25 +289,27 @@ async function queryRecruiterFtd(branchName: string, forDate: string): Promise<R
   );
 
   return rows.map((r) => {
-    const attended  = Number(r.attended ?? 0);
-    const selected  = Number(r.selected ?? 0);
-    const slaMet    = Number(r.sla_met ?? 0);
-    const pending   = Number(r.pending ?? 0);
-    const avgWait   = r.avg_wait != null ? Number(r.avg_wait) : null;
+    const attended = Number(r.attended ?? 0);
+    const selected = Number(r.selected ?? 0);
+    const slaMet = Number(r.sla_met ?? 0);
+    const pending = Number(r.pending ?? 0);
+    const avgWait = r.avg_wait != null ? Number(r.avg_wait) : null;
 
     let attention: "Stable" | "At Risk" | "Critical" = "Stable";
-    if (pending >= 3 || (avgWait !== null && avgWait > 180)) attention = "Critical";
-    else if (pending >= 1 || (avgWait !== null && avgWait > 90)) attention = "At Risk";
+    if (pending >= 3 || (avgWait !== null && avgWait > 180))
+      attention = "Critical";
+    else if (pending >= 1 || (avgWait !== null && avgWait > 90))
+      attention = "At Risk";
 
     return {
-      recruiter:     String(r.recruiter ?? "Unassigned"),
-      branch:        branchName,
-      sourced:       Number(r.sourced ?? 0),
+      recruiter: String(r.recruiter ?? "Unassigned"),
+      branch: branchName,
+      sourced: Number(r.sourced ?? 0),
       attended,
-      slaPct:        fmtPct(slaMet, attended),
-      selectionPct:  fmtPct(selected, attended),
+      slaPct: fmtPct(slaMet, attended),
+      selectionPct: fmtPct(selected, attended),
       avgWaitMinutes: avgWait,
-      pendingCount:  pending,
+      pendingCount: pending,
       attention,
     };
   });
@@ -358,8 +366,11 @@ function buildInterventions(
 
 // -- public API -------------------------------------------------------------
 
-export async function computeBranchReport(branchName: string, forDate?: string): Promise<BranchDailyReport> {
-  const today     = forDate || todayIso();
+export async function computeBranchReport(
+  branchName: string,
+  forDate?: string,
+): Promise<BranchDailyReport> {
+  const today = forDate || todayIso();
   const weekStart = weekStartIso();
   const monthStart = monthStartIso();
 
@@ -371,7 +382,12 @@ export async function computeBranchReport(branchName: string, forDate?: string):
     queryRecruiterFtd(branchName, today),
   ]);
 
-  const interventions = buildInterventions(branchName, ftd, processFtd, recruiterFtd);
+  const interventions = buildInterventions(
+    branchName,
+    ftd,
+    processFtd,
+    recruiterFtd,
+  );
 
   return { branchName, ftd, wtd, mtd, processFtd, recruiterFtd, interventions };
 }

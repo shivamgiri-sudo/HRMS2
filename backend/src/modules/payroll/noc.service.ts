@@ -22,16 +22,20 @@ export interface NocRecord {
 }
 
 /** Check whether NOC is required for an employee. Returns reason or null. */
-export async function nocRequired(employeeId: string): Promise<{ required: boolean; reason: string | null }> {
+export async function nocRequired(
+  employeeId: string,
+): Promise<{ required: boolean; reason: string | null }> {
   // Check active employment status
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employment_status FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
-  const emp = (empRows[0] as any);
+  const emp = empRows[0] as any;
   if (!emp) return { required: false, reason: null };
 
-  const isInactive = !["active", "Active"].includes(emp.employment_status ?? "");
+  const isInactive = !["active", "Active"].includes(
+    emp.employment_status ?? "",
+  );
   if (!isInactive) return { required: false, reason: null };
 
   // Check pending FNF
@@ -39,9 +43,9 @@ export async function nocRequired(employeeId: string): Promise<{ required: boole
     `SELECT id, net_payable, status FROM full_final_calculation
      WHERE employee_id = ? AND status NOT IN ('paid', 'cancelled')
      ORDER BY created_at DESC LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
-  const ff = (ffRows[0] as any);
+  const ff = ffRows[0] as any;
   if (ff && Number(ff.net_payable ?? 0) > 0) {
     return { required: true, reason: "FNF settlement pending" };
   }
@@ -63,9 +67,9 @@ export async function nocRequired(employeeId: string): Promise<{ required: boole
      JOIN salary_prep_line spl ON spl.run_id = spr.id AND spl.employee_id = ?
      WHERE LOWER(spr.status) NOT IN (${CLOSED_RUN_STATUSES_SQL}, 'cancelled')
      ORDER BY spr.run_month DESC LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
-  const run = (runRows[0] as any);
+  const run = runRows[0] as any;
   if (run) {
     return { required: true, reason: `Salary pending for ${run.run_month}` };
   }
@@ -74,13 +78,17 @@ export async function nocRequired(employeeId: string): Promise<{ required: boole
 }
 
 /** Check whether a validated NOC exists for this employee + context */
-export async function nocValidated(employeeId: string, nocType: "salary" | "fnf", runMonth?: string): Promise<boolean> {
+export async function nocValidated(
+  employeeId: string,
+  nocType: "salary" | "fnf",
+  runMonth?: string,
+): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM payroll_noc
      WHERE employee_id = ? AND noc_type = ? AND upload_status = 'validated'
      ${runMonth ? "AND run_month = ?" : ""}
      LIMIT 1`,
-    runMonth ? [employeeId, nocType, runMonth] : [employeeId, nocType]
+    runMonth ? [employeeId, nocType, runMonth] : [employeeId, nocType],
   );
   return (rows as any[]).length > 0;
 }
@@ -102,8 +110,16 @@ export async function createNoc(params: {
      ON DUPLICATE KEY UPDATE
        upload_status = 'uploaded', uploaded_by = VALUES(uploaded_by), uploaded_at = NOW(),
        doc_path = VALUES(doc_path), doc_original_name = VALUES(doc_original_name)`,
-    [id, params.employeeId, params.runMonth ?? null, params.ffCalculationId ?? null,
-     params.nocType, params.uploadedBy, params.docPath, params.docOriginalName]
+    [
+      id,
+      params.employeeId,
+      params.runMonth ?? null,
+      params.ffCalculationId ?? null,
+      params.nocType,
+      params.uploadedBy,
+      params.docPath,
+      params.docOriginalName,
+    ],
   );
   return getNoc(id) as Promise<NocRecord>;
 }
@@ -119,7 +135,7 @@ export async function getNoc(id: string): Promise<NocRecord | null> {
      LEFT JOIN employees up ON up.id = n.uploaded_by
      LEFT JOIN employees vp ON vp.id = n.validated_by
      WHERE n.id = ? LIMIT 1`,
-    [id]
+    [id],
   );
   return ((rows[0] as any) ?? null) as NocRecord | null;
 }
@@ -132,10 +148,22 @@ export async function listNocs(filters: {
 }): Promise<NocRecord[]> {
   const conds: string[] = [];
   const params: unknown[] = [];
-  if (filters.employeeId) { conds.push("n.employee_id = ?"); params.push(filters.employeeId); }
-  if (filters.uploadStatus) { conds.push("n.upload_status = ?"); params.push(filters.uploadStatus); }
-  if (filters.nocType) { conds.push("n.noc_type = ?"); params.push(filters.nocType); }
-  if (filters.runMonth) { conds.push("n.run_month = ?"); params.push(filters.runMonth); }
+  if (filters.employeeId) {
+    conds.push("n.employee_id = ?");
+    params.push(filters.employeeId);
+  }
+  if (filters.uploadStatus) {
+    conds.push("n.upload_status = ?");
+    params.push(filters.uploadStatus);
+  }
+  if (filters.nocType) {
+    conds.push("n.noc_type = ?");
+    params.push(filters.nocType);
+  }
+  if (filters.runMonth) {
+    conds.push("n.run_month = ?");
+    params.push(filters.runMonth);
+  }
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -147,21 +175,29 @@ export async function listNocs(filters: {
      LEFT JOIN employees vp ON vp.id = n.validated_by
      ${where}
      ORDER BY n.created_at DESC LIMIT 500`,
-    params
+    params,
   );
   return rows as NocRecord[];
 }
 
-export async function validateNoc(id: string, validatedBy: string, note?: string): Promise<void> {
+export async function validateNoc(
+  id: string,
+  validatedBy: string,
+  note?: string,
+): Promise<void> {
   await db.execute(
     `UPDATE payroll_noc SET upload_status = 'validated', validated_by = ?, validated_at = NOW(), validation_note = ? WHERE id = ?`,
-    [validatedBy, note ?? null, id]
+    [validatedBy, note ?? null, id],
   );
 }
 
-export async function rejectNoc(id: string, rejectedBy: string, reason: string): Promise<void> {
+export async function rejectNoc(
+  id: string,
+  rejectedBy: string,
+  reason: string,
+): Promise<void> {
   await db.execute(
     `UPDATE payroll_noc SET upload_status = 'rejected', validated_by = ?, validated_at = NOW(), rejection_reason = ? WHERE id = ?`,
-    [rejectedBy, reason, id]
+    [rejectedBy, reason, id],
   );
 }

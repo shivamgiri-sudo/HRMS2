@@ -21,7 +21,10 @@ import {
 } from "../src/shared/dashboardAccessRegistry.js";
 import { WORKFORCE_ROLE_CATALOG } from "../src/shared/workforceRoleCatalog.js";
 
-const OUT = resolve(import.meta.dirname, "../sql/600_role_dashboard_page_grants.sql");
+const OUT = resolve(
+  import.meta.dirname,
+  "../sql/600_role_dashboard_page_grants.sql",
+);
 
 function main() {
   const rows: Array<{ role: string; page: string }> = [];
@@ -35,13 +38,17 @@ function main() {
   // Roles absent from workforce_role_catalog are skipped: user_roles.role_key is FK-bound
   // to that table, so a grant for an unassignable key is a dead row.
   for (const role of WORKFORCE_ROLE_CATALOG) {
-    for (const code of Object.keys(DASHBOARD_ACCESS_REGISTRY) as DashboardCode[]) {
+    for (const code of Object.keys(
+      DASHBOARD_ACCESS_REGISTRY,
+    ) as DashboardCode[]) {
       if (!canAccessDashboard(code, [role])) continue;
       rows.push({ role, page: DASHBOARD_ACCESS_REGISTRY[code].pageCode });
     }
   }
 
-  rows.sort((a, b) => a.role.localeCompare(b.role) || a.page.localeCompare(b.page));
+  rows.sort(
+    (a, b) => a.role.localeCompare(b.role) || a.page.localeCompare(b.page),
+  );
 
   // Deliberately does NOT set can_export. An earlier revision derived it from
   // registry.permissions.export, which on a dry run turned out to grant export rights to
@@ -80,7 +87,9 @@ ON DUPLICATE KEY UPDATE
 
   writeFileSync(OUT, sql, "utf8");
   console.log(`Wrote ${rows.length} grants to ${OUT}`);
-  console.log(`Roles covered: ${[...new Set(rows.map((r) => r.role))].sort().join(", ")}`);
+  console.log(
+    `Roles covered: ${[...new Set(rows.map((r) => r.role))].sort().join(", ")}`,
+  );
 }
 
 main();

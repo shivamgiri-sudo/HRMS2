@@ -17,9 +17,18 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { leaveService } from "../leave/leave.service.js";
 import {
-  loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
-  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeDate,
-  type ImportOutcome, type ApplyOutcome, type BatchRecord,
+  loadStagedRows,
+  resolveEmployees,
+  resolveSingleBranch,
+  linkRowToEntity,
+  markRowFailed,
+  markPendingApproval,
+  lockEntities,
+  BulkUploadError,
+  normalizeDate,
+  type ImportOutcome,
+  type ApplyOutcome,
+  type BatchRecord,
 } from "./bulk-approval.service.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 import { withBulkLockRetry } from "./lock-retry.js";
@@ -48,9 +57,13 @@ export async function importLeaveBatch(
   userId: string,
 ): Promise<ImportOutcome> {
   const rows = await loadStagedRows(batchId);
-  if (rows.length === 0) throw new BulkUploadError("This batch has no rows left to import.", 400);
+  if (rows.length === 0)
+    throw new BulkUploadError("This batch has no rows left to import.", 400);
 
-  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""), { includeInactive: true });
+  const employees = await resolveEmployees(
+    rows.map((r) => r.data.employee_code ?? ""),
+    { includeInactive: true },
+  );
   const leaveTypes = await loadLeaveTypes();
   const errors: string[] = [];
   let staged = 0;
@@ -69,16 +82,21 @@ export async function importLeaveBatch(
     const emp = employees.get((d.employee_code ?? "").toUpperCase());
     const leaveType = leaveTypes.get((d.leave_code ?? "").toUpperCase());
     if (!d.employee_code) return "employee_code is required";
-    if (!emp) return `employee_code "${d.employee_code}" is not in the employee master`;
+    if (!emp)
+      return `employee_code "${d.employee_code}" is not in the employee master`;
     if (!d.leave_code) return "leave_code is required";
     if (!leaveType) {
-      return `leave_code "${d.leave_code}" is not in leave_type_master — valid codes are ` +
-        `${[...leaveTypes.keys()].sort().join(", ")}`;
+      return (
+        `leave_code "${d.leave_code}" is not in leave_type_master — valid codes are ` +
+        `${[...leaveTypes.keys()].sort().join(", ")}`
+      );
     }
     const from = normalizeDate(d.from_date);
     const to = normalizeDate(d.to_date);
-    if (!from) return `from_date must be a date (YYYY-MM-DD or DD-MM-YYYY), got "${d.from_date}"`;
-    if (!to) return `to_date must be a date (YYYY-MM-DD or DD-MM-YYYY), got "${d.to_date}"`;
+    if (!from)
+      return `from_date must be a date (YYYY-MM-DD or DD-MM-YYYY), got "${d.from_date}"`;
+    if (!to)
+      return `to_date must be a date (YYYY-MM-DD or DD-MM-YYYY), got "${d.to_date}"`;
     d.from_date = from;
     d.to_date = to;
     if (d.to_date < d.from_date) return "to_date must be on or after from_date";
@@ -88,7 +106,9 @@ export async function importLeaveBatch(
     }
     const calendarDays =
       (new Date(`${d.to_date}T00:00:00`).getTime() -
-        new Date(`${d.from_date}T00:00:00`).getTime()) / 86_400_000 + 1;
+        new Date(`${d.from_date}T00:00:00`).getTime()) /
+        86_400_000 +
+      1;
     if (days > calendarDays) {
       return `total_days ${days} exceeds the ${calendarDays} calendar day(s) between from_date and to_date`;
     }
@@ -224,7 +244,8 @@ export async function applyLeaveBatch(
 
   const byEmployee = new Map<string, LinkedRow[]>();
   for (const row of rows) {
-    const empId = empByLeaveId.get(row.created_entity_id) ?? `__unresolved_${row.row_no}`;
+    const empId =
+      empByLeaveId.get(row.created_entity_id) ?? `__unresolved_${row.row_no}`;
     if (!byEmployee.has(empId)) byEmployee.set(empId, []);
     byEmployee.get(empId)!.push(row);
   }
@@ -338,7 +359,12 @@ export async function reapplyLeaveBatch(
       ORDER BY ubr.row_no ASC`,
     [batch.id, ENTITY_TYPE],
   );
-  const rows = rawRows as Array<{ id: string; row_no: number; created_entity_id: string; employee_id: string }>;
+  const rows = rawRows as Array<{
+    id: string;
+    row_no: number;
+    created_entity_id: string;
+    employee_id: string;
+  }>;
 
   const byEmployee = new Map<string, typeof rows>();
   for (const row of rows) {
@@ -449,7 +475,9 @@ export async function rejectLeaveBatch(
     } else {
       failed++;
       const reason = outcome.reason;
-      errors.push(`Row ${rows[i].row_no}: ${(reason as Error)?.message ?? String(reason)}`);
+      errors.push(
+        `Row ${rows[i].row_no}: ${(reason as Error)?.message ?? String(reason)}`,
+      );
     }
   }
   return { applied, failed, errors };

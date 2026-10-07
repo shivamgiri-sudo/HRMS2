@@ -7,7 +7,7 @@ const IS_PROD = process.env.NODE_ENV === "production";
 export function notFoundHandler(req: Request, res: Response) {
   return res.status(404).json({
     success: false,
-    message: `Route not found: ${req.method} ${req.originalUrl}`
+    message: `Route not found: ${req.method} ${req.originalUrl}`,
   });
 }
 
@@ -15,7 +15,7 @@ export function errorHandler(
   error: unknown,
   _req: Request,
   res: Response,
-  _next: NextFunction
+  _next: NextFunction,
 ) {
   console.error("API Error:", error);
 
@@ -35,24 +35,32 @@ export function errorHandler(
         ? "The file is too large for this upload. Reduce its size, or split it and upload the parts separately."
         : code === "LIMIT_UNEXPECTED_FILE"
           ? `The upload sent a file in an unexpected field${
-              (error as Error & { field?: string }).field ? ` ("${(error as Error & { field?: string }).field}")` : ""
+              (error as Error & { field?: string }).field
+                ? ` ("${(error as Error & { field?: string }).field}")`
+                : ""
             }. Attach it in the field this screen expects.`
           : code === "LIMIT_FILE_COUNT"
             ? "Too many files were attached for this upload."
             : error.message || "The uploaded file could not be read.";
-    return res.status(400).json({ success: false, errorCode: code ?? null, message });
+    return res
+      .status(400)
+      .json({ success: false, errorCode: code ?? null, message });
   }
 
   if (error instanceof ZodError) {
     return res.status(400).json({
       success: false,
       message: "Validation failed",
-      errors: error.flatten().fieldErrors
+      errors: error.flatten().fieldErrors,
     });
   }
 
   if (error instanceof Error) {
-    const operationalError = error as Error & { statusCode?: number; code?: string; retryAfter?: number };
+    const operationalError = error as Error & {
+      statusCode?: number;
+      code?: string;
+      retryAfter?: number;
+    };
 
     // db/mysql.ts's circuit breaker throws a plain Error with code=CIRCUIT_BREAKER_OPEN
     // and retryAfter, no statusCode — so it fell through to the generic 500 mask below
@@ -70,7 +78,7 @@ export function errorHandler(
         success: false,
         errorCode: operationalError.code,
         retryAfter,
-        message: `The system is briefly reconnecting to the database. Please try again in ${retryAfter} second${retryAfter === 1 ? "" : "s"}.`
+        message: `The system is briefly reconnecting to the database. Please try again in ${retryAfter} second${retryAfter === 1 ? "" : "s"}.`,
       });
     }
 
@@ -80,7 +88,7 @@ export function errorHandler(
       return res.status(statusCode).json({
         success: false,
         errorCode: operationalError.code ?? null,
-        message: error.message
+        message: error.message,
       });
     }
     // An explicit 5xx statusCode means the code chose that status and wrote that
@@ -93,7 +101,7 @@ export function errorHandler(
       return res.status(statusCode).json({
         success: false,
         errorCode: operationalError.code ?? null,
-        message: error.message
+        message: error.message,
       });
     }
     // Unexpected 500: never leak internals (DB schema, stack traces) in production,
@@ -105,7 +113,7 @@ export function errorHandler(
       reference,
       message: IS_PROD
         ? `An unexpected server error occurred. Please quote reference ${reference} if you contact HR.`
-        : error.message
+        : error.message,
     });
   }
 
@@ -116,6 +124,6 @@ export function errorHandler(
     reference,
     message: IS_PROD
       ? `An unexpected server error occurred. Please quote reference ${reference} if you contact HR.`
-      : "Unexpected server error"
+      : "Unexpected server error",
   });
 }

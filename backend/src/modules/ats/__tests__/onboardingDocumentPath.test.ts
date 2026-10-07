@@ -23,7 +23,9 @@ import {
  */
 
 const FIXTURE = "11111111-2222-3333-4444-555555555555.jpg";
-const WINDOWS_PATH = String.raw`C:\Users\ADMIN\Desktop\HRMS2-latest\backend\private-storage\onboarding-documents` + `\\${FIXTURE}`;
+const WINDOWS_PATH =
+  String.raw`C:\Users\ADMIN\Desktop\HRMS2-latest\backend\private-storage\onboarding-documents` +
+  `\\${FIXTURE}`;
 const DIST_PATH = `/var/www/HRMS2/backend/dist/private-storage/onboarding-documents/${FIXTURE}`;
 
 let createdDir = false;
@@ -45,14 +47,23 @@ afterAll(() => {
   const target = path.join(ONBOARDING_DOCUMENT_ROOT, FIXTURE);
   if (createdFile && fs.existsSync(target)) fs.unlinkSync(target);
   if (createdDir && fs.existsSync(ONBOARDING_DOCUMENT_ROOT)) {
-    try { fs.rmdirSync(ONBOARDING_DOCUMENT_ROOT); } catch { /* other documents present */ }
+    try {
+      fs.rmdirSync(ONBOARDING_DOCUMENT_ROOT);
+    } catch {
+      /* other documents present */
+    }
   }
 });
 
 describe("onboarding document path resolution", () => {
   it("recovers a document stored with a Windows developer path", () => {
-    const resolved = resolveOnboardingDocumentFile(WINDOWS_PATH.replace("\\\\", "\\"));
-    expect(resolved, "a foreign absolute path must still find the file").not.toBeNull();
+    const resolved = resolveOnboardingDocumentFile(
+      WINDOWS_PATH.replace("\\\\", "\\"),
+    );
+    expect(
+      resolved,
+      "a foreign absolute path must still find the file",
+    ).not.toBeNull();
     expect(fs.existsSync(String(resolved))).toBe(true);
   });
 
@@ -68,7 +79,11 @@ describe("onboarding document path resolution", () => {
   });
 
   it("returns null for a document that genuinely is not on disk", () => {
-    expect(resolveOnboardingDocumentFile("/var/www/HRMS2/backend/private-storage/onboarding-documents/nope.jpg")).toBeNull();
+    expect(
+      resolveOnboardingDocumentFile(
+        "/var/www/HRMS2/backend/private-storage/onboarding-documents/nope.jpg",
+      ),
+    ).toBeNull();
     expect(onboardingDocumentExists("")).toBe(false);
     expect(onboardingDocumentExists(null)).toBe(false);
   });

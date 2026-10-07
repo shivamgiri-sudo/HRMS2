@@ -39,21 +39,33 @@ let authUser: { id: string; role: string; roles: string[] } = {
 };
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    (req as express.Request & { authUser: typeof authUser }).authUser = authUser;
+  requireAuth: (
+    req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    (req as express.Request & { authUser: typeof authUser }).authUser =
+      authUser;
     next();
   },
 }));
 
-vi.mock("../exit.controller.js", () => ({ exitController: { createExitRequest: vi.fn() } }));
+vi.mock("../exit.controller.js", () => ({
+  exitController: { createExitRequest: vi.fn() },
+}));
 const { updateExitStatus } = vi.hoisted(() => ({ updateExitStatus: vi.fn() }));
-vi.mock("../exit.service.js", () => ({ exitService: { updateExitStatus, getExitRequest: vi.fn() } }));
+vi.mock("../exit.service.js", () => ({
+  exitService: { updateExitStatus, getExitRequest: vi.fn() },
+}));
 
 const { getEmployeeForUser, hasRole } = vi.hoisted(() => ({
   getEmployeeForUser: vi.fn().mockResolvedValue(null),
   hasRole: vi.fn().mockResolvedValue(true), // admin/hr/manager privileged path by default
 }));
-vi.mock("../../../shared/accessGuard.js", () => ({ getEmployeeForUser, hasRole }));
+vi.mock("../../../shared/accessGuard.js", () => ({
+  getEmployeeForUser,
+  hasRole,
+}));
 
 const { resignationRouter } = await import("../resignation.routes.js");
 
@@ -75,7 +87,9 @@ function mockStatusThenUpdate(currentStatus: string) {
 
 beforeEach(() => {
   dbExecute.mockReset();
-  updateExitStatus.mockReset().mockResolvedValue({ id: EXIT_ID, status: "accepted" });
+  updateExitStatus
+    .mockReset()
+    .mockResolvedValue({ id: EXIT_ID, status: "accepted" });
   getEmployeeForUser.mockReset().mockResolvedValue(null);
   hasRole.mockReset().mockResolvedValue(true);
   authUser = { id: ACTOR_ID, role: "hr", roles: ["hr"] };
@@ -94,7 +108,9 @@ describe("POST /:exitId/accept", () => {
   it("409s an already-'closed' request instead of silently reopening it", async () => {
     mockStatusThenUpdate("closed");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/accept`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/accept`,
+    );
 
     expect(res.status).toBe(409);
     expect(updateExitStatus).not.toHaveBeenCalled();
@@ -103,7 +119,9 @@ describe("POST /:exitId/accept", () => {
   it("409s an already-'exited' request — the exact split-state bug this closes", async () => {
     mockStatusThenUpdate("exited");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/accept`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/accept`,
+    );
 
     expect(res.status).toBe(409);
     expect(updateExitStatus).not.toHaveBeenCalled();
@@ -112,16 +130,26 @@ describe("POST /:exitId/accept", () => {
   it("succeeds from 'manager_review' and passes the read status as expectedStatus for race safety", async () => {
     mockStatusThenUpdate("manager_review");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/accept`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/accept`,
+    );
 
     expect(res.status).toBe(200);
-    expect(updateExitStatus).toHaveBeenCalledWith(EXIT_ID, "accepted", "Resignation accepted", ACTOR_ID, "manager_review");
+    expect(updateExitStatus).toHaveBeenCalledWith(
+      EXIT_ID,
+      "accepted",
+      "Resignation accepted",
+      ACTOR_ID,
+      "manager_review",
+    );
   });
 
   it("404s when the exit request does not exist, before any transition check", async () => {
     dbExecute.mockResolvedValueOnce([[], []]);
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/accept`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/accept`,
+    );
 
     expect(res.status).toBe(404);
     expect(updateExitStatus).not.toHaveBeenCalled();
@@ -132,7 +160,9 @@ describe("POST /:exitId/mark-clearance-pending", () => {
   it("409s from a status the FSM does not allow (draft)", async () => {
     mockStatusThenUpdate("draft");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/mark-clearance-pending`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/mark-clearance-pending`,
+    );
 
     expect(res.status).toBe(409);
     expect(res.body.message).toContain("draft → clearance_pending");
@@ -142,12 +172,20 @@ describe("POST /:exitId/mark-clearance-pending", () => {
   it("succeeds from 'accepted' and writes the exit_approval_log entry it was missing", async () => {
     mockStatusThenUpdate("accepted");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/mark-clearance-pending`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/mark-clearance-pending`,
+    );
 
     expect(res.status).toBe(200);
     const sqls = dbExecute.mock.calls.map((c) => String(c[0]));
-    expect(sqls.some((s) => s.includes("UPDATE exit_request SET status = 'clearance_pending'"))).toBe(true);
-    expect(sqls.some((s) => s.includes("INSERT INTO exit_approval_log"))).toBe(true);
+    expect(
+      sqls.some((s) =>
+        s.includes("UPDATE exit_request SET status = 'clearance_pending'"),
+      ),
+    ).toBe(true);
+    expect(sqls.some((s) => s.includes("INSERT INTO exit_approval_log"))).toBe(
+      true,
+    );
   });
 });
 
@@ -155,7 +193,9 @@ describe("POST /:exitId/mark-fnf-pending", () => {
   it("409s when clearance_pending was skipped", async () => {
     mockStatusThenUpdate("accepted");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/mark-fnf-pending`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/mark-fnf-pending`,
+    );
 
     expect(res.status).toBe(409);
     expect(dbExecute).toHaveBeenCalledTimes(1);
@@ -164,12 +204,20 @@ describe("POST /:exitId/mark-fnf-pending", () => {
   it("succeeds from 'clearance_pending' and writes the audit log", async () => {
     mockStatusThenUpdate("clearance_pending");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/mark-fnf-pending`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/mark-fnf-pending`,
+    );
 
     expect(res.status).toBe(200);
     const sqls = dbExecute.mock.calls.map((c) => String(c[0]));
-    expect(sqls.some((s) => s.includes("UPDATE exit_request SET status = 'fnf_pending'"))).toBe(true);
-    expect(sqls.some((s) => s.includes("INSERT INTO exit_approval_log"))).toBe(true);
+    expect(
+      sqls.some((s) =>
+        s.includes("UPDATE exit_request SET status = 'fnf_pending'"),
+      ),
+    ).toBe(true);
+    expect(sqls.some((s) => s.includes("INSERT INTO exit_approval_log"))).toBe(
+      true,
+    );
   });
 });
 
@@ -177,7 +225,9 @@ describe("POST /:exitId/close", () => {
   it("409s when an exit still in 'draft' is closed directly (the exact gap this fix closes)", async () => {
     mockStatusThenUpdate("draft");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/close`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/close`,
+    );
 
     expect(res.status).toBe(409);
     expect(dbExecute).toHaveBeenCalledTimes(1);
@@ -186,7 +236,9 @@ describe("POST /:exitId/close", () => {
   it("succeeds from 'fnf_pending', the terminal step of the new chain", async () => {
     mockStatusThenUpdate("fnf_pending");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/close`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/close`,
+    );
 
     expect(res.status).toBe(200);
   });
@@ -194,7 +246,9 @@ describe("POST /:exitId/close", () => {
   it("404s when the exit request does not exist, before any transition check", async () => {
     dbExecute.mockResolvedValueOnce([[], []]);
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/close`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/close`,
+    );
 
     expect(res.status).toBe(404);
     expect(dbExecute).toHaveBeenCalledTimes(1);
@@ -205,7 +259,9 @@ describe("POST /:exitId/withdraw", () => {
   it("409s an already-'exited' request — cannot withdraw what already concluded", async () => {
     mockStatusThenUpdate("exited");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/withdraw`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/withdraw`,
+    );
 
     expect(res.status).toBe(409);
   });
@@ -213,7 +269,9 @@ describe("POST /:exitId/withdraw", () => {
   it("409s an already-'closed' request", async () => {
     mockStatusThenUpdate("closed");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/withdraw`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/withdraw`,
+    );
 
     expect(res.status).toBe(409);
   });
@@ -221,7 +279,9 @@ describe("POST /:exitId/withdraw", () => {
   it("succeeds from 'submitted', mirroring 'revoked's allowed source states", async () => {
     mockStatusThenUpdate("submitted");
 
-    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/withdraw`);
+    const res = await request(app()).post(
+      `/api/exit/resignation/${EXIT_ID}/withdraw`,
+    );
 
     expect(res.status).toBe(200);
   });

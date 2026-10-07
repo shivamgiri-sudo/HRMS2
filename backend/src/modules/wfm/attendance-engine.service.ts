@@ -1,19 +1,28 @@
 // backend/src/modules/wfm/attendance-engine.service.ts
-import { randomUUID } from 'crypto';
-import { halfDayAttendanceTarget, halfDayLwpValue } from "../../shared/halfDayLeave.js";
-import { db } from '../../db/mysql.js';
-import { EMPLOYMENT_END_DATE_SELECT } from '../payroll/employment-end-date.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { toIST, minutesOfDay } from '../../shared/timezone.js';
-import { logger } from '../../logger.js';
+import { randomUUID } from "crypto";
+import {
+  halfDayAttendanceTarget,
+  halfDayLwpValue,
+} from "../../shared/halfDayLeave.js";
+import { db } from "../../db/mysql.js";
+import { EMPLOYMENT_END_DATE_SELECT } from "../payroll/employment-end-date.js";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { toIST, minutesOfDay } from "../../shared/timezone.js";
+import { logger } from "../../logger.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type AttendanceSource = 'dialler' | 'biometric';
+export type AttendanceSource = "dialler" | "biometric";
 export type AttendanceStatus =
-  | 'present' | 'half_day' | 'absent'
-  | 'leave_approved' | 'holiday' | 'week_off' | 'unreconciled'
-  | 'missing_punch' | 'week_off_worked';
+  | "present"
+  | "half_day"
+  | "absent"
+  | "leave_approved"
+  | "holiday"
+  | "week_off"
+  | "unreconciled"
+  | "missing_punch"
+  | "week_off_worked";
 
 export interface AttendanceRuleConfig {
   id: string;
@@ -118,10 +127,10 @@ export interface ShiftWindowInfo {
 
 export function isCrossMidnightShift(
   shiftStartTime: string | null | undefined,
-  shiftEndTime: string | null | undefined
+  shiftEndTime: string | null | undefined,
 ): boolean {
-  const start = String(shiftStartTime ?? '').trim();
-  const end = String(shiftEndTime ?? '').trim();
+  const start = String(shiftStartTime ?? "").trim();
+  const end = String(shiftEndTime ?? "").trim();
   return Boolean(start && end && end < start);
 }
 
@@ -140,7 +149,7 @@ export function prevIstDate(date: string): string {
 export function buildShiftWindowInfo(
   date: string,
   shiftStartTime: string | null | undefined,
-  shiftEndTime: string | null | undefined
+  shiftEndTime: string | null | undefined,
 ): ShiftWindowInfo {
   const isNightShift = isCrossMidnightShift(shiftStartTime, shiftEndTime);
   return {
@@ -165,7 +174,7 @@ export function buildShiftWindowInfo(
  *   apr_validated_by_cosec — APR first; when APR falls short of a full day the biometric
  *                            reading is classified too and the better of the two is used.
  */
-export type AttendanceLogic = 'apr' | 'cosec' | 'apr_validated_by_cosec';
+export type AttendanceLogic = "apr" | "cosec" | "apr_validated_by_cosec";
 
 /** Ordering used by the tally: a better-evidenced day wins. */
 const STATUS_RANK: Partial<Record<AttendanceStatus, number>> = {
@@ -180,16 +189,21 @@ function statusRank(status: AttendanceStatus | null): number {
 }
 
 // Legacy regex fallback — used when apr_eligibility_config table is empty.
-export function isOperationsExecutiveByRegex(departmentName: string, designationName: string): boolean {
+export function isOperationsExecutiveByRegex(
+  departmentName: string,
+  designationName: string,
+): boolean {
   const department = departmentName.trim().toLowerCase();
   const designation = designationName.trim().toLowerCase();
-  return (department === 'operations' || department === 'operation')
-    && /^executive(?:\s*-\s*.+)?$/.test(designation);
+  return (
+    (department === "operations" || department === "operation") &&
+    /^executive(?:\s*-\s*.+)?$/.test(designation)
+  );
 }
 
 function isOperationsDepartmentName(departmentName: string): boolean {
   const department = departmentName.trim().toLowerCase();
-  return department === 'operations' || department === 'operation';
+  return department === "operations" || department === "operation";
 }
 
 // G9: Read a feature flag from attendance_feature_config. Returns the raw string or null.
@@ -197,7 +211,7 @@ async function getFeatureFlag(key: string): Promise<string | null> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT config_value FROM attendance_feature_config WHERE config_key = ? LIMIT 1`,
-      [key]
+      [key],
     );
     return (rows[0] as any)?.config_value ?? null;
   } catch {
@@ -205,10 +219,13 @@ async function getFeatureFlag(key: string): Promise<string | null> {
   }
 }
 
-async function getFeatureFlagBool(key: string, defaultVal = false): Promise<boolean> {
+async function getFeatureFlagBool(
+  key: string,
+  defaultVal = false,
+): Promise<boolean> {
   const v = await getFeatureFlag(key);
   if (v === null) return defaultVal;
-  return v === '1' || v.toLowerCase() === 'true';
+  return v === "1" || v.toLowerCase() === "true";
 }
 
 /** Half-day floor used when none is configured, or when the configured value is unusable. */
@@ -231,18 +248,19 @@ export const DEFAULT_HALF_DAY_FLOOR_MINUTES = 240;
  * used inside a map or loop without a query per row.
  */
 export async function resolveHalfDayFloorMinutes(
-  key: 'netlogin_half_day_floor_minutes' | 'biometric_half_day_floor_minutes',
+  key: "netlogin_half_day_floor_minutes" | "biometric_half_day_floor_minutes",
 ): Promise<number> {
   const raw = await getFeatureFlag(key);
-  if (raw === null || String(raw).trim() === '') return DEFAULT_HALF_DAY_FLOOR_MINUTES;
+  if (raw === null || String(raw).trim() === "")
+    return DEFAULT_HALF_DAY_FLOOR_MINUTES;
 
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     logger.error(
       { key, configuredValue: raw, applied: DEFAULT_HALF_DAY_FLOOR_MINUTES },
       `[attendance] ${key} is not a usable number of minutes — refusing it and applying ` +
-      `${DEFAULT_HALF_DAY_FLOOR_MINUTES}. Attendance is being classified against the default, ` +
-      `not against this setting.`,
+        `${DEFAULT_HALF_DAY_FLOOR_MINUTES}. Attendance is being classified against the default, ` +
+        `not against this setting.`,
     );
     return DEFAULT_HALF_DAY_FLOOR_MINUTES;
   }
@@ -264,10 +282,11 @@ export async function resolveHalfDayFloorMinutes(
 export function classifyOperationsNetLogin(
   netLoginMinutes: number,
   halfDayFloor: number = DEFAULT_HALF_DAY_FLOOR_MINUTES,
-): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
-  if (netLoginMinutes >= 480) return { status: 'present', lwpValue: 0.0 };
-  if (netLoginMinutes >= halfDayFloor) return { status: 'half_day', lwpValue: 0.5 };
-  return { status: 'absent', lwpValue: 1.0 };
+): { status: "present" | "half_day" | "absent"; lwpValue: number } {
+  if (netLoginMinutes >= 480) return { status: "present", lwpValue: 0.0 };
+  if (netLoginMinutes >= halfDayFloor)
+    return { status: "half_day", lwpValue: 0.5 };
+  return { status: "absent", lwpValue: 1.0 };
 }
 
 // ── Per-employee attendance exceptions (migration 1652) ──────────────────────
@@ -284,11 +303,13 @@ export const COSEC_DEFAULT_FULL_DAY_MINUTES = 540;
 export function classifyCosecMinutes(
   biometricMinutes: number,
   halfDayFloor = 240,
-  fullDayMinutes = COSEC_DEFAULT_FULL_DAY_MINUTES
-): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
-  if (biometricMinutes >= fullDayMinutes) return { status: 'present', lwpValue: 0.0 };
-  if (biometricMinutes >= halfDayFloor) return { status: 'half_day', lwpValue: 0.5 };
-  return { status: 'absent', lwpValue: 1.0 };
+  fullDayMinutes = COSEC_DEFAULT_FULL_DAY_MINUTES,
+): { status: "present" | "half_day" | "absent"; lwpValue: number } {
+  if (biometricMinutes >= fullDayMinutes)
+    return { status: "present", lwpValue: 0.0 };
+  if (biometricMinutes >= halfDayFloor)
+    return { status: "half_day", lwpValue: 0.5 };
+  return { status: "absent", lwpValue: 1.0 };
 }
 
 export interface AttendanceExceptionBucket {
@@ -308,7 +329,8 @@ function mapBucketRow(row: any): AttendanceExceptionBucket {
   const threshold = row.full_day_threshold_minutes;
   return {
     employeeId: String(row.employee_id),
-    singlePunchCountsAsPresent: Number(row.single_punch_counts_as_present ?? 0) === 1,
+    singlePunchCountsAsPresent:
+      Number(row.single_punch_counts_as_present ?? 0) === 1,
     fullDayThresholdMinutes:
       threshold === null || threshold === undefined ? null : Number(threshold),
   };
@@ -323,13 +345,16 @@ function mapBucketRow(row: any): AttendanceExceptionBucket {
  * nobody is told.
  */
 function isMissingBucketTable(err: any): boolean {
-  return err?.code === 'ER_NO_SUCH_TABLE' || err?.errno === 1146;
+  return err?.code === "ER_NO_SUCH_TABLE" || err?.errno === 1146;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export const attendanceEngineService = {
-  async getShiftWindow(employeeId: string, date: string): Promise<ShiftWindowInfo> {
+  async getShiftWindow(
+    employeeId: string,
+    date: string,
+  ): Promise<ShiftWindowInfo> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
           COALESCE(wra.shift_start_time, wsm.start_time) AS shift_start_time,
@@ -339,19 +364,22 @@ export const attendanceEngineService = {
        WHERE wra.employee_id = ? AND wra.roster_date = ?
        ORDER BY FIELD(wra.publish_status, 'approved_final', 'published', 'draft'), wra.updated_at DESC, wra.created_at DESC
        LIMIT 1`,
-      [employeeId, date]
+      [employeeId, date],
     );
     const row = (rows as RowDataPacket[])[0] as any;
-    return buildShiftWindowInfo(date, row?.shift_start_time ?? null, row?.shift_end_time ?? null);
+    return buildShiftWindowInfo(
+      date,
+      row?.shift_start_time ?? null,
+      row?.shift_end_time ?? null,
+    );
   },
-
 
   // Rule resolution — specificity scoring query
   async resolveRule(
     designationId: string | null,
     processId: string | null,
     branchId: string | null,
-    date: string
+    date: string,
   ): Promise<AttendanceRuleConfig> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT *,
@@ -367,15 +395,24 @@ export const attendanceEngineService = {
          AND (branch_id      = ? OR branch_id      IS NULL)
        ORDER BY specificity DESC
        LIMIT 1`,
-      [date, date, designationId, processId, branchId]
+      [date, date, designationId, processId, branchId],
     );
     if (!rows[0]) {
       // Fallback: return hardcoded biometric default if no rule at all in DB
       return {
-        id: 'fallback', rule_name: 'Fallback Default', scope_type: 'global',
-        designation_id: null, process_id: null, branch_id: null,
-        attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: 270,
-        grace_minutes: 0, effective_from: date, effective_to: null, active_status: 1,
+        id: "fallback",
+        rule_name: "Fallback Default",
+        scope_type: "global",
+        designation_id: null,
+        process_id: null,
+        branch_id: null,
+        attendance_source: "biometric",
+        full_day_minutes: 540,
+        half_day_minutes: 270,
+        grace_minutes: 0,
+        effective_from: date,
+        effective_to: null,
+        active_status: 1,
       };
     }
     return rows[0] as AttendanceRuleConfig;
@@ -393,17 +430,19 @@ export const attendanceEngineService = {
     departmentId: string | null,
     processId: string | null,
     deptNameLower: string,
-    desigNameLower: string
+    desigNameLower: string,
   ): Promise<AttendanceLogic> {
     try {
       // First check if any active rules exist in the config table
       const [countRows] = await db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS cnt FROM apr_eligibility_config WHERE active_status = 1`
+        `SELECT COUNT(*) AS cnt FROM apr_eligibility_config WHERE active_status = 1`,
       );
       const configCount = Number((countRows[0] as any).cnt ?? 0);
       if (configCount === 0) {
         // Fall back to legacy regex if config is empty (safe deploy with no seed)
-        return isOperationsExecutiveByRegex(deptNameLower, desigNameLower) ? 'apr' : 'cosec';
+        return isOperationsExecutiveByRegex(deptNameLower, desigNameLower)
+          ? "apr"
+          : "cosec";
       }
 
       // Match: process_id (most specific) > department_id > designation_id > all NULL (global)
@@ -419,15 +458,21 @@ export const attendanceEngineService = {
             CASE WHEN department_id IS NOT NULL THEN 2 ELSE 0 END +
             CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC
          LIMIT 1`,
-        [designationId, departmentId, processId]
+        [designationId, departmentId, processId],
       );
       const matched = (rows as RowDataPacket[])[0] as any;
-      if (!matched) return 'cosec';
-      const logic = String(matched.attendance_logic ?? 'apr') as AttendanceLogic;
-      return logic === 'apr_validated_by_cosec' ? 'apr_validated_by_cosec' : 'apr';
+      if (!matched) return "cosec";
+      const logic = String(
+        matched.attendance_logic ?? "apr",
+      ) as AttendanceLogic;
+      return logic === "apr_validated_by_cosec"
+        ? "apr_validated_by_cosec"
+        : "apr";
     } catch {
       // If table or column doesn't exist yet (migration pending), use regex fallback
-      return isOperationsExecutiveByRegex(deptNameLower, desigNameLower) ? 'apr' : 'cosec';
+      return isOperationsExecutiveByRegex(deptNameLower, desigNameLower)
+        ? "apr"
+        : "cosec";
     }
   },
 
@@ -439,11 +484,16 @@ export const attendanceEngineService = {
     departmentId: string | null,
     processId: string | null,
     deptNameLower: string,
-    desigNameLower: string
+    desigNameLower: string,
   ): Promise<boolean> {
     const logic = await this.resolveAttendanceLogic(
-      designationId, departmentId, processId, deptNameLower, desigNameLower);
-    return logic !== 'cosec';
+      designationId,
+      departmentId,
+      processId,
+      deptNameLower,
+      desigNameLower,
+    );
+    return logic !== "cosec";
   },
 
   // Check leave/holiday/week-off overrides.
@@ -456,8 +506,12 @@ export const attendanceEngineService = {
     dateOfJoining?: string | null,
     costCentreId?: string | null,
     designationId?: string | null,
-    employmentEndDate?: string | null
-  ): Promise<{ status: AttendanceStatus; isRosterWeekOff?: boolean; isHalfDayLeave?: boolean } | null> {
+    employmentEndDate?: string | null,
+  ): Promise<{
+    status: AttendanceStatus;
+    isRosterWeekOff?: boolean;
+    isHalfDayLeave?: boolean;
+  } | null> {
     // 1. Approved leave
     //
     // total_days matters. A WHOLE-day leave replaces the day outright ('leave_approved', paid
@@ -471,16 +525,20 @@ export const attendanceEngineService = {
        WHERE employee_id = ? AND status = 'approved'
          AND ? BETWEEN from_date AND to_date
        ORDER BY total_days ASC LIMIT 1`,
-      [employeeId, date]
+      [employeeId, date],
     );
     const leaveRow = (leaveRows as RowDataPacket[])[0];
     if (leaveRow) {
-      const isHalfDayLeave = Number((leaveRow as { total_days: number }).total_days) === 0.5;
-      return { status: 'leave_approved', isHalfDayLeave };
+      const isHalfDayLeave =
+        Number((leaveRow as { total_days: number }).total_days) === 0.5;
+      return { status: "leave_approved", isHalfDayLeave };
     }
 
     // 2. Holiday (branch-aware) + cost centre/designation scope + G7 DOJ exclusion
-    const dojExclusionEnabled = await getFeatureFlagBool('doj_holiday_exclusion_enabled', true);
+    const dojExclusionEnabled = await getFeatureFlagBool(
+      "doj_holiday_exclusion_enabled",
+      true,
+    );
     let holidaySql = `
       SELECT lhm.id
       FROM leave_holiday_master lhm
@@ -529,8 +587,12 @@ export const attendanceEngineService = {
         )`;
     holidayParams.push(designationId ?? null);
     holidaySql += ` LIMIT 1`;
-    const [holidayRows] = await db.execute<RowDataPacket[]>(holidaySql, holidayParams);
-    if ((holidayRows as RowDataPacket[]).length > 0) return { status: 'holiday' };
+    const [holidayRows] = await db.execute<RowDataPacket[]>(
+      holidaySql,
+      holidayParams,
+    );
+    if ((holidayRows as RowDataPacket[]).length > 0)
+      return { status: "holiday" };
 
     // 3. NO week-off step. Attendance is not derived from the roster.
     //
@@ -553,7 +615,6 @@ export const attendanceEngineService = {
     // as "A". Week-off ENTITLEMENT is untouched - calculateWeekoffEligibility() awards it
     // from the days actually worked in the month, and never read this status.
 
-
     return null;
   },
 
@@ -570,7 +631,10 @@ export const attendanceEngineService = {
    * The 30-day look-back keeps the two populations separable without flipping
    * an employee's treatment retroactively as rows arrive mid-month.
    */
-  async isEnrolledInAprFeed(employeeCode: string, date: string): Promise<boolean> {
+  async isEnrolledInAprFeed(
+    employeeCode: string,
+    date: string,
+  ): Promise<boolean> {
     if (!employeeCode) return false;
     try {
       const result = await db.execute<RowDataPacket[]>(
@@ -591,37 +655,46 @@ export const attendanceEngineService = {
     }
   },
 
-  async getAprNetMinutes(employeeCode: string, date: string, shiftWindow?: ShiftWindowInfo): Promise<number> {
+  async getAprNetMinutes(
+    employeeCode: string,
+    date: string,
+    shiftWindow?: ShiftWindowInfo,
+  ): Promise<number> {
     const dates = shiftWindow?.isNightShift
       ? [shiftWindow.startDate, shiftWindow.endDate]
       : [date];
-    const placeholders = dates.map(() => '?').join(', ');
+    const placeholders = dates.map(() => "?").join(", ");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ReportDate, Net_Login FROM apr WHERE UserID = ? AND ReportDate IN (${placeholders})`,
-      [employeeCode, ...dates]
+      [employeeCode, ...dates],
     );
     if (!rows.length) return 0;
     let totalMinutes = 0;
     for (const row of rows as any[]) {
       const netLogin = row.Net_Login as string; // 'HH:MM:SS'
       if (!netLogin) continue;
-      const parts = String(netLogin).split(':').map(Number);
-      totalMinutes += (parts[0] * 60) + (parts[1] || 0) + Math.round((parts[2] || 0) / 60);
+      const parts = String(netLogin).split(":").map(Number);
+      totalMinutes +=
+        parts[0] * 60 + (parts[1] || 0) + Math.round((parts[2] || 0) / 60);
     }
     return totalMinutes;
   },
 
   // Sum dialler login minutes — fallback join on employee_code if employee_id is null
-  async getDiallerMinutes(employeeId: string, date: string, shiftWindow?: ShiftWindowInfo): Promise<number> {
+  async getDiallerMinutes(
+    employeeId: string,
+    date: string,
+    shiftWindow?: ShiftWindowInfo,
+  ): Promise<number> {
     const dates = shiftWindow?.isNightShift
       ? [shiftWindow.startDate, shiftWindow.endDate]
       : [date];
-    const placeholders = dates.map(() => '?').join(', ');
+    const placeholders = dates.map(() => "?").join(", ");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(dsl.login_minutes), 0) AS total
        FROM dialer_session_log dsl
        WHERE dsl.employee_id = ? AND dsl.session_date IN (${placeholders})`,
-      [employeeId, ...dates]
+      [employeeId, ...dates],
     );
     let total = Number((rows[0] as any).total ?? 0);
     // Fallback: join via employee_code for unlinked imports
@@ -631,7 +704,7 @@ export const attendanceEngineService = {
          FROM dialer_session_log dsl
          JOIN employees e ON e.employee_code = dsl.employee_code
          WHERE e.id = ? AND dsl.session_date IN (${placeholders})`,
-        [employeeId, ...dates]
+        [employeeId, ...dates],
       );
       total = Number((fb[0] as any).total ?? 0);
     }
@@ -646,14 +719,16 @@ export const attendanceEngineService = {
   // ── Exception bucket lookups (migration 1652) ───────────────────────────────
 
   /** One employee's active exception row, or null. Used by callers outside processDateBatch. */
-  async getExceptionBucket(employeeId: string): Promise<AttendanceExceptionBucket | null> {
+  async getExceptionBucket(
+    employeeId: string,
+  ): Promise<AttendanceExceptionBucket | null> {
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT employee_id, single_punch_counts_as_present, full_day_threshold_minutes
            FROM employee_attendance_exception_bucket
           WHERE employee_id = ? AND active_status = 1
           LIMIT 1`,
-        [employeeId]
+        [employeeId],
       );
       const row = (rows as RowDataPacket[])[0];
       return row ? mapBucketRow(row) : null;
@@ -668,13 +743,15 @@ export const attendanceEngineService = {
    * than one per employee. processDateBatch sweeps ~1,100 employees; the bucket is a handful of
    * people, so this is a small map that answers the question for all of them.
    */
-  async getExceptionBucketMap(): Promise<Map<string, AttendanceExceptionBucket>> {
+  async getExceptionBucketMap(): Promise<
+    Map<string, AttendanceExceptionBucket>
+  > {
     const map = new Map<string, AttendanceExceptionBucket>();
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT employee_id, single_punch_counts_as_present, full_day_threshold_minutes
            FROM employee_attendance_exception_bucket
-          WHERE active_status = 1`
+          WHERE active_status = 1`,
       );
       for (const row of rows as RowDataPacket[]) {
         const bucket = mapBucketRow(row);
@@ -699,7 +776,10 @@ export const attendanceEngineService = {
    * A person with no punch whatsoever has total_punches = 0 or no row, gets false here, and
    * still lands on missing_punch. The exception credits a partial punch, never an absent one.
    */
-  async hasAnyBiometricPunch(employeeId: string, date: string): Promise<boolean> {
+  async hasAnyBiometricPunch(
+    employeeId: string,
+    date: string,
+  ): Promise<boolean> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT 1
          FROM biometric_attendance_log
@@ -707,37 +787,50 @@ export const attendanceEngineService = {
           AND punch_date = ?
           AND (COALESCE(total_punches, 0) >= 1 OR first_punch_in IS NOT NULL)
         LIMIT 1`,
-      [employeeId, date]
+      [employeeId, date],
     );
     return (rows as RowDataPacket[]).length > 0;
   },
 
   async getBiometricEvidence(
     employeeId: string,
-    date: string
-  ): Promise<{ minutes: number; sourceSystem: string; sourceReference: string | null }> {
+    date: string,
+  ): Promise<{
+    minutes: number;
+    sourceSystem: string;
+    sourceReference: string | null;
+  }> {
     // Get all sessions for this IST date
     const [sessRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, total_login_minutes, current_status, login_time
        FROM wfm_attendance_session
        WHERE employee_id = ? AND session_date = ?`,
-      [employeeId, date]
+      [employeeId, date],
     );
     const sessions = sessRows as any[];
-    let totalMinutes = sessions.reduce((s: number, r: any) => s + Number(r.total_login_minutes ?? 0), 0);
-    const sourceRef = sessions.length > 0 ? String(sessions[sessions.length - 1].id) : null;
+    let totalMinutes = sessions.reduce(
+      (s: number, r: any) => s + Number(r.total_login_minutes ?? 0),
+      0,
+    );
+    const sourceRef =
+      sessions.length > 0 ? String(sessions[sessions.length - 1].id) : null;
 
     // Night-shift cross-midnight merge: if any session on this IST date is Partial and started
     // after 20:00 IST, the shift continues into the next calendar day. Add those early-morning
     // continuation minutes so the full shift is counted against the shift-start date.
     // Feature flag: night_shift_cross_midnight_merge (default on).
-    const mergeCrossMidnight = await getFeatureFlagBool('night_shift_cross_midnight_merge', true);
+    const mergeCrossMidnight = await getFeatureFlagBool(
+      "night_shift_cross_midnight_merge",
+      true,
+    );
     if (mergeCrossMidnight && sessions.length > 0) {
       const hasNightStart = sessions.some((s: any) => {
-        if (s.current_status !== 'Partial' || !s.login_time) return false;
+        if (s.current_status !== "Partial" || !s.login_time) return false;
         const loginDate = new Date(s.login_time);
         // Convert UTC to IST minutes-of-day (IST = UTC + 5h30m = +330 min)
-        const istMinutesOfDay = (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) % 1440;
+        const istMinutesOfDay =
+          (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) %
+          1440;
         return istMinutesOfDay >= 20 * 60; // after 20:00 IST
       });
 
@@ -747,12 +840,14 @@ export const attendanceEngineService = {
           `SELECT total_login_minutes, current_status, login_time
            FROM wfm_attendance_session
            WHERE employee_id = ? AND session_date = ?`,
-          [employeeId, nextDate]
+          [employeeId, nextDate],
         );
         for (const s of nextRows as any[]) {
           if (!s.login_time) continue;
           const loginDate = new Date(s.login_time);
-          const istMinutesOfDay = (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) % 1440;
+          const istMinutesOfDay =
+            (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) %
+            1440;
           // Include only early-morning sessions (before 08:00 IST) — these are the tail of the
           // night shift that started on `date`, not a new shift that began on the next day.
           if (istMinutesOfDay < 8 * 60) {
@@ -765,7 +860,7 @@ export const attendanceEngineService = {
     if (totalMinutes > 0) {
       return {
         minutes: totalMinutes,
-        sourceSystem: 'wfm_attendance_session',
+        sourceSystem: "wfm_attendance_session",
         sourceReference: sourceRef,
       };
     }
@@ -780,34 +875,41 @@ export const attendanceEngineService = {
          ON e.id = ?
         AND ibd.employee_code IN (e.employee_code, e.biometric_code)
        WHERE ibd.activity_date = ?`,
-      [employeeId, date]
+      [employeeId, date],
     );
     const row = intRows[0] as any;
     const minutes = Number(row?.minutes ?? 0);
     return {
       minutes,
-      sourceSystem: minutes > 0 ? String(row?.source_system ?? 'cosec') : 'cosec_policy_absence',
-      sourceReference: minutes > 0 ? String(row?.source_reference ?? '') || null : null,
+      sourceSystem:
+        minutes > 0
+          ? String(row?.source_system ?? "cosec")
+          : "cosec_policy_absence",
+      sourceReference:
+        minutes > 0 ? String(row?.source_reference ?? "") || null : null,
     };
   },
 
   // Pure classification — no DB
   classifyMinutes(
     rawMinutes: number,
-    rule: AttendanceRuleConfig
-  ): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
-    if (rawMinutes >= rule.full_day_minutes) return { status: 'present', lwpValue: 0.0 };
-    if (rawMinutes >= rule.half_day_minutes) return { status: 'half_day', lwpValue: 0.5 };
-    return { status: 'absent', lwpValue: 1.0 };
+    rule: AttendanceRuleConfig,
+  ): { status: "present" | "half_day" | "absent"; lwpValue: number } {
+    if (rawMinutes >= rule.full_day_minutes)
+      return { status: "present", lwpValue: 0.0 };
+    if (rawMinutes >= rule.half_day_minutes)
+      return { status: "half_day", lwpValue: 0.5 };
+    return { status: "absent", lwpValue: 1.0 };
   },
 
   // Late arrival — biometric only; returns {0,0} immediately for dialler
   async calculateLateArrival(
     employeeId: string,
     date: string,
-    rule: AttendanceRuleConfig
+    rule: AttendanceRuleConfig,
   ): Promise<{ lateMark: number; lateByMinutes: number }> {
-    if (rule.attendance_source === 'dialler') return { lateMark: 0, lateByMinutes: 0 };
+    if (rule.attendance_source === "dialler")
+      return { lateMark: 0, lateByMinutes: 0 };
 
     // ── Clock-in: fall back through every source that can carry a first punch ──
     //
@@ -826,7 +928,7 @@ export const attendanceEngineService = {
                 (SELECT bal.first_punch_in FROM biometric_attendance_log bal
                   WHERE bal.employee_id = ? AND bal.punch_date = ? LIMIT 1)
               ) AS clock_in`,
-      [employeeId, date, employeeId, date, employeeId, date]
+      [employeeId, date, employeeId, date, employeeId, date],
     );
     const clockInMinutes = minutesOfDay((clockRows[0] as any)?.clock_in);
     if (clockInMinutes === null) return { lateMark: 0, lateByMinutes: 0 };
@@ -849,7 +951,7 @@ export const attendanceEngineService = {
                   WHERE wra.employee_id = ? AND wra.roster_date = ? LIMIT 1),
                 (SELECT e.working_hours_start FROM employees e WHERE e.id = ? LIMIT 1)
               ) AS start_time`,
-      [employeeId, date, employeeId]
+      [employeeId, date, employeeId],
     );
     const shiftStartMinutes = minutesOfDay((shiftRows[0] as any)?.start_time);
     // No shift basis at all — cannot judge lateness, so do not guess.
@@ -872,9 +974,9 @@ export const attendanceEngineService = {
   async checkAndNotifyBiometricMismatch(
     employeeId: string,
     date: string,
-    result: EngineResult
+    result: EngineResult,
   ): Promise<void> {
-    if (result.source !== 'dialler') return;
+    if (result.source !== "dialler") return;
     if ((result.diallerMinutes ?? 0) >= 480) return;
     const bioMinutes = result.biometricMinutes ?? 0;
     if (bioMinutes < 540) return;
@@ -883,7 +985,7 @@ export const attendanceEngineService = {
       `SELECT user_id, reporting_manager_id, employee_code,
          CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
        FROM employees WHERE id = ? LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     const emp = empRows[0] as any;
     if (!emp) return;
@@ -891,23 +993,28 @@ export const attendanceEngineService = {
     let managerUserId: string | null = null;
     if (emp.reporting_manager_id) {
       const [managerRows] = await db.execute<RowDataPacket[]>(
-        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [emp.reporting_manager_id]
+        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`,
+        [emp.reporting_manager_id],
       );
       managerUserId = (managerRows[0] as any)?.user_id ?? null;
     }
 
-    const recipients = Array.from(new Set(
-      [emp.user_id, managerUserId].filter((userId): userId is string => Boolean(userId))
-    ));
+    const recipients = Array.from(
+      new Set(
+        [emp.user_id, managerUserId].filter((userId): userId is string =>
+          Boolean(userId),
+        ),
+      ),
+    );
     if (recipients.length === 0) return;
 
     try {
-      const { inboxService } = await import('../inbox/inbox.service.js');
+      const { inboxService } = await import("../inbox/inbox.service.js");
       const actionUrl = `/attendance/regularizations?employeeId=${employeeId}&date=${date}`;
       const description =
-        `${emp.employee_code} COSEC time is ${(bioMinutes / 60).toFixed(1)} hours on ${date}, `
-        + `but net login is ${((result.diallerMinutes ?? 0) / 60).toFixed(1)} hours. `
-        + `Attendance is marked ${result.status.replace('_', ' ')} and requires review.`;
+        `${emp.employee_code} COSEC time is ${(bioMinutes / 60).toFixed(1)} hours on ${date}, ` +
+        `but net login is ${((result.diallerMinutes ?? 0) / 60).toFixed(1)} hours. ` +
+        `Attendance is marked ${result.status.replace("_", " ")} and requires review.`;
 
       for (const userId of recipients) {
         const [existing] = await db.execute<RowDataPacket[]>(
@@ -915,21 +1022,22 @@ export const attendanceEngineService = {
            WHERE user_id = ? AND type = 'attendance_validation'
              AND entity_id = ? AND action_url = ?
            LIMIT 1`,
-          [userId, employeeId, actionUrl]
+          [userId, employeeId, actionUrl],
         );
         if (existing.length > 0) continue;
 
         await inboxService.createItem({
           user_id: userId,
-          type: 'attendance_validation',
-          title: userId === emp.user_id
-            ? 'Attendance review required'
-            : `Attendance mismatch: ${emp.full_name}`,
+          type: "attendance_validation",
+          title:
+            userId === emp.user_id
+              ? "Attendance review required"
+              : `Attendance mismatch: ${emp.full_name}`,
           description,
-          entity_type: 'attendance',
+          entity_type: "attendance",
           entity_id: employeeId,
           action_url: actionUrl,
-          priority: 'high',
+          priority: "high",
         });
       }
     } catch {
@@ -947,7 +1055,7 @@ export const attendanceEngineService = {
   async processEmployee(
     employeeId: string,
     date: string,
-    exceptionBucket?: AttendanceExceptionBucket | null
+    exceptionBucket?: AttendanceExceptionBucket | null,
   ): Promise<EngineResult> {
     // Fetch employee info including dept/designation/department_id for APR determination
     const [empRows] = await db.execute<RowDataPacket[]>(
@@ -960,7 +1068,7 @@ export const attendanceEngineService = {
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN designation_master desig ON desig.id = e.designation_id
        WHERE e.id = ? LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     if (!(empRows as RowDataPacket[]).length) {
       throw new Error(`Employee ${employeeId} not found`);
@@ -979,9 +1087,10 @@ export const attendanceEngineService = {
 
     // Per-employee COSEC exceptions. Resolved once here and used at every biometric
     // classification point below; an employee with no row behaves exactly as before.
-    const bucket = exceptionBucket === undefined
-      ? await this.getExceptionBucket(employeeId)
-      : exceptionBucket;
+    const bucket =
+      exceptionBucket === undefined
+        ? await this.getExceptionBucket(employeeId)
+        : exceptionBucket;
     const cosecFullDayMinutes =
       bucket?.fullDayThresholdMinutes ?? COSEC_DEFAULT_FULL_DAY_MINUTES;
 
@@ -990,17 +1099,21 @@ export const attendanceEngineService = {
 
     // G1: DB-backed attendance-logic resolution (replaces hardcoded regex)
     const attendanceLogic = await this.resolveAttendanceLogic(
-      designationId, departmentId, processId,
-      emp.dept_name, emp.designation_name
+      designationId,
+      departmentId,
+      processId,
+      emp.dept_name,
+      emp.designation_name,
     );
-    const configuredAprEmployee = attendanceLogic !== 'cosec';
+    const configuredAprEmployee = attendanceLogic !== "cosec";
 
     // Always fetch biometric minutes upfront — needed for G12 week-off cross-validation
     // and for mismatch detection even when employee is APR-eligible.
     const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
     const biometricMinutes = biometricEvidence.minutes;
-    const hasScopedDiallerRule = rule.attendance_source === 'dialler'
-      && Boolean(rule.designation_id || rule.process_id || rule.branch_id);
+    const hasScopedDiallerRule =
+      rule.attendance_source === "dialler" &&
+      Boolean(rule.designation_id || rule.process_id || rule.branch_id);
     let isAprEmployee = configuredAprEmployee || hasScopedDiallerRule;
     let forcedAprMinutes: number | null = null;
     let forcedAprSourceSystem: string | null = null;
@@ -1008,23 +1121,43 @@ export const attendanceEngineService = {
     // Production-safe fallback: if master data is incomplete but the employee belongs to
     // operations and biometric has no evidence for the day, let strong APR/dialler evidence
     // drive the attendance source for that date instead of forcing a missing_punch payroll gap.
-    if (!isAprEmployee && biometricMinutes === 0 && isOperationsDepartmentName(emp.dept_name)) {
-      const aprMinutes = await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
-      const diallerMinutes = aprMinutes > 0
-        ? aprMinutes
-        : await this.getDiallerMinutes(employeeId, date, shiftWindow);
+    if (
+      !isAprEmployee &&
+      biometricMinutes === 0 &&
+      isOperationsDepartmentName(emp.dept_name)
+    ) {
+      const aprMinutes = await this.getAprNetMinutes(
+        emp.employee_code,
+        date,
+        shiftWindow,
+      );
+      const diallerMinutes =
+        aprMinutes > 0
+          ? aprMinutes
+          : await this.getDiallerMinutes(employeeId, date, shiftWindow);
       if (diallerMinutes >= 240) {
         isAprEmployee = true;
         forcedAprMinutes = diallerMinutes;
-        forcedAprSourceSystem = aprMinutes > 0
-          ? (shiftWindow.isNightShift ? 'apr.night_shift_window' : 'apr.ReportDate')
-          : (shiftWindow.isNightShift ? 'dialer_session_log.night_shift_window' : 'dialer_session_log.session_date');
+        forcedAprSourceSystem =
+          aprMinutes > 0
+            ? shiftWindow.isNightShift
+              ? "apr.night_shift_window"
+              : "apr.ReportDate"
+            : shiftWindow.isNightShift
+              ? "dialer_session_log.night_shift_window"
+              : "dialer_session_log.session_date";
       }
     }
 
     // Check overrides (leave/holiday/week-off) with G7 DOJ holiday exclusion
     const override = await this.resolveOverridePriority(
-      employeeId, date, branchId, dateOfJoining, costCentreId, designationId, employmentEndDate
+      employeeId,
+      date,
+      branchId,
+      dateOfJoining,
+      costCentreId,
+      designationId,
+      employmentEndDate,
     );
 
     // A half-day leave deliberately does NOT take the override path: that path returns a
@@ -1051,7 +1184,10 @@ export const attendanceEngineService = {
         if (isAprEmployee) {
           // Check whether previous day's night shift tail is landing on this week-off date.
           const prevDate = prevIstDate(date);
-          const prevShiftWindow = await this.getShiftWindow(employeeId, prevDate);
+          const prevShiftWindow = await this.getShiftWindow(
+            employeeId,
+            prevDate,
+          );
           const isNightShiftCarryover =
             prevShiftWindow.isNightShift && prevShiftWindow.endDate === date;
 
@@ -1063,18 +1199,29 @@ export const attendanceEngineService = {
             // physical presence, and biometric always records login_time as a datetime.
             // If the earliest biometric punch on this week-off date is before 08:00, the APR
             // minutes belong to a night-shift carryover, not a new working day.
-            const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
+            const aprCheck =
+              forcedAprMinutes ??
+              (await this.getAprNetMinutes(
+                emp.employee_code,
+                date,
+                shiftWindow,
+              ));
             if (aprCheck > 0) {
               const [firstBioRow] = await db.execute<RowDataPacket[]>(
                 `SELECT MIN(login_time) AS first_login
                  FROM wfm_attendance_session
                  WHERE employee_id = ? AND session_date = ?`,
-                [employeeId, date]
+                [employeeId, date],
               );
-              const firstBio: Date | null = (firstBioRow[0] as any)?.first_login ?? null;
+              const firstBio: Date | null =
+                (firstBioRow[0] as any)?.first_login ?? null;
               // IST = UTC + 330 min. If no biometric at all, assume genuine new session.
               const firstBioIstHour = firstBio
-                ? ((new Date(firstBio).getUTCHours() * 60 + new Date(firstBio).getUTCMinutes() + 330) % 1440) / 60
+                ? ((new Date(firstBio).getUTCHours() * 60 +
+                    new Date(firstBio).getUTCMinutes() +
+                    330) %
+                    1440) /
+                  60
                 : 24;
               if (firstBioIstHour >= 8) {
                 actualMinutesOnWeekOff = aprCheck;
@@ -1086,7 +1233,10 @@ export const attendanceEngineService = {
         } else {
           // Biometric employee: same carryover guard applies.
           const prevDate = prevIstDate(date);
-          const prevShiftWindow = await this.getShiftWindow(employeeId, prevDate);
+          const prevShiftWindow = await this.getShiftWindow(
+            employeeId,
+            prevDate,
+          );
           const isNightShiftCarryover =
             prevShiftWindow.isNightShift && prevShiftWindow.endDate === date;
           if (isNightShiftCarryover) {
@@ -1098,27 +1248,41 @@ export const attendanceEngineService = {
                FROM wfm_attendance_session
                WHERE employee_id = ? AND session_date = ?
                AND login_time >= CONCAT(?, ' 08:00:00')`,
-              [employeeId, date, date]
+              [employeeId, date, date],
             );
-            actualMinutesOnWeekOff = Number((weekOffSessions[0] as any).mins ?? 0);
+            actualMinutesOnWeekOff = Number(
+              (weekOffSessions[0] as any).mins ?? 0,
+            );
           }
         }
 
         if (actualMinutesOnWeekOff > 0) {
           // Employee genuinely worked on their roster week-off — flag for WFM review
           const wowResult: EngineResult = {
-            employeeId, date, processId, branchId,
-            source: isAprEmployee ? 'dialler' : 'biometric',
-            sourceSystem: isAprEmployee ? 'apr' : biometricEvidence.sourceSystem,
+            employeeId,
+            date,
+            processId,
+            branchId,
+            source: isAprEmployee ? "dialler" : "biometric",
+            sourceSystem: isAprEmployee
+              ? "apr"
+              : biometricEvidence.sourceSystem,
             sourceRecordDate: date,
-            sourceReference: isAprEmployee ? null : biometricEvidence.sourceReference,
+            sourceReference: isAprEmployee
+              ? null
+              : biometricEvidence.sourceReference,
             diallerMinutes: isAprEmployee ? actualMinutesOnWeekOff : null,
-            biometricMinutes: isAprEmployee ? null : (biometricMinutes > 0 ? biometricMinutes : null),
+            biometricMinutes: isAprEmployee
+              ? null
+              : biometricMinutes > 0
+                ? biometricMinutes
+                : null,
             rawMinutes: actualMinutesOnWeekOff,
-            status: 'week_off_worked',
+            status: "week_off_worked",
             lwpValue: 0.0,
-            lateMark: 0, lateByMinutes: 0,
-            ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+            lateMark: 0,
+            lateByMinutes: 0,
+            ruleConfigId: rule.id === "fallback" ? null : rule.id,
             biometricStatus: null,
             aprStatus: null,
             mismatchFlag: 0,
@@ -1129,15 +1293,22 @@ export const attendanceEngineService = {
 
       // Regular override (leave, holiday, or confirmed week-off with no attendance)
       return {
-        employeeId, date, processId, branchId,
-        source: isAprEmployee ? 'dialler' : 'biometric',
-        sourceSystem: 'attendance_override',
+        employeeId,
+        date,
+        processId,
+        branchId,
+        source: isAprEmployee ? "dialler" : "biometric",
+        sourceSystem: "attendance_override",
         sourceRecordDate: date,
         sourceReference: null,
-        diallerMinutes: null, biometricMinutes: null, rawMinutes: 0,
-        status: override.status, lwpValue: 0.0,
-        lateMark: 0, lateByMinutes: 0,
-        ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+        diallerMinutes: null,
+        biometricMinutes: null,
+        rawMinutes: 0,
+        status: override.status,
+        lwpValue: 0.0,
+        lateMark: 0,
+        lateByMinutes: 0,
+        ruleConfigId: rule.id === "fallback" ? null : rule.id,
         biometricStatus: null,
         aprStatus: null,
         mismatchFlag: 0,
@@ -1156,8 +1327,12 @@ export const attendanceEngineService = {
     // whole workforce. resolveHalfDayFloorMinutes refuses an unusable value, logs
     // what it rejected, and applies the default instead. This was noted here as a
     // known follow-up; it is that follow-up.
-    const halfDayFloor = await resolveHalfDayFloorMinutes('biometric_half_day_floor_minutes');
-    const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes('netlogin_half_day_floor_minutes');
+    const halfDayFloor = await resolveHalfDayFloorMinutes(
+      "biometric_half_day_floor_minutes",
+    );
+    const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes(
+      "netlogin_half_day_floor_minutes",
+    );
 
     let diallerMinutes: number | null = null;
     let rawMinutes: number;
@@ -1181,21 +1356,42 @@ export const attendanceEngineService = {
     if (isAprEmployee) {
       // G4: Classify biometric independently for mismatch comparison
       if (biometricMinutes > 0) {
-        biometricStatusRaw = classifyCosecMinutes(biometricMinutes, halfDayFloor, cosecFullDayMinutes).status;
+        biometricStatusRaw = classifyCosecMinutes(
+          biometricMinutes,
+          halfDayFloor,
+          cosecFullDayMinutes,
+        ).status;
       }
 
-      const aprMinutes = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
-      diallerMinutes = aprMinutes > 0
-        ? aprMinutes
-        : await this.getDiallerMinutes(employeeId, date, shiftWindow);
-      sourceSystem = forcedAprSourceSystem ?? (aprMinutes > 0
-        ? (shiftWindow.isNightShift ? 'apr.night_shift_window' : 'apr.ReportDate')
-        : (shiftWindow.isNightShift ? 'dialer_session_log.night_shift_window' : 'dialer_session_log.session_date'));
+      const aprMinutes =
+        forcedAprMinutes ??
+        (await this.getAprNetMinutes(emp.employee_code, date, shiftWindow));
+      diallerMinutes =
+        aprMinutes > 0
+          ? aprMinutes
+          : await this.getDiallerMinutes(employeeId, date, shiftWindow);
+      sourceSystem =
+        forcedAprSourceSystem ??
+        (aprMinutes > 0
+          ? shiftWindow.isNightShift
+            ? "apr.night_shift_window"
+            : "apr.ReportDate"
+          : shiftWindow.isNightShift
+            ? "dialer_session_log.night_shift_window"
+            : "dialer_session_log.session_date");
       sourceReference = emp.employee_code;
       rawMinutes = diallerMinutes ?? 0;
-      rule = { ...rule, attendance_source: 'dialler', full_day_minutes: 480, half_day_minutes: 240 };
+      rule = {
+        ...rule,
+        attendance_source: "dialler",
+        full_day_minutes: 480,
+        half_day_minutes: 240,
+      };
 
-      aprStatusRaw = classifyOperationsNetLogin(rawMinutes, netLoginHalfDayFloor).status;
+      aprStatusRaw = classifyOperationsNetLogin(
+        rawMinutes,
+        netLoginHalfDayFloor,
+      ).status;
 
       // G4: flag mismatch when both sources have data and they disagree
       if (biometricStatusRaw !== null && biometricStatusRaw !== aprStatusRaw) {
@@ -1205,7 +1401,10 @@ export const attendanceEngineService = {
       // Enrolment check — used only by mismatch notifications and future audit queries.
       // No longer gates classification: APR employees with 0 rawMinutes fall through to the
       // classifier and land on 'absent' regardless of feed enrolment (2026-09-03 ruling).
-      aprFeedCoversEmployee = await this.isEnrolledInAprFeed(emp.employee_code, date);
+      aprFeedCoversEmployee = await this.isEnrolledInAprFeed(
+        emp.employee_code,
+        date,
+      );
 
       // No biometric fallback for APR employees.
       // Absence of an APR record IS the attendance answer for this population (2026-09-03).
@@ -1221,11 +1420,13 @@ export const attendanceEngineService = {
       //
       // Only applies when APR actually has a record (rawMinutes > 0): when APR is silent
       // the day is absent; there is nothing to validate or lift.
-      if (attendanceLogic === 'apr_validated_by_cosec'
-          && classifyAsApr
-          && rawMinutes > 0
-          && biometricMinutes > 0
-          && statusRank(biometricStatusRaw) > statusRank(aprStatusRaw)) {
+      if (
+        attendanceLogic === "apr_validated_by_cosec" &&
+        classifyAsApr &&
+        rawMinutes > 0 &&
+        biometricMinutes > 0 &&
+        statusRank(biometricStatusRaw) > statusRank(aprStatusRaw)
+      ) {
         classifyAsApr = false;
         const aprMinutesForTrail = rawMinutes;
         rawMinutes = biometricMinutes;
@@ -1233,12 +1434,23 @@ export const attendanceEngineService = {
         // The decision is written into source_reference so the tally is auditable on the
         // row itself — attendance_source alone would say 'biometric' with no hint that APR
         // was consulted first and lost.
-        sourceReference = `APR tally: apr=${aprMinutesForTrail}min (${aprStatusRaw}), `
-          + `biometric=${biometricMinutes}min (${biometricStatusRaw}) — biometric used`;
-        rule = { ...rule, attendance_source: 'biometric', full_day_minutes: cosecFullDayMinutes, half_day_minutes: halfDayFloor };
+        sourceReference =
+          `APR tally: apr=${aprMinutesForTrail}min (${aprStatusRaw}), ` +
+          `biometric=${biometricMinutes}min (${biometricStatusRaw}) — biometric used`;
+        rule = {
+          ...rule,
+          attendance_source: "biometric",
+          full_day_minutes: cosecFullDayMinutes,
+          half_day_minutes: halfDayFloor,
+        };
       }
     } else {
-      rule = { ...rule, attendance_source: 'biometric', full_day_minutes: cosecFullDayMinutes, half_day_minutes: halfDayFloor };
+      rule = {
+        ...rule,
+        attendance_source: "biometric",
+        full_day_minutes: cosecFullDayMinutes,
+        half_day_minutes: halfDayFloor,
+      };
       rawMinutes = biometricMinutes;
     }
 
@@ -1278,24 +1490,35 @@ export const attendanceEngineService = {
     //   - !classifyAsApr: the exception is about what COSEC saw, and an employee judged on
     //     dialler net login has no COSEC punch to be credited for.
     // Leave, holiday and week-off never reach here — resolveOverridePriority returns above.
-    if (bucket?.singlePunchCountsAsPresent
-        && rawMinutes < cosecFullDayMinutes
-        && !classifyAsApr
-        && await this.hasAnyBiometricPunch(employeeId, date)) {
-      const lateResult = await this.calculateLateArrival(employeeId, date, rule);
+    if (
+      bucket?.singlePunchCountsAsPresent &&
+      rawMinutes < cosecFullDayMinutes &&
+      !classifyAsApr &&
+      (await this.hasAnyBiometricPunch(employeeId, date))
+    ) {
+      const lateResult = await this.calculateLateArrival(
+        employeeId,
+        date,
+        rule,
+      );
       const isUnpairedPunch = rawMinutes === 0;
       return {
-        employeeId, date, processId, branchId,
-        source: 'biometric',
+        employeeId,
+        date,
+        processId,
+        branchId,
+        source: "biometric",
         // Named so the row itself says why it is present on less than a full day's minutes.
         // A reader who finds a present day backed by four hours can tell this was a standing
         // Payroll Head exception and not the engine miscounting. The two cases stay
         // distinguishable in reporting: an unpaired punch keeps the original value, so every
         // row written before this broadening still means exactly what it meant.
-        sourceSystem: isUnpairedPunch ? 'cosec_single_punch_exception' : 'cosec_any_punch_exception',
+        sourceSystem: isUnpairedPunch
+          ? "cosec_single_punch_exception"
+          : "cosec_any_punch_exception",
         sourceRecordDate: date,
         sourceReference: isUnpairedPunch
-          ? 'employee_attendance_exception_bucket: single punch counted as present'
+          ? "employee_attendance_exception_bucket: single punch counted as present"
           : `employee_attendance_exception_bucket: any punch counted as present (${rawMinutes} min worked)`,
         diallerMinutes: null,
         // The real reading is kept rather than blanked: the day is present by exception, but
@@ -1303,11 +1526,11 @@ export const attendanceEngineService = {
         // unpaired punch has no minutes to report and stays null, exactly as before.
         biometricMinutes: biometricMinutes > 0 ? biometricMinutes : null,
         rawMinutes,
-        status: 'present',
+        status: "present",
         lwpValue: 0.0,
         lateMark: lateResult.lateMark,
         lateByMinutes: lateResult.lateByMinutes,
-        ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+        ruleConfigId: rule.id === "fallback" ? null : rule.id,
         biometricStatus: null,
         aprStatus: aprStatusRaw,
         mismatchFlag: 0,
@@ -1317,21 +1540,28 @@ export const attendanceEngineService = {
     // missing_punch only for biometric employees with no data.
     // APR employees with 0 rawMinutes are absent (no APR record = absent, per 2026-09-03 ruling).
     if (rawMinutes === 0 && !isAprEmployee) {
-      const lateResult = await this.calculateLateArrival(employeeId, date, rule);
+      const lateResult = await this.calculateLateArrival(
+        employeeId,
+        date,
+        rule,
+      );
       return {
-        employeeId, date, processId, branchId,
-        source: 'biometric',
-        sourceSystem: 'cosec_policy_absence',
+        employeeId,
+        date,
+        processId,
+        branchId,
+        source: "biometric",
+        sourceSystem: "cosec_policy_absence",
         sourceRecordDate: date,
         sourceReference: null,
         diallerMinutes: null,
         biometricMinutes: null,
         rawMinutes: 0,
-        status: 'missing_punch',
-        lwpValue: 0.0,  // LWP NOT applied until WFM resolves — prevents wrongful deduction
+        status: "missing_punch",
+        lwpValue: 0.0, // LWP NOT applied until WFM resolves — prevents wrongful deduction
         lateMark: lateResult.lateMark,
         lateByMinutes: lateResult.lateByMinutes,
-        ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+        ruleConfigId: rule.id === "fallback" ? null : rule.id,
         biometricStatus: null,
         aprStatus: aprStatusRaw,
         mismatchFlag: 0,
@@ -1364,7 +1594,10 @@ export const attendanceEngineService = {
     }
 
     return {
-      employeeId, date, processId, branchId,
+      employeeId,
+      date,
+      processId,
+      branchId,
       source: rule.attendance_source,
       sourceSystem,
       sourceRecordDate: date,
@@ -1376,7 +1609,7 @@ export const attendanceEngineService = {
       lwpValue: finalLwp,
       lateMark: lateResult.lateMark,
       lateByMinutes: lateResult.lateByMinutes,
-      ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+      ruleConfigId: rule.id === "fallback" ? null : rule.id,
       biometricStatus: biometricStatusRaw,
       aprStatus: aprStatusRaw,
       mismatchFlag,
@@ -1386,10 +1619,10 @@ export const attendanceEngineService = {
   // DB write — is_locked guard enforced at SQL level. Also writes mismatch columns (G4).
   async upsertDailyRecord(
     result: EngineResult,
-    createdBy: string
+    createdBy: string,
   ): Promise<AttendanceDailyRecord> {
     await db.execute(
-       `INSERT INTO attendance_daily_record
+      `INSERT INTO attendance_daily_record
          (id, employee_id, record_date, process_id, branch_id, attendance_source,
           source_system, source_record_date, source_reference,
           dialler_minutes, biometric_minutes, raw_minutes, attendance_status,
@@ -1415,20 +1648,31 @@ export const attendanceEngineService = {
          processed_at       = IF(is_locked = 0, NOW(),                      processed_at),
          created_by         = IF(is_locked = 0, VALUES(created_by),         created_by)`,
       [
-        result.employeeId, result.date, result.processId, result.branchId,
-        result.source, result.sourceSystem, result.sourceRecordDate, result.sourceReference,
-        result.diallerMinutes, result.biometricMinutes, result.rawMinutes,
+        result.employeeId,
+        result.date,
+        result.processId,
+        result.branchId,
+        result.source,
+        result.sourceSystem,
+        result.sourceRecordDate,
+        result.sourceReference,
+        result.diallerMinutes,
+        result.biometricMinutes,
+        result.rawMinutes,
         result.status,
         result.biometricStatus ?? null,
         result.aprStatus ?? null,
         result.mismatchFlag,
-        result.lwpValue, result.lateMark, result.lateByMinutes,
-        result.ruleConfigId, createdBy
-      ]
+        result.lwpValue,
+        result.lateMark,
+        result.lateByMinutes,
+        result.ruleConfigId,
+        createdBy,
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1`,
-      [result.employeeId, result.date]
+      [result.employeeId, result.date],
     );
     return rows[0] as AttendanceDailyRecord;
   },
@@ -1438,13 +1682,14 @@ export const attendanceEngineService = {
     employeeId: string,
     date: string,
     input: CorrectionInput,
-    correctedBy: string
+    correctedBy: string,
   ): Promise<AttendanceDailyRecord> {
     const [check] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1`,
-      [employeeId, date]
+      [employeeId, date],
     );
-    if (!(check as RowDataPacket[]).length) throw new Error('Attendance record not found');
+    if (!(check as RowDataPacket[]).length)
+      throw new Error("Attendance record not found");
 
     await db.execute(
       `UPDATE attendance_daily_record
@@ -1458,15 +1703,20 @@ export const attendanceEngineService = {
            created_by         = ?
        WHERE employee_id = ? AND record_date = ?`,
       [
-        input.attendanceStatus, input.lwpValue, correctedBy,
-        input.overrideReason, input.isLocked !== false ? 1 : 0,
-        input.regularizationId ?? null, correctedBy,
-        employeeId, date
-      ]
+        input.attendanceStatus,
+        input.lwpValue,
+        correctedBy,
+        input.overrideReason,
+        input.isLocked !== false ? 1 : 0,
+        input.regularizationId ?? null,
+        correctedBy,
+        employeeId,
+        date,
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1`,
-      [employeeId, date]
+      [employeeId, date],
     );
     return rows[0] as AttendanceDailyRecord;
   },
@@ -1479,48 +1729,65 @@ export const attendanceEngineService = {
        WHERE LOWER(employment_status) = 'active' AND active_status = 1
          AND (date_of_exit IS NULL OR date_of_exit >= ?)
        ORDER BY id`,
-      [date]
+      [date],
     );
 
     // Fetch already-locked records for this date
     const [lockedRows] = await db.execute<RowDataPacket[]>(
       `SELECT employee_id FROM attendance_daily_record WHERE record_date = ? AND is_locked = 1`,
-      [date]
+      [date],
     );
-    const lockedSet = new Set((lockedRows as RowDataPacket[]).map((r: any) => r.employee_id as string));
+    const lockedSet = new Set(
+      (lockedRows as RowDataPacket[]).map((r: any) => r.employee_id as string),
+    );
 
     // Per-employee COSEC exceptions for the whole run — one query, not one per employee.
     const bucketMap = await this.getExceptionBucketMap();
 
-    let processed = 0, skipped = 0, failed = 0;
+    let processed = 0,
+      skipped = 0,
+      failed = 0;
     const errors: string[] = [];
 
     for (let i = 0; i < (employees as RowDataPacket[]).length; i += batchSize) {
       const chunk = (employees as RowDataPacket[]).slice(i, i + batchSize);
       const results = await Promise.allSettled(
         chunk.map(async (emp: any) => {
-          if (lockedSet.has(emp.employee_id)) { skipped++; return; }
+          if (lockedSet.has(emp.employee_id)) {
+            skipped++;
+            return;
+          }
           // ?? null, never undefined: undefined would make processEmployee re-query per employee.
           const result = await this.processEmployee(
-            emp.employee_id, date, bucketMap.get(emp.employee_id) ?? null
+            emp.employee_id,
+            date,
+            bucketMap.get(emp.employee_id) ?? null,
           );
-          await this.upsertDailyRecord(result, 'system');
+          await this.upsertDailyRecord(result, "system");
           // Fire notifications non-blocking
-          this.checkAndNotifyBiometricMismatch(emp.employee_id, date, result).catch(() => {});
-          if (result.status === 'missing_punch') {
+          this.checkAndNotifyBiometricMismatch(
+            emp.employee_id,
+            date,
+            result,
+          ).catch(() => {});
+          if (result.status === "missing_punch") {
             this.notifyMissingPunch(emp.employee_id, date).catch(() => {});
           }
-          if (result.status === 'week_off_worked') {
-            this.notifyWeekOffWorked(emp.employee_id, date, result).catch(() => {});
+          if (result.status === "week_off_worked") {
+            this.notifyWeekOffWorked(emp.employee_id, date, result).catch(
+              () => {},
+            );
           }
           processed++;
-        })
+        }),
       );
       results.forEach((r, idx) => {
-        if (r.status === 'rejected') {
+        if (r.status === "rejected") {
           failed++;
           const empId = (chunk[idx] as any).employee_id;
-          errors.push(`${empId}/${date}: ${(r.reason as Error)?.message ?? String(r.reason)}`);
+          errors.push(
+            `${empId}/${date}: ${(r.reason as Error)?.message ?? String(r.reason)}`,
+          );
         }
       });
     }
@@ -1529,7 +1796,10 @@ export const attendanceEngineService = {
   },
 
   // Read helpers
-  async getRecord(employeeId: string, date: string): Promise<AttendanceDailyRecord | null> {
+  async getRecord(
+    employeeId: string,
+    date: string,
+  ): Promise<AttendanceDailyRecord | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT adr.*,
          DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
@@ -1542,14 +1812,14 @@ export const attendanceEngineService = {
          adr.clock_out_location AS clock_out_location_name
        FROM attendance_daily_record adr
        WHERE adr.employee_id = ? AND adr.record_date = ? LIMIT 1`,
-      [employeeId, date]
+      [employeeId, date],
     );
     const rec = rows[0] as any;
     if (rec) {
-      rec.clock_in_time  = toIST(rec.clock_in_time);
+      rec.clock_in_time = toIST(rec.clock_in_time);
       rec.clock_out_time = toIST(rec.clock_out_time);
-      rec.clock_in       = toIST(rec.clock_in);
-      rec.clock_out      = toIST(rec.clock_out);
+      rec.clock_in = toIST(rec.clock_in);
+      rec.clock_out = toIST(rec.clock_out);
     }
     return (rec as AttendanceDailyRecord) ?? null;
   },
@@ -1563,7 +1833,12 @@ export const attendanceEngineService = {
     attendanceStatus?: string;
     page?: number;
     limit?: number;
-  }): Promise<{ data: AttendanceDailyRecord[]; total: number; page: number; limit: number }> {
+  }): Promise<{
+    data: AttendanceDailyRecord[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 50;
     const offset = (page - 1) * limit;
@@ -1588,45 +1863,72 @@ export const attendanceEngineService = {
       LEFT JOIN department_master dm ON dm.id = e.department_id
       WHERE 1=1`;
     const p: unknown[] = [];
-    if (filters.employeeId) { q += ' AND adr.employee_id = ?'; p.push(filters.employeeId); }
-    if (filters.processId)  { q += ' AND adr.process_id = ?';  p.push(filters.processId); }
-    if (filters.branchId)   { q += ' AND adr.branch_id = ?';   p.push(filters.branchId); }
-    if (filters.fromDate)   { q += ' AND adr.record_date >= ?'; p.push(filters.fromDate); }
-    if (filters.toDate)     { q += ' AND adr.record_date <= ?'; p.push(filters.toDate); }
-    if (filters.attendanceStatus) { q += ' AND adr.attendance_status = ?'; p.push(filters.attendanceStatus); }
-    const cq = `SELECT COUNT(*) AS total FROM attendance_daily_record adr WHERE 1=1` +
-      (filters.employeeId    ? ` AND adr.employee_id = ?`       : '') +
-      (filters.processId     ? ` AND adr.process_id = ?`        : '') +
-      (filters.branchId      ? ` AND adr.branch_id = ?`         : '') +
-      (filters.fromDate      ? ` AND adr.record_date >= ?`      : '') +
-      (filters.toDate        ? ` AND adr.record_date <= ?`      : '') +
-      (filters.attendanceStatus ? ` AND adr.attendance_status = ?` : '');
+    if (filters.employeeId) {
+      q += " AND adr.employee_id = ?";
+      p.push(filters.employeeId);
+    }
+    if (filters.processId) {
+      q += " AND adr.process_id = ?";
+      p.push(filters.processId);
+    }
+    if (filters.branchId) {
+      q += " AND adr.branch_id = ?";
+      p.push(filters.branchId);
+    }
+    if (filters.fromDate) {
+      q += " AND adr.record_date >= ?";
+      p.push(filters.fromDate);
+    }
+    if (filters.toDate) {
+      q += " AND adr.record_date <= ?";
+      p.push(filters.toDate);
+    }
+    if (filters.attendanceStatus) {
+      q += " AND adr.attendance_status = ?";
+      p.push(filters.attendanceStatus);
+    }
+    const cq =
+      `SELECT COUNT(*) AS total FROM attendance_daily_record adr WHERE 1=1` +
+      (filters.employeeId ? ` AND adr.employee_id = ?` : "") +
+      (filters.processId ? ` AND adr.process_id = ?` : "") +
+      (filters.branchId ? ` AND adr.branch_id = ?` : "") +
+      (filters.fromDate ? ` AND adr.record_date >= ?` : "") +
+      (filters.toDate ? ` AND adr.record_date <= ?` : "") +
+      (filters.attendanceStatus ? ` AND adr.attendance_status = ?` : "");
     const [countRows] = await db.execute<RowDataPacket[]>(cq, p);
     q += ` ORDER BY adr.record_date DESC LIMIT ${limit} OFFSET ${offset}`;
     const [rows] = await db.execute<RowDataPacket[]>(q, p);
     // Nest employee fields into sub-object to match frontend expectations
-    const mapped = (rows as any[]).map(r => ({
+    const mapped = (rows as any[]).map((r) => ({
       ...r,
-      clock_in_time:  toIST(r.clock_in_time),
+      clock_in_time: toIST(r.clock_in_time),
       clock_out_time: toIST(r.clock_out_time),
-      clock_in:       toIST(r.clock_in),
-      clock_out:      toIST(r.clock_out),
+      clock_in: toIST(r.clock_in),
+      clock_out: toIST(r.clock_out),
       employee: {
-        first_name: r.first_name ?? '',
-        last_name:  r.last_name  ?? '',
-        employee_code: r.employee_code ?? '',
+        first_name: r.first_name ?? "",
+        last_name: r.last_name ?? "",
+        employee_code: r.employee_code ?? "",
         working_hours_start: r.working_hours_start ?? null,
-        working_hours_end:   r.working_hours_end   ?? null,
+        working_hours_end: r.working_hours_end ?? null,
       },
     }));
-    return { data: mapped as AttendanceDailyRecord[], total: (countRows[0] as any).total, page, limit };
+    return {
+      data: mapped as AttendanceDailyRecord[],
+      total: (countRows[0] as any).total,
+      page,
+      limit,
+    };
   },
 
-  async getMonthlySummary(employeeId: string, month: string): Promise<MonthlySummary> {
+  async getMonthlySummary(
+    employeeId: string,
+    month: string,
+  ): Promise<MonthlySummary> {
     const monthStart = `${month}-01`;
-    const [y, m] = month.split('-').map(Number);
+    const [y, m] = month.split("-").map(Number);
     const lastDay = new Date(y, m, 0).getDate();
-    const monthEnd = `${month}-${String(lastDay).padStart(2, '0')}`;
+    const monthEnd = `${month}-${String(lastDay).padStart(2, "0")}`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -1643,21 +1945,21 @@ export const attendanceEngineService = {
          COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END) AS total_working_days
        FROM attendance_daily_record
        WHERE employee_id = ? AND record_date BETWEEN ? AND ?`,
-      [employeeId, monthStart, monthEnd]
+      [employeeId, monthStart, monthEnd],
     );
     const r = rows[0] as any;
     return {
-      presentDays:     Number(r.present_days),
-      halfDays:        Number(r.half_days),
-      absentDays:      Number(r.absent_days),
-      leaveDays:       Number(r.leave_days),
-      holidayDays:     Number(r.holiday_days),
-      weekOffDays:     Number(r.week_off_days),
-      totalLwp:        Number(r.total_lwp),
-      lateMarks:       Number(r.late_marks),
-      totalWorkingDays:Number(r.total_working_days),
-      totalHours:      Number(r.total_hours),
-      wfoDays:         Number(r.wfo_days),
+      presentDays: Number(r.present_days),
+      halfDays: Number(r.half_days),
+      absentDays: Number(r.absent_days),
+      leaveDays: Number(r.leave_days),
+      holidayDays: Number(r.holiday_days),
+      weekOffDays: Number(r.week_off_days),
+      totalLwp: Number(r.total_lwp),
+      lateMarks: Number(r.late_marks),
+      totalWorkingDays: Number(r.total_working_days),
+      totalHours: Number(r.total_hours),
+      wfoDays: Number(r.wfo_days),
     };
   },
 
@@ -1669,7 +1971,7 @@ export const attendanceEngineService = {
        LEFT JOIN designation_master dm ON dm.id = arc.designation_id
        LEFT JOIN process_master pm     ON pm.id = arc.process_id
        LEFT JOIN branch_master bm      ON bm.id = arc.branch_id
-       ORDER BY arc.active_status DESC, arc.created_at DESC`
+       ORDER BY arc.active_status DESC, arc.created_at DESC`,
     );
     return rows as AttendanceRuleConfig[];
   },
@@ -1687,12 +1989,21 @@ export const attendanceEngineService = {
    * a cost centre serves (the thing that actually identifies it) is on client_name /
    * billing_client_name instead, so that is what the caller should show alongside the code.
    */
-  async listCostCentresForRules(branchId?: string | null): Promise<Array<{
-    id: string; cost_centre_code: string; cost_centre_name: string; client_name: string | null; branch_id: string | null;
-  }>> {
+  async listCostCentresForRules(branchId?: string | null): Promise<
+    Array<{
+      id: string;
+      cost_centre_code: string;
+      cost_centre_name: string;
+      client_name: string | null;
+      branch_id: string | null;
+    }>
+  > {
     const params: unknown[] = [];
-    let where = 'WHERE active_status = 1';
-    if (branchId) { where += ' AND branch_id = ?'; params.push(branchId); }
+    let where = "WHERE active_status = 1";
+    if (branchId) {
+      where += " AND branch_id = ?";
+      params.push(branchId);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, cost_centre_code, cost_centre_name,
               COALESCE(NULLIF(client_name,''), NULLIF(billing_client_name,'')) AS client_name,
@@ -1700,17 +2011,31 @@ export const attendanceEngineService = {
        FROM cost_centre_master
        ${where}
        ORDER BY cost_centre_name`,
-      params
+      params,
     );
-    return rows as Array<{ id: string; cost_centre_code: string; cost_centre_name: string; client_name: string | null; branch_id: string | null }>;
+    return rows as Array<{
+      id: string;
+      cost_centre_code: string;
+      cost_centre_name: string;
+      client_name: string | null;
+      branch_id: string | null;
+    }>;
   },
 
   async createRule(input: {
-    rule_name: string; scope_type: string;
-    designation_id?: string | null; process_id?: string | null; branch_id?: string | null;
-    attendance_source: AttendanceSource; full_day_minutes: number; half_day_minutes: number;
-    grace_minutes: number; effective_from: string; effective_to?: string | null;
-    notes?: string | null; created_by?: string;
+    rule_name: string;
+    scope_type: string;
+    designation_id?: string | null;
+    process_id?: string | null;
+    branch_id?: string | null;
+    attendance_source: AttendanceSource;
+    full_day_minutes: number;
+    half_day_minutes: number;
+    grace_minutes: number;
+    effective_from: string;
+    effective_to?: string | null;
+    notes?: string | null;
+    created_by?: string;
   }): Promise<AttendanceRuleConfig> {
     const id = randomUUID();
     await db.execute(
@@ -1719,42 +2044,81 @@ export const attendanceEngineService = {
           attendance_source, full_day_minutes, half_day_minutes, grace_minutes,
           effective_from, effective_to, notes, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, input.rule_name, input.scope_type, input.designation_id ?? null,
-       input.process_id ?? null, input.branch_id ?? null, input.attendance_source,
-       input.full_day_minutes, input.half_day_minutes, input.grace_minutes,
-       input.effective_from, input.effective_to ?? null, input.notes ?? null,
-       input.created_by ?? null]
+      [
+        id,
+        input.rule_name,
+        input.scope_type,
+        input.designation_id ?? null,
+        input.process_id ?? null,
+        input.branch_id ?? null,
+        input.attendance_source,
+        input.full_day_minutes,
+        input.half_day_minutes,
+        input.grace_minutes,
+        input.effective_from,
+        input.effective_to ?? null,
+        input.notes ?? null,
+        input.created_by ?? null,
+      ],
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM attendance_rule_config WHERE id = ? LIMIT 1`, [id]
+      `SELECT * FROM attendance_rule_config WHERE id = ? LIMIT 1`,
+      [id],
     );
     return rows[0] as AttendanceRuleConfig;
   },
 
-  async updateRule(id: string, updates: Partial<{
-    rule_name: string; attendance_source: AttendanceSource;
-    full_day_minutes: number; half_day_minutes: number; grace_minutes: number;
-    effective_from: string; effective_to: string | null;
-    notes: string | null; active_status: number;
-  }>): Promise<AttendanceRuleConfig> {
+  async updateRule(
+    id: string,
+    updates: Partial<{
+      rule_name: string;
+      attendance_source: AttendanceSource;
+      full_day_minutes: number;
+      half_day_minutes: number;
+      grace_minutes: number;
+      effective_from: string;
+      effective_to: string | null;
+      notes: string | null;
+      active_status: number;
+    }>,
+  ): Promise<AttendanceRuleConfig> {
     const fields: string[] = [];
     const params: unknown[] = [];
-    const allowed = ['rule_name','attendance_source','full_day_minutes','half_day_minutes',
-                     'grace_minutes','effective_from','effective_to','notes','active_status'];
+    const allowed = [
+      "rule_name",
+      "attendance_source",
+      "full_day_minutes",
+      "half_day_minutes",
+      "grace_minutes",
+      "effective_from",
+      "effective_to",
+      "notes",
+      "active_status",
+    ];
     for (const k of allowed) {
-      if (k in updates) { fields.push(`${k} = ?`); params.push((updates as any)[k]); }
+      if (k in updates) {
+        fields.push(`${k} = ?`);
+        params.push((updates as any)[k]);
+      }
     }
-    if (!fields.length) throw new Error('No fields to update');
+    if (!fields.length) throw new Error("No fields to update");
     params.push(id);
-    await db.execute(`UPDATE attendance_rule_config SET ${fields.join(', ')} WHERE id = ?`, params);
+    await db.execute(
+      `UPDATE attendance_rule_config SET ${fields.join(", ")} WHERE id = ?`,
+      params,
+    );
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM attendance_rule_config WHERE id = ? LIMIT 1`, [id]
+      `SELECT * FROM attendance_rule_config WHERE id = ? LIMIT 1`,
+      [id],
     );
     return rows[0] as AttendanceRuleConfig;
   },
 
   async deactivateRule(id: string): Promise<void> {
-    await db.execute(`UPDATE attendance_rule_config SET active_status = 0 WHERE id = ?`, [id]);
+    await db.execute(
+      `UPDATE attendance_rule_config SET active_status = 0 WHERE id = ?`,
+      [id],
+    );
   },
 
   // ---- Attendance logic per process (apr_eligibility_config) -----------------------
@@ -1765,10 +2129,15 @@ export const attendanceEngineService = {
   // they are what the Attendance Rules Master page writes through.
 
   /** One row per active process, with the logic currently in force and who it affects. */
-  async listProcessAttendanceLogic(): Promise<Array<{
-    process_id: string; process_name: string; attendance_logic: AttendanceLogic;
-    rule_count: number; employee_count: number;
-  }>> {
+  async listProcessAttendanceLogic(): Promise<
+    Array<{
+      process_id: string;
+      process_name: string;
+      attendance_logic: AttendanceLogic;
+      rule_count: number;
+      employee_count: number;
+    }>
+  > {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT p.id AS process_id, p.process_name,
               COALESCE(MAX(a.attendance_logic), 'cosec') AS attendance_logic,
@@ -1780,7 +2149,8 @@ export const attendanceEngineService = {
                 ON a.process_id = p.id AND a.active_status = 1 AND a.attendance_logic <> 'cosec'
         WHERE p.active_status = 1
         GROUP BY p.id, p.process_name
-        ORDER BY p.process_name`);
+        ORDER BY p.process_name`,
+    );
     return (rows as any[]).map((r) => ({
       process_id: String(r.process_id),
       process_name: String(r.process_name),
@@ -1803,56 +2173,81 @@ export const attendanceEngineService = {
    * rather than silently writing nothing.
    */
   async setProcessAttendanceLogic(
-    processId: string, logic: AttendanceLogic, actor: string,
+    processId: string,
+    logic: AttendanceLogic,
+    actor: string,
   ): Promise<{ deactivated: number; written: number }> {
-    if (logic === 'cosec') {
+    if (logic === "cosec") {
       const [res] = await db.execute<ResultSetHeader>(
         `UPDATE apr_eligibility_config
             SET active_status = 0, updated_at = NOW()
-          WHERE process_id = ? AND active_status = 1`, [processId]);
+          WHERE process_id = ? AND active_status = 1`,
+        [processId],
+      );
       return { deactivated: res.affectedRows ?? 0, written: 0 };
     }
 
     const [pairRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT designation_id, department_id
          FROM apr_eligibility_config
-        WHERE designation_id IS NOT NULL AND department_id IS NOT NULL`);
+        WHERE designation_id IS NOT NULL AND department_id IS NOT NULL`,
+    );
     const pairs = pairRows as any[];
     if (!pairs.length) {
       throw new Error(
-        'No designation/department scope exists in apr_eligibility_config to apply this logic to.');
+        "No designation/department scope exists in apr_eligibility_config to apply this logic to.",
+      );
     }
 
     const [procRows] = await db.execute<RowDataPacket[]>(
-      `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`, [processId]);
-    const processName = String((procRows as any[])[0]?.process_name ?? processId);
+      `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`,
+      [processId],
+    );
+    const processName = String(
+      (procRows as any[])[0]?.process_name ?? processId,
+    );
 
     let written = 0;
     for (const pair of pairs) {
       const [desigRows] = await db.execute<RowDataPacket[]>(
-        `SELECT designation_name FROM designation_master WHERE id = ? LIMIT 1`, [pair.designation_id]);
-      const desigName = String((desigRows as any[])[0]?.designation_name ?? 'EXECUTIVE');
+        `SELECT designation_name FROM designation_master WHERE id = ? LIMIT 1`,
+        [pair.designation_id],
+      );
+      const desigName = String(
+        (desigRows as any[])[0]?.designation_name ?? "EXECUTIVE",
+      );
 
       // No unique key exists on this table, so ON DUPLICATE KEY UPDATE would append rather
       // than update. Look the row up first.
       const [existing] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM apr_eligibility_config
           WHERE process_id = ? AND designation_id = ? AND department_id = ? LIMIT 1`,
-        [processId, pair.designation_id, pair.department_id]);
+        [processId, pair.designation_id, pair.department_id],
+      );
       const row = (existing as any[])[0];
       if (row) {
         await db.execute(
           `UPDATE apr_eligibility_config
               SET active_status = 1, attendance_logic = ?, updated_at = NOW()
-            WHERE id = ?`, [logic, row.id]);
+            WHERE id = ?`,
+          [logic, row.id],
+        );
       } else {
         await db.execute(
           `INSERT INTO apr_eligibility_config
              (id, rule_name, designation_id, department_id, process_id, active_status,
               attendance_logic, notes, created_by, created_at, updated_at)
            VALUES (UUID(), ?, ?, ?, ?, 1, ?, ?, ?, NOW(), NOW())`,
-          [`APR: ${desigName} / ${processName}`, pair.designation_id, pair.department_id,
-           processId, logic, `Set via Attendance Rules Master by ${actor}.`, actor]);
+          [
+            `APR: ${desigName} / ${processName}`,
+            pair.designation_id,
+            pair.department_id,
+            processId,
+            logic,
+            `Set via Attendance Rules Master by ${actor}.`,
+            actor,
+          ],
+        );
       }
       written++;
     }
@@ -1861,14 +2256,17 @@ export const attendanceEngineService = {
 
   // G10: Missing punch inbox notification to employee + reporting manager
   async notifyMissingPunch(employeeId: string, date: string): Promise<void> {
-    const enabled = await getFeatureFlagBool('missing_punch_notification_enabled', true);
+    const enabled = await getFeatureFlagBool(
+      "missing_punch_notification_enabled",
+      true,
+    );
     if (!enabled) return;
 
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT user_id, reporting_manager_id, employee_code,
          CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
        FROM employees WHERE id = ? LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     const emp = empRows[0] as any;
     if (!emp) return;
@@ -1876,53 +2274,64 @@ export const attendanceEngineService = {
     let managerUserId: string | null = null;
     if (emp.reporting_manager_id) {
       const [mgr] = await db.execute<RowDataPacket[]>(
-        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [emp.reporting_manager_id]
+        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`,
+        [emp.reporting_manager_id],
       );
       managerUserId = (mgr[0] as any)?.user_id ?? null;
     }
 
-    const recipients = Array.from(new Set(
-      [emp.user_id, managerUserId].filter((u): u is string => Boolean(u))
-    ));
+    const recipients = Array.from(
+      new Set(
+        [emp.user_id, managerUserId].filter((u): u is string => Boolean(u)),
+      ),
+    );
     if (!recipients.length) return;
 
     try {
-      const { inboxService } = await import('../inbox/inbox.service.js');
-      const encodedName = encodeURIComponent(emp.full_name?.trim() ?? '');
-      const encodedCode = encodeURIComponent(emp.employee_code ?? '');
-      const actionUrl = `/attendance-regularization?employeeId=${employeeId}&date=${date}${encodedName ? `&employeeName=${encodedName}` : ''}${encodedCode ? `&employeeCode=${encodedCode}` : ''}`;
+      const { inboxService } = await import("../inbox/inbox.service.js");
+      const encodedName = encodeURIComponent(emp.full_name?.trim() ?? "");
+      const encodedCode = encodeURIComponent(emp.employee_code ?? "");
+      const actionUrl = `/attendance-regularization?employeeId=${employeeId}&date=${date}${encodedName ? `&employeeName=${encodedName}` : ""}${encodedCode ? `&employeeCode=${encodedCode}` : ""}`;
       for (const userId of recipients) {
         const [existing] = await db.execute<RowDataPacket[]>(
           `SELECT id FROM work_inbox_item
            WHERE user_id = ? AND type = 'attendance_missing_punch'
              AND entity_id = ? AND action_url = ? LIMIT 1`,
-          [userId, employeeId, actionUrl]
+          [userId, employeeId, actionUrl],
         );
         if (existing.length > 0) continue;
         await inboxService.createItem({
           user_id: userId,
-          type: 'attendance_missing_punch',
-          title: userId === emp.user_id
-            ? `No attendance recorded for ${date}`
-            : `Missing punch: ${emp.full_name} on ${date}`,
-          description: `${emp.employee_code} has no biometric punch recorded for ${date}. `
-            + `This may be a COSEC sync issue. Please verify and submit regularisation if correct.`,
-          entity_type: 'attendance',
+          type: "attendance_missing_punch",
+          title:
+            userId === emp.user_id
+              ? `No attendance recorded for ${date}`
+              : `Missing punch: ${emp.full_name} on ${date}`,
+          description:
+            `${emp.employee_code} has no biometric punch recorded for ${date}. ` +
+            `This may be a COSEC sync issue. Please verify and submit regularisation if correct.`,
+          entity_type: "attendance",
           entity_id: employeeId,
           action_url: actionUrl,
-          priority: 'high',
+          priority: "high",
         });
       }
-    } catch { /* non-fatal */ }
+    } catch {
+      /* non-fatal */
+    }
   },
 
   // G12: Week-off worked notification to reporting manager for WFM review
-  async notifyWeekOffWorked(employeeId: string, date: string, result: EngineResult): Promise<void> {
+  async notifyWeekOffWorked(
+    employeeId: string,
+    date: string,
+    result: EngineResult,
+  ): Promise<void> {
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT user_id, reporting_manager_id, employee_code,
          CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
        FROM employees WHERE id = ? LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     const emp = empRows[0] as any;
     if (!emp) return;
@@ -1930,33 +2339,37 @@ export const attendanceEngineService = {
     let managerUserId: string | null = null;
     if (emp.reporting_manager_id) {
       const [mgr] = await db.execute<RowDataPacket[]>(
-        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [emp.reporting_manager_id]
+        `SELECT user_id FROM employees WHERE id = ? LIMIT 1`,
+        [emp.reporting_manager_id],
       );
       managerUserId = (mgr[0] as any)?.user_id ?? null;
     }
     if (!managerUserId) return;
 
     try {
-      const { inboxService } = await import('../inbox/inbox.service.js');
+      const { inboxService } = await import("../inbox/inbox.service.js");
       const actionUrl = `/wfm/attendance-integrity?tab=mismatches&employeeId=${employeeId}&fromDate=${date}&toDate=${date}`;
       const [existing] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM work_inbox_item
          WHERE user_id = ? AND type = 'attendance_week_off_worked'
            AND entity_id = ? AND action_url = ? LIMIT 1`,
-        [managerUserId, employeeId, actionUrl]
+        [managerUserId, employeeId, actionUrl],
       );
       if (existing.length > 0) return;
       await inboxService.createItem({
         user_id: managerUserId,
-        type: 'attendance_week_off_worked',
+        type: "attendance_week_off_worked",
         title: `Week-off worked: ${emp.full_name} on ${date}`,
-        description: `${emp.employee_code} has attendance data recorded (${Math.round(result.rawMinutes / 60 * 10) / 10}h) `
-          + `on their roster week-off day ${date}. WFM review required before payroll.`,
-        entity_type: 'attendance',
+        description:
+          `${emp.employee_code} has attendance data recorded (${Math.round((result.rawMinutes / 60) * 10) / 10}h) ` +
+          `on their roster week-off day ${date}. WFM review required before payroll.`,
+        entity_type: "attendance",
         entity_id: employeeId,
         action_url: actionUrl,
-        priority: 'high',
+        priority: "high",
       });
-    } catch { /* non-fatal */ }
+    } catch {
+      /* non-fatal */
+    }
   },
 };

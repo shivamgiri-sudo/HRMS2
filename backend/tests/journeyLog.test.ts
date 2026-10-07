@@ -5,7 +5,10 @@ vi.mock("../src/db/mysql.js", () => ({
 }));
 
 import { db } from "../src/db/mysql.js";
-import { appendJourneyEvent, listJourneyEvents } from "../src/modules/employees/journeyLog.service.js";
+import {
+  appendJourneyEvent,
+  listJourneyEvents,
+} from "../src/modules/employees/journeyLog.service.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
@@ -43,7 +46,9 @@ describe("appendJourneyEvent", () => {
 
   it("stores metadata as JSON when provided", async () => {
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    mockExecute.mockResolvedValueOnce([[{ ...fakeEvent, metadata: { old_salary: 25000 } }]]);
+    mockExecute.mockResolvedValueOnce([
+      [{ ...fakeEvent, metadata: { old_salary: 25000 } }],
+    ]);
     await appendJourneyEvent({
       employeeId: "emp-1",
       eventType: "salary_revised",
@@ -54,14 +59,16 @@ describe("appendJourneyEvent", () => {
     });
     const [, params] = mockExecute.mock.calls[0];
     const metaParam = (params as unknown[]).find(
-      (p) => typeof p === "string" && p.includes("old_salary")
+      (p) => typeof p === "string" && p.includes("old_salary"),
     );
     expect(metaParam).toBeDefined();
   });
 
   it("stores old_value / new_value when provided", async () => {
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    mockExecute.mockResolvedValueOnce([[{ ...fakeEvent, old_value: "Inbound", new_value: "Outbound" }]]);
+    mockExecute.mockResolvedValueOnce([
+      [{ ...fakeEvent, old_value: "Inbound", new_value: "Outbound" }],
+    ]);
     await appendJourneyEvent({
       employeeId: "emp-1",
       eventType: "process_transfer",

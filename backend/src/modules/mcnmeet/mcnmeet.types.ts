@@ -1,26 +1,27 @@
 export type MeetingType =
-  | 'team_meeting'
-  | 'live_broadcast'
-  | 'training_induction'
-  | 'interview'
-  | 'coaching_1on1'
-  | 'compliance_policy';
+  | "team_meeting"
+  | "live_broadcast"
+  | "training_induction"
+  | "interview"
+  | "coaching_1on1"
+  | "compliance_policy";
 
-export type MeetingStatus = 'draft' | 'scheduled' | 'live' | 'completed' | 'cancelled';
+export type MeetingStatus =
+  "draft" | "scheduled" | "live" | "completed" | "cancelled";
 
 export type AudienceType =
-  | 'all_company'
-  | 'branch'
-  | 'department'
-  | 'process'
-  | 'lob'
-  | 'designation'
-  | 'reporting_manager_team'
-  | 'selected_employees';
+  | "all_company"
+  | "branch"
+  | "department"
+  | "process"
+  | "lob"
+  | "designation"
+  | "reporting_manager_team"
+  | "selected_employees";
 
-export type InviteStatus = 'pending' | 'accepted' | 'declined';
-export type JoinedStatus = 'not_joined' | 'joined' | 'late';
-export type AckStatus = 'pending' | 'acknowledged';
+export type InviteStatus = "pending" | "accepted" | "declined";
+export type JoinedStatus = "not_joined" | "joined" | "late";
+export type AckStatus = "pending" | "acknowledged";
 
 export interface AudienceRow {
   type: AudienceType;

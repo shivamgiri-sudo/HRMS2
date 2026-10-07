@@ -2,7 +2,11 @@ import { logger } from "../logger.js";
 import { getCurrentDateIST } from "../shared/istDate.js";
 import { refreshRunningSalarySnapshot } from "../modules/process-pnl/pnl-running-salary.service.js";
 import { shiftPeriod } from "../modules/process-pnl/pnl-seat-billing.service.js";
-import { registerTimer, unregisterTimer, withWorkerLock } from "./worker-utils.js";
+import {
+  registerTimer,
+  unregisterTimer,
+  withWorkerLock,
+} from "./worker-utils.js";
 
 /**
  * Keeps pnl_running_salary_snapshot current for the open month, so Live P&L has a real payroll
@@ -32,7 +36,9 @@ let intervalTimer: NodeJS.Timeout | null = null;
 let startupTimer: NodeJS.Timeout | null = null;
 
 /** The two months refreshed each cycle: the open month and the one just behind it. */
-export function windowPeriods(asOf: string): [previous: string, current: string] {
+export function windowPeriods(
+  asOf: string,
+): [previous: string, current: string] {
   const current = asOf.slice(0, 7);
   return [shiftPeriod(current, -1), current];
 }
@@ -47,7 +53,10 @@ async function refreshOne(period: string): Promise<void> {
   } catch (error) {
     // Never throws onward: a failed refresh must not take the worker down, and the next run
     // (in 4 hours, or the next boot) tries again against whatever changed since.
-    logger.error({ worker: WORKER_NAME, period, err: error }, "[running-salary-refresh] FAILED");
+    logger.error(
+      { worker: WORKER_NAME, period, err: error },
+      "[running-salary-refresh] FAILED",
+    );
   }
 }
 
@@ -61,22 +70,41 @@ async function cycle(): Promise<void> {
 
 export function startPnlRunningSalaryRefreshWorker(): void {
   if (process.env.PNL_RUNNING_SALARY_REFRESH_ENABLED === "false") {
-    logger.info({ worker: WORKER_NAME }, "[running-salary-refresh] disabled (PNL_RUNNING_SALARY_REFRESH_ENABLED=false)");
+    logger.info(
+      { worker: WORKER_NAME },
+      "[running-salary-refresh] disabled (PNL_RUNNING_SALARY_REFRESH_ENABLED=false)",
+    );
     return;
   }
 
   // 15 minutes in — after the db_bill syncs, once things have settled from a fresh boot.
-  startupTimer = setTimeout(() => {
-    void cycle();
-  }, 15 * 60 * 1000);
+  startupTimer = setTimeout(
+    () => {
+      void cycle();
+    },
+    15 * 60 * 1000,
+  );
   registerTimer(`${WORKER_NAME}:startup`, startupTimer);
 
-  intervalTimer = setInterval(() => { void cycle(); }, INTERVAL_MS);
+  intervalTimer = setInterval(() => {
+    void cycle();
+  }, INTERVAL_MS);
   registerTimer(WORKER_NAME, intervalTimer);
-  logger.info({ worker: WORKER_NAME, intervalMs: INTERVAL_MS }, "[running-salary-refresh] scheduled");
+  logger.info(
+    { worker: WORKER_NAME, intervalMs: INTERVAL_MS },
+    "[running-salary-refresh] scheduled",
+  );
 }
 
 export function stopPnlRunningSalaryRefreshWorker(): void {
-  if (startupTimer) { clearTimeout(startupTimer); unregisterTimer(`${WORKER_NAME}:startup`); startupTimer = null; }
-  if (intervalTimer) { clearInterval(intervalTimer); unregisterTimer(WORKER_NAME); intervalTimer = null; }
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    unregisterTimer(`${WORKER_NAME}:startup`);
+    startupTimer = null;
+  }
+  if (intervalTimer) {
+    clearInterval(intervalTimer);
+    unregisterTimer(WORKER_NAME);
+    intervalTimer = null;
+  }
 }

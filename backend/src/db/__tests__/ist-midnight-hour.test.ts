@@ -47,9 +47,12 @@ function tsFilesUnder(dir: string, acc: string[] = []): string[] {
 /** Intl options blocks that ask for a numeric hour while relying on `hour12: false`. */
 export function unsafeHourCycleBlocks(source: string): number {
   let count = 0;
-  for (const m of source.matchAll(/new Intl\.DateTimeFormat\s*\([\s\S]{0,600}?\)/g)) {
+  for (const m of source.matchAll(
+    /new Intl\.DateTimeFormat\s*\([\s\S]{0,600}?\)/g,
+  )) {
     const block = m[0];
-    const asksForHour = /\bhour\s*:\s*["']2-digit["']|\bhour\s*:\s*["']numeric["']/.test(block);
+    const asksForHour =
+      /\bhour\s*:\s*["']2-digit["']|\bhour\s*:\s*["']numeric["']/.test(block);
     const usesHour12False = /\bhour12\s*:\s*false\b/.test(block);
     const pinsCycle = /\bhourCycle\s*:\s*["']h23["']/.test(block);
     if (asksForHour && usesHour12False && !pinsCycle) count++;
@@ -78,8 +81,12 @@ describe("IST midnight hour", () => {
     const midnight = new Date(Date.UTC(2026, 7, 5, 19, 11, 4));
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Kolkata",
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
       hourCycle: "h23",
     }).formatToParts(midnight);
     const pick = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
@@ -93,13 +100,16 @@ describe("IST midnight hour", () => {
     for (const file of tsFilesUnder(SRC_DIR)) {
       if (file === selfPath) continue; // this file carries the bad pattern as a fixture
       const n = unsafeHourCycleBlocks(readFileSync(file, "utf8"));
-      if (n > 0) offenders.push(`${relative(SRC_DIR, file).split(sep).join("/")} (${n})`);
+      if (n > 0)
+        offenders.push(
+          `${relative(SRC_DIR, file).split(sep).join("/")} (${n})`,
+        );
     }
     expect(
       offenders,
       "hour12:false selects the h24 cycle on node 20, so midnight formats as '24:xx' and " +
         "MySQL rejects the DATETIME. Use hourCycle: 'h23'.\n" +
-        offenders.map((o) => `  - ${o}`).join("\n")
+        offenders.map((o) => `  - ${o}`).join("\n"),
     ).toEqual([]);
   }, 30_000);
 });

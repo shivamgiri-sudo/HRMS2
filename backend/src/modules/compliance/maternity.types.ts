@@ -1,7 +1,9 @@
 // backend/src/modules/compliance/maternity.types.ts
 
-export type MaternityRecordType = 'delivery' | 'adoption' | 'miscarriage' | 'surrogacy';
-export type MaternityStatus = 'applied' | 'approved' | 'active' | 'completed' | 'rejected';
+export type MaternityRecordType =
+  "delivery" | "adoption" | "miscarriage" | "surrogacy";
+export type MaternityStatus =
+  "applied" | "approved" | "active" | "completed" | "rejected";
 
 export interface MaternityRecord {
   id: string;
@@ -58,18 +60,18 @@ export interface UpdateMaternityDTO {
 export function computeEntitledWeeks(
   recordType: MaternityRecordType,
   childBirthOrder: number,
-  complications: boolean
+  complications: boolean,
 ): number {
   let weeks: number;
   switch (recordType) {
-    case 'delivery':
+    case "delivery":
       weeks = childBirthOrder <= 2 ? 26 : 12;
       break;
-    case 'adoption':
+    case "adoption":
       weeks = 8;
       break;
-    case 'miscarriage':
-    case 'surrogacy':
+    case "miscarriage":
+    case "surrogacy":
       weeks = 6;
       break;
     default:
@@ -81,7 +83,10 @@ export function computeEntitledWeeks(
 /**
  * Compute leave end date from start + entitled weeks.
  */
-export function computeLeaveEndDate(startDate: string, entitledWeeks: number): string {
+export function computeLeaveEndDate(
+  startDate: string,
+  entitledWeeks: number,
+): string {
   const d = new Date(startDate);
   d.setDate(d.getDate() + entitledWeeks * 7 - 1);
   return d.toISOString().slice(0, 10);

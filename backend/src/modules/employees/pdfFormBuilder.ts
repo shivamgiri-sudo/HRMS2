@@ -11,7 +11,14 @@
  * exactly one glyph per cell, so a space occupies its own box, which is what
  * EPFO expects of a boxed name.
  */
-import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFForm, type PDFFont } from "pdf-lib";
+import {
+  PDFDocument,
+  StandardFonts,
+  rgb,
+  type PDFPage,
+  type PDFForm,
+  type PDFFont,
+} from "pdf-lib";
 
 export const A4 = { w: 595.28, h: 841.89 };
 export const MARGIN = 34;
@@ -33,7 +40,14 @@ export async function newFormDoc(title: string) {
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const page = doc.addPage([A4.w, A4.h]);
-  const ctx: Ctx = { doc, form: doc.getForm(), page, font, bold, y: A4.h - MARGIN };
+  const ctx: Ctx = {
+    doc,
+    form: doc.getForm(),
+    page,
+    font,
+    bold,
+    y: A4.h - MARGIN,
+  };
   return ctx;
 }
 
@@ -43,12 +57,31 @@ export function newPage(ctx: Ctx) {
   return ctx.y;
 }
 
-export function label(ctx: Ctx, s: string, x: number, y: number, size = 8, bold = false) {
-  ctx.page.drawText(s, { x, y, size, font: bold ? ctx.bold : ctx.font, color: INK });
+export function label(
+  ctx: Ctx,
+  s: string,
+  x: number,
+  y: number,
+  size = 8,
+  bold = false,
+) {
+  ctx.page.drawText(s, {
+    x,
+    y,
+    size,
+    font: bold ? ctx.bold : ctx.font,
+    color: INK,
+  });
 }
 
 export function footer(ctx: Ctx, s: string) {
-  ctx.page.drawText(s, { x: A4.w / 2 - 24, y: 24, size: 7, font: ctx.font, color: INK });
+  ctx.page.drawText(s, {
+    x: A4.w / 2 - 24,
+    y: 24,
+    size: 7,
+    font: ctx.font,
+    color: INK,
+  });
 }
 
 /** A row of empty cells plus a comb field writing one character per cell. */
@@ -63,15 +96,25 @@ export function combField(
 ) {
   for (let i = 0; i < cells; i++) {
     ctx.page.drawRectangle({
-      x: x + i * cellW, y, width: cellW, height: cellH,
-      borderColor: BOX, borderWidth: 0.6,
+      x: x + i * cellW,
+      y,
+      width: cellW,
+      height: cellH,
+      borderColor: BOX,
+      borderWidth: 0.6,
     });
   }
   const field = ctx.form.createTextField(name);
   field.setMaxLength(cells);
   field.enableCombing();
   // setFontSize needs the /DA entry that addToPage creates, so it comes after.
-  field.addToPage(ctx.page, { x, y, width: cells * cellW, height: cellH, borderWidth: 0 });
+  field.addToPage(ctx.page, {
+    x,
+    y,
+    width: cells * cellW,
+    height: cellH,
+    borderWidth: 0,
+  });
   field.setFontSize(9);
   return field;
 }
@@ -86,18 +129,47 @@ export function lineField(
   height = 15,
   fontSize = 9,
 ) {
-  ctx.page.drawRectangle({ x, y, width, height, borderColor: BOX, borderWidth: 0.6 });
+  ctx.page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    borderColor: BOX,
+    borderWidth: 0.6,
+  });
   const field = ctx.form.createTextField(name);
   field.addToPage(ctx.page, { x, y, width, height, borderWidth: 0 });
   field.setFontSize(fontSize);
   return field;
 }
 
-export function checkBox(ctx: Ctx, name: string, text: string, x: number, y: number, labelWidth = 74) {
-  ctx.page.drawText(text, { x, y: y + 4, size: 7.5, font: ctx.font, color: INK });
+export function checkBox(
+  ctx: Ctx,
+  name: string,
+  text: string,
+  x: number,
+  y: number,
+  labelWidth = 74,
+) {
+  ctx.page.drawText(text, {
+    x,
+    y: y + 4,
+    size: 7.5,
+    font: ctx.font,
+    color: INK,
+  });
   const bx = x + labelWidth;
-  ctx.page.drawRectangle({ x: bx, y, width: 13, height: 13, borderColor: BOX, borderWidth: 0.6 });
-  ctx.form.createCheckBox(name).addToPage(ctx.page, { x: bx, y, width: 13, height: 13, borderWidth: 0 });
+  ctx.page.drawRectangle({
+    x: bx,
+    y,
+    width: 13,
+    height: 13,
+    borderColor: BOX,
+    borderWidth: 0.6,
+  });
+  ctx.form
+    .createCheckBox(name)
+    .addToPage(ctx.page, { x: bx, y, width: 13, height: 13, borderWidth: 0 });
   return bx + 13;
 }
 
@@ -114,9 +186,22 @@ export function dateBoxes(
 }
 
 /** The grey section band the EPFO forms use for "A. PREVIOUS EMPLOYMENT DETAILS" etc. */
-export function sectionBand(ctx: Ctx, text: string, x: number, y: number, width: number, height = 13) {
+export function sectionBand(
+  ctx: Ctx,
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+  height = 13,
+) {
   ctx.page.drawRectangle({ x, y, width, height, color: rgb(0.85, 0.85, 0.85) });
-  ctx.page.drawText(text, { x: x + 6, y: y + 3.5, size: 7.5, font: ctx.bold, color: INK });
+  ctx.page.drawText(text, {
+    x: x + 6,
+    y: y + 3.5,
+    size: 7.5,
+    font: ctx.bold,
+    color: INK,
+  });
 }
 
 /**
@@ -135,25 +220,49 @@ export function tickTable(
 ) {
   columns.forEach((column, index) => {
     const cx = x + index * colWidth;
-    ctx.page.drawRectangle({ x: cx, y: top - headerHeight, width: colWidth, height: headerHeight, borderColor: BOX, borderWidth: 0.6 });
+    ctx.page.drawRectangle({
+      x: cx,
+      y: top - headerHeight,
+      width: colWidth,
+      height: headerHeight,
+      borderColor: BOX,
+      borderWidth: 0.6,
+    });
     // Long headings are split so they stay inside the cell.
     const words = column.label.split(" ");
-    const lines = words.length > 1 && column.label.length > 11
-      ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")]
-      : [column.label];
+    const lines =
+      words.length > 1 && column.label.length > 11
+        ? [
+            words.slice(0, Math.ceil(words.length / 2)).join(" "),
+            words.slice(Math.ceil(words.length / 2)).join(" "),
+          ]
+        : [column.label];
     lines.forEach((line, li) => {
       const size = 5.8;
       const w = ctx.font.widthOfTextAtSize(line, size);
       ctx.page.drawText(line, {
         x: cx + Math.max(1, (colWidth - w) / 2),
         y: top - headerHeight + (lines.length === 1 ? 5.5 : 9.5 - li * 5.5),
-        size, font: ctx.font, color: INK,
+        size,
+        font: ctx.font,
+        color: INK,
       });
     });
     const cellY = top - headerHeight - cellHeight;
-    ctx.page.drawRectangle({ x: cx, y: cellY, width: colWidth, height: cellHeight, borderColor: BOX, borderWidth: 0.6 });
+    ctx.page.drawRectangle({
+      x: cx,
+      y: cellY,
+      width: colWidth,
+      height: cellHeight,
+      borderColor: BOX,
+      borderWidth: 0.6,
+    });
     ctx.form.createCheckBox(column.field).addToPage(ctx.page, {
-      x: cx + colWidth / 2 - 6, y: cellY + 2, width: 11, height: 11, borderWidth: 0,
+      x: cx + colWidth / 2 - 6,
+      y: cellY + 2,
+      width: 11,
+      height: 11,
+      borderWidth: 0,
     });
   });
   return top - headerHeight - cellHeight;
@@ -170,17 +279,27 @@ export function tableGrid(
 ) {
   const xs: number[] = [];
   let cx = x;
-  for (const w of widths) { xs.push(cx); cx += w; }
+  for (const w of widths) {
+    xs.push(cx);
+    cx += w;
+  }
   const totalW = cx - x;
   for (let r = 0; r <= rows; r++) {
     const y = top - r * rowHeight;
-    ctx.page.drawLine({ start: { x, y }, end: { x: x + totalW, y }, thickness: 0.6, color: BOX });
+    ctx.page.drawLine({
+      start: { x, y },
+      end: { x: x + totalW, y },
+      thickness: 0.6,
+      color: BOX,
+    });
   }
   for (let c = 0; c <= widths.length; c++) {
     const lx = c === widths.length ? x + totalW : xs[c];
     ctx.page.drawLine({
-      start: { x: lx, y: top }, end: { x: lx, y: top - rows * rowHeight },
-      thickness: 0.6, color: BOX,
+      start: { x: lx, y: top },
+      end: { x: lx, y: top - rows * rowHeight },
+      thickness: 0.6,
+      color: BOX,
     });
   }
   return xs;

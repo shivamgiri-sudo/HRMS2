@@ -32,13 +32,14 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
  *     against the date they *proposed*, never the one HR agreed.
  */
 
-const { dbExecute, connCommit, connRollback, connRelease, connBegin } = vi.hoisted(() => ({
-  dbExecute: vi.fn(),
-  connCommit: vi.fn(async () => undefined),
-  connRollback: vi.fn(async () => undefined),
-  connRelease: vi.fn(() => undefined),
-  connBegin: vi.fn(async () => undefined),
-}));
+const { dbExecute, connCommit, connRollback, connRelease, connBegin } =
+  vi.hoisted(() => ({
+    dbExecute: vi.fn(),
+    connCommit: vi.fn(async () => undefined),
+    connRollback: vi.fn(async () => undefined),
+    connRelease: vi.fn(() => undefined),
+    connBegin: vi.fn(async () => undefined),
+  }));
 vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: dbExecute,
@@ -55,17 +56,25 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 
 vi.mock("../../../shared/sessionRevocation.js", () => ({
-  revokeSessionsForEmployee: vi.fn(async () => ({ refreshTokensRevoked: 0, deviceSessionsRevoked: 0 })),
+  revokeSessionsForEmployee: vi.fn(async () => ({
+    refreshTokensRevoked: 0,
+    deviceSessionsRevoked: 0,
+  })),
 }));
 vi.mock("../../../shared/employeeDeprovisioning.js", () => ({
   deprovisionEmployeeAccess: vi.fn(async () => ({
-    lmsMappingsRevoked: 0, leaveRequestsCancelled: 0, openAssetAssignments: 0, failures: [],
+    lmsMappingsRevoked: 0,
+    leaveRequestsCancelled: 0,
+    openAssetAssignments: 0,
+    failures: [],
   })),
 }));
 vi.mock("../../management/manager-attribution.service.js", () => ({
   recordManagerChange: vi.fn(async () => undefined),
 }));
-vi.mock("../exit-followup-recovery.js", () => ({ recordExitFollowUpFailure: vi.fn(async () => undefined) }));
+vi.mock("../exit-followup-recovery.js", () => ({
+  recordExitFollowUpFailure: vi.fn(async () => undefined),
+}));
 vi.mock("../exit-intelligence.service.js", () => ({
   createDefaultClearanceTasks: vi.fn(async () => undefined),
   createExitHealthSnapshot: vi.fn(async () => undefined),
@@ -77,8 +86,12 @@ vi.mock("../exit.notifications.js", () => ({
 vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({
   triggerResignationPendingReview: vi.fn(async () => undefined),
 }));
-vi.mock("../../communication/sms.helper.js", () => ({ sendSMS: vi.fn(async () => undefined) }));
-vi.mock("nodemailer", () => ({ default: { createTransport: () => ({ sendMail: vi.fn() }) } }));
+vi.mock("../../communication/sms.helper.js", () => ({
+  sendSMS: vi.fn(async () => undefined),
+}));
+vi.mock("nodemailer", () => ({
+  default: { createTransport: () => ({ sendMail: vi.fn() }) },
+}));
 
 /** An exit in manager_review with a proposed but not yet confirmed LWD — the real starting state. */
 const EXIT_ROW = {
@@ -97,7 +110,10 @@ const EXIT_ROW = {
 type Call = { sql: string; params: unknown[] };
 let calls: Call[];
 
-function mockDb(row: Record<string, unknown> = EXIT_ROW, opts: { lwdDue?: boolean } = {}) {
+function mockDb(
+  row: Record<string, unknown> = EXIT_ROW,
+  opts: { lwdDue?: boolean } = {},
+) {
   const lwdDue = opts.lwdDue ?? true;
   calls = [];
   dbExecute.mockReset();
@@ -107,18 +123,24 @@ function mockDb(row: Record<string, unknown> = EXIT_ROW, opts: { lwdDue?: boolea
     if (/SELECT status FROM exit_request WHERE id = \? FOR UPDATE/.test(sql)) {
       return [[{ status: row.status }], []];
     }
-    if (/UPDATE exit_request SET status/.test(sql)) return [{ affectedRows: 1 }, []];
-    if (/INSERT INTO exit_approval_log/.test(sql)) return [{ affectedRows: 1 }, []];
-    if (/UPDATE employees SET active_status = 0/.test(sql)) return [{ affectedRows: 1 }, []];
+    if (/UPDATE exit_request SET status/.test(sql))
+      return [{ affectedRows: 1 }, []];
+    if (/INSERT INTO exit_approval_log/.test(sql))
+      return [{ affectedRows: 1 }, []];
+    if (/UPDATE employees SET active_status = 0/.test(sql))
+      return [{ affectedRows: 1 }, []];
     // The immediate-fire LWD-due check (exit.service.ts) — see the describe block below.
-    if (/last_working_day_confirmed <= CURDATE\(\)/.test(sql)) return [lwdDue ? [{ 1: 1 }] : [], []];
+    if (/last_working_day_confirmed <= CURDATE\(\)/.test(sql))
+      return [lwdDue ? [{ 1: 1 }] : [], []];
     return [[], []];
   });
 }
 
 /** The single UPDATE that carries the transition. */
-const statusUpdate = () => calls.find((c) => /UPDATE exit_request SET status/.test(c.sql))!;
-const employeeUpdate = () => calls.find((c) => /UPDATE employees SET active_status = 0/.test(c.sql));
+const statusUpdate = () =>
+  calls.find((c) => /UPDATE exit_request SET status/.test(c.sql))!;
+const employeeUpdate = () =>
+  calls.find((c) => /UPDATE employees SET active_status = 0/.test(c.sql));
 
 beforeEach(() => {
   connCommit.mockClear();
@@ -131,10 +153,17 @@ describe("updateExitStatus — notice terms are persisted", () => {
   it("writes the confirmed last working day", async () => {
     mockDb();
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-10-15",
-      noticePeriodDays: 30,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-10-15",
+        noticePeriodDays: 30,
+      },
+    );
 
     const u = statusUpdate();
     expect(u.sql).toMatch(/last_working_day_confirmed = \?/);
@@ -144,10 +173,17 @@ describe("updateExitStatus — notice terms are persisted", () => {
   it("writes the notice period", async () => {
     mockDb();
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-10-15",
-      noticePeriodDays: 45,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-10-15",
+        noticePeriodDays: 45,
+      },
+    );
 
     const u = statusUpdate();
     expect(u.sql).toMatch(/notice_period_days = \?/);
@@ -157,10 +193,17 @@ describe("updateExitStatus — notice terms are persisted", () => {
   it("derives the notice window in the same statement as the transition", async () => {
     mockDb();
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-10-15",
-      noticePeriodDays: 30,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-10-15",
+        noticePeriodDays: 30,
+      },
+    );
 
     const u = statusUpdate();
     // Atomicity: notice terms must land with the status they were agreed at, not in a second
@@ -173,24 +216,40 @@ describe("updateExitStatus — notice terms are persisted", () => {
   it("anchors notice_start_date on the tender date, and never moves one already recorded", async () => {
     mockDb();
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-10-15",
-      noticePeriodDays: 30,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-10-15",
+        noticePeriodDays: 30,
+      },
+    );
 
     const u = statusUpdate();
     // COALESCE puts the existing value first, so re-running a transition cannot shift the
     // start date and silently change how much notice the employee is recorded as having served.
-    expect(u.sql).toMatch(/notice_start_date = COALESCE\(notice_start_date, DATE\(submitted_at\), DATE\(created_at\)\)/);
+    expect(u.sql).toMatch(
+      /notice_start_date = COALESCE\(notice_start_date, DATE\(submitted_at\), DATE\(created_at\)\)/,
+    );
   });
 
   it("computes the notice window in SQL, never in JS", async () => {
     mockDb();
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-10-15",
-      noticePeriodDays: 30,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-10-15",
+        noticePeriodDays: 30,
+      },
+    );
 
     // mysql2 hands a DATE back as a host-timezone JS Date and this codebase has a documented
     // history of that shifting a day. On a notice boundary a day is a day of pay, so the dates
@@ -201,15 +260,24 @@ describe("updateExitStatus — notice terms are persisted", () => {
   it("prefers the confirmed LWD as the notice end over start + days", async () => {
     mockDb();
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-10-15",
-      noticePeriodDays: 30,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-10-15",
+        noticePeriodDays: 30,
+      },
+    );
 
     const u = statusUpdate();
     expect(u.sql).toMatch(/notice_end_date = COALESCE\(\?, DATE_ADD\(/);
     // The confirmed date is bound as the first arm, so an agreed LWD wins over the arithmetic.
-    expect(u.params.filter((p) => p === "2026-10-15").length).toBeGreaterThanOrEqual(2);
+    expect(
+      u.params.filter((p) => p === "2026-10-15").length,
+    ).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -219,7 +287,13 @@ describe("updateExitStatus — notice terms are optional and non-destructive", (
     const { exitService } = await import("../exit.service.js");
     // The plain transitions — Notice, Confirm Exit, Revoke, and every bulk action — send only
     // status and remarks. They must not blank out terms a previous step agreed.
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review");
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+    );
 
     const u = statusUpdate();
     expect(u.sql).not.toMatch(/last_working_day_confirmed/);
@@ -231,10 +305,17 @@ describe("updateExitStatus — notice terms are optional and non-destructive", (
   it("ignores an empty-string date rather than writing a blank", async () => {
     mockDb();
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "",
-      noticePeriodDays: null,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "",
+        noticePeriodDays: null,
+      },
+    );
 
     expect(statusUpdate().sql).not.toMatch(/last_working_day_confirmed/);
   });
@@ -245,10 +326,17 @@ describe("updateExitStatus — notice terms are optional and non-destructive", (
     // notice_period_days = 0 is the absence of a notice period, not a notice period of zero.
     // Writing notice_start = notice_end here would make "no notice recorded" indistinguishable
     // from "notice served and finished today" for every reader downstream.
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-10-15",
-      noticePeriodDays: 0,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-10-15",
+        noticePeriodDays: 0,
+      },
+    );
 
     const u = statusUpdate();
     expect(u.sql).toMatch(/last_working_day_confirmed = \?/); // the LWD is still a fact
@@ -266,10 +354,17 @@ describe("updateExitStatus — the confirmed LWD reaches the employee record", (
     // exists to prevent, on the one transition where it cannot be undone.
     mockDb({ ...EXIT_ROW, status: "notice_serving" });
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1", "notice_serving", {
-      lastWorkingDayConfirmed: "2026-10-15",
-      noticePeriodDays: 30,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "exited",
+      "confirming",
+      "actor-1",
+      "notice_serving",
+      {
+        lastWorkingDayConfirmed: "2026-10-15",
+        noticePeriodDays: 30,
+      },
+    );
 
     const e = employeeUpdate();
     expect(e).toBeDefined();
@@ -278,9 +373,19 @@ describe("updateExitStatus — the confirmed LWD reaches the employee record", (
   });
 
   it("still falls back to the stored confirmed LWD, then proposed, when none is supplied", async () => {
-    mockDb({ ...EXIT_ROW, status: "notice_serving", last_working_day_confirmed: "2026-09-25" });
+    mockDb({
+      ...EXIT_ROW,
+      status: "notice_serving",
+      last_working_day_confirmed: "2026-09-25",
+    });
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1", "notice_serving");
+    await exitService.updateExitStatus(
+      "exit-1",
+      "exited",
+      "confirming",
+      "actor-1",
+      "notice_serving",
+    );
 
     expect(employeeUpdate()!.params).toContain("2026-09-25");
   });
@@ -288,7 +393,13 @@ describe("updateExitStatus — the confirmed LWD reaches the employee record", (
   it("uses the proposed LWD when nothing has ever been confirmed", async () => {
     mockDb({ ...EXIT_ROW, status: "notice_serving" });
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1", "notice_serving");
+    await exitService.updateExitStatus(
+      "exit-1",
+      "exited",
+      "confirming",
+      "actor-1",
+      "notice_serving",
+    );
 
     expect(employeeUpdate()!.params).toContain("2026-09-30");
   });
@@ -297,14 +408,22 @@ describe("updateExitStatus — the confirmed LWD reaches the employee record", (
 describe("updateExitStatus — immediate clearance-task creation for a backdated LWD", () => {
   it("creates clearance tasks immediately when the confirmed LWD is already due", async () => {
     mockDb({ ...EXIT_ROW, status: "manager_review" }, { lwdDue: true });
-    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    const { createDefaultClearanceTasks } =
+      await import("../exit-intelligence.service.js");
     (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
     const { exitService } = await import("../exit.service.js");
 
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-09-01", // in the past relative to the mocked "due" check
-      noticePeriodDays: 0,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-09-01", // in the past relative to the mocked "due" check
+        noticePeriodDays: 0,
+      },
+    );
 
     expect(createDefaultClearanceTasks).toHaveBeenCalledTimes(1);
     expect(createDefaultClearanceTasks).toHaveBeenCalledWith("exit-1", "emp-1");
@@ -312,14 +431,22 @@ describe("updateExitStatus — immediate clearance-task creation for a backdated
 
   it("does nothing when the LWD is not yet due", async () => {
     mockDb({ ...EXIT_ROW, status: "manager_review" }, { lwdDue: false });
-    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    const { createDefaultClearanceTasks } =
+      await import("../exit-intelligence.service.js");
     (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
     const { exitService } = await import("../exit.service.js");
 
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-12-31",
-      noticePeriodDays: 30,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-12-31",
+        noticePeriodDays: 30,
+      },
+    );
 
     expect(createDefaultClearanceTasks).not.toHaveBeenCalled();
   });
@@ -329,39 +456,62 @@ describe("updateExitStatus — immediate clearance-task creation for a backdated
     // request body unconditionally, regardless of nextStatus — so a revoke call carrying a
     // stale LWD value must not spin up a clearance chain for a resignation that never happened.
     mockDb({ ...EXIT_ROW, status: "notice_serving" }, { lwdDue: true });
-    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    const { createDefaultClearanceTasks } =
+      await import("../exit-intelligence.service.js");
     (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
     const { exitService } = await import("../exit.service.js");
 
-    await exitService.updateExitStatus("exit-1", "revoked", "employee changed their mind", "actor-1", "notice_serving", {
-      lastWorkingDayConfirmed: "2026-09-01",
-      noticePeriodDays: 0,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "revoked",
+      "employee changed their mind",
+      "actor-1",
+      "notice_serving",
+      {
+        lastWorkingDayConfirmed: "2026-09-01",
+        noticePeriodDays: 0,
+      },
+    );
 
     expect(createDefaultClearanceTasks).not.toHaveBeenCalled();
   });
 
   it("never creates clearance tasks for a rejected resignation, even with a due LWD in the same call", async () => {
     mockDb({ ...EXIT_ROW, status: "manager_review" }, { lwdDue: true });
-    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    const { createDefaultClearanceTasks } =
+      await import("../exit-intelligence.service.js");
     (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
     const { exitService } = await import("../exit.service.js");
 
-    await exitService.updateExitStatus("exit-1", "rejected", "not approved", "actor-1", "manager_review", {
-      lastWorkingDayConfirmed: "2026-09-01",
-      noticePeriodDays: 0,
-    });
+    await exitService.updateExitStatus(
+      "exit-1",
+      "rejected",
+      "not approved",
+      "actor-1",
+      "manager_review",
+      {
+        lastWorkingDayConfirmed: "2026-09-01",
+        noticePeriodDays: 0,
+      },
+    );
 
     expect(createDefaultClearanceTasks).not.toHaveBeenCalled();
   });
 
   it("does nothing when the call carries no LWD at all, regardless of status", async () => {
     mockDb({ ...EXIT_ROW, status: "manager_review" }, { lwdDue: true });
-    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    const { createDefaultClearanceTasks } =
+      await import("../exit-intelligence.service.js");
     (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
     const { exitService } = await import("../exit.service.js");
 
-    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review");
+    await exitService.updateExitStatus(
+      "exit-1",
+      "accepted",
+      "ok",
+      "actor-1",
+      "manager_review",
+    );
 
     expect(createDefaultClearanceTasks).not.toHaveBeenCalled();
   });
@@ -371,19 +521,23 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
   function mockCreate() {
     calls = [];
     dbExecute.mockReset();
-    dbExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
-      calls.push({ sql: String(sql), params });
-      // no open exit for this employee
-      if (/SELECT id FROM exit_request/.test(sql)) return [[], []];
-      if (/FROM exit_request er/.test(sql)) return [[EXIT_ROW], []];
-      if (/INSERT INTO exit_request/.test(sql)) return [{ affectedRows: 1 }, []];
-      // business_policy_config lookup behind getPolicyValue — unseeded, so the caller's
-      // fallback of "30" applies. That is the live state: no migration seeds this key.
-      if (/FROM business_policy_config/.test(sql)) return [[], []];
-      return [[], []];
-    });
+    dbExecute.mockImplementation(
+      async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql: String(sql), params });
+        // no open exit for this employee
+        if (/SELECT id FROM exit_request/.test(sql)) return [[], []];
+        if (/FROM exit_request er/.test(sql)) return [[EXIT_ROW], []];
+        if (/INSERT INTO exit_request/.test(sql))
+          return [{ affectedRows: 1 }, []];
+        // business_policy_config lookup behind getPolicyValue — unseeded, so the caller's
+        // fallback of "30" applies. That is the live state: no migration seeds this key.
+        if (/FROM business_policy_config/.test(sql)) return [[], []];
+        return [[], []];
+      },
+    );
   }
-  const insert = () => calls.find((c) => /INSERT INTO exit_request/.test(c.sql))!;
+  const insert = () =>
+    calls.find((c) => /INSERT INTO exit_request/.test(c.sql))!;
 
   /**
    * Value bound to a named column of the INSERT, resolved by parsing the column list rather
@@ -400,14 +554,18 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
    */
   const insertedValueFor = (column: string) => {
     const { sql, params } = insert();
-    const columnList = /INSERT INTO exit_request\s*\(([\s\S]*?)\)\s*VALUES/i.exec(sql)?.[1] ?? "";
+    const columnList =
+      /INSERT INTO exit_request\s*\(([\s\S]*?)\)\s*VALUES/i.exec(sql)?.[1] ??
+      "";
     const valuesList = /VALUES\s*\(([\s\S]*?)\)/i.exec(sql)?.[1] ?? "";
     const columns = columnList.split(",").map((c) => c.trim());
     const values = valuesList.split(",").map((v) => v.trim());
     const idx = columns.indexOf(column);
     expect(idx, `INSERT does not name column "${column}"`).toBeGreaterThan(-1);
     const paramIndex = values.slice(0, idx).filter((v) => v === "?").length;
-    expect(values[idx], `column "${column}" is not a bound parameter`).toBe("?");
+    expect(values[idx], `column "${column}" is not a bound parameter`).toBe(
+      "?",
+    );
     return params[paramIndex];
   };
 
@@ -418,7 +576,7 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
       { employeeId: "emp-1", exitDate: "2026-10-31", exitType: "voluntary" },
-      "actor-1"
+      "actor-1",
     );
 
     const i = insert();
@@ -432,10 +590,13 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
       {
-        employeeId: "emp-1", exitDate: "2026-10-31", exitType: "involuntary",
-        exitSubType: "absconding", initiatedBy: "hr",
+        employeeId: "emp-1",
+        exitDate: "2026-10-31",
+        exitType: "involuntary",
+        exitSubType: "absconding",
+        initiatedBy: "hr",
       },
-      "actor-hr"
+      "actor-hr",
     );
 
     // Was the literal "employee" unconditionally, so an HR-raised absconding exit was
@@ -448,7 +609,7 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
       { employeeId: "emp-1", exitDate: "2026-10-31", exitType: "voluntary" },
-      "actor-1"
+      "actor-1",
     );
 
     expect(insert().params).toContain("employee");
@@ -462,7 +623,7 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
     // notice-shortfall calculation all had nothing to work from.
     await exitService.createExitRequest(
       { employeeId: "emp-1", exitDate: "2026-10-31", exitType: "voluntary" },
-      "actor-1"
+      "actor-1",
     );
 
     expect(insertedNoticeDays()).toBe(30);
@@ -476,10 +637,12 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
     // settlement, for notice nobody ever required.
     await exitService.createExitRequest(
       {
-        employeeId: "emp-1", exitDate: "2026-10-31",
-        exitType: "involuntary", exitSubType: "absconding",
+        employeeId: "emp-1",
+        exitDate: "2026-10-31",
+        exitType: "involuntary",
+        exitSubType: "absconding",
       },
-      "actor-hr"
+      "actor-hr",
     );
 
     expect(insertedNoticeDays()).toBe(0);
@@ -490,10 +653,12 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
       {
-        employeeId: "emp-1", exitDate: "2026-10-31",
-        exitType: "involuntary", exitSubType: "termination",
+        employeeId: "emp-1",
+        exitDate: "2026-10-31",
+        exitType: "involuntary",
+        exitSubType: "termination",
       },
-      "actor-hr"
+      "actor-hr",
     );
 
     expect(insertedNoticeDays()).toBe(0);
@@ -503,8 +668,13 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
     mockCreate();
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
-      { employeeId: "emp-1", exitDate: "2026-10-31", exitType: "voluntary", noticePeriodDays: 15 },
-      "actor-1"
+      {
+        employeeId: "emp-1",
+        exitDate: "2026-10-31",
+        exitType: "voluntary",
+        noticePeriodDays: 15,
+      },
+      "actor-1",
     );
     expect(insertedNoticeDays()).toBe(15);
 
@@ -513,8 +683,13 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
     // "said zero notice" the same value and left no way to apply a default without also
     // overriding a deliberate waiver.
     await exitService.createExitRequest(
-      { employeeId: "emp-1", exitDate: "2026-10-31", exitType: "voluntary", noticePeriodDays: 0 },
-      "actor-1"
+      {
+        employeeId: "emp-1",
+        exitDate: "2026-10-31",
+        exitType: "voluntary",
+        noticePeriodDays: 0,
+      },
+      "actor-1",
     );
     expect(insertedNoticeDays()).toBe(0);
   });
@@ -524,25 +699,30 @@ describe("createExitRequest — submitted_at, initiated_by and the default notic
     // already cached this key at the "30" fallback. Without an explicit invalidation this test
     // reads that cached 30 and passes for the wrong reason — it would pass identically against a
     // hardcoded literal, which is exactly what it exists to rule out.
-    const { invalidatePolicyCacheKey } = await import("../../policy-engine/policy-engine.cache.js");
+    const { invalidatePolicyCacheKey } =
+      await import("../../policy-engine/policy-engine.cache.js");
     invalidatePolicyCacheKey("exit", "notice", "default_notice_days");
 
     calls = [];
     dbExecute.mockReset();
-    dbExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
-      calls.push({ sql: String(sql), params });
-      if (/SELECT id FROM exit_request/.test(sql)) return [[], []];
-      if (/FROM exit_request er/.test(sql)) return [[EXIT_ROW], []];
-      if (/INSERT INTO exit_request/.test(sql)) return [{ affectedRows: 1 }, []];
-      // The company changes its standard notice period to 45 days in business_policy_config.
-      if (/FROM business_policy_config/.test(sql)) return [[{ config_value: "45" }], []];
-      return [[], []];
-    });
+    dbExecute.mockImplementation(
+      async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql: String(sql), params });
+        if (/SELECT id FROM exit_request/.test(sql)) return [[], []];
+        if (/FROM exit_request er/.test(sql)) return [[EXIT_ROW], []];
+        if (/INSERT INTO exit_request/.test(sql))
+          return [{ affectedRows: 1 }, []];
+        // The company changes its standard notice period to 45 days in business_policy_config.
+        if (/FROM business_policy_config/.test(sql))
+          return [[{ config_value: "45" }], []];
+        return [[], []];
+      },
+    );
 
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
       { employeeId: "emp-1", exitDate: "2026-11-30", exitType: "voluntary" },
-      "actor-1"
+      "actor-1",
     );
 
     // Effective-dated and changeable without a deploy — the whole reason this is not a literal.

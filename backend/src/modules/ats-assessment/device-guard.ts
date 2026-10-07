@@ -34,7 +34,9 @@ export const MOBILE_UA_PATTERN_SOURCE =
  * working unmodified, and so a missing header never blocks a real desktop
  * candidate by accident.
  */
-export function isBlockedDeviceUserAgent(userAgent: string | null | undefined): boolean {
+export function isBlockedDeviceUserAgent(
+  userAgent: string | null | undefined,
+): boolean {
   if (!userAgent) return false;
   return new RegExp(MOBILE_UA_PATTERN_SOURCE, "i").test(userAgent);
 }
@@ -48,7 +50,11 @@ export function isBlockedDeviceUserAgent(userAgent: string | null | undefined): 
  * misfires against a real candidate.
  */
 export function isDeviceGateEnabled(): boolean {
-  return String(process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED ?? "true").toLowerCase() !== "false";
+  return (
+    String(
+      process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED ?? "true",
+    ).toLowerCase() !== "false"
+  );
 }
 
 /**
@@ -56,7 +62,10 @@ export function isDeviceGateEnabled(): boolean {
  * resolved for this candidate; a generic instruction (no fabricated contact
  * details) otherwise.
  */
-export function deviceBlockMessage(recruiterName?: string | null, recruiterMobile?: string | null): string {
+export function deviceBlockMessage(
+  recruiterName?: string | null,
+  recruiterMobile?: string | null,
+): string {
   const contact = recruiterName
     ? `Contact your recruiter ${recruiterName}${recruiterMobile ? ` (${recruiterMobile})` : ""} for help.`
     : "Contact the recruiter who registered you for help.";

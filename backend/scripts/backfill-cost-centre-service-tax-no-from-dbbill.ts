@@ -26,16 +26,23 @@ import mysql from "mysql2/promise";
 import "dotenv/config";
 
 const APPLY = process.argv.includes("--apply");
-const isRealGstin = (value: unknown) => /^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$/.test(String(value ?? "").trim());
+const isRealGstin = (value: unknown) =>
+  /^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$/.test(String(value ?? "").trim());
 
 async function main() {
   const hrms = await mysql.createConnection({
-    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
   });
   const bill = await mysql.createConnection({
-    host: process.env.BILL_DB_HOST, port: Number(process.env.BILL_DB_PORT),
-    user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD, database: process.env.BILL_DB_NAME,
+    host: process.env.BILL_DB_HOST,
+    port: Number(process.env.BILL_DB_PORT),
+    user: process.env.BILL_DB_USER,
+    password: process.env.BILL_DB_PASSWORD,
+    database: process.env.BILL_DB_NAME,
   });
 
   try {
@@ -43,14 +50,19 @@ async function main() {
       `SELECT id, cost_centre_code, bill_source_id
          FROM cost_centre_master
         WHERE bill_source_id IS NOT NULL
-          AND (service_tax_no IS NULL OR service_tax_no = '')`
+          AND (service_tax_no IS NULL OR service_tax_no = '')`,
     );
     const keys = targets.map((r) => r.bill_source_id).filter((v) => v != null);
-    if (!keys.length) { console.log("Nothing to do — no cost centres with a bill_source_id and a blank service_tax_no."); return; }
+    if (!keys.length) {
+      console.log(
+        "Nothing to do — no cost centres with a bill_source_id and a blank service_tax_no.",
+      );
+      return;
+    }
 
     const [srcRows] = await bill.query<any[]>(
       `SELECT id, ServiceTaxNo FROM cost_master WHERE id IN (${keys.map(() => "?").join(",")})`,
-      keys
+      keys,
     );
     const source = new Map(srcRows.map((r) => [String(r.id), r.ServiceTaxNo]));
 
@@ -60,40 +72,69 @@ async function main() {
     for (const row of targets) {
       const gstin = source.get(String(row.bill_source_id));
       if (isRealGstin(gstin)) {
-        recoverable.push({ id: String(row.id), gstin: String(gstin).trim().toUpperCase(), cc: String(row.cost_centre_code) });
+        recoverable.push({
+          id: String(row.id),
+          gstin: String(gstin).trim().toUpperCase(),
+          cc: String(row.cost_centre_code),
+        });
       } else {
-        stranded.push({ cc: String(row.cost_centre_code), bill_source_id: String(row.bill_source_id) });
+        stranded.push({
+          cc: String(row.cost_centre_code),
+          bill_source_id: String(row.bill_source_id),
+        });
       }
     }
 
-    console.log(`\nCost centres with a bill_source_id and blank service_tax_no : ${targets.length}`);
-    console.log(`  recoverable from db_bill (cost_master.ServiceTaxNo)        : ${recoverable.length}`);
-    console.log(`  no usable GSTIN upstream either — left for a human          : ${stranded.length}\n`);
+    console.log(
+      `\nCost centres with a bill_source_id and blank service_tax_no : ${targets.length}`,
+    );
+    console.log(
+      `  recoverable from db_bill (cost_master.ServiceTaxNo)        : ${recoverable.length}`,
+    );
+    console.log(
+      `  no usable GSTIN upstream either — left for a human          : ${stranded.length}\n`,
+    );
 
     const byGstin = new Map<string, number>();
-    for (const r of recoverable) byGstin.set(r.gstin, (byGstin.get(r.gstin) ?? 0) + 1);
+    for (const r of recoverable)
+      byGstin.set(r.gstin, (byGstin.get(r.gstin) ?? 0) + 1);
     console.log("GSTINs that would be written:");
-    console.table([...byGstin.entries()].map(([gstin, n]) => ({ gstin, cost_centres: n })));
+    console.table(
+      [...byGstin.entries()].map(([gstin, n]) => ({ gstin, cost_centres: n })),
+    );
 
     if (stranded.length) {
-      console.log(`\nNo ServiceTaxNo in db_bill either — sample of ${Math.min(20, stranded.length)}:`);
+      console.log(
+        `\nNo ServiceTaxNo in db_bill either — sample of ${Math.min(20, stranded.length)}:`,
+      );
       console.table(stranded.slice(0, 20));
-      if (stranded.length > 20) console.log(`  … and ${stranded.length - 20} more`);
+      if (stranded.length > 20)
+        console.log(`  … and ${stranded.length - 20} more`);
     }
 
     if (!APPLY) {
-      console.log("\nDRY RUN — nothing written. Pass --apply to write the recovered GSTINs.");
+      console.log(
+        "\nDRY RUN — nothing written. Pass --apply to write the recovered GSTINs.",
+      );
       return;
     }
 
     for (const row of recoverable) {
-      await hrms.execute(`UPDATE cost_centre_master SET service_tax_no = ? WHERE id = ?`, [row.gstin, row.id]);
+      await hrms.execute(
+        `UPDATE cost_centre_master SET service_tax_no = ? WHERE id = ?`,
+        [row.gstin, row.id],
+      );
     }
-    console.log(`\nAPPLIED — ${recoverable.length} cost centre(s) given their real GSTIN from db_bill.`);
+    console.log(
+      `\nAPPLIED — ${recoverable.length} cost centre(s) given their real GSTIN from db_bill.`,
+    );
   } finally {
     await hrms.end();
     await bill.end();
   }
 }
 
-main().catch((error) => { console.error("FAILED:", error); process.exit(1); });
+main().catch((error) => {
+  console.error("FAILED:", error);
+  process.exit(1);
+});

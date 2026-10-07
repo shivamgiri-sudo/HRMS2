@@ -14,7 +14,9 @@ beforeEach(() => {
 describe("bulkValidate()", () => {
   it("returns ok for valid employee with active assignment and no pending request", async () => {
     // execute call 1: employee lookup
-    execute.mockResolvedValueOnce([[{ id: "42", name: "Alice Smith", date_of_joining: "2020-01-01" }]]);
+    execute.mockResolvedValueOnce([
+      [{ id: "42", name: "Alice Smith", date_of_joining: "2020-01-01" }],
+    ]);
     // execute call 2: active salary assignment
     execute.mockResolvedValueOnce([[{ id: 99 }]]);
     // execute call 3: pending revision check
@@ -57,7 +59,9 @@ describe("bulkValidate()", () => {
 
   it("returns error when requested date is before date of joining — only 1 execute call fires after emp lookup", async () => {
     // execute call 1: employee lookup returns emp with future DOJ
-    execute.mockResolvedValueOnce([[{ id: "5", name: "Bob Jones", date_of_joining: "2025-01-01" }]]);
+    execute.mockResolvedValueOnce([
+      [{ id: "5", name: "Bob Jones", date_of_joining: "2025-01-01" }],
+    ]);
 
     const result = await bulkValidate({
       employee_codes: ["EMP002"],
@@ -78,7 +82,9 @@ describe("bulkValidate()", () => {
 
   it("returns error when no active salary assignment exists — 2 execute calls", async () => {
     // execute call 1: employee lookup
-    execute.mockResolvedValueOnce([[{ id: "7", name: "Carol White", date_of_joining: "2020-03-01" }]]);
+    execute.mockResolvedValueOnce([
+      [{ id: "7", name: "Carol White", date_of_joining: "2020-03-01" }],
+    ]);
     // execute call 2: active salary assignment returns empty
     execute.mockResolvedValueOnce([[]]); // no assignment
 
@@ -101,7 +107,9 @@ describe("bulkValidate()", () => {
 
   it("returns error when pending revision already exists — 3 execute calls", async () => {
     // execute call 1: employee lookup
-    execute.mockResolvedValueOnce([[{ id: "10", name: "Dave Brown", date_of_joining: "2019-05-01" }]]);
+    execute.mockResolvedValueOnce([
+      [{ id: "10", name: "Dave Brown", date_of_joining: "2019-05-01" }],
+    ]);
     // execute call 2: active salary assignment exists
     execute.mockResolvedValueOnce([[{ id: 50 }]]);
     // execute call 3: pending revision found
@@ -126,7 +134,9 @@ describe("bulkValidate()", () => {
 
   it("deduplicates input codes with whitespace — 2 codes [EMP001, ' EMP001 '] → only 1 result, only 3 execute calls", async () => {
     // execute call 1: employee lookup (deduplicated to one code)
-    execute.mockResolvedValueOnce([[{ id: "42", name: "Alice Smith", date_of_joining: "2020-01-01" }]]);
+    execute.mockResolvedValueOnce([
+      [{ id: "42", name: "Alice Smith", date_of_joining: "2020-01-01" }],
+    ]);
     // execute call 2: active assignment
     execute.mockResolvedValueOnce([[{ id: 99 }]]);
     // execute call 3: pending check
@@ -150,7 +160,7 @@ describe("bulkValidate()", () => {
         employee_codes: ["EMP001"],
         requested_effective_from: "not-a-date",
         actor_roles: ["payroll_head"],
-      })
+      }),
     ).rejects.toMatchObject({
       status: 400,
       code: "INVALID_DATE",
@@ -161,7 +171,9 @@ describe("bulkValidate()", () => {
 
   it("processes a two-code batch where first resolves ok and second is not found", async () => {
     // EMP001: ok path (3 execute calls)
-    execute.mockResolvedValueOnce([[{ id: "1", name: "Alice Smith", date_of_joining: "2020-01-01" }]]);
+    execute.mockResolvedValueOnce([
+      [{ id: "1", name: "Alice Smith", date_of_joining: "2020-01-01" }],
+    ]);
     execute.mockResolvedValueOnce([[{ id: 99 }]]);
     execute.mockResolvedValueOnce([[]]);
     // EMP002: not found (1 execute call)
@@ -175,7 +187,11 @@ describe("bulkValidate()", () => {
 
     expect(result).toHaveLength(2);
     expect(result[0]).toMatchObject({ code: "EMP001", status: "ok" });
-    expect(result[1]).toMatchObject({ code: "EMP002", status: "error", reason: "Employee not found" });
+    expect(result[1]).toMatchObject({
+      code: "EMP002",
+      status: "error",
+      reason: "Employee not found",
+    });
     expect(execute).toHaveBeenCalledTimes(4);
   });
 });
@@ -232,8 +248,15 @@ describe("bulkCreate()", () => {
 
     expect(result.submitted).toBe(1);
     expect(result.failed).toBe(1);
-    expect(result.details[0]).toMatchObject({ employee_id: "e1", status: "ok", request_id: 201 });
-    expect(result.details[1]).toMatchObject({ employee_id: "e2", status: "error" });
+    expect(result.details[0]).toMatchObject({
+      employee_id: "e1",
+      status: "ok",
+      request_id: 201,
+    });
+    expect(result.details[1]).toMatchObject({
+      employee_id: "e2",
+      status: "error",
+    });
     expect(result.details[1].reason).toMatch(/salary assignment/i);
   });
 });

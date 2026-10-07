@@ -20,7 +20,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-let vendorService: typeof import("../erp.service.js")["vendorService"];
+let vendorService: (typeof import("../erp.service.js"))["vendorService"];
 beforeAll(async () => {
   ({ vendorService } = await import("../erp.service.js"));
 }, 120_000);
@@ -32,9 +32,14 @@ beforeEach(() => {
 
 /** The write statement, ignoring the getById round-trip that follows it. */
 function writeCall() {
-  const hit = execute.mock.calls.find(([sql]) => /^\s*(INSERT|UPDATE)/i.test(String(sql)));
+  const hit = execute.mock.calls.find(([sql]) =>
+    /^\s*(INSERT|UPDATE)/i.test(String(sql)),
+  );
   if (!hit) throw new Error("no write statement was issued");
-  return { sql: String(hit[0]).replace(/\s+/g, " "), params: (hit[1] ?? []) as unknown[] };
+  return {
+    sql: String(hit[0]).replace(/\s+/g, " "),
+    params: (hit[1] ?? []) as unknown[],
+  };
 }
 
 describe("update — the original columns keep COALESCE", () => {
@@ -104,7 +109,10 @@ describe("gst_state_code is derived from the GSTIN", () => {
   });
 
   it("never overrides an explicitly supplied state code", async () => {
-    await vendorService.update("v1", { gst_number: "09AAACH7409R1ZZ", gst_state_code: "27" });
+    await vendorService.update("v1", {
+      gst_number: "09AAACH7409R1ZZ",
+      gst_state_code: "27",
+    });
     expect(writeCall().params).toContain("27");
   });
 
@@ -127,7 +135,10 @@ describe("create", () => {
 
   it("includes enrichment columns when they are supplied", async () => {
     await vendorService.create({
-      vendor_code: "V-2", vendor_name: "Beta", tally_name: "Beta A/c", city: "Noida",
+      vendor_code: "V-2",
+      vendor_name: "Beta",
+      tally_name: "Beta A/c",
+      city: "Noida",
       gst_number: "09AAACH7409R1ZZ",
     });
     const { sql, params } = writeCall();
@@ -140,7 +151,11 @@ describe("create", () => {
 
   it("keeps placeholder count equal to parameter count", async () => {
     // A mismatch here is a runtime bind error, not a compile error.
-    await vendorService.create({ vendor_code: "V-3", vendor_name: "Gamma", pin_code: "201301" });
+    await vendorService.create({
+      vendor_code: "V-3",
+      vendor_name: "Gamma",
+      pin_code: "201301",
+    });
     const { sql, params } = writeCall();
     const placeholders = (sql.match(/\?/g) ?? []).length;
     expect(placeholders).toBe(params.length);

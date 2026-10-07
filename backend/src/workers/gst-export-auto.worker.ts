@@ -1,7 +1,14 @@
 import { db } from "../db/mysql.js";
 import { logger } from "../logger.js";
-import { gstExportService, isValidGstin } from "../modules/gst/gst-export.service.js";
-import { registerTimer, unregisterTimer, withWorkerLock } from "./worker-utils.js";
+import {
+  gstExportService,
+  isValidGstin,
+} from "../modules/gst/gst-export.service.js";
+import {
+  registerTimer,
+  unregisterTimer,
+  withWorkerLock,
+} from "./worker-utils.js";
 import type { RowDataPacket } from "mysql2";
 
 /**
@@ -109,7 +116,12 @@ async function cycle(): Promise<void> {
       }
 
       const result = await gstExportService.generateBatch(
-        { exportType: "GSTR1", companyGstin: gstin, periodMonth: period, notes: "Auto-generated" },
+        {
+          exportType: "GSTR1",
+          companyGstin: gstin,
+          periodMonth: period,
+          notes: "Auto-generated",
+        },
         null,
         "system",
       );
@@ -141,15 +153,21 @@ async function cycle(): Promise<void> {
 
 export function startGstExportAutoWorker(): void {
   if (process.env.GST_EXPORT_AUTO_ENABLED === "false") {
-    logger.info({ worker: WORKER_NAME }, "[gst-export] disabled (GST_EXPORT_AUTO_ENABLED=false)");
+    logger.info(
+      { worker: WORKER_NAME },
+      "[gst-export] disabled (GST_EXPORT_AUTO_ENABLED=false)",
+    );
     return;
   }
 
   // Not on boot: a deploy restarts the process, and a rollout should not trigger a generation
   // sweep across every registration while the app is still settling.
-  startupTimer = setTimeout(() => {
-    void withWorkerLock(WORKER_NAME, cycle);
-  }, 10 * 60 * 1000);
+  startupTimer = setTimeout(
+    () => {
+      void withWorkerLock(WORKER_NAME, cycle);
+    },
+    10 * 60 * 1000,
+  );
   registerTimer(`${WORKER_NAME}:startup`, startupTimer);
 
   intervalTimer = setInterval(() => {
@@ -157,10 +175,21 @@ export function startGstExportAutoWorker(): void {
   }, INTERVAL_MS);
   registerTimer(WORKER_NAME, intervalTimer);
 
-  logger.info({ worker: WORKER_NAME, intervalMs: INTERVAL_MS }, "[gst-export] scheduled");
+  logger.info(
+    { worker: WORKER_NAME, intervalMs: INTERVAL_MS },
+    "[gst-export] scheduled",
+  );
 }
 
 export function stopGstExportAutoWorker(): void {
-  if (startupTimer) { clearTimeout(startupTimer); unregisterTimer(`${WORKER_NAME}:startup`); startupTimer = null; }
-  if (intervalTimer) { clearInterval(intervalTimer); unregisterTimer(WORKER_NAME); intervalTimer = null; }
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    unregisterTimer(`${WORKER_NAME}:startup`);
+    startupTimer = null;
+  }
+  if (intervalTimer) {
+    clearInterval(intervalTimer);
+    unregisterTimer(WORKER_NAME);
+    intervalTimer = null;
+  }
 }

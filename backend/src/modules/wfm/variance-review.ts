@@ -73,20 +73,24 @@
 //     `queueState` those produce.
 //
 
-import type { DayClassification, VarianceEvaluation } from './attendance-variance.js';
+import type {
+  DayClassification,
+  VarianceEvaluation,
+} from "./attendance-variance.js";
 
 // ---------------------------------------------------------------------------------------------
 // Fixed vocabulary (criterion 7.11)
 // ---------------------------------------------------------------------------------------------
 
 /** criterion 7.11's new Review_Outcome vocabulary. */
-export type ReviewOutcome = 'apr_accepted' | 'apr_disputed' | 'adjustment_requested';
+export type ReviewOutcome =
+  "apr_accepted" | "apr_disputed" | "adjustment_requested";
 
 /** criteria 6.9, 6.11, 7.1, 7.11. */
-export type QueueState = 'queued_for_dual_review' | 'recorded_not_queued';
+export type QueueState = "queued_for_dual_review" | "recorded_not_queued";
 
 /** The two reviewer slots of criterion 7.5. */
-export type ReviewerRole = 'wfm_reviewer' | 'reporting_manager';
+export type ReviewerRole = "wfm_reviewer" | "reporting_manager";
 
 /**
  * The existing `payroll_attendance_conflict_review.status` enum plus criterion 7.10's contested
@@ -94,12 +98,12 @@ export type ReviewerRole = 'wfm_reviewer' | 'reporting_manager';
  * because criterion 7.11 extends that structure rather than replacing it.
  */
 export type VarianceRecordStatus =
-  | 'open'
-  | 'notified'
-  | 'reviewed'
-  | 'contested'
-  | 'no_issue'
-  | 'regularization_required';
+  | "open"
+  | "notified"
+  | "reviewed"
+  | "contested"
+  | "no_issue"
+  | "regularization_required";
 
 /**
  * Statuses that close a Variance_Record to further recording. A `contested` record is closed to
@@ -108,10 +112,10 @@ export type VarianceRecordStatus =
  * dispute they are party to.
  */
 const CLOSED_STATUSES: readonly VarianceRecordStatus[] = Object.freeze([
-  'reviewed',
-  'contested',
-  'no_issue',
-  'regularization_required',
+  "reviewed",
+  "contested",
+  "no_issue",
+  "regularization_required",
 ]);
 
 /** criterion 7.9: three whole days when the escalation age is not configured. */
@@ -127,8 +131,8 @@ export const MIN_REVIEWER_COMMENT_LENGTH = 20;
 
 /** criterion 7.4: the two outcomes that require a comment. */
 const OUTCOMES_REQUIRING_COMMENT: readonly ReviewOutcome[] = Object.freeze([
-  'apr_disputed',
-  'adjustment_requested',
+  "apr_disputed",
+  "adjustment_requested",
 ]);
 
 // ---------------------------------------------------------------------------------------------
@@ -146,7 +150,7 @@ export interface DiallerSourceContribution {
 /** criterion 7.2's biometric punch times, as strings exactly as the feed recorded them. */
 export interface BiometricPunch {
   readonly punchAt: string;
-  readonly direction: 'in' | 'out' | 'unknown';
+  readonly direction: "in" | "out" | "unknown";
 }
 
 /**
@@ -178,7 +182,7 @@ export interface DailyOutcome {
 export type RecordedReview =
   // criterion 8.1: no classification and no lwp member exists on this arm.
   | {
-      readonly outcome: 'apr_accepted';
+      readonly outcome: "apr_accepted";
       readonly role: ReviewerRole;
       readonly userId: string;
       readonly recordedAt: string;
@@ -187,7 +191,7 @@ export type RecordedReview =
     }
   // criterion 8.1: likewise.
   | {
-      readonly outcome: 'apr_disputed';
+      readonly outcome: "apr_disputed";
       readonly role: ReviewerRole;
       readonly userId: string;
       readonly recordedAt: string;
@@ -196,7 +200,7 @@ export type RecordedReview =
     }
   // criterion 8.2: the ONLY arm that carries a requested classification.
   | {
-      readonly outcome: 'adjustment_requested';
+      readonly outcome: "adjustment_requested";
       readonly role: ReviewerRole;
       readonly userId: string;
       readonly recordedAt: string;
@@ -213,9 +217,9 @@ export type RecordedReview =
  * discarded. 1 of 1,123 active employees.
  */
 export interface ManagerSubstitution {
-  readonly kind: 'branch_wfm_point_of_contact';
+  readonly kind: "branch_wfm_point_of_contact";
   readonly substituteUserId: string;
-  readonly reason: 'employee_has_no_reporting_manager';
+  readonly reason: "employee_has_no_reporting_manager";
 }
 
 interface VarianceRecordBase {
@@ -251,7 +255,7 @@ interface VarianceRecordBase {
 
 /** criteria 6.8, 6.9: presented for Dual_Review. */
 export type QueuedVarianceRecord = VarianceRecordBase & {
-  readonly queueState: 'queued_for_dual_review';
+  readonly queueState: "queued_for_dual_review";
 };
 
 /**
@@ -260,14 +264,17 @@ export type QueuedVarianceRecord = VarianceRecordBase & {
  * that rather than a comment asking a caller to remember it.
  */
 export type RecordedNotQueuedVarianceRecord = VarianceRecordBase & {
-  readonly queueState: 'recorded_not_queued';
+  readonly queueState: "recorded_not_queued";
 };
 
-export type VarianceRecord = QueuedVarianceRecord | RecordedNotQueuedVarianceRecord;
+export type VarianceRecord =
+  QueuedVarianceRecord | RecordedNotQueuedVarianceRecord;
 
 /** Narrowing helper, so a caller does not compare the string literal by hand. */
-export function isQueuedForDualReview(record: VarianceRecord): record is QueuedVarianceRecord {
-  return record.queueState === 'queued_for_dual_review';
+export function isQueuedForDualReview(
+  record: VarianceRecord,
+): record is QueuedVarianceRecord {
+  return record.queueState === "queued_for_dual_review";
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -312,9 +319,14 @@ export interface NormalizedComment {
  * requirement states, and inventing policy is not this module's job. Steps 1 and 3 are the
  * minimum needed to close the trivial evasion, and no more.
  */
-export function normalizeReviewerComment(raw: string | null | undefined): NormalizedComment {
-  if (raw === null || raw === undefined) return { normalized: '', length: 0 };
-  const normalized = raw.replace(INVISIBLE_CHARACTERS, '').replace(WHITESPACE_RUN, ' ').trim();
+export function normalizeReviewerComment(
+  raw: string | null | undefined,
+): NormalizedComment {
+  if (raw === null || raw === undefined) return { normalized: "", length: 0 };
+  const normalized = raw
+    .replace(INVISIBLE_CHARACTERS, "")
+    .replace(WHITESPACE_RUN, " ")
+    .trim();
   return { normalized, length: Array.from(normalized).length };
 }
 
@@ -333,7 +345,7 @@ declare const REVIEW_AUTHORITY_BRAND: unique symbol;
  * on it (criteria 7.1, 7.6, 7.7). Obtainable only from `authorizeReviewer`.
  */
 export interface ReviewAuthority {
-  readonly [REVIEW_AUTHORITY_BRAND]: 'checked_not_self_review';
+  readonly [REVIEW_AUTHORITY_BRAND]: "checked_not_self_review";
   readonly recordId: string;
   readonly userId: string;
   readonly role: ReviewerRole;
@@ -350,25 +362,25 @@ export interface ReviewActor {
 
 export type ReviewRejectionCode =
   /** criterion 7.7. */
-  | 'self_review_not_permitted'
+  | "self_review_not_permitted"
   /** criterion 7.1: a Recorded_Not_Queued record reached a review entry point at runtime. */
-  | 'record_not_queued_for_dual_review'
+  | "record_not_queued_for_dual_review"
   /** criterion 7.1: the acting WFM_Reviewer's scope does not contain the employee. */
-  | 'reviewer_not_in_scope'
+  | "reviewer_not_in_scope"
   /** criteria 7.1, 7.6: not the Reporting_Manager and not the branch substitute. */
-  | 'not_the_reporting_manager'
+  | "not_the_reporting_manager"
   /** criterion 7.6: neither a Reporting_Manager nor a branch WFM point of contact exists. */
-  | 'no_manager_reviewer_available'
+  | "no_manager_reviewer_available"
   /** The authority was issued for a different Variance_Record. */
-  | 'authority_record_mismatch'
+  | "authority_record_mismatch"
   /** criterion 7.4. */
-  | 'comment_too_short'
+  | "comment_too_short"
   /** criterion 8.2: an adjustment request must state the requested classification. */
-  | 'requested_classification_required'
+  | "requested_classification_required"
   /** criterion 7.3: the slot already holds an outcome. */
-  | 'outcome_already_recorded_for_role'
+  | "outcome_already_recorded_for_role"
   /** criteria 7.5, 7.10: the record is reviewed, contested or legacy-closed. */
-  | 'record_already_closed';
+  | "record_already_closed";
 
 export interface ReviewRejection {
   readonly code: ReviewRejectionCode;
@@ -388,7 +400,11 @@ function reject(
 ): { readonly ok: false; readonly rejection: ReviewRejection } {
   return Object.freeze({
     ok: false as const,
-    rejection: Object.freeze({ code, message, criteria: Object.freeze([...criteria]) }),
+    rejection: Object.freeze({
+      code,
+      message,
+      criteria: Object.freeze([...criteria]),
+    }),
   });
 }
 
@@ -407,11 +423,11 @@ export function authorizeReviewer(
 ): AuthorizeReviewerResult {
   // criterion 7.1, defence in depth. The parameter type already excludes a Recorded_Not_Queued
   // record; this catches a value that reached here through `as` or from untyped JSON.
-  if (record.queueState !== 'queued_for_dual_review') {
+  if (record.queueState !== "queued_for_dual_review") {
     return reject(
-      'record_not_queued_for_dual_review',
-      'This Variance_Record is Recorded_Not_Queued and is not presented for Dual_Review.',
-      ['7.1'],
+      "record_not_queued_for_dual_review",
+      "This Variance_Record is Recorded_Not_Queued and is not presented for Dual_Review.",
+      ["7.1"],
     );
   }
 
@@ -426,24 +442,24 @@ export function authorizeReviewer(
     actor.employeeId === record.employeeId;
   if (isEmployeeLogin || isEmployeeRow) {
     return reject(
-      'self_review_not_permitted',
-      'Self-review is not permitted: the recording user is the employee named on this Variance_Record.',
-      ['7.7'],
+      "self_review_not_permitted",
+      "Self-review is not permitted: the recording user is the employee named on this Variance_Record.",
+      ["7.7"],
     );
   }
 
-  if (actor.role === 'wfm_reviewer') {
+  if (actor.role === "wfm_reviewer") {
     // criterion 7.1: the WFM_Reviewers whose scope contains the employee.
     if (!record.authorizedWfmReviewerUserIds.includes(actor.userId)) {
       return reject(
-        'reviewer_not_in_scope',
-        'This Variance_Record is not presented to the acting WFM_Reviewer: the employee is outside their scope.',
-        ['7.1'],
+        "reviewer_not_in_scope",
+        "This Variance_Record is not presented to the acting WFM_Reviewer: the employee is outside their scope.",
+        ["7.1"],
       );
     }
     return Object.freeze({
       ok: true as const,
-      authority: makeAuthority(record.id, actor.userId, 'wfm_reviewer', null),
+      authority: makeAuthority(record.id, actor.userId, "wfm_reviewer", null),
     });
   }
 
@@ -451,14 +467,19 @@ export function authorizeReviewer(
   if (record.reportingManagerUserId !== null) {
     if (record.reportingManagerUserId !== actor.userId) {
       return reject(
-        'not_the_reporting_manager',
+        "not_the_reporting_manager",
         "The acting user is not the employee's Reporting_Manager for this Variance_Record.",
-        ['7.1'],
+        ["7.1"],
       );
     }
     return Object.freeze({
       ok: true as const,
-      authority: makeAuthority(record.id, actor.userId, 'reporting_manager', null),
+      authority: makeAuthority(
+        record.id,
+        actor.userId,
+        "reporting_manager",
+        null,
+      ),
     });
   }
 
@@ -466,24 +487,24 @@ export function authorizeReviewer(
   // substitutes and the substitution is recorded on the record.
   if (record.branchWfmContactUserId === null) {
     return reject(
-      'no_manager_reviewer_available',
-      'The employee has no Reporting_Manager and the branch has no workforce-management point of contact to substitute.',
-      ['7.6'],
+      "no_manager_reviewer_available",
+      "The employee has no Reporting_Manager and the branch has no workforce-management point of contact to substitute.",
+      ["7.6"],
     );
   }
   if (record.branchWfmContactUserId !== actor.userId) {
     return reject(
-      'not_the_reporting_manager',
+      "not_the_reporting_manager",
       "The employee has no Reporting_Manager; only the branch workforce-management point of contact may fill the second slot.",
-      ['7.1', '7.6'],
+      ["7.1", "7.6"],
     );
   }
   return Object.freeze({
     ok: true as const,
-    authority: makeAuthority(record.id, actor.userId, 'reporting_manager', {
-      kind: 'branch_wfm_point_of_contact',
+    authority: makeAuthority(record.id, actor.userId, "reporting_manager", {
+      kind: "branch_wfm_point_of_contact",
       substituteUserId: actor.userId,
-      reason: 'employee_has_no_reporting_manager',
+      reason: "employee_has_no_reporting_manager",
     }),
   });
 }
@@ -527,7 +548,8 @@ export type PresentationResult =
   | {
       readonly presented: false;
       readonly recordId: string;
-      readonly reason: 'recorded_not_queued' | 'review_already_complete' | 'record_closed';
+      readonly reason:
+        "recorded_not_queued" | "review_already_complete" | "record_closed";
       /** criterion 7.1: not presented is not the same as not retrievable. */
       readonly retrievableForReporting: true;
     };
@@ -538,12 +560,14 @@ export type PresentationResult =
  * `evidence` without first handling the Recorded_Not_Queued case, so criterion 7.1's "SHALL NOT
  * be presented for Dual_Review" is not something a UI can forget.
  */
-export function presentForDualReview(record: VarianceRecord): PresentationResult {
+export function presentForDualReview(
+  record: VarianceRecord,
+): PresentationResult {
   if (!isQueuedForDualReview(record)) {
     return Object.freeze({
       presented: false as const,
       recordId: record.id,
-      reason: 'recorded_not_queued' as const,
+      reason: "recorded_not_queued" as const,
       retrievableForReporting: true as const,
     });
   }
@@ -551,7 +575,7 @@ export function presentForDualReview(record: VarianceRecord): PresentationResult
     return Object.freeze({
       presented: false as const,
       recordId: record.id,
-      reason: 'review_already_complete' as const,
+      reason: "review_already_complete" as const,
       retrievableForReporting: true as const,
     });
   }
@@ -559,41 +583,42 @@ export function presentForDualReview(record: VarianceRecord): PresentationResult
     return Object.freeze({
       presented: false as const,
       recordId: record.id,
-      reason: 'record_closed' as const,
+      reason: "record_closed" as const,
       retrievableForReporting: true as const,
     });
   }
 
-  const reviewers: PresentedReviewer[] = record.authorizedWfmReviewerUserIds.map((userId) => ({
-    role: 'wfm_reviewer' as const,
-    userId,
-    substituted: false,
-  }));
+  const reviewers: PresentedReviewer[] =
+    record.authorizedWfmReviewerUserIds.map((userId) => ({
+      role: "wfm_reviewer" as const,
+      userId,
+      substituted: false,
+    }));
 
   let substitution: ManagerSubstitution | null = null;
   if (record.reportingManagerUserId !== null) {
     reviewers.push({
-      role: 'reporting_manager',
+      role: "reporting_manager",
       userId: record.reportingManagerUserId,
       substituted: false,
     });
   } else if (record.branchWfmContactUserId !== null) {
     // criterion 7.6.
     substitution = Object.freeze({
-      kind: 'branch_wfm_point_of_contact' as const,
+      kind: "branch_wfm_point_of_contact" as const,
       substituteUserId: record.branchWfmContactUserId,
-      reason: 'employee_has_no_reporting_manager' as const,
+      reason: "employee_has_no_reporting_manager" as const,
     });
     reviewers.push({
-      role: 'reporting_manager',
+      role: "reporting_manager",
       userId: record.branchWfmContactUserId,
       substituted: true,
     });
   }
 
   const missing: ReviewerRole[] = [];
-  if (record.wfmReview === null) missing.push('wfm_reviewer');
-  if (record.managerReview === null) missing.push('reporting_manager');
+  if (record.wfmReview === null) missing.push("wfm_reviewer");
+  if (record.managerReview === null) missing.push("reporting_manager");
 
   return Object.freeze({
     presented: true as const,
@@ -636,10 +661,12 @@ export function describeForReport(record: VarianceRecord): ReportRow {
     queueState: record.queueState,
     status: record.status,
     varianceRiskScore: record.evidence.evaluation.varianceRiskScore,
-    presentedForDualReview: record.queueState === 'queued_for_dual_review',
+    presentedForDualReview: record.queueState === "queued_for_dual_review",
     wfmOutcome: record.wfmReview?.outcome ?? null,
     managerOutcome: record.managerReview?.outcome ?? null,
-    managerSubstituted: record.managerReview !== null && record.managerReview.substitution !== null,
+    managerSubstituted:
+      record.managerReview !== null &&
+      record.managerReview.substitution !== null,
   });
 }
 
@@ -649,16 +676,16 @@ export function describeForReport(record: VarianceRecord): ReportRow {
 
 export type ConflictReason =
   /** One reviewer accepts the APR record, the other disputes it. */
-  | 'accepted_versus_disputed'
+  | "accepted_versus_disputed"
   /** One reviewer would leave the day alone, the other would move the day's pay. */
-  | 'accepted_versus_adjustment'
+  | "accepted_versus_adjustment"
   /** Both want an adjustment, to different classifications or different LWP values. */
-  | 'divergent_requested_adjustments';
+  | "divergent_requested_adjustments";
 
 export type AgreementReason =
-  | 'identical_outcomes'
-  | 'same_requested_adjustment'
-  | 'dispute_and_adjustment_agree_on_the_finding';
+  | "identical_outcomes"
+  | "same_requested_adjustment"
+  | "dispute_and_adjustment_agree_on_the_finding";
 
 export type ConflictAssessment =
   | { readonly conflicting: false; readonly reason: AgreementReason }
@@ -721,26 +748,31 @@ export function assessOutcomeConflict(
   const conflict = (reason: ConflictReason): ConflictAssessment =>
     Object.freeze({ conflicting: true as const, reason });
 
-  if (first.outcome === 'adjustment_requested' && second.outcome === 'adjustment_requested') {
-    const sameClassification = first.requestedClassification === second.requestedClassification;
-    const sameLwp = (first.requestedLwpValue ?? null) === (second.requestedLwpValue ?? null);
+  if (
+    first.outcome === "adjustment_requested" &&
+    second.outcome === "adjustment_requested"
+  ) {
+    const sameClassification =
+      first.requestedClassification === second.requestedClassification;
+    const sameLwp =
+      (first.requestedLwpValue ?? null) === (second.requestedLwpValue ?? null);
     return sameClassification && sameLwp
-      ? agree('same_requested_adjustment')
-      : conflict('divergent_requested_adjustments');
+      ? agree("same_requested_adjustment")
+      : conflict("divergent_requested_adjustments");
   }
 
-  if (first.outcome === second.outcome) return agree('identical_outcomes');
+  if (first.outcome === second.outcome) return agree("identical_outcomes");
 
   // Normalized to an unordered pair so the verdict cannot depend on recording order.
   const pair = new Set<ReviewOutcome>([first.outcome, second.outcome]);
-  if (pair.has('apr_accepted') && pair.has('apr_disputed')) {
-    return conflict('accepted_versus_disputed');
+  if (pair.has("apr_accepted") && pair.has("apr_disputed")) {
+    return conflict("accepted_versus_disputed");
   }
-  if (pair.has('apr_accepted') && pair.has('adjustment_requested')) {
-    return conflict('accepted_versus_adjustment');
+  if (pair.has("apr_accepted") && pair.has("adjustment_requested")) {
+    return conflict("accepted_versus_adjustment");
   }
   // The remaining pair: apr_disputed + adjustment_requested.
-  return agree('dispute_and_adjustment_agree_on_the_finding');
+  return agree("dispute_and_adjustment_agree_on_the_finding");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -754,10 +786,10 @@ export function assessOutcomeConflict(
  * only for the other two.
  */
 export type ReviewSubmission =
-  | { readonly outcome: 'apr_accepted'; readonly comment?: string | null }
-  | { readonly outcome: 'apr_disputed'; readonly comment: string }
+  | { readonly outcome: "apr_accepted"; readonly comment?: string | null }
+  | { readonly outcome: "apr_disputed"; readonly comment: string }
   | {
-      readonly outcome: 'adjustment_requested';
+      readonly outcome: "adjustment_requested";
       readonly comment: string;
       readonly requestedClassification: DayClassification;
       readonly requestedLwpValue?: number | null;
@@ -765,7 +797,7 @@ export type ReviewSubmission =
 
 /** criterion 7.10's routing target. Returned as intent; this module notifies nobody. */
 export interface OverrideApproverRouting {
-  readonly reason: 'conflicting_review_outcomes';
+  readonly reason: "conflicting_review_outcomes";
   readonly conflictReason: ConflictReason;
   readonly branchId: string;
   readonly overrideApproverUserIds: readonly string[];
@@ -813,15 +845,17 @@ export interface RecordOutcomeInput {
  * criteria 7.3, 7.4, 7.5, 7.10, 8.1 and 8.2. Returns the accepted new state or a typed rejection.
  * Never throws for ordinary data.
  */
-export function recordReviewOutcome(input: RecordOutcomeInput): RecordOutcomeResult {
+export function recordReviewOutcome(
+  input: RecordOutcomeInput,
+): RecordOutcomeResult {
   const { record, authority, submission, recordedAt } = input;
 
   // criterion 7.1, defence in depth behind the parameter type.
-  if (record.queueState !== 'queued_for_dual_review') {
+  if (record.queueState !== "queued_for_dual_review") {
     return reject(
-      'record_not_queued_for_dual_review',
-      'This Variance_Record is Recorded_Not_Queued and is not presented for Dual_Review.',
-      ['7.1'],
+      "record_not_queued_for_dual_review",
+      "This Variance_Record is Recorded_Not_Queued and is not presented for Dual_Review.",
+      ["7.1"],
     );
   }
 
@@ -829,38 +863,40 @@ export function recordReviewOutcome(input: RecordOutcomeInput): RecordOutcomeRes
   // the self-review hole the brand closes, since the employee differs per record.
   if (authority.recordId !== record.id) {
     return reject(
-      'authority_record_mismatch',
-      'The reviewer authority was issued for a different Variance_Record.',
-      ['7.1', '7.7'],
+      "authority_record_mismatch",
+      "The reviewer authority was issued for a different Variance_Record.",
+      ["7.1", "7.7"],
     );
   }
 
   // criterion 7.7 re-checked. `authorizeReviewer` already refused this, so reaching it means the
   // brand was bypassed by a cast; the security rule still holds.
   const isEmployeeLogin =
-    record.employeeUserId !== null && record.employeeUserId === authority.userId;
+    record.employeeUserId !== null &&
+    record.employeeUserId === authority.userId;
   if (isEmployeeLogin) {
     return reject(
-      'self_review_not_permitted',
-      'Self-review is not permitted: the recording user is the employee named on this Variance_Record.',
-      ['7.7'],
+      "self_review_not_permitted",
+      "Self-review is not permitted: the recording user is the employee named on this Variance_Record.",
+      ["7.7"],
     );
   }
 
   if (CLOSED_STATUSES.includes(record.status)) {
     return reject(
-      'record_already_closed',
+      "record_already_closed",
       `This Variance_Record is ${record.status} and accepts no further Review_Outcome.`,
-      ['7.5', '7.10'],
+      ["7.5", "7.10"],
     );
   }
 
-  const existing = authority.role === 'wfm_reviewer' ? record.wfmReview : record.managerReview;
+  const existing =
+    authority.role === "wfm_reviewer" ? record.wfmReview : record.managerReview;
   if (existing !== null) {
     return reject(
-      'outcome_already_recorded_for_role',
+      "outcome_already_recorded_for_role",
       `A Review_Outcome is already recorded for the ${authority.role} slot on this Variance_Record.`,
-      ['7.3'],
+      ["7.3"],
     );
   }
 
@@ -871,19 +907,22 @@ export function recordReviewOutcome(input: RecordOutcomeInput): RecordOutcomeRes
     comment.length < MIN_REVIEWER_COMMENT_LENGTH
   ) {
     return reject(
-      'comment_too_short',
+      "comment_too_short",
       `A Review_Outcome of ${submission.outcome} requires a reviewer comment of at least ` +
         `${MIN_REVIEWER_COMMENT_LENGTH} characters; this one counts ${comment.length}.`,
-      ['7.4'],
+      ["7.4"],
     );
   }
 
   // criterion 8.2: a request that names no classification states nothing to approve.
-  if (submission.outcome === 'adjustment_requested' && !submission.requestedClassification) {
+  if (
+    submission.outcome === "adjustment_requested" &&
+    !submission.requestedClassification
+  ) {
     return reject(
-      'requested_classification_required',
-      'An adjustment request must state the requested classification.',
-      ['8.2'],
+      "requested_classification_required",
+      "An adjustment request must state the requested classification.",
+      ["8.2"],
     );
   }
 
@@ -897,43 +936,49 @@ export function recordReviewOutcome(input: RecordOutcomeInput): RecordOutcomeRes
   } as const;
 
   const recorded: RecordedReview =
-    submission.outcome === 'adjustment_requested'
+    submission.outcome === "adjustment_requested"
       ? Object.freeze({
-          outcome: 'adjustment_requested' as const,
+          outcome: "adjustment_requested" as const,
           ...common,
           requestedClassification: submission.requestedClassification,
           requestedLwpValue: submission.requestedLwpValue ?? null,
         })
-      : submission.outcome === 'apr_disputed'
-        ? Object.freeze({ outcome: 'apr_disputed' as const, ...common })
-        : Object.freeze({ outcome: 'apr_accepted' as const, ...common });
+      : submission.outcome === "apr_disputed"
+        ? Object.freeze({ outcome: "apr_disputed" as const, ...common })
+        : Object.freeze({ outcome: "apr_accepted" as const, ...common });
 
-  const wfmReview = authority.role === 'wfm_reviewer' ? recorded : record.wfmReview;
-  const managerReview = authority.role === 'reporting_manager' ? recorded : record.managerReview;
+  const wfmReview =
+    authority.role === "wfm_reviewer" ? recorded : record.wfmReview;
+  const managerReview =
+    authority.role === "reporting_manager" ? recorded : record.managerReview;
 
   // criterion 7.5: both slots filled marks the record reviewed. criterion 7.10 overrides that
   // with contested when the two outcomes conflict.
   const dualReviewComplete = wfmReview !== null && managerReview !== null;
-  const conflict = dualReviewComplete ? assessOutcomeConflict(wfmReview, managerReview) : null;
+  const conflict = dualReviewComplete
+    ? assessOutcomeConflict(wfmReview, managerReview)
+    : null;
 
   let statusAfter: VarianceRecordStatus = record.status;
   let routing: OverrideApproverRouting | null = null;
   if (conflict !== null && conflict.conflicting) {
-    statusAfter = 'contested';
+    statusAfter = "contested";
     routing = Object.freeze({
-      reason: 'conflicting_review_outcomes' as const,
+      reason: "conflicting_review_outcomes" as const,
       conflictReason: conflict.reason,
       branchId: record.branchId,
-      overrideApproverUserIds: Object.freeze([...record.overrideApproverUserIds]),
+      overrideApproverUserIds: Object.freeze([
+        ...record.overrideApproverUserIds,
+      ]),
       unroutable: record.overrideApproverUserIds.length === 0,
     });
   } else if (dualReviewComplete) {
-    statusAfter = 'reviewed';
+    statusAfter = "reviewed";
   }
 
   const nextRecord: QueuedVarianceRecord = Object.freeze({
     ...record,
-    queueState: 'queued_for_dual_review' as const,
+    queueState: "queued_for_dual_review" as const,
     status: statusAfter,
     wfmReview,
     managerReview,
@@ -942,7 +987,7 @@ export function recordReviewOutcome(input: RecordOutcomeInput): RecordOutcomeRes
   // criterion 8.2. The type of `recorded` is what gates this: only the `adjustment_requested`
   // arm is assignable to buildAdjustmentRequest's parameter.
   const adjustmentRequest =
-    recorded.outcome === 'adjustment_requested'
+    recorded.outcome === "adjustment_requested"
       ? buildAdjustmentRequest(record, recorded)
       : null;
 
@@ -996,7 +1041,9 @@ function calendarDayNumber(value: string, label: string): number {
   const day = Number(match[3]);
   const ms = Date.UTC(year, month - 1, day);
   if (!Number.isFinite(ms)) {
-    throw new RangeError(`${label} is not a valid date; received ${JSON.stringify(value)}.`);
+    throw new RangeError(
+      `${label} is not a valid date; received ${JSON.stringify(value)}.`,
+    );
   }
   const roundTrip = new Date(ms);
   if (
@@ -1005,7 +1052,9 @@ function calendarDayNumber(value: string, label: string): number {
     roundTrip.getUTCDate() !== day
   ) {
     // '2026-02-31' parses arithmetically and would silently become 2026-03-03.
-    throw new RangeError(`${label} names a date that does not exist; received ${JSON.stringify(value)}.`);
+    throw new RangeError(
+      `${label} names a date that does not exist; received ${JSON.stringify(value)}.`,
+    );
   }
   return ms / MS_PER_DAY;
 }
@@ -1015,7 +1064,10 @@ function calendarDayNumber(value: string, label: string): number {
  * a caller (or a test) must be able to check it directly. Negative when `to` precedes `from`.
  */
 export function wholeDaysBetween(from: string, to: string): number {
-  return calendarDayNumber(to, 'reference date') - calendarDayNumber(from, 'start date');
+  return (
+    calendarDayNumber(to, "reference date") -
+    calendarDayNumber(from, "start date")
+  );
 }
 
 /** criterion 7.8's "next escalation level", resolved by the caller and handed in. */
@@ -1036,15 +1088,15 @@ export interface EscalationNotificationIntent {
 }
 
 export type EscalationReason =
-  | 'due'
-  | 'record_not_queued'
-  | 'record_closed'
-  | 'review_already_complete'
-  | 'not_presented'
-  | 'presented_after_reference_date'
-  | 'age_below_escalation_age'
-  | 'interval_not_elapsed'
-  | 'no_escalation_target';
+  | "due"
+  | "record_not_queued"
+  | "record_closed"
+  | "review_already_complete"
+  | "not_presented"
+  | "presented_after_reference_date"
+  | "age_below_escalation_age"
+  | "interval_not_elapsed"
+  | "no_escalation_target";
 
 export interface EscalationEvaluation {
   readonly due: boolean;
@@ -1106,17 +1158,19 @@ function applyDayCount(
  *
  * Throws only for a malformed date (see `calendarDayNumber`) -- a programmer error.
  */
-export function evaluateEscalation(input: EscalationEvaluationInput): EscalationEvaluation {
+export function evaluateEscalation(
+  input: EscalationEvaluationInput,
+): EscalationEvaluation {
   const { record, referenceDate, ladder } = input;
 
   const age = applyDayCount(
-    'escalation age',
+    "escalation age",
     record.escalationAgeDays,
     DEFAULT_ESCALATION_AGE_DAYS,
     `the default of ${DEFAULT_ESCALATION_AGE_DAYS} whole days (criterion 7.9)`,
   );
   const interval = applyDayCount(
-    'escalation interval',
+    "escalation interval",
     record.escalationIntervalDays,
     age.days,
     `the applied escalation age of ${age.days} whole days`,
@@ -1124,16 +1178,19 @@ export function evaluateEscalation(input: EscalationEvaluationInput): Escalation
   const warnings: string[] = [];
   if (age.warning !== null) warnings.push(age.warning);
   if (interval.warning !== null) warnings.push(interval.warning);
-  if (record.escalationIntervalDays === null || record.escalationIntervalDays === undefined) {
+  if (
+    record.escalationIntervalDays === null ||
+    record.escalationIntervalDays === undefined
+  ) {
     warnings.push(
-      'No escalation interval is configured and criterion 7.9 supplies a default only for the ' +
+      "No escalation interval is configured and criterion 7.9 supplies a default only for the " +
         `escalation age; applied the escalation age of ${age.days} whole days as the interval.`,
     );
   }
 
   const pendingRoles: ReviewerRole[] = [];
-  if (record.wfmReview === null) pendingRoles.push('wfm_reviewer');
-  if (record.managerReview === null) pendingRoles.push('reporting_manager');
+  if (record.wfmReview === null) pendingRoles.push("wfm_reviewer");
+  if (record.managerReview === null) pendingRoles.push("reporting_manager");
 
   const settle = (
     due: boolean,
@@ -1158,23 +1215,30 @@ export function evaluateEscalation(input: EscalationEvaluationInput): Escalation
 
   // criterion 7.1, defence in depth behind the parameter type: a Recorded_Not_Queued record was
   // never presented, so it has no SLA to breach.
-  if (record.queueState !== 'queued_for_dual_review') {
-    return settle(false, 'record_not_queued', null, null, [], []);
+  if (record.queueState !== "queued_for_dual_review") {
+    return settle(false, "record_not_queued", null, null, [], []);
   }
   // criterion 7.8 applies WHILE the record remains unreviewed.
   if (pendingRoles.length === 0) {
-    return settle(false, 'review_already_complete', null, null, [], []);
+    return settle(false, "review_already_complete", null, null, [], []);
   }
   if (CLOSED_STATUSES.includes(record.status)) {
-    return settle(false, 'record_closed', null, null, [], []);
+    return settle(false, "record_closed", null, null, [], []);
   }
   if (record.presentedAt === null) {
-    return settle(false, 'not_presented', null, null, [], []);
+    return settle(false, "not_presented", null, null, [], []);
   }
 
   const ageInWholeDays = wholeDaysBetween(record.presentedAt, referenceDate);
   if (ageInWholeDays < 0) {
-    return settle(false, 'presented_after_reference_date', ageInWholeDays, null, [], []);
+    return settle(
+      false,
+      "presented_after_reference_date",
+      ageInWholeDays,
+      null,
+      [],
+      [],
+    );
   }
 
   const daysSinceLastEscalation =
@@ -1186,7 +1250,7 @@ export function evaluateEscalation(input: EscalationEvaluationInput): Escalation
   if (ageInWholeDays < age.days) {
     return settle(
       false,
-      'age_below_escalation_age',
+      "age_below_escalation_age",
       ageInWholeDays,
       daysSinceLastEscalation,
       [],
@@ -1196,15 +1260,25 @@ export function evaluateEscalation(input: EscalationEvaluationInput): Escalation
 
   // criterion 7.8: once per configured escalation interval. A never-escalated record is due now;
   // an already-escalated one waits out the interval, again in whole days.
-  if (daysSinceLastEscalation !== null && daysSinceLastEscalation < interval.days) {
-    return settle(false, 'interval_not_elapsed', ageInWholeDays, daysSinceLastEscalation, [], []);
+  if (
+    daysSinceLastEscalation !== null &&
+    daysSinceLastEscalation < interval.days
+  ) {
+    return settle(
+      false,
+      "interval_not_elapsed",
+      ageInWholeDays,
+      daysSinceLastEscalation,
+      [],
+      [],
+    );
   }
 
   const notifications: EscalationNotificationIntent[] = [];
   const withoutTarget: ReviewerRole[] = [];
   for (const role of pendingRoles) {
     const notifyUserId =
-      role === 'wfm_reviewer'
+      role === "wfm_reviewer"
         ? ladder.wfmReviewerNextLevelUserId
         : ladder.reportingManagerNextLevelUserId;
     if (notifyUserId === null) {
@@ -1212,9 +1286,11 @@ export function evaluateEscalation(input: EscalationEvaluationInput): Escalation
       continue;
     }
     const pendingReviewerUserId =
-      role === 'wfm_reviewer'
+      role === "wfm_reviewer"
         ? (record.authorizedWfmReviewerUserIds[0] ?? null)
-        : (record.reportingManagerUserId ?? record.branchWfmContactUserId ?? null);
+        : (record.reportingManagerUserId ??
+          record.branchWfmContactUserId ??
+          null);
     notifications.push(
       Object.freeze({
         pendingRole: role,
@@ -1232,7 +1308,7 @@ export function evaluateEscalation(input: EscalationEvaluationInput): Escalation
   if (notifications.length === 0) {
     return settle(
       false,
-      'no_escalation_target',
+      "no_escalation_target",
       ageInWholeDays,
       daysSinceLastEscalation,
       [],
@@ -1241,7 +1317,7 @@ export function evaluateEscalation(input: EscalationEvaluationInput): Escalation
   }
   return settle(
     true,
-    'due',
+    "due",
     ageInWholeDays,
     daysSinceLastEscalation,
     notifications,
@@ -1282,7 +1358,7 @@ export interface AdjustmentRequest {
  */
 export function buildAdjustmentRequest(
   record: VarianceRecord,
-  review: Extract<RecordedReview, { outcome: 'adjustment_requested' }>,
+  review: Extract<RecordedReview, { outcome: "adjustment_requested" }>,
 ): AdjustmentRequest {
   return Object.freeze({
     varianceRecordId: record.id,
@@ -1314,13 +1390,13 @@ export interface PayMonthCutOffState {
 
 export type AdjustmentRefusalCode =
   /** criterion 8.4. */
-  | 'approver_lacks_override_grant'
+  | "approver_lacks_override_grant"
   /** criterion 8.5. */
-  | 'approver_is_requester'
+  | "approver_is_requester"
   /** criterion 8.6. */
-  | 'pay_month_reached_cut_off'
+  | "pay_month_reached_cut_off"
   /** criterion 14.5, decided by the caller and passed in. */
-  | 'approver_authored_deciding_rule';
+  | "approver_authored_deciding_rule";
 
 /**
  * criterion 8.4 requires the refused attempt to be RECORDED, which is why every refusal is a
@@ -1403,7 +1479,9 @@ export interface ApprovalAttempt {
  * a programmer error, and one that would otherwise authorise a closed month against an open
  * month's cut-off state.
  */
-export function approveAdjustmentRequest(attempt: ApprovalAttempt): AdjustmentApprovalResult {
+export function approveAdjustmentRequest(
+  attempt: ApprovalAttempt,
+): AdjustmentApprovalResult {
   const { request, approvingUserId, payMonthCutOff } = attempt;
 
   if (payMonthCutOff.payMonth !== request.payMonth) {
@@ -1419,23 +1497,23 @@ export function approveAdjustmentRequest(attempt: ApprovalAttempt): AdjustmentAp
   // criterion 8.4. Order follows design.md section 9: grant, then separation of duties, then
   // cut-off.
   if (!attempt.approverOverrideApproverBranchIds.includes(request.branchId)) {
-    codes.push('approver_lacks_override_grant');
-    criteria.push('8.4');
+    codes.push("approver_lacks_override_grant");
+    criteria.push("8.4");
   }
   // criterion 8.5.
   if (approvingUserId === request.requestingUserId) {
-    codes.push('approver_is_requester');
-    criteria.push('8.5');
+    codes.push("approver_is_requester");
+    criteria.push("8.5");
   }
   // criterion 14.5, only when the caller resolved it.
   if (attempt.approverAuthoredDecidingRule === true) {
-    codes.push('approver_authored_deciding_rule');
-    criteria.push('14.5');
+    codes.push("approver_authored_deciding_rule");
+    criteria.push("14.5");
   }
   // criterion 8.6.
   if (payMonthCutOff.reachedCutOff) {
-    codes.push('pay_month_reached_cut_off');
-    criteria.push('8.6');
+    codes.push("pay_month_reached_cut_off");
+    criteria.push("8.6");
   }
 
   if (codes.length > 0) {
@@ -1483,24 +1561,28 @@ export function approveAdjustmentRequest(attempt: ApprovalAttempt): AdjustmentAp
         payableDays: before.payableDays,
       }),
       precedingStateDrifted:
-        before.classification !== request.dailyOutcomeAtRequest.classification ||
+        before.classification !==
+          request.dailyOutcomeAtRequest.classification ||
         before.lwpValue !== request.dailyOutcomeAtRequest.lwpValue,
     }),
   });
 }
 
-function refusalMessage(code: AdjustmentRefusalCode, cutOff: PayMonthCutOffState): string {
+function refusalMessage(
+  code: AdjustmentRefusalCode,
+  cutOff: PayMonthCutOffState,
+): string {
   switch (code) {
-    case 'approver_lacks_override_grant':
-      return 'The approving user does not hold the Override_Approver grant for the employee\'s branch; the attempt has been recorded.';
-    case 'approver_is_requester':
-      return 'A separate approver is required: the requesting reviewer may not approve their own adjustment request.';
-    case 'approver_authored_deciding_rule':
-      return 'The approving user created or amended the Attendance_Source_Rule that decided this date; a different Override_Approver is required.';
-    case 'pay_month_reached_cut_off':
+    case "approver_lacks_override_grant":
+      return "The approving user does not hold the Override_Approver grant for the employee's branch; the attempt has been recorded.";
+    case "approver_is_requester":
+      return "A separate approver is required: the requesting reviewer may not approve their own adjustment request.";
+    case "approver_authored_deciding_rule":
+      return "The approving user created or amended the Attendance_Source_Rule that decided this date; a different Override_Approver is required.";
+    case "pay_month_reached_cut_off":
       return (
         `Pay_Month ${cutOff.payMonth} has reached Payroll_Cut_Off. Use the arrear adjustment path ` +
-        `for ${cutOff.earliestOpenPayMonth ?? 'the earliest open Pay_Month'} instead.`
+        `for ${cutOff.earliestOpenPayMonth ?? "the earliest open Pay_Month"} instead.`
       );
   }
 }
@@ -1510,7 +1592,9 @@ function refusalMessage(code: AdjustmentRefusalCode, cutOff: PayMonthCutOffState
  * payrollCalculate.service can re-derive it from the new classification; the superseded snapshot
  * on the approval keeps the old figure, so `revertApprovedAdjustment` is still exact.
  */
-export function applyApprovedAdjustment(approval: ApprovedAdjustment): DailyOutcome {
+export function applyApprovedAdjustment(
+  approval: ApprovedAdjustment,
+): DailyOutcome {
   return Object.freeze({
     classification: approval.appliedClassification,
     lwpValue: approval.appliedLwpValue,
@@ -1523,7 +1607,9 @@ export function applyApprovedAdjustment(approval: ApprovedAdjustment): DailyOutc
  * the approval itself. `revertApprovedAdjustment(approval)` equals the `DailyOutcome` that was
  * passed as `dailyOutcomeBeforeAdjustment`, which is what the reversibility property asserts.
  */
-export function revertApprovedAdjustment(approval: ApprovedAdjustment): DailyOutcome {
+export function revertApprovedAdjustment(
+  approval: ApprovedAdjustment,
+): DailyOutcome {
   return approval.superseded;
 }
 
@@ -1546,13 +1632,16 @@ export function verifyReversibility(
   dailyOutcomeBeforeAdjustment: DailyOutcome,
 ): ReversibilityCheck {
   const holds =
-    approval.superseded.classification === dailyOutcomeBeforeAdjustment.classification &&
+    approval.superseded.classification ===
+      dailyOutcomeBeforeAdjustment.classification &&
     approval.superseded.lwpValue === dailyOutcomeBeforeAdjustment.lwpValue &&
-    approval.superseded.payableDays === dailyOutcomeBeforeAdjustment.payableDays;
+    approval.superseded.payableDays ===
+      dailyOutcomeBeforeAdjustment.payableDays;
   return Object.freeze({
     holds,
     recordedSupersededClassification: approval.superseded.classification,
-    expectedSupersededClassification: dailyOutcomeBeforeAdjustment.classification,
+    expectedSupersededClassification:
+      dailyOutcomeBeforeAdjustment.classification,
     recordedSupersededLwpValue: approval.superseded.lwpValue,
     expectedSupersededLwpValue: dailyOutcomeBeforeAdjustment.lwpValue,
   });

@@ -44,7 +44,11 @@
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
-import { blindIndex, isUsingDevBlindIndexKey, resolveAccountNumber } from "../src/shared/fieldEncryption.js";
+import {
+  blindIndex,
+  isUsingDevBlindIndexKey,
+  resolveAccountNumber,
+} from "../src/shared/fieldEncryption.js";
 import { withDeadlockRetry } from "../src/shared/deadlockRetry.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
@@ -70,14 +74,20 @@ interface Row extends RowDataPacket {
   account_number: Buffer | string | null;
 }
 
-async function backfill(): Promise<{ written: number; pending: number; skipped: number }> {
+async function backfill(): Promise<{
+  written: number;
+  pending: number;
+  skipped: number;
+}> {
   const [pendingRows] = await db.query<RowDataPacket[]>(
     `SELECT COUNT(*) AS n FROM employee_bank_detail
       WHERE account_number_blind_index IS NULL
         AND (account_number_enc IS NOT NULL OR account_number IS NOT NULL)`,
   );
   const pending = Number((pendingRows[0] as Record<string, unknown>).n);
-  console.log(`[blind-index] account_number_blind_index: ${pending} row(s) pending`);
+  console.log(
+    `[blind-index] account_number_blind_index: ${pending} row(s) pending`,
+  );
   if (DRY_RUN || pending === 0) return { written: 0, pending, skipped: 0 };
 
   let written = 0;
@@ -97,7 +107,10 @@ async function backfill(): Promise<{ written: number; pending: number; skipped: 
     for (const row of rows) {
       lastId = row.id;
       const value = resolveAccountNumber(row);
-      if (!value) { skipped++; continue; }
+      if (!value) {
+        skipped++;
+        continue;
+      }
 
       // updated_at = updated_at: deriving a blind index from a value that already exists is
       // not a business modification of the row — see the identical note in
@@ -105,19 +118,24 @@ async function backfill(): Promise<{ written: number; pending: number; skipped: 
       // thousands of rows is a real downstream problem (reports, exports, audit views), not
       // a cosmetic one.
       const [res] = await withDeadlockRetry(
-        () => db.execute<ResultSetHeader>(
-          `UPDATE employee_bank_detail SET account_number_blind_index = ?, updated_at = updated_at
+        () =>
+          db.execute<ResultSetHeader>(
+            `UPDATE employee_bank_detail SET account_number_blind_index = ?, updated_at = updated_at
             WHERE id = ? AND account_number_blind_index IS NULL`,
-          [blindIndex(value), row.id],
-        ),
+            [blindIndex(value), row.id],
+          ),
         {
           onRetry: (attempt) =>
-            console.warn(`\n[blind-index] deadlock on account_number_blind_index row ${row.id}, retry ${attempt}`),
+            console.warn(
+              `\n[blind-index] deadlock on account_number_blind_index row ${row.id}, retry ${attempt}`,
+            ),
         },
       );
       written += res.affectedRows;
     }
-    process.stdout.write(`\r  account_number_blind_index: ${written}/${pending} (${skipped} unresolvable)   `);
+    process.stdout.write(
+      `\r  account_number_blind_index: ${written}/${pending} (${skipped} unresolvable)   `,
+    );
     if (rows.length < BATCH_SIZE) break;
   }
   process.stdout.write("\n");
@@ -148,7 +166,9 @@ async function verify(): Promise<void> {
       distinctPlain.add(value);
       distinctPlainCI.add(value.toLowerCase());
     }
-    const idx = (row as unknown as { account_number_blind_index: string | null }).account_number_blind_index;
+    const idx = (
+      row as unknown as { account_number_blind_index: string | null }
+    ).account_number_blind_index;
     if (idx) distinctIndex.add(idx);
     else if (value) stillNull++;
   }
@@ -158,21 +178,21 @@ async function verify(): Promise<void> {
 
   console.log(
     `[blind-index] verify account_number_blind_index: distinct_plain=${distinctPlain.size} ` +
-    `distinct_index=${distinctIndex.size} still_null=${stillNull} case_variants=${caseVariants} ` +
-    `${ok ? "OK" : "MISMATCH"}`,
+      `distinct_index=${distinctIndex.size} still_null=${stillNull} case_variants=${caseVariants} ` +
+      `${ok ? "OK" : "MISMATCH"}`,
   );
 
   if (!ok) {
     console.log(
       "  Index count differs from resolved-plaintext count, or rows were left unindexed. " +
-      "That is a genuine collision or a missed batch. Do NOT wire the duplicate check onto " +
-      "this index until it reconciles.",
+        "That is a genuine collision or a missed batch. Do NOT wire the duplicate check onto " +
+        "this index until it reconciles.",
     );
   }
   if (caseVariants > 0) {
     console.log(
       `  NOTE: ${caseVariants} value(s) differ only by case (unlikely for numeric account ` +
-      "numbers, but checked for parity with the statutory backfill's own warning).",
+        "numbers, but checked for parity with the statutory backfill's own warning).",
     );
   }
 }
@@ -183,19 +203,23 @@ async function run(): Promise<void> {
   if (isUsingDevBlindIndexKey()) {
     throw new Error(
       "FIELD_BLIND_INDEX_KEY is unset, so the built-in development key is in use. An index " +
-      "built with it matches nothing at lookup time, and nothing would report an error — the " +
-      "duplicate check would simply stop finding duplicates. Run this on the production host. " +
-      "Refusing to write.",
+        "built with it matches nothing at lookup time, and nothing would report an error — the " +
+        "duplicate check would simply stop finding duplicates. Run this on the production host. " +
+        "Refusing to write.",
     );
   }
 
   if (!(await columnExists())) {
-    throw new Error("employee_bank_detail.account_number_blind_index does not exist — apply migration 1136 first.");
+    throw new Error(
+      "employee_bank_detail.account_number_blind_index does not exist — apply migration 1136 first.",
+    );
   }
 
   const { written, pending, skipped } = await backfill();
   if (!DRY_RUN) {
-    console.log(`[blind-index] account_number_blind_index: wrote ${written} of ${pending} (${skipped} unresolvable)`);
+    console.log(
+      `[blind-index] account_number_blind_index: wrote ${written} of ${pending} (${skipped} unresolvable)`,
+    );
     await verify();
   } else {
     console.log("\n  [DRY RUN — no rows were updated]");
@@ -203,8 +227,8 @@ async function run(): Promise<void> {
 
   console.log(
     "\n  Reminder: nothing reads this column yet. Wiring shared/bankAccountDuplicate.ts into " +
-    "the live bank-write paths is a separate change that should only happen once the verify " +
-    "above reconciles.",
+      "the live bank-write paths is a separate change that should only happen once the verify " +
+      "above reconciles.",
   );
   await db.end();
 }

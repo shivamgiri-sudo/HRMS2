@@ -16,7 +16,10 @@ function hashRecipient(value: string): string {
   return createHash("sha256").update(value.trim().toLowerCase()).digest("hex");
 }
 
-async function getRecipient(userId: string, channel: TwoFactorChannel): Promise<string> {
+async function getRecipient(
+  userId: string,
+  channel: TwoFactorChannel,
+): Promise<string> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT au.email AS auth_email,
             e.personal_email,
@@ -30,11 +33,21 @@ async function getRecipient(userId: string, channel: TwoFactorChannel): Promise<
     [userId],
   );
   const row = rows[0];
-  if (!row) throw Object.assign(new Error("User account not found"), { statusCode: 404 });
-  const value = channel === "email"
-    ? String(row.personal_email ?? row.employee_email ?? row.auth_email ?? "").trim()
-    : String(row.personal_phone ?? row.mobile ?? "").trim();
-  if (!value) throw Object.assign(new Error(`No ${channel} recipient is available for this account`), { statusCode: 400 });
+  if (!row)
+    throw Object.assign(new Error("User account not found"), {
+      statusCode: 404,
+    });
+  const value =
+    channel === "email"
+      ? String(
+          row.personal_email ?? row.employee_email ?? row.auth_email ?? "",
+        ).trim()
+      : String(row.personal_phone ?? row.mobile ?? "").trim();
+  if (!value)
+    throw Object.assign(
+      new Error(`No ${channel} recipient is available for this account`),
+      { statusCode: 400 },
+    );
   return value;
 }
 
@@ -69,7 +82,7 @@ export async function sendTwoFactorChallenge(
         [userId, preAuthChallengeId, channel, recipientHash, otpHash],
       );
     } catch (err: any) {
-      if (err?.code !== 'ER_BAD_FIELD_ERROR') throw err;
+      if (err?.code !== "ER_BAD_FIELD_ERROR") throw err;
       await db.execute(
         `INSERT INTO auth_two_factor_challenge
            (id, user_id, channel, recipient_hash, otp_hash, expires_at, status)
@@ -88,7 +101,9 @@ export async function sendTwoFactorChallenge(
 
   if (channel === "email") {
     if (!emailService.isConfigured()) {
-      throw Object.assign(new Error("Email delivery is not configured"), { statusCode: 503 });
+      throw Object.assign(new Error("Email delivery is not configured"), {
+        statusCode: 503,
+      });
     }
     await emailService.send({
       to: recipient,
@@ -98,7 +113,10 @@ export async function sendTwoFactorChallenge(
     });
   } else {
     const sent = await sendOtpSms(recipient, code);
-    if (!sent) throw Object.assign(new Error("SMS delivery failed"), { statusCode: 502 });
+    if (!sent)
+      throw Object.assign(new Error("SMS delivery failed"), {
+        statusCode: 502,
+      });
   }
 
   await logSensitiveAction({
@@ -115,7 +133,10 @@ export async function sendTwoFactorChallenge(
   });
 }
 
-export async function verifyTwoFactorChallenge(userId: string, otp: string): Promise<void> {
+export async function verifyTwoFactorChallenge(
+  userId: string,
+  otp: string,
+): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, otp_hash, attempts, max_attempts, expires_at
        FROM auth_two_factor_challenge
@@ -125,14 +146,27 @@ export async function verifyTwoFactorChallenge(userId: string, otp: string): Pro
     [userId],
   );
   const challenge = rows[0];
-  if (!challenge) throw Object.assign(new Error("No active verification challenge"), { statusCode: 400 });
+  if (!challenge)
+    throw Object.assign(new Error("No active verification challenge"), {
+      statusCode: 400,
+    });
   if (new Date(challenge.expires_at as string).getTime() < Date.now()) {
-    await db.execute(`UPDATE auth_two_factor_challenge SET status = 'expired', updated_at = NOW() WHERE id = ?`, [challenge.id]);
-    throw Object.assign(new Error("Verification code expired"), { statusCode: 400 });
+    await db.execute(
+      `UPDATE auth_two_factor_challenge SET status = 'expired', updated_at = NOW() WHERE id = ?`,
+      [challenge.id],
+    );
+    throw Object.assign(new Error("Verification code expired"), {
+      statusCode: 400,
+    });
   }
   if (Number(challenge.attempts ?? 0) >= Number(challenge.max_attempts ?? 5)) {
-    await db.execute(`UPDATE auth_two_factor_challenge SET status = 'locked', updated_at = NOW() WHERE id = ?`, [challenge.id]);
-    throw Object.assign(new Error("Verification attempts exceeded"), { statusCode: 429 });
+    await db.execute(
+      `UPDATE auth_two_factor_challenge SET status = 'locked', updated_at = NOW() WHERE id = ?`,
+      [challenge.id],
+    );
+    throw Object.assign(new Error("Verification attempts exceeded"), {
+      statusCode: 429,
+    });
   }
 
   const valid = await bcrypt.compare(String(otp), String(challenge.otp_hash));
@@ -141,7 +175,9 @@ export async function verifyTwoFactorChallenge(userId: string, otp: string): Pro
       `UPDATE auth_two_factor_challenge SET attempts = attempts + 1, updated_at = NOW() WHERE id = ?`,
       [challenge.id],
     );
-    throw Object.assign(new Error("Invalid verification code"), { statusCode: 400 });
+    throw Object.assign(new Error("Invalid verification code"), {
+      statusCode: 400,
+    });
   }
 
   await db.execute(

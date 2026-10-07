@@ -34,16 +34,22 @@ describe("privacy.service recordConsent — column name regression", () => {
     // old (wrong) name for context — strip comments before asserting it is
     // gone from the actual SQL and property access.
     const codeOnly = recordConsentBody.replace(/\/\/.*$/gm, "");
-    expect(codeOnly, "reintroduces the column that does not exist")
-      .not.toMatch(/\bversion_tag\b/);
-    expect(codeOnly).toMatch(/SELECT id AS version_id, version_code, consent_text/);
+    expect(codeOnly, "reintroduces the column that does not exist").not.toMatch(
+      /\bversion_tag\b/,
+    );
+    expect(codeOnly).toMatch(
+      /SELECT id AS version_id, version_code, consent_text/,
+    );
     expect(codeOnly).toMatch(/version\.version_code/);
   });
 });
 
 describe("public consent-capture endpoint — scoped, not open", () => {
   const source = readFileSync(
-    new URL("../src/modules/ats/registration.enhanced.routes.ts", import.meta.url),
+    new URL(
+      "../src/modules/ats/registration.enhanced.routes.ts",
+      import.meta.url,
+    ),
     "utf8",
   );
   const routeBody = source.slice(
@@ -52,8 +58,10 @@ describe("public consent-capture endpoint — scoped, not open", () => {
 
   it("TC-CONSENT-02: purpose_code is hardcoded, never taken from the request body", () => {
     expect(routeBody).toMatch(/purposeCode:\s*'recruitment'/);
-    expect(routeBody, "purpose_code should not be read from req.body")
-      .not.toMatch(/req\.body\.\s*purpose/);
+    expect(
+      routeBody,
+      "purpose_code should not be read from req.body",
+    ).not.toMatch(/req\.body\.\s*purpose/);
   });
 
   it("TC-CONSENT-03: principalType is hardcoded to 'candidate', not client-supplied", () => {

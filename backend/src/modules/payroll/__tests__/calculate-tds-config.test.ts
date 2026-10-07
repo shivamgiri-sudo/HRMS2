@@ -85,13 +85,19 @@ describe("calculateTds without approved configuration", () => {
     const r = calculateTds(2500000, partial);
 
     expect(r.status).toBe("pending_configuration");
-    expect(r.missing_config_keys).toEqual(["tds_slab_2400001_above", "tds_cess_pct"]);
+    expect(r.missing_config_keys).toEqual([
+      "tds_slab_2400001_above",
+      "tds_cess_pct",
+    ]);
   });
 
   it("treats a non-numeric or null value as missing, not as zero", () => {
     // A NULL config_value must never be read as a 0% slab — that would silently
     // deduct nothing for that band and look like a valid computation.
-    const broken = { ...APPROVED_CONFIG, tds_slab_1200001_1600000: null as unknown as number };
+    const broken = {
+      ...APPROVED_CONFIG,
+      tds_slab_1200001_1600000: null as unknown as number,
+    };
     const r = calculateTds(1500000, broken);
     expect(r.status).toBe("pending_configuration");
     expect(r.missing_config_keys).toEqual(["tds_slab_1200001_1600000"]);

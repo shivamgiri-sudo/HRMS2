@@ -3,7 +3,7 @@
  * TTL: 2-10 min per endpoint, max 200 entries (bounded, no memory leak).
  */
 
-import { logger } from '../logger.js';
+import { logger } from "../logger.js";
 
 export type CacheValue = Record<string, unknown> | unknown[];
 
@@ -33,7 +33,7 @@ class MemoryCache {
   }
 
   async invalidate(pattern: string): Promise<void> {
-    const regex = new RegExp(`^${pattern.replace(/\*/g, '.*')}$`);
+    const regex = new RegExp(`^${pattern.replace(/\*/g, ".*")}$`);
     for (const k of Array.from(this.store.keys())) {
       if (regex.test(k)) this.store.delete(k);
     }
@@ -58,9 +58,9 @@ export class QualityCache {
       // When Redis is added, replace with redis.createClient()
       this.client = new MemoryCache();
       this.isConnected = true;
-      logger.info('Cache initialized (in-memory)');
+      logger.info("Cache initialized (in-memory)");
     } catch (err) {
-      logger.error({ err }, 'Failed to initialize cache');
+      logger.error({ err }, "Failed to initialize cache");
     }
   }
 
@@ -70,7 +70,7 @@ export class QualityCache {
     try {
       await this.client.set(key, value, ttlSeconds);
     } catch (err) {
-      logger.error({ err, key }, 'Cache set failed');
+      logger.error({ err, key }, "Cache set failed");
     }
   }
 
@@ -80,7 +80,7 @@ export class QualityCache {
     try {
       return await this.client.get<T>(key);
     } catch (err) {
-      logger.error({ err, key }, 'Cache get failed');
+      logger.error({ err, key }, "Cache get failed");
       return null;
     }
   }
@@ -88,7 +88,7 @@ export class QualityCache {
   async getOrSet<T extends CacheValue>(
     key: string,
     fetcher: () => Promise<T>,
-    ttlSeconds: number
+    ttlSeconds: number,
   ): Promise<T> {
     const cached = await this.get<T>(key);
     if (cached) return cached;
@@ -103,9 +103,9 @@ export class QualityCache {
 
     try {
       await this.client.invalidate(pattern);
-      logger.info({ pattern }, 'Cache invalidated');
+      logger.info({ pattern }, "Cache invalidated");
     } catch (err) {
-      logger.error({ err, pattern }, 'Cache invalidate failed');
+      logger.error({ err, pattern }, "Cache invalidate failed");
     }
   }
 

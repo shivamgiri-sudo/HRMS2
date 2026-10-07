@@ -23,16 +23,24 @@ describe("salary-verification.routes.ts — admin/payroll_branch parity with the
   const src = read("salary-verification.routes.ts");
 
   it("GET /processes, /employees, /summary accept admin and payroll_branch", () => {
-    const matches = [...src.matchAll(/requireRole\("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"\)/g)];
+    const matches = [
+      ...src.matchAll(
+        /requireRole\("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"\)/g,
+      ),
+    ];
     expect(matches.length).toBe(4);
   });
 
   it("POST /verify-bulk accepts payroll_head and super_admin, matching canBulkVerify", () => {
-    expect(src).toMatch(/"\/verify-bulk"[\s\S]{0,300}requireRole\("wfm", "process_manager", "branch_head", "payroll_head", "super_admin"\)/);
+    expect(src).toMatch(
+      /"\/verify-bulk"[\s\S]{0,300}requireRole\("wfm", "process_manager", "branch_head", "payroll_head", "super_admin"\)/,
+    );
   });
 
   it("GET /export accepts admin and payroll_branch", () => {
-    expect(src).toMatch(/"\/export"[\s\S]{0,300}requireRole\("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "admin", "payroll_branch"\)/);
+    expect(src).toMatch(
+      /"\/export"[\s\S]{0,300}requireRole\("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "admin", "payroll_branch"\)/,
+    );
   });
 });
 
@@ -41,7 +49,9 @@ describe("payroll-lines.compat.routes.ts — payroll_head reaches the line-editi
     const src = read("payroll-lines.compat.routes.ts");
     // Core roles added 2026-08-25; payslip-center roles added 2026-08-28 so NativePayslipCenter
     // no longer 403s for payroll_admin/payroll_branch/payroll_hr/hr_head/accounts_head.
-    expect(src).toMatch(/requireRole\([^)]*"payroll_head"[^)]*"super_admin"[^)]*"finance_head"[^)]*\)/);
+    expect(src).toMatch(
+      /requireRole\([^)]*"payroll_head"[^)]*"super_admin"[^)]*"finance_head"[^)]*\)/,
+    );
     expect(src).toMatch(/"payroll_admin"/);
     expect(src).toMatch(/"payroll_branch"/);
     expect(src).toMatch(/"hr_head"/);
@@ -53,22 +63,32 @@ describe("payroll-window.routes.ts — TDS mode, window status, salary history p
   const src = read("payroll-window.routes.ts");
 
   it("PATCH /runs/:id/tds-mode accepts payroll_head and finance, matching the GET on the same resource", () => {
-    expect(src).toMatch(/'\/runs\/:id\/tds-mode'[\s\S]{0,40}requireRole\('payroll', 'super_admin', 'payroll_head', 'finance'\)/);
+    expect(src).toMatch(
+      /'\/runs\/:id\/tds-mode'[\s\S]{0,40}requireRole\('payroll', 'super_admin', 'payroll_head', 'finance'\)/,
+    );
   });
 
   it("GET /runs/:id/window-status accepts admin and payroll_head", () => {
-    expect(src).toMatch(/requireRole\('payroll', 'super_admin', 'finance', 'hr', 'admin', 'payroll_head'\)/);
+    expect(src).toMatch(
+      /requireRole\('payroll', 'super_admin', 'finance', 'hr', 'admin', 'payroll_head'\)/,
+    );
   });
 
   it("GET /employee-salary-history accepts admin, hr, payroll_head", () => {
-    expect(src).toMatch(/requireRole\('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'\)/);
+    expect(src).toMatch(
+      /requireRole\('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'\)/,
+    );
   });
 });
 
 describe("payroll-extended.routes.ts — salary-sheet-export parity", () => {
   it("both salary-sheet-export paths accept payroll_head, finance_head, payroll_admin", () => {
     const src = read("payroll-extended.routes.ts");
-    const matches = [...src.matchAll(/requireRole\("admin", "finance", "payroll", "hr", "payroll_head", "finance_head", "payroll_admin"\)/g)];
+    const matches = [
+      ...src.matchAll(
+        /requireRole\("admin", "finance", "payroll", "hr", "payroll_head", "finance_head", "payroll_admin"\)/g,
+      ),
+    ];
     expect(matches.length).toBe(2);
   });
 });
@@ -77,19 +97,29 @@ describe("payroll-more.routes.ts — Holiday Work admits wfm, matching HolidayWo
   const src = read("payroll-more.routes.ts");
 
   it("GET /holiday-work/requests accepts wfm", () => {
-    expect(src).toMatch(/"\/holiday-work\/requests"[\s\S]{0,60}requireRole\("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "wfm"\)/);
+    expect(src).toMatch(
+      /"\/holiday-work\/requests"[\s\S]{0,60}requireRole\("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "wfm"\)/,
+    );
   });
 
   it("POST /holiday-work/requests accepts wfm", () => {
-    expect(src).toMatch(/"\/holiday-work\/requests"[\s\S]{0,60}requireRole\("admin", "super_admin", "payroll", "payroll_head", "wfm"\)/);
+    expect(src).toMatch(
+      /"\/holiday-work\/requests"[\s\S]{0,60}requireRole\("admin", "super_admin", "payroll", "payroll_head", "wfm"\)/,
+    );
   });
 
   it("PATCH /holiday-work/requests/:id/approve accepts wfm", () => {
-    expect(src).toMatch(/"\/holiday-work\/requests\/:id\/approve"[\s\S]{0,60}requireRole\("admin", "super_admin", "payroll", "payroll_head", "wfm"\)/);
+    expect(src).toMatch(
+      /"\/holiday-work\/requests\/:id\/approve"[\s\S]{0,60}requireRole\("admin", "super_admin", "payroll", "payroll_head", "wfm"\)/,
+    );
   });
 
   it("does NOT add wfm to the unrelated holiday-master cc/designation-mapping routes", () => {
-    const unrelated = [...src.matchAll(/requireRole\("admin", "super_admin", "payroll", "payroll_head"\)/g)];
+    const unrelated = [
+      ...src.matchAll(
+        /requireRole\("admin", "super_admin", "payroll", "payroll_head"\)/g,
+      ),
+    ];
     expect(unrelated.length).toBe(2); // cc-mapping + designation-mapping, untouched by this fix
   });
 });
@@ -97,21 +127,29 @@ describe("payroll-more.routes.ts — Holiday Work admits wfm, matching HolidayWo
 describe("payroll-statutory-override.routes.ts / cheque-validation.routes.ts — read-only widen, write stays restricted", () => {
   it("PF opt-out GET /all accepts admin, hr, payroll_head", () => {
     const src = read("payroll-statutory-override.routes.ts");
-    expect(src).toMatch(/requireRole\('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'\)/);
+    expect(src).toMatch(
+      /requireRole\('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'\)/,
+    );
   });
 
   it("PF opt-out PATCH /:id/approve is untouched — still payroll/super_admin only", () => {
     const src = read("payroll-statutory-override.routes.ts");
-    expect(src).toMatch(/'\/:id\/approve'[\s\S]{0,40}requireRole\('payroll', 'super_admin'\)/);
+    expect(src).toMatch(
+      /'\/:id\/approve'[\s\S]{0,40}requireRole\('payroll', 'super_admin'\)/,
+    );
   });
 
   it("cheque-validation GET /queue accepts admin, hr, payroll_head", () => {
     const src = read("cheque-validation.routes.ts");
-    expect(src).toMatch(/requireRole\('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'\)/);
+    expect(src).toMatch(
+      /requireRole\('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'\)/,
+    );
   });
 
   it("cheque-validation PATCH /:id is untouched — still payroll/super_admin only", () => {
     const src = read("cheque-validation.routes.ts");
-    expect(src).toMatch(/'\/:id'[\s\S]{0,40}requireRole\('payroll', 'super_admin'\)/);
+    expect(src).toMatch(
+      /'\/:id'[\s\S]{0,40}requireRole\('payroll', 'super_admin'\)/,
+    );
   });
 });

@@ -18,7 +18,12 @@ import { logSourceFailure } from "../../shared/apiResponse.js";
  * caught and reported, not rethrown.
  */
 export async function logRosterChange(
-  conn: { execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]> },
+  conn: {
+    execute<T extends RowDataPacket[] = RowDataPacket[]>(
+      sql: string,
+      params?: unknown[],
+    ): Promise<[T, unknown]>;
+  },
   input: {
     entityType: "wfm_roster_assignment";
     entityId: string;
@@ -33,8 +38,10 @@ export async function logRosterChange(
   if (!input.cycleId) return; // cycle_id is NOT NULL on roster_change_log — nothing to attribute this to.
 
   const changeTypes: Array<"shift_change" | "week_off_change"> = [];
-  if (input.oldValue.shift_template_id !== input.newValue.shift_template_id) changeTypes.push("shift_change");
-  if (input.oldValue.is_week_off !== input.newValue.is_week_off) changeTypes.push("week_off_change");
+  if (input.oldValue.shift_template_id !== input.newValue.shift_template_id)
+    changeTypes.push("shift_change");
+  if (input.oldValue.is_week_off !== input.newValue.is_week_off)
+    changeTypes.push("week_off_change");
   if (changeTypes.length === 0) return;
 
   for (const changeType of changeTypes) {
@@ -57,7 +64,11 @@ export async function logRosterChange(
         ],
       );
     } catch (err) {
-      logSourceFailure("roster-change-log", err, { entityType: input.entityType, entityId: input.entityId, changeType });
+      logSourceFailure("roster-change-log", err, {
+        entityType: input.entityType,
+        entityId: input.entityId,
+        changeType,
+      });
     }
   }
 }

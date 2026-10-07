@@ -51,7 +51,9 @@ async function main() {
       .sort();
 
     // Blocked: the DB says yes, the code registry says no (for a code the code knows).
-    const blocked = dbGranted.filter((code) => CODE_CODES.has(code) && !codeGranted.includes(code));
+    const blocked = dbGranted.filter(
+      (code) => CODE_CODES.has(code) && !codeGranted.includes(code),
+    );
     // Gate-blocked: the code says yes, the DB withholds the page.
     const pageMissing = codeGranted.filter((code) => !dbGranted.includes(code));
     // Phantom: granted in the DB but the code implements no such dashboard.
@@ -72,7 +74,8 @@ async function main() {
 
   console.log("\n══ DASHBOARD CODES GRANTED IN DB WITH NO IMPLEMENTATION ══");
   const allDb = new Set<string>();
-  for (const set of grantsByRole.values()) for (const code of set) allDb.add(code);
+  for (const set of grantsByRole.values())
+    for (const code of set) allDb.add(code);
   const phantoms = [...allDb].filter((code) => !CODE_CODES.has(code)).sort();
   console.log("  " + (phantoms.join("\n  ") || "(none)"));
 
@@ -82,8 +85,11 @@ async function main() {
 
   console.log("\n══ ROLES WITH USERS BUT NO DASHBOARD AT ALL (code side) ══");
   const orphans = (roles as any[])
-    .filter((r) => Object.keys(DASHBOARD_ACCESS_REGISTRY)
-      .every((code) => !canAccessDashboard(code as any, [String(r.role_key)])))
+    .filter((r) =>
+      Object.keys(DASHBOARD_ACCESS_REGISTRY).every(
+        (code) => !canAccessDashboard(code as any, [String(r.role_key)]),
+      ),
+    )
     .map((r) => `${r.role_key} (${r.users} users)`);
   console.log("  " + (orphans.join("\n  ") || "(none)"));
 
@@ -91,6 +97,9 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error("role-dashboard-gap failed:", error instanceof Error ? error.message : error);
+  console.error(
+    "role-dashboard-gap failed:",
+    error instanceof Error ? error.message : error,
+  );
   process.exit(1);
 });

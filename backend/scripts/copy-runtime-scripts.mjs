@@ -28,7 +28,10 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const RUNTIME_SCRIPTS = ["sync-db-bill-snapshot.mjs", "sync-all-tables-from-dbbill.mjs"];
+const RUNTIME_SCRIPTS = [
+  "sync-db-bill-snapshot.mjs",
+  "sync-all-tables-from-dbbill.mjs",
+];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, "..", "dist", "scripts");
@@ -38,12 +41,16 @@ try {
   for (const name of RUNTIME_SCRIPTS) {
     const from = join(here, name);
     if (!existsSync(from)) {
-      console.warn(`[copy-runtime-scripts] MISSING ${from} — the worker that spawns it will not run`);
+      console.warn(
+        `[copy-runtime-scripts] MISSING ${from} — the worker that spawns it will not run`,
+      );
       continue;
     }
     copyFileSync(from, join(outDir, name));
     console.log(`[copy-runtime-scripts] dist/scripts/${name}`);
   }
 } catch (error) {
-  console.warn(`[copy-runtime-scripts] could not copy runtime scripts: ${error instanceof Error ? error.message : error}`);
+  console.warn(
+    `[copy-runtime-scripts] could not copy runtime scripts: ${error instanceof Error ? error.message : error}`,
+  );
 }

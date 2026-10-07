@@ -28,18 +28,27 @@
  *      this catches it regardless of which path did it, present or future). Raise the same
  *      EMPLOYEE_MASTER_CREATION work item /generate would have, so HR is actually notified.
  */
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { upsertOpenWorkItem } from '../../shared/workItem.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { upsertOpenWorkItem } from "../../shared/workItem.js";
 
 export interface ReconciliationResult {
-  staleCodesRepaired: Array<{ candidateId: string; candidateCode: string; oldCode: string; newCode: string }>;
-  orphansFlagged: Array<{ candidateId: string; candidateCode: string; employeeCode: string }>;
+  staleCodesRepaired: Array<{
+    candidateId: string;
+    candidateCode: string;
+    oldCode: string;
+    newCode: string;
+  }>;
+  orphansFlagged: Array<{
+    candidateId: string;
+    candidateCode: string;
+    employeeCode: string;
+  }>;
 }
 
 export async function reconcileEmployeeCodeDrift(): Promise<ReconciliationResult> {
-  const staleCodesRepaired: ReconciliationResult['staleCodesRepaired'] = [];
-  const orphansFlagged: ReconciliationResult['orphansFlagged'] = [];
+  const staleCodesRepaired: ReconciliationResult["staleCodesRepaired"] = [];
+  const orphansFlagged: ReconciliationResult["orphansFlagged"] = [];
 
   // Check 1 — stale denormalized code on an otherwise-real, correctly linked employee.
   const [staleRows] = await db.execute<RowDataPacket[]>(
@@ -52,18 +61,25 @@ export async function reconcileEmployeeCodeDrift(): Promise<ReconciliationResult
         AND c.employee_code <> e.employee_code`,
   );
 
-  for (const row of staleRows as Array<{ candidate_id: string; candidate_code: string; stale_code: string; current_code: string }>) {
+  for (const row of staleRows as Array<{
+    candidate_id: string;
+    candidate_code: string;
+    stale_code: string;
+    current_code: string;
+  }>) {
     await db.execute<ResultSetHeader>(
       `UPDATE ats_candidate SET employee_code = ?, updated_at = NOW() WHERE id = ?`,
       [row.current_code, row.candidate_id],
     );
-    await db.execute<ResultSetHeader>(
-      `UPDATE ats_onboarding_bridge SET employee_code = ?, updated_at = NOW() WHERE candidate_id = ?`,
-      [row.current_code, row.candidate_id],
-    ).catch(() => {
-      // ats_onboarding_bridge.employee_code may not exist on an older bridge row shape; the
-      // ats_candidate copy above is the one every current search path actually reads.
-    });
+    await db
+      .execute<ResultSetHeader>(
+        `UPDATE ats_onboarding_bridge SET employee_code = ?, updated_at = NOW() WHERE candidate_id = ?`,
+        [row.current_code, row.candidate_id],
+      )
+      .catch(() => {
+        // ats_onboarding_bridge.employee_code may not exist on an older bridge row shape; the
+        // ats_candidate copy above is the one every current search path actually reads.
+      });
     staleCodesRepaired.push({
       candidateId: row.candidate_id,
       candidateCode: row.candidate_code,
@@ -91,15 +107,19 @@ export async function reconcileEmployeeCodeDrift(): Promise<ReconciliationResult
         AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.employee_code = c.employee_code)`,
   );
 
-  for (const row of orphanRows as Array<{ candidate_id: string; candidate_code: string; employee_code: string }>) {
+  for (const row of orphanRows as Array<{
+    candidate_id: string;
+    candidate_code: string;
+    employee_code: string;
+  }>) {
     await upsertOpenWorkItem({
-      itemType: 'EMPLOYEE_MASTER_CREATION',
-      title: 'Create employee master record',
-      moduleCode: 'employees',
-      entityType: 'candidate',
+      itemType: "EMPLOYEE_MASTER_CREATION",
+      title: "Create employee master record",
+      moduleCode: "employees",
+      entityType: "candidate",
       entityId: row.candidate_id,
-      assignedToRole: 'hr',
-      priority: 'critical',
+      assignedToRole: "hr",
+      priority: "critical",
       description: `Reconciliation found employee_code ${row.employee_code} set with no linked employee record.`,
     }).catch(() => {});
     orphansFlagged.push({

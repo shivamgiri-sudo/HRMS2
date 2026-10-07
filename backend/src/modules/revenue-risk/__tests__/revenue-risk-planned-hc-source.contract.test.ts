@@ -40,7 +40,9 @@ const source = readFileSync(
 );
 
 function fnBody(name: string): string {
-  const match = source.match(new RegExp(`async function ${name}\\([\\s\\S]*?\\n\\}`));
+  const match = source.match(
+    new RegExp(`async function ${name}\\([\\s\\S]*?\\n\\}`),
+  );
   expect(match, `${name} function body not found`).toBeTruthy();
   return match![0];
 }
@@ -50,15 +52,23 @@ function wfmBranch(): string {
   const body = fnBody("getAllPlannedHc");
   const start = body.indexOf('tableExists("wfm_roster_assignment")');
   const end = body.indexOf('tableExists("employees")');
-  expect(start, "getAllPlannedHc no longer checks wfm_roster_assignment at all").toBeGreaterThan(-1);
-  expect(end, "the employees-headcount fallback has gone missing").toBeGreaterThan(start);
+  expect(
+    start,
+    "getAllPlannedHc no longer checks wfm_roster_assignment at all",
+  ).toBeGreaterThan(-1);
+  expect(
+    end,
+    "the employees-headcount fallback has gone missing",
+  ).toBeGreaterThan(start);
   return body.slice(start, end);
 }
 
 describe("revenue-risk getAllPlannedHc reads the table that actually has data", () => {
   it("reads wfm_roster_assignment, the single roster source", () => {
     const body = fnBody("getAllPlannedHc");
-    expect(body.indexOf('tableExists("wfm_roster_assignment")')).toBeGreaterThan(-1);
+    expect(
+      body.indexOf('tableExists("wfm_roster_assignment")'),
+    ).toBeGreaterThan(-1);
   });
 
   it("does not consult roster_assignment, which nothing writes", () => {
@@ -66,7 +76,9 @@ describe("revenue-risk getAllPlannedHc reads the table that actually has data", 
     // Deliberately matched with a boundary so it cannot be satisfied by the
     // "wfm_roster_assignment" substring, which of course contains it.
     expect(
-      /(?<!wfm_)roster_assignment/.test(body.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")),
+      /(?<!wfm_)roster_assignment/.test(
+        body.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ""),
+      ),
       "getAllPlannedHc queries roster_assignment again. It has no writer since " +
         "roster-master.service.ts was repointed on 2026-08-28, so any branch reading it can " +
         "only return an empty map — the exact failure that made planned headcount 0 for " +

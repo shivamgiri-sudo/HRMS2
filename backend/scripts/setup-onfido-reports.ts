@@ -17,7 +17,10 @@ import { readFileSync } from "fs";
 async function createTable(cfg: (typeof ONFIDO_REPORT_CONFIGS)[number]) {
   const pool = await getOnfidoPool();
   const dedup = cfg.extract.find((e) => e.column === cfg.dedupColumn);
-  if (!dedup) throw new Error(`${cfg.table}: dedupColumn ${cfg.dedupColumn} not in extract[]`);
+  if (!dedup)
+    throw new Error(
+      `${cfg.table}: dedupColumn ${cfg.dedupColumn} not in extract[]`,
+    );
 
   const otherCols = cfg.extract.filter((e) => e.column !== cfg.dedupColumn);
   const dedupIsLong = /url|uuid/i.test(dedup.column) || dedup.type === "string";
@@ -44,7 +47,7 @@ async function createTable(cfg: (typeof ONFIDO_REPORT_CONFIGS)[number]) {
     `KEY idx_${cfg.table}_dedup (${dedup.column}${dedupIsLong ? "(191)" : ""})`,
     "KEY idx_report_date (report_completed_date)".replace(
       "report_completed_date",
-      otherCols.find((e) => e.type === "date")?.column ?? dedup.column
+      otherCols.find((e) => e.type === "date")?.column ?? dedup.column,
     ),
   ];
 
@@ -53,10 +56,13 @@ async function createTable(cfg: (typeof ONFIDO_REPORT_CONFIGS)[number]) {
   console.log(`[ONFIDO] ensured table ${cfg.table}`);
 }
 
-async function registerTemplate(cfg: (typeof ONFIDO_REPORT_CONFIGS)[number], sampleRow: Record<string, unknown>) {
+async function registerTemplate(
+  cfg: (typeof ONFIDO_REPORT_CONFIGS)[number],
+  sampleRow: Record<string, unknown>,
+) {
   const [existing] = await db.execute(
     "SELECT id FROM upload_template_master WHERE upload_type_code = ? LIMIT 1",
-    [cfg.uploadTypeCode]
+    [cfg.uploadTypeCode],
   );
   const rows = existing as Array<{ id: string }>;
 
@@ -67,10 +73,14 @@ async function registerTemplate(cfg: (typeof ONFIDO_REPORT_CONFIGS)[number], sam
               required_columns = ?, optional_columns = ?, sample_row = ?, active_status = 1
         WHERE upload_type_code = ?`,
       [
-        cfg.uploadTypeName, cfg.table, cfg.description,
-        JSON.stringify([]), JSON.stringify(cfg.headers), JSON.stringify(sampleRow),
+        cfg.uploadTypeName,
+        cfg.table,
+        cfg.description,
+        JSON.stringify([]),
+        JSON.stringify(cfg.headers),
+        JSON.stringify(sampleRow),
         cfg.uploadTypeCode,
-      ]
+      ],
     );
     console.log(`[ONFIDO] updated template ${cfg.uploadTypeCode}`);
     return;
@@ -82,9 +92,15 @@ async function registerTemplate(cfg: (typeof ONFIDO_REPORT_CONFIGS)[number], sam
         required_columns, optional_columns, sample_row, active_status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
     [
-      randomUUID(), cfg.uploadTypeCode, cfg.uploadTypeName, cfg.table, cfg.description,
-      JSON.stringify([]), JSON.stringify(cfg.headers), JSON.stringify(sampleRow),
-    ]
+      randomUUID(),
+      cfg.uploadTypeCode,
+      cfg.uploadTypeName,
+      cfg.table,
+      cfg.description,
+      JSON.stringify([]),
+      JSON.stringify(cfg.headers),
+      JSON.stringify(sampleRow),
+    ],
   );
   console.log(`[ONFIDO] inserted template ${cfg.uploadTypeCode}`);
 }
@@ -92,7 +108,10 @@ async function registerTemplate(cfg: (typeof ONFIDO_REPORT_CONFIGS)[number], sam
 async function main() {
   const manifestPath = process.argv[2];
   const manifest = manifestPath
-    ? (JSON.parse(readFileSync(manifestPath, "utf8")) as Array<{ table: string; sampleRow: Record<string, unknown> }>)
+    ? (JSON.parse(readFileSync(manifestPath, "utf8")) as Array<{
+        table: string;
+        sampleRow: Record<string, unknown>;
+      }>)
     : [];
   const sampleByTable = new Map(manifest.map((m) => [m.table, m.sampleRow]));
 

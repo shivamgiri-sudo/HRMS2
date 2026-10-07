@@ -29,7 +29,10 @@ const MAX_THRESHOLD = 60;
 const MIN_THRESHOLD = 20;
 
 export function effectiveThreshold(orgBaselinePassPct: number): number {
-  return Math.min(MAX_THRESHOLD, Math.max(MIN_THRESHOLD, orgBaselinePassPct - MARGIN_BELOW_BASELINE));
+  return Math.min(
+    MAX_THRESHOLD,
+    Math.max(MIN_THRESHOLD, orgBaselinePassPct - MARGIN_BELOW_BASELINE),
+  );
 }
 
 import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
@@ -97,7 +100,7 @@ export interface TniAgentCallRecord {
 
 function buildSelectColumns(): string {
   return TNI_PARAMS.map(
-    (p) => `ROUND(AVG(COALESCE(q.\`${p}\`, 0)) * 100, 1) AS \`${p}\``
+    (p) => `ROUND(AVG(COALESCE(q.\`${p}\`, 0)) * 100, 1) AS \`${p}\``,
   ).join(",\n      ");
 }
 
@@ -108,16 +111,32 @@ export async function getTniAnalysis(
   branchId?: string | null,
   processId?: string | null,
   costCentreId?: string | null,
-): Promise<{ agents: TniAgentRow[]; summary: TniSummary; thresholds: TniThresholds }> {
+): Promise<{
+  agents: TniAgentRow[];
+  summary: TniSummary;
+  thresholds: TniThresholds;
+}> {
   const pool = getShivamgiriPool();
 
   const conditions: string[] = [];
   const baseParams: (string | number)[] = [startDate, endDate];
 
-  if (clientId) { conditions.push("AND q.ClientId = ?"); baseParams.push(clientId); }
-  if (branchId) { conditions.push("AND e.branch_id = ?"); baseParams.push(branchId); }
-  if (processId) { conditions.push("AND e.process_id = ?"); baseParams.push(processId); }
-  if (costCentreId) { conditions.push("AND e.cost_centre_id = ?"); baseParams.push(costCentreId); }
+  if (clientId) {
+    conditions.push("AND q.ClientId = ?");
+    baseParams.push(clientId);
+  }
+  if (branchId) {
+    conditions.push("AND e.branch_id = ?");
+    baseParams.push(branchId);
+  }
+  if (processId) {
+    conditions.push("AND e.process_id = ?");
+    baseParams.push(processId);
+  }
+  if (costCentreId) {
+    conditions.push("AND e.cost_centre_id = ?");
+    baseParams.push(costCentreId);
+  }
 
   const extraCond = conditions.join(" ");
 
@@ -147,7 +166,7 @@ export async function getTniAnalysis(
        ${extraCond}
      GROUP BY q.User, am.AgentName, e.full_name, pm.process_name, rm.full_name, bm.branch_name, ccm.cost_centre_name
      ORDER BY audit_count DESC`,
-    baseParams
+    baseParams,
   );
 
   // First pass: pull each agent's own per-parameter pass rate, without flagging
@@ -176,7 +195,10 @@ export async function getTniAnalysis(
   const totalAudits = rawAgents.reduce((s, a) => s + a.audit_count, 0);
   const thresholds = {} as TniThresholds;
   for (const p of TNI_PARAMS) {
-    const weightedSum = rawAgents.reduce((s, a) => s + a.params[p] * a.audit_count, 0);
+    const weightedSum = rawAgents.reduce(
+      (s, a) => s + a.params[p] * a.audit_count,
+      0,
+    );
     const baseline = totalAudits > 0 ? weightedSum / totalAudits : 100;
     thresholds[p] = effectiveThreshold(baseline);
   }
@@ -205,7 +227,9 @@ export async function getTniAnalysis(
   const agentsWithTni = agents.filter((a) => a.tni_flag_count > 0).length;
   const avgCq =
     agents.length > 0
-      ? Math.round(agents.reduce((s, a) => s + a.avg_cq_score, 0) / agents.length * 10) / 10
+      ? Math.round(
+          (agents.reduce((s, a) => s + a.avg_cq_score, 0) / agents.length) * 10,
+        ) / 10
       : 0;
 
   // Most failed param = lowest average pass % across all agents
@@ -240,13 +264,19 @@ export async function getTniAgentCalls(
   param: TniParam,
   startDate: string,
   endDate: string,
-  clientId?: string | null
+  clientId?: string | null,
 ): Promise<TniAgentCallRecord[]> {
-  if (!TNI_PARAMS.includes(param)) throw new Error(`Unknown TNI param: ${param}`);
+  if (!TNI_PARAMS.includes(param))
+    throw new Error(`Unknown TNI param: ${param}`);
 
   const pool = getShivamgiriPool();
   const clientCond = clientId ? " AND q.ClientId = ?" : "";
-  const params: (string | number)[] = [agentCode, startDate, endDate, ...(clientId ? [clientId] : [])];
+  const params: (string | number)[] = [
+    agentCode,
+    startDate,
+    endDate,
+    ...(clientId ? [clientId] : []),
+  ];
 
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
@@ -265,7 +295,7 @@ export async function getTniAgentCalls(
        ${clientCond}
      ORDER BY q.CallDate DESC
      LIMIT 200`,
-    params
+    params,
   );
 
   return (rows as RowDataPacket[]).map((r) => ({

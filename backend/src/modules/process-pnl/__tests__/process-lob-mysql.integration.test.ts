@@ -22,7 +22,11 @@ async function runSqlFile(connection: Connection, filename: string) {
   const raw = fs.readFileSync(path.join(sqlDir, filename), "utf8");
   const statements = splitSql(raw).filter((statement) => {
     const normalized = statement.trim().toUpperCase();
-    return normalized && !normalized.startsWith("USE ") && !normalized.startsWith("SOURCE ");
+    return (
+      normalized &&
+      !normalized.startsWith("USE ") &&
+      !normalized.startsWith("SOURCE ")
+    );
   });
   for (const statement of statements) {
     await connection.query(statement);
@@ -256,47 +260,47 @@ async function createFixture(connection: Connection) {
   `);
 
   await connection.query(
-    `INSERT INTO process_master (id, process_name) VALUES ('process-1', 'Example Process')`
+    `INSERT INTO process_master (id, process_name) VALUES ('process-1', 'Example Process')`,
   );
   await connection.query(
     `INSERT INTO cost_centre_master (id, cc_code, cc_name, process_id)
-     VALUES ('cc-1', 'CC-001', 'Example Cost Centre', 'process-1')`
+     VALUES ('cc-1', 'CC-001', 'Example Cost Centre', 'process-1')`,
   );
   await connection.query(
     `INSERT INTO process_revenue_rule
        (id, process_id, rule_name, billing_model, metric_key, rate_amount, effective_from, status)
-     VALUES ('rule-1', 'process-1', 'Legacy rate', 'per_seat', 'billable_seats', 1000, '2026-01-01', 'approved')`
+     VALUES ('rule-1', 'process-1', 'Legacy rate', 'per_seat', 'billable_seats', 1000, '2026-01-01', 'approved')`,
   );
   await connection.query(
     `INSERT INTO process_delivery_actual
        (id, process_id, period_code, metric_key, planned_units, delivered_units,
         accepted_units, billable_units, data_source, source_reference, status)
-     VALUES ('delivery-1', 'process-1', '2026-07', 'billable_seats', 10, 9, 9, 9, 'manual', 'legacy', 'validated')`
+     VALUES ('delivery-1', 'process-1', '2026-07', 'billable_seats', 10, 9, 9, 9, 'manual', 'legacy', 'validated')`,
   );
   await connection.query(
     `INSERT INTO process_revenue_component
        (id, process_id, period_code, component_type, direction, description, amount_inr, status)
-     VALUES ('component-1', 'process-1', '2026-07', 'incentive', 'increase', 'Legacy incentive', 500, 'approved')`
+     VALUES ('component-1', 'process-1', '2026-07', 'incentive', 'increase', 'Legacy incentive', 500, 'approved')`,
   );
   await connection.query(
     `INSERT INTO process_pnl_cost_component
        (id, process_id, period_code, cost_type, description, amount_inr, status)
-     VALUES ('cost-1', 'process-1', '2026-07', 'depreciation', 'Legacy depreciation', 100, 'approved')`
+     VALUES ('cost-1', 'process-1', '2026-07', 'depreciation', 'Legacy depreciation', 100, 'approved')`,
   );
   await connection.query(
     `INSERT INTO pnl_adjustment_journal
        (id, process_id, period_code, metric_key, previous_value, adjustment_amount, revised_value, reason)
-     VALUES ('adjustment-1', 'process-1', '2026-07', 'recognized_revenue', 9000, 500, 9500, 'Legacy adjustment')`
+     VALUES ('adjustment-1', 'process-1', '2026-07', 'recognized_revenue', 9000, 500, 9500, 'Legacy adjustment')`,
   );
   await connection.query(
     `INSERT INTO finance_budget_line
        (id, budget_id, process_id, cost_centre_id, head, sub_head, item_name, pnl_cost_amount)
-     VALUES ('budget-line-1', 'budget-1', 'process-1', 'cc-1', 'Technology', 'Software', 'Licence', 1000)`
+     VALUES ('budget-line-1', 'budget-1', 'process-1', 'cc-1', 'Technology', 'Software', 'Licence', 1000)`,
   );
   await connection.query(
     `INSERT INTO grn_request
        (id, branch_id, service_period_end, bill_date, reviewed_at, status)
-     VALUES ('grn-1', 'branch-1', '2026-07-31', '2026-08-05', NOW(), 'pending_accounts_payment')`
+     VALUES ('grn-1', 'branch-1', '2026-07-31', '2026-08-05', NOW(), 'pending_accounts_payment')`,
   );
   await connection.query(
     `INSERT INTO grn_cost_allocation
@@ -304,7 +308,7 @@ async function createFixture(connection: Connection) {
         branch_id, cost_class, pnl_bucket, recognition_period, pnl_cost_amount,
         amount_with_tax, lifecycle_status, consumed_at)
      VALUES ('allocation-1', 'grn-1', 'budget-line-1', 1, 'process-1', 'cc-1',
-             'branch-1', 'direct', 'dsc_non_people', '2026-07', 1000, 1180, 'consumed', NOW())`
+             'branch-1', 'direct', 'dsc_non_people', '2026-07', 1000, 1180, 'consumed', NOW())`,
   );
   await connection.query(
     `INSERT INTO vendor_payment_tracking
@@ -312,15 +316,23 @@ async function createFixture(connection: Connection) {
         process_id, cost_centre_id, recognition_period, due_amount, paid_amount,
         balance_amount, payment_status, due_date)
      VALUES ('payment-1', 'grn-1', 'GRN-1', 'vendor-1', 'Example Vendor', 'branch-1',
-             'process-1', 'cc-1', '2026-07', 1180, 0, 1180, 'Payment Pending', '2026-09-04')`
+             'process-1', 'cc-1', '2026-07', 1180, 0, 1180, 'Payment Pending', '2026-09-04')`,
   );
 }
 
 describeMysql("Process LOB MySQL migration integration", () => {
   beforeAll(async () => {
     admin = await mysql.createConnection({ host, port, user, password });
-    await admin.query(`CREATE DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    db = await mysql.createConnection({ host, port, user, password, database: dbName });
+    await admin.query(
+      `CREATE DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+    );
+    db = await mysql.createConnection({
+      host,
+      port,
+      user,
+      password,
+      database: dbName,
+    });
     await createFixture(db);
   }, 30_000);
 
@@ -345,14 +357,14 @@ describeMysql("Process LOB MySQL migration integration", () => {
             'process_lob_master','process_lob_monthly_plan','employee_lob_assignment',
             'vendor_payment_allocation','pnl_period_snapshot','pnl_period_snapshot_row'
           )`,
-      [dbName]
+      [dbName],
     );
     expect(tables).toHaveLength(6);
   }, 30_000);
 
   it("backfills the visible DEFAULT LOB into existing financial records", async () => {
     const [lobs] = await db.query<RowDataPacket[]>(
-      `SELECT id, lob_code, approval_status FROM process_lob_master WHERE process_id = 'process-1'`
+      `SELECT id, lob_code, approval_status FROM process_lob_master WHERE process_id = 'process-1'`,
     );
     expect(lobs).toHaveLength(1);
     expect(lobs[0].lob_code).toBe("DEFAULT");
@@ -370,7 +382,7 @@ describeMysql("Process LOB MySQL migration integration", () => {
     ] as const) {
       const [rows] = await db.query<RowDataPacket[]>(
         `SELECT process_lob_id FROM ${table} WHERE id = ?`,
-        [id]
+        [id],
       );
       expect(String(rows[0].process_lob_id)).toBe(lobId);
     }
@@ -380,7 +392,7 @@ describeMysql("Process LOB MySQL migration integration", () => {
     const [grnRows] = await db.query<RowDataPacket[]>(
       `SELECT process_id, process_lob_id, period_code, pnl_bucket, pnl_cost_amount, gross_amount
          FROM vw_process_lob_grn_allocation
-        WHERE process_id = 'process-1'`
+        WHERE process_id = 'process-1'`,
     );
     expect(grnRows).toHaveLength(1);
     expect(Number(grnRows[0].pnl_cost_amount)).toBe(1000);
@@ -391,10 +403,12 @@ describeMysql("Process LOB MySQL migration integration", () => {
       `SELECT process_id, process_lob_id, recognition_period, pnl_cost_amount,
               gross_amount, payment_due_amount, payment_status
          FROM vw_vendor_payment_lob_allocation
-        WHERE vendor_payment_id = 'payment-1'`
+        WHERE vendor_payment_id = 'payment-1'`,
     );
     expect(paymentRows).toHaveLength(1);
-    expect(String(paymentRows[0].process_lob_id)).toBe(String(grnRows[0].process_lob_id));
+    expect(String(paymentRows[0].process_lob_id)).toBe(
+      String(grnRows[0].process_lob_id),
+    );
     expect(Number(paymentRows[0].pnl_cost_amount)).toBe(1000);
     expect(Number(paymentRows[0].gross_amount)).toBe(1180);
     expect(Number(paymentRows[0].payment_due_amount)).toBe(1180);
@@ -404,7 +418,7 @@ describeMysql("Process LOB MySQL migration integration", () => {
   it("backfills canonical cost-centre aliases from cc_code and cc_name", async () => {
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT cc_code, cc_name, cost_centre_code, cost_centre_name
-         FROM cost_centre_master WHERE id = 'cc-1'`
+         FROM cost_centre_master WHERE id = 'cc-1'`,
     );
     expect(rows[0].cost_centre_code).toBe("CC-001");
     expect(rows[0].cost_centre_name).toBe("Example Cost Centre");
@@ -416,11 +430,11 @@ describeMysql("Process LOB MySQL migration integration", () => {
     await runSqlFile(db, "423_cost_centre_lob_compatibility.sql");
 
     const [lobs] = await db.query<RowDataPacket[]>(
-      `SELECT COUNT(*) count FROM process_lob_master WHERE process_id = 'process-1' AND lob_code = 'DEFAULT'`
+      `SELECT COUNT(*) count FROM process_lob_master WHERE process_id = 'process-1' AND lob_code = 'DEFAULT'`,
     );
     const [bridges] = await db.query<RowDataPacket[]>(
       `SELECT COUNT(*) count FROM vendor_payment_allocation
-        WHERE vendor_payment_id = 'payment-1' AND grn_allocation_id = 'allocation-1'`
+        WHERE vendor_payment_id = 'payment-1' AND grn_allocation_id = 'allocation-1'`,
     );
     expect(Number(lobs[0].count)).toBe(1);
     expect(Number(bridges[0].count)).toBe(1);

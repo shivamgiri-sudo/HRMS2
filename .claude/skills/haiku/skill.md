@@ -15,6 +15,7 @@ Switches Claude into fast execution mode:
 ## When to Use
 
 Use `/haiku` when you need:
+
 - Quick bug fixes
 - Simple feature additions
 - Fast code updates
@@ -26,18 +27,21 @@ Use `/haiku` when you need:
 ## Characteristics
 
 **Intelligence Level:**
+
 - Fastest model
 - Good for straightforward tasks
 - Less capable on complex logic
 - Best for well-defined work
 
 **Communication Style:**
+
 - Brief and direct
 - Minimal explanation
 - Action-focused
 - Quick acknowledgments
 
 **Code Quality:**
+
 - Basic validation
 - Standard patterns
 - Quick solutions
@@ -46,18 +50,21 @@ Use `/haiku` when you need:
 ## What Changes
 
 **Compared to Opus:**
+
 - Much faster
 - Much less depth
 - Quick vs comprehensive
 - Simple vs complex
 
 **Compared to Fable:**
+
 - Faster execution
 - Less reasoning depth
 - Concise vs natural prose
 - Speed over quality
 
 **Compared to Sonnet:**
+
 - Faster responses
 - Less capable reasoning
 - More concise

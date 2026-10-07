@@ -35,8 +35,15 @@ vi.mock("../org.service.js", () => ({
   processService: svcStub(),
 }));
 
-const executeMock = vi.fn().mockResolvedValue([[{ id: "m1", employee_code: "MAS1", full_name: "Boss" }], []]);
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => executeMock(...a) } }));
+const executeMock = vi
+  .fn()
+  .mockResolvedValue([
+    [{ id: "m1", employee_code: "MAS1", full_name: "Boss" }],
+    [],
+  ]);
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: (...a: unknown[]) => executeMock(...a) },
+}));
 
 const { orgRouter } = await import("../org.routes.js");
 
@@ -47,13 +54,14 @@ function app() {
   return a;
 }
 
-
 describe("GET /api/org/filter-options manager list query", () => {
   it("avoids the cross-column OR EXISTS (full-scan) shape and still returns managers", async () => {
     roles = ["hr"];
     const res = await request(app()).get("/api/org/filter-options");
     expect(res.status).toBe(200);
-    expect(res.body.data.managers).toEqual([{ id: "m1", employee_code: "MAS1", full_name: "Boss" }]);
+    expect(res.body.data.managers).toEqual([
+      { id: "m1", employee_code: "MAS1", full_name: "Boss" },
+    ]);
     const sql = String(executeMock.mock.calls[0][0]);
     expect(sql).not.toMatch(/reporting_manager_id\s*=\s*e\.id\s+OR/i);
     expect(sql).toMatch(/GROUP BY reporting_manager_id/);

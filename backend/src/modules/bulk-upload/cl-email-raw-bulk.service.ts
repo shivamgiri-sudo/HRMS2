@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
 Clovia's Email raw export (cl_email_raw.xlsx, 12 real
@@ -17,16 +20,23 @@ Clovia's Email raw export (cl_email_raw.xlsx, 12 real
 function normalizeKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
-function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): string {
+function getByColumn(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string {
   const normalized: Record<string, unknown> = {};
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const col of columnNames) {
     const v = normalized[normalizeKey(col)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
-function n(data: Record<string, unknown>, ...columnNames: string[]): string | null {
+function n(
+  data: Record<string, unknown>,
+  ...columnNames: string[]
+): string | null {
   const v = getByColumn(data, ...columnNames);
   return v || null;
 }
@@ -47,12 +57,15 @@ export async function importClEmailRawBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
 
-  const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+  const uploadedByInt = /^\d+$/.test(importedByUserId)
+    ? Number(importedByUserId)
+    : null;
 
   const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
@@ -64,24 +77,31 @@ export async function importClEmailRawBatch(
     const requiredVal = getByColumn(data, "Unique ID");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Unique ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
-    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
-      requiredVal,
-      n(data, "EMP ID"),
-      n(data, "Week"),
-      n(data, "Date"),
-      n(data, "Agent Name"),
-      n(data, "Open Email"),
-      n(data, "In Process"),
-      n(data, "Re-Open"),
-      n(data, "Total Mail Assigned"),
-      n(data, "Total Touched Email"),
-      n(data, "Closed Email"),
-      n(data, "JunkMail"),
-      uploadedByInt, batchId,
-    ] });
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        requiredVal,
+        n(data, "EMP ID"),
+        n(data, "Week"),
+        n(data, "Date"),
+        n(data, "Agent Name"),
+        n(data, "Open Email"),
+        n(data, "In Process"),
+        n(data, "Re-Open"),
+        n(data, "Total Mail Assigned"),
+        n(data, "Total Touched Email"),
+        n(data, "Closed Email"),
+        n(data, "JunkMail"),
+        uploadedByInt,
+        batchId,
+      ],
+    });
   }
   const inserted = await chunkedMasmisInsert({
     insertPrefix: `INSERT INTO db_masmis.cl_email_raw (unique_id, emp_id, week, report_date, agent_name, open_email, in_process, re_open, total_mail_assigned, total_touched_email, closed_email, junk_mail, uploaded_by, upload_batch_id)`,
@@ -102,17 +122,26 @@ export async function importClEmailRawBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

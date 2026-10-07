@@ -21,7 +21,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
-import { splitSql, MIGRATION_MANIFEST } from "../src/db/runPendingMigrations.js";
+import {
+  splitSql,
+  MIGRATION_MANIFEST,
+} from "../src/db/runPendingMigrations.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SQL_DIR = path.resolve(__dirname, "../sql");
@@ -44,29 +47,37 @@ const disposableDbName =
   /(^test_|_test$|_testing$|^hrms_migration_test_|^hrms_test_)/i.test(TEST_DB);
 
 if (!allowDestructive) {
-  console.error("[migrate-fresh-test] FATAL: missing --allow-destructive-test-db confirmation flag.");
+  console.error(
+    "[migrate-fresh-test] FATAL: missing --allow-destructive-test-db confirmation flag.",
+  );
   process.exit(1);
 }
 
 if (!localHosts.has(DB_HOST.trim().toLowerCase())) {
-  console.error(`[migrate-fresh-test] FATAL: refusing destructive test migration on non-local host '${DB_HOST}'.`);
+  console.error(
+    `[migrate-fresh-test] FATAL: refusing destructive test migration on non-local host '${DB_HOST}'.`,
+  );
   process.exit(1);
 }
 
 if (!disposableDbName) {
-  console.error(`[migrate-fresh-test] FATAL: TEST_DB_NAME '${TEST_DB}' does not look disposable/test-scoped.`);
+  console.error(
+    `[migrate-fresh-test] FATAL: TEST_DB_NAME '${TEST_DB}' does not look disposable/test-scoped.`,
+  );
   process.exit(1);
 }
 
 if (NODE_ENV === "production") {
-  console.error("[migrate-fresh-test] FATAL: refusing destructive test migration when NODE_ENV=production.");
+  console.error(
+    "[migrate-fresh-test] FATAL: refusing destructive test migration when NODE_ENV=production.",
+  );
   process.exit(1);
 }
 
 if (TEST_DB === PROD_DB) {
   console.error(
     `[migrate-fresh-test] FATAL: TEST_DB_NAME '${TEST_DB}' matches DB_NAME '${PROD_DB}'. ` +
-      "Refusing to drop production database."
+      "Refusing to drop production database.",
   );
   process.exit(1);
 }
@@ -90,12 +101,14 @@ async function main() {
 
   let mysqlVersion = "unknown";
   try {
-    const [rows] = await adminConn.query<RowDataPacket[]>("SELECT VERSION() AS v");
+    const [rows] = await adminConn.query<RowDataPacket[]>(
+      "SELECT VERSION() AS v",
+    );
     const row = rows[0] as (RowDataPacket & { v?: string }) | undefined;
     mysqlVersion = row?.v ?? "unknown";
   } catch (error: unknown) {
     console.warn(
-      `[migrate-fresh-test] Unable to determine MySQL version: ${error instanceof Error ? error.message : String(error)}`
+      `[migrate-fresh-test] Unable to determine MySQL version: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -109,11 +122,15 @@ async function main() {
   await adminConn.query(`DROP DATABASE IF EXISTS \`${TEST_DB}\``);
   console.log(`[migrate-fresh-test] Creating '${TEST_DB}' ...`);
   await adminConn.query(
-    `CREATE DATABASE \`${TEST_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    `CREATE DATABASE \`${TEST_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
   );
   await adminConn.end();
 
-  const connConfig = { ...connBase, database: TEST_DB, multipleStatements: false };
+  const connConfig = {
+    ...connBase,
+    database: TEST_DB,
+    multipleStatements: false,
+  };
 
   // Create schema_migrations tracking table
   {
@@ -144,7 +161,9 @@ async function main() {
       return !upper.startsWith("SOURCE ") && !upper.startsWith("USE ");
     });
 
-    console.log(`[migrate-fresh-test] Running: ${file} (${statements.length} statements)`);
+    console.log(
+      `[migrate-fresh-test] Running: ${file} (${statements.length} statements)`,
+    );
 
     const conn = await mysql.createConnection(connConfig);
     try {
@@ -165,7 +184,9 @@ async function main() {
         }
       }
 
-      await conn.query("INSERT INTO schema_migrations (filename) VALUES (?)", [file]);
+      await conn.query("INSERT INTO schema_migrations (filename) VALUES (?)", [
+        file,
+      ]);
       applied++;
       console.log(`[migrate-fresh-test] OK: ${file}`);
     } finally {
@@ -175,7 +196,7 @@ async function main() {
 
   console.log(
     `\n[migrate-fresh-test] Pass 1 (fresh database) passed.\n` +
-      `  Applied: ${applied}  Skipped: ${skipped}  MySQL: ${mysqlVersion}\n`
+      `  Applied: ${applied}  Skipped: ${skipped}  MySQL: ${mysqlVersion}\n`,
   );
 
   // ---------------------------------------------------------------------------
@@ -226,7 +247,7 @@ async function main() {
           console.error(
             `\n  This migration applies cleanly to an empty database but cannot be re-run.\n` +
               `  Guard each object with information_schema + PREPARE/EXECUTE (MySQL 8.0\n` +
-              `  rejects ADD COLUMN IF NOT EXISTS), as the other migrations here do.\n`
+              `  rejects ADD COLUMN IF NOT EXISTS), as the other migrations here do.\n`,
           );
           await conn.end();
           process.exit(1);
@@ -241,7 +262,7 @@ async function main() {
   console.log(
     `\n[migrate-fresh-test] Pass 2 (idempotency replay) passed.\n` +
       `  Replayed: ${replayed}  MySQL: ${mysqlVersion}\n\n` +
-      `[migrate-fresh-test] All migrations passed both passes.\n`
+      `[migrate-fresh-test] All migrations passed both passes.\n`,
   );
 }
 

@@ -1,17 +1,20 @@
-import { Router } from 'express';
-import type { Response } from 'express';
-import type { RowDataPacket } from 'mysql2';
-import path from 'path';
-import { mkdirSync } from 'fs';
-import { randomUUID } from 'crypto';
-import multer from 'multer';
-import { requireAuth } from '../../middleware/authMiddleware.js';
-import { requireRole } from '../../middleware/requireRole.js';
-import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
-import { hasRole, getEmployeeForUser } from '../../shared/accessGuard.js';
-import { narrowDashboardScope, resolveDashboardScope } from '../../shared/dashboardScope.js';
-import { getUserRoleContext } from '../../shared/roleResolver.js';
-import { db } from '../../db/mysql.js';
+import { Router } from "express";
+import type { Response } from "express";
+import type { RowDataPacket } from "mysql2";
+import path from "path";
+import { mkdirSync } from "fs";
+import { randomUUID } from "crypto";
+import multer from "multer";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
+import {
+  narrowDashboardScope,
+  resolveDashboardScope,
+} from "../../shared/dashboardScope.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { db } from "../../db/mysql.js";
 import {
   listProvisioningRequests,
   getProvisioningRequest,
@@ -21,25 +24,40 @@ import {
   reopenLockedRequest,
   getProvisioningStats,
   OFFICIAL_EMAIL_REGEX,
-} from './it-provisioning.service.js';
-import { logSensitiveAction } from '../../shared/auditLog.js';
-import { getItAnalyticsSummary } from './it-analytics.service.js';
-import { parseAdEventLog } from './ad-log-parser.js';
-import { dispatchTaskCompletion } from './task-completion-handlers.service.js';
+} from "./it-provisioning.service.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { getItAnalyticsSummary } from "./it-analytics.service.js";
+import { parseAdEventLog } from "./ad-log-parser.js";
+import { dispatchTaskCompletion } from "./task-completion-handlers.service.js";
 import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 
 const router = Router();
-const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h = (fn: Function) => (req: any, res: any, next: any) =>
+  fn(req, res).catch(next);
 // `it_head` and `ho_it` are admitted to the IT Manager dashboard but were absent here, and
 // this is one of only two endpoints that dashboard calls — so both IT head accounts saw a
 // page with nothing on it at all. wfm/hr/branch_admin stay: they use provisioning outside
 // the dashboard.
-const PROVISIONING_ROLES = ['admin', 'wfm', 'hr', 'branch_admin', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')];
+const PROVISIONING_ROLES = [
+  "admin",
+  "wfm",
+  "hr",
+  "branch_admin",
+  ...dashboardConsumerRoles("IT_MANAGER_DASHBOARD"),
+];
 
 // Multer for AD log evidence uploads — stored under uploads/provisioning-evidence/
-const EVIDENCE_UPLOAD_DIR = path.resolve(process.cwd(), 'uploads', 'provisioning-evidence');
-try { mkdirSync(EVIDENCE_UPLOAD_DIR, { recursive: true }); } catch { /* dir already exists */ }
-const ALLOWED_EVIDENCE_EXTS = new Set(['.txt', '.log', '.pdf', '.evtx']);
+const EVIDENCE_UPLOAD_DIR = path.resolve(
+  process.cwd(),
+  "uploads",
+  "provisioning-evidence",
+);
+try {
+  mkdirSync(EVIDENCE_UPLOAD_DIR, { recursive: true });
+} catch {
+  /* dir already exists */
+}
+const ALLOWED_EVIDENCE_EXTS = new Set([".txt", ".log", ".pdf", ".evtx"]);
 const evidenceUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, EVIDENCE_UPLOAD_DIR),
@@ -52,7 +70,11 @@ const evidenceUpload = multer({
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (ALLOWED_EVIDENCE_EXTS.has(ext)) return cb(null, true);
-    cb(new Error('Only .txt, .log, .pdf, or .evtx files are allowed for AD evidence'));
+    cb(
+      new Error(
+        "Only .txt, .log, .pdf, or .evtx files are allowed for AD evidence",
+      ),
+    );
   },
 });
 
@@ -61,11 +83,15 @@ router.use(requireAuth);
 // IT Manager Analytics (Dashboard)
 router.get(
   "/analytics",
-  requireRole("super_admin", "admin", ...dashboardConsumerRoles("IT_MANAGER_DASHBOARD")),
+  requireRole(
+    "super_admin",
+    "admin",
+    ...dashboardConsumerRoles("IT_MANAGER_DASHBOARD"),
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const summary = await getItAnalyticsSummary();
     res.json({ success: true, data: summary });
-  })
+  }),
 );
 
 type AppointmentRow = RowDataPacket & {
@@ -76,40 +102,81 @@ type AppointmentRow = RowDataPacket & {
   company_signature_status: string;
 };
 
-type AppointmentAction = 'send' | 'aadhaar-signed' | 'company-signed' | 'complete';
+type AppointmentAction =
+  "send" | "aadhaar-signed" | "company-signed" | "complete";
 
 function clean(value: unknown): string {
-  return String(value ?? '').trim();
+  return String(value ?? "").trim();
 }
 
-async function persistStructuredFields(taskId: string, body: Record<string, unknown>) {
-  const officialEmail   = clean(body.official_email)    || null;
-  const domainAccount   = clean(body.domain_account)    || null;
-  const assetTag        = clean(body.asset_tag)         || null;
+async function persistStructuredFields(
+  taskId: string,
+  body: Record<string, unknown>,
+) {
+  const officialEmail = clean(body.official_email) || null;
+  const domainAccount = clean(body.domain_account) || null;
+  const assetTag = clean(body.asset_tag) || null;
   const evidenceFileUrl = clean(body.evidence_file_url) || null;
-  const biometricDone   = body.biometric_enrolled != null ? (body.biometric_enrolled ? 1 : 0) : null;
-  const idCardDone      = body.id_card_printed    != null ? (body.id_card_printed    ? 1 : 0) : null;
+  const biometricDone =
+    body.biometric_enrolled != null ? (body.biometric_enrolled ? 1 : 0) : null;
+  const idCardDone =
+    body.id_card_printed != null ? (body.id_card_printed ? 1 : 0) : null;
   const bgvResult = clean(body.bgv_result) || null;
   if (bgvResult && !["red", "green"].includes(bgvResult)) {
-    throw Object.assign(new Error("bgv_result must be 'red' or 'green'"), { statusCode: 400 });
+    throw Object.assign(new Error("bgv_result must be 'red' or 'green'"), {
+      statusCode: 400,
+    });
   }
 
   // Only UPDATE if at least one structured field was sent
-  if (!officialEmail && !domainAccount && !assetTag && !evidenceFileUrl && biometricDone == null && idCardDone == null && !bgvResult) return;
+  if (
+    !officialEmail &&
+    !domainAccount &&
+    !assetTag &&
+    !evidenceFileUrl &&
+    biometricDone == null &&
+    idCardDone == null &&
+    !bgvResult
+  )
+    return;
 
   const sets: string[] = [];
   const vals: unknown[] = [];
-  if (officialEmail   !== null) { sets.push('official_email = ?');      vals.push(officialEmail); }
-  if (domainAccount   !== null) { sets.push('domain_account = ?');      vals.push(domainAccount); }
-  if (assetTag        !== null) { sets.push('asset_tag = ?');           vals.push(assetTag); }
-  if (evidenceFileUrl !== null) { sets.push('evidence_file_url = ?');   vals.push(evidenceFileUrl); }
-  if (biometricDone   != null)  { sets.push('biometric_enrolled = ?'); vals.push(biometricDone); }
-  if (idCardDone      != null)  { sets.push('id_card_printed = ?');    vals.push(idCardDone); }
-  if (bgvResult !== null) { sets.push('bgv_result = ?'); vals.push(bgvResult); }
+  if (officialEmail !== null) {
+    sets.push("official_email = ?");
+    vals.push(officialEmail);
+  }
+  if (domainAccount !== null) {
+    sets.push("domain_account = ?");
+    vals.push(domainAccount);
+  }
+  if (assetTag !== null) {
+    sets.push("asset_tag = ?");
+    vals.push(assetTag);
+  }
+  if (evidenceFileUrl !== null) {
+    sets.push("evidence_file_url = ?");
+    vals.push(evidenceFileUrl);
+  }
+  if (biometricDone != null) {
+    sets.push("biometric_enrolled = ?");
+    vals.push(biometricDone);
+  }
+  if (idCardDone != null) {
+    sets.push("id_card_printed = ?");
+    vals.push(idCardDone);
+  }
+  if (bgvResult !== null) {
+    sets.push("bgv_result = ?");
+    vals.push(bgvResult);
+  }
 
   if (sets.length) {
     vals.push(taskId);
-    await db.execute(`UPDATE it_provisioning_request SET ${sets.join(', ')} WHERE id = ?`, vals);
+    await db.execute(
+      `UPDATE it_provisioning_request SET ${sets.join(", ")} WHERE id = ?`,
+      vals,
+    );
   }
 }
 
@@ -118,7 +185,7 @@ function firstEvidence(body: Record<string, unknown>, keys: string[]): string {
     const value = clean(body[key]);
     if (value) return value;
   }
-  return '';
+  return "";
 }
 
 function invalidTransition(res: Response, message: string) {
@@ -132,24 +199,48 @@ async function changeAppointmentStatus(
 ) {
   const requestId = req.params.id;
   const body = req.body as Record<string, unknown>;
-  const evidenceUrl = firstEvidence(body, ['evidence_url', 'document_url', 'signed_artifact_url', 'signature_evidence_url', 'final_pdf_url']);
+  const evidenceUrl = firstEvidence(body, [
+    "evidence_url",
+    "document_url",
+    "signed_artifact_url",
+    "signature_evidence_url",
+    "final_pdf_url",
+  ]);
   const providerReference = clean(body.provider_reference);
   const remarks = clean(body.remarks);
   const signerUserId = clean(body.signer_user_id);
   const finalPdfUrl = clean(body.final_pdf_url);
 
   if (!evidenceUrl && !providerReference && !remarks) {
-    return res.status(400).json({ success: false, message: 'evidence_url, provider_reference, document_url, final_pdf_url, or remarks required' });
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message:
+          "evidence_url, provider_reference, document_url, final_pdf_url, or remarks required",
+      });
   }
 
-  if (action === 'aadhaar-signed' && !providerReference && !evidenceUrl) {
-    return res.status(400).json({ success: false, message: 'provider_reference or signed artifact evidence required' });
+  if (action === "aadhaar-signed" && !providerReference && !evidenceUrl) {
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message: "provider_reference or signed artifact evidence required",
+      });
   }
-  if (action === 'company-signed' && (!signerUserId || !evidenceUrl)) {
-    return res.status(400).json({ success: false, message: 'signer_user_id and signature evidence required' });
+  if (action === "company-signed" && (!signerUserId || !evidenceUrl)) {
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message: "signer_user_id and signature evidence required",
+      });
   }
-  if (action === 'complete' && !finalPdfUrl) {
-    return res.status(400).json({ success: false, message: 'final_pdf_url required' });
+  if (action === "complete" && !finalPdfUrl) {
+    return res
+      .status(400)
+      .json({ success: false, message: "final_pdf_url required" });
   }
 
   const conn = await db.getConnection();
@@ -165,20 +256,28 @@ async function changeAppointmentStatus(
     const current = rows[0];
     if (!current) {
       await conn.rollback();
-      return res.status(404).json({ success: false, message: 'Appointment letter request not found' });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "Appointment letter request not found",
+        });
     }
 
     const fromStatus = current.status;
     let toStatus = fromStatus;
-    let updateSql = '';
+    let updateSql = "";
     let updateParams: any[] = [];
 
-    if (action === 'send') {
-      if (fromStatus !== 'draft') {
+    if (action === "send") {
+      if (fromStatus !== "draft") {
         await conn.rollback();
-        return invalidTransition(res, `Cannot send appointment letter from ${fromStatus}`);
+        return invalidTransition(
+          res,
+          `Cannot send appointment letter from ${fromStatus}`,
+        );
       }
-      toStatus = 'sent_for_esign';
+      toStatus = "sent_for_esign";
       updateSql = `UPDATE appointment_letter_request
           SET template_id = COALESCE(?, template_id),
               document_url = COALESCE(?, document_url),
@@ -188,12 +287,22 @@ async function changeAppointmentStatus(
               updated_at = NOW()
         WHERE id = ?`;
       updateParams = [body.template_id ?? null, evidenceUrl || null, requestId];
-    } else if (action === 'aadhaar-signed') {
-      if (!['sent_for_esign', 'candidate_signed', 'company_signed'].includes(fromStatus)) {
+    } else if (action === "aadhaar-signed") {
+      if (
+        !["sent_for_esign", "candidate_signed", "company_signed"].includes(
+          fromStatus,
+        )
+      ) {
         await conn.rollback();
-        return invalidTransition(res, `Cannot mark Aadhaar signed from ${fromStatus}`);
+        return invalidTransition(
+          res,
+          `Cannot mark Aadhaar signed from ${fromStatus}`,
+        );
       }
-      toStatus = current.company_signature_status === 'signed' ? 'company_signed' : 'candidate_signed';
+      toStatus =
+        current.company_signature_status === "signed"
+          ? "company_signed"
+          : "candidate_signed";
       updateSql = `UPDATE appointment_letter_request
           SET aadhaar_esign_status = 'candidate_signed',
               document_url = COALESCE(?, document_url),
@@ -202,12 +311,22 @@ async function changeAppointmentStatus(
               updated_at = NOW()
         WHERE id = ?`;
       updateParams = [evidenceUrl || null, toStatus, requestId];
-    } else if (action === 'company-signed') {
-      if (!['sent_for_esign', 'candidate_signed', 'company_signed'].includes(fromStatus)) {
+    } else if (action === "company-signed") {
+      if (
+        !["sent_for_esign", "candidate_signed", "company_signed"].includes(
+          fromStatus,
+        )
+      ) {
         await conn.rollback();
-        return invalidTransition(res, `Cannot mark company signed from ${fromStatus}`);
+        return invalidTransition(
+          res,
+          `Cannot mark company signed from ${fromStatus}`,
+        );
       }
-      toStatus = current.aadhaar_esign_status === 'candidate_signed' ? 'company_signed' : 'sent_for_esign';
+      toStatus =
+        current.aadhaar_esign_status === "candidate_signed"
+          ? "company_signed"
+          : "sent_for_esign";
       updateSql = `UPDATE appointment_letter_request
           SET company_signature_status = 'signed',
               final_pdf_url = COALESCE(?, final_pdf_url),
@@ -217,15 +336,24 @@ async function changeAppointmentStatus(
         WHERE id = ?`;
       updateParams = [evidenceUrl || null, toStatus, requestId];
     } else {
-      if (fromStatus === 'draft' || fromStatus === 'sent_for_esign') {
+      if (fromStatus === "draft" || fromStatus === "sent_for_esign") {
         await conn.rollback();
-        return invalidTransition(res, `Cannot complete appointment letter from ${fromStatus}`);
+        return invalidTransition(
+          res,
+          `Cannot complete appointment letter from ${fromStatus}`,
+        );
       }
-      if (current.aadhaar_esign_status !== 'candidate_signed' || current.company_signature_status !== 'signed') {
+      if (
+        current.aadhaar_esign_status !== "candidate_signed" ||
+        current.company_signature_status !== "signed"
+      ) {
         await conn.rollback();
-        return invalidTransition(res, 'Both candidate and company signatures are required before completion');
+        return invalidTransition(
+          res,
+          "Both candidate and company signatures are required before completion",
+        );
       }
-      toStatus = 'completed';
+      toStatus = "completed";
       updateSql = `UPDATE appointment_letter_request
           SET status = 'completed',
               final_pdf_url = ?,
@@ -252,11 +380,14 @@ async function changeAppointmentStatus(
         remarks || null,
         req.authUser!.id,
         req.ip ?? null,
-        req.get('user-agent') ?? null,
+        req.get("user-agent") ?? null,
       ],
     );
     await conn.commit();
-    return res.json({ success: true, data: { id: requestId, status: toStatus } });
+    return res.json({
+      success: true,
+      data: { id: requestId, status: toStatus },
+    });
   } catch (error) {
     await conn.rollback();
     throw error;
@@ -286,295 +417,431 @@ router.get(
 
 // ── GET /api/it-provisioning/requests ─────────────────────────────────────────
 // Functional teams default to their own queue; admin/hr/super_admin can inspect all.
-router.get('/stats', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  // 'hr' deliberately excluded: it is not an unrestricted-viewer role, it is a scoped
-  // role like any other (see resolveDashboardScope's ORG_ALL_ROLES handling, which
-  // already gives real head-office HR an ORG_ALL scope via their scope_type='all' grant
-  // and fails closed to their own branch otherwise). Including it here made anyone who
-  // also held 'hr' — e.g. a branch admin who is also branch HR — bypass branch scoping
-  // entirely and see every branch's unassigned queue instead of their own.
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
-  const filters: { assignedRole?: string; branchIds?: string[]; processIds?: string[] } = {
-    assignedRole: isAdmin ? String(req.query.assigned_role ?? 'it') : 'it',
-  };
+router.get(
+  "/stats",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    // 'hr' deliberately excluded: it is not an unrestricted-viewer role, it is a scoped
+    // role like any other (see resolveDashboardScope's ORG_ALL_ROLES handling, which
+    // already gives real head-office HR an ORG_ALL scope via their scope_type='all' grant
+    // and fails closed to their own branch otherwise). Including it here made anyone who
+    // also held 'hr' — e.g. a branch admin who is also branch HR — bypass branch scoping
+    // entirely and see every branch's unassigned queue instead of their own.
+    const isAdmin = await hasRole(userId, "admin", "super_admin");
+    const filters: {
+      assignedRole?: string;
+      branchIds?: string[];
+      processIds?: string[];
+    } = {
+      assignedRole: isAdmin ? String(req.query.assigned_role ?? "it") : "it",
+    };
 
-  if (isAdmin) {
-    if (req.query.branch_id) filters.branchIds = [String(req.query.branch_id)];
-    if (req.query.process_id) filters.processIds = [String(req.query.process_id)];
-  } else {
-    const roleContext = await getUserRoleContext(userId);
-    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
-    const scoped = await narrowDashboardScope(
-      baseScope,
-      String(req.query.branch_id ?? ''),
-      String(req.query.process_id ?? ''),
-    );
-    filters.branchIds = scoped.branchIds;
-    filters.processIds = scoped.processIds;
-  }
-
-  return res.json({ success: true, data: await getProvisioningStats(filters) });
-}));
-
-router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  // See the /stats handler above for why 'hr' is not in this bypass list.
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
-
-  const filters: Record<string, any> = {
-    status:      req.query.status as string | undefined,
-    requestType: req.query.request_type as string | undefined,
-    page:        req.query.page   ? Number(req.query.page)  : 1,
-    limit:       req.query.limit  ? Number(req.query.limit) : 50,
-  };
-
-  if (!isAdmin) {
-    // Scoped: functional roles see their own assigned queue by default.
-    const isIT       = await hasRole(userId, 'it');
-    const isWFM      = await hasRole(userId, 'wfm');
-    const isBranchAdmin = await hasRole(userId, 'branch_admin');
-
-    if (isIT) filters.assignedRole = 'it';
-    else if (isWFM) filters.assignedRole = 'wfm';
-    else if (isBranchAdmin) filters.assignedRole = 'admin';
-
-    const roleContext = await getUserRoleContext(userId);
-    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
-    const scoped = await narrowDashboardScope(
-      baseScope,
-      String(req.query.branch_id ?? ''),
-      String(req.query.process_id ?? ''),
-    );
-    filters.branchIds = scoped.branchIds;
-    filters.processIds = scoped.processIds;
-  } else {
-    if (req.query.branch_id)      filters.branchId     = req.query.branch_id as string;
-    if (req.query.assigned_role)  filters.assignedRole = req.query.assigned_role as string;
-  }
-
-  const result = await listProvisioningRequests(filters);
-  return res.json({ success: true, ...result });
-}));
-
-router.get(['/tasks', '/tasks/my'], requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  // See the /stats handler above for why 'hr' is not in this bypass list.
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
-  const filters: Record<string, any> = {
-    status: req.query.status as string | undefined,
-    requestType: req.query.request_type as string | undefined,
-    assignedRole: req.query.assigned_role as string | undefined,
-    taskCode: req.query.task_code as string | undefined,
-    createdFrom: req.query.created_from as string | undefined,
-    page: req.query.page ? Number(req.query.page) : 1,
-    limit: req.query.limit ? Number(req.query.limit) : 50,
-  };
-  if (req.path.endsWith('/my')) filters.assignedUserId = userId;
-  if (!isAdmin) {
-    if (!filters.assignedRole) {
-      if (await hasRole(userId, 'it')) filters.assignedRole = 'it';
-      else if (await hasRole(userId, 'wfm')) filters.assignedRole = 'wfm';
-      else if (await hasRole(userId, 'branch_admin')) filters.assignedRole = 'admin';
+    if (isAdmin) {
+      if (req.query.branch_id)
+        filters.branchIds = [String(req.query.branch_id)];
+      if (req.query.process_id)
+        filters.processIds = [String(req.query.process_id)];
+    } else {
+      const roleContext = await getUserRoleContext(userId);
+      const baseScope = await resolveDashboardScope(
+        userId,
+        roleContext.primaryRole,
+      );
+      const scoped = await narrowDashboardScope(
+        baseScope,
+        String(req.query.branch_id ?? ""),
+        String(req.query.process_id ?? ""),
+      );
+      filters.branchIds = scoped.branchIds;
+      filters.processIds = scoped.processIds;
     }
 
-    const roleContext = await getUserRoleContext(userId);
-    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
-    const scoped = await narrowDashboardScope(
-      baseScope,
-      String(req.query.branch_id ?? ''),
-      String(req.query.process_id ?? ''),
-    );
-    filters.branchIds = scoped.branchIds;
-    filters.processIds = scoped.processIds;
-  } else {
-    if (req.query.branch_id) filters.branchId = req.query.branch_id as string;
-  }
-  const result = await listProvisioningRequests(filters);
-  return res.json({ success: true, ...result });
-}));
+    return res.json({
+      success: true,
+      data: await getProvisioningStats(filters),
+    });
+  }),
+);
+
+router.get(
+  "/requests",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    // See the /stats handler above for why 'hr' is not in this bypass list.
+    const isAdmin = await hasRole(userId, "admin", "super_admin");
+
+    const filters: Record<string, any> = {
+      status: req.query.status as string | undefined,
+      requestType: req.query.request_type as string | undefined,
+      page: req.query.page ? Number(req.query.page) : 1,
+      limit: req.query.limit ? Number(req.query.limit) : 50,
+    };
+
+    if (!isAdmin) {
+      // Scoped: functional roles see their own assigned queue by default.
+      const isIT = await hasRole(userId, "it");
+      const isWFM = await hasRole(userId, "wfm");
+      const isBranchAdmin = await hasRole(userId, "branch_admin");
+
+      if (isIT) filters.assignedRole = "it";
+      else if (isWFM) filters.assignedRole = "wfm";
+      else if (isBranchAdmin) filters.assignedRole = "admin";
+
+      const roleContext = await getUserRoleContext(userId);
+      const baseScope = await resolveDashboardScope(
+        userId,
+        roleContext.primaryRole,
+      );
+      const scoped = await narrowDashboardScope(
+        baseScope,
+        String(req.query.branch_id ?? ""),
+        String(req.query.process_id ?? ""),
+      );
+      filters.branchIds = scoped.branchIds;
+      filters.processIds = scoped.processIds;
+    } else {
+      if (req.query.branch_id) filters.branchId = req.query.branch_id as string;
+      if (req.query.assigned_role)
+        filters.assignedRole = req.query.assigned_role as string;
+    }
+
+    const result = await listProvisioningRequests(filters);
+    return res.json({ success: true, ...result });
+  }),
+);
+
+router.get(
+  ["/tasks", "/tasks/my"],
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    // See the /stats handler above for why 'hr' is not in this bypass list.
+    const isAdmin = await hasRole(userId, "admin", "super_admin");
+    const filters: Record<string, any> = {
+      status: req.query.status as string | undefined,
+      requestType: req.query.request_type as string | undefined,
+      assignedRole: req.query.assigned_role as string | undefined,
+      taskCode: req.query.task_code as string | undefined,
+      createdFrom: req.query.created_from as string | undefined,
+      page: req.query.page ? Number(req.query.page) : 1,
+      limit: req.query.limit ? Number(req.query.limit) : 50,
+    };
+    if (req.path.endsWith("/my")) filters.assignedUserId = userId;
+    if (!isAdmin) {
+      if (!filters.assignedRole) {
+        if (await hasRole(userId, "it")) filters.assignedRole = "it";
+        else if (await hasRole(userId, "wfm")) filters.assignedRole = "wfm";
+        else if (await hasRole(userId, "branch_admin"))
+          filters.assignedRole = "admin";
+      }
+
+      const roleContext = await getUserRoleContext(userId);
+      const baseScope = await resolveDashboardScope(
+        userId,
+        roleContext.primaryRole,
+      );
+      const scoped = await narrowDashboardScope(
+        baseScope,
+        String(req.query.branch_id ?? ""),
+        String(req.query.process_id ?? ""),
+      );
+      filters.branchIds = scoped.branchIds;
+      filters.processIds = scoped.processIds;
+    } else {
+      if (req.query.branch_id) filters.branchId = req.query.branch_id as string;
+    }
+    const result = await listProvisioningRequests(filters);
+    return res.json({ success: true, ...result });
+  }),
+);
 
 // ── GET /api/it-provisioning/requests/:id ─────────────────────────────────────
-router.get('/requests/:id', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getProvisioningRequest(req.params.id);
-  return res.json({ success: true, data });
-}));
+router.get(
+  "/requests/:id",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await getProvisioningRequest(req.params.id);
+    return res.json({ success: true, data });
+  }),
+);
 
 // ── PATCH /api/it-provisioning/requests/:id/action ───────────────────────────
-router.patch('/requests/:id/action', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { evidence_note } = req.body as { evidence_note?: string };
-  await actionProvisioningRequest({
-    requestId:    req.params.id,
-    actionedBy:   req.authUser!.id,
-    evidenceNote: evidence_note,
-  });
-  const data = await getProvisioningRequest(req.params.id);
-  return res.json({ success: true, data });
-}));
+router.patch(
+  "/requests/:id/action",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { evidence_note } = req.body as { evidence_note?: string };
+    await actionProvisioningRequest({
+      requestId: req.params.id,
+      actionedBy: req.authUser!.id,
+      evidenceNote: evidence_note,
+    });
+    const data = await getProvisioningRequest(req.params.id);
+    return res.json({ success: true, data });
+  }),
+);
 
-router.patch('/tasks/:id', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const note = req.body.evidence_note ?? req.body.remarks ?? null;
-  if (note) {
-    await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: String(note) });
-  }
-  // Persist structured IT/Admin fields if provided
-  await persistStructuredFields(req.params.id, req.body);
-  const data = await getProvisioningRequest(req.params.id);
-  return res.json({ success: true, data });
-}));
+router.patch(
+  "/tasks/:id",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const note = req.body.evidence_note ?? req.body.remarks ?? null;
+    if (note) {
+      await actionProvisioningRequest({
+        requestId: req.params.id,
+        actionedBy: req.authUser!.id,
+        evidenceNote: String(note),
+      });
+    }
+    // Persist structured IT/Admin fields if provided
+    await persistStructuredFields(req.params.id, req.body);
+    const data = await getProvisioningRequest(req.params.id);
+    return res.json({ success: true, data });
+  }),
+);
 
-router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const taskId = req.params.id;
-  const actorUserId = req.authUser!.id;
-  const body = req.body as Record<string, unknown>;
+router.post(
+  "/tasks/:id/complete",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const taskId = req.params.id;
+    const actorUserId = req.authUser!.id;
+    const body = req.body as Record<string, unknown>;
 
-  /*
-   * Read status BEFORE dispatching, because a task can legitimately be submitted more than
-   * once and the two cases must be told apart.
-   *
-   * ADMIN_BIOMETRIC_ID_CARD is two independent sub-tasks — biometric enrolment and the ID
-   * card — and completeAdminProvisioningTask() refuses the ID card with a 422 when the
-   * employee has no photo. So the normal way to work that queue is: tick biometric, submit,
-   * come back for the card once the photo is up. Measured live 2026-08-26, 12 requests are
-   * sitting in exactly that state, all 12 for employees with no photo_url, all actioned
-   * within three minutes of each other.
-   *
-   * They could not be finished. The queue only rendered its action button for status
-   * 'pending', and this handler skipped persistStructuredFields() once the row was
-   * 'actioned' — so even reaching the endpoint again would sync master data while leaving
-   * the task row still saying the card was never printed.
-   */
-  const [taskRows] = await db.execute<RowDataPacket[]>(
-    `SELECT task_code, status, locked FROM it_provisioning_request WHERE id = ? LIMIT 1`,
-    [taskId],
-  );
-  const taskRow = (taskRows as RowDataPacket[])[0];
-  if (!taskRow) throw Object.assign(new Error('Provisioning request not found'), { statusCode: 404 });
+    /*
+     * Read status BEFORE dispatching, because a task can legitimately be submitted more than
+     * once and the two cases must be told apart.
+     *
+     * ADMIN_BIOMETRIC_ID_CARD is two independent sub-tasks — biometric enrolment and the ID
+     * card — and completeAdminProvisioningTask() refuses the ID card with a 422 when the
+     * employee has no photo. So the normal way to work that queue is: tick biometric, submit,
+     * come back for the card once the photo is up. Measured live 2026-08-26, 12 requests are
+     * sitting in exactly that state, all 12 for employees with no photo_url, all actioned
+     * within three minutes of each other.
+     *
+     * They could not be finished. The queue only rendered its action button for status
+     * 'pending', and this handler skipped persistStructuredFields() once the row was
+     * 'actioned' — so even reaching the endpoint again would sync master data while leaving
+     * the task row still saying the card was never printed.
+     */
+    const [taskRows] = await db.execute<RowDataPacket[]>(
+      `SELECT task_code, status, locked FROM it_provisioning_request WHERE id = ? LIMIT 1`,
+      [taskId],
+    );
+    const taskRow = (taskRows as RowDataPacket[])[0];
+    if (!taskRow)
+      throw Object.assign(new Error("Provisioning request not found"), {
+        statusCode: 404,
+      });
 
-  /*
-   * Locked evidence is immutable, and this is the only place that says so.
-   *
-   * getRequest() in the service rejects a locked row, but dispatchTaskCompletion() and its
-   * handlers never look at the flag — they write biometric enrolments, ID card documents,
-   * employees.official_email and auth_user rows regardless. That was masked only by the UI
-   * hiding every button on a locked row. Re-submission is now a supported path, so the
-   * guard has to be real. Note autoLockConfirmedRequests() locks any actioned row 48h after
-   * actioned_at, which is the window a half-finished task has to be completed in.
-   */
-  if (taskRow.locked) {
-    throw Object.assign(new Error('Request is locked and cannot be modified'), { statusCode: 403 });
-  }
+    /*
+     * Locked evidence is immutable, and this is the only place that says so.
+     *
+     * getRequest() in the service rejects a locked row, but dispatchTaskCompletion() and its
+     * handlers never look at the flag — they write biometric enrolments, ID card documents,
+     * employees.official_email and auth_user rows regardless. That was masked only by the UI
+     * hiding every button on a locked row. Re-submission is now a supported path, so the
+     * guard has to be real. Note autoLockConfirmedRequests() locks any actioned row 48h after
+     * actioned_at, which is the window a half-finished task has to be completed in.
+     */
+    if (taskRow.locked) {
+      throw Object.assign(
+        new Error("Request is locked and cannot be modified"),
+        { statusCode: 403 },
+      );
+    }
 
-  if (taskRow.task_code === 'HR_BGV_INITIATION' && !['red', 'green'].includes(clean(body.bgv_result))) {
-    return res.status(400).json({ success: false, message: "bgv_result ('red' or 'green') is required to complete this task" });
-  }
+    if (
+      taskRow.task_code === "HR_BGV_INITIATION" &&
+      !["red", "green"].includes(clean(body.bgv_result))
+    ) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "bgv_result ('red' or 'green') is required to complete this task",
+        });
+    }
 
-  // Dispatch to role-specific handler that syncs master data
-  // IT: syncs employees.official_email + creates auth_user
-  // Admin: creates biometric + ID card records
-  // WFM: updates employees.process_id + creates roster config
-  // Others: falls through to existing actionProvisioningRequest
-  await dispatchTaskCompletion(taskId, body, actorUserId);
+    // Dispatch to role-specific handler that syncs master data
+    // IT: syncs employees.official_email + creates auth_user
+    // Admin: creates biometric + ID card records
+    // WFM: updates employees.process_id + creates roster config
+    // Others: falls through to existing actionProvisioningRequest
+    await dispatchTaskCompletion(taskId, body, actorUserId);
 
-  const taskCode: string = taskRow.task_code ?? '';
-  const alreadyActioned = taskRow.status === 'actioned';
+    const taskCode: string = taskRow.task_code ?? "";
+    const alreadyActioned = taskRow.status === "actioned";
 
-  /*
-   * Persist unconditionally. The handlers are idempotent by construction (each does a
-   * SELECT-then-UPDATE-or-INSERT), so a second submission corrects the record rather than
-   * duplicating it, and the task row must end up agreeing with the master data it just
-   * wrote. Only the state transition is guarded: re-stamping actioned_at would restart the
-   * 48h auto-lock clock and re-fire the completion notification for work already reported.
-   */
-  await persistStructuredFields(taskId, body);
-  if (!alreadyActioned) {
-    await actionProvisioningRequest({ requestId: taskId, actionedBy: actorUserId, evidenceNote: String(body.evidence_note ?? 'Completed from provisioning queue') });
-  }
+    /*
+     * Persist unconditionally. The handlers are idempotent by construction (each does a
+     * SELECT-then-UPDATE-or-INSERT), so a second submission corrects the record rather than
+     * duplicating it, and the task row must end up agreeing with the master data it just
+     * wrote. Only the state transition is guarded: re-stamping actioned_at would restart the
+     * 48h auto-lock clock and re-fire the completion notification for work already reported.
+     */
+    await persistStructuredFields(taskId, body);
+    if (!alreadyActioned) {
+      await actionProvisioningRequest({
+        requestId: taskId,
+        actionedBy: actorUserId,
+        evidenceNote: String(
+          body.evidence_note ?? "Completed from provisioning queue",
+        ),
+      });
+    }
 
-  const data = await getProvisioningRequest(taskId);
-  return res.json({ success: true, data, taskCode });
-}));
+    const data = await getProvisioningRequest(taskId);
+    return res.json({ success: true, data, taskCode });
+  }),
+);
 
 // ── POST /api/it-provisioning/tasks/:id/reopen ────────────────────────────────
 // Explicitly-authorized override of a locked (immutable-audit) request — see
 // reopenLockedRequest()'s doc comment. Reason required, same as the
 // attendance/payroll unlock precedent this mirrors.
-router.post('/tasks/:id/reopen', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
-  if (reason.length < 10) {
-    return res.status(400).json({ success: false, error: 'A reason of at least 10 characters is required to reopen a locked request' });
-  }
-  await reopenLockedRequest(req.params.id, req.authUser!.id, reason);
-  const data = await getProvisioningRequest(req.params.id);
-  return res.json({ success: true, data });
-}));
+router.post(
+  "/tasks/:id/reopen",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const reason =
+      typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (reason.length < 10) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error:
+            "A reason of at least 10 characters is required to reopen a locked request",
+        });
+    }
+    await reopenLockedRequest(req.params.id, req.authUser!.id, reason);
+    const data = await getProvisioningRequest(req.params.id);
+    return res.json({ success: true, data });
+  }),
+);
 
 // ── PATCH /api/it-provisioning/requests/:id/waive ────────────────────────────
-router.patch('/requests/:id/waive', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { evidence_note } = req.body as { evidence_note?: string };
-  await waiveProvisioningRequest({
-    requestId:    req.params.id,
-    actionedBy:   req.authUser!.id,
-    evidenceNote: evidence_note ?? '',
-  });
-  const data = await getProvisioningRequest(req.params.id);
-  return res.json({ success: true, data });
-}));
+router.patch(
+  "/requests/:id/waive",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { evidence_note } = req.body as { evidence_note?: string };
+    await waiveProvisioningRequest({
+      requestId: req.params.id,
+      actionedBy: req.authUser!.id,
+      evidenceNote: evidence_note ?? "",
+    });
+    const data = await getProvisioningRequest(req.params.id);
+    return res.json({ success: true, data });
+  }),
+);
 
-router.post('/tasks/:id/waive', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  await waiveProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: req.body.evidence_note ?? req.body.reason ?? '' });
-  const data = await getProvisioningRequest(req.params.id);
-  return res.json({ success: true, data });
-}));
+router.post(
+  "/tasks/:id/waive",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    await waiveProvisioningRequest({
+      requestId: req.params.id,
+      actionedBy: req.authUser!.id,
+      evidenceNote: req.body.evidence_note ?? req.body.reason ?? "",
+    });
+    const data = await getProvisioningRequest(req.params.id);
+    return res.json({ success: true, data });
+  }),
+);
 
-router.post('/tasks/:id/block', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const reason = String(req.body.reason ?? req.body.evidence_note ?? '').trim();
-  if (!reason) return res.status(400).json({ success: false, message: 'reason required' });
-  await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: `BLOCKED: ${reason}` });
-  const data = await getProvisioningRequest(req.params.id);
-  return res.json({ success: true, data });
-}));
+router.post(
+  "/tasks/:id/block",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const reason = String(
+      req.body.reason ?? req.body.evidence_note ?? "",
+    ).trim();
+    if (!reason)
+      return res
+        .status(400)
+        .json({ success: false, message: "reason required" });
+    await actionProvisioningRequest({
+      requestId: req.params.id,
+      actionedBy: req.authUser!.id,
+      evidenceNote: `BLOCKED: ${reason}`,
+    });
+    const data = await getProvisioningRequest(req.params.id);
+    return res.json({ success: true, data });
+  }),
+);
 
-router.get('/appointment-letters', requireRole('admin', 'hr', 'super_admin'), h(async (_req: AuthenticatedRequest, res: Response) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT alr.*, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name, c.candidate_code, c.full_name AS candidate_name
+router.get(
+  "/appointment-letters",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT alr.*, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name, c.candidate_code, c.full_name AS candidate_name
        FROM appointment_letter_request alr
        LEFT JOIN employees e ON e.id = alr.employee_id
        LEFT JOIN ats_candidate c ON c.id = alr.candidate_id
       ORDER BY alr.updated_at DESC
       LIMIT 100`,
-  );
-  return res.json({ success: true, data: rows });
-}));
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
 
-router.post('/appointment-letters/:id/send', requireRole('admin', 'hr', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
-  return changeAppointmentStatus(req, res, 'send');
-}));
+router.post(
+  "/appointment-letters/:id/send",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    return changeAppointmentStatus(req, res, "send");
+  }),
+);
 
-router.post('/appointment-letters/:id/aadhaar-signed', requireRole('admin', 'hr', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
-  return changeAppointmentStatus(req, res, 'aadhaar-signed');
-}));
+router.post(
+  "/appointment-letters/:id/aadhaar-signed",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    return changeAppointmentStatus(req, res, "aadhaar-signed");
+  }),
+);
 
-router.post('/appointment-letters/:id/company-signed', requireRole('admin', 'hr', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
-  return changeAppointmentStatus(req, res, 'company-signed');
-}));
+router.post(
+  "/appointment-letters/:id/company-signed",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    return changeAppointmentStatus(req, res, "company-signed");
+  }),
+);
 
-router.post('/appointment-letters/:id/complete', requireRole('admin', 'hr', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
-  return changeAppointmentStatus(req, res, 'complete');
-}));
+router.post(
+  "/appointment-letters/:id/complete",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    return changeAppointmentStatus(req, res, "complete");
+  }),
+);
 
 // ── POST /api/it-provisioning/requests/:id/confirm ───────────────────────────
 // Admin-only: manually lock a request immediately
-router.post('/requests/:id/confirm', requireRole('admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
-  await confirmAndLockRequest(req.params.id, req.authUser!.id);
-  const data = await getProvisioningRequest(req.params.id);
-  return res.json({ success: true, data });
-}));
+router.post(
+  "/requests/:id/confirm",
+  requireRole("admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    await confirmAndLockRequest(req.params.id, req.authUser!.id);
+    const data = await getProvisioningRequest(req.params.id);
+    return res.json({ success: true, data });
+  }),
+);
 
 // ── GET /api/it-provisioning/tasks/:id/candidate-report ──────────────────────
-router.get('/tasks/:id/candidate-report', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
+router.get(
+  "/tasks/:id/candidate-report",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
        ipr.id AS task_id, ipr.task_code, ipr.status, ipr.locked,
        ipr.official_email, ipr.domain_account, ipr.asset_tag,
        ipr.biometric_enrolled, ipr.id_card_printed, ipr.evidence_note,
@@ -590,57 +857,117 @@ router.get('/tasks/:id/candidate-report', requireRole(...PROVISIONING_ROLES), h(
      LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ipr.id = ?
      LIMIT 1`,
-    [req.params.id],
-  );
-  if (!(rows as RowDataPacket[]).length) return res.status(404).json({ success: false, message: 'Task not found' });
-  const row = (rows as RowDataPacket[])[0];
-  // Mask mobile
-  if (row.mobile && row.mobile.length >= 6) {
-    row.mobile = row.mobile.slice(0, 3) + 'XXXXX' + row.mobile.slice(-3);
-  }
-  return res.json({ success: true, data: row });
-}));
+      [req.params.id],
+    );
+    if (!(rows as RowDataPacket[]).length)
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
+    const row = (rows as RowDataPacket[])[0];
+    // Mask mobile
+    if (row.mobile && row.mobile.length >= 6) {
+      row.mobile = row.mobile.slice(0, 3) + "XXXXX" + row.mobile.slice(-3);
+    }
+    return res.json({ success: true, data: row });
+  }),
+);
 
 // ── POST /api/it-provisioning/tasks/bulk-complete ────────────────────────────
-router.post('/tasks/bulk-complete', requireRole('it', 'admin', 'super_admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
-  const rows = req.body.rows as Array<{ employee_code: string; official_email?: string; domain_account?: string; asset_tag?: string }>;
-  if (!Array.isArray(rows) || !rows.length) {
-    return res.status(400).json({ success: false, message: 'rows array required' });
-  }
-  const results: { employee_code: string; status: 'ok' | 'error'; message?: string }[] = [];
+router.post(
+  "/tasks/bulk-complete",
+  requireRole("it", "admin", "super_admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const rows = req.body.rows as Array<{
+      employee_code: string;
+      official_email?: string;
+      domain_account?: string;
+      asset_tag?: string;
+    }>;
+    if (!Array.isArray(rows) || !rows.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "rows array required" });
+    }
+    const results: {
+      employee_code: string;
+      status: "ok" | "error";
+      message?: string;
+    }[] = [];
 
-  for (const row of rows) {
-    try {
-      if (!row.employee_code?.trim()) { results.push({ employee_code: '', status: 'error', message: 'Missing employee_code' }); continue; }
-      const [taskRows] = await db.execute<RowDataPacket[]>(
-        `SELECT ipr.id, ipr.task_code FROM it_provisioning_request ipr
+    for (const row of rows) {
+      try {
+        if (!row.employee_code?.trim()) {
+          results.push({
+            employee_code: "",
+            status: "error",
+            message: "Missing employee_code",
+          });
+          continue;
+        }
+        const [taskRows] = await db.execute<RowDataPacket[]>(
+          `SELECT ipr.id, ipr.task_code FROM it_provisioning_request ipr
            JOIN employees e ON e.id = ipr.employee_id
           WHERE e.employee_code = ? AND ipr.task_code = 'IT_EMAIL_DOMAIN_ASSET' AND ipr.status = 'pending'
           LIMIT 1`,
-        [row.employee_code.trim()],
-      );
-      const task = (taskRows as RowDataPacket[])[0];
-      if (!task) { results.push({ employee_code: row.employee_code, status: 'error', message: 'No pending IT task found' }); continue; }
+          [row.employee_code.trim()],
+        );
+        const task = (taskRows as RowDataPacket[])[0];
+        if (!task) {
+          results.push({
+            employee_code: row.employee_code,
+            status: "error",
+            message: "No pending IT task found",
+          });
+          continue;
+        }
 
-      // official_email is optional (owner decision) — domain_account is the only hard
-      // requirement, matching completeItProvisioningTask's single-task path.
-      if (!row.domain_account?.trim()) {
-        results.push({ employee_code: row.employee_code, status: 'error', message: 'domain_account required' }); continue;
+        // official_email is optional (owner decision) — domain_account is the only hard
+        // requirement, matching completeItProvisioningTask's single-task path.
+        if (!row.domain_account?.trim()) {
+          results.push({
+            employee_code: row.employee_code,
+            status: "error",
+            message: "domain_account required",
+          });
+          continue;
+        }
+        if (
+          row.official_email?.trim() &&
+          !OFFICIAL_EMAIL_REGEX.test(row.official_email.trim().toLowerCase())
+        ) {
+          results.push({
+            employee_code: row.employee_code,
+            status: "error",
+            message:
+              "official_email must end with @teammas.in or @teammas.co.in",
+          });
+          continue;
+        }
+        await persistStructuredFields(task.id, row);
+        await actionProvisioningRequest({
+          requestId: task.id,
+          actionedBy: req.authUser!.id,
+          evidenceNote: `Bulk completed: ${row.official_email}`,
+        });
+        results.push({ employee_code: row.employee_code, status: "ok" });
+      } catch (err: unknown) {
+        results.push({
+          employee_code: row.employee_code,
+          status: "error",
+          message: (err as Error)?.message ?? "Unknown error",
+        });
       }
-      if (row.official_email?.trim() && !OFFICIAL_EMAIL_REGEX.test(row.official_email.trim().toLowerCase())) {
-        results.push({ employee_code: row.employee_code, status: 'error', message: 'official_email must end with @teammas.in or @teammas.co.in' }); continue;
-      }
-      await persistStructuredFields(task.id, row);
-      await actionProvisioningRequest({ requestId: task.id, actionedBy: req.authUser!.id, evidenceNote: `Bulk completed: ${row.official_email}` });
-      results.push({ employee_code: row.employee_code, status: 'ok' });
-    } catch (err: unknown) {
-      results.push({ employee_code: row.employee_code, status: 'error', message: (err as Error)?.message ?? 'Unknown error' });
     }
-  }
 
-  const okCount = results.filter(r => r.status === 'ok').length;
-  return res.json({ success: true, processed: results.length, completed: okCount, results });
-}));
+    const okCount = results.filter((r) => r.status === "ok").length;
+    return res.json({
+      success: true,
+      processed: results.length,
+      completed: okCount,
+      results,
+    });
+  }),
+);
 
 // ── POST /api/it-provisioning/tasks/:id/upload-evidence ──────────────────────
 // Accepts multipart/form-data field "file" (.txt/.log/.pdf/.evtx, max 10 MB).
@@ -648,19 +975,32 @@ router.post('/tasks/bulk-complete', requireRole('it', 'admin', 'super_admin', 'h
 // on the provisioning task row. Does NOT mark the task as actioned.
 
 router.post(
-  '/tasks/:id/upload-evidence',
+  "/tasks/:id/upload-evidence",
   requireRole(...PROVISIONING_ROLES),
-  (req: any, res: any, next: any) => evidenceUpload.single('file')(req, res, (err: any) => {
-    if (err) return res.status(400).json({ success: false, message: err.message });
-    next();
-  }),
+  (req: any, res: any, next: any) =>
+    evidenceUpload.single("file")(req, res, (err: any) => {
+      if (err)
+        return res.status(400).json({ success: false, message: err.message });
+      next();
+    }),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const taskId = req.params.id;
     if (!(req as any).file) {
-      return res.status(400).json({ success: false, message: 'No file uploaded. Send a multipart/form-data request with field "file".' });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            'No file uploaded. Send a multipart/form-data request with field "file".',
+        });
     }
 
-    const file = (req as any).file as { filename: string; originalname: string; size: number; mimetype: string };
+    const file = (req as any).file as {
+      filename: string;
+      originalname: string;
+      size: number;
+      mimetype: string;
+    };
     const fileUrl = `/api/files/provisioning-evidence/${file.filename}`;
 
     // Persist URL on the task row
@@ -671,28 +1011,34 @@ router.post(
 
     // Register in document vault for audit trail (non-fatal)
     try {
-      const { registerUpload } = await import('../document-vault/documentVault.service.js');
-      const actorEmployee = await getEmployeeForUser(req.authUser!.id).catch(() => null);
+      const { registerUpload } =
+        await import("../document-vault/documentVault.service.js");
+      const actorEmployee = await getEmployeeForUser(req.authUser!.id).catch(
+        () => null,
+      );
       await registerUpload({
         uploadedByUser: req.authUser!.id,
-        category: 'provisioning-evidence',
+        category: "provisioning-evidence",
         storedFilename: file.filename,
         originalFilename: file.originalname,
         mimeType: file.mimetype,
         fileSizeBytes: file.size,
-        accessLevel: 'internal',
+        accessLevel: "internal",
         ownerEmployeeId: actorEmployee?.id,
       });
     } catch (err) {
-      console.error('[upload-evidence] document vault registration failed:', err);
+      console.error(
+        "[upload-evidence] document vault registration failed:",
+        err,
+      );
     }
 
     // Parse AD Security Event Log if it's a .txt or .log file (non-fatal)
     const ext = path.extname(file.originalname).toLowerCase();
-    if (ext === '.txt' || ext === '.log') {
+    if (ext === ".txt" || ext === ".log") {
       try {
         const parsed = await parseAdEventLog(
-          path.resolve(EVIDENCE_UPLOAD_DIR, file.filename)
+          path.resolve(EVIDENCE_UPLOAD_DIR, file.filename),
         );
         if (parsed) {
           await db.execute(
@@ -705,16 +1051,16 @@ router.post(
               WHERE id = ?`,
             [
               parsed.logType,
-              parsed.accountName   ?? null,
+              parsed.accountName ?? null,
               parsed.eventId,
-              parsed.actionedByIt  ?? null,
-              parsed.eventTime     ?? null,
+              parsed.actionedByIt ?? null,
+              parsed.eventTime ?? null,
               taskId,
             ],
           );
         }
       } catch (err) {
-        console.error('[upload-evidence] AD log parsing failed:', err);
+        console.error("[upload-evidence] AD log parsing failed:", err);
       }
     }
 
@@ -723,84 +1069,131 @@ router.post(
 );
 
 // ── SLA Violations Dashboard ──────────────────────────────────────────────────
-router.get('/sla/violations', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm', 'branch_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { findSlaViolations } = await import('../employees/employee-activation.service.js');
-  const taskCode = req.query.task_code ? String(req.query.task_code) : undefined;
-  const userId = req.authUser!.id;
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
-  let branchIds: string[] | undefined;
-  if (!isAdmin) {
-    const roleContext = await getUserRoleContext(userId);
-    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
-    if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
-  }
-  const violations = await findSlaViolations(taskCode, branchIds);
-  return res.json({ success: true, data: violations, count: violations.length });
-}));
+router.get(
+  "/sla/violations",
+  requireRole("admin", "super_admin", "hr", "it", "wfm", "branch_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { findSlaViolations } =
+      await import("../employees/employee-activation.service.js");
+    const taskCode = req.query.task_code
+      ? String(req.query.task_code)
+      : undefined;
+    const userId = req.authUser!.id;
+    const isAdmin = await hasRole(userId, "admin", "super_admin");
+    let branchIds: string[] | undefined;
+    if (!isAdmin) {
+      const roleContext = await getUserRoleContext(userId);
+      const baseScope = await resolveDashboardScope(
+        userId,
+        roleContext.primaryRole,
+      );
+      if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
+    }
+    const violations = await findSlaViolations(taskCode, branchIds);
+    return res.json({
+      success: true,
+      data: violations,
+      count: violations.length,
+    });
+  }),
+);
 
 // ── POST /api/it-provisioning/sla/bulk-waive ─────────────────────────────────
 // Bulk-waive all current SLA violations (or a filtered subset) with an audit reason.
-router.post('/sla/bulk-waive', requireRole('admin', 'super_admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { reason, task_ids } = req.body as { reason?: string; task_ids?: string[] };
-  const waiveReason = (reason ?? '').trim() || 'Bulk-resolved: employee already onboarded, task missed in system';
+router.post(
+  "/sla/bulk-waive",
+  requireRole("admin", "super_admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { reason, task_ids } = req.body as {
+      reason?: string;
+      task_ids?: string[];
+    };
+    const waiveReason =
+      (reason ?? "").trim() ||
+      "Bulk-resolved: employee already onboarded, task missed in system";
 
-  // If specific task IDs provided, waive those; otherwise waive all current violations
-  let idsToWaive: string[] = [];
-  if (Array.isArray(task_ids) && task_ids.length > 0) {
-    idsToWaive = task_ids;
-  } else {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT r.id
+    // If specific task IDs provided, waive those; otherwise waive all current violations
+    let idsToWaive: string[] = [];
+    if (Array.isArray(task_ids) && task_ids.length > 0) {
+      idsToWaive = task_ids;
+    } else {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT r.id
        FROM it_provisioning_request r
        JOIN employees e ON e.id = r.employee_id
        WHERE r.sla_due_at IS NOT NULL
          AND r.sla_due_at < NOW()
          AND r.status IN ('pending', 'pending_unassigned', 'assigned', 'in_progress')
          AND e.active_status = 1`,
-      []
-    );
-    idsToWaive = (rows as any[]).map(r => r.id);
-  }
+        [],
+      );
+      idsToWaive = (rows as any[]).map((r) => r.id);
+    }
 
-  if (idsToWaive.length === 0) {
-    return res.json({ success: true, waived: 0, message: 'No violations to waive' });
-  }
+    if (idsToWaive.length === 0) {
+      return res.json({
+        success: true,
+        waived: 0,
+        message: "No violations to waive",
+      });
+    }
 
-  let waived = 0;
-  for (const id of idsToWaive) {
-    try {
-      await waiveProvisioningRequest({ requestId: id, actionedBy: req.authUser!.id, evidenceNote: waiveReason });
-      waived++;
-    } catch (_) { /* skip individual failures */ }
-  }
+    let waived = 0;
+    for (const id of idsToWaive) {
+      try {
+        await waiveProvisioningRequest({
+          requestId: id,
+          actionedBy: req.authUser!.id,
+          evidenceNote: waiveReason,
+        });
+        waived++;
+      } catch (_) {
+        /* skip individual failures */
+      }
+    }
 
-  await logSensitiveAction({
-    actor_user_id: req.authUser!.id,
-    action_type: 'it_bulk_waive_sla',
-    module_key: 'it_provisioning',
-    entity_type: 'it_provisioning_request',
-    entity_id: 'bulk',
-    change_summary: { waived, reason: waiveReason, task_ids: idsToWaive.slice(0, 20) },
-  });
+    await logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "it_bulk_waive_sla",
+      module_key: "it_provisioning",
+      entity_type: "it_provisioning_request",
+      entity_id: "bulk",
+      change_summary: {
+        waived,
+        reason: waiveReason,
+        task_ids: idsToWaive.slice(0, 20),
+      },
+    });
 
-  return res.json({ success: true, waived, message: `${waived} SLA violation${waived !== 1 ? 's' : ''} resolved` });
-}));
+    return res.json({
+      success: true,
+      waived,
+      message: `${waived} SLA violation${waived !== 1 ? "s" : ""} resolved`,
+    });
+  }),
+);
 
-router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm', 'branch_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
-  const taskCode = req.query.task_code ? String(req.query.task_code) : null;
-  const userId = req.authUser!.id;
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
-  let branchIds: string[] | undefined;
-  if (!isAdmin) {
-    const roleContext = await getUserRoleContext(userId);
-    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
-    if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
-  }
-  const branchClause = branchIds?.length
-    ? `AND r.employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => '?').join(',')}))`
-    : '';
-  const [summary] = await db.execute<RowDataPacket[]>(
-    `SELECT
+router.get(
+  "/sla/summary",
+  requireRole("admin", "super_admin", "hr", "it", "wfm", "branch_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const taskCode = req.query.task_code ? String(req.query.task_code) : null;
+    const userId = req.authUser!.id;
+    const isAdmin = await hasRole(userId, "admin", "super_admin");
+    let branchIds: string[] | undefined;
+    if (!isAdmin) {
+      const roleContext = await getUserRoleContext(userId);
+      const baseScope = await resolveDashboardScope(
+        userId,
+        roleContext.primaryRole,
+      );
+      if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
+    }
+    const branchClause = branchIds?.length
+      ? `AND r.employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => "?").join(",")}))`
+      : "";
+    const [summary] = await db.execute<RowDataPacket[]>(
+      `SELECT
        r.task_code,
        COUNT(*) AS total,
        SUM(CASE WHEN r.status IN ('actioned','verified','waived') THEN 1 ELSE 0 END) AS completed,
@@ -814,194 +1207,282 @@ router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm'
      FROM it_provisioning_request r
      WHERE r.request_type = 'join'
        AND r.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
-       ${taskCode ? 'AND r.task_code = ?' : ''}
+       ${taskCode ? "AND r.task_code = ?" : ""}
        ${branchClause}
      GROUP BY r.task_code
      ORDER BY r.task_code`,
-    [...(taskCode ? [taskCode] : []), ...(branchIds ?? [])]
-  );
-  return res.json({ success: true, data: summary });
-}));
+      [...(taskCode ? [taskCode] : []), ...(branchIds ?? [])],
+    );
+    return res.json({ success: true, data: summary });
+  }),
+);
 
 // ── POST /api/it-provisioning/bulk-sync ──────────────────────────────────────
 // Upserts existing IT data (email, domain, asset) onto employee records.
 // Works whether or not a provisioning task exists — handles both:
 //   a) employees with a pending IT task  → marks it actioned
 //   b) employees already provisioned / no task → just updates employee record
-router.post('/bulk-sync', requireRole('it', 'admin', 'super_admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
-  const rows = req.body.rows as Array<{
-    employee_code: string;
-    official_email?: string;
-    domain_account?: string;
-    asset_tag?: string;
-    biometric_enrolled?: string;
-    id_card_printed?: string;
-  }>;
-  if (!Array.isArray(rows) || !rows.length) {
-    return res.status(400).json({ success: false, message: 'rows array required' });
-  }
+router.post(
+  "/bulk-sync",
+  requireRole("it", "admin", "super_admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const rows = req.body.rows as Array<{
+      employee_code: string;
+      official_email?: string;
+      domain_account?: string;
+      asset_tag?: string;
+      biometric_enrolled?: string;
+      id_card_printed?: string;
+    }>;
+    if (!Array.isArray(rows) || !rows.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "rows array required" });
+    }
 
-  const results: {
-    employee_code: string;
-    employee_name?: string;
-    status: 'updated' | 'task_completed' | 'skipped' | 'error';
-    actions: string[];
-    message?: string;
-  }[] = [];
+    const results: {
+      employee_code: string;
+      employee_name?: string;
+      status: "updated" | "task_completed" | "skipped" | "error";
+      actions: string[];
+      message?: string;
+    }[] = [];
 
-  for (const row of rows) {
-    const empCode = String(row.employee_code ?? '').trim();
-    const actions: string[] = [];
-    try {
-      if (!empCode) {
-        results.push({ employee_code: '', status: 'skipped', actions, message: 'Missing employee_code' });
-        continue;
-      }
+    for (const row of rows) {
+      const empCode = String(row.employee_code ?? "").trim();
+      const actions: string[] = [];
+      try {
+        if (!empCode) {
+          results.push({
+            employee_code: "",
+            status: "skipped",
+            actions,
+            message: "Missing employee_code",
+          });
+          continue;
+        }
 
-      // Look up the employee
-      const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT e.id, e.official_email,
+        // Look up the employee
+        const [empRows] = await db.execute<RowDataPacket[]>(
+          `SELECT e.id, e.official_email,
                 CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name
            FROM employees e WHERE e.employee_code = ? AND e.active_status = 1 LIMIT 1`,
-        [empCode],
-      );
-      const emp = (empRows as any[])[0];
-      if (!emp) {
-        results.push({ employee_code: empCode, status: 'error', actions, message: 'Employee not found or inactive' });
-        continue;
-      }
-
-      const officialEmail  = String(row.official_email  ?? '').trim() || null;
-      const domainAccount  = String(row.domain_account  ?? '').trim() || null;
-      const assetTag       = String(row.asset_tag       ?? '').trim() || null;
-      const bioEnrolled    = String(row.biometric_enrolled ?? '').trim().toLowerCase();
-      const idCardPrinted  = String(row.id_card_printed  ?? '').trim().toLowerCase();
-
-      // 1. Update employees.official_email if provided and different
-      if (officialEmail && officialEmail !== emp.official_email) {
-        await db.execute(
-          `UPDATE employees SET official_email = ?, updated_at = NOW() WHERE id = ?`,
-          [officialEmail, emp.id],
+          [empCode],
         );
-        actions.push(`official_email set to ${officialEmail}`);
-      }
+        const emp = (empRows as any[])[0];
+        if (!emp) {
+          results.push({
+            employee_code: empCode,
+            status: "error",
+            actions,
+            message: "Employee not found or inactive",
+          });
+          continue;
+        }
 
-      // 2. Find any provisioning task for this employee
-      const [taskRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, task_code, status FROM it_provisioning_request
+        const officialEmail = String(row.official_email ?? "").trim() || null;
+        const domainAccount = String(row.domain_account ?? "").trim() || null;
+        const assetTag = String(row.asset_tag ?? "").trim() || null;
+        const bioEnrolled = String(row.biometric_enrolled ?? "")
+          .trim()
+          .toLowerCase();
+        const idCardPrinted = String(row.id_card_printed ?? "")
+          .trim()
+          .toLowerCase();
+
+        // 1. Update employees.official_email if provided and different
+        if (officialEmail && officialEmail !== emp.official_email) {
+          await db.execute(
+            `UPDATE employees SET official_email = ?, updated_at = NOW() WHERE id = ?`,
+            [officialEmail, emp.id],
+          );
+          actions.push(`official_email set to ${officialEmail}`);
+        }
+
+        // 2. Find any provisioning task for this employee
+        const [taskRows] = await db.execute<RowDataPacket[]>(
+          `SELECT id, task_code, status FROM it_provisioning_request
           WHERE employee_id = ? AND task_code = 'IT_EMAIL_DOMAIN_ASSET'
           ORDER BY created_at DESC LIMIT 1`,
-        [emp.id],
-      );
-      const task = (taskRows as any[])[0];
+          [emp.id],
+        );
+        const task = (taskRows as any[])[0];
 
-      let taskStatus: 'updated' | 'task_completed' | 'skipped' | 'error' = 'updated';
+        let taskStatus: "updated" | "task_completed" | "skipped" | "error" =
+          "updated";
 
-      if (task) {
-        // Persist structured fields on the provisioning task row
-        const fieldsToSet: string[] = [];
-        const fieldVals: unknown[] = [];
-        if (officialEmail)  { fieldsToSet.push('official_email = ?');  fieldVals.push(officialEmail); }
-        if (domainAccount)  { fieldsToSet.push('domain_account = ?');  fieldVals.push(domainAccount); }
-        if (assetTag)       { fieldsToSet.push('asset_tag = ?');       fieldVals.push(assetTag); }
-        if (bioEnrolled === '1' || bioEnrolled === 'yes' || bioEnrolled === 'true') {
-          fieldsToSet.push('biometric_enrolled = 1');
-        }
-        if (idCardPrinted === '1' || idCardPrinted === 'yes' || idCardPrinted === 'true') {
-          fieldsToSet.push('id_card_printed = 1');
-        }
-        if (fieldsToSet.length) {
-          fieldVals.push(task.id);
-          await db.execute(
-            `UPDATE it_provisioning_request SET ${fieldsToSet.join(', ')}, updated_at = NOW() WHERE id = ?`,
-            fieldVals,
-          );
-          if (domainAccount) actions.push(`domain_account set to ${domainAccount}`);
-          if (assetTag)      actions.push(`asset_tag set to ${assetTag}`);
-        }
+        if (task) {
+          // Persist structured fields on the provisioning task row
+          const fieldsToSet: string[] = [];
+          const fieldVals: unknown[] = [];
+          if (officialEmail) {
+            fieldsToSet.push("official_email = ?");
+            fieldVals.push(officialEmail);
+          }
+          if (domainAccount) {
+            fieldsToSet.push("domain_account = ?");
+            fieldVals.push(domainAccount);
+          }
+          if (assetTag) {
+            fieldsToSet.push("asset_tag = ?");
+            fieldVals.push(assetTag);
+          }
+          if (
+            bioEnrolled === "1" ||
+            bioEnrolled === "yes" ||
+            bioEnrolled === "true"
+          ) {
+            fieldsToSet.push("biometric_enrolled = 1");
+          }
+          if (
+            idCardPrinted === "1" ||
+            idCardPrinted === "yes" ||
+            idCardPrinted === "true"
+          ) {
+            fieldsToSet.push("id_card_printed = 1");
+          }
+          if (fieldsToSet.length) {
+            fieldVals.push(task.id);
+            await db.execute(
+              `UPDATE it_provisioning_request SET ${fieldsToSet.join(", ")}, updated_at = NOW() WHERE id = ?`,
+              fieldVals,
+            );
+            if (domainAccount)
+              actions.push(`domain_account set to ${domainAccount}`);
+            if (assetTag) actions.push(`asset_tag set to ${assetTag}`);
+          }
 
-        // If task is still pending, mark it actioned. official_email is optional (owner
-        // decision) — domain_account is the only hard requirement here too.
-        if (task.status === 'pending' || task.status === 'pending_unassigned') {
-          if (!domainAccount) {
-            actions.push('task NOT completed — domain_account required');
+          // If task is still pending, mark it actioned. official_email is optional (owner
+          // decision) — domain_account is the only hard requirement here too.
+          if (
+            task.status === "pending" ||
+            task.status === "pending_unassigned"
+          ) {
+            if (!domainAccount) {
+              actions.push("task NOT completed — domain_account required");
+            } else {
+              await actionProvisioningRequest({
+                requestId: task.id,
+                actionedBy: req.authUser!.id,
+                evidenceNote: `Bulk sync: email=${officialEmail}, domain=${domainAccount}${assetTag ? `, asset=${assetTag}` : ""}`,
+              });
+              actions.push("provisioning task marked completed");
+              taskStatus = "task_completed";
+            }
           } else {
-            await actionProvisioningRequest({
-              requestId: task.id,
-              actionedBy: req.authUser!.id,
-              evidenceNote: `Bulk sync: email=${officialEmail}, domain=${domainAccount}${assetTag ? `, asset=${assetTag}` : ''}`,
-            });
-            actions.push('provisioning task marked completed');
-            taskStatus = 'task_completed';
+            actions.push(
+              `provisioning task already ${task.status} — data updated only`,
+            );
           }
         } else {
-          actions.push(`provisioning task already ${task.status} — data updated only`);
+          // No task — just log what was done
+          if (domainAccount)
+            actions.push(
+              `domain_account noted (${domainAccount}) — no provisioning task to update`,
+            );
+          if (assetTag)
+            actions.push(
+              `asset_tag noted (${assetTag}) — no provisioning task to update`,
+            );
         }
-      } else {
-        // No task — just log what was done
-        if (domainAccount) actions.push(`domain_account noted (${domainAccount}) — no provisioning task to update`);
-        if (assetTag)      actions.push(`asset_tag noted (${assetTag}) — no provisioning task to update`);
+
+        if (actions.length === 0)
+          actions.push("no changes — all fields already match");
+
+        await logSensitiveAction({
+          actor_user_id: req.authUser!.id,
+          action_type: "it_bulk_sync",
+          module_key: "it_provisioning",
+          entity_type: "employee",
+          entity_id: emp.id,
+          change_summary: {
+            employee_code: empCode,
+            official_email: officialEmail,
+            domain_account: domainAccount,
+            asset_tag: assetTag,
+          },
+        });
+
+        results.push({
+          employee_code: empCode,
+          employee_name: emp.employee_name,
+          status: taskStatus,
+          actions,
+        });
+      } catch (err: unknown) {
+        results.push({
+          employee_code: empCode,
+          status: "error",
+          actions,
+          message: (err as Error)?.message ?? "Unknown error",
+        });
       }
-
-      if (actions.length === 0) actions.push('no changes — all fields already match');
-
-      await logSensitiveAction({
-        actor_user_id: req.authUser!.id,
-        action_type: 'it_bulk_sync',
-        module_key: 'it_provisioning',
-        entity_type: 'employee',
-        entity_id: emp.id,
-        change_summary: { employee_code: empCode, official_email: officialEmail, domain_account: domainAccount, asset_tag: assetTag },
-      });
-
-      results.push({ employee_code: empCode, employee_name: emp.employee_name, status: taskStatus, actions });
-    } catch (err: unknown) {
-      results.push({ employee_code: empCode, status: 'error', actions, message: (err as Error)?.message ?? 'Unknown error' });
     }
-  }
 
-  const completed = results.filter(r => r.status === 'task_completed').length;
-  const updated   = results.filter(r => r.status === 'updated').length;
-  const errors    = results.filter(r => r.status === 'error').length;
-  return res.json({ success: true, processed: results.length, completed, updated, errors, results });
-}));
+    const completed = results.filter(
+      (r) => r.status === "task_completed",
+    ).length;
+    const updated = results.filter((r) => r.status === "updated").length;
+    const errors = results.filter((r) => r.status === "error").length;
+    return res.json({
+      success: true,
+      processed: results.length,
+      completed,
+      updated,
+      errors,
+      results,
+    });
+  }),
+);
 
 // ── IT Dashboard Summary (comprehensive) ─────────────────────────────────────
 // Same gap as /stats above: `it_head` was missing, which is the role the IT Manager
 // dashboard is named for.
-router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  const isAdmin = await hasRole(userId, 'admin', 'hr', 'super_admin');
+router.get(
+  "/it-dashboard-summary",
+  requireRole("admin", "hr", ...dashboardConsumerRoles("IT_MANAGER_DASHBOARD")),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const isAdmin = await hasRole(userId, "admin", "hr", "super_admin");
 
-  const provFilters: { assignedRole?: string; branchIds?: string[]; processIds?: string[] } = {
-    assignedRole: 'it',
-  };
-  if (isAdmin) {
-    if (req.query.branch_id) provFilters.branchIds = [String(req.query.branch_id)];
-    if (req.query.process_id) provFilters.processIds = [String(req.query.process_id)];
-  } else {
-    const roleContext = await getUserRoleContext(userId);
-    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
-    const scoped = await narrowDashboardScope(
-      baseScope,
-      String(req.query.branch_id ?? ''),
-      String(req.query.process_id ?? ''),
-    );
-    provFilters.branchIds = scoped.branchIds;
-    provFilters.processIds = scoped.processIds;
-  }
+    const provFilters: {
+      assignedRole?: string;
+      branchIds?: string[];
+      processIds?: string[];
+    } = {
+      assignedRole: "it",
+    };
+    if (isAdmin) {
+      if (req.query.branch_id)
+        provFilters.branchIds = [String(req.query.branch_id)];
+      if (req.query.process_id)
+        provFilters.processIds = [String(req.query.process_id)];
+    } else {
+      const roleContext = await getUserRoleContext(userId);
+      const baseScope = await resolveDashboardScope(
+        userId,
+        roleContext.primaryRole,
+      );
+      const scoped = await narrowDashboardScope(
+        baseScope,
+        String(req.query.branch_id ?? ""),
+        String(req.query.process_id ?? ""),
+      );
+      provFilters.branchIds = scoped.branchIds;
+      provFilters.processIds = scoped.processIds;
+    }
 
-  const [
-    provisioning,
-    [ticketStatsRows],
-    [ticketListRows],
-    [assetSummaryRows],
-    [empDirectoryRows],
-  ] = await Promise.all([
-    getProvisioningStats(provFilters),
+    const [
+      provisioning,
+      [ticketStatsRows],
+      [ticketListRows],
+      [assetSummaryRows],
+      [empDirectoryRows],
+    ] = await Promise.all([
+      getProvisioningStats(provFilters),
 
-    db.execute<RowDataPacket[]>(
-      `SELECT
+      db.execute<RowDataPacket[]>(
+        `SELECT
          COUNT(*)                                                                     AS total_tickets,
          SUM(status NOT IN ('resolved','closed','cancelled'))                         AS open_tickets,
          SUM(priority = 'urgent' AND status NOT IN ('resolved','closed','cancelled')) AS urgent_tickets,
@@ -1012,11 +1493,11 @@ router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsu
          SUM(status IN ('resolved','closed') AND sla_breached = 0)                   AS resolved_on_time
        FROM helpdesk_ticket
        WHERE category = 'it'`,
-      [],
-    ),
+        [],
+      ),
 
-    db.execute<RowDataPacket[]>(
-      `SELECT t.id, t.ticket_code AS ticket_number, t.subject, t.status, t.priority,
+      db.execute<RowDataPacket[]>(
+        `SELECT t.id, t.ticket_code AS ticket_number, t.subject, t.status, t.priority,
               t.created_at, t.resolved_at, t.sla_due_at, t.sla_breached,
               t.assigned_to, t.closure_rating,
               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS raised_by_name,
@@ -1040,11 +1521,11 @@ router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsu
         WHERE t.category = 'it'
         ORDER BY t.created_at DESC
         LIMIT 50`,
-      [],
-    ),
+        [],
+      ),
 
-    db.execute<RowDataPacket[]>(
-      `SELECT
+      db.execute<RowDataPacket[]>(
+        `SELECT
          COUNT(*)                                                                              AS total_assets,
          SUM(status = 'available')                                                            AS available,
          SUM(status = 'assigned')                                                             AS assigned,
@@ -1053,11 +1534,11 @@ router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsu
              AND DATE_ADD(NOW(), INTERVAL 90 DAY))                                            AS expiring_soon
        FROM asset_master
        WHERE active_status = 1`,
-      [],
-    ),
+        [],
+      ),
 
-    db.execute<RowDataPacket[]>(
-      `SELECT e.id, e.employee_code,
+      db.execute<RowDataPacket[]>(
+        `SELECT e.id, e.employee_code,
               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
               e.official_email,
               bm.branch_name, pm.process_name, dm.dept_name,
@@ -1080,83 +1561,123 @@ router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsu
         WHERE e.active_status = 1
         ORDER BY e.employee_code
         LIMIT 200`,
-      [],
-    ),
-  ]);
+        [],
+      ),
+    ]);
 
-  return res.json({
-    success: true,
-    data: {
-      provisioning,
-      helpdesk: {
-        stats: (ticketStatsRows as any[])[0] ?? {},
-        tickets: ticketListRows as any[],
+    return res.json({
+      success: true,
+      data: {
+        provisioning,
+        helpdesk: {
+          stats: (ticketStatsRows as any[])[0] ?? {},
+          tickets: ticketListRows as any[],
+        },
+        assets: (assetSummaryRows as any[])[0] ?? {},
+        employees: empDirectoryRows as any[],
+        generatedAt: new Date().toISOString(),
       },
-      assets: (assetSummaryRows as any[])[0] ?? {},
-      employees: empDirectoryRows as any[],
-      generatedAt: new Date().toISOString(),
-    },
-  });
-}));
+    });
+  }),
+);
 
 // ── POST /api/it-provisioning/redispatch/:employeeId ─────────────────────────
 // Recovery endpoint: re-dispatch join provisioning tasks for an employee whose
 // tasks were lost (e.g., failed fire-and-forget during employee creation).
 // Only dispatches task codes that have NO existing row — idempotent.
-router.post('/redispatch/:employeeId', requireRole('hr', 'super_admin', 'admin'), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { employeeId } = req.params;
+router.post(
+  "/redispatch/:employeeId",
+  requireRole("hr", "super_admin", "admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { employeeId } = req.params;
 
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code, e.full_name, e.branch_id, e.date_of_joining, e.legacy_emp_id
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id, e.employee_code, e.full_name, e.branch_id, e.date_of_joining, e.legacy_emp_id
        FROM employees e WHERE e.id = ? LIMIT 1`,
-    [employeeId],
-  );
-  const emp = (empRows as RowDataPacket[])[0];
-  if (!emp) return res.status(404).json({ success: false, message: 'Employee not found' });
-  if (emp.legacy_emp_id) return res.status(400).json({ success: false, message: 'Cannot dispatch IT provisioning for a legacy (pre-HRMS) employee' });
-  if (!emp.employee_code) return res.status(400).json({ success: false, message: 'Employee has no employee_code — cannot dispatch provisioning' });
+      [employeeId],
+    );
+    const emp = (empRows as RowDataPacket[])[0];
+    if (!emp)
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found" });
+    if (emp.legacy_emp_id)
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "Cannot dispatch IT provisioning for a legacy (pre-HRMS) employee",
+        });
+    if (!emp.employee_code)
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "Employee has no employee_code — cannot dispatch provisioning",
+        });
 
-  // Find which task codes already exist so we skip them
-  const [existingRows] = await db.execute<RowDataPacket[]>(
-    `SELECT task_code FROM it_provisioning_request WHERE employee_id = ? AND request_type = 'join'`,
-    [employeeId],
-  );
-  const existingCodes = new Set((existingRows as RowDataPacket[]).map(r => String(r.task_code)));
+    // Find which task codes already exist so we skip them
+    const [existingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT task_code FROM it_provisioning_request WHERE employee_id = ? AND request_type = 'join'`,
+      [employeeId],
+    );
+    const existingCodes = new Set(
+      (existingRows as RowDataPacket[]).map((r) => String(r.task_code)),
+    );
 
-  const JOIN_TASK_CODES = ['WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN'];
-  const missingCodes = JOIN_TASK_CODES.filter(code => !existingCodes.has(code));
+    const JOIN_TASK_CODES = [
+      "WFM_PROCESS_ALIGNMENT",
+      "IT_EMAIL_DOMAIN_ASSET",
+      "ADMIN_BIOMETRIC_ID_CARD",
+      "APPOINTMENT_LETTER_ESIGN",
+    ];
+    const missingCodes = JOIN_TASK_CODES.filter(
+      (code) => !existingCodes.has(code),
+    );
 
-  if (missingCodes.length === 0) {
-    return res.json({ success: true, dispatched: 0, skipped: JOIN_TASK_CODES.length, message: 'All provisioning tasks already exist — nothing to redispatch' });
-  }
+    if (missingCodes.length === 0) {
+      return res.json({
+        success: true,
+        dispatched: 0,
+        skipped: JOIN_TASK_CODES.length,
+        message: "All provisioning tasks already exist — nothing to redispatch",
+      });
+    }
 
-  const { dispatchJoinProvisioningTasks } = await import('./it-provisioning.service.js');
-  await dispatchJoinProvisioningTasks({
-    employeeId: emp.id,
-    employeeCode: emp.employee_code,
-    employeeName: emp.full_name,
-    branchId: emp.branch_id ?? null,
-    actorUserId: req.authUser!.id,
-    joiningDate: emp.date_of_joining ?? null,
-  });
+    const { dispatchJoinProvisioningTasks } =
+      await import("./it-provisioning.service.js");
+    await dispatchJoinProvisioningTasks({
+      employeeId: emp.id,
+      employeeCode: emp.employee_code,
+      employeeName: emp.full_name,
+      branchId: emp.branch_id ?? null,
+      actorUserId: req.authUser!.id,
+      joiningDate: emp.date_of_joining ?? null,
+    });
 
-  await logSensitiveAction({
-    actor_user_id: req.authUser!.id,
-    action_type: 'provisioning_redispatched',
-    module_key: 'it_provisioning',
-    entity_type: 'employee',
-    entity_id: employeeId,
-    employee_id: employeeId,
-    change_summary: { redispatched_codes: missingCodes, skipped_codes: Array.from(existingCodes) },
-  });
+    await logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "provisioning_redispatched",
+      module_key: "it_provisioning",
+      entity_type: "employee",
+      entity_id: employeeId,
+      employee_id: employeeId,
+      change_summary: {
+        redispatched_codes: missingCodes,
+        skipped_codes: Array.from(existingCodes),
+      },
+    });
 
-  return res.json({
-    success: true,
-    dispatched: missingCodes.length,
-    skipped: existingCodes.size,
-    redispatched_codes: missingCodes,
-    message: `Provisioning redispatched for ${missingCodes.length} task(s)`,
-  });
-}));
+    return res.json({
+      success: true,
+      dispatched: missingCodes.length,
+      skipped: existingCodes.size,
+      redispatched_codes: missingCodes,
+      message: `Provisioning redispatched for ${missingCodes.length} task(s)`,
+    });
+  }),
+);
 
 export { router as itProvisioningRouter };

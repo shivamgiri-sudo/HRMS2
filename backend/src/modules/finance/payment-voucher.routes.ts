@@ -2,9 +2,16 @@ import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { Router } from "express";
 import multer from "multer";
-import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  requireWriteAccess,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { paymentVoucherService, PaymentVoucherError } from "./payment-voucher.service.js";
+import {
+  paymentVoucherService,
+  PaymentVoucherError,
+} from "./payment-voucher.service.js";
 
 /**
  * Payment Voucher API — own prefix (/api/finance/payment-vouchers), matching imprest.routes.ts's
@@ -22,7 +29,15 @@ export const VOUCHER_CEO_ROLES = ["ceo", "super_admin"] as const;
 export const VOUCHER_RELEASE_ROLES = ["finance_head", "super_admin"] as const;
 export const VOUCHER_REVIEW_ROLES = ["accounts_head", "super_admin"] as const;
 export const VOUCHER_READ_ROLES = [
-  ...new Set([...VOUCHER_RAISE_ROLES, ...VOUCHER_CEO_ROLES, ...VOUCHER_RELEASE_ROLES, ...VOUCHER_REVIEW_ROLES, "branch_head", "admin", "finance"]),
+  ...new Set([
+    ...VOUCHER_RAISE_ROLES,
+    ...VOUCHER_CEO_ROLES,
+    ...VOUCHER_RELEASE_ROLES,
+    ...VOUCHER_REVIEW_ROLES,
+    "branch_head",
+    "admin",
+    "finance",
+  ]),
 ] as const;
 
 export const paymentVoucherRouter = Router();
@@ -35,11 +50,15 @@ const h =
 function actor(req: AuthenticatedRequest) {
   const id = req.authUser?.id;
   if (!id) throw new Error("Authenticated user is required");
-  return { id, role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown") };
+  return {
+    id,
+    role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown"),
+  };
 }
 
 const fail = (res: any, error: unknown, fallback: string) => {
-  const statusCode = error instanceof PaymentVoucherError ? error.statusCode : 400;
+  const statusCode =
+    error instanceof PaymentVoucherError ? error.statusCode : 400;
   res.status(statusCode).json({
     success: false,
     error: error instanceof Error ? error.message : fallback,
@@ -50,15 +69,25 @@ const fail = (res: any, error: unknown, fallback: string) => {
 // extensions/mimetypes) — a supporting document is a supporting document regardless of which
 // finance record it hangs off.
 const ATTACHMENT_UPLOAD_DIR = "uploads/payment-voucher-attachments";
-if (!existsSync(ATTACHMENT_UPLOAD_DIR)) mkdirSync(ATTACHMENT_UPLOAD_DIR, { recursive: true });
+if (!existsSync(ATTACHMENT_UPLOAD_DIR))
+  mkdirSync(ATTACHMENT_UPLOAD_DIR, { recursive: true });
 const attachmentUpload = multer({
   dest: ATTACHMENT_UPLOAD_DIR,
   limits: { fileSize: 30 * 1024 * 1024 },
   fileFilter(_req, file, callback) {
     const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
-    const allowedMimeTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    const allowedMimeTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ];
     const extension = path.extname(file.originalname).toLowerCase();
-    callback(null, allowedExtensions.includes(extension) && allowedMimeTypes.includes(file.mimetype));
+    callback(
+      null,
+      allowedExtensions.includes(extension) &&
+        allowedMimeTypes.includes(file.mimetype),
+    );
   },
 });
 
@@ -70,8 +99,12 @@ paymentVoucherRouter.get(
   h(async (req, res) => {
     const data = await paymentVoucherService.list({
       status: req.query.status ? String(req.query.status) : undefined,
-      sourceType: req.query.sourceType ? String(req.query.sourceType) : undefined,
-      bankAccountId: req.query.bankAccountId ? String(req.query.bankAccountId) : undefined,
+      sourceType: req.query.sourceType
+        ? String(req.query.sourceType)
+        : undefined,
+      bankAccountId: req.query.bankAccountId
+        ? String(req.query.bankAccountId)
+        : undefined,
       limit: req.query.limit ? Number(req.query.limit) : undefined,
     });
     res.json({ success: true, data });
@@ -83,7 +116,9 @@ paymentVoucherRouter.get(
   "/vendor-expense-options",
   requireRole(...VOUCHER_RAISE_ROLES),
   h(async (req, res) => {
-    const data = await paymentVoucherService.vendorExpenseOptions(String(req.query.vendorId ?? ""));
+    const data = await paymentVoucherService.vendorExpenseOptions(
+      String(req.query.vendorId ?? ""),
+    );
     res.json({ success: true, data });
   }),
 );
@@ -98,11 +133,18 @@ paymentVoucherRouter.get(
   h(async (req, res) => {
     const csv = await paymentVoucherService.toCsv({
       status: req.query.status ? String(req.query.status) : undefined,
-      sourceType: req.query.sourceType ? String(req.query.sourceType) : undefined,
-      bankAccountId: req.query.bankAccountId ? String(req.query.bankAccountId) : undefined,
+      sourceType: req.query.sourceType
+        ? String(req.query.sourceType)
+        : undefined,
+      bankAccountId: req.query.bankAccountId
+        ? String(req.query.bankAccountId)
+        : undefined,
     });
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="payment-vouchers-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="payment-vouchers-${new Date().toISOString().slice(0, 10)}.csv"`,
+    );
     res.send(csv);
   }),
 );
@@ -112,7 +154,10 @@ paymentVoucherRouter.get(
   requireRole(...VOUCHER_READ_ROLES),
   h(async (req, res) => {
     const data = await paymentVoucherService.get(req.params.id);
-    if (!data) return res.status(404).json({ success: false, error: "Payment voucher not found" });
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, error: "Payment voucher not found" });
     res.json({ success: true, data });
   }),
 );
@@ -139,7 +184,13 @@ paymentVoucherRouter.post(
   h(async (req, res) => {
     try {
       const a = actor(req);
-      const data = await paymentVoucherService.ceoApprove(req.params.id, a.id, a.role, "approve", req.body?.note ?? null);
+      const data = await paymentVoucherService.ceoApprove(
+        req.params.id,
+        a.id,
+        a.role,
+        "approve",
+        req.body?.note ?? null,
+      );
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to approve the payment voucher");
@@ -154,7 +205,13 @@ paymentVoucherRouter.post(
   h(async (req, res) => {
     try {
       const a = actor(req);
-      const data = await paymentVoucherService.ceoApprove(req.params.id, a.id, a.role, "reject", req.body?.note ?? null);
+      const data = await paymentVoucherService.ceoApprove(
+        req.params.id,
+        a.id,
+        a.role,
+        "reject",
+        req.body?.note ?? null,
+      );
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to reject the payment voucher");
@@ -169,7 +226,13 @@ paymentVoucherRouter.post(
   h(async (req, res) => {
     try {
       const a = actor(req);
-      const data = await paymentVoucherService.ceoApprove(req.params.id, a.id, a.role, "request_changes", req.body?.note ?? null);
+      const data = await paymentVoucherService.ceoApprove(
+        req.params.id,
+        a.id,
+        a.role,
+        "request_changes",
+        req.body?.note ?? null,
+      );
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to request changes on the payment voucher");
@@ -188,7 +251,12 @@ paymentVoucherRouter.post(
   h(async (req, res) => {
     try {
       const a = actor(req);
-      const data = await paymentVoucherService.withdraw(req.params.id, a.id, a.role, String(req.body?.reason ?? ""));
+      const data = await paymentVoucherService.withdraw(
+        req.params.id,
+        a.id,
+        a.role,
+        String(req.body?.reason ?? ""),
+      );
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to withdraw the payment voucher");
@@ -207,11 +275,22 @@ paymentVoucherRouter.post(
   h(async (req, res) => {
     try {
       if (!req.file) {
-        res.status(400).json({ success: false, error: "A PDF or supported image file is required" });
+        res
+          .status(400)
+          .json({
+            success: false,
+            error: "A PDF or supported image file is required",
+          });
         return;
       }
       const a = actor(req);
-      const data = await paymentVoucherService.saveAttachment(req.params.id, req.file.path, req.file.originalname, a.id, req.file.mimetype);
+      const data = await paymentVoucherService.saveAttachment(
+        req.params.id,
+        req.file.path,
+        req.file.originalname,
+        a.id,
+        req.file.mimetype,
+      );
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Attachment upload failed");
@@ -225,15 +304,18 @@ paymentVoucherRouter.get(
   h(async (req, res) => {
     const voucher = await paymentVoucherService.get(req.params.id);
     const filePath = (voucher as any)?.attachment_path;
-    const fileName = (voucher as any)?.attachment_original_name ?? "payment-voucher-attachment";
+    const fileName =
+      (voucher as any)?.attachment_original_name ??
+      "payment-voucher-attachment";
     if (!filePath || !existsSync(filePath)) {
-      res.status(404).json({ success: false, error: "No attachment on this voucher" });
+      res
+        .status(404)
+        .json({ success: false, error: "No attachment on this voucher" });
       return;
     }
     res.download(filePath, fileName);
   }),
 );
-
 
 paymentVoucherRouter.post(
   "/:id/resubmit",
@@ -242,12 +324,20 @@ paymentVoucherRouter.post(
   h(async (req, res) => {
     try {
       const a = actor(req);
-      const data = await paymentVoucherService.resubmit(req.params.id, a.id, a.role, {
-        bankAccountId: req.body?.bankAccountId,
-        payableAccountId: req.body?.payableAccountId,
-        amount: req.body?.amount !== undefined ? Number(req.body.amount) : undefined,
-        remarks: req.body?.remarks,
-      });
+      const data = await paymentVoucherService.resubmit(
+        req.params.id,
+        a.id,
+        a.role,
+        {
+          bankAccountId: req.body?.bankAccountId,
+          payableAccountId: req.body?.payableAccountId,
+          amount:
+            req.body?.amount !== undefined
+              ? Number(req.body.amount)
+              : undefined,
+          remarks: req.body?.remarks,
+        },
+      );
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to resubmit the payment voucher");
@@ -262,11 +352,16 @@ paymentVoucherRouter.post(
   h(async (req, res) => {
     try {
       const a = actor(req);
-      const data = await paymentVoucherService.release(req.params.id, a.id, a.role, {
-        paymentMode: req.body?.paymentMode,
-        paymentDate: req.body?.paymentDate,
-        transactionRef: req.body?.transactionRef ?? null,
-      });
+      const data = await paymentVoucherService.release(
+        req.params.id,
+        a.id,
+        a.role,
+        {
+          paymentMode: req.body?.paymentMode,
+          paymentDate: req.body?.paymentDate,
+          transactionRef: req.body?.transactionRef ?? null,
+        },
+      );
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to release the payment voucher");
@@ -282,7 +377,12 @@ paymentVoucherRouter.post(
   h(async (req, res) => {
     try {
       const a = actor(req);
-      const data = await paymentVoucherService.reviewRelease(req.params.id, a.id, a.role, req.body?.note ?? null);
+      const data = await paymentVoucherService.reviewRelease(
+        req.params.id,
+        a.id,
+        a.role,
+        req.body?.note ?? null,
+      );
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to record the review");

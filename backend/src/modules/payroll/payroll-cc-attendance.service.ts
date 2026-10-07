@@ -81,14 +81,18 @@ export class CcAttendanceError extends Error {
   constructor(
     public readonly status: number,
     public readonly code: string,
-    message: string
+    message: string,
   ) {
     super(message);
     this.name = "CcAttendanceError";
   }
 }
 
-function refuse(status: number, code: string, message: string): CcAttendanceError {
+function refuse(
+  status: number,
+  code: string,
+  message: string,
+): CcAttendanceError {
   return new CcAttendanceError(status, code, message);
 }
 
@@ -234,9 +238,15 @@ function monthBounds(month: string) {
 }
 
 /** SQL fragment + params selecting the employees of one cost centre in one branch. */
-function costCentrePredicate(costCentreId: string): { sql: string; params: unknown[] } {
+function costCentrePredicate(costCentreId: string): {
+  sql: string;
+  params: unknown[];
+} {
   if (costCentreId === UNASSIGNED_COST_CENTRE) {
-    return { sql: "(e.cost_centre_id IS NULL OR e.cost_centre_id = '')", params: [] };
+    return {
+      sql: "(e.cost_centre_id IS NULL OR e.cost_centre_id = '')",
+      params: [],
+    };
   }
   return { sql: "e.cost_centre_id = ?", params: [costCentreId] };
 }
@@ -268,7 +278,10 @@ export type CostCentreRow = {
  * month has nothing to finalize and would only add noise, while an employee whose cost centre is
  * missing must still appear (the UNASSIGNED bucket).
  */
-export async function listCostCentres(month: string, branchId: string): Promise<CostCentreRow[]> {
+export async function listCostCentres(
+  month: string,
+  branchId: string,
+): Promise<CostCentreRow[]> {
   await ensureTables();
   const m = assertMonth(month);
 
@@ -294,7 +307,7 @@ export async function listCostCentres(month: string, branchId: string): Promise<
       -- only_full_group_by then rejects for the same reason as above. Unnamed cost centres —
       -- the UNASSIGNED bucket — sort last.
       ORDER BY MAX(cc.cost_centre_name) IS NULL, MAX(cc.cost_centre_name)`,
-    [branchId]
+    [branchId],
   );
 
   const [finalizations] = await db.execute<RowDataPacket[]>(
@@ -304,7 +317,7 @@ export async function listCostCentres(month: string, branchId: string): Promise<
               ORDER BY u.requested_at DESC LIMIT 1) AS pending_unlock_request_id
        FROM payroll_cc_attendance_finalization f
       WHERE f.process_month = ? AND f.branch_id = ?`,
-    [m, branchId]
+    [m, branchId],
   );
   const byCostCentre = new Map<string, RowDataPacket>();
   for (const f of finalizations) byCostCentre.set(String(f.cost_centre_id), f);
@@ -324,10 +337,16 @@ export async function listCostCentres(month: string, branchId: string): Promise<
       cycle_no: f ? Number(f.cycle_no ?? 1) : 1,
       finalization_id: f ? String(f.id) : null,
       hr_finalized_at: f?.hr_finalized_at ? String(f.hr_finalized_at) : null,
-      branch_head_approved_at: f?.branch_head_approved_at ? String(f.branch_head_approved_at) : null,
+      branch_head_approved_at: f?.branch_head_approved_at
+        ? String(f.branch_head_approved_at)
+        : null,
       ho_approved_at: f?.ho_approved_at ? String(f.ho_approved_at) : null,
-      last_rejected_stage: f?.last_rejected_stage ? String(f.last_rejected_stage) : null,
-      last_rejected_reason: f?.last_rejected_reason ? String(f.last_rejected_reason) : null,
+      last_rejected_stage: f?.last_rejected_stage
+        ? String(f.last_rejected_stage)
+        : null,
+      last_rejected_reason: f?.last_rejected_reason
+        ? String(f.last_rejected_reason)
+        : null,
       pending_unlock_request_id: f?.pending_unlock_request_id
         ? String(f.pending_unlock_request_id)
         : null,
@@ -354,7 +373,8 @@ export async function branchSummary(month: string, branchId: string) {
     total_cost_centres: costCentres.length,
     total_employees: employees,
     counts,
-    fully_approved: costCentres.length > 0 && counts.ho_approved === costCentres.length,
+    fully_approved:
+      costCentres.length > 0 && counts.ho_approved === costCentres.length,
   };
 }
 
@@ -374,7 +394,7 @@ export async function branchSummary(month: string, branchId: string) {
 export async function getLiveEmployeeGrid(
   month: string,
   branchId: string,
-  costCentreId: string
+  costCentreId: string,
 ): Promise<EmployeeDayRow[]> {
   const m = assertMonth(month);
   const { yr, mo, daysInMonth, firstDay, lastDay } = monthBounds(m);
@@ -404,7 +424,7 @@ export async function getLiveEmployeeGrid(
                      ('present','half_day','on_duty','leave_approved','holiday','week_off_worked')
             ))
       ORDER BY e.employee_code, adr.record_date`,
-    [firstDay, lastDay, branchId, ...cc.params, firstDay, lastDay]
+    [firstDay, lastDay, branchId, ...cc.params, firstDay, lastDay],
   );
 
   // Pivot: one entry per employee, day cells keyed 1..daysInMonth.
@@ -420,7 +440,9 @@ export async function getLiveEmployeeGrid(
   for (const row of attRows) {
     const id = String(row.employee_id);
     if (!empMap.has(id)) {
-      const doj = row.date_of_joining ? new Date(row.date_of_joining as string) : null;
+      const doj = row.date_of_joining
+        ? new Date(row.date_of_joining as string)
+        : null;
       if (doj) doj.setHours(0, 0, 0, 0);
       empMap.set(id, {
         employee_id: id,
@@ -434,7 +456,8 @@ export async function getLiveEmployeeGrid(
     if (row.day_num == null) continue; // LEFT JOIN found no attendance record
     const emp = empMap.get(id)!;
     emp.cells[Number(row.day_num)] =
-      ATTENDANCE_STATUS_CODE[String(row.attendance_status)] ?? String(row.attendance_status ?? "");
+      ATTENDANCE_STATUS_CODE[String(row.attendance_status)] ??
+      String(row.attendance_status ?? "");
   }
 
   const today = new Date();
@@ -444,14 +467,23 @@ export async function getLiveEmployeeGrid(
     Array.from(empMap.values()).map(async (emp): Promise<EmployeeDayRow> => {
       for (let d = 1; d <= daysInMonth; d++) {
         if (emp.cells[d] !== undefined) continue;
-        emp.cells[d] = resolveMissingDayCell(new Date(yr, mo - 1, d), emp.date_of_joining, today);
+        emp.cells[d] = resolveMissingDayCell(
+          new Date(yr, mo - 1, d),
+          emp.date_of_joining,
+          today,
+        );
       }
       const counts = countDayCodes((d) => emp.cells[d] ?? "", daysInMonth);
       const paidBase = computePaidBase(counts);
       // The payroll engine's own function — same slabs, same month-relative rule as the payslip.
       // counts.holiday is passed so this grid applies the same holiday-aware eligibility test
       // as the engine that pays. Omitting it showed fewer week-offs here than payroll grants.
-      const eligibleWO = await calculateWeekoffEligibility(emp.employee_id, paidBase, m, counts.holiday);
+      const eligibleWO = await calculateWeekoffEligibility(
+        emp.employee_id,
+        paidBase,
+        m,
+        counts.holiday,
+      );
       return {
         employee_id: emp.employee_id,
         employee_code: emp.employee_code,
@@ -465,14 +497,22 @@ export async function getLiveEmployeeGrid(
         leave_days: counts.leave,
         holiday_days: counts.holiday,
         weekoff_days: eligibleWO,
-        sal_days: computeSalDays(paidBase, eligibleWO, counts.holiday, daysInMonth),
+        sal_days: computeSalDays(
+          paidBase,
+          eligibleWO,
+          counts.holiday,
+          daysInMonth,
+        ),
       };
-    })
+    }),
   );
 }
 
 /** The snapshot the current cycle was finalized on, if there is one. */
-async function getSnapshot(finalizationId: string, cycleNo: number): Promise<EmployeeDayRow[]> {
+async function getSnapshot(
+  finalizationId: string,
+  cycleNo: number,
+): Promise<EmployeeDayRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id, employee_code, employee_name, emp_location, total_days,
             absent_days, present_days, od_days, half_days, leave_days, holiday_days,
@@ -480,7 +520,7 @@ async function getSnapshot(finalizationId: string, cycleNo: number): Promise<Emp
        FROM payroll_cc_attendance_line
       WHERE finalization_id = ? AND cycle_no = ?
       ORDER BY employee_code`,
-    [finalizationId, cycleNo]
+    [finalizationId, cycleNo],
   );
   // DECIMAL columns arrive from mysql2 as strings — Number() them here rather than at the twelve
   // call sites, where a .toFixed() on a string is the crash that took out /quality-dashboard.
@@ -507,7 +547,11 @@ async function getSnapshot(finalizationId: string, cycleNo: number): Promise<Emp
  * Drift is computed here rather than left to the UI so every consumer — screen, export, a future
  * digest — answers "is the Payroll Head approving what HR finalized?" the same way.
  */
-export async function getCostCentreDetail(month: string, branchId: string, costCentreId: string) {
+export async function getCostCentreDetail(
+  month: string,
+  branchId: string,
+  costCentreId: string,
+) {
   await ensureTables();
   const m = assertMonth(month);
   const record = await findFinalization(m, branchId, costCentreId);
@@ -515,7 +559,10 @@ export async function getCostCentreDetail(month: string, branchId: string, costC
 
   let snapshot: EmployeeDayRow[] = [];
   if (record && record.status !== "unprocessed") {
-    snapshot = await getSnapshot(String(record.id), Number(record.cycle_no ?? 1));
+    snapshot = await getSnapshot(
+      String(record.id),
+      Number(record.cycle_no ?? 1),
+    );
   }
 
   const drifted: string[] = [];
@@ -523,7 +570,8 @@ export async function getCostCentreDetail(month: string, branchId: string, costC
     const liveById = new Map(live.map((r) => [r.employee_id, r]));
     for (const snap of snapshot) {
       const l = liveById.get(snap.employee_id);
-      if (!l || l.sal_days !== snap.sal_days) drifted.push(snap.employee_code ?? snap.employee_id);
+      if (!l || l.sal_days !== snap.sal_days)
+        drifted.push(snap.employee_code ?? snap.employee_id);
     }
     for (const l of live) {
       if (!snapshot.some((s) => s.employee_id === l.employee_id)) {
@@ -541,7 +589,7 @@ export async function getCostCentreDetail(month: string, branchId: string, costC
       `SELECT id FROM payroll_cc_attendance_unlock_request
         WHERE finalization_id = ? AND status = 'pending'
         ORDER BY requested_at DESC LIMIT 1`,
-      [String(record.id)]
+      [String(record.id)],
     );
     pendingUnlockRequestId = reqRows[0] ? String(reqRows[0].id) : null;
   }
@@ -550,7 +598,9 @@ export async function getCostCentreDetail(month: string, branchId: string, costC
     month: m,
     branch_id: branchId,
     cost_centre_id: costCentreId,
-    status: (record ? String(record.status) : "unprocessed") as CcAttendanceStatus,
+    status: (record
+      ? String(record.status)
+      : "unprocessed") as CcAttendanceStatus,
     cycle_no: record ? Number(record.cycle_no ?? 1) : 1,
     finalization: record ?? null,
     pending_unlock_request_id: pendingUnlockRequestId,
@@ -569,23 +619,26 @@ async function findFinalization(
   branchId: string,
   costCentreId: string,
   connection?: PoolConnection,
-  forUpdate = false
+  forUpdate = false,
 ): Promise<RowDataPacket | null> {
   const executor = connection ?? db;
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT * FROM payroll_cc_attendance_finalization
       WHERE process_month = ? AND branch_id = ? AND cost_centre_id = ?
       LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
-    [month, branchId, costCentreId]
+    [month, branchId, costCentreId],
   );
   return rows[0] ?? null;
 }
 
-async function resolveCostCentreName(costCentreId: string): Promise<string | null> {
-  if (costCentreId === UNASSIGNED_COST_CENTRE) return "Unassigned (no cost centre)";
+async function resolveCostCentreName(
+  costCentreId: string,
+): Promise<string | null> {
+  if (costCentreId === UNASSIGNED_COST_CENTRE)
+    return "Unassigned (no cost centre)";
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT cost_centre_name, cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1",
-    [costCentreId]
+    [costCentreId],
   );
   const r = rows[0];
   if (!r) return null;
@@ -600,10 +653,16 @@ export type Actor = { userId: string; role: string; roles?: string[] };
  * and — more importantly — a user who holds payroll_hr AND branch_head is NOT exempt just because
  * their primary role reads branch_head. That combination is exactly what this guard exists for.
  */
-function assertNotSelf(previousActorId: string | null, actor: Actor, message: string) {
+function assertNotSelf(
+  previousActorId: string | null,
+  actor: Actor,
+  message: string,
+) {
   if (!previousActorId) return;
   if (previousActorId !== actor.userId) return;
-  const held = [actor.role, ...(actor.roles ?? [])].map((r) => String(r ?? "").toLowerCase());
+  const held = [actor.role, ...(actor.roles ?? [])].map((r) =>
+    String(r ?? "").toLowerCase(),
+  );
   if (held.some((r) => MAKER_CHECKER_EXEMPT.has(r))) return;
   throw refuse(409, "CC_ATT_MAKER_CHECKER", message);
 }
@@ -623,7 +682,7 @@ export async function finalize(
   branchId: string,
   costCentreId: string,
   actor: Actor,
-  remarks?: string
+  remarks?: string,
 ) {
   await ensureTables();
   const m = assertMonth(month);
@@ -632,7 +691,7 @@ export async function finalize(
     throw refuse(
       409,
       "CC_ATT_NO_EMPLOYEES",
-      "This cost centre has no employees to finalize for the selected month"
+      "This cost centre has no employees to finalize for the selected month",
     );
   }
 
@@ -640,12 +699,18 @@ export async function finalize(
   try {
     await connection.beginTransaction();
 
-    let record = await findFinalization(m, branchId, costCentreId, connection, true);
+    let record = await findFinalization(
+      m,
+      branchId,
+      costCentreId,
+      connection,
+      true,
+    );
     if (record && String(record.status) !== "unprocessed") {
       throw refuse(
         409,
         "CC_ATT_WRONG_STAGE",
-        `This cost centre is already ${String(record.status).replace(/_/g, " ")} — it cannot be finalized again`
+        `This cost centre is already ${String(record.status).replace(/_/g, " ")} — it cannot be finalized again`,
       );
     }
 
@@ -668,7 +733,7 @@ export async function finalize(
           rows.length,
           actor.userId,
           remarks?.trim() || null,
-        ]
+        ],
       );
     } else {
       // Concurrency: another session finalizing the same cost centre in the same second must lose,
@@ -681,10 +746,14 @@ export async function finalize(
                 branch_head_approved_by = NULL, branch_head_approved_at = NULL, branch_head_remarks = NULL,
                 ho_approved_by = NULL, ho_approved_at = NULL, ho_remarks = NULL
           WHERE id = ? AND status = 'unprocessed'`,
-        [rows.length, actor.userId, remarks?.trim() || null, finalizationId]
+        [rows.length, actor.userId, remarks?.trim() || null, finalizationId],
       );
       if (res.affectedRows !== 1) {
-        throw refuse(409, "CC_ATT_STATE_CHANGED", "This cost centre changed state — reload and try again");
+        throw refuse(
+          409,
+          "CC_ATT_STATE_CHANGED",
+          "This cost centre changed state — reload and try again",
+        );
       }
     }
 
@@ -692,7 +761,7 @@ export async function finalize(
     // an old grid behind, and the unique key would reject the duplicate rows anyway.
     await connection.execute(
       "DELETE FROM payroll_cc_attendance_line WHERE finalization_id = ? AND cycle_no = ?",
-      [finalizationId, cycleNo]
+      [finalizationId, cycleNo],
     );
     for (const r of rows) {
       await connection.execute(
@@ -702,10 +771,23 @@ export async function finalize(
             weekoff_days, sal_days)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          randomUUID(), finalizationId, cycleNo, r.employee_id, r.employee_code, r.employee_name,
-          r.emp_location, r.total_days, r.absent_days, r.present_days, r.od_days, r.half_days,
-          r.leave_days, r.holiday_days, r.weekoff_days, r.sal_days,
-        ]
+          randomUUID(),
+          finalizationId,
+          cycleNo,
+          r.employee_id,
+          r.employee_code,
+          r.employee_name,
+          r.emp_location,
+          r.total_days,
+          r.absent_days,
+          r.present_days,
+          r.od_days,
+          r.half_days,
+          r.leave_days,
+          r.holiday_days,
+          r.weekoff_days,
+          r.sal_days,
+        ],
       );
     }
 
@@ -720,13 +802,24 @@ export async function finalize(
         actorUserId: actor.userId,
         actorRole: STAGE_ROLE.hr,
         remarks: remarks?.trim() || null,
-        details: { month: m, branchId, costCentreId, cycleNo, employees: rows.length },
+        details: {
+          month: m,
+          branchId,
+          costCentreId,
+          cycleNo,
+          employees: rows.length,
+        },
       },
-      connection
+      connection,
     );
 
     await connection.commit();
-    return { finalizationId, status: "hr_finalized" as const, cycleNo, employees: rows.length };
+    return {
+      finalizationId,
+      status: "hr_finalized" as const,
+      cycleNo,
+      employees: rows.length,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -741,8 +834,15 @@ export async function finalize(
 
 type Stage = "branch" | "ho";
 
-const STAGE_RULES: Record<Stage, { from: CcAttendanceStatus; to: CcAttendanceStatus; role: string }> = {
-  branch: { from: "hr_finalized", to: "branch_head_approved", role: STAGE_ROLE.branch },
+const STAGE_RULES: Record<
+  Stage,
+  { from: CcAttendanceStatus; to: CcAttendanceStatus; role: string }
+> = {
+  branch: {
+    from: "hr_finalized",
+    to: "branch_head_approved",
+    role: STAGE_ROLE.branch,
+  },
   ho: { from: "branch_head_approved", to: "ho_approved", role: STAGE_ROLE.ho },
 };
 
@@ -752,7 +852,7 @@ export async function approve(
   branchId: string,
   costCentreId: string,
   actor: Actor,
-  remarks?: string
+  remarks?: string,
 ) {
   await ensureTables();
   const m = assertMonth(month);
@@ -761,15 +861,26 @@ export async function approve(
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
-    const record = await findFinalization(m, branchId, costCentreId, connection, true);
-    if (!record) throw refuse(404, "CC_ATT_NOT_FOUND", "This cost centre has not been finalized yet");
+    const record = await findFinalization(
+      m,
+      branchId,
+      costCentreId,
+      connection,
+      true,
+    );
+    if (!record)
+      throw refuse(
+        404,
+        "CC_ATT_NOT_FOUND",
+        "This cost centre has not been finalized yet",
+      );
     if (String(record.status) !== rule.from) {
       throw refuse(
         409,
         "CC_ATT_WRONG_STAGE",
         `This cost centre is ${String(record.status).replace(/_/g, " ")} — it is not waiting for ${
           stage === "branch" ? "Branch Head" : "Payroll Head"
-        } approval`
+        } approval`,
       );
     }
 
@@ -778,13 +889,15 @@ export async function approve(
     assertNotSelf(
       record.hr_finalized_by ? String(record.hr_finalized_by) : null,
       actor,
-      "You finalized this cost centre, so you cannot also approve it. A different approver must review it."
+      "You finalized this cost centre, so you cannot also approve it. A different approver must review it.",
     );
     if (stage === "ho") {
       assertNotSelf(
-        record.branch_head_approved_by ? String(record.branch_head_approved_by) : null,
+        record.branch_head_approved_by
+          ? String(record.branch_head_approved_by)
+          : null,
         actor,
-        "You approved this cost centre as Branch Head, so you cannot also give it HO approval."
+        "You approved this cost centre as Branch Head, so you cannot also give it HO approval.",
       );
     }
 
@@ -797,10 +910,14 @@ export async function approve(
       `UPDATE payroll_cc_attendance_finalization
           SET status = ?, ${setCols}
         WHERE id = ? AND status = ?`,
-      [rule.to, actor.userId, remarks?.trim() || null, record.id, rule.from]
+      [rule.to, actor.userId, remarks?.trim() || null, record.id, rule.from],
     );
     if (res.affectedRows !== 1) {
-      throw refuse(409, "CC_ATT_STATE_CHANGED", "This cost centre changed state — reload and try again");
+      throw refuse(
+        409,
+        "CC_ATT_STATE_CHANGED",
+        "This cost centre changed state — reload and try again",
+      );
     }
 
     await recordFinanceApprovalEvent(
@@ -814,13 +931,22 @@ export async function approve(
         actorUserId: actor.userId,
         actorRole: rule.role,
         remarks: remarks?.trim() || null,
-        details: { month: m, branchId, costCentreId, cycleNo: Number(record.cycle_no ?? 1) },
+        details: {
+          month: m,
+          branchId,
+          costCentreId,
+          cycleNo: Number(record.cycle_no ?? 1),
+        },
       },
-      connection
+      connection,
     );
 
     await connection.commit();
-    return { finalizationId: String(record.id), status: rule.to, cycleNo: Number(record.cycle_no ?? 1) };
+    return {
+      finalizationId: String(record.id),
+      status: rule.to,
+      cycleNo: Number(record.cycle_no ?? 1),
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -842,25 +968,40 @@ export async function sendBack(
   branchId: string,
   costCentreId: string,
   actor: Actor,
-  reason: string
+  reason: string,
 ) {
   await ensureTables();
   const m = assertMonth(month);
   if (!reason?.trim()) {
-    throw refuse(400, "CC_ATT_REASON_REQUIRED", "A reason is required to send a cost centre back");
+    throw refuse(
+      400,
+      "CC_ATT_REASON_REQUIRED",
+      "A reason is required to send a cost centre back",
+    );
   }
   const rule = STAGE_RULES[stage];
 
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
-    const record = await findFinalization(m, branchId, costCentreId, connection, true);
-    if (!record) throw refuse(404, "CC_ATT_NOT_FOUND", "This cost centre has not been finalized yet");
+    const record = await findFinalization(
+      m,
+      branchId,
+      costCentreId,
+      connection,
+      true,
+    );
+    if (!record)
+      throw refuse(
+        404,
+        "CC_ATT_NOT_FOUND",
+        "This cost centre has not been finalized yet",
+      );
     if (String(record.status) !== rule.from) {
       throw refuse(
         409,
         "CC_ATT_WRONG_STAGE",
-        `This cost centre is ${String(record.status).replace(/_/g, " ")} — there is nothing to send back at this stage`
+        `This cost centre is ${String(record.status).replace(/_/g, " ")} — there is nothing to send back at this stage`,
       );
     }
 
@@ -870,10 +1011,14 @@ export async function sendBack(
               last_rejected_by = ?, last_rejected_at = NOW(),
               last_rejected_stage = ?, last_rejected_reason = ?
         WHERE id = ? AND status = ?`,
-      [actor.userId, rule.role, reason.trim(), record.id, rule.from]
+      [actor.userId, rule.role, reason.trim(), record.id, rule.from],
     );
     if (res.affectedRows !== 1) {
-      throw refuse(409, "CC_ATT_STATE_CHANGED", "This cost centre changed state — reload and try again");
+      throw refuse(
+        409,
+        "CC_ATT_STATE_CHANGED",
+        "This cost centre changed state — reload and try again",
+      );
     }
 
     await recordFinanceApprovalEvent(
@@ -887,13 +1032,21 @@ export async function sendBack(
         actorUserId: actor.userId,
         actorRole: rule.role,
         remarks: reason.trim(),
-        details: { month: m, branchId, costCentreId, cycleNo: Number(record.cycle_no ?? 1) },
+        details: {
+          month: m,
+          branchId,
+          costCentreId,
+          cycleNo: Number(record.cycle_no ?? 1),
+        },
       },
-      connection
+      connection,
     );
 
     await connection.commit();
-    return { finalizationId: String(record.id), status: "unprocessed" as const };
+    return {
+      finalizationId: String(record.id),
+      status: "unprocessed" as const,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -917,7 +1070,7 @@ export async function requestUnlock(
   branchId: string,
   costCentreId: string,
   reason: string,
-  actor: Actor
+  actor: Actor,
 ) {
   await ensureTables();
   const m = assertMonth(month);
@@ -927,20 +1080,31 @@ export async function requestUnlock(
     throw refuse(
       400,
       "CC_ATT_UNLOCK_REASON_REQUIRED",
-      "A reason of at least 10 characters is required to request an unlock"
+      "A reason of at least 10 characters is required to request an unlock",
     );
   }
 
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
-    const record = await findFinalization(m, branchId, costCentreId, connection, true);
-    if (!record) throw refuse(404, "CC_ATT_NOT_FOUND", "This cost centre has not been finalized yet");
+    const record = await findFinalization(
+      m,
+      branchId,
+      costCentreId,
+      connection,
+      true,
+    );
+    if (!record)
+      throw refuse(
+        404,
+        "CC_ATT_NOT_FOUND",
+        "This cost centre has not been finalized yet",
+      );
     if (String(record.status) !== "ho_approved") {
       throw refuse(
         409,
         "CC_ATT_NOT_APPROVED",
-        "Only a cost centre already approved by the Payroll Head needs an unlock request"
+        "Only a cost centre already approved by the Payroll Head needs an unlock request",
       );
     }
 
@@ -951,19 +1115,29 @@ export async function requestUnlock(
           status, requested_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       [
-        requestId, record.id, Number(record.cycle_no ?? 1), m, branchId, costCentreId,
-        reason.trim(), actor.userId,
-      ]
+        requestId,
+        record.id,
+        Number(record.cycle_no ?? 1),
+        m,
+        branchId,
+        costCentreId,
+        reason.trim(),
+        actor.userId,
+      ],
     );
 
     const [res] = await connection.execute<ResultSetHeader>(
       `UPDATE payroll_cc_attendance_finalization
           SET status = 'unlock_requested'
         WHERE id = ? AND status = 'ho_approved'`,
-      [record.id]
+      [record.id],
     );
     if (res.affectedRows !== 1) {
-      throw refuse(409, "CC_ATT_STATE_CHANGED", "This cost centre changed state — reload and try again");
+      throw refuse(
+        409,
+        "CC_ATT_STATE_CHANGED",
+        "This cost centre changed state — reload and try again",
+      );
     }
 
     await recordFinanceApprovalEvent(
@@ -977,13 +1151,23 @@ export async function requestUnlock(
         actorUserId: actor.userId,
         actorRole: actor.role,
         remarks: reason.trim(),
-        details: { month: m, branchId, costCentreId, requestId, cycleNo: Number(record.cycle_no ?? 1) },
+        details: {
+          month: m,
+          branchId,
+          costCentreId,
+          requestId,
+          cycleNo: Number(record.cycle_no ?? 1),
+        },
       },
-      connection
+      connection,
     );
 
     await connection.commit();
-    return { requestId, finalizationId: String(record.id), status: "unlock_requested" as const };
+    return {
+      requestId,
+      finalizationId: String(record.id),
+      status: "unlock_requested" as const,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -1003,11 +1187,15 @@ export async function reviewUnlock(
   requestId: string,
   decision: "approve" | "reject",
   actor: Actor,
-  reviewNotes?: string
+  reviewNotes?: string,
 ) {
   await ensureTables();
   if (decision === "reject" && !reviewNotes?.trim()) {
-    throw refuse(400, "CC_ATT_REJECT_REASON_REQUIRED", "A reason is required to reject an unlock request");
+    throw refuse(
+      400,
+      "CC_ATT_REJECT_REASON_REQUIRED",
+      "A reason is required to reject an unlock request",
+    );
   }
 
   const connection = await db.getConnection();
@@ -1015,17 +1203,22 @@ export async function reviewUnlock(
     await connection.beginTransaction();
     const [rows] = await connection.execute<RowDataPacket[]>(
       "SELECT * FROM payroll_cc_attendance_unlock_request WHERE id = ? FOR UPDATE",
-      [requestId]
+      [requestId],
     );
     const request = rows[0];
-    if (!request) throw refuse(404, "CC_ATT_UNLOCK_NOT_FOUND", "Unlock request not found");
+    if (!request)
+      throw refuse(404, "CC_ATT_UNLOCK_NOT_FOUND", "Unlock request not found");
     if (String(request.status) !== "pending") {
-      throw refuse(409, "CC_ATT_UNLOCK_WRONG_STAGE", `This unlock request is already ${request.status}`);
+      throw refuse(
+        409,
+        "CC_ATT_UNLOCK_WRONG_STAGE",
+        `This unlock request is already ${request.status}`,
+      );
     }
     assertNotSelf(
       String(request.requested_by),
       actor,
-      "You raised this unlock request, so you cannot review it. A different Payroll Head must decide."
+      "You raised this unlock request, so you cannot review it. A different Payroll Head must decide.",
     );
 
     const nextRequestStatus = decision === "approve" ? "approved" : "rejected";
@@ -1033,11 +1226,12 @@ export async function reviewUnlock(
       `UPDATE payroll_cc_attendance_unlock_request
           SET status = ?, reviewed_by = ?, reviewed_at = NOW(), review_notes = ?
         WHERE id = ?`,
-      [nextRequestStatus, actor.userId, reviewNotes?.trim() || null, requestId]
+      [nextRequestStatus, actor.userId, reviewNotes?.trim() || null, requestId],
     );
 
     const finalizationId = String(request.finalization_id);
-    const nextStatus: CcAttendanceStatus = decision === "approve" ? "unprocessed" : "ho_approved";
+    const nextStatus: CcAttendanceStatus =
+      decision === "approve" ? "unprocessed" : "ho_approved";
 
     const [res] = await connection.execute<ResultSetHeader>(
       decision === "approve"
@@ -1053,10 +1247,14 @@ export async function reviewUnlock(
         : `UPDATE payroll_cc_attendance_finalization
               SET status = 'ho_approved'
             WHERE id = ? AND status = 'unlock_requested'`,
-      [finalizationId]
+      [finalizationId],
     );
     if (res.affectedRows !== 1) {
-      throw refuse(409, "CC_ATT_STATE_CHANGED", "This cost centre changed state — reload and try again");
+      throw refuse(
+        409,
+        "CC_ATT_STATE_CHANGED",
+        "This cost centre changed state — reload and try again",
+      );
     }
 
     await recordFinanceApprovalEvent(
@@ -1078,11 +1276,15 @@ export async function reviewUnlock(
           previousCycleNo: Number(request.cycle_no ?? 1),
         },
       },
-      connection
+      connection,
     );
 
     await connection.commit();
-    return { requestId, status: nextRequestStatus, finalizationStatus: nextStatus };
+    return {
+      requestId,
+      status: nextRequestStatus,
+      finalizationStatus: nextStatus,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -1092,7 +1294,10 @@ export async function reviewUnlock(
 }
 
 /** Pending unlock requests the Payroll Head has to decide on, newest first. */
-export async function listPendingUnlockRequests(month?: string, branchId?: string) {
+export async function listPendingUnlockRequests(
+  month?: string,
+  branchId?: string,
+) {
   await ensureTables();
   const clauses = ["u.status = 'pending'"];
   const params: unknown[] = [];
@@ -1115,7 +1320,7 @@ export async function listPendingUnlockRequests(month?: string, branchId?: strin
       WHERE ${clauses.join(" AND ")}
       ORDER BY u.requested_at DESC
       LIMIT 200`,
-    params
+    params,
   );
   return rows;
 }
@@ -1131,7 +1336,11 @@ export async function listPendingUnlockRequests(month?: string, branchId?: strin
  * design, is written in the same transaction as each transition, and throws rather than silently
  * dropping a row — which is what a sign-off history has to do.
  */
-export async function getHistory(month: string, branchId: string, costCentreId: string) {
+export async function getHistory(
+  month: string,
+  branchId: string,
+  costCentreId: string,
+) {
   await ensureTables();
   const m = assertMonth(month);
   const record = await findFinalization(m, branchId, costCentreId);
@@ -1139,11 +1348,11 @@ export async function getHistory(month: string, branchId: string, costCentreId: 
 
   const events = (await listFinanceApprovalEvents(
     CC_ATTENDANCE_ENTITY_TYPE,
-    String(record.id)
+    String(record.id),
   )) as RowDataPacket[];
 
   const actorIds = Array.from(
-    new Set(events.map((e) => String(e.actor_user_id)).filter(Boolean))
+    new Set(events.map((e) => String(e.actor_user_id)).filter(Boolean)),
   );
   const names = new Map<string, string>();
   if (actorIds.length > 0) {
@@ -1158,14 +1367,18 @@ export async function getHistory(month: string, branchId: string, costCentreId: 
          FROM auth_user au
          LEFT JOIN employees ae ON ae.user_id = au.id
         WHERE au.id IN (?)`,
-      [actorIds]
+      [actorIds],
     );
-    for (const u of userRows) names.set(String(u.id), String(u.display_name ?? ""));
+    for (const u of userRows)
+      names.set(String(u.id), String(u.display_name ?? ""));
   }
 
   return {
     finalization_id: String(record.id),
-    events: events.map((e) => ({ ...e, actor_name: names.get(String(e.actor_user_id)) ?? null })),
+    events: events.map((e) => ({
+      ...e,
+      actor_name: names.get(String(e.actor_user_id)) ?? null,
+    })),
   };
 }
 

@@ -15,7 +15,10 @@
  * restarted in a loop unattended, and approval batches move people's pay.
  */
 
-import { reapStalledBatches, STALL_MINUTES } from "../modules/bulk-upload/stale-batch-reaper.service.js";
+import {
+  reapStalledBatches,
+  STALL_MINUTES,
+} from "../modules/bulk-upload/stale-batch-reaper.service.js";
 import { runBatchAutoRecovery } from "../modules/bulk-upload/batch-auto-recovery.service.js";
 import { recordWorkerRun, withWorkerLock } from "./worker-utils.js";
 
@@ -33,12 +36,19 @@ async function audit(): Promise<void> {
   // failed on them, BEFORE the stalled-batch pass. A failure here must not stop the reaper.
   try {
     const rec = await runBatchAutoRecovery();
-    if (rec.killedSessions.length || rec.requeued.length || rec.needsHuman.length) {
+    if (
+      rec.killedSessions.length ||
+      rec.requeued.length ||
+      rec.needsHuman.length
+    ) {
       console.warn(`[${WORKER_NAME}] auto-recovery`, JSON.stringify(rec));
       await recordWorkerRun(`${WORKER_NAME}-recovery`, "completed", { ...rec });
     }
   } catch (error) {
-    console.error(`[${WORKER_NAME}] auto-recovery failed:`, error instanceof Error ? error.message : error);
+    console.error(
+      `[${WORKER_NAME}] auto-recovery failed:`,
+      error instanceof Error ? error.message : error,
+    );
   }
 
   const r = await reapStalledBatches(STALL_MINUTES);
@@ -58,7 +68,11 @@ async function audit(): Promise<void> {
   await recordWorkerRun(WORKER_NAME, "completed", {
     scanned: r.scanned,
     marked: r.marked,
-    batches: r.batches.map((b) => ({ no: b.uploadBatchNo, status: b.status, remaining: b.remainingRows })),
+    batches: r.batches.map((b) => ({
+      no: b.uploadBatchNo,
+      status: b.status,
+      remaining: b.remainingRows,
+    })),
   });
 }
 
@@ -78,8 +92,12 @@ export function startBulkUploadStaleBatchWorker(): void {
     `[${WORKER_NAME}] Starting — interval: ${CHECK_INTERVAL_MS / 60000}min, ` +
       `stall threshold: ${STALL_MINUTES}min`,
   );
-  startupRef = setTimeout(() => { void sweep(); }, STARTUP_DELAY_MS);
-  intervalRef = setInterval(() => { void sweep(); }, CHECK_INTERVAL_MS);
+  startupRef = setTimeout(() => {
+    void sweep();
+  }, STARTUP_DELAY_MS);
+  intervalRef = setInterval(() => {
+    void sweep();
+  }, CHECK_INTERVAL_MS);
 }
 
 export function stopBulkUploadStaleBatchWorker(): void {

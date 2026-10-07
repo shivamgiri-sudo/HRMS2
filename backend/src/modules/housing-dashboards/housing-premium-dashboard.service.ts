@@ -2,8 +2,13 @@ import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import {
-  FieldSpec, parseFlexibleSheet, normalizeDate, normalizeDurationSeconds,
-  normalizeNumber, normalizeText, normalizeName,
+  FieldSpec,
+  parseFlexibleSheet,
+  normalizeDate,
+  normalizeDurationSeconds,
+  normalizeNumber,
+  normalizeText,
+  normalizeName,
 } from "./flexible-parser.js";
 
 const SALE_FIELDS: FieldSpec[] = [
@@ -71,33 +76,63 @@ export async function uploadSaleRaw(buffer: Buffer, uploadedBy: string) {
           source_time, hour_of_day, order_value, target, slot, sale_count, week_label, created_by)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        randomUUID(), processId, batchId,
-        normalizeText(r.orderId), normalizeText(r.couponCode), amount,
-        normalizeDate(r.createdAt) ? `${normalizeDate(r.createdAt)} 00:00:00` : null,
-        reportDate, normalizeText(r.partnerName),
-        normalizeText(r.agentName), normalizeName(r.agentName),
-        normalizeText(r.tlName), normalizeText(r.assignTl), normalizeText(r.time),
-        hourVal !== null ? Math.max(0, Math.min(23, Math.round(hourVal))) : null,
-        orderValue, normalizeNumber(r.target), normalizeText(r.slots),
-        normalizeNumber(r.count) ?? 1, normalizeText(r.week), uploadedBy,
+        randomUUID(),
+        processId,
+        batchId,
+        normalizeText(r.orderId),
+        normalizeText(r.couponCode),
+        amount,
+        normalizeDate(r.createdAt)
+          ? `${normalizeDate(r.createdAt)} 00:00:00`
+          : null,
+        reportDate,
+        normalizeText(r.partnerName),
+        normalizeText(r.agentName),
+        normalizeName(r.agentName),
+        normalizeText(r.tlName),
+        normalizeText(r.assignTl),
+        normalizeText(r.time),
+        hourVal !== null
+          ? Math.max(0, Math.min(23, Math.round(hourVal)))
+          : null,
+        orderValue,
+        normalizeNumber(r.target),
+        normalizeText(r.slots),
+        normalizeNumber(r.count) ?? 1,
+        normalizeText(r.week),
+        uploadedBy,
       ],
     );
   }
 
   return {
-    batchId, fileType: "sale_raw",
-    totalRows: parsed.totalRows, validRows: parsed.validRows, duplicateRows: parsed.duplicateRows,
-    recognizedColumns: parsed.recognizedColumns, additionalColumns: parsed.additionalColumns,
-    missingOptionalColumns: parsed.missingOptionalColumns, preview: parsed.previewRaw,
+    batchId,
+    fileType: "sale_raw",
+    totalRows: parsed.totalRows,
+    validRows: parsed.validRows,
+    duplicateRows: parsed.duplicateRows,
+    recognizedColumns: parsed.recognizedColumns,
+    additionalColumns: parsed.additionalColumns,
+    missingOptionalColumns: parsed.missingOptionalColumns,
+    preview: parsed.previewRaw,
   };
 }
 
-function normalizeCallStatus(status: string | null, routingStatus: string | null): "Answered" | "Not Answered" | "Other" {
+function normalizeCallStatus(
+  status: string | null,
+  routingStatus: string | null,
+): "Answered" | "Not Answered" | "Other" {
   const s = (status ?? "").toLowerCase();
   const rs = (routingStatus ?? "").toLowerCase();
-  if (s.includes("answer") && !s.includes("no") && !s.includes("not")) return "Answered";
+  if (s.includes("answer") && !s.includes("no") && !s.includes("not"))
+    return "Answered";
   if (rs === "answer") return "Answered";
-  if (s.includes("no answer") || s.includes("not answered") || s.includes("missed")) return "Not Answered";
+  if (
+    s.includes("no answer") ||
+    s.includes("not answered") ||
+    s.includes("missed")
+  )
+    return "Not Answered";
   return "Other";
 }
 
@@ -118,24 +153,40 @@ export async function uploadCdrRaw(buffer: Buffer, uploadedBy: string) {
           talk_duration_seconds, ringing_duration_seconds, tl_name, created_by)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        randomUUID(), processId, batchId,
-        normalizeText(r.caller), normalizeText(r.member), normalizeName(r.member),
-        reportDate, normalizeText(r.time),
-        normalizeDate(r.endTime) ? `${normalizeDate(r.endTime)} 00:00:00` : null,
-        normalizeDurationSeconds(r.duration), status,
+        randomUUID(),
+        processId,
+        batchId,
+        normalizeText(r.caller),
+        normalizeText(r.member),
+        normalizeName(r.member),
+        reportDate,
+        normalizeText(r.time),
+        normalizeDate(r.endTime)
+          ? `${normalizeDate(r.endTime)} 00:00:00`
+          : null,
+        normalizeDurationSeconds(r.duration),
+        status,
         normalizeCallStatus(status, routingStatus),
-        normalizeText(r.routingNumbers), routingStatus,
-        normalizeDurationSeconds(r.talkDuration), normalizeDurationSeconds(r.ringingDuration),
-        normalizeText(r.tlName), uploadedBy,
+        normalizeText(r.routingNumbers),
+        routingStatus,
+        normalizeDurationSeconds(r.talkDuration),
+        normalizeDurationSeconds(r.ringingDuration),
+        normalizeText(r.tlName),
+        uploadedBy,
       ],
     );
   }
 
   return {
-    batchId, fileType: "cdr_raw",
-    totalRows: parsed.totalRows, validRows: parsed.validRows, duplicateRows: parsed.duplicateRows,
-    recognizedColumns: parsed.recognizedColumns, additionalColumns: parsed.additionalColumns,
-    missingOptionalColumns: parsed.missingOptionalColumns, preview: parsed.previewRaw,
+    batchId,
+    fileType: "cdr_raw",
+    totalRows: parsed.totalRows,
+    validRows: parsed.validRows,
+    duplicateRows: parsed.duplicateRows,
+    recognizedColumns: parsed.recognizedColumns,
+    additionalColumns: parsed.additionalColumns,
+    missingOptionalColumns: parsed.missingOptionalColumns,
+    preview: parsed.previewRaw,
   };
 }
 
@@ -146,16 +197,27 @@ interface DashboardFilters {
   agentName?: string;
 }
 
-function dateClause(alias: string, f: DashboardFilters, params: unknown[]): string {
+function dateClause(
+  alias: string,
+  f: DashboardFilters,
+  params: unknown[],
+): string {
   let clause = "";
-  if (f.startDate) { clause += ` AND ${alias}.report_date >= ?`; params.push(f.startDate); }
-  if (f.endDate) { clause += ` AND ${alias}.report_date <= ?`; params.push(f.endDate); }
+  if (f.startDate) {
+    clause += ` AND ${alias}.report_date >= ?`;
+    params.push(f.startDate);
+  }
+  if (f.endDate) {
+    clause += ` AND ${alias}.report_date <= ?`;
+    params.push(f.endDate);
+  }
   return clause;
 }
 
 export async function getOverview(f: DashboardFilters) {
   const saleParams: unknown[] = [];
-  const saleWhere = dateClause("s", f, saleParams) + (f.tlName ? " AND s.tl_name = ?" : "");
+  const saleWhere =
+    dateClause("s", f, saleParams) + (f.tlName ? " AND s.tl_name = ?" : "");
   if (f.tlName) saleParams.push(f.tlName);
   const [saleRows] = await db.execute<RowDataPacket[]>(
     `SELECT amount, order_value, sale_count, order_id, agent_name_norm, target, report_date, agent_name
@@ -165,12 +227,16 @@ export async function getOverview(f: DashboardFilters) {
     saleParams,
   );
 
-  let totalSalesValue = 0, totalSalesCount = 0;
+  let totalSalesValue = 0,
+    totalSalesCount = 0;
   const uniqueOrders = new Set<string>();
   const uniqueAgents = new Set<string>();
   const targetByDateAgent = new Map<string, number>();
   for (const r of saleRows) {
-    const v = saleValue(r.amount !== null ? Number(r.amount) : null, r.order_value !== null ? Number(r.order_value) : null);
+    const v = saleValue(
+      r.amount !== null ? Number(r.amount) : null,
+      r.order_value !== null ? Number(r.order_value) : null,
+    );
     totalSalesValue += v;
     totalSalesCount += Number(r.sale_count ?? 1);
     if (r.order_id) uniqueOrders.add(String(r.order_id));
@@ -180,10 +246,14 @@ export async function getOverview(f: DashboardFilters) {
       targetByDateAgent.set(key, Number(r.target));
     }
   }
-  const totalTarget = Array.from(targetByDateAgent.values()).reduce((a, b) => a + b, 0);
+  const totalTarget = Array.from(targetByDateAgent.values()).reduce(
+    (a, b) => a + b,
+    0,
+  );
 
   const cdrParams: unknown[] = [];
-  const cdrWhere = dateClause("c", f, cdrParams) + (f.tlName ? " AND c.tl_name = ?" : "");
+  const cdrWhere =
+    dateClause("c", f, cdrParams) + (f.tlName ? " AND c.tl_name = ?" : "");
   if (f.tlName) cdrParams.push(f.tlName);
   const [[cdrKpi]] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) totalCalls,
@@ -203,28 +273,41 @@ export async function getOverview(f: DashboardFilters) {
   return {
     dataSources: { saleRaw: saleRows.length > 0, cdr: totalCalls > 0 },
     sales: {
-      totalSales: totalSalesCount, totalSalesValue,
-      averageSaleValue: totalSalesCount > 0 ? totalSalesValue / totalSalesCount : 0,
-      uniqueOrders: uniqueOrders.size, uniqueAgents: uniqueAgents.size,
+      totalSales: totalSalesCount,
+      totalSalesValue,
+      averageSaleValue:
+        totalSalesCount > 0 ? totalSalesValue / totalSalesCount : 0,
+      uniqueOrders: uniqueOrders.size,
+      uniqueAgents: uniqueAgents.size,
     },
     calling: {
-      totalCalls, answered, notAnswered: Number(cdrKpi?.notAnswered ?? 0),
+      totalCalls,
+      answered,
+      notAnswered: Number(cdrKpi?.notAnswered ?? 0),
       answerRatePct: totalCalls > 0 ? (answered / totalCalls) * 100 : 0,
-      notAnswerRatePct: totalCalls > 0 ? (Number(cdrKpi?.notAnswered ?? 0) / totalCalls) * 100 : 0,
+      notAnswerRatePct:
+        totalCalls > 0
+          ? (Number(cdrKpi?.notAnswered ?? 0) / totalCalls) * 100
+          : 0,
       totalTalkTimeSeconds: Number(cdrKpi?.totalTalk ?? 0),
-      averageTalkTimeSeconds: answered > 0 ? Number(cdrKpi?.totalTalk ?? 0) / answered : 0,
-      averageCallDurationSeconds: totalCalls > 0 ? Number(cdrKpi?.totalDuration ?? 0) / totalCalls : 0,
+      averageTalkTimeSeconds:
+        answered > 0 ? Number(cdrKpi?.totalTalk ?? 0) / answered : 0,
+      averageCallDurationSeconds:
+        totalCalls > 0 ? Number(cdrKpi?.totalDuration ?? 0) / totalCalls : 0,
     },
-    conversion: bothAvailable ? {
-      conversionPct: (totalSalesCount / answered) * 100,
-      salesPer100Answered: (totalSalesCount / answered) * 100,
-      revenuePerAnsweredCall: totalSalesValue / answered,
-      revenuePerCall: totalCalls > 0 ? totalSalesValue / totalCalls : 0,
-    } : null,
+    conversion: bothAvailable
+      ? {
+          conversionPct: (totalSalesCount / answered) * 100,
+          salesPer100Answered: (totalSalesCount / answered) * 100,
+          revenuePerAnsweredCall: totalSalesValue / answered,
+          revenuePerCall: totalCalls > 0 ? totalSalesValue / totalCalls : 0,
+        }
+      : null,
     target: {
       totalTarget,
       achievement: totalSalesValue,
-      achievementPct: totalTarget > 0 ? (totalSalesValue / totalTarget) * 100 : null,
+      achievementPct:
+        totalTarget > 0 ? (totalSalesValue / totalTarget) * 100 : null,
       targetGap: totalSalesValue - totalTarget,
     },
   };
@@ -232,7 +315,8 @@ export async function getOverview(f: DashboardFilters) {
 
 export async function getAgentPerformance(f: DashboardFilters) {
   const saleParams: unknown[] = [];
-  const saleWhere = dateClause("s", f, saleParams) + (f.tlName ? " AND s.tl_name = ?" : "");
+  const saleWhere =
+    dateClause("s", f, saleParams) + (f.tlName ? " AND s.tl_name = ?" : "");
   if (f.tlName) saleParams.push(f.tlName);
   const [saleRows] = await db.execute<RowDataPacket[]>(
     `SELECT agent_name_norm, agent_name, tl_name, amount, order_value, sale_count, target, report_date
@@ -242,18 +326,38 @@ export async function getAgentPerformance(f: DashboardFilters) {
     saleParams,
   );
 
-  const byAgent = new Map<string, { agent: string; tl: string | null; sales: number; salesValue: number; targetSeen: Map<string, number> }>();
+  const byAgent = new Map<
+    string,
+    {
+      agent: string;
+      tl: string | null;
+      sales: number;
+      salesValue: number;
+      targetSeen: Map<string, number>;
+    }
+  >();
   for (const r of saleRows) {
     const key = r.agent_name_norm as string;
-    const entry = byAgent.get(key) ?? { agent: r.agent_name as string, tl: r.tl_name as string | null, sales: 0, salesValue: 0, targetSeen: new Map() };
+    const entry = byAgent.get(key) ?? {
+      agent: r.agent_name as string,
+      tl: r.tl_name as string | null,
+      sales: 0,
+      salesValue: 0,
+      targetSeen: new Map(),
+    };
     entry.sales += Number(r.sale_count ?? 1);
-    entry.salesValue += saleValue(r.amount !== null ? Number(r.amount) : null, r.order_value !== null ? Number(r.order_value) : null);
-    if (r.target !== null && r.report_date) entry.targetSeen.set(String(r.report_date), Number(r.target));
+    entry.salesValue += saleValue(
+      r.amount !== null ? Number(r.amount) : null,
+      r.order_value !== null ? Number(r.order_value) : null,
+    );
+    if (r.target !== null && r.report_date)
+      entry.targetSeen.set(String(r.report_date), Number(r.target));
     byAgent.set(key, entry);
   }
 
   const cdrParams: unknown[] = [];
-  const cdrWhere = dateClause("c", f, cdrParams) + (f.tlName ? " AND c.tl_name = ?" : "");
+  const cdrWhere =
+    dateClause("c", f, cdrParams) + (f.tlName ? " AND c.tl_name = ?" : "");
   if (f.tlName) cdrParams.push(f.tlName);
   const [cdrAgg] = await db.execute<RowDataPacket[]>(
     `SELECT member_norm, MAX(\`member\`) \`member\`, COUNT(*) calls,
@@ -276,21 +380,29 @@ export async function getAgentPerformance(f: DashboardFilters) {
     const answered = Number(cdr?.answered ?? 0);
     const salesCount = sale?.sales ?? 0;
     const salesValue = sale?.salesValue ?? 0;
-    const target = sale ? Array.from(sale.targetSeen.values()).reduce((a, b) => a + b, 0) : 0;
+    const target = sale
+      ? Array.from(sale.targetSeen.values()).reduce((a, b) => a + b, 0)
+      : 0;
     result.push({
       agentKey: key,
       agent: sale?.agent ?? cdr?.member ?? key,
       tl: sale?.tl ?? null,
-      calls, answered, notAnswered: Number(cdr?.notAnswered ?? 0),
+      calls,
+      answered,
+      notAnswered: Number(cdr?.notAnswered ?? 0),
       answerPct: calls > 0 ? (answered / calls) * 100 : 0,
-      sales: salesCount, salesValue,
+      sales: salesCount,
+      salesValue,
       conversionPct: answered > 0 ? (salesCount / answered) * 100 : 0,
       avgSale: salesCount > 0 ? salesValue / salesCount : 0,
       talkTimeSeconds: Number(cdr?.talkTime ?? 0),
-      target, achievementPct: target > 0 ? (salesValue / target) * 100 : null,
+      target,
+      achievementPct: target > 0 ? (salesValue / target) * 100 : null,
     });
   }
-  return result.sort((a, b) => (b.salesValue as number) - (a.salesValue as number));
+  return result.sort(
+    (a, b) => (b.salesValue as number) - (a.salesValue as number),
+  );
 }
 
 export async function getDailyTrend(f: DashboardFilters) {
@@ -303,13 +415,24 @@ export async function getDailyTrend(f: DashboardFilters) {
         AND report_date IS NOT NULL ${saleWhere}`,
     saleParams,
   );
-  const byDate = new Map<string, { salesValue: number; salesCount: number; target: Map<string, number> }>();
+  const byDate = new Map<
+    string,
+    { salesValue: number; salesCount: number; target: Map<string, number> }
+  >();
   for (const r of saleRows) {
     const d = String(r.report_date).slice(0, 10);
-    const e = byDate.get(d) ?? { salesValue: 0, salesCount: 0, target: new Map() };
-    e.salesValue += saleValue(r.amount !== null ? Number(r.amount) : null, r.order_value !== null ? Number(r.order_value) : null);
+    const e = byDate.get(d) ?? {
+      salesValue: 0,
+      salesCount: 0,
+      target: new Map(),
+    };
+    e.salesValue += saleValue(
+      r.amount !== null ? Number(r.amount) : null,
+      r.order_value !== null ? Number(r.order_value) : null,
+    );
     e.salesCount += Number(r.sale_count ?? 1);
-    if (r.target !== null && r.agent_name_norm) e.target.set(String(r.agent_name_norm), Number(r.target));
+    if (r.target !== null && r.agent_name_norm)
+      e.target.set(String(r.agent_name_norm), Number(r.target));
     byDate.set(d, e);
   }
 
@@ -323,23 +446,35 @@ export async function getDailyTrend(f: DashboardFilters) {
       GROUP BY report_date`,
     cdrParams,
   );
-  const cdrByDate = new Map(cdrRows.map((r) => [String(r.report_date).slice(0, 10), r]));
+  const cdrByDate = new Map(
+    cdrRows.map((r) => [String(r.report_date).slice(0, 10), r]),
+  );
 
   const allDates = new Set([...byDate.keys(), ...cdrByDate.keys()]);
-  return Array.from(allDates).sort().map((d) => {
-    const s = byDate.get(d);
-    const c = cdrByDate.get(d);
-    const target = s ? Array.from(s.target.values()).reduce((a, b) => a + b, 0) : 0;
-    const calls = Number(c?.calls ?? 0);
-    const answered = Number(c?.answered ?? 0);
-    return {
-      date: d, calls, answered,
-      answerPct: calls > 0 ? (answered / calls) * 100 : 0,
-      salesValue: s?.salesValue ?? 0, salesCount: s?.salesCount ?? 0,
-      conversionPct: answered > 0 ? ((s?.salesCount ?? 0) / answered) * 100 : 0,
-      target, achievementPct: target > 0 ? ((s?.salesValue ?? 0) / target) * 100 : null,
-    };
-  });
+  return Array.from(allDates)
+    .sort()
+    .map((d) => {
+      const s = byDate.get(d);
+      const c = cdrByDate.get(d);
+      const target = s
+        ? Array.from(s.target.values()).reduce((a, b) => a + b, 0)
+        : 0;
+      const calls = Number(c?.calls ?? 0);
+      const answered = Number(c?.answered ?? 0);
+      return {
+        date: d,
+        calls,
+        answered,
+        answerPct: calls > 0 ? (answered / calls) * 100 : 0,
+        salesValue: s?.salesValue ?? 0,
+        salesCount: s?.salesCount ?? 0,
+        conversionPct:
+          answered > 0 ? ((s?.salesCount ?? 0) / answered) * 100 : 0,
+        target,
+        achievementPct:
+          target > 0 ? ((s?.salesValue ?? 0) / target) * 100 : null,
+      };
+    });
 }
 
 export async function getHourlyAnalysis(f: DashboardFilters) {
@@ -362,8 +497,16 @@ export async function getHourlyAnalysis(f: DashboardFilters) {
     saleParams,
   );
   return {
-    byHour: byHour.map((r) => ({ hour: Number(r.hour_of_day), sales: Number(r.sales), salesValue: Number(r.salesValue) })),
-    bySlot: bySlot.map((r) => ({ slot: r.slot, sales: Number(r.sales), salesValue: Number(r.salesValue) })),
+    byHour: byHour.map((r) => ({
+      hour: Number(r.hour_of_day),
+      sales: Number(r.sales),
+      salesValue: Number(r.salesValue),
+    })),
+    bySlot: bySlot.map((r) => ({
+      slot: r.slot,
+      sales: Number(r.sales),
+      salesValue: Number(r.salesValue),
+    })),
   };
 }
 
@@ -383,7 +526,9 @@ export async function getTargetAchievement(f: DashboardFilters) {
     const target = Number(r.target ?? 0);
     const achievement = Number(r.achievement ?? 0);
     return {
-      agent: r.agentName, target, achievement,
+      agent: r.agentName,
+      target,
+      achievement,
       achievementPct: target > 0 ? (achievement / target) * 100 : null,
       gap: achievement - target,
     };
@@ -392,8 +537,12 @@ export async function getTargetAchievement(f: DashboardFilters) {
     agents,
     overallTarget: agents.reduce((a, x) => a + x.target, 0),
     overallAchievement: agents.reduce((a, x) => a + x.achievement, 0),
-    agentsAboveTarget: agents.filter((a) => a.target > 0 && a.achievement >= a.target).length,
-    agentsBelowTarget: agents.filter((a) => a.target > 0 && a.achievement < a.target).length,
+    agentsAboveTarget: agents.filter(
+      (a) => a.target > 0 && a.achievement >= a.target,
+    ).length,
+    agentsBelowTarget: agents.filter(
+      (a) => a.target > 0 && a.achievement < a.target,
+    ).length,
   };
 }
 
@@ -408,7 +557,10 @@ export async function getFilterOptions() {
        (SELECT COUNT(*) FROM housing_premium_dashboard_cdr_raw) cdrRows`,
   );
   return {
-    tlNames: tls.map((r) => r.tl_name as string).filter(Boolean).sort(),
+    tlNames: tls
+      .map((r) => r.tl_name as string)
+      .filter(Boolean)
+      .sort(),
     saleRawLoaded: Number(dataStatus[0]?.saleRows ?? 0) > 0,
     cdrLoaded: Number(dataStatus[0]?.cdrRows ?? 0) > 0,
   };

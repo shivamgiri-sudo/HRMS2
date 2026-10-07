@@ -18,12 +18,12 @@ async function insertControlLog(
   action: AccountAction,
   initiatedBy: string,
   ip: string,
-  reason?: string
+  reason?: string,
 ): Promise<void> {
   await db.execute(
     `INSERT INTO account_control_log (id, user_id, action, initiated_by, ip_address, reason)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [randomUUID(), userId, action, initiatedBy, ip, reason ?? null]
+    [randomUUID(), userId, action, initiatedBy, ip, reason ?? null],
   );
 }
 
@@ -32,7 +32,7 @@ export const accountControlService = {
     userId: string,
     email: string,
     initiatedBy: string,
-    ip: string
+    ip: string,
   ): Promise<{ logged: true; message: string }> {
     await insertControlLog(userId, "password_reset_requested", initiatedBy, ip);
     await logSensitiveAction({
@@ -50,7 +50,7 @@ export const accountControlService = {
     userId: string,
     initiatedBy: string,
     reason: string,
-    ip: string
+    ip: string,
   ): Promise<RowDataPacket> {
     // MySQL logs the intent. No plaintext credential is stored.
     await insertControlLog(userId, "force_change_set", initiatedBy, ip, reason);
@@ -65,21 +65,25 @@ export const accountControlService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT user_id, role_key, active_status
        FROM user_roles WHERE user_id = ? LIMIT 1`,
-      [userId]
+      [userId],
     );
-    return (rows as RowDataPacket[])[0] ?? { user_id: userId, force_change_requested: true };
+    return (
+      (rows as RowDataPacket[])[0] ?? {
+        user_id: userId,
+        force_change_requested: true,
+      }
+    );
   },
 
   async lockAccount(
     userId: string,
     initiatedBy: string,
     reason: string,
-    ip: string
+    ip: string,
   ): Promise<{ logged: true }> {
-    await db.execute(
-      `UPDATE auth_user SET is_blocked = 1 WHERE id = ?`,
-      [userId]
-    );
+    await db.execute(`UPDATE auth_user SET is_blocked = 1 WHERE id = ?`, [
+      userId,
+    ]);
     await insertControlLog(userId, "account_locked", initiatedBy, ip, reason);
     await logSensitiveAction({
       actor_user_id: initiatedBy,
@@ -95,13 +99,13 @@ export const accountControlService = {
   async unlockAccount(
     userId: string,
     initiatedBy: string,
-    ip: string
+    ip: string,
   ): Promise<{ logged: true }> {
     await db.execute(
       `UPDATE auth_user
        SET is_blocked = 0, failed_login_attempts = 0, locked_until = NULL
        WHERE id = ?`,
-      [userId]
+      [userId],
     );
     await insertControlLog(userId, "account_unlocked", initiatedBy, ip);
     await logSensitiveAction({
@@ -118,7 +122,7 @@ export const accountControlService = {
     userId: string,
     initiatedBy: string,
     reason: string,
-    ip: string
+    ip: string,
   ): Promise<{ logged: true }> {
     await insertControlLog(userId, "account_disabled", initiatedBy, ip, reason);
     await logSensitiveAction({
@@ -135,7 +139,7 @@ export const accountControlService = {
   async enableAccount(
     userId: string,
     initiatedBy: string,
-    ip: string
+    ip: string,
   ): Promise<{ logged: true }> {
     await insertControlLog(userId, "account_enabled", initiatedBy, ip);
     await logSensitiveAction({
@@ -151,7 +155,7 @@ export const accountControlService = {
   async logSessionRevoke(
     userId: string,
     initiatedBy: string,
-    ip: string
+    ip: string,
   ): Promise<{ logged: true }> {
     await insertControlLog(userId, "session_revoked", initiatedBy, ip);
     await logSensitiveAction({
@@ -166,7 +170,7 @@ export const accountControlService = {
 
   async getAccountAuditLog(
     userId: string,
-    limit = 50
+    limit = 50,
   ): Promise<RowDataPacket[]> {
     const safeLimit = Math.min(Math.max(1, limit), 200);
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -175,7 +179,7 @@ export const accountControlService = {
        WHERE user_id = ?
        ORDER BY created_at DESC
        ${sqlLimit(safeLimit)}`,
-      [userId]
+      [userId],
     );
     return rows as RowDataPacket[];
   },

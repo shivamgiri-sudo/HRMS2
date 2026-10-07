@@ -18,10 +18,15 @@ function detectType(value: unknown): DetectedField["type"] {
   return "unknown";
 }
 
-export function analyzeSchema(rows: Record<string, unknown>[]): DetectedField[] {
+export function analyzeSchema(
+  rows: Record<string, unknown>[],
+): DetectedField[] {
   if (rows.length === 0) return [];
 
-  const fieldMap = new Map<string, { types: Set<string>; samples: unknown[]; presentCount: number }>();
+  const fieldMap = new Map<
+    string,
+    { types: Set<string>; samples: unknown[]; presentCount: number }
+  >();
 
   for (const row of rows) {
     for (const [key, val] of Object.entries(row)) {
@@ -43,10 +48,10 @@ export function analyzeSchema(rows: Record<string, unknown>[]): DetectedField[] 
 
   for (const [name, { types, samples, presentCount }] of fieldMap) {
     let type: DetectedField["type"] = "unknown";
-    if (types.has("date"))    type = "date";
-    else if (types.has("number"))  type = "number";
+    if (types.has("date")) type = "date";
+    else if (types.has("number")) type = "number";
     else if (types.has("boolean")) type = "boolean";
-    else if (types.has("string"))  type = "string";
+    else if (types.has("string")) type = "string";
 
     result.push({
       name,

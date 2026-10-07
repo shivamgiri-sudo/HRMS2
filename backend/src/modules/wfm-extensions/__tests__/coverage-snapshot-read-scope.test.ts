@@ -28,7 +28,10 @@ import { describe, expect, it } from "vitest";
  * either. Every one of them landed in the same reduce().
  */
 describe("coverage snapshot READ path applies the caller's scope (RR17)", () => {
-  const service = readFileSync(resolve(__dirname, "../wfm-ext.service.ts"), "utf-8");
+  const service = readFileSync(
+    resolve(__dirname, "../wfm-ext.service.ts"),
+    "utf-8",
+  );
 
   function snapshotBranch(): string {
     const start = service.indexOf("const snapshotConds = [");
@@ -50,7 +53,9 @@ describe("coverage snapshot READ path applies the caller's scope (RR17)", () => 
   });
 
   it("binds the scope params, so the predicate is not interpolated unbound", () => {
-    expect(snapshotBranch()).toMatch(/snapshotParams\.push\(\.\.\.\(filters\.params \?\? \[\]\)\)/);
+    expect(snapshotBranch()).toMatch(
+      /snapshotParams\.push\(\.\.\.\(filters\.params \?\? \[\]\)\)/,
+    );
   });
 
   it("never hands a scoped caller a coarser-grain row that spans scopes they do not own", () => {
@@ -70,7 +75,10 @@ describe("coverage snapshot READ path applies the caller's scope (RR17)", () => 
 });
 
 describe("coverage snapshot totals use one grain and cannot double count (RR16)", () => {
-  const service = readFileSync(resolve(__dirname, "../wfm-ext.service.ts"), "utf-8");
+  const service = readFileSync(
+    resolve(__dirname, "../wfm-ext.service.ts"),
+    "utf-8",
+  );
 
   function snapshotSum(): string {
     const start = service.indexOf("if (snapshotRows.length) {");
@@ -87,7 +95,9 @@ describe("coverage snapshot totals use one grain and cannot double count (RR16)"
   });
 
   it("sums one grain only, preferring the finer component grain when it exists", () => {
-    expect(snapshotSum()).toMatch(/componentRows\.length > 0 \? componentRows : aggregateRows/);
+    expect(snapshotSum()).toMatch(
+      /componentRows\.length > 0 \? componentRows : aggregateRows/,
+    );
   });
 
   it("dedupes by grain key so repeated NULL-scope aggregate rows cannot stack", () => {
@@ -117,7 +127,10 @@ describe("coverage snapshot totals use one grain and cannot double count (RR16)"
 });
 
 describe("the coverage response says which path produced it", () => {
-  const service = readFileSync(resolve(__dirname, "../wfm-ext.service.ts"), "utf-8");
+  const service = readFileSync(
+    resolve(__dirname, "../wfm-ext.service.ts"),
+    "utf-8",
+  );
 
   it("labels snapshot and live results distinctly", () => {
     // An archived point-in-time figure and a computed-now figure can legitimately disagree; the

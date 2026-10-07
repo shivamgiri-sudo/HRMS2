@@ -28,10 +28,17 @@ const SOURCE = readFileSync(
 );
 
 /** Columns that exist on ats_candidate, confirmed against the live schema. */
-const NOT_ON_ATS_CANDIDATE = ["passport_no", "driving_license_no", "epf_number", "esic_number"];
+const NOT_ON_ATS_CANDIDATE = [
+  "passport_no",
+  "driving_license_no",
+  "epf_number",
+  "esic_number",
+];
 
 function atsCandidateUpdates(): string[] {
-  return [...SOURCE.matchAll(/UPDATE ats_candidate SET[\s\S]*?WHERE/g)].map((m) => m[0]);
+  return [...SOURCE.matchAll(/UPDATE ats_candidate SET[\s\S]*?WHERE/g)].map(
+    (m) => m[0],
+  );
 }
 
 describe("onboarding writes only to columns that exist", () => {
@@ -41,7 +48,9 @@ describe("onboarding writes only to columns that exist", () => {
 
   for (const column of NOT_ON_ATS_CANDIDATE) {
     it(`never sets ${column} on ats_candidate`, () => {
-      const offending = atsCandidateUpdates().filter((sql) => sql.includes(column));
+      const offending = atsCandidateUpdates().filter((sql) =>
+        sql.includes(column),
+      );
       expect(
         offending.length,
         `${column} is on candidate_onboarding_profile, not ats_candidate — the whole UPDATE fails and takes uan_number with it`,
@@ -52,7 +61,9 @@ describe("onboarding writes only to columns that exist", () => {
   it("still records the UAN, which ats_candidate does have", () => {
     // The point is to keep the one write that was always valid, not to delete
     // the statement wholesale.
-    const keepsUan = atsCandidateUpdates().some((sql) => sql.includes("uan_number"));
+    const keepsUan = atsCandidateUpdates().some((sql) =>
+      sql.includes("uan_number"),
+    );
     expect(keepsUan).toBe(true);
   });
 
@@ -63,7 +74,10 @@ describe("onboarding writes only to columns that exist", () => {
       SOURCE.indexOf("INSERT INTO candidate_onboarding_profile") + 4000,
     );
     for (const column of [...NOT_ON_ATS_CANDIDATE, "uan_number"]) {
-      expect(upsert, `${column} must still reach candidate_onboarding_profile`).toContain(column);
+      expect(
+        upsert,
+        `${column} must still reach candidate_onboarding_profile`,
+      ).toContain(column);
     }
   });
 
@@ -73,6 +87,8 @@ describe("onboarding writes only to columns that exist", () => {
     const at = SOURCE.search(/UPDATE ats_candidate SET[\s\S]*?uan_number/);
     expect(at).toBeGreaterThan(-1);
     const tail = SOURCE.slice(at, at + 900);
-    expect(tail).not.toMatch(/\.catch\(\s*\(\)\s*=>\s*\{\s*\/\*[^*]*\*\/\s*\}\s*\)/);
+    expect(tail).not.toMatch(
+      /\.catch\(\s*\(\)\s*=>\s*\{\s*\/\*[^*]*\*\/\s*\}\s*\)/,
+    );
   });
 });

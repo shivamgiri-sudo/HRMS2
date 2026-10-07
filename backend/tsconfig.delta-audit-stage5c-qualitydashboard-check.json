@@ -1,5 +1,8 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "noEmit": true },
-  "include": ["src/modules/quality-dashboard/quality-dashboard-v2.service.ts", "src/modules/quality-dashboard/quality-dashboard-v2.routes.ts"]
+  "include": [
+    "src/modules/quality-dashboard/quality-dashboard-v2.service.ts",
+    "src/modules/quality-dashboard/quality-dashboard-v2.routes.ts"
+  ]
 }

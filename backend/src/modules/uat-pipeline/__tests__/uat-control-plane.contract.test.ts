@@ -8,9 +8,19 @@ import {
   readControlPlaneFile,
   repoRoot,
 } from "../control-plane.js";
-import { hitsForPath, loadProtectedPaths, pathTierFor } from "../protected-paths.js";
-import { capabilityClassFor, loadCapabilityRegistry } from "../capability-registry.js";
-import type { CapabilityRegistryFile, ProtectedPathsFile } from "../uat-pipeline.types.js";
+import {
+  hitsForPath,
+  loadProtectedPaths,
+  pathTierFor,
+} from "../protected-paths.js";
+import {
+  capabilityClassFor,
+  loadCapabilityRegistry,
+} from "../capability-registry.js";
+import type {
+  CapabilityRegistryFile,
+  ProtectedPathsFile,
+} from "../uat-pipeline.types.js";
 
 /**
  * The control plane decides whether the AI is allowed to touch a file. If it drifts from
@@ -24,7 +34,7 @@ describe("control plane — protected-paths.json", () => {
 
   it("the typed wrapper reads the same bytes as the JSON on disk", () => {
     const onDisk = JSON.parse(
-      readFileSync(join(repoRoot(), "uat", "protected-paths.json"), "utf8")
+      readFileSync(join(repoRoot(), "uat", "protected-paths.json"), "utf8"),
     ) as ProtectedPathsFile;
     expect(rules).toEqual(onDisk.rules);
   });
@@ -38,7 +48,7 @@ describe("control plane — protected-paths.json", () => {
       .map((r) => r.pattern);
     expect(
       missing,
-      `these protected paths no longer exist, so their rule protects nothing:\n  ${missing.join("\n  ")}`
+      `these protected paths no longer exist, so their rule protects nothing:\n  ${missing.join("\n  ")}`,
     ).toEqual([]);
   });
 
@@ -47,7 +57,7 @@ describe("control plane — protected-paths.json", () => {
       expect(["deny", "review"], `bad tier on ${r.pattern}`).toContain(r.tier);
       expect(
         ["business-critical", "control-plane", "domain-owned"],
-        `bad category on ${r.pattern}`
+        `bad category on ${r.pattern}`,
       ).toContain(r.category);
       expect(r.reason?.trim(), `rule ${r.pattern} has no reason`).toBeTruthy();
     }
@@ -77,7 +87,9 @@ describe("control plane — protected-paths.json", () => {
       "backend/src/app.ts",
     ];
     for (const f of mustBeDenied) {
-      expect(pathTierFor(hitsForPath(f, rules)), `${f} must be deny-tier`).toBe("deny");
+      expect(pathTierFor(hitsForPath(f, rules)), `${f} must be deny-tier`).toBe(
+        "deny",
+      );
     }
   });
 
@@ -89,11 +101,13 @@ describe("control plane — protected-paths.json", () => {
       "backend/scripts/guard-mass-deletion.mjs",
       "backend/scripts/uat-check-diff.mjs", // Phase 4; the rule must already exist
       "backend/scripts/check-test-baseline.mjs",
-      ".github/workflows/uat-build.yml",     // Phase 4; likewise
+      ".github/workflows/uat-build.yml", // Phase 4; likewise
       "backend/src/modules/uat-pipeline/__tests__/uat-state-machine.test.ts",
     ];
     for (const f of selfProtected) {
-      expect(pathTierFor(hitsForPath(f, rules)), `${f} must be deny-tier`).toBe("deny");
+      expect(pathTierFor(hitsForPath(f, rules)), `${f} must be deny-tier`).toBe(
+        "deny",
+      );
     }
   });
 
@@ -103,7 +117,10 @@ describe("control plane — protected-paths.json", () => {
       "src/pages/NativeVisitorManagement.tsx",
       "backend/src/modules/visitor/visitor.service.ts",
     ]) {
-      expect(pathTierFor(hitsForPath(f, rules)), `${f} should not be blocked`).not.toBe("deny");
+      expect(
+        pathTierFor(hitsForPath(f, rules)),
+        `${f} should not be blocked`,
+      ).not.toBe("deny");
     }
   });
 });
@@ -113,7 +130,7 @@ describe("control plane — capability-registry.json", () => {
 
   it("the typed wrapper reads the same bytes as the JSON on disk", () => {
     const onDisk = JSON.parse(
-      readFileSync(join(repoRoot(), "uat", "capability-registry.json"), "utf8")
+      readFileSync(join(repoRoot(), "uat", "capability-registry.json"), "utf8"),
     ) as CapabilityRegistryFile;
     expect(capabilities).toEqual(onDisk.capabilities);
   });
@@ -122,19 +139,30 @@ describe("control plane — capability-registry.json", () => {
     for (const c of capabilities) {
       expect(
         ["DENY", "HIGH_REVIEW", "REVIEW", "STANDARD", "TRIVIAL"],
-        `bad class on ${c.key}`
+        `bad class on ${c.key}`,
       ).toContain(c.class);
-      expect(c.reason?.trim(), `capability ${c.key} has no reason`).toBeTruthy();
+      expect(
+        c.reason?.trim(),
+        `capability ${c.key} has no reason`,
+      ).toBeTruthy();
       const signals =
-        (c.paths?.length ?? 0) + (c.tables?.length ?? 0) + (c.keywords?.length ?? 0);
-      expect(signals, `capability ${c.key} can never fire: no path, table or keyword`).toBeGreaterThan(0);
+        (c.paths?.length ?? 0) +
+        (c.tables?.length ?? 0) +
+        (c.keywords?.length ?? 0);
+      expect(
+        signals,
+        `capability ${c.key} can never fire: no path, table or keyword`,
+      ).toBeGreaterThan(0);
     }
   });
 
   it("every keyword compiles as a regular expression", () => {
     for (const c of capabilities) {
       for (const k of c.keywords ?? []) {
-        expect(() => new RegExp(k, "i"), `capability ${c.key} keyword ${k}`).not.toThrow();
+        expect(
+          () => new RegExp(k, "i"),
+          `capability ${c.key} keyword ${k}`,
+        ).not.toThrow();
       }
     }
   });
@@ -144,7 +172,7 @@ describe("control plane — capability-registry.json", () => {
       if (c.class === "REVIEW" || c.class === "HIGH_REVIEW") {
         expect(
           c.requiredApproverRoles?.length ?? 0,
-          `${c.key} is ${c.class} but names no approver role, so nothing would gate it`
+          `${c.key} is ${c.class} but names no approver role, so nothing would gate it`,
         ).toBeGreaterThan(0);
       }
     }
@@ -155,15 +183,22 @@ describe("control plane — capability-registry.json", () => {
       for (const t of c.mandatoryTests ?? []) {
         expect(
           existsSync(join(repoRoot(), t)),
-          `capability ${c.key} requires ${t}, which does not exist`
+          `capability ${c.key} requires ${t}, which does not exist`,
         ).toBe(true);
       }
     }
   });
 
   it("keeps a DENY capability for each domain that must never be automated", () => {
-    const denyKeys = capabilities.filter((c) => c.class === "DENY").map((c) => c.key);
-    for (const k of ["payroll_calculation", "auth_rbac", "finance_payment", "attendance_classification"]) {
+    const denyKeys = capabilities
+      .filter((c) => c.class === "DENY")
+      .map((c) => c.key);
+    for (const k of [
+      "payroll_calculation",
+      "auth_rbac",
+      "finance_payment",
+      "attendance_classification",
+    ]) {
       expect(denyKeys, `${k} must remain DENY`).toContain(k);
     }
   });
@@ -179,24 +214,58 @@ describe("control plane — capability-registry.json", () => {
 
 describe("control plane — glob matching", () => {
   it("** spans directory separators, * does not", () => {
-    expect(matchGlob("backend/src/modules/payroll/**", "backend/src/modules/payroll/a/b/c.ts")).toBe(true);
-    expect(matchGlob("backend/scripts/uat-*.mjs", "backend/scripts/uat-check-diff.mjs")).toBe(true);
-    expect(matchGlob("backend/scripts/uat-*.mjs", "backend/scripts/nested/uat-x.mjs")).toBe(false);
+    expect(
+      matchGlob(
+        "backend/src/modules/payroll/**",
+        "backend/src/modules/payroll/a/b/c.ts",
+      ),
+    ).toBe(true);
+    expect(
+      matchGlob(
+        "backend/scripts/uat-*.mjs",
+        "backend/scripts/uat-check-diff.mjs",
+      ),
+    ).toBe(true);
+    expect(
+      matchGlob(
+        "backend/scripts/uat-*.mjs",
+        "backend/scripts/nested/uat-x.mjs",
+      ),
+    ).toBe(false);
   });
 
   it("**/ also matches zero directories", () => {
     expect(matchGlob("**/uat-*.test.ts", "uat-a.test.ts")).toBe(true);
-    expect(matchGlob("**/uat-*.test.ts", "backend/src/x/__tests__/uat-a.test.ts")).toBe(true);
+    expect(
+      matchGlob("**/uat-*.test.ts", "backend/src/x/__tests__/uat-a.test.ts"),
+    ).toBe(true);
   });
 
   it("matches backend/src/**/*.cron.ts at any depth", () => {
-    expect(matchGlob("backend/src/**/*.cron.ts", "backend/src/cron/business-action-sync.cron.ts")).toBe(true);
-    expect(matchGlob("backend/src/**/*.cron.ts", "backend/src/modules/wfm/attendance-engine.cron.ts")).toBe(true);
-    expect(matchGlob("backend/src/**/*.cron.ts", "backend/src/modules/wfm/attendance-engine.service.ts")).toBe(false);
+    expect(
+      matchGlob(
+        "backend/src/**/*.cron.ts",
+        "backend/src/cron/business-action-sync.cron.ts",
+      ),
+    ).toBe(true);
+    expect(
+      matchGlob(
+        "backend/src/**/*.cron.ts",
+        "backend/src/modules/wfm/attendance-engine.cron.ts",
+      ),
+    ).toBe(true);
+    expect(
+      matchGlob(
+        "backend/src/**/*.cron.ts",
+        "backend/src/modules/wfm/attendance-engine.service.ts",
+      ),
+    ).toBe(false);
   });
 
   it("normalises Windows separators so a rule written with / still matches", () => {
-    expect(matchGlob("backend/sql/**", "backend\\sql\\1095_uat_feedback_intake.sql")).toBe(true);
+    expect(
+      matchGlob("backend/sql/**", "backend\\sql\\1095_uat_feedback_intake.sql"),
+    ).toBe(true);
   });
 
   it("escapes regex metacharacters in literal path segments", () => {
@@ -214,6 +283,8 @@ describe("control plane — glob matching", () => {
 
 describe("control plane — fails loud, never open", () => {
   it("refuses to read a control-plane file that is missing", () => {
-    expect(() => readControlPlaneFile("does-not-exist.json")).toThrow(/Cannot read control-plane file/);
+    expect(() => readControlPlaneFile("does-not-exist.json")).toThrow(
+      /Cannot read control-plane file/,
+    );
   });
 });

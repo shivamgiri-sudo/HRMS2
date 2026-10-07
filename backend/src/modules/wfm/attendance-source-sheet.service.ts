@@ -238,7 +238,9 @@ export async function fetchSheet(
 
   return employees.map((e) => {
     const rawDays = byEmployee.get(String(e.id)) ?? {};
-    const dol: string | null = e.date_of_leaving ? String(e.date_of_leaving) : null;
+    const dol: string | null = e.date_of_leaving
+      ? String(e.date_of_leaving)
+      : null;
 
     // Days after DOL must be blank (not absent). Strip them from the day map — the
     // XLSX/API consumer treats a missing key as blank when DOL is set, unlike a missing

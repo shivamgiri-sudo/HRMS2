@@ -46,7 +46,11 @@ function env(key) {
 
 function git(args) {
   try {
-    return execFileSync("git", args, { cwd: REPO, encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
+    return execFileSync("git", args, {
+      cwd: REPO,
+      encoding: "buffer",
+      maxBuffer: 64 * 1024 * 1024,
+    });
   } catch {
     return null;
   }
@@ -90,7 +94,8 @@ function buildBlobIndex() {
     if (space === -1) continue;
     const oid = line.slice(0, space);
     const file = line.slice(space + 1).trim();
-    if (file.startsWith("backend/sql/") && file.endsWith(".sql")) wanted.set(oid, file);
+    if (file.startsWith("backend/sql/") && file.endsWith(".sql"))
+      wanted.set(oid, file);
   }
   if (wanted.size === 0) return new Map();
 
@@ -124,7 +129,8 @@ function buildBlobIndex() {
 }
 
 const blobIndex = buildBlobIndex();
-const findOriginal = (rel, checksum) => blobIndex.get(`${rel}|${checksum}`) ?? null;
+const findOriginal = (rel, checksum) =>
+  blobIndex.get(`${rel}|${checksum}`) ?? null;
 
 const connection = await mysql.createConnection({
   host: env("DB_HOST"),
@@ -139,7 +145,13 @@ const [rows] = await connection.query(
 );
 await connection.end();
 
-const buckets = { clean: [], cosmetic: [], substantive: [], unresolved: [], absent: [] };
+const buckets = {
+  clean: [],
+  cosmetic: [],
+  substantive: [],
+  unresolved: [],
+  absent: [],
+};
 
 for (const row of rows) {
   const rel = `backend/sql/${row.filename}`;
@@ -183,9 +195,15 @@ for (const row of rows) {
 
 console.log(`applied migrations : ${rows.length}`);
 console.log(`  checksum clean   : ${buckets.clean.length}`);
-console.log(`  COSMETIC drift   : ${buckets.cosmetic.length}  (comments/whitespace only — safe to rebaseline)`);
-console.log(`  SUBSTANTIVE drift: ${buckets.substantive.length}  (SQL changed after it ran — never executed)`);
-console.log(`  unresolved       : ${buckets.unresolved.length}  (original bytes not recoverable from git)`);
+console.log(
+  `  COSMETIC drift   : ${buckets.cosmetic.length}  (comments/whitespace only — safe to rebaseline)`,
+);
+console.log(
+  `  SUBSTANTIVE drift: ${buckets.substantive.length}  (SQL changed after it ran — never executed)`,
+);
+console.log(
+  `  unresolved       : ${buckets.unresolved.length}  (original bytes not recoverable from git)`,
+);
 console.log(`  file absent      : ${buckets.absent.length}`);
 
 if (buckets.cosmetic.length > 0) {
@@ -194,14 +212,20 @@ if (buckets.cosmetic.length > 0) {
 }
 
 if (buckets.substantive.length > 0) {
-  console.log(`\nSUBSTANTIVE — these files contain SQL the database has never run:`);
+  console.log(
+    `\nSUBSTANTIVE — these files contain SQL the database has never run:`,
+  );
   for (const item of buckets.substantive) {
     console.log(`  ! ${item.filename}`);
     if (VERBOSE) {
-      console.log(`      was ${item.before.length} chars, now ${item.after.length} chars`);
+      console.log(
+        `      was ${item.before.length} chars, now ${item.after.length} chars`,
+      );
     }
   }
-  console.log(`\nDo NOT rebaseline these. Work out whether the added SQL still needs to run.`);
+  console.log(
+    `\nDo NOT rebaseline these. Work out whether the added SQL still needs to run.`,
+  );
 }
 
 if (VERBOSE && buckets.unresolved.length > 0) {

@@ -4,39 +4,39 @@
  * Purpose: Express routes for manager team-level risk endpoints
  */
 
-import { Router } from 'express';
-import { requireAuth } from '../../middleware/authMiddleware.js';
-import { requireRole } from '../../middleware/requireRole.js';
+import { Router } from "express";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import {
   getManagerRiskLeaderboard,
   getCriticalManagers,
-  getManagerTeamDrilldown
-} from './manager-risk.service.js';
+  getManagerTeamDrilldown,
+} from "./manager-risk.service.js";
 
 const router = Router();
 
 // GET /api/analytics/manager-risk/leaderboard?branchId=&processId=&limit=50&riskLevel=
 router.get(
-  '/leaderboard',
+  "/leaderboard",
   requireAuth,
-  requireRole('hr', 'admin', 'super_admin', 'manager', 'wfm'),
-  getManagerRiskLeaderboard
+  requireRole("hr", "admin", "super_admin", "manager", "wfm"),
+  getManagerRiskLeaderboard,
 );
 
 // GET /api/analytics/manager-risk/critical
 router.get(
-  '/critical',
+  "/critical",
   requireAuth,
-  requireRole('hr', 'admin', 'super_admin', 'manager', 'wfm'),
-  getCriticalManagers
+  requireRole("hr", "admin", "super_admin", "manager", "wfm"),
+  getCriticalManagers,
 );
 
 // GET /api/analytics/manager-risk/:managerId
 router.get(
-  '/:managerId',
+  "/:managerId",
   requireAuth,
-  requireRole('hr', 'admin', 'super_admin', 'manager', 'wfm'),
-  getManagerTeamDrilldown
+  requireRole("hr", "admin", "super_admin", "manager", "wfm"),
+  getManagerTeamDrilldown,
 );
 
 export const managerRiskRouter = router;

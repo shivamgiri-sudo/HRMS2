@@ -29,30 +29,39 @@
  * Aadhaar identify a person, a phone number identifies a handset.
  */
 
-import { PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
-import { randomUUID } from 'crypto';
-import { db } from '../../db/mysql.js';
-import { checkBgvReadiness, getBgvReadinessSummary } from '../ats/bgv-readiness.service.js';
-import { PAN_REGEX, AADHAAR_REGEX } from '../ats/bgv-config.js';
-import { dispatchJoinProvisioningTasks } from '../it-provisioning/it-provisioning.service.js';
-import { activateIfJoiningDateReached } from './employee-activation.service.js';
-import { provisionLmsIdentityForEmployee } from '../lms/lms-provisioning.service.js';
-import { autoGenerateJoiningDocuments } from './employeeJoiningDocuments.service.js';
-import { queueJoiningKit, dispatchJoiningKit } from './joiningKitDispatch.service.js';
-import { generateEmployeeCode } from './employee-code.service.js';
-import { appendJourneyEvent } from '../employees/journeyLog.service.js';
-import { logSensitiveAction } from '../../shared/auditLog.js';
-import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js';
-import { issueCandidatePortalAccess } from '../ats/interview.service.js';
-import { resolveOnboardingDocumentFile } from '../ats/onboardingDocumentPath.js';
-import { promoteCandidateDocumentsToEmployee } from './candidateDocumentPromotion.service.js';
-import { cropFaceForProfilePhoto } from './face-crop.util.js';
-import { normalizeBloodGroup } from './bloodGroup.util.js';
-import { normalizeMaritalStatus } from './maritalStatus.util.js';
-import { writeEmployeePhotoBuffer } from './employee.photo.compat.routes.js';
-import { env } from '../../config/env.js';
+import { PoolConnection, RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import { randomUUID } from "crypto";
+import { db } from "../../db/mysql.js";
+import {
+  checkBgvReadiness,
+  getBgvReadinessSummary,
+} from "../ats/bgv-readiness.service.js";
+import { PAN_REGEX, AADHAAR_REGEX } from "../ats/bgv-config.js";
+import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisioning.service.js";
+import { activateIfJoiningDateReached } from "./employee-activation.service.js";
+import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
+import { autoGenerateJoiningDocuments } from "./employeeJoiningDocuments.service.js";
+import {
+  queueJoiningKit,
+  dispatchJoiningKit,
+} from "./joiningKitDispatch.service.js";
+import { generateEmployeeCode } from "./employee-code.service.js";
+import { appendJourneyEvent } from "../employees/journeyLog.service.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { sendPayrollHrJoiningDocNotification } from "../ats/ats.email.service.js";
+import { issueCandidatePortalAccess } from "../ats/interview.service.js";
+import { resolveOnboardingDocumentFile } from "../ats/onboardingDocumentPath.js";
+import { promoteCandidateDocumentsToEmployee } from "./candidateDocumentPromotion.service.js";
+import { cropFaceForProfilePhoto } from "./face-crop.util.js";
+import { normalizeBloodGroup } from "./bloodGroup.util.js";
+import { normalizeMaritalStatus } from "./maritalStatus.util.js";
+import { writeEmployeePhotoBuffer } from "./employee.photo.compat.routes.js";
+import { env } from "../../config/env.js";
 import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
-import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
+import {
+  encryptPanForSync,
+  blindIndexPan,
+} from "../../shared/syncPiiEncryption.js";
 import { registerEmployeeInCosec } from "../integrations/cosec/cosec-registration.service.js";
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 import { inboxService } from "../inbox/inbox.service.js";
@@ -74,7 +83,7 @@ export interface EmployeeCreationResult {
   blockers: Array<{
     type: string;
     reason: string;
-    severity: 'critical' | 'warning';
+    severity: "critical" | "warning";
   }>;
   warnings: string[];
   bgvStatus: string;
@@ -88,7 +97,7 @@ export interface EmployeeCreationResult {
  * Main orchestrator function - creates employee from approved offer
  */
 export async function createEmployeeFromCandidate(
-  input: EmployeeCreationInput
+  input: EmployeeCreationInput,
 ): Promise<EmployeeCreationResult> {
   const { candidateId, offerId, approverId } = input;
 
@@ -99,7 +108,7 @@ export async function createEmployeeFromCandidate(
     alreadyExisted: false,
     blockers: [],
     warnings: [],
-    bgvStatus: 'pending',
+    bgvStatus: "pending",
     provisioningStatus: {
       dispatched: false,
       tasksFailed: [],
@@ -115,7 +124,7 @@ export async function createEmployeeFromCandidate(
     const [bridgeRows] = await conn.execute<RowDataPacket[]>(
       `SELECT employee_id, employee_code FROM ats_onboarding_bridge
        WHERE candidate_id = ? FOR UPDATE`,
-      [candidateId]
+      [candidateId],
     );
 
     if (bridgeRows.length > 0 && (bridgeRows[0] as any).employee_id) {
@@ -124,7 +133,7 @@ export async function createEmployeeFromCandidate(
       result.employeeId = existing.employee_id;
       result.employeeCode = existing.employee_code;
       result.alreadyExisted = true;
-      result.warnings.push('Employee already created for this candidate');
+      result.warnings.push("Employee already created for this candidate");
 
       await conn.commit();
       return result;
@@ -133,22 +142,26 @@ export async function createEmployeeFromCandidate(
     // Get offer details
     const [offerRows] = await conn.execute<RowDataPacket[]>(
       `SELECT * FROM ats_employment_offer WHERE id = ? FOR UPDATE`,
-      [offerId]
+      [offerId],
     );
 
     if (offerRows.length === 0) {
-      throw new Error('Offer not found');
+      throw new Error("Offer not found");
     }
 
     const offer = offerRows[0] as any;
 
     // RULE 2: Salary Lock Validation
-    const salaryValidation = await validateSalaryLock(conn, candidateId, offerId);
+    const salaryValidation = await validateSalaryLock(
+      conn,
+      candidateId,
+      offerId,
+    );
     if (!salaryValidation.locked) {
       result.blockers.push({
-        type: 'salary_not_locked',
+        type: "salary_not_locked",
         reason: salaryValidation.reason,
-        severity: 'critical',
+        severity: "critical",
       });
       await conn.rollback();
       return result;
@@ -159,7 +172,7 @@ export async function createEmployeeFromCandidate(
     if (!consentValidation.valid) {
       result.blockers.push(...consentValidation.blockers);
       // ALLOW creation but flag for manual review
-      result.warnings.push('Consent issues detected - manual review required');
+      result.warnings.push("Consent issues detected - manual review required");
     }
 
     // RULE 1: BGV Validation (manual review workflow - doesn't block)
@@ -177,21 +190,29 @@ export async function createEmployeeFromCandidate(
     // warning rather than the whole hire. It cannot hide a *negative* readiness
     // verdict — that path still runs below and is still surfaced.
     try {
-      const bgvReadiness = await checkBgvReadiness(candidateId, offer.designation_id);
+      const bgvReadiness = await checkBgvReadiness(
+        candidateId,
+        offer.designation_id,
+      );
       result.bgvStatus = getBgvReadinessSummary(bgvReadiness);
 
       if (!bgvReadiness.ready) {
-        result.warnings.push(`BGV not complete: ${bgvReadiness.blockers.map(b => b.reason).join(', ')}`);
+        result.warnings.push(
+          `BGV not complete: ${bgvReadiness.blockers.map((b) => b.reason).join(", ")}`,
+        );
         // Employee creation proceeds - manual review workflow
       }
 
       if (bgvReadiness.manualReviewRequired) {
-        result.warnings.push('BGV manual review required before activation');
+        result.warnings.push("BGV manual review required before activation");
       }
     } catch (bgvErr) {
       const message = bgvErr instanceof Error ? bgvErr.message : String(bgvErr);
-      console.error('[EmployeeOrchestrator] BGV readiness could not be evaluated:', { candidateId, message });
-      result.bgvStatus = 'unknown';
+      console.error(
+        "[EmployeeOrchestrator] BGV readiness could not be evaluated:",
+        { candidateId, message },
+      );
+      result.bgvStatus = "unknown";
       result.warnings.push(
         `BGV readiness could not be evaluated (${message}) — verify the candidate's checks manually before activation.`,
       );
@@ -227,12 +248,15 @@ export async function createEmployeeFromCandidate(
     // RULE 11: minimum employment age. A critical blocker with a rollback, the
     // same shape as the statutory check above — an underage hire is not a
     // "manual review" case, it is one that must not be created.
-    const ageCheck = await resolveVerifiedDob(candidateId, offer?.date_of_joining ?? null);
+    const ageCheck = await resolveVerifiedDob(
+      candidateId,
+      offer?.date_of_joining ?? null,
+    );
     if (ageCheck.isMinor) {
       result.blockers.push({
-        type: 'underage_candidate',
+        type: "underage_candidate",
         reason: ageCheck.reason,
-        severity: 'critical',
+        severity: "critical",
       });
       await conn.rollback();
       return result;
@@ -247,12 +271,15 @@ export async function createEmployeeFromCandidate(
 
     // RULE 6: Reporting Manager Validation
     if (offer.reporting_manager_id) {
-      const managerValid = await validateReportingManager(conn, offer.reporting_manager_id);
+      const managerValid = await validateReportingManager(
+        conn,
+        offer.reporting_manager_id,
+      );
       if (!managerValid) {
         result.blockers.push({
-          type: 'invalid_manager',
-          reason: 'Reporting manager does not exist or is inactive',
-          severity: 'critical',
+          type: "invalid_manager",
+          reason: "Reporting manager does not exist or is inactive",
+          severity: "critical",
         });
         await conn.rollback();
         return result;
@@ -354,7 +381,7 @@ export async function createEmployeeFromCandidate(
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
        LEFT JOIN candidate_onboarding_family fam ON fam.candidate_id = c.id
        WHERE c.id = ? LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
 
     const candRow = candRows[0] as any;
@@ -362,12 +389,15 @@ export async function createEmployeeFromCandidate(
     // The candidate is the only source of the name; `offer.full_name` does not
     // exist, so this used to split undefined and create every employee with a
     // blank first_name and a generated full_name of a single space.
-    const nameParts = String(candRow?.full_name ?? '').trim().split(/\s+/).filter(Boolean);
+    const nameParts = String(candRow?.full_name ?? "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
     if (nameParts.length === 0) {
-      throw new Error('Cannot create an employee: the candidate has no name.');
+      throw new Error("Cannot create an employee: the candidate has no name.");
     }
     const firstName = nameParts[0];
-    const lastName = nameParts.slice(1).join(' ') || firstName;
+    const lastName = nameParts.slice(1).join(" ") || firstName;
 
     const salaryStartDate = offer.date_of_salary ?? offer.date_of_joining;
 
@@ -403,17 +433,24 @@ export async function createEmployeeFromCandidate(
                   WHERE v.candidate_id = ? LIMIT 1)
               )
         LIMIT 1`,
-      [rawCostCentre, candidateId]
+      [rawCostCentre, candidateId],
     );
-    const ccRow = ccRows[0] as { id?: string; cost_centre_code?: string; process_id?: string; branch_id?: string } | undefined;
-    const costCentreId   = ccRow?.id ?? null;
+    const ccRow = ccRows[0] as
+      | {
+          id?: string;
+          cost_centre_code?: string;
+          process_id?: string;
+          branch_id?: string;
+        }
+      | undefined;
+    const costCentreId = ccRow?.id ?? null;
     const costCentreCode = ccRow?.cost_centre_code ?? null;
     // Inherit process_id and branch_id from cost_centre if candidate data is missing
     const resolvedProcessId = candRow?.process_id ?? ccRow?.process_id ?? null;
-    const resolvedBranchId  = candRow?.branch_id ?? ccRow?.branch_id ?? null;
+    const resolvedBranchId = candRow?.branch_id ?? ccRow?.branch_id ?? null;
     if (!costCentreId) {
       result.warnings.push(
-        'No cost centre could be resolved for this employee; it must be set manually.'
+        "No cost centre could be resolved for this employee; it must be set manually.",
       );
     }
 
@@ -453,7 +490,11 @@ export async function createEmployeeFromCandidate(
         // first -- see cosec-sync.service.ts -- with this column as a secondary fallback
         // before employee_code; setting it here just fills a field that already fell through
         // to employee_code at match time.)
-        employeeId, employeeCode, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
+        employeeId,
+        employeeCode,
+        employeeCode,
+        toStoredNameRequired(firstName),
+        toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
         candRow?.mobile ?? null,
         candRow?.personal_email ?? null,
@@ -472,10 +513,16 @@ export async function createEmployeeFromCandidate(
         // Same validated-or-null rule the onboarding capture uses: a malformed or masked
         // value is stored as NULL rather than written into a column downstream readers
         // treat as a filable identifier.
-        /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(String(candRow?.pan_number ?? "").trim().toUpperCase())
+        /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(
+          String(candRow?.pan_number ?? "")
+            .trim()
+            .toUpperCase(),
+        )
           ? String(candRow?.pan_number).trim().toUpperCase()
           : null,
-        /^[0-9]{12}$/.test(String(candRow?.aadhar_number ?? "").replace(/\D/g, ""))
+        /^[0-9]{12}$/.test(
+          String(candRow?.aadhar_number ?? "").replace(/\D/g, ""),
+        )
           ? String(candRow?.aadhar_number).replace(/\D/g, "")
           : null,
         candidateId,
@@ -493,10 +540,12 @@ export async function createEmployeeFromCandidate(
         candRow?.annual_income ?? null,
         // SMALLINT max is 32767; a candidate who entered an income-like number
         // into this field would crash the INSERT without this guard.
-        (typeof candRow?.count_of_dependents === 'number' && candRow.count_of_dependents <= 32767 && candRow.count_of_dependents >= 0)
+        typeof candRow?.count_of_dependents === "number" &&
+        candRow.count_of_dependents <= 32767 &&
+        candRow.count_of_dependents >= 0
           ? candRow.count_of_dependents
           : null,
-      ]
+      ],
     );
 
     // LOB default: a process with exactly ONE active mapped LOB (process_lob_map) gives the new
@@ -506,7 +555,10 @@ export async function createEmployeeFromCandidate(
     try {
       await applySingleMappedLob(conn, employeeId, resolvedProcessId);
     } catch (lobErr: unknown) {
-      console.warn('[EmployeeOrchestrator] Single-LOB default skipped:', lobErr instanceof Error ? lobErr.message : lobErr);
+      console.warn(
+        "[EmployeeOrchestrator] Single-LOB default skipped:",
+        lobErr instanceof Error ? lobErr.message : lobErr,
+      );
     }
 
     // Father/Husband relation: no employees column holds this (only father_name does), and
@@ -519,7 +571,7 @@ export async function createEmployeeFromCandidate(
          VALUES (UUID(), ?, ?)
          ON DUPLICATE KEY UPDATE
            relationship_type = COALESCE(NULLIF(relationship_type,''), VALUES(relationship_type))`,
-        [employeeId, String(candRow.relation).trim()]
+        [employeeId, String(candRow.relation).trim()],
       );
     }
 
@@ -543,9 +595,12 @@ export async function createEmployeeFromCandidate(
     // falls back to '' (a real empty value, not NULL) rather than blocking the whole
     // row when the form never asked for it.
     const hasPresentAddress = !!(
-      candRow?.present_city  && String(candRow.present_city).trim() &&
-      candRow?.present_state && String(candRow.present_state).trim() &&
-      candRow?.present_pincode && String(candRow.present_pincode).trim()
+      candRow?.present_city &&
+      String(candRow.present_city).trim() &&
+      candRow?.present_state &&
+      String(candRow.present_state).trim() &&
+      candRow?.present_pincode &&
+      String(candRow.present_pincode).trim()
     );
     if (hasPresentAddress) {
       await conn.execute(
@@ -558,14 +613,23 @@ export async function createEmployeeFromCandidate(
            city          = COALESCE(NULLIF(city,''), VALUES(city)),
            state         = COALESCE(NULLIF(state,''), VALUES(state)),
            pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
-        [employeeId, String(candRow?.present_address_line1 ?? "").trim(), candRow?.present_address_line2 ?? null,
-         candRow?.present_city ?? null, candRow?.present_state ?? null, candRow?.present_pincode ?? null]
+        [
+          employeeId,
+          String(candRow?.present_address_line1 ?? "").trim(),
+          candRow?.present_address_line2 ?? null,
+          candRow?.present_city ?? null,
+          candRow?.present_state ?? null,
+          candRow?.present_pincode ?? null,
+        ],
       );
     }
     const hasPermanentAddress = !!(
-      candRow?.permanent_city  && String(candRow.permanent_city).trim() &&
-      candRow?.permanent_state && String(candRow.permanent_state).trim() &&
-      candRow?.permanent_pincode && String(candRow.permanent_pincode).trim()
+      candRow?.permanent_city &&
+      String(candRow.permanent_city).trim() &&
+      candRow?.permanent_state &&
+      String(candRow.permanent_state).trim() &&
+      candRow?.permanent_pincode &&
+      String(candRow.permanent_pincode).trim()
     );
     if (hasPermanentAddress) {
       await conn.execute(
@@ -578,8 +642,14 @@ export async function createEmployeeFromCandidate(
            city          = COALESCE(NULLIF(city,''), VALUES(city)),
            state         = COALESCE(NULLIF(state,''), VALUES(state)),
            pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
-        [employeeId, String(candRow?.permanent_address_line1 ?? "").trim(), candRow?.permanent_address_line2 ?? null,
-         candRow?.permanent_city ?? null, candRow?.permanent_state ?? null, candRow?.permanent_pincode ?? null]
+        [
+          employeeId,
+          String(candRow?.permanent_address_line1 ?? "").trim(),
+          candRow?.permanent_address_line2 ?? null,
+          candRow?.permanent_city ?? null,
+          candRow?.permanent_state ?? null,
+          candRow?.permanent_pincode ?? null,
+        ],
       );
     }
 
@@ -604,7 +674,7 @@ export async function createEmployeeFromCandidate(
         WHERE candidate_id = ?
         ORDER BY passed_out_year DESC, created_at DESC
         LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
     const qualRow = (qualRows as RowDataPacket[])[0];
     if (qualRow?.qualification && String(qualRow.qualification).trim()) {
@@ -613,10 +683,16 @@ export async function createEmployeeFromCandidate(
            (id, employee_id, qualification, specialization_course_name, institution_name,
             passed_out_state, passed_out_city, passed_out_year, passed_out_percentage)
          VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [employeeId, qualRow.qualification, qualRow.specialization_course_name ?? null,
-         qualRow.institution_name ?? null, qualRow.passed_out_state ?? null,
-         qualRow.passed_out_city ?? null, qualRow.passed_out_year ?? null,
-         qualRow.passed_out_percentage ?? null]
+        [
+          employeeId,
+          qualRow.qualification,
+          qualRow.specialization_course_name ?? null,
+          qualRow.institution_name ?? null,
+          qualRow.passed_out_state ?? null,
+          qualRow.passed_out_city ?? null,
+          qualRow.passed_out_year ?? null,
+          qualRow.passed_out_percentage ?? null,
+        ],
       );
     }
 
@@ -633,14 +709,17 @@ export async function createEmployeeFromCandidate(
         WHERE candidate_id = ?
         ORDER BY to_date DESC, created_at DESC
         LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
     const expRow = (expRows as RowDataPacket[])[0];
-    if (expRow?.experience_year !== undefined && expRow?.experience_year !== null) {
+    if (
+      expRow?.experience_year !== undefined &&
+      expRow?.experience_year !== null
+    ) {
       await conn.execute(
         `INSERT INTO employee_experience (id, employee_id, is_fresher, experience_years)
          VALUES (UUID(), ?, 0, ?)`,
-        [employeeId, Number(expRow.experience_year) || 0]
+        [employeeId, Number(expRow.experience_year) || 0],
       );
     }
 
@@ -657,20 +736,46 @@ export async function createEmployeeFromCandidate(
     const nomineeName = String(candRow?.nominee_name ?? "").trim();
     const nomineeRelation = String(candRow?.nominee_relation ?? "").trim();
     if (nomineeName && nomineeRelation) {
-      const nomineeDob = candRow?.nominee_dob ? new Date(candRow.nominee_dob) : null;
-      const isMinor = nomineeDob && !Number.isNaN(nomineeDob.getTime())
-        ? (Date.now() - nomineeDob.getTime()) / (365.25 * 24 * 60 * 60 * 1000) < 18
-        : false;
-      await conn.execute(
-        `INSERT INTO employee_nominee
+      const nomineeDob = candRow?.nominee_dob
+        ? new Date(candRow.nominee_dob)
+        : null;
+      const isMinor =
+        nomineeDob && !Number.isNaN(nomineeDob.getTime())
+          ? (Date.now() - nomineeDob.getTime()) /
+              (365.25 * 24 * 60 * 60 * 1000) <
+            18
+          : false;
+      await conn
+        .execute(
+          `INSERT INTO employee_nominee
            (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, is_minor)
          VALUES (?, ?, ?, ?, ?, 100, 'general', ?)`,
-        [randomUUID(), employeeId, toStoredNameRequired(nomineeName), nomineeRelation, candRow?.nominee_dob ?? null, isMinor ? 1 : 0]
-      ).catch((e: unknown) => console.warn('[createEmployee] employee_nominee insert skipped:', (e as Error).message));
+          [
+            randomUUID(),
+            employeeId,
+            toStoredNameRequired(nomineeName),
+            nomineeRelation,
+            candRow?.nominee_dob ?? null,
+            isMinor ? 1 : 0,
+          ],
+        )
+        .catch((e: unknown) =>
+          console.warn(
+            "[createEmployee] employee_nominee insert skipped:",
+            (e as Error).message,
+          ),
+        );
     }
 
     // Create related records (statutory, salary, nominee, leave, pf-opt-out)
-    await createRelatedEmployeeRecords(conn, employeeId, candidateId, offer, candRow, approverId);
+    await createRelatedEmployeeRecords(
+      conn,
+      employeeId,
+      candidateId,
+      offer,
+      candRow,
+      approverId,
+    );
 
     // Link the bridge. The idempotency guard above reads this row, so if the
     // update matches nothing the guard is silently defeated and a second
@@ -680,7 +785,7 @@ export async function createEmployeeFromCandidate(
       `UPDATE ats_onboarding_bridge
        SET employee_id = ?, employee_code = ?, converted_at = NOW()
        WHERE candidate_id = ?`,
-      [employeeId, employeeCode, candidateId]
+      [employeeId, employeeCode, candidateId],
     );
     if (bridgeUpdate.affectedRows === 0) {
       await conn.execute(
@@ -689,7 +794,7 @@ export async function createEmployeeFromCandidate(
          ON DUPLICATE KEY UPDATE employee_id = VALUES(employee_id),
                                  employee_code = VALUES(employee_code),
                                  converted_at = VALUES(converted_at)`,
-        [randomUUID(), candidateId, employeeId, employeeCode]
+        [randomUUID(), candidateId, employeeId, employeeCode],
       );
     }
 
@@ -697,13 +802,13 @@ export async function createEmployeeFromCandidate(
     // 'bh_rejected') — 'approved' is not a member and was rejected outright.
     await conn.execute(
       `UPDATE ats_employment_offer SET status = 'bh_approved', approved_at = NOW() WHERE id = ?`,
-      [offerId]
+      [offerId],
     );
 
     // Update candidate status
     await conn.execute(
       `UPDATE ats_candidate SET profile_status = 'onboarded', employee_code = ? WHERE id = ?`,
-      [employeeCode, candidateId]
+      [employeeCode, candidateId],
     );
 
     await conn.commit();
@@ -730,53 +835,64 @@ export async function createEmployeeFromCandidate(
     // an employee excluded from every payroll run until this is actioned is
     // not a routine item.
     db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT ur.user_id FROM user_roles ur WHERE ur.active_status = 1 AND ur.role_key = 'payroll_head'`
-    ).then(async ([rows]) => {
-      const userIds = (rows as RowDataPacket[]).map((r) => String(r.user_id));
-      await Promise.allSettled(
-        userIds.map((userId) =>
-          inboxService.createItem({
-            user_id: userId,
-            type: 'payroll_head_review_pending',
-            title: `Salary review needed: ${candRow?.full_name ?? employeeCode}`,
-            description: `New employee ${employeeCode} is waiting on salary/document/BGV/bank review before payroll can build their salary.`,
-            entity_type: 'employee',
-            entity_id: employeeId,
-            action_url: `/payroll/salary-review/${employeeId}`,
-            priority: 'high',
-          })
-        )
-      );
-    }).catch((error) => {
-      console.error(`[EmployeeOrchestrator] Could not notify payroll_head of new review for ${employeeCode}:`, (error as Error)?.message);
-    });
+      `SELECT DISTINCT ur.user_id FROM user_roles ur WHERE ur.active_status = 1 AND ur.role_key = 'payroll_head'`,
+    )
+      .then(async ([rows]) => {
+        const userIds = (rows as RowDataPacket[]).map((r) => String(r.user_id));
+        await Promise.allSettled(
+          userIds.map((userId) =>
+            inboxService.createItem({
+              user_id: userId,
+              type: "payroll_head_review_pending",
+              title: `Salary review needed: ${candRow?.full_name ?? employeeCode}`,
+              description: `New employee ${employeeCode} is waiting on salary/document/BGV/bank review before payroll can build their salary.`,
+              entity_type: "employee",
+              entity_id: employeeId,
+              action_url: `/payroll/salary-review/${employeeId}`,
+              priority: "high",
+            }),
+          ),
+        );
+      })
+      .catch((error) => {
+        console.error(
+          `[EmployeeOrchestrator] Could not notify payroll_head of new review for ${employeeCode}:`,
+          (error as Error)?.message,
+        );
+      });
 
     // Payroll HR notification: complete salary component assignment in ATS.
     // Without this step, the employee will have no basic/HRA/gross breakdown
     // and payroll cannot build their salary line even if the Payroll Head approves.
     db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT ur.user_id FROM user_roles ur WHERE ur.active_status = 1 AND ur.role_key IN ('payroll_hr','payroll','payroll_admin')`
-    ).then(async ([rows]) => {
-      const userIds = (rows as RowDataPacket[]).map((r) => String(r.user_id));
-      await Promise.allSettled(
-        userIds.map((userId) =>
-          inboxService.createItem({
-            user_id: userId,
-            type: 'payroll_hr_salary_component_pending',
-            title: `Salary components needed: ${candRow?.full_name ?? employeeCode}`,
-            description: `New employee ${employeeCode} joined on ${offer?.date_of_joining ?? 'N/A'}. `
-              + `Complete the salary component assignment (basic / HRA / gross breakdown) in ATS `
-              + `so their salary can be built in this month's payroll run.`,
-            entity_type: 'employee',
-            entity_id: employeeId,
-            action_url: `/ats/candidates/${candidateId}/salary-assignment`,
-            priority: 'high',
-          })
-        )
-      );
-    }).catch((error) => {
-      console.error(`[EmployeeOrchestrator] Could not notify payroll_hr of salary component pending for ${employeeCode}:`, (error as Error)?.message);
-    });
+      `SELECT DISTINCT ur.user_id FROM user_roles ur WHERE ur.active_status = 1 AND ur.role_key IN ('payroll_hr','payroll','payroll_admin')`,
+    )
+      .then(async ([rows]) => {
+        const userIds = (rows as RowDataPacket[]).map((r) => String(r.user_id));
+        await Promise.allSettled(
+          userIds.map((userId) =>
+            inboxService.createItem({
+              user_id: userId,
+              type: "payroll_hr_salary_component_pending",
+              title: `Salary components needed: ${candRow?.full_name ?? employeeCode}`,
+              description:
+                `New employee ${employeeCode} joined on ${offer?.date_of_joining ?? "N/A"}. ` +
+                `Complete the salary component assignment (basic / HRA / gross breakdown) in ATS ` +
+                `so their salary can be built in this month's payroll run.`,
+              entity_type: "employee",
+              entity_id: employeeId,
+              action_url: `/ats/candidates/${candidateId}/salary-assignment`,
+              priority: "high",
+            }),
+          ),
+        );
+      })
+      .catch((error) => {
+        console.error(
+          `[EmployeeOrchestrator] Could not notify payroll_hr of salary component pending for ${employeeCode}:`,
+          (error as Error)?.message,
+        );
+      });
 
     // AML screening, once the employee code exists and the hire is committed.
     //
@@ -785,11 +901,19 @@ export async function createEmployeeFromCandidate(
     // reverse that. Which designations need it is decided by the existing
     // per-role policy, so an executive role is skipped without a new rule being
     // written for it.
-    await queueAmlScreening({ candidateId, employeeId, designationId: offer.designation_id ?? null })
-      .catch((error) => {
-        result.warnings.push('AML screening could not be queued — raise it with Payroll HR');
-        console.error(`[EmployeeOrchestrator] AML screening not queued for ${employeeCode}:`, (error as Error)?.message);
-      });
+    await queueAmlScreening({
+      candidateId,
+      employeeId,
+      designationId: offer.designation_id ?? null,
+    }).catch((error) => {
+      result.warnings.push(
+        "AML screening could not be queued — raise it with Payroll HR",
+      );
+      console.error(
+        `[EmployeeOrchestrator] AML screening not queued for ${employeeCode}:`,
+        (error as Error)?.message,
+      );
+    });
 
     // Promote the candidate's mandatory onboarding Live Selfie to employee
     // avatar_url/photo_url. Previously this read ats_candidate.selfie_url — the
@@ -819,23 +943,33 @@ export async function createEmployeeFromCandidate(
           `SELECT file_path FROM candidate_onboarding_document
             WHERE candidate_id = ? AND doc_type = 'Live Selfie' AND deleted_at IS NULL
             ORDER BY uploaded_at DESC LIMIT 1`,
-          [candidateId]
+          [candidateId],
         );
-        const storedPath: string | null = (selfieDocRows as any[])[0]?.file_path ?? null;
-        const resolvedPath = storedPath ? resolveOnboardingDocumentFile(storedPath) : null;
+        const storedPath: string | null =
+          (selfieDocRows as any[])[0]?.file_path ?? null;
+        const resolvedPath = storedPath
+          ? resolveOnboardingDocumentFile(storedPath)
+          : null;
 
         if (resolvedPath) {
           const croppedBuffer = await cropFaceForProfilePhoto(resolvedPath);
-          await writeEmployeePhotoBuffer(employeeId, croppedBuffer, '.jpg');
-          console.log(`[EmployeeOrchestrator] Onboarding Live Selfie auto-cropped and promoted to employee avatar for ${employeeCode}`);
+          await writeEmployeePhotoBuffer(employeeId, croppedBuffer, ".jpg");
+          console.log(
+            `[EmployeeOrchestrator] Onboarding Live Selfie auto-cropped and promoted to employee avatar for ${employeeCode}`,
+          );
         } else if (storedPath) {
           // Row exists but the file isn't reachable on this machine (see
           // onboardingDocumentPath.ts — a known, separate, unrecoverable-by-
           // path-resolution class of already-missing files).
-          console.warn(`[EmployeeOrchestrator] Live Selfie document row exists but file not found on disk for candidate ${candidateId}.`);
+          console.warn(
+            `[EmployeeOrchestrator] Live Selfie document row exists but file not found on disk for candidate ${candidateId}.`,
+          );
         }
       } catch (selfieErr) {
-        console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
+        console.warn(
+          "[EmployeeOrchestrator] Selfie promotion failed (non-blocking):",
+          selfieErr,
+        );
       }
     })();
 
@@ -850,8 +984,10 @@ export async function createEmployeeFromCandidate(
       .then(({ promoted, skippedFileMissing }) => {
         if (promoted > 0 || skippedFileMissing > 0) {
           console.log(
-            `[EmployeeOrchestrator] Promoted ${promoted} onboarding document(s) to employee_documents for ${employeeCode}`
-              + (skippedFileMissing > 0 ? ` (${skippedFileMissing} skipped — file missing on disk)` : ''),
+            `[EmployeeOrchestrator] Promoted ${promoted} onboarding document(s) to employee_documents for ${employeeCode}` +
+              (skippedFileMissing > 0
+                ? ` (${skippedFileMissing} skipped — file missing on disk)`
+                : ""),
           );
         }
       })
@@ -875,7 +1011,10 @@ export async function createEmployeeFromCandidate(
       triggerEventId: offerId,
       joiningDate: offer.date_of_joining,
     }).catch((provErr: unknown) => {
-      console.error('[EmployeeOrchestrator] Provisioning dispatch failed:', provErr instanceof Error ? provErr.message : provErr);
+      console.error(
+        "[EmployeeOrchestrator] Provisioning dispatch failed:",
+        provErr instanceof Error ? provErr.message : provErr,
+      );
     });
     result.provisioningStatus.dispatched = true;
 
@@ -884,12 +1023,15 @@ export async function createEmployeeFromCandidate(
       employeeCode,
       createdBy: approverId ?? "system",
     }).catch((err) => {
-      console.error('[EmployeeOrchestrator] LMS auto-provisioning failed:', err);
+      console.error(
+        "[EmployeeOrchestrator] LMS auto-provisioning failed:",
+        err,
+      );
     });
 
     // Non-blocking COSEC biometric registration — errors do not block employee creation
     registerEmployeeInCosec(employeeId, employeeCode).catch((err) => {
-      console.error('[EmployeeOrchestrator] COSEC registration failed:', err);
+      console.error("[EmployeeOrchestrator] COSEC registration failed:", err);
     });
 
     // ── Post-code steps ────────────────────────────────────────────────────
@@ -901,23 +1043,28 @@ export async function createEmployeeFromCandidate(
 
     appendJourneyEvent({
       employeeId,
-      eventType: 'hiring',
+      eventType: "hiring",
       eventDate: offer.date_of_joining,
       description: `Joined through ATS as ${employeeCode}`,
-      module: 'ATS',
+      module: "ATS",
       triggeredBy: approverId,
       metadata: { candidate_id: candidateId, offer_id: offerId },
     }).catch((err: unknown) => {
-      console.error('[EmployeeOrchestrator] Journey log failed for employee', employeeId, ':', err instanceof Error ? err.message : String(err));
+      console.error(
+        "[EmployeeOrchestrator] Journey log failed for employee",
+        employeeId,
+        ":",
+        err instanceof Error ? err.message : String(err),
+      );
     });
 
     // No auth_user or password at this stage — IT provisioning creates the
     // account with the official email later.
     logSensitiveAction({
       actor_user_id: approverId,
-      action_type: 'employee_created_preboarding',
-      module_key: 'ats',
-      entity_type: 'employee',
+      action_type: "employee_created_preboarding",
+      module_key: "ats",
+      entity_type: "employee",
       entity_id: employeeId,
       employee_id: employeeId,
       change_summary: {
@@ -927,7 +1074,10 @@ export async function createEmployeeFromCandidate(
         awaiting_it_provisioning: true,
       },
     }).catch((err: unknown) => {
-      console.error('[EmployeeOrchestrator] Sensitive action log failed:', err instanceof Error ? err.message : String(err));
+      console.error(
+        "[EmployeeOrchestrator] Sensitive action log failed:",
+        err instanceof Error ? err.message : String(err),
+      );
     });
 
     // Build the joining-document checklist and pre-filled drafts, then
@@ -942,20 +1092,27 @@ export async function createEmployeeFromCandidate(
           employeeId,
           candidateId: candidateId ?? null,
           actorUserId: approverId,
-          triggerSource: 'auto_employee_creation',
-        }).then(({ kitId }) => dispatchJoiningKit(kitId, approverId))
-          .then(outcome => {
-            console.log(`[EmployeeOrchestrator] Auto joining kit dispatch: ${outcome.status}`, {
-              employeeCode,
-              blockedReason: outcome.blockedReason ?? null,
-            });
+          triggerSource: "auto_employee_creation",
+        })
+          .then(({ kitId }) => dispatchJoiningKit(kitId, approverId))
+          .then((outcome) => {
+            console.log(
+              `[EmployeeOrchestrator] Auto joining kit dispatch: ${outcome.status}`,
+              {
+                employeeCode,
+                blockedReason: outcome.blockedReason ?? null,
+              },
+            );
           });
       })
       .catch((err: unknown) => {
-        console.error('[EmployeeOrchestrator] Auto joining document/kit failed:', {
-          employeeCode,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        console.error(
+          "[EmployeeOrchestrator] Auto joining document/kit failed:",
+          {
+            employeeCode,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
       });
 
     // Tell Payroll HR there is a pack to issue.
@@ -970,7 +1127,7 @@ export async function createEmployeeFromCandidate(
     // Candidate-portal credentials, deliberately deferred to here rather than
     // interview selection — see issueCandidatePortalAccess for why.
     issueCandidatePortalAccess(candidateId).catch((err: unknown) => {
-      console.error('[EmployeeOrchestrator] Portal access issuance failed:', {
+      console.error("[EmployeeOrchestrator] Portal access issuance failed:", {
         employeeCode,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -979,7 +1136,12 @@ export async function createEmployeeFromCandidate(
     // Consent and BGV problems are deliberately non-blocking, but the warnings
     // were only ever returned in the HTTP response and then discarded — a
     // "manual review required" that no system tracked and nobody was assigned.
-    void raiseManualReviewWorkItem(employeeId, candidateId, employeeCode, result.warnings);
+    void raiseManualReviewWorkItem(
+      employeeId,
+      candidateId,
+      employeeCode,
+      result.warnings,
+    );
 
     // Real-time activation: if joining date is today or past, activate immediately.
     //
@@ -993,12 +1155,18 @@ export async function createEmployeeFromCandidate(
     //      rather than a missing employee.
     if (result.employeeId && offer.date_of_joining) {
       const tryActivate = () =>
-        activateIfJoiningDateReached(result.employeeId!, offer.date_of_joining, approverId);
+        activateIfJoiningDateReached(
+          result.employeeId!,
+          offer.date_of_joining,
+          approverId,
+        );
 
       try {
         const activated = await tryActivate();
         if (activated) {
-          result.warnings.push('Employee activated immediately - joining date is today');
+          result.warnings.push(
+            "Employee activated immediately - joining date is today",
+          );
         }
       } catch (firstErr) {
         // Retry once after 2 s — covers transient pool exhaustion during approval bursts.
@@ -1006,7 +1174,9 @@ export async function createEmployeeFromCandidate(
           await new Promise((r) => setTimeout(r, 2000));
           const activated = await tryActivate();
           if (activated) {
-            result.warnings.push('Employee activated immediately (retry) - joining date is today');
+            result.warnings.push(
+              "Employee activated immediately (retry) - joining date is today",
+            );
           }
         } catch (retryErr) {
           console.error(
@@ -1026,15 +1196,19 @@ export async function createEmployeeFromCandidate(
               result.employeeId,
             ],
           ).catch((e: unknown) =>
-            console.error('[EmployeeOrchestrator] Could not raise activation-failed work item:', e),
+            console.error(
+              "[EmployeeOrchestrator] Could not raise activation-failed work item:",
+              e,
+            ),
           );
-          result.warnings.push('Real-time activation failed — nightly job will retry at 00:01');
+          result.warnings.push(
+            "Real-time activation failed — nightly job will retry at 00:01",
+          );
         }
       }
     }
 
     return result;
-
   } catch (err) {
     // RULE 8: Full rollback on failure
     await conn.rollback();
@@ -1065,12 +1239,15 @@ async function raiseManualReviewWorkItem(
        ON DUPLICATE KEY UPDATE updated_at = NOW()`,
       [
         `Manual review required for ${employeeCode}`,
-        `Employee created with unresolved warnings (candidate ${candidateId}):\n- ${warnings.join('\n- ')}`,
+        `Employee created with unresolved warnings (candidate ${candidateId}):\n- ${warnings.join("\n- ")}`,
         employeeId,
       ],
     );
   } catch (err: unknown) {
-    console.error('[EmployeeOrchestrator] Failed to raise manual-review work item:', err instanceof Error ? err.message : String(err));
+    console.error(
+      "[EmployeeOrchestrator] Failed to raise manual-review work item:",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
@@ -1087,7 +1264,7 @@ async function notifyPayrollHrToIssueJoiningDocuments(params: {
   branchId: string | null;
 }): Promise<void> {
   try {
-    const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
+    const baseUrl = env.FRONTEND_URL || "http://localhost:5173";
     // The name comes from employees, not auth_user: auth_user has no full_name
     // column (id, email, password_hash, …), so selecting u.full_name threw
     // ER_BAD_FIELD_ERROR and no Payroll HR was ever told a pack was ready. The
@@ -1104,7 +1281,9 @@ async function notifyPayrollHrToIssueJoiningDocuments(params: {
     );
 
     if ((hrRows as RowDataPacket[]).length === 0) {
-      console.warn(`[EmployeeOrchestrator] No payroll_hr users found for branch ${params.branchId}, employee ${params.employeeCode}`);
+      console.warn(
+        `[EmployeeOrchestrator] No payroll_hr users found for branch ${params.branchId}, employee ${params.employeeCode}`,
+      );
       return;
     }
 
@@ -1116,10 +1295,12 @@ async function notifyPayrollHrToIssueJoiningDocuments(params: {
         employeeName: params.employeeName,
         joiningDocUrl: `${baseUrl}/employees/${params.employeeId}/joining-documents`,
         candidateId: params.candidateId,
-      }).catch((err: unknown) => console.error('[EmployeeOrchestrator] payroll-hr email failed', err));
+      }).catch((err: unknown) =>
+        console.error("[EmployeeOrchestrator] payroll-hr email failed", err),
+      );
     }
   } catch (err: unknown) {
-    console.error('[EmployeeOrchestrator] Payroll HR notification failed:', {
+    console.error("[EmployeeOrchestrator] Payroll HR notification failed:", {
       employeeCode: params.employeeCode,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -1132,7 +1313,7 @@ async function notifyPayrollHrToIssueJoiningDocuments(params: {
 async function validateSalaryLock(
   conn: PoolConnection,
   candidateId: string,
-  offerId: string
+  offerId: string,
 ): Promise<{ locked: boolean; reason: string }> {
   // Check Branch Head approval (joined via payroll_validation → candidate)
   const [bhApproval] = await conn.execute<RowDataPacket[]>(
@@ -1141,36 +1322,42 @@ async function validateSalaryLock(
      JOIN ats_payroll_hr_validation pv ON pv.id = bha.payroll_validation_id
      WHERE pv.candidate_id = ?
      ORDER BY bha.approved_at DESC LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
 
-  if (bhApproval.length === 0 || (bhApproval[0] as any).approval_status !== 'approved') {
-    return { locked: false, reason: 'Branch Head approval pending' };
+  if (
+    bhApproval.length === 0 ||
+    (bhApproval[0] as any).approval_status !== "approved"
+  ) {
+    return { locked: false, reason: "Branch Head approval pending" };
   }
 
   // Check Payroll HR validation
   const [payrollValidation] = await conn.execute<RowDataPacket[]>(
     `SELECT validation_status FROM ats_payroll_hr_validation
      WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
 
-  if (payrollValidation.length === 0 || (payrollValidation[0] as any).validation_status !== 'validated') {
-    return { locked: false, reason: 'Payroll HR validation pending' };
+  if (
+    payrollValidation.length === 0 ||
+    (payrollValidation[0] as any).validation_status !== "validated"
+  ) {
+    return { locked: false, reason: "Payroll HR validation pending" };
   }
 
   // Check salary exceptions
   const [exceptions] = await conn.execute<RowDataPacket[]>(
     `SELECT status FROM salary_exception_proposal
      WHERE candidate_id = ? AND status = 'pending' LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
 
   if (exceptions.length > 0) {
-    return { locked: false, reason: 'Salary exception approval pending' };
+    return { locked: false, reason: "Salary exception approval pending" };
   }
 
-  return { locked: true, reason: 'Salary locked and approved' };
+  return { locked: true, reason: "Salary locked and approved" };
 }
 
 /**
@@ -1178,11 +1365,22 @@ async function validateSalaryLock(
  */
 async function validateConsents(
   conn: PoolConnection,
-  candidateId: string
-): Promise<{ valid: boolean; blockers: Array<{ type: string; reason: string; severity: 'critical' | 'warning' }> }> {
-  const blockers: Array<{ type: string; reason: string; severity: 'critical' | 'warning' }> = [];
+  candidateId: string,
+): Promise<{
+  valid: boolean;
+  blockers: Array<{
+    type: string;
+    reason: string;
+    severity: "critical" | "warning";
+  }>;
+}> {
+  const blockers: Array<{
+    type: string;
+    reason: string;
+    severity: "critical" | "warning";
+  }> = [];
 
-  const requiredConsents = ['recruitment', 'onboarding', 'bgv'];
+  const requiredConsents = ["recruitment", "onboarding", "bgv"];
 
   for (const purposeCode of requiredConsents) {
     // Use dpdp_consent_register (actual table — confirmed 2026-07-16)
@@ -1190,25 +1388,28 @@ async function validateConsents(
       `SELECT consent_status FROM dpdp_consent_register
        WHERE candidate_id = ? AND purpose_code = ?
        ORDER BY updated_at DESC LIMIT 1`,
-      [candidateId, purposeCode]
+      [candidateId, purposeCode],
     );
 
     if (consentRows.length === 0) {
       blockers.push({
         type: `consent_${purposeCode}_missing`,
         reason: `${purposeCode} consent not recorded`,
-        severity: 'warning',
+        severity: "warning",
       });
-    } else if ((consentRows[0] as any).consent_status === 'withdrawn') {
+    } else if ((consentRows[0] as any).consent_status === "withdrawn") {
       blockers.push({
         type: `consent_${purposeCode}_withdrawn`,
         reason: `${purposeCode} consent was withdrawn - manual review required`,
-        severity: 'warning',
+        severity: "warning",
       });
     }
   }
 
-  return { valid: blockers.filter(b => b.severity === 'critical').length === 0, blockers };
+  return {
+    valid: blockers.filter((b) => b.severity === "critical").length === 0,
+    blockers,
+  };
 }
 
 /**
@@ -1256,18 +1457,23 @@ async function queueAmlScreening(input: {
     `SELECT designation_name FROM designation_master WHERE id = ? LIMIT 1`,
     [input.designationId],
   );
-  const designationName = String((rows as RowDataPacket[])[0]?.designation_name ?? "").trim();
+  const designationName = String(
+    (rows as RowDataPacket[])[0]?.designation_name ?? "",
+  ).trim();
   if (!designationName) return;
 
-  const { getBgvRequirementsByDesignation } = await import("../ats/bgv-config.js");
+  const { getBgvRequirementsByDesignation } =
+    await import("../ats/bgv-config.js");
   if (!getBgvRequirementsByDesignation(designationName).aml) return;
 
-  const [cfg] = await db.execute<RowDataPacket[]>(
-    `SELECT setting_value FROM org_settings
+  const [cfg] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT setting_value FROM org_settings
       WHERE setting_key IN ('aml_api_url', 'prescreening_api_url')
         AND setting_value IS NOT NULL AND setting_value <> ''
       LIMIT 1`,
-  ).catch(() => [[] as RowDataPacket[]]);
+    )
+    .catch(() => [[] as RowDataPacket[]]);
 
   const configured = (cfg as RowDataPacket[]).length > 0;
   try {
@@ -1282,7 +1488,11 @@ async function queueAmlScreening(input: {
         configured
           ? `AML screening required for ${designationName} — queued.`
           : `AML screening is required for ${designationName}, but no AML provider is configured. A human must clear this.`,
-        JSON.stringify({ designation: designationName, providerConfigured: configured, employeeId: input.employeeId }),
+        JSON.stringify({
+          designation: designationName,
+          providerConfigured: configured,
+          employeeId: input.employeeId,
+        }),
       ],
     );
   } catch (error) {
@@ -1294,8 +1504,8 @@ async function queueAmlScreening(input: {
     const message = (error as Error)?.message ?? String(error);
     if (/check_type/i.test(message) || /Data truncated/i.test(message)) {
       throw new Error(
-        `AML screening could not be recorded for ${designationName}: candidate_bgv_check.check_type `
-        + `does not accept 'aml' yet. Apply backend/sql/1060_bgv_check_type_aml.sql. (${message})`,
+        `AML screening could not be recorded for ${designationName}: candidate_bgv_check.check_type ` +
+          `does not accept 'aml' yet. Apply backend/sql/1060_bgv_check_type_aml.sql. (${message})`,
       );
     }
     throw error;
@@ -1305,7 +1515,14 @@ async function queueAmlScreening(input: {
 export async function validateNoOpenFraudAlerts(
   conn: PoolConnection,
   candidateId: string,
-): Promise<{ valid: boolean; blockers: Array<{ type: string; reason: string; severity: 'critical' | 'warning' }> }> {
+): Promise<{
+  valid: boolean;
+  blockers: Array<{
+    type: string;
+    reason: string;
+    severity: "critical" | "warning";
+  }>;
+}> {
   const [rows] = await conn.execute<RowDataPacket[]>(
     `SELECT id, alert_type, severity
        FROM candidate_fraud_alert
@@ -1320,21 +1537,24 @@ export async function validateNoOpenFraudAlerts(
   // only in the SQL means the rule that decides whether someone can be hired
   // exists nowhere a reader or a test can see it, and a later edit to the
   // WHERE clause would silently widen what blocks.
-  const BLOCKING_SEVERITIES = new Set(['critical', 'high']);
+  const BLOCKING_SEVERITIES = new Set(["critical", "high"]);
   const open = (rows as RowDataPacket[]).filter((row) =>
-    BLOCKING_SEVERITIES.has(String(row.severity ?? '').toLowerCase()));
+    BLOCKING_SEVERITIES.has(String(row.severity ?? "").toLowerCase()),
+  );
   if (!open.length) return { valid: true, blockers: [] };
 
   const types = [...new Set(open.map((row) => String(row.alert_type)))];
   return {
     valid: false,
-    blockers: [{
-      type: 'FRAUD_ALERT_OPEN',
-      severity: 'critical',
-      reason:
-        `${open.length} unresolved fraud alert(s) on this candidate: ${types.join(', ')}. `
-        + `Payroll HR must review and clear them before an employee record can be created.`,
-    }],
+    blockers: [
+      {
+        type: "FRAUD_ALERT_OPEN",
+        severity: "critical",
+        reason:
+          `${open.length} unresolved fraud alert(s) on this candidate: ${types.join(", ")}. ` +
+          `Payroll HR must review and clear them before an employee record can be created.`,
+      },
+    ],
   };
 }
 
@@ -1343,9 +1563,16 @@ export async function validateNoOpenFraudAlerts(
  */
 async function validateStatutoryInfo(
   conn: PoolConnection,
-  candidateId: string
-): Promise<{ valid: boolean; blockers: Array<{ type: string; reason: string; severity: 'critical' }> }> {
-  const blockers: Array<{ type: string; reason: string; severity: 'critical' }> = [];
+  candidateId: string,
+): Promise<{
+  valid: boolean;
+  blockers: Array<{ type: string; reason: string; severity: "critical" }>;
+}> {
+  const blockers: Array<{
+    type: string;
+    reason: string;
+    severity: "critical";
+  }> = [];
 
   // PAN and Aadhaar come from the candidate only — the same rule the employee
   // INSERT above already follows. candidate_onboarding_profile has no
@@ -1362,7 +1589,7 @@ async function validateStatutoryInfo(
     `SELECT c.pan_number, c.aadhar_number
      FROM ats_candidate c
      WHERE c.id = ? LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
 
   const panNumber = (candRows[0] as any)?.pan_number?.trim();
@@ -1372,9 +1599,9 @@ async function validateStatutoryInfo(
   if (panNumber) {
     if (!PAN_REGEX.test(panNumber)) {
       blockers.push({
-        type: 'invalid_pan_format',
+        type: "invalid_pan_format",
         reason: `Invalid PAN format: ${panNumber}`,
-        severity: 'critical',
+        severity: "critical",
       });
     } else {
       // Check PAN duplicate (RULE 10)
@@ -1387,12 +1614,16 @@ async function validateStatutoryInfo(
       // pan_number on 915 of 1,125 active (81%), aadhaar_number on 1,043 (93%).
       // Both are consulted now; statutory_info stays because the few rows it
       // does have are still true.
-      const existing = await findActiveEmployeeByStatutoryId(conn, 'pan', panNumber);
+      const existing = await findActiveEmployeeByStatutoryId(
+        conn,
+        "pan",
+        panNumber,
+      );
       if (existing) {
         blockers.push({
-          type: 'duplicate_pan',
+          type: "duplicate_pan",
           reason: `PAN ${panNumber} already registered to ACTIVE employee ${existing.employee_code} (${existing.full_name}). This candidate is already employed — converting them would create a second employee record for one person. If this is a genuine rehire, close the existing employment first.`,
-          severity: 'critical',
+          severity: "critical",
         });
       }
     }
@@ -1401,9 +1632,9 @@ async function validateStatutoryInfo(
   // Validate Aadhaar format
   if (aadhaarNumber && !AADHAAR_REGEX.test(aadhaarNumber)) {
     blockers.push({
-      type: 'invalid_aadhaar_format',
+      type: "invalid_aadhaar_format",
       reason: `Invalid Aadhaar format: must be 12 digits`,
-      severity: 'critical',
+      severity: "critical",
     });
   } else if (aadhaarNumber) {
     // Aadhaar had NO duplicate check at all — only a format test. It is the
@@ -1411,12 +1642,16 @@ async function validateStatutoryInfo(
     // PAN's 81%. This is the check that would have stopped MAS63086, a full
     // joining kit and e-sign chase raised on 2026-08-05 for someone already
     // working under MAS62457 with attendance through 2026-08-06.
-    const existing = await findActiveEmployeeByStatutoryId(conn, 'aadhaar', aadhaarNumber);
+    const existing = await findActiveEmployeeByStatutoryId(
+      conn,
+      "aadhaar",
+      aadhaarNumber,
+    );
     if (existing) {
       blockers.push({
-        type: 'duplicate_aadhaar',
+        type: "duplicate_aadhaar",
         reason: `Aadhaar already registered to ACTIVE employee ${existing.employee_code} (${existing.full_name}). This candidate is already employed — converting them would create a second employee record for one person. If this is a genuine rehire, close the existing employment first.`,
-        severity: 'critical',
+        severity: "critical",
       });
     }
   }
@@ -1439,14 +1674,14 @@ async function validateStatutoryInfo(
  */
 async function findActiveEmployeeByStatutoryId(
   conn: PoolConnection,
-  kind: 'pan' | 'aadhaar',
-  value: string
+  kind: "pan" | "aadhaar",
+  value: string,
 ): Promise<{ employee_code: string; full_name: string } | null> {
-  const employeeColumn = kind === 'pan' ? 'e.pan_number' : 'e.aadhaar_number';
+  const employeeColumn = kind === "pan" ? "e.pan_number" : "e.aadhaar_number";
   // employee_statutory_info spells it aadhaar_id, not aadhaar_number — the two
   // tables disagree, and guessing the employees-table name here would throw
   // ER_BAD_FIELD_ERROR on every conversion. Verified against live schema.
-  const statutoryColumn = kind === 'pan' ? 's.pan_number' : 's.aadhaar_id';
+  const statutoryColumn = kind === "pan" ? "s.pan_number" : "s.aadhaar_id";
 
   try {
     const [rows] = await conn.execute<RowDataPacket[]>(
@@ -1458,11 +1693,15 @@ async function findActiveEmployeeByStatutoryId(
           AND ( (${employeeColumn} IS NOT NULL AND ${employeeColumn} <> '' AND ${employeeColumn} = ?)
              OR (${statutoryColumn} IS NOT NULL AND ${statutoryColumn} <> '' AND ${statutoryColumn} = ?) )
         LIMIT 1`,
-      [value, value]
+      [value, value],
     );
-    const hit = rows[0] as { employee_code?: string; full_name?: string } | undefined;
+    const hit = rows[0] as
+      { employee_code?: string; full_name?: string } | undefined;
     return hit?.employee_code
-      ? { employee_code: String(hit.employee_code), full_name: String(hit.full_name ?? '').trim() }
+      ? {
+          employee_code: String(hit.employee_code),
+          full_name: String(hit.full_name ?? "").trim(),
+        }
       : null;
   } catch (error) {
     // employee_statutory_info.aadhaar_number may not exist on every environment.
@@ -1474,15 +1713,19 @@ async function findActiveEmployeeByStatutoryId(
       `SELECT employee_code, TRIM(CONCAT_WS(' ', first_name, last_name)) AS full_name
          FROM employees
         WHERE active_status = 1
-          AND ${employeeColumn.replace('e.', '')} IS NOT NULL
-          AND ${employeeColumn.replace('e.', '')} <> ''
-          AND ${employeeColumn.replace('e.', '')} = ?
+          AND ${employeeColumn.replace("e.", "")} IS NOT NULL
+          AND ${employeeColumn.replace("e.", "")} <> ''
+          AND ${employeeColumn.replace("e.", "")} = ?
         LIMIT 1`,
-      [value]
+      [value],
     );
-    const hit = rows[0] as { employee_code?: string; full_name?: string } | undefined;
+    const hit = rows[0] as
+      { employee_code?: string; full_name?: string } | undefined;
     return hit?.employee_code
-      ? { employee_code: String(hit.employee_code), full_name: String(hit.full_name ?? '').trim() }
+      ? {
+          employee_code: String(hit.employee_code),
+          full_name: String(hit.full_name ?? "").trim(),
+        }
       : null;
   }
 }
@@ -1492,16 +1735,15 @@ async function findActiveEmployeeByStatutoryId(
  */
 async function validateReportingManager(
   conn: PoolConnection,
-  managerId: string
+  managerId: string,
 ): Promise<boolean> {
   const [managerRows] = await conn.execute<RowDataPacket[]>(
     `SELECT active_status FROM employees WHERE id = ? LIMIT 1`,
-    [managerId]
+    [managerId],
   );
 
   return managerRows.length > 0 && (managerRows[0] as any).active_status === 1;
 }
-
 
 /**
  * Create related employee records (statutory, salary, nominee, leave)
@@ -1512,11 +1754,11 @@ async function createRelatedEmployeeRecords(
   candidateId: string,
   offer: any,
   candRow: any,
-  actorUserId: string
+  actorUserId: string,
 ): Promise<void> {
-  const panNumber = String(candRow?.pan_number ?? '').trim() || null;
-  const aadhaarNumber = String(candRow?.aadhar_number ?? '').trim() || null;
-  const uanNumber = String(candRow?.uan_number ?? '').trim() || null;
+  const panNumber = String(candRow?.pan_number ?? "").trim() || null;
+  const aadhaarNumber = String(candRow?.aadhar_number ?? "").trim() || null;
+  const uanNumber = String(candRow?.uan_number ?? "").trim() || null;
 
   // Statutory info. The column is `aadhaar_id`, not `aadhaar_number`.
   if (panNumber || aadhaarNumber || uanNumber) {
@@ -1533,11 +1775,14 @@ async function createRelatedEmployeeRecords(
           pf_eligible, esi_eligible)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)`,
       [
-        randomUUID(), employeeId, panNumber,
+        randomUUID(),
+        employeeId,
+        panNumber,
         encryptPanForSync(panNumber, "employee-creation"),
         blindIndexPan(panNumber, "employee-creation"),
-        aadhaarNumber, uanNumber,
-      ]
+        aadhaarNumber,
+        uanNumber,
+      ],
     );
   }
 
@@ -1588,7 +1833,7 @@ async function createRelatedEmployeeRecords(
       offer.pli ?? 0,
       offer.pay_mode ?? null,
       offer.salary_payment_mode ?? null,
-    ]
+    ],
   );
 
   // Opening leave balance. The ledger tracks allocated/used/adjusted days per
@@ -1607,7 +1852,7 @@ async function createRelatedEmployeeRecords(
       WHERE lt.leave_code = 'CL'
       LIMIT 1
      ON DUPLICATE KEY UPDATE employee_id = leave_balance_ledger.employee_id`,
-    [randomUUID(), employeeId, offer.date_of_joining]
+    [randomUUID(), employeeId, offer.date_of_joining],
   );
 
   // Form 11 PF opt-out: if the candidate elected PF opt-out during onboarding
@@ -1620,10 +1865,11 @@ async function createRelatedEmployeeRecords(
   // INSERT IGNORE: safe to retry — the unique key uq_emp_override_active on
   // (employee_id, override_type, status) prevents a second approved row.
   if (candRow?.pf_opt_out_elected) {
-    const joiningDate: Date = offer.date_of_joining instanceof Date
-      ? offer.date_of_joining
-      : new Date(String(offer.date_of_joining));
-    const effectiveFromMonth = `${joiningDate.getFullYear()}-${String(joiningDate.getMonth() + 1).padStart(2, '0')}`;
+    const joiningDate: Date =
+      offer.date_of_joining instanceof Date
+        ? offer.date_of_joining
+        : new Date(String(offer.date_of_joining));
+    const effectiveFromMonth = `${joiningDate.getFullYear()}-${String(joiningDate.getMonth() + 1).padStart(2, "0")}`;
 
     await conn.execute(
       `INSERT IGNORE INTO employee_statutory_override
@@ -1634,7 +1880,7 @@ async function createRelatedEmployeeRecords(
                ?, 'PF opt-out elected by employee on Form 11 during onboarding',
                ?, NOW(), ?,
                'Auto-approved from Form 11 election — no Payroll HO review required for first-employment declarations')`,
-      [employeeId, actorUserId, actorUserId, effectiveFromMonth]
+      [employeeId, actorUserId, actorUserId, effectiveFromMonth],
     );
   }
 
@@ -1651,16 +1897,21 @@ async function createRelatedEmployeeRecords(
   // is naturally idempotent alongside the Form 11 block above if both happened to be true for
   // the same employee (first write for a given override_type wins; the two paths never disagree
   // about approval, only about provenance).
-  const offerOptOuts: Array<{ flag: unknown; overrideType: 'pf_opt_out' | 'esic_opt_out'; label: string }> = [
-    { flag: offer.pf_opt_out, overrideType: 'pf_opt_out', label: 'PF' },
-    { flag: offer.esic_opt_out, overrideType: 'esic_opt_out', label: 'ESIC' },
+  const offerOptOuts: Array<{
+    flag: unknown;
+    overrideType: "pf_opt_out" | "esic_opt_out";
+    label: string;
+  }> = [
+    { flag: offer.pf_opt_out, overrideType: "pf_opt_out", label: "PF" },
+    { flag: offer.esic_opt_out, overrideType: "esic_opt_out", label: "ESIC" },
   ];
   for (const { flag, overrideType, label } of offerOptOuts) {
     if (!Number(flag)) continue;
-    const joiningDate: Date = offer.date_of_joining instanceof Date
-      ? offer.date_of_joining
-      : new Date(String(offer.date_of_joining));
-    const effectiveFromMonth = `${joiningDate.getFullYear()}-${String(joiningDate.getMonth() + 1).padStart(2, '0')}`;
+    const joiningDate: Date =
+      offer.date_of_joining instanceof Date
+        ? offer.date_of_joining
+        : new Date(String(offer.date_of_joining));
+    const effectiveFromMonth = `${joiningDate.getFullYear()}-${String(joiningDate.getMonth() + 1).padStart(2, "0")}`;
 
     await conn.execute(
       `INSERT IGNORE INTO employee_statutory_override
@@ -1671,12 +1922,15 @@ async function createRelatedEmployeeRecords(
                ?, ?,
                ?, NOW(), ?, ?)`,
       [
-        employeeId, overrideType,
-        actorUserId, `${label} opt-out elected by Payroll HR at offer creation`,
-        actorUserId, effectiveFromMonth,
-        `Auto-approved from offer ${offer.id ?? ''} — Branch Head already approved this offer, ` +
+        employeeId,
+        overrideType,
+        actorUserId,
+        `${label} opt-out elected by Payroll HR at offer creation`,
+        actorUserId,
+        effectiveFromMonth,
+        `Auto-approved from offer ${offer.id ?? ""} — Branch Head already approved this offer, ` +
           `which included the ${label} opt-out election; no separate Payroll HO review required.`,
-      ]
+      ],
     );
   }
 
@@ -1694,7 +1948,7 @@ async function createRelatedEmployeeRecords(
       `INSERT IGNORE INTO employee_salary_assignment
          (id, employee_id, structure_id, ctc_annual, effective_from, active_status)
        VALUES (UUID(), ?, NULL, ?, ?, 1)`,
-      [employeeId, annualCtc, salaryEffectiveFrom]
+      [employeeId, annualCtc, salaryEffectiveFrom],
     );
   }
 
@@ -1708,7 +1962,7 @@ async function createRelatedEmployeeRecords(
   await conn.execute(
     `INSERT IGNORE INTO employee_payroll_head_review (id, employee_id, candidate_id, status)
      VALUES (UUID(), ?, ?, 'pending_review')`,
-    [employeeId, candidateId]
+    [employeeId, candidateId],
   );
 
   // Emergency contact carried over from Onboarding (candidate_onboarding_profile), so the ID
@@ -1719,8 +1973,12 @@ async function createRelatedEmployeeRecords(
   // same as before this change. ON DUPLICATE KEY UPDATE on (employee_id, contact_seq) mirrors
   // the self-service upsert at employee.routes.ts's PUT /me/emergency-contact, so a retried
   // conversion never raises ER_DUP_ENTRY and never overwrites a value someone already entered.
-  const onboardingEmergencyName = String(candRow?.emergency_contact_name ?? '').trim();
-  const onboardingEmergencyMobile = String(candRow?.emergency_contact_mobile ?? '').trim();
+  const onboardingEmergencyName = String(
+    candRow?.emergency_contact_name ?? "",
+  ).trim();
+  const onboardingEmergencyMobile = String(
+    candRow?.emergency_contact_mobile ?? "",
+  ).trim();
   if (onboardingEmergencyName && onboardingEmergencyMobile) {
     await conn.execute(
       `INSERT INTO employee_emergency_contact (id, employee_id, contact_seq, is_primary, name, relationship, mobile)
@@ -1729,11 +1987,12 @@ async function createRelatedEmployeeRecords(
          name = IF(employee_emergency_contact.name = '', VALUES(name), employee_emergency_contact.name),
          mobile = IF(employee_emergency_contact.mobile = '', VALUES(mobile), employee_emergency_contact.mobile)`,
       [
-        randomUUID(), employeeId,
+        randomUUID(),
+        employeeId,
         toStoredNameRequired(onboardingEmergencyName),
-        String(candRow?.emergency_contact_relation ?? '').trim() || null,
+        String(candRow?.emergency_contact_relation ?? "").trim() || null,
         onboardingEmergencyMobile,
-      ]
+      ],
     );
   }
 
@@ -1800,13 +2059,13 @@ async function createRelatedEmployeeRecords(
       LIMIT 1`,
     // First ? is the derived table's candidate filter (rn is computed per candidate, so
     // restricting it to this candidate changes nothing but avoids ranking all ~29k rows).
-    [candidateId, candidateId]
+    [candidateId, candidateId],
   );
   const verifiedAccount = pennyDropRows[0];
   if (verifiedAccount?.account_no) {
     const [existingPrimary] = await conn.execute<RowDataPacket[]>(
       `SELECT id FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 AND is_primary = 1 LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     if (!existingPrimary.length) {
       const accountNoStr = String(verifiedAccount.account_no).trim();
@@ -1817,7 +2076,8 @@ async function createRelatedEmployeeRecords(
             bank_name, bank_branch, account_type, verified, active_status)
          VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, 'savings', 1, 1)`,
         [
-          randomUUID(), employeeId,
+          randomUUID(),
+          employeeId,
           verifiedAccount.account_holder_name ?? null,
           accountNoStr,
           encryptField(accountNoStr),
@@ -1825,7 +2085,7 @@ async function createRelatedEmployeeRecords(
           verifiedAccount.ifsc_code ?? null,
           verifiedAccount.bank_name ?? null,
           verifiedAccount.branch_name ?? null,
-        ]
+        ],
       );
     }
   }

@@ -26,7 +26,12 @@ describe("business action signal sync", () => {
   const liveCode = () =>
     code()
       .split("\n")
-      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*") && !l.trim().startsWith("/*"))
+      .filter(
+        (l) =>
+          !l.trim().startsWith("//") &&
+          !l.trim().startsWith("*") &&
+          !l.trim().startsWith("/*"),
+      )
       .join("\n");
 
   it("never groups by a table-qualified select alias", () => {
@@ -40,12 +45,17 @@ describe("business action signal sync", () => {
     // owner_user_id is joined to auth_user, so it must be populated from
     // employees.user_id of the manager row.
     expect(src).toContain("mgr.user_id AS reporting_manager_user_id");
-    expect(src).not.toContain("e.reporting_manager_id AS reporting_manager_user_id");
+    expect(src).not.toContain(
+      "e.reporting_manager_id AS reporting_manager_user_id",
+    );
   });
 
   it("joins the manager row in both queries that need it", () => {
     const src = code();
-    const joins = src.match(/LEFT JOIN employees mgr ON mgr\.id = e\.reporting_manager_id/g) ?? [];
+    const joins =
+      src.match(
+        /LEFT JOIN employees mgr ON mgr\.id = e\.reporting_manager_id/g,
+      ) ?? [];
     // people-risk and attendance-gap
     expect(joins.length).toBeGreaterThanOrEqual(2);
   });
@@ -53,7 +63,9 @@ describe("business action signal sync", () => {
   it("still falls back to HR when the manager has no login", () => {
     // 121 of 1,115 active employees have no auth_user, so mgr.user_id is NULL
     // for them and the action must not end up ownerless.
-    expect(code()).toMatch(/owner_role:\s*\w+\.reporting_manager_user_id\s*\?\s*null\s*:\s*['"]hr['"]/);
+    expect(code()).toMatch(
+      /owner_role:\s*\w+\.reporting_manager_user_id\s*\?\s*null\s*:\s*['"]hr['"]/,
+    );
   });
 
   /**
@@ -81,7 +93,9 @@ describe("business action signal sync", () => {
     // ('pending_approval' never appears live; 'draft'/'processing'/'approved' do).
     const src = code();
     expect(src).toContain("CLOSED_RUN_STATUSES_SQL");
-    expect(src).not.toMatch(/status\s+IN\s*\(\s*'draft'\s*,\s*'pending_approval'\s*\)/);
+    expect(src).not.toMatch(
+      /status\s+IN\s*\(\s*'draft'\s*,\s*'pending_approval'\s*\)/,
+    );
   });
 
   /**
@@ -94,7 +108,9 @@ describe("business action signal sync", () => {
    */
   it("hashes the payroll issue source_id instead of concatenating past the column limit", () => {
     const src = code();
-    expect(src).toMatch(/createHash\(['"]md5['"]\)\.update\(`\$\{run\.id\}_\$\{issue\.code\}`\)\.digest\(['"]hex['"]\)/);
+    expect(src).toMatch(
+      /createHash\(['"]md5['"]\)\.update\(`\$\{run\.id\}_\$\{issue\.code\}`\)\.digest\(['"]hex['"]\)/,
+    );
     expect(src).not.toContain("source_id: `${run.id}_${issue.code}`");
   });
 
@@ -107,11 +123,22 @@ describe("business action signal sync", () => {
    */
   it("clamps title/source_id once and reuses the clamped value for both the lookup and the insert", () => {
     const src = code();
-    const ensureActionBody = src.slice(src.indexOf("async function ensureAction"));
-    expect(ensureActionBody).toMatch(/const sourceId = clamp\(input\.source_id, 36\)/);
-    expect(ensureActionBody).toMatch(/const title = clamp\(input\.title, 500\)/);
+    const ensureActionBody = src.slice(
+      src.indexOf("async function ensureAction"),
+    );
+    expect(ensureActionBody).toMatch(
+      /const sourceId = clamp\(input\.source_id, 36\)/,
+    );
+    expect(ensureActionBody).toMatch(
+      /const title = clamp\(input\.title, 500\)/,
+    );
     // The SELECT (dedup lookup) must bind the clamped variable, not input.source_id directly.
-    const selectClause = ensureActionBody.slice(0, ensureActionBody.indexOf("INSERT INTO business_action_queue"));
-    expect(selectClause).toContain("[input.source_module, sourceId, input.risk_type]");
+    const selectClause = ensureActionBody.slice(
+      0,
+      ensureActionBody.indexOf("INSERT INTO business_action_queue"),
+    );
+    expect(selectClause).toContain(
+      "[input.source_module, sourceId, input.risk_type]",
+    );
   });
 });

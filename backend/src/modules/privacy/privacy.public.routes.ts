@@ -20,8 +20,10 @@ import { db } from "../../db/mysql.js";
  */
 export const privacyPublicRouter = Router();
 
-const h = (fn: (req: never, res: Response) => Promise<unknown>) =>
-  (req: never, res: Response, next: (error?: unknown) => void) => fn(req, res).catch(next);
+const h =
+  (fn: (req: never, res: Response) => Promise<unknown>) =>
+  (req: never, res: Response, next: (error?: unknown) => void) =>
+    fn(req, res).catch(next);
 
 export interface GrievanceOfficer {
   name: string;
@@ -44,12 +46,14 @@ const GRIEVANCE_PLACEHOLDERS = new Set([
 
 const configured = (value: string | undefined) => {
   const trimmed = (value ?? "").trim();
-  return trimmed && !GRIEVANCE_PLACEHOLDERS.has(trimmed.toLowerCase()) ? trimmed : "";
+  return trimmed && !GRIEVANCE_PLACEHOLDERS.has(trimmed.toLowerCase())
+    ? trimmed
+    : "";
 };
 
 /** Exported so the placeholder rules can be tested without standing up the route. */
 export function resolveGrievanceOfficer(
-  config: Map<string, string>
+  config: Map<string, string>,
 ): GrievanceOfficer | null {
   const name = configured(config.get("grievance_officer_name"));
   const email = configured(config.get("grievance_officer_email"));
@@ -80,11 +84,13 @@ privacyPublicRouter.get(
           'grievance_officer_email',
           'grievance_officer_designation',
           'grievance_response_sla_days'
-        )`
+        )`,
     );
-    const config = new Map(rows.map((row) => [String(row.config_key), String(row.config_value)]));
+    const config = new Map(
+      rows.map((row) => [String(row.config_key), String(row.config_value)]),
+    );
     // null, not 404: the footer asks on every page and simply renders nothing when the
     // officer is unset. An error would be noise for a state that is merely unconfigured.
     return res.json({ success: true, data: resolveGrievanceOfficer(config) });
-  })
+  }),
 );

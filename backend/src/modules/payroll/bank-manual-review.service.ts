@@ -56,7 +56,12 @@ export interface ManualReviewGapRow {
   // candidate_onboarding_document rather than trusting cancelled_cheque_document_id — that FK is
   // populated on only ~0.7% of rows (an auto-link bug on some upload paths leaves it null even
   // when a real document exists), confirmed live 2026-09-11.
-  proof_document: { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null } | null;
+  proof_document: {
+    id: string;
+    doc_type: string;
+    file_name: string | null;
+    uploaded_at: string | null;
+  } | null;
 }
 
 /**
@@ -115,7 +120,9 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
   // Proof documents matter only for the manual_review case (a verified account needs no human
   // eyeballing a photo), but the lookup is cheap and uniform either way — keeps the mapping
   // below simple, and the frontend already only renders the image when status is manual_review.
-  const candidateIds = (rows as any[]).map((r) => r.candidate_id).filter(Boolean);
+  const candidateIds = (rows as any[])
+    .map((r) => r.candidate_id)
+    .filter(Boolean);
   const proofByCandidate = await getProofDocumentsByCandidate(candidateIds);
 
   return (rows as any[]).map((r) => ({
@@ -128,7 +135,8 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
     account_masked: maskAccount(r.bank_account_no),
     ifsc_code: r.ifsc_code ?? null,
     account_holder_name: r.account_holder_name ?? null,
-    name_match_score: r.name_match_score == null ? null : Number(r.name_match_score),
+    name_match_score:
+      r.name_match_score == null ? null : Number(r.name_match_score),
     verified_at: r.verified_at ?? null,
     bank_name: r.ob_bank_name ?? null,
     branch_name_onboarding: r.ob_branch_name ?? null,
@@ -148,8 +156,26 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
  */
 async function getProofDocumentsByCandidate(
   candidateIds: string[],
-): Promise<Map<string, { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null }>> {
-  const result = new Map<string, { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null }>();
+): Promise<
+  Map<
+    string,
+    {
+      id: string;
+      doc_type: string;
+      file_name: string | null;
+      uploaded_at: string | null;
+    }
+  >
+> {
+  const result = new Map<
+    string,
+    {
+      id: string;
+      doc_type: string;
+      file_name: string | null;
+      uploaded_at: string | null;
+    }
+  >();
   if (!candidateIds.length) return result;
 
   const placeholders = candidateIds.map(() => "?").join(",");
@@ -186,7 +212,9 @@ async function getProofDocumentsByCandidate(
  */
 export async function approveManualReviewBankDetail(params: {
   employeeId: string;
-}): Promise<{ status: "inserted" | "already_has_primary" | "no_manual_review_row" }> {
+}): Promise<{
+  status: "inserted" | "already_has_primary" | "no_manual_review_row";
+}> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.bank_account_no AS account_no,
             COALESCE(NULLIF(v.ifsc_code, ''), c.bank_ifsc) AS ifsc_code,
@@ -208,7 +236,8 @@ export async function approveManualReviewBankDetail(params: {
     `SELECT id FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 AND is_primary = 1 LIMIT 1`,
     [params.employeeId],
   );
-  if ((existingPrimary as any[]).length) return { status: "already_has_primary" };
+  if ((existingPrimary as any[]).length)
+    return { status: "already_has_primary" };
 
   // No created_by/updated_by columns on this table (confirmed against the live schema) --
   // matches the orchestrator's own insert shape exactly. Who approved this lives in the
@@ -220,7 +249,8 @@ export async function approveManualReviewBankDetail(params: {
         account_number, account_number_enc, account_number_blind_index, ifsc_code, account_type, verified, active_status)
      VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, 'savings', 1, 1)`,
     [
-      randomUUID(), params.employeeId,
+      randomUUID(),
+      params.employeeId,
       row.account_holder_name ?? null,
       accountNoStr,
       encryptField(accountNoStr),

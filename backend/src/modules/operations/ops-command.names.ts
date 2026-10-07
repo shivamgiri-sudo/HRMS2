@@ -17,9 +17,14 @@ const UNASSIGNED: Record<string, string> = {
 };
 
 /** Display names for group ids (one indexed lookup per dimension, ids bound as parameters). */
-export async function resolveNames(dim: OpsDimension, ids: string[]): Promise<Map<string, GroupLabel>> {
+export async function resolveNames(
+  dim: OpsDimension,
+  ids: string[],
+): Promise<Map<string, GroupLabel>> {
   const out = new Map<string, GroupLabel>();
-  for (const id of ids) if (id === NONE_ID) out.set(id, { name: UNASSIGNED[dim] ?? "Unassigned", sub: null });
+  for (const id of ids)
+    if (id === NONE_ID)
+      out.set(id, { name: UNASSIGNED[dim] ?? "Unassigned", sub: null });
   if (dim === "all") {
     out.set("all", { name: UNASSIGNED.all, sub: null });
     return out;
@@ -45,6 +50,10 @@ export async function resolveNames(dim: OpsDimension, ids: string[]): Promise<Ma
                FROM employees e LEFT JOIN process_master p ON p.id = e.process_id WHERE e.id IN (${marks})`;
   }
   const [rows] = await db.execute<RowDataPacket[]>(sql, real);
-  for (const r of rows) out.set(String(r.id), { name: String(r.name ?? "—"), sub: r.sub ? String(r.sub) : null });
+  for (const r of rows)
+    out.set(String(r.id), {
+      name: String(r.name ?? "—"),
+      sub: r.sub ? String(r.sub) : null,
+    });
   return out;
 }

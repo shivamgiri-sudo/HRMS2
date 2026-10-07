@@ -26,31 +26,328 @@ type SourceSpec = {
 };
 
 const SOURCE_REGISTRY: SourceSpec[] = [
-  { key: "ATS_CANDIDATE", title: "ATS CANDIDATE CREATION", table: "ats_candidate", requiredColumns: ["id", "candidate_code", "full_name", "current_stage", "created_at"], authoritativeFor: ["APPLICATION CREATED", "CURRENT ATS STAGE"], activityDateColumn: "created_at", immutable: false },
-  { key: "ATS_STAGE_LOG", title: "ATS STAGE HISTORY", table: "ats_candidate_stage_log", requiredColumns: ["id", "candidate_id", "from_stage", "to_stage", "stage_date", "updated_by"], authoritativeFor: ["INTERVIEW STAGE MOVEMENT", "SELECTION/REJECTION MOVEMENT"], activityDateColumn: "stage_date", actorColumn: "updated_by", immutable: true },
-  { key: "ONBOARDING_BRIDGE", title: "CANDIDATE TO EMPLOYEE BRIDGE", table: "ats_onboarding_bridge", requiredColumns: ["id", "candidate_id", "employee_id", "bridge_date", "status", "created_at"], authoritativeFor: ["EMPLOYEE CODE LINKAGE", "JOINING BRIDGE"], activityDateColumn: "created_at", actorColumn: "created_by", immutable: true },
-  { key: "EMPLOYEE_JOURNEY", title: "EMPLOYEE JOURNEY LOG", table: "employee_journey_log", requiredColumns: ["id", "employee_id", "event_type", "event_date", "description", "created_at"], authoritativeFor: ["EMPLOYEE JOURNEY EVENT"], activityDateColumn: "created_at", actorColumn: "triggered_by", immutable: true },
-  { key: "LIFECYCLE_EVENT", title: "EMPLOYEE LIFECYCLE EVENT", table: "employee_lifecycle_event", requiredColumns: ["id", "employee_id", "event_type", "effective_date", "old_value_json", "new_value_json", "created_at"], authoritativeFor: ["CONFIRMATION", "TRANSFER", "PROMOTION", "ROLE/BRANCH/PROCESS CHANGE"], activityDateColumn: "created_at", actorColumn: "initiated_by", immutable: true },
-  { key: "JOB_HISTORY", title: "EMPLOYEE JOB HISTORY", table: "employee_job_history", requiredColumns: ["id", "employee_id", "effective_date", "change_type", "created_at"], authoritativeFor: ["POSITION HISTORY", "SALARY/ORG MOVEMENT HISTORY"], activityDateColumn: "created_at", actorColumn: "created_by", immutable: true },
-  { key: "COACHING", title: "COACHING SESSION", table: "coaching_session", requiredColumns: ["id", "employee_id", "session_date", "session_type", "status", "created_at"], authoritativeFor: ["COACHING", "DEVELOPMENT DISCUSSION"], activityDateColumn: "created_at", actorColumn: "coach_user_id", immutable: true },
-  { key: "PIP", title: "PERFORMANCE IMPROVEMENT PLAN", table: "pip_record", requiredColumns: ["id", "employee_id", "start_date", "end_date", "reason", "status", "created_at"], authoritativeFor: ["PIP START", "PIP STATUS", "PIP OUTCOME"], activityDateColumn: "created_at", actorColumn: "initiated_by", immutable: true },
-  { key: "LETTER", title: "GENERATED EMPLOYEE LETTER", table: "generated_letter", requiredColumns: ["id", "employee_id", "letter_type", "issued_date", "created_at"], authoritativeFor: ["OFFER/CONFIRMATION/EXPERIENCE LETTER ISSUANCE"], activityDateColumn: "created_at", actorColumn: "generated_by", immutable: true },
-  { key: "ASSET_ASSIGNMENT", title: "ASSET CUSTODY", table: "asset_assignment", requiredColumns: ["id", "asset_id", "employee_id", "assigned_date", "returned_date", "created_at"], authoritativeFor: ["ASSET ISSUE", "ASSET RETURN"], activityDateColumn: "created_at", actorColumn: "assigned_by", immutable: true },
-  { key: "EXIT_REQUEST", title: "EXIT REQUEST", table: "exit_request", requiredColumns: ["id", "employee_id", "exit_type", "exit_sub_type", "status", "created_at"], authoritativeFor: ["RESIGNATION/TERMINATION INITIATION", "EXIT STATUS", "LAST WORKING DAY"], activityDateColumn: "created_at", actorColumn: "initiated_by_user_id", immutable: false },
-  { key: "EXIT_APPROVAL", title: "EXIT APPROVAL HISTORY", table: "exit_approval_log", requiredColumns: ["id", "exit_request_id", "stage", "action", "action_by", "action_by_role", "created_at"], authoritativeFor: ["EXIT DISCUSSION", "EXIT APPROVAL/REJECTION/REVOCATION"], activityDateColumn: "created_at", actorColumn: "action_by", immutable: true },
+  {
+    key: "ATS_CANDIDATE",
+    title: "ATS CANDIDATE CREATION",
+    table: "ats_candidate",
+    requiredColumns: [
+      "id",
+      "candidate_code",
+      "full_name",
+      "current_stage",
+      "created_at",
+    ],
+    authoritativeFor: ["APPLICATION CREATED", "CURRENT ATS STAGE"],
+    activityDateColumn: "created_at",
+    immutable: false,
+  },
+  {
+    key: "ATS_STAGE_LOG",
+    title: "ATS STAGE HISTORY",
+    table: "ats_candidate_stage_log",
+    requiredColumns: [
+      "id",
+      "candidate_id",
+      "from_stage",
+      "to_stage",
+      "stage_date",
+      "updated_by",
+    ],
+    authoritativeFor: [
+      "INTERVIEW STAGE MOVEMENT",
+      "SELECTION/REJECTION MOVEMENT",
+    ],
+    activityDateColumn: "stage_date",
+    actorColumn: "updated_by",
+    immutable: true,
+  },
+  {
+    key: "ONBOARDING_BRIDGE",
+    title: "CANDIDATE TO EMPLOYEE BRIDGE",
+    table: "ats_onboarding_bridge",
+    requiredColumns: [
+      "id",
+      "candidate_id",
+      "employee_id",
+      "bridge_date",
+      "status",
+      "created_at",
+    ],
+    authoritativeFor: ["EMPLOYEE CODE LINKAGE", "JOINING BRIDGE"],
+    activityDateColumn: "created_at",
+    actorColumn: "created_by",
+    immutable: true,
+  },
+  {
+    key: "EMPLOYEE_JOURNEY",
+    title: "EMPLOYEE JOURNEY LOG",
+    table: "employee_journey_log",
+    requiredColumns: [
+      "id",
+      "employee_id",
+      "event_type",
+      "event_date",
+      "description",
+      "created_at",
+    ],
+    authoritativeFor: ["EMPLOYEE JOURNEY EVENT"],
+    activityDateColumn: "created_at",
+    actorColumn: "triggered_by",
+    immutable: true,
+  },
+  {
+    key: "LIFECYCLE_EVENT",
+    title: "EMPLOYEE LIFECYCLE EVENT",
+    table: "employee_lifecycle_event",
+    requiredColumns: [
+      "id",
+      "employee_id",
+      "event_type",
+      "effective_date",
+      "old_value_json",
+      "new_value_json",
+      "created_at",
+    ],
+    authoritativeFor: [
+      "CONFIRMATION",
+      "TRANSFER",
+      "PROMOTION",
+      "ROLE/BRANCH/PROCESS CHANGE",
+    ],
+    activityDateColumn: "created_at",
+    actorColumn: "initiated_by",
+    immutable: true,
+  },
+  {
+    key: "JOB_HISTORY",
+    title: "EMPLOYEE JOB HISTORY",
+    table: "employee_job_history",
+    requiredColumns: [
+      "id",
+      "employee_id",
+      "effective_date",
+      "change_type",
+      "created_at",
+    ],
+    authoritativeFor: ["POSITION HISTORY", "SALARY/ORG MOVEMENT HISTORY"],
+    activityDateColumn: "created_at",
+    actorColumn: "created_by",
+    immutable: true,
+  },
+  {
+    key: "COACHING",
+    title: "COACHING SESSION",
+    table: "coaching_session",
+    requiredColumns: [
+      "id",
+      "employee_id",
+      "session_date",
+      "session_type",
+      "status",
+      "created_at",
+    ],
+    authoritativeFor: ["COACHING", "DEVELOPMENT DISCUSSION"],
+    activityDateColumn: "created_at",
+    actorColumn: "coach_user_id",
+    immutable: true,
+  },
+  {
+    key: "PIP",
+    title: "PERFORMANCE IMPROVEMENT PLAN",
+    table: "pip_record",
+    requiredColumns: [
+      "id",
+      "employee_id",
+      "start_date",
+      "end_date",
+      "reason",
+      "status",
+      "created_at",
+    ],
+    authoritativeFor: ["PIP START", "PIP STATUS", "PIP OUTCOME"],
+    activityDateColumn: "created_at",
+    actorColumn: "initiated_by",
+    immutable: true,
+  },
+  {
+    key: "LETTER",
+    title: "GENERATED EMPLOYEE LETTER",
+    table: "generated_letter",
+    requiredColumns: [
+      "id",
+      "employee_id",
+      "letter_type",
+      "issued_date",
+      "created_at",
+    ],
+    authoritativeFor: ["OFFER/CONFIRMATION/EXPERIENCE LETTER ISSUANCE"],
+    activityDateColumn: "created_at",
+    actorColumn: "generated_by",
+    immutable: true,
+  },
+  {
+    key: "ASSET_ASSIGNMENT",
+    title: "ASSET CUSTODY",
+    table: "asset_assignment",
+    requiredColumns: [
+      "id",
+      "asset_id",
+      "employee_id",
+      "assigned_date",
+      "returned_date",
+      "created_at",
+    ],
+    authoritativeFor: ["ASSET ISSUE", "ASSET RETURN"],
+    activityDateColumn: "created_at",
+    actorColumn: "assigned_by",
+    immutable: true,
+  },
+  {
+    key: "EXIT_REQUEST",
+    title: "EXIT REQUEST",
+    table: "exit_request",
+    requiredColumns: [
+      "id",
+      "employee_id",
+      "exit_type",
+      "exit_sub_type",
+      "status",
+      "created_at",
+    ],
+    authoritativeFor: [
+      "RESIGNATION/TERMINATION INITIATION",
+      "EXIT STATUS",
+      "LAST WORKING DAY",
+    ],
+    activityDateColumn: "created_at",
+    actorColumn: "initiated_by_user_id",
+    immutable: false,
+  },
+  {
+    key: "EXIT_APPROVAL",
+    title: "EXIT APPROVAL HISTORY",
+    table: "exit_approval_log",
+    requiredColumns: [
+      "id",
+      "exit_request_id",
+      "stage",
+      "action",
+      "action_by",
+      "action_by_role",
+      "created_at",
+    ],
+    authoritativeFor: ["EXIT DISCUSSION", "EXIT APPROVAL/REJECTION/REVOCATION"],
+    activityDateColumn: "created_at",
+    actorColumn: "action_by",
+    immutable: true,
+  },
   // 2026-08-19: was exit_clearance_checklist (0 live rows, abandoned) — exit_clearance_task
   // is what the exit module writes (24 live rows); department -> clearance_area, assigned_to
   // -> owner_user_id (a real user id — owner_role holds a role string like 'payroll'/'wfm').
-  { key: "EXIT_CLEARANCE", title: "EXIT CLEARANCE HISTORY", table: "exit_clearance_task", requiredColumns: ["id", "exit_request_id", "clearance_area", "status", "created_at"], authoritativeFor: ["DEPARTMENT CLEARANCE", "EXIT RECOVERY"], activityDateColumn: "created_at", actorColumn: "owner_user_id", immutable: true },
-  { key: "SENSITIVE_ACTION", title: "SENSITIVE ACTION LOG", table: "sensitive_action_log", requiredColumns: ["id", "action_type", "module_key", "created_at"], authoritativeFor: ["SENSITIVE DATA CHANGE", "PRIVILEGED ACTION"], activityDateColumn: "created_at", actorColumn: "actor_user_id", immutable: true },
-  { key: "AUDIT_LOG", title: "SYSTEM AUDIT LOG", table: "audit_log", requiredColumns: ["id", "action_type", "module_key", "created_at"], authoritativeFor: ["SYSTEM USER ACTIVITY", "CONTROL EVIDENCE"], activityDateColumn: "created_at", actorColumn: "actor_user_id", immutable: true },
-  { key: "ATS_OFFER", title: "OFFER MANAGEMENT", table: "ats_offer", requiredColumns: ["id", "candidate_id", "status", "offer_date", "created_at"], authoritativeFor: ["OFFER CREATED", "OFFER STATUS", "OFFER ACCEPTED/REJECTED"], activityDateColumn: "created_at", actorColumn: "prepared_by", immutable: false },
-  { key: "LEAVE_REQUEST", title: "LEAVE REQUEST", table: "leave_request", requiredColumns: ["id", "employee_id", "leave_type_id", "from_date", "to_date", "status", "applied_at"], authoritativeFor: ["LEAVE APPLIED", "LEAVE APPROVED", "LEAVE REJECTED"], activityDateColumn: "applied_at", immutable: false },
+  {
+    key: "EXIT_CLEARANCE",
+    title: "EXIT CLEARANCE HISTORY",
+    table: "exit_clearance_task",
+    requiredColumns: [
+      "id",
+      "exit_request_id",
+      "clearance_area",
+      "status",
+      "created_at",
+    ],
+    authoritativeFor: ["DEPARTMENT CLEARANCE", "EXIT RECOVERY"],
+    activityDateColumn: "created_at",
+    actorColumn: "owner_user_id",
+    immutable: true,
+  },
+  {
+    key: "SENSITIVE_ACTION",
+    title: "SENSITIVE ACTION LOG",
+    table: "sensitive_action_log",
+    requiredColumns: ["id", "action_type", "module_key", "created_at"],
+    authoritativeFor: ["SENSITIVE DATA CHANGE", "PRIVILEGED ACTION"],
+    activityDateColumn: "created_at",
+    actorColumn: "actor_user_id",
+    immutable: true,
+  },
+  {
+    key: "AUDIT_LOG",
+    title: "SYSTEM AUDIT LOG",
+    table: "audit_log",
+    requiredColumns: ["id", "action_type", "module_key", "created_at"],
+    authoritativeFor: ["SYSTEM USER ACTIVITY", "CONTROL EVIDENCE"],
+    activityDateColumn: "created_at",
+    actorColumn: "actor_user_id",
+    immutable: true,
+  },
+  {
+    key: "ATS_OFFER",
+    title: "OFFER MANAGEMENT",
+    table: "ats_offer",
+    requiredColumns: [
+      "id",
+      "candidate_id",
+      "status",
+      "offer_date",
+      "created_at",
+    ],
+    authoritativeFor: [
+      "OFFER CREATED",
+      "OFFER STATUS",
+      "OFFER ACCEPTED/REJECTED",
+    ],
+    activityDateColumn: "created_at",
+    actorColumn: "prepared_by",
+    immutable: false,
+  },
+  {
+    key: "LEAVE_REQUEST",
+    title: "LEAVE REQUEST",
+    table: "leave_request",
+    requiredColumns: [
+      "id",
+      "employee_id",
+      "leave_type_id",
+      "from_date",
+      "to_date",
+      "status",
+      "applied_at",
+    ],
+    authoritativeFor: ["LEAVE APPLIED", "LEAVE APPROVED", "LEAVE REJECTED"],
+    activityDateColumn: "applied_at",
+    immutable: false,
+  },
   // NOTE: salary_prep_run is a run-level batch record with no employee_id.
   // This entry enables verifySources() schema checking only.
   // Per-employee payroll events require joining through salary_prep_line.
-  { key: "SALARY_RUN", title: "PAYROLL RUN RECORD", table: "salary_prep_run", requiredColumns: ["id", "run_month", "status", "created_at"], authoritativeFor: ["PAYROLL RUN CREATED", "PAYROLL RUN APPROVED"], activityDateColumn: "created_at", actorColumn: "created_by", immutable: false },
-  { key: "REGULARISATION", title: "ATTENDANCE REGULARISATION", table: "attendance_regularization", requiredColumns: ["id", "employee_id", "session_date", "status", "reason", "reviewed_by", "created_at"], authoritativeFor: ["REGULARISATION REQUEST", "REGULARISATION APPROVED"], activityDateColumn: "created_at", actorColumn: "reviewed_by", immutable: false },
+  {
+    key: "SALARY_RUN",
+    title: "PAYROLL RUN RECORD",
+    table: "salary_prep_run",
+    requiredColumns: ["id", "run_month", "status", "created_at"],
+    authoritativeFor: ["PAYROLL RUN CREATED", "PAYROLL RUN APPROVED"],
+    activityDateColumn: "created_at",
+    actorColumn: "created_by",
+    immutable: false,
+  },
+  {
+    key: "REGULARISATION",
+    title: "ATTENDANCE REGULARISATION",
+    table: "attendance_regularization",
+    requiredColumns: [
+      "id",
+      "employee_id",
+      "session_date",
+      "status",
+      "reason",
+      "reviewed_by",
+      "created_at",
+    ],
+    authoritativeFor: ["REGULARISATION REQUEST", "REGULARISATION APPROVED"],
+    activityDateColumn: "created_at",
+    actorColumn: "reviewed_by",
+    immutable: false,
+  },
 ];
 
 async function schemaColumns() {
@@ -82,13 +379,18 @@ async function schemaColumns() {
   return map;
 }
 
-function has(columns: Map<string, Set<string>>, table: string, required: string[]) {
+function has(
+  columns: Map<string, Set<string>>,
+  table: string,
+  required: string[],
+) {
   const actual = columns.get(table);
   return Boolean(actual && required.every((column) => actual.has(column)));
 }
 
 function branchPredicate(scope: BranchScope, alias = "e") {
-  if (scope.isSuperAdmin || scope.branchIds.length === 0) return { sql: "1=1", params: [] as unknown[] };
+  if (scope.isSuperAdmin || scope.branchIds.length === 0)
+    return { sql: "1=1", params: [] as unknown[] };
   return {
     sql: `${alias}.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`,
     params: [...scope.branchIds],
@@ -118,12 +420,19 @@ export const journeyAuditReportService = {
     const columns = await schemaColumns();
     return SOURCE_REGISTRY.map((source) => {
       const actual = columns.get(source.table) ?? new Set<string>();
-      const missingColumns = source.requiredColumns.filter((column) => !actual.has(column));
+      const missingColumns = source.requiredColumns.filter(
+        (column) => !actual.has(column),
+      );
       return {
         SOURCE_KEY: source.key,
         SOURCE_TITLE: source.title,
         SOURCE_TABLE: source.table,
-        SOURCE_STATUS: missingColumns.length === 0 ? "VERIFIED" : actual.size ? "COLUMN_GAP" : "TABLE_MISSING",
+        SOURCE_STATUS:
+          missingColumns.length === 0
+            ? "VERIFIED"
+            : actual.size
+              ? "COLUMN_GAP"
+              : "TABLE_MISSING",
         AUTHORITATIVE_FOR: source.authoritativeFor.join(" | "),
         ACTIVITY_DATE_COLUMN: source.activityDateColumn,
         ACTOR_COLUMN: source.actorColumn ?? "SYSTEM/NOT RECORDED",
@@ -142,7 +451,15 @@ export const journeyAuditReportService = {
     const params: unknown[] = [];
     const branch = branchPredicate(scope);
 
-    if (has(columns, "ats_candidate", ["id", "candidate_code", "full_name", "current_stage", "created_at"])) {
+    if (
+      has(columns, "ats_candidate", [
+        "id",
+        "candidate_code",
+        "full_name",
+        "current_stage",
+        "created_at",
+      ])
+    ) {
       parts.push(`SELECT
         COALESCE(e.employee_code, 'PENDING EMPLOYEE CODE') AS EMPLOYEE_CODE,
         DATE_FORMAT(c.created_at, '%d-%m-%Y') AS REPORT_DATE,
@@ -164,7 +481,16 @@ export const journeyAuditReportService = {
       params.push(filters.from, `${filters.to} 23:59:59`, ...branch.params);
     }
 
-    if (has(columns, "ats_candidate_stage_log", ["id", "candidate_id", "from_stage", "to_stage", "stage_date", "updated_by"])) {
+    if (
+      has(columns, "ats_candidate_stage_log", [
+        "id",
+        "candidate_id",
+        "from_stage",
+        "to_stage",
+        "stage_date",
+        "updated_by",
+      ])
+    ) {
       parts.push(`SELECT
         COALESCE(e.employee_code, 'PENDING EMPLOYEE CODE') AS EMPLOYEE_CODE,
         DATE_FORMAT(l.stage_date, '%d-%m-%Y') AS REPORT_DATE,
@@ -191,7 +517,16 @@ export const journeyAuditReportService = {
       params.push(filters.from, `${filters.to} 23:59:59`, ...branch.params);
     }
 
-    if (has(columns, "employee_journey_log", ["id", "employee_id", "event_type", "event_date", "description", "created_at"])) {
+    if (
+      has(columns, "employee_journey_log", [
+        "id",
+        "employee_id",
+        "event_type",
+        "event_date",
+        "description",
+        "created_at",
+      ])
+    ) {
       parts.push(`SELECT e.employee_code AS EMPLOYEE_CODE, DATE_FORMAT(j.created_at, '%d-%m-%Y') AS REPORT_DATE,
         NULL AS CANDIDATE_ID, NULL AS CANDIDATE_CODE, e.full_name AS PERSON_NAME,
         COALESCE(j.module, 'EMPLOYEE LIFECYCLE') AS JOURNEY_PHASE, j.event_type AS ACTIVITY_TYPE,
@@ -209,7 +544,17 @@ export const journeyAuditReportService = {
       params.push(filters.from, `${filters.to} 23:59:59`, ...branch.params);
     }
 
-    if (has(columns, "employee_lifecycle_event", ["id", "employee_id", "event_type", "effective_date", "old_value_json", "new_value_json", "created_at"])) {
+    if (
+      has(columns, "employee_lifecycle_event", [
+        "id",
+        "employee_id",
+        "event_type",
+        "effective_date",
+        "old_value_json",
+        "new_value_json",
+        "created_at",
+      ])
+    ) {
       parts.push(`SELECT e.employee_code, DATE_FORMAT(le.created_at,'%d-%m-%Y'), NULL,NULL,e.full_name,
         'EMPLOYMENT LIFECYCLE', le.event_type, COALESCE(CAST(le.approved_by AS CHAR),'RECORDED'), le.created_at, le.effective_date,
         COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(le.initiated_by AS CHAR),'SYSTEM'),
@@ -224,7 +569,15 @@ export const journeyAuditReportService = {
       params.push(filters.from, `${filters.to} 23:59:59`, ...branch.params);
     }
 
-    if (has(columns, "employee_job_history", ["id", "employee_id", "effective_date", "change_type", "created_at"])) {
+    if (
+      has(columns, "employee_job_history", [
+        "id",
+        "employee_id",
+        "effective_date",
+        "change_type",
+        "created_at",
+      ])
+    ) {
       parts.push(`SELECT e.employee_code,DATE_FORMAT(jh.created_at,'%d-%m-%Y'),NULL,NULL,e.full_name,
         'JOB HISTORY',jh.change_type,jh.change_type,jh.created_at,jh.effective_date,
         COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(jh.created_by AS CHAR),'SYSTEM'),
@@ -240,7 +593,17 @@ export const journeyAuditReportService = {
       params.push(filters.from, `${filters.to} 23:59:59`, ...branch.params);
     }
 
-    if (has(columns, "exit_approval_log", ["id", "exit_request_id", "stage", "action", "action_by", "action_by_role", "created_at"])) {
+    if (
+      has(columns, "exit_approval_log", [
+        "id",
+        "exit_request_id",
+        "stage",
+        "action",
+        "action_by",
+        "action_by_role",
+        "created_at",
+      ])
+    ) {
       parts.push(`SELECT e.employee_code,DATE_FORMAT(xl.created_at,'%d-%m-%Y'),NULL,NULL,e.full_name,
         'EXIT',xl.stage,xl.action,xl.created_at,DATE(xl.created_at),
         COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(xl.action_by AS CHAR)),
@@ -258,7 +621,15 @@ export const journeyAuditReportService = {
     // 2026-08-19: was exit_clearance_checklist (0 live rows) — exit_clearance_task is what
     // the exit module writes (24 live rows). department -> clearance_area, assigned_to ->
     // owner_user_id (a real user id, unlike owner_role which holds a role string).
-    if (has(columns, "exit_clearance_task", ["id", "exit_request_id", "clearance_area", "status", "created_at"])) {
+    if (
+      has(columns, "exit_clearance_task", [
+        "id",
+        "exit_request_id",
+        "clearance_area",
+        "status",
+        "created_at",
+      ])
+    ) {
       parts.push(`SELECT e.employee_code,DATE_FORMAT(COALESCE(ec.cleared_at,ec.created_at),'%d-%m-%Y'),NULL,NULL,e.full_name,
         'EXIT CLEARANCE',ec.clearance_area,ec.status,COALESCE(ec.cleared_at,ec.created_at),DATE(COALESCE(ec.cleared_at,ec.created_at)),
         COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(ec.owner_user_id AS CHAR),'SYSTEM'),
@@ -272,31 +643,52 @@ export const journeyAuditReportService = {
       params.push(filters.from, `${filters.to} 23:59:59`, ...branch.params);
     }
 
-    if (parts.length === 0) return { rows: [], totalCount: 0, sources: [], message: "No verified lifecycle source is available." };
+    if (parts.length === 0)
+      return {
+        rows: [],
+        totalCount: 0,
+        sources: [],
+        message: "No verified lifecycle source is available.",
+      };
     let sql = parts.join("\nUNION ALL\n");
     const outer: string[] = [];
-    if (filters.employeeCode) { outer.push("EMPLOYEE_CODE = ?"); params.push(filters.employeeCode); }
-    if (filters.candidateId) { outer.push("CANDIDATE_ID = ?"); params.push(filters.candidateId); }
-    if (filters.module) { outer.push("UPPER(JOURNEY_PHASE) LIKE ?"); params.push(`%${filters.module}%`); }
+    if (filters.employeeCode) {
+      outer.push("EMPLOYEE_CODE = ?");
+      params.push(filters.employeeCode);
+    }
+    if (filters.candidateId) {
+      outer.push("CANDIDATE_ID = ?");
+      params.push(filters.candidateId);
+    }
+    if (filters.module) {
+      outer.push("UPPER(JOURNEY_PHASE) LIKE ?");
+      params.push(`%${filters.module}%`);
+    }
     sql = `SELECT * FROM (${sql}) journey${outer.length ? ` WHERE ${outer.join(" AND ")}` : ""}`;
     const countSql = `SELECT COUNT(*) AS total FROM (${sql}) counted`;
     const [countRows] = await db.execute<RowDataPacket[]>(countSql, params);
-    const [rows] = await db.execute<RowDataPacket[]>(`${sql} ORDER BY ACTIVITY_DATETIME ASC, SOURCE_TABLE, SOURCE_RECORD_ID ${sqlLimitOffset(filters.limit, filters.offset)}`, params);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `${sql} ORDER BY ACTIVITY_DATETIME ASC, SOURCE_TABLE, SOURCE_RECORD_ID ${sqlLimitOffset(filters.limit, filters.offset)}`,
+      params,
+    );
 
     // Compute DAYS_FROM_PREVIOUS_EVENT per person key
     const lastEventDateByPerson = new Map<string, Date>();
     for (const row of rows as Record<string, unknown>[]) {
       const empCode = String(row["EMPLOYEE_CODE"] ?? "");
-      const personKey = (empCode && empCode !== "PENDING EMPLOYEE CODE")
-        ? empCode
-        : String(row["CANDIDATE_ID"] ?? "UNKNOWN");
+      const personKey =
+        empCode && empCode !== "PENDING EMPLOYEE CODE"
+          ? empCode
+          : String(row["CANDIDATE_ID"] ?? "UNKNOWN");
       const activityDateRaw = row["ACTIVITY_DATETIME"];
       if (activityDateRaw) {
         const activityDate = new Date(String(activityDateRaw));
         const lastDate = lastEventDateByPerson.get(personKey);
         if (lastDate && !Number.isNaN(activityDate.getTime())) {
           const diffMs = activityDate.getTime() - lastDate.getTime();
-          row["DAYS_FROM_PREVIOUS_EVENT"] = Math.round(diffMs / (1000 * 60 * 60 * 24));
+          row["DAYS_FROM_PREVIOUS_EVENT"] = Math.round(
+            diffMs / (1000 * 60 * 60 * 24),
+          );
         } else {
           row["DAYS_FROM_PREVIOUS_EVENT"] = null;
         }
@@ -308,7 +700,14 @@ export const journeyAuditReportService = {
       }
     }
 
-    return { rows, totalCount: Number(countRows[0]?.total ?? 0), sources: SOURCE_REGISTRY.filter((s) => has(columns, s.table, s.requiredColumns)).map((s) => s.table), message: null };
+    return {
+      rows,
+      totalCount: Number(countRows[0]?.total ?? 0),
+      sources: SOURCE_REGISTRY.filter((s) =>
+        has(columns, s.table, s.requiredColumns),
+      ).map((s) => s.table),
+      message: null,
+    };
   },
 
   async compliance(filtersInput: JourneyAuditFilters, scope: BranchScope) {
@@ -331,7 +730,10 @@ export const journeyAuditReportService = {
       SOURCE_RECORD_ID: row.SOURCE_RECORD_ID,
       SOURCE_FIELD: row.SOURCE_FIELD,
       SOURCE_CONFIDENCE: row.SOURCE_CONFIDENCE,
-      EVIDENCE_COMPLETE_FLAG: row.ACTIVITY_DATETIME && row.SOURCE_RECORD_ID && row.ACTOR_CODE ? "YES" : "NO",
+      EVIDENCE_COMPLETE_FLAG:
+        row.ACTIVITY_DATETIME && row.SOURCE_RECORD_ID && row.ACTOR_CODE
+          ? "YES"
+          : "NO",
       OLD_VALUE: row.OLD_VALUE,
       NEW_VALUE: row.NEW_VALUE,
       REMARKS: row.REMARKS,

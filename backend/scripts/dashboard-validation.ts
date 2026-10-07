@@ -16,11 +16,15 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import type { DashboardScope } from "../src/shared/dashboardScope.js";
-import { buildScopeWhere, buildScopeWhereEmployees } from "../src/shared/dashboardScope.js";
+import {
+  buildScopeWhere,
+  buildScopeWhereEmployees,
+} from "../src/shared/dashboardScope.js";
 import type { MetricResult } from "../src/modules/dashboards/dashboard-metric.service.js";
 import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from "../src/shared/attendanceStatus.js";
 
-export type CheckOutcome = "MATCH" | "MISMATCH" | "NO_DATA" | "QUERY_FAILED" | "SKIPPED";
+export type CheckOutcome =
+  "MATCH" | "MISMATCH" | "NO_DATA" | "QUERY_FAILED" | "SKIPPED";
 
 export type DatapointCheck = {
   metric: string;
@@ -31,12 +35,18 @@ export type DatapointCheck = {
   note?: string;
 };
 
-async function q(sql: string, params: unknown[] = []): Promise<RowDataPacket[]> {
+async function q(
+  sql: string,
+  params: unknown[] = [],
+): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
 }
 
-async function scalar(sql: string, params: unknown[] = []): Promise<number | null> {
+async function scalar(
+  sql: string,
+  params: unknown[] = [],
+): Promise<number | null> {
   const rows = await q(sql, params);
   const first = rows[0] as Record<string, unknown> | undefined;
   if (!first) return null;
@@ -63,17 +73,29 @@ function compare(
 ): DatapointCheck {
   // A metric whose whole source table is empty is a data gap, not a code defect.
   if (sourceRows === 0) {
-    return { metric, datapoint, serviceValue, expectedValue, outcome: "NO_DATA", note };
+    return {
+      metric,
+      datapoint,
+      serviceValue,
+      expectedValue,
+      outcome: "NO_DATA",
+      note,
+    };
   }
   if (serviceValue === null && expectedValue !== null) {
     return {
-      metric, datapoint, serviceValue, expectedValue, outcome: "QUERY_FAILED",
+      metric,
+      datapoint,
+      serviceValue,
+      expectedValue,
+      outcome: "QUERY_FAILED",
       note: note ?? "service returned null while the source has rows",
     };
   }
-  const outcome: CheckOutcome = Number(serviceValue ?? NaN) === Number(expectedValue ?? NaN)
-    ? "MATCH"
-    : "MISMATCH";
+  const outcome: CheckOutcome =
+    Number(serviceValue ?? NaN) === Number(expectedValue ?? NaN)
+      ? "MATCH"
+      : "MISMATCH";
   return { metric, datapoint, serviceValue, expectedValue, outcome, note };
 }
 
@@ -92,14 +114,19 @@ const detail = (m: MetricResult, key: string): number | null => {
 export async function latestAttendanceDate(): Promise<string | null> {
   // Must be the SAME definition the metric uses, or the comparison measures the
   // anchor rule rather than the metric. Imported rather than re-expressed.
-  const rows = await q(`SELECT ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL} AS record_date`);
+  const rows = await q(
+    `SELECT ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL} AS record_date`,
+  );
   const v = (rows[0] as any)?.record_date;
   return v ? String(v) : null;
 }
 
 // ── Per-metric validators ────────────────────────────────────────────────────
 
-export async function validateHeadcount(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateHeadcount(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const s = buildScopeWhereEmployees(scope, "e");
   const active = await scalar(
     `SELECT COUNT(*) FROM employees e
@@ -109,11 +136,20 @@ export async function validateHeadcount(scope: DashboardScope, m: MetricResult):
     s.params,
   );
   return [
-    compare("HEADCOUNT", "active", detail(m, "active") ?? m.value, active, active),
+    compare(
+      "HEADCOUNT",
+      "active",
+      detail(m, "active") ?? m.value,
+      active,
+      active,
+    ),
   ];
 }
 
-export async function validateOnboarding(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateOnboarding(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("ats_onboarding_bridge");
   const s = buildScopeWhere(scope, "bm.id", "pm.id");
   const base = `
@@ -123,27 +159,51 @@ export async function validateOnboarding(scope: DashboardScope, m: MetricResult)
     LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
     WHERE ${s.sql}`;
 
-  const pending = await scalar(`SELECT COUNT(*) ${base} AND b.status IN ('pending','initiated')`, s.params);
-  const submitted = await scalar(`SELECT COUNT(*) ${base} AND b.status = 'profile_submitted'`, s.params);
-  const joined = await scalar(`SELECT COUNT(*) ${base} AND b.status = 'joined'`, s.params);
+  const pending = await scalar(
+    `SELECT COUNT(*) ${base} AND b.status IN ('pending','initiated')`,
+    s.params,
+  );
+  const submitted = await scalar(
+    `SELECT COUNT(*) ${base} AND b.status = 'profile_submitted'`,
+    s.params,
+  );
+  const joined = await scalar(
+    `SELECT COUNT(*) ${base} AND b.status = 'joined'`,
+    s.params,
+  );
   const scopedTotal = await scalar(`SELECT COUNT(*) ${base}`, s.params);
 
   return [
     compare("ONBOARDING", "pending", detail(m, "pending"), pending, total),
-    compare("ONBOARDING", "submitted", detail(m, "submitted"), submitted, total),
+    compare(
+      "ONBOARDING",
+      "submitted",
+      detail(m, "submitted"),
+      submitted,
+      total,
+    ),
     compare("ONBOARDING", "joined", detail(m, "joined"), joined, total),
     compare("ONBOARDING", "total", detail(m, "total"), scopedTotal, total),
   ];
 }
 
-export async function validateAttendance(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateAttendance(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("attendance_daily_record");
   const day = await latestAttendanceDate();
   if (!day) {
-    return [{
-      metric: "ATTENDANCE", datapoint: "*", serviceValue: m.value, expectedValue: null,
-      outcome: "NO_DATA", note: "no attendance day with >10 records",
-    }];
+    return [
+      {
+        metric: "ATTENDANCE",
+        datapoint: "*",
+        serviceValue: m.value,
+        expectedValue: null,
+        outcome: "NO_DATA",
+        note: "no attendance day with >10 records",
+      },
+    ];
   }
   const s = buildScopeWhereEmployees(scope, "e");
   const base = `
@@ -153,12 +213,30 @@ export async function validateAttendance(scope: DashboardScope, m: MetricResult)
   const params = [day, ...s.params];
 
   // 'present' must include week_off_worked, matching shared/attendanceStatus.ts.
-  const present = await scalar(`SELECT COUNT(*) ${base} AND a.attendance_status IN ('present','week_off_worked')`, params);
-  const absent = await scalar(`SELECT COUNT(*) ${base} AND a.attendance_status='absent'`, params);
-  const missing = await scalar(`SELECT COUNT(*) ${base} AND a.attendance_status='missing_punch'`, params);
-  const half = await scalar(`SELECT COUNT(*) ${base} AND a.attendance_status='half_day'`, params);
-  const late = await scalar(`SELECT COUNT(*) ${base} AND a.late_mark=1`, params);
-  const onLeave = await scalar(`SELECT COUNT(*) ${base} AND a.attendance_status IN ('leave_approved','on_leave','leave')`, params);
+  const present = await scalar(
+    `SELECT COUNT(*) ${base} AND a.attendance_status IN ('present','week_off_worked')`,
+    params,
+  );
+  const absent = await scalar(
+    `SELECT COUNT(*) ${base} AND a.attendance_status='absent'`,
+    params,
+  );
+  const missing = await scalar(
+    `SELECT COUNT(*) ${base} AND a.attendance_status='missing_punch'`,
+    params,
+  );
+  const half = await scalar(
+    `SELECT COUNT(*) ${base} AND a.attendance_status='half_day'`,
+    params,
+  );
+  const late = await scalar(
+    `SELECT COUNT(*) ${base} AND a.late_mark=1`,
+    params,
+  );
+  const onLeave = await scalar(
+    `SELECT COUNT(*) ${base} AND a.attendance_status IN ('leave_approved','on_leave','leave')`,
+    params,
+  );
   const expected = await scalar(
     `SELECT COUNT(*) ${base} AND a.attendance_status NOT IN ('holiday','week_off','leave_approved','on_leave','leave')`,
     params,
@@ -171,17 +249,48 @@ export async function validateAttendance(scope: DashboardScope, m: MetricResult)
 
   const note = `anchored on ${day}; rows dated today = ${todayRows ?? 0}`;
   return [
-    compare("ATTENDANCE", "present", detail(m, "present"), present, total, note),
+    compare(
+      "ATTENDANCE",
+      "present",
+      detail(m, "present"),
+      present,
+      total,
+      note,
+    ),
     compare("ATTENDANCE", "absent", detail(m, "absent"), absent, total, note),
-    compare("ATTENDANCE", "missedPunch", detail(m, "missedPunch"), missing, total, note),
+    compare(
+      "ATTENDANCE",
+      "missedPunch",
+      detail(m, "missedPunch"),
+      missing,
+      total,
+      note,
+    ),
     compare("ATTENDANCE", "halfDay", detail(m, "halfDay"), half, total, note),
     compare("ATTENDANCE", "late", detail(m, "late"), late, total, note),
-    compare("ATTENDANCE", "onLeave", detail(m, "onLeave"), onLeave, total, note),
-    compare("ATTENDANCE", "expectedToWork", detail(m, "expectedToWork"), expected, total, note),
+    compare(
+      "ATTENDANCE",
+      "onLeave",
+      detail(m, "onLeave"),
+      onLeave,
+      total,
+      note,
+    ),
+    compare(
+      "ATTENDANCE",
+      "expectedToWork",
+      detail(m, "expectedToWork"),
+      expected,
+      total,
+      note,
+    ),
   ];
 }
 
-export async function validatePayrollReadiness(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validatePayrollReadiness(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const s = buildScopeWhereEmployees(scope, "e");
   // Must use the SAME active-employee predicate as the metric (and as HEADCOUNT):
   // active_status alone counts 2 extra rows whose employment_status is not 'active',
@@ -204,11 +313,20 @@ export async function validatePayrollReadiness(scope: DashboardScope, m: MetricR
   );
   return [
     compare("PAYROLL_READINESS", "total", detail(m, "total"), total, total),
-    compare("PAYROLL_READINESS", "readyCount", detail(m, "readyCount"), ready, total),
+    compare(
+      "PAYROLL_READINESS",
+      "readyCount",
+      detail(m, "readyCount"),
+      ready,
+      total,
+    ),
   ];
 }
 
-export async function validateBgv(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateBgv(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("candidate_bgv_check");
   const s = buildScopeWhere(scope, "bm.id", "pm.id");
   const base = `
@@ -219,11 +337,17 @@ export async function validateBgv(scope: DashboardScope, m: MetricResult): Promi
     WHERE ${s.sql}`;
 
   const pending = await scalar(
-    `SELECT COUNT(*) ${base} AND (bgv.status IS NULL OR bgv.status IN ('pending','not_started','queued','manual_review','in_progress'))`, s.params);
+    `SELECT COUNT(*) ${base} AND (bgv.status IS NULL OR bgv.status IN ('pending','not_started','queued','manual_review','in_progress'))`,
+    s.params,
+  );
   const cleared = await scalar(
-    `SELECT COUNT(*) ${base} AND bgv.status IN ('cleared','verified','passed')`, s.params);
+    `SELECT COUNT(*) ${base} AND bgv.status IN ('cleared','verified','passed')`,
+    s.params,
+  );
   const flagged = await scalar(
-    `SELECT COUNT(*) ${base} AND bgv.status IN ('flagged','failed','mismatch','discrepancy')`, s.params);
+    `SELECT COUNT(*) ${base} AND bgv.status IN ('flagged','failed','mismatch','discrepancy')`,
+    s.params,
+  );
   const scoped = await scalar(`SELECT COUNT(*) ${base}`, s.params);
 
   const checks = [
@@ -239,12 +363,18 @@ export async function validateBgv(scope: DashboardScope, m: MetricResult): Promi
     serviceValue: bucketed,
     expectedValue: scoped,
     outcome: bucketed === scoped ? "MATCH" : "MISMATCH",
-    note: bucketed === scoped ? "" : "some BGV statuses fall into no bucket and are invisible",
+    note:
+      bucketed === scoped
+        ? ""
+        : "some BGV statuses fall into no bucket and are invisible",
   });
   return checks;
 }
 
-export async function validateResignation(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateResignation(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("exit_request");
   const s = buildScopeWhere(scope, "e.branch_id", "e.process_id");
   const active = await scalar(
@@ -253,7 +383,15 @@ export async function validateResignation(scope: DashboardScope, m: MetricResult
       WHERE er.status NOT IN ('completed','cancelled') AND ${s.sql}`,
     s.params,
   );
-  return [compare("RESIGNATION", "totalActive", detail(m, "totalActive") ?? m.value, active, total)];
+  return [
+    compare(
+      "RESIGNATION",
+      "totalActive",
+      detail(m, "totalActive") ?? m.value,
+      active,
+      total,
+    ),
+  ];
 }
 
 // ── Validators for the newly-added metric sources ────────────────────────────
@@ -261,7 +399,10 @@ export async function validateResignation(scope: DashboardScope, m: MetricResult
 // That method has caught three wrong assumptions of mine so far, so no new metric ships
 // without one.
 
-export async function validateAttendanceExceptions(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateAttendanceExceptions(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("attendance_reconciliation_issue");
   const s = buildScopeWhere(scope, "emp.branch_id", "emp.process_id");
   // issue_date, not created_at (which does not exist); open is resolved_at IS NULL.
@@ -270,29 +411,66 @@ export async function validateAttendanceExceptions(scope: DashboardScope, m: Met
     LEFT JOIN employees emp ON emp.id = ari.employee_id
     WHERE ari.issue_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${s.sql}`;
 
-  const openTotal = await scalar(`SELECT COUNT(*) ${base} AND ari.resolved_at IS NULL`, s.params);
-  const blockers = await scalar(`SELECT COUNT(*) ${base} AND ari.resolved_at IS NULL AND ari.severity='blocker'`, s.params);
-  const missingAdr = await scalar(`SELECT COUNT(*) ${base} AND ari.resolved_at IS NULL AND ari.issue_type='missing_adr'`, s.params);
+  const openTotal = await scalar(
+    `SELECT COUNT(*) ${base} AND ari.resolved_at IS NULL`,
+    s.params,
+  );
+  const blockers = await scalar(
+    `SELECT COUNT(*) ${base} AND ari.resolved_at IS NULL AND ari.severity='blocker'`,
+    s.params,
+  );
+  const missingAdr = await scalar(
+    `SELECT COUNT(*) ${base} AND ari.resolved_at IS NULL AND ari.issue_type='missing_adr'`,
+    s.params,
+  );
   const payable = await scalar(
     `SELECT COUNT(*) ${base} AND ari.resolved_at IS NULL AND ari.issue_type='salary_payable_days_mismatch'`,
     s.params,
   );
 
   return [
-    compare("ATTENDANCE_EXCEPTIONS", "openTotal", detail(m, "openTotal") ?? m.value, openTotal, total),
-    compare("ATTENDANCE_EXCEPTIONS", "blockers", detail(m, "blockers"), blockers, total),
-    compare("ATTENDANCE_EXCEPTIONS", "missingAdr", detail(m, "missingAdr"), missingAdr, total),
-    compare("ATTENDANCE_EXCEPTIONS", "payableMismatch", detail(m, "payableMismatch"), payable, total),
+    compare(
+      "ATTENDANCE_EXCEPTIONS",
+      "openTotal",
+      detail(m, "openTotal") ?? m.value,
+      openTotal,
+      total,
+    ),
+    compare(
+      "ATTENDANCE_EXCEPTIONS",
+      "blockers",
+      detail(m, "blockers"),
+      blockers,
+      total,
+    ),
+    compare(
+      "ATTENDANCE_EXCEPTIONS",
+      "missingAdr",
+      detail(m, "missingAdr"),
+      missingAdr,
+      total,
+    ),
+    compare(
+      "ATTENDANCE_EXCEPTIONS",
+      "payableMismatch",
+      detail(m, "payableMismatch"),
+      payable,
+      total,
+    ),
   ];
 }
 
-export async function validateDocCompliance(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateDocCompliance(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("employee_documents");
   const s = buildScopeWhereEmployees(scope, "e");
   // Counted over ACTIVE employees only, and with a NOT EXISTS rather than the service's
   // LEFT JOIN aggregate, so the two disagree if either is wrong.
   const activeEmployees = await scalar(
-    `SELECT COUNT(*) FROM employees e WHERE e.active_status = 1 AND ${s.sql}`, s.params,
+    `SELECT COUNT(*) FROM employees e WHERE e.active_status = 1 AND ${s.sql}`,
+    s.params,
   );
   const noDocs = await scalar(
     `SELECT COUNT(*) FROM employees e
@@ -307,24 +485,53 @@ export async function validateDocCompliance(scope: DashboardScope, m: MetricResu
   );
 
   return [
-    compare("DOC_COMPLIANCE", "activeEmployees", detail(m, "activeEmployees"), activeEmployees, total),
-    compare("DOC_COMPLIANCE", "employeesWithNoDocs", detail(m, "employeesWithNoDocs") ?? m.value, noDocs, total),
-    compare("DOC_COMPLIANCE", "verifiedDocs", detail(m, "verifiedDocs"), verifiedDocs, total),
+    compare(
+      "DOC_COMPLIANCE",
+      "activeEmployees",
+      detail(m, "activeEmployees"),
+      activeEmployees,
+      total,
+    ),
+    compare(
+      "DOC_COMPLIANCE",
+      "employeesWithNoDocs",
+      detail(m, "employeesWithNoDocs") ?? m.value,
+      noDocs,
+      total,
+    ),
+    compare(
+      "DOC_COMPLIANCE",
+      "verifiedDocs",
+      detail(m, "verifiedDocs"),
+      verifiedDocs,
+      total,
+    ),
   ];
 }
 
-export async function validateBiometricActivity(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateBiometricActivity(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("integration_biometric_daily");
   const s = buildScopeWhereEmployees(scope, "e");
   // Must use the same "latest complete day" anchor as the metric, or this measures the
   // anchor rule instead of the metric. Today is excluded because a partial day reads as
   // mass early departure (1.54h at 15:00 vs 10.34h the day before).
-  const day = await scalar(`SELECT 1 FROM integration_biometric_daily WHERE activity_date < CURDATE() LIMIT 1`);
+  const day = await scalar(
+    `SELECT 1 FROM integration_biometric_daily WHERE activity_date < CURDATE() LIMIT 1`,
+  );
   if (day === null) {
-    return [{
-      metric: "BIOMETRIC_ACTIVITY", datapoint: "*", serviceValue: m.value, expectedValue: null,
-      outcome: "NO_DATA", note: "no biometric activity before today",
-    }];
+    return [
+      {
+        metric: "BIOMETRIC_ACTIVITY",
+        datapoint: "*",
+        serviceValue: m.value,
+        expectedValue: null,
+        outcome: "NO_DATA",
+        note: "no biometric activity before today",
+      },
+    ];
   }
   const base = `
     FROM integration_biometric_daily b
@@ -332,18 +539,48 @@ export async function validateBiometricActivity(scope: DashboardScope, m: Metric
     WHERE b.activity_date = (SELECT MAX(activity_date) FROM integration_biometric_daily WHERE activity_date < CURDATE())
       AND e.active_status = 1 AND ${s.sql}`;
 
-  const employees = await scalar(`SELECT COUNT(DISTINCT b.employee_code) ${base}`, s.params);
-  const pairs = await scalar(`SELECT COUNT(*) ${base} AND b.total_punches >= 2`, s.params);
-  const single = await scalar(`SELECT COUNT(*) ${base} AND b.total_punches = 1`, s.params);
+  const employees = await scalar(
+    `SELECT COUNT(DISTINCT b.employee_code) ${base}`,
+    s.params,
+  );
+  const pairs = await scalar(
+    `SELECT COUNT(*) ${base} AND b.total_punches >= 2`,
+    s.params,
+  );
+  const single = await scalar(
+    `SELECT COUNT(*) ${base} AND b.total_punches = 1`,
+    s.params,
+  );
 
   return [
-    compare("BIOMETRIC_ACTIVITY", "employees", detail(m, "employees") ?? m.value, employees, total),
-    compare("BIOMETRIC_ACTIVITY", "completePunchPairs", detail(m, "completePunchPairs"), pairs, total),
-    compare("BIOMETRIC_ACTIVITY", "singlePunchOnly", detail(m, "singlePunchOnly"), single, total),
+    compare(
+      "BIOMETRIC_ACTIVITY",
+      "employees",
+      detail(m, "employees") ?? m.value,
+      employees,
+      total,
+    ),
+    compare(
+      "BIOMETRIC_ACTIVITY",
+      "completePunchPairs",
+      detail(m, "completePunchPairs"),
+      pairs,
+      total,
+    ),
+    compare(
+      "BIOMETRIC_ACTIVITY",
+      "singlePunchOnly",
+      detail(m, "singlePunchOnly"),
+      single,
+      total,
+    ),
   ];
 }
 
-export async function validateSalaryComponents(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateSalaryComponents(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("salary_prep_line_component");
   const s = buildScopeWhereEmployees(scope, "e");
   const base = `
@@ -352,18 +589,48 @@ export async function validateSalaryComponents(scope: DashboardScope, m: MetricR
     WHERE c.run_id = (SELECT id FROM salary_prep_run ORDER BY run_month DESC, created_at DESC LIMIT 1)
       AND ${s.sql}`;
 
-  const codes = await scalar(`SELECT COUNT(DISTINCT c.component_code) ${base}`, s.params);
-  const earningLines = await scalar(`SELECT COUNT(*) ${base} AND c.component_type='earning'`, s.params);
-  const deductionLines = await scalar(`SELECT COUNT(*) ${base} AND c.component_type='deduction'`, s.params);
+  const codes = await scalar(
+    `SELECT COUNT(DISTINCT c.component_code) ${base}`,
+    s.params,
+  );
+  const earningLines = await scalar(
+    `SELECT COUNT(*) ${base} AND c.component_type='earning'`,
+    s.params,
+  );
+  const deductionLines = await scalar(
+    `SELECT COUNT(*) ${base} AND c.component_type='deduction'`,
+    s.params,
+  );
 
   return [
-    compare("SALARY_COMPONENTS", "componentCodes", detail(m, "componentCodes") ?? m.value, codes, total),
-    compare("SALARY_COMPONENTS", "earningLines", detail(m, "earningLines"), earningLines, total),
-    compare("SALARY_COMPONENTS", "deductionLines", detail(m, "deductionLines"), deductionLines, total),
+    compare(
+      "SALARY_COMPONENTS",
+      "componentCodes",
+      detail(m, "componentCodes") ?? m.value,
+      codes,
+      total,
+    ),
+    compare(
+      "SALARY_COMPONENTS",
+      "earningLines",
+      detail(m, "earningLines"),
+      earningLines,
+      total,
+    ),
+    compare(
+      "SALARY_COMPONENTS",
+      "deductionLines",
+      detail(m, "deductionLines"),
+      deductionLines,
+      total,
+    ),
   ];
 }
 
-export async function validateRecruiterActivity(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateRecruiterActivity(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("ats_recruiter_hiring_activity");
   const s = buildScopeWhere(scope, "bm.id", "pm.id");
   const base = `
@@ -373,21 +640,51 @@ export async function validateRecruiterActivity(scope: DashboardScope, m: Metric
     WHERE r.activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${s.sql}`;
 
   const leads = await scalar(`SELECT COUNT(*) ${base}`, s.params);
-  const selected = await scalar(`SELECT COUNT(*) ${base} AND r.final_selection_flag = 1`, s.params);
-  const joined = await scalar(`SELECT COUNT(*) ${base} AND r.joined_flag = 1`, s.params);
+  const selected = await scalar(
+    `SELECT COUNT(*) ${base} AND r.final_selection_flag = 1`,
+    s.params,
+  );
+  const joined = await scalar(
+    `SELECT COUNT(*) ${base} AND r.joined_flag = 1`,
+    s.params,
+  );
   // Guards the finding that recruiter FK columns are unusable: if a future change starts
   // grouping by recruiter_employee_id, this drops from 15 to ~5 and the check fires.
-  const recruiters = await scalar(`SELECT COUNT(DISTINCT r.recruiter_name_snapshot) ${base}`, s.params);
+  const recruiters = await scalar(
+    `SELECT COUNT(DISTINCT r.recruiter_name_snapshot) ${base}`,
+    s.params,
+  );
 
   return [
-    compare("RECRUITER_ACTIVITY", "leads", detail(m, "leads") ?? m.value, leads, total),
-    compare("RECRUITER_ACTIVITY", "recruiters", detail(m, "recruiters"), recruiters, total),
-    compare("RECRUITER_ACTIVITY", "selected", detail(m, "selected"), selected, total),
+    compare(
+      "RECRUITER_ACTIVITY",
+      "leads",
+      detail(m, "leads") ?? m.value,
+      leads,
+      total,
+    ),
+    compare(
+      "RECRUITER_ACTIVITY",
+      "recruiters",
+      detail(m, "recruiters"),
+      recruiters,
+      total,
+    ),
+    compare(
+      "RECRUITER_ACTIVITY",
+      "selected",
+      detail(m, "selected"),
+      selected,
+      total,
+    ),
     compare("RECRUITER_ACTIVITY", "joined", detail(m, "joined"), joined, total),
   ];
 }
 
-export async function validateTrainingProgress(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateTrainingProgress(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("lms_learning_progress_snapshot");
   const s = buildScopeWhereEmployees(scope, "e");
   const base = `
@@ -396,19 +693,55 @@ export async function validateTrainingProgress(scope: DashboardScope, m: MetricR
     WHERE ${s.sql}`;
 
   const assignments = await scalar(`SELECT COUNT(*) ${base}`, s.params);
-  const completed = await scalar(`SELECT COUNT(*) ${base} AND snap.status='completed'`, s.params);
-  const notStarted = await scalar(`SELECT COUNT(*) ${base} AND snap.status='not_started'`, s.params);
-  const learners = await scalar(`SELECT COUNT(DISTINCT snap.employee_id) ${base}`, s.params);
+  const completed = await scalar(
+    `SELECT COUNT(*) ${base} AND snap.status='completed'`,
+    s.params,
+  );
+  const notStarted = await scalar(
+    `SELECT COUNT(*) ${base} AND snap.status='not_started'`,
+    s.params,
+  );
+  const learners = await scalar(
+    `SELECT COUNT(DISTINCT snap.employee_id) ${base}`,
+    s.params,
+  );
 
   return [
-    compare("TRAINING_PROGRESS", "assignments", detail(m, "assignments"), assignments, total),
-    compare("TRAINING_PROGRESS", "completed", detail(m, "completed"), completed, total),
-    compare("TRAINING_PROGRESS", "notStarted", detail(m, "notStarted"), notStarted, total),
-    compare("TRAINING_PROGRESS", "learners", detail(m, "learners"), learners, total),
+    compare(
+      "TRAINING_PROGRESS",
+      "assignments",
+      detail(m, "assignments"),
+      assignments,
+      total,
+    ),
+    compare(
+      "TRAINING_PROGRESS",
+      "completed",
+      detail(m, "completed"),
+      completed,
+      total,
+    ),
+    compare(
+      "TRAINING_PROGRESS",
+      "notStarted",
+      detail(m, "notStarted"),
+      notStarted,
+      total,
+    ),
+    compare(
+      "TRAINING_PROGRESS",
+      "learners",
+      detail(m, "learners"),
+      learners,
+      total,
+    ),
   ];
 }
 
-export async function validateLeaveApprovals(scope: DashboardScope, m: MetricResult): Promise<DatapointCheck[]> {
+export async function validateLeaveApprovals(
+  scope: DashboardScope,
+  m: MetricResult,
+): Promise<DatapointCheck[]> {
   const total = await rowCount("leave_request");
   const s = buildScopeWhereEmployees(scope, "e");
   const base = `
@@ -416,14 +749,41 @@ export async function validateLeaveApprovals(scope: DashboardScope, m: MetricRes
     JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
     WHERE ${s.sql}`;
 
-  const pending = await scalar(`SELECT COUNT(*) ${base} AND lr.status='pending'`, s.params);
-  const started = await scalar(`SELECT COUNT(*) ${base} AND lr.status='pending' AND lr.from_date < CURDATE()`, s.params);
-  const approved = await scalar(`SELECT COUNT(*) ${base} AND lr.status='approved'`, s.params);
+  const pending = await scalar(
+    `SELECT COUNT(*) ${base} AND lr.status='pending'`,
+    s.params,
+  );
+  const started = await scalar(
+    `SELECT COUNT(*) ${base} AND lr.status='pending' AND lr.from_date < CURDATE()`,
+    s.params,
+  );
+  const approved = await scalar(
+    `SELECT COUNT(*) ${base} AND lr.status='approved'`,
+    s.params,
+  );
 
   return [
-    compare("LEAVE_APPROVALS", "pending", detail(m, "pending") ?? m.value, pending, total),
-    compare("LEAVE_APPROVALS", "pendingAlreadyStarted", detail(m, "pendingAlreadyStarted"), started, total),
-    compare("LEAVE_APPROVALS", "approved", detail(m, "approved"), approved, total),
+    compare(
+      "LEAVE_APPROVALS",
+      "pending",
+      detail(m, "pending") ?? m.value,
+      pending,
+      total,
+    ),
+    compare(
+      "LEAVE_APPROVALS",
+      "pendingAlreadyStarted",
+      detail(m, "pendingAlreadyStarted"),
+      started,
+      total,
+    ),
+    compare(
+      "LEAVE_APPROVALS",
+      "approved",
+      detail(m, "approved"),
+      approved,
+      total,
+    ),
   ];
 }
 
@@ -442,19 +802,29 @@ export async function validateEmptySourceMetric(
   const table = EMPTY_SOURCE_METRICS[metricCode];
   if (!table) return [];
   const rows = await rowCount(table);
-  return [{
-    metric: metricCode,
-    datapoint: "value",
-    serviceValue: m.value,
-    expectedValue: rows === null ? null : 0,
-    outcome: rows === null ? "QUERY_FAILED" : rows === 0 ? "NO_DATA" : "SKIPPED",
-    note: rows === null ? `${table} does not exist` : `${table} has ${rows} rows`,
-  }];
+  return [
+    {
+      metric: metricCode,
+      datapoint: "value",
+      serviceValue: m.value,
+      expectedValue: rows === null ? null : 0,
+      outcome:
+        rows === null ? "QUERY_FAILED" : rows === 0 ? "NO_DATA" : "SKIPPED",
+      note:
+        rows === null ? `${table} does not exist` : `${table} has ${rows} rows`,
+    },
+  ];
 }
 
-export function summarise(checks: DatapointCheck[]): Record<CheckOutcome, number> {
+export function summarise(
+  checks: DatapointCheck[],
+): Record<CheckOutcome, number> {
   const out: Record<CheckOutcome, number> = {
-    MATCH: 0, MISMATCH: 0, NO_DATA: 0, QUERY_FAILED: 0, SKIPPED: 0,
+    MATCH: 0,
+    MISMATCH: 0,
+    NO_DATA: 0,
+    QUERY_FAILED: 0,
+    SKIPPED: 0,
   };
   for (const c of checks) out[c.outcome]++;
   return out;

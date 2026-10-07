@@ -21,7 +21,7 @@
  * new limit dimension.
  */
 
-import { db } from '../../db/mysql.js';
+import { db } from "../../db/mysql.js";
 
 const DEFAULT_DAILY_REQUEST_LIMIT = 100;
 const WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -43,7 +43,10 @@ function todayWindowStart(): Date {
  * @param userId       authenticated user ID
  * @param dailyLimit   provider-configured limit (0 = use default)
  */
-export async function checkAndIncrement(userId: string, dailyLimit = 0): Promise<RateLimitResult> {
+export async function checkAndIncrement(
+  userId: string,
+  dailyLimit = 0,
+): Promise<RateLimitResult> {
   const limit = dailyLimit > 0 ? dailyLimit : DEFAULT_DAILY_REQUEST_LIMIT;
   const windowStart = todayWindowStart();
   const resetAt = new Date(windowStart.getTime() + WINDOW_MS);

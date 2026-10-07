@@ -1,5 +1,5 @@
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
 
 export async function generateRequestReference(): Promise<string> {
   const year = new Date().getFullYear();
@@ -10,10 +10,10 @@ export async function generateRequestReference(): Promise<string> {
       `SELECT COUNT(*) + 1 AS seq
        FROM report_request
        WHERE YEAR(requested_at) = ?`,
-      [year]
+      [year],
     );
     const seq = Number((rows[0] as { seq: number }).seq);
-    const ref = `RPT-${year}-${String(seq).padStart(6, '0')}`;
+    const ref = `RPT-${year}-${String(seq).padStart(6, "0")}`;
     await conn.commit();
     return ref;
   } catch (err) {

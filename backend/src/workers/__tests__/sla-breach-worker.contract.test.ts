@@ -18,7 +18,9 @@ describe("SLA breach worker runtime safety", () => {
     expect(workerSource).toContain("DATE_SUB(NOW(), INTERVAL 24 HOUR)");
     expect(workerSource).toContain("ORDER BY pending_minutes ASC");
     expect(workerSource).toContain("LIMIT ${CANDIDATE_SCAN_LIMIT}");
-    expect(workerSource).toContain("if (alertsSent >= MAX_ALERTS_PER_RUN) break");
+    expect(workerSource).toContain(
+      "if (alertsSent >= MAX_ALERTS_PER_RUN) break",
+    );
   });
 
   it("does not run the SLA scan synchronously during server startup", () => {

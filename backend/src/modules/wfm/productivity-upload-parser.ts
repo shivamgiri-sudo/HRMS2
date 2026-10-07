@@ -9,32 +9,32 @@
 // target this parser's output feeds -- its column set is exactly the optional-field list below.
 
 export type UploadTargetField =
-  | 'employee_code'
-  | 'report_date'
-  | 'login_minutes'
-  | 'calls_handled'
-  | 'aht_seconds'
-  | 'bio_minutes'
-  | 'lunch_minutes'
-  | 'qa_minutes'
-  | 'training_minutes';
+  | "employee_code"
+  | "report_date"
+  | "login_minutes"
+  | "calls_handled"
+  | "aht_seconds"
+  | "bio_minutes"
+  | "lunch_minutes"
+  | "qa_minutes"
+  | "training_minutes";
 
 // criterion 17.4: "an accepted row to supply, at minimum, an employee code, a report date and
 // login minutes" -- everything else apr_manual_upload can hold is optional.
 export const MANDATORY_UPLOAD_FIELDS: readonly UploadTargetField[] = [
-  'employee_code',
-  'report_date',
-  'login_minutes',
+  "employee_code",
+  "report_date",
+  "login_minutes",
 ];
 
 const NUMERIC_FIELDS: readonly UploadTargetField[] = [
-  'login_minutes',
-  'calls_handled',
-  'aht_seconds',
-  'bio_minutes',
-  'lunch_minutes',
-  'qa_minutes',
-  'training_minutes',
+  "login_minutes",
+  "calls_handled",
+  "aht_seconds",
+  "bio_minutes",
+  "lunch_minutes",
+  "qa_minutes",
+  "training_minutes",
 ];
 
 export interface ParsedRow {
@@ -49,7 +49,8 @@ export interface ParsedRow {
   training_minutes?: number;
 }
 
-export type ParseResult = { ok: true; row: ParsedRow } | { ok: false; reason: string };
+export type ParseResult =
+  { ok: true; row: ParsedRow } | { ok: false; reason: string };
 
 /**
  * Checks a Dialler_Source's declared Column_Mapping covers every mandatory Upload field
@@ -60,8 +61,12 @@ export function checkMappingCoversMandatoryFields(
   columnMappings: Record<string, string>,
 ): { ok: true } | { ok: false; missingFields: UploadTargetField[] } {
   const mappedTargets = new Set(Object.values(columnMappings));
-  const missingFields = MANDATORY_UPLOAD_FIELDS.filter((f) => !mappedTargets.has(f));
-  return missingFields.length === 0 ? { ok: true } : { ok: false, missingFields };
+  const missingFields = MANDATORY_UPLOAD_FIELDS.filter(
+    (f) => !mappedTargets.has(f),
+  );
+  return missingFields.length === 0
+    ? { ok: true }
+    : { ok: false, missingFields };
 }
 
 /**
@@ -84,7 +89,7 @@ export function parseUploadRow(
     // without this trim a visually-empty cell would silently pass as a valid login_minutes: 0
     // instead of being rejected as blank.
     const trimmed = raw?.trim();
-    if (trimmed !== undefined && trimmed !== '') {
+    if (trimmed !== undefined && trimmed !== "") {
       values[targetField as UploadTargetField] = trimmed;
     }
   }
@@ -114,12 +119,18 @@ export function parseUploadRow(
     report_date: values.report_date!,
     login_minutes: parsedNumbers.login_minutes!,
   };
-  if (parsedNumbers.calls_handled !== undefined) row.calls_handled = parsedNumbers.calls_handled;
-  if (parsedNumbers.aht_seconds !== undefined) row.aht_seconds = parsedNumbers.aht_seconds;
-  if (parsedNumbers.bio_minutes !== undefined) row.bio_minutes = parsedNumbers.bio_minutes;
-  if (parsedNumbers.lunch_minutes !== undefined) row.lunch_minutes = parsedNumbers.lunch_minutes;
-  if (parsedNumbers.qa_minutes !== undefined) row.qa_minutes = parsedNumbers.qa_minutes;
-  if (parsedNumbers.training_minutes !== undefined) row.training_minutes = parsedNumbers.training_minutes;
+  if (parsedNumbers.calls_handled !== undefined)
+    row.calls_handled = parsedNumbers.calls_handled;
+  if (parsedNumbers.aht_seconds !== undefined)
+    row.aht_seconds = parsedNumbers.aht_seconds;
+  if (parsedNumbers.bio_minutes !== undefined)
+    row.bio_minutes = parsedNumbers.bio_minutes;
+  if (parsedNumbers.lunch_minutes !== undefined)
+    row.lunch_minutes = parsedNumbers.lunch_minutes;
+  if (parsedNumbers.qa_minutes !== undefined)
+    row.qa_minutes = parsedNumbers.qa_minutes;
+  if (parsedNumbers.training_minutes !== undefined)
+    row.training_minutes = parsedNumbers.training_minutes;
 
   return { ok: true, row };
 }

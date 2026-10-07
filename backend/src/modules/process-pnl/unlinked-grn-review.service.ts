@@ -74,11 +74,13 @@ function currentPeriod(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
-export async function getUnlinkedGrnReview(filters: {
-  branchId?: string;
-  /** Include FUTURE_DEFERRED rows in the main list — off by default, they aren't a problem. */
-  includeFutureDeferred?: boolean;
-} = {}): Promise<UnlinkedGrnReview> {
+export async function getUnlinkedGrnReview(
+  filters: {
+    branchId?: string;
+    /** Include FUTURE_DEFERRED rows in the main list — off by default, they aren't a problem. */
+    includeFutureDeferred?: boolean;
+  } = {},
+): Promise<UnlinkedGrnReview> {
   const asOfPeriod = currentPeriod();
 
   const where: string[] = [
@@ -101,7 +103,7 @@ export async function getUnlinkedGrnReview(filters: {
        LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
       WHERE ${where.join(" AND ")}
       ORDER BY g.accounting_period, bm.branch_name`,
-    params
+    params,
   );
 
   if (!grns.length) {
@@ -110,20 +112,24 @@ export async function getUnlinkedGrnReview(filters: {
 
   // Batch-load everything needed to classify, rather than one query per GRN.
   const [headers] = await db.execute<RowDataPacket[]>(
-    `SELECT id, branch_id, period_code FROM finance_budget_header WHERE status = 'active'`
+    `SELECT id, branch_id, period_code FROM finance_budget_header WHERE status = 'active'`,
   );
   const headerByKey = new Map<string, { id: string }>();
-  for (const h of headers) headerByKey.set(`${h.branch_id}|${h.period_code}`, { id: String(h.id) });
+  for (const h of headers)
+    headerByKey.set(`${h.branch_id}|${h.period_code}`, { id: String(h.id) });
 
   const [lines] = await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.budget_id, l.cost_centre_id, l.head, l.sub_head,
             l.gross_amount, l.reserved_amount, l.consumed_amount,
             ${budgetLineCeilingSql("l")} AS ceiling_ex_gst
-       FROM finance_budget_line l`
+       FROM finance_budget_line l`,
   );
   const lineByKey = new Map<string, RowDataPacket>();
   for (const l of lines) {
-    lineByKey.set(`${l.budget_id}|${l.cost_centre_id}|${l.head}|${l.sub_head ?? ""}`, l);
+    lineByKey.set(
+      `${l.budget_id}|${l.cost_centre_id}|${l.head}|${l.sub_head ?? ""}`,
+      l,
+    );
   }
 
   const rows: UnlinkedGrnRow[] = grns.map((g) => {
@@ -151,17 +157,31 @@ export async function getUnlinkedGrnReview(filters: {
     }
     const header = headerByKey.get(`${g.branch_id}|${g.accounting_period}`);
     if (!header) {
-      return { ...base, category: "NO_BRANCH_BUDGET" as const, shortfall: null };
+      return {
+        ...base,
+        category: "NO_BRANCH_BUDGET" as const,
+        shortfall: null,
+      };
     }
-    const line = lineByKey.get(`${header.id}|${g.cost_centre_id}|${g.head}|${g.sub_head ?? ""}`);
+    const line = lineByKey.get(
+      `${header.id}|${g.cost_centre_id}|${g.head}|${g.sub_head ?? ""}`,
+    );
     if (!line) {
-      return { ...base, category: "NO_MATCHING_LINE" as const, shortfall: null };
+      return {
+        ...base,
+        category: "NO_MATCHING_LINE" as const,
+        shortfall: null,
+      };
     }
     // Ex-GST on both sides, the basis the approval gate enforces. A row missing the computed
     // column (never from the query above) falls back to the old gross figures, not to zero.
     const ceiling = line.ceiling_ex_gst ?? line.gross_amount;
-    const available = n(ceiling) - n(line.reserved_amount) - n(line.consumed_amount);
-    const shortfall = Math.max(0, n(g.amount_ex_gst ?? g.amount_with_tax) - available);
+    const available =
+      n(ceiling) - n(line.reserved_amount) - n(line.consumed_amount);
+    const shortfall = Math.max(
+      0,
+      n(g.amount_ex_gst ?? g.amount_with_tax) - available,
+    );
     return { ...base, category: "HEADROOM_EXCEEDED" as const, shortfall };
   });
 
@@ -169,16 +189,23 @@ export async function getUnlinkedGrnReview(filters: {
     ? rows
     : rows.filter((r) => r.category !== "FUTURE_DEFERRED");
 
-  const summaryMap = new Map<UnlinkedGrnCategory, { count: number; amount: number }>();
+  const summaryMap = new Map<
+    UnlinkedGrnCategory,
+    { count: number; amount: number }
+  >();
   for (const r of rows) {
     const cur = summaryMap.get(r.category) ?? { count: 0, amount: 0 };
     cur.count += 1;
     cur.amount += r.amountWithTax;
     summaryMap.set(r.category, cur);
   }
-  const summary: UnlinkedGrnSummary[] = [...summaryMap.entries()].map(([category, v]) => ({
-    category, count: v.count, amount: Math.round(v.amount * 100) / 100,
-  }));
+  const summary: UnlinkedGrnSummary[] = [...summaryMap.entries()].map(
+    ([category, v]) => ({
+      category,
+      count: v.count,
+      amount: Math.round(v.amount * 100) / 100,
+    }),
+  );
 
   const problemRows = rows.filter((r) => r.category !== "FUTURE_DEFERRED");
   return {
@@ -186,7 +213,9 @@ export async function getUnlinkedGrnReview(filters: {
     rows: visibleRows,
     summary,
     totalCount: problemRows.length,
-    totalAmount: Math.round(problemRows.reduce((s, r) => s + r.amountWithTax, 0) * 100) / 100,
+    totalAmount:
+      Math.round(problemRows.reduce((s, r) => s + r.amountWithTax, 0) * 100) /
+      100,
   };
 }
 

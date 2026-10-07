@@ -58,10 +58,14 @@ function defaultMonth(): string {
 async function main() {
   const month = arg("month", defaultMonth());
   const csvPath = arg("csv", "");
-  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error(`--month must be YYYY-MM (got "${month}")`);
+  if (!/^\d{4}-\d{2}$/.test(month))
+    throw new Error(`--month must be YYYY-MM (got "${month}")`);
 
   for (const k of ["BILL_HOST", "BILL_USER", "BILL_PASS", "BILL_DB"]) {
-    if (!process.env[k]) throw new Error(`Missing env ${k} — db_bill connection details are required`);
+    if (!process.env[k])
+      throw new Error(
+        `Missing env ${k} — db_bill connection details are required`,
+      );
   }
 
   const bill = await mysql.createConnection({
@@ -90,20 +94,20 @@ async function main() {
          FROM salary_data
         WHERE DATE_FORMAT(SalDate, '%Y-%m') = ?
         GROUP BY CostCenter`,
-      [month]
+      [month],
     );
     const salary = new Map<string, number>(
-      salaryRows.map((r) => [String(r.cc ?? "").trim(), Number(r.headcount)])
+      salaryRows.map((r) => [String(r.cc ?? "").trim(), Number(r.headcount)]),
     );
 
     const [masterRows] = await bill.query<any[]>(
       `SELECT m.cost_center AS cc, m.branch, m.Billing,
               COALESCE(NULLIF(TRIM(m.client), ''), NULLIF(TRIM(m.process_name), ''), '(unmapped)') AS process,
               (SELECT MAX(i.createdate) FROM inv_particulars i WHERE i.cost_center_id = m.id) AS last_invoice
-         FROM cost_master m`
+         FROM cost_master m`,
     );
     const master = new Map<string, any>(
-      masterRows.map((r) => [String(r.cc ?? "").trim(), r])
+      masterRows.map((r) => [String(r.cc ?? "").trim(), r]),
     );
 
     // ── HRMS: what the app currently believes is live ────────────────────────────────────────
@@ -117,7 +121,7 @@ async function main() {
          FROM cost_centre_master cc
          LEFT JOIN branch_master b ON b.id = cc.branch_id
          LEFT JOIN employees e ON e.cost_centre_id = cc.id AND e.active_status = 1
-        GROUP BY b.branch_name, cc.cost_centre_code, cc.active_status, cc.close_date`
+        GROUP BY b.branch_name, cc.cost_centre_code, cc.active_status, cc.close_date`,
     );
 
     const cutoff = new Date();
@@ -130,7 +134,12 @@ async function main() {
       const lastInvoice = m?.last_invoice ? new Date(m.last_invoice) : null;
       const billedRecently = Boolean(lastInvoice && lastInvoice >= cutoff);
 
-      const verdict: Verdict = salaryHeadcount > 0 ? "ACTIVE" : billedRecently ? "BILLING_ONLY" : "DORMANT";
+      const verdict: Verdict =
+        salaryHeadcount > 0
+          ? "ACTIVE"
+          : billedRecently
+            ? "BILLING_ONLY"
+            : "DORMANT";
 
       return {
         branch: String(r.branch_name ?? "(none)"),
@@ -139,7 +148,9 @@ async function main() {
         hrmsCloseDate: r.close_date ? String(r.close_date).slice(0, 10) : null,
         hrmsHeadcount: Number(r.hrms_headcount ?? 0),
         salaryHeadcount,
-        lastInvoice: lastInvoice ? lastInvoice.toISOString().slice(0, 10) : null,
+        lastInvoice: lastInvoice
+          ? lastInvoice.toISOString().slice(0, 10)
+          : null,
         billingFlag: m ? Number(m.Billing) : null,
         process: m?.process ?? "(not in billing master)",
         verdict,
@@ -148,10 +159,21 @@ async function main() {
 
     report(rows, month);
     if (csvPath) {
-      const header = "branch,cost_centre_code,verdict,hrms_active,hrms_close_date,hrms_headcount,salary_headcount,last_invoice,billing_flag,process";
+      const header =
+        "branch,cost_centre_code,verdict,hrms_active,hrms_close_date,hrms_headcount,salary_headcount,last_invoice,billing_flag,process";
       const body = rows.map((r) =>
-        [r.branch, r.costCentreCode, r.verdict, r.hrmsActive, r.hrmsCloseDate ?? "", r.hrmsHeadcount,
-         r.salaryHeadcount, r.lastInvoice ?? "", r.billingFlag ?? "", `"${r.process.replace(/"/g, "''")}"`].join(",")
+        [
+          r.branch,
+          r.costCentreCode,
+          r.verdict,
+          r.hrmsActive,
+          r.hrmsCloseDate ?? "",
+          r.hrmsHeadcount,
+          r.salaryHeadcount,
+          r.lastInvoice ?? "",
+          r.billingFlag ?? "",
+          `"${r.process.replace(/"/g, "''")}"`,
+        ].join(","),
       );
       fs.writeFileSync(csvPath, [header, ...body].join("\n"), "utf8");
       console.log(`\nCSV written: ${csvPath}`);
@@ -172,15 +194,29 @@ function report(rows: Row[], month: string) {
   console.log("READ-ONLY. No data was modified in mas_hrms or db_bill.");
   console.log("=".repeat(78));
 
-  console.log(`\nHRMS cost centres flagged active_status=1 : ${rows.filter((r) => r.hrmsActive === 1).length}`);
-  console.log(`  ACTIVE       (salary in ${month})          : ${active.length}`);
-  console.log(`  BILLING_ONLY (invoiced <12m, no salary)  : ${billingOnly.length}`);
+  console.log(
+    `\nHRMS cost centres flagged active_status=1 : ${rows.filter((r) => r.hrmsActive === 1).length}`,
+  );
+  console.log(
+    `  ACTIVE       (salary in ${month})          : ${active.length}`,
+  );
+  console.log(
+    `  BILLING_ONLY (invoiced <12m, no salary)  : ${billingOnly.length}`,
+  );
   console.log(`  DORMANT      (neither)                   : ${dormant.length}`);
 
   // ── branch rollup ─────────────────────────────────────────────────────────────────────────
-  const byBranch = new Map<string, { active: number; billing: number; dormant: number; staff: number }>();
+  const byBranch = new Map<
+    string,
+    { active: number; billing: number; dormant: number; staff: number }
+  >();
   for (const r of rows) {
-    const b = byBranch.get(r.branch) ?? { active: 0, billing: 0, dormant: 0, staff: 0 };
+    const b = byBranch.get(r.branch) ?? {
+      active: 0,
+      billing: 0,
+      dormant: 0,
+      staff: 0,
+    };
     if (r.verdict === "ACTIVE") b.active++;
     else if (r.verdict === "BILLING_ONLY") b.billing++;
     else b.dormant++;
@@ -190,15 +226,23 @@ function report(rows: Row[], month: string) {
   console.log("\n" + "-".repeat(78));
   console.log("BRANCHES");
   console.log("-".repeat(78));
-  console.log("branch".padEnd(32) + "active  billing  dormant  staff   verdict");
+  console.log(
+    "branch".padEnd(32) + "active  billing  dormant  staff   verdict",
+  );
   [...byBranch.entries()]
     .sort((a, b) => b[1].staff - a[1].staff || b[1].active - a[1].active)
     .forEach(([name, v]) => {
       console.log(
         name.slice(0, 30).padEnd(32) +
-        String(v.active).padEnd(8) + String(v.billing).padEnd(9) +
-        String(v.dormant).padEnd(9) + String(v.staff).padEnd(8) +
-        (v.active > 0 ? "ACTIVE" : v.billing > 0 ? "BILLING ONLY" : "INACTIVE")
+          String(v.active).padEnd(8) +
+          String(v.billing).padEnd(9) +
+          String(v.dormant).padEnd(9) +
+          String(v.staff).padEnd(8) +
+          (v.active > 0
+            ? "ACTIVE"
+            : v.billing > 0
+              ? "BILLING ONLY"
+              : "INACTIVE"),
       );
     });
 
@@ -206,36 +250,67 @@ function report(rows: Row[], month: string) {
   const byProcess = new Map<string, { ccs: number; staff: number }>();
   for (const r of active) {
     const p = byProcess.get(r.process) ?? { ccs: 0, staff: 0 };
-    p.ccs++; p.staff += r.salaryHeadcount;
+    p.ccs++;
+    p.staff += r.salaryHeadcount;
     byProcess.set(r.process, p);
   }
   console.log("\n" + "-".repeat(78));
-  console.log(`ACTIVE PROCESSES — ${byProcess.size} distinct (identity: client -> process_name)`);
+  console.log(
+    `ACTIVE PROCESSES — ${byProcess.size} distinct (identity: client -> process_name)`,
+  );
   console.log("-".repeat(78));
   console.log("process / client".padEnd(48) + "CCs   staff");
-  [...byProcess.entries()].sort((a, b) => b[1].staff - a[1].staff).forEach(([p, v]) =>
-    console.log(p.replace(/\s+/g, " ").slice(0, 46).padEnd(48) + String(v.ccs).padEnd(6) + v.staff)
-  );
+  [...byProcess.entries()]
+    .sort((a, b) => b[1].staff - a[1].staff)
+    .forEach(([p, v]) =>
+      console.log(
+        p.replace(/\s+/g, " ").slice(0, 46).padEnd(48) +
+          String(v.ccs).padEnd(6) +
+          v.staff,
+      ),
+    );
 
   // ── the correction candidates ─────────────────────────────────────────────────────────────
-  const candidates = rows.filter((r) => r.hrmsActive === 1 && r.verdict === "DORMANT");
+  const candidates = rows.filter(
+    (r) => r.hrmsActive === 1 && r.verdict === "DORMANT",
+  );
   console.log("\n" + "-".repeat(78));
-  console.log(`CORRECTION CANDIDATES — active in HRMS but DORMANT upstream: ${candidates.length}`);
+  console.log(
+    `CORRECTION CANDIDATES — active in HRMS but DORMANT upstream: ${candidates.length}`,
+  );
   console.log("-".repeat(78));
-  console.log("branch".padEnd(26) + "cost_centre".padEnd(26) + "hrmsHC  last_invoice");
+  console.log(
+    "branch".padEnd(26) + "cost_centre".padEnd(26) + "hrmsHC  last_invoice",
+  );
   candidates
-    .sort((a, b) => a.branch.localeCompare(b.branch) || a.costCentreCode.localeCompare(b.costCentreCode))
-    .forEach((r) => console.log(
-      r.branch.slice(0, 24).padEnd(26) + r.costCentreCode.slice(0, 24).padEnd(26) +
-      String(r.hrmsHeadcount).padEnd(8) + (r.lastInvoice ?? "never")
-    ));
+    .sort(
+      (a, b) =>
+        a.branch.localeCompare(b.branch) ||
+        a.costCentreCode.localeCompare(b.costCentreCode),
+    )
+    .forEach((r) =>
+      console.log(
+        r.branch.slice(0, 24).padEnd(26) +
+          r.costCentreCode.slice(0, 24).padEnd(26) +
+          String(r.hrmsHeadcount).padEnd(8) +
+          (r.lastInvoice ?? "never"),
+      ),
+    );
 
   if (billingOnly.length) {
     console.log("\n" + "-".repeat(78));
-    console.log("NEEDS A BUSINESS RULING — recently invoiced but no salary (client work, no staff):");
+    console.log(
+      "NEEDS A BUSINESS RULING — recently invoiced but no salary (client work, no staff):",
+    );
     console.log("-".repeat(78));
     billingOnly.forEach((r) =>
-      console.log("  " + r.branch.padEnd(24) + r.costCentreCode.padEnd(26) + "last invoice " + r.lastInvoice)
+      console.log(
+        "  " +
+          r.branch.padEnd(24) +
+          r.costCentreCode.padEnd(26) +
+          "last invoice " +
+          r.lastInvoice,
+      ),
     );
   }
 
@@ -249,23 +324,43 @@ function report(rows: Row[], month: string) {
     const k = b.trim().toLowerCase();
     nameKey.set(k, [...(nameKey.get(k) ?? []), b]);
   }
-  [...nameKey.values()].filter((v) => v.length > 1)
-    .forEach((v) => console.log(`  duplicate branch records: ${v.join("  vs  ")}`));
+  [...nameKey.values()]
+    .filter((v) => v.length > 1)
+    .forEach((v) =>
+      console.log(`  duplicate branch records: ${v.join("  vs  ")}`),
+    );
 
-  [...byBranch.keys()].filter((b) => /test|demo|smoke/i.test(b))
-    .forEach((b) => console.log(`  test/demo branch present in real data: ${b}`));
+  [...byBranch.keys()]
+    .filter((b) => /test|demo|smoke/i.test(b))
+    .forEach((b) =>
+      console.log(`  test/demo branch present in real data: ${b}`),
+    );
 
-  const notInBilling = rows.filter((r) => r.hrmsActive === 1 && r.process === "(not in billing master)");
-  if (notInBilling.length) console.log(`  active in HRMS but absent from billing master: ${notInBilling.length}`);
+  const notInBilling = rows.filter(
+    (r) => r.hrmsActive === 1 && r.process === "(not in billing master)",
+  );
+  if (notInBilling.length)
+    console.log(
+      `  active in HRMS but absent from billing master: ${notInBilling.length}`,
+    );
 
   const staffedNotMapped = active.filter((r) => r.hrmsHeadcount === 0);
   if (staffedNotMapped.length) {
-    console.log(`  paid staff upstream but 0 employees mapped in HRMS: ${staffedNotMapped.length}`);
-    staffedNotMapped.slice(0, 8).forEach((r) =>
-      console.log(`     ${r.branch.padEnd(24)}${r.costCentreCode.padEnd(24)}salary HC=${r.salaryHeadcount}`));
+    console.log(
+      `  paid staff upstream but 0 employees mapped in HRMS: ${staffedNotMapped.length}`,
+    );
+    staffedNotMapped
+      .slice(0, 8)
+      .forEach((r) =>
+        console.log(
+          `     ${r.branch.padEnd(24)}${r.costCentreCode.padEnd(24)}salary HC=${r.salaryHeadcount}`,
+        ),
+      );
   }
 
-  console.log("\nNothing was changed. Review the candidates above before any correction is applied.");
+  console.log(
+    "\nNothing was changed. Review the candidates above before any correction is applied.",
+  );
 }
 
 main().catch((e) => {

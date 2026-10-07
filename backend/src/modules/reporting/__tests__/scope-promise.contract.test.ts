@@ -26,13 +26,15 @@ const R = "src/modules/reporting";
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
 /** What "constrains rows by caller scope" looks like, regardless of the wrapper's name. */
-const CONSTRAINS = /scope\.branchScope|scope\.branchIds|reportBranchScope|ReportScopeAccessDeniedError/;
+const CONSTRAINS =
+  /scope\.branchScope|scope\.branchIds|reportBranchScope|ReportScopeAccessDeniedError/;
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const f of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
-    if (f.isDirectory()) { if (f.name !== "__tests__") out.push(...sourceFiles(`${dir}/${f.name}`)); }
-    else if (f.name.endsWith(".ts")) out.push(`${dir}/${f.name}`);
+    if (f.isDirectory()) {
+      if (f.name !== "__tests__") out.push(...sourceFiles(`${dir}/${f.name}`));
+    } else if (f.name.endsWith(".ts")) out.push(`${dir}/${f.name}`);
   }
   return out;
 }
@@ -41,7 +43,9 @@ function sourceFiles(dir: string): string[] {
 function scopeHelpers(): Set<string> {
   const helpers = new Set<string>();
   for (const f of sourceFiles(R)) {
-    for (const part of read(f).split(/(?=\n(?:export )?(?:async )?function )/)) {
+    for (const part of read(f).split(
+      /(?=\n(?:export )?(?:async )?function )/,
+    )) {
       const n = /^\n(?:export )?(?:async )?function (\w+)\(/.exec(part);
       if (n && CONSTRAINS.test(part)) helpers.add(n[1]);
     }
@@ -68,14 +72,22 @@ function catalogEntries(): Map<string, string> {
   while ((m = re.exec(cat))) marks.push({ code: m[1], at: m.index });
   const out = new Map<string, string>();
   marks.forEach((mk, i) =>
-    out.set(mk.code, cat.slice(mk.at, i + 1 < marks.length ? marks[i + 1].at : cat.length)));
+    out.set(
+      mk.code,
+      cat.slice(mk.at, i + 1 < marks.length ? marks[i + 1].at : cat.length),
+    ),
+  );
   return out;
 }
 
 function executorBodies(): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const f of readdirSync(resolve(ROOT, `${R}/executors`)).filter(f => f.endsWith(".executor.ts"))) {
-    for (const part of read(`${R}/executors/${f}`).split(/(?=\nexport async function )/)) {
+  for (const f of readdirSync(resolve(ROOT, `${R}/executors`)).filter((f) =>
+    f.endsWith(".executor.ts"),
+  )) {
+    for (const part of read(`${R}/executors/${f}`).split(
+      /(?=\nexport async function )/,
+    )) {
       const n = /^\nexport async function (\w+)\(/.exec(part);
       if (n) out[n[1]] = part;
     }
@@ -89,9 +101,14 @@ describe("declared branch scoping is actually applied", () => {
     // Guards the test itself: if this collapses to nothing, every report below would "pass"
     // by looking unscoped-but-unchecked, which is how a green suite hides a regression.
     expect(helpers.size).toBeGreaterThan(5);
-    for (const known of ["appendScopeConditions", "appendMasterBranchScope",
-                         "appendCandidateScopeConditions"]) {
-      expect(helpers, `${known} must be discovered, not assumed`).toContain(known);
+    for (const known of [
+      "appendScopeConditions",
+      "appendMasterBranchScope",
+      "appendCandidateScopeConditions",
+    ]) {
+      expect(helpers, `${known} must be discovered, not assumed`).toContain(
+        known,
+      );
     }
   });
 
@@ -107,14 +124,17 @@ describe("declared branch scoping is actually applied", () => {
       if (!entry || !/\n    branchScoped:\s*true/.test(entry)) continue;
       const body = bodies[fn];
       if (!body) continue;
-      const stripped = body.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+      const stripped = body
+        .replace(/^\s*\/\/.*$/gm, "")
+        .replace(/\/\*[\s\S]*?\*\//g, "");
       if (calls.test(stripped) || helpers.has(fn)) continue;
       offenders.push(`${code} (${fn})`);
     }
     expect(
       offenders,
       "these promise branch scoping and enforce none — either scope them, or set " +
-        "branchScoped: false and record why:\n" + offenders.join("\n"),
+        "branchScoped: false and record why:\n" +
+        offenders.join("\n"),
     ).toEqual([]);
   });
 });

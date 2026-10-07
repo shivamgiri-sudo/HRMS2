@@ -39,11 +39,21 @@ describe("Part A availability", () => {
   });
 
   it("withholds the document until it is verified", async () => {
-    execute.mockResolvedValue([[{
-      id: "pa-1", certificate_number: "ABCDE1234F", vault_document_id: "vault-9",
-      stored_filename: "abc.pdf", storage_category: "tds-certificates",
-      covers_quarters: "Q1-Q4", verified_at: null, form_number: "130",
-    }], []]);
+    execute.mockResolvedValue([
+      [
+        {
+          id: "pa-1",
+          certificate_number: "ABCDE1234F",
+          vault_document_id: "vault-9",
+          stored_filename: "abc.pdf",
+          storage_category: "tds-certificates",
+          covers_quarters: "Q1-Q4",
+          verified_at: null,
+          form_number: "130",
+        },
+      ],
+      [],
+    ]);
 
     const a = await getPartAAvailability("emp-1", 2026);
 
@@ -59,11 +69,21 @@ describe("Part A availability", () => {
   });
 
   it("releases the document once verified", async () => {
-    execute.mockResolvedValue([[{
-      id: "pa-1", certificate_number: "ABCDE1234F", vault_document_id: "vault-9",
-      stored_filename: "abc.pdf", storage_category: "tds-certificates",
-      covers_quarters: "Q1-Q4", verified_at: "2027-06-10 10:00:00", form_number: "130",
-    }], []]);
+    execute.mockResolvedValue([
+      [
+        {
+          id: "pa-1",
+          certificate_number: "ABCDE1234F",
+          vault_document_id: "vault-9",
+          stored_filename: "abc.pdf",
+          storage_category: "tds-certificates",
+          covers_quarters: "Q1-Q4",
+          verified_at: "2027-06-10 10:00:00",
+          form_number: "130",
+        },
+      ],
+      [],
+    ]);
 
     const a = await getPartAAvailability("emp-1", 2026);
 
@@ -78,9 +98,13 @@ describe("Part A availability", () => {
     execute.mockResolvedValue([[], []]);
 
     // FY 2025-26 predates the Income-tax Act, 2025.
-    expect((await getPartAAvailability("emp-1", 2025)).expectedFormNumber).toBe("16");
+    expect((await getPartAAvailability("emp-1", 2025)).expectedFormNumber).toBe(
+      "16",
+    );
     // FY 2026-27 is the first year under it.
-    expect((await getPartAAvailability("emp-1", 2026)).expectedFormNumber).toBe("130");
+    expect((await getPartAAvailability("emp-1", 2026)).expectedFormNumber).toBe(
+      "130",
+    );
   });
 
   it("degrades to not_uploaded when the table does not exist yet", async () => {
@@ -101,7 +125,9 @@ describe("Part A availability", () => {
   });
 
   it("rejects a malformed year rather than guessing one", async () => {
-    await expect(getPartAAvailability("emp-1", 26 as number)).rejects.toThrow(/four-digit/);
+    await expect(getPartAAvailability("emp-1", 26 as number)).rejects.toThrow(
+      /four-digit/,
+    );
     expect(execute).not.toHaveBeenCalled();
   });
 });
@@ -113,14 +139,20 @@ describe("recording and verifying Part A", () => {
     execute.mockResolvedValue([{ affectedRows: 1 }, []]);
 
     const older = await recordPartA({
-      employeeId: "emp-1", financialYear: 2025,
-      vaultDocumentId: "vault-1", storedFilename: "a.pdf", uploadedBy: "user-1",
+      employeeId: "emp-1",
+      financialYear: 2025,
+      vaultDocumentId: "vault-1",
+      storedFilename: "a.pdf",
+      uploadedBy: "user-1",
     });
     expect(older.formNumber).toBe("16");
 
     const current = await recordPartA({
-      employeeId: "emp-1", financialYear: 2026,
-      vaultDocumentId: "vault-2", storedFilename: "b.pdf", uploadedBy: "user-1",
+      employeeId: "emp-1",
+      financialYear: 2026,
+      vaultDocumentId: "vault-2",
+      storedFilename: "b.pdf",
+      uploadedBy: "user-1",
     });
     expect(current.formNumber).toBe("130");
   });
@@ -129,8 +161,11 @@ describe("recording and verifying Part A", () => {
     execute.mockResolvedValue([{ affectedRows: 1 }, []]);
 
     await recordPartA({
-      employeeId: "emp-1", financialYear: 2026,
-      vaultDocumentId: "vault-1", storedFilename: "a.pdf", uploadedBy: "user-1",
+      employeeId: "emp-1",
+      financialYear: 2026,
+      vaultDocumentId: "vault-1",
+      storedFilename: "a.pdf",
+      uploadedBy: "user-1",
     });
 
     const [sql] = execute.mock.calls[0] as [string, unknown[]];
@@ -145,8 +180,11 @@ describe("recording and verifying Part A", () => {
     execute.mockResolvedValue([{ affectedRows: 2 }, []]);
 
     await recordPartA({
-      employeeId: "emp-1", financialYear: 2026,
-      vaultDocumentId: "vault-new", storedFilename: "c.pdf", uploadedBy: "user-1",
+      employeeId: "emp-1",
+      financialYear: 2026,
+      vaultDocumentId: "vault-new",
+      storedFilename: "c.pdf",
+      uploadedBy: "user-1",
     });
 
     const [sql] = execute.mock.calls[0] as [string, unknown[]];

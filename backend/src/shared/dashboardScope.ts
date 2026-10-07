@@ -73,9 +73,20 @@ const SYSTEM_WIDE_ROLES = new Set(["super_admin", "admin"]);
  * narrowable or the leak returns — 14 of the 16 affected users are exactly that case.
  */
 const HEAD_OFFICE_ROLES = new Set([
-  "ceo", "coo", "management",
-  "ho_hr", "ho_payroll", "ho_operations", "ho_wfm", "ho_rta", "ho_it",
-  "compliance_head", "payroll_head", "finance_head", "accounts_head", "operations_head",
+  "ceo",
+  "coo",
+  "management",
+  "ho_hr",
+  "ho_payroll",
+  "ho_operations",
+  "ho_wfm",
+  "ho_rta",
+  "ho_it",
+  "compliance_head",
+  "payroll_head",
+  "finance_head",
+  "accounts_head",
+  "operations_head",
 ]);
 
 /**
@@ -85,10 +96,28 @@ const HEAD_OFFICE_ROLES = new Set([
  * used to make that decision.
  */
 const ORG_ALL_ROLES = new Set([
-  "super_admin", "admin", "ceo", "coo", "management", "ho_hr", "hr_admin", "hr",
-  "ho_payroll", "payroll_head", "finance_head", "accounts_head", "payroll_admin",
-  "payroll_hr", "payroll", "finance", "ho_operations", "operations_head", "ho_wfm",
-  "ho_rta", "compliance_head", "ho_it",
+  "super_admin",
+  "admin",
+  "ceo",
+  "coo",
+  "management",
+  "ho_hr",
+  "hr_admin",
+  "hr",
+  "ho_payroll",
+  "payroll_head",
+  "finance_head",
+  "accounts_head",
+  "payroll_admin",
+  "payroll_hr",
+  "payroll",
+  "finance",
+  "ho_operations",
+  "operations_head",
+  "ho_wfm",
+  "ho_rta",
+  "compliance_head",
+  "ho_it",
   // Head-office function heads that were in no scope set at all, so they fell through the
   // whole ladder to the SELF_ONLY default at the bottom of resolveDashboardScope. Both are
   // named on dashboards they could not populate: `it_head` on IT_MANAGER_DASHBOARD,
@@ -96,32 +125,50 @@ const ORG_ALL_ROLES = new Set([
   // grant here — the branch below fails closed to the caller's own branch unless they hold
   // an explicit scope_type='all' row, so this widens them from "themselves" to at least
   // "their branch", and to the org only where an administrator has said so.
-  "it_head", "tq_head",
+  "it_head",
+  "tq_head",
 ]);
 
 // Roles that should be scoped to their assigned branch(es) only.
 // branch_hr, hr_branch, payroll_branch, branch_finance moved here from ORG_ALL_ROLES
 // so that branch-scoped staff only see their own branch data.
 const BRANCH_ALL_ROLES = new Set([
-  "branch_head", "bm", "branch_manager",
-  "branch_hr", "hr_branch",
+  "branch_head",
+  "bm",
+  "branch_manager",
+  "branch_hr",
+  "hr_branch",
   "branch_finance",
   "payroll_branch",
   "branch_it",
-  "it",   // IT department manager — scoped to their assigned branch
+  "it", // IT department manager — scoped to their assigned branch
   // Same gap as the head-office pair above: declared on branch-scoped dashboards but in no
   // scope set, so they resolved to SELF_ONLY.
-  "branch_admin", "branch_qa", "branch_wfm",
+  "branch_admin",
+  "branch_qa",
+  "branch_wfm",
 ]);
 
 const PROCESS_OR_TEAM_ROLES = new Set([
   "process_manager",
-  "wfm", "wfm_spoc", "rta", "process_hr", "qa_manager", "quality_analyst", "quality_lead",
-  "qa", "operations_manager", "recruiter",
+  "wfm",
+  "wfm_spoc",
+  "rta",
+  "process_hr",
+  "qa_manager",
+  "quality_analyst",
+  "quality_lead",
+  "qa",
+  "operations_manager",
+  "recruiter",
 ]);
 
 const TEAM_ROLES = new Set([
-  "manager", "assistant_manager", "team_leader", "team_lead", "tl",
+  "manager",
+  "assistant_manager",
+  "team_leader",
+  "team_lead",
+  "tl",
 ]);
 
 const SELF_ONLY_ROLES = new Set(["employee", "agent", "trainee"]);
@@ -156,10 +203,15 @@ export class DashboardScopeConfigurationError extends Error {
 }
 
 function unique(values: unknown[]): string[] {
-  return Array.from(new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)));
+  return Array.from(
+    new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)),
+  );
 }
 
-async function loadAssignmentScopes(userId: string, roleKeys: readonly string[]): Promise<AssignmentScopeRow[]> {
+async function loadAssignmentScopes(
+  userId: string,
+  roleKeys: readonly string[],
+): Promise<AssignmentScopeRow[]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT role_key, scope_type, branch_id, process_id, manager_employee_id
@@ -180,13 +232,18 @@ async function loadAssignmentScopes(userId: string, roleKeys: readonly string[])
     // was invisible while a missing grant still fell through to ORG_ALL; once absent
     // grants correctly fail closed, it would have narrowed a head-office payroll
     // administrator to the 13 people sitting at Head Office.
-    const allowedRoles = new Set(roleKeys.map((role) => normalizeDashboardRole(role)));
+    const allowedRoles = new Set(
+      roleKeys.map((role) => normalizeDashboardRole(role)),
+    );
     return (rows as AssignmentScopeRow[]).filter((row) => {
       const role = normalizeDashboardRole(row.role_key);
       return !role || allowedRoles.has(role);
     });
   } catch (err) {
-    logSourceFailure("dashboard-scope", err, { query: "user_assignment_scope", userId });
+    logSourceFailure("dashboard-scope", err, {
+      query: "user_assignment_scope",
+      userId,
+    });
     return [];
   }
 }
@@ -196,14 +253,18 @@ async function resolveEmployeeScope(userId: string): Promise<{
   branchIds: string[];
   processIds: string[];
 }> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, branch_id, process_id
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id, branch_id, process_id
        FROM employees
       WHERE user_id = ? AND active_status = 1
       ORDER BY updated_at DESC
       LIMIT 1`,
-    [userId],
-  ).catch(emptyOnError("employees by user_id", { site: "resolveEmployeeScope" }));
+      [userId],
+    )
+    .catch(
+      emptyOnError("employees by user_id", { site: "resolveEmployeeScope" }),
+    );
 
   const row = rows[0] as RowDataPacket | undefined;
   return {
@@ -213,16 +274,24 @@ async function resolveEmployeeScope(userId: string): Promise<{
   };
 }
 
-async function branchesForProcesses(processIds: readonly string[]): Promise<string[]> {
+async function branchesForProcesses(
+  processIds: readonly string[],
+): Promise<string[]> {
   if (processIds.length === 0) return [];
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT branch_id
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT DISTINCT branch_id
        FROM employees
       WHERE process_id IN (${processIds.map(() => "?").join(",")})
         AND branch_id IS NOT NULL
         AND active_status = 1`,
-    [...processIds],
-  ).catch(emptyOnError("branch_master by process", { site: "branchesForProcesses" }));
+      [...processIds],
+    )
+    .catch(
+      emptyOnError("branch_master by process", {
+        site: "branchesForProcesses",
+      }),
+    );
   return unique(rows.map((row) => row.branch_id));
 }
 
@@ -243,12 +312,20 @@ async function branchesForProcesses(processIds: readonly string[]): Promise<stri
  * The 5 self-referencing rows remain a data defect worth correcting at source; this makes
  * the resolver immune to them rather than dependent on that cleanup.
  */
-async function resolveTeamEmployeeIds(managerEmployeeId: string): Promise<string[]> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, reporting_manager_id, manager_id
+async function resolveTeamEmployeeIds(
+  managerEmployeeId: string,
+): Promise<string[]> {
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id, reporting_manager_id, manager_id
        FROM employees
       WHERE active_status = 1`,
-  ).catch(emptyOnError("employees reporting edges", { site: "resolveTeamEmployeeIds" }));
+    )
+    .catch(
+      emptyOnError("employees reporting edges", {
+        site: "resolveTeamEmployeeIds",
+      }),
+    );
 
   const childrenOf = new Map<string, string[]>();
   for (const row of rows as RowDataPacket[]) {
@@ -307,13 +384,26 @@ export async function resolveDashboardScopeForRequest(
   user: { id: string; role?: string; isDemo?: boolean },
   primaryRole: string,
 ): Promise<DashboardScope> {
-  if (user.isDemo === true && (user.role === "super_admin" || user.role === "admin")) {
-    return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId: user.id, role: user.role };
+  if (
+    user.isDemo === true &&
+    (user.role === "super_admin" || user.role === "admin")
+  ) {
+    return {
+      level: "ORG_ALL",
+      branchIds: [],
+      processIds: [],
+      employeeIds: [],
+      userId: user.id,
+      role: user.role,
+    };
   }
   return resolveDashboardScope(user.id, primaryRole);
 }
 
-export async function resolveDashboardScope(userId: string, _role: string): Promise<DashboardScope> {
+export async function resolveDashboardScope(
+  userId: string,
+  _role: string,
+): Promise<DashboardScope> {
   const context = await getUserRoleContext(userId);
   const effectiveRole = context.primaryRole;
 
@@ -321,8 +411,18 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
   // stray assignment row, or an administrator could lock themselves out of the platform.
   // Head-office titles are org-wide for the same reason: head office is itself a branch
   // in branch_master, so narrowing the CEO by assignment scoped him to 13 people.
-  if (SYSTEM_WIDE_ROLES.has(effectiveRole) || HEAD_OFFICE_ROLES.has(effectiveRole)) {
-    return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
+  if (
+    SYSTEM_WIDE_ROLES.has(effectiveRole) ||
+    HEAD_OFFICE_ROLES.has(effectiveRole)
+  ) {
+    return {
+      level: "ORG_ALL",
+      branchIds: [],
+      processIds: [],
+      employeeIds: [],
+      userId,
+      role: effectiveRole,
+    };
   }
 
   const [assignments, employee] = await Promise.all([
@@ -344,12 +444,18 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
   // ROLE_PRIORITY, so three branch heads holding both roles were also silently elevated —
   // defeating the protection BRANCH_ALL_ROLES exists to provide.
   const explicitlyScoped = assignments.filter((row) => {
-    const scopeType = String(row.scope_type ?? "").trim().toLowerCase();
+    const scopeType = String(row.scope_type ?? "")
+      .trim()
+      .toLowerCase();
     if (scopeType === "all") return false;
     return Boolean(row.branch_id) || Boolean(row.process_id);
   });
-  const assignedBranchIds = unique(explicitlyScoped.map((row) => row.branch_id));
-  const assignedProcessIds = unique(explicitlyScoped.map((row) => row.process_id));
+  const assignedBranchIds = unique(
+    explicitlyScoped.map((row) => row.branch_id),
+  );
+  const assignedProcessIds = unique(
+    explicitlyScoped.map((row) => row.process_id),
+  );
 
   if (ORG_ALL_ROLES.has(effectiveRole) && !SELF_ONLY_ROLES.has(effectiveRole)) {
     if (assignedBranchIds.length === 0 && assignedProcessIds.length === 0) {
@@ -364,10 +470,20 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
       // Every real privileged user already carries an explicit 'all' grant, so this
       // narrows nobody in production today — only test fixtures sat on the old default.
       const hasAllGrant = assignments.some(
-        (row) => String(row.scope_type ?? "").trim().toLowerCase() === "all",
+        (row) =>
+          String(row.scope_type ?? "")
+            .trim()
+            .toLowerCase() === "all",
       );
       if (hasAllGrant) {
-        return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
+        return {
+          level: "ORG_ALL",
+          branchIds: [],
+          processIds: [],
+          employeeIds: [],
+          userId,
+          role: effectiveRole,
+        };
       }
       // Fail closed to the employee's own branch rather than opening the whole org.
       if (employee.branchIds.length > 0) {
@@ -382,14 +498,20 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
       }
       // No assignment and no branch to fall back on: refuse rather than guess. The message
       // tells an administrator exactly what to add.
-      throw new DashboardScopeConfigurationError(effectiveRole, "branch or scope_type='all'");
+      throw new DashboardScopeConfigurationError(
+        effectiveRole,
+        "branch or scope_type='all'",
+      );
     }
     // Assigned to specific branches/processes: scope to exactly those, and no wider.
     // The employee's own branch is deliberately excluded — the assignment is the grant.
     if (assignedProcessIds.length > 0) {
       return {
         level: "PROCESS_ALL",
-        branchIds: unique([...assignedBranchIds, ...await branchesForProcesses(assignedProcessIds)]),
+        branchIds: unique([
+          ...assignedBranchIds,
+          ...(await branchesForProcesses(assignedProcessIds)),
+        ]),
         processIds: assignedProcessIds,
         employeeIds: [],
         userId,
@@ -429,7 +551,8 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
     // Explicit assignment wins outright, on the same principle applied above: the
     // assignment is the grant. Only when a branch role carries no assignment at all does
     // it fall back to the employee's own branch — which is a narrowing, never a widening.
-    const grantedBranchIds = assignedBranchIds.length > 0 ? assignedBranchIds : employee.branchIds;
+    const grantedBranchIds =
+      assignedBranchIds.length > 0 ? assignedBranchIds : employee.branchIds;
     if (grantedBranchIds.length > 0) {
       return {
         level: "BRANCH_ALL",
@@ -445,25 +568,48 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
 
   if (PROCESS_OR_TEAM_ROLES.has(effectiveRole)) {
     if (processIds.length > 0) {
-      return { level: "PROCESS_ALL", branchIds, processIds, employeeIds: [], userId, role: effectiveRole };
+      return {
+        level: "PROCESS_ALL",
+        branchIds,
+        processIds,
+        employeeIds: [],
+        userId,
+        role: effectiveRole,
+      };
     }
     throw new DashboardScopeConfigurationError(effectiveRole, "process");
   }
 
   if (TEAM_ROLES.has(effectiveRole)) {
     if (!employee.employeeId) {
-      throw new DashboardScopeConfigurationError(effectiveRole, "reporting hierarchy");
+      throw new DashboardScopeConfigurationError(
+        effectiveRole,
+        "reporting hierarchy",
+      );
     }
     const employeeIds = await resolveTeamEmployeeIds(employee.employeeId);
-    return { level: "TEAM_ONLY", branchIds: [], processIds: [], employeeIds, userId, role: effectiveRole };
+    return {
+      level: "TEAM_ONLY",
+      branchIds: [],
+      processIds: [],
+      employeeIds,
+      userId,
+      role: effectiveRole,
+    };
   }
 
   if (SELF_ONLY_ROLES.has(effectiveRole) && !employee.employeeId) {
-    throw new DashboardScopeConfigurationError(effectiveRole, "employee mapping");
+    throw new DashboardScopeConfigurationError(
+      effectiveRole,
+      "employee mapping",
+    );
   }
 
   if (!employee.employeeId) {
-    throw new DashboardScopeConfigurationError(effectiveRole, "employee mapping");
+    throw new DashboardScopeConfigurationError(
+      effectiveRole,
+      "employee mapping",
+    );
   }
 
   return {
@@ -495,11 +641,16 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
  * DashboardScopeConfigurationError any other unmapped user would — a personal dashboard
  * has nothing scope-widening to fall back to.
  */
-export async function resolveSelfOnlyDashboardScope(userId: string): Promise<DashboardScope> {
+export async function resolveSelfOnlyDashboardScope(
+  userId: string,
+): Promise<DashboardScope> {
   const context = await getUserRoleContext(userId);
   const employee = await resolveEmployeeScope(userId);
   if (!employee.employeeId) {
-    throw new DashboardScopeConfigurationError(context.primaryRole, "employee mapping");
+    throw new DashboardScopeConfigurationError(
+      context.primaryRole,
+      "employee mapping",
+    );
   }
   return {
     level: "SELF_ONLY",
@@ -521,54 +672,99 @@ export async function narrowDashboardScope(
   if (!branchId && !processId) return scope;
   if (scope.level === "SELF_ONLY" || scope.level === "TEAM_ONLY") return scope;
 
-  const deny = (): DashboardScope => ({ ...scope, level: "CUSTOM_SCOPE", branchIds: [], processIds: [] });
+  const deny = (): DashboardScope => ({
+    ...scope,
+    level: "CUSTOM_SCOPE",
+    branchIds: [],
+    processIds: [],
+  });
 
-  if (scope.level === "BRANCH_ALL" && branchId && !scope.branchIds.includes(branchId)) return deny();
-  if (scope.level === "PROCESS_ALL" && processId && !scope.processIds.includes(processId)) return deny();
+  if (
+    scope.level === "BRANCH_ALL" &&
+    branchId &&
+    !scope.branchIds.includes(branchId)
+  )
+    return deny();
+  if (
+    scope.level === "PROCESS_ALL" &&
+    processId &&
+    !scope.processIds.includes(processId)
+  )
+    return deny();
 
   if (branchId) {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM branch_master WHERE id = ? AND active_status = 1 LIMIT 1",
-      [branchId],
-    ).catch(emptyOnError("branch_master validity", { site: "narrowDashboardScope" }));
+    const [rows] = await db
+      .execute<RowDataPacket[]>(
+        "SELECT id FROM branch_master WHERE id = ? AND active_status = 1 LIMIT 1",
+        [branchId],
+      )
+      .catch(
+        emptyOnError("branch_master validity", {
+          site: "narrowDashboardScope",
+        }),
+      );
     if (rows.length === 0) return deny();
   }
 
   if (processId) {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM process_master WHERE id = ? AND active_status = 1 LIMIT 1",
-      [processId],
-    ).catch(emptyOnError("process_master validity", { site: "narrowDashboardScope" }));
+    const [rows] = await db
+      .execute<RowDataPacket[]>(
+        "SELECT id FROM process_master WHERE id = ? AND active_status = 1 LIMIT 1",
+        [processId],
+      )
+      .catch(
+        emptyOnError("process_master validity", {
+          site: "narrowDashboardScope",
+        }),
+      );
     if (rows.length === 0) return deny();
   }
 
   if (scope.level === "BRANCH_ALL" && processId) {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT 1 FROM employees
+    const [rows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT 1 FROM employees
         WHERE process_id = ?
           AND branch_id IN (${scope.branchIds.map(() => "?").join(",")})
           AND active_status = 1 LIMIT 1`,
-      [processId, ...scope.branchIds],
-    ).catch(emptyOnError("process within branch scope", { site: "narrowDashboardScope" }));
+        [processId, ...scope.branchIds],
+      )
+      .catch(
+        emptyOnError("process within branch scope", {
+          site: "narrowDashboardScope",
+        }),
+      );
     if (rows.length === 0) return deny();
   }
 
   if (scope.level === "PROCESS_ALL" && branchId) {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT 1 FROM employees
+    const [rows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT 1 FROM employees
         WHERE branch_id = ?
           AND process_id IN (${scope.processIds.map(() => "?").join(",")})
           AND active_status = 1 LIMIT 1`,
-      [branchId, ...scope.processIds],
-    ).catch(emptyOnError("branch within process scope", { site: "narrowDashboardScope" }));
+        [branchId, ...scope.processIds],
+      )
+      .catch(
+        emptyOnError("branch within process scope", {
+          site: "narrowDashboardScope",
+        }),
+      );
     if (rows.length === 0) return deny();
   }
 
   if (branchId && processId) {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT 1 FROM employees WHERE branch_id = ? AND process_id = ? AND active_status = 1 LIMIT 1",
-      [branchId, processId],
-    ).catch(emptyOnError("branch+process pair validity", { site: "narrowDashboardScope" }));
+    const [rows] = await db
+      .execute<RowDataPacket[]>(
+        "SELECT 1 FROM employees WHERE branch_id = ? AND process_id = ? AND active_status = 1 LIMIT 1",
+        [branchId, processId],
+      )
+      .catch(
+        emptyOnError("branch+process pair validity", {
+          site: "narrowDashboardScope",
+        }),
+      );
     if (rows.length === 0) return deny();
   }
 
@@ -622,20 +818,29 @@ export function buildScopeWhere(
     const conditions: string[] = [];
     const params: string[] = [];
     if (scope.branchIds.length > 0) {
-      conditions.push(`${branchCol} IN (${scope.branchIds.map(() => "?").join(",")})`);
+      conditions.push(
+        `${branchCol} IN (${scope.branchIds.map(() => "?").join(",")})`,
+      );
       params.push(...scope.branchIds);
     }
     if (scope.processIds.length > 0) {
-      conditions.push(`${processCol} IN (${scope.processIds.map(() => "?").join(",")})`);
+      conditions.push(
+        `${processCol} IN (${scope.processIds.map(() => "?").join(",")})`,
+      );
       params.push(...scope.processIds);
     }
-    return conditions.length > 0 ? { sql: conditions.join(" AND "), params } : { sql: "1=0", params: [] };
+    return conditions.length > 0
+      ? { sql: conditions.join(" AND "), params }
+      : { sql: "1=0", params: [] };
   }
 
   return { sql: "1=0", params: [] };
 }
 
-export function buildScopeWhereEmployees(scope: DashboardScope, alias = "e"): { sql: string; params: string[] } {
+export function buildScopeWhereEmployees(
+  scope: DashboardScope,
+  alias = "e",
+): { sql: string; params: string[] } {
   if (scope.level === "ORG_ALL") return { sql: "1=1", params: [] };
   if (scope.level === "SELF_ONLY" || scope.level === "TEAM_ONLY") {
     const employeeIds = scope.employeeIds ?? [];
@@ -665,6 +870,9 @@ export function buildEmployeeLinkedScopeWhere(
   return buildScopeWhere(scope, branchCol, processCol);
 }
 
-export function scopeToSqlWhere(scope: DashboardScope, tableAlias = "e"): { sql: string; params: any[] } {
+export function scopeToSqlWhere(
+  scope: DashboardScope,
+  tableAlias = "e",
+): { sql: string; params: any[] } {
   return buildScopeWhereEmployees(scope, tableAlias);
 }

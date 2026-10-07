@@ -14,7 +14,13 @@ import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import PDFDocument from "pdfkit";
-import { PDFDocument as PDFLibDocument, PDFRawStream, PDFName, StandardFonts, rgb } from "pdf-lib";
+import {
+  PDFDocument as PDFLibDocument,
+  PDFRawStream,
+  PDFName,
+  StandardFonts,
+  rgb,
+} from "pdf-lib";
 import { TEMPLATE_DEFINITIONS } from "./joiningDocumentTemplates.js";
 
 const COMPANY_NAME = "Mas Callnet India Pvt. Ltd.";
@@ -62,7 +68,10 @@ function displayValue(value: string): string {
   return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
 }
 
-function substitute(text: string, replacements: Record<string, string>): string {
+function substitute(
+  text: string,
+  replacements: Record<string, string>,
+): string {
   return text.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_whole, token: string) => {
     const value = replacements[token.trim()];
     // An unresolved token must not be left as {{token}} on a document going out
@@ -83,20 +92,39 @@ function drawLetterhead(doc: Doc, letterhead?: PdfLetterhead) {
   const textW = doc.page.width - PAGE.margin - textX; // ~373pt remaining
   const logo = logoPath();
   if (logo) {
-    try { doc.image(logo, PAGE.margin, top, { fit: [logoMaxW, 26] }); } catch { /* fall through to text */ }
+    try {
+      doc.image(logo, PAGE.margin, top, { fit: [logoMaxW, 26] });
+    } catch {
+      /* fall through to text */
+    }
   }
-  doc.font("Helvetica-Bold").fontSize(9).fillColor(INK)
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(INK)
     .text(COMPANY_NAME, textX, top, { width: textW, align: "right" });
 
   // The branch that issued this document. Collapsed to at most two lines so a
   // long postal address cannot push into the body text.
   const addressText = letterheadAddressText(letterhead);
-  doc.font("Helvetica").fontSize(7.5).fillColor(MUTED)
-    .text(addressText, textX, top + 12, { width: textW, align: "right", height: 20, ellipsis: true });
+  doc
+    .font("Helvetica")
+    .fontSize(7.5)
+    .fillColor(MUTED)
+    .text(addressText, textX, top + 12, {
+      width: textW,
+      align: "right",
+      height: 20,
+      ellipsis: true,
+    });
 
   const ruleY = top + 32;
-  doc.moveTo(PAGE.margin, ruleY).lineTo(doc.page.width - PAGE.margin, ruleY)
-    .lineWidth(1.2).strokeColor(ACCENT).stroke();
+  doc
+    .moveTo(PAGE.margin, ruleY)
+    .lineTo(doc.page.width - PAGE.margin, ruleY)
+    .lineWidth(1.2)
+    .strokeColor(ACCENT)
+    .stroke();
   doc.y = ruleY + 18;
   // Reset doc.x to the left margin. The right-aligned letterhead text leaves
   // doc.x somewhere on the right side of the page, which then shifts all
@@ -116,7 +144,8 @@ function ensureRoom(doc: Doc, needed: number) {
 }
 
 /** "Signature: ______  Date: 29/07/2026" is set as a ruled block, not body text. */
-const SIGNATURE_LINE = /^(Signature|Employee Signature|For and on behalf of|Witness \d)/i;
+const SIGNATURE_LINE =
+  /^(Signature|Employee Signature|For and on behalf of|Witness \d)/i;
 
 /**
  * The exact address line drawn on the letterhead. finish() needs the identical
@@ -145,8 +174,11 @@ function renderContent(
   replacements: Record<string, string>,
   letterhead?: PdfLetterhead,
 ): Promise<Buffer> {
-  const definition = TEMPLATE_DEFINITIONS.find((entry) => entry.code === documentCode);
-  if (!definition) throw new Error(`No template definition for ${documentCode}`);
+  const definition = TEMPLATE_DEFINITIONS.find(
+    (entry) => entry.code === documentCode,
+  );
+  if (!definition)
+    throw new Error(`No template definition for ${documentCode}`);
 
   // Derived from the same letterhead drawn at the top of the page, so the
   // address in the body can never contradict the one in the header.
@@ -165,7 +197,12 @@ function renderContent(
       size: PAGE.size,
       // bottom margin includes the reserved band: PDFKit paginates on this,
       // and a bare `margin` would let an overflowing paragraph run into it.
-      margins: { top: PAGE.margin, bottom: PAGE.margin + RESERVE.band, left: PAGE.margin, right: PAGE.margin },
+      margins: {
+        top: PAGE.margin,
+        bottom: PAGE.margin + RESERVE.band,
+        left: PAGE.margin,
+        right: PAGE.margin,
+      },
       bufferPages: true,
     });
     const chunks: Buffer[] = [];
@@ -182,20 +219,31 @@ function renderContent(
 
     for (const block of definition.blocks) {
       const style = block.style ?? "body";
-      if (style === "spacer") { doc.moveDown(0.6); continue; }
+      if (style === "spacer") {
+        doc.moveDown(0.6);
+        continue;
+      }
 
       const text = substitute(block.text, replacements);
 
       if (style === "title") {
         ensureRoom(doc, 46);
         doc.moveDown(0.4);
-        doc.font("Helvetica-Bold").fontSize(13).fillColor(INK)
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(13)
+          .fillColor(INK)
           .text(text, { width: contentWidth, align: "center" });
         // A rule under the title, the width of the words, reads as a heading.
         doc.moveDown(0.3);
         const w = Math.min(contentWidth, doc.widthOfString(text) + 20);
         const x = PAGE.margin + (contentWidth - w) / 2;
-        doc.moveTo(x, doc.y).lineTo(x + w, doc.y).lineWidth(0.8).strokeColor(ACCENT).stroke();
+        doc
+          .moveTo(x, doc.y)
+          .lineTo(x + w, doc.y)
+          .lineWidth(0.8)
+          .strokeColor(ACCENT)
+          .stroke();
         doc.moveDown(0.8);
         continue;
       }
@@ -203,7 +251,10 @@ function renderContent(
       if (style === "heading") {
         ensureRoom(doc, 40);
         doc.moveDown(0.5);
-        doc.font("Helvetica-Bold").fontSize(10).fillColor(ACCENT)
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(10)
+          .fillColor(ACCENT)
           .text(text, { width: contentWidth });
         doc.moveDown(0.25);
         continue;
@@ -219,16 +270,31 @@ function renderContent(
           const body = text.slice(marker[0].length);
           const labelWidth = 34;
           const startY = doc.y;
-          doc.font("Helvetica-Bold").fontSize(9).fillColor(INK)
-            .text(label, PAGE.margin + 8, startY, { width: labelWidth, lineBreak: false });
-          doc.font("Helvetica").fontSize(9).fillColor(INK)
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(9)
+            .fillColor(INK)
+            .text(label, PAGE.margin + 8, startY, {
+              width: labelWidth,
+              lineBreak: false,
+            });
+          doc
+            .font("Helvetica")
+            .fontSize(9)
+            .fillColor(INK)
             .text(body, PAGE.margin + 8 + labelWidth, startY, {
               width: contentWidth - labelWidth - 8,
               align: "justify",
             });
         } else {
-          doc.font("Helvetica").fontSize(9).fillColor(INK)
-            .text(text, PAGE.margin + 8, doc.y, { width: contentWidth - 8, align: "justify" });
+          doc
+            .font("Helvetica")
+            .fontSize(9)
+            .fillColor(INK)
+            .text(text, PAGE.margin + 8, doc.y, {
+              width: contentWidth - 8,
+              align: "justify",
+            });
         }
         doc.moveDown(0.35);
         continue;
@@ -237,14 +303,20 @@ function renderContent(
       if (SIGNATURE_LINE.test(text)) {
         ensureRoom(doc, 44);
         doc.moveDown(0.5);
-        doc.font("Helvetica").fontSize(9).fillColor(INK)
+        doc
+          .font("Helvetica")
+          .fontSize(9)
+          .fillColor(INK)
           .text(text, { width: contentWidth });
         doc.moveDown(0.3);
         continue;
       }
 
       ensureRoom(doc, 28);
-      doc.font("Helvetica").fontSize(9).fillColor(INK)
+      doc
+        .font("Helvetica")
+        .fontSize(9)
+        .fillColor(INK)
         .text(text, { width: contentWidth, align: "justify" });
       doc.moveDown(0.45);
     }
@@ -263,7 +335,8 @@ async function pageText(doc: PDFLibDocument, index: number): Promise<string> {
   const page = doc.getPage(index);
   const contents = page.node.Contents();
   const streams: PDFRawStream[] = [];
-  const asArray = (contents as unknown as { asArray?: () => unknown[] })?.asArray;
+  const asArray = (contents as unknown as { asArray?: () => unknown[] })
+    ?.asArray;
   if (contents instanceof PDFRawStream) streams.push(contents);
   else if (typeof asArray === "function") {
     for (const ref of asArray.call(contents)) {
@@ -276,7 +349,11 @@ async function pageText(doc: PDFLibDocument, index: number): Promise<string> {
     let raw = Buffer.from(stream.contents);
     const filter = stream.dict.get(PDFName.of("Filter"));
     if (filter && String(filter).includes("FlateDecode")) {
-      try { raw = zlib.inflateSync(raw); } catch { continue; }
+      try {
+        raw = zlib.inflateSync(raw);
+      } catch {
+        continue;
+      }
     }
     const text = raw.toString("latin1");
     for (const match of text.matchAll(/<([0-9A-Fa-f\s]+)>/g)) {
@@ -317,15 +394,26 @@ async function finish(pdfBytes: Buffer, addressText: string): Promise<Buffer> {
     // Moved above the reserved band so the footer is not overwritten either.
     const y = RESERVE.band + 2;
     page.drawLine({
-      start: { x: PAGE.margin, y: y + 12 }, end: { x: width - PAGE.margin, y: y + 12 },
-      thickness: 0.6, color: rgb(0.82, 0.84, 0.86),
+      start: { x: PAGE.margin, y: y + 12 },
+      end: { x: width - PAGE.margin, y: y + 12 },
+      thickness: 0.6,
+      color: rgb(0.82, 0.84, 0.86),
     });
     const left = `${COMPANY_NAME}  |  ${CONFIDENTIAL_NOTE}`;
-    page.drawText(left, { x: PAGE.margin, y, size: 7, font, color: rgb(0.42, 0.45, 0.5) });
+    page.drawText(left, {
+      x: PAGE.margin,
+      y,
+      size: 7,
+      font,
+      color: rgb(0.42, 0.45, 0.5),
+    });
     const right = `Page ${index + 1} of ${total}`;
     page.drawText(right, {
       x: width - PAGE.margin - font.widthOfTextAtSize(right, 7),
-      y, size: 7, font, color: rgb(0.42, 0.45, 0.5),
+      y,
+      size: 7,
+      font,
+      color: rgb(0.42, 0.45, 0.5),
     });
   });
   return Buffer.from(await doc.save());

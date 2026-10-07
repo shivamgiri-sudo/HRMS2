@@ -108,7 +108,9 @@ function parseAnswerJson(
   return fallback;
 }
 
-function questionRowToDefinition(row: QuestionRow): AssessmentQuestionDefinition {
+function questionRowToDefinition(
+  row: QuestionRow,
+): AssessmentQuestionDefinition {
   const base: AssessmentQuestionDefinition = {
     id: row.question_code,
     sectionKey: row.section_key,
@@ -121,7 +123,10 @@ function questionRowToDefinition(row: QuestionRow): AssessmentQuestionDefinition
 
   if (row.question_type === "single" || row.question_type === "multi") {
     base.options = parseJson<string[]>(row.options_json, []);
-    base.correctAnswer = parseAnswerJson(row.correct_answer_json, row.question_type);
+    base.correctAnswer = parseAnswerJson(
+      row.correct_answer_json,
+      row.question_type,
+    );
   }
 
   if (row.question_type === "text") {
@@ -140,7 +145,9 @@ export async function getAvailableSetNumbers(
   process: AssessmentProcess,
   role: AssessmentRole,
 ): Promise<{ questionSets: number[]; passageSets: number[] }> {
-  const [questionRows] = await db.execute<(RowDataPacket & { set_number: number })[]>(
+  const [questionRows] = await db.execute<
+    (RowDataPacket & { set_number: number })[]
+  >(
     `SELECT DISTINCT set_number
      FROM ats_question_bank
      WHERE active_status = 1
@@ -150,7 +157,9 @@ export async function getAvailableSetNumbers(
     [process, role],
   );
 
-  const [passageRows] = await db.execute<(RowDataPacket & { set_number: number })[]>(
+  const [passageRows] = await db.execute<
+    (RowDataPacket & { set_number: number })[]
+  >(
     `SELECT DISTINCT set_number
      FROM ats_typing_passage_bank
      WHERE active_status = 1
@@ -173,7 +182,10 @@ export async function selectRandomQuestionSet(
   role: AssessmentRole,
   _questionsPerSection: number = 10,
   excludeSets: number[] = [],
-): Promise<{ setNumber: number; questions: AssessmentQuestionDefinition[] } | null> {
+): Promise<{
+  setNumber: number;
+  questions: AssessmentQuestionDefinition[];
+} | null> {
   // Pull all active questions for this process/role across all sets
   const [allRows] = await db.execute<QuestionRow[]>(
     `SELECT *
@@ -193,7 +205,10 @@ export async function selectRandomQuestionSet(
   const seen = new Set<string>();
   const picked: QuestionRow[] = [];
   for (const row of shuffled) {
-    if (!seen.has(row.question_code) && picked.length < QUESTIONS_PER_ASSESSMENT) {
+    if (
+      !seen.has(row.question_code) &&
+      picked.length < QUESTIONS_PER_ASSESSMENT
+    ) {
       seen.add(row.question_code);
       picked.push(row);
     }
@@ -209,7 +224,10 @@ export async function selectRandomQuestionSet(
   }
 
   // Use set_number 0 as a sentinel when pulling from mixed sets
-  return { setNumber: 0, questions: shuffleArray(picked.map(questionRowToDefinition)) };
+  return {
+    setNumber: 0,
+    questions: shuffleArray(picked.map(questionRowToDefinition)),
+  };
 }
 
 export async function selectRandomPassage(
@@ -239,7 +257,10 @@ export async function selectRandomPassage(
   const passage = rows[0];
   if (!passage) return null;
 
-  await db.execute(`UPDATE ats_typing_passage_bank SET usage_count = usage_count + 1 WHERE id = ?`, [passage.id]);
+  await db.execute(
+    `UPDATE ats_typing_passage_bank SET usage_count = usage_count + 1 WHERE id = ?`,
+    [passage.id],
+  );
 
   return {
     setNumber: selectedSet,
@@ -260,9 +281,18 @@ export async function buildRandomizedTemplate(
   excludePassageSets: number[] = [],
 ): Promise<{ config: AssessmentTemplateDefinition; fromBank: boolean }> {
   const [questionResult, passageResult] = await Promise.all([
-    selectRandomQuestionSet(baseTemplate.process, baseTemplate.role, 10, excludeQuestionSets),
+    selectRandomQuestionSet(
+      baseTemplate.process,
+      baseTemplate.role,
+      10,
+      excludeQuestionSets,
+    ),
     baseTemplate.typing.required
-      ? selectRandomPassage(baseTemplate.process, baseTemplate.role, excludePassageSets)
+      ? selectRandomPassage(
+          baseTemplate.process,
+          baseTemplate.role,
+          excludePassageSets,
+        )
       : Promise.resolve(null),
   ]);
 
@@ -289,7 +319,12 @@ export async function countQuestionBankStats(): Promise<{
   }>;
 }> {
   // Four independent aggregates — issued together rather than one after another.
-  const [[questionCount], [passageCount], [byProcessRole], [passageByProcessRole]] = await Promise.all([
+  const [
+    [questionCount],
+    [passageCount],
+    [byProcessRole],
+    [passageByProcessRole],
+  ] = await Promise.all([
     db.execute<(RowDataPacket & { count: number })[]>(
       `SELECT COUNT(*) as count FROM ats_question_bank WHERE active_status = 1`,
     ),
@@ -310,7 +345,11 @@ export async function countQuestionBankStats(): Promise<{
      GROUP BY process_key, role_key`,
     ),
     db.execute<
-      (RowDataPacket & { process_key: string; role_key: string; passage_count: number })[]
+      (RowDataPacket & {
+        process_key: string;
+        role_key: string;
+        passage_count: number;
+      })[]
     >(
       `SELECT process_key, role_key, COUNT(*) as passage_count
      FROM ats_typing_passage_bank
@@ -319,7 +358,12 @@ export async function countQuestionBankStats(): Promise<{
     ),
   ]);
 
-  const passageMap = new Map(passageByProcessRole.map((p) => [`${p.process_key}:${p.role_key}`, p.passage_count]));
+  const passageMap = new Map(
+    passageByProcessRole.map((p) => [
+      `${p.process_key}:${p.role_key}`,
+      p.passage_count,
+    ]),
+  );
 
   return {
     totalQuestions: questionCount[0]?.count ?? 0,

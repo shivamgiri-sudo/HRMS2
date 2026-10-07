@@ -3,8 +3,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 vi.mock("../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
-const { resolveDashboardScope, resolveSelfOnlyDashboardScope, DashboardScopeConfigurationError } =
-  await import("../dashboardScope.js");
+const {
+  resolveDashboardScope,
+  resolveSelfOnlyDashboardScope,
+  DashboardScopeConfigurationError,
+} = await import("../dashboardScope.js");
 
 const USER_ID = "d98a0a9d-6d7b-4b1d-98a1-cc948fb09eea";
 const EMPLOYEE_ID = "0cf00cf6-5e8b-11f1-adb1-00155d0ab410";
@@ -22,7 +25,9 @@ function mockBranchHead() {
     if (sql.includes("FROM user_roles")) return [[{ role_key: "branch_head" }]];
     if (sql.includes("FROM user_assignment_scope")) return [[]];
     if (sql.includes("FROM employees")) {
-      return [[{ id: EMPLOYEE_ID, branch_id: BRANCH_ID, process_id: PROCESS_ID }]];
+      return [
+        [{ id: EMPLOYEE_ID, branch_id: BRANCH_ID, process_id: PROCESS_ID }],
+      ];
     }
     return [[]];
   });

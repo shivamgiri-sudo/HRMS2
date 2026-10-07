@@ -48,17 +48,23 @@ async function main() {
          FROM cost_centre_master ccm
          JOIN process_master pm ON pm.process_name = ccm.process_name_bill
         WHERE ccm.process_id IS NULL
-          AND ccm.process_name_bill IS NOT NULL AND ccm.process_name_bill NOT IN ('', '0')`
+          AND ccm.process_name_bill IS NOT NULL AND ccm.process_name_bill NOT IN ('', '0')`,
     );
 
-    const toLink = candidates.filter((r) => !isDialdesk(r.cost_centre_code, r.process_name_bill));
+    const toLink = candidates.filter(
+      (r) => !isDialdesk(r.cost_centre_code, r.process_name_bill),
+    );
     const skippedDialdesk = candidates.length - toLink.length;
 
-    console.log(`exact process-name matches with process_id still NULL: ${candidates.length}`);
+    console.log(
+      `exact process-name matches with process_id still NULL: ${candidates.length}`,
+    );
     console.log(`  -> DialDesk-excluded: ${skippedDialdesk}`);
     console.log(`  -> eligible to link: ${toLink.length}`);
     toLink.forEach((r) =>
-      console.log(`  ${r.cost_centre_code} | "${r.process_name_bill}" -> ${r.matched_process_id}`)
+      console.log(
+        `  ${r.cost_centre_code} | "${r.process_name_bill}" -> ${r.matched_process_id}`,
+      ),
     );
 
     const [unmatchedCount] = await hrms.execute<any[]>(
@@ -66,10 +72,10 @@ async function main() {
         WHERE ccm.process_id IS NULL
           AND ccm.process_name_bill IS NOT NULL AND ccm.process_name_bill NOT IN ('', '0')
           AND ccm.cost_centre_code NOT LIKE '%DIALDESK%' AND ccm.cost_centre_code NOT LIKE '%-DD/%'
-          AND NOT EXISTS (SELECT 1 FROM process_master pm WHERE pm.process_name = ccm.process_name_bill)`
+          AND NOT EXISTS (SELECT 1 FROM process_master pm WHERE pm.process_name = ccm.process_name_bill)`,
     );
     console.log(
-      `\nremaining non-DialDesk cost centres with NO exact process-name match (need a human): ${unmatchedCount[0].c}`
+      `\nremaining non-DialDesk cost centres with NO exact process-name match (need a human): ${unmatchedCount[0].c}`,
     );
 
     if (!APPLY) {
@@ -83,9 +89,10 @@ async function main() {
       for (const r of toLink) {
         const [res] = await hrms.execute(
           "UPDATE cost_centre_master SET process_id = ? WHERE id = ? AND process_id IS NULL",
-          [r.matched_process_id, r.cc_id]
+          [r.matched_process_id, r.cc_id],
         );
-        if ((res as any).affectedRows !== 1) throw new Error(`unexpected affectedRows for ${r.cc_id}`);
+        if ((res as any).affectedRows !== 1)
+          throw new Error(`unexpected affectedRows for ${r.cc_id}`);
         updated++;
       }
       await hrms.commit();

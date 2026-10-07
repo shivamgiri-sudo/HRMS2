@@ -33,34 +33,65 @@ const { hasRoleForRequest, getEmployeeForUser } = vi.hoisted(() => ({
   hasRoleForRequest: vi.fn(async () => false),
   getEmployeeForUser: vi.fn(async () => ({ id: "emp-caller-1" })),
 }));
-vi.mock("../../../shared/accessGuard.js", () => ({ hasRoleForRequest, getEmployeeForUser }));
-
-const { resolveUserBusinessScope, buildProcessScopeCondition } = vi.hoisted(() => ({
-  resolveUserBusinessScope: vi.fn(async () => ({ isSuperAdmin: false, isAdmin: false, isHr: false, roles: ["it"] })),
-  buildProcessScopeCondition: vi.fn(() => ({ sql: "1=1", params: [] })),
+vi.mock("../../../shared/accessGuard.js", () => ({
+  hasRoleForRequest,
+  getEmployeeForUser,
 }));
-vi.mock("../../../shared/enterpriseScope.js", () => ({ resolveUserBusinessScope, buildProcessScopeCondition }));
 
-const { getUserRoleKeys } = vi.hoisted(() => ({ getUserRoleKeys: vi.fn(async () => ["it"]) }));
+const { resolveUserBusinessScope, buildProcessScopeCondition } = vi.hoisted(
+  () => ({
+    resolveUserBusinessScope: vi.fn(async () => ({
+      isSuperAdmin: false,
+      isAdmin: false,
+      isHr: false,
+      roles: ["it"],
+    })),
+    buildProcessScopeCondition: vi.fn(() => ({ sql: "1=1", params: [] })),
+  }),
+);
+vi.mock("../../../shared/enterpriseScope.js", () => ({
+  resolveUserBusinessScope,
+  buildProcessScopeCondition,
+}));
+
+const { getUserRoleKeys } = vi.hoisted(() => ({
+  getUserRoleKeys: vi.fn(async () => ["it"]),
+}));
 vi.mock("../../../shared/scopeAccess.js", () => ({ getUserRoleKeys }));
 
 const { getTicket, updateTicket, createTicket } = vi.hoisted(() => ({
-  getTicket: vi.fn(async () => ({ id: "t-1", employee_id: "emp-owner", comments: [] })),
+  getTicket: vi.fn(async () => ({
+    id: "t-1",
+    employee_id: "emp-owner",
+    comments: [],
+  })),
   updateTicket: vi.fn(async () => ({ id: "t-1", status: "resolved" })),
   createTicket: vi.fn(async () => ({ id: "t-new" })),
 }));
 vi.mock("../helpdesk.service.js", () => ({
   helpdeskService: {
-    getTicket, updateTicket, createTicket,
+    getTicket,
+    updateTicket,
+    createTicket,
     listTickets: vi.fn(async () => []),
-    reopenTicket: vi.fn(), takeTicket: vi.fn(), holdTicket: vi.fn(),
-    addComment: vi.fn(), rateTicket: vi.fn(), listAgents: vi.fn(async () => []),
+    reopenTicket: vi.fn(),
+    takeTicket: vi.fn(),
+    holdTicket: vi.fn(),
+    addComment: vi.fn(),
+    rateTicket: vi.fn(),
+    listAgents: vi.fn(async () => []),
   },
   writeSensitiveAuditLog: vi.fn(async () => undefined),
   CATEGORY_OWNER_ROLES: {
     it: ["it", "branch_it", "it_admin"],
-    hr: ["hr"], leave: ["hr"], payroll: ["hr"],
-    attendance: ["admin"], admin: ["admin"], asset: ["admin"], general: ["admin"], other: ["admin"],
+    hr: ["hr"],
+    leave: ["hr"],
+    payroll: ["hr"],
+    attendance: ["admin"],
+    admin: ["admin"],
+    asset: ["admin"],
+    general: ["admin"],
+    other: ["admin"],
   },
 }));
 
@@ -77,14 +108,27 @@ vi.mock("../helpdesk-sla.service.js", () => ({
   getItDepthAnalysis: vi.fn(async () => ({ summary: {} })),
 }));
 
-vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem: vi.fn(async () => undefined) } }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(async () => [[], []]) } }));
+vi.mock("../../inbox/inbox.service.js", () => ({
+  inboxService: { createItem: vi.fn(async () => undefined) },
+}));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: vi.fn(async () => [[], []]) },
+}));
 
 const AGENT = "u-agent-1";
 const actor = { id: AGENT, role: "it" };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
-  return { ...original, requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); } };
+  const original =
+    await importOriginal<
+      typeof import("../../../middleware/authMiddleware.js")
+    >();
+  return {
+    ...original,
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.authUser = actor;
+      next();
+    },
+  };
 });
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: any, _res: any, next: any) => next(),
@@ -100,23 +144,42 @@ function app() {
 }
 
 /** Every /resolve test posts a valid body — the guard under test must be what refuses, not validation. */
-const BODY = { resolution_note: "replaced the headset", root_cause: "hardware" };
+const BODY = {
+  resolution_note: "replaced the headset",
+  root_cause: "hardware",
+};
 
 beforeEach(() => {
   hasRoleForRequest.mockClear().mockResolvedValue(false);
   getEmployeeForUser.mockClear().mockResolvedValue({ id: "emp-caller-1" });
   getUserRoleKeys.mockClear().mockResolvedValue(["it"]);
-  resolveUserBusinessScope.mockClear().mockResolvedValue({ isSuperAdmin: true, isAdmin: false, isHr: false, roles: ["it"] });
-  buildProcessScopeCondition.mockClear().mockReturnValue({ sql: "1=1", params: [] });
+  resolveUserBusinessScope
+    .mockClear()
+    .mockResolvedValue({
+      isSuperAdmin: true,
+      isAdmin: false,
+      isHr: false,
+      roles: ["it"],
+    });
+  buildProcessScopeCondition
+    .mockClear()
+    .mockReturnValue({ sql: "1=1", params: [] });
   updateTicket.mockClear().mockResolvedValue({ id: "t-1", status: "resolved" });
   createTicket.mockClear().mockResolvedValue({ id: "t-new" });
 });
 
 describe("POST /tickets/:id/resolve — maker cannot be the checker", () => {
   it("refuses when the resolver is the person who raised the ticket", async () => {
-    getTicket.mockResolvedValue({ id: "t-1", employee_id: "emp-owner", raised_by_user_id: AGENT, assigned_to: AGENT });
+    getTicket.mockResolvedValue({
+      id: "t-1",
+      employee_id: "emp-owner",
+      raised_by_user_id: AGENT,
+      assigned_to: AGENT,
+    });
 
-    const res = await request(app()).post("/api/helpdesk/tickets/t-1/resolve").send(BODY);
+    const res = await request(app())
+      .post("/api/helpdesk/tickets/t-1/resolve")
+      .send(BODY);
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/raised this ticket/i);
@@ -125,21 +188,38 @@ describe("POST /tickets/:id/resolve — maker cannot be the checker", () => {
   });
 
   it("allows a different agent to resolve a ticket assigned to them", async () => {
-    getTicket.mockResolvedValue({ id: "t-1", employee_id: "emp-owner", raised_by_user_id: "u-someone-else", assigned_to: AGENT });
+    getTicket.mockResolvedValue({
+      id: "t-1",
+      employee_id: "emp-owner",
+      raised_by_user_id: "u-someone-else",
+      assigned_to: AGENT,
+    });
 
-    const res = await request(app()).post("/api/helpdesk/tickets/t-1/resolve").send(BODY);
+    const res = await request(app())
+      .post("/api/helpdesk/tickets/t-1/resolve")
+      .send(BODY);
 
     expect(res.status).toBe(200);
-    expect(updateTicket).toHaveBeenCalledWith("t-1", expect.objectContaining({
-      status: "resolved",
-      resolved_by_user_id: AGENT,
-    }));
+    expect(updateTicket).toHaveBeenCalledWith(
+      "t-1",
+      expect.objectContaining({
+        status: "resolved",
+        resolved_by_user_id: AGENT,
+      }),
+    );
   });
 
   it("does not refuse a legacy ticket whose raiser was never recorded (raised_by_user_id NULL)", async () => {
-    getTicket.mockResolvedValue({ id: "t-1", employee_id: "emp-owner", raised_by_user_id: null, assigned_to: AGENT });
+    getTicket.mockResolvedValue({
+      id: "t-1",
+      employee_id: "emp-owner",
+      raised_by_user_id: null,
+      assigned_to: AGENT,
+    });
 
-    const res = await request(app()).post("/api/helpdesk/tickets/t-1/resolve").send(BODY);
+    const res = await request(app())
+      .post("/api/helpdesk/tickets/t-1/resolve")
+      .send(BODY);
 
     expect(res.status).toBe(200);
     expect(updateTicket).toHaveBeenCalled();
@@ -148,9 +228,16 @@ describe("POST /tickets/:id/resolve — maker cannot be the checker", () => {
 
 describe("POST /tickets/:id/resolve — a ticket is resolved by its owner", () => {
   it("refuses to resolve a ticket that has no assignee at all", async () => {
-    getTicket.mockResolvedValue({ id: "t-1", employee_id: "emp-owner", raised_by_user_id: "u-someone-else", assigned_to: null });
+    getTicket.mockResolvedValue({
+      id: "t-1",
+      employee_id: "emp-owner",
+      raised_by_user_id: "u-someone-else",
+      assigned_to: null,
+    });
 
-    const res = await request(app()).post("/api/helpdesk/tickets/t-1/resolve").send(BODY);
+    const res = await request(app())
+      .post("/api/helpdesk/tickets/t-1/resolve")
+      .send(BODY);
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/no assignee/i);
@@ -158,30 +245,58 @@ describe("POST /tickets/:id/resolve — a ticket is resolved by its owner", () =
   });
 
   it("refuses a non-assignee who is not admin or super_admin", async () => {
-    getTicket.mockResolvedValue({ id: "t-1", employee_id: "emp-owner", raised_by_user_id: "u-someone-else", assigned_to: "u-other-agent" });
+    getTicket.mockResolvedValue({
+      id: "t-1",
+      employee_id: "emp-owner",
+      raised_by_user_id: "u-someone-else",
+      assigned_to: "u-other-agent",
+    });
     hasRoleForRequest.mockResolvedValue(false);
 
-    const res = await request(app()).post("/api/helpdesk/tickets/t-1/resolve").send(BODY);
+    const res = await request(app())
+      .post("/api/helpdesk/tickets/t-1/resolve")
+      .send(BODY);
 
     expect(res.status).toBe(403);
     expect(updateTicket).not.toHaveBeenCalled();
   });
 
   it("still lets an admin close on the assignee's behalf, and records who actually did it", async () => {
-    getTicket.mockResolvedValue({ id: "t-1", employee_id: "emp-owner", raised_by_user_id: "u-someone-else", assigned_to: "u-other-agent" });
-    hasRoleForRequest.mockImplementation(async (_u: any, ...roles: string[]) => roles.includes("admin"));
+    getTicket.mockResolvedValue({
+      id: "t-1",
+      employee_id: "emp-owner",
+      raised_by_user_id: "u-someone-else",
+      assigned_to: "u-other-agent",
+    });
+    hasRoleForRequest.mockImplementation(async (_u: any, ...roles: string[]) =>
+      roles.includes("admin"),
+    );
 
-    const res = await request(app()).post("/api/helpdesk/tickets/t-1/resolve").send(BODY);
+    const res = await request(app())
+      .post("/api/helpdesk/tickets/t-1/resolve")
+      .send(BODY);
 
     expect(res.status).toBe(200);
-    expect(updateTicket).toHaveBeenCalledWith("t-1", expect.objectContaining({ resolved_by_user_id: AGENT }));
+    expect(updateTicket).toHaveBeenCalledWith(
+      "t-1",
+      expect.objectContaining({ resolved_by_user_id: AGENT }),
+    );
   });
 
   it("an admin who raised the ticket is still refused — elevation does not buy past rule 1", async () => {
-    getTicket.mockResolvedValue({ id: "t-1", employee_id: "emp-owner", raised_by_user_id: AGENT, assigned_to: "u-other-agent" });
-    hasRoleForRequest.mockImplementation(async (_u: any, ...roles: string[]) => roles.includes("admin"));
+    getTicket.mockResolvedValue({
+      id: "t-1",
+      employee_id: "emp-owner",
+      raised_by_user_id: AGENT,
+      assigned_to: "u-other-agent",
+    });
+    hasRoleForRequest.mockImplementation(async (_u: any, ...roles: string[]) =>
+      roles.includes("admin"),
+    );
 
-    const res = await request(app()).post("/api/helpdesk/tickets/t-1/resolve").send(BODY);
+    const res = await request(app())
+      .post("/api/helpdesk/tickets/t-1/resolve")
+      .send(BODY);
 
     expect(res.status).toBe(409);
     expect(updateTicket).not.toHaveBeenCalled();
@@ -200,9 +315,11 @@ describe("POST /tickets — the maker is the acting user, not whatever the body 
       raised_by_user_id: "u-somebody-i-am-not", // hostile body field
     });
 
-    expect(createTicket).toHaveBeenCalledWith(expect.objectContaining({
-      employee_id: "emp-subject",
-      raised_by_user_id: AGENT,
-    }));
+    expect(createTicket).toHaveBeenCalledWith(
+      expect.objectContaining({
+        employee_id: "emp-subject",
+        raised_by_user_id: AGENT,
+      }),
+    );
   });
 });

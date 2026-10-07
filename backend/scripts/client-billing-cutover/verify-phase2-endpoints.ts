@@ -10,7 +10,7 @@ async function main() {
   // Summary aggregates
   const [invoiceRows] = await db.execute<any[]>(
     `SELECT invoice_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
-     FROM client_invoice GROUP BY invoice_status`
+     FROM client_invoice GROUP BY invoice_status`,
   );
   console.log("Invoice status aggregates:", invoiceRows);
 
@@ -18,7 +18,7 @@ async function main() {
     `SELECT COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
      FROM client_invoice
      WHERE invoice_status = 'approved'
-       AND DATE_FORMAT(invoice_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`
+       AND DATE_FORMAT(invoice_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`,
   );
   console.log("This month billed:", thisMonth);
 
@@ -31,7 +31,7 @@ async function main() {
      WHERE ci.invoice_status = 'approved'
      ORDER BY ci.created_at DESC
      LIMIT ? OFFSET ?`,
-    [10, 10]
+    [10, 10],
   );
   console.log(`Page 2 (limit 10) approved invoices: ${pageRows.length} rows`);
   console.log(pageRows.slice(0, 3));
@@ -39,7 +39,7 @@ async function main() {
   const [[countRow]] = await db.execute<any[]>(
     `SELECT COUNT(*) AS total FROM client_invoice ci
      LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
-     WHERE ci.invoice_status = 'approved'`
+     WHERE ci.invoice_status = 'approved'`,
   );
   console.log("Total approved count:", countRow.total);
 
@@ -49,9 +49,12 @@ async function main() {
      LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
      WHERE (ci.proforma_no LIKE ? OR ci.bill_no LIKE ? OR cc.billing_client_name LIKE ? OR cc.company_name LIKE ?)
      LIMIT 5`,
-    ["%Vodafone%", "%Vodafone%", "%Vodafone%", "%Vodafone%"]
+    ["%Vodafone%", "%Vodafone%", "%Vodafone%", "%Vodafone%"],
   );
-  console.log(`Search "Vodafone" matched ${searchRows.length} rows (sample):`, searchRows);
+  console.log(
+    `Search "Vodafone" matched ${searchRows.length} rows (sample):`,
+    searchRows,
+  );
 
   // Credit note filtered list
   const [cnRows] = await db.query<any[]>(
@@ -61,7 +64,7 @@ async function main() {
      LEFT JOIN client_invoice ci ON ci.id = ccn.invoice_id
      WHERE ccn.credit_status = 'approved'
      ORDER BY ccn.created_at DESC
-     LIMIT 5`
+     LIMIT 5`,
   );
   console.log(`Credit notes (approved), sample: ${cnRows.length} rows`, cnRows);
 

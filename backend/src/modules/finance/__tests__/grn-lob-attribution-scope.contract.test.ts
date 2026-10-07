@@ -31,10 +31,13 @@ describe("GRN LOB attribution branch scope", () => {
 
   it("filters listPending by branch when a branch id is supplied", async () => {
     const { db } = await import("../../../db/mysql.js");
-    const execute = vi.mocked(db.execute as unknown as (...args: unknown[]) => unknown);
+    const execute = vi.mocked(
+      db.execute as unknown as (...args: unknown[]) => unknown,
+    );
     execute.mockResolvedValue([[], []] as never);
 
-    const { grnLobAttributionService } = await import("../grn-lob-attribution.service.js");
+    const { grnLobAttributionService } =
+      await import("../grn-lob-attribution.service.js");
     await grnLobAttributionService.listPending(50, "branch-abc");
 
     const [sql, params] = execute.mock.calls.at(-1) as [string, unknown[]];
@@ -49,10 +52,13 @@ describe("GRN LOB attribution branch scope", () => {
 
   it("does not filter by branch for global finance roles", async () => {
     const { db } = await import("../../../db/mysql.js");
-    const execute = vi.mocked(db.execute as unknown as (...args: unknown[]) => unknown);
+    const execute = vi.mocked(
+      db.execute as unknown as (...args: unknown[]) => unknown,
+    );
     execute.mockResolvedValue([[], []] as never);
 
-    const { grnLobAttributionService } = await import("../grn-lob-attribution.service.js");
+    const { grnLobAttributionService } =
+      await import("../grn-lob-attribution.service.js");
     await grnLobAttributionService.listPending(50, null);
 
     const [sql, params] = execute.mock.calls.at(-1) as [string, unknown[]];
@@ -66,14 +72,18 @@ describe("GRN LOB attribution branch scope", () => {
     // The listing resolves the caller's branch rather than trusting the query.
     expect(routes).toContain("resolveFinanceBranchScope");
     // Both :grnId routes assert the record's branch before reading or writing.
-    const assertions = routes.match(/assertGrnAttributionBranch\(req, req\.params\.grnId\)/g) ?? [];
+    const assertions =
+      routes.match(/assertGrnAttributionBranch\(req, req\.params\.grnId\)/g) ??
+      [];
     expect(assertions).toHaveLength(2);
     expect(routes).toContain("assertFinanceRecordBranch");
   });
 
   it("keeps branch roles out of GRN review authority", () => {
     const grnRoutes = read("src/modules/finance/grn.routes.ts");
-    const review = grnRoutes.match(/GRN_REVIEW_ROLES: RoleKey\[\] = \[([^\]]*)\]/)?.[1] ?? "";
+    const review =
+      grnRoutes.match(/GRN_REVIEW_ROLES: RoleKey\[\] = \[([^\]]*)\]/)?.[1] ??
+      "";
     expect(review).not.toContain("branch_admin");
     // branch_head reviews at the first approval stage, so it is expected here.
     expect(review).toContain("branch_head");

@@ -6,18 +6,31 @@ import pdfLib from "pdf-lib";
 const { PDFDocument, StandardFonts } = pdfLib;
 import PizZip from "pizzip";
 import { epfNominationFieldMaps } from "./epfNominationForm.js";
-import { getPayrollHrSignatoryForEmployee, mergeBranchSignatureIntoSeal } from "./branchPayrollHrSignatory.service.js";
+import {
+  getPayrollHrSignatoryForEmployee,
+  mergeBranchSignatureIntoSeal,
+} from "./branchPayrollHrSignatory.service.js";
 import { isOperationsExecutiveByRegex } from "../wfm/attendance-engine.service.js";
 import type { RowDataPacket } from "mysql2";
 
 import { db } from "../../db/mysql.js";
-import { fillAcroFormPdf, validateAcroFormTemplate } from "./pdfAcroFormFill.service.js";
+import {
+  fillAcroFormPdf,
+  validateAcroFormTemplate,
+} from "./pdfAcroFormFill.service.js";
 import { applyCompanySeal, loadCompanySeal } from "./companySeal.service.js";
 import { resolveTemplateFile } from "./joiningDocumentTemplatePath.js";
-import { hasStructuredPdf, renderJoiningDocumentPdf } from "./joiningDocumentPdf.service.js";
+import {
+  hasStructuredPdf,
+  renderJoiningDocumentPdf,
+} from "./joiningDocumentPdf.service.js";
 import { resolveEmployeeLetterhead } from "../org/branchAddress.service.js";
 
-const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
+const STORAGE_ROOT = path.resolve(
+  process.cwd(),
+  "private-storage",
+  "employee-joining-documents",
+);
 
 type FieldMapInput = {
   id?: string;
@@ -88,8 +101,12 @@ function digitsOnly(value: unknown) {
 }
 
 function hashValue(value: unknown) {
-  const normalized = String(value ?? "").trim().toUpperCase();
-  return normalized ? createHash("sha256").update(normalized).digest("hex") : null;
+  const normalized = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  return normalized
+    ? createHash("sha256").update(normalized).digest("hex")
+    : null;
 }
 
 function maskDigits(value: unknown, visible = 4) {
@@ -149,7 +166,10 @@ function affirmativeOnly(value: unknown): 1 | null {
   return value != null && Number(value) === 1 ? 1 : null;
 }
 
-function nestedValue(source: Record<string, unknown>, sourcePath?: string | null) {
+function nestedValue(
+  source: Record<string, unknown>,
+  sourcePath?: string | null,
+) {
   const normalized = safeTrim(sourcePath);
   if (!normalized) return null;
   return normalized.split(".").reduce<unknown>((acc, key) => {
@@ -158,7 +178,11 @@ function nestedValue(source: Record<string, unknown>, sourcePath?: string | null
   }, source);
 }
 
-function formatValueForField(value: unknown, fieldType: string, checkedWhen?: string | null) {
+function formatValueForField(
+  value: unknown,
+  fieldType: string,
+  checkedWhen?: string | null,
+) {
   if (value == null) return "";
   if (fieldType === "checkbox" || fieldType === "radio") {
     // A map with `checked_when` selects one box out of a group by comparing the
@@ -182,55 +206,295 @@ function escapeXml(value: unknown) {
 }
 
 const COMMON_TEMPLATE_FIELDS: DefaultFieldMap[] = [
-  { field_key: "employee_name", field_label: "Employee Name", source_path: "employee.full_name", required: true, aliases: ["employee_name", "name", "candidate_name"] },
-  { field_key: "employee_code", field_label: "Employee Code", source_path: "employee.employee_code", required: false, aliases: ["employee_code", "emp_code", "employee_id"] },
-  { field_key: "father_name", field_label: "Father / Spouse Name", source_path: "employee.father_name", required: false, aliases: ["father_name", "father_or_spouse_name"] },
-  { field_key: "date_of_birth", field_label: "Date of Birth", source_path: "employee.date_of_birth", required: false, field_type: "date", aliases: ["date_of_birth", "dob"] },
-  { field_key: "date_of_joining", field_label: "Date of Joining", source_path: "employee.date_of_joining", required: false, field_type: "date", aliases: ["date_of_joining", "doj", "joining_date"] },
-  { field_key: "designation", field_label: "Designation", source_path: "employee.designation", required: false, aliases: ["designation"] },
-  { field_key: "department", field_label: "Department", source_path: "employee.department", required: false, aliases: ["department"] },
-  { field_key: "branch", field_label: "Branch", source_path: "employee.branch", required: false, aliases: ["branch", "location"] },
-  { field_key: "process", field_label: "Process", source_path: "employee.process", required: false, aliases: ["process"] },
-  { field_key: "mobile", field_label: "Mobile Number", source_path: "employee.mobile", required: false, aliases: ["mobile", "mobile_number", "phone"] },
-  { field_key: "email", field_label: "Email", source_path: "employee.email", required: false, field_type: "email", aliases: ["email", "personal_email"] },
-  { field_key: "pan_masked", field_label: "PAN", source_path: "statutory.pan_masked", required: false, masking_rule: "pan", aliases: ["pan", "pan_number"] },
-  { field_key: "aadhaar_masked", field_label: "Aadhaar", source_path: "statutory.aadhaar_masked", required: false, masking_rule: "aadhaar", aliases: ["aadhaar", "aadhaar_number"] },
-  { field_key: "uan", field_label: "UAN", source_path: "statutory.uan", required: false, aliases: ["uan", "uan_number"] },
-  { field_key: "current_date", field_label: "Current Date", source_path: "system.current_date", required: false, field_type: "date", aliases: ["date", "current_date", "signed_date"] },
-  { field_key: "nda_employee_name", field_label: "NDA Agreement - Employee Name", source_path: "employee.full_name", required: true, aliases: ["nda_employee_name"] },
-  { field_key: "nda_signature_date", field_label: "NDA Agreement - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["nda_signature_date"] },
-  { field_key: "it_employee_name", field_label: "IT Compliance - Employee Name", source_path: "employee.full_name", required: true, aliases: ["it_employee_name"] },
-  { field_key: "it_signature_date", field_label: "IT Compliance - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["it_signature_date"] },
-  { field_key: "surveillance_candidate_name", field_label: "Surveillance/Anti-Bribery - Candidate Name", source_path: "employee.full_name", required: true, aliases: ["surveillance_candidate_name"] },
+  {
+    field_key: "employee_name",
+    field_label: "Employee Name",
+    source_path: "employee.full_name",
+    required: true,
+    aliases: ["employee_name", "name", "candidate_name"],
+  },
+  {
+    field_key: "employee_code",
+    field_label: "Employee Code",
+    source_path: "employee.employee_code",
+    required: false,
+    aliases: ["employee_code", "emp_code", "employee_id"],
+  },
+  {
+    field_key: "father_name",
+    field_label: "Father / Spouse Name",
+    source_path: "employee.father_name",
+    required: false,
+    aliases: ["father_name", "father_or_spouse_name"],
+  },
+  {
+    field_key: "date_of_birth",
+    field_label: "Date of Birth",
+    source_path: "employee.date_of_birth",
+    required: false,
+    field_type: "date",
+    aliases: ["date_of_birth", "dob"],
+  },
+  {
+    field_key: "date_of_joining",
+    field_label: "Date of Joining",
+    source_path: "employee.date_of_joining",
+    required: false,
+    field_type: "date",
+    aliases: ["date_of_joining", "doj", "joining_date"],
+  },
+  {
+    field_key: "designation",
+    field_label: "Designation",
+    source_path: "employee.designation",
+    required: false,
+    aliases: ["designation"],
+  },
+  {
+    field_key: "department",
+    field_label: "Department",
+    source_path: "employee.department",
+    required: false,
+    aliases: ["department"],
+  },
+  {
+    field_key: "branch",
+    field_label: "Branch",
+    source_path: "employee.branch",
+    required: false,
+    aliases: ["branch", "location"],
+  },
+  {
+    field_key: "process",
+    field_label: "Process",
+    source_path: "employee.process",
+    required: false,
+    aliases: ["process"],
+  },
+  {
+    field_key: "mobile",
+    field_label: "Mobile Number",
+    source_path: "employee.mobile",
+    required: false,
+    aliases: ["mobile", "mobile_number", "phone"],
+  },
+  {
+    field_key: "email",
+    field_label: "Email",
+    source_path: "employee.email",
+    required: false,
+    field_type: "email",
+    aliases: ["email", "personal_email"],
+  },
+  {
+    field_key: "pan_masked",
+    field_label: "PAN",
+    source_path: "statutory.pan_masked",
+    required: false,
+    masking_rule: "pan",
+    aliases: ["pan", "pan_number"],
+  },
+  {
+    field_key: "aadhaar_masked",
+    field_label: "Aadhaar",
+    source_path: "statutory.aadhaar_masked",
+    required: false,
+    masking_rule: "aadhaar",
+    aliases: ["aadhaar", "aadhaar_number"],
+  },
+  {
+    field_key: "uan",
+    field_label: "UAN",
+    source_path: "statutory.uan",
+    required: false,
+    aliases: ["uan", "uan_number"],
+  },
+  {
+    field_key: "current_date",
+    field_label: "Current Date",
+    source_path: "system.current_date",
+    required: false,
+    field_type: "date",
+    aliases: ["date", "current_date", "signed_date"],
+  },
+  {
+    field_key: "nda_employee_name",
+    field_label: "NDA Agreement - Employee Name",
+    source_path: "employee.full_name",
+    required: true,
+    aliases: ["nda_employee_name"],
+  },
+  {
+    field_key: "nda_signature_date",
+    field_label: "NDA Agreement - Signature Date",
+    source_path: "system.current_date",
+    required: true,
+    field_type: "date",
+    aliases: ["nda_signature_date"],
+  },
+  {
+    field_key: "it_employee_name",
+    field_label: "IT Compliance - Employee Name",
+    source_path: "employee.full_name",
+    required: true,
+    aliases: ["it_employee_name"],
+  },
+  {
+    field_key: "it_signature_date",
+    field_label: "IT Compliance - Signature Date",
+    source_path: "system.current_date",
+    required: true,
+    field_type: "date",
+    aliases: ["it_signature_date"],
+  },
+  {
+    field_key: "surveillance_candidate_name",
+    field_label: "Surveillance/Anti-Bribery - Candidate Name",
+    source_path: "employee.full_name",
+    required: true,
+    aliases: ["surveillance_candidate_name"],
+  },
   // Was source_path: null, so this printed blank on every NDA ever issued. It
   // is the Payroll HR of the branch the candidate joins, configured per branch.
-  { field_key: "surveillance_hr_name", field_label: "Surveillance/Anti-Bribery - HR Name", source_path: "payroll_hr.name", required: false, aliases: ["surveillance_hr_name"] },
-  { field_key: "surveillance_signature_date", field_label: "Surveillance/Anti-Bribery - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["surveillance_signature_date"] },
-  { field_key: "bams_employee_name", field_label: "BAMS Declaration - Employee Name", source_path: "employee.full_name", required: true, aliases: ["bams_employee_name"] },
-  { field_key: "bams_employee_code", field_label: "BAMS Declaration - Employee Code", source_path: "employee.employee_code", required: false, aliases: ["bams_employee_code"] },
-  { field_key: "bams_date_of_joining", field_label: "BAMS Declaration - DOJ", source_path: "employee.date_of_joining", required: false, field_type: "date", aliases: ["bams_date_of_joining"] },
-  { field_key: "pi_employee_name", field_label: "Personal Information Consent - Employee Name", source_path: "employee.full_name", required: true, aliases: ["pi_employee_name"] },
-  { field_key: "pi_signature_date", field_label: "Personal Information Consent - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["pi_signature_date"] },
-  { field_key: "zero_tolerance_employee_name", field_label: "Zero Tolerance - Employee Name", source_path: "employee.full_name", required: true, aliases: ["zero_tolerance_employee_name"] },
-  { field_key: "zero_tolerance_signature_date", field_label: "Zero Tolerance - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["zero_tolerance_signature_date"] },
+  {
+    field_key: "surveillance_hr_name",
+    field_label: "Surveillance/Anti-Bribery - HR Name",
+    source_path: "payroll_hr.name",
+    required: false,
+    aliases: ["surveillance_hr_name"],
+  },
+  {
+    field_key: "surveillance_signature_date",
+    field_label: "Surveillance/Anti-Bribery - Signature Date",
+    source_path: "system.current_date",
+    required: true,
+    field_type: "date",
+    aliases: ["surveillance_signature_date"],
+  },
+  {
+    field_key: "bams_employee_name",
+    field_label: "BAMS Declaration - Employee Name",
+    source_path: "employee.full_name",
+    required: true,
+    aliases: ["bams_employee_name"],
+  },
+  {
+    field_key: "bams_employee_code",
+    field_label: "BAMS Declaration - Employee Code",
+    source_path: "employee.employee_code",
+    required: false,
+    aliases: ["bams_employee_code"],
+  },
+  {
+    field_key: "bams_date_of_joining",
+    field_label: "BAMS Declaration - DOJ",
+    source_path: "employee.date_of_joining",
+    required: false,
+    field_type: "date",
+    aliases: ["bams_date_of_joining"],
+  },
+  {
+    field_key: "pi_employee_name",
+    field_label: "Personal Information Consent - Employee Name",
+    source_path: "employee.full_name",
+    required: true,
+    aliases: ["pi_employee_name"],
+  },
+  {
+    field_key: "pi_signature_date",
+    field_label: "Personal Information Consent - Signature Date",
+    source_path: "system.current_date",
+    required: true,
+    field_type: "date",
+    aliases: ["pi_signature_date"],
+  },
+  {
+    field_key: "zero_tolerance_employee_name",
+    field_label: "Zero Tolerance - Employee Name",
+    source_path: "employee.full_name",
+    required: true,
+    aliases: ["zero_tolerance_employee_name"],
+  },
+  {
+    field_key: "zero_tolerance_signature_date",
+    field_label: "Zero Tolerance - Signature Date",
+    source_path: "system.current_date",
+    required: true,
+    field_type: "date",
+    aliases: ["zero_tolerance_signature_date"],
+  },
   // The employment agreement names the second party as "r/o <address>" and
   // repeats it as the notice address, so a blank here is a defective contract.
-  { field_key: "employee_address", field_label: "Residential Address", source_path: "employee.permanent_address", required: false, aliases: ["employee_address", "address", "permanent_address"] },
+  {
+    field_key: "employee_address",
+    field_label: "Residential Address",
+    source_path: "employee.permanent_address",
+    required: false,
+    aliases: ["employee_address", "address", "permanent_address"],
+  },
   // Resolves the agreement's "s/o | d/o" from gender. Not required: an unknown
   // gender legitimately yields both forms rather than a blank.
-  { field_key: "relation_prefix", field_label: "Relation (s/o or d/o)", source_path: "employee.relation_prefix", required: false, aliases: ["relation_prefix"] },
+  {
+    field_key: "relation_prefix",
+    field_label: "Relation (s/o or d/o)",
+    source_path: "employee.relation_prefix",
+    required: false,
+    aliases: ["relation_prefix"],
+  },
   // The employer block on the employment contract. Same person who signs the
   // EPF forms — the Payroll HR of the branch the candidate joins. Optional:
   // blank until a branch is configured, and must never block the document.
-  { field_key: "payroll_hr_name", field_label: "Payroll HR Name (employer signatory)", source_path: "payroll_hr.name", required: false, aliases: ["payroll_hr_name"] },
-  { field_key: "payroll_hr_designation", field_label: "Payroll HR Designation", source_path: "payroll_hr.designation", required: false, aliases: ["payroll_hr_designation"] },
+  {
+    field_key: "payroll_hr_name",
+    field_label: "Payroll HR Name (employer signatory)",
+    source_path: "payroll_hr.name",
+    required: false,
+    aliases: ["payroll_hr_name"],
+  },
+  {
+    field_key: "payroll_hr_designation",
+    field_label: "Payroll HR Designation",
+    source_path: "payroll_hr.designation",
+    required: false,
+    aliases: ["payroll_hr_designation"],
+  },
   // The agreement's appendix states the remuneration, so figure and words are
   // both required; a contract that says one and not the other is defective.
-  { field_key: "monthly_remuneration", field_label: "Monthly Remuneration", source_path: "salary.monthly_gross", required: false, aliases: ["monthly_remuneration", "remuneration"] },
-  { field_key: "attendance_system_name", field_label: "Attendance System", source_path: "attendance.system_name", required: false, aliases: ["attendance_system_name"] },
-  { field_key: "attendance_criterion", field_label: "Attendance Criterion", source_path: "attendance.criterion_statement", required: false, aliases: ["attendance_criterion"] },
-  { field_key: "attendance_login_hours", field_label: "Log-in Hours", source_path: "attendance.login_hours_statement", required: false, aliases: ["attendance_login_hours"] },
-  { field_key: "monthly_remuneration_words", field_label: "Monthly Remuneration (in words)", source_path: "salary.monthly_gross_words", required: false, aliases: ["monthly_remuneration_words"] },
+  {
+    field_key: "monthly_remuneration",
+    field_label: "Monthly Remuneration",
+    source_path: "salary.monthly_gross",
+    required: false,
+    aliases: ["monthly_remuneration", "remuneration"],
+  },
+  {
+    field_key: "attendance_system_name",
+    field_label: "Attendance System",
+    source_path: "attendance.system_name",
+    required: false,
+    aliases: ["attendance_system_name"],
+  },
+  {
+    field_key: "attendance_criterion",
+    field_label: "Attendance Criterion",
+    source_path: "attendance.criterion_statement",
+    required: false,
+    aliases: ["attendance_criterion"],
+  },
+  {
+    field_key: "attendance_login_hours",
+    field_label: "Log-in Hours",
+    source_path: "attendance.login_hours_statement",
+    required: false,
+    aliases: ["attendance_login_hours"],
+  },
+  {
+    field_key: "monthly_remuneration_words",
+    field_label: "Monthly Remuneration (in words)",
+    source_path: "salary.monthly_gross_words",
+    required: false,
+    aliases: ["monthly_remuneration_words"],
+  },
 ];
 
 const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
@@ -258,12 +522,74 @@ const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
     "zero_tolerance_employee_name",
     "zero_tolerance_signature_date",
   ],
-  IT_COMPLIANCE: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "current_date"],
-  BAMS_DECLARATION: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "designation", "department", "current_date", "attendance_system_name", "attendance_criterion", "attendance_login_hours"],
-  PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "process", "mobile", "email", "current_date", "pi_signature_date"],
-  ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "current_date", "zero_tolerance_signature_date"],
-  EPF_DECLARATION: ["employee_name", "father_name", "date_of_birth", "date_of_joining", "mobile", "email", "pan_masked", "aadhaar_masked", "uan", "current_date"],
-  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "relation_prefix", "employee_address", "monthly_remuneration", "monthly_remuneration_words", "payroll_hr_name", "payroll_hr_designation"],
+  IT_COMPLIANCE: [
+    "employee_name",
+    "employee_code",
+    "date_of_joining",
+    "branch",
+    "process",
+    "current_date",
+  ],
+  BAMS_DECLARATION: [
+    "employee_name",
+    "employee_code",
+    "date_of_joining",
+    "branch",
+    "process",
+    "designation",
+    "department",
+    "current_date",
+    "attendance_system_name",
+    "attendance_criterion",
+    "attendance_login_hours",
+  ],
+  PI_PROCESSING_CONSENT: [
+    "employee_name",
+    "employee_code",
+    "process",
+    "mobile",
+    "email",
+    "current_date",
+    "pi_signature_date",
+  ],
+  ZERO_TOLERANCE_ACK: [
+    "employee_name",
+    "employee_code",
+    "date_of_joining",
+    "branch",
+    "process",
+    "current_date",
+    "zero_tolerance_signature_date",
+  ],
+  EPF_DECLARATION: [
+    "employee_name",
+    "father_name",
+    "date_of_birth",
+    "date_of_joining",
+    "mobile",
+    "email",
+    "pan_masked",
+    "aadhaar_masked",
+    "uan",
+    "current_date",
+  ],
+  EMPLOYMENT_CONTRACT: [
+    "employee_name",
+    "employee_code",
+    "date_of_joining",
+    "designation",
+    "department",
+    "branch",
+    "process",
+    "current_date",
+    "father_name",
+    "relation_prefix",
+    "employee_address",
+    "monthly_remuneration",
+    "monthly_remuneration_words",
+    "payroll_hr_name",
+    "payroll_hr_designation",
+  ],
 };
 
 function normalizeToken(value: string) {
@@ -286,21 +612,31 @@ function normalizeToken(value: string) {
  */
 export function matchPlaceholderField(placeholder: string) {
   const token = normalizeToken(placeholder);
-  return COMMON_TEMPLATE_FIELDS.find((field) =>
-    field.field_key === token || field.aliases?.some((alias) => normalizeToken(alias) === token),
+  return COMMON_TEMPLATE_FIELDS.find(
+    (field) =>
+      field.field_key === token ||
+      field.aliases?.some((alias) => normalizeToken(alias) === token),
   );
 }
 
 function fieldsForDocument(documentCode: string) {
-  const wanted = DEFAULT_FIELDS_BY_DOCUMENT[String(documentCode || "").trim().toUpperCase()] ?? [
+  const wanted = DEFAULT_FIELDS_BY_DOCUMENT[
+    String(documentCode || "")
+      .trim()
+      .toUpperCase()
+  ] ?? [
     "employee_name",
     "employee_code",
     "date_of_joining",
     "branch",
     "current_date",
   ];
-  const byKey = new Map(COMMON_TEMPLATE_FIELDS.map((field) => [field.field_key, field]));
-  return wanted.map((key) => byKey.get(key)).filter(Boolean) as DefaultFieldMap[];
+  const byKey = new Map(
+    COMMON_TEMPLATE_FIELDS.map((field) => [field.field_key, field]),
+  );
+  return wanted
+    .map((key) => byKey.get(key))
+    .filter(Boolean) as DefaultFieldMap[];
 }
 
 function extractDocxPlaceholders(fileBuffer?: Buffer | null) {
@@ -353,85 +689,221 @@ function epfAcroMap(
 }
 
 function epfAcroformFieldMaps(): FieldMapInput[] {
-  const text = (fieldKey: string, sourcePath: string | null, options: Partial<FieldMapInput> = {}) => epfAcroMap(fieldKey, sourcePath, options);
-  const check = (fieldKey: string, sourcePath: string | null, checkedWhen: string, options: Partial<FieldMapInput> = {}) =>
-    epfAcroMap(fieldKey, sourcePath, { ...options, field_type: "checkbox", checked_when: checkedWhen });
+  const text = (
+    fieldKey: string,
+    sourcePath: string | null,
+    options: Partial<FieldMapInput> = {},
+  ) => epfAcroMap(fieldKey, sourcePath, options);
+  const check = (
+    fieldKey: string,
+    sourcePath: string | null,
+    checkedWhen: string,
+    options: Partial<FieldMapInput> = {},
+  ) =>
+    epfAcroMap(fieldKey, sourcePath, {
+      ...options,
+      field_type: "checkbox",
+      checked_when: checkedWhen,
+    });
   return [
-    text("employee_name", "epf.employee_name", { required: true, validation_rule: "required" }),
-    text("father_or_spouse_name", "epf.father_or_spouse_name", { required: true, validation_rule: "required" }),
-    check("relationship_father", "epf.relationship_type", "father", { required: true }),
+    text("employee_name", "epf.employee_name", {
+      required: true,
+      validation_rule: "required",
+    }),
+    text("father_or_spouse_name", "epf.father_or_spouse_name", {
+      required: true,
+      validation_rule: "required",
+    }),
+    check("relationship_father", "epf.relationship_type", "father", {
+      required: true,
+    }),
     check("relationship_husband", "epf.relationship_type", "husband"),
-    text("dob_day", "epf.date_of_birth", { required: true, transform_rule: "date_day", validation_rule: "date" }),
-    text("dob_month", "epf.date_of_birth", { required: true, transform_rule: "date_month", validation_rule: "date" }),
-    text("dob_year_1", "epf.date_of_birth", { required: true, transform_rule: "date_year_1", validation_rule: "date" }),
-    text("dob_year_2", "epf.date_of_birth", { required: true, transform_rule: "date_year_2", validation_rule: "date" }),
-    text("dob_year_3", "epf.date_of_birth", { required: true, transform_rule: "date_year_3", validation_rule: "date" }),
-    text("dob_year_4", "epf.date_of_birth", { required: true, transform_rule: "date_year_4", validation_rule: "date" }),
+    text("dob_day", "epf.date_of_birth", {
+      required: true,
+      transform_rule: "date_day",
+      validation_rule: "date",
+    }),
+    text("dob_month", "epf.date_of_birth", {
+      required: true,
+      transform_rule: "date_month",
+      validation_rule: "date",
+    }),
+    text("dob_year_1", "epf.date_of_birth", {
+      required: true,
+      transform_rule: "date_year_1",
+      validation_rule: "date",
+    }),
+    text("dob_year_2", "epf.date_of_birth", {
+      required: true,
+      transform_rule: "date_year_2",
+      validation_rule: "date",
+    }),
+    text("dob_year_3", "epf.date_of_birth", {
+      required: true,
+      transform_rule: "date_year_3",
+      validation_rule: "date",
+    }),
+    text("dob_year_4", "epf.date_of_birth", {
+      required: true,
+      transform_rule: "date_year_4",
+      validation_rule: "date",
+    }),
     check("gender_male", "epf.gender", "Male", { required: true }),
     check("gender_female", "epf.gender", "Female", { required: true }),
     check("gender_other", "epf.gender", "Other", { required: true }),
-    text("mobile_number", "epf.mobile_number", { required: true, validation_rule: "mobile_10" }),
+    text("mobile_number", "epf.mobile_number", {
+      required: true,
+      validation_rule: "mobile_10",
+    }),
     text("email", "epf.personal_email", { validation_rule: "email" }),
-    check("previous_pf_member_yes", "epf.previous_pf_member", "true", { required: true }),
-    check("previous_pf_member_no", "epf.previous_pf_member_no", "true", { required: true }),
-    check("previous_eps_member_yes", "epf.previous_eps_member", "true", { required: true }),
-    check("previous_eps_member_no", "epf.previous_eps_member_no", "true", { required: true }),
+    check("previous_pf_member_yes", "epf.previous_pf_member", "true", {
+      required: true,
+    }),
+    check("previous_pf_member_no", "epf.previous_pf_member_no", "true", {
+      required: true,
+    }),
+    check("previous_eps_member_yes", "epf.previous_eps_member", "true", {
+      required: true,
+    }),
+    check("previous_eps_member_no", "epf.previous_eps_member_no", "true", {
+      required: true,
+    }),
     text("uan", "epf.uan_masked", { validation_rule: "uan_12" }),
-    text("previous_pf_account_number", "epf.previous_pf_account_number", { validation_rule: "previous_pf_account_if_needed" }),
-    text("date_of_exit_previous_day", "epf.previous_exit_date", { transform_rule: "date_day" }),
-    text("date_of_exit_previous_month", "epf.previous_exit_date", { transform_rule: "date_month" }),
-    text("date_of_exit_previous_year", "epf.previous_exit_date", { transform_rule: "date_year" }),
+    text("previous_pf_account_number", "epf.previous_pf_account_number", {
+      validation_rule: "previous_pf_account_if_needed",
+    }),
+    text("date_of_exit_previous_day", "epf.previous_exit_date", {
+      transform_rule: "date_day",
+    }),
+    text("date_of_exit_previous_month", "epf.previous_exit_date", {
+      transform_rule: "date_month",
+    }),
+    text("date_of_exit_previous_year", "epf.previous_exit_date", {
+      transform_rule: "date_year",
+    }),
     text("scheme_certificate_number", "epf.scheme_certificate_number"),
     text("ppo_number", "epf.ppo_number"),
-    check("international_worker_yes", "epf.international_worker", "true", { required: true }),
-    check("international_worker_no", "epf.international_worker_no", "true", { required: true }),
-    text("country_of_origin", "epf.country_of_origin", { validation_rule: "international_worker_required" }),
-    text("passport_number", "epf.passport_number", { validation_rule: "international_worker_required" }),
-    text("passport_valid_from_day", "epf.passport_valid_from", { transform_rule: "date_day" }),
-    text("passport_valid_from_month", "epf.passport_valid_from", { transform_rule: "date_month" }),
-    text("passport_valid_from_year", "epf.passport_valid_from", { transform_rule: "date_year" }),
-    text("passport_valid_to_day", "epf.passport_valid_to", { transform_rule: "date_day" }),
-    text("passport_valid_to_month", "epf.passport_valid_to", { transform_rule: "date_month" }),
-    text("passport_valid_to_year", "epf.passport_valid_to", { transform_rule: "date_year" }),
+    check("international_worker_yes", "epf.international_worker", "true", {
+      required: true,
+    }),
+    check("international_worker_no", "epf.international_worker_no", "true", {
+      required: true,
+    }),
+    text("country_of_origin", "epf.country_of_origin", {
+      validation_rule: "international_worker_required",
+    }),
+    text("passport_number", "epf.passport_number", {
+      validation_rule: "international_worker_required",
+    }),
+    text("passport_valid_from_day", "epf.passport_valid_from", {
+      transform_rule: "date_day",
+    }),
+    text("passport_valid_from_month", "epf.passport_valid_from", {
+      transform_rule: "date_month",
+    }),
+    text("passport_valid_from_year", "epf.passport_valid_from", {
+      transform_rule: "date_year",
+    }),
+    text("passport_valid_to_day", "epf.passport_valid_to", {
+      transform_rule: "date_day",
+    }),
+    text("passport_valid_to_month", "epf.passport_valid_to", {
+      transform_rule: "date_month",
+    }),
+    text("passport_valid_to_year", "epf.passport_valid_to", {
+      transform_rule: "date_year",
+    }),
     check("education_illiterate", "epf.education_qualification", "illiterate"),
     check("education_non_matric", "epf.education_qualification", "non_matric"),
     check("education_matric", "epf.education_qualification", "matric"),
-    check("education_senior_secondary", "epf.education_qualification", "senior_secondary"),
+    check(
+      "education_senior_secondary",
+      "epf.education_qualification",
+      "senior_secondary",
+    ),
     check("education_graduate", "epf.education_qualification", "graduate"),
-    check("education_post_graduate", "epf.education_qualification", "post_graduate"),
+    check(
+      "education_post_graduate",
+      "epf.education_qualification",
+      "post_graduate",
+    ),
     check("education_doctor", "epf.education_qualification", "doctor"),
-    check("education_technical_professional", "epf.education_qualification", "technical_professional"),
+    check(
+      "education_technical_professional",
+      "epf.education_qualification",
+      "technical_professional",
+    ),
     check("marital_status_married", "epf.marital_status", "Married"),
     check("marital_status_unmarried", "epf.marital_status", "Unmarried"),
-    check("marital_status_widow_widower", "epf.marital_status", "Widow/Widower"),
+    check(
+      "marital_status_widow_widower",
+      "epf.marital_status",
+      "Widow/Widower",
+    ),
     check("marital_status_divorcee", "epf.marital_status", "Divorcee"),
     check("specially_abled_yes", "epf.specially_abled", "true"),
     check("specially_abled_no", "epf.specially_abled_no", "true"),
     check("disability_locomotive", "epf.disability_type", "locomotive"),
     check("disability_visual", "epf.disability_type", "visual"),
     check("disability_hearing", "epf.disability_type", "hearing"),
-    text("kyc_bank_account_number", "statutory.bank_account_masked", { validation_rule: "bank_account" }),
+    text("kyc_bank_account_number", "statutory.bank_account_masked", {
+      validation_rule: "bank_account",
+    }),
     text("kyc_bank_ifsc", "statutory.ifsc_code", { validation_rule: "ifsc" }),
     text("kyc_aadhaar_name", "epf.aadhaar_name_as_per_kyc"),
-    text("kyc_aadhaar_number", "epf.aadhaar_masked", { masking_rule: "aadhaar" }),
+    text("kyc_aadhaar_number", "epf.aadhaar_masked", {
+      masking_rule: "aadhaar",
+    }),
     text("kyc_pan_name", "epf.pan_name_as_per_kyc"),
-    text("kyc_pan_number", "epf.pan_masked", { validation_rule: "pan", masking_rule: "pan" }),
+    text("kyc_pan_number", "epf.pan_masked", {
+      validation_rule: "pan",
+      masking_rule: "pan",
+    }),
     text("place", "epf.branch_name_snapshot", { required: true }),
-    text("signature_date_day", "system.current_date", { required: true, transform_rule: "date_day" }),
-    text("signature_date_month", "system.current_date", { required: true, transform_rule: "date_month" }),
-    text("signature_date_year", "system.current_date", { required: true, transform_rule: "date_year" }),
+    text("signature_date_day", "system.current_date", {
+      required: true,
+      transform_rule: "date_day",
+    }),
+    text("signature_date_month", "system.current_date", {
+      required: true,
+      transform_rule: "date_month",
+    }),
+    text("signature_date_year", "system.current_date", {
+      required: true,
+      transform_rule: "date_year",
+    }),
     text("employee_signature", null),
     text("employer_name", "system.company_name"),
     text("employer_signature", null),
-    text("doj_day", "epf.joining_date", { required: true, transform_rule: "date_day", validation_rule: "date" }),
-    text("doj_month", "epf.joining_date", { required: true, transform_rule: "date_month", validation_rule: "date" }),
-    text("doj_year", "epf.joining_date", { required: true, transform_rule: "date_year", validation_rule: "date" }),
+    text("doj_day", "epf.joining_date", {
+      required: true,
+      transform_rule: "date_day",
+      validation_rule: "date",
+    }),
+    text("doj_month", "epf.joining_date", {
+      required: true,
+      transform_rule: "date_month",
+      validation_rule: "date",
+    }),
+    text("doj_year", "epf.joining_date", {
+      required: true,
+      transform_rule: "date_year",
+      validation_rule: "date",
+    }),
   ];
 }
 
-export function defaultMapsForTemplate(documentCode: string, fileName?: string | null, fileBuffer?: Buffer | null): FieldMapInput[] {
-  const code = String(documentCode || "").trim().toUpperCase();
-  const isPdf = String(fileName || "").toLowerCase().endsWith(".pdf");
+export function defaultMapsForTemplate(
+  documentCode: string,
+  fileName?: string | null,
+  fileBuffer?: Buffer | null,
+): FieldMapInput[] {
+  const code = String(documentCode || "")
+    .trim()
+    .toUpperCase();
+  const isPdf = String(fileName || "")
+    .toLowerCase()
+    .endsWith(".pdf");
   // The two statutory EPF forms are authored AcroForms with fixed field names,
   // so their maps come from the form definition rather than being derived.
   if (code === "EPF_DECLARATION" && isPdf) {
@@ -443,8 +915,13 @@ export function defaultMapsForTemplate(documentCode: string, fileName?: string |
       field_label: map.field_label,
       source_path: map.source_path ?? null,
       page_no: 1,
-      x: null, y: null, width: null, height: null,
-      font_size: 9, font_weight: null, alignment: null,
+      x: null,
+      y: null,
+      width: null,
+      height: null,
+      font_size: 9,
+      font_weight: null,
+      alignment: null,
       field_type: map.field_type ?? "text",
       required: false,
       masking_rule: null,
@@ -476,7 +953,11 @@ export function defaultMapsForTemplate(documentCode: string, fileName?: string |
       field_type: field.field_type ?? "text",
       required: Boolean(field.required),
       masking_rule: field.masking_rule ?? null,
-      mapping_mode: String(fileName || "").toLowerCase().endsWith(".pdf") ? "pdf_coordinate_overlay" : "placeholder",
+      mapping_mode: String(fileName || "")
+        .toLowerCase()
+        .endsWith(".pdf")
+        ? "pdf_coordinate_overlay"
+        : "placeholder",
       placeholder_token: `{{${field.field_key}}}`,
       pdf_field_name: null,
     });
@@ -545,7 +1026,9 @@ async function auditFieldChange(input: {
   );
 }
 
-async function checklistContext(checklistId: string): Promise<ChecklistContextRow> {
+async function checklistContext(
+  checklistId: string,
+): Promise<ChecklistContextRow> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
         c.id AS checklist_id,
@@ -567,7 +1050,9 @@ async function checklistContext(checklistId: string): Promise<ChecklistContextRo
   );
   const row = (rows as unknown as ChecklistContextRow[])[0];
   if (!row) {
-    const err = new Error("Checklist item not found") as Error & { statusCode?: number };
+    const err = new Error("Checklist item not found") as Error & {
+      statusCode?: number;
+    };
     err.statusCode = 404;
     throw err;
   }
@@ -579,9 +1064,19 @@ async function checklistContext(checklistId: string): Promise<ChecklistContextRo
  * the permanent address (what "r/o" and "permanent address" mean on the
  * statutory forms), falling back to the current one when it is not recorded.
  */
-function joinAddress(employee: RowDataPacket | undefined, which: "permanent" | "current" = "permanent") {
-  const pick = (...keys: string[]) => keys.map((key) => safeTrim(employee?.[key])).filter(Boolean);
-  const permanent = pick("permanent_address1", "permanent_address2", "permanent_city", "permanent_state", "permanent_pincode");
+function joinAddress(
+  employee: RowDataPacket | undefined,
+  which: "permanent" | "current" = "permanent",
+) {
+  const pick = (...keys: string[]) =>
+    keys.map((key) => safeTrim(employee?.[key])).filter(Boolean);
+  const permanent = pick(
+    "permanent_address1",
+    "permanent_address2",
+    "permanent_city",
+    "permanent_state",
+    "permanent_pincode",
+  );
   const current = pick("address1", "address2", "city", "state", "pincode");
   if (which === "current") return current.join(", ");
   return (permanent.length ? permanent : current).join(", ");
@@ -613,16 +1108,29 @@ export function maritalStatusForForm(value: unknown) {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
   switch (raw.toLowerCase()) {
-    case "married": return "Married";
-    case "single": case "unmarried": return "Unmarried";
-    case "widow": case "widower": case "widowed": case "widow/widower": return "Widow/Widower";
-    case "divorce": case "divorced": case "divorcee": return "Divorcee";
-    default: return raw;
+    case "married":
+      return "Married";
+    case "single":
+    case "unmarried":
+      return "Unmarried";
+    case "widow":
+    case "widower":
+    case "widowed":
+    case "widow/widower":
+      return "Widow/Widower";
+    case "divorce":
+    case "divorced":
+    case "divorcee":
+      return "Divorcee";
+    default:
+      return raw;
   }
 }
 
 export function relationPrefix(gender: unknown) {
-  const value = String(gender ?? "").trim().toLowerCase();
+  const value = String(gender ?? "")
+    .trim()
+    .toLowerCase();
   if (value === "male" || value === "m") return "s/o";
   if (value === "female" || value === "f") return "d/o";
   return "s/o | d/o";
@@ -656,19 +1164,29 @@ async function resolveAttendanceSource(
                   CASE WHEN department_id  IS NOT NULL THEN 2 ELSE 0 END +
                   CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC
         LIMIT 1`,
-      [employee?.designation_id ?? null, employee?.department_id ?? null, employee?.process_id ?? null],
+      [
+        employee?.designation_id ?? null,
+        employee?.department_id ?? null,
+        employee?.process_id ?? null,
+      ],
     );
     if ((rows as RowDataPacket[]).length) return "dialler";
     // An empty table means nothing is configured yet, so fall back to the rule
     // the engine falls back to rather than declaring everyone biometric.
-    const [[{ total }]] = await db.query<RowDataPacket[]>(
+    const [[{ total }]] = (await db.query<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM apr_eligibility_config WHERE active_status = 1`,
-    ) as unknown as [[{ total: number }]];
-    if (Number(total) === 0 && isOperationsExecutiveByRegex(departmentName, designationName)) return "dialler";
+    )) as unknown as [[{ total: number }]];
+    if (
+      Number(total) === 0 &&
+      isOperationsExecutiveByRegex(departmentName, designationName)
+    )
+      return "dialler";
     return "biometric";
   } catch {
     // Table missing — same fallback the engine uses.
-    return isOperationsExecutiveByRegex(departmentName, designationName) ? "dialler" : "biometric";
+    return isOperationsExecutiveByRegex(departmentName, designationName)
+      ? "dialler"
+      : "biometric";
   }
 }
 
@@ -677,16 +1195,50 @@ function indianDigits(value: number): string {
   const [whole] = value.toFixed(2).split(".");
   const last3 = whole.slice(-3);
   const rest = whole.slice(0, -3);
-  return rest ? `${rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",")},${last3}` : last3;
+  return rest
+    ? `${rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",")},${last3}`
+    : last3;
 }
 
-const ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-  "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
-const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+const ONES = [
+  "",
+  "One",
+  "Two",
+  "Three",
+  "Four",
+  "Five",
+  "Six",
+  "Seven",
+  "Eight",
+  "Nine",
+  "Ten",
+  "Eleven",
+  "Twelve",
+  "Thirteen",
+  "Fourteen",
+  "Fifteen",
+  "Sixteen",
+  "Seventeen",
+  "Eighteen",
+  "Nineteen",
+];
+const TENS = [
+  "",
+  "",
+  "Twenty",
+  "Thirty",
+  "Forty",
+  "Fifty",
+  "Sixty",
+  "Seventy",
+  "Eighty",
+  "Ninety",
+];
 
 function underThousand(n: number): string {
   if (n < 20) return ONES[n];
-  if (n < 100) return `${TENS[Math.floor(n / 10)]}${n % 10 ? ` ${ONES[n % 10]}` : ""}`;
+  if (n < 100)
+    return `${TENS[Math.floor(n / 10)]}${n % 10 ? ` ${ONES[n % 10]}` : ""}`;
   return `${ONES[Math.floor(n / 100)]} Hundred${n % 100 ? ` ${underThousand(n % 100)}` : ""}`;
 }
 
@@ -711,7 +1263,10 @@ function amountInWords(value: number): string {
 }
 
 /** Exported so diagnostics can resolve exactly what a document would be filled with. */
-export async function buildSourceContext(employeeId: string, candidateId?: string | null) {
+export async function buildSourceContext(
+  employeeId: string,
+  candidateId?: string | null,
+) {
   const [[employee]] = await db.execute<RowDataPacket[]>(
     `SELECT
         e.id,
@@ -754,8 +1309,9 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     [employeeId],
   );
 
-  const [[bank]] = await db.execute<RowDataPacket[]>(
-    `SELECT
+  const [[bank]] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT
         COALESCE(ac.bank_name, ebd.bank_name) AS bank_name,
         ac.bank_account_no,
         ac.bank_ifsc,
@@ -766,11 +1322,13 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
       WHERE e.id = ?
       LIMIT 1`,
-    [candidateId ?? "", employeeId],
-  ).catch(() => [[null] as unknown as RowDataPacket[], []]);
+      [candidateId ?? "", employeeId],
+    )
+    .catch(() => [[null] as unknown as RowDataPacket[], []]);
 
-  const [[onboarding]] = await db.execute<RowDataPacket[]>(
-    `SELECT
+  const [[onboarding]] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT
         father_husband_name,
         date_of_birth,
         marital_status,
@@ -808,11 +1366,13 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
        FROM candidate_onboarding_profile
       WHERE candidate_id = ?
       LIMIT 1`,
-    [candidateId ?? ""],
-  ).catch(() => [[null] as unknown as RowDataPacket[], []]);
+      [candidateId ?? ""],
+    )
+    .catch(() => [[null] as unknown as RowDataPacket[], []]);
 
-  const [[epf]] = await db.execute<RowDataPacket[]>(
-    `SELECT
+  const [[epf]] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT
         father_or_spouse_name,
         date_of_birth,
         mobile_number,
@@ -845,11 +1405,13 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
        FROM employee_epf_compliance_profile
       WHERE employee_id = ?
       LIMIT 1`,
-    [employeeId],
-  ).catch(() => [[null] as unknown as RowDataPacket[], []]);
+      [employeeId],
+    )
+    .catch(() => [[null] as unknown as RowDataPacket[], []]);
 
-  const [[salary]] = await db.execute<RowDataPacket[]>(
-    `SELECT ctc_offered, basic, hra, conveyance, da, special_allowance,
+  const [[salary]] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT ctc_offered, basic, hra, conveyance, da, special_allowance,
             portfolio_allowance, medical_allowance, lta, mobile_allowance,
             other_allowance, bonus, gross, net_in_hand,
             epf_employee, epf_employer, esic_employee, esic_employer,
@@ -858,8 +1420,9 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       WHERE employee_id = ?
       ORDER BY snapshot_date DESC
       LIMIT 1`,
-    [employeeId],
-  ).catch(() => [[null] as unknown as RowDataPacket[], []]);
+      [employeeId],
+    )
+    .catch(() => [[null] as unknown as RowDataPacket[], []]);
 
   // The EPF compliance screen writes its own nominee rows, keyed to the EPF
   // profile and carrying the fields Form 2 actually asks for — share, guardian
@@ -871,8 +1434,9 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
   //
   // It wins where it has rows: it is the EPF-specific record, curated for this
   // form, while the table below is shared with gratuity and insurance.
-  const [epfNominees] = await db.execute<RowDataPacket[]>(
-    `SELECT nominee_name, relationship, date_of_birth, share_percentage,
+  const [epfNominees] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT nominee_name, relationship, date_of_birth, share_percentage,
             guardian_name, guardian_relationship AS guardian_relation,
             CONCAT_WS(', ', NULLIF(address_line, ''), NULLIF(city, ''),
                       NULLIF(state, ''), NULLIF(pincode, '')) AS address,
@@ -885,22 +1449,25 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       WHERE employee_id = ?
       ORDER BY is_primary DESC, share_percentage DESC, id ASC
       LIMIT 4`,
-    [employeeId],
-  ).catch(() => [[] as unknown as RowDataPacket[], []]);
+      [employeeId],
+    )
+    .catch(() => [[] as unknown as RowDataPacket[], []]);
 
   // EPF Form 2 nominates against the PF corpus, so take the PF nominees. Rows
   // are flattened to nominee.n1_*, n2_* … because a field map addresses one
   // scalar path per box and the form prints a fixed number of rows.
-  const [generalNominees] = await db.execute<RowDataPacket[]>(
-    `SELECT nominee_name, relationship, date_of_birth, share_percentage,
+  const [generalNominees] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT nominee_name, relationship, date_of_birth, share_percentage,
             address, is_minor, guardian_name, guardian_relation
        FROM employee_nominee
       WHERE employee_id = ?
         AND (nominee_for IS NULL OR nominee_for LIKE '%pf%')
       ORDER BY share_percentage DESC, id ASC
       LIMIT 4`,
-    [employeeId],
-  ).catch(() => [[] as unknown as RowDataPacket[], []]);
+      [employeeId],
+    )
+    .catch(() => [[] as unknown as RowDataPacket[], []]);
 
   const nominees = (epfNominees as RowDataPacket[]).length
     ? (epfNominees as RowDataPacket[])
@@ -921,7 +1488,10 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       relationship: onboarding?.nominee_relation ?? null,
       date_of_birth: onboarding?.nominee_date_of_birth ?? null,
       share_percentage: onboarding?.nominee1_share_pct ?? null,
-      address: null, is_minor: 0, guardian_name: null, guardian_relation: null,
+      address: null,
+      is_minor: 0,
+      guardian_name: null,
+      guardian_relation: null,
     } as unknown as RowDataPacket);
   }
   if (safeTrim(onboarding?.nominee2_name)) {
@@ -930,7 +1500,10 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       relationship: onboarding?.nominee2_relation ?? null,
       date_of_birth: onboarding?.nominee2_dob ?? null,
       share_percentage: onboarding?.nominee2_share_pct ?? null,
-      address: null, is_minor: 0, guardian_name: null, guardian_relation: null,
+      address: null,
+      is_minor: 0,
+      guardian_name: null,
+      guardian_relation: null,
     } as unknown as RowDataPacket);
   }
   // Last resort: 18,742 employees carry a single nominee on their own row with
@@ -939,8 +1512,12 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     onboardingNominees.push({
       nominee_name: employee?.nominee_name,
       relationship: employee?.nominee_relation ?? null,
-      date_of_birth: null, share_percentage: null,
-      address: null, is_minor: 0, guardian_name: null, guardian_relation: null,
+      date_of_birth: null,
+      share_percentage: null,
+      address: null,
+      is_minor: 0,
+      guardian_name: null,
+      guardian_relation: null,
     } as unknown as RowDataPacket);
   }
 
@@ -954,11 +1531,16 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     nominee[`${p}name`] = entry.nominee_name ?? null;
     nominee[`${p}relationship`] = entry.relationship ?? null;
     nominee[`${p}date_of_birth`] = entry.date_of_birth ?? null;
-    nominee[`${p}share_percentage`] = entry.share_percentage == null ? null : `${entry.share_percentage}`;
+    nominee[`${p}share_percentage`] =
+      entry.share_percentage == null ? null : `${entry.share_percentage}`;
     nominee[`${p}address`] = entry.address ?? null;
     // The guardian line is only meaningful for a minor nominee.
-    nominee[`${p}guardian_name`] = Number(entry.is_minor ?? 0) === 1 ? entry.guardian_name ?? null : null;
-    nominee[`${p}guardian_relation`] = Number(entry.is_minor ?? 0) === 1 ? entry.guardian_relation ?? null : null;
+    nominee[`${p}guardian_name`] =
+      Number(entry.is_minor ?? 0) === 1 ? (entry.guardian_name ?? null) : null;
+    nominee[`${p}guardian_relation`] =
+      Number(entry.is_minor ?? 0) === 1
+        ? (entry.guardian_relation ?? null)
+        : null;
   });
 
   // EPF Form 2 Part B declares the member's FAMILY for the pension scheme. It is
@@ -967,8 +1549,9 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
   // so the only legitimate source is what the member wrote themselves during
   // onboarding. Anyone who did not supply one keeps a blank Part B to complete
   // by hand, exactly as before.
-  const [familyMembers] = await db.execute<RowDataPacket[]>(
-    `SELECT member_name, relation, dob, address, is_eps_nominee
+  const [familyMembers] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT member_name, relation, dob, address, is_eps_nominee
        FROM candidate_onboarding_family_member
       WHERE candidate_id = ?
         -- All 31 rows written before the writer skipped blank drafts have a
@@ -976,12 +1559,16 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
         -- an empty line, pushing a real family member off the form.
         AND member_name IS NOT NULL AND TRIM(member_name) <> ''
       ORDER BY created_at ASC`,
-    [candidateId ?? ""],
-  ).catch(() => [[] as unknown as RowDataPacket[], []]);
+      [candidateId ?? ""],
+    )
+    .catch(() => [[] as unknown as RowDataPacket[], []]);
 
   // The EPS block on the form is the fallback used where no eligible family
   // exists, so a flagged row goes there and never into the family table.
-  const epsRow = (familyMembers as RowDataPacket[]).find((r) => Number(r.is_eps_nominee ?? 0) === 1) ?? null;
+  const epsRow =
+    (familyMembers as RowDataPacket[]).find(
+      (r) => Number(r.is_eps_nominee ?? 0) === 1,
+    ) ?? null;
   const family: Record<string, unknown> = {};
   (familyMembers as RowDataPacket[])
     .filter((r) => Number(r.is_eps_nominee ?? 0) !== 1)
@@ -1009,8 +1596,9 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
   // approved + accepted package review so no unapproved figure is ever printed.
   // salary_component_assignments is NOT consulted for amounts: an active row may
   // exist without an approved review (264 employees measured 2026-09-08).
-  const [[packageRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT p.ctc AS package_gross
+  const [[packageRow]] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT p.ctc AS package_gross
        FROM employee_payroll_head_review r
        JOIN salary_package_master p ON p.id = r.salary_package_id
       WHERE r.employee_id = ?
@@ -1018,17 +1606,25 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
         AND r.package_accepted = 1
         AND r.salary_package_id IS NOT NULL
       LIMIT 1`,
-    [employeeId],
-  ).catch(() => [[null] as unknown as RowDataPacket[], []]);
+      [employeeId],
+    )
+    .catch(() => [[null] as unknown as RowDataPacket[], []]);
 
   const num = (value: unknown) => {
     const parsed = Number(value ?? 0);
     return Number.isFinite(parsed) ? parsed : 0;
   };
   const componentSum = [
-    salary?.basic, salary?.hra, salary?.conveyance, salary?.da,
-    salary?.portfolio_allowance, salary?.medical_allowance, salary?.lta,
-    salary?.mobile_allowance, salary?.special_allowance, salary?.other_allowance,
+    salary?.basic,
+    salary?.hra,
+    salary?.conveyance,
+    salary?.da,
+    salary?.portfolio_allowance,
+    salary?.medical_allowance,
+    salary?.lta,
+    salary?.mobile_allowance,
+    salary?.special_allowance,
+    salary?.other_allowance,
   ].reduce<number>((total, part) => total + num(part), 0);
 
   const packageGross = num(packageRow?.package_gross);
@@ -1047,28 +1643,33 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
   // largest value that actually reaches this branch today is 32,966.
   const UNCORROBORATED_MONTHLY_CEILING = 200_000;
   const offered = num(salary?.ctc_offered);
-  const offeredMonthly = offered > 0 && offered < UNCORROBORATED_MONTHLY_CEILING ? offered : 0;
+  const offeredMonthly =
+    offered > 0 && offered < UNCORROBORATED_MONTHLY_CEILING ? offered : 0;
 
   // 595 rows carry no figure anywhere. A blank on the contract is honest; a
   // fabricated one is not, so nothing is invented for them.
-  const grossRaw = packageGross > 0
-    ? packageGross
-    : snapshotGross > 0
-      ? snapshotGross
-      : componentSum > 0
-        ? componentSum
-        : offeredMonthly > 0
-          ? offeredMonthly
-          : null;
-  const monthlyGross = grossRaw == null || !Number.isFinite(grossRaw) || grossRaw <= 0
-    ? null
-    : grossRaw;
+  const grossRaw =
+    packageGross > 0
+      ? packageGross
+      : snapshotGross > 0
+        ? snapshotGross
+        : componentSum > 0
+          ? componentSum
+          : offeredMonthly > 0
+            ? offeredMonthly
+            : null;
+  const monthlyGross =
+    grossRaw == null || !Number.isFinite(grossRaw) || grossRaw <= 0
+      ? null
+      : grossRaw;
 
   // The Payroll HR who signs this candidate's joining documents. Resolved from
   // the employee's branch; null where no signatory is configured yet, or where
   // sql/1061 has not been applied, in which case the name prints blank exactly
   // as it always has.
-  const payrollHr = await getPayrollHrSignatoryForEmployee(employeeId).catch(() => null);
+  const payrollHr = await getPayrollHrSignatoryForEmployee(employeeId).catch(
+    () => null,
+  );
 
   return {
     nominee,
@@ -1081,15 +1682,28 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     employee: {
       full_name: employee?.full_name ?? null,
       employee_code: employee?.employee_code ?? null,
-      date_of_birth: employee?.date_of_birth ?? onboarding?.date_of_birth ?? epf?.date_of_birth ?? null,
+      date_of_birth:
+        employee?.date_of_birth ??
+        onboarding?.date_of_birth ??
+        epf?.date_of_birth ??
+        null,
       date_of_joining: employee?.date_of_joining ?? null,
       designation: employee?.designation_name ?? null,
       department: employee?.department_name ?? null,
       branch: employee?.branch_name ?? null,
       process: employee?.process_name ?? null,
-      mobile: employee?.mobile ?? onboarding?.mobile_number ?? epf?.mobile_number ?? null,
-      email: employee?.email ?? onboarding?.personal_email_id ?? epf?.personal_email ?? null,
-      father_name: epf?.father_or_spouse_name ?? onboarding?.father_husband_name ?? null,
+      mobile:
+        employee?.mobile ??
+        onboarding?.mobile_number ??
+        epf?.mobile_number ??
+        null,
+      email:
+        employee?.email ??
+        onboarding?.personal_email_id ??
+        epf?.personal_email ??
+        null,
+      father_name:
+        epf?.father_or_spouse_name ?? onboarding?.father_husband_name ?? null,
       // The agreement named the second party "<name> s/o | d/o <father>" —
       // the template's own placeholder text, printed verbatim on every signed
       // contract because nothing ever resolved it. Gender decides it: 43,427
@@ -1099,33 +1713,61 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       // Falls back to onboarding and EPF sources so newly converted ATS
       // candidates whose employees.gender is not yet populated still get
       // the correct s/o or d/o on the first page of their contract.
-      relation_prefix: relationPrefix(employee?.gender ?? onboarding?.gender ?? epf?.gender),
+      relation_prefix: relationPrefix(
+        employee?.gender ?? onboarding?.gender ?? epf?.gender,
+      ),
       // "r/o" on the employment agreement means place of residence, so prefer
       // the permanent address and fall back to the current one.
       // Falls back to the address the candidate typed during onboarding when the
       // employee record has none. Only 67 profiles carry one today, so this
       // closes a small gap rather than a large one.
-      permanent_address: joinAddress(employee)
-        || [onboarding?.permanent_address, onboarding?.permanent_city,
-            onboarding?.permanent_state, onboarding?.permanent_pincode]
-             .map((part) => safeTrim(part)).filter(Boolean).join(", ")
-        || null,
+      permanent_address:
+        joinAddress(employee) ||
+        [
+          onboarding?.permanent_address,
+          onboarding?.permanent_city,
+          onboarding?.permanent_state,
+          onboarding?.permanent_pincode,
+        ]
+          .map((part) => safeTrim(part))
+          .filter(Boolean)
+          .join(", ") ||
+        null,
       current_address: joinAddress(employee, "current") || null,
     },
     epf: {
       employee_name: epf?.employee_name ?? employee?.full_name ?? null,
-      father_or_spouse_name: epf?.father_or_spouse_name ?? onboarding?.father_husband_name ?? null,
+      father_or_spouse_name:
+        epf?.father_or_spouse_name ?? onboarding?.father_husband_name ?? null,
       relationship_type: epf?.relationship_type ?? "father",
-      date_of_birth: epf?.date_of_birth ?? onboarding?.date_of_birth ?? employee?.date_of_birth ?? null,
+      date_of_birth:
+        epf?.date_of_birth ??
+        onboarding?.date_of_birth ??
+        employee?.date_of_birth ??
+        null,
       joining_date: epf?.joining_date ?? employee?.date_of_joining ?? null,
-      gender: safeTrim(epf?.gender) ?? safeTrim(employee?.gender) ?? safeTrim(onboarding?.gender),
+      gender:
+        safeTrim(epf?.gender) ??
+        safeTrim(employee?.gender) ??
+        safeTrim(onboarding?.gender),
       marital_status: maritalStatusForForm(
-        epf?.marital_status ?? onboarding?.marital_status ?? employee?.marital_status,
+        epf?.marital_status ??
+          onboarding?.marital_status ??
+          employee?.marital_status,
       ),
-      mobile_number: epf?.mobile_number ?? onboarding?.mobile_number ?? employee?.mobile ?? null,
-      personal_email: epf?.personal_email ?? onboarding?.personal_email_id ?? employee?.email ?? null,
+      mobile_number:
+        epf?.mobile_number ??
+        onboarding?.mobile_number ??
+        employee?.mobile ??
+        null,
+      personal_email:
+        epf?.personal_email ??
+        onboarding?.personal_email_id ??
+        employee?.email ??
+        null,
       pan_masked: epf?.pan_masked ?? onboarding?.pan_number_masked ?? null,
-      aadhaar_masked: epf?.aadhaar_masked ?? onboarding?.aadhaar_number_masked ?? null,
+      aadhaar_masked:
+        epf?.aadhaar_masked ?? onboarding?.aadhaar_number_masked ?? null,
       // employee_epf_compliance_profile holds 4 rows, so uan_masked was null for
       // effectively everyone while 11,751 employee rows carry a UAN. Masked on
       // the way through to match what this field has always printed — the raw
@@ -1133,22 +1775,51 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       // safeTrim, not `??`: these columns hold '' rather than NULL on 65 profiles,
       // and `??` treats '' as a real value, so the employee-row fallback would
       // never fire and the form would print blank for someone who has a UAN.
-      uan_masked: safeTrim(epf?.uan_masked) ?? safeTrim(onboarding?.uan_number) ?? maskDigits(employee?.uan_number),
-      previous_pf_member: tri(affirmativeOnly(epf?.previous_pf_member), onboarding?.previous_pf_member) === true,
-      previous_pf_member_no: tri(affirmativeOnly(epf?.previous_pf_member), onboarding?.previous_pf_member) === false,
+      uan_masked:
+        safeTrim(epf?.uan_masked) ??
+        safeTrim(onboarding?.uan_number) ??
+        maskDigits(employee?.uan_number),
+      previous_pf_member:
+        tri(
+          affirmativeOnly(epf?.previous_pf_member),
+          onboarding?.previous_pf_member,
+        ) === true,
+      previous_pf_member_no:
+        tri(
+          affirmativeOnly(epf?.previous_pf_member),
+          onboarding?.previous_pf_member,
+        ) === false,
       // Only the onboarding column is a valid fallback: its field is labelled
       // "Previous EPF / PF Number". employees.epf_number is the CURRENT member
       // id, and printing it here would make Form 11 assert a previous
       // membership that does not exist.
-      previous_pf_account_number: safeTrim(epf?.previous_pf_account_number) ?? safeTrim(onboarding?.epf_number),
+      previous_pf_account_number:
+        safeTrim(epf?.previous_pf_account_number) ??
+        safeTrim(onboarding?.epf_number),
       previous_exit_date: epf?.previous_exit_date ?? null,
-      previous_eps_member: tri(affirmativeOnly(epf?.previous_eps_member), onboarding?.eps_member) === true,
-      previous_eps_member_no: tri(affirmativeOnly(epf?.previous_eps_member), onboarding?.eps_member) === false,
+      previous_eps_member:
+        tri(
+          affirmativeOnly(epf?.previous_eps_member),
+          onboarding?.eps_member,
+        ) === true,
+      previous_eps_member_no:
+        tri(
+          affirmativeOnly(epf?.previous_eps_member),
+          onboarding?.eps_member,
+        ) === false,
       // Both sources for this one are DEFAULT 0, so it can only ever be answered
       // yes. With no affirmative anywhere the boxes stay blank rather than
       // asserting a "No" nobody made.
-      international_worker: tri(affirmativeOnly(epf?.international_worker), affirmativeOnly(onboarding?.international_worker)) === true,
-      international_worker_no: tri(affirmativeOnly(epf?.international_worker), affirmativeOnly(onboarding?.international_worker)) === false,
+      international_worker:
+        tri(
+          affirmativeOnly(epf?.international_worker),
+          affirmativeOnly(onboarding?.international_worker),
+        ) === true,
+      international_worker_no:
+        tri(
+          affirmativeOnly(epf?.international_worker),
+          affirmativeOnly(onboarding?.international_worker),
+        ) === false,
       country_of_origin: epf?.country_of_origin ?? null,
       passport_number: epf?.passport_number ?? null,
       passport_valid_from: epf?.passport_valid_from ?? null,
@@ -1157,16 +1828,29 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       specially_abled: Number(epf?.specially_abled ?? 0) === 1,
       specially_abled_no: Number(epf?.specially_abled ?? 0) !== 1,
       disability_type: epf?.disability_type ?? null,
-      aadhaar_name_as_per_kyc: epf?.aadhaar_name_as_per_kyc ?? epf?.employee_name ?? employee?.full_name ?? null,
-      pan_name_as_per_kyc: epf?.pan_name_as_per_kyc ?? epf?.employee_name ?? employee?.full_name ?? null,
+      aadhaar_name_as_per_kyc:
+        epf?.aadhaar_name_as_per_kyc ??
+        epf?.employee_name ??
+        employee?.full_name ??
+        null,
+      pan_name_as_per_kyc:
+        epf?.pan_name_as_per_kyc ??
+        epf?.employee_name ??
+        employee?.full_name ??
+        null,
       scheme_certificate_number: epf?.scheme_certificate_number ?? null,
       ppo_number: epf?.ppo_number ?? null,
-      branch_name_snapshot: epf?.branch_name_snapshot ?? employee?.branch_name ?? null,
+      branch_name_snapshot:
+        epf?.branch_name_snapshot ?? employee?.branch_name ?? null,
     },
     statutory: {
       pan_masked: epf?.pan_masked ?? onboarding?.pan_number_masked ?? null,
-      aadhaar_masked: epf?.aadhaar_masked ?? onboarding?.aadhaar_number_masked ?? null,
-      uan: safeTrim(epf?.uan_masked) ?? safeTrim(onboarding?.uan_number) ?? maskDigits(employee?.uan_number),
+      aadhaar_masked:
+        epf?.aadhaar_masked ?? onboarding?.aadhaar_number_masked ?? null,
+      uan:
+        safeTrim(epf?.uan_masked) ??
+        safeTrim(onboarding?.uan_number) ??
+        maskDigits(employee?.uan_number),
       bank_account_masked: maskBankAccount(bank?.bank_account_no ?? null),
       ifsc_code: bank?.bank_ifsc ?? bank?.ifsc_code ?? null,
       bank_verified: Number(bank?.bank_verified ?? 0) === 1,
@@ -1192,22 +1876,26 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       // The employment agreement's appendix prints the monthly figure and the
       // same amount in words, so both are derived from one source.
       monthly_gross: monthlyGross == null ? null : indianDigits(monthlyGross),
-      monthly_gross_words: monthlyGross == null ? null : amountInWords(monthlyGross),
+      monthly_gross_words:
+        monthlyGross == null ? null : amountInWords(monthlyGross),
     },
     attendance: {
       source: attendanceSource,
       // The wording the joiner signs, so it has to match how they are actually
       // tracked. Log-in hours follow the engine's thresholds: the dialler rule
       // is 480 minutes, the biometric default 540.
-      system_name: attendanceSource === "dialler"
-        ? "Dialler-based Attendance (APR) with Biometric Attendance Management System (BAMS) for entry and exit"
-        : "Biometric Attendance Management System (BAMS)",
-      criterion_statement: attendanceSource === "dialler"
-        ? "my attendance is tracked from my dialler log-in hours recorded in the Company's systems, and that I am also required to record my entry and exit on the Biometric Attendance Management System"
-        : "the Biometric Attendance Management System is the only criterion for tracking my attendance",
-      login_hours_statement: attendanceSource === "dialler"
-        ? "Log-in hours = 8 hours (dialler log-in) + 1 hour (break)"
-        : "Log-in hours = 9 hours (system log-in, inclusive of 1 hour break)",
+      system_name:
+        attendanceSource === "dialler"
+          ? "Dialler-based Attendance (APR) with Biometric Attendance Management System (BAMS) for entry and exit"
+          : "Biometric Attendance Management System (BAMS)",
+      criterion_statement:
+        attendanceSource === "dialler"
+          ? "my attendance is tracked from my dialler log-in hours recorded in the Company's systems, and that I am also required to record my entry and exit on the Biometric Attendance Management System"
+          : "the Biometric Attendance Management System is the only criterion for tracking my attendance",
+      login_hours_statement:
+        attendanceSource === "dialler"
+          ? "Log-in hours = 8 hours (dialler log-in) + 1 hour (break)"
+          : "Log-in hours = 9 hours (system log-in, inclusive of 1 hour break)",
     },
     system: {
       current_date: new Date().toISOString().slice(0, 10),
@@ -1216,7 +1904,10 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
   };
 }
 
-async function fieldMapsForTemplate(templateId: string | null, documentCode: string) {
+async function fieldMapsForTemplate(
+  templateId: string | null,
+  documentCode: string,
+) {
   const params: unknown[] = [documentCode];
   let templateSql = "";
   if (templateId) {
@@ -1234,7 +1925,10 @@ async function fieldMapsForTemplate(templateId: string | null, documentCode: str
 }
 
 /** Exported alongside buildSourceContext for the same reason. */
-export function deriveFieldValue(map: RowDataPacket, sourceContext: Record<string, unknown>) {
+export function deriveFieldValue(
+  map: RowDataPacket,
+  sourceContext: Record<string, unknown>,
+) {
   const sourceValue = nestedValue(sourceContext, String(map.source_path ?? ""));
   const fieldType = String(map.field_type ?? "text");
   const maskingRule = safeTrim(map.masking_rule);
@@ -1242,7 +1936,11 @@ export function deriveFieldValue(map: RowDataPacket, sourceContext: Record<strin
   if (maskingRule === "aadhaar") rawValue = maskDigits(sourceValue);
   if (maskingRule === "pan") rawValue = maskPan(sourceValue);
   if (maskingRule === "bank_account") rawValue = maskBankAccount(sourceValue);
-  const textValue = formatValueForField(rawValue, fieldType, safeTrim(map.checked_when));
+  const textValue = formatValueForField(
+    rawValue,
+    fieldType,
+    safeTrim(map.checked_when),
+  );
   return {
     value_text: textValue || null,
     masked_value: textValue || null,
@@ -1263,7 +1961,8 @@ async function upsertFieldValue(params: {
   fieldType: string;
   valueText?: string | null;
   maskedValue?: string | null;
-  valueSource: "SYSTEM" | "HR_ENTERED" | "EMPLOYEE_CONFIRMED" | "PAYROLL_ENTERED";
+  valueSource:
+    "SYSTEM" | "HR_ENTERED" | "EMPLOYEE_CONFIRMED" | "PAYROLL_ENTERED";
   fillStatus: string;
   confidenceScore?: number | null;
   requiresConfirmation?: number;
@@ -1390,15 +2089,17 @@ const OPTIONAL_SOURCED_FIELD_KEYS = [
 ];
 
 const NON_BLOCKING_FIELD_KEYS: string[] = [
-  ...COMMON_TEMPLATE_FIELDS
-    .filter((f) => f.required === false && !f.source_path)
-    .map((f) => String(f.field_key)),
+  ...COMMON_TEMPLATE_FIELDS.filter(
+    (f) => f.required === false && !f.source_path,
+  ).map((f) => String(f.field_key)),
   ...OPTIONAL_SOURCED_FIELD_KEYS,
 ];
 
 async function persistChecklistFillStatus(checklistId: string) {
   // `NOT IN ()` is a syntax error, so use a sentinel that never matches a key.
-  const skip = NON_BLOCKING_FIELD_KEYS.length ? NON_BLOCKING_FIELD_KEYS : ["__none__"];
+  const skip = NON_BLOCKING_FIELD_KEYS.length
+    ? NON_BLOCKING_FIELD_KEYS
+    : ["__none__"];
   const skipSql = skip.map(() => "?").join(",");
   // Only a field the template marks required may hold a document back.
   //
@@ -1434,16 +2135,18 @@ async function persistChecklistFillStatus(checklistId: string) {
   const hrEntered = Number(row?.hr_count ?? 0);
   const unconfirmed = Number(row?.unconfirmed_count ?? 0);
 
-  const fillStatus = missing > 0
-    ? "hr_fill_required"
-    : hrEntered > 0
-      ? "hr_filled"
-      : "auto_filled";
-  const reviewStatus = missing > 0
-    ? "pending"
-    : unconfirmed > 0
-      ? "employee_review_pending"
-      : "confirmed";
+  const fillStatus =
+    missing > 0
+      ? "hr_fill_required"
+      : hrEntered > 0
+        ? "hr_filled"
+        : "auto_filled";
+  const reviewStatus =
+    missing > 0
+      ? "pending"
+      : unconfirmed > 0
+        ? "employee_review_pending"
+        : "confirmed";
 
   await db.execute(
     `UPDATE employee_joining_document_checklist
@@ -1460,11 +2163,19 @@ async function persistChecklistFillStatus(checklistId: string) {
   );
 }
 
-export async function listTemplateFieldMaps(templateId: string, documentCode: string) {
+export async function listTemplateFieldMaps(
+  templateId: string,
+  documentCode: string,
+) {
   return fieldMapsForTemplate(templateId, documentCode);
 }
 
-export async function replaceTemplateFieldMaps(templateId: string, documentCode: string, actorUserId: string, maps: FieldMapInput[]) {
+export async function replaceTemplateFieldMaps(
+  templateId: string,
+  documentCode: string,
+  actorUserId: string,
+  maps: FieldMapInput[],
+) {
   await db.execute(
     `DELETE FROM document_template_field_map WHERE template_id = ? AND document_code = ?`,
     [templateId, documentCode],
@@ -1519,11 +2230,23 @@ export async function ensureDefaultTemplateFieldMaps(params: {
   fileName?: string | null;
   fileBuffer?: Buffer | null;
 }) {
-  const existing = await listTemplateFieldMaps(params.templateId, params.documentCode);
+  const existing = await listTemplateFieldMaps(
+    params.templateId,
+    params.documentCode,
+  );
   if (existing.length > 0) return existing;
-  const maps = defaultMapsForTemplate(params.documentCode, params.fileName, params.fileBuffer);
+  const maps = defaultMapsForTemplate(
+    params.documentCode,
+    params.fileName,
+    params.fileBuffer,
+  );
   if (maps.length === 0) return existing;
-  return replaceTemplateFieldMaps(params.templateId, params.documentCode, params.actorUserId, maps);
+  return replaceTemplateFieldMaps(
+    params.templateId,
+    params.documentCode,
+    params.actorUserId,
+    maps,
+  );
 }
 
 // ─── Schema JSON seeding ────────────────────────────────────────────────────
@@ -1548,7 +2271,12 @@ function parseDbSourceSuggestion(suggestion: string): {
   transform_rule: string | null;
   checked_when: string | null;
 } {
-  if (!suggestion || suggestion.startsWith("esign.") || suggestion.startsWith("employer_kyc") || suggestion.startsWith("employer.")) {
+  if (
+    !suggestion ||
+    suggestion.startsWith("esign.") ||
+    suggestion.startsWith("employer_kyc") ||
+    suggestion.startsWith("employer.")
+  ) {
     return { source_path: null, transform_rule: null, checked_when: null };
   }
 
@@ -1557,7 +2285,11 @@ function parseDbSourceSuggestion(suggestion: string): {
   if (eqMatch) {
     const rawPath = eqMatch[1].trim();
     const checkedWhen = eqMatch[2].trim();
-    return { source_path: mapKycPath(rawPath), transform_rule: null, checked_when: checkedWhen };
+    return {
+      source_path: mapKycPath(rawPath),
+      transform_rule: null,
+      checked_when: checkedWhen,
+    };
   }
 
   // Slice pattern:  "some.path[N:M]"
@@ -1566,67 +2298,97 @@ function parseDbSourceSuggestion(suggestion: string): {
     const rawPath = sliceMatch[1].trim();
     const n = sliceMatch[2];
     const m = sliceMatch[3];
-    return { source_path: mapKycPath(rawPath), transform_rule: `slice_${n}_${m}`, checked_when: null };
+    return {
+      source_path: mapKycPath(rawPath),
+      transform_rule: `slice_${n}_${m}`,
+      checked_when: null,
+    };
   }
 
   // Date format pattern:  "... formatted DDMMYYYY"
   const dateFmtMatch = suggestion.match(/^([^\s]+)\s+formatted\s+DDMMYYYY/i);
   if (dateFmtMatch) {
-    return { source_path: mapKycPath(dateFmtMatch[1].trim()), transform_rule: "date_ddmmyyyy", checked_when: null };
+    return {
+      source_path: mapKycPath(dateFmtMatch[1].trim()),
+      transform_rule: "date_ddmmyyyy",
+      checked_when: null,
+    };
   }
 
   // Digits-only fields (mobile, UAN, account numbers)
-  const digitsFields = ["employee.mobile_number", "epf.uan_number", "kyc.bank_account.number"];
+  const digitsFields = [
+    "employee.mobile_number",
+    "epf.uan_number",
+    "kyc.bank_account.number",
+  ];
   const cleaned = suggestion.split(" ")[0].trim();
   if (digitsFields.includes(cleaned)) {
-    return { source_path: mapKycPath(cleaned), transform_rule: "digits_only", checked_when: null };
+    return {
+      source_path: mapKycPath(cleaned),
+      transform_rule: "digits_only",
+      checked_when: null,
+    };
   }
 
   // Plain path
-  return { source_path: mapKycPath(cleaned), transform_rule: null, checked_when: null };
+  return {
+    source_path: mapKycPath(cleaned),
+    transform_rule: null,
+    checked_when: null,
+  };
 }
 
 /** Map kyc.* and employment.* paths to the HRMS source context paths. */
 function mapKycPath(raw: string): string {
   const MAP: Record<string, string> = {
-    "kyc.aadhaar.name":            "statutory.aadhaar_name",
-    "kyc.aadhaar.number":          "statutory.aadhaar_number",
-    "kyc.aadhaar.remarks":         "statutory.aadhaar_remarks",
-    "kyc.pan.name":                "statutory.pan_name",
-    "kyc.pan.number":              "statutory.pan_number",
-    "kyc.pan.remarks":             "statutory.pan_remarks",
-    "kyc.bank_account.name":       "statutory.bank_account_name",
-    "kyc.bank_account.number":     "statutory.bank_account_number",
-    "kyc.bank_account.remarks":    "statutory.ifsc_code",
-    "kyc.passport.name":           "kyc.passport_name",
-    "kyc.passport.number":         "kyc.passport_number",
-    "kyc.passport.remarks":        "kyc.passport_remarks",
-    "kyc.driving_licence.name":    "kyc.driving_licence_name",
-    "kyc.driving_licence.number":  "kyc.driving_licence_number",
+    "kyc.aadhaar.name": "statutory.aadhaar_name",
+    "kyc.aadhaar.number": "statutory.aadhaar_number",
+    "kyc.aadhaar.remarks": "statutory.aadhaar_remarks",
+    "kyc.pan.name": "statutory.pan_name",
+    "kyc.pan.number": "statutory.pan_number",
+    "kyc.pan.remarks": "statutory.pan_remarks",
+    "kyc.bank_account.name": "statutory.bank_account_name",
+    "kyc.bank_account.number": "statutory.bank_account_number",
+    "kyc.bank_account.remarks": "statutory.ifsc_code",
+    "kyc.passport.name": "kyc.passport_name",
+    "kyc.passport.number": "kyc.passport_number",
+    "kyc.passport.remarks": "kyc.passport_remarks",
+    "kyc.driving_licence.name": "kyc.driving_licence_name",
+    "kyc.driving_licence.number": "kyc.driving_licence_number",
     "kyc.driving_licence.remarks": "kyc.driving_licence_remarks",
-    "kyc.election_card.name":      "kyc.election_card_name",
-    "kyc.election_card.number":    "kyc.election_card_number",
-    "kyc.election_card.remarks":   "kyc.election_card_remarks",
-    "kyc.ration_card.name":        "kyc.ration_card_name",
-    "kyc.ration_card.number":      "kyc.ration_card_number",
-    "kyc.ration_card.remarks":     "kyc.ration_card_remarks",
-    "kyc.esic_card.name":          "kyc.esic_card_name",
-    "kyc.esic_card.number":        "kyc.esic_card_number",
-    "kyc.esic_card.remarks":       "kyc.esic_card_remarks",
-    "employment.joining_date":     "employee.date_of_joining",
-    "epf.declaration_date":        "system.current_date",
-    "employee.branch_or_city":     "employee.branch_name",
+    "kyc.election_card.name": "kyc.election_card_name",
+    "kyc.election_card.number": "kyc.election_card_number",
+    "kyc.election_card.remarks": "kyc.election_card_remarks",
+    "kyc.ration_card.name": "kyc.ration_card_name",
+    "kyc.ration_card.number": "kyc.ration_card_number",
+    "kyc.ration_card.remarks": "kyc.ration_card_remarks",
+    "kyc.esic_card.name": "kyc.esic_card_name",
+    "kyc.esic_card.number": "kyc.esic_card_number",
+    "kyc.esic_card.remarks": "kyc.esic_card_remarks",
+    "employment.joining_date": "employee.date_of_joining",
+    "epf.declaration_date": "system.current_date",
+    "employee.branch_or_city": "employee.branch_name",
   };
   return MAP[raw] ?? raw;
 }
 
 /** Map JSON field type → fill engine mapping_mode and field_type. */
-function schemaTypeToMappingMode(type: SchemaJsonField["type"]): { mapping_mode: string; field_type: string } {
+function schemaTypeToMappingMode(type: SchemaJsonField["type"]): {
+  mapping_mode: string;
+  field_type: string;
+} {
   switch (type) {
-    case "comb_text":             return { mapping_mode: "pdf_box_grid",             field_type: "text" };
-    case "text":                  return { mapping_mode: "pdf_coordinate_overlay",   field_type: "text" };
-    case "checkbox":              return { mapping_mode: "pdf_coordinate_overlay",   field_type: "checkbox" };
-    case "signature_placeholder": return { mapping_mode: "pdf_coordinate_overlay",   field_type: "signature" };
+    case "comb_text":
+      return { mapping_mode: "pdf_box_grid", field_type: "text" };
+    case "text":
+      return { mapping_mode: "pdf_coordinate_overlay", field_type: "text" };
+    case "checkbox":
+      return { mapping_mode: "pdf_coordinate_overlay", field_type: "checkbox" };
+    case "signature_placeholder":
+      return {
+        mapping_mode: "pdf_coordinate_overlay",
+        field_type: "signature",
+      };
   }
 }
 
@@ -1657,7 +2419,8 @@ export async function seedFieldMapsFromSchema(
     if (confirmedKeys.has(field.name)) continue; // admin already confirmed this one
 
     const { mapping_mode, field_type } = schemaTypeToMappingMode(field.type);
-    const { source_path, transform_rule, checked_when } = parseDbSourceSuggestion(field.db_source_suggestion ?? "");
+    const { source_path, transform_rule, checked_when } =
+      parseDbSourceSuggestion(field.db_source_suggestion ?? "");
     const [x, y, w, h] = field.rect_pdf_pt;
 
     await db.execute(
@@ -1692,7 +2455,10 @@ export async function seedFieldMapsFromSchema(
         field.tooltip ?? field.name,
         source_path,
         field.page ?? 1,
-        x, y, w, h,
+        x,
+        y,
+        w,
+        h,
         field_type,
         mapping_mode,
         `{{${field.name.toUpperCase()}}}`,
@@ -1711,21 +2477,37 @@ export async function seedFieldMapsFromSchema(
   return upserted;
 }
 
-export async function synchronizeChecklistFieldValues(checklistId: string, actorUserId?: string | null) {
+export async function synchronizeChecklistFieldValues(
+  checklistId: string,
+  actorUserId?: string | null,
+) {
   const checklist = await checklistContext(checklistId);
-  const maps = await fieldMapsForTemplate(checklist.template_id, checklist.document_code);
-  const sourceContext = await buildSourceContext(checklist.employee_id, checklist.candidate_id);
+  const maps = await fieldMapsForTemplate(
+    checklist.template_id,
+    checklist.document_code,
+  );
+  const sourceContext = await buildSourceContext(
+    checklist.employee_id,
+    checklist.candidate_id,
+  );
   const [existingRows] = await db.execute<RowDataPacket[]>(
     `SELECT field_key, value_source, value_text
        FROM employee_joining_document_field_value
       WHERE checklist_id = ?`,
     [checklistId],
   );
-  const existingByKey = new Map(existingRows.map((row) => [String(row.field_key), row]));
+  const existingByKey = new Map(
+    existingRows.map((row) => [String(row.field_key), row]),
+  );
 
   for (const map of maps) {
     const existing = existingByKey.get(String(map.field_key));
-    if (existing && ["HR_ENTERED", "EMPLOYEE_CONFIRMED", "PAYROLL_ENTERED"].includes(String(existing.value_source))) {
+    if (
+      existing &&
+      ["HR_ENTERED", "EMPLOYEE_CONFIRMED", "PAYROLL_ENTERED"].includes(
+        String(existing.value_source),
+      )
+    ) {
       continue;
     }
     const derived = deriveFieldValue(map, sourceContext);
@@ -1750,7 +2532,9 @@ export async function synchronizeChecklistFieldValues(checklistId: string, actor
       candidateId: checklist.candidate_id ?? null,
       checklistId,
       documentCode: checklist.document_code,
-      actionType: derived.value_text ? "AUTO_FIELD_FILLED" : "AUTO_FIELD_MISSING",
+      actionType: derived.value_text
+        ? "AUTO_FIELD_FILLED"
+        : "AUTO_FIELD_MISSING",
       actorUserId,
       actorType: actorUserId ? "hr" : "system",
       newValue: {
@@ -1815,7 +2599,12 @@ export async function manualFillChecklistValues(params: {
       actorUserId: params.actorUserId,
       actorType: "hr",
       remarks: safeTrim(update.reason),
-      oldValue: existing ? { value_text: existing.value_text, value_source: existing.value_source } : null,
+      oldValue: existing
+        ? {
+            value_text: existing.value_text,
+            value_source: existing.value_source,
+          }
+        : null,
       newValue: { value_text: update.value_text, value_source: "HR_ENTERED" },
       ipAddress: params.ipAddress ?? null,
       userAgent: params.userAgent ?? null,
@@ -1825,8 +2614,18 @@ export async function manualFillChecklistValues(params: {
   return getChecklistFieldReview(params.checklistId);
 }
 
-async function writeArtifact(employeeId: string, documentCode: string, fileName: string, content: Buffer) {
-  const dirPath = path.join(STORAGE_ROOT, employeeId, documentCode.toLowerCase(), "filled");
+async function writeArtifact(
+  employeeId: string,
+  documentCode: string,
+  fileName: string,
+  content: Buffer,
+) {
+  const dirPath = path.join(
+    STORAGE_ROOT,
+    employeeId,
+    documentCode.toLowerCase(),
+    "filled",
+  );
   ensureDir(dirPath);
   const storedFilename = `${Date.now()}-${randomUUID()}${path.extname(fileName) || ".pdf"}`;
   const storagePath = path.join(dirPath, storedFilename);
@@ -1848,11 +2647,25 @@ async function writeArtifact(employeeId: string, documentCode: string, fileName:
  * module boundaries for one array.
  */
 const TERMINAL_CHECKLIST_STATUSES = [
-  'verified', 'completed', 'esign_completed', 'signed_verified', 'wet_signed_uploaded',
+  "verified",
+  "completed",
+  "esign_completed",
+  "signed_verified",
+  "wet_signed_uploaded",
 ] as const;
 
-async function attachGeneratedArtifact(checklist: ChecklistContextRow, content: Buffer, fileName: string, actorUserId?: string | null) {
-  const artifact = await writeArtifact(checklist.employee_id, checklist.document_code, fileName, content);
+async function attachGeneratedArtifact(
+  checklist: ChecklistContextRow,
+  content: Buffer,
+  fileName: string,
+  actorUserId?: string | null,
+) {
+  const artifact = await writeArtifact(
+    checklist.employee_id,
+    checklist.document_code,
+    fileName,
+    content,
+  );
   const fileId = randomUUID();
   await db.execute(
     `INSERT INTO employee_joining_document_file
@@ -1890,7 +2703,7 @@ async function attachGeneratedArtifact(checklist: ChecklistContextRow, content: 
               -- around it by not calling the generator at all. That protects one
               -- call site; the corruption belongs to this write, so the guard
               -- belongs here, where every caller gets it.
-              WHEN status IN (${TERMINAL_CHECKLIST_STATUSES.map(() => '?').join(', ')}) THEN status
+              WHEN status IN (${TERMINAL_CHECKLIST_STATUSES.map(() => "?").join(", ")}) THEN status
               WHEN employee_review_status = 'confirmed' THEN 'ready_for_esign'
               WHEN fill_status = 'hr_fill_required' THEN 'hr_fill_required'
               ELSE 'draft_generated'
@@ -1904,28 +2717,51 @@ async function attachGeneratedArtifact(checklist: ChecklistContextRow, content: 
 
 function mimeTypeFromFileName(fileName: string) {
   const ext = path.extname(fileName).toLowerCase();
-  if (ext === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === ".docx")
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   if (ext === ".html") return "text/html";
   if (ext === ".pdf") return "application/pdf";
   return "application/octet-stream";
 }
 
-async function renderSummaryPdf(checklist: ChecklistContextRow, values: RowDataPacket[]) {
-  const outputPath = path.join(STORAGE_ROOT, checklist.employee_id, checklist.document_code.toLowerCase(), "summary-preview.pdf");
+async function renderSummaryPdf(
+  checklist: ChecklistContextRow,
+  values: RowDataPacket[],
+) {
+  const outputPath = path.join(
+    STORAGE_ROOT,
+    checklist.employee_id,
+    checklist.document_code.toLowerCase(),
+    "summary-preview.pdf",
+  );
   ensureDir(path.dirname(outputPath));
   await new Promise<void>((resolve, reject) => {
     const doc = new PDFDocumentKit({ margin: 42, size: "A4" });
     const stream = fs.createWriteStream(outputPath);
     doc.pipe(stream);
-    doc.fontSize(22).fillColor("#B91C1C").text("DRAFT - TEMPLATE NOT CONFIGURED", { align: "center" });
+    doc
+      .fontSize(22)
+      .fillColor("#B91C1C")
+      .text("DRAFT - TEMPLATE NOT CONFIGURED", { align: "center" });
     doc.moveDown(0.75);
-    doc.fillColor("#111827").fontSize(18).text(checklist.document_name, { align: "center" });
+    doc
+      .fillColor("#111827")
+      .fontSize(18)
+      .text(checklist.document_name, { align: "center" });
     doc.moveDown();
-    doc.fontSize(11).text("Digital draft generated by HRMS Universal Digital Form Fill Engine.");
-    doc.text("This is a placeholder until the official template and field map are configured.");
+    doc
+      .fontSize(11)
+      .text(
+        "Digital draft generated by HRMS Universal Digital Form Fill Engine.",
+      );
+    doc.text(
+      "This is a placeholder until the official template and field map are configured.",
+    );
     doc.moveDown();
     values.forEach((value) => {
-      doc.font("Helvetica-Bold").text(`${value.field_label}: `, { continued: true });
+      doc
+        .font("Helvetica-Bold")
+        .text(`${value.field_label}: `, { continued: true });
       doc.font("Helvetica").text(String(value.value_text ?? ""));
     });
     doc.end();
@@ -1949,10 +2785,14 @@ function formatDateForDocumentDisplay(value: string): string {
 }
 
 /** Exported for tests: the legacy fix-up pass below is easy to regress silently. */
-export async function renderPlaceholderDocx(templatePath: string, replacements: Record<string, string>) {
+export async function renderPlaceholderDocx(
+  templatePath: string,
+  replacements: Record<string, string>,
+) {
   const zip = new PizZip(fs.readFileSync(templatePath));
   const documentXml = zip.file("word/document.xml")?.asText();
-  if (!documentXml) throw new Error("DOCX template is missing word/document.xml");
+  if (!documentXml)
+    throw new Error("DOCX template is missing word/document.xml");
   let nextXml = documentXml;
   // The fix-ups further down were written for the original hand-authored Word
   // files, which had bare labels ("Employee Name:") and no placeholders. On a
@@ -1967,49 +2807,90 @@ export async function renderPlaceholderDocx(templatePath: string, replacements: 
     // A joiner signing "Date of Joining: 2017-01-19" reads as a system dump;
     // Indian documents use DD/MM/YYYY. Applied here so only the rendered
     // document changes, never the persisted value.
-    nextXml = nextXml.split(`{{${token}}}`).join(formatDateForDocumentDisplay(value));
+    nextXml = nextXml
+      .split(`{{${token}}}`)
+      .join(formatDateForDocumentDisplay(value));
   }
-  const employeeName = escapeXml(replacements.employee_name ?? replacements.full_name ?? "");
+  const employeeName = escapeXml(
+    replacements.employee_name ?? replacements.full_name ?? "",
+  );
   const employeeCode = escapeXml(replacements.employee_code ?? "");
   const joiningDate = escapeXml(replacements.date_of_joining ?? "");
   const currentDate = escapeXml(replacements.current_date ?? "");
   const ndaDate = escapeXml(replacements.nda_signature_date ?? currentDate);
   const itDate = escapeXml(replacements.it_signature_date ?? currentDate);
-  const surveillanceDate = escapeXml(replacements.surveillance_signature_date ?? currentDate);
+  const surveillanceDate = escapeXml(
+    replacements.surveillance_signature_date ?? currentDate,
+  );
   const bamsName = escapeXml(replacements.bams_employee_name ?? employeeName);
   const bamsCode = escapeXml(replacements.bams_employee_code ?? employeeCode);
   const bamsDoj = escapeXml(replacements.bams_date_of_joining ?? joiningDate);
   const piName = escapeXml(replacements.pi_employee_name ?? employeeName);
   const piDate = escapeXml(replacements.pi_signature_date ?? currentDate);
-  const zeroToleranceDate = escapeXml(replacements.zero_tolerance_signature_date ?? currentDate);
+  const zeroToleranceDate = escapeXml(
+    replacements.zero_tolerance_signature_date ?? currentDate,
+  );
   const hrName = escapeXml(replacements.surveillance_hr_name ?? "");
   if (employeeName && !isTokenTemplate) {
-    nextXml = nextXml
-      .replace(/(I\s+)([A-Z][A-Z\s.]{2,80})(\s*,\s*agree)/g, `$1${employeeName}$3`);
+    nextXml = nextXml.replace(
+      /(I\s+)([A-Z][A-Z\s.]{2,80})(\s*,\s*agree)/g,
+      `$1${employeeName}$3`,
+    );
   }
-  if (!isTokenTemplate) nextXml = nextXml
-    .replace(/Name of the Analyst:\s*Date/g, `Name of the Analyst: ${employeeName}    Date: ${ndaDate}`)
-    .replace(/Signature\s+Date/g, `Signature: __________________    Date: ${itDate}`)
-    .replace(/Name of the candidate:\s*HR Person name\s*:/g, `Name of the candidate: ${employeeName}    HR Person name: ${hrName}`)
-    .replace(/Signature\s*:\s*Date\s*:/g, `Signature: __________________    Date: ${surveillanceDate}`)
-    .replace(/Regards,\s*Name/g, `Regards, ${bamsName}`)
-    .replace(/E Code\s+DOJ/g, `E Code: ${bamsCode}    DOJ: ${bamsDoj}`)
-    .replace(/Employee Name\s*:\s*[^<]+/g, `Employee Name: ${piName}`)
-    .replace(/Employee Signature\s*:\s*Date\s*:/g, `Employee Signature: __________________    Date: ${piDate}`)
-    .replace(/Signature:\s*Date:/g, `Signature: __________________    Date: ${zeroToleranceDate}`);
+  if (!isTokenTemplate)
+    nextXml = nextXml
+      .replace(
+        /Name of the Analyst:\s*Date/g,
+        `Name of the Analyst: ${employeeName}    Date: ${ndaDate}`,
+      )
+      .replace(
+        /Signature\s+Date/g,
+        `Signature: __________________    Date: ${itDate}`,
+      )
+      .replace(
+        /Name of the candidate:\s*HR Person name\s*:/g,
+        `Name of the candidate: ${employeeName}    HR Person name: ${hrName}`,
+      )
+      .replace(
+        /Signature\s*:\s*Date\s*:/g,
+        `Signature: __________________    Date: ${surveillanceDate}`,
+      )
+      .replace(/Regards,\s*Name/g, `Regards, ${bamsName}`)
+      .replace(/E Code\s+DOJ/g, `E Code: ${bamsCode}    DOJ: ${bamsDoj}`)
+      .replace(/Employee Name\s*:\s*[^<]+/g, `Employee Name: ${piName}`)
+      .replace(
+        /Employee Signature\s*:\s*Date\s*:/g,
+        `Employee Signature: __________________    Date: ${piDate}`,
+      )
+      .replace(
+        /Signature:\s*Date:/g,
+        `Signature: __________________    Date: ${zeroToleranceDate}`,
+      );
   zip.file("word/document.xml", nextXml);
   return zip.generate({ type: "nodebuffer" });
 }
 
-async function renderFillablePdf(templatePath: string, fieldMaps: RowDataPacket[], values: RowDataPacket[]) {
+async function renderFillablePdf(
+  templatePath: string,
+  fieldMaps: RowDataPacket[],
+  values: RowDataPacket[],
+) {
   const pdfBytes = fs.readFileSync(templatePath);
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const form = pdfDoc.getForm();
-  const valueMap = new Map(values.map((value) => [String(value.field_key), String(value.value_text ?? "")]));
+  const valueMap = new Map(
+    values.map((value) => [
+      String(value.field_key),
+      String(value.value_text ?? ""),
+    ]),
+  );
   for (const fieldMap of fieldMaps) {
-    const fieldName = safeTrim(fieldMap.pdf_field_name) ?? String(fieldMap.field_key);
+    const fieldName =
+      safeTrim(fieldMap.pdf_field_name) ?? String(fieldMap.field_key);
     const textValue = valueMap.get(String(fieldMap.field_key)) ?? "";
-    const field = form.getFields().find((candidate) => candidate.getName() === fieldName);
+    const field = form
+      .getFields()
+      .find((candidate) => candidate.getName() === fieldName);
     if (!field) continue;
     try {
       if ("setText" in field && typeof field.setText === "function") {
@@ -2035,12 +2916,21 @@ function normalizeGridText(text: string, fieldType: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
-async function renderOverlayPdf(templatePath: string, fieldMaps: RowDataPacket[], values: RowDataPacket[]) {
+async function renderOverlayPdf(
+  templatePath: string,
+  fieldMaps: RowDataPacket[],
+  values: RowDataPacket[],
+) {
   const pdfBytes = fs.readFileSync(templatePath);
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const valueMap = new Map(values.map((value) => [String(value.field_key), String(value.value_text ?? "")]));
+  const valueMap = new Map(
+    values.map((value) => [
+      String(value.field_key),
+      String(value.value_text ?? ""),
+    ]),
+  );
   const pages = pdfDoc.getPages();
   for (const map of fieldMaps) {
     const pageIndex = Math.max(0, Number(map.page_no ?? 1) - 1);
@@ -2055,7 +2945,10 @@ async function renderOverlayPdf(templatePath: string, fieldMaps: RowDataPacket[]
     const mappingMode = String(map.mapping_mode ?? "");
     if (mappingMode === "pdf_box_grid") {
       const cellWidth = Math.max(1, Number(map.width ?? 12));
-      const gridText = normalizeGridText(text, String(map.field_type ?? "text"));
+      const gridText = normalizeGridText(
+        text,
+        String(map.field_type ?? "text"),
+      );
       [...gridText].forEach((char, index) => {
         const glyphWidth = boldFont.widthOfTextAtSize(char, fontSize);
         page.drawText(char, {
@@ -2094,25 +2987,43 @@ export async function generateChecklistDraft(
   transientValues?: TransientFieldValues,
 ) {
   const checklist = await checklistContext(checklistId);
-  const fieldReview = await synchronizeChecklistFieldValues(checklistId, actorUserId);
+  const fieldReview = await synchronizeChecklistFieldValues(
+    checklistId,
+    actorUserId,
+  );
   const persisted = fieldReview.values as RowDataPacket[];
   // Overlay the transient values over the persisted (masked) ones for this
   // render only. synchronizeChecklistFieldValues has already run, so nothing
   // below writes these back.
-  const values = (transientValues && Object.keys(transientValues).length
-    ? persisted.map((row) => {
-        const override = transientValues[String(row.field_key)];
-        return override === undefined ? row : { ...row, value_text: override };
-      })
-    : persisted) as RowDataPacket[];
-  const fieldMaps = await fieldMapsForTemplate(checklist.template_id, checklist.document_code);
+  const values = (
+    transientValues && Object.keys(transientValues).length
+      ? persisted.map((row) => {
+          const override = transientValues[String(row.field_key)];
+          return override === undefined
+            ? row
+            : { ...row, value_text: override };
+        })
+      : persisted
+  ) as RowDataPacket[];
+  const fieldMaps = await fieldMapsForTemplate(
+    checklist.template_id,
+    checklist.document_code,
+  );
   const replacements: Record<string, string> = Object.fromEntries([
-    ...values.map((value) => [String(value.field_key), String(value.value_text ?? "")]),
+    ...values.map((value) => [
+      String(value.field_key),
+      String(value.value_text ?? ""),
+    ]),
     ...fieldMaps
       .filter((map) => safeTrim(map.placeholder_token))
       .map((map) => {
-        const fieldValue = values.find((value) => String(value.field_key) === String(map.field_key));
-        return [String(map.placeholder_token).replace(/^\{\{|\}\}$/g, ""), String(fieldValue?.value_text ?? "")];
+        const fieldValue = values.find(
+          (value) => String(value.field_key) === String(map.field_key),
+        );
+        return [
+          String(map.placeholder_token).replace(/^\{\{|\}\}$/g, ""),
+          String(fieldValue?.value_text ?? ""),
+        ];
       }),
   ]);
 
@@ -2124,15 +3035,28 @@ export async function generateChecklistDraft(
   // missing defaults directly from sourceContext here so the PDF is always
   // complete regardless of DB field-map coverage.
   if (hasStructuredPdf(checklist.document_code)) {
-    const sourceCtx = await buildSourceContext(checklist.employee_id, checklist.candidate_id);
+    const sourceCtx = await buildSourceContext(
+      checklist.employee_id,
+      checklist.candidate_id,
+    );
     const defaultFields = fieldsForDocument(checklist.document_code);
     for (const field of defaultFields) {
-      if (replacements[field.field_key] != null && replacements[field.field_key] !== "") continue;
+      if (
+        replacements[field.field_key] != null &&
+        replacements[field.field_key] !== ""
+      )
+        continue;
       const derived = deriveFieldValue(
-        { source_path: field.source_path ?? null, field_type: field.field_type ?? "text", masking_rule: null, checked_when: null } as import("mysql2").RowDataPacket,
+        {
+          source_path: field.source_path ?? null,
+          field_type: field.field_type ?? "text",
+          masking_rule: null,
+          checked_when: null,
+        } as import("mysql2").RowDataPacket,
         sourceCtx,
       );
-      if (derived.value_text) replacements[field.field_key] = String(derived.value_text);
+      if (derived.value_text)
+        replacements[field.field_key] = String(derived.value_text);
     }
   }
   let outputFileName = `${checklist.document_code.toLowerCase()}-draft.pdf`;
@@ -2160,12 +3084,20 @@ export async function generateChecklistDraft(
       // Letterhead shows the branch that issued the document, not a hardcoded
       // head-office address. Resolution failure is non-fatal: the renderer falls
       // back to the constant rather than blocking a draft.
-      const letterhead = await resolveEmployeeLetterhead(String(checklist.employee_id))
-        .catch(() => undefined);
-      content = await renderJoiningDocumentPdf(checklist.document_code, replacements, letterhead);
+      const letterhead = await resolveEmployeeLetterhead(
+        String(checklist.employee_id),
+      ).catch(() => undefined);
+      content = await renderJoiningDocumentPdf(
+        checklist.document_code,
+        replacements,
+        letterhead,
+      );
     } else if (templatePath) {
       const fillMode = safeTrim(checklist.fill_mode) ?? "placeholder";
-      if (fillMode === "placeholder" && templatePath.toLowerCase().endsWith(".docx")) {
+      if (
+        fillMode === "placeholder" &&
+        templatePath.toLowerCase().endsWith(".docx")
+      ) {
         outputFileName = `${checklist.document_code.toLowerCase()}-draft.docx`;
         content = await renderPlaceholderDocx(templatePath, replacements);
       } else if (fillMode === "acroform") {
@@ -2175,7 +3107,10 @@ export async function generateChecklistDraft(
         content = await fillAcroFormPdf({
           templatePath,
           fieldMaps,
-          values: values.map((value) => ({ field_key: String(value.field_key), value_text: String(value.value_text ?? "") })),
+          values: values.map((value) => ({
+            field_key: String(value.field_key),
+            value_text: String(value.value_text ?? ""),
+          })),
           flatten: false,
         });
         // Both EPF forms carry an employer block the form itself requires to be
@@ -2188,14 +3123,18 @@ export async function generateChecklistDraft(
         // — this resolves to exactly the company seal used before, so the
         // documents are unchanged.
         const branchSignatory = await getPayrollHrSignatoryForEmployee(
-          String(checklist.employee_id), { withImage: true },
+          String(checklist.employee_id),
+          { withImage: true },
         ).catch(() => null);
         content = Buffer.from(
           await applyCompanySeal(
             content,
             String(checklist.document_code ?? ""),
             branchSignatory
-              ? mergeBranchSignatureIntoSeal(await loadCompanySeal(), branchSignatory)
+              ? mergeBranchSignatureIntoSeal(
+                  await loadCompanySeal(),
+                  branchSignatory,
+                )
               : undefined,
           ),
         );
@@ -2220,7 +3159,12 @@ export async function generateChecklistDraft(
     content = await renderSummaryPdf(checklist, values);
   }
 
-  const fileId = await attachGeneratedArtifact(checklist, content, outputFileName, actorUserId);
+  const fileId = await attachGeneratedArtifact(
+    checklist,
+    content,
+    outputFileName,
+    actorUserId,
+  );
   await auditFieldChange({
     employeeId: checklist.employee_id,
     candidateId: checklist.candidate_id ?? null,
@@ -2244,7 +3188,10 @@ export async function inspectChecklistAcroFormTemplate(checklistId: string) {
   if (!templatePath) {
     throw new Error("Template file not found for checklist.");
   }
-  const fieldMaps = await fieldMapsForTemplate(checklist.template_id, checklist.document_code);
+  const fieldMaps = await fieldMapsForTemplate(
+    checklist.template_id,
+    checklist.document_code,
+  );
   return validateAcroFormTemplate(templatePath, fieldMaps);
 }
 
@@ -2281,7 +3228,9 @@ export async function employeeReviewChecklistByToken(params: {
   ipAddress?: string | null;
   userAgent?: string | null;
 }) {
-  const publicTokenHash = createHash("sha256").update(String(params.publicToken ?? "").trim()).digest("hex");
+  const publicTokenHash = createHash("sha256")
+    .update(String(params.publicToken ?? "").trim())
+    .digest("hex");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT checklist_id, employee_id, document_code
        FROM employee_joining_document_public_token
@@ -2293,7 +3242,9 @@ export async function employeeReviewChecklistByToken(params: {
   );
   const tokenRow = rows[0];
   if (!tokenRow) {
-    const err = new Error("Invalid or expired employee review link") as Error & { statusCode?: number };
+    const err = new Error(
+      "Invalid or expired employee review link",
+    ) as Error & { statusCode?: number };
     err.statusCode = 404;
     throw err;
   }
@@ -2346,7 +3297,10 @@ export async function employeeReviewChecklistByToken(params: {
     employeeId: String(tokenRow.employee_id),
     checklistId: String(tokenRow.checklist_id),
     documentCode: String(tokenRow.document_code),
-    actionType: params.action === "confirm" ? "EMPLOYEE_REVIEW_CONFIRMED" : "EMPLOYEE_REVIEW_CORRECTION_REQUESTED",
+    actionType:
+      params.action === "confirm"
+        ? "EMPLOYEE_REVIEW_CONFIRMED"
+        : "EMPLOYEE_REVIEW_CORRECTION_REQUESTED",
     actorType: "public_token",
     remarks: params.comment ?? null,
     newValue: { actorName: params.actorName ?? null, action: params.action },

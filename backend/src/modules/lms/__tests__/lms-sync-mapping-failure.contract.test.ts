@@ -14,14 +14,20 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const source = readFileSync(resolve(process.cwd(), "src/modules/lms/lms.sync.service.ts"), "utf8");
+const source = readFileSync(
+  resolve(process.cwd(), "src/modules/lms/lms.sync.service.ts"),
+  "utf8",
+);
 
 /** The body of syncAssessmentScores, isolated so matches elsewhere in the file don't count. */
 function assessmentScoresBody(): string {
   const match = source.match(
     /export async function syncAssessmentScores[\s\S]*?\n\}/,
   );
-  if (!match) throw new Error("syncAssessmentScores function not found in lms.sync.service.ts");
+  if (!match)
+    throw new Error(
+      "syncAssessmentScores function not found in lms.sync.service.ts",
+    );
   return match[0];
 }
 

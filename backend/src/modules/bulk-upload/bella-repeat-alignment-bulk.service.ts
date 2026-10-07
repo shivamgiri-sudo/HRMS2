@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Bella Vita Repeat LOB's own "Alignment" sheet -- found while auditing
@@ -11,7 +14,12 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  */
 
 export const BELLA_REPEAT_ALIGNMENT_HEADERS = [
-  "MAS_ID", "Agent_Name", "TL", "DOJ", "Agent_Period", "Status",
+  "MAS_ID",
+  "Agent_Name",
+  "TL",
+  "DOJ",
+  "Agent_Period",
+  "Status",
 ] as const;
 
 export function parseDate(raw: unknown): string | null {
@@ -22,7 +30,9 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
+    const d = new Date(
+      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
+    );
     return d.toISOString().slice(0, 10);
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
@@ -35,7 +45,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importBellaRepeatAlignmentBatch(
   batchId: string,
@@ -47,7 +59,8 @@ export async function importBellaRepeatAlignmentBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const [procRows] = await db.execute<Ref[]>(
     "SELECT id FROM process_master WHERE process_name = 'Bella-Vita Organic' AND active_status = 1 LIMIT 1",
@@ -67,20 +80,26 @@ export async function importBellaRepeatAlignmentBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Bella-Vita Organic" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     const masId = String(data["MAS_ID"] ?? "").trim();
     if (!masId) {
       const msg = `Row ${row.row_no}: "MAS_ID" is required — it is the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, masId,
+        randomUUID(),
+        processId,
+        masId,
         String(data["Agent_Name"] ?? "").trim() || null,
         String(data["TL"] ?? "").trim() || null,
         parseDate(data["DOJ"]),
@@ -111,12 +130,17 @@ export async function importBellaRepeatAlignmentBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 

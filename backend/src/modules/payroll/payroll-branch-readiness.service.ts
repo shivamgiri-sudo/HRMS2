@@ -216,7 +216,8 @@ async function acquireMetricSlot(): Promise<void> {
 }
 function releaseMetricSlot(): void {
   const next = metricWaiters.shift();
-  if (next) next(); // hand the slot straight to the next waiter
+  if (next)
+    next(); // hand the slot straight to the next waiter
   else metricInFlight--;
 }
 
@@ -224,7 +225,7 @@ function releaseMetricSlot(): void {
 async function safeQuery<T>(
   fn: () => Promise<T>,
   fallback: T,
-  label: string
+  label: string,
 ): Promise<T> {
   await acquireMetricSlot();
   try {
@@ -251,19 +252,25 @@ export const payrollBranchReadinessService = {
   // ensureRecord
   // -------------------------------------------------------------------------
 
-  async ensureRecord(month: string, branchId: string, processId = ''): Promise<void> {
+  async ensureRecord(
+    month: string,
+    branchId: string,
+    processId = "",
+  ): Promise<void> {
     await ensureTable();
     if (!(await tableExists())) return;
 
-    let processName = '';
+    let processName = "";
     if (processId) {
       try {
         const [prows] = await db.execute<RowDataPacket[]>(
           `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`,
-          [processId]
+          [processId],
         );
-        processName = (prows[0] as any)?.process_name ?? '';
-      } catch { /* non-critical */ }
+        processName = (prows[0] as any)?.process_name ?? "";
+      } catch {
+        /* non-critical */
+      }
     }
 
     try {
@@ -277,7 +284,7 @@ export const payrollBranchReadinessService = {
             branch_head_signoff, ho_override_ready,
             readiness_score, readiness_status, employee_count)
          VALUES (?, ?, ?, ?, 0, 0, 'not_uploaded', 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 'not_started', 0)`,
-        [branchId, month, processId, processName]
+        [branchId, month, processId, processName],
       );
     } catch (err: unknown) {
       // Fallback: table may not yet have process_id column (migration pending)
@@ -291,7 +298,7 @@ export const payrollBranchReadinessService = {
               branch_head_signoff, ho_override_ready,
               readiness_score, readiness_status, employee_count)
            VALUES (?, ?, 0, 'not_uploaded', 0, 0, 0, 0, 1, 1, 0, 0, 0, 'not_started', 0)`,
-          [branchId, month]
+          [branchId, month],
         );
       } catch (err2: unknown) {
         const msg = err2 instanceof Error ? err2.message : String(err2);
@@ -326,7 +333,9 @@ export const payrollBranchReadinessService = {
    * defaulting to 1 — those two are re-derived by refreshLiveMetrics and are deliberately not
    * scored, so seeding them at 1 grants no readiness credit.
    */
-  async ensureMonthGrid(month: string): Promise<{ branchRows: number; processRows: number }> {
+  async ensureMonthGrid(
+    month: string,
+  ): Promise<{ branchRows: number; processRows: number }> {
     await ensureTable();
     if (!(await tableExists())) return { branchRows: 0, processRows: 0 };
 
@@ -355,12 +364,12 @@ export const payrollBranchReadinessService = {
             WHERE e.active_status = 1
               AND e.branch_id  IS NOT NULL AND e.branch_id  <> ''
               AND e.process_id IS NOT NULL AND e.process_id <> ''`,
-          [month]
+          [month],
         );
         return Number((res as any)?.affectedRows ?? 0);
       },
       0,
-      "ensureMonthGrid.process"
+      "ensureMonthGrid.process",
     );
 
     // Branch-level rollup row (process_id = '').
@@ -373,12 +382,12 @@ export const payrollBranchReadinessService = {
              FROM employees e
             WHERE e.active_status = 1
               AND e.branch_id IS NOT NULL AND e.branch_id <> ''`,
-          [month]
+          [month],
         );
         return Number((res as any)?.affectedRows ?? 0);
       },
       0,
-      "ensureMonthGrid.branch"
+      "ensureMonthGrid.branch",
     );
 
     return { branchRows, processRows };
@@ -388,7 +397,11 @@ export const payrollBranchReadinessService = {
   // refreshLiveMetrics
   // -------------------------------------------------------------------------
 
-  async refreshLiveMetrics(month: string, branchId: string, processId = ''): Promise<void> {
+  async refreshLiveMetrics(
+    month: string,
+    branchId: string,
+    processId = "",
+  ): Promise<void> {
     const updates: Record<string, unknown> = {};
 
     // --- attendance_frozen ---------------------------------------------------
@@ -417,7 +430,7 @@ export const payrollBranchReadinessService = {
               AND (attendance_snapshot_locked = 1
                    OR LOWER(status) IN ('finalized','finalised','locked','disbursed','approved'))
             LIMIT 1`,
-          [month, branchId, branchId]
+          [month, branchId, branchId],
         );
         if ((rows as any[]).length > 0) return 1;
 
@@ -433,7 +446,7 @@ export const payrollBranchReadinessService = {
         return 0;
       },
       0,
-      "attendance_frozen"
+      "attendance_frozen",
     );
 
     // --- incentives_status ---------------------------------------------------
@@ -444,7 +457,7 @@ export const payrollBranchReadinessService = {
              FROM incentive_upload_batch
             WHERE pay_month LIKE ? AND branch_id = ?
             ORDER BY created_at DESC`,
-          [`${month}%`, branchId]
+          [`${month}%`, branchId],
         );
         const statusList = (rows as any[]).map((r) => r.status as string);
         if (statusList.includes("approved")) return "approved";
@@ -452,13 +465,13 @@ export const payrollBranchReadinessService = {
         return "not_uploaded";
       },
       "not_uploaded" as const,
-      "incentives_status"
+      "incentives_status",
     );
 
     // --- bank_details_pct ----------------------------------------------------
     const bankDetailsPctP = safeQuery(
       async () => {
-        const processFilter = processId ? 'AND e.process_id = ?' : '';
+        const processFilter = processId ? "AND e.process_id = ?" : "";
         const processParams = processId ? [processId] : [];
         // Try employee_bank_detail table first
         try {
@@ -476,7 +489,7 @@ export const payrollBranchReadinessService = {
                AND e.active_status = 1
                AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
                ${processFilter}`,
-            [branchId, ...processParams]
+            [branchId, ...processParams],
           );
           const total = Number((rows[0] as any)?.total ?? 0);
           const withBank = Number((rows[0] as any)?.with_bank ?? 0);
@@ -492,7 +505,7 @@ export const payrollBranchReadinessService = {
                AND active_status = 1
                AND LOWER(COALESCE(employment_status, 'active')) = 'active'
                ${processFilter}`,
-            [branchId, ...processParams]
+            [branchId, ...processParams],
           );
           const total = Number((rows[0] as any)?.total ?? 0);
           const withBank = Number((rows[0] as any)?.with_bank ?? 0);
@@ -500,13 +513,13 @@ export const payrollBranchReadinessService = {
         }
       },
       0,
-      "bank_details_pct"
+      "bank_details_pct",
     );
 
     // --- uan_complete_pct ----------------------------------------------------
     const uanCompletePctP = safeQuery(
       async () => {
-        const processFilter = processId ? 'AND process_id = ?' : '';
+        const processFilter = processId ? "AND process_id = ?" : "";
         const processParams = processId ? [processId] : [];
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT
@@ -520,14 +533,14 @@ export const payrollBranchReadinessService = {
              AND active_status = 1
              AND LOWER(COALESCE(employment_status, 'active')) = 'active'
              ${processFilter}`,
-          [branchId, ...processParams]
+          [branchId, ...processParams],
         );
         const total = Number((rows[0] as any)?.total ?? 0);
         const withUan = Number((rows[0] as any)?.with_uan ?? 0);
         return total > 0 ? Math.round((withUan / total) * 100) : 0;
       },
       0,
-      "uan_complete_pct"
+      "uan_complete_pct",
     );
 
     // --- noc_resolved --------------------------------------------------------
@@ -563,8 +576,7 @@ export const payrollBranchReadinessService = {
                    WHERE n.${statusCol} NOT IN ('resolved','closed','approved')
                    ${branchWhere}`;
 
-            const params =
-              table === "payroll_noc" ? [branchId] : [branchId];
+            const params = table === "payroll_noc" ? [branchId] : [branchId];
             const [rows] = await db.execute<RowDataPacket[]>(sql, params);
             const cnt = Number((rows[0] as any)?.cnt ?? 0);
             return cnt === 0 ? 1 : 0;
@@ -574,7 +586,7 @@ export const payrollBranchReadinessService = {
               sawGenuineError = true;
               console.error(
                 `[BranchReadiness] noc_resolved query against '${table}' failed for a reason other than a missing table — treating as unresolved rather than silently passing:`,
-                err instanceof Error ? err.message : err
+                err instanceof Error ? err.message : err,
               );
             }
             continue;
@@ -590,7 +602,7 @@ export const payrollBranchReadinessService = {
       // failure here blocks readiness instead of silently passing it, consistent
       // with the inline handling above.
       0,
-      "noc_resolved"
+      "noc_resolved",
     );
 
     // --- holiday_work_approved -----------------------------------------------
@@ -613,7 +625,7 @@ export const payrollBranchReadinessService = {
           const [cols] = await db.execute<RowDataPacket[]>(
             `SELECT COLUMN_NAME FROM information_schema.COLUMNS
               WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'holiday_work_request'
-              AND COLUMN_NAME IN ('work_date','date','holiday_date','request_date') LIMIT 1`
+              AND COLUMN_NAME IN ('work_date','date','holiday_date','request_date') LIMIT 1`,
           );
           dateCol = (cols[0] as any)?.COLUMN_NAME as string | undefined;
           if (dateCol) holidayWorkDateColCache = dateCol;
@@ -630,20 +642,20 @@ export const payrollBranchReadinessService = {
               WHERE branch_id = ?
                 AND status = 'pending'
                 AND \`${dateCol}\` BETWEEN ? AND ?`,
-            [branchId, monthStart, monthEnd]
+            [branchId, monthStart, monthEnd],
           );
           const cnt = Number((rows[0] as any)?.cnt ?? 0);
           return cnt === 0 ? 1 : 0;
         } catch (err: unknown) {
           console.error(
             `[BranchReadiness] holiday_work_approved COUNT query failed — treating as unresolved rather than silently passing:`,
-            err instanceof Error ? err.message : err
+            err instanceof Error ? err.message : err,
           );
           return 0;
         }
       },
       0,
-      "holiday_work_approved"
+      "holiday_work_approved",
     );
 
     // --- outstanding-work counters -------------------------------------------
@@ -677,12 +689,12 @@ export const payrollBranchReadinessService = {
               AND COALESCE(lr.start_date, lr.from_date) <= ?
               AND COALESCE(lr.end_date,   lr.to_date)   >= ?
               ${cProcJoined}`,
-          [branchId, cEnd, cStart, ...cProcParams]
+          [branchId, cEnd, cStart, ...cProcParams],
         );
         return Number((rows[0] as any)?.cnt ?? 0);
       },
       0,
-      "pending_leave_count"
+      "pending_leave_count",
     );
 
     // attendance_regularization carries branch_id but NO process_id, so the process cut has to
@@ -698,12 +710,12 @@ export const payrollBranchReadinessService = {
               AND LOWER(ar.status) IN ('pending','escalated')
               AND ar.session_date BETWEEN ? AND ?
               ${cProcJoined}`,
-          [branchId, cStart, cEnd, ...cProcParams]
+          [branchId, cStart, cEnd, ...cProcParams],
         );
         return Number((rows[0] as any)?.cnt ?? 0);
       },
       0,
-      "pending_regularization_count"
+      "pending_regularization_count",
     );
 
     // Active employees with NO attendance row at all this month. This is the number behind
@@ -722,12 +734,12 @@ export const payrollBranchReadinessService = {
                  WHERE adr.employee_id = e.id
                    AND adr.record_date BETWEEN ? AND ?
               )`,
-          [branchId, ...cProcParams, cStart, cEnd]
+          [branchId, ...cProcParams, cStart, cEnd],
         );
         return Number((rows[0] as any)?.cnt ?? 0);
       },
       0,
-      "employees_without_attendance"
+      "employees_without_attendance",
     );
 
     // The incentive batch's real state. incentives_status = 'approved' is worth 20 of the 100
@@ -744,13 +756,13 @@ export const payrollBranchReadinessService = {
             WHERE salary_month = ? AND branch_id = ? ${proc}
             ORDER BY updated_at DESC
             LIMIT 1`,
-          [month, branchId, ...(processId ? [processId] : [])]
+          [month, branchId, ...(processId ? [processId] : [])],
         );
         const s = (rows[0] as any)?.status;
         return s == null ? null : String(s);
       },
       null as string | null,
-      "incentive_batch_status"
+      "incentive_batch_status",
     );
 
     // --- Derive the attestations from evidence -------------------------------
@@ -787,7 +799,7 @@ export const payrollBranchReadinessService = {
              (SELECT COUNT(*) FROM payroll_cc_attendance_finalization f
                WHERE f.branch_id = ? AND f.process_month = ?
                  AND LOWER(f.status) = 'ho_approved') AS approved`,
-          [branchId, branchId, month]
+          [branchId, branchId, month],
         );
         const staffed = Number((rows[0] as any)?.staffed ?? 0);
         const approved = Number((rows[0] as any)?.approved ?? 0);
@@ -796,7 +808,7 @@ export const payrollBranchReadinessService = {
         return staffed > 0 && approved >= staffed ? 1 : 0;
       },
       0,
-      "cc_attendance_ho_approved"
+      "cc_attendance_ho_approved",
     );
     // Leave and regularizations: the counters computed immediately above already say whether
     // anything is outstanding. Nothing pending IS the finished state — asking someone to also
@@ -826,14 +838,14 @@ export const payrollBranchReadinessService = {
               AND e.branch_id = ?
               AND e.active_status = 1
               ${proc}`,
-          [month, branchId, ...(processId ? [processId] : [])]
+          [month, branchId, ...(processId ? [processId] : [])],
         );
         return Number((rows[0] as any)?.cnt ?? 0);
       },
       // -1, not 0: a failed query must not read as "no deductions exist" and silently satisfy
       // the check. Unknown stays unsatisfied.
       -1,
-      "deduction_entry_count"
+      "deduction_entry_count",
     );
 
     // All metric queries above were started together; collect them here in the original
@@ -860,8 +872,10 @@ export const payrollBranchReadinessService = {
     if (ccAttendanceReady === 1) updates.attendance_data_ready = 1;
 
     // Leave and regularizations: nothing pending IS the finished state (see above).
-    if (Number(updates.pending_leave_count ?? -1) === 0) updates.leave_finalized = 1;
-    if (Number(updates.pending_regularization_count ?? -1) === 0) updates.regularization_complete = 1;
+    if (Number(updates.pending_leave_count ?? -1) === 0)
+      updates.leave_finalized = 1;
+    if (Number(updates.pending_regularization_count ?? -1) === 0)
+      updates.regularization_complete = 1;
     if (deductionsPending === 0) updates.custom_deductions_uploaded = 1;
 
     // --- Persist updates when table exists -----------------------------------
@@ -877,11 +891,13 @@ export const payrollBranchReadinessService = {
         `UPDATE payroll_branch_readiness
             SET ${setClauses}
           WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-        values
+        values,
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[BranchReadiness] refreshLiveMetrics persist failed — ${msg}`);
+      console.warn(
+        `[BranchReadiness] refreshLiveMetrics persist failed — ${msg}`,
+      );
     }
   },
 
@@ -901,11 +917,11 @@ export const payrollBranchReadinessService = {
     // points were awarded for a box no branch is permitted to tick. Its weight moved to
     // the attendance gates, which are the ones that gate correctness.
     if (record.attendance_data_ready) score += 20; // WFM declares the month closed
-    if (record.attendance_frozen)     score += 15; // payroll freezes the snapshot
+    if (record.attendance_frozen) score += 15; // payroll freezes the snapshot
     if (record.incentives_status === "approved") score += 20;
     if (record.custom_deductions_uploaded) score += 10;
-    if (record.leave_finalized)          score += 5;
-    if (record.regularization_complete)  score += 5;
+    if (record.leave_finalized) score += 5;
+    if (record.regularization_complete) score += 5;
 
     const bankPct = record.bank_details_pct ?? 0;
     score += Math.min(15, (bankPct * 15) / 100);
@@ -927,10 +943,12 @@ export const payrollBranchReadinessService = {
     score: number,
     frozen: number,
     hoOverride: number,
-    attendanceDataReady = 0
+    attendanceDataReady = 0,
   ): Promise<"not_started" | "in_progress" | "ready" | "blocked"> {
     if (hoOverride === 1) return "ready";
-    const minScore = Number(await getPolicyValue("payroll", "readiness", "min_readiness_score", "80"));
+    const minScore = Number(
+      await getPolicyValue("payroll", "readiness", "min_readiness_score", "80"),
+    );
     // Not `&& frozen === 1`. attendance_frozen is set by freezeAttendance(runId), which needs
     // a run to already exist, so requiring it here made 'ready' unreachable for every branch
     // in every month — 0 of 74 rows have ever held it. The freeze remains a scored input
@@ -956,15 +974,19 @@ export const payrollBranchReadinessService = {
   // refreshProjection
   // -------------------------------------------------------------------------
 
-  async refreshProjection(month: string, branchId: string, processId = ''): Promise<void> {
+  async refreshProjection(
+    month: string,
+    branchId: string,
+    processId = "",
+  ): Promise<void> {
     let projectedGross: number | null = null;
     let projectedNet: number | null = null;
     let employeeCount = 0;
     let employeeCountActive = 0;
     let employeeCountLeft = 0;
 
-    const processFilter = processId ? 'AND e.process_id = ?' : '';
-    const processFilterPlain = processId ? 'AND process_id = ?' : '';
+    const processFilter = processId ? "AND e.process_id = ?" : "";
+    const processFilterPlain = processId ? "AND process_id = ?" : "";
     const processParams = processId ? [processId] : [];
 
     // Try salary_prep_run lines first (branch-level only; no process filter on runs)
@@ -974,7 +996,7 @@ export const payrollBranchReadinessService = {
           WHERE run_month = ?
             AND (branch_id = ? OR branch_filter = ?)
           LIMIT 1`,
-        [month, branchId, branchId]
+        [month, branchId, branchId],
       );
       const runId = (runRows[0] as any)?.id as string | undefined;
 
@@ -986,12 +1008,13 @@ export const payrollBranchReadinessService = {
              SUM(net_salary) AS total_net
            FROM salary_prep_line
            WHERE run_id = ?`,
-          [runId]
+          [runId],
         );
         const row = lineRows[0] as any;
         if (row) {
           employeeCount = Number(row.emp_count ?? 0);
-          projectedGross = row.total_gross != null ? Number(row.total_gross) : null;
+          projectedGross =
+            row.total_gross != null ? Number(row.total_gross) : null;
           projectedNet = row.total_net != null ? Number(row.total_net) : null;
         }
       }
@@ -1014,7 +1037,7 @@ export const payrollBranchReadinessService = {
              AND e.active_status = 1
              AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
              ${processFilter}`,
-          [branchId, ...processParams]
+          [branchId, ...processParams],
         );
         const row = estRows[0] as any;
         if (row) {
@@ -1031,7 +1054,7 @@ export const payrollBranchReadinessService = {
                 AND active_status = 1
                 AND LOWER(COALESCE(employment_status, 'active')) = 'active'
                 ${processFilterPlain}`,
-            [branchId, ...processParams]
+            [branchId, ...processParams],
           );
           employeeCountActive = Number((empRows[0] as any)?.emp_count ?? 0);
         } catch {
@@ -1056,7 +1079,7 @@ export const payrollBranchReadinessService = {
             AND (resignation_date IS NOT NULL AND resignation_date >= ? AND resignation_date <= ?)
             ${processFilterPlain}`,
         // Two date placeholders now, not four — the last_working_day branch above is gone.
-        [branchId, monthStart, monthEnd, ...processParams]
+        [branchId, monthStart, monthEnd, ...processParams],
       );
       employeeCountLeft = Number((leftRows[0] as any)?.left_count ?? 0);
     } catch {
@@ -1078,7 +1101,16 @@ export const payrollBranchReadinessService = {
                 employee_count_active = ?,
                 employee_count_left = ?
           WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-        [projectedGross, projectedNet, employeeCount, employeeCountActive, employeeCountLeft, month, branchId, processId]
+        [
+          projectedGross,
+          projectedNet,
+          employeeCount,
+          employeeCountActive,
+          employeeCountLeft,
+          month,
+          branchId,
+          processId,
+        ],
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1097,10 +1129,19 @@ export const payrollBranchReadinessService = {
                   projection_computed_at = NOW(),
                   employee_count = ?
             WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-          [projectedGross, projectedNet, employeeCount, month, branchId, processId]
+          [
+            projectedGross,
+            projectedNet,
+            employeeCount,
+            month,
+            branchId,
+            processId,
+          ],
         );
       } catch {
-        console.warn(`[BranchReadiness] refreshProjection persist failed — ${msg}`);
+        console.warn(
+          `[BranchReadiness] refreshProjection persist failed — ${msg}`,
+        );
       }
     }
   },
@@ -1112,7 +1153,7 @@ export const payrollBranchReadinessService = {
   async getOrRefresh(
     month: string,
     branchId: string,
-    processId = ''
+    processId = "",
   ): Promise<BranchReadinessRecord> {
     const hasTable = await tableExists();
 
@@ -1137,7 +1178,7 @@ export const payrollBranchReadinessService = {
              LEFT JOIN branch_master b ON CONVERT(b.id USING utf8mb4) = CONVERT(r.branch_id USING utf8mb4)
             WHERE r.process_month = ? AND r.branch_id = ? AND r.process_id = ?
             LIMIT 1`,
-          [branchId, month, branchId, processId]
+          [branchId, month, branchId, processId],
         );
         if ((rows as any[]).length > 0) {
           record = rows[0] as Partial<BranchReadinessRecord>;
@@ -1153,7 +1194,7 @@ export const payrollBranchReadinessService = {
       score,
       Number(record.attendance_frozen ?? 0),
       Number(record.ho_override_ready ?? 0),
-      Number(record.attendance_data_ready ?? 0)
+      Number(record.attendance_data_ready ?? 0),
     );
 
     if (hasTable) {
@@ -1162,7 +1203,7 @@ export const payrollBranchReadinessService = {
           `UPDATE payroll_branch_readiness
               SET readiness_score = ?, readiness_status = ?
             WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-          [score, status, month, branchId, processId]
+          [score, status, month, branchId, processId],
         );
       } catch {
         // best-effort
@@ -1178,7 +1219,7 @@ export const payrollBranchReadinessService = {
              LEFT JOIN branch_master b ON CONVERT(b.id USING utf8mb4) = CONVERT(r.branch_id USING utf8mb4)
             WHERE r.process_month = ? AND r.branch_id = ? AND r.process_id = ?
             LIMIT 1`,
-          [branchId, month, branchId, processId]
+          [branchId, month, branchId, processId],
         );
         if ((finalRows as any[]).length > 0) {
           return finalRows[0] as BranchReadinessRecord;
@@ -1194,26 +1235,35 @@ export const payrollBranchReadinessService = {
       // this branch runs when the table is absent or the SELECT failed, so we have not measured
       // the outstanding work and must not imply that we did and found none.
       pending_leave_count: Number((record as any).pending_leave_count ?? 0),
-      pending_regularization_count: Number((record as any).pending_regularization_count ?? 0),
-      employees_without_attendance: Number((record as any).employees_without_attendance ?? 0),
-      incentive_batch_status: ((record as any).incentive_batch_status as string | null) ?? null,
+      pending_regularization_count: Number(
+        (record as any).pending_regularization_count ?? 0,
+      ),
+      employees_without_attendance: Number(
+        (record as any).employees_without_attendance ?? 0,
+      ),
+      incentive_batch_status:
+        ((record as any).incentive_batch_status as string | null) ?? null,
       branch_id: branchId,
       branch_name: String(record.branch_name ?? branchId),
       process_month: month,
       process_id: processId,
-      process_name: String((record as any).process_name ?? ''),
+      process_name: String((record as any).process_name ?? ""),
       attendance_frozen: Number(record.attendance_frozen ?? 0),
       attendance_frozen_at: (record.attendance_frozen_at as string) ?? null,
       attendance_frozen_by: (record.attendance_frozen_by as string) ?? null,
       attendance_data_ready: Number((record as any).attendance_data_ready ?? 0),
-      attendance_data_ready_at: (record as any).attendance_data_ready_at ?? null,
-      attendance_data_ready_by: (record as any).attendance_data_ready_by ?? null,
+      attendance_data_ready_at:
+        (record as any).attendance_data_ready_at ?? null,
+      attendance_data_ready_by:
+        (record as any).attendance_data_ready_by ?? null,
       incentives_status:
         (record.incentives_status as BranchReadinessRecord["incentives_status"]) ??
         "not_uploaded",
       incentives_confirmed_at:
         (record.incentives_confirmed_at as string) ?? null,
-      custom_deductions_uploaded: Number(record.custom_deductions_uploaded ?? 0),
+      custom_deductions_uploaded: Number(
+        record.custom_deductions_uploaded ?? 0,
+      ),
       custom_deductions_confirmed_at:
         (record.custom_deductions_confirmed_at as string) ?? null,
       overtime_entered: Number(record.overtime_entered ?? 0),
@@ -1221,7 +1271,8 @@ export const payrollBranchReadinessService = {
       leave_finalized: Number(record.leave_finalized ?? 0),
       leave_finalized_at: (record.leave_finalized_at as string) ?? null,
       regularization_complete: Number(record.regularization_complete ?? 0),
-      regularization_complete_at: (record.regularization_complete_at as string) ?? null,
+      regularization_complete_at:
+        (record.regularization_complete_at as string) ?? null,
       bank_details_pct: Number(record.bank_details_pct ?? 0),
       uan_complete_pct: Number(record.uan_complete_pct ?? 0),
       noc_resolved: Number(record.noc_resolved ?? 1),
@@ -1230,9 +1281,13 @@ export const payrollBranchReadinessService = {
       branch_head_signoff_at: (record.branch_head_signoff_at as string) ?? null,
       branch_head_signoff_by: (record.branch_head_signoff_by as string) ?? null,
       branch_head_remarks: (record.branch_head_remarks as string) ?? null,
-      process_manager_signoff: Number((record as any).process_manager_signoff ?? 0),
-      process_manager_signoff_at: (record as any).process_manager_signoff_at ?? null,
-      process_manager_signoff_by: (record as any).process_manager_signoff_by ?? null,
+      process_manager_signoff: Number(
+        (record as any).process_manager_signoff ?? 0,
+      ),
+      process_manager_signoff_at:
+        (record as any).process_manager_signoff_at ?? null,
+      process_manager_signoff_by:
+        (record as any).process_manager_signoff_by ?? null,
       process_manager_remarks: (record as any).process_manager_remarks ?? null,
       ho_override_ready: Number(record.ho_override_ready ?? 0),
       ho_override_by: (record.ho_override_by as string) ?? null,
@@ -1241,12 +1296,16 @@ export const payrollBranchReadinessService = {
       readiness_score: score,
       readiness_status: status,
       employee_count: Number(record.employee_count ?? 0),
-      employee_count_active: Number((record as any).employee_count_active ?? record.employee_count ?? 0),
+      employee_count_active: Number(
+        (record as any).employee_count_active ?? record.employee_count ?? 0,
+      ),
       employee_count_left: Number((record as any).employee_count_left ?? 0),
       projected_gross: record.projected_gross ?? null,
       projected_net: record.projected_net ?? null,
       projection_computed_at: (record.projection_computed_at as string) ?? null,
-      salary_verification_done: Number((record as any).salary_verification_done ?? 0),
+      salary_verification_done: Number(
+        (record as any).salary_verification_done ?? 0,
+      ),
       salary_verification_at: (record as any).salary_verification_at ?? null,
       salary_verification_by: (record as any).salary_verification_by ?? null,
     };
@@ -1257,7 +1316,9 @@ export const payrollBranchReadinessService = {
   // -------------------------------------------------------------------------
 
   async getHOSummary(month: string): Promise<BranchReadinessRecord[]> {
-    return cachedReadinessSummary(`ho:${month}`, () => this.getHOSummaryUncached(month));
+    return cachedReadinessSummary(`ho:${month}`, () =>
+      this.getHOSummaryUncached(month),
+    );
   },
 
   async getHOSummaryUncached(month: string): Promise<BranchReadinessRecord[]> {
@@ -1266,12 +1327,14 @@ export const payrollBranchReadinessService = {
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
-        []
+        [],
       );
       branches = rows as Array<{ id: string; branch_name: string }>;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[BranchReadiness] getHOSummary branch list failed — ${msg}`);
+      console.warn(
+        `[BranchReadiness] getHOSummary branch list failed — ${msg}`,
+      );
       return [];
     }
 
@@ -1301,11 +1364,11 @@ export const payrollBranchReadinessService = {
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           console.warn(
-            `[BranchReadiness] getHOSummary branch ${branch.id} failed — ${msg}`
+            `[BranchReadiness] getHOSummary branch ${branch.id} failed — ${msg}`,
           );
           return null;
         }
-      })
+      }),
     );
     for (const rec of refreshed) {
       if (rec) results.push(rec);
@@ -1313,7 +1376,10 @@ export const payrollBranchReadinessService = {
 
     // Sort: not_started/blocked (score ASC) → in_progress → ready
     const priority = (r: BranchReadinessRecord) => {
-      if (r.readiness_status === "not_started" || r.readiness_status === "blocked")
+      if (
+        r.readiness_status === "not_started" ||
+        r.readiness_status === "blocked"
+      )
         return 0;
       if (r.readiness_status === "in_progress") return 1;
       return 2;
@@ -1339,10 +1405,12 @@ export const payrollBranchReadinessService = {
     branchId: string,
     userId: string,
     remarks: string,
-    processId = ''
+    processId = "",
   ): Promise<void> {
     if (!(await tableExists())) {
-      console.warn("[BranchReadiness] branchHeadSignOff — table absent, skipped");
+      console.warn(
+        "[BranchReadiness] branchHeadSignOff — table absent, skipped",
+      );
       return;
     }
 
@@ -1353,7 +1421,7 @@ export const payrollBranchReadinessService = {
               branch_head_signoff_by = ?,
               branch_head_remarks = ?
         WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-      [userId, remarks, month, branchId, processId]
+      [userId, remarks, month, branchId, processId],
     );
 
     // Audit log
@@ -1371,7 +1439,7 @@ export const payrollBranchReadinessService = {
       try {
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1`,
-          [branchId]
+          [branchId],
         );
         const branchName = (rows[0] as any)?.branch_name ?? branchId;
         await triggerPayrollBranchSignOff(branchId, branchName, month);
@@ -1387,7 +1455,7 @@ export const payrollBranchReadinessService = {
       score,
       rec.attendance_frozen,
       rec.ho_override_ready,
-      Number(rec.attendance_data_ready ?? 0)
+      Number(rec.attendance_data_ready ?? 0),
     );
 
     try {
@@ -1395,7 +1463,7 @@ export const payrollBranchReadinessService = {
         `UPDATE payroll_branch_readiness
             SET readiness_score = ?, readiness_status = ?
           WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-        [score, status, month, branchId, processId]
+        [score, status, month, branchId, processId],
       );
     } catch {
       // best-effort
@@ -1411,7 +1479,7 @@ export const payrollBranchReadinessService = {
     branchId: string,
     userId: string,
     reason: string,
-    processId = ''
+    processId = "",
   ): Promise<void> {
     if (!(await tableExists())) {
       console.warn("[BranchReadiness] hoOverride — table absent, skipped");
@@ -1427,7 +1495,7 @@ export const payrollBranchReadinessService = {
               readiness_status = 'ready',
               readiness_score = 100
         WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-      [userId, reason, month, branchId, processId]
+      [userId, reason, month, branchId, processId],
     );
 
     // Audit log
@@ -1437,7 +1505,12 @@ export const payrollBranchReadinessService = {
       module_key: "payroll",
       entity_type: "branch_readiness",
       entity_id: branchId,
-      change_summary: { month, branch_id: branchId, process_id: processId, reason },
+      change_summary: {
+        month,
+        branch_id: branchId,
+        process_id: processId,
+        reason,
+      },
     });
   },
 
@@ -1450,10 +1523,12 @@ export const payrollBranchReadinessService = {
     branchId: string,
     processId: string,
     userId: string,
-    remarks: string
+    remarks: string,
   ): Promise<void> {
     if (!(await tableExists())) {
-      console.warn("[BranchReadiness] processManagerSignOff — table absent, skipped");
+      console.warn(
+        "[BranchReadiness] processManagerSignOff — table absent, skipped",
+      );
       return;
     }
 
@@ -1464,7 +1539,7 @@ export const payrollBranchReadinessService = {
               process_manager_signoff_by = ?,
               process_manager_remarks = ?
         WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-      [userId, remarks, month, branchId, processId]
+      [userId, remarks, month, branchId, processId],
     );
 
     void logSensitiveAction({
@@ -1473,7 +1548,12 @@ export const payrollBranchReadinessService = {
       module_key: "payroll",
       entity_type: "process_readiness",
       entity_id: processId,
-      change_summary: { month, branch_id: branchId, process_id: processId, remarks },
+      change_summary: {
+        month,
+        branch_id: branchId,
+        process_id: processId,
+        remarks,
+      },
     });
 
     // Notify payroll head via work-inbox (non-critical)
@@ -1484,25 +1564,40 @@ export const payrollBranchReadinessService = {
              FROM process_master pm
              JOIN branch_master bm ON bm.id = pm.branch_id
             WHERE pm.id = ? LIMIT 1`,
-          [processId]
+          [processId],
         );
         const processName = (rows[0] as any)?.process_name ?? processId;
-        const branchName  = (rows[0] as any)?.branch_name ?? branchId;
-        await triggerPayrollProcessSignOff(branchId, processId, processName, branchName, month);
-      } catch { /* non-critical */ }
+        const branchName = (rows[0] as any)?.branch_name ?? branchId;
+        await triggerPayrollProcessSignOff(
+          branchId,
+          processId,
+          processName,
+          branchName,
+          month,
+        );
+      } catch {
+        /* non-critical */
+      }
     })();
 
     const rec = await this.getOrRefresh(month, branchId, processId);
     const score = this.computeScore(rec);
-    const status = await this.computeStatus(score, rec.attendance_frozen, rec.ho_override_ready, Number(rec.attendance_data_ready ?? 0));
+    const status = await this.computeStatus(
+      score,
+      rec.attendance_frozen,
+      rec.ho_override_ready,
+      Number(rec.attendance_data_ready ?? 0),
+    );
     try {
       await db.execute(
         `UPDATE payroll_branch_readiness
             SET readiness_score = ?, readiness_status = ?
           WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
-        [score, status, month, branchId, processId]
+        [score, status, month, branchId, processId],
       );
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   },
 
   // -------------------------------------------------------------------------
@@ -1511,14 +1606,16 @@ export const payrollBranchReadinessService = {
 
   async getSummaryForBranch(
     month: string,
-    branchId: string
+    branchId: string,
   ): Promise<BranchReadinessRecord[]> {
-    return cachedReadinessSummary(`branch:${month}:${branchId}`, () => this.getSummaryForBranchUncached(month, branchId));
+    return cachedReadinessSummary(`branch:${month}:${branchId}`, () =>
+      this.getSummaryForBranchUncached(month, branchId),
+    );
   },
 
   async getSummaryForBranchUncached(
     month: string,
-    branchId: string
+    branchId: string,
   ): Promise<BranchReadinessRecord[]> {
     let processes: Array<{ id: string; process_name: string }> = [];
     try {
@@ -1551,12 +1648,14 @@ export const payrollBranchReadinessService = {
          ) u
          GROUP BY pid
          ORDER BY process_name`,
-        [branchId, branchId]
+        [branchId, branchId],
       );
       processes = rows as Array<{ id: string; process_name: string }>;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[BranchReadiness] getSummaryForBranch process list failed — ${msg}`);
+      console.warn(
+        `[BranchReadiness] getSummaryForBranch process list failed — ${msg}`,
+      );
       return [];
     }
 
@@ -1574,10 +1673,12 @@ export const payrollBranchReadinessService = {
             return await this.getOrRefresh(month, branchId, proc.id);
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.warn(`[BranchReadiness] getSummaryForBranch process ${proc.id} failed — ${msg}`);
+            console.warn(
+              `[BranchReadiness] getSummaryForBranch process ${proc.id} failed — ${msg}`,
+            );
             return null;
           }
-        })
+        }),
       );
       for (const rec of recs) if (rec) results.push(rec);
     }
@@ -1588,21 +1689,29 @@ export const payrollBranchReadinessService = {
   // getHOSummaryGrouped — all branches each with their processes
   // -------------------------------------------------------------------------
 
-  async getHOSummaryGrouped(month: string): Promise<ProcessReadinessBranchGroup[]> {
-    return cachedReadinessSummary(`grouped:${month}`, () => this.getHOSummaryGroupedUncached(month));
+  async getHOSummaryGrouped(
+    month: string,
+  ): Promise<ProcessReadinessBranchGroup[]> {
+    return cachedReadinessSummary(`grouped:${month}`, () =>
+      this.getHOSummaryGroupedUncached(month),
+    );
   },
 
-  async getHOSummaryGroupedUncached(month: string): Promise<ProcessReadinessBranchGroup[]> {
+  async getHOSummaryGroupedUncached(
+    month: string,
+  ): Promise<ProcessReadinessBranchGroup[]> {
     let branches: Array<{ id: string; branch_name: string }> = [];
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
-        []
+        [],
       );
       branches = rows as Array<{ id: string; branch_name: string }>;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[BranchReadiness] getHOSummaryGrouped branch list failed — ${msg}`);
+      console.warn(
+        `[BranchReadiness] getHOSummaryGrouped branch list failed — ${msg}`,
+      );
       return [];
     }
 
@@ -1615,17 +1724,22 @@ export const payrollBranchReadinessService = {
       branches.map(async (branch) => {
         const processes = await this.getSummaryForBranch(month, branch.id);
         const total = processes.length;
-        const ready = processes.filter(p => p.readiness_status === 'ready').length;
-        const avg_score = total > 0
-          ? Math.round(processes.reduce((s, p) => s + p.readiness_score, 0) / total)
-          : 0;
+        const ready = processes.filter(
+          (p) => p.readiness_status === "ready",
+        ).length;
+        const avg_score =
+          total > 0
+            ? Math.round(
+                processes.reduce((s, p) => s + p.readiness_score, 0) / total,
+              )
+            : 0;
         return {
           branch_id: branch.id,
           branch_name: branch.branch_name,
           processes,
           stats: { total, ready, avg_score },
         };
-      })
+      }),
     );
     groups.push(...grouped);
 
@@ -1654,7 +1768,7 @@ export const payrollBranchReadinessService = {
    */
   async validatePayrollRunCreation(
     month: string,
-    branchIds?: string[]
+    branchIds?: string[],
   ): Promise<{ blocked: string[]; ready: string[] }> {
     let branches: Array<{ id: string; branch_name: string }> = [];
 
@@ -1664,7 +1778,7 @@ export const payrollBranchReadinessService = {
         `SELECT id, branch_name FROM branch_master
           WHERE active_status = 1
           ${scoped ? `AND id IN (${branchIds!.map(() => "?").join(",")})` : ""}`,
-        scoped ? branchIds! : []
+        scoped ? branchIds! : [],
       );
       branches = rows as Array<{ id: string; branch_name: string }>;
     } catch {
@@ -1695,8 +1809,7 @@ export const payrollBranchReadinessService = {
         // accounts for the score threshold — using it here is sufficient and
         // consistent with computeStatus() which was corrected earlier.
         const isReady =
-          rec.ho_override_ready === 1 ||
-          rec.readiness_status === "ready";
+          rec.ho_override_ready === 1 || rec.readiness_status === "ready";
 
         if (isReady) {
           ready.push(branch.branch_name);
@@ -1711,7 +1824,7 @@ export const payrollBranchReadinessService = {
         // ER_CANT_AGGREGATE_2COLLATIONS and would read as "this branch is not ready".
         console.warn(
           `[BranchReadiness] readiness unreadable for branch ${branch.branch_name} (${branch.id}) in ${month} — treating as blocked:`,
-          err instanceof Error ? err.message : String(err)
+          err instanceof Error ? err.message : String(err),
         );
         blocked.push(branch.branch_name);
       }

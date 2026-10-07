@@ -15,13 +15,15 @@ async function main() {
     `SELECT pf_opt_out, COUNT(*) AS c FROM ats_employment_offer GROUP BY pf_opt_out`,
   );
   console.log("ats_employment_offer.pf_opt_out counts:");
-  for (const r of offerCounts as any[]) console.log(`  pf_opt_out=${r.pf_opt_out}: ${r.c}`);
+  for (const r of offerCounts as any[])
+    console.log(`  pf_opt_out=${r.pf_opt_out}: ${r.c}`);
 
   const [profileCounts] = await db.execute<RowDataPacket[]>(
     `SELECT pf_opt_out_elected, COUNT(*) AS c FROM candidate_onboarding_profile GROUP BY pf_opt_out_elected`,
   );
   console.log("\ncandidate_onboarding_profile.pf_opt_out_elected counts:");
-  for (const r of profileCounts as any[]) console.log(`  pf_opt_out_elected=${r.pf_opt_out_elected}: ${r.c}`);
+  for (const r of profileCounts as any[])
+    console.log(`  pf_opt_out_elected=${r.pf_opt_out_elected}: ${r.c}`);
 
   // Join to active employees via employee_code, pulling whichever opt-out signal exists.
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -35,12 +37,24 @@ async function main() {
       WHERE e.active_status = 1
       GROUP BY e.employee_code`,
   );
-  const linked = rows as Array<{ employee_code: string; offer_pf_opt_out: number | null; onboarding_pf_opt_out_elected: number | null }>;
-  const optedOut = linked.filter((r) => Number(r.offer_pf_opt_out) === 1 || Number(r.onboarding_pf_opt_out_elected) === 1);
-  console.log(`\nActive employees with EITHER real opt-out signal = 1: ${optedOut.length} of ${linked.length}`);
+  const linked = rows as Array<{
+    employee_code: string;
+    offer_pf_opt_out: number | null;
+    onboarding_pf_opt_out_elected: number | null;
+  }>;
+  const optedOut = linked.filter(
+    (r) =>
+      Number(r.offer_pf_opt_out) === 1 ||
+      Number(r.onboarding_pf_opt_out_elected) === 1,
+  );
+  console.log(
+    `\nActive employees with EITHER real opt-out signal = 1: ${optedOut.length} of ${linked.length}`,
+  );
 
   const resolved = await resolvePfApplicabilityForPeriod(runMonth);
-  let matchNotApplicable = 0, mismatchApplicable = 0, mismatchUnresolved = 0;
+  let matchNotApplicable = 0,
+    mismatchApplicable = 0,
+    mismatchUnresolved = 0;
   for (const r of optedOut) {
     const code = r.employee_code.trim().toUpperCase();
     const res = resolved.get(code);
@@ -56,8 +70,11 @@ async function main() {
 
   // And the reverse: of the 333 "current=applicable(default), resolver=not-applicable" set from
   // the earlier script, how many actually have a real opt-out record explaining the resolver's answer?
-  const optedOutCodes = new Set(optedOut.map((r) => r.employee_code.trim().toUpperCase()));
-  let disagreementExplainedByRealOptOut = 0, disagreementUnexplained = 0;
+  const optedOutCodes = new Set(
+    optedOut.map((r) => r.employee_code.trim().toUpperCase()),
+  );
+  let disagreementExplainedByRealOptOut = 0,
+    disagreementUnexplained = 0;
   for (const r of linked) {
     const code = r.employee_code.trim().toUpperCase();
     const res = resolved.get(code);
@@ -67,10 +84,20 @@ async function main() {
     }
   }
   console.log(`\nOf all employees where the resolver says PF_NOT_APPLICABLE:`);
-  console.log(`  explained by a real Form 11 opt-out record: ${disagreementExplainedByRealOptOut}`);
-  console.log(`  NOT explained by any opt-out record on file: ${disagreementUnexplained}`);
+  console.log(
+    `  explained by a real Form 11 opt-out record: ${disagreementExplainedByRealOptOut}`,
+  );
+  console.log(
+    `  NOT explained by any opt-out record on file: ${disagreementUnexplained}`,
+  );
 }
 
 main()
-  .catch((err) => { console.error("FATAL", err); process.exitCode = 1; })
-  .finally(async () => { await db.end().catch(() => {}); await closeBillPool().catch(() => {}); });
+  .catch((err) => {
+    console.error("FATAL", err);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await db.end().catch(() => {});
+    await closeBillPool().catch(() => {});
+  });

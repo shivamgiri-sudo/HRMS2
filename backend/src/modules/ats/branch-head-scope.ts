@@ -17,7 +17,10 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getUserRoleKeys, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
+import {
+  getUserRoleKeys,
+  getUserAssignmentScopes,
+} from "../../shared/scopeAccess.js";
 
 /** Roles that see every branch. */
 const UNRESTRICTED_ROLES = ["super_admin", "admin", "hr"];
@@ -42,7 +45,9 @@ export type BranchHeadScope = {
  * bha.branch_head_id, so an unresolved id shows a blank approver name in
  * history.
  */
-export async function resolveEmployeeIdForAuthUser(authUserId: string): Promise<string> {
+export async function resolveEmployeeIdForAuthUser(
+  authUserId: string,
+): Promise<string> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
     [authUserId],
@@ -50,27 +55,40 @@ export async function resolveEmployeeIdForAuthUser(authUserId: string): Promise<
   return rows[0]?.id ? String(rows[0].id) : authUserId;
 }
 
-export async function resolveBranchHeadScope(authUserId: string): Promise<BranchHeadScope> {
+export async function resolveBranchHeadScope(
+  authUserId: string,
+): Promise<BranchHeadScope> {
   const roles = await getUserRoleKeys(authUserId).catch(() => [] as string[]);
   const employeeId = await resolveEmployeeIdForAuthUser(authUserId);
 
-  const [assignments] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT branch_name FROM branch_head_assignments
+  const [assignments] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT DISTINCT branch_name FROM branch_head_assignments
       WHERE branch_head_id = ? AND is_active = TRUE`,
-    [employeeId],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      [employeeId],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
 
-  const scopes = await getUserAssignmentScopes(authUserId, ["branch_head"]).catch(() => []);
-  const branchNames = assignments.map((r) => String(r.branch_name)).filter(Boolean);
-  const branchIds = scopes.map((s) => String(s.branch_id ?? "")).filter(Boolean);
+  const scopes = await getUserAssignmentScopes(authUserId, [
+    "branch_head",
+  ]).catch(() => []);
+  const branchNames = assignments
+    .map((r) => String(r.branch_name))
+    .filter(Boolean);
+  const branchIds = scopes
+    .map((s) => String(s.branch_id ?? ""))
+    .filter(Boolean);
 
   // Grant unrestricted access only when the user has an admin/hr role AND has
   // no branch_head scope entries. A user who is both `hr` and `branch_head`
   // (e.g. a branch head who was also given HR access) should be scoped to their
   // branches, not shown all decisions in the system — which caused 30+ second
   // DB hangs via the COUNT query in listBranchHeadDecisions.
-  if (branchNames.length === 0 && branchIds.length === 0
-      && roles.some((r) => UNRESTRICTED_ROLES.includes(r))) {
+  if (
+    branchNames.length === 0 &&
+    branchIds.length === 0 &&
+    roles.some((r) => UNRESTRICTED_ROLES.includes(r))
+  ) {
     return { unrestricted: true, employeeId, branchNames: [], branchIds: [] };
   }
 
@@ -141,7 +159,10 @@ export async function assertBranchHeadCanSeeCandidate(
   const scope = await resolveBranchHeadScope(authUserId);
   if (scope.unrestricted) return;
 
-  const pred = buildCandidateBranchPredicate(scope, { candidate: "c", branch: "bm" });
+  const pred = buildCandidateBranchPredicate(scope, {
+    candidate: "c",
+    branch: "bm",
+  });
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM ats_candidate c
        LEFT JOIN branch_master bm

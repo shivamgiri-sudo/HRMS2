@@ -1,9 +1,16 @@
 import { logger } from "../logger.js";
-import { registerTimer, unregisterTimer, withWorkerLock } from "./worker-utils.js";
+import {
+  registerTimer,
+  unregisterTimer,
+  withWorkerLock,
+} from "./worker-utils.js";
 import { resolveCostCentreProcesses } from "../modules/process-pnl/cost-centre-process-resolver.service.js";
 import { bpoPnlService } from "../modules/process-pnl/bpo-pnl.service.js";
 import { processPnlService } from "../modules/process-pnl/process-pnl.service.js";
-import { backfillProcessMasterForOrphanedCostCentres, syncProcessActiveStatusWithCostCentres } from "../shared/cost-centre-sync.js";
+import {
+  backfillProcessMasterForOrphanedCostCentres,
+  syncProcessActiveStatusWithCostCentres,
+} from "../shared/cost-centre-sync.js";
 
 /**
  * Keeps cost_centre_master.process_id self-populating.
@@ -31,13 +38,19 @@ let startupTimer: NodeJS.Timeout | null = null;
 async function cycle(): Promise<void> {
   await withWorkerLock(WORKER_NAME, async () => {
     try {
-      const { resolved, unresolved, excludedCount } = await resolveCostCentreProcesses({ apply: true });
+      const { resolved, unresolved, excludedCount } =
+        await resolveCostCentreProcesses({ apply: true });
       if (resolved.length > 0) {
         processPnlService.invalidateCaches();
         bpoPnlService.invalidateCaches();
       }
       logger.info(
-        { worker: WORKER_NAME, resolved: resolved.length, unresolved: unresolved.length, excludedCount },
+        {
+          worker: WORKER_NAME,
+          resolved: resolved.length,
+          unresolved: unresolved.length,
+          excludedCount,
+        },
         `[cost-centre-process-resolver] resolved ${resolved.length}, left ${unresolved.length} unresolved (no confident process match), excluded ${excludedCount} out-of-scope`,
       );
 
@@ -46,12 +59,16 @@ async function cycle(): Promise<void> {
       // from db_bill never appeared in the ATS process dropdown until this ran).
       const backfilled = await backfillProcessMasterForOrphanedCostCentres();
       if (backfilled > 0) {
-        logger.info({ worker: WORKER_NAME, backfilled }, `[cost-centre-process-resolver] created ${backfilled} new process_master entries from orphaned cost centres`);
+        logger.info(
+          { worker: WORKER_NAME, backfilled },
+          `[cost-centre-process-resolver] created ${backfilled} new process_master entries from orphaned cost centres`,
+        );
       }
 
       // A process whose cost centres are all closed goes inactive with them (and comes back if
       // one reopens) — see syncProcessActiveStatusWithCostCentres for the exemptions.
-      const { deactivated, reactivated } = await syncProcessActiveStatusWithCostCentres();
+      const { deactivated, reactivated } =
+        await syncProcessActiveStatusWithCostCentres();
       if (deactivated > 0 || reactivated > 0) {
         processPnlService.invalidateCaches();
         bpoPnlService.invalidateCaches();
@@ -63,27 +80,51 @@ async function cycle(): Promise<void> {
     } catch (error) {
       // Never throws: same reasoning as db-bill-finance-sync — a failed run must not take the
       // worker process down, and the next scheduled run recovers on its own.
-      logger.error({ worker: WORKER_NAME, err: error }, "[cost-centre-process-resolver] FAILED");
+      logger.error(
+        { worker: WORKER_NAME, err: error },
+        "[cost-centre-process-resolver] FAILED",
+      );
     }
   });
 }
 
 export function startCostCentreProcessResolverWorker(): void {
   if (process.env.COST_CENTRE_PROCESS_RESOLVER_ENABLED === "false") {
-    logger.info({ worker: WORKER_NAME }, "[cost-centre-process-resolver] disabled");
+    logger.info(
+      { worker: WORKER_NAME },
+      "[cost-centre-process-resolver] disabled",
+    );
     return;
   }
   // 10 minutes in, after db-bill-finance-sync's 5-minute startup delay has had time to land any
   // newly-synced cost centres for this run to pick up.
-  startupTimer = setTimeout(() => { void cycle(); }, 10 * 60 * 1000);
+  startupTimer = setTimeout(
+    () => {
+      void cycle();
+    },
+    10 * 60 * 1000,
+  );
   registerTimer(`${WORKER_NAME}:startup`, startupTimer);
 
-  intervalTimer = setInterval(() => { void cycle(); }, INTERVAL_MS);
+  intervalTimer = setInterval(() => {
+    void cycle();
+  }, INTERVAL_MS);
   registerTimer(WORKER_NAME, intervalTimer);
-  logger.info({ worker: WORKER_NAME, intervalMs: INTERVAL_MS }, "[cost-centre-process-resolver] scheduled");
+  logger.info(
+    { worker: WORKER_NAME, intervalMs: INTERVAL_MS },
+    "[cost-centre-process-resolver] scheduled",
+  );
 }
 
 export function stopCostCentreProcessResolverWorker(): void {
-  if (startupTimer) { clearTimeout(startupTimer); unregisterTimer(`${WORKER_NAME}:startup`); startupTimer = null; }
-  if (intervalTimer) { clearInterval(intervalTimer); unregisterTimer(WORKER_NAME); intervalTimer = null; }
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    unregisterTimer(`${WORKER_NAME}:startup`);
+    startupTimer = null;
+  }
+  if (intervalTimer) {
+    clearInterval(intervalTimer);
+    unregisterTimer(WORKER_NAME);
+    intervalTimer = null;
+  }
 }

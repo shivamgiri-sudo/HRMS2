@@ -25,9 +25,19 @@ const CC_READ_ROLES: RoleKey[] = [
   "branch_admin",
 ];
 
-const CC_CREATE_ROLES: RoleKey[] = ["super_admin", "admin", "finance_head", "accounts_head"];
+const CC_CREATE_ROLES: RoleKey[] = [
+  "super_admin",
+  "admin",
+  "finance_head",
+  "accounts_head",
+];
 
-const CC_L1_APPROVAL_ROLES: RoleKey[] = ["super_admin", "admin", "finance_head", "accounts_head"];
+const CC_L1_APPROVAL_ROLES: RoleKey[] = [
+  "super_admin",
+  "admin",
+  "finance_head",
+  "accounts_head",
+];
 
 const CC_L2_APPROVAL_ROLES: RoleKey[] = ["super_admin", "admin"];
 
@@ -35,7 +45,8 @@ const CC_L2_APPROVAL_ROLES: RoleKey[] = ["super_admin", "admin"];
 // Helpers
 // ============================================================================
 
-const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+const h =
+  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) =>
     fn(req, res).catch(next);
 
@@ -64,7 +75,10 @@ function scopedBranchId(req: AuthenticatedRequest, requested?: unknown) {
 }
 
 /** Refuses a record that belongs to a branch this caller may not see. */
-async function assertRecordBranch(req: AuthenticatedRequest, branchId: unknown) {
+async function assertRecordBranch(
+  req: AuthenticatedRequest,
+  branchId: unknown,
+) {
   await assertFinanceRecordBranch({
     userId: req.authUser!.id,
     primaryRole: req.authUser!.role,
@@ -75,7 +89,10 @@ async function assertRecordBranch(req: AuthenticatedRequest, branchId: unknown) 
 
 function actor(req: AuthenticatedRequest) {
   const id = req.authUser?.id;
-  if (!id) throw Object.assign(new Error("Authenticated user required"), { statusCode: 401 });
+  if (!id)
+    throw Object.assign(new Error("Authenticated user required"), {
+      statusCode: 401,
+    });
   return {
     id,
     role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown"),
@@ -83,7 +100,9 @@ function actor(req: AuthenticatedRequest) {
 }
 
 function primaryRole(req: AuthenticatedRequest): string {
-  return String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown").toLowerCase();
+  return String(
+    req.authUser?.role ?? req.userRoles?.[0] ?? "unknown",
+  ).toLowerCase();
 }
 
 // ============================================================================
@@ -102,7 +121,8 @@ router.get(
   "/",
   requireRole(...CC_READ_ROLES),
   h(async (req, res) => {
-    const { q, status, client_id, client_name, branch_id, page, limit } = req.query;
+    const { q, status, client_id, client_name, branch_id, page, limit } =
+      req.query;
     const result = await costCentreManagementService.list({
       q: q as string,
       status: status as any,
@@ -114,7 +134,7 @@ router.get(
       limit: limit ? parseInt(limit as string, 10) : 50,
     });
     res.json(result);
-  })
+  }),
 );
 
 /**
@@ -127,10 +147,10 @@ router.get(
   h(async (req, res) => {
     // Scoped like the list, so the tab badges cannot advertise rows the tab will not show.
     const counts = await costCentreManagementService.getStatusCounts(
-      await scopedBranchId(req, req.query.branch_id)
+      await scopedBranchId(req, req.query.branch_id),
     );
     res.json({ data: counts });
-  })
+  }),
 );
 
 /**
@@ -144,7 +164,7 @@ router.get(
     const role = primaryRole(req);
     const queue = await costCentreManagementService.getApprovalQueue(role);
     res.json({ data: queue });
-  })
+  }),
 );
 
 /**
@@ -162,7 +182,7 @@ router.get(
     // whole approval trail.
     await assertRecordBranch(req, (item as { branch_id?: unknown }).branch_id);
     res.json({ data: item });
-  })
+  }),
 );
 
 /**
@@ -178,9 +198,11 @@ router.get(
     const item = await costCentreManagementService.getById(req.params.id);
     if (!item) return res.status(404).json({ error: "Cost centre not found" });
     await assertRecordBranch(req, (item as { branch_id?: unknown }).branch_id);
-    const history = await costCentreManagementService.getApprovalHistory(req.params.id);
+    const history = await costCentreManagementService.getApprovalHistory(
+      req.params.id,
+    );
     res.json({ data: history });
-  })
+  }),
 );
 
 /**
@@ -193,7 +215,7 @@ router.post(
   h(async (req, res) => {
     const item = await costCentreManagementService.create(req.body, actor(req));
     res.status(201).json({ data: item });
-  })
+  }),
 );
 
 /**
@@ -204,9 +226,13 @@ router.put(
   "/:id",
   requireRole(...CC_CREATE_ROLES),
   h(async (req, res) => {
-    const item = await costCentreManagementService.update(req.params.id, req.body, actor(req));
+    const item = await costCentreManagementService.update(
+      req.params.id,
+      req.body,
+      actor(req),
+    );
     res.json({ data: item });
-  })
+  }),
 );
 
 /**
@@ -217,9 +243,12 @@ router.post(
   "/:id/submit",
   requireRole(...CC_CREATE_ROLES),
   h(async (req, res) => {
-    const item = await costCentreManagementService.submit(req.params.id, actor(req));
+    const item = await costCentreManagementService.submit(
+      req.params.id,
+      actor(req),
+    );
     res.json({ data: item });
-  })
+  }),
 );
 
 /**
@@ -231,9 +260,13 @@ router.post(
   requireRole(...CC_L1_APPROVAL_ROLES),
   h(async (req, res) => {
     const { remarks } = req.body;
-    const item = await costCentreManagementService.approveL1(req.params.id, actor(req), remarks);
+    const item = await costCentreManagementService.approveL1(
+      req.params.id,
+      actor(req),
+      remarks,
+    );
     res.json({ data: item });
-  })
+  }),
 );
 
 /**
@@ -245,9 +278,13 @@ router.post(
   requireRole(...CC_L2_APPROVAL_ROLES),
   h(async (req, res) => {
     const { remarks } = req.body;
-    const item = await costCentreManagementService.approveL2(req.params.id, actor(req), remarks);
+    const item = await costCentreManagementService.approveL2(
+      req.params.id,
+      actor(req),
+      remarks,
+    );
     res.json({ data: item });
-  })
+  }),
 );
 
 /**
@@ -262,9 +299,13 @@ router.post(
     if (!reason?.trim()) {
       return res.status(400).json({ error: "Rejection reason is required" });
     }
-    const item = await costCentreManagementService.reject(req.params.id, actor(req), reason);
+    const item = await costCentreManagementService.reject(
+      req.params.id,
+      actor(req),
+      reason,
+    );
     res.json({ data: item });
-  })
+  }),
 );
 
 /**
@@ -279,9 +320,13 @@ router.post(
     if (!reason?.trim()) {
       return res.status(400).json({ error: "Revision reason is required" });
     }
-    const item = await costCentreManagementService.requestRevision(req.params.id, actor(req), reason);
+    const item = await costCentreManagementService.requestRevision(
+      req.params.id,
+      actor(req),
+      reason,
+    );
     res.json({ data: item });
-  })
+  }),
 );
 
 /**
@@ -292,9 +337,12 @@ router.post(
   "/:id/activate",
   requireRole(...CC_L2_APPROVAL_ROLES),
   h(async (req, res) => {
-    const item = await costCentreManagementService.activate(req.params.id, actor(req));
+    const item = await costCentreManagementService.activate(
+      req.params.id,
+      actor(req),
+    );
     res.json({ data: item });
-  })
+  }),
 );
 
 /**
@@ -306,9 +354,13 @@ router.post(
   requireRole(...CC_L1_APPROVAL_ROLES),
   h(async (req, res) => {
     const { reason } = req.body;
-    const item = await costCentreManagementService.close(req.params.id, actor(req), reason);
+    const item = await costCentreManagementService.close(
+      req.params.id,
+      actor(req),
+      reason,
+    );
     res.json({ data: item });
-  })
+  }),
 );
 
 export const costCentreManagementRouter = router;

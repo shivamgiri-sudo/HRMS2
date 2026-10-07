@@ -3,7 +3,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 function source(relativePath: string) {
-  return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8");
+  return readFileSync(
+    fileURLToPath(new URL(relativePath, import.meta.url)),
+    "utf8",
+  );
 }
 
 describe("BPO master report verified source contracts", () => {
@@ -23,12 +26,14 @@ describe("BPO master report verified source contracts", () => {
     expect(workforce).toContain('NET_PAY:["net_salary"]');
     expect(workforce).toContain('BASIC_PAY:["basic"]');
     expect(workforce).not.toContain("DIALS' THEN");
-    expect(workforce).not.toContain('metric_date) metric_date');
+    expect(workforce).not.toContain("metric_date) metric_date");
   });
 
   it("keeps external quality data fully qualified and exact", () => {
     const business = source("../bpo-master-verified-business-adapters.ts");
-    expect(business).toContain('const sourceRef = "db_audit.call_quality_assessment"');
+    expect(business).toContain(
+      'const sourceRef = "db_audit.call_quality_assessment"',
+    );
     expect(business).toContain("professionalism_maintained");
     expect(business).toContain("active_listening");
     expect(business).toContain("quality_percentage");
@@ -53,8 +58,8 @@ describe("BPO master report verified source contracts", () => {
 
   it("exposes live source validation before the dynamic report route", () => {
     const routes = source("../bpo-master-report.routes.ts");
-    const validationIndex = routes.indexOf('/validation/source-accuracy');
-    const dynamicIndex = routes.indexOf('/:code');
+    const validationIndex = routes.indexOf("/validation/source-accuracy");
+    const dynamicIndex = routes.indexOf("/:code");
     expect(validationIndex).toBeGreaterThanOrEqual(0);
     expect(dynamicIndex).toBeGreaterThan(validationIndex);
     expect(routes).toContain("validateAllBpoMasterReports");

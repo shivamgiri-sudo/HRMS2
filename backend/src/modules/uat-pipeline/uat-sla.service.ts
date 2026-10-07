@@ -39,7 +39,7 @@ interface SlaRow extends RowDataPacket {
 export async function resolveSla(
   severity: Severity,
   priority: Priority,
-  at: Date = new Date()
+  at: Date = new Date(),
 ): Promise<SlaTargets | null> {
   const [rows] = await db.execute<SlaRow[]>(
     `SELECT first_response_mins, triage_mins, resolution_mins, escalation_role
@@ -49,7 +49,7 @@ export async function resolveSla(
         AND (effective_to IS NULL OR effective_to > ?)
       ORDER BY effective_from DESC
       LIMIT 1`,
-    [severity, priority, at, at]
+    [severity, priority, at, at],
   );
   if (rows.length === 0) return null;
   const r = rows[0];
@@ -65,7 +65,7 @@ export async function resolveSla(
 export async function computeDueAt(
   severity: Severity,
   priority: Priority,
-  from: Date = new Date()
+  from: Date = new Date(),
 ): Promise<Date | null> {
   const sla = await resolveSla(severity, priority, from);
   if (!sla) return null;
@@ -79,8 +79,15 @@ export interface AgingInfo {
 }
 
 /** Pure, so the console can compute aging for a list without a query per row. */
-export function agingFor(createdAt: Date, dueAt: Date | null, now: Date = new Date()): AgingInfo {
-  const ageMins = Math.max(0, Math.round((now.getTime() - createdAt.getTime()) / 60_000));
+export function agingFor(
+  createdAt: Date,
+  dueAt: Date | null,
+  now: Date = new Date(),
+): AgingInfo {
+  const ageMins = Math.max(
+    0,
+    Math.round((now.getTime() - createdAt.getTime()) / 60_000),
+  );
   if (!dueAt) return { ageMins, overdue: false, minutesRemaining: null };
   const remaining = Math.round((dueAt.getTime() - now.getTime()) / 60_000);
   return { ageMins, overdue: remaining < 0, minutesRemaining: remaining };

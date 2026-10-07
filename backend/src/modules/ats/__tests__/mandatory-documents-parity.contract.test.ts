@@ -14,14 +14,24 @@ import { describe, expect, it } from "vitest";
 // match-keyword sets — or this exact bug reappears silently.
 const backendService = readFileSync(
   resolve(process.cwd(), "src/modules/ats/onboarding-full.service.ts"),
-  "utf8"
+  "utf8",
 );
 const frontendModule = readFileSync(
-  resolve(process.cwd(), "..", "src", "components", "onboarding-full", "mandatoryDocuments.ts"),
-  "utf8"
+  resolve(
+    process.cwd(),
+    "..",
+    "src",
+    "components",
+    "onboarding-full",
+    "mandatoryDocuments.ts",
+  ),
+  "utf8",
 );
 
-function extractRules(source: string, arrayName: string): { label: string; matches: string[] }[] {
+function extractRules(
+  source: string,
+  arrayName: string,
+): { label: string; matches: string[] }[] {
   const start = source.indexOf(`${arrayName}`);
   const arrayText = source.slice(start, source.indexOf("];", start) + 1);
   const rules: { label: string; matches: string[] }[] = [];
@@ -36,8 +46,14 @@ function extractRules(source: string, arrayName: string): { label: string; match
 
 describe("Onboarding — frontend/backend mandatory-document parity", () => {
   it("MANDATORY_DOCUMENTS (backend) and MANDATORY_DOCUMENT_RULES (frontend) are identical", () => {
-    const backendRules = extractRules(backendService, "const MANDATORY_DOCUMENTS");
-    const frontendRules = extractRules(frontendModule, "export const MANDATORY_DOCUMENT_RULES");
+    const backendRules = extractRules(
+      backendService,
+      "const MANDATORY_DOCUMENTS",
+    );
+    const frontendRules = extractRules(
+      frontendModule,
+      "export const MANDATORY_DOCUMENT_RULES",
+    );
 
     expect(backendRules.length).toBeGreaterThan(0);
     expect(frontendRules.length).toBeGreaterThan(0);
@@ -45,17 +61,29 @@ describe("Onboarding — frontend/backend mandatory-document parity", () => {
   });
 
   it("findMissingMandatoryDocuments query excludes soft-deleted documents", () => {
-    const fn = backendService.slice(backendService.indexOf("async function findMissingMandatoryDocuments"));
+    const fn = backendService.slice(
+      backendService.indexOf("async function findMissingMandatoryDocuments"),
+    );
     const queryEnd = fn.indexOf("[candidateId]");
     const query = fn.slice(0, queryEnd);
     expect(query).toContain("deleted_at IS NULL");
   });
 
   it("neither list requires a bank/cheque document — bank is optional at onboarding", () => {
-    const backendRules = extractRules(backendService, "const MANDATORY_DOCUMENTS");
-    const frontendRules = extractRules(frontendModule, "export const MANDATORY_DOCUMENT_RULES");
-    expect(backendRules.some((r) => r.label.toLowerCase().includes("cheque"))).toBe(false);
-    expect(frontendRules.some((r) => r.label.toLowerCase().includes("cheque"))).toBe(false);
+    const backendRules = extractRules(
+      backendService,
+      "const MANDATORY_DOCUMENTS",
+    );
+    const frontendRules = extractRules(
+      frontendModule,
+      "export const MANDATORY_DOCUMENT_RULES",
+    );
+    expect(
+      backendRules.some((r) => r.label.toLowerCase().includes("cheque")),
+    ).toBe(false);
+    expect(
+      frontendRules.some((r) => r.label.toLowerCase().includes("cheque")),
+    ).toBe(false);
   });
 });
 
@@ -66,7 +94,9 @@ describe("Onboarding — frontend/backend mandatory-document parity", () => {
 // split is the whole design, so both halves are asserted here — a future edit
 // that "tidies" PAN out of the rules list would silently stop asking for it.
 function extractNonBlockingLabels(source: string): string[] {
-  const start = source.indexOf("NON_BLOCKING_DOCUMENT_LABELS = new Set<string>(");
+  const start = source.indexOf(
+    "NON_BLOCKING_DOCUMENT_LABELS = new Set<string>(",
+  );
   const end = source.indexOf(");", start);
   const body = source.slice(start, end);
   return body.match(/"([^"]+)"/g)?.map((s) => s.slice(1, -1)) ?? [];
@@ -82,12 +112,23 @@ describe("Onboarding — PAN Card is collected but does not block submission", (
   });
 
   it("PAN Card is still a mandatory-document rule on both sides (still asked for)", () => {
-    expect(extractRules(backendService, "const MANDATORY_DOCUMENTS").some((r) => r.label === "PAN Card")).toBe(true);
-    expect(extractRules(frontendModule, "export const MANDATORY_DOCUMENT_RULES").some((r) => r.label === "PAN Card")).toBe(true);
+    expect(
+      extractRules(backendService, "const MANDATORY_DOCUMENTS").some(
+        (r) => r.label === "PAN Card",
+      ),
+    ).toBe(true);
+    expect(
+      extractRules(
+        frontendModule,
+        "export const MANDATORY_DOCUMENT_RULES",
+      ).some((r) => r.label === "PAN Card"),
+    ).toBe(true);
   });
 
   it("submitFullOnboarding filters non-blocking labels out of its document gate", () => {
-    const fn = backendService.slice(backendService.indexOf("export async function submitFullOnboarding"));
+    const fn = backendService.slice(
+      backendService.indexOf("export async function submitFullOnboarding"),
+    );
     const gate = fn.slice(
       fn.indexOf("await findMissingMandatoryDocuments(candidateId)"),
       fn.indexOf("MISSING_REQUIRED_DOCUMENTS"),
@@ -97,11 +138,22 @@ describe("Onboarding — PAN Card is collected but does not block submission", (
 
   it("the frontend Submit button uses the blocking subset, not the full list", () => {
     const stepTen = readFileSync(
-      resolve(process.cwd(), "..", "src", "components", "onboarding-full", "OnboardingSteps6to10.tsx"),
+      resolve(
+        process.cwd(),
+        "..",
+        "src",
+        "components",
+        "onboarding-full",
+        "OnboardingSteps6to10.tsx",
+      ),
       "utf8",
     );
-    expect(stepTen).toMatch(/const missingMandatoryDocs = findMissingBlockingDocs\(/);
-    expect(stepTen).not.toMatch(/const missingMandatoryDocs = findMissingMandatoryDocs\(/);
+    expect(stepTen).toMatch(
+      /const missingMandatoryDocs = findMissingBlockingDocs\(/,
+    );
+    expect(stepTen).not.toMatch(
+      /const missingMandatoryDocs = findMissingMandatoryDocs\(/,
+    );
   });
 });
 
@@ -109,7 +161,9 @@ describe("Onboarding — bank account is not mandatory to submit", () => {
   it("submitFullOnboarding no longer hard-requires a candidate_onboarding_bank_detail row", () => {
     const fn = backendService.slice(
       backendService.indexOf("export async function submitFullOnboarding"),
-      backendService.indexOf("await findMissingMandatoryDocuments(candidateId)")
+      backendService.indexOf(
+        "await findMissingMandatoryDocuments(candidateId)",
+      ),
     );
     expect(fn).not.toContain("candidate_onboarding_bank_detail");
     expect(fn).not.toContain("Bank details are required before submit");

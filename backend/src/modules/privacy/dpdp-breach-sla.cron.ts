@@ -46,7 +46,7 @@ async function getRecipients(): Promise<string[]> {
   const emails: string[] = [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT config_key, config_value FROM dpdp_config
-      WHERE config_key IN ('grievance_officer_email', 'dpo_email') AND config_value != ''`
+      WHERE config_key IN ('grievance_officer_email', 'dpo_email') AND config_value != ''`,
   );
   for (const r of rows as RowDataPacket[]) {
     const v = String(r.config_value ?? "").trim();
@@ -55,10 +55,17 @@ async function getRecipients(): Promise<string[]> {
   return emails;
 }
 
-async function sendAlert(to: string[], subject: string, body: string): Promise<boolean> {
+async function sendAlert(
+  to: string[],
+  subject: string,
+  body: string,
+): Promise<boolean> {
   const transport = getTransporter();
   if (!transport || !to.length) {
-    console.warn("[dpdp-breach-sla] SMTP not configured or no recipients — alert not sent:", subject);
+    console.warn(
+      "[dpdp-breach-sla] SMTP not configured or no recipients — alert not sent:",
+      subject,
+    );
     return false;
   }
   try {
@@ -87,7 +94,7 @@ async function checkBreaches() {
        FROM data_breach_log
       WHERE status NOT IN ('resolved') AND notified_authority_at IS NULL
       ORDER BY detected_at ASC
-      LIMIT 50`
+      LIMIT 50`,
   );
 
   if (!(breaches as RowDataPacket[]).length) return;
@@ -104,21 +111,25 @@ async function checkBreaches() {
         recipients,
         `[DPDP ALERT] Data Breach ${b.breach_ref} — Notification Required Within 72 Hours`,
         `DPDP Act 2023 — Breach Notification Required\n\n` +
-        `Organisation: ${orgName}\n` +
-        `Breach Reference: ${b.breach_ref}\n` +
-        `Detected At: ${b.detected_at}\n` +
-        `Severity: ${b.severity}\n` +
-        `Description: ${b.description}\n\n` +
-        `ACTION REQUIRED: Under DPDP Act 2023 §8, you must notify the Data Protection Board of India (DPBI) within 72 hours of detecting a breach.\n\n` +
-        `Hours elapsed since detection: ${Math.round(hours)} hours\n` +
-        `Deadline: within ${Math.round(72 - hours)} hours\n\n` +
-        `Log in to HRMS > Compliance > DPDP > Data Breaches to update the notification status.`
+          `Organisation: ${orgName}\n` +
+          `Breach Reference: ${b.breach_ref}\n` +
+          `Detected At: ${b.detected_at}\n` +
+          `Severity: ${b.severity}\n` +
+          `Description: ${b.description}\n\n` +
+          `ACTION REQUIRED: Under DPDP Act 2023 §8, you must notify the Data Protection Board of India (DPBI) within 72 hours of detecting a breach.\n\n` +
+          `Hours elapsed since detection: ${Math.round(hours)} hours\n` +
+          `Deadline: within ${Math.round(72 - hours)} hours\n\n` +
+          `Log in to HRMS > Compliance > DPDP > Data Breaches to update the notification status.`,
       );
       if (sent) {
-        await db.execute(
-          `UPDATE data_breach_log SET alert_sent_at_1h = NOW() WHERE id = ?`,
-          [b.id]
-        ).catch(() => { /* column may not exist until migration 336 runs */ });
+        await db
+          .execute(
+            `UPDATE data_breach_log SET alert_sent_at_1h = NOW() WHERE id = ?`,
+            [b.id],
+          )
+          .catch(() => {
+            /* column may not exist until migration 336 runs */
+          });
       }
     }
 
@@ -128,18 +139,22 @@ async function checkBreaches() {
         recipients,
         `[DPDP ESCALATION] Breach ${b.breach_ref} — 48 Hours Elapsed — 24 Hours Remaining`,
         `DPDP Breach Notification — ESCALATION\n\n` +
-        `Breach Reference: ${b.breach_ref}\n` +
-        `Hours elapsed: ${Math.round(hours)} hours\n` +
-        `Hours remaining before DPBI deadline: ${Math.round(72 - hours)} hours\n\n` +
-        `This breach has NOT yet been notified to the Data Protection Board of India (DPBI).\n` +
-        `Failure to notify within 72 hours is an offence under DPDP Act 2023 §8 carrying penalty up to ₹200 Crore.\n\n` +
-        `IMMEDIATE ACTION REQUIRED: Notify DPBI and update the breach record in HRMS.`
+          `Breach Reference: ${b.breach_ref}\n` +
+          `Hours elapsed: ${Math.round(hours)} hours\n` +
+          `Hours remaining before DPBI deadline: ${Math.round(72 - hours)} hours\n\n` +
+          `This breach has NOT yet been notified to the Data Protection Board of India (DPBI).\n` +
+          `Failure to notify within 72 hours is an offence under DPDP Act 2023 §8 carrying penalty up to ₹200 Crore.\n\n` +
+          `IMMEDIATE ACTION REQUIRED: Notify DPBI and update the breach record in HRMS.`,
       );
       if (sent) {
-        await db.execute(
-          `UPDATE data_breach_log SET alert_sent_at_48h = NOW() WHERE id = ?`,
-          [b.id]
-        ).catch(() => { /* column may not exist until migration 336 runs */ });
+        await db
+          .execute(
+            `UPDATE data_breach_log SET alert_sent_at_48h = NOW() WHERE id = ?`,
+            [b.id],
+          )
+          .catch(() => {
+            /* column may not exist until migration 336 runs */
+          });
       }
     }
 
@@ -149,18 +164,22 @@ async function checkBreaches() {
         recipients,
         `[DPDP CRITICAL] Breach ${b.breach_ref} — DEADLINE IN 1 HOUR — DPBI Notification OVERDUE`,
         `⚠️ CRITICAL — DPDP DPBI NOTIFICATION DEADLINE IMMINENT\n\n` +
-        `Breach Reference: ${b.breach_ref}\n` +
-        `Hours elapsed: ${Math.round(hours)} hours\n` +
-        `DPBI 72-hour notification window expires in approximately 1 HOUR.\n\n` +
-        `Immediate action required. Notify the Data Protection Board of India now.\n` +
-        `Non-compliance: penalty up to ₹200 Crore under DPDP Act 2023.\n\n` +
-        `DPBI portal: https://www.meity.gov.in (check DPBI section for filing procedure)`
+          `Breach Reference: ${b.breach_ref}\n` +
+          `Hours elapsed: ${Math.round(hours)} hours\n` +
+          `DPBI 72-hour notification window expires in approximately 1 HOUR.\n\n` +
+          `Immediate action required. Notify the Data Protection Board of India now.\n` +
+          `Non-compliance: penalty up to ₹200 Crore under DPDP Act 2023.\n\n` +
+          `DPBI portal: https://www.meity.gov.in (check DPBI section for filing procedure)`,
       );
       if (sent) {
-        await db.execute(
-          `UPDATE data_breach_log SET alert_sent_at_71h = NOW() WHERE id = ?`,
-          [b.id]
-        ).catch(() => { /* column may not exist until migration 336 runs */ });
+        await db
+          .execute(
+            `UPDATE data_breach_log SET alert_sent_at_71h = NOW() WHERE id = ?`,
+            [b.id],
+          )
+          .catch(() => {
+            /* column may not exist until migration 336 runs */
+          });
       }
     }
   }
@@ -174,14 +193,23 @@ export function startBreachSlaCron(): void {
 
   // Run immediately on startup, then every 30 minutes
   startupTimeoutRef = setTimeout(() => {
-    checkBreaches().catch((err) => console.error("[dpdp-breach-sla] check failed:", err));
+    checkBreaches().catch((err) =>
+      console.error("[dpdp-breach-sla] check failed:", err),
+    );
   }, 5000);
 
-  intervalRef = setInterval(() => {
-    checkBreaches().catch((err) => console.error("[dpdp-breach-sla] check failed:", err));
-  }, 30 * 60 * 1000);
+  intervalRef = setInterval(
+    () => {
+      checkBreaches().catch((err) =>
+        console.error("[dpdp-breach-sla] check failed:", err),
+      );
+    },
+    30 * 60 * 1000,
+  );
 
-  console.log("[dpdp-breach-sla] DPDP breach SLA cron started (checks every 30 min)");
+  console.log(
+    "[dpdp-breach-sla] DPDP breach SLA cron started (checks every 30 min)",
+  );
 }
 
 export function stopBreachSlaCron(): void {

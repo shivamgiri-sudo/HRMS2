@@ -24,13 +24,19 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const src = fs.readFileSync(path.resolve(DIR, "..", "payroll-branch-readiness.service.ts"), "utf8");
+const src = fs.readFileSync(
+  path.resolve(DIR, "..", "payroll-branch-readiness.service.ts"),
+  "utf8",
+);
 
 /** The derivation block added to refreshLiveMetrics. */
 function derivation(): string {
   const start = src.indexOf("// --- Derive the attestations from evidence");
   expect(start, "derivation block not found").toBeGreaterThan(-1);
-  return src.slice(start, src.indexOf("// --- Persist updates when table exists", start));
+  return src.slice(
+    start,
+    src.indexOf("// --- Persist updates when table exists", start),
+  );
 }
 
 describe("attendance readiness comes from the cost-centre sign-off chain", () => {
@@ -76,8 +82,12 @@ describe("attendance readiness comes from the cost-centre sign-off chain", () =>
 describe("leave and regularizations come from the outstanding-work counters", () => {
   it("treats nothing pending as finished", () => {
     const d = derivation();
-    expect(d).toMatch(/pending_leave_count \?\? -1\) === 0\) updates\.leave_finalized = 1/);
-    expect(d).toMatch(/pending_regularization_count \?\? -1\) === 0\) updates\.regularization_complete = 1/);
+    expect(d).toMatch(
+      /pending_leave_count \?\? -1\) === 0\) updates\.leave_finalized = 1/,
+    );
+    expect(d).toMatch(
+      /pending_regularization_count \?\? -1\) === 0\) updates\.regularization_complete = 1/,
+    );
   });
 
   it("does not treat an unknown count as zero", () => {
@@ -100,8 +110,12 @@ describe("a derivation can correct a false negative but never invent a positive"
      * can rescue a branch wrongly reading blocked; it cannot silently un-approve one.
      */
     const d = derivation();
-    expect(d).not.toMatch(/updates\.(attendance_data_ready|leave_finalized|regularization_complete)\s*=\s*0/);
-    expect((d.match(/updates\.\w+ = 1/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(d).not.toMatch(
+      /updates\.(attendance_data_ready|leave_finalized|regularization_complete)\s*=\s*0/,
+    );
+    expect((d.match(/updates\.\w+ = 1/g) ?? []).length).toBeGreaterThanOrEqual(
+      3,
+    );
   });
 
   it("degrades to not-ready when the evidence query fails", () => {
@@ -110,7 +124,9 @@ describe("a derivation can correct a false negative but never invent a positive"
     const d = derivation();
     const idx = d.indexOf("cc_attendance_ho_approved");
     expect(idx).toBeGreaterThan(-1);
-    expect(d.slice(Math.max(0, idx - 120), idx)).toMatch(/\b0,\s*$|\b0,\s*\n\s*"/);
+    expect(d.slice(Math.max(0, idx - 120), idx)).toMatch(
+      /\b0,\s*$|\b0,\s*\n\s*"/,
+    );
   });
 });
 
@@ -124,7 +140,9 @@ describe("custom deductions: nothing to upload is not the same as not done", () 
      */
     const d = derivation();
     expect(d).toContain("employee_deduction_entries");
-    expect(d).toMatch(/deductionsPending === 0\) updates\.custom_deductions_uploaded = 1/);
+    expect(d).toMatch(
+      /deductionsPending === 0\) updates\.custom_deductions_uploaded = 1/,
+    );
   });
 
   it("leaves the manual confirmation in place when entries DO exist", () => {
@@ -136,7 +154,9 @@ describe("custom deductions: nothing to upload is not the same as not done", () 
      */
     const d = derivation();
     expect((d.match(/custom_deductions_uploaded = 1/g) ?? []).length).toBe(1);
-    expect(d).toMatch(/if \(deductionsPending === 0\) updates\.custom_deductions_uploaded = 1/);
+    expect(d).toMatch(
+      /if \(deductionsPending === 0\) updates\.custom_deductions_uploaded = 1/,
+    );
   });
 
   it("scopes the count to this branch and month", () => {

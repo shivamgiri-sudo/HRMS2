@@ -49,9 +49,13 @@ function computeGst(baseAmount: number, gstType: string, applyGst: boolean) {
   return { igst: 0, cgst: half, sgst: half };
 }
 
-async function createProforma(input: CreateProformaInput): Promise<ProformaResult> {
+async function createProforma(
+  input: CreateProformaInput,
+): Promise<ProformaResult> {
   if (input.lines.length === 0) {
-    throw Object.assign(new Error("At least one line item is required"), { statusCode: 400 });
+    throw Object.assign(new Error("At least one line item is required"), {
+      statusCode: 400,
+    });
   }
 
   const conn = await db.getConnection();
@@ -66,20 +70,40 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
        FROM cost_centre_master cc
        LEFT JOIN branch_master b ON b.id = cc.branch_id
        WHERE cc.id = ?`,
-      [input.costCentreId]
+      [input.costCentreId],
     );
-    const costCentre = costCentreRows[0] as {
-      gstType: string; stateCode: string | null;
-      tallyHead: string | null; clientTallyName: string | null;
-    } | undefined;
+    const costCentre = costCentreRows[0] as
+      | {
+          gstType: string;
+          stateCode: string | null;
+          tallyHead: string | null;
+          clientTallyName: string | null;
+        }
+      | undefined;
     if (!costCentre) {
-      throw Object.assign(new Error(`cost_centre_master ${input.costCentreId} not found`), { statusCode: 400 });
+      throw Object.assign(
+        new Error(`cost_centre_master ${input.costCentreId} not found`),
+        { statusCode: 400 },
+      );
     }
     if (!costCentre.stateCode) {
-      throw Object.assign(new Error(`cost centre ${input.costCentreId} has no branch GST state code — cannot mint a proforma number`), { statusCode: 400 });
+      throw Object.assign(
+        new Error(
+          `cost centre ${input.costCentreId} has no branch GST state code — cannot mint a proforma number`,
+        ),
+        { statusCode: 400 },
+      );
     }
-    if (costCentre.gstType !== "Integrated" && costCentre.gstType !== "Intrastate") {
-      throw Object.assign(new Error(`cost centre ${input.costCentreId} has an unrecognized GST type '${costCentre.gstType}' — expected 'Integrated' or 'Intrastate'`), { statusCode: 400 });
+    if (
+      costCentre.gstType !== "Integrated" &&
+      costCentre.gstType !== "Intrastate"
+    ) {
+      throw Object.assign(
+        new Error(
+          `cost centre ${input.costCentreId} has an unrecognized GST type '${costCentre.gstType}' — expected 'Integrated' or 'Intrastate'`,
+        ),
+        { statusCode: 400 },
+      );
     }
 
     const applyGst = input.applyGst ?? true;
@@ -87,12 +111,19 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
       input.lines.reduce((sum, line) => {
         const amount = round2(line.qty * line.rate);
         return line.lineType === "deduction" ? sum - amount : sum + amount;
-      }, 0)
+      }, 0),
     );
-    const { igst, cgst, sgst } = computeGst(totalAmount, costCentre.gstType, applyGst);
+    const { igst, cgst, sgst } = computeGst(
+      totalAmount,
+      costCentre.gstType,
+      applyGst,
+    );
     const grandTotal = round2(totalAmount + igst + cgst + sgst);
 
-    const proformaNo = await clientBillingNumberingService.mintProformaNumber(costCentre.stateCode, conn);
+    const proformaNo = await clientBillingNumberingService.mintProformaNumber(
+      costCentre.stateCode,
+      conn,
+    );
 
     await conn.execute<ResultSetHeader>(
       `INSERT INTO client_invoice
@@ -101,26 +132,56 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
           sgst_amount, grand_total, created_by, tally_head, client_tally_name)
        VALUES (?, ?, 'proforma', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        invoiceId, input.costCentreId, input.category, input.financeYear, input.monthLabel,
-        input.invoiceDate, input.description ?? null, proformaNo, costCentre.gstType,
-        applyGst ? 1 : 0, totalAmount, igst, cgst, sgst, grandTotal, input.createdBy,
+        invoiceId,
+        input.costCentreId,
+        input.category,
+        input.financeYear,
+        input.monthLabel,
+        input.invoiceDate,
+        input.description ?? null,
+        proformaNo,
+        costCentre.gstType,
+        applyGst ? 1 : 0,
+        totalAmount,
+        igst,
+        cgst,
+        sgst,
+        grandTotal,
+        input.createdBy,
         // Frozen at creation time, same as legacy's own cost_TallyHead/cost_client_tally_name
         // snapshot — Tally posting must reflect what was true then, not whatever
         // cost_centre_master says later if the ledger head is renamed.
-        costCentre.tallyHead ?? null, costCentre.clientTallyName ?? null,
-      ]
+        costCentre.tallyHead ?? null,
+        costCentre.clientTallyName ?? null,
+      ],
     );
 
     for (const line of input.lines) {
       await conn.execute<ResultSetHeader>(
         `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), invoiceId, line.lineType ?? "charge", line.particulars, line.qty, line.rate, round2(line.qty * line.rate)]
+        [
+          randomUUID(),
+          invoiceId,
+          line.lineType ?? "charge",
+          line.particulars,
+          line.qty,
+          line.rate,
+          round2(line.qty * line.rate),
+        ],
       );
     }
 
     await conn.commit();
-    return { id: invoiceId, proformaNo, totalAmount, igstAmount: igst, cgstAmount: cgst, sgstAmount: sgst, grandTotal };
+    return {
+      id: invoiceId,
+      proformaNo,
+      totalAmount,
+      igstAmount: igst,
+      cgstAmount: cgst,
+      sgstAmount: sgst,
+      grandTotal,
+    };
   } catch (error) {
     await conn.rollback();
     throw error;

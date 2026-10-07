@@ -14,12 +14,7 @@ export type DashboardCode =
   | "PERFORMANCE_SCORECARD";
 
 export type DashboardScopeType =
-  | "ORGANISATION"
-  | "BRANCH"
-  | "PROCESS"
-  | "TEAM"
-  | "SELF"
-  | "CUSTOM";
+  "ORGANISATION" | "BRANCH" | "PROCESS" | "TEAM" | "SELF" | "CUSTOM";
 
 export type DashboardAccessDefinition = {
   code: DashboardCode;
@@ -89,7 +84,14 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     displayName: "HR",
     route: "/hr/dashboard",
     pageCode: "HR_DASHBOARD",
-    allowedRoleKeys: ["hr", "hr_admin", "ho_hr", "branch_hr", "process_hr", "super_admin"],
+    allowedRoleKeys: [
+      "hr",
+      "hr_admin",
+      "ho_hr",
+      "branch_hr",
+      "process_hr",
+      "super_admin",
+    ],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS"],
     sensitiveMetrics: ["candidate", "employee", "bgv", "dpdp"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -106,7 +108,15 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     // 'branch_head' added 2026-09-16: branch heads own everything happening in their branch's
     // WFM operations and had no entitlement to the WFM dashboard itself, only individual
     // sub-pages (RTA Board, Live Tracker, Capacity Dashboard).
-    allowedRoleKeys: ["wfm", "ho_wfm", "wfm_spoc", "rta", "manager", "branch_head", "super_admin"],
+    allowedRoleKeys: [
+      "wfm",
+      "ho_wfm",
+      "wfm_spoc",
+      "rta",
+      "manager",
+      "branch_head",
+      "super_admin",
+    ],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS"],
     sensitiveMetrics: ["attendance", "productivity"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -118,7 +128,16 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     route: "/wfm-attendance",
     pageCode: "WFM_ATTENDANCE_DASHBOARD",
     // 'branch_head' added 2026-09-16: see WFM_DASHBOARD above — same branch-oversight rationale.
-    allowedRoleKeys: ["wfm", "ho_wfm", "wfm_spoc", "rta", "hr", "operations_manager", "branch_head", "super_admin"],
+    allowedRoleKeys: [
+      "wfm",
+      "ho_wfm",
+      "wfm_spoc",
+      "rta",
+      "hr",
+      "operations_manager",
+      "branch_head",
+      "super_admin",
+    ],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS", "TEAM"],
     sensitiveMetrics: ["attendance", "biometric"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -129,7 +148,17 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     displayName: "Payroll",
     route: "/payroll-hr/dashboard",
     pageCode: "PAYROLL_HR_DASHBOARD",
-    allowedRoleKeys: ["payroll", "payroll_head", "payroll_branch", "ho_payroll", "finance", "finance_head", "accounts_head", "branch_finance", "super_admin"],
+    allowedRoleKeys: [
+      "payroll",
+      "payroll_head",
+      "payroll_branch",
+      "ho_payroll",
+      "finance",
+      "finance_head",
+      "accounts_head",
+      "branch_finance",
+      "super_admin",
+    ],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS"],
     sensitiveMetrics: ["salary", "bank", "statutory"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -144,7 +173,19 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     // deactivated (active_status=0) — a leftover from the 2026-07-25 RBAC cleanup sweep, not a
     // deliberate lock-out. This registry list is the other, independently-enforced gate
     // (dashboard.routes.ts:65) — both need to agree or the DB grant alone does nothing.
-    allowedRoleKeys: ["qa", "quality_analyst", "quality_lead", "qa_manager", "operations_manager", "tq_head", "branch_head", "ceo", "coo", "manager", "super_admin"],
+    allowedRoleKeys: [
+      "qa",
+      "quality_analyst",
+      "quality_lead",
+      "qa_manager",
+      "operations_manager",
+      "tq_head",
+      "branch_head",
+      "ceo",
+      "coo",
+      "manager",
+      "super_admin",
+    ],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS", "TEAM"],
     sensitiveMetrics: ["quality", "coaching"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -155,7 +196,18 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     displayName: "Operations",
     route: "/operations-dashboard",
     pageCode: "OPERATIONS_DASHBOARD",
-    allowedRoleKeys: ["operations_manager", "operations_head", "ho_operations", "process_manager", "branch_head", "qa", "tq_head", "ceo", "manager", "super_admin"],
+    allowedRoleKeys: [
+      "operations_manager",
+      "operations_head",
+      "ho_operations",
+      "process_manager",
+      "branch_head",
+      "qa",
+      "tq_head",
+      "ceo",
+      "manager",
+      "super_admin",
+    ],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS", "TEAM"],
     sensitiveMetrics: ["revenue", "productivity", "quality"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -188,7 +240,17 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     displayName: "Manager",
     route: "/manager/dashboard",
     pageCode: "MANAGEMENT_DASHBOARD",
-    allowedRoleKeys: ["manager", "process_manager", "assistant_manager", "branch_head", "branch_manager", "team_leader", "tl", "ceo", "super_admin"],
+    allowedRoleKeys: [
+      "manager",
+      "process_manager",
+      "assistant_manager",
+      "branch_head",
+      "branch_manager",
+      "team_leader",
+      "tl",
+      "ceo",
+      "super_admin",
+    ],
     scopeTypes: ["BRANCH", "PROCESS", "TEAM"],
     sensitiveMetrics: ["performance", "attendance", "attrition"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -199,7 +261,56 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     displayName: "My Dashboard",
     route: "/my-dashboard",
     pageCode: "EMPLOYEE_SELF_DASHBOARD",
-    allowedRoleKeys: ["employee", "agent", "trainee", "manager", "process_manager", "assistant_manager", "branch_head", "branch_manager", "team_leader", "tl", "recruiter", "qa", "quality_analyst", "quality_lead", "qa_manager", "operations_manager", "wfm", "ho_wfm", "wfm_spoc", "rta", "hr", "hr_admin", "ho_hr", "branch_hr", "process_hr", "payroll", "payroll_head", "payroll_branch", "payroll_admin", "payroll_hr", "ho_payroll", "finance", "finance_head", "accounts_head", "branch_finance", "it", "branch_it", "ho_it", "it_head", "tq_head", "ceo", "coo", "management", "admin", "branch_admin", "interviewer", "trainer", "super_admin"],
+    allowedRoleKeys: [
+      "employee",
+      "agent",
+      "trainee",
+      "manager",
+      "process_manager",
+      "assistant_manager",
+      "branch_head",
+      "branch_manager",
+      "team_leader",
+      "tl",
+      "recruiter",
+      "qa",
+      "quality_analyst",
+      "quality_lead",
+      "qa_manager",
+      "operations_manager",
+      "wfm",
+      "ho_wfm",
+      "wfm_spoc",
+      "rta",
+      "hr",
+      "hr_admin",
+      "ho_hr",
+      "branch_hr",
+      "process_hr",
+      "payroll",
+      "payroll_head",
+      "payroll_branch",
+      "payroll_admin",
+      "payroll_hr",
+      "ho_payroll",
+      "finance",
+      "finance_head",
+      "accounts_head",
+      "branch_finance",
+      "it",
+      "branch_it",
+      "ho_it",
+      "it_head",
+      "tq_head",
+      "ceo",
+      "coo",
+      "management",
+      "admin",
+      "branch_admin",
+      "interviewer",
+      "trainer",
+      "super_admin",
+    ],
     scopeTypes: ["SELF"],
     sensitiveMetrics: ["attendance", "leave", "payroll", "performance"],
     permissions: { drilldown: true, export: false, filters: false },
@@ -210,7 +321,24 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     displayName: "Performance Scorecard",
     route: "/performance-command-center",
     pageCode: "PERFORMANCE_SCORECARD_COMMAND_CENTER",
-    allowedRoleKeys: ["manager", "process_manager", "assistant_manager", "branch_head", "branch_manager", "team_leader", "tl", "hr", "hr_admin", "ho_hr", "branch_hr", "process_hr", "ceo", "coo", "management", "super_admin"],
+    allowedRoleKeys: [
+      "manager",
+      "process_manager",
+      "assistant_manager",
+      "branch_head",
+      "branch_manager",
+      "team_leader",
+      "tl",
+      "hr",
+      "hr_admin",
+      "ho_hr",
+      "branch_hr",
+      "process_hr",
+      "ceo",
+      "coo",
+      "management",
+      "super_admin",
+    ],
     scopeTypes: ["ORGANISATION", "TEAM", "BRANCH", "PROCESS"],
     sensitiveMetrics: ["attendance", "performance", "attrition", "revenue"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -218,7 +346,9 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
 });
 
 export function normalizeDashboardRole(value: unknown): string {
-  const normalized = String(value ?? "").trim().toLowerCase();
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
   return DASHBOARD_ROLE_ALIASES[normalized] ?? normalized;
 }
 
@@ -235,7 +365,9 @@ function variantIndex(): Map<string, DashboardCode> {
   return _variantIndex;
 }
 
-export function getDashboardDefinition(code: unknown): DashboardAccessDefinition | null {
+export function getDashboardDefinition(
+  code: unknown,
+): DashboardAccessDefinition | null {
   const raw = String(code ?? "").trim();
   const upper = raw.toUpperCase() as DashboardCode;
   // Direct match (e.g. "HR_DASHBOARD")
@@ -245,11 +377,16 @@ export function getDashboardDefinition(code: unknown): DashboardAccessDefinition
   return byVariant ? DASHBOARD_ACCESS_REGISTRY[byVariant] : null;
 }
 
-export function canAccessDashboard(code: unknown, roleKeys: readonly string[]): boolean {
+export function canAccessDashboard(
+  code: unknown,
+  roleKeys: readonly string[],
+): boolean {
   const dashboard = getDashboardDefinition(code);
   if (!dashboard) return false;
   const normalizedRoles = new Set(roleKeys.map(normalizeDashboardRole));
-  return dashboard.allowedRoleKeys.some((role) => normalizedRoles.has(normalizeDashboardRole(role)));
+  return dashboard.allowedRoleKeys.some((role) =>
+    normalizedRoles.has(normalizeDashboardRole(role)),
+  );
 }
 
 /**
@@ -273,7 +410,9 @@ export function canAccessDashboard(code: unknown, roleKeys: readonly string[]): 
  * Returns raw (un-normalised) keys because requireRole normalises and expands its own
  * inputs; handing it the alias forms as well would be redundant, not wrong.
  */
-export function dashboardConsumerRoles(...codes: readonly DashboardCode[]): string[] {
+export function dashboardConsumerRoles(
+  ...codes: readonly DashboardCode[]
+): string[] {
   const roles = new Set<string>();
   for (const code of codes) {
     const definition = DASHBOARD_ACCESS_REGISTRY[code];

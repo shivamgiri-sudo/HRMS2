@@ -34,7 +34,8 @@ const SRC = readFileSync(at("../salary-voucher.routes.ts"), "utf8");
 let registered: { method: string; path: string }[];
 beforeAll(async () => {
   const { app } = await import("../../../app.js");
-  const { enumerateRoutes } = await import("../../../platform/route-contract.js");
+  const { enumerateRoutes } =
+    await import("../../../platform/route-contract.js");
   registered = enumerateRoutes(app).map((r) => ({
     method: String(r.method).toUpperCase(),
     path: String(r.path).replace(/:[A-Za-z_][A-Za-z0-9_]*/g, ":x"),
@@ -53,42 +54,76 @@ describe("the endpoints exist", () => {
     // IDC is sourced from db_bill, on its own explicitly-gated endpoint.
     ["GET", "/api/finance/payroll/runs/bill/:x/vouchers"],
   ])("%s %s", (method, path) => {
-    expect(registered.some((r) => r.method === method && r.path === path),
-      `${method} ${path} is not registered`).toBe(true);
+    expect(
+      registered.some((r) => r.method === method && r.path === path),
+      `${method} ${path} is not registered`,
+    ).toBe(true);
   });
 
   it("is mounted under its own prefix", () => {
     // A salary voucher exposes a whole branch payroll, including individual advance recoveries.
     // It must not be reachable through a path some broader finance router also serves.
     expect(SRC).not.toContain('app.use("/api/finance"');
-    expect(registered.some((r) => r.path.startsWith("/api/finance/payroll"))).toBe(true);
+    expect(
+      registered.some((r) => r.path.startsWith("/api/finance/payroll")),
+    ).toBe(true);
   });
 });
 
 describe("the header is the reference file's, in order", () => {
   it("names the columns exactly as the reference does", () => {
-    const header = SRC.slice(SRC.indexOf("const header = ["), SRC.indexOf("];", SRC.indexOf("const header = [")));
+    const header = SRC.slice(
+      SRC.indexOf("const header = ["),
+      SRC.indexOf("];", SRC.indexOf("const header = [")),
+    );
     for (const column of [
-      '"Vch No"', '"Date"', '"Details"', '"Amount"', '"DebitCredit"',
-      '"Cost Category"', '"Cost Centre"', '"Narration for Each Entry"', '"Narration"', '"VchType"',
+      '"Vch No"',
+      '"Date"',
+      '"Details"',
+      '"Amount"',
+      '"DebitCredit"',
+      '"Cost Category"',
+      '"Cost Centre"',
+      '"Narration for Each Entry"',
+      '"Narration"',
+      '"VchType"',
     ]) {
       expect(header, `${column} must be in the header`).toContain(column);
     }
   });
 
   it("keeps the columns in the reference order", () => {
-    const header = SRC.slice(SRC.indexOf("const header = ["), SRC.indexOf("];", SRC.indexOf("const header = [")));
-    const order = ['"Vch No"', '"Date"', '"Details"', '"Amount"', '"DebitCredit"',
-      '"Cost Category"', '"Cost Centre"', '"Narration for Each Entry"', '"Narration"', '"VchType"'];
+    const header = SRC.slice(
+      SRC.indexOf("const header = ["),
+      SRC.indexOf("];", SRC.indexOf("const header = [")),
+    );
+    const order = [
+      '"Vch No"',
+      '"Date"',
+      '"Details"',
+      '"Amount"',
+      '"DebitCredit"',
+      '"Cost Category"',
+      '"Cost Centre"',
+      '"Narration for Each Entry"',
+      '"Narration"',
+      '"VchType"',
+    ];
     const positions = order.map((c) => header.indexOf(c));
     for (let i = 1; i < positions.length; i++) {
-      expect(positions[i], `${order[i]} must follow ${order[i - 1]}`).toBeGreaterThan(positions[i - 1]);
+      expect(
+        positions[i],
+        `${order[i]} must follow ${order[i - 1]}`,
+      ).toBeGreaterThan(positions[i - 1]);
     }
   });
 
   it("puts the split columns between Amount and DebitCredit, unnamed", () => {
     // Where the reference puts them, and they carry no heading there.
-    const header = SRC.slice(SRC.indexOf("const header = ["), SRC.indexOf("];", SRC.indexOf("const header = [")));
+    const header = SRC.slice(
+      SRC.indexOf("const header = ["),
+      SRC.indexOf("];", SRC.indexOf("const header = [")),
+    );
     const amountAt = header.indexOf('"Amount"');
     const splitAt = header.indexOf("Array.from({ length: splitCount }");
     const dcAt = header.indexOf('"DebitCredit"');
@@ -112,10 +147,15 @@ describe("authorisation", () => {
   it("restricts the voucher to finance and payroll roles", () => {
     // Not the broad GRN read set, and never branch_admin: one response carries a branch's whole
     // payroll and what each person had recovered from them.
-    expect(SRC).toContain('const VOUCHER_ROLES = ["finance_head", "payroll_hr", "super_admin"] as const;');
+    expect(SRC).toContain(
+      'const VOUCHER_ROLES = ["finance_head", "payroll_hr", "super_admin"] as const;',
+    );
     // Checked against the role list rather than the whole file: the prose above it names
     // branch_admin precisely to say it is excluded.
-    const roleList = SRC.slice(SRC.indexOf("const VOUCHER_ROLES"), SRC.indexOf("as const;") + 9);
+    const roleList = SRC.slice(
+      SRC.indexOf("const VOUCHER_ROLES"),
+      SRC.indexOf("as const;") + 9,
+    );
     expect(roleList).not.toContain("branch_admin");
     expect(roleList).not.toContain("branch_head");
   });
@@ -164,9 +204,13 @@ describe("the voucher serial is Tally's, not ours", () => {
   });
 
   it("uses the validated parser on both the list and the export", () => {
-    const uses = SRC.match(/serialFrom: parseSerial\(req\.query\.serialFrom\)/g) ?? [];
+    const uses =
+      SRC.match(/serialFrom: parseSerial\(req\.query\.serialFrom\)/g) ?? [];
     // list, export, and the db_bill IDC endpoint all validate the serial the same way.
-    expect(uses, "every voucher endpoint must validate the serial").toHaveLength(3);
+    expect(
+      uses,
+      "every voucher endpoint must validate the serial",
+    ).toHaveLength(3);
   });
 
   it("treats a bad serial as absent rather than failing the request", () => {

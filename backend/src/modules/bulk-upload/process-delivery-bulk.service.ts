@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Per-process delivery actuals.
@@ -51,7 +54,9 @@ const NUMERIC: Array<{ column: string; header: string }> = [
 
 /** These four are NOT NULL with a 0 default, so a blank cell means zero, not null. */
 export function parseUnits(raw: unknown): number {
-  const v = String(raw ?? "").trim().replace(/,/g, "");
+  const v = String(raw ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!v) return 0;
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -59,7 +64,9 @@ export function parseUnits(raw: unknown): number {
 
 /** quality_score and sla_score are nullable: "not measured" is not the same as zero. */
 export function parseScore(raw: unknown): number | null {
-  const v = String(raw ?? "").trim().replace("%", "");
+  const v = String(raw ?? "")
+    .trim()
+    .replace("%", "");
   if (!v) return null;
   const n = Number(v);
   if (!Number.isFinite(n)) return null;
@@ -67,11 +74,24 @@ export function parseScore(raw: unknown): number | null {
 }
 
 /** Accepts 2026-09, 09-2026 and Sep-2026; period_code is char(7) as YYYY-MM. */
-export function parsePeriod(raw: unknown, activityDate: string | null): string | null {
+export function parsePeriod(
+  raw: unknown,
+  activityDate: string | null,
+): string | null {
   const v = String(raw ?? "").trim();
   const MONTHS: Record<string, number> = {
-    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+    jan: 1,
+    feb: 2,
+    mar: 3,
+    apr: 4,
+    may: 5,
+    jun: 6,
+    jul: 7,
+    aug: 8,
+    sep: 9,
+    oct: 10,
+    nov: 11,
+    dec: 12,
   };
   let m = /^(\d{4})-(\d{1,2})$/.exec(v);
   if (m) return `${m[1]}-${m[2].padStart(2, "0")}`;
@@ -90,8 +110,18 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   const MONTHS: Record<string, number> = {
-    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+    jan: 1,
+    feb: 2,
+    mar: 3,
+    apr: 4,
+    may: 5,
+    jun: 6,
+    jul: 7,
+    aug: 8,
+    sep: 9,
+    oct: 10,
+    nov: 11,
+    dec: 12,
   };
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
@@ -109,7 +139,10 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string; k: string }
+interface Ref extends RowDataPacket {
+  id: string;
+  k: string;
+}
 
 export async function importProcessDeliveryBatch(
   batchId: string,
@@ -121,7 +154,8 @@ export async function importProcessDeliveryBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   // Resolved by code, never created. A delivery row against a process that does not
   // exist is a typo, and inventing the process to accept the row would put numbers
@@ -161,7 +195,9 @@ export async function importProcessDeliveryBatch(
         ? JSON.parse(row.normalized_data)
         : ((row.normalized_data ?? {}) as Record<string, unknown>);
 
-    const code = String(data["Process Code"] ?? "").trim().toUpperCase();
+    const code = String(data["Process Code"] ?? "")
+      .trim()
+      .toUpperCase();
     const processId = processByCode.get(code);
     if (!processId) {
       const msg = `Row ${row.row_no}: no active process with code "${code || "(blank)"}"`;
@@ -187,36 +223,57 @@ export async function importProcessDeliveryBatch(
       continue;
     }
 
-    const lobName = String(data["LOB"] ?? "").trim().toUpperCase();
-    const lobId = lobName ? (lobByKey.get(`${processId}|${lobName}`) ?? null) : null;
+    const lobName = String(data["LOB"] ?? "")
+      .trim()
+      .toUpperCase();
+    const lobId = lobName
+      ? (lobByKey.get(`${processId}|${lobName}`) ?? null)
+      : null;
     const units = NUMERIC.map((n) => parseUnits(data[n.header]));
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, lobId, period, activityDate, metric,
+        randomUUID(),
+        processId,
+        lobId,
+        period,
+        activityDate,
+        metric,
         ...units,
-        parseScore(data["Quality Score"]), parseScore(data["SLA Score"]),
+        parseScore(data["Quality Score"]),
+        parseScore(data["SLA Score"]),
         batchId,
-        importedByUserId, importedByUserId,
+        importedByUserId,
+        importedByUserId,
       ],
     });
   }
 
-  const inserted = await chunkedMasmisInsert({ insertPrefix, placeholderGroup, insertSuffix, rows: toInsert });
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix,
+    placeholderGroup,
+    insertSuffix,
+    rows: toInsert,
+  });
   errorUpdates.push(...inserted.errorUpdates);
   for (const u of inserted.errorUpdates) errors.push(u.message);
   const importedRows = inserted.importedRows;
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 

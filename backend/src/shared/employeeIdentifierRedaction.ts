@@ -57,13 +57,14 @@ import { isCryptoPlumbingColumn } from "./cryptoColumnHygiene.js";
 export { CRYPTO_PLUMBING_PATTERN } from "./cryptoColumnHygiene.js";
 
 /** Raw identifier columns on `employees`, with the mask shape each one needs. */
-export const IDENTIFIER_FIELDS: Record<string, Parameters<typeof maskPii>[1]> = {
-  aadhaar_number: "aadhaar",
-  pan_number: "pan",
-  bank_account_number: "bank_account",
-  uan_number: "bank_account",
-  ifsc_code: "bank_account",
-};
+export const IDENTIFIER_FIELDS: Record<string, Parameters<typeof maskPii>[1]> =
+  {
+    aadhaar_number: "aadhaar",
+    pan_number: "pan",
+    bank_account_number: "bank_account",
+    uan_number: "bank_account",
+    ifsc_code: "bank_account",
+  };
 
 /**
  * Roles that keep raw identifiers — today's behaviour, preserved deliberately.
@@ -93,9 +94,13 @@ export const RAW_IDENTIFIER_ROLES = new Set([
  * rows. If that grant inheritance is itself wrong, it is wrong upstream in role assignment;
  * this module must not try to second-guess it by intersecting instead.
  */
-export function maySeeRawIdentifiers(roles: readonly string[] | null | undefined): boolean {
+export function maySeeRawIdentifiers(
+  roles: readonly string[] | null | undefined,
+): boolean {
   if (!roles || roles.length === 0) return false; // no roles resolved -> fail closed
-  return roles.some((r) => RAW_IDENTIFIER_ROLES.has(String(r).trim().toLowerCase()));
+  return roles.some((r) =>
+    RAW_IDENTIFIER_ROLES.has(String(r).trim().toLowerCase()),
+  );
 }
 
 /**

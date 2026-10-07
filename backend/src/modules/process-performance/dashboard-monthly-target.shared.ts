@@ -24,7 +24,10 @@ export interface MonthlyTargetChange {
   newValue: number;
 }
 
-const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const num = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
 const p2 = (n: number): string => String(n).padStart(2, "0");
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -35,7 +38,11 @@ function daysInMonth(ym: string): number {
 
 /** The single target in force for one metric in one month (the row whose
  * effective range covers the 1st of that month), or null if none is set. */
-export async function loadMonthlyTarget(dashboardCode: string, metricCode: string, month: string): Promise<number | null> {
+export async function loadMonthlyTarget(
+  dashboardCode: string,
+  metricCode: string,
+  month: string,
+): Promise<number | null> {
   const map = await loadMonthlyTargets(dashboardCode, [metricCode], [month]);
   return map.get(month)?.get(metricCode) ?? null;
 }
@@ -43,7 +50,9 @@ export async function loadMonthlyTarget(dashboardCode: string, metricCode: strin
 /** Batch loader for several metric codes across several months in one query --
  * mirrors bellavita-chat-overview.service.ts's loadCapacity(). */
 export async function loadMonthlyTargets(
-  dashboardCode: string, metricCodes: string[], months: string[],
+  dashboardCode: string,
+  metricCodes: string[],
+  months: string[],
 ): Promise<Map<string, Map<string, number>>> {
   const out = new Map<string, Map<string, number>>();
   for (const month of months) out.set(month, new Map());
@@ -63,7 +72,12 @@ export async function loadMonthlyTargets(
     const first = `${month}-01`;
     const entry = out.get(month)!;
     for (const code of metricCodes) {
-      const hit = rows.find((r) => r.metric_code === code && String(r.ef) <= first && (!r.et || String(r.et) >= first));
+      const hit = rows.find(
+        (r) =>
+          r.metric_code === code &&
+          String(r.ef) <= first &&
+          (!r.et || String(r.et) >= first),
+      );
       if (hit) entry.set(code, num(hit.target_value));
     }
   }
@@ -74,10 +88,15 @@ export async function loadMonthlyTargets(
  * exact month if present, otherwise inserts a new one; the old value is
  * returned so the caller can audit it. */
 export async function setMonthlyTarget(
-  dashboardCode: string, metricCode: string, month: string, value: number, actorId: string,
+  dashboardCode: string,
+  metricCode: string,
+  month: string,
+  value: number,
+  actorId: string,
 ): Promise<MonthlyTargetChange> {
   if (!MONTH_RE.test(month)) throw new Error("month must be YYYY-MM");
-  if (!Number.isFinite(value) || value <= 0 || value > 1_000_000_000) throw new Error("target must be a positive number");
+  if (!Number.isFinite(value) || value <= 0 || value > 1_000_000_000)
+    throw new Error("target must be a positive number");
   const first = `${month}-01`;
   const last = `${month}-${p2(daysInMonth(month))}`;
 
@@ -92,7 +111,12 @@ export async function setMonthlyTarget(
       `UPDATE dashboard_metric_target SET target_value = ?, effective_to = ?, updated_at = NOW() WHERE id = ?`,
       [value, last, existing[0].id],
     );
-    return { metricCode, month, oldValue: num(existing[0].target_value), newValue: value };
+    return {
+      metricCode,
+      month,
+      oldValue: num(existing[0].target_value),
+      newValue: value,
+    };
   }
   await db.execute<ResultSetHeader>(
     `INSERT INTO dashboard_metric_target
@@ -106,7 +130,13 @@ export async function setMonthlyTarget(
 
 /** Roles allowed to set a monthly target -- a business commitment, same
  * narrow set the Bellavita Chat planned-capacity feature already uses. */
-export const TARGET_ADMIN_ROLES = ["super_admin", "admin", "ceo", "coo", "management"] as const;
+export const TARGET_ADMIN_ROLES = [
+  "super_admin",
+  "admin",
+  "ceo",
+  "coo",
+  "management",
+] as const;
 
 /* ------------------------------- daily targets ------------------------------ */
 /** Same table, `target_period = 'daily'` instead of 'monthly' -- one row per
@@ -124,7 +154,11 @@ export interface DailyTargetChange {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Batch loader for several dates in one query. */
-export async function loadDailyTargets(dashboardCode: string, metricCode: string, dates: string[]): Promise<Map<string, number>> {
+export async function loadDailyTargets(
+  dashboardCode: string,
+  metricCode: string,
+  dates: string[],
+): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (dates.length === 0) return out;
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -142,10 +176,15 @@ export async function loadDailyTargets(dashboardCode: string, metricCode: string
 /** Sets one date's target for one metric. Updates the existing row for that
  * exact date if present, otherwise inserts a new one. */
 export async function setDailyTarget(
-  dashboardCode: string, metricCode: string, date: string, value: number, actorId: string,
+  dashboardCode: string,
+  metricCode: string,
+  date: string,
+  value: number,
+  actorId: string,
 ): Promise<DailyTargetChange> {
   if (!DATE_RE.test(date)) throw new Error("date must be YYYY-MM-DD");
-  if (!Number.isFinite(value) || value < 0 || value > 1_000_000_000) throw new Error("target must be a non-negative number");
+  if (!Number.isFinite(value) || value < 0 || value > 1_000_000_000)
+    throw new Error("target must be a non-negative number");
 
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id, target_value FROM dashboard_metric_target
@@ -158,7 +197,12 @@ export async function setDailyTarget(
       `UPDATE dashboard_metric_target SET target_value = ?, updated_at = NOW() WHERE id = ?`,
       [value, existing[0].id],
     );
-    return { metricCode, date, oldValue: num(existing[0].target_value), newValue: value };
+    return {
+      metricCode,
+      date,
+      oldValue: num(existing[0].target_value),
+      newValue: value,
+    };
   }
   await db.execute<ResultSetHeader>(
     `INSERT INTO dashboard_metric_target
@@ -174,10 +218,16 @@ export async function setDailyTarget(
  * upserts via setDailyTarget, each individually valid/auditable. Small row
  * counts (a month's worth of dates at most), so no batching optimisation. */
 export async function setDailyTargetsBulk(
-  dashboardCode: string, metricCode: string, rows: Array<{ date: string; value: number }>, actorId: string,
+  dashboardCode: string,
+  metricCode: string,
+  rows: Array<{ date: string; value: number }>,
+  actorId: string,
 ): Promise<DailyTargetChange[]> {
   const changes: DailyTargetChange[] = [];
-  for (const r of rows) changes.push(await setDailyTarget(dashboardCode, metricCode, r.date, r.value, actorId));
+  for (const r of rows)
+    changes.push(
+      await setDailyTarget(dashboardCode, metricCode, r.date, r.value, actorId),
+    );
   return changes;
 }
 
@@ -210,7 +260,11 @@ export interface SpanTargetContext {
  * need, in 2 queries total -- callers then derive as many spans/columns as
  * they like from the same context with no further DB round-trips (used by
  * the Snapshot tab's MTD/week/day columns). */
-export async function loadSpanTargetContext(dashboardCode: string, metricCode: string, dates: string[]): Promise<SpanTargetContext> {
+export async function loadSpanTargetContext(
+  dashboardCode: string,
+  metricCode: string,
+  dates: string[],
+): Promise<SpanTargetContext> {
   const uniqueDates = [...new Set(dates)];
   const months = [...new Set(uniqueDates.map((d) => d.slice(0, 7)))];
   const [dailyByDate, monthlyMap] = await Promise.all([
@@ -227,7 +281,10 @@ export async function loadSpanTargetContext(dashboardCode: string, metricCode: s
 
 /** One day's target: the real daily value if set, else that day's month's
  * monthly target / days in that month, else null (nothing set either way). */
-export function dayTargetFrom(ctx: SpanTargetContext, date: string): number | null {
+export function dayTargetFrom(
+  ctx: SpanTargetContext,
+  date: string,
+): number | null {
   const daily = ctx.dailyByDate.get(date);
   if (daily !== undefined) return daily;
   const month = date.slice(0, 7);
@@ -240,12 +297,18 @@ export function dayTargetFrom(ctx: SpanTargetContext, date: string): number | nu
  * partially covered still returns the real partial sum, not null, so an
  * uploaded daily sheet that doesn't yet cover the whole range is reflected
  * honestly rather than hidden. */
-export function spanTarget(ctx: SpanTargetContext, dates: string[]): number | null {
+export function spanTarget(
+  ctx: SpanTargetContext,
+  dates: string[],
+): number | null {
   let sum = 0;
   let any = false;
   for (const d of dates) {
     const t = dayTargetFrom(ctx, d);
-    if (t !== null) { sum += t; any = true; }
+    if (t !== null) {
+      sum += t;
+      any = true;
+    }
   }
   return any ? Math.round(sum) : null;
 }

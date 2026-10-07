@@ -6,16 +6,28 @@ import { describe, it, expect, vi } from "vitest";
  * the register now inherits, using the shipped default slabs (no policy override).
  */
 vi.mock("../../../policy-engine/policy-engine.cache.js", () => ({
-  getPolicyValue: async (_d: string, _k: string, _s: string, fallback: string) => fallback,
+  getPolicyValue: async (
+    _d: string,
+    _k: string,
+    _s: string,
+    fallback: string,
+  ) => fallback,
 }));
 
-const { calculateWeekoffEligibility } = await import(
-  "../../../payroll/weekoff-eligibility.service.js"
-);
+const { calculateWeekoffEligibility } =
+  await import("../../../payroll/weekoff-eligibility.service.js");
 
 // sal_days as the register renders it, capped at the length of the month.
-function salDays(paidBase: number, eligibleWO: number, holiday: number, daysInMonth: number) {
-  return Math.round(Math.min(paidBase + eligibleWO + holiday, daysInMonth) * 100) / 100;
+function salDays(
+  paidBase: number,
+  eligibleWO: number,
+  holiday: number,
+  daysInMonth: number,
+) {
+  return (
+    Math.round(Math.min(paidBase + eligibleWO + holiday, daysInMonth) * 100) /
+    100
+  );
 }
 
 describe("week-off entitlement is relative to the month", () => {

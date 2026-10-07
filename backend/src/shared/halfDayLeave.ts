@@ -56,7 +56,11 @@ export const HALF_DAY_ATTENDANCE_TRANSITION: Record<string, string> = {
  * paid_base scores it 0, and a week-off date cannot reach this code anyway because
  * chargeableDates() returns only dates classified 'chargeable'.
  */
-export const HALF_DAY_ALREADY_FULL = new Set(["present", "late", "leave_approved"]);
+export const HALF_DAY_ALREADY_FULL = new Set([
+  "present",
+  "late",
+  "leave_approved",
+]);
 
 /**
  * Target attendance status for a half day landing on `existing`, or null when the day must be
@@ -66,7 +70,9 @@ export const HALF_DAY_ALREADY_FULL = new Set(["present", "late", "leave_approved
  * what makes it idempotent: the attendance engine can re-grade the same day any number of times
  * and always land on the same answer, instead of bumping the day further on every run.
  */
-export function halfDayAttendanceTarget(existing: string | null | undefined): string | null {
+export function halfDayAttendanceTarget(
+  existing: string | null | undefined,
+): string | null {
   const current = (existing ?? "").trim();
   if (!current) return "half_day";
   if (HALF_DAY_ALREADY_FULL.has(current)) return null;

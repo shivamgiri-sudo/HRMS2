@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Housing Owner's own "Look up Data" sheet -- a CRM lead/opportunity
@@ -10,11 +13,35 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  */
 
 export const HOUSING_OWNER_LEAD_PIPELINE_HEADERS = [
-  "Date", "caseId", "callId", "callType", "agentId", "agentName", "agentNumber",
-  "customerName", "customerPhone", "alternatePhone", "tlId", "tlName", "opportunityId",
-  "accountId", "ownerOpportunityStageName", "opportunityType", "createdAt", "assignedAt",
-  "callStartTime", "callEndTime", "talkTime", "wrapupTime", "callStatus", "disposition",
-  "notes", "followupTime", "recordingURL", "Fresh", "Hot Leads",
+  "Date",
+  "caseId",
+  "callId",
+  "callType",
+  "agentId",
+  "agentName",
+  "agentNumber",
+  "customerName",
+  "customerPhone",
+  "alternatePhone",
+  "tlId",
+  "tlName",
+  "opportunityId",
+  "accountId",
+  "ownerOpportunityStageName",
+  "opportunityType",
+  "createdAt",
+  "assignedAt",
+  "callStartTime",
+  "callEndTime",
+  "talkTime",
+  "wrapupTime",
+  "callStatus",
+  "disposition",
+  "notes",
+  "followupTime",
+  "recordingURL",
+  "Fresh",
+  "Hot Leads",
 ] as const;
 
 export function parseDate(raw: unknown): string | null {
@@ -25,7 +52,9 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
+    const d = new Date(
+      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
+    );
     return d.toISOString().slice(0, 10);
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
@@ -38,7 +67,9 @@ export function parseDateTime(raw: unknown): string | null {
   if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
     const days = Math.floor(raw);
     const secondsOfDay = Math.round((raw - days) * 86400);
-    const d = new Date(Date.UTC(1899, 11, 30) + days * 86400000 + secondsOfDay * 1000);
+    const d = new Date(
+      Date.UTC(1899, 11, 30) + days * 86400000 + secondsOfDay * 1000,
+    );
     return d.toISOString().slice(0, 19).replace("T", " ");
   }
   const v = String(raw ?? "").trim();
@@ -76,7 +107,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importHousingOwnerLeadPipelineBatch(
   batchId: string,
@@ -127,21 +160,28 @@ export async function importHousingOwnerLeadPipelineBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Housing Owner" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     const caseId = cleanText(data["caseId"]);
     const reportDate = parseDate(data["Date"]);
     if (!caseId || !reportDate) {
       const msg = `Row ${row.row_no}: "caseId" and "Date" are both required -- together with callId/disposition/createdAt they are this row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, reportDate, caseId,
+        randomUUID(),
+        processId,
+        reportDate,
+        caseId,
         cleanText(data["callId"]),
         cleanText(data["callType"]),
         cleanText(data["agentId"]),
@@ -183,7 +223,8 @@ export async function importHousingOwnerLeadPipelineBatch(
         assigned_at, call_start_time, call_end_time, talk_time_seconds, had_wrapup,
         call_status, disposition, notes, followup_time, recording_url, is_fresh_lead,
         lead_temperature, data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
        opportunity_stage = VALUES(opportunity_stage),
        call_status = VALUES(call_status),
@@ -196,17 +237,26 @@ export async function importHousingOwnerLeadPipelineBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

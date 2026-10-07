@@ -31,7 +31,9 @@ function normalisePeriod(value?: string) {
 function money(value: unknown, field: string) {
   const number = Number(value ?? 0);
   if (!Number.isFinite(number) || number < 0) {
-    throw Object.assign(new Error(`${field} must be zero or greater`), { statusCode: 400 });
+    throw Object.assign(new Error(`${field} must be zero or greater`), {
+      statusCode: 400,
+    });
   }
   return number;
 }
@@ -50,22 +52,30 @@ function dateRangeOverlaps(
   existingFrom: string,
   existingTo: string | null,
   nextFrom: string,
-  nextTo: string | null
+  nextTo: string | null,
 ) {
-  return existingFrom <= (nextTo ?? "9999-12-31")
-    && nextFrom <= (existingTo ?? "9999-12-31");
+  return (
+    existingFrom <= (nextTo ?? "9999-12-31") &&
+    nextFrom <= (existingTo ?? "9999-12-31")
+  );
 }
 
 async function ensureCommercialFoundation() {
-  const required = ["process_lob_master", "process_revenue_rule", "process_delivery_actual"];
+  const required = [
+    "process_lob_master",
+    "process_revenue_rule",
+    "process_delivery_actual",
+  ];
   const missing: string[] = [];
   for (const table of required) {
     if (!(await tableExists(table))) missing.push(table);
   }
   if (missing.length) {
     throw Object.assign(
-      new Error(`LOB commercial foundation unavailable: ${missing.join(", ")}. Run migration 421 first.`),
-      { statusCode: 503 }
+      new Error(
+        `LOB commercial foundation unavailable: ${missing.join(", ")}. Run migration 421 first.`,
+      ),
+      { statusCode: 503 },
     );
   }
 }
@@ -73,19 +83,31 @@ async function ensureCommercialFoundation() {
 async function getLobForUpdate(
   connection: Awaited<ReturnType<typeof db.getConnection>>,
   processId: string,
-  processLobId: string
+  processLobId: string,
 ) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT id, process_id, lob_code, lob_name, active_status, approval_status
        FROM process_lob_master
       WHERE id = ? AND process_id = ?
       FOR UPDATE`,
-    [processLobId, processId]
+    [processLobId, processId],
   );
   const row = rows[0];
-  if (!row) throw Object.assign(new Error("LOB does not belong to the selected process"), { statusCode: 400 });
-  if (Number(row.active_status ?? 0) !== 1 || String(row.approval_status) !== "approved") {
-    throw Object.assign(new Error("Only an approved active LOB can receive rates or delivery actuals"), { statusCode: 400 });
+  if (!row)
+    throw Object.assign(
+      new Error("LOB does not belong to the selected process"),
+      { statusCode: 400 },
+    );
+  if (
+    Number(row.active_status ?? 0) !== 1 ||
+    String(row.approval_status) !== "approved"
+  ) {
+    throw Object.assign(
+      new Error(
+        "Only an approved active LOB can receive rates or delivery actuals",
+      ),
+      { statusCode: 400 },
+    );
   }
   return row;
 }
@@ -154,7 +176,7 @@ export const processLobCommercialService = {
             AND l.effective_from <= ?
             AND (l.effective_to IS NULL OR l.effective_to >= ?)
           ORDER BY l.lob_code`,
-        [processId, end, `${period}-01`]
+        [processId, end, `${period}-01`],
       ),
       queryRows<RowDataPacket>(
         `SELECT r.*, l.lob_code, l.lob_name
@@ -164,7 +186,7 @@ export const processLobCommercialService = {
             AND r.effective_from <= ?
             AND (r.effective_to IS NULL OR r.effective_to >= ?)
           ORDER BY l.lob_code, r.metric_key, r.effective_from DESC`,
-        [processId, end, `${period}-01`]
+        [processId, end, `${period}-01`],
       ),
       queryRows<RowDataPacket>(
         `SELECT d.*, l.lob_code, l.lob_name
@@ -172,10 +194,16 @@ export const processLobCommercialService = {
            JOIN process_lob_master l ON l.id = d.process_lob_id
           WHERE d.process_id = ? AND d.period_code = ?
           ORDER BY l.lob_code, d.metric_key, d.activity_date, d.updated_at DESC`,
-        [processId, period]
+        [processId, period],
       ),
     ]);
-    return { period, processId, lobs, revenueRules: rules, deliveryActuals: delivery };
+    return {
+      period,
+      processId,
+      lobs,
+      revenueRules: rules,
+      deliveryActuals: delivery,
+    };
   },
 
   async saveRevenueRule(input: SaveLobRevenueRuleInput, actorUserId: string) {
@@ -188,22 +216,49 @@ export const processLobCommercialService = {
     const effectiveFrom = String(input.effectiveFrom ?? "").slice(0, 10);
     const effectiveTo = cleanText(input.effectiveTo)?.slice(0, 10) ?? null;
     const status = input.status ?? "draft";
-    if (!processId || !processLobId || !ruleName || !metricKey || !effectiveFrom) {
-      throw Object.assign(new Error("Process, LOB, rule name, metric and effective-from date are required"), { statusCode: 400 });
+    if (
+      !processId ||
+      !processLobId ||
+      !ruleName ||
+      !metricKey ||
+      !effectiveFrom
+    ) {
+      throw Object.assign(
+        new Error(
+          "Process, LOB, rule name, metric and effective-from date are required",
+        ),
+        { statusCode: 400 },
+      );
     }
     if (!BILLING_MODELS.has(billingModel)) {
-      throw Object.assign(new Error("Unsupported billing model"), { statusCode: 400 });
+      throw Object.assign(new Error("Unsupported billing model"), {
+        statusCode: 400,
+      });
     }
-    if (!RULE_STATUSES.has(status)) throw Object.assign(new Error("Invalid revenue-rule status"), { statusCode: 400 });
+    if (!RULE_STATUSES.has(status))
+      throw Object.assign(new Error("Invalid revenue-rule status"), {
+        statusCode: 400,
+      });
     if (effectiveTo && effectiveTo < effectiveFrom) {
-      throw Object.assign(new Error("Effective-to date cannot precede effective-from date"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("Effective-to date cannot precede effective-from date"),
+        { statusCode: 400 },
+      );
     }
     const rateAmount = money(input.rateAmount, "Rate");
     const fxToInr = money(input.fxToInr ?? 1, "FX rate");
-    if (fxToInr <= 0) throw Object.assign(new Error("FX rate must be greater than zero"), { statusCode: 400 });
-    const currencyCode = String(input.currencyCode ?? "INR").trim().toUpperCase();
+    if (fxToInr <= 0)
+      throw Object.assign(new Error("FX rate must be greater than zero"), {
+        statusCode: 400,
+      });
+    const currencyCode = String(input.currencyCode ?? "INR")
+      .trim()
+      .toUpperCase();
     if (!/^[A-Z]{3}$/.test(currencyCode)) {
-      throw Object.assign(new Error("Currency code must be a three-letter ISO code"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("Currency code must be a three-letter ISO code"),
+        { statusCode: 400 },
+      );
     }
 
     const id = String(input.id ?? randomUUID());
@@ -222,17 +277,23 @@ export const processLobCommercialService = {
               AND status = 'approved'
               AND id <> ?
             FOR UPDATE`,
-          [processId, processLobId, metricKey, billingModel, id]
+          [processId, processLobId, metricKey, billingModel, id],
         );
-        if (overlaps.some((row) => dateRangeOverlaps(
-          String(row.effective_from).slice(0, 10),
-          row.effective_to ? String(row.effective_to).slice(0, 10) : null,
-          effectiveFrom,
-          effectiveTo
-        ))) {
+        if (
+          overlaps.some((row) =>
+            dateRangeOverlaps(
+              String(row.effective_from).slice(0, 10),
+              row.effective_to ? String(row.effective_to).slice(0, 10) : null,
+              effectiveFrom,
+              effectiveTo,
+            ),
+          )
+        ) {
           throw Object.assign(
-            new Error("An approved LOB revenue rule already overlaps this metric, billing model and date range"),
-            { statusCode: 409 }
+            new Error(
+              "An approved LOB revenue rule already overlaps this metric, billing model and date range",
+            ),
+            { statusCode: 409 },
           );
         }
       }
@@ -268,7 +329,10 @@ export const processLobCommercialService = {
           rateAmount,
           currencyCode,
           fxToInr,
-          money(input.monthlyMinimumCommitment ?? 0, "Monthly minimum commitment"),
+          money(
+            input.monthlyMinimumCommitment ?? 0,
+            "Monthly minimum commitment",
+          ),
           money(input.includedUnits ?? 0, "Included units"),
           money(input.overageRate ?? 0, "Overage rate"),
           nullableNumber(input.mandatedSeats, "Mandated seats"),
@@ -282,7 +346,7 @@ export const processLobCommercialService = {
           cleanText(input.approvalReference),
           actorUserId,
           actorUserId,
-        ]
+        ],
       );
       await connection.commit();
       return { id };
@@ -303,12 +367,32 @@ export const processLobCommercialService = {
     const dataSource = String(input.dataSource ?? "manual").trim();
     const sourceReference = String(input.sourceReference ?? "manual").trim();
     const status = input.status ?? "draft";
-    if (!processId || !processLobId || !metricKey || !dataSource || !sourceReference) {
-      throw Object.assign(new Error("Process, LOB, metric, data source and source reference are required"), { statusCode: 400 });
+    if (
+      !processId ||
+      !processLobId ||
+      !metricKey ||
+      !dataSource ||
+      !sourceReference
+    ) {
+      throw Object.assign(
+        new Error(
+          "Process, LOB, metric, data source and source reference are required",
+        ),
+        { statusCode: 400 },
+      );
     }
-    if (!DELIVERY_STATUSES.has(status)) throw Object.assign(new Error("Invalid delivery status"), { statusCode: 400 });
-    if (input.activityDate && !String(input.activityDate).startsWith(periodCode)) {
-      throw Object.assign(new Error("Activity date must fall inside the selected period"), { statusCode: 400 });
+    if (!DELIVERY_STATUSES.has(status))
+      throw Object.assign(new Error("Invalid delivery status"), {
+        statusCode: 400,
+      });
+    if (
+      input.activityDate &&
+      !String(input.activityDate).startsWith(periodCode)
+    ) {
+      throw Object.assign(
+        new Error("Activity date must fall inside the selected period"),
+        { statusCode: 400 },
+      );
     }
     const planned = money(input.plannedUnits ?? 0, "Planned units");
     const delivered = money(input.deliveredUnits ?? 0, "Delivered units");
@@ -316,10 +400,16 @@ export const processLobCommercialService = {
     const rejected = money(input.rejectedUnits ?? 0, "Rejected units");
     const billable = money(input.billableUnits ?? 0, "Billable units");
     if (accepted + rejected > delivered + 0.0001) {
-      throw Object.assign(new Error("Accepted plus rejected units cannot exceed delivered units"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("Accepted plus rejected units cannot exceed delivered units"),
+        { statusCode: 400 },
+      );
     }
     if (billable > accepted + 0.0001 && accepted > 0) {
-      throw Object.assign(new Error("Billable units cannot exceed accepted units"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("Billable units cannot exceed accepted units"),
+        { statusCode: 400 },
+      );
     }
 
     const id = String(input.id ?? randomUUID());
@@ -367,7 +457,7 @@ export const processLobCommercialService = {
           status === "validated" || status === "locked" ? new Date() : null,
           actorUserId,
           actorUserId,
-        ]
+        ],
       );
       await connection.commit();
       return { id, periodCode };

@@ -13,7 +13,17 @@ import { getEmployee360Profile } from "./employee-360.service.js";
 export const employee360Router = Router();
 
 employee360Router.use(requireAuth);
-employee360Router.use(requireRole("hr", "admin", "super_admin", "manager", "wfm", "payroll", "branch_head"));
+employee360Router.use(
+  requireRole(
+    "hr",
+    "admin",
+    "super_admin",
+    "manager",
+    "wfm",
+    "payroll",
+    "branch_head",
+  ),
+);
 
 // GET /api/analytics/employee-360/:employeeId?period=YYYY-MM
 employee360Router.get("/:employeeId", getEmployee360Profile);

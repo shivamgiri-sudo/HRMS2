@@ -14,32 +14,43 @@
  * source-text assertion is the more stable regression guard against a query text edit
  * losing the join again.
  */
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 const serviceFile = readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), '../inbox.service.ts'),
-  'utf8',
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../inbox.service.ts",
+  ),
+  "utf8",
 );
 
-describe('getMyPending — work_item rows resolve who raised the item, not just who it is assigned to', () => {
-  it('joins employees on created_by and selects requested_by_name/code', () => {
-    expect(serviceFile).toContain('LEFT JOIN employees req ON req.user_id = wi.created_by');
-    expect(serviceFile).toContain('req.full_name AS requested_by_name');
-    expect(serviceFile).toContain('req.employee_code AS requested_by_code');
+describe("getMyPending — work_item rows resolve who raised the item, not just who it is assigned to", () => {
+  it("joins employees on created_by and selects requested_by_name/code", () => {
+    expect(serviceFile).toContain(
+      "LEFT JOIN employees req ON req.user_id = wi.created_by",
+    );
+    expect(serviceFile).toContain("req.full_name AS requested_by_name");
+    expect(serviceFile).toContain("req.employee_code AS requested_by_code");
   });
 
-  it('maps requested_by_name/code onto the work_item PendingTask, not just employee_name', () => {
+  it("maps requested_by_name/code onto the work_item PendingTask, not just employee_name", () => {
     // The mapping block for the work_item source (the one carrying due_at) must read
     // both new columns off the row, or the query change is inert.
-    const workItemMapBlock = serviceFile.slice(serviceFile.indexOf('// work_item rows.'));
-    expect(workItemMapBlock).toContain('requested_by_name: row.requested_by_name ? String(row.requested_by_name) : undefined');
-    expect(workItemMapBlock).toContain('requested_by_code: row.requested_by_code ? String(row.requested_by_code) : undefined');
+    const workItemMapBlock = serviceFile.slice(
+      serviceFile.indexOf("// work_item rows."),
+    );
+    expect(workItemMapBlock).toContain(
+      "requested_by_name: row.requested_by_name ? String(row.requested_by_name) : undefined",
+    );
+    expect(workItemMapBlock).toContain(
+      "requested_by_code: row.requested_by_code ? String(row.requested_by_code) : undefined",
+    );
   });
 
-  it('PendingTask interface declares the new fields', () => {
+  it("PendingTask interface declares the new fields", () => {
     expect(serviceFile).toMatch(/requested_by_name\?:\s*string/);
     expect(serviceFile).toMatch(/requested_by_code\?:\s*string/);
   });

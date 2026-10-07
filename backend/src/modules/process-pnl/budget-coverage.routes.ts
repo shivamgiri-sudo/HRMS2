@@ -43,13 +43,17 @@ function actor(req: AuthenticatedRequest) {
 
 function normalizedRoles(req: AuthenticatedRequest) {
   return Array.from(
-    new Set([req.authUser.role, ...(req.userRoles ?? [])].filter(Boolean).map((role) => String(role).toLowerCase()))
+    new Set(
+      [req.authUser.role, ...(req.userRoles ?? [])]
+        .filter(Boolean)
+        .map((role) => String(role).toLowerCase()),
+    ),
   );
 }
 
 async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
   const user = actor(req);
-  const budget = await branchBudgetService.get(budgetId) as any;
+  const budget = (await branchBudgetService.get(budgetId)) as any;
   await assertFinanceRecordBranch({
     userId: user.id,
     primaryRole: user.role,
@@ -95,8 +99,11 @@ budgetCoverageRouter.get(
           // always 403d on submit. The route is the security boundary; this is only the UI
           // telling the truth about it. (A finance_head who also holds branch_admin, which is
           // the live case, still gets canCreate through branch_admin.)
-          canCreate: isSuperAdmin || roles.some(r => ["admin", "branch_admin"].includes(r)),
-          canManageExpenseMaster: isSuperAdmin || roles.includes("finance_head"),
+          canCreate:
+            isSuperAdmin ||
+            roles.some((r) => ["admin", "branch_admin"].includes(r)),
+          canManageExpenseMaster:
+            isSuperAdmin || roles.includes("finance_head"),
           // Changing or removing a head/sub-head that budgets already reference is Super Admin
           // only; Finance Head keeps the ability to add new ones via canManageExpenseMaster.
           canEditExpenseMaster: isSuperAdmin,
@@ -106,7 +113,9 @@ budgetCoverageRouter.get(
           // The Accounts Head review stage was removed from this workflow (owner decision,
           // 2026-08-21) — that flag no longer exists here; accounts_head remains a valid role
           // for other, unrelated finance workflows (GRN reversal, budget transfer, P&L signoff).
-          canReviewBranchStage: isSuperAdmin || roles.some(r => ["branch_head", "finance_head"].includes(r)),
+          canReviewBranchStage:
+            isSuperAdmin ||
+            roles.some((r) => ["branch_head", "finance_head"].includes(r)),
           canReviewFinanceStage: isSuperAdmin || roles.includes("finance_head"),
           // Finance Head direct budget top-up (owner decision, 2026-08-21): finance_head +
           // super_admin only, deliberately excluding branch_admin/branch_head/accounts_head.
@@ -114,7 +123,9 @@ budgetCoverageRouter.get(
           // Monthly business-case close (owner decision, 2026-08-21): Branch Admin and Finance
           // Head only, per the owner's own wording — deliberately excludes branch_head, unlike
           // canReviewBranchStage above.
-          canCloseBusinessCase: isSuperAdmin || roles.some(r => ["branch_admin", "finance_head"].includes(r)),
+          canCloseBusinessCase:
+            isSuperAdmin ||
+            roles.some((r) => ["branch_admin", "finance_head"].includes(r)),
           // Reopening a closed head/sub-head needs Finance Head approval — same actors as
           // canReviewFinanceStage, kept as its own flag since the two questions ("can I approve a
           // budget stage" vs "can I approve a reopen request") are conceptually separate even
@@ -125,10 +136,13 @@ budgetCoverageRouter.get(
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to resolve budget capabilities",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to resolve budget capabilities",
       });
     }
-  }
+  },
 );
 
 budgetCoverageRouter.post(
@@ -144,14 +158,20 @@ budgetCoverageRouter.post(
         userRoles: user.roles,
         requestedBranchId: req.body?.branchId,
       });
-      if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
-      const budget = await branchBudgetService.saveDraft(
+      if (!branchId)
+        throw Object.assign(new Error("Branch is required"), {
+          statusCode: 400,
+        });
+      const budget = (await branchBudgetService.saveDraft(
         { ...req.body, branchId },
         user.id,
-        user.role
-      ) as any;
-      await budgetCoverageService.syncPlannedFromLines(String(budget.id), user.id);
-      const data = await branchBudgetService.get(String(budget.id)) as any;
+        user.role,
+      )) as any;
+      await budgetCoverageService.syncPlannedFromLines(
+        String(budget.id),
+        user.id,
+      );
+      const data = (await branchBudgetService.get(String(budget.id))) as any;
       const exceptions = await checkBudgetExceptions(String(budget.id));
       res.status(201).json({ success: true, data: { ...data, exceptions } });
     } catch (error) {
@@ -160,7 +180,7 @@ budgetCoverageRouter.post(
         error: error instanceof Error ? error.message : "Unable to save budget",
       });
     }
-  }
+  },
 );
 
 budgetCoverageRouter.get(
@@ -174,10 +194,13 @@ budgetCoverageRouter.get(
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to load budget coverage",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to load budget coverage",
       });
     }
-  }
+  },
 );
 
 budgetCoverageRouter.put(
@@ -191,16 +214,19 @@ budgetCoverageRouter.put(
       const data = await budgetCoverageService.saveCoverage(
         req.params.id,
         Array.isArray(req.body?.entries) ? req.body.entries : [],
-        user.id
+        user.id,
       );
       res.json({ success: true, data });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to save budget coverage",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to save budget coverage",
       });
     }
-  }
+  },
 );
 
 budgetCoverageRouter.post(
@@ -214,16 +240,17 @@ budgetCoverageRouter.post(
       await budgetCoverageService.submitBudget(
         req.params.id,
         user.id,
-        user.role
+        user.role,
       );
-      const data = await branchBudgetService.get(req.params.id) as any;
+      const data = (await branchBudgetService.get(req.params.id)) as any;
       const exceptions = await checkBudgetExceptions(req.params.id);
       res.json({ success: true, data: { ...data, exceptions } });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error: error instanceof Error ? error.message : "Unable to submit budget",
+        error:
+          error instanceof Error ? error.message : "Unable to submit budget",
       });
     }
-  }
+  },
 );

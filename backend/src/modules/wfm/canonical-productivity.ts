@@ -32,7 +32,7 @@ export interface Contribution {
   magnitudeMinutes: number;
 }
 
-export type ProducingRule = 'interval_union' | 'max_contribution';
+export type ProducingRule = "interval_union" | "max_contribution";
 
 export interface CanonicalResult {
   // null means absent for this employee-date (criterion 18.10) — never a measured zero.
@@ -45,7 +45,9 @@ function isUsable(c: Contribution): boolean {
   return c.interval !== null && c.interval.endMinute > c.interval.startMinute;
 }
 
-export function deriveCanonical(contributions: Contribution[]): CanonicalResult {
+export function deriveCanonical(
+  contributions: Contribution[],
+): CanonicalResult {
   if (contributions.length === 0) {
     return { minutes: null, rule: null, excludedCount: 0 };
   }
@@ -61,18 +63,22 @@ export function deriveCanonical(contributions: Contribution[]): CanonicalResult 
     // criterion 18.10 reserves for "absent" once serialized. Treat an invalid magnitude as 0,
     // not as an excuse to throw or drop the contribution.
     const sanitizedMagnitudes = contributions.map((c) =>
-      Number.isFinite(c.magnitudeMinutes) && c.magnitudeMinutes >= 0 ? c.magnitudeMinutes : 0,
+      Number.isFinite(c.magnitudeMinutes) && c.magnitudeMinutes >= 0
+        ? c.magnitudeMinutes
+        : 0,
     );
     const maxMagnitude = Math.max(...sanitizedMagnitudes);
     return {
       minutes: Math.max(0, Math.min(maxMagnitude, 1440)),
-      rule: 'max_contribution',
+      rule: "max_contribution",
       excludedCount,
     };
   }
 
   // Primary rule (18.4): sweep-merge overlapping intervals, sum the merged lengths.
-  const sorted = [...usable].sort((a, b) => a.interval!.startMinute - b.interval!.startMinute);
+  const sorted = [...usable].sort(
+    (a, b) => a.interval!.startMinute - b.interval!.startMinute,
+  );
   let totalMinutes = 0;
   let mergedStart = sorted[0].interval!.startMinute;
   let mergedEnd = sorted[0].interval!.endMinute;
@@ -90,7 +96,7 @@ export function deriveCanonical(contributions: Contribution[]): CanonicalResult 
 
   return {
     minutes: Math.max(0, Math.min(totalMinutes, 1440)),
-    rule: 'interval_union',
+    rule: "interval_union",
     excludedCount: 0,
   };
 }

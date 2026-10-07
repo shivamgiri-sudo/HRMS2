@@ -28,7 +28,10 @@ export interface TeamTree {
   depth: number;
 }
 
-async function childrenOf(frontier: string[], exec: SqlExecutor): Promise<string[]> {
+async function childrenOf(
+  frontier: string[],
+  exec: SqlExecutor,
+): Promise<string[]> {
   const out: string[] = [];
   for (let i = 0; i < frontier.length; i += FRONTIER_CHUNK) {
     const chunk = frontier.slice(i, i + FRONTIER_CHUNK);
@@ -83,7 +86,10 @@ export async function resolveTeamTree(
 }
 
 /** The signed-in user's own employee row, or null when the login is not linked to an employee. */
-export async function resolveCallerEmployee(userId: string, exec: SqlExecutor = db) {
+export async function resolveCallerEmployee(
+  userId: string,
+  exec: SqlExecutor = db,
+) {
   const result = await exec.execute(
     `SELECT id, employee_code, full_name, first_name, last_name, branch_id, process_id,
             reporting_manager_id, manager_id, active_status
@@ -92,16 +98,24 @@ export async function resolveCallerEmployee(userId: string, exec: SqlExecutor = 
   );
   const row = rowsOf<RowDataPacket>(result)[0];
   if (!row) return null;
-  const name = String(row.full_name || `${row.first_name ?? ""} ${row.last_name ?? ""}`).trim();
+  const name = String(
+    row.full_name || `${row.first_name ?? ""} ${row.last_name ?? ""}`,
+  ).trim();
   return {
     id: String(row.id),
     code: row.employee_code ? String(row.employee_code) : null,
     name: name || String(row.employee_code ?? row.id),
     branchId: row.branch_id ? String(row.branch_id) : null,
     processId: row.process_id ? String(row.process_id) : null,
-    reportingManagerId: row.reporting_manager_id ? String(row.reporting_manager_id) : row.manager_id ? String(row.manager_id) : null,
+    reportingManagerId: row.reporting_manager_id
+      ? String(row.reporting_manager_id)
+      : row.manager_id
+        ? String(row.manager_id)
+        : null,
     active: Number(row.active_status) === 1,
   };
 }
 
-export type CallerEmployee = NonNullable<Awaited<ReturnType<typeof resolveCallerEmployee>>>;
+export type CallerEmployee = NonNullable<
+  Awaited<ReturnType<typeof resolveCallerEmployee>>
+>;

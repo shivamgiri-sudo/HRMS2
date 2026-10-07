@@ -1,6 +1,9 @@
-import sql from 'mssql';
-import { env } from '../config/env.js';
-import { getPoolForKey, testPoolForKey } from '../modules/external-db/external-db.service.js';
+import sql from "mssql";
+import { env } from "../config/env.js";
+import {
+  getPoolForKey,
+  testPoolForKey,
+} from "../modules/external-db/external-db.service.js";
 
 const legacyConfig: sql.config = {
   server: env.NCOSEC_DB_HOST,
@@ -9,8 +12,8 @@ const legacyConfig: sql.config = {
   password: env.NCOSEC_DB_PASSWORD,
   database: env.NCOSEC_DB_NAME,
   options: {
-    encrypt: env.NCOSEC_DB_ENCRYPT === 'true',
-    trustServerCertificate: env.NCOSEC_DB_TRUST_CERT === 'true',
+    encrypt: env.NCOSEC_DB_ENCRYPT === "true",
+    trustServerCertificate: env.NCOSEC_DB_TRUST_CERT === "true",
     enableArithAbort: true,
     readOnlyIntent: true,
   },
@@ -35,34 +38,48 @@ async function getLegacyPool(): Promise<sql.ConnectionPool> {
 }
 
 export async function getNcosecPool(): Promise<sql.ConnectionPool> {
-  const hasDirectEnvConfig = Boolean(env.NCOSEC_DB_HOST && env.NCOSEC_DB_USER && env.NCOSEC_DB_PASSWORD);
+  const hasDirectEnvConfig = Boolean(
+    env.NCOSEC_DB_HOST && env.NCOSEC_DB_USER && env.NCOSEC_DB_PASSWORD,
+  );
   if (hasDirectEnvConfig) {
     return getLegacyPool();
   }
 
   try {
-    return (await getPoolForKey('cosec_biometric')) as sql.ConnectionPool;
+    return (await getPoolForKey("cosec_biometric")) as sql.ConnectionPool;
   } catch {
-    if (!env.NCOSEC_DB_HOST) throw new Error('COSEC not configured: set credentials via Integration Hub or env vars');
+    if (!env.NCOSEC_DB_HOST)
+      throw new Error(
+        "COSEC not configured: set credentials via Integration Hub or env vars",
+      );
     return getLegacyPool();
   }
 }
 
 export async function closeNcosecPool(): Promise<void> {
-  if (legacyPool) { await legacyPool.close(); legacyPool = null; }
+  if (legacyPool) {
+    await legacyPool.close();
+    legacyPool = null;
+  }
 }
 
-export async function testNcosecConnection(): Promise<{ ok: boolean; error?: string }> {
+export async function testNcosecConnection(): Promise<{
+  ok: boolean;
+  error?: string;
+}> {
   try {
-    const result = await testPoolForKey('cosec_biometric');
+    const result = await testPoolForKey("cosec_biometric");
     if (result.ok) return result;
   } catch (err: unknown) {
-    console.error('[ncosecDb] Config-based pool test failed:', err instanceof Error ? err.message : String(err));
+    console.error(
+      "[ncosecDb] Config-based pool test failed:",
+      err instanceof Error ? err.message : String(err),
+    );
   }
   // fallback to env-var pool
   try {
     const p = await getLegacyPool();
-    await p.request().query('SELECT 1 AS ok');
+    await p.request().query("SELECT 1 AS ok");
     return { ok: true };
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

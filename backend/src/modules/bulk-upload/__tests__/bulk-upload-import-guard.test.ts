@@ -35,14 +35,21 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: ACTOR }; next(); },
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.authUser = { id: ACTOR };
+    next();
+  },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: any, _res: any, next: any) => next(),
 }));
 
-const { importReportingManagerBatch } = vi.hoisted(() => ({ importReportingManagerBatch: vi.fn() }));
-vi.mock("../reporting-manager-bulk.service.js", () => ({ importReportingManagerBatch }));
+const { importReportingManagerBatch } = vi.hoisted(() => ({
+  importReportingManagerBatch: vi.fn(),
+}));
+vi.mock("../reporting-manager-bulk.service.js", () => ({
+  importReportingManagerBatch,
+}));
 
 const { bulkUploadRouter } = await import("../bulk-upload.routes.js");
 
@@ -59,14 +66,16 @@ function importBody() {
 
 beforeEach(() => {
   execute.mockReset();
-  importReportingManagerBatch.mockReset().mockResolvedValue({ importedRows: 720, errorRows: 98, errors: [] });
+  importReportingManagerBatch
+    .mockReset()
+    .mockResolvedValue({ importedRows: 720, errorRows: 98, errors: [] });
 });
 
 describe("POST /batches/:id/import — concurrency guard", () => {
   it("claims the batch and starts the import on a clean call", async () => {
     execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // stale-claim release: nothing to release
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // claim succeeds
-    execute.mockResolvedValueOnce([[{ n: 818 }], []]);        // rows still to import
+    execute.mockResolvedValueOnce([[{ n: 818 }], []]); // rows still to import
 
     const res = await request(app())
       .post(`/api/bulk-upload/batches/${BATCH_ID}/import`)
@@ -104,8 +113,8 @@ describe("POST /batches/:id/import — concurrency guard", () => {
   it("resets the batch off 'importing' when the import throws, instead of leaving it stuck", async () => {
     execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // stale-claim release
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // claim succeeds
-    execute.mockResolvedValueOnce([[{ n: 10 }], []]);         // rows still to import
-    execute.mockResolvedValueOnce([{}, []]);                  // failed-status UPDATE
+    execute.mockResolvedValueOnce([[{ n: 10 }], []]); // rows still to import
+    execute.mockResolvedValueOnce([{}, []]); // failed-status UPDATE
     importReportingManagerBatch.mockRejectedValue(new Error("connection lost"));
 
     // The request is answered before the import fails, so the failure can no longer

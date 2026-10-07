@@ -8,17 +8,23 @@ import { portalPermissionsService } from "./portal-permissions.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 // ── Public auth (no middleware) ───────────────────────────────────────────
-router.get("/health", h(async (_req, res) => {
-  return res.json({ success: true, status: "ok", service: "portal" });
-}));
+router.get(
+  "/health",
+  h(async (_req, res) => {
+    return res.json({ success: true, status: "ok", service: "portal" });
+  }),
+);
 router.post("/auth/request-otp", h(c.requestOtp));
-router.post("/auth/verify-otp",  h(c.verifyOtp));
-router.post("/auth/login",       h(c.loginWithPassword));
+router.post("/auth/verify-otp", h(c.verifyOtp));
+router.post("/auth/login", h(c.loginWithPassword));
 // Public branding lookup for /:slug_clientportal -- no auth, no client-scoped data.
-router.get ("/process-by-slug/:slug", h(c.getProcessBySlug));
+router.get("/process-by-slug/:slug", h(c.getProcessBySlug));
 
 // ── Client-authenticated: self-service password change ──────────────────────
 router.post("/auth/change-password", requireClientAuth, h(c.changePassword));
@@ -27,7 +33,7 @@ router.post("/auth/change-password", requireClientAuth, h(c.changePassword));
 // who forgot their login_id/password and has no admin nearby had no self-service way back
 // into the password-login system, only email OTP forever. See resetClientPasswordSchema's
 // own comment for why no currentPassword field exists here.
-router.post("/auth/reset-password",  requireClientAuth, h(c.resetPassword));
+router.post("/auth/reset-password", requireClientAuth, h(c.resetPassword));
 // Sign-out: revokes THIS session's own jti server-side before the frontend clears its
 // local token. Previously "Exit" on the impersonation banner (and any future explicit
 // sign-out) only cleared localStorage -- the JWT and its portal_user_sessions row stayed
@@ -35,7 +41,7 @@ router.post("/auth/reset-password",  requireClientAuth, h(c.resetPassword));
 // real login), so a copied or leaked token kept working after the user believed they had
 // signed out. Defense in depth, not a fix for an exploited bug: nothing in this session
 // found evidence of a leaked token being reused, but "Exit" should mean exit.
-router.post("/auth/logout",          requireClientAuth, h(c.logout));
+router.post("/auth/logout", requireClientAuth, h(c.logout));
 
 // ── Internal ops (internal staff JWT) ── MUST be before requireClientAuth middleware ──
 router.use("/internal", requireAuth);
@@ -53,30 +59,78 @@ router.use("/internal", requireAuth);
 //
 // No frontend calls any of the seven — the portal UI only uses the already-guarded
 // kpi-* and snapshots/* endpoints — so this closes the hole without changing a live flow.
-const PORTAL_CONTENT_ROLES = ["admin", "hr", "finance_head", "operations_manager", "ceo"] as const;
+const PORTAL_CONTENT_ROLES = [
+  "admin",
+  "hr",
+  "finance_head",
+  "operations_manager",
+  "ceo",
+] as const;
 
-router.post("/internal/glide-paths",          requireRole(...PORTAL_CONTENT_ROLES), h(c.setGlideCommitment));
-router.post("/internal/action-plans",         requireRole(...PORTAL_CONTENT_ROLES), h(c.createActionPlan));
-router.put ("/internal/action-plans/:id",     requireRole(...PORTAL_CONTENT_ROLES), h(c.updateActionPlan));
-router.post("/internal/governance",           requireRole(...PORTAL_CONTENT_ROLES), h(c.updateGovernance));
-router.post("/internal/commentary",           requireRole(...PORTAL_CONTENT_ROLES), h(c.createCommentary));
-router.get ("/internal/client-users",         requireRole("admin", "hr"), h(c.listClientUsers));
-router.post("/internal/client-users",         requireRole("admin", "hr"), h(c.createClientUser));
-router.post("/internal/client-users/:id/generate-login", requireRole("admin", "hr"), h(c.generatePortalLogin));
+router.post(
+  "/internal/glide-paths",
+  requireRole(...PORTAL_CONTENT_ROLES),
+  h(c.setGlideCommitment),
+);
+router.post(
+  "/internal/action-plans",
+  requireRole(...PORTAL_CONTENT_ROLES),
+  h(c.createActionPlan),
+);
+router.put(
+  "/internal/action-plans/:id",
+  requireRole(...PORTAL_CONTENT_ROLES),
+  h(c.updateActionPlan),
+);
+router.post(
+  "/internal/governance",
+  requireRole(...PORTAL_CONTENT_ROLES),
+  h(c.updateGovernance),
+);
+router.post(
+  "/internal/commentary",
+  requireRole(...PORTAL_CONTENT_ROLES),
+  h(c.createCommentary),
+);
+router.get(
+  "/internal/client-users",
+  requireRole("admin", "hr"),
+  h(c.listClientUsers),
+);
+router.post(
+  "/internal/client-users",
+  requireRole("admin", "hr"),
+  h(c.createClientUser),
+);
+router.post(
+  "/internal/client-users/:id/generate-login",
+  requireRole("admin", "hr"),
+  h(c.generatePortalLogin),
+);
 
 // ── Internal: Snapshot approval workflow ─────────────────────────────────────
 router.post(
   "/internal/snapshots/prepare",
   requireRole("admin", "hr"),
   h(async (req, res) => {
-    const { process_id, snapshot_type, period } = req.body as Record<string, string>;
+    const { process_id, snapshot_type, period } = req.body as Record<
+      string,
+      string
+    >;
     if (!process_id || !snapshot_type || !period) {
-      return res.status(400).json({ error: "process_id, snapshot_type and period are required" });
+      return res
+        .status(400)
+        .json({ error: "process_id, snapshot_type and period are required" });
     }
     const userId = (req as any).authUser?.id ?? "system";
-    const result = await portalSnapshotService.prepare(process_id, snapshot_type as any, period, userId);
+    const result = await portalSnapshotService.prepare(
+      process_id,
+      snapshot_type as any,
+      period,
+      userId,
+    );
     return res.status(201).json({ data: result });
-  })
+  }),
 );
 
 router.get(
@@ -85,21 +139,31 @@ router.get(
   h(async (_req, res) => {
     const items = await portalSnapshotService.listQueue();
     return res.json({ data: items });
-  })
+  }),
 );
 
 router.patch(
   "/internal/snapshots/:id/review",
   requireRole("admin", "hr"),
   h(async (req, res) => {
-    const { action, rejection_reason } = req.body as { action: "approved" | "rejected"; rejection_reason?: string };
+    const { action, rejection_reason } = req.body as {
+      action: "approved" | "rejected";
+      rejection_reason?: string;
+    };
     if (action !== "approved" && action !== "rejected") {
-      return res.status(400).json({ error: "action must be 'approved' or 'rejected'" });
+      return res
+        .status(400)
+        .json({ error: "action must be 'approved' or 'rejected'" });
     }
     const userId = (req as any).authUser?.id ?? "system";
-    await portalSnapshotService.review(req.params.id, action, userId, rejection_reason);
+    await portalSnapshotService.review(
+      req.params.id,
+      action,
+      userId,
+      rejection_reason,
+    );
     return res.json({ ok: true });
-  })
+  }),
 );
 
 router.get(
@@ -108,7 +172,7 @@ router.get(
   h(async (_req, res) => {
     const snapshots = await portalSnapshotService.listPublished();
     return res.json({ data: snapshots });
-  })
+  }),
 );
 
 router.patch(
@@ -117,17 +181,24 @@ router.patch(
   h(async (req, res) => {
     await portalSnapshotService.deactivate(req.params.id);
     return res.json({ ok: true });
-  })
+  }),
 );
 
 router.get(
   "/internal/access-log",
   requireRole("admin", "hr"),
   h(async (req, res) => {
-    const { process_id, from_date, to_date } = req.query as Record<string, string | undefined>;
-    const logs = await portalSnapshotService.listAccessLog(process_id, from_date, to_date);
+    const { process_id, from_date, to_date } = req.query as Record<
+      string,
+      string | undefined
+    >;
+    const logs = await portalSnapshotService.listAccessLog(
+      process_id,
+      from_date,
+      to_date,
+    );
     return res.json({ data: logs });
-  })
+  }),
 );
 
 // ── KPI templates list (for frontend dropdown) ───────────────────────────────
@@ -137,10 +208,10 @@ router.get(
   h(async (_req, res) => {
     const dbMod = await import("../../db/mysql.js");
     const [rows] = await dbMod.db.execute(
-      `SELECT id, template_name FROM kpi_template WHERE active_status = 1 ORDER BY template_name`
+      `SELECT id, template_name FROM kpi_template WHERE active_status = 1 ORDER BY template_name`,
     );
     return res.json({ data: rows });
-  })
+  }),
 );
 
 /**
@@ -173,10 +244,10 @@ router.get(
       `SELECT id, metric_code, metric_name, unit, direction
          FROM kpi_metric_master
         WHERE active_status = 1
-        ORDER BY metric_name`
+        ORDER BY metric_name`,
     );
     return res.json({ data: rows });
-  })
+  }),
 );
 
 /*
@@ -195,45 +266,69 @@ router.get(
   "/internal/client-permissions",
   requireRole("admin", "hr", "super_admin"),
   h(async (req, res) => {
-    const clientUserId = req.query.client_user_id ? String(req.query.client_user_id) : undefined;
-    return res.json({ success: true, data: await portalPermissionsService.list(clientUserId) });
-  })
+    const clientUserId = req.query.client_user_id
+      ? String(req.query.client_user_id)
+      : undefined;
+    return res.json({
+      success: true,
+      data: await portalPermissionsService.list(clientUserId),
+    });
+  }),
 );
 
 router.post(
   "/internal/client-permissions",
   requireRole("admin", "super_admin"),
   h(async (req, res) => {
-    const { client_user_id, permission_type, resource_scope, resource_ids, expires_at } =
-      req.body as Record<string, unknown>;
+    const {
+      client_user_id,
+      permission_type,
+      resource_scope,
+      resource_ids,
+      expires_at,
+    } = req.body as Record<string, unknown>;
     if (!client_user_id || !permission_type) {
-      throw Object.assign(new Error("client_user_id and permission_type are required"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("client_user_id and permission_type are required"),
+        { statusCode: 400 },
+      );
     }
-    if (resource_ids !== undefined && resource_ids !== null && !Array.isArray(resource_ids)) {
-      throw Object.assign(new Error("resource_ids must be an array of ids"), { statusCode: 400 });
+    if (
+      resource_ids !== undefined &&
+      resource_ids !== null &&
+      !Array.isArray(resource_ids)
+    ) {
+      throw Object.assign(new Error("resource_ids must be an array of ids"), {
+        statusCode: 400,
+      });
     }
     await portalPermissionsService.grant({
       clientUserId: String(client_user_id),
       permissionType: String(permission_type),
       resourceScope: resource_scope == null ? null : String(resource_scope),
       resourceIds: (resource_ids as string[] | undefined) ?? null,
-      grantedBy: (req as { authUser?: { id?: string } }).authUser?.id ?? "system",
+      grantedBy:
+        (req as { authUser?: { id?: string } }).authUser?.id ?? "system",
       expiresAt: expires_at == null ? null : String(expires_at),
     });
     return res.status(201).json({ success: true });
-  })
+  }),
 );
 
 router.delete(
   "/internal/client-permissions/:id",
   requireRole("admin", "super_admin"),
   h(async (req, res) => {
-    const revoked = await portalPermissionsService.revoke(String(req.params.id));
+    const revoked = await portalPermissionsService.revoke(
+      String(req.params.id),
+    );
     if (!revoked) {
-      throw Object.assign(new Error("No active permission with that id"), { statusCode: 404 });
+      throw Object.assign(new Error("No active permission with that id"), {
+        statusCode: 404,
+      });
     }
     return res.json({ success: true });
-  })
+  }),
 );
 
 // ── KPI template assignments for portal processes ────────────────────────────
@@ -246,7 +341,9 @@ router.get(
   requireRole("admin", "hr", "finance_head", "operations_manager", "ceo"),
   h(async (req, res) => {
     const { process_id } = req.query as Record<string, string | undefined>;
-    const [rows] = await (await import("../../db/mysql.js")).db.execute(
+    const [rows] = await (
+      await import("../../db/mysql.js")
+    ).db.execute(
       `SELECT ka.id, ka.process_id, ka.template_id, ka.effective_from, ka.effective_to,
               kt.template_name, pm.process_name,
               ka.assigned_by, ka.created_at
@@ -255,19 +352,24 @@ router.get(
        JOIN process_master pm ON pm.id = ka.process_id
        ${process_id ? "WHERE ka.process_id = ?" : ""}
        ORDER BY ka.created_at DESC`,
-      process_id ? [process_id] : []
+      process_id ? [process_id] : [],
     );
     return res.json({ data: rows });
-  })
+  }),
 );
 
 router.post(
   "/internal/kpi-assignments",
   requireRole("admin", "hr", "finance_head", "operations_manager", "ceo"),
   h(async (req, res) => {
-    const { process_id, template_id, effective_from, effective_to } = req.body as Record<string, string>;
+    const { process_id, template_id, effective_from, effective_to } =
+      req.body as Record<string, string>;
     if (!process_id || !template_id || !effective_from) {
-      return res.status(400).json({ error: "process_id, template_id and effective_from are required" });
+      return res
+        .status(400)
+        .json({
+          error: "process_id, template_id and effective_from are required",
+        });
     }
     const assigned_by = (req as any).authUser?.id ?? "system";
     const { randomUUID } = await import("crypto");
@@ -276,10 +378,17 @@ router.post(
       `INSERT INTO kpi_process_assignment (id, process_id, template_id, effective_from, effective_to, assigned_by)
        VALUES (?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE effective_to = VALUES(effective_to), assigned_by = VALUES(assigned_by)`,
-      [randomUUID(), process_id, template_id, effective_from, effective_to ?? null, assigned_by]
+      [
+        randomUUID(),
+        process_id,
+        template_id,
+        effective_from,
+        effective_to ?? null,
+        assigned_by,
+      ],
     );
     return res.status(201).json({ ok: true });
-  })
+  }),
 );
 
 router.delete(
@@ -287,31 +396,36 @@ router.delete(
   requireRole("admin", "hr"),
   h(async (req, res) => {
     const dbMod = await import("../../db/mysql.js");
-    await dbMod.db.execute("DELETE FROM kpi_process_assignment WHERE id = ?", [req.params.id]);
+    await dbMod.db.execute("DELETE FROM kpi_process_assignment WHERE id = ?", [
+      req.params.id,
+    ]);
     return res.json({ ok: true });
-  })
+  }),
 );
 
 // ── Client portal (portal JWT) ────────────────────────────────────────────
-router.use("/overview",   requireClientAuth);
-router.use("/processes",  requireClientAuth);
+router.use("/overview", requireClientAuth);
+router.use("/processes", requireClientAuth);
 router.use("/commentary", requireClientAuth);
 
-router.get ("/overview",                              h(c.getOverview));
-router.get ("/processes/:id/info",                    h(c.getProcessInfo));
-router.get ("/processes/:id/kpis",                    h(c.getKpis));
-router.get ("/processes/:id/glide-paths",             h(c.getGlidePaths));
-router.get ("/processes/:id/action-plans",            h(c.getActionPlans));
-router.get ("/processes/:id/governance",              h(c.getGovernance));
-router.get ("/processes/:id/operations",              h(c.getOperations));
-router.get ("/processes/:id/metrics/:metricKey/drilldown", h(c.getMetricDrilldown));
-router.get ("/processes/:id/live-dashboard",          h(c.getLiveDashboard));
-router.get ("/processes/:id/quality",                 h(c.getQuality));
-router.get ("/processes/:id/workforce",               h(c.getWorkforce));
-router.get ("/processes/:id/attrition",               h(c.getAttrition));
-router.get ("/processes/:id/training-compliance",     h(c.getTrainingCompliance));
-router.get ("/processes/:id/commentary",              h(c.getCommentary));
-router.post("/commentary/:id/acknowledge",            h(c.acknowledgeCommentary));
-router.post("/commentary/:id/reply",                  h(c.replyCommentary));
+router.get("/overview", h(c.getOverview));
+router.get("/processes/:id/info", h(c.getProcessInfo));
+router.get("/processes/:id/kpis", h(c.getKpis));
+router.get("/processes/:id/glide-paths", h(c.getGlidePaths));
+router.get("/processes/:id/action-plans", h(c.getActionPlans));
+router.get("/processes/:id/governance", h(c.getGovernance));
+router.get("/processes/:id/operations", h(c.getOperations));
+router.get(
+  "/processes/:id/metrics/:metricKey/drilldown",
+  h(c.getMetricDrilldown),
+);
+router.get("/processes/:id/live-dashboard", h(c.getLiveDashboard));
+router.get("/processes/:id/quality", h(c.getQuality));
+router.get("/processes/:id/workforce", h(c.getWorkforce));
+router.get("/processes/:id/attrition", h(c.getAttrition));
+router.get("/processes/:id/training-compliance", h(c.getTrainingCompliance));
+router.get("/processes/:id/commentary", h(c.getCommentary));
+router.post("/commentary/:id/acknowledge", h(c.acknowledgeCommentary));
+router.post("/commentary/:id/reply", h(c.replyCommentary));
 
 export { router as portalRouter };

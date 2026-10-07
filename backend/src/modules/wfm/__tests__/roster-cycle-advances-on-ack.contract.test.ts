@@ -21,16 +21,22 @@ import { describe, expect, it } from "vitest";
 const SOURCE = readFileSync(resolve(__dirname, "../wfm.routes.ts"), "utf8");
 
 function advanceHelper(): string {
-  const start = SOURCE.indexOf("async function advanceCycleIfFullyAcknowledged");
-  expect(start, "advanceCycleIfFullyAcknowledged not found — was it renamed or removed?")
-    .toBeGreaterThan(-1);
+  const start = SOURCE.indexOf(
+    "async function advanceCycleIfFullyAcknowledged",
+  );
+  expect(
+    start,
+    "advanceCycleIfFullyAcknowledged not found — was it renamed or removed?",
+  ).toBeGreaterThan(-1);
   return SOURCE.slice(start, start + 1400);
 }
 
 describe("roster cycle advances to acknowledged", () => {
   it("is called from the acknowledge route", () => {
     // Without the call site the helper is dead code and the cycle never moves.
-    expect(SOURCE).toMatch(/await advanceCycleIfFullyAcknowledged\(dbConn, req\.params\.assignmentId\)/);
+    expect(SOURCE).toMatch(
+      /await advanceCycleIfFullyAcknowledged\(dbConn, req\.params\.assignmentId\)/,
+    );
   });
 
   it("only ever performs the published -> acknowledged transition", () => {
@@ -44,7 +50,11 @@ describe("roster cycle advances to acknowledged", () => {
   it("waits for every state that is still awaiting a human, not just employee acks", () => {
     const fn = advanceHelper();
     expect(fn).toMatch(/NOT EXISTS/);
-    for (const blocking of ["pending_employee_ack", "pending_manager_action", "escalated_to_hr"]) {
+    for (const blocking of [
+      "pending_employee_ack",
+      "pending_manager_action",
+      "escalated_to_hr",
+    ]) {
       expect(fn, `${blocking} must keep the cycle open`).toContain(blocking);
     }
   });

@@ -1,4 +1,4 @@
-import type { Pool } from 'mysql2/promise';
+import type { Pool } from "mysql2/promise";
 
 export type AprSourceAggregate = {
   agent_user: string | null;
@@ -14,14 +14,14 @@ export type AprSourceReadResult = {
 };
 
 export const APR_DIALER_AGENT_LOG_TABLES = [
-  'vicidial_agent_log_10_25',
-  'vicidial_agent_log_10_4',
-  'vicidial_agent_log_11_4',
-  'vicidial_agent_log_11_5',
-  'vicidial_agent_log_247',
-  'vicidial_agent_log_249',
-  'vicidial_agent_log_250',
-  'vicidial_agent_log_9',
+  "vicidial_agent_log_10_25",
+  "vicidial_agent_log_10_4",
+  "vicidial_agent_log_11_4",
+  "vicidial_agent_log_11_5",
+  "vicidial_agent_log_247",
+  "vicidial_agent_log_249",
+  "vicidial_agent_log_250",
+  "vicidial_agent_log_9",
 ] as const;
 
 const DEFAULT_TABLE_TIMEOUT_MS = 15_000;
@@ -34,7 +34,9 @@ function numberValue(value: unknown): number {
 }
 
 function normalizeIdentifier(value: unknown): string {
-  return String(value ?? '').trim().toUpperCase();
+  return String(value ?? "")
+    .trim()
+    .toUpperCase();
 }
 
 function errorMessage(error: unknown): string {
@@ -48,8 +50,11 @@ function nextDate(date: string): string {
 }
 
 function resolveTableTimeoutMs(): number {
-  const configured = Number(process.env.PERFORMANCE_APR_TABLE_TIMEOUT_MS ?? DEFAULT_TABLE_TIMEOUT_MS);
-  if (!Number.isFinite(configured) || configured <= 0) return DEFAULT_TABLE_TIMEOUT_MS;
+  const configured = Number(
+    process.env.PERFORMANCE_APR_TABLE_TIMEOUT_MS ?? DEFAULT_TABLE_TIMEOUT_MS,
+  );
+  if (!Number.isFinite(configured) || configured <= 0)
+    return DEFAULT_TABLE_TIMEOUT_MS;
   return Math.min(Math.floor(configured), MAX_TABLE_TIMEOUT_MS);
 }
 
@@ -58,23 +63,32 @@ export function aprSourceReadBudgetMs(): number {
 }
 
 function resolveAprTables(): string[] {
-  const configured = process.env.PERFORMANCE_APR_SOURCE_TABLES
-    ?.split(',')
+  const configured = process.env.PERFORMANCE_APR_SOURCE_TABLES?.split(",")
     .map((table) => table.trim())
     .filter(Boolean);
-  const tables = configured?.length ? configured : [...APR_DIALER_AGENT_LOG_TABLES];
+  const tables = configured?.length
+    ? configured
+    : [...APR_DIALER_AGENT_LOG_TABLES];
   const unsafe = tables.filter((table) => !SAFE_TABLE_NAME.test(table));
-  if (unsafe.length) throw new Error(`Unsafe APR source table name(s): ${unsafe.join(', ')}`);
+  if (unsafe.length)
+    throw new Error(`Unsafe APR source table name(s): ${unsafe.join(", ")}`);
   return [...new Set(tables)];
 }
 
-async function withClientTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+async function withClientTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${ms}ms`)),
+          ms,
+        );
       }),
     ]);
   } finally {
@@ -133,9 +147,16 @@ async function readAprTable(
   }
 }
 
-export async function readAprSourceAggregates(pool: Pool, date: string): Promise<AprSourceReadResult> {
+export async function readAprSourceAggregates(
+  pool: Pool,
+  date: string,
+): Promise<AprSourceReadResult> {
   const timeoutMs = resolveTableTimeoutMs();
-  const results = await Promise.all(resolveAprTables().map((table) => readAprTable(pool, table, date, timeoutMs)));
+  const results = await Promise.all(
+    resolveAprTables().map((table) =>
+      readAprTable(pool, table, date, timeoutMs),
+    ),
+  );
   return {
     rows: mergeRows(results.flatMap((result) => result.rows)),
     errors: results.flatMap((result) => result.errors),

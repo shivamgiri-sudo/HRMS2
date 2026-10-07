@@ -15,7 +15,9 @@ import type { RowDataPacket } from "mysql2";
  * image field) resolves to `null` so a calling page never breaks because a
  * photo happens to be absent.
  */
-export async function getDigilockerFacePhotoBuffer(candidateId: string): Promise<Buffer | null> {
+export async function getDigilockerFacePhotoBuffer(
+  candidateId: string,
+): Promise<Buffer | null> {
   try {
     if (!candidateId) return null;
 
@@ -25,7 +27,7 @@ export async function getDigilockerFacePhotoBuffer(candidateId: string): Promise
         WHERE candidate_id = ? AND check_type = 'digilocker'
         ORDER BY updated_at DESC
         LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
     const row = rows[0];
     if (!row || row.result_json == null) return null;
@@ -45,14 +47,18 @@ export async function getDigilockerFacePhotoBuffer(candidateId: string): Promise
 
     const obj = parsed as Record<string, unknown>;
     const data = obj.data as Record<string, unknown> | undefined;
-    const photoBase64 = (data?.image as string | undefined) ?? (obj.image as string | undefined) ?? null;
+    const photoBase64 =
+      (data?.image as string | undefined) ??
+      (obj.image as string | undefined) ??
+      null;
 
     if (!photoBase64 || typeof photoBase64 !== "string") return null;
 
     // Some providers prefix the value as a data URI (data:image/jpeg;base64,...).
-    const base64Only = photoBase64.includes(",") && photoBase64.trim().startsWith("data:")
-      ? photoBase64.slice(photoBase64.indexOf(",") + 1)
-      : photoBase64;
+    const base64Only =
+      photoBase64.includes(",") && photoBase64.trim().startsWith("data:")
+        ? photoBase64.slice(photoBase64.indexOf(",") + 1)
+        : photoBase64;
 
     const buffer = Buffer.from(base64Only, "base64");
     if (!buffer || buffer.length === 0) return null;

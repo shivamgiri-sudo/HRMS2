@@ -4,23 +4,39 @@
  *   GET /generation-runs/:id   full run record + timeline + decision breakdown + decisions + sibling runs
  * Registered onto the roster-audit router (kept separate to stay under the file-size limit).
  */
-import type { Response, Router } from 'express';
-import type { RowDataPacket } from 'mysql2';
-import { requireRole } from '../../middleware/requireRole.js';
-import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
-import { db } from '../../db/mysql.js';
-import { effectiveDecisionCode, formatDecisionType, ENGINE_ERROR_CODE, addDaysIso } from './roster-audit.helpers.js';
-import { actorName, resolveActors } from './roster-audit.actors.js';
+import type { Response, Router } from "express";
+import type { RowDataPacket } from "mysql2";
+import { requireRole } from "../../middleware/requireRole.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { db } from "../../db/mysql.js";
+import {
+  effectiveDecisionCode,
+  formatDecisionType,
+  ENGINE_ERROR_CODE,
+  addDaysIso,
+} from "./roster-audit.helpers.js";
+import { actorName, resolveActors } from "./roster-audit.actors.js";
 
 function parseJson(v: unknown): unknown {
   if (v === null || v === undefined) return null;
-  if (typeof v !== 'string') return v;
-  try { return JSON.parse(v); } catch { return v; }
+  if (typeof v !== "string") return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return v;
+  }
 }
 
-interface TimelineEntry { at: string | null; event: string; actor: string; decision: string | null; remarks: string | null }
+interface TimelineEntry {
+  at: string | null;
+  event: string;
+  actor: string;
+  decision: string | null;
+  remarks: string | null;
+}
 
-const byTime = (a: TimelineEntry, b: TimelineEntry) => String(a.at ?? '').localeCompare(String(b.at ?? ''));
+const byTime = (a: TimelineEntry, b: TimelineEntry) =>
+  String(a.at ?? "").localeCompare(String(b.at ?? ""));
 
 export function mountAuditDetailRoutes(
   router: Router,
@@ -28,7 +44,7 @@ export function mountAuditDetailRoutes(
   roles: readonly string[],
 ): void {
   router.get(
-    '/trails/:id',
+    "/trails/:id",
     requireRole(...roles),
     wrap(async (req: AuthenticatedRequest, res: Response) => {
       const { id } = req.params;
@@ -58,7 +74,7 @@ export function mountAuditDetailRoutes(
         [id],
       );
       if (rows.length === 0) {
-        res.status(404).json({ error: 'Audit trail entry not found' });
+        res.status(404).json({ error: "Audit trail entry not found" });
         return;
       }
       const r = rows[0];
@@ -98,33 +114,51 @@ export function mountAuditDetailRoutes(
       ]);
 
       const actors = await resolveActors([
-        r.override_by, r.triggeredById,
-        ...relatedRows.map((x) => x.changedById), ...amendRows.map((x) => x.changedById),
+        r.override_by,
+        r.triggeredById,
+        ...relatedRows.map((x) => x.changedById),
+        ...amendRows.map((x) => x.changedById),
       ]);
       const changedBy = r.override_by
         ? actorName(actors, r.override_by)
-        : r.triggeredById ? actorName(actors, r.triggeredById) : 'System';
+        : r.triggeredById
+          ? actorName(actors, r.triggeredById)
+          : "System";
 
       const timeline: TimelineEntry[] = [];
       if (r.run_id) {
         timeline.push({
-          at: r.runStartedAt ?? null, event: 'Generation run started',
-          actor: actorName(actors, r.triggeredById), decision: r.runType ?? null, remarks: null,
+          at: r.runStartedAt ?? null,
+          event: "Generation run started",
+          actor: actorName(actors, r.triggeredById),
+          decision: r.runType ?? null,
+          remarks: null,
         });
       }
       timeline.push({
-        at: r.created_at, event: 'Decision recorded',
-        actor: r.override_by ? actorName(actors, r.override_by) : 'System',
-        decision: formatDecisionType(code), remarks: r.rule_applied ?? null,
+        at: r.created_at,
+        event: "Decision recorded",
+        actor: r.override_by ? actorName(actors, r.override_by) : "System",
+        decision: formatDecisionType(code),
+        remarks: r.rule_applied ?? null,
       });
       if (r.override_by) {
         timeline.push({
-          at: r.override_at ?? r.created_at, event: 'Manual override',
-          actor: actorName(actors, r.override_by), decision: formatDecisionType(code), remarks: r.override_reason ?? null,
+          at: r.override_at ?? r.created_at,
+          event: "Manual override",
+          actor: actorName(actors, r.override_by),
+          decision: formatDecisionType(code),
+          remarks: r.override_reason ?? null,
         });
       }
       if (r.runCompletedAt) {
-        timeline.push({ at: r.runCompletedAt, event: `Generation run ${r.runStatus ?? 'finished'}`, actor: 'System', decision: r.runStatus ?? null, remarks: null });
+        timeline.push({
+          at: r.runCompletedAt,
+          event: `Generation run ${r.runStatus ?? "finished"}`,
+          actor: "System",
+          decision: r.runStatus ?? null,
+          remarks: null,
+        });
       }
       timeline.sort(byTime);
 
@@ -134,20 +168,34 @@ export function mountAuditDetailRoutes(
         changeType: formatDecisionType(code),
         changeTypeCode: code,
         isEngineError: code === ENGINE_ERROR_CODE,
-        reason: r.override_reason || r.rule_applied || 'System generated',
+        reason: r.override_reason || r.rule_applied || "System generated",
         ruleApplied: r.rule_applied,
         overrideReason: r.override_reason,
         overrideAt: r.override_at,
         timestamp: r.created_at,
         cycleId: r.cycle_id,
         cycle: r.cycle_id
-          ? { id: r.cycle_id, weekStart: r.cycleWeekStart ?? r.week_start_date ?? null, weekEnd: r.cycleWeekEnd ?? null, status: r.cycleStatus ?? null }
+          ? {
+              id: r.cycle_id,
+              weekStart: r.cycleWeekStart ?? r.week_start_date ?? null,
+              weekEnd: r.cycleWeekEnd ?? null,
+              status: r.cycleStatus ?? null,
+            }
           : null,
-        employee: { id: r.employee_id, code: r.employeeCode, name: r.employeeName },
+        employee: {
+          id: r.employee_id,
+          code: r.employeeCode,
+          name: r.employeeName,
+        },
         processName: r.processName,
         branchName: r.branchName,
         shift: r.shiftName
-          ? { name: r.shiftName, code: r.shiftCode, startTime: r.shiftStart, endTime: r.shiftEnd }
+          ? {
+              name: r.shiftName,
+              code: r.shiftCode,
+              startTime: r.shiftStart,
+              endTime: r.shiftEnd,
+            }
           : null,
         engine: {
           isWeekOff: Number(r.is_week_off) === 1,
@@ -155,7 +203,10 @@ export function mountAuditDetailRoutes(
           allocatedDay: r.allocated_day ?? null,
           allocationSequence: r.allocation_sequence ?? null,
           fcfsRank: r.fcfs_rank ?? null,
-          fairnessScore: r.fairness_score === null || r.fairness_score === undefined ? null : Number(r.fairness_score),
+          fairnessScore:
+            r.fairness_score === null || r.fairness_score === undefined
+              ? null
+              : Number(r.fairness_score),
           skillCheckResult: r.skill_check_result ?? null,
           capacityAtAllocation: parseJson(r.capacity_at_allocation),
         },
@@ -163,7 +214,9 @@ export function mountAuditDetailRoutes(
         newValue: parseJson(r.new_value_json),
         changedBy,
         changedById: r.override_by || r.triggeredById || null,
-        changedByCode: r.override_by ? actors.get(r.override_by)?.code ?? null : null,
+        changedByCode: r.override_by
+          ? (actors.get(r.override_by)?.code ?? null)
+          : null,
         actedByRole: r.acted_by_role ?? null,
         run: r.run_id
           ? {
@@ -176,14 +229,22 @@ export function mountAuditDetailRoutes(
             }
           : null,
         timeline,
-        employeeTrend: trendRows.map((t) => ({ date: t.d, total: Number(t.total), overrides: Number(t.overrides ?? 0) })),
+        employeeTrend: trendRows.map((t) => ({
+          date: t.d,
+          total: Number(t.total),
+          overrides: Number(t.overrides ?? 0),
+        })),
         relatedChanges: relatedRows.map((rr: RowDataPacket) => ({
           id: rr.id,
           date: rr.date,
-          changeType: formatDecisionType(effectiveDecisionCode(rr.changeType, rr.reason)),
-          reason: rr.overrideReason || rr.reason || 'System generated',
+          changeType: formatDecisionType(
+            effectiveDecisionCode(rr.changeType, rr.reason),
+          ),
+          reason: rr.overrideReason || rr.reason || "System generated",
           timestamp: rr.timestamp,
-          changedBy: rr.changedById ? actorName(actors, rr.changedById) : 'System',
+          changedBy: rr.changedById
+            ? actorName(actors, rr.changedById)
+            : "System",
         })),
         amendments: amendRows.map((a: RowDataPacket) => ({
           id: a.id,
@@ -193,7 +254,8 @@ export function mountAuditDetailRoutes(
           timestamp: a.timestamp,
           newAssignmentType: a.newAssignmentType,
           isLateChange: Number(a.isLateChange) === 1,
-          leadTimeHours: a.leadTimeHours === null ? null : Number(a.leadTimeHours),
+          leadTimeHours:
+            a.leadTimeHours === null ? null : Number(a.leadTimeHours),
           changedBy: actorName(actors, a.changedById),
         })),
       });
@@ -201,7 +263,7 @@ export function mountAuditDetailRoutes(
   );
 
   router.get(
-    '/generation-runs/:id',
+    "/generation-runs/:id",
     requireRole(...roles),
     wrap(async (req: AuthenticatedRequest, res: Response) => {
       const { id } = req.params;
@@ -222,14 +284,15 @@ export function mountAuditDetailRoutes(
         [id],
       );
       if (rows.length === 0) {
-        res.status(404).json({ error: 'Generation run not found' });
+        res.status(404).json({ error: "Generation run not found" });
         return;
       }
       const r = rows[0];
 
-      const [[decisionRows], [breakdownRows], [dailyRows], [siblingRows]] = await Promise.all([
-        db.execute<RowDataPacket[]>(
-          `SELECT rda.id, rda.roster_date AS date, rda.decision_type AS changeType,
+      const [[decisionRows], [breakdownRows], [dailyRows], [siblingRows]] =
+        await Promise.all([
+          db.execute<RowDataPacket[]>(
+            `SELECT rda.id, rda.roster_date AS date, rda.decision_type AS changeType,
                   rda.override_reason AS overrideReason, rda.rule_applied AS reason,
                   rda.created_at AS timestamp, e.employee_code AS employeeCode, e.full_name AS employeeName
              FROM roster_decision_audit rda
@@ -237,30 +300,30 @@ export function mountAuditDetailRoutes(
             WHERE rda.run_id = ?
             ORDER BY rda.created_at DESC, rda.id DESC
             LIMIT 100`,
-          [id],
-        ),
-        db.execute<RowDataPacket[]>(
-          `SELECT decision_type, COALESCE(rule_applied LIKE 'error:%', 0) AS is_error, COUNT(*) AS count
+            [id],
+          ),
+          db.execute<RowDataPacket[]>(
+            `SELECT decision_type, COALESCE(rule_applied LIKE 'error:%', 0) AS is_error, COUNT(*) AS count
              FROM roster_decision_audit WHERE run_id = ?
             GROUP BY decision_type, is_error`,
-          [id],
-        ),
-        db.execute<RowDataPacket[]>(
-          `SELECT roster_date AS d, COUNT(*) AS total
+            [id],
+          ),
+          db.execute<RowDataPacket[]>(
+            `SELECT roster_date AS d, COUNT(*) AS total
              FROM roster_decision_audit WHERE run_id = ?
             GROUP BY roster_date ORDER BY roster_date`,
-          [id],
-        ),
-        db.execute<RowDataPacket[]>(
-          `SELECT id, run_type AS runType, status, started_at AS startedAt, completed_at AS completedAt,
+            [id],
+          ),
+          db.execute<RowDataPacket[]>(
+            `SELECT id, run_type AS runType, status, started_at AS startedAt, completed_at AS completedAt,
                   assignments_created AS assignmentsCreated, conflicts_found AS conflictsFound
              FROM roster_generation_run
             WHERE cycle_id = ? AND id != ?
             ORDER BY started_at DESC
             LIMIT 5`,
-          [r.cycle_id, id],
-        ),
-      ]);
+            [r.cycle_id, id],
+          ),
+        ]);
 
       const actors = await resolveActors([r.triggered_by]);
       const trigger = actors.get(r.triggered_by);
@@ -280,16 +343,33 @@ export function mountAuditDetailRoutes(
         .sort((a, b) => b.count - a.count);
 
       const timeline: TimelineEntry[] = [
-        { at: r.started_at, event: 'Run started', actor: triggerName, decision: r.run_type, remarks: null },
+        {
+          at: r.started_at,
+          event: "Run started",
+          actor: triggerName,
+          decision: r.run_type,
+          remarks: null,
+        },
       ];
       if (r.completed_at) {
-        timeline.push({ at: r.completed_at, event: `Run ${r.status}`, actor: 'System', decision: r.status, remarks: null });
+        timeline.push({
+          at: r.completed_at,
+          event: `Run ${r.status}`,
+          actor: "System",
+          decision: r.status,
+          remarks: null,
+        });
       }
 
       res.json({
         id: r.id,
         cycleId: r.cycle_id,
-        cycle: { id: r.cycle_id, weekStart: r.weekStart ?? null, weekEnd: r.weekEnd ?? null, status: r.cycleStatus ?? null },
+        cycle: {
+          id: r.cycle_id,
+          weekStart: r.weekStart ?? null,
+          weekEnd: r.weekEnd ?? null,
+          status: r.cycleStatus ?? null,
+        },
         processId: r.process_id,
         processName: r.processName,
         branchId: r.branch_id,
@@ -304,15 +384,25 @@ export function mountAuditDetailRoutes(
         },
         startedAt: r.started_at,
         completedAt: r.completed_at,
-        duration: r.durationSeconds === null || r.durationSeconds === undefined ? null : Math.max(0, Number(r.durationSeconds)),
-        triggeredBy: { id: r.triggered_by, name: triggerName, code: trigger?.code ?? null },
+        duration:
+          r.durationSeconds === null || r.durationSeconds === undefined
+            ? null
+            : Math.max(0, Number(r.durationSeconds)),
+        triggeredBy: {
+          id: r.triggered_by,
+          name: triggerName,
+          code: trigger?.code ?? null,
+        },
         parameters: parseJson(r.parameters_json),
         errorDetails: parseJson(r.error_details),
         timeline,
         decisionSummary,
         decisionTotal,
         engineErrorCount: errorTotal,
-        decisionsByDate: dailyRows.map((d) => ({ date: d.d, total: Number(d.total) })),
+        decisionsByDate: dailyRows.map((d) => ({
+          date: d.d,
+          total: Number(d.total),
+        })),
         decisions: decisionRows.map((d: RowDataPacket) => {
           const c = effectiveDecisionCode(d.changeType, d.reason);
           return {
@@ -320,14 +410,19 @@ export function mountAuditDetailRoutes(
             date: d.date,
             changeType: formatDecisionType(c),
             changeTypeCode: c,
-            reason: d.overrideReason || d.reason || 'System generated',
+            reason: d.overrideReason || d.reason || "System generated",
             timestamp: d.timestamp,
             employee: { code: d.employeeCode, name: d.employeeName },
           };
         }),
         siblingRuns: siblingRows.map((s: RowDataPacket) => ({
-          id: s.id, runType: s.runType, status: s.status, startedAt: s.startedAt, completedAt: s.completedAt,
-          assignmentsCreated: Number(s.assignmentsCreated ?? 0), conflictsFound: Number(s.conflictsFound ?? 0),
+          id: s.id,
+          runType: s.runType,
+          status: s.status,
+          startedAt: s.startedAt,
+          completedAt: s.completedAt,
+          assignmentsCreated: Number(s.assignmentsCreated ?? 0),
+          conflictsFound: Number(s.conflictsFound ?? 0),
         })),
       });
     }),

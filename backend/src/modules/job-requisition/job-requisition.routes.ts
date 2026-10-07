@@ -51,14 +51,27 @@ export const jobRequisitionRouter = Router();
  * not permission to see every row.
  */
 const REQUISITION_READ_ROLES = [
-  "super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager",
-  "process_manager", "management", "manager", "assistant_manager", "recruiter",
+  "super_admin",
+  "hr",
+  "recruitment_hr",
+  "branch_head",
+  "operations_manager",
+  "process_manager",
+  "management",
+  "manager",
+  "assistant_manager",
+  "recruiter",
 ] as const;
 
-type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
-const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  void fn(req, res).catch(next);
-};
+type AsyncHandler = (
+  req: AuthenticatedRequest,
+  res: Response,
+) => Promise<unknown>;
+const h =
+  (fn: AsyncHandler) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    void fn(req, res).catch(next);
+  };
 
 /**
  * Row-scope guard for the single-requisition read endpoints.
@@ -74,15 +87,21 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
  * check. Left alone deliberately — guarding an approval path needs a branch-scoped login
  * to test against, and every demo token here carries scope_type='all'.
  */
-const inScope = (key: "id" | "code") =>
+const inScope =
+  (key: "id" | "code") =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const value = req.params[key];
     void jobRequisitionService
-      .isRequisitionVisible(req.authUser!, key === "id" ? { id: value } : { code: value })
+      .isRequisitionVisible(
+        req.authUser!,
+        key === "id" ? { id: value } : { code: value },
+      )
       .then((visible) =>
         visible
           ? next()
-          : res.status(404).json({ success: false, message: "Requisition not found" }),
+          : res
+              .status(404)
+              .json({ success: false, message: "Requisition not found" }),
       )
       .catch(next);
   };
@@ -93,17 +112,27 @@ jobRequisitionRouter.get(
   requireAuth,
   requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { branch_id, branch_name, approval_status, priority, from_date, to_date } = req.query;
-    const metrics = await jobRequisitionService.getDashboardMetrics({
-      branch_id: branch_id as string | undefined,
-      branch_name: branch_name as string | undefined,
-      approval_status: approval_status as string | undefined,
-      priority: priority as string | undefined,
-      from_date: from_date as string | undefined,
-      to_date: to_date as string | undefined,
-    }, req.authUser!);
+    const {
+      branch_id,
+      branch_name,
+      approval_status,
+      priority,
+      from_date,
+      to_date,
+    } = req.query;
+    const metrics = await jobRequisitionService.getDashboardMetrics(
+      {
+        branch_id: branch_id as string | undefined,
+        branch_name: branch_name as string | undefined,
+        approval_status: approval_status as string | undefined,
+        priority: priority as string | undefined,
+        from_date: from_date as string | undefined,
+        to_date: to_date as string | undefined,
+      },
+      req.authUser!,
+    );
     return res.json({ success: true, data: metrics });
-  })
+  }),
 );
 
 // ─── List Requisitions ───────────────────────────────────────────────────────
@@ -117,9 +146,11 @@ jobRequisitionRouter.get(
       branch_name: req.query.branch_name as string | undefined,
       process_id: req.query.process_id as string | undefined,
       department_id: req.query.department_id as string | undefined,
-      approval_status: req.query.approval_status as RequisitionFilters["approval_status"],
+      approval_status: req.query
+        .approval_status as RequisitionFilters["approval_status"],
       priority: req.query.priority as RequisitionFilters["priority"],
-      employment_type: req.query.employment_type as RequisitionFilters["employment_type"],
+      employment_type: req.query
+        .employment_type as RequisitionFilters["employment_type"],
       requested_by: req.query.requested_by as string | undefined,
       owner_recruiter_id: req.query.owner_recruiter_id as string | undefined,
       from_date: req.query.from_date as string | undefined,
@@ -130,9 +161,12 @@ jobRequisitionRouter.get(
       limit: req.query.limit ? Number(req.query.limit) : 20,
     };
 
-    const result = await jobRequisitionService.listRequisitions(filters, req.authUser!);
+    const result = await jobRequisitionService.listRequisitions(
+      filters,
+      req.authUser!,
+    );
     return res.json({ success: true, ...result });
-  })
+  }),
 );
 
 // ─── Get Pending Approvals for Role ──────────────────────────────────────────
@@ -142,9 +176,12 @@ jobRequisitionRouter.get(
   requireRole("super_admin", "branch_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const role = req.authUser?.role ?? "branch_head";
-    const data = await jobRequisitionService.getPendingForApproval(role, req.authUser!);
+    const data = await jobRequisitionService.getPendingForApproval(
+      role,
+      req.authUser!,
+    );
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Get Available LMS Batches for Dropdown ──────────────────────────────────
@@ -161,26 +198,46 @@ jobRequisitionRouter.get(
       process: process as string | undefined,
     });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Get Processes for Branch (from process_master, for cascading dropdown) ──
 jobRequisitionRouter.get(
   "/processes-for-branch/:branchName",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management", "recruiter"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+    "process_manager",
+    "management",
+    "recruiter",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branchName } = req.params;
-    const data = await jobRequisitionService.getProcessesForBranch(decodeURIComponent(branchName));
+    const data = await jobRequisitionService.getProcessesForBranch(
+      decodeURIComponent(branchName),
+    );
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Get Open Requisitions for Branch (for candidate linking) ────────────────
 jobRequisitionRouter.get(
   "/open-for-branch/:branchName",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management", "recruiter"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+    "process_manager",
+    "management",
+    "recruiter",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branchName } = req.params;
     const processId = req.query.processId as string | undefined;
@@ -188,10 +245,10 @@ jobRequisitionRouter.get(
     const data = await jobRequisitionService.getOpenRequisitionsForBranch(
       decodeURIComponent(branchName),
       processId ? decodeURIComponent(processId) : undefined,
-      processName ? decodeURIComponent(processName) : undefined
+      processName ? decodeURIComponent(processName) : undefined,
     );
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Aggregate Funnel Across All Requisitions ────────────────────────────────
@@ -202,22 +259,34 @@ jobRequisitionRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const branch_name = req.query.branch_name as string | undefined;
     const approval_status = req.query.approval_status as string | undefined;
-    const data = await jobRequisitionService.getAggregateFunnel({ branch_name, approval_status }, req.authUser!);
+    const data = await jobRequisitionService.getAggregateFunnel(
+      { branch_name, approval_status },
+      req.authUser!,
+    );
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Handover Recipient Options ───────────────────────────────────────────────
 jobRequisitionRouter.get(
   "/handover-recipients",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await jobRequisitionService.getHandoverRecipientOptions([
-      "operations_manager", "trainer", "branch_head", "process_manager",
+      "operations_manager",
+      "trainer",
+      "branch_head",
+      "process_manager",
     ]);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Get Single Requisition ──────────────────────────────────────────────────
@@ -230,10 +299,12 @@ jobRequisitionRouter.get(
     const { id } = req.params;
     const data = await jobRequisitionService.getRequisition(id);
     if (!data) {
-      return res.status(404).json({ success: false, message: "Requisition not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Requisition not found" });
     }
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Get Requisition by Code ─────────────────────────────────────────────────
@@ -246,10 +317,12 @@ jobRequisitionRouter.get(
     const { code } = req.params;
     const data = await jobRequisitionService.getRequisitionByCode(code);
     if (!data) {
-      return res.status(404).json({ success: false, message: "Requisition not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Requisition not found" });
     }
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Get Approval History ────────────────────────────────────────────────────
@@ -262,7 +335,7 @@ jobRequisitionRouter.get(
     const { id } = req.params;
     const data = await jobRequisitionService.getApprovalHistory(id);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Get Linked Candidates ───────────────────────────────────────────────────
@@ -275,21 +348,34 @@ jobRequisitionRouter.get(
     const { id } = req.params;
     const data = await jobRequisitionService.getRequisitionCandidates(id);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Create Requisition ──────────────────────────────────────────────────────
 jobRequisitionRouter.post(
   "/",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "assistant_manager"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+    "process_manager",
+    "assistant_manager",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const input: CreateRequisitionInput = req.body;
 
-    if (!input.designation_name || !input.branch_name || !input.requested_headcount) {
+    if (
+      !input.designation_name ||
+      !input.branch_name ||
+      !input.requested_headcount
+    ) {
       return res.status(400).json({
         success: false,
-        message: "designation_name, branch_name, and requested_headcount are required",
+        message:
+          "designation_name, branch_name, and requested_headcount are required",
       });
     }
 
@@ -304,28 +390,49 @@ jobRequisitionRouter.post(
     const userName = req.authUser?.email ?? null;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
 
     // A branch-scoped raiser must not open headcount against someone else's branch.
     // Silent for actors whose scope names no branch — see canCreateForBranch.
-    if (!(await jobRequisitionService.canCreateForBranch(req.authUser!, input.branch_name))) {
+    if (
+      !(await jobRequisitionService.canCreateForBranch(
+        req.authUser!,
+        input.branch_name,
+      ))
+    ) {
       return res.status(403).json({
         success: false,
         message: `You cannot raise a requisition for ${input.branch_name}. It is outside your assigned branch.`,
       });
     }
 
-    const data = await jobRequisitionService.createRequisition(input, userId, userName);
-    return res.status(201).json({ success: true, data, message: "Requisition created as draft" });
-  })
+    const data = await jobRequisitionService.createRequisition(
+      input,
+      userId,
+      userName,
+    );
+    return res
+      .status(201)
+      .json({ success: true, data, message: "Requisition created as draft" });
+  }),
 );
 
 // ─── Update Requisition ──────────────────────────────────────────────────────
 jobRequisitionRouter.patch(
   "/:id",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "assistant_manager"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+    "process_manager",
+    "assistant_manager",
+  ),
   inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
@@ -333,19 +440,33 @@ jobRequisitionRouter.patch(
     const userId = req.authUser?.id;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
 
-    const data = await jobRequisitionService.updateRequisition(id, input, userId);
+    const data = await jobRequisitionService.updateRequisition(
+      id,
+      input,
+      userId,
+    );
     return res.json({ success: true, data, message: "Requisition updated" });
-  })
+  }),
 );
 
 // ─── Submit for Approval ─────────────────────────────────────────────────────
 jobRequisitionRouter.post(
   "/:id/submit",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "assistant_manager"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+    "process_manager",
+    "assistant_manager",
+  ),
   inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
@@ -354,12 +475,23 @@ jobRequisitionRouter.post(
     const userRole = req.authUser?.role ?? null;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
 
-    const data = await jobRequisitionService.submitForApproval(id, userId, userName, userRole);
-    return res.json({ success: true, data, message: "Requisition submitted for approval" });
-  })
+    const data = await jobRequisitionService.submitForApproval(
+      id,
+      userId,
+      userName,
+      userRole,
+    );
+    return res.json({
+      success: true,
+      data,
+      message: "Requisition submitted for approval",
+    });
+  }),
 );
 
 // ─── Approve Requisition ─────────────────────────────────────────────────────
@@ -376,12 +508,20 @@ jobRequisitionRouter.post(
     const userRole = req.authUser?.role ?? null;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
 
-    const data = await jobRequisitionService.approveRequisition(id, userId, userName, userRole, remarks);
+    const data = await jobRequisitionService.approveRequisition(
+      id,
+      userId,
+      userName,
+      userRole,
+      remarks,
+    );
     return res.json({ success: true, data, message: "Requisition approved" });
-  })
+  }),
 );
 
 // ─── Reject Requisition ──────────────────────────────────────────────────────
@@ -398,7 +538,9 @@ jobRequisitionRouter.post(
     const userRole = req.authUser?.role ?? null;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
 
     if (!reason || typeof reason !== "string" || reason.trim().length < 5) {
@@ -408,9 +550,15 @@ jobRequisitionRouter.post(
       });
     }
 
-    const data = await jobRequisitionService.rejectRequisition(id, userId, userName, userRole, reason.trim());
+    const data = await jobRequisitionService.rejectRequisition(
+      id,
+      userId,
+      userName,
+      userRole,
+      reason.trim(),
+    );
     return res.json({ success: true, data, message: "Requisition rejected" });
-  })
+  }),
 );
 
 // ─── Close Requisition ───────────────────────────────────────────────────────
@@ -424,7 +572,15 @@ jobRequisitionRouter.post(
 jobRequisitionRouter.post(
   "/:id/close",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "assistant_manager"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+    "process_manager",
+    "assistant_manager",
+  ),
   inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
@@ -432,16 +588,24 @@ jobRequisitionRouter.post(
     const userId = req.authUser?.id;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
 
     if (!reason || typeof reason !== "string") {
-      return res.status(400).json({ success: false, message: "A close reason is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "A close reason is required" });
     }
 
-    const data = await jobRequisitionService.closeRequisition(id, userId, reason.trim());
+    const data = await jobRequisitionService.closeRequisition(
+      id,
+      userId,
+      reason.trim(),
+    );
     return res.json({ success: true, data, message: "Requisition closed" });
-  })
+  }),
 );
 
 // ─── Request Close ───────────────────────────────────────────────────────────
@@ -463,7 +627,9 @@ jobRequisitionRouter.post(
     const userRole = req.authUser?.role ?? null;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
 
     if (!reason || typeof reason !== "string" || reason.trim().length < 5) {
@@ -473,9 +639,15 @@ jobRequisitionRouter.post(
       });
     }
 
-    const data = await jobRequisitionService.requestClose(id, userId, userName, userRole, reason.trim());
+    const data = await jobRequisitionService.requestClose(
+      id,
+      userId,
+      userName,
+      userRole,
+      reason.trim(),
+    );
     return res.json({ success: true, data, message: "Close request sent" });
-  })
+  }),
 );
 
 // ─── Extend Deadline ─────────────────────────────────────────────────────────
@@ -490,25 +662,48 @@ jobRequisitionRouter.post(
     const userId = req.authUser?.id;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
     if (!new_validity || typeof new_validity !== "string") {
-      return res.status(400).json({ success: false, message: "new_validity (YYYY-MM-DD) is required" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "new_validity (YYYY-MM-DD) is required",
+        });
     }
     if (!reason || typeof reason !== "string" || reason.trim().length < 5) {
-      return res.status(400).json({ success: false, message: "A reason of at least 5 characters is required" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "A reason of at least 5 characters is required",
+        });
     }
 
-    const data = await jobRequisitionService.extendDeadline(id, new_validity, reason.trim(), userId);
+    const data = await jobRequisitionService.extendDeadline(
+      id,
+      new_validity,
+      reason.trim(),
+      userId,
+    );
     return res.json({ success: true, data, message: "Deadline extended" });
-  })
+  }),
 );
 
 // ─── Link Candidate to Requisition ───────────────────────────────────────────
 jobRequisitionRouter.post(
   "/:id/link-candidate",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+  ),
   inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id: requisitionId } = req.params;
@@ -516,11 +711,15 @@ jobRequisitionRouter.post(
     const userId = req.authUser?.id;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
 
     if (!candidate_id) {
-      return res.status(400).json({ success: false, message: "candidate_id is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "candidate_id is required" });
     }
 
     const data = await jobRequisitionService.linkCandidate(
@@ -528,23 +727,41 @@ jobRequisitionRouter.post(
       candidate_id,
       userId,
       link_source ?? "manual",
-      remarks
+      remarks,
     );
-    return res.status(201).json({ success: true, data, message: "Candidate linked to requisition" });
-  })
+    return res
+      .status(201)
+      .json({
+        success: true,
+        data,
+        message: "Candidate linked to requisition",
+      });
+  }),
 );
 
 // ─── Update Candidate Outcome ────────────────────────────────────────────────
 jobRequisitionRouter.patch(
   "/:id/candidate/:candidateId/outcome",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+  ),
   inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id: requisitionId, candidateId } = req.params;
     const { outcome, remarks } = req.body;
 
-    const validOutcomes: CandidateOutcome[] = ["in_progress", "selected", "rejected", "withdrawn", "offer_declined"];
+    const validOutcomes: CandidateOutcome[] = [
+      "in_progress",
+      "selected",
+      "rejected",
+      "withdrawn",
+      "offer_declined",
+    ];
     if (!outcome || !validOutcomes.includes(outcome)) {
       return res.status(400).json({
         success: false,
@@ -552,9 +769,14 @@ jobRequisitionRouter.patch(
       });
     }
 
-    await jobRequisitionService.updateCandidateOutcome(requisitionId, candidateId, outcome, remarks);
+    await jobRequisitionService.updateCandidateOutcome(
+      requisitionId,
+      candidateId,
+      outcome,
+      remarks,
+    );
     return res.json({ success: true, message: "Candidate outcome updated" });
-  })
+  }),
 );
 
 // ─── Get Requisition Funnel Metrics ──────────────────────────────────────────
@@ -567,17 +789,25 @@ jobRequisitionRouter.get(
     const { id } = req.params;
     const data = await jobRequisitionService.getRequisitionFunnel(id);
     if (!data) {
-      return res.status(404).json({ success: false, message: "Requisition not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Requisition not found" });
     }
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Mark Batch as Handed Over to Operations ─────────────────────────────────
 jobRequisitionRouter.post(
   "/:id/handover",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+  ),
   inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
@@ -586,16 +816,24 @@ jobRequisitionRouter.post(
     const userName = req.authUser?.email ?? null;
 
     if (!userId) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
 
     await jobRequisitionService.markHandover(
-      id, userId, userName, notes,
+      id,
+      userId,
+      userName,
+      notes,
       Array.isArray(emailRecipientUserIds) ? emailRecipientUserIds : undefined,
-      Array.isArray(manualCcEmails) ? manualCcEmails : undefined
+      Array.isArray(manualCcEmails) ? manualCcEmails : undefined,
     );
-    return res.json({ success: true, message: "Requisition marked as handed over" });
-  })
+    return res.json({
+      success: true,
+      message: "Requisition marked as handed over",
+    });
+  }),
 );
 
 // ─── Get Handover Pack Data ───────────────────────────────────────────────────
@@ -608,7 +846,7 @@ jobRequisitionRouter.get(
     const { id } = req.params;
     const data = await jobRequisitionService.getHandoverPack(id);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Get Joined Employees for Requisition ────────────────────────────────────
@@ -621,7 +859,7 @@ jobRequisitionRouter.get(
     const { id } = req.params;
     const data = await jobRequisitionService.getJoinedEmployees(id);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Delete Requisition (super_admin only) ────────────────────────────────────
@@ -633,14 +871,20 @@ jobRequisitionRouter.delete(
     const { id } = req.params;
     await jobRequisitionService.deleteRequisition(id);
     return res.json({ success: true, message: "Requisition deleted" });
-  })
+  }),
 );
 
 // ─── Update Planned Batch ────────────────────────────────────────────────────
 jobRequisitionRouter.patch(
   "/:id/batch",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  requireRole(
+    "super_admin",
+    "hr",
+    "recruitment_hr",
+    "branch_head",
+    "operations_manager",
+  ),
   inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
@@ -650,11 +894,11 @@ jobRequisitionRouter.patch(
       id,
       batch_no ?? null,
       batch_name ?? null,
-      training_start_date ?? null
+      training_start_date ?? null,
     );
 
     return res.json({ success: true, message: "Planned batch updated" });
-  })
+  }),
 );
 
 // ─── Backfill Candidates by Mobile Number ────────────────────────────────────
@@ -688,12 +932,17 @@ jobRequisitionRouter.post(
        WHERE ${reqCondition}
          AND jr.active_status = 1
        ORDER BY jr.created_at DESC`,
-      reqParams
+      reqParams,
     );
 
     let totalLinked = 0;
     let totalSkipped = 0;
-    const results: Array<{ requisition_code: string; linked: number; skipped: number; details: string[] }> = [];
+    const results: Array<{
+      requisition_code: string;
+      linked: number;
+      skipped: number;
+      details: string[];
+    }> = [];
 
     for (const req of requisitions as RowDataPacket[]) {
       const details: string[] = [];
@@ -703,7 +952,8 @@ jobRequisitionRouter.post(
       // Find employees who match this requisition by branch and have mobile numbers
       // Join date should be within reasonable range of requisition dates
       const startDate = req.approved_at ?? req.created_at;
-      const endDate = req.requisition_validity ?? new Date().toISOString().slice(0, 10);
+      const endDate =
+        req.requisition_validity ?? new Date().toISOString().slice(0, 10);
 
       const [employees] = await db.execute<RowDataPacket[]>(
         `SELECT
@@ -722,7 +972,7 @@ jobRequisitionRouter.post(
            AND e.date_of_joining >= DATE(?)
            AND e.date_of_joining <= DATE(?)
          ORDER BY e.date_of_joining ASC`,
-        [req.branch_name, startDate, endDate]
+        [req.branch_name, startDate, endDate],
       );
 
       for (const emp of employees as RowDataPacket[]) {
@@ -748,7 +998,7 @@ jobRequisitionRouter.post(
            )
            ORDER BY created_at DESC
            LIMIT 1`,
-          [mobile, `0${mobile}`]
+          [mobile, `0${mobile}`],
         );
 
         if (!candidates[0]) {
@@ -763,7 +1013,7 @@ jobRequisitionRouter.post(
           `SELECT id FROM job_requisition_candidate
            WHERE requisition_id = ? AND candidate_id = ?
            LIMIT 1`,
-          [req.requisition_id, candidateId]
+          [req.requisition_id, candidateId],
         );
 
         if (existing[0]) {
@@ -785,7 +1035,7 @@ jobRequisitionRouter.post(
             null,
             emp.date_of_joining,
             `Backfill: matched employee ${emp.employee_code} by mobile`,
-          ]
+          ],
         );
 
         linked++;
@@ -813,6 +1063,5 @@ jobRequisitionRouter.post(
       requisitions_processed: requisitions.length,
       results,
     });
-  })
+  }),
 );
-

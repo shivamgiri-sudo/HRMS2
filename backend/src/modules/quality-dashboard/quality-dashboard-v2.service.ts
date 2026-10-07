@@ -27,7 +27,12 @@ export interface QualitySummaryResponse {
 
 const DEFAULT_RANGE_DAYS = 30;
 
-type PerUserAgg = { user: string; calls: number; scoreSum: number; scoredCalls: number };
+type PerUserAgg = {
+  user: string;
+  calls: number;
+  scoreSum: number;
+  scoredCalls: number;
+};
 
 type EmployeeInfo = {
   id: string;
@@ -53,7 +58,12 @@ function round1(n: number): number {
  */
 class QualityDashboardV2Service {
   private async perUserAggregates(rangeDays: number): Promise<PerUserAgg[]> {
-    const rows = await querySource<{ User: string; calls: number; score_sum: string | null; scored_calls: number }>(
+    const rows = await querySource<{
+      User: string;
+      calls: number;
+      score_sum: string | null;
+      scored_calls: number;
+    }>(
       `SELECT User,
               COUNT(*) AS calls,
               SUM(CASE WHEN quality_percentage IS NOT NULL THEN quality_percentage ELSE 0 END) AS score_sum,
@@ -65,7 +75,12 @@ class QualityDashboardV2Service {
       [rangeDays],
     ).catch((err) => {
       logger.error("quality-dashboard-v2 db_audit aggregate failed", err);
-      return [] as Array<{ User: string; calls: number; score_sum: string | null; scored_calls: number }>;
+      return [] as Array<{
+        User: string;
+        calls: number;
+        score_sum: string | null;
+        scored_calls: number;
+      }>;
     });
     return rows.map((r) => ({
       user: r.User,
@@ -75,7 +90,9 @@ class QualityDashboardV2Service {
     }));
   }
 
-  private async employeesByCode(codes: string[]): Promise<Map<string, EmployeeInfo>> {
+  private async employeesByCode(
+    codes: string[],
+  ): Promise<Map<string, EmployeeInfo>> {
     if (codes.length === 0) return new Map();
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_code, full_name, branch_id, process_id, reporting_manager_id, manager_id, active_status
@@ -109,22 +126,35 @@ class QualityDashboardV2Service {
    * (delta-audit 2026-08-14, P1). Extracted here so both call sites can
    * never drift apart on what "in scope" means.
    */
-  private isEmployeeInScope(scope: DashboardScope, info: EmployeeInfo): boolean {
+  private isEmployeeInScope(
+    scope: DashboardScope,
+    info: EmployeeInfo,
+  ): boolean {
     if (!info.activeStatus) return false;
     if (scope.level === "ORG_ALL") return true;
-    if (scope.level === "BRANCH_ALL") return !!info.branchId && scope.branchIds.includes(info.branchId);
-    if (scope.level === "PROCESS_ALL") return !!info.processId && scope.processIds.includes(info.processId);
-    if (scope.level === "TEAM_ONLY" || scope.level === "SELF_ONLY") return scope.employeeIds.includes(info.id);
+    if (scope.level === "BRANCH_ALL")
+      return !!info.branchId && scope.branchIds.includes(info.branchId);
+    if (scope.level === "PROCESS_ALL")
+      return !!info.processId && scope.processIds.includes(info.processId);
+    if (scope.level === "TEAM_ONLY" || scope.level === "SELF_ONLY")
+      return scope.employeeIds.includes(info.id);
     if (scope.level === "CUSTOM_SCOPE") {
-      const branchOk = scope.branchIds.length === 0 || (!!info.branchId && scope.branchIds.includes(info.branchId));
-      const processOk = scope.processIds.length === 0 || (!!info.processId && scope.processIds.includes(info.processId));
+      const branchOk =
+        scope.branchIds.length === 0 ||
+        (!!info.branchId && scope.branchIds.includes(info.branchId));
+      const processOk =
+        scope.processIds.length === 0 ||
+        (!!info.processId && scope.processIds.includes(info.processId));
       return branchOk && processOk;
     }
     return false;
   }
 
   /** Scope-filter + join per-user call aggregates against employee identity, in application code. */
-  private async scopedUserRows(scope: DashboardScope, rangeDays: number): Promise<Array<PerUserAgg & EmployeeInfo>> {
+  private async scopedUserRows(
+    scope: DashboardScope,
+    rangeDays: number,
+  ): Promise<Array<PerUserAgg & EmployeeInfo>> {
     const aggs = await this.perUserAggregates(rangeDays);
     const employees = await this.employeesByCode(aggs.map((a) => a.user));
 
@@ -137,12 +167,28 @@ class QualityDashboardV2Service {
     return out;
   }
 
-  private rollup(rows: Array<PerUserAgg & EmployeeInfo>, keyOf: (r: PerUserAgg & EmployeeInfo) => string | null) {
-    const groups = new Map<string, { agentCount: Set<string>; calls: number; scoreSum: number; scoredCalls: number }>();
+  private rollup(
+    rows: Array<PerUserAgg & EmployeeInfo>,
+    keyOf: (r: PerUserAgg & EmployeeInfo) => string | null,
+  ) {
+    const groups = new Map<
+      string,
+      {
+        agentCount: Set<string>;
+        calls: number;
+        scoreSum: number;
+        scoredCalls: number;
+      }
+    >();
     for (const r of rows) {
       const key = keyOf(r);
       if (!key) continue;
-      const g = groups.get(key) ?? { agentCount: new Set<string>(), calls: 0, scoreSum: 0, scoredCalls: 0 };
+      const g = groups.get(key) ?? {
+        agentCount: new Set<string>(),
+        calls: 0,
+        scoreSum: 0,
+        scoredCalls: 0,
+      };
       g.agentCount.add(r.id);
       g.calls += r.calls;
       g.scoreSum += r.scoreSum;
@@ -152,47 +198,99 @@ class QualityDashboardV2Service {
     return groups;
   }
 
-  async branchLevel(scope: DashboardScope, rangeDays: number): Promise<QualitySummaryResponse> {
+  async branchLevel(
+    scope: DashboardScope,
+    rangeDays: number,
+  ): Promise<QualitySummaryResponse> {
     const rows = await this.scopedUserRows(scope, rangeDays);
     const groups = this.rollup(rows, (r) => r.branchId);
     const names = await this.branchNames([...groups.keys()]);
-    return this.toResponse("branch", null, null, groups, (id) => names.get(id) ?? "Unknown Branch", () => null, true, rangeDays);
-  }
-
-  async processLevel(branchId: string | null, scope: DashboardScope, rangeDays: number): Promise<QualitySummaryResponse> {
-    if (!branchId) throw new Error("branchId is required for process level");
-    const rows = (await this.scopedUserRows(scope, rangeDays)).filter((r) => r.branchId === branchId);
-    const groups = this.rollup(rows, (r) => r.processId);
-    const names = await this.processNames([...groups.keys()]);
-    const parentLabel = (await this.branchNames([branchId])).get(branchId) ?? null;
-    return this.toResponse("process", branchId, parentLabel, groups, (id) => names.get(id) ?? "Unassigned Process", () => null, true, rangeDays);
-  }
-
-  async teamLevel(processId: string | null, scope: DashboardScope, rangeDays: number): Promise<QualitySummaryResponse> {
-    if (!processId) throw new Error("processId is required for team level");
-    const rows = (await this.scopedUserRows(scope, rangeDays)).filter((r) => r.processId === processId);
-    const groups = this.rollup(rows, (r) => r.reportsTo);
-    const names = await this.employeeNames([...groups.keys()]);
-    const parentLabel = (await this.processNames([processId])).get(processId) ?? null;
     return this.toResponse(
-      "team", processId, parentLabel, groups,
-      (id) => { const n = names.get(id); return n ? `${n.fullName}'s team` : "Unassigned team"; },
-      (id) => names.get(id)?.employeeCode ?? null,
-      true, rangeDays,
+      "branch",
+      null,
+      null,
+      groups,
+      (id) => names.get(id) ?? "Unknown Branch",
+      () => null,
+      true,
+      rangeDays,
     );
   }
 
-  async analystLevel(managerId: string | null, scope: DashboardScope, rangeDays: number): Promise<QualitySummaryResponse> {
+  async processLevel(
+    branchId: string | null,
+    scope: DashboardScope,
+    rangeDays: number,
+  ): Promise<QualitySummaryResponse> {
+    if (!branchId) throw new Error("branchId is required for process level");
+    const rows = (await this.scopedUserRows(scope, rangeDays)).filter(
+      (r) => r.branchId === branchId,
+    );
+    const groups = this.rollup(rows, (r) => r.processId);
+    const names = await this.processNames([...groups.keys()]);
+    const parentLabel =
+      (await this.branchNames([branchId])).get(branchId) ?? null;
+    return this.toResponse(
+      "process",
+      branchId,
+      parentLabel,
+      groups,
+      (id) => names.get(id) ?? "Unassigned Process",
+      () => null,
+      true,
+      rangeDays,
+    );
+  }
+
+  async teamLevel(
+    processId: string | null,
+    scope: DashboardScope,
+    rangeDays: number,
+  ): Promise<QualitySummaryResponse> {
+    if (!processId) throw new Error("processId is required for team level");
+    const rows = (await this.scopedUserRows(scope, rangeDays)).filter(
+      (r) => r.processId === processId,
+    );
+    const groups = this.rollup(rows, (r) => r.reportsTo);
+    const names = await this.employeeNames([...groups.keys()]);
+    const parentLabel =
+      (await this.processNames([processId])).get(processId) ?? null;
+    return this.toResponse(
+      "team",
+      processId,
+      parentLabel,
+      groups,
+      (id) => {
+        const n = names.get(id);
+        return n ? `${n.fullName}'s team` : "Unassigned team";
+      },
+      (id) => names.get(id)?.employeeCode ?? null,
+      true,
+      rangeDays,
+    );
+  }
+
+  async analystLevel(
+    managerId: string | null,
+    scope: DashboardScope,
+    rangeDays: number,
+  ): Promise<QualitySummaryResponse> {
     if (!managerId) throw new Error("managerId is required for analyst level");
-    const rows = (await this.scopedUserRows(scope, rangeDays)).filter((r) => r.reportsTo === managerId);
+    const rows = (await this.scopedUserRows(scope, rangeDays)).filter(
+      (r) => r.reportsTo === managerId,
+    );
     const groups = this.rollup(rows, (r) => r.id);
     const names = await this.employeeNames([...groups.keys()]);
     const parentInfo = (await this.employeeNames([managerId])).get(managerId);
     return this.toResponse(
-      "analyst", managerId, parentInfo?.fullName ?? null, groups,
+      "analyst",
+      managerId,
+      parentInfo?.fullName ?? null,
+      groups,
       (id) => names.get(id)?.fullName ?? "Unknown",
       (id) => names.get(id)?.employeeCode ?? null,
-      false, rangeDays,
+      false,
+      rangeDays,
     );
   }
 
@@ -200,7 +298,15 @@ class QualityDashboardV2Service {
     level: QualityDrillLevel,
     parentId: string | null,
     parentLabel: string | null,
-    groups: Map<string, { agentCount: Set<string>; calls: number; scoreSum: number; scoredCalls: number }>,
+    groups: Map<
+      string,
+      {
+        agentCount: Set<string>;
+        calls: number;
+        scoreSum: number;
+        scoredCalls: number;
+      }
+    >,
     nameOf: (id: string) => string,
     secondaryOf: (id: string) => string | null,
     hasChildren: boolean,
@@ -212,10 +318,18 @@ class QualityDashboardV2Service {
       secondaryLabel: secondaryOf(id),
       agentCount: g.agentCount.size,
       callsAudited: g.calls,
-      avgQualityPct: g.scoredCalls > 0 ? round1(g.scoreSum / g.scoredCalls) : null,
+      avgQualityPct:
+        g.scoredCalls > 0 ? round1(g.scoreSum / g.scoredCalls) : null,
       hasChildren,
     }));
-    return { level, parentId, parentLabel, nodes, rangeDays, asOf: new Date().toISOString() };
+    return {
+      level,
+      parentId,
+      parentLabel,
+      nodes,
+      rangeDays,
+      asOf: new Date().toISOString(),
+    };
   }
 
   private async branchNames(ids: string[]): Promise<Map<string, string>> {
@@ -236,17 +350,28 @@ class QualityDashboardV2Service {
     return new Map((rows as any[]).map((r) => [String(r.id), r.process_name]));
   }
 
-  private async employeeNames(ids: string[]): Promise<Map<string, { fullName: string; employeeCode: string }>> {
+  private async employeeNames(
+    ids: string[],
+  ): Promise<Map<string, { fullName: string; employeeCode: string }>> {
     if (ids.length === 0) return new Map();
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, full_name, employee_code FROM employees WHERE id IN (${ids.map(() => "?").join(",")})`,
       ids,
     );
-    return new Map((rows as any[]).map((r) => [String(r.id), { fullName: r.full_name, employeeCode: r.employee_code }]));
+    return new Map(
+      (rows as any[]).map((r) => [
+        String(r.id),
+        { fullName: r.full_name, employeeCode: r.employee_code },
+      ]),
+    );
   }
 
   /** Level-5 drill: an analyst's individually audited calls for the range. */
-  async analystCalls(employeeId: string, rangeDays: number, scope: DashboardScope): Promise<{
+  async analystCalls(
+    employeeId: string,
+    rangeDays: number,
+    scope: DashboardScope,
+  ): Promise<{
     employee: { id: string; fullName: string; employeeCode: string } | null;
     calls: Array<{
       id: number;
@@ -274,17 +399,29 @@ class QualityDashboardV2Service {
     // Out-of-scope reads identically to not-found, same information-hiding
     // choice used elsewhere in this codebase's row-scope fixes — a caller
     // cannot tell "exists outside my scope" from "doesn't exist".
-    if (!emp || !this.isEmployeeInScope(scope, {
-      id: emp.id, employeeCode: emp.employee_code, fullName: emp.full_name,
-      branchId: emp.branch_id, processId: emp.process_id, reportsTo: null,
-      activeStatus: !!emp.active_status,
-    })) {
+    if (
+      !emp ||
+      !this.isEmployeeInScope(scope, {
+        id: emp.id,
+        employeeCode: emp.employee_code,
+        fullName: emp.full_name,
+        branchId: emp.branch_id,
+        processId: emp.process_id,
+        reportsTo: null,
+        activeStatus: !!emp.active_status,
+      })
+    ) {
       return { employee: null, calls: [] };
     }
 
     const calls = await querySource<{
-      id: number; ClientId: string | null; CallDate: string; quality_percentage: string | null;
-      total_score: number | null; max_score: number | null; areas_for_improvement: string | null;
+      id: number;
+      ClientId: string | null;
+      CallDate: string;
+      quality_percentage: string | null;
+      total_score: number | null;
+      max_score: number | null;
+      areas_for_improvement: string | null;
       call_answered_within_5_seconds: number | null;
       professionalism_maintained: number | null;
       active_listening: number | null;
@@ -311,21 +448,26 @@ class QualityDashboardV2Service {
     });
 
     return {
-      employee: { id: employeeId, fullName: emp.full_name, employeeCode: emp.employee_code },
+      employee: {
+        id: employeeId,
+        fullName: emp.full_name,
+        employeeCode: emp.employee_code,
+      },
       calls: calls.map((c) => ({
         id: c.id,
         callDate: c.CallDate,
         client: c.ClientId,
-        qualityPct: c.quality_percentage !== null ? Number(c.quality_percentage) : null,
+        qualityPct:
+          c.quality_percentage !== null ? Number(c.quality_percentage) : null,
         totalScore: c.total_score,
         maxScore: c.max_score,
         areasForImprovement: c.areas_for_improvement,
         params: {
-          callOpen:       c.call_answered_within_5_seconds,
+          callOpen: c.call_answered_within_5_seconds,
           professionalism: c.professionalism_maintained,
           activeListening: c.active_listening,
-          callClosure:    c.proper_call_closure,
-          accuracy:       c.correct_and_complete_information,
+          callClosure: c.proper_call_closure,
+          accuracy: c.correct_and_complete_information,
         },
       })),
     };

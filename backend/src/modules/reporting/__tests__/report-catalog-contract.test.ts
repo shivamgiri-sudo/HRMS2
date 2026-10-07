@@ -29,9 +29,19 @@ import { REPORT_CATALOG as BACKEND_CATALOG } from "../report-catalog.js";
 import { EXECUTOR_MAP } from "../executors/index.js";
 
 const REPO_ROOT = path.resolve(process.cwd(), "..");
-const FRONTEND_CATALOG_PATH = path.join(REPO_ROOT, "src", "lib", "report-catalog.ts");
+const FRONTEND_CATALOG_PATH = path.join(
+  REPO_ROOT,
+  "src",
+  "lib",
+  "report-catalog.ts",
+);
 const SUITE_ROUTES_PATH = path.join(
-  REPO_ROOT, "backend", "src", "modules", "reporting", "report-suite.routes.ts",
+  REPO_ROOT,
+  "backend",
+  "src",
+  "modules",
+  "reporting",
+  "report-suite.routes.ts",
 );
 
 /**
@@ -49,7 +59,9 @@ function frontendCatalogColumns(): Map<string, string[]> {
     const start = matches[i].index!;
     // Stop at the next code so a report with no columns block cannot borrow the next one's.
     const end = i + 1 < matches.length ? matches[i + 1].index! : src.length;
-    const keys = [...src.slice(start, end).matchAll(/\{\s*key:\s*"([a-z0-9_]+)"/g)].map((m) => m[1]);
+    const keys = [
+      ...src.slice(start, end).matchAll(/\{\s*key:\s*"([a-z0-9_]+)"/g),
+    ].map((m) => m[1]);
     if (keys.length) byCode.set(code, keys);
   }
   return byCode;
@@ -58,13 +70,16 @@ function frontendCatalogColumns(): Map<string, string[]> {
 /** Report codes served by an inline `case` in the preview switch rather than by an executor. */
 function inlineServedCodes(): Set<string> {
   const src = fs.readFileSync(SUITE_ROUTES_PATH, "utf8");
-  return new Set([...src.matchAll(/^\s*case\s+"([a-z0-9-]+)":/gm)].map((m) => m[1]));
+  return new Set(
+    [...src.matchAll(/^\s*case\s+"([a-z0-9-]+)":/gm)].map((m) => m[1]),
+  );
 }
 
 const FE = frontendCatalogColumns();
 const BE = new Map(
-  (BACKEND_CATALOG as { code: string; columns?: { key: string }[] }[])
-    .map((r) => [r.code, (r.columns ?? []).map((c) => c.key)]),
+  (BACKEND_CATALOG as { code: string; columns?: { key: string }[] }[]).map(
+    (r) => [r.code, (r.columns ?? []).map((c) => c.key)],
+  ),
 );
 
 describe("report catalog contract", () => {
@@ -117,7 +132,9 @@ describe("report catalog contract", () => {
    */
   it("every frontend catalog report is served by an executor or an inline route case", () => {
     const inline = inlineServedCodes();
-    const unservable = [...FE.keys()].filter((code) => !EXECUTOR_MAP[code] && !inline.has(code));
+    const unservable = [...FE.keys()].filter(
+      (code) => !EXECUTOR_MAP[code] && !inline.has(code),
+    );
 
     // Baseline measured 2026-09-03: training-batch-summary and
     // notification-undeliverable-recipients have no backend implementation on either path.
@@ -136,7 +153,9 @@ describe("report catalog contract", () => {
    */
   it("does not add reports whose preview works but whose export would 404", () => {
     const inline = inlineServedCodes();
-    const previewOnly = [...FE.keys()].filter((code) => !EXECUTOR_MAP[code] && inline.has(code));
+    const previewOnly = [...FE.keys()].filter(
+      (code) => !EXECUTOR_MAP[code] && inline.has(code),
+    );
 
     // Baseline measured 2026-09-03.
     const BASELINE = 9;
@@ -160,14 +179,19 @@ describe("grouped header alignment", () => {
   it("backend catalog headerGroups sum to the column count", () => {
     const bad: string[] = [];
     for (const r of BACKEND_CATALOG as {
-      code: string; columns?: unknown[]; headerGroups?: { colSpan: number }[];
+      code: string;
+      columns?: unknown[];
+      headerGroups?: { colSpan: number }[];
     }[]) {
       if (!r.headerGroups?.length) continue;
       const sum = r.headerGroups.reduce((a, g) => a + g.colSpan, 0);
       const cols = (r.columns ?? []).length;
-      if (sum !== cols) bad.push(`${r.code} (colSpan sum ${sum} != ${cols} columns)`);
+      if (sum !== cols)
+        bad.push(`${r.code} (colSpan sum ${sum} != ${cols} columns)`);
     }
-    expect(bad, `Grouped headers misaligned:\n  ${bad.join("\n  ")}`).toEqual([]);
+    expect(bad, `Grouped headers misaligned:\n  ${bad.join("\n  ")}`).toEqual(
+      [],
+    );
   });
 
   it("frontend catalog headerGroups sum to the column count", () => {
@@ -185,9 +209,13 @@ describe("grouped header alignment", () => {
       const cols = (FE.get(code) ?? []).length;
       const groupBlock = slice.slice(slice.indexOf("headerGroups:"));
       const sum = [...groupBlock.matchAll(/colSpan:\s*(\d+)/g)]
-        .map((m) => Number(m[1])).reduce((a, b) => a + b, 0);
-      if (sum !== cols) bad.push(`${code} (colSpan sum ${sum} != ${cols} columns)`);
+        .map((m) => Number(m[1]))
+        .reduce((a, b) => a + b, 0);
+      if (sum !== cols)
+        bad.push(`${code} (colSpan sum ${sum} != ${cols} columns)`);
     }
-    expect(bad, `Grouped headers misaligned:\n  ${bad.join("\n  ")}`).toEqual([]);
+    expect(bad, `Grouped headers misaligned:\n  ${bad.join("\n  ")}`).toEqual(
+      [],
+    );
   });
 });

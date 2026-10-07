@@ -39,26 +39,48 @@ function baseProfile(overrides: Record<string, unknown> = {}) {
 function installMock(profile: ReturnType<typeof baseProfile>) {
   execute.mockImplementation(async (sql: string) => {
     const s = String(sql);
-    if (s.includes("ats_onboarding_bridge") && s.includes("SELECT b.candidate_id")) {
-      return [[{
-        candidate_id: CANDIDATE_ID,
-        onboarding_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
-        id: CANDIDATE_ID, candidate_code: "MAS63413", full_name: "UDAY KUMAR",
-      }], []];
+    if (
+      s.includes("ats_onboarding_bridge") &&
+      s.includes("SELECT b.candidate_id")
+    ) {
+      return [
+        [
+          {
+            candidate_id: CANDIDATE_ID,
+            onboarding_token_expires_at: new Date(
+              Date.now() + 3600_000,
+            ).toISOString(),
+            id: CANDIDATE_ID,
+            candidate_code: "MAS63413",
+            full_name: "UDAY KUMAR",
+          },
+        ],
+        [],
+      ];
     }
-    if (s.includes("FROM candidate_onboarding_profile") && s.includes("pan_number_hash")) {
+    if (
+      s.includes("FROM candidate_onboarding_profile") &&
+      s.includes("pan_number_hash")
+    ) {
       return [[profile], []];
     }
-    if (s.includes("candidate_bgv_check")) return [[{ check_type: "aadhaar" }, { check_type: "pan" }], []];
-    if (s.includes("candidate_onboarding_document")) return [[
-      { doc_type: "Address Proof", doc_name: "Address Proof" },
-      { doc_type: "Passport Photo", doc_name: "Passport Photo" },
-      { doc_type: "Live Selfie", doc_name: "Live Selfie" },
-      { doc_type: "10th Marksheet", doc_name: "10th Marksheet" },
-      { doc_type: "12th Marksheet", doc_name: "12th Marksheet" },
-    ], []];
-    if (s.includes("candidate_onboarding_qualification")) return [[{ id: "q1" }], []];
-    if (s.trim().startsWith("UPDATE") || s.trim().startsWith("INSERT")) return [{ affectedRows: 1 }, undefined];
+    if (s.includes("candidate_bgv_check"))
+      return [[{ check_type: "aadhaar" }, { check_type: "pan" }], []];
+    if (s.includes("candidate_onboarding_document"))
+      return [
+        [
+          { doc_type: "Address Proof", doc_name: "Address Proof" },
+          { doc_type: "Passport Photo", doc_name: "Passport Photo" },
+          { doc_type: "Live Selfie", doc_name: "Live Selfie" },
+          { doc_type: "10th Marksheet", doc_name: "10th Marksheet" },
+          { doc_type: "12th Marksheet", doc_name: "12th Marksheet" },
+        ],
+        [],
+      ];
+    if (s.includes("candidate_onboarding_qualification"))
+      return [[{ id: "q1" }], []];
+    if (s.trim().startsWith("UPDATE") || s.trim().startsWith("INSERT"))
+      return [{ affectedRows: 1 }, undefined];
     return [[], []];
   });
 }

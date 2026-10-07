@@ -31,5 +31,10 @@ export async function importGncAllocationMasmisBatch(
   batchId: string,
   importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
-  return importViaSharedInsert(batchId, insertGncAllocationRows, importedByUserId, "uid");
+  return importViaSharedInsert(
+    batchId,
+    insertGncAllocationRows,
+    importedByUserId,
+    "uid",
+  );
 }

@@ -13,9 +13,19 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROUTES = readFileSync(
-  resolve(process.cwd(), "src/modules/payroll/bank-payment-readiness.routes.ts"), "utf8");
+  resolve(
+    process.cwd(),
+    "src/modules/payroll/bank-payment-readiness.routes.ts",
+  ),
+  "utf8",
+);
 const SERVICE = readFileSync(
-  resolve(process.cwd(), "src/modules/payroll/bank-payment-readiness.service.ts"), "utf8");
+  resolve(
+    process.cwd(),
+    "src/modules/payroll/bank-payment-readiness.service.ts",
+  ),
+  "utf8",
+);
 /**
  * The page these guards cover was BankPaymentReadiness.tsx until 8eca63c2 consolidated
  * eight payroll pages into four tab-based surfaces and folded it into
@@ -25,9 +35,13 @@ const SERVICE = readFileSync(
  * page, which satisfies all of them.
  */
 const PAGE = readFileSync(
-  resolve(process.cwd(), "..", "src/pages/payroll/PaymentDisbursalCenter.tsx"), "utf8");
+  resolve(process.cwd(), "..", "src/pages/payroll/PaymentDisbursalCenter.tsx"),
+  "utf8",
+);
 const BACKFILL = readFileSync(
-  resolve(process.cwd(), "scripts/bank-detail-db-bill-backfill.ts"), "utf8");
+  resolve(process.cwd(), "scripts/bank-detail-db-bill-backfill.ts"),
+  "utf8",
+);
 
 /** Body of the handler registered at `path`, up to `len` chars. */
 function handlerAt(source: string, path: string, len = 2500): string {
@@ -45,7 +59,7 @@ describe("only the payment file may emit a full account number", () => {
     expect(
       occurrences,
       "resolveAccountNumber must be called only by /payment-file. A new call site here means a " +
-      "read endpoint can now emit an unmasked account number.",
+        "read endpoint can now emit an unmasked account number.",
     ).toBe(1);
     const paymentFile = handlerAt(ROUTES, "/payment-file", 4000);
     expect(paymentFile).toContain("resolveAccountNumber(");
@@ -58,15 +72,19 @@ describe("only the payment file may emit a full account number", () => {
   });
 
   it("the service masks in classify(), so no caller can obtain the raw value from a result", () => {
-    expect(SERVICE).toMatch(/account_masked:\s*input\.account_number \? maskAccount\(input\.account_number\) : null/);
+    expect(SERVICE).toMatch(
+      /account_masked:\s*input\.account_number \? maskAccount\(input\.account_number\) : null/,
+    );
     // BankReadinessResult must expose no full-value field.
-    const iface = SERVICE.slice(SERVICE.indexOf("export interface BankReadinessResult"));
+    const iface = SERVICE.slice(
+      SERVICE.indexOf("export interface BankReadinessResult"),
+    );
     const body = iface.slice(0, iface.indexOf("}"));
     expect(body).not.toMatch(/account_number\s*:/);
   });
 
   it("the page renders only the masked field", () => {
-    expect(PAGE).toContain("{r.account_masked ?? \"—\"}");
+    expect(PAGE).toContain('{r.account_masked ?? "—"}');
     expect(PAGE).not.toMatch(/r\.account_number\b/);
   });
 });
@@ -90,8 +108,8 @@ describe("/payment-file is gated MORE strictly than the other bank-file endpoint
     const from = ROUTES.slice(ROUTES.indexOf("async function hasExportScope"));
     const fn = from.slice(0, from.indexOf("\n}"));
     expect(fn).toMatch(/scope_type === "all"/);
-    expect(fn).toMatch(/super_admin/);      // org-wide by definition, still allowed
-    expect(fn).not.toMatch(/"admin"/);      // holding `admin` alone must never satisfy it
+    expect(fn).toMatch(/super_admin/); // org-wide by definition, still allowed
+    expect(fn).not.toMatch(/"admin"/); // holding `admin` alone must never satisfy it
   });
 
   it("refuses to build a payment file from an uncommitted run", () => {
@@ -131,7 +149,8 @@ describe("the remediation list never asserts contact that did not happen", () =>
     // sees " false". That regex passes on nothing and fails on the correct code.
     const occurrences = body.match(/contacted:[^,\n]*/g) ?? [];
     expect(occurrences.length).toBeGreaterThan(0);
-    for (const o of occurrences) expect(o.replace(/\s+/g, " ")).toBe("contacted: false");
+    for (const o of occurrences)
+      expect(o.replace(/\s+/g, " ")).toBe("contacted: false");
   });
 
   it("says in the response that the system cannot contact these people", () => {
@@ -154,8 +173,14 @@ describe("classification is computed, never persisted", () => {
   });
 
   it("the migration creates no column that could hold a stale classification", () => {
-    const sql = readFileSync(resolve(process.cwd(), "sql/1141_payroll_bank_exception.sql"), "utf8");
-    const ddl = sql.slice(sql.indexOf("CREATE TABLE"), sql.indexOf("ENGINE=InnoDB"));
+    const sql = readFileSync(
+      resolve(process.cwd(), "sql/1141_payroll_bank_exception.sql"),
+      "utf8",
+    );
+    const ddl = sql.slice(
+      sql.indexOf("CREATE TABLE"),
+      sql.indexOf("ENGINE=InnoDB"),
+    );
     expect(ddl).not.toMatch(/readiness_class|account_number|reason_code/);
     // Collation must be explicit — employees.id is utf8mb4_unicode_ci and the server default
     // is not, so an unqualified table dies with errno 3780 on its first join.
@@ -172,7 +197,9 @@ describe("classification is computed, never persisted", () => {
 
 describe("the verification month is chosen by confirmed receipts, not recency", () => {
   it("resolveVerificationMonth filters on SalaryReceiveStatus before ordering", () => {
-    const idx = SERVICE.indexOf("export async function resolveVerificationMonth");
+    const idx = SERVICE.indexOf(
+      "export async function resolveVerificationMonth",
+    );
     const body = SERVICE.slice(idx, idx + 900);
     expect(body).toContain("SalaryReceiveStatus = 'YES'");
     expect(body).toContain("ORDER BY SalDate DESC");
@@ -197,17 +224,24 @@ describe("the backfill cannot silently write unreadable ciphertext", () => {
     const insertIdx = BACKFILL.indexOf("INSERT INTO employee_bank_detail");
     expect(parityIdx).toBeGreaterThan(-1);
     expect(insertIdx).toBeGreaterThan(-1);
-    expect(parityIdx, "the parity guard must precede the first write").toBeLessThan(insertIdx);
+    expect(
+      parityIdx,
+      "the parity guard must precede the first write",
+    ).toBeLessThan(insertIdx);
     expect(BACKFILL).toContain("REFUSING TO RUN");
   });
 
   it("is dry-run unless --apply is passed", () => {
-    expect(BACKFILL).toMatch(/const APPLY = process\.argv\.includes\("--apply"\)/);
+    expect(BACKFILL).toMatch(
+      /const APPLY = process\.argv\.includes\("--apply"\)/,
+    );
     expect(BACKFILL).toMatch(/if \(!APPLY\)/);
   });
 
   it("can never overwrite an existing bank record", () => {
-    expect(BACKFILL).toContain("NOT EXISTS (SELECT 1 FROM employee_bank_detail");
+    expect(BACKFILL).toContain(
+      "NOT EXISTS (SELECT 1 FROM employee_bank_detail",
+    );
     expect(BACKFILL).not.toMatch(/UPDATE employee_bank_detail/);
     expect(BACKFILL).not.toMatch(/ON DUPLICATE KEY UPDATE/);
   });
@@ -219,7 +253,9 @@ describe("the backfill cannot silently write unreadable ciphertext", () => {
   it("writes no new plaintext account column", () => {
     expect(BACKFILL).toContain("account_number_enc");
     // The INSERT column list must not name the legacy plaintext column.
-    const ins = BACKFILL.slice(BACKFILL.indexOf("INSERT INTO employee_bank_detail"));
+    const ins = BACKFILL.slice(
+      BACKFILL.indexOf("INSERT INTO employee_bank_detail"),
+    );
     const cols = ins.slice(0, ins.indexOf("VALUES"));
     expect(cols).not.toMatch(/[^_]account_number[^_]/);
   });
@@ -227,7 +263,9 @@ describe("the backfill cannot silently write unreadable ciphertext", () => {
 
 describe("existing payment paths are reported, not changed", () => {
   it("the divergence helper only reads", () => {
-    const idx = SERVICE.indexOf("export async function getPaymentSourceDivergence");
+    const idx = SERVICE.indexOf(
+      "export async function getPaymentSourceDivergence",
+    );
     const body = SERVICE.slice(idx, idx + 2500);
     expect(body).toMatch(/SELECT/);
     expect(body).not.toMatch(/UPDATE|INSERT|DELETE/);
@@ -264,7 +302,9 @@ describe("confirmation is per-account across all history, not per-month", () => 
 
   it("loads every confirmed (EmpCode, AcNo) pair, not just the verification month", () => {
     expect(body).toMatch(/SELECT DISTINCT EmpCode, AcNo/);
-    const confirmedQuery = body.slice(body.indexOf("SELECT DISTINCT EmpCode, AcNo"));
+    const confirmedQuery = body.slice(
+      body.indexOf("SELECT DISTINCT EmpCode, AcNo"),
+    );
     expect(confirmedQuery.slice(0, 260)).not.toMatch(/SalDate\s*=\s*\?/);
     expect(confirmedQuery).toContain("SalaryReceiveStatus = 'YES'");
   });
@@ -274,7 +314,9 @@ describe("confirmation is per-account across all history, not per-month", () => 
   });
 
   it("still records an employee absent from the verification month but confirmed earlier", () => {
-    expect(body).toMatch(/if \(!credits\.has\(k\)\) credits\.set\(k, \{ account, confirmed: true \}\)/);
+    expect(body).toMatch(
+      /if \(!credits\.has\(k\)\) credits\.set\(k, \{ account, confirmed: true \}\)/,
+    );
   });
 
   it("keeps the conflict comparison on the most recent credited account", () => {

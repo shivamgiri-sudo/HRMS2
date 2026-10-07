@@ -51,13 +51,21 @@ export async function isSPOCForBranch(
 ): Promise<boolean> {
   const spoc = await getActiveSPOCForBranch(branchId, onDate);
   if (!spoc) return false;
-  return userId === spoc.primaryId || (spoc.backupId !== null && userId === spoc.backupId);
+  return (
+    userId === spoc.primaryId ||
+    (spoc.backupId !== null && userId === spoc.backupId)
+  );
 }
 
-export async function listSPOCConfigs(branchId?: string): Promise<SpocConfig[]> {
+export async function listSPOCConfigs(
+  branchId?: string,
+): Promise<SpocConfig[]> {
   const conds: string[] = [];
   const params: unknown[] = [];
-  if (branchId) { conds.push("c.branch_id = ?"); params.push(branchId); }
+  if (branchId) {
+    conds.push("c.branch_id = ?");
+    params.push(branchId);
+  }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.*,
@@ -113,12 +121,30 @@ export async function updateSPOCConfig(
 ): Promise<void> {
   const sets: string[] = [];
   const params: unknown[] = [];
-  if (data.primary_spoc_user_id !== undefined) { sets.push("primary_spoc_user_id = ?"); params.push(data.primary_spoc_user_id); }
-  if ("backup_spoc_user_id" in data) { sets.push("backup_spoc_user_id = ?"); params.push(data.backup_spoc_user_id ?? null); }
-  if (data.effective_from) { sets.push("effective_from = ?"); params.push(data.effective_from); }
-  if ("effective_to" in data) { sets.push("effective_to = ?"); params.push(data.effective_to ?? null); }
-  if (data.is_active !== undefined) { sets.push("is_active = ?"); params.push(data.is_active); }
+  if (data.primary_spoc_user_id !== undefined) {
+    sets.push("primary_spoc_user_id = ?");
+    params.push(data.primary_spoc_user_id);
+  }
+  if ("backup_spoc_user_id" in data) {
+    sets.push("backup_spoc_user_id = ?");
+    params.push(data.backup_spoc_user_id ?? null);
+  }
+  if (data.effective_from) {
+    sets.push("effective_from = ?");
+    params.push(data.effective_from);
+  }
+  if ("effective_to" in data) {
+    sets.push("effective_to = ?");
+    params.push(data.effective_to ?? null);
+  }
+  if (data.is_active !== undefined) {
+    sets.push("is_active = ?");
+    params.push(data.is_active);
+  }
   if (!sets.length) return;
   params.push(id);
-  await db.execute(`UPDATE branch_wfm_spoc_config SET ${sets.join(", ")} WHERE id = ?`, params);
+  await db.execute(
+    `UPDATE branch_wfm_spoc_config SET ${sets.join(", ")} WHERE id = ?`,
+    params,
+  );
 }

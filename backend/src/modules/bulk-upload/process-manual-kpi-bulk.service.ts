@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Manual/upload feed for KPI Studio's process-grain sources.
@@ -64,7 +67,9 @@ const FIELD_COLUMNS: Array<{ header: string; field: string }> = [
 ];
 
 export function parseNumber(raw: unknown): number | null {
-  const v = String(raw ?? "").trim().replace(/,/g, "");
+  const v = String(raw ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!v) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -74,8 +79,18 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   const MONTHS: Record<string, number> = {
-    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+    jan: 1,
+    feb: 2,
+    mar: 3,
+    apr: 4,
+    may: 5,
+    jun: 6,
+    jul: 7,
+    aug: 8,
+    sep: 9,
+    oct: 10,
+    nov: 11,
+    dec: 12,
   };
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
@@ -93,7 +108,10 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface ProcRef extends RowDataPacket { id: string; k: string }
+interface ProcRef extends RowDataPacket {
+  id: string;
+  k: string;
+}
 
 export async function importProcessManualKpiBatch(
   batchId: string,
@@ -143,7 +161,9 @@ export async function importProcessManualKpiBatch(
         ? JSON.parse(row.normalized_data)
         : ((row.normalized_data ?? {}) as Record<string, unknown>);
 
-    const code = String(data["Process Code"] ?? "").trim().toUpperCase();
+    const code = String(data["Process Code"] ?? "")
+      .trim()
+      .toUpperCase();
     const processId = processByCode.get(code);
     if (!processId) {
       const msg = `Row ${row.row_no}: no active process with code "${code || "(blank)"}"`;
@@ -163,9 +183,10 @@ export async function importProcessManualKpiBatch(
     // A row naming no metric column at all is not an error worth stopping the batch
     // for — a sheet with one metric per upload will have that shape on every row —
     // but it is worth zero writes, so it is counted separately rather than as a hit.
-    const present = FIELD_COLUMNS
-      .map((f) => ({ ...f, value: parseNumber(data[f.header]) }))
-      .filter((f) => f.value !== null);
+    const present = FIELD_COLUMNS.map((f) => ({
+      ...f,
+      value: parseNumber(data[f.header]),
+    })).filter((f) => f.value !== null);
 
     if (!present.length) {
       const msg = `Row ${row.row_no}: no recognised metric column had a numeric value`;
@@ -179,7 +200,15 @@ export async function importProcessManualKpiBatch(
       toInsert.push({
         rowId: row.id,
         rowNo: row.row_no,
-        values: [randomUUID(), processId, f.field, date, f.value, batchId, importedByUserId],
+        values: [
+          randomUUID(),
+          processId,
+          f.field,
+          date,
+          f.value,
+          batchId,
+          importedByUserId,
+        ],
       });
     }
     validRowIds.push(row.id);
@@ -215,17 +244,26 @@ export async function importProcessManualKpiBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

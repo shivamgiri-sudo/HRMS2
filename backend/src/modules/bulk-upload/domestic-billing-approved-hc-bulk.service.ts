@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Domestic Billing Approved Headcount bulk upload.
@@ -23,11 +26,29 @@ export const DOMESTIC_BILLING_APPROVED_HC_HEADERS = [
 ] as const;
 
 const MONTH_NAMES: Record<string, string> = {
-  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
-  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
-  january: "01", february: "02", march: "03", april: "04",
-  june: "06", july: "07", august: "08", september: "09",
-  october: "10", november: "11", december: "12",
+  jan: "01",
+  feb: "02",
+  mar: "03",
+  apr: "04",
+  may: "05",
+  jun: "06",
+  jul: "07",
+  aug: "08",
+  sep: "09",
+  oct: "10",
+  nov: "11",
+  dec: "12",
+  january: "01",
+  february: "02",
+  march: "03",
+  april: "04",
+  june: "06",
+  july: "07",
+  august: "08",
+  september: "09",
+  october: "10",
+  november: "11",
+  december: "12",
 };
 
 /**
@@ -68,13 +89,17 @@ export function normalizeMonth(raw: unknown): string | null {
 }
 
 export function parsePlanningRule(raw: unknown): "SUNDAY_OFF" | "ALL_DAYS" {
-  const v = String(raw ?? "").trim().toUpperCase();
+  const v = String(raw ?? "")
+    .trim()
+    .toUpperCase();
   if (v === "SUNDAY_OFF") return "SUNDAY_OFF";
   return "ALL_DAYS";
 }
 
 export function parseActiveFlag(raw: unknown): 0 | 1 {
-  const v = String(raw ?? "").trim().toUpperCase();
+  const v = String(raw ?? "")
+    .trim()
+    .toUpperCase();
   if (v === "TRUE" || v === "YES" || v === "1") return 1;
   return 0;
 }
@@ -102,14 +127,20 @@ interface BatchRow extends RowDataPacket {
 export async function importDomesticBillingApprovedHcBatch(
   batchId: string,
   importedByUserId: string,
-): Promise<{ importedRows: number; errorRows: number; skippedRows: number; errors: string[] }> {
+): Promise<{
+  importedRows: number;
+  errorRows: number;
+  skippedRows: number;
+  errors: string[];
+}> {
   const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, skippedRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, skippedRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
@@ -134,19 +165,27 @@ export async function importDomesticBillingApprovedHcBatch(
     // --- Validation ---
     if (!month) {
       const msg = `Row ${row.row_no}: "Month" is required and could not be parsed (got: ${String(data["Month"] ?? "")})`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
     if (!process) {
       const msg = `Row ${row.row_no}: "Process" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
     if (!lob) {
       const msg = `Row ${row.row_no}: "LOB" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
     if (approvedHc === null || approvedHc < 0) {
       const msg = `Row ${row.row_no}: "Approved Headcount" must be a non-negative integer`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     // --- Skip rule: Approved Headcount <= 0 when Active = 0 ---
@@ -196,12 +235,17 @@ export async function importDomesticBillingApprovedHcBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 

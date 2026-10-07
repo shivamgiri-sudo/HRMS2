@@ -1,11 +1,11 @@
-import { db } from '../../db/mysql.js';
-import { getPoolForKey } from '../external-db/external-db.service.js';
-import type { Pool } from 'mysql2/promise';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { recordMappingException } from './mapping-exception.service.js';
-import { readAprSourceAggregates } from './performance-apr-source-reader.js';
+import { db } from "../../db/mysql.js";
+import { getPoolForKey } from "../external-db/external-db.service.js";
+import type { Pool } from "mysql2/promise";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { recordMappingException } from "./mapping-exception.service.js";
+import { readAprSourceAggregates } from "./performance-apr-source-reader.js";
 
-type KpiSource = 'apr' | 'attendance' | 'quality' | 'manual' | 'calculated';
+type KpiSource = "apr" | "attendance" | "quality" | "manual" | "calculated";
 
 type SyncResult = {
   synced: number;
@@ -47,30 +47,30 @@ type SourceAggregate = {
 };
 
 const LINEAGE_COLUMNS = [
-  'numerator_value',
-  'denominator_value',
-  'source_system',
-  'source_record_count',
-  'formula_version_id',
-  'integration_run_id',
-  'computed_at',
-  'process_id_at_event',
-  'branch_id_at_event',
+  "numerator_value",
+  "denominator_value",
+  "source_system",
+  "source_record_count",
+  "formula_version_id",
+  "integration_run_id",
+  "computed_at",
+  "process_id_at_event",
+  "branch_id_at_event",
 ];
 
 const FORMULA_BY_METRIC: Record<string, string> = {
-  DIALS: 'CALLS_TOTAL',
-  AHT: 'AHT_WEIGHTED',
-  TALK_TIME: 'TALK_TIME_WEIGHTED',
-  ACW: 'ACW_WEIGHTED',
-  QUALITY_SCORE: 'QUALITY_WEIGHTED',
-  FATAL_RATE: 'FATAL_RATE',
-  CONVERSION_RATE: 'CONVERSION_RATE',
-  SALES_COUNT: 'SALES_TOTAL',
-  REVENUE: 'REVENUE_TOTAL',
-  AOV: 'AOV_WEIGHTED',
-  COD_SHARE: 'COD_SHARE',
-  RTO_RATE: 'RTO_RATE',
+  DIALS: "CALLS_TOTAL",
+  AHT: "AHT_WEIGHTED",
+  TALK_TIME: "TALK_TIME_WEIGHTED",
+  ACW: "ACW_WEIGHTED",
+  QUALITY_SCORE: "QUALITY_WEIGHTED",
+  FATAL_RATE: "FATAL_RATE",
+  CONVERSION_RATE: "CONVERSION_RATE",
+  SALES_COUNT: "SALES_TOTAL",
+  REVENUE: "REVENUE_TOTAL",
+  AOV: "AOV_WEIGHTED",
+  COD_SHARE: "COD_SHARE",
+  RTO_RATE: "RTO_RATE",
 };
 
 function numberValue(value: unknown): number {
@@ -87,7 +87,9 @@ function round2(value: number): number {
 }
 
 function normalizeIdentifier(value: unknown): string {
-  return String(value ?? '').trim().toUpperCase();
+  return String(value ?? "")
+    .trim()
+    .toUpperCase();
 }
 
 function errorMessage(error: unknown): string {
@@ -101,7 +103,7 @@ function nextDate(date: string): string {
 }
 
 function monthBounds(yearMonth: string): { from: string; to: string } {
-  const [year, month] = yearMonth.split('-').map(Number);
+  const [year, month] = yearMonth.split("-").map(Number);
   const from = `${yearMonth}-01`;
   const d = new Date(Date.UTC(year, month, 1));
   return { from, to: d.toISOString().slice(0, 10) };
@@ -109,28 +111,35 @@ function monthBounds(yearMonth: string): { from: string; to: string } {
 
 async function getMetricIds(codes: string[]): Promise<Map<string, string>> {
   if (!codes.length) return new Map();
-  const placeholders = codes.map(() => '?').join(',');
+  const placeholders = codes.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, metric_code FROM kpi_metric_master WHERE metric_code IN (${placeholders})`,
     codes,
   );
   const map = new Map<string, string>();
-  for (const row of rows as any[]) map.set(String(row.metric_code), String(row.id));
+  for (const row of rows as any[])
+    map.set(String(row.metric_code), String(row.id));
   return map;
 }
 
-async function getFormulaIds(metricCodes: string[]): Promise<Map<string, string>> {
-  const formulaCodes = metricCodes.map((code) => FORMULA_BY_METRIC[code]).filter(Boolean);
+async function getFormulaIds(
+  metricCodes: string[],
+): Promise<Map<string, string>> {
+  const formulaCodes = metricCodes
+    .map((code) => FORMULA_BY_METRIC[code])
+    .filter(Boolean);
   if (!formulaCodes.length) return new Map();
-  const placeholders = formulaCodes.map(() => '?').join(',');
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, metric_code, formula_code
+  const placeholders = formulaCodes.map(() => "?").join(",");
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id, metric_code, formula_code
        FROM kpi_formula_version
       WHERE formula_code IN (${placeholders})
         AND status IN ('active', 'draft')
       ORDER BY FIELD(status, 'active', 'draft'), version_no DESC`,
-    formulaCodes,
-  ).catch(() => [[], []] as any);
+      formulaCodes,
+    )
+    .catch(() => [[], []] as any);
   const map = new Map<string, string>();
   for (const row of rows as any[]) {
     const metricCode = String(row.metric_code);
@@ -140,21 +149,27 @@ async function getFormulaIds(metricCodes: string[]): Promise<Map<string, string>
 }
 
 async function getLineageColumns(): Promise<Set<string>> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COLUMN_NAME
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT COLUMN_NAME
        FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE()
         AND TABLE_NAME = 'kpi_daily_actual'
-        AND COLUMN_NAME IN (${LINEAGE_COLUMNS.map(() => '?').join(',')})`,
-    LINEAGE_COLUMNS,
-  ).catch(() => [[], []] as any);
+        AND COLUMN_NAME IN (${LINEAGE_COLUMNS.map(() => "?").join(",")})`,
+      LINEAGE_COLUMNS,
+    )
+    .catch(() => [[], []] as any);
   return new Set((rows as any[]).map((row) => String(row.COLUMN_NAME)));
 }
 
-async function mapEmployees(identifiers: string[]): Promise<Map<string, string>> {
-  const unique = [...new Set(identifiers.map(normalizeIdentifier).filter(Boolean))];
+async function mapEmployees(
+  identifiers: string[],
+): Promise<Map<string, string>> {
+  const unique = [
+    ...new Set(identifiers.map(normalizeIdentifier).filter(Boolean)),
+  ];
   if (!unique.length) return new Map();
-  const placeholders = unique.map(() => '?').join(',');
+  const placeholders = unique.map(() => "?").join(",");
   // Active employees first, but inactive ones still match.
   //
   // This filtered on active_status = 1, so the moment someone resigned their
@@ -178,8 +193,10 @@ async function mapEmployees(identifiers: string[]): Promise<Map<string, string>>
   for (const row of rows as any[]) {
     const employeeCode = normalizeIdentifier(row.employee_code);
     const biometricCode = normalizeIdentifier(row.biometric_code);
-    if (employeeCode && !map.has(employeeCode)) map.set(employeeCode, String(row.id));
-    if (biometricCode && !map.has(biometricCode)) map.set(biometricCode, String(row.id));
+    if (employeeCode && !map.has(employeeCode))
+      map.set(employeeCode, String(row.id));
+    if (biometricCode && !map.has(biometricCode))
+      map.set(biometricCode, String(row.id));
   }
   return map;
 }
@@ -192,12 +209,20 @@ type EmployeeScope = { processId: string | null; branchId: string | null };
 // (~45k calls), but only briefly, so a mid-day transfer is picked up by the next sync rather
 // than frozen for the lifetime of the process.
 const EMPLOYEE_SCOPE_TTL_MS = 60_000;
-let employeeScopeCache: { loadedAt: number; scopes: Map<string, EmployeeScope> } | null = null;
+let employeeScopeCache: {
+  loadedAt: number;
+  scopes: Map<string, EmployeeScope>;
+} | null = null;
 
 async function getEmployeeScope(employeeId: string): Promise<EmployeeScope> {
-  if (!employeeScopeCache || Date.now() - employeeScopeCache.loadedAt > EMPLOYEE_SCOPE_TTL_MS) {
+  if (
+    !employeeScopeCache ||
+    Date.now() - employeeScopeCache.loadedAt > EMPLOYEE_SCOPE_TTL_MS
+  ) {
     const [rows] = await db
-      .execute<RowDataPacket[]>('SELECT id, process_id, branch_id FROM employees')
+      .execute<RowDataPacket[]>(
+        "SELECT id, process_id, branch_id FROM employees",
+      )
       .catch(() => [[], []] as any);
     const scopes = new Map<string, EmployeeScope>();
     for (const row of rows as any[]) {
@@ -208,7 +233,12 @@ async function getEmployeeScope(employeeId: string): Promise<EmployeeScope> {
     }
     employeeScopeCache = { loadedAt: Date.now(), scopes };
   }
-  return employeeScopeCache.scopes.get(String(employeeId)) ?? { processId: null, branchId: null };
+  return (
+    employeeScopeCache.scopes.get(String(employeeId)) ?? {
+      processId: null,
+      branchId: null,
+    }
+  );
 }
 
 /** Exposed so tests and long-lived workers can force a reload rather than wait out the TTL. */
@@ -216,13 +246,29 @@ export function resetEmployeeScopeCache() {
   employeeScopeCache = null;
 }
 
-async function upsertDailyActual(fact: MetricFact, metricIds: Map<string, string>, formulaIds: Map<string, string>) {
+async function upsertDailyActual(
+  fact: MetricFact,
+  metricIds: Map<string, string>,
+  formulaIds: Map<string, string>,
+) {
   const metricId = metricIds.get(fact.metricCode);
   if (!metricId) return false;
 
   const lineageColumns = await getLineageColumns();
-  const baseColumns = ['employee_id', 'metric_id', 'score_date', 'actual_value', 'source'];
-  const baseValues: unknown[] = [fact.employeeId, metricId, fact.date, fact.value, fact.source];
+  const baseColumns = [
+    "employee_id",
+    "metric_id",
+    "score_date",
+    "actual_value",
+    "source",
+  ];
+  const baseValues: unknown[] = [
+    fact.employeeId,
+    metricId,
+    fact.date,
+    fact.value,
+    fact.source,
+  ];
   const optionalColumns: string[] = [];
   const optionalValues: unknown[] = [];
 
@@ -233,40 +279,52 @@ async function upsertDailyActual(fact: MetricFact, metricIds: Map<string, string
     }
   };
 
-  maybeAdd('numerator_value', fact.numerator ?? null);
-  maybeAdd('denominator_value', fact.denominator ?? null);
-  maybeAdd('source_system', fact.sourceSystem ?? fact.source);
-  maybeAdd('source_record_count', fact.sourceRecordCount ?? null);
-  maybeAdd('formula_version_id', formulaIds.get(fact.metricCode) ?? null);
-  maybeAdd('integration_run_id', null);
+  maybeAdd("numerator_value", fact.numerator ?? null);
+  maybeAdd("denominator_value", fact.denominator ?? null);
+  maybeAdd("source_system", fact.sourceSystem ?? fact.source);
+  maybeAdd("source_record_count", fact.sourceRecordCount ?? null);
+  maybeAdd("formula_version_id", formulaIds.get(fact.metricCode) ?? null);
+  maybeAdd("integration_run_id", null);
 
-  if (lineageColumns.has('process_id_at_event') || lineageColumns.has('branch_id_at_event')) {
+  if (
+    lineageColumns.has("process_id_at_event") ||
+    lineageColumns.has("branch_id_at_event")
+  ) {
     const scope = await getEmployeeScope(fact.employeeId);
-    maybeAdd('process_id_at_event', scope.processId);
-    maybeAdd('branch_id_at_event', scope.branchId);
+    maybeAdd("process_id_at_event", scope.processId);
+    maybeAdd("branch_id_at_event", scope.branchId);
   }
 
-  const computedAtNow = lineageColumns.has('computed_at');
-  const columns = [...baseColumns, ...optionalColumns, ...(computedAtNow ? ['computed_at'] : [])];
+  const computedAtNow = lineageColumns.has("computed_at");
+  const columns = [
+    ...baseColumns,
+    ...optionalColumns,
+    ...(computedAtNow ? ["computed_at"] : []),
+  ];
   const values = [...baseValues, ...optionalValues];
-  const placeholders = [...values.map(() => '?'), ...(computedAtNow ? ['NOW()'] : [])];
+  const placeholders = [
+    ...values.map(() => "?"),
+    ...(computedAtNow ? ["NOW()"] : []),
+  ];
   const updates = [
-    'actual_value = VALUES(actual_value)',
-    'source = VALUES(source)',
+    "actual_value = VALUES(actual_value)",
+    "source = VALUES(source)",
     ...optionalColumns.map((column) => `${column} = VALUES(${column})`),
-    ...(computedAtNow ? ['computed_at = VALUES(computed_at)'] : []),
+    ...(computedAtNow ? ["computed_at = VALUES(computed_at)"] : []),
   ];
 
   await db.execute<ResultSetHeader>(
-    `INSERT INTO kpi_daily_actual (${columns.join(', ')})
-     VALUES (${placeholders.join(', ')})
-     ON DUPLICATE KEY UPDATE ${updates.join(', ')}`,
+    `INSERT INTO kpi_daily_actual (${columns.join(", ")})
+     VALUES (${placeholders.join(", ")})
+     ON DUPLICATE KEY UPDATE ${updates.join(", ")}`,
     values,
   );
   return true;
 }
 
-async function readSourcePool(key: string): Promise<{ pool: Pool | null; errors: string[] }> {
+async function readSourcePool(
+  key: string,
+): Promise<{ pool: Pool | null; errors: string[] }> {
   try {
     return { pool: (await getPoolForKey(key)) as Pool, errors: [] };
   } catch (error) {
@@ -287,7 +345,9 @@ async function writeFacts(
 ): Promise<SyncResult> {
   const metricIds = await getMetricIds(metricCodes);
   const formulaIds = await getFormulaIds(metricCodes);
-  const employeeMap = await mapEmployees(rows.map((row) => row.agent_user ?? ''));
+  const employeeMap = await mapEmployees(
+    rows.map((row) => row.agent_user ?? ""),
+  );
   let synced = 0;
   let skipped = 0;
   const errors: string[] = [];
@@ -299,8 +359,8 @@ async function writeFacts(
       if (unmappedSource) {
         await recordMappingException({
           ...unmappedSource,
-          externalIdentifier: String(row.agent_user ?? ''),
-          exceptionType: 'employee_unmapped',
+          externalIdentifier: String(row.agent_user ?? ""),
+          exceptionType: "employee_unmapped",
           detail: `No employee matches this agent identifier, so its metrics are not being recorded`,
         });
       }
@@ -316,8 +376,10 @@ async function writeFacts(
   return { synced, skipped, errors };
 }
 
-export async function syncIntegrationCallMetrics(date: string): Promise<SyncResult> {
-  const metricIds = await getMetricIds(['TALK_TIME', 'DIALS']);
+export async function syncIntegrationCallMetrics(
+  date: string,
+): Promise<SyncResult> {
+  const metricIds = await getMetricIds(["TALK_TIME", "DIALS"]);
   if (!metricIds.size) return { synced: 0, skipped: 0, errors: [] };
 
   // Assign a process to employees the call feed can place unambiguously.
@@ -371,34 +433,42 @@ export async function syncIntegrationCallMetrics(date: string): Promise<SyncResu
     [date],
   );
 
-  const formulaIds = await getFormulaIds(['TALK_TIME', 'DIALS']);
+  const formulaIds = await getFormulaIds(["TALK_TIME", "DIALS"]);
   let synced = 0;
   for (const row of rows as any[]) {
     const totalCalls = numberValue(row.total_calls);
     const talkMinutes = numberValue(row.talk_minutes);
-    await upsertDailyActual({
-      employeeId: row.employee_id,
-      metricCode: 'DIALS',
-      date,
-      value: totalCalls,
-      source: 'apr',
-      sourceSystem: 'integration_call_daily',
-      numerator: totalCalls,
-      sourceRecordCount: totalCalls,
-    }, metricIds, formulaIds);
+    await upsertDailyActual(
+      {
+        employeeId: row.employee_id,
+        metricCode: "DIALS",
+        date,
+        value: totalCalls,
+        source: "apr",
+        sourceSystem: "integration_call_daily",
+        numerator: totalCalls,
+        sourceRecordCount: totalCalls,
+      },
+      metricIds,
+      formulaIds,
+    );
     if (totalCalls > 0) {
       const averageTalkSeconds = (talkMinutes * 60) / totalCalls;
-      await upsertDailyActual({
-        employeeId: row.employee_id,
-        metricCode: 'TALK_TIME',
-        date,
-        value: round1(averageTalkSeconds),
-        source: 'apr',
-        sourceSystem: 'integration_call_daily',
-        numerator: talkMinutes * 60,
-        denominator: totalCalls,
-        sourceRecordCount: totalCalls,
-      }, metricIds, formulaIds);
+      await upsertDailyActual(
+        {
+          employeeId: row.employee_id,
+          metricCode: "TALK_TIME",
+          date,
+          value: round1(averageTalkSeconds),
+          source: "apr",
+          sourceSystem: "integration_call_daily",
+          numerator: talkMinutes * 60,
+          denominator: totalCalls,
+          sourceRecordCount: totalCalls,
+        },
+        metricIds,
+        formulaIds,
+      );
     }
     synced += 1;
   }
@@ -407,62 +477,66 @@ export async function syncIntegrationCallMetrics(date: string): Promise<SyncResu
 }
 
 export async function syncAprMetrics(date: string): Promise<SyncResult> {
-  const { pool, errors } = await readSourcePool('apr_productivity');
+  const { pool, errors } = await readSourcePool("apr_productivity");
   if (!pool) return { synced: 0, skipped: 0, errors };
 
   try {
     const result = await readAprSourceAggregates(pool, date);
-    const written = await writeFacts(result.rows as SourceAggregate[], ['AHT', 'TALK_TIME', 'DIALS', 'ACW'], (row, employeeId) => {
-      const totalCalls = numberValue(row.total_calls);
-      const totalTalk = numberValue(row.total_talk);
-      const totalDispo = numberValue(row.total_dispo);
-      if (totalCalls <= 0) return [];
-      return [
-        {
-          employeeId,
-          metricCode: 'AHT',
-          date,
-          value: round1((totalTalk + totalDispo) / totalCalls),
-          source: 'apr',
-          sourceSystem: 'dialer_vicidial_agent_log_tables',
-          numerator: totalTalk + totalDispo,
-          denominator: totalCalls,
-          sourceRecordCount: numberValue(row.source_records),
-        },
-        {
-          employeeId,
-          metricCode: 'TALK_TIME',
-          date,
-          value: round1(totalTalk / totalCalls),
-          source: 'apr',
-          sourceSystem: 'dialer_vicidial_agent_log_tables',
-          numerator: totalTalk,
-          denominator: totalCalls,
-          sourceRecordCount: numberValue(row.source_records),
-        },
-        {
-          employeeId,
-          metricCode: 'DIALS',
-          date,
-          value: totalCalls,
-          source: 'apr',
-          sourceSystem: 'dialer_vicidial_agent_log_tables',
-          numerator: totalCalls,
-          sourceRecordCount: numberValue(row.source_records),
-        },
-        {
-          employeeId,
-          metricCode: 'ACW',
-          date,
-          value: round1(totalDispo / totalCalls),
-          source: 'apr',
-          sourceSystem: 'dialer_vicidial_agent_log_tables',
-          numerator: totalDispo,
-          denominator: totalCalls,
-          sourceRecordCount: numberValue(row.source_records),
-        },
-      ];
-    });
+    const written = await writeFacts(
+      result.rows as SourceAggregate[],
+      ["AHT", "TALK_TIME", "DIALS", "ACW"],
+      (row, employeeId) => {
+        const totalCalls = numberValue(row.total_calls);
+        const totalTalk = numberValue(row.total_talk);
+        const totalDispo = numberValue(row.total_dispo);
+        if (totalCalls <= 0) return [];
+        return [
+          {
+            employeeId,
+            metricCode: "AHT",
+            date,
+            value: round1((totalTalk + totalDispo) / totalCalls),
+            source: "apr",
+            sourceSystem: "dialer_vicidial_agent_log_tables",
+            numerator: totalTalk + totalDispo,
+            denominator: totalCalls,
+            sourceRecordCount: numberValue(row.source_records),
+          },
+          {
+            employeeId,
+            metricCode: "TALK_TIME",
+            date,
+            value: round1(totalTalk / totalCalls),
+            source: "apr",
+            sourceSystem: "dialer_vicidial_agent_log_tables",
+            numerator: totalTalk,
+            denominator: totalCalls,
+            sourceRecordCount: numberValue(row.source_records),
+          },
+          {
+            employeeId,
+            metricCode: "DIALS",
+            date,
+            value: totalCalls,
+            source: "apr",
+            sourceSystem: "dialer_vicidial_agent_log_tables",
+            numerator: totalCalls,
+            sourceRecordCount: numberValue(row.source_records),
+          },
+          {
+            employeeId,
+            metricCode: "ACW",
+            date,
+            value: round1(totalDispo / totalCalls),
+            source: "apr",
+            sourceSystem: "dialer_vicidial_agent_log_tables",
+            numerator: totalDispo,
+            denominator: totalCalls,
+            sourceRecordCount: numberValue(row.source_records),
+          },
+        ];
+      },
+    );
     return { ...written, errors: [...result.errors, ...written.errors] };
   } catch (error) {
     return { synced: 0, skipped: 0, errors: [errorMessage(error)] };
@@ -470,8 +544,8 @@ export async function syncAprMetrics(date: string): Promise<SyncResult> {
 }
 
 export async function syncAttendanceMetrics(date: string): Promise<SyncResult> {
-  const metricIds = await getMetricIds(['ATTENDANCE_PCT']);
-  const attMetricId = metricIds.get('ATTENDANCE_PCT');
+  const metricIds = await getMetricIds(["ATTENDANCE_PCT"]);
+  const attMetricId = metricIds.get("ATTENDANCE_PCT");
   if (!attMetricId) return { synced: 0, skipped: 0, errors: [] };
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -481,7 +555,7 @@ export async function syncAttendanceMetrics(date: string): Promise<SyncResult> {
     [date],
   );
 
-  const formulaIds = await getFormulaIds(['ATTENDANCE_PCT']);
+  const formulaIds = await getFormulaIds(["ATTENDANCE_PCT"]);
   let synced = 0;
   let skipped = 0;
 
@@ -495,34 +569,42 @@ export async function syncAttendanceMetrics(date: string): Promise<SyncResult> {
   // 'week_off_worked' is deliberately NOT excluded — that is a day actually worked
   // and must score as present, which the old ['P','PRESENT'] test also missed.
   const NOT_SCOREABLE = new Set([
-    'WEEK_OFF', 'HOLIDAY', 'LEAVE_APPROVED', 'ON_LEAVE', 'LEAVE',
+    "WEEK_OFF",
+    "HOLIDAY",
+    "LEAVE_APPROVED",
+    "ON_LEAVE",
+    "LEAVE",
   ]);
 
   for (const rec of rows as any[]) {
-    const status = String(rec.attendance_status ?? '').toUpperCase();
+    const status = String(rec.attendance_status ?? "").toUpperCase();
 
     if (NOT_SCOREABLE.has(status)) {
       skipped += 1;
       continue;
     }
 
-    const value = ['P', 'PRESENT', 'WEEK_OFF_WORKED'].includes(status)
+    const value = ["P", "PRESENT", "WEEK_OFF_WORKED"].includes(status)
       ? 100
-      : ['H', 'HALF_DAY'].includes(status)
+      : ["H", "HALF_DAY"].includes(status)
         ? 50
         : 0;
 
-    await upsertDailyActual({
-      employeeId: rec.employee_id,
-      metricCode: 'ATTENDANCE_PCT',
-      date,
-      value,
-      source: 'attendance',
-      sourceSystem: 'attendance_daily_record',
-      numerator: value,
-      denominator: 100,
-      sourceRecordCount: 1,
-    }, metricIds, formulaIds);
+    await upsertDailyActual(
+      {
+        employeeId: rec.employee_id,
+        metricCode: "ATTENDANCE_PCT",
+        date,
+        value,
+        source: "attendance",
+        sourceSystem: "attendance_daily_record",
+        numerator: value,
+        denominator: 100,
+        sourceRecordCount: 1,
+      },
+      metricIds,
+      formulaIds,
+    );
     synced += 1;
   }
 
@@ -545,8 +627,10 @@ export async function syncAttendanceMetrics(date: string): Promise<SyncResult> {
  * left untouched — kpi-master.routes and performance-safe-sync both call it for
  * month-close, and that is a legitimate separate job.
  */
-export async function syncQualityMetricsForDate(date: string): Promise<SyncResult> {
-  const { pool, errors } = await readSourcePool('quality_audit');
+export async function syncQualityMetricsForDate(
+  date: string,
+): Promise<SyncResult> {
+  const { pool, errors } = await readSourcePool("quality_audit");
   if (!pool) return { synced: 0, skipped: 0, errors };
 
   const sql = `
@@ -569,55 +653,64 @@ export async function syncQualityMetricsForDate(date: string): Promise<SyncResul
 
   try {
     const [rows] = await pool.execute(sql, [date, nextDate(date)]);
-    return writeFacts(rows as SourceAggregate[], ['QUALITY_SCORE', 'FATAL_RATE'], (row, employeeId) => {
-      const possible = numberValue(row.points_possible);
-      const audits = numberValue(row.total_audits);
-      const facts: MetricFact[] = [];
-      if (possible > 0) {
-        facts.push({
-          employeeId,
-          metricCode: 'QUALITY_SCORE',
-          // The date being synced, not MAX(CallDate) — that is the whole
-          // difference between a daily fact and a monthly rollup.
-          date,
-          value: round2((numberValue(row.points_earned) / possible) * 100),
-          source: 'quality',
-          sourceSystem: 'db_audit.call_quality_assessment',
-          numerator: numberValue(row.points_earned),
-          denominator: possible,
-          sourceRecordCount: audits,
-        });
-      }
-      // Emit nothing rather than a flattering zero when the day's audits were
-      // never scored. No fatal rate is an honest gap; 0% is a false claim.
-      const scored = numberValue((row as { scored_audits?: unknown }).scored_audits);
-      if (scored > 0) {
-        facts.push({
-          employeeId,
-          metricCode: 'FATAL_RATE',
-          date,
-          value: round2((numberValue(row.fatal_audits) / scored) * 100),
-          source: 'quality',
-          sourceSystem: 'db_audit.call_quality_assessment',
-          numerator: numberValue(row.fatal_audits),
-          denominator: scored,
-          // Lineage keeps the true audit count, so the gap between audits taken
-          // and audits scored stays visible rather than being rounded away.
-          sourceRecordCount: audits,
-        });
-      }
-      return facts;
-    }, {
-      sourceSystem: 'quality_audit',
-      sourceEntity: 'db_audit.call_quality_assessment',
-    });
+    return writeFacts(
+      rows as SourceAggregate[],
+      ["QUALITY_SCORE", "FATAL_RATE"],
+      (row, employeeId) => {
+        const possible = numberValue(row.points_possible);
+        const audits = numberValue(row.total_audits);
+        const facts: MetricFact[] = [];
+        if (possible > 0) {
+          facts.push({
+            employeeId,
+            metricCode: "QUALITY_SCORE",
+            // The date being synced, not MAX(CallDate) — that is the whole
+            // difference between a daily fact and a monthly rollup.
+            date,
+            value: round2((numberValue(row.points_earned) / possible) * 100),
+            source: "quality",
+            sourceSystem: "db_audit.call_quality_assessment",
+            numerator: numberValue(row.points_earned),
+            denominator: possible,
+            sourceRecordCount: audits,
+          });
+        }
+        // Emit nothing rather than a flattering zero when the day's audits were
+        // never scored. No fatal rate is an honest gap; 0% is a false claim.
+        const scored = numberValue(
+          (row as { scored_audits?: unknown }).scored_audits,
+        );
+        if (scored > 0) {
+          facts.push({
+            employeeId,
+            metricCode: "FATAL_RATE",
+            date,
+            value: round2((numberValue(row.fatal_audits) / scored) * 100),
+            source: "quality",
+            sourceSystem: "db_audit.call_quality_assessment",
+            numerator: numberValue(row.fatal_audits),
+            denominator: scored,
+            // Lineage keeps the true audit count, so the gap between audits taken
+            // and audits scored stays visible rather than being rounded away.
+            sourceRecordCount: audits,
+          });
+        }
+        return facts;
+      },
+      {
+        sourceSystem: "quality_audit",
+        sourceEntity: "db_audit.call_quality_assessment",
+      },
+    );
   } catch (error) {
     return { synced: 0, skipped: 0, errors: [errorMessage(error)] };
   }
 }
 
-export async function syncQualityMetrics(yearMonth: string): Promise<SyncResult> {
-  const { pool, errors } = await readSourcePool('quality_audit');
+export async function syncQualityMetrics(
+  yearMonth: string,
+): Promise<SyncResult> {
+  const { pool, errors } = await readSourcePool("quality_audit");
   if (!pool) return { synced: 0, skipped: 0, errors };
   const bounds = monthBounds(yearMonth);
   const sql = `
@@ -640,57 +733,65 @@ export async function syncQualityMetrics(yearMonth: string): Promise<SyncResult>
 
   try {
     const [rows] = await pool.execute(sql, [bounds.from, bounds.to]);
-    return writeFacts(rows as SourceAggregate[], ['QUALITY_SCORE', 'FATAL_RATE'], (row, employeeId) => {
-      const possible = numberValue(row.points_possible);
-      const audits = numberValue(row.total_audits);
-      const factDate = row.last_audit_date instanceof Date
-        ? row.last_audit_date.toISOString().slice(0, 10)
-        : String(row.last_audit_date ?? `${yearMonth}-01`).slice(0, 10);
-      const facts: MetricFact[] = [];
-      if (possible > 0) {
-        facts.push({
-          employeeId,
-          metricCode: 'QUALITY_SCORE',
-          date: factDate,
-          value: round2((numberValue(row.points_earned) / possible) * 100),
-          source: 'quality',
-          sourceSystem: 'db_audit.call_quality_assessment',
-          numerator: numberValue(row.points_earned),
-          denominator: possible,
-          sourceRecordCount: audits,
-        });
-      }
-      const scoredMonth = numberValue((row as { scored_audits?: unknown }).scored_audits);
-      if (scoredMonth > 0) {
-        facts.push({
-          employeeId,
-          metricCode: 'FATAL_RATE',
-          date: factDate,
-          value: round2((numberValue(row.fatal_audits) / scoredMonth) * 100),
-          source: 'quality',
-          sourceSystem: 'db_audit.call_quality_assessment',
-          numerator: numberValue(row.fatal_audits),
-          denominator: scoredMonth,
-          // Lineage keeps the true audit count, so the gap between audits taken
-          // and audits scored stays visible rather than being rounded away.
-          sourceRecordCount: audits,
-        });
-      }
-      return facts;
-    }, {
-      // Quality is where an unmapped agent hurts most: the feed stopped
-      // populating Campaign in May 2026, so `User` is the only link between a
-      // score and a person.
-      sourceSystem: 'quality_audit',
-      sourceEntity: 'db_audit.call_quality_assessment',
-    });
+    return writeFacts(
+      rows as SourceAggregate[],
+      ["QUALITY_SCORE", "FATAL_RATE"],
+      (row, employeeId) => {
+        const possible = numberValue(row.points_possible);
+        const audits = numberValue(row.total_audits);
+        const factDate =
+          row.last_audit_date instanceof Date
+            ? row.last_audit_date.toISOString().slice(0, 10)
+            : String(row.last_audit_date ?? `${yearMonth}-01`).slice(0, 10);
+        const facts: MetricFact[] = [];
+        if (possible > 0) {
+          facts.push({
+            employeeId,
+            metricCode: "QUALITY_SCORE",
+            date: factDate,
+            value: round2((numberValue(row.points_earned) / possible) * 100),
+            source: "quality",
+            sourceSystem: "db_audit.call_quality_assessment",
+            numerator: numberValue(row.points_earned),
+            denominator: possible,
+            sourceRecordCount: audits,
+          });
+        }
+        const scoredMonth = numberValue(
+          (row as { scored_audits?: unknown }).scored_audits,
+        );
+        if (scoredMonth > 0) {
+          facts.push({
+            employeeId,
+            metricCode: "FATAL_RATE",
+            date: factDate,
+            value: round2((numberValue(row.fatal_audits) / scoredMonth) * 100),
+            source: "quality",
+            sourceSystem: "db_audit.call_quality_assessment",
+            numerator: numberValue(row.fatal_audits),
+            denominator: scoredMonth,
+            // Lineage keeps the true audit count, so the gap between audits taken
+            // and audits scored stays visible rather than being rounded away.
+            sourceRecordCount: audits,
+          });
+        }
+        return facts;
+      },
+      {
+        // Quality is where an unmapped agent hurts most: the feed stopped
+        // populating Campaign in May 2026, so `User` is the only link between a
+        // score and a person.
+        sourceSystem: "quality_audit",
+        sourceEntity: "db_audit.call_quality_assessment",
+      },
+    );
   } catch (error) {
     return { synced: 0, skipped: 0, errors: [errorMessage(error)] };
   }
 }
 
 export async function syncConversionMetrics(date: string): Promise<SyncResult> {
-  const { pool, errors } = await readSourcePool('outbound_calls');
+  const { pool, errors } = await readSourcePool("outbound_calls");
   if (!pool) return { synced: 0, skipped: 0, errors };
   const sql = `
     SELECT
@@ -705,28 +806,38 @@ export async function syncConversionMetrics(date: string): Promise<SyncResult> {
 
   try {
     const [rows] = await pool.execute(sql, [date, nextDate(date)]);
-    return writeFacts(rows as SourceAggregate[], ['CONVERSION_RATE'], (row, employeeId) => {
-      const eligibleContacts = numberValue(row.eligible_contacts);
-      if (eligibleContacts <= 0) return [];
-      return [{
-        employeeId,
-        metricCode: 'CONVERSION_RATE',
-        date,
-        value: round2((numberValue(row.converted_sales) / eligibleContacts) * 100),
-        source: 'calculated',
-        sourceSystem: 'db_external.CallDetails',
-        numerator: numberValue(row.converted_sales),
-        denominator: eligibleContacts,
-        sourceRecordCount: numberValue(row.source_records),
-      }];
-    });
+    return writeFacts(
+      rows as SourceAggregate[],
+      ["CONVERSION_RATE"],
+      (row, employeeId) => {
+        const eligibleContacts = numberValue(row.eligible_contacts);
+        if (eligibleContacts <= 0) return [];
+        return [
+          {
+            employeeId,
+            metricCode: "CONVERSION_RATE",
+            date,
+            value: round2(
+              (numberValue(row.converted_sales) / eligibleContacts) * 100,
+            ),
+            source: "calculated",
+            sourceSystem: "db_external.CallDetails",
+            numerator: numberValue(row.converted_sales),
+            denominator: eligibleContacts,
+            sourceRecordCount: numberValue(row.source_records),
+          },
+        ];
+      },
+    );
   } catch (error) {
     return { synced: 0, skipped: 0, errors: [errorMessage(error)] };
   }
 }
 
-export async function syncSalesBrandMisMetrics(date: string): Promise<SyncResult> {
-  const { pool, errors } = await readSourcePool('sales_brand_mis');
+export async function syncSalesBrandMisMetrics(
+  date: string,
+): Promise<SyncResult> {
+  const { pool, errors } = await readSourcePool("sales_brand_mis");
   if (!pool) return { synced: 0, skipped: 0, errors };
 
   const sql = `
@@ -804,66 +915,70 @@ export async function syncSalesBrandMisMetrics(date: string): Promise<SyncResult
 
   try {
     const [rows] = await pool.execute(sql, [date, date, date]);
-    return writeFacts(rows as SourceAggregate[], ['DIALS', 'AHT', 'TALK_TIME', 'ACW'], (row, employeeId) => {
-      const totalCalls = numberValue(row.total_calls);
-      const sourceRecords = numberValue(row.source_records);
-      const facts: MetricFact[] = [];
-      if (totalCalls > 0) {
-        facts.push(
-          {
-            employeeId,
-            metricCode: 'DIALS',
-            date,
-            value: totalCalls,
-            source: 'apr',
-            sourceSystem: 'db_masmis.brand_apr',
-            numerator: totalCalls,
-            sourceRecordCount: sourceRecords,
-          },
-          {
-            employeeId,
-            metricCode: 'AHT',
-            date,
-            value: round1(numberValue(row.total_aht) / totalCalls),
-            source: 'apr',
-            sourceSystem: 'db_masmis.brand_apr',
-            numerator: numberValue(row.total_aht),
-            denominator: totalCalls,
-            sourceRecordCount: sourceRecords,
-          },
-          {
-            employeeId,
-            metricCode: 'TALK_TIME',
-            date,
-            value: round1(numberValue(row.total_talk) / totalCalls),
-            source: 'apr',
-            sourceSystem: 'db_masmis.brand_apr',
-            numerator: numberValue(row.total_talk),
-            denominator: totalCalls,
-            sourceRecordCount: sourceRecords,
-          },
-          {
-            employeeId,
-            metricCode: 'ACW',
-            date,
-            value: round2(numberValue(row.total_dispo) / totalCalls),
-            source: 'apr',
-            sourceSystem: 'db_masmis.brand_apr',
-            numerator: numberValue(row.total_dispo),
-            denominator: totalCalls,
-            sourceRecordCount: sourceRecords,
-          },
-        );
-      }
-      return facts;
-    });
+    return writeFacts(
+      rows as SourceAggregate[],
+      ["DIALS", "AHT", "TALK_TIME", "ACW"],
+      (row, employeeId) => {
+        const totalCalls = numberValue(row.total_calls);
+        const sourceRecords = numberValue(row.source_records);
+        const facts: MetricFact[] = [];
+        if (totalCalls > 0) {
+          facts.push(
+            {
+              employeeId,
+              metricCode: "DIALS",
+              date,
+              value: totalCalls,
+              source: "apr",
+              sourceSystem: "db_masmis.brand_apr",
+              numerator: totalCalls,
+              sourceRecordCount: sourceRecords,
+            },
+            {
+              employeeId,
+              metricCode: "AHT",
+              date,
+              value: round1(numberValue(row.total_aht) / totalCalls),
+              source: "apr",
+              sourceSystem: "db_masmis.brand_apr",
+              numerator: numberValue(row.total_aht),
+              denominator: totalCalls,
+              sourceRecordCount: sourceRecords,
+            },
+            {
+              employeeId,
+              metricCode: "TALK_TIME",
+              date,
+              value: round1(numberValue(row.total_talk) / totalCalls),
+              source: "apr",
+              sourceSystem: "db_masmis.brand_apr",
+              numerator: numberValue(row.total_talk),
+              denominator: totalCalls,
+              sourceRecordCount: sourceRecords,
+            },
+            {
+              employeeId,
+              metricCode: "ACW",
+              date,
+              value: round2(numberValue(row.total_dispo) / totalCalls),
+              source: "apr",
+              sourceSystem: "db_masmis.brand_apr",
+              numerator: numberValue(row.total_dispo),
+              denominator: totalCalls,
+              sourceRecordCount: sourceRecords,
+            },
+          );
+        }
+        return facts;
+      },
+    );
   } catch (error) {
     return { synced: 0, skipped: 0, errors: [errorMessage(error)] };
   }
 }
 
 export async function syncSalesOrderMetrics(date: string): Promise<SyncResult> {
-  const { pool, errors } = await readSourcePool('sales_brand_mis');
+  const { pool, errors } = await readSourcePool("sales_brand_mis");
   if (!pool) return { synced: 0, skipped: 0, errors };
 
   const sql = `
@@ -923,67 +1038,71 @@ export async function syncSalesOrderMetrics(date: string): Promise<SyncResult> {
 
   try {
     const [rows] = await pool.execute(sql, [date, date, date, date, date]);
-    return writeFacts(rows as SourceAggregate[], ['SALES_COUNT', 'REVENUE', 'AOV', 'COD_SHARE', 'RTO_RATE'], (row, employeeId) => {
-      const sales = numberValue(row.converted_sales);
-      const revenue = numberValue(row.revenue);
-      const sourceRecords = numberValue(row.source_records);
-      if (sales <= 0) return [];
-      return [
-        {
-          employeeId,
-          metricCode: 'SALES_COUNT',
-          date,
-          value: sales,
-          source: 'calculated',
-          sourceSystem: 'db_masmis.brand_sales',
-          numerator: sales,
-          sourceRecordCount: sourceRecords,
-        },
-        {
-          employeeId,
-          metricCode: 'REVENUE',
-          date,
-          value: round2(revenue),
-          source: 'calculated',
-          sourceSystem: 'db_masmis.brand_sales',
-          numerator: revenue,
-          sourceRecordCount: sourceRecords,
-        },
-        {
-          employeeId,
-          metricCode: 'AOV',
-          date,
-          value: round2(revenue / sales),
-          source: 'calculated',
-          sourceSystem: 'db_masmis.brand_sales',
-          numerator: revenue,
-          denominator: sales,
-          sourceRecordCount: sourceRecords,
-        },
-        {
-          employeeId,
-          metricCode: 'COD_SHARE',
-          date,
-          value: round2((numberValue(row.cod_orders) / sales) * 100),
-          source: 'calculated',
-          sourceSystem: 'db_masmis.brand_sales',
-          numerator: numberValue(row.cod_orders),
-          denominator: sales,
-          sourceRecordCount: sourceRecords,
-        },
-        {
-          employeeId,
-          metricCode: 'RTO_RATE',
-          date,
-          value: round2((numberValue(row.rto_orders) / sales) * 100),
-          source: 'calculated',
-          sourceSystem: 'db_masmis.brand_sales',
-          numerator: numberValue(row.rto_orders),
-          denominator: sales,
-          sourceRecordCount: sourceRecords,
-        },
-      ];
-    });
+    return writeFacts(
+      rows as SourceAggregate[],
+      ["SALES_COUNT", "REVENUE", "AOV", "COD_SHARE", "RTO_RATE"],
+      (row, employeeId) => {
+        const sales = numberValue(row.converted_sales);
+        const revenue = numberValue(row.revenue);
+        const sourceRecords = numberValue(row.source_records);
+        if (sales <= 0) return [];
+        return [
+          {
+            employeeId,
+            metricCode: "SALES_COUNT",
+            date,
+            value: sales,
+            source: "calculated",
+            sourceSystem: "db_masmis.brand_sales",
+            numerator: sales,
+            sourceRecordCount: sourceRecords,
+          },
+          {
+            employeeId,
+            metricCode: "REVENUE",
+            date,
+            value: round2(revenue),
+            source: "calculated",
+            sourceSystem: "db_masmis.brand_sales",
+            numerator: revenue,
+            sourceRecordCount: sourceRecords,
+          },
+          {
+            employeeId,
+            metricCode: "AOV",
+            date,
+            value: round2(revenue / sales),
+            source: "calculated",
+            sourceSystem: "db_masmis.brand_sales",
+            numerator: revenue,
+            denominator: sales,
+            sourceRecordCount: sourceRecords,
+          },
+          {
+            employeeId,
+            metricCode: "COD_SHARE",
+            date,
+            value: round2((numberValue(row.cod_orders) / sales) * 100),
+            source: "calculated",
+            sourceSystem: "db_masmis.brand_sales",
+            numerator: numberValue(row.cod_orders),
+            denominator: sales,
+            sourceRecordCount: sourceRecords,
+          },
+          {
+            employeeId,
+            metricCode: "RTO_RATE",
+            date,
+            value: round2((numberValue(row.rto_orders) / sales) * 100),
+            source: "calculated",
+            sourceSystem: "db_masmis.brand_sales",
+            numerator: numberValue(row.rto_orders),
+            denominator: sales,
+            sourceRecordCount: sourceRecords,
+          },
+        ];
+      },
+    );
   } catch (error) {
     return { synced: 0, skipped: 0, errors: [errorMessage(error)] };
   }

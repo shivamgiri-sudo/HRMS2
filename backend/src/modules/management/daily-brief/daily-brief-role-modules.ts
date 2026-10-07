@@ -184,7 +184,9 @@ const EXECUTIVE_CONFIG: RoleModuleConfig = {
   isExecutiveRollup: true,
 };
 
-export const DAILY_BRIEF_ROLE_MODULES: Readonly<Record<string, RoleModuleConfig>> = {
+export const DAILY_BRIEF_ROLE_MODULES: Readonly<
+  Record<string, RoleModuleConfig>
+> = {
   team_leader: TEAM_LEADER_CONFIG,
   tl: TEAM_LEADER_CONFIG,
   manager: MANAGER_CONFIG,
@@ -255,35 +257,67 @@ export function canonicalRoleForModuleGating(role: string): string {
  * automatically participates in multi-role merging correctly without the aggregator
  * needing its own copy of the precedence rules.
  */
-export function resolveModulesForRoles(roles: readonly string[]): RoleModuleConfig {
+export function resolveModulesForRoles(
+  roles: readonly string[],
+): RoleModuleConfig {
   const merged: RoleModuleConfig = {};
-  const detailRank: Record<string, number> = { summary: 0, diagnostic: 1, operational: 0, detailed: 1 };
+  const detailRank: Record<string, number> = {
+    summary: 0,
+    diagnostic: 1,
+    operational: 0,
+    detailed: 1,
+  };
   const scopeRank: Record<TeamOrHrScope, number> = { team: 0, hr: 1 };
-  const payrollRank: Record<PayrollDetailSetting, number> = { hint: 0, readiness: 1 };
+  const payrollRank: Record<PayrollDetailSetting, number> = {
+    hint: 0,
+    readiness: 1,
+  };
 
   for (const rawRole of roles) {
     const config = DAILY_BRIEF_ROLE_MODULES[rawRole.trim().toLowerCase()];
     if (!config) continue;
 
-    if (config.kpi && (!merged.kpi || detailRank[config.kpi] > detailRank[merged.kpi])) {
+    if (
+      config.kpi &&
+      (!merged.kpi || detailRank[config.kpi] > detailRank[merged.kpi])
+    ) {
       merged.kpi = config.kpi;
     }
-    if (config.quality && (!merged.quality || detailRank[config.quality] > detailRank[merged.quality])) {
+    if (
+      config.quality &&
+      (!merged.quality ||
+        detailRank[config.quality] > detailRank[merged.quality])
+    ) {
       merged.quality = config.quality;
     }
     if (config.roster) merged.roster = true;
     if (config.peopleRisk) merged.peopleRisk = true;
-    if (config.helpdesk && (!merged.helpdesk || detailRank[config.helpdesk] > detailRank[merged.helpdesk])) {
+    if (
+      config.helpdesk &&
+      (!merged.helpdesk ||
+        detailRank[config.helpdesk] > detailRank[merged.helpdesk])
+    ) {
       merged.helpdesk = config.helpdesk;
     }
-    if (config.recruitment && (!merged.recruitment || scopeRank[config.recruitment] > scopeRank[merged.recruitment])) {
+    if (
+      config.recruitment &&
+      (!merged.recruitment ||
+        scopeRank[config.recruitment] > scopeRank[merged.recruitment])
+    ) {
       merged.recruitment = config.recruitment;
     }
-    if (config.exit && (!merged.exit || scopeRank[config.exit] > scopeRank[merged.exit])) {
+    if (
+      config.exit &&
+      (!merged.exit || scopeRank[config.exit] > scopeRank[merged.exit])
+    ) {
       merged.exit = config.exit;
     }
     if (config.training) merged.training = true;
-    if (config.payroll && (!merged.payroll || payrollRank[config.payroll] > payrollRank[merged.payroll])) {
+    if (
+      config.payroll &&
+      (!merged.payroll ||
+        payrollRank[config.payroll] > payrollRank[merged.payroll])
+    ) {
       merged.payroll = config.payroll;
     }
     if (config.isExecutiveRollup) merged.isExecutiveRollup = true;

@@ -52,10 +52,16 @@ const OTHER = "branch-B";
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
+  const original =
+    await importOriginal<
+      typeof import("../../../middleware/authMiddleware.js")
+    >();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.authUser = actor;
+      next();
+    },
   };
 });
 
@@ -65,7 +71,11 @@ function appFor(role: string) {
   actor = { id: `u-${role}`, role, roles: [role] };
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => { req.authUser = actor; req.userRoles = actor.roles; next(); });
+  app.use((req: any, _res, next) => {
+    req.authUser = actor;
+    req.userRoles = actor.roles;
+    next();
+  });
   app.use("/api/finance/imprest", imprestRouter);
   return app;
 }
@@ -73,9 +83,12 @@ function appFor(role: string) {
 /** The allocation lives in `allocationBranch`; the caller's own employee branch is branch-A. */
 let allocationBranch = OTHER;
 beforeEach(() => {
-  reviewAllocation.mockReset().mockResolvedValue({ id: "a1", status: "approved" });
+  reviewAllocation
+    .mockReset()
+    .mockResolvedValue({ id: "a1", status: "approved" });
   execute.mockReset().mockImplementation(async (sql: string) => {
-    if (/FROM imprest_allocation/i.test(String(sql))) return [[{ branch_id: allocationBranch }], []];
+    if (/FROM imprest_allocation/i.test(String(sql)))
+      return [[{ branch_id: allocationBranch }], []];
     // Everything else is the scope resolver asking which branch this user belongs to.
     return [[{ branch_id: OWN, id: OWN }], []];
   });
@@ -87,8 +100,14 @@ describe("POST /allocations/:id/review", () => {
     const res = await request(appFor("branch_head"))
       .post("/api/finance/imprest/allocations/a1/review")
       .send({ decision: "approve" });
-    expect(res.status, "approving another branch's float must not be possible").toBe(403);
-    expect(reviewAllocation, "the service must not be reached at all").not.toHaveBeenCalled();
+    expect(
+      res.status,
+      "approving another branch's float must not be possible",
+    ).toBe(403);
+    expect(
+      reviewAllocation,
+      "the service must not be reached at all",
+    ).not.toHaveBeenCalled();
   });
 
   it("REFUSES a Branch Head reviewing an allocation, even for their own branch", async () => {
@@ -128,15 +147,19 @@ describe("POST /allocations/:id/review", () => {
 describe("the read and the write agree", () => {
   it("the history read still refuses another branch", async () => {
     // It always did; this pins it while both move to a shared helper.
-    const res = await request(appFor("branch_head"))
-      .get("/api/finance/imprest/allocations/a1/approval-history");
+    const res = await request(appFor("branch_head")).get(
+      "/api/finance/imprest/allocations/a1/approval-history",
+    );
     expect(res.status).toBe(403);
   });
 
   it("both go through the one helper, not two copies", () => {
     const source = require("fs").readFileSync(
-      require("path").resolve(__dirname, "../imprest.routes.ts"), "utf8");
-    const uses = source.match(/assertAllocationBranch\(req, req\.params\.id\)/g) ?? [];
+      require("path").resolve(__dirname, "../imprest.routes.ts"),
+      "utf8",
+    );
+    const uses =
+      source.match(/assertAllocationBranch\(req, req\.params\.id\)/g) ?? [];
     expect(uses.length, "the review and the history read").toBe(2);
   });
 });

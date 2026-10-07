@@ -25,23 +25,26 @@
  * guaranteed-401. That is why enabling this on an untokened environment is harmless.
  */
 
-import { recordWorkerRun } from '../../workers/worker-utils.js';
-import { metaCampaignService } from './meta-campaign.service.js';
-import { isMetaConfigured } from './meta-api.client.js';
+import { recordWorkerRun } from "../../workers/worker-utils.js";
+import { metaCampaignService } from "./meta-campaign.service.js";
+import { isMetaConfigured } from "./meta-api.client.js";
 
-export const WORKER_NAME = 'meta-campaign-metrics-sync';
-const DEFAULT_TIME = '06:00';
+export const WORKER_NAME = "meta-campaign-metrics-sync";
+const DEFAULT_TIME = "06:00";
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 let nextRun: NodeJS.Timeout | undefined;
 
 function isEnabled(): boolean {
-  return process.env.META_CAMPAIGN_SYNC_ENABLED === 'true';
+  return process.env.META_CAMPAIGN_SYNC_ENABLED === "true";
 }
 
-export function parseRunTime(value: string | undefined): { hour: number; minute: number } {
+export function parseRunTime(value: string | undefined): {
+  hour: number;
+  minute: number;
+} {
   const raw = value && TIME_PATTERN.test(value) ? value : DEFAULT_TIME;
-  const [hourStr, minuteStr] = raw.split(':');
+  const [hourStr, minuteStr] = raw.split(":");
   return { hour: Number(hourStr), minute: Number(minuteStr) };
 }
 
@@ -63,12 +66,22 @@ export interface MetaSyncRunSummary {
 export async function runMetaCampaignMetricsSync(): Promise<MetaSyncRunSummary> {
   const startedAt = Date.now();
   console.log(`[${WORKER_NAME}] run start`);
-  await recordWorkerRun(WORKER_NAME, 'started', {});
+  await recordWorkerRun(WORKER_NAME, "started", {});
 
   if (!isMetaConfigured()) {
-    const summary: MetaSyncRunSummary = { synced: 0, failed: 0, skipped: 0, metaConfigured: false };
-    console.log(`[${WORKER_NAME}] skipped — META_MARKETING_ACCESS_TOKEN is not configured`);
-    await recordWorkerRun(WORKER_NAME, 'completed', { ...summary, elapsedMs: Date.now() - startedAt });
+    const summary: MetaSyncRunSummary = {
+      synced: 0,
+      failed: 0,
+      skipped: 0,
+      metaConfigured: false,
+    };
+    console.log(
+      `[${WORKER_NAME}] skipped — META_MARKETING_ACCESS_TOKEN is not configured`,
+    );
+    await recordWorkerRun(WORKER_NAME, "completed", {
+      ...summary,
+      elapsedMs: Date.now() - startedAt,
+    });
     return summary;
   }
 
@@ -76,12 +89,17 @@ export async function runMetaCampaignMetricsSync(): Promise<MetaSyncRunSummary> 
     const result = await metaCampaignService.syncAllCampaignMetrics();
     const summary: MetaSyncRunSummary = { ...result, metaConfigured: true };
     const elapsedMs = Date.now() - startedAt;
-    console.log(`[${WORKER_NAME}] run end elapsedMs=${elapsedMs} synced=${summary.synced} failed=${summary.failed}`);
-    await recordWorkerRun(WORKER_NAME, 'completed', { ...summary, elapsedMs });
+    console.log(
+      `[${WORKER_NAME}] run end elapsedMs=${elapsedMs} synced=${summary.synced} failed=${summary.failed}`,
+    );
+    await recordWorkerRun(WORKER_NAME, "completed", { ...summary, elapsedMs });
     return summary;
   } catch (error) {
-    console.error(`[${WORKER_NAME}] run failed`, error instanceof Error ? error.message : String(error));
-    await recordWorkerRun(WORKER_NAME, 'failed', {
+    console.error(
+      `[${WORKER_NAME}] run failed`,
+      error instanceof Error ? error.message : String(error),
+    );
+    await recordWorkerRun(WORKER_NAME, "failed", {
       error: error instanceof Error ? error.message : String(error),
       elapsedMs: Date.now() - startedAt,
     });
@@ -91,7 +109,9 @@ export async function runMetaCampaignMetricsSync(): Promise<MetaSyncRunSummary> 
 
 export function startMetaCampaignSyncScheduler(): void {
   if (!isEnabled()) {
-    console.log(`[${WORKER_NAME}] disabled (set META_CAMPAIGN_SYNC_ENABLED=true to enable)`);
+    console.log(
+      `[${WORKER_NAME}] disabled (set META_CAMPAIGN_SYNC_ENABLED=true to enable)`,
+    );
     return;
   }
   if (nextRun) return;
@@ -101,7 +121,10 @@ export function startMetaCampaignSyncScheduler(): void {
       try {
         await runMetaCampaignMetricsSync();
       } catch (error) {
-        console.error(`[${WORKER_NAME}] scheduled run failed`, error instanceof Error ? error.message : String(error));
+        console.error(
+          `[${WORKER_NAME}] scheduled run failed`,
+          error instanceof Error ? error.message : String(error),
+        );
       } finally {
         nextRun = undefined;
         scheduleNext();
@@ -113,7 +136,7 @@ export function startMetaCampaignSyncScheduler(): void {
   scheduleNext();
   const { hour, minute } = parseRunTime(process.env.META_CAMPAIGN_SYNC_TIME);
   console.log(
-    `[${WORKER_NAME}] scheduled daily at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+    `[${WORKER_NAME}] scheduled daily at ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
   );
 }
 

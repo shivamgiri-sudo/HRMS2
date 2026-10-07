@@ -18,9 +18,9 @@
  * leadgen_id is a no-op rather than a second candidate.
  */
 
-import { randomUUID } from 'crypto';
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
 import {
   fetchLeadDetail,
   fetchCampaignInsights,
@@ -28,12 +28,21 @@ import {
   fetchPageLeadForms,
   isMetaConfigured,
   MetaApiError,
-} from './meta-api.client.js';
-import { parseLead, normaliseMetaId, extractRoutingCode } from './meta-lead.parser.js';
-import { screenLead } from './lead-screener.service.js';
-import { loadCampaignScreeningConfig } from './campaign-screening.js';
-import { notifyQualifiedLead } from './lead-outreach.service.js';
-import { buildCanonicalFunnel, canonicalStage, CANONICAL_STAGE_LABEL, CANONICAL_STAGE_ORDER } from '../ats/ats-stage-model.js';
+} from "./meta-api.client.js";
+import {
+  parseLead,
+  normaliseMetaId,
+  extractRoutingCode,
+} from "./meta-lead.parser.js";
+import { screenLead } from "./lead-screener.service.js";
+import { loadCampaignScreeningConfig } from "./campaign-screening.js";
+import { notifyQualifiedLead } from "./lead-outreach.service.js";
+import {
+  buildCanonicalFunnel,
+  canonicalStage,
+  CANONICAL_STAGE_LABEL,
+  CANONICAL_STAGE_ORDER,
+} from "../ats/ats-stage-model.js";
 import type {
   MetaCampaign,
   MetaCampaignRow,
@@ -45,7 +54,7 @@ import type {
   CreateMetaCampaignInput,
   UpdateMetaCampaignInput,
   MetaCampaignStatus,
-} from './meta-campaign.types.js';
+} from "./meta-campaign.types.js";
 
 // ──────────────────────────── mappers ────────────────────────────
 
@@ -68,7 +77,9 @@ function toCampaign(row: RowDataPacket | MetaCampaignRow): MetaCampaign {
     trainingStartDate: iso(r.training_start_date as Date | string | null),
     targetJoiningDate: iso(r.target_joining_date as Date | string | null),
     requestedByName: (r.requested_by_name as string | null) ?? null,
-    requestedHeadcount: r.requested_headcount ? Number(r.requested_headcount) : null,
+    requestedHeadcount: r.requested_headcount
+      ? Number(r.requested_headcount)
+      : null,
     plannedBatchNo: (r.planned_batch_no as string | null) ?? null,
     plannedBatchName: (r.planned_batch_name as string | null) ?? null,
     requisitionPriority: (r.requisition_priority as string | null) ?? null,
@@ -87,18 +98,21 @@ function toCampaign(row: RowDataPacket | MetaCampaignRow): MetaCampaign {
     lastSyncError: r.last_sync_error,
     notes: r.notes,
     createdBy: r.created_by,
-    createdAt: iso(r.created_at) ?? '',
-    updatedAt: iso(r.updated_at) ?? '',
+    createdAt: iso(r.created_at) ?? "",
+    updatedAt: iso(r.updated_at) ?? "",
   };
 }
 
 /** mysql2 returns a JSON column as a parsed value on some driver versions and a string on others. */
 function jsonArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string');
-  if (typeof value === 'string' && value.trim()) {
+  if (Array.isArray(value))
+    return value.filter((v): v is string => typeof v === "string");
+  if (typeof value === "string" && value.trim()) {
     try {
       const parsed: unknown = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+      return Array.isArray(parsed)
+        ? parsed.filter((v): v is string => typeof v === "string")
+        : [];
     } catch {
       return [];
     }
@@ -109,14 +123,16 @@ function jsonArray(value: unknown): string[] {
 /** True for the placeholder row ingestLead stores when the Graph lead fetch failed. */
 export function isGraphFetchStub(row: Record<string, unknown>): boolean {
   let payload = row.raw_payload;
-  if (typeof payload === 'string') {
+  if (typeof payload === "string") {
     try {
       payload = JSON.parse(payload);
     } catch {
       return false;
     }
   }
-  return (payload as { error?: unknown } | null)?.error === 'graph_fetch_failed';
+  return (
+    (payload as { error?: unknown } | null)?.error === "graph_fetch_failed"
+  );
 }
 
 function toLead(row: RowDataPacket | MetaLeadRow): MetaLead {
@@ -133,7 +149,8 @@ function toLead(row: RowDataPacket | MetaLeadRow): MetaLead {
     parsedAge: r.parsed_age === null ? null : Number(r.parsed_age),
     parsedLocation: r.parsed_location,
     parsedEducation: r.parsed_education,
-    parsedExperienceYr: r.parsed_experience_yr === null ? null : Number(r.parsed_experience_yr),
+    parsedExperienceYr:
+      r.parsed_experience_yr === null ? null : Number(r.parsed_experience_yr),
     screeningResult: r.screening_result,
     disqualificationReason: r.disqualification_reason,
     atsCandidateId: r.ats_candidate_id,
@@ -145,7 +162,7 @@ function toLead(row: RowDataPacket | MetaLeadRow): MetaLead {
     callingFeedback: r.calling_feedback,
     callingFeedbackAt: iso(r.calling_feedback_at),
     callingFeedbackNotes: r.calling_feedback_notes,
-    createdAt: iso(r.created_at) ?? '',
+    createdAt: iso(r.created_at) ?? "",
   };
 }
 
@@ -161,56 +178,63 @@ const CAMPAIGN_SELECT = `
 // ──────────────────────────── service ────────────────────────────
 
 export const metaCampaignService = {
-  async listCampaigns(filters: {
-    requisitionId?: string;
-    status?: MetaCampaignStatus;
-    search?: string;
-    branchName?: string;
-    processName?: string;
-    dateFrom?: string;
-    dateTo?: string;
-  } = {}): Promise<MetaCampaign[]> {
+  async listCampaigns(
+    filters: {
+      requisitionId?: string;
+      status?: MetaCampaignStatus;
+      search?: string;
+      branchName?: string;
+      processName?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    } = {},
+  ): Promise<MetaCampaign[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
     if (filters.requisitionId) {
-      conds.push('mc.requisition_id = ?');
+      conds.push("mc.requisition_id = ?");
       params.push(filters.requisitionId);
     }
     if (filters.status) {
-      conds.push('mc.campaign_status = ?');
+      conds.push("mc.campaign_status = ?");
       params.push(filters.status);
     }
     if (filters.search) {
-      conds.push('(mc.campaign_name LIKE ? OR jr.requisition_code LIKE ? OR jr.designation_name LIKE ?)');
+      conds.push(
+        "(mc.campaign_name LIKE ? OR jr.requisition_code LIKE ? OR jr.designation_name LIKE ?)",
+      );
       const like = `%${filters.search}%`;
       params.push(like, like, like);
     }
     if (filters.branchName) {
-      conds.push('jr.branch_name = ?');
+      conds.push("jr.branch_name = ?");
       params.push(filters.branchName);
     }
     if (filters.processName) {
-      conds.push('jr.process_name = ?');
+      conds.push("jr.process_name = ?");
       params.push(filters.processName);
     }
     if (filters.dateFrom) {
-      conds.push('mc.created_at >= ?');
+      conds.push("mc.created_at >= ?");
       params.push(filters.dateFrom);
     }
     if (filters.dateTo) {
       conds.push("mc.created_at <= CONCAT(?, ' 23:59:59')");
       params.push(filters.dateTo);
     }
-    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `${CAMPAIGN_SELECT} ${where} ORDER BY mc.created_at DESC LIMIT 500`,
-      params
+      params,
     );
     return rows.map(toCampaign);
   },
 
   async getCampaign(id: string): Promise<MetaCampaign | null> {
-    const [rows] = await db.execute<RowDataPacket[]>(`${CAMPAIGN_SELECT} WHERE mc.id = ? LIMIT 1`, [id]);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `${CAMPAIGN_SELECT} WHERE mc.id = ? LIMIT 1`,
+      [id],
+    );
     return rows[0] ? toCampaign(rows[0]) : null;
   },
 
@@ -221,25 +245,39 @@ export const metaCampaignService = {
    * Manager pastes the bare number. Both must produce the same stored value, or the UNIQUE index on
    * meta_form_id fails to catch a genuine duplicate and webhook routing misses.
    */
-  normaliseCampaignIds<T extends { metaFormId?: string | null; metaCampaignId?: string | null; metaAdsetId?: string | null; metaAdId?: string | null }>(
-    input: T
-  ): T {
+  normaliseCampaignIds<
+    T extends {
+      metaFormId?: string | null;
+      metaCampaignId?: string | null;
+      metaAdsetId?: string | null;
+      metaAdId?: string | null;
+    },
+  >(input: T): T {
     const out = { ...input };
-    if (out.metaFormId !== undefined) out.metaFormId = normaliseMetaId(out.metaFormId);
-    if (out.metaCampaignId !== undefined) out.metaCampaignId = normaliseMetaId(out.metaCampaignId);
-    if (out.metaAdsetId !== undefined) out.metaAdsetId = normaliseMetaId(out.metaAdsetId);
-    if (out.metaAdId !== undefined) out.metaAdId = normaliseMetaId(out.metaAdId);
+    if (out.metaFormId !== undefined)
+      out.metaFormId = normaliseMetaId(out.metaFormId);
+    if (out.metaCampaignId !== undefined)
+      out.metaCampaignId = normaliseMetaId(out.metaCampaignId);
+    if (out.metaAdsetId !== undefined)
+      out.metaAdsetId = normaliseMetaId(out.metaAdsetId);
+    if (out.metaAdId !== undefined)
+      out.metaAdId = normaliseMetaId(out.metaAdId);
     return out;
   },
 
-  async createCampaign(rawInput: CreateMetaCampaignInput, userId: string | null): Promise<MetaCampaign> {
+  async createCampaign(
+    rawInput: CreateMetaCampaignInput,
+    userId: string | null,
+  ): Promise<MetaCampaign> {
     const input = this.normaliseCampaignIds(rawInput);
     const [req] = await db.execute<RowDataPacket[]>(
-      'SELECT id FROM job_requisition WHERE id = ? LIMIT 1',
-      [input.requisitionId]
+      "SELECT id FROM job_requisition WHERE id = ? LIMIT 1",
+      [input.requisitionId],
     );
     if (!req[0]) {
-      throw Object.assign(new Error('Requisition not found'), { statusCode: 404 });
+      throw Object.assign(new Error("Requisition not found"), {
+        statusCode: 404,
+      });
     }
 
     // meta_form_id is UNIQUE, and a collision here is an operator pasting a form ID that is
@@ -250,14 +288,14 @@ export const metaCampaignService = {
         `SELECT mc.id, jr.requisition_code FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
          WHERE mc.meta_form_id = ? LIMIT 1`,
-        [input.metaFormId]
+        [input.metaFormId],
       );
       if (clash[0]) {
         throw Object.assign(
           new Error(
-            `Lead Gen Form ID ${input.metaFormId} is already linked to requisition ${clash[0].requisition_code ?? clash[0].id}. One form can only feed one requisition.`
+            `Lead Gen Form ID ${input.metaFormId} is already linked to requisition ${clash[0].requisition_code ?? clash[0].id}. One form can only feed one requisition.`,
           ),
-          { statusCode: 409 }
+          { statusCode: 409 },
         );
       }
     }
@@ -276,42 +314,48 @@ export const metaCampaignService = {
         input.metaAdId ?? null,
         input.metaFormId ?? null,
         input.campaignName,
-        input.campaignStatus ?? 'draft',
+        input.campaignStatus ?? "draft",
         input.notes ?? null,
         userId,
-      ]
+      ],
     );
     const created = await this.getCampaign(id);
-    if (!created) throw new Error('Campaign insert did not persist');
+    if (!created) throw new Error("Campaign insert did not persist");
     return created;
   },
 
-  async updateCampaign(id: string, rawInput: UpdateMetaCampaignInput): Promise<MetaCampaign> {
+  async updateCampaign(
+    id: string,
+    rawInput: UpdateMetaCampaignInput,
+  ): Promise<MetaCampaign> {
     const input = this.normaliseCampaignIds(rawInput);
     const existing = await this.getCampaign(id);
-    if (!existing) throw Object.assign(new Error('Campaign not found'), { statusCode: 404 });
+    if (!existing)
+      throw Object.assign(new Error("Campaign not found"), { statusCode: 404 });
 
     if (input.metaFormId && input.metaFormId !== existing.metaFormId) {
       const [clash] = await db.execute<RowDataPacket[]>(
-        'SELECT id FROM meta_campaign WHERE meta_form_id = ? AND id <> ? LIMIT 1',
-        [input.metaFormId, id]
+        "SELECT id FROM meta_campaign WHERE meta_form_id = ? AND id <> ? LIMIT 1",
+        [input.metaFormId, id],
       );
       if (clash[0]) {
         throw Object.assign(
-          new Error(`Lead Gen Form ID ${input.metaFormId} is already linked to another campaign.`),
-          { statusCode: 409 }
+          new Error(
+            `Lead Gen Form ID ${input.metaFormId} is already linked to another campaign.`,
+          ),
+          { statusCode: 409 },
         );
       }
     }
 
     const map: Array<[keyof UpdateMetaCampaignInput, string]> = [
-      ['campaignName', 'campaign_name'],
-      ['metaCampaignId', 'meta_campaign_id'],
-      ['metaAdsetId', 'meta_adset_id'],
-      ['metaAdId', 'meta_ad_id'],
-      ['metaFormId', 'meta_form_id'],
-      ['campaignStatus', 'campaign_status'],
-      ['notes', 'notes'],
+      ["campaignName", "campaign_name"],
+      ["metaCampaignId", "meta_campaign_id"],
+      ["metaAdsetId", "meta_adset_id"],
+      ["metaAdId", "meta_ad_id"],
+      ["metaFormId", "meta_form_id"],
+      ["campaignStatus", "campaign_status"],
+      ["notes", "notes"],
     ];
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -323,32 +367,41 @@ export const metaCampaignService = {
     }
     if (sets.length) {
       params.push(id);
-      await db.execute(`UPDATE meta_campaign SET ${sets.join(', ')} WHERE id = ?`, params);
+      await db.execute(
+        `UPDATE meta_campaign SET ${sets.join(", ")} WHERE id = ?`,
+        params,
+      );
     }
     const updated = await this.getCampaign(id);
-    if (!updated) throw new Error('Campaign vanished during update');
+    if (!updated) throw new Error("Campaign vanished during update");
     return updated;
   },
 
-  async listLeads(filters: { campaignId?: string; requisitionId?: string; screening?: string } = {}): Promise<MetaLead[]> {
+  async listLeads(
+    filters: {
+      campaignId?: string;
+      requisitionId?: string;
+      screening?: string;
+    } = {},
+  ): Promise<MetaLead[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
     if (filters.campaignId) {
-      conds.push('campaign_id = ?');
+      conds.push("campaign_id = ?");
       params.push(filters.campaignId);
     }
     if (filters.requisitionId) {
-      conds.push('requisition_id = ?');
+      conds.push("requisition_id = ?");
       params.push(filters.requisitionId);
     }
     if (filters.screening) {
-      conds.push('screening_result = ?');
+      conds.push("screening_result = ?");
       params.push(filters.screening);
     }
-    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM meta_lead_raw ${where} ORDER BY created_at DESC LIMIT 500`,
-      params
+      params,
     );
     return rows.map(toLead);
   },
@@ -363,23 +416,23 @@ export const metaCampaignService = {
     const id = randomUUID();
     let serialised: string;
     try {
-      serialised = typeof payload === 'string' ? payload : JSON.stringify(payload);
+      serialised =
+        typeof payload === "string" ? payload : JSON.stringify(payload);
     } catch {
       serialised = String(payload);
     }
     await db.execute(
-      'INSERT INTO meta_webhook_log (id, event_type, payload) VALUES (?, ?, ?)',
-      [id, eventType, serialised.slice(0, 16_000_000)]
+      "INSERT INTO meta_webhook_log (id, event_type, payload) VALUES (?, ?, ?)",
+      [id, eventType, serialised.slice(0, 16_000_000)],
     );
     return id;
   },
 
   async markWebhookProcessed(logId: string, error?: string): Promise<void> {
-    await db.execute('UPDATE meta_webhook_log SET processed = ?, error_msg = ? WHERE id = ?', [
-      error ? 0 : 1,
-      error ?? null,
-      logId,
-    ]);
+    await db.execute(
+      "UPDATE meta_webhook_log SET processed = ?, error_msg = ? WHERE id = ?",
+      [error ? 0 : 1, error ?? null, logId],
+    );
   },
 
   /**
@@ -388,13 +441,16 @@ export const metaCampaignService = {
    * Errors are collected per entry rather than thrown: one unparseable change must not abandon
    * the others in the same batch (META can bundle several).
    */
-  async processWebhookPayload(payload: MetaWebhookLeadPayload, logId: string): Promise<{ processed: number; errors: string[] }> {
+  async processWebhookPayload(
+    payload: MetaWebhookLeadPayload,
+    logId: string,
+  ): Promise<{ processed: number; errors: string[] }> {
     const errors: string[] = [];
     let processed = 0;
 
     for (const entry of payload.entry ?? []) {
       for (const change of entry.changes ?? []) {
-        if (change.field !== 'leadgen') continue;
+        if (change.field !== "leadgen") continue;
         try {
           await this.ingestLead({
             formId: change.value.form_id,
@@ -410,7 +466,10 @@ export const metaCampaignService = {
       }
     }
 
-    await this.markWebhookProcessed(logId, errors.length ? errors.join(' | ') : undefined);
+    await this.markWebhookProcessed(
+      logId,
+      errors.length ? errors.join(" | ") : undefined,
+    );
     return { processed, errors };
   },
 
@@ -433,29 +492,29 @@ export const metaCampaignService = {
    */
   async resolveCampaignByRoutingCode(
     formId: string,
-    routingCode: string
+    routingCode: string,
   ): Promise<RowDataPacket | null> {
     const [reqRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, requisition_code FROM job_requisition WHERE UPPER(requisition_code) = ? LIMIT 1`,
-      [routingCode]
+      [routingCode],
     );
     const requisition = reqRows[0];
     if (!requisition) return null;
 
     // Is this form already linked (manually or by an earlier auto-route)?
     const [existing] = await db.execute<RowDataPacket[]>(
-      'SELECT id, requisition_id FROM meta_campaign WHERE meta_form_id = ? LIMIT 1',
-      [formId]
+      "SELECT id, requisition_id FROM meta_campaign WHERE meta_form_id = ? LIMIT 1",
+      [formId],
     );
     if (existing[0]) {
       // Correct a drifted link: the hidden code is authoritative, so if the stored campaign points
       // at a different requisition than the form now declares, re-point it. This is how a form
       // that was manually mislinked self-heals once it starts carrying the code.
       if (existing[0].requisition_id !== requisition.id) {
-        await db.execute('UPDATE meta_campaign SET requisition_id = ? WHERE id = ?', [
-          requisition.id,
-          existing[0].id,
-        ]);
+        await db.execute(
+          "UPDATE meta_campaign SET requisition_id = ? WHERE id = ?",
+          [requisition.id, existing[0].id],
+        );
       }
     } else {
       // Auto-create the link. campaign_status 'active' (not 'draft') because a form actively
@@ -472,7 +531,7 @@ export const metaCampaignService = {
             formId,
             `Auto-linked · ${requisition.requisition_code}`,
             `Self-registered from hidden requisition_code field on form ${formId}.`,
-          ]
+          ],
         )
         .catch(async (e: unknown) => {
           // A UNIQUE clash on meta_form_id means a concurrent lead from the same form created the
@@ -493,7 +552,7 @@ export const metaCampaignService = {
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
         WHERE mc.meta_form_id = ? LIMIT 1`,
-      [formId]
+      [formId],
     );
     return rows[0] ?? null;
   },
@@ -518,7 +577,7 @@ export const metaCampaignService = {
      * A lead detail already fetched from Graph (backfill has it in hand from the /leads listing),
      * so ingestLead need not spend a second Graph call per lead re-fetching what it was handed.
      */
-    prefetchedDetail?: import('./meta-campaign.types.js').MetaLeadDetail;
+    prefetchedDetail?: import("./meta-campaign.types.js").MetaLeadDetail;
   }): Promise<MetaLead | null> {
     // Normalise both ids before anything else. The live lead export prefixes them by type
     // (`f:27936517096019427`, `l:1735112467564611`) while the Graph webhook sends them bare, and a
@@ -529,8 +588,8 @@ export const metaCampaignService = {
 
     // Dedup first: META redelivers, and the cheapest correct response to a redelivery is nothing.
     const [dupe] = await db.execute<RowDataPacket[]>(
-      'SELECT * FROM meta_lead_raw WHERE meta_lead_id = ? LIMIT 1',
-      [leadgenId]
+      "SELECT * FROM meta_lead_raw WHERE meta_lead_id = ? LIMIT 1",
+      [leadgenId],
     );
     // A placeholder left by a failed Graph fetch is NOT a duplicate: it holds no name or phone, and
     // treating it as one would strand the lead forever. It is completed in place below.
@@ -548,7 +607,7 @@ export const metaCampaignService = {
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
         WHERE mc.meta_form_id = ? LIMIT 1`,
-      [formId]
+      [formId],
     );
     // The form-ID link, resolved before we have the lead detail. It may be overridden below once
     // the detail is parsed and a hidden requisition_code is found (Option-A auto-routing).
@@ -573,9 +632,9 @@ export const metaCampaignService = {
           leadgenId,
           campaignFromForm?.id ?? null,
           campaignFromForm?.requisition_id ?? null,
-          JSON.stringify({ error: 'graph_fetch_failed', args }),
+          JSON.stringify({ error: "graph_fetch_failed", args }),
           err instanceof MetaApiError ? err.message : String(err),
-        ]
+        ],
       );
       throw err;
     }
@@ -588,12 +647,16 @@ export const metaCampaignService = {
     // requisition. Falls through to the form-ID `campaign` when absent or unresolvable.
     let campaign = campaignFromForm;
     if (parsed.routingCode) {
-      const routed = await this.resolveCampaignByRoutingCode(formId, parsed.routingCode).catch(
-        (e: unknown) => {
-          console.warn('[meta] routing-code resolution failed', e instanceof Error ? e.message : e);
-          return null;
-        }
-      );
+      const routed = await this.resolveCampaignByRoutingCode(
+        formId,
+        parsed.routingCode,
+      ).catch((e: unknown) => {
+        console.warn(
+          "[meta] routing-code resolution failed",
+          e instanceof Error ? e.message : e,
+        );
+        return null;
+      });
       if (routed) campaign = routed;
     }
 
@@ -601,36 +664,55 @@ export const metaCampaignService = {
     // campaign-level criteria, if it has any. With none it stays 'pending' — it used to be screened
     // against nothing and so qualified (and was messaged) unchecked.
     const hasRequisition = Boolean(campaign?.requisition_id);
-    const campaignCriteria = campaign && !hasRequisition ? await loadCampaignScreeningConfig(formId) : null;
-    const rawScreeningConfig = hasRequisition ? campaign?.meta_screening_config : campaignCriteria;
+    const campaignCriteria =
+      campaign && !hasRequisition
+        ? await loadCampaignScreeningConfig(formId)
+        : null;
+    const rawScreeningConfig = hasRequisition
+      ? campaign?.meta_screening_config
+      : campaignCriteria;
     const screeningConfig = rawScreeningConfig
-      ? (typeof rawScreeningConfig === 'string' ? JSON.parse(rawScreeningConfig) : rawScreeningConfig)
+      ? typeof rawScreeningConfig === "string"
+        ? JSON.parse(rawScreeningConfig)
+        : rawScreeningConfig
       : null;
 
-    const screening = campaign && (hasRequisition || campaignCriteria)
-      ? screenLead(
-          {
-            parsedAge: parsed.age,
-            parsedEducation: parsed.education,
-            parsedExperienceYr: parsed.experienceYears,
-            parsedGender: parsed.gender,
-            rawFields: parsed.rawFields,
-          },
-          {
-            metaTargetAgeMin: campaign.meta_target_age_min === null ? null : Number(campaign.meta_target_age_min),
-            metaTargetAgeMax: campaign.meta_target_age_max === null ? null : Number(campaign.meta_target_age_max),
-            educationRequirement: (campaign.education_requirement as string | null) ?? null,
-            experienceMinYears:
-              campaign.experience_min_years === null ? null : Number(campaign.experience_min_years),
-            experienceMaxYears:
-              campaign.experience_max_years === null ? null : Number(campaign.experience_max_years),
-            screeningConfig,
-          }
-        )
-      : // No linked requisition means no criteria to screen against. 'pending' is the honest
-        // state — neither qualified nor disqualified — and it keeps the lead visible for a
-        // recruiter to action manually.
-        null;
+    const screening =
+      campaign && (hasRequisition || campaignCriteria)
+        ? screenLead(
+            {
+              parsedAge: parsed.age,
+              parsedEducation: parsed.education,
+              parsedExperienceYr: parsed.experienceYears,
+              parsedGender: parsed.gender,
+              rawFields: parsed.rawFields,
+            },
+            {
+              metaTargetAgeMin:
+                campaign.meta_target_age_min === null
+                  ? null
+                  : Number(campaign.meta_target_age_min),
+              metaTargetAgeMax:
+                campaign.meta_target_age_max === null
+                  ? null
+                  : Number(campaign.meta_target_age_max),
+              educationRequirement:
+                (campaign.education_requirement as string | null) ?? null,
+              experienceMinYears:
+                campaign.experience_min_years === null
+                  ? null
+                  : Number(campaign.experience_min_years),
+              experienceMaxYears:
+                campaign.experience_max_years === null
+                  ? null
+                  : Number(campaign.experience_max_years),
+              screeningConfig,
+            },
+          )
+        : // No linked requisition means no criteria to screen against. 'pending' is the honest
+          // state — neither qualified nor disqualified — and it keeps the lead visible for a
+          // recruiter to action manually.
+          null;
 
     const id = stubToHeal ? String(stubToHeal.id) : randomUUID();
     const leadValues = [
@@ -644,7 +726,11 @@ export const metaCampaignService = {
       parsed.location,
       parsed.education,
       parsed.experienceYears,
-      screening === null ? 'pending' : screening.qualified ? 'qualified' : 'disqualified',
+      screening === null
+        ? "pending"
+        : screening.qualified
+          ? "qualified"
+          : "disqualified",
       screening?.reason ?? null,
     ];
     if (stubToHeal) {
@@ -654,7 +740,7 @@ export const metaCampaignService = {
                 parsed_name = ?, parsed_phone = ?, parsed_email = ?, parsed_age = ?, parsed_location = ?,
                 parsed_education = ?, parsed_experience_yr = ?, screening_result = ?, disqualification_reason = ?
           WHERE id = ?`,
-        [...leadValues, id]
+        [...leadValues, id],
       );
     } else {
       await db.execute(
@@ -663,29 +749,41 @@ export const metaCampaignService = {
             parsed_name, parsed_phone, parsed_email, parsed_age, parsed_location,
             parsed_education, parsed_experience_yr, screening_result, disqualification_reason)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, formId, leadgenId, ...leadValues]
+        [id, formId, leadgenId, ...leadValues],
       );
     }
 
     if (campaign?.id) {
-      await db.execute('UPDATE meta_campaign SET leads_count = leads_count + 1 WHERE id = ?', [campaign.id]);
+      await db.execute(
+        "UPDATE meta_campaign SET leads_count = leads_count + 1 WHERE id = ?",
+        [campaign.id],
+      );
     }
 
     if (screening?.qualified) {
       await this.createCandidateFromLead(id).catch((e: unknown) =>
-        console.warn('[meta] createCandidateFromLead failed', e instanceof Error ? e.message : e)
+        console.warn(
+          "[meta] createCandidateFromLead failed",
+          e instanceof Error ? e.message : e,
+        ),
       );
       // Outreach is suppressed for backfilled leads or when auto_notify is explicitly disabled.
       // Default: auto_notify = true (fire immediately on qualify).
       const autoNotify = screeningConfig?.auto_notify !== false;
       if (!args.skipOutreach && autoNotify) {
         await notifyQualifiedLead(id).catch((e: unknown) =>
-          console.warn('[meta] notifyQualifiedLead failed', e instanceof Error ? e.message : e)
+          console.warn(
+            "[meta] notifyQualifiedLead failed",
+            e instanceof Error ? e.message : e,
+          ),
         );
       }
     }
 
-    const [rows] = await db.execute<RowDataPacket[]>('SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1', [id]);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1",
+      [id],
+    );
     return rows[0] ? toLead(rows[0]) : null;
   },
 
@@ -702,8 +800,14 @@ export const metaCampaignService = {
    */
   async backfillFormLeads(
     formId: string,
-    opts: { maxPages?: number } = {}
-  ): Promise<{ formId: string; fetched: number; imported: number; duplicates: number; errors: number }> {
+    opts: { maxPages?: number } = {},
+  ): Promise<{
+    formId: string;
+    fetched: number;
+    imported: number;
+    duplicates: number;
+    errors: number;
+  }> {
     const normalisedForm = normaliseMetaId(formId) ?? formId;
     const maxPages = opts.maxPages ?? 200; // 200 * 100 = 20k leads ceiling, well above any one form
     let after: string | null = null;
@@ -723,8 +827,8 @@ export const metaCampaignService = {
           // Cheap pre-check so the "duplicates" counter is meaningful; ingestLead would also
           // dedup, but it would report the lead as imported.
           const [dupe] = await db.execute<RowDataPacket[]>(
-            'SELECT id, raw_payload FROM meta_lead_raw WHERE meta_lead_id = ? LIMIT 1',
-            [normaliseMetaId(leadgenId) ?? leadgenId]
+            "SELECT id, raw_payload FROM meta_lead_raw WHERE meta_lead_id = ? LIMIT 1",
+            [normaliseMetaId(leadgenId) ?? leadgenId],
           );
           if (dupe[0] && !isGraphFetchStub(dupe[0])) {
             duplicates += 1;
@@ -757,14 +861,26 @@ export const metaCampaignService = {
    * backfillFormLeads for the initial bulk import and the dashboard's "import history" action.
    */
   async backfillAllLinkedForms(): Promise<{
-    forms: Array<{ formId: string; fetched: number; imported: number; duplicates: number; errors: number }>;
+    forms: Array<{
+      formId: string;
+      fetched: number;
+      imported: number;
+      duplicates: number;
+      errors: number;
+    }>;
     totalImported: number;
   }> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT meta_form_id FROM meta_campaign
-        WHERE meta_form_id IS NOT NULL AND meta_form_id <> ''`
+        WHERE meta_form_id IS NOT NULL AND meta_form_id <> ''`,
     );
-    const forms: Array<{ formId: string; fetched: number; imported: number; duplicates: number; errors: number }> = [];
+    const forms: Array<{
+      formId: string;
+      fetched: number;
+      imported: number;
+      duplicates: number;
+      errors: number;
+    }> = [];
     let totalImported = 0;
     for (const row of rows) {
       const result = await this.backfillFormLeads(String(row.meta_form_id));
@@ -775,7 +891,11 @@ export const metaCampaignService = {
   },
 
   /** List the Lead Gen forms on the configured Page (discovery for form→requisition linking). */
-  async listPageForms(pageId: string): Promise<Array<{ id: string; name: string; status: string; leadsCount: number }>> {
+  async listPageForms(
+    pageId: string,
+  ): Promise<
+    Array<{ id: string; name: string; status: string; leadsCount: number }>
+  > {
     return fetchPageLeadForms(pageId);
   },
 
@@ -786,59 +906,73 @@ export const metaCampaignService = {
    * supports offset paging, a free-text search over name/phone/email, and joins the requisition +
    * campaign so each row can name where it came from. Returns rows + a total for the pager.
    */
-  async listAllLeads(filters: {
-    search?: string;
-    screening?: string;
-    requisitionId?: string;
-    branchName?: string;
-    processName?: string;
-    dateFrom?: string;
-    dateTo?: string;
-    limit?: number;
-    offset?: number;
-  } = {}): Promise<{ rows: Array<MetaLead & { requisitionCode: string | null; designationName: string | null; branchName: string | null; campaignName: string | null }>; total: number }> {
+  async listAllLeads(
+    filters: {
+      search?: string;
+      screening?: string;
+      requisitionId?: string;
+      branchName?: string;
+      processName?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<{
+    rows: Array<
+      MetaLead & {
+        requisitionCode: string | null;
+        designationName: string | null;
+        branchName: string | null;
+        campaignName: string | null;
+      }
+    >;
+    total: number;
+  }> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.screening && filters.screening !== 'all') {
-      conds.push('ml.screening_result = ?');
+    if (filters.screening && filters.screening !== "all") {
+      conds.push("ml.screening_result = ?");
       params.push(filters.screening);
     }
     if (filters.requisitionId) {
-      conds.push('ml.requisition_id = ?');
+      conds.push("ml.requisition_id = ?");
       params.push(filters.requisitionId);
     }
     if (filters.search && filters.search.trim()) {
-      conds.push('(ml.parsed_name LIKE ? OR ml.parsed_phone LIKE ? OR ml.parsed_email LIKE ?)');
+      conds.push(
+        "(ml.parsed_name LIKE ? OR ml.parsed_phone LIKE ? OR ml.parsed_email LIKE ?)",
+      );
       const like = `%${filters.search.trim()}%`;
       params.push(like, like, like);
     }
     let needsJrJoin = false;
     if (filters.branchName) {
-      conds.push('jr.branch_name = ?');
+      conds.push("jr.branch_name = ?");
       params.push(filters.branchName);
       needsJrJoin = true;
     }
     if (filters.processName) {
-      conds.push('jr.process_name = ?');
+      conds.push("jr.process_name = ?");
       params.push(filters.processName);
       needsJrJoin = true;
     }
     if (filters.dateFrom) {
-      conds.push('ml.created_at >= ?');
+      conds.push("ml.created_at >= ?");
       params.push(filters.dateFrom);
     }
     if (filters.dateTo) {
       conds.push("ml.created_at <= CONCAT(?, ' 23:59:59')");
       params.push(filters.dateTo);
     }
-    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const countJoin = needsJrJoin
-      ? 'LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id'
-      : '';
+      ? "LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id"
+      : "";
 
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM meta_lead_raw ml ${countJoin} ${where}`,
-      params
+      params,
     );
     const total = Number(countRows[0]?.total ?? 0);
 
@@ -862,7 +996,7 @@ export const metaCampaignService = {
          ${where}
         ORDER BY ml.created_at DESC
         LIMIT ${limit} OFFSET ${offset}`,
-      params
+      params,
     );
 
     return {
@@ -904,7 +1038,7 @@ export const metaCampaignService = {
          LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
          LEFT JOIN meta_campaign mc ON mc.id = ml.campaign_id
         WHERE ml.id = ? LIMIT 1`,
-      [leadId]
+      [leadId],
     );
     const row = rows[0];
     if (!row) return null;
@@ -914,12 +1048,19 @@ export const metaCampaignService = {
     let fields: Array<{ name: string; value: string }> = [];
     let routingCode: string | null = null;
     try {
-      const raw = typeof row.raw_payload === 'string' ? JSON.parse(row.raw_payload) : row.raw_payload;
+      const raw =
+        typeof row.raw_payload === "string"
+          ? JSON.parse(row.raw_payload)
+          : row.raw_payload;
       if (raw && Array.isArray(raw.field_data)) {
-        fields = raw.field_data.map((f: { name?: string; field_name?: string; values?: string[] }) => ({
-          name: String(f.name ?? f.field_name ?? ''),
-          value: Array.isArray(f.values) ? f.values.filter(Boolean).join(', ') : '',
-        }));
+        fields = raw.field_data.map(
+          (f: { name?: string; field_name?: string; values?: string[] }) => ({
+            name: String(f.name ?? f.field_name ?? ""),
+            value: Array.isArray(f.values)
+              ? f.values.filter(Boolean).join(", ")
+              : "",
+          }),
+        );
         routingCode = extractRoutingCode(raw);
       }
     } catch {
@@ -948,8 +1089,8 @@ export const metaCampaignService = {
    */
   async createCandidateFromLead(leadId: string): Promise<string | null> {
     const [leadRows] = await db.execute<RowDataPacket[]>(
-      'SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1',
-      [leadId]
+      "SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1",
+      [leadId],
     );
     const lead = leadRows[0];
     if (!lead) return null;
@@ -961,19 +1102,22 @@ export const metaCampaignService = {
     }
 
     const [existing] = await db.execute<RowDataPacket[]>(
-      'SELECT id FROM ats_candidate WHERE mobile = ? ORDER BY created_at DESC LIMIT 1',
-      [lead.parsed_phone]
+      "SELECT id FROM ats_candidate WHERE mobile = ? ORDER BY created_at DESC LIMIT 1",
+      [lead.parsed_phone],
     );
     if (existing[0]) {
-      await db.execute('UPDATE meta_lead_raw SET ats_candidate_id = ? WHERE id = ?', [existing[0].id, leadId]);
+      await db.execute(
+        "UPDATE meta_lead_raw SET ats_candidate_id = ? WHERE id = ?",
+        [existing[0].id, leadId],
+      );
       return existing[0].id as string;
     }
 
     let requisition: RowDataPacket | undefined;
     if (lead.requisition_id) {
       const [reqRows] = await db.execute<RowDataPacket[]>(
-        'SELECT designation_name, branch_name, process_name FROM job_requisition WHERE id = ? LIMIT 1',
-        [lead.requisition_id]
+        "SELECT designation_name, branch_name, process_name FROM job_requisition WHERE id = ? LIMIT 1",
+        [lead.requisition_id],
       );
       requisition = reqRows[0];
     }
@@ -981,14 +1125,16 @@ export const metaCampaignService = {
     const candidateId = randomUUID();
     const candidateCode = `CND-${Date.now().toString(36).toUpperCase()}`;
     const remarks = [
-      'Auto-created from META Lead Gen campaign.',
+      "Auto-created from META Lead Gen campaign.",
       lead.parsed_location ? `Location: ${lead.parsed_location}` : null,
       lead.parsed_age ? `Age: ${lead.parsed_age}` : null,
-      lead.parsed_experience_yr !== null ? `Experience: ${lead.parsed_experience_yr} yrs` : null,
+      lead.parsed_experience_yr !== null
+        ? `Experience: ${lead.parsed_experience_yr} yrs`
+        : null,
       `META lead ID: ${lead.meta_lead_id}`,
     ]
       .filter(Boolean)
-      .join(' | ');
+      .join(" | ");
 
     // sourcing_channel uses the existing canonical value "Social Media" rather than a new
     // "META" string, so these candidates aggregate into the channel reporting that already
@@ -1011,11 +1157,16 @@ export const metaCampaignService = {
         remarks,
         lead.requisition_id ?? null,
         lead.parsed_education ?? null,
-        lead.parsed_experience_yr === null ? null : String(lead.parsed_experience_yr),
-      ]
+        lead.parsed_experience_yr === null
+          ? null
+          : String(lead.parsed_experience_yr),
+      ],
     );
 
-    await db.execute('UPDATE meta_lead_raw SET ats_candidate_id = ? WHERE id = ?', [candidateId, leadId]);
+    await db.execute(
+      "UPDATE meta_lead_raw SET ats_candidate_id = ? WHERE id = ?",
+      [candidateId, leadId],
+    );
     return candidateId;
   },
 
@@ -1024,18 +1175,27 @@ export const metaCampaignService = {
    * at ingest time leaves the lead qualified with ats_candidate_id NULL and nothing retries it),
    * and re-fetch leads stranded as Graph-fetch stubs. Candidate creation sends no messages.
    */
-  async healUnsyncedLeads(sinceDays = 2, limit = 200): Promise<{ candidatesCreated: number; stubsRetried: number; stubsHealed: number }> {
+  async healUnsyncedLeads(
+    sinceDays = 2,
+    limit = 200,
+  ): Promise<{
+    candidatesCreated: number;
+    stubsRetried: number;
+    stubsHealed: number;
+  }> {
     const [orphans] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM meta_lead_raw
         WHERE screening_result = 'qualified' AND ats_candidate_id IS NULL
           AND parsed_phone IS NOT NULL AND parsed_name IS NOT NULL
           AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
         ORDER BY created_at ASC LIMIT ${Number(limit)}`,
-      [sinceDays]
+      [sinceDays],
     );
     let candidatesCreated = 0;
     for (const row of orphans) {
-      const id = await this.createCandidateFromLead(String(row.id)).catch(() => null);
+      const id = await this.createCandidateFromLead(String(row.id)).catch(
+        () => null,
+      );
       if (id) candidatesCreated += 1;
     }
 
@@ -1045,7 +1205,7 @@ export const metaCampaignService = {
           AND JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.error')) = 'graph_fetch_failed'
           AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
         ORDER BY created_at ASC LIMIT ${Number(limit)}`,
-      [sinceDays]
+      [sinceDays],
     );
     let stubsHealed = 0;
     for (const s of stubs) {
@@ -1070,8 +1230,13 @@ export const metaCampaignService = {
    * its `reached` semantics are cumulative-from-the-deepest-stage — so each row below is a real
    * survival count, not a disjoint GROUP BY bucket being wrongly divided by the next.
    */
-  async getCampaignFunnel(campaignId: string): Promise<MetaCampaignFunnel | null> {
-    const [rows] = await db.execute<RowDataPacket[]>(`${CAMPAIGN_SELECT} WHERE mc.id = ? LIMIT 1`, [campaignId]);
+  async getCampaignFunnel(
+    campaignId: string,
+  ): Promise<MetaCampaignFunnel | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `${CAMPAIGN_SELECT} WHERE mc.id = ? LIMIT 1`,
+      [campaignId],
+    );
     const campaign = rows[0];
     if (!campaign) return null;
 
@@ -1083,7 +1248,7 @@ export const metaCampaignService = {
          SUM(CASE WHEN notification_sent_at IS NOT NULL THEN 1 ELSE 0 END)     AS notified,
          SUM(CASE WHEN ats_candidate_id IS NOT NULL THEN 1 ELSE 0 END)         AS candidates
        FROM meta_lead_raw WHERE campaign_id = ?`,
-      [campaignId]
+      [campaignId],
     );
     const agg = leadAgg[0] ?? {};
 
@@ -1093,10 +1258,13 @@ export const metaCampaignService = {
          JOIN ats_candidate c ON c.id = ml.ats_candidate_id
         WHERE ml.campaign_id = ?
         GROUP BY c.current_stage`,
-      [campaignId]
+      [campaignId],
     );
     const atsFunnel = buildCanonicalFunnel(
-      stageRows.map((r) => ({ stage: String(r.stage ?? ''), count: Number(r.count ?? 0) }))
+      stageRows.map((r) => ({
+        stage: String(r.stage ?? ""),
+        count: Number(r.count ?? 0),
+      })),
     );
 
     const impressions = Number(campaign.impressions ?? 0);
@@ -1105,12 +1273,12 @@ export const metaCampaignService = {
     const notified = Number(agg.notified ?? 0);
 
     const stages: MetaFunnelStage[] = [
-      { key: 'impressions', label: 'Impressions', count: impressions },
-      { key: 'reach', label: 'Reach', count: Number(campaign.reach ?? 0) },
-      { key: 'clicks', label: 'Clicks', count: Number(campaign.clicks ?? 0) },
-      { key: 'form_fills', label: 'Form Fills', count: formFills },
-      { key: 'qualified', label: 'Qualified', count: qualified },
-      { key: 'notified', label: 'Notified', count: notified },
+      { key: "impressions", label: "Impressions", count: impressions },
+      { key: "reach", label: "Reach", count: Number(campaign.reach ?? 0) },
+      { key: "clicks", label: "Clicks", count: Number(campaign.clicks ?? 0) },
+      { key: "form_fills", label: "Form Fills", count: formFills },
+      { key: "qualified", label: "Qualified", count: qualified },
+      { key: "notified", label: "Notified", count: notified },
     ];
 
     // Only stages an ATS candidate actually reached are appended. Rendering all ten canonical
@@ -1118,7 +1286,11 @@ export const metaCampaignService = {
     for (const stage of CANONICAL_STAGE_ORDER) {
       const step = atsFunnel.steps.find((s) => s.stage === stage);
       if (step && step.reached > 0) {
-        stages.push({ key: `ats_${stage}`, label: CANONICAL_STAGE_LABEL[stage], count: step.reached });
+        stages.push({
+          key: `ats_${stage}`,
+          label: CANONICAL_STAGE_LABEL[stage],
+          count: step.reached,
+        });
       }
     }
 
@@ -1128,7 +1300,7 @@ export const metaCampaignService = {
       requisitionId: (campaign.requisition_id as string | null) ?? null,
       requisitionCode: (campaign.requisition_code as string | null) ?? null,
       designationName: (campaign.designation_name as string | null) ?? null,
-      campaignName: String(campaign.campaign_name ?? ''),
+      campaignName: String(campaign.campaign_name ?? ""),
       stages,
       spendInr: spend,
       // Guarded divides: 0 spend over 0 leads is not "₹0 per lead", it is unknown.
@@ -1163,7 +1335,7 @@ export const metaCampaignService = {
               COALESCE(SUM(impressions),0) AS impressions,
               COALESCE(SUM(clicks),0)      AS clicks,
               COALESCE(SUM(spend_inr),0)   AS spend_inr
-         FROM meta_campaign`
+         FROM meta_campaign`,
     );
     const [l] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS form_fills,
@@ -1171,7 +1343,7 @@ export const metaCampaignService = {
               SUM(CASE WHEN screening_result = 'disqualified' THEN 1 ELSE 0 END) AS disqualified,
               SUM(CASE WHEN screening_result = 'pending' THEN 1 ELSE 0 END)      AS pending,
               SUM(CASE WHEN ats_candidate_id IS NOT NULL THEN 1 ELSE 0 END)      AS candidates
-         FROM meta_lead_raw`
+         FROM meta_lead_raw`,
     );
 
     // ATS funnel stages for candidates from META campaigns — uses the canonical stage mapping
@@ -1183,7 +1355,7 @@ export const metaCampaignService = {
          SUM(CASE WHEN LOWER(c.current_stage) IN ('onboarded', 'converted', 'payroll_validated') THEN 1 ELSE 0 END) AS onboarded
        FROM meta_lead_raw ml
        JOIN ats_candidate c ON c.id = ml.ats_candidate_id
-       WHERE ml.ats_candidate_id IS NOT NULL`
+       WHERE ml.ats_candidate_id IS NOT NULL`,
     );
 
     const spend = Number(c[0]?.spend_inr ?? 0);
@@ -1221,7 +1393,11 @@ export const metaCampaignService = {
    * Silent partial success is the failure mode to avoid here: a dashboard showing yesterday's
    * numbers with no indication that the sync broke is worse than showing the error.
    */
-  async syncAllCampaignMetrics(): Promise<{ synced: number; failed: number; skipped: number }> {
+  async syncAllCampaignMetrics(): Promise<{
+    synced: number;
+    failed: number;
+    skipped: number;
+  }> {
     if (!isMetaConfigured()) {
       return { synced: 0, failed: 0, skipped: 0 };
     }
@@ -1229,29 +1405,42 @@ export const metaCampaignService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, meta_campaign_id FROM meta_campaign
         WHERE meta_campaign_id IS NOT NULL AND meta_campaign_id <> ''
-          AND campaign_status IN ('active','paused','completed')`
+          AND campaign_status IN ('active','paused','completed')`,
     );
 
     let synced = 0;
     let failed = 0;
     for (const row of rows) {
       try {
-        const insights = await fetchCampaignInsights(String(row.meta_campaign_id));
+        const insights = await fetchCampaignInsights(
+          String(row.meta_campaign_id),
+        );
         await db.execute(
           `UPDATE meta_campaign
               SET impressions = ?, reach = ?, clicks = ?, spend_inr = ?,
                   last_synced_at = NOW(), last_sync_error = NULL
             WHERE id = ?`,
-          [insights.impressions, insights.reach, insights.clicks, insights.spend, row.id]
+          [
+            insights.impressions,
+            insights.reach,
+            insights.clicks,
+            insights.spend,
+            row.id,
+          ],
         );
         synced += 1;
       } catch (err) {
         failed += 1;
         await db
-          .execute('UPDATE meta_campaign SET last_sync_error = ?, last_synced_at = NOW() WHERE id = ?', [
-            err instanceof Error ? err.message.slice(0, 1000) : String(err).slice(0, 1000),
-            row.id,
-          ])
+          .execute(
+            "UPDATE meta_campaign SET last_sync_error = ?, last_synced_at = NOW() WHERE id = ?",
+            [
+              err instanceof Error
+                ? err.message.slice(0, 1000)
+                : String(err).slice(0, 1000),
+              row.id,
+            ],
+          )
           .catch(() => undefined);
       }
     }
@@ -1268,14 +1457,22 @@ export const metaCampaignService = {
       `SELECT DISTINCT jr.branch_name, jr.process_name
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
-        WHERE jr.branch_name IS NOT NULL OR jr.process_name IS NOT NULL`
+        WHERE jr.branch_name IS NOT NULL OR jr.process_name IS NOT NULL`,
     );
-    const branches = [...new Set(
-      dimRows.map((r) => r.branch_name as string | null).filter((v): v is string => Boolean(v))
-    )].sort();
-    const processes = [...new Set(
-      dimRows.map((r) => r.process_name as string | null).filter((v): v is string => Boolean(v))
-    )].sort();
+    const branches = [
+      ...new Set(
+        dimRows
+          .map((r) => r.branch_name as string | null)
+          .filter((v): v is string => Boolean(v)),
+      ),
+    ].sort();
+    const processes = [
+      ...new Set(
+        dimRows
+          .map((r) => r.process_name as string | null)
+          .filter((v): v is string => Boolean(v)),
+      ),
+    ].sort();
 
     const [reqRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT mc.requisition_id AS id, jr.requisition_code AS code,
@@ -1283,49 +1480,58 @@ export const metaCampaignService = {
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
         WHERE mc.requisition_id IS NOT NULL
-        ORDER BY jr.requisition_code`
+        ORDER BY jr.requisition_code`,
     );
     const requisitions = reqRows
       .filter((r) => r.id)
       .map((r) => ({
         id: String(r.id),
         code: String(r.code ?? r.id),
-        designation: String(r.designation ?? ''),
+        designation: String(r.designation ?? ""),
       }));
 
     return { branches, processes, requisitions };
   },
 
   /** Re-parse and re-screen a stored lead without going back to the Graph API. */
-  async rescreenLead(leadId: string, opts: { createCandidate?: boolean } = {}): Promise<MetaLead | null> {
-    const [rows] = await db.execute<RowDataPacket[]>('SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1', [leadId]);
+  async rescreenLead(
+    leadId: string,
+    opts: { createCandidate?: boolean } = {},
+  ): Promise<MetaLead | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1",
+      [leadId],
+    );
     const lead = rows[0];
     if (!lead) return null;
 
-    const raw = typeof lead.raw_payload === 'string' ? JSON.parse(lead.raw_payload) : lead.raw_payload;
+    const raw =
+      typeof lead.raw_payload === "string"
+        ? JSON.parse(lead.raw_payload)
+        : lead.raw_payload;
     if (!raw || !Array.isArray(raw.field_data)) return toLead(lead);
 
     const parsed = parseLead(raw);
-    let screeningResult: 'pending' | 'qualified' | 'disqualified' = 'pending';
+    let screeningResult: "pending" | "qualified" | "disqualified" = "pending";
     let reason: string | null = null;
 
     // Retro-route on re-parse: if this lead's form carries a hidden requisition_code, resolve it
     // and (re)link the lead to that requisition + campaign. This is how the leads imported before
     // auto-routing existed — the 2,600+ backfilled ones sitting at pending/unlinked — get placed
     // onto their batch requisition simply by being re-parsed, with no manual form linking.
-    let effectiveRequisitionId: string | null = (lead.requisition_id as string | null) ?? null;
+    let effectiveRequisitionId: string | null =
+      (lead.requisition_id as string | null) ?? null;
     if (parsed.routingCode) {
       const routed = await this.resolveCampaignByRoutingCode(
         String(lead.meta_form_id),
-        parsed.routingCode
+        parsed.routingCode,
       ).catch(() => null);
       if (routed?.requisition_id) {
         effectiveRequisitionId = routed.requisition_id as string;
-        await db.execute('UPDATE meta_lead_raw SET campaign_id = ?, requisition_id = ? WHERE id = ?', [
-          routed.id,
-          routed.requisition_id,
-          leadId,
-        ]);
+        await db.execute(
+          "UPDATE meta_lead_raw SET campaign_id = ?, requisition_id = ? WHERE id = ?",
+          [routed.id, routed.requisition_id, leadId],
+        );
       }
     }
 
@@ -1334,12 +1540,16 @@ export const metaCampaignService = {
         `SELECT meta_target_age_min, meta_target_age_max, education_requirement,
                 experience_min_years, experience_max_years, meta_screening_config
            FROM job_requisition WHERE id = ? LIMIT 1`,
-        [effectiveRequisitionId]
+        [effectiveRequisitionId],
       );
       const r = reqRows[0];
       if (r) {
         const rawCfg = r.meta_screening_config;
-        const cfg = rawCfg ? (typeof rawCfg === 'string' ? JSON.parse(rawCfg) : rawCfg) : null;
+        const cfg = rawCfg
+          ? typeof rawCfg === "string"
+            ? JSON.parse(rawCfg)
+            : rawCfg
+          : null;
         const result = screenLead(
           {
             parsedAge: parsed.age,
@@ -1349,21 +1559,36 @@ export const metaCampaignService = {
             rawFields: parsed.rawFields,
           },
           {
-            metaTargetAgeMin: r.meta_target_age_min === null ? null : Number(r.meta_target_age_min),
-            metaTargetAgeMax: r.meta_target_age_max === null ? null : Number(r.meta_target_age_max),
-            educationRequirement: (r.education_requirement as string | null) ?? null,
-            experienceMinYears: r.experience_min_years === null ? null : Number(r.experience_min_years),
-            experienceMaxYears: r.experience_max_years === null ? null : Number(r.experience_max_years),
+            metaTargetAgeMin:
+              r.meta_target_age_min === null
+                ? null
+                : Number(r.meta_target_age_min),
+            metaTargetAgeMax:
+              r.meta_target_age_max === null
+                ? null
+                : Number(r.meta_target_age_max),
+            educationRequirement:
+              (r.education_requirement as string | null) ?? null,
+            experienceMinYears:
+              r.experience_min_years === null
+                ? null
+                : Number(r.experience_min_years),
+            experienceMaxYears:
+              r.experience_max_years === null
+                ? null
+                : Number(r.experience_max_years),
             screeningConfig: cfg,
-          }
+          },
         );
-        screeningResult = result.qualified ? 'qualified' : 'disqualified';
+        screeningResult = result.qualified ? "qualified" : "disqualified";
         reason = result.reason;
       }
     } else {
       // No requisition yet ("JR pending"): screen against the campaign's own criteria if it has
       // any; otherwise the lead stays pending, as before.
-      const campaignCfg = await loadCampaignScreeningConfig(String(lead.meta_form_id));
+      const campaignCfg = await loadCampaignScreeningConfig(
+        String(lead.meta_form_id),
+      );
       if (campaignCfg) {
         const result = screenLead(
           {
@@ -1380,9 +1605,9 @@ export const metaCampaignService = {
             experienceMinYears: null,
             experienceMaxYears: null,
             screeningConfig: campaignCfg,
-          }
+          },
         );
-        screeningResult = result.qualified ? 'qualified' : 'disqualified';
+        screeningResult = result.qualified ? "qualified" : "disqualified";
         reason = result.reason;
       }
     }
@@ -1404,7 +1629,7 @@ export const metaCampaignService = {
         screeningResult,
         reason,
         leadId,
-      ]
+      ],
     );
 
     // If the re-screen (typically after retro-routing) now qualifies the lead, create the ATS
@@ -1412,13 +1637,19 @@ export const metaCampaignService = {
     // here: rescreen runs over historical/backfilled leads, and messaging them is the exact thing
     // the backfill's skipOutreach was built to avoid. A recruiter can trigger outreach per-lead.
     // opts.createCandidate = false lets a bulk re-screen refresh results without seeding the ATS.
-    if (screeningResult === 'qualified' && opts.createCandidate !== false) {
+    if (screeningResult === "qualified" && opts.createCandidate !== false) {
       await this.createCandidateFromLead(leadId).catch((e: unknown) =>
-        console.warn('[meta] rescreen createCandidateFromLead failed', e instanceof Error ? e.message : e)
+        console.warn(
+          "[meta] rescreen createCandidateFromLead failed",
+          e instanceof Error ? e.message : e,
+        ),
       );
     }
 
-    const [after] = await db.execute<RowDataPacket[]>('SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1', [leadId]);
+    const [after] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1",
+      [leadId],
+    );
     return after[0] ? toLead(after[0]) : null;
   },
 };

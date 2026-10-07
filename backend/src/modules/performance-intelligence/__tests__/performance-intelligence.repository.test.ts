@@ -58,10 +58,8 @@ describe("performanceIntelligenceRepository", () => {
     expect(sql).toContain("kda.score_date BETWEEN ? AND ?");
     expect(sql).toContain("e.id IN (?)");
     expect(sql).not.toContain("employee-1");
-    expect(params).toEqual(expect.arrayContaining([
-      "2026-07-01",
-      "2026-07-18",
-      "employee-1",
-    ]));
+    expect(params).toEqual(
+      expect.arrayContaining(["2026-07-01", "2026-07-18", "employee-1"]),
+    );
   });
 });

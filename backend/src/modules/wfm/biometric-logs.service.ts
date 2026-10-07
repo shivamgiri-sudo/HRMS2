@@ -151,7 +151,9 @@ export function mergeRawPunchRows(
     merged.push(row);
   }
 
-  return merged.sort((a, b) => String(a.punch_time).localeCompare(String(b.punch_time)));
+  return merged.sort((a, b) =>
+    String(a.punch_time).localeCompare(String(b.punch_time)),
+  );
 }
 
 export function mergeBiometricPunchLogDays(input: {
@@ -194,7 +196,8 @@ export function mergeBiometricPunchLogDays(input: {
       clockInTime: row.clock_in_time,
       clockOutTime: row.clock_out_time,
       attendanceStatus: String(row.attendance_status ?? ""),
-      biometricMinutes: row.biometric_minutes == null ? null : Number(row.biometric_minutes),
+      biometricMinutes:
+        row.biometric_minutes == null ? null : Number(row.biometric_minutes),
       attendanceSource: row.attendance_source ?? null,
       sourceSystem: row.source_system ?? null,
       processedAt: row.processed_at,
@@ -220,11 +223,15 @@ export function mergeBiometricPunchLogDays(input: {
     .sort((a, b) => b.date.localeCompare(a.date))
     .map((day) => ({
       ...day,
-      rawPunches: [...day.rawPunches].sort((a, b) => a.punchTime.localeCompare(b.punchTime)),
+      rawPunches: [...day.rawPunches].sort((a, b) =>
+        a.punchTime.localeCompare(b.punchTime),
+      ),
     }));
 }
 
-async function getTargetEmployee(employeeId: string): Promise<EmployeeRow | null> {
+async function getTargetEmployee(
+  employeeId: string,
+): Promise<EmployeeRow | null> {
   const [rows] = await db.execute<EmployeeRow[]>(
     `SELECT
         e.id,
@@ -264,8 +271,12 @@ async function getTargetEmployee(employeeId: string): Promise<EmployeeRow | null
   return rows[0] ?? null;
 }
 
-async function canAccessEmployee(userId: string, employee: EmployeeRow): Promise<boolean> {
-  if (await hasAnyRole(userId, "super_admin", "admin", "hr", "wfm", "ceo")) return true;
+async function canAccessEmployee(
+  userId: string,
+  employee: EmployeeRow,
+): Promise<boolean> {
+  if (await hasAnyRole(userId, "super_admin", "admin", "hr", "wfm", "ceo"))
+    return true;
   const callerEmployee = await getEmployeeForUser(userId);
   if (callerEmployee?.id === employee.id) return true;
   return hasScopedAccess(
@@ -275,7 +286,8 @@ async function canAccessEmployee(userId: string, employee: EmployeeRow): Promise
       branchId: employee.branch_id ?? null,
       processId: employee.process_id ?? null,
       departmentId: employee.department_id ?? null,
-      managerEmployeeId: employee.reporting_manager_id ?? employee.manager_id ?? null,
+      managerEmployeeId:
+        employee.reporting_manager_id ?? employee.manager_id ?? null,
       employeeId: employee.id,
     },
     { allowAdminBypass: true, requireScopeForNonAdmin: true },
@@ -286,7 +298,9 @@ function recentDirectQueryStart(fromDate: string, toDate: string): string {
   const date = new Date(`${toDate}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() - 30);
   const latestThirtyOneDayStart = date.toISOString().slice(0, 10);
-  return fromDate > latestThirtyOneDayStart ? fromDate : latestThirtyOneDayStart;
+  return fromDate > latestThirtyOneDayStart
+    ? fromDate
+    : latestThirtyOneDayStart;
 }
 
 async function getLiveRawPunches(
@@ -302,7 +316,10 @@ async function getLiveRawPunches(
     const pool = await getNcosecPool();
     const request = pool.request();
     request.input("userId", employee.cosec_user_id);
-    request.input("dateStart", `${recentDirectQueryStart(fromDate, toDate)} 00:00:00`);
+    request.input(
+      "dateStart",
+      `${recentDirectQueryStart(fromDate, toDate)} 00:00:00`,
+    );
     request.input("dateEnd", `${toDate} 23:59:59`);
 
     const userIdColumn = env.NCOSEC_USER_ID_COLUMN || "UserID";
@@ -357,7 +374,9 @@ async function getLiveRawPunches(
 
 function assertDateInput(value: string, fieldName: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const error = new Error(`${fieldName} must be YYYY-MM-DD`) as Error & { statusCode?: number };
+    const error = new Error(`${fieldName} must be YYYY-MM-DD`) as Error & {
+      statusCode?: number;
+    };
     error.statusCode = 400;
     throw error;
   }
@@ -374,14 +393,18 @@ export const biometricLogsService = {
     const safeFromDate = assertDateInput(fromDate, "fromDate");
     const safeToDate = assertDateInput(toDate, "toDate");
     if (safeFromDate > safeToDate) {
-      const error = new Error("fromDate must be on or before toDate") as Error & { statusCode?: number };
+      const error = new Error(
+        "fromDate must be on or before toDate",
+      ) as Error & { statusCode?: number };
       error.statusCode = 400;
       throw error;
     }
     const employee = await getTargetEmployee(employeeId);
 
     if (!employee) {
-      const error = new Error("Employee not found") as Error & { statusCode?: number };
+      const error = new Error("Employee not found") as Error & {
+        statusCode?: number;
+      };
       error.statusCode = 404;
       throw error;
     }
@@ -392,9 +415,15 @@ export const biometricLogsService = {
       throw error;
     }
 
-    const [localRawPunches, liveRawPunches, biometricSummaries, attendanceSummaries] = await Promise.all([
-      db.execute<RawPunchRow[]>(
-        `SELECT
+    const [
+      localRawPunches,
+      liveRawPunches,
+      biometricSummaries,
+      attendanceSummaries,
+    ] = await Promise.all([
+      db
+        .execute<RawPunchRow[]>(
+          `SELECT
             cps.cosec_index,
             cps.user_id,
             DATE_FORMAT(cps.punch_time, '%Y-%m-%d %H:%i:%s') AS punch_time,
@@ -406,17 +435,19 @@ export const biometricLogsService = {
             AND cps.punch_time < DATE_ADD(?, INTERVAL 1 DAY)
             AND cps.user_id IN (?, ?, ?)
           ORDER BY cps.punch_time ASC`,
-        [
-          safeFromDate,
-          safeToDate,
-          employee.employee_code,
-          employee.biometric_code ?? null,
-          employee.cosec_user_id ?? null,
-        ],
-      ).then(([rows]) => rows),
+          [
+            safeFromDate,
+            safeToDate,
+            employee.employee_code,
+            employee.biometric_code ?? null,
+            employee.cosec_user_id ?? null,
+          ],
+        )
+        .then(([rows]) => rows),
       getLiveRawPunches(employee, safeFromDate, safeToDate),
-      db.execute<BiometricSummaryRow[]>(
-        `SELECT
+      db
+        .execute<BiometricSummaryRow[]>(
+          `SELECT
             DATE_FORMAT(bal.punch_date, '%Y-%m-%d') AS punch_date,
             DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch_in,
             DATE_FORMAT(bal.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
@@ -428,10 +459,12 @@ export const biometricLogsService = {
             AND bal.punch_date >= ?
             AND bal.punch_date <= ?
           ORDER BY bal.punch_date DESC`,
-        [employee.id, safeFromDate, safeToDate],
-      ).then(([rows]) => rows),
-      db.execute<AttendanceSummaryRow[]>(
-        `SELECT
+          [employee.id, safeFromDate, safeToDate],
+        )
+        .then(([rows]) => rows),
+      db
+        .execute<AttendanceSummaryRow[]>(
+          `SELECT
             DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
             DATE_FORMAT(adr.clock_in_time, '%Y-%m-%d %H:%i:%s') AS clock_in_time,
             DATE_FORMAT(adr.clock_out_time, '%Y-%m-%d %H:%i:%s') AS clock_out_time,
@@ -446,8 +479,9 @@ export const biometricLogsService = {
             AND adr.record_date >= ?
             AND adr.record_date <= ?
           ORDER BY adr.record_date DESC`,
-        [employee.id, safeFromDate, safeToDate],
-      ).then(([rows]) => rows),
+          [employee.id, safeFromDate, safeToDate],
+        )
+        .then(([rows]) => rows),
     ]);
     const rawPunches = mergeRawPunchRows(localRawPunches, liveRawPunches);
 

@@ -1,7 +1,5 @@
 {
-  "db/__tests__/schema-column-refs.test.ts": [
-    "upload_batch_row.error_message"
-  ],
+  "db/__tests__/schema-column-refs.test.ts": ["upload_batch_row.error_message"],
   "modules/ats/__tests__/offer-letter.test.ts": [
     "ats_candidate.applied_for_role",
     "ats_candidate.candidate_id",
@@ -41,9 +39,7 @@
     "cost_centre_master.cc_code",
     "cost_centre_master.cc_name"
   ],
-  "workers/domains/dialer-kpi-sync.ts": [
-    "kpi_score.updated_at"
-  ],
+  "workers/domains/dialer-kpi-sync.ts": ["kpi_score.updated_at"],
   "workers/domains/employee-master-sync-handler.ts": [
     "employees.branch",
     "employees.client_name",
@@ -76,7 +72,5 @@
     "legacy_sync_run_log.records_failed",
     "legacy_sync_run_log.records_processed"
   ],
-  "workers/domains/leave-sync-handler.ts": [
-    "leave_request.updated_at"
-  ]
+  "workers/domains/leave-sync-handler.ts": ["leave_request.updated_at"]
 }

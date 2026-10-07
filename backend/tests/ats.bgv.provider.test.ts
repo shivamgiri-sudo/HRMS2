@@ -82,7 +82,10 @@ describe("MockBgvProviderAdapter", () => {
   });
 
   it("TC-PROV-07: PAN valid format → verified with no risk flags", async () => {
-    const result = await adapter.verifyPan({ panNumber: "ABCDE1234F", candidateName: "Rahul" });
+    const result = await adapter.verifyPan({
+      panNumber: "ABCDE1234F",
+      candidateName: "Rahul",
+    });
     expect(result.status).toBe("verified");
     expect(result.providerKey).toBe("mock_bgv");
     expect(result.riskFlags).toEqual([]);
@@ -105,18 +108,27 @@ describe("MockBgvProviderAdapter", () => {
   });
 
   it("TC-PROV-10: bank invalid IFSC → failed with IFSC_FORMAT_INVALID flag", async () => {
-    const result = await adapter.verifyBank({ accountNo: "123456", ifscCode: "BADIFSC", candidateName: "Test" });
+    const result = await adapter.verifyBank({
+      accountNo: "123456",
+      ifscCode: "BADIFSC",
+      candidateName: "Test",
+    });
     expect(result.status).toBe("failed");
     expect(result.riskFlags).toContain("IFSC_FORMAT_INVALID");
   });
 
   it("TC-PROV-11: aadhaar with documentId → manual_review", async () => {
-    const result = await adapter.verifyAadhaarOffline({ documentId: "doc-123", candidateName: "Test" });
+    const result = await adapter.verifyAadhaarOffline({
+      documentId: "doc-123",
+      candidateName: "Test",
+    });
     expect(result.status).toBe("manual_review");
   });
 
   it("TC-PROV-12: aadhaar without documentId → failed with AADHAAR_DOCUMENT_MISSING", async () => {
-    const result = await adapter.verifyAadhaarOffline({ candidateName: "Test" });
+    const result = await adapter.verifyAadhaarOffline({
+      candidateName: "Test",
+    });
     expect(result.status).toBe("failed");
     expect(result.riskFlags).toContain("AADHAAR_DOCUMENT_MISSING");
   });
@@ -208,12 +220,26 @@ describe("Composite Befisc/Luckpay adapter", () => {
   });
 
   it("TC-PROV-24: PAN uses Luckpay auth token and verifyPan payload contract", async () => {
-    const post = vi.spyOn(axios, "post")
-      .mockResolvedValueOnce({ data: { data: { token: "access-token", expiresIn: 60 } } })
-      .mockResolvedValueOnce({ data: { status: "success", transaction_id: "pan-ref", pan_name: "Rahul Sharma", idNumber: "ABCDE1234F" } });
+    const post = vi
+      .spyOn(axios, "post")
+      .mockResolvedValueOnce({
+        data: { data: { token: "access-token", expiresIn: 60 } },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          status: "success",
+          transaction_id: "pan-ref",
+          pan_name: "Rahul Sharma",
+          idNumber: "ABCDE1234F",
+        },
+      });
 
     const adapter = buildAdapterFromDbConfig(luckpayCfg);
-    const result = await adapter.verifyPan({ panNumber: "ABCDE1234F", candidateName: "Rahul Sharma", mobileNumber: "98765 43210" });
+    const result = await adapter.verifyPan({
+      panNumber: "ABCDE1234F",
+      candidateName: "Rahul Sharma",
+      mobileNumber: "98765 43210",
+    });
 
     expect(post).toHaveBeenNthCalledWith(
       1,
@@ -246,13 +272,24 @@ describe("Composite Befisc/Luckpay adapter", () => {
   });
 
   it("TC-PROV-25: UAN uses verifyUanByUan with identifier payload", async () => {
-    const post = vi.spyOn(axios, "post")
+    const post = vi
+      .spyOn(axios, "post")
       .mockResolvedValueOnce({ data: { data: { token: "access-token" } } })
-      .mockResolvedValueOnce({ data: { status: "success", transaction_id: "uan-ref", member_name: "Rahul Sharma", identifier: "100200300400" } });
+      .mockResolvedValueOnce({
+        data: {
+          status: "success",
+          transaction_id: "uan-ref",
+          member_name: "Rahul Sharma",
+          identifier: "100200300400",
+        },
+      });
 
     const adapter = buildAdapterFromDbConfig(luckpayCfg);
     if (!adapter.verifyUan) throw new Error("verifyUan missing");
-    await adapter.verifyUan({ uanNumber: "100200300400", candidateName: "Rahul Sharma" });
+    await adapter.verifyUan({
+      uanNumber: "100200300400",
+      candidateName: "Rahul Sharma",
+    });
 
     expect(post).toHaveBeenNthCalledWith(
       2,
@@ -266,9 +303,17 @@ describe("Composite Befisc/Luckpay adapter", () => {
   });
 
   it("TC-PROV-26: bank verification uses Luckpay verifyPennyDrop contract", async () => {
-    const post = vi.spyOn(axios, "post")
+    const post = vi
+      .spyOn(axios, "post")
       .mockResolvedValueOnce({ data: { data: { token: "access-token" } } })
-      .mockResolvedValueOnce({ data: { status: "success", transaction_id: "bank-ref", registered_name: "Rahul Sharma", customerAccountNumber: "123456789012" } });
+      .mockResolvedValueOnce({
+        data: {
+          status: "success",
+          transaction_id: "bank-ref",
+          registered_name: "Rahul Sharma",
+          customerAccountNumber: "123456789012",
+        },
+      });
 
     const adapter = buildAdapterFromDbConfig(luckpayCfg);
     await adapter.verifyBank({
@@ -292,10 +337,19 @@ describe("Composite Befisc/Luckpay adapter", () => {
   });
 
   it("TC-PROV-27: DigiLocker uses Luckpay verifyDigilockerWithURL with candidate contact", async () => {
-    vi.mocked(db.execute).mockResolvedValueOnce([[{ full_name: "Rahul Sharma", mobile: "9876543210" }], []] as any);
-    const post = vi.spyOn(axios, "post")
+    vi.mocked(db.execute).mockResolvedValueOnce([
+      [{ full_name: "Rahul Sharma", mobile: "9876543210" }],
+      [],
+    ] as any);
+    const post = vi
+      .spyOn(axios, "post")
       .mockResolvedValueOnce({ data: { data: { token: "access-token" } } })
-      .mockResolvedValueOnce({ data: { redirectUrl: "https://luckpay.example/digilocker", mobileNumber: "9876543210" } });
+      .mockResolvedValueOnce({
+        data: {
+          redirectUrl: "https://luckpay.example/digilocker",
+          mobileNumber: "9876543210",
+        },
+      });
 
     const adapter = buildAdapterFromDbConfig(luckpayCfg);
     const session = await adapter.startDigilocker("candidate-1", ["AADHAAR"]);
@@ -332,7 +386,9 @@ describe("Composite Befisc/Luckpay adapter", () => {
 
     const adapter = buildAdapterFromDbConfig(luckpayCfg);
     await adapter.verifyPan({ panNumber: "ABCDE1234F" }).catch((error) => {
-      expect(String(error.message)).toContain("IP address 203.0.113.10 is not whitelisted");
+      expect(String(error.message)).toContain(
+        "IP address 203.0.113.10 is not whitelisted",
+      );
       expect(String(error.message)).not.toContain("test-basic-token");
     });
   });
@@ -344,14 +400,20 @@ describe("Composite Befisc/Luckpay adapter", () => {
     vi.spyOn(axios, "post").mockRejectedValueOnce({
       response: {
         status: 403,
-        data: { code: "AUTH_023", status: "Failed", message: "IP address 203.0.113.11 is not whitelisted" },
+        data: {
+          code: "AUTH_023",
+          status: "Failed",
+          message: "IP address 203.0.113.11 is not whitelisted",
+        },
       },
     });
 
     const adapter = buildAdapterFromDbConfig(luckpayCfg);
     await adapter.verifyPan({ panNumber: "ABCDE1234F" }).catch((error) => {
       expect((error as { statusCode?: number }).statusCode).toBe(503);
-      expect((error as { isIpWhitelistError?: boolean }).isIpWhitelistError).toBe(true);
+      expect(
+        (error as { isIpWhitelistError?: boolean }).isIpWhitelistError,
+      ).toBe(true);
     });
   });
 
@@ -359,11 +421,21 @@ describe("Composite Befisc/Luckpay adapter", () => {
     // The production shape: DigiLocker/eSign use the same base URL and
     // credentials as PAN, so they must reuse the cached token rather than
     // re-authenticating (previously the DigiLocker token was never cached).
-    vi.mocked(db.execute).mockResolvedValueOnce([[{ full_name: "Rahul Sharma", mobile: "9876543210" }], []] as any);
-    const post = vi.spyOn(axios, "post")
-      .mockResolvedValueOnce({ data: { data: { token: "access-token", expiresIn: 60 } } })
-      .mockResolvedValueOnce({ data: { status: "success", pan_name: "Rahul Sharma" } })
-      .mockResolvedValueOnce({ data: { redirectUrl: "https://luckpay.example/digilocker" } });
+    vi.mocked(db.execute).mockResolvedValueOnce([
+      [{ full_name: "Rahul Sharma", mobile: "9876543210" }],
+      [],
+    ] as any);
+    const post = vi
+      .spyOn(axios, "post")
+      .mockResolvedValueOnce({
+        data: { data: { token: "access-token", expiresIn: 60 } },
+      })
+      .mockResolvedValueOnce({
+        data: { status: "success", pan_name: "Rahul Sharma" },
+      })
+      .mockResolvedValueOnce({
+        data: { redirectUrl: "https://luckpay.example/digilocker" },
+      });
 
     const adapter = buildAdapterFromDbConfig(luckpayCfg);
     await adapter.verifyPan({ panNumber: "ABCDE1234F" });
@@ -375,23 +447,38 @@ describe("Composite Befisc/Luckpay adapter", () => {
       "https://api-banking.luckpay.in/apibanking/api/v1/verifyDigilockerWithURL",
       expect.any(Object),
       expect.objectContaining({
-        headers: expect.objectContaining({ "X-Access-Token": "Bearer access-token" }),
+        headers: expect.objectContaining({
+          "X-Access-Token": "Bearer access-token",
+        }),
       }),
     );
     expect(session.authUrl).toBe("https://luckpay.example/digilocker");
   });
 
   it("TC-PROV-31: DigiLocker authenticates separately when an override account is configured", async () => {
-    vi.mocked(db.execute).mockResolvedValueOnce([[{ full_name: "Rahul Sharma", mobile: "9876543210" }], []] as any);
-    const post = vi.spyOn(axios, "post")
-      .mockResolvedValueOnce({ data: { data: { token: "core-token", expiresIn: 60 } } })
-      .mockResolvedValueOnce({ data: { status: "success", pan_name: "Rahul Sharma" } })
-      .mockResolvedValueOnce({ data: { data: { token: "dl-token", expiresIn: 60 } } })
-      .mockResolvedValueOnce({ data: { redirectUrl: "https://luckpay.example/digilocker" } });
+    vi.mocked(db.execute).mockResolvedValueOnce([
+      [{ full_name: "Rahul Sharma", mobile: "9876543210" }],
+      [],
+    ] as any);
+    const post = vi
+      .spyOn(axios, "post")
+      .mockResolvedValueOnce({
+        data: { data: { token: "core-token", expiresIn: 60 } },
+      })
+      .mockResolvedValueOnce({
+        data: { status: "success", pan_name: "Rahul Sharma" },
+      })
+      .mockResolvedValueOnce({
+        data: { data: { token: "dl-token", expiresIn: 60 } },
+      })
+      .mockResolvedValueOnce({
+        data: { redirectUrl: "https://luckpay.example/digilocker" },
+      });
 
     const adapter = buildAdapterFromDbConfig({
       ...luckpayCfg,
-      luckpay_digilocker_base_url: "https://staging-api-banking.luckpay.in/apibanking/api/v1",
+      luckpay_digilocker_base_url:
+        "https://staging-api-banking.luckpay.in/apibanking/api/v1",
       luckpay_digilocker_basic_token: "dl-basic-token",
       luckpay_digilocker_client_id: "DLCLIENT",
     });
@@ -403,7 +490,9 @@ describe("Composite Befisc/Luckpay adapter", () => {
       3,
       "https://staging-api-banking.luckpay.in/apibanking/api/v1/auth/token",
       undefined,
-      expect.objectContaining({ headers: { Authorization: "Basic dl-basic-token" } }),
+      expect.objectContaining({
+        headers: { Authorization: "Basic dl-basic-token" },
+      }),
     );
     expect(post).toHaveBeenNthCalledWith(
       4,
@@ -432,7 +521,9 @@ describe("requireFormApiKey guard logic", () => {
 
     const provided = ""; // no header
     if (!provided) {
-      mockRes.status(401).json({ success: false, message: "Missing X-ATS-Api-Key header" });
+      mockRes
+        .status(401)
+        .json({ success: false, message: "Missing X-ATS-Api-Key header" });
     } else {
       mockNext();
     }
@@ -447,7 +538,8 @@ describe("requireFormApiKey guard logic", () => {
     const provided = "wrong-key"; // different length → immediate false
     let match = false;
     try {
-      match = provided.length === secret.length &&
+      match =
+        provided.length === secret.length &&
         timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
     } catch {
       match = false;
@@ -460,7 +552,8 @@ describe("requireFormApiKey guard logic", () => {
     const provided = "bbbbbbbbbbbbbbbb"; // 16 chars, different bytes
     let match = false;
     try {
-      match = provided.length === secret.length &&
+      match =
+        provided.length === secret.length &&
         timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
     } catch {
       match = false;
@@ -473,7 +566,8 @@ describe("requireFormApiKey guard logic", () => {
     const provided = "correct-key-12345678901234567890";
     let match = false;
     try {
-      match = provided.length === secret.length &&
+      match =
+        provided.length === secret.length &&
         timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
     } catch {
       match = false;
@@ -491,7 +585,9 @@ describe("requireFormApiKey guard logic", () => {
 
     if (!secret) {
       if (isProduction) {
-        mockRes.status(503).json({ success: false, message: "Form endpoint not configured" });
+        mockRes
+          .status(503)
+          .json({ success: false, message: "Form endpoint not configured" });
       } else {
         // Non-prod: skip with warning
         mockNext();

@@ -3,10 +3,9 @@ import { randomUUID } from "node:crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
 export const skillRoadmapService = {
-
   async listRoadmaps() {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, label, description, node_count, is_active FROM skill_roadmaps WHERE is_active = 1 ORDER BY label`
+      `SELECT id, label, description, node_count, is_active FROM skill_roadmaps WHERE is_active = 1 ORDER BY label`,
     );
     return rows as RowDataPacket[];
   },
@@ -18,24 +17,28 @@ export const skillRoadmapService = {
        JOIN skill_roadmaps r ON r.id = era.roadmap_id
        WHERE era.employee_id = ? AND era.is_active = 1
        ORDER BY r.label`,
-      [employeeId]
+      [employeeId],
     );
     return rows as RowDataPacket[];
   },
 
-  async assignRoadmap(employeeId: string, roadmapId: string, assignedBy: string) {
+  async assignRoadmap(
+    employeeId: string,
+    roadmapId: string,
+    assignedBy: string,
+  ) {
     await db.execute(
       `INSERT INTO employee_roadmap_assignments (id, employee_id, roadmap_id, assigned_by)
        VALUES (?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE is_active = 1, assigned_by = VALUES(assigned_by), assigned_at = NOW()`,
-      [randomUUID(), employeeId, roadmapId, assignedBy]
+      [randomUUID(), employeeId, roadmapId, assignedBy],
     );
   },
 
   async unassignRoadmap(employeeId: string, roadmapId: string) {
     await db.execute(
       `UPDATE employee_roadmap_assignments SET is_active = 0 WHERE employee_id = ? AND roadmap_id = ?`,
-      [employeeId, roadmapId]
+      [employeeId, roadmapId],
     );
   },
 
@@ -45,7 +48,7 @@ export const skillRoadmapService = {
        FROM skill_roadmap_nodes
        WHERE roadmap_id = ? AND is_active = 1
        ORDER BY sort_order, label`,
-      [roadmapId]
+      [roadmapId],
     );
     return rows as RowDataPacket[];
   },
@@ -57,7 +60,7 @@ export const skillRoadmapService = {
        FROM employee_skill_states ess
        JOIN skill_roadmap_nodes n ON n.id = ess.node_id
        WHERE ess.employee_id = ? AND n.roadmap_id = ?`,
-      [employeeId, roadmapId]
+      [employeeId, roadmapId],
     );
     return rows as RowDataPacket[];
   },
@@ -67,14 +70,14 @@ export const skillRoadmapService = {
     nodeId: string,
     status: "none" | "in_progress" | "done",
     updatedBy: string,
-    notes?: string
+    notes?: string,
   ) {
     await db.execute(
       `INSERT INTO employee_skill_states (id, employee_id, node_id, status, updated_by, notes)
        VALUES (?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE status = VALUES(status), updated_by = VALUES(updated_by),
          notes = COALESCE(VALUES(notes), notes), updated_at = NOW()`,
-      [randomUUID(), employeeId, nodeId, status, updatedBy, notes ?? null]
+      [randomUUID(), employeeId, nodeId, status, updatedBy, notes ?? null],
     );
   },
 
@@ -88,16 +91,25 @@ export const skillRoadmapService = {
        LEFT JOIN employee_skill_states ess
          ON ess.node_id = n.id AND ess.employee_id = ?
        WHERE n.roadmap_id = ? AND n.is_active = 1`,
-      [employeeId, roadmapId]
+      [employeeId, roadmapId],
     );
     const r = (rows as RowDataPacket[])[0] ?? {};
     const total = Number(r.total ?? 0);
     const done = Number(r.done_count ?? 0);
     const inprog = Number(r.inprog_count ?? 0);
-    return { total, done, inprog, pct: total ? Math.round((done / total) * 100) : 0 };
+    return {
+      total,
+      done,
+      inprog,
+      pct: total ? Math.round((done / total) * 100) : 0,
+    };
   },
 
-  async getGapSkills(employeeId: string, roadmapId: string, designationId: string) {
+  async getGapSkills(
+    employeeId: string,
+    roadmapId: string,
+    designationId: string,
+  ) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT n.id AS node_id, n.label, n.node_slug,
               COALESCE(ess.status, 'none') AS status
@@ -107,14 +119,19 @@ export const skillRoadmapService = {
          ON ess.node_id = n.id AND ess.employee_id = ?
        WHERE drs.designation_id = ?
          AND (ess.status IS NULL OR ess.status = 'none')`,
-      [roadmapId, employeeId, designationId]
+      [roadmapId, employeeId, designationId],
     );
     return rows as RowDataPacket[];
   },
 
   async bulkUpsertNodes(
     roadmapId: string,
-    nodes: Array<{ slug: string; label: string; description?: string; sortOrder: number }>
+    nodes: Array<{
+      slug: string;
+      label: string;
+      description?: string;
+      sortOrder: number;
+    }>,
   ) {
     if (nodes.length === 0) return;
     // Single multi-row INSERT instead of N separate round-trips.

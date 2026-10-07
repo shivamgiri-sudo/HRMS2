@@ -50,7 +50,7 @@ export async function getPayrollAnalyticsSummary(): Promise<PayrollAnalyticsSumm
        SUM(CASE WHEN status = 'in_review' THEN 1 ELSE 0 END) as in_review,
        SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved,
        AVG(CASE WHEN status = 'resolved' THEN DATEDIFF(resolved_date, created_date) END) as avg_resolution_days
-     FROM salary_disputes`
+     FROM salary_disputes`,
   );
 
   // Reimbursement backlog
@@ -61,7 +61,7 @@ export async function getPayrollAnalyticsSummary(): Promise<PayrollAnalyticsSumm
        SUM(CASE WHEN DATEDIFF(CURDATE(), submission_date) BETWEEN 7 AND 15 THEN 1 ELSE 0 END) as between_7_15,
        SUM(CASE WHEN DATEDIFF(CURDATE(), submission_date) > 15 THEN 1 ELSE 0 END) as over_15
      FROM reimbursement_claims
-     WHERE status IN ('pending', 'submitted')`
+     WHERE status IN ('pending', 'submitted')`,
   );
 
   // Payroll readiness (current month)
@@ -79,13 +79,15 @@ export async function getPayrollAnalyticsSummary(): Promise<PayrollAnalyticsSumm
        AND DATE_FORMAT(r.roster_date, '%Y-%m') = ?
        AND r.status = 'published'
      WHERE e.status = 'active'`,
-    [currentMonth, currentMonth, currentMonth]
+    [currentMonth, currentMonth, currentMonth],
   );
 
   const attendanceFinalized = readiness[0]?.attendance_finalized_pct ?? 0;
   const cosecSynced = readiness[0]?.cosec_synced_pct ?? 0;
   const rosterLocked = readiness[0]?.roster_locked_pct ?? 0;
-  const overallReadiness = Math.round((attendanceFinalized + cosecSynced + rosterLocked) / 3);
+  const overallReadiness = Math.round(
+    (attendanceFinalized + cosecSynced + rosterLocked) / 3,
+  );
 
   // TDS status
   const [tds] = await db.query<RowDataPacket[]>(
@@ -93,13 +95,13 @@ export async function getPayrollAnalyticsSummary(): Promise<PayrollAnalyticsSumm
        MAX(quarter) as last_filed_quarter,
        (SELECT deadline FROM tds_deadlines WHERE deadline > CURDATE() ORDER BY deadline ASC LIMIT 1) as next_deadline
      FROM tds_filings
-     WHERE status = 'filed'`
+     WHERE status = 'filed'`,
   );
 
   const [tdsProjections] = await db.query<RowDataPacket[]>(
     `SELECT COUNT(*) as count
      FROM tds_projections
-     WHERE financial_year = YEAR(CURDATE())`
+     WHERE financial_year = YEAR(CURDATE())`,
   );
 
   // Gratuity liability
@@ -109,7 +111,7 @@ export async function getPayrollAnalyticsSummary(): Promise<PayrollAnalyticsSumm
        COUNT(*) as eligible_count
      FROM employees
      WHERE status = 'active'
-       AND DATEDIFF(CURDATE(), date_of_joining) / 365 >= 5`
+       AND DATEDIFF(CURDATE(), date_of_joining) / 365 >= 5`,
   );
 
   // F&F settlement
@@ -119,7 +121,7 @@ export async function getPayrollAnalyticsSummary(): Promise<PayrollAnalyticsSumm
        AVG(DATEDIFF(CURDATE(), e.lwd)) as avg_tat_days,
        SUM(CASE WHEN DATEDIFF(CURDATE(), e.lwd) > 45 THEN 1 ELSE 0 END) as overdue_count
      FROM exit_requests e
-     WHERE e.status IN ('clearance_pending', 'clearance_in_progress', 'f&f_pending')`
+     WHERE e.status IN ('clearance_pending', 'clearance_in_progress', 'f&f_pending')`,
   );
 
   return {
@@ -127,7 +129,9 @@ export async function getPayrollAnalyticsSummary(): Promise<PayrollAnalyticsSumm
       open: disputes[0]?.open_count ?? 0,
       in_review: disputes[0]?.in_review ?? 0,
       resolved: disputes[0]?.resolved ?? 0,
-      avg_resolution_days: Math.round(Number(disputes[0]?.avg_resolution_days ?? 0)),
+      avg_resolution_days: Math.round(
+        Number(disputes[0]?.avg_resolution_days ?? 0),
+      ),
     },
     reimbursement_backlog: {
       total_pending: reimbursement[0]?.total_pending ?? 0,

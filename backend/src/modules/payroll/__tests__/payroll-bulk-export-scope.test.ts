@@ -24,7 +24,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const RUN_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const AUTH_USER_ID = "33333333-3333-3333-3333-333333333333";
 
-const { execute, hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScopeWhereClause, hasRole, getEmployeeForUser } = vi.hoisted(() => ({
+const {
+  execute,
+  hasOrgWideScope,
+  hasAnyRole,
+  getUserAssignmentScopes,
+  buildScopeWhereClause,
+  hasRole,
+  getEmployeeForUser,
+} = vi.hoisted(() => ({
   execute: vi.fn(),
   hasOrgWideScope: vi.fn(),
   // Fixed 2026-08-17 (Section M RBAC audit): the bank-file endpoints below no longer call
@@ -41,19 +49,42 @@ const { execute, hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScop
 }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../../shared/scopeAccess.js", () => ({ hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScopeWhereClause }));
-vi.mock("../../../shared/accessGuard.js", () => ({ hasRole, getEmployeeForUser }));
-vi.mock("../../../config/env.js", () => ({ env: { PAYROLL_BANK_KEY: "test-bank-key" } }));
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  hasOrgWideScope,
+  hasAnyRole,
+  getUserAssignmentScopes,
+  buildScopeWhereClause,
+}));
+vi.mock("../../../shared/accessGuard.js", () => ({
+  hasRole,
+  getEmployeeForUser,
+}));
+vi.mock("../../../config/env.js", () => ({
+  env: { PAYROLL_BANK_KEY: "test-bank-key" },
+}));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = { id: AUTH_USER_ID };
+  requireAuth: (
+    req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = {
+      id: AUTH_USER_ID,
+    };
     next();
   },
 }));
 // requireRole is the "may you call this" gate; these tests are about "over whom",
 // so it is allowed through and the scope rule is what gets asserted.
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+  requireRole:
+    () =>
+    (
+      _req: express.Request,
+      _res: express.Response,
+      next: express.NextFunction,
+    ) =>
+      next(),
 }));
 
 import { payrollExtendedRouter } from "../payroll-extended.routes.js";
@@ -65,7 +96,9 @@ function buildApp() {
 }
 
 /** A settled run — isRunClosed is the real implementation, so this must be a real closed status. */
-const RUN_ROW: [Array<Record<string, unknown>>] = [[{ id: RUN_ID, run_month: "2026-07", status: "FINALIZED" }]];
+const RUN_ROW: [Array<Record<string, unknown>>] = [
+  [{ id: RUN_ID, run_month: "2026-07", status: "FINALIZED" }],
+];
 
 describe("bank-file exports deny a branch-scoped caller instead of emitting a partial file", () => {
   beforeEach(() => {
@@ -78,13 +111,17 @@ describe("bank-file exports deny a branch-scoped caller instead of emitting a pa
 
   /** hasExportScope: holds a payroll-export role but not super_admin, with only a branch-scope row. */
   function mockBranchScopedCaller() {
-    hasAnyRole.mockImplementation(async (_userId, ...roles) => !roles.includes("super_admin"));
+    hasAnyRole.mockImplementation(
+      async (_userId, ...roles) => !roles.includes("super_admin"),
+    );
     getUserAssignmentScopes.mockResolvedValue([{ scope_type: "branch" }]);
   }
 
   /** hasExportScope: holds a payroll-export role with an explicit scope_type='all' row. */
   function mockOrgWideCaller() {
-    hasAnyRole.mockImplementation(async (_userId, ...roles) => !roles.includes("super_admin"));
+    hasAnyRole.mockImplementation(
+      async (_userId, ...roles) => !roles.includes("super_admin"),
+    );
     getUserAssignmentScopes.mockResolvedValue([{ scope_type: "all" }]);
   }
 
@@ -92,7 +129,9 @@ describe("bank-file exports deny a branch-scoped caller instead of emitting a pa
     it(`GET /runs/:id/${path} returns 403 for a branch-scoped caller and touches no bank data`, async () => {
       mockBranchScopedCaller();
 
-      const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/${path}`);
+      const res = await request(buildApp()).get(
+        `/api/payroll/runs/${RUN_ID}/${path}`,
+      );
 
       expect(res.status).toBe(403);
       // The guard runs before any query, so no account number is ever decrypted.
@@ -102,16 +141,23 @@ describe("bank-file exports deny a branch-scoped caller instead of emitting a pa
 
   it("GET /runs/:id/neft-export still serves a full CSV for an org-wide caller", async () => {
     mockOrgWideCaller();
-    execute
-      .mockResolvedValueOnce(RUN_ROW)
-      .mockResolvedValueOnce([[
+    execute.mockResolvedValueOnce(RUN_ROW).mockResolvedValueOnce([
+      [
         {
-          employee_id: "e1", net_salary: 25000, employee_code: "MAS001", full_name: "Test One",
-          bank_name: "HDFC", ifsc_code: "HDFC0001", account_number: Buffer.from("1234567890"),
+          employee_id: "e1",
+          net_salary: 25000,
+          employee_code: "MAS001",
+          full_name: "Test One",
+          bank_name: "HDFC",
+          ifsc_code: "HDFC0001",
+          account_number: Buffer.from("1234567890"),
         },
-      ]]);
+      ],
+    ]);
 
-    const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/neft-export`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/runs/${RUN_ID}/neft-export`,
+    );
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/csv");
@@ -125,7 +171,9 @@ describe("bank-file exports deny a branch-scoped caller instead of emitting a pa
     hasAnyRole.mockResolvedValue(false); // holds neither super_admin nor a PAYROLL_EXPORT_ROLES role
     getUserAssignmentScopes.mockResolvedValue([]);
 
-    const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/neft-export`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/runs/${RUN_ID}/neft-export`,
+    );
 
     expect(res.status).toBe(403);
     expect(execute).not.toHaveBeenCalled();
@@ -140,12 +188,15 @@ describe("salary-sheet export row-filters to the caller's scope", () => {
   });
 
   it("appends the scope clause and its params to the export query for a branch-scoped caller", async () => {
-    buildScopeWhereClause.mockResolvedValue({ sql: "e.branch_id = ?", params: ["branch-a"] });
-    execute
-      .mockResolvedValueOnce(RUN_ROW)
-      .mockResolvedValueOnce([[]]);
+    buildScopeWhereClause.mockResolvedValue({
+      sql: "e.branch_id = ?",
+      params: ["branch-a"],
+    });
+    execute.mockResolvedValueOnce(RUN_ROW).mockResolvedValueOnce([[]]);
 
-    const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/salary-sheet-export`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/runs/${RUN_ID}/salary-sheet-export`,
+    );
 
     expect(res.status).toBe(200);
     const [sql, params] = execute.mock.calls[1];
@@ -163,11 +214,11 @@ describe("salary-sheet export row-filters to the caller's scope", () => {
 
   it("returns the whole run unfiltered for an org-wide caller", async () => {
     buildScopeWhereClause.mockResolvedValue({ sql: "1=1", params: [] });
-    execute
-      .mockResolvedValueOnce(RUN_ROW)
-      .mockResolvedValueOnce([[]]);
+    execute.mockResolvedValueOnce(RUN_ROW).mockResolvedValueOnce([[]]);
 
-    const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/salary-sheet-export`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/runs/${RUN_ID}/salary-sheet-export`,
+    );
 
     expect(res.status).toBe(200);
     const [sql, params] = execute.mock.calls[1];
@@ -182,7 +233,9 @@ describe("salary-sheet export row-filters to the caller's scope", () => {
     buildScopeWhereClause.mockResolvedValue({ sql: "1=0", params: [] });
     execute.mockResolvedValueOnce(RUN_ROW);
 
-    const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/salary-sheet-export`);
+    const res = await request(buildApp()).get(
+      `/api/payroll/runs/${RUN_ID}/salary-sheet-export`,
+    );
 
     expect(res.status).toBe(403);
     expect(res.body.message).toMatch(/no branch or process scope/i);

@@ -28,16 +28,20 @@ vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: vi.fn(async (sql: string) => {
       const s = String(sql);
-      if (s.includes("candidate_onboarding_profile")) return [state.onboarding ? [state.onboarding] : []];
-      if (s.includes("employee_epf_compliance_profile")) return [state.epf ? [state.epf] : []];
-      if (s.includes("FROM employees")) return [state.employee ? [state.employee] : []];
+      if (s.includes("candidate_onboarding_profile"))
+        return [state.onboarding ? [state.onboarding] : []];
+      if (s.includes("employee_epf_compliance_profile"))
+        return [state.epf ? [state.epf] : []];
+      if (s.includes("FROM employees"))
+        return [state.employee ? [state.employee] : []];
       return [[]];
     }),
     query: vi.fn(async () => [[]]),
   },
 }));
 
-const { buildSourceContext } = await import("../universalDigitalFormFill.service.js");
+const { buildSourceContext } =
+  await import("../universalDigitalFormFill.service.js");
 
 const maritalOf = async () => {
   const ctx = await buildSourceContext("emp-1", "cand-1");

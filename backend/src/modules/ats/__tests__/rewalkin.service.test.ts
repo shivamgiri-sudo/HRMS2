@@ -12,16 +12,22 @@ const prior = (o: Partial<Parameters<typeof isGenuineRewalkin>[0]> = {}) => ({
 
 describe("isGenuineRewalkin", () => {
   it("counts a candidate who walked in on an earlier day", () => {
-    expect(isGenuineRewalkin(prior({ priorWalkInDate: "2026-09-18" }), "2026-09-25")).toBe(true);
+    expect(
+      isGenuineRewalkin(prior({ priorWalkInDate: "2026-09-18" }), "2026-09-25"),
+    ).toBe(true);
   });
   it("ignores a same-day resubmission", () => {
-    expect(isGenuineRewalkin(prior({ priorWalkInDate: "2026-09-25" }), "2026-09-25")).toBe(false);
+    expect(
+      isGenuineRewalkin(prior({ priorWalkInDate: "2026-09-25" }), "2026-09-25"),
+    ).toBe(false);
   });
   it("ignores a calling lead that never walked in", () => {
     expect(isGenuineRewalkin(prior(), "2026-09-25")).toBe(false);
   });
   it("counts a candidate with a queue token but no walk-in date", () => {
-    expect(isGenuineRewalkin(prior({ hasQueueToken: true }), "2026-09-25")).toBe(true);
+    expect(
+      isGenuineRewalkin(prior({ hasQueueToken: true }), "2026-09-25"),
+    ).toBe(true);
   });
 });
 
@@ -35,7 +41,11 @@ describe("buildRewalkinWhere", () => {
     expect(params).toEqual(["NOIDA-2", "NOIDA-2"]);
   });
   it("ignores malformed dates", () => {
-    const { params } = buildRewalkinWhere({ from: "x", to: "y", scope: { sql: "1=1", params: [] } });
+    const { params } = buildRewalkinWhere({
+      from: "x",
+      to: "y",
+      scope: { sql: "1=1", params: [] },
+    });
     expect(params).toEqual([]);
   });
 });

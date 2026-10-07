@@ -38,7 +38,7 @@ function msUntilNext7th(): number {
   const now = new Date();
   const istNow = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
   const next7th = new Date(
-    Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), 7, 2, 30, 0, 0)
+    Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), 7, 2, 30, 0, 0),
   );
   if (next7th.getTime() <= now.getTime()) {
     next7th.setUTCMonth(next7th.getUTCMonth() + 1);
@@ -55,7 +55,9 @@ function isTodayThe7th(): boolean {
 
 async function runReminders(): Promise<void> {
   const period = previousMonthIST();
-  console.log(`[${WORKER_NAME}] Checking business-case closure for ${period}...`);
+  console.log(
+    `[${WORKER_NAME}] Checking business-case closure for ${period}...`,
+  );
 
   // Every active budget for the month that must be closed, with a count of its still-open
   // head/sub-heads (no closure row, or closure row not 'closed'). A head/sub-head with no line
@@ -72,11 +74,16 @@ async function runReminders(): Promise<void> {
         AND h.status = 'active'
         AND (c.id IS NULL OR c.status <> 'closed')
       GROUP BY h.id, h.branch_id, bm.branch_name`,
-    [period]
+    [period],
   );
 
   let sent = 0;
-  for (const row of rows as Array<{ budget_id: string; branch_id: string; branch_name: string | null; open_count: number }>) {
+  for (const row of rows as Array<{
+    budget_id: string;
+    branch_id: string;
+    branch_name: string | null;
+    open_count: number;
+  }>) {
     try {
       // Two-tier resolution, matching resolveFinanceBranchScopeSet's own precedence
       // (finance-access-scope.ts): an explicit user_assignment_scope branch grant first;
@@ -104,7 +111,7 @@ async function runReminders(): Promise<void> {
               SELECT 1 FROM user_assignment_scope x
                WHERE x.user_id = u.id AND x.active_status = 1
             )`,
-        [row.branch_id, row.branch_id]
+        [row.branch_id, row.branch_id],
       );
       for (const admin of branchAdmins as Array<{ user_id: string }>) {
         await inboxService.createItem({
@@ -121,7 +128,9 @@ async function runReminders(): Promise<void> {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[${WORKER_NAME}] Failed for budget ${row.budget_id}: ${msg}`);
+      console.warn(
+        `[${WORKER_NAME}] Failed for budget ${row.budget_id}: ${msg}`,
+      );
     }
   }
 
@@ -130,7 +139,9 @@ async function runReminders(): Promise<void> {
 
 export async function startBudgetClosureReminderWorker(): Promise<void> {
   const delay = msUntilNext7th();
-  console.log(`[${WORKER_NAME}] Next run on 7th of month — in ${Math.round(delay / 3600000)}h`);
+  console.log(
+    `[${WORKER_NAME}] Next run on 7th of month — in ${Math.round(delay / 3600000)}h`,
+  );
 
   scheduledTimer = setTimeout(async () => {
     if (isTodayThe7th()) {

@@ -86,6 +86,8 @@ export function recordCircuitBreakerFailure(
     lastFailure: now,
     status: failures >= config.failureThreshold ? "open" : state.status,
     nextProbeTime:
-      failures >= config.failureThreshold ? now + config.recoveryTimeMs + jitterMs : state.nextProbeTime,
+      failures >= config.failureThreshold
+        ? now + config.recoveryTimeMs + jitterMs
+        : state.nextProbeTime,
   };
 }

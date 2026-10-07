@@ -49,7 +49,8 @@ describe("Integration Hub scheduler worker", () => {
 
   it("claims a due schedule and runs it without a logged-in user", async () => {
     const connection = {
-      execute: vi.fn()
+      execute: vi
+        .fn()
         .mockResolvedValueOnce([[{ acquired: 1 }], []])
         .mockResolvedValueOnce([[dueSchedule], []])
         .mockResolvedValueOnce([{ affectedRows: 1 }, []])
@@ -80,7 +81,8 @@ describe("Integration Hub scheduler worker", () => {
 
   it("does not run when another backend process owns the connector lock", async () => {
     const connection = {
-      execute: vi.fn()
+      execute: vi
+        .fn()
         .mockResolvedValueOnce([[{ acquired: 0 }], []])
         .mockResolvedValueOnce([[{ released: 0 }], []]),
       release: vi.fn(),
@@ -94,9 +96,10 @@ describe("Integration Hub scheduler worker", () => {
 
   it("initializes legacy enabled schedules without executing them immediately", async () => {
     mockDbExecute
-      .mockResolvedValueOnce([[
-        { integration_key: "dialer_1", cron_expression: "*/5 * * * *" },
-      ], []])
+      .mockResolvedValueOnce([
+        [{ integration_key: "dialer_1", cron_expression: "*/5 * * * *" }],
+        [],
+      ])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
     await expect(initializeIntegrationSchedules()).resolves.toBe(1);
@@ -106,7 +109,8 @@ describe("Integration Hub scheduler worker", () => {
 
   it("does not claim cosec_biometric because it is owned by the dedicated sync worker", async () => {
     const connection = {
-      execute: vi.fn()
+      execute: vi
+        .fn()
         .mockResolvedValueOnce([[{ acquired: 1 }], []])
         .mockResolvedValueOnce([[], []])
         .mockResolvedValueOnce([[{ released: 1 }], []]),
@@ -114,20 +118,28 @@ describe("Integration Hub scheduler worker", () => {
     };
     mockGetConnection.mockResolvedValue(connection);
 
-    await expect(runDueIntegrationSchedule("cosec_biometric")).resolves.toBe(false);
+    await expect(runDueIntegrationSchedule("cosec_biometric")).resolves.toBe(
+      false,
+    );
     expect(mockExecuteConnector).not.toHaveBeenCalled();
     expect(connection.release).toHaveBeenCalledOnce();
   });
 
   it("disables the schedule when the connector has a permanent credential configuration failure", async () => {
     const credentialError = Object.assign(
-      new Error("Stored credentials for integration shivamgiri_quality could not be decrypted. Re-save the connector credentials."),
+      new Error(
+        "Stored credentials for integration shivamgiri_quality could not be decrypted. Re-save the connector credentials.",
+      ),
       { nonRetryable: true, disableSchedule: true },
     );
     const connection = {
-      execute: vi.fn()
+      execute: vi
+        .fn()
         .mockResolvedValueOnce([[{ acquired: 1 }], []])
-        .mockResolvedValueOnce([[{ ...dueSchedule, integration_key: "shivamgiri_quality" }], []])
+        .mockResolvedValueOnce([
+          [{ ...dueSchedule, integration_key: "shivamgiri_quality" }],
+          [],
+        ])
         .mockResolvedValueOnce([{ affectedRows: 1 }, []])
         .mockResolvedValueOnce([{ affectedRows: 1 }, []])
         .mockResolvedValueOnce([{ affectedRows: 1 }, []])
@@ -138,7 +150,9 @@ describe("Integration Hub scheduler worker", () => {
     mockExecuteConnector.mockRejectedValue(credentialError);
     mockDbExecute.mockResolvedValue([{ affectedRows: 1 }, []]);
 
-    await expect(runDueIntegrationSchedule("shivamgiri_quality")).resolves.toBe(true);
+    await expect(runDueIntegrationSchedule("shivamgiri_quality")).resolves.toBe(
+      true,
+    );
 
     expect(connection.execute.mock.calls[3][0]).toMatch(/SET enabled = 0/i);
     expect(mockDbExecute).toHaveBeenCalledWith(

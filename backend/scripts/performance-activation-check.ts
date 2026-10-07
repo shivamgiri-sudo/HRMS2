@@ -9,13 +9,20 @@ function readArg(name: string): string | undefined {
   return found ? found.slice(prefix.length).trim() : undefined;
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${ms}ms`)),
+          ms,
+        );
       }),
     ]);
   } finally {
@@ -23,7 +30,11 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
   }
 }
 
-async function query(pool: mysql.Pool, sql: string, params: unknown[] = []): Promise<QueryResult> {
+async function query(
+  pool: mysql.Pool,
+  sql: string,
+  params: unknown[] = [],
+): Promise<QueryResult> {
   const [rows] = await withTimeout(pool.query(sql, params), 15_000, "query");
   return rows as QueryResult;
 }
@@ -70,7 +81,12 @@ async function main() {
          FROM integration_config
         WHERE integration_key IN (?, ?, ?, ?)
         ORDER BY integration_key`,
-      ["apr_productivity", "quality_audit", "outbound_calls", "sales_brand_mis"],
+      [
+        "apr_productivity",
+        "quality_audit",
+        "outbound_calls",
+        "sales_brand_mis",
+      ],
     );
 
     const lineageColumns = await query(

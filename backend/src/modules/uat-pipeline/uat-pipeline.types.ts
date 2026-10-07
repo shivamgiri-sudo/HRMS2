@@ -13,7 +13,8 @@
 export type PathTier = "deny" | "review" | "standard" | "trivial";
 
 /** Business-capability class, from uat/capability-registry.json. */
-export type CapabilityClass = "DENY" | "HIGH_REVIEW" | "REVIEW" | "STANDARD" | "TRIVIAL";
+export type CapabilityClass =
+  "DENY" | "HIGH_REVIEW" | "REVIEW" | "STANDARD" | "TRIVIAL";
 
 /**
  * The two dimensions are ordered independently but compared on one scale.
@@ -45,7 +46,8 @@ export function rankToPathTier(rank: number): PathTier {
 // ── Protected paths ───────────────────────────────────────────────────────────
 
 export type ProtectedTier = "deny" | "review";
-export type ProtectedCategory = "business-critical" | "control-plane" | "domain-owned";
+export type ProtectedCategory =
+  "business-critical" | "control-plane" | "domain-owned";
 
 export interface ProtectedPathRule {
   tier: ProtectedTier;

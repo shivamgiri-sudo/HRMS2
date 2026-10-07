@@ -18,7 +18,10 @@ import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
 
-const SERVICE = path.resolve(__dirname, "../employeeJoiningDocuments.service.ts");
+const SERVICE = path.resolve(
+  __dirname,
+  "../employeeJoiningDocuments.service.ts",
+);
 const source = fs.readFileSync(SERVICE, "utf8");
 
 /** Body of finalizeChecklistEsign, where the provider download happens. */
@@ -31,15 +34,22 @@ function finalizeBody() {
 
 /** Body of the webhook handler, which resolves the transaction row. */
 function webhookBody() {
-  const start = source.indexOf("export async function handleJoiningDocumentEsignWebhook");
-  expect(start, "handleJoiningDocumentEsignWebhook must exist").toBeGreaterThan(-1);
+  const start = source.indexOf(
+    "export async function handleJoiningDocumentEsignWebhook",
+  );
+  expect(start, "handleJoiningDocumentEsignWebhook must exist").toBeGreaterThan(
+    -1,
+  );
   return source.slice(start, start + 6000);
 }
 
 describe("eSign provider identifiers", () => {
   it("never passes the checklist id to downloadESignDocument", () => {
     const body = finalizeBody();
-    const call = body.slice(body.indexOf("downloadESignDocument"), body.indexOf("downloadESignDocument") + 400);
+    const call = body.slice(
+      body.indexOf("downloadESignDocument"),
+      body.indexOf("downloadESignDocument") + 400,
+    );
     expect(call).not.toContain("params.checklist.id");
   });
 
@@ -96,7 +106,9 @@ describe("signed artefact retrieval", () => {
     // persistDocument's default is the onboarding tree; a joining document
     // written there is invisible to every joining-document reader.
     expect(statusSource).toContain("joiningDocumentStorageDir");
-    expect(statusSource).toContain("private-storage/employee-joining-documents");
+    expect(statusSource).toContain(
+      "private-storage/employee-joining-documents",
+    );
   });
 
   it("recalculates document progress after marking a document signed", () => {

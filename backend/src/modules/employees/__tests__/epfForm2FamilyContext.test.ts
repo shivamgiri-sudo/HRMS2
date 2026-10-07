@@ -24,7 +24,15 @@ vi.mock("../../../db/mysql.js", () => ({
       if (s.includes("candidate_onboarding_family_member")) return [familyRows];
       if (s.includes("FROM employee_nominee")) return [nomineeRows];
       if (s.includes("FROM employees e")) {
-        return [[{ id: EMPLOYEE, full_name: "TEST MEMBER", employee_code: "MAS00001" }]];
+        return [
+          [
+            {
+              id: EMPLOYEE,
+              full_name: "TEST MEMBER",
+              employee_code: "MAS00001",
+            },
+          ],
+        ];
       }
       return [[]];
     }),
@@ -38,7 +46,8 @@ vi.mock("../branchPayrollHrSignatory.service.js", () => ({
   mergeBranchSignatureIntoSeal: async () => null,
 }));
 
-const { buildSourceContext } = await import("../universalDigitalFormFill.service.js");
+const { buildSourceContext } =
+  await import("../universalDigitalFormFill.service.js");
 
 const member = (over: Record<string, unknown> = {}) => ({
   member_name: "RUKHSANA BEGUM",
@@ -57,7 +66,10 @@ beforeEach(() => {
 describe("EPF Form 2 Part B family context", () => {
   it("exposes a declared family member as family.f1_*", async () => {
     familyRows = [member()];
-    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<string, never>;
+    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<
+      string,
+      never
+    >;
     const family = ctx.family as Record<string, unknown>;
 
     expect(family.f1_name).toBe("RUKHSANA BEGUM");
@@ -71,10 +83,17 @@ describe("EPF Form 2 Part B family context", () => {
     // row flagged for it must not also appear as family_1 — that would declare
     // the same person twice in two different capacities.
     familyRows = [
-      member({ member_name: "SULTAN AHMED", relation: "Father", is_eps_nominee: 1 }),
+      member({
+        member_name: "SULTAN AHMED",
+        relation: "Father",
+        is_eps_nominee: 1,
+      }),
       member({ member_name: "RUKHSANA BEGUM" }),
     ];
-    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<string, never>;
+    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<
+      string,
+      never
+    >;
     const family = ctx.family as Record<string, unknown>;
     const eps = ctx.eps_nominee as Record<string, unknown>;
 
@@ -88,9 +107,18 @@ describe("EPF Form 2 Part B family context", () => {
     // The original hazard: a nominee is not a family member. With no declared
     // family, Part B must stay empty even though a nominee exists.
     familyRows = [];
-    nomineeRows = [{ nominee_name: "SULTAN AHMED", relationship: "Father", date_of_birth: "1980-02-04" }];
+    nomineeRows = [
+      {
+        nominee_name: "SULTAN AHMED",
+        relationship: "Father",
+        date_of_birth: "1980-02-04",
+      },
+    ];
 
-    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<string, never>;
+    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<
+      string,
+      never
+    >;
     const family = ctx.family as Record<string, unknown>;
     const eps = ctx.eps_nominee as Record<string, unknown>;
     const nominee = ctx.nominee as Record<string, unknown>;
@@ -101,8 +129,13 @@ describe("EPF Form 2 Part B family context", () => {
   });
 
   it("prints at most the four rows the form has", async () => {
-    familyRows = Array.from({ length: 6 }, (_, i) => member({ member_name: `MEMBER ${i + 1}` }));
-    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<string, never>;
+    familyRows = Array.from({ length: 6 }, (_, i) =>
+      member({ member_name: `MEMBER ${i + 1}` }),
+    );
+    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<
+      string,
+      never
+    >;
     const family = ctx.family as Record<string, unknown>;
 
     expect(family.f4_name).toBe("MEMBER 4");
@@ -113,7 +146,10 @@ describe("EPF Form 2 Part B family context", () => {
     // These onboarding columns hold '' rather than NULL in places; `??` would
     // accept '' and print an empty box as though it were declared data.
     familyRows = [member({ address: "   ", relation: "" })];
-    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<string, never>;
+    const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<
+      string,
+      never
+    >;
     const family = ctx.family as Record<string, unknown>;
 
     expect(family.f1_address).toBeNull();

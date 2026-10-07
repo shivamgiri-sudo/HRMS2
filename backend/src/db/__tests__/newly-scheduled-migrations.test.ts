@@ -21,7 +21,10 @@ import { splitSql } from "../runPendingMigrations.js";
  */
 
 const sqlDir = path.resolve(__dirname, "../../../sql");
-const manifestSource = fs.readFileSync(path.resolve(__dirname, "../runPendingMigrations.ts"), "utf8");
+const manifestSource = fs.readFileSync(
+  path.resolve(__dirname, "../runPendingMigrations.ts"),
+  "utf8",
+);
 const read = (file: string) => fs.readFileSync(path.join(sqlDir, file), "utf8");
 
 const NEWLY_SCHEDULED = [
@@ -46,7 +49,7 @@ describe("migrations promoted from knownUnlisted into the manifest", () => {
         const ends = (statement.match(/\bEND\b/gi) ?? []).length;
         expect(
           ends,
-          `unbalanced BEGIN/END — the splitter cut a compound statement:\n${statement.slice(0, 160)}`
+          `unbalanced BEGIN/END — the splitter cut a compound statement:\n${statement.slice(0, 160)}`,
         ).toBeGreaterThanOrEqual(begins - ends >= 0 ? 0 : ends);
         expect(statement.trim()).not.toMatch(/^(DECLARE|SET @sql =)\b/i);
       }
@@ -66,14 +69,15 @@ describe("migrations promoted from knownUnlisted into the manifest", () => {
     });
   }
 
-
   it("440 runs after every table it alters is created", () => {
     // Its filename number would place it early, but each of its four guards fires an
     // ALTER when it finds the column absent - and "absent" is also what a table that
     // does not exist yet reports. At position 440 a rebuilt database would hit
     // ER_NO_SUCH_TABLE on grn_invoice_component (1074) and grn_period_allocation
     // (1099), and the split_method guard would no-op because @sm_type is NULL.
-    const order = [...manifestSource.matchAll(/"([0-9][^"]*\.sql)"/g)].map((m) => m[1]);
+    const order = [...manifestSource.matchAll(/"([0-9][^"]*\.sql)"/g)].map(
+      (m) => m[1],
+    );
     const at = (name: string) => order.indexOf(name);
     const phase1 = at("440_finance_phase1.sql");
     expect(phase1).toBeGreaterThan(-1);
@@ -83,8 +87,12 @@ describe("migrations promoted from knownUnlisted into the manifest", () => {
       "1074_grn_invoice_gst_components.sql",
       "1099_grn_period_allocation.sql",
     ]) {
-      expect(at(dependency), `${dependency} must be scheduled`).toBeGreaterThan(-1);
-      expect(at(dependency), `440 must run after ${dependency}`).toBeLessThan(phase1);
+      expect(at(dependency), `${dependency} must be scheduled`).toBeGreaterThan(
+        -1,
+      );
+      expect(at(dependency), `440 must run after ${dependency}`).toBeLessThan(
+        phase1,
+      );
     }
   });
 
@@ -104,7 +112,10 @@ describe("migrations promoted from knownUnlisted into the manifest", () => {
     // Defined and dropped inside this one file. If a later migration ever relied on it, dropping
     // it here would break that migration instead.
     expect(sql).toContain("CREATE PROCEDURE add_column_if_not_exists");
-    expect((sql.match(/DROP PROCEDURE IF EXISTS add_column_if_not_exists/gi) ?? []).length).toBe(2);
+    expect(
+      (sql.match(/DROP PROCEDURE IF EXISTS add_column_if_not_exists/gi) ?? [])
+        .length,
+    ).toBe(2);
   });
 
   it("1029 only ever inserts or updates", () => {
@@ -116,12 +127,16 @@ describe("migrations promoted from knownUnlisted into the manifest", () => {
   it("600 runs before anything that reads the columns it adds", () => {
     // cost-centre migrations that extend the same table must not precede the file that creates
     // its extended shape.
-    const order = [...manifestSource.matchAll(/"([0-9][^"]*\.sql)"/g)].map((m) => m[1]);
+    const order = [...manifestSource.matchAll(/"([0-9][^"]*\.sql)"/g)].map(
+      (m) => m[1],
+    );
     const at = (name: string) => order.indexOf(name);
     expect(at("600_cost_centre_extended_schema.sql")).toBeGreaterThan(-1);
     for (const later of ["1029_ungated_routes_page_catalog.sql"]) {
       if (at(later) > -1) {
-        expect(at("600_cost_centre_extended_schema.sql")).toBeLessThan(at(later));
+        expect(at("600_cost_centre_extended_schema.sql")).toBeLessThan(
+          at(later),
+        );
       }
     }
   });

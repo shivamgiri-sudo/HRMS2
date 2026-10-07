@@ -15,6 +15,7 @@ Switches Claude into Fable 5 thinking mode for the current session:
 ## When to Use
 
 Use `/fable` when you want:
+
 - Deep reasoning on complex architectural decisions
 - Multiple approach evaluation before implementation
 - Cleaner, more natural communication style
@@ -36,12 +37,14 @@ That's it. Claude will acknowledge the mode is active and continue with enhanced
 ## What Changes
 
 **Before Fable mode:**
+
 - More cautious, asks more questions
 - Verbose formatted responses with bullets
 - Narrates process steps
 - May not consider all edge cases upfront
 
 **After Fable mode:**
+
 - Thinks deeply before acting
 - Natural prose responses
 - Leads with outcomes
@@ -49,6 +52,7 @@ That's it. Claude will acknowledge the mode is active and continue with enhanced
 - Proceeds confidently with reasonable defaults
 
 **What stays the same:**
+
 - All CLAUDE.md charter rules still enforced
 - Database/LMS boundaries respected
 - Payroll/statutory safety gates unchanged

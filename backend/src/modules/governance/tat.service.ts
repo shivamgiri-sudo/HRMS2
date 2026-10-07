@@ -14,7 +14,7 @@ export async function createTatInstance(
   entityId: string,
   assignedTo: string,
   branchId?: string,
-  processId?: string
+  processId?: string,
 ): Promise<string> {
   // Look up TAT hours — prefer branch-specific, fall back to global
   const [matrixRows] = await db.execute<RowDataPacket[]>(
@@ -25,7 +25,7 @@ export async function createTatInstance(
        AND (branch_id = ? OR branch_id IS NULL)
      ORDER BY branch_id IS NULL ASC
      LIMIT 1`,
-    [taskType, branchId ?? null]
+    [taskType, branchId ?? null],
   );
 
   const tatHours: number = (matrixRows[0] as any)?.default_tat_hours ?? 24;
@@ -40,7 +40,16 @@ export async function createTatInstance(
     `INSERT INTO task_tat_instance
        (id, task_type, entity_type, entity_id, assigned_to, branch_id, process_id, due_at, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), 'open', NOW(), NOW())`,
-    [id, taskType, entityType, entityId, assignedTo, branchId ?? null, processId ?? null, Math.round(tatHours * 60)]
+    [
+      id,
+      taskType,
+      entityType,
+      entityId,
+      assignedTo,
+      branchId ?? null,
+      processId ?? null,
+      Math.round(tatHours * 60),
+    ],
   );
 
   // Insert a work item for the assignee
@@ -50,7 +59,7 @@ export async function createTatInstance(
     `INSERT INTO work_item
        (id, item_type, entity_type, entity_id, assigned_to_user_id, due_at, priority, status, created_at, updated_at)
      VALUES (UUID(), ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), 'high', 'pending', NOW(), NOW())`,
-    [taskType, entityType, entityId, assignedTo, Math.round(tatHours * 60)]
+    [taskType, entityType, entityId, assignedTo, Math.round(tatHours * 60)],
   );
 
   return id;
@@ -139,7 +148,7 @@ export async function findDueEscalations(opts: {
     escalationLevel: Number(r.escalation_level),
     notifyRole: r.notify_role ?? null,
     notifyUserId: r.notify_user_id ?? null,
-    escalationAction: r.escalation_action ?? 'notify',
+    escalationAction: r.escalation_action ?? "notify",
     hoursOverdue: Number(r.hours_overdue ?? 0),
   }));
 }
@@ -159,11 +168,18 @@ export async function recordEscalation(esc: DueEscalation): Promise<boolean> {
       `INSERT INTO task_escalation_log
          (id, tat_instance_id, escalation_level, triggered_at, notified_user_id, notify_role, action_taken)
        VALUES (?, ?, ?, NOW(), ?, ?, ?)`,
-      [randomUUID(), esc.tatInstanceId, esc.escalationLevel, esc.notifyUserId, esc.notifyRole, esc.escalationAction],
+      [
+        randomUUID(),
+        esc.tatInstanceId,
+        esc.escalationLevel,
+        esc.notifyUserId,
+        esc.notifyRole,
+        esc.escalationAction,
+      ],
     );
     return true;
   } catch (err) {
-    if ((err as { code?: string }).code === 'ER_DUP_ENTRY') return false;
+    if ((err as { code?: string }).code === "ER_DUP_ENTRY") return false;
     throw err;
   }
 }
@@ -204,26 +220,40 @@ export async function checkAndEscalate(): Promise<number> {
  * modules/work-inbox/work-inbox.service.ts, the equivalent gate for the sibling `work_item`
  * table, so the two tables that make up the Work Inbox enforce access the same way.
  */
-export async function assertTatTaskAccess(userId: string, taskId: string): Promise<void> {
+export async function assertTatTaskAccess(
+  userId: string,
+  taskId: string,
+): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT assigned_to, owner_user_id, owner_role, status FROM task_tat_instance WHERE id = ? LIMIT 1",
-    [taskId]
+    [taskId],
   );
   const task = (rows as RowDataPacket[])[0];
   if (!task) {
     throw Object.assign(new Error("TAT task not found"), { statusCode: 404 });
   }
   if (task.status === "completed" || task.status === "cancelled") {
-    throw Object.assign(new Error("TAT task already " + task.status), { statusCode: 400 });
+    throw Object.assign(new Error("TAT task already " + task.status), {
+      statusCode: 400,
+    });
   }
   const { roleKeys } = await getUserRoleContext(userId);
   const isPrivileged = roleKeys.some((r) =>
-    ["super_admin", "admin", "ho_hr", "hr_branch", "branch_head", "operations_head"].includes(r)
+    [
+      "super_admin",
+      "admin",
+      "ho_hr",
+      "hr_branch",
+      "branch_head",
+      "operations_head",
+    ].includes(r),
   );
   const isOwner = task.assigned_to === userId || task.owner_user_id === userId;
   const hasOwnerRole = task.owner_role && roleKeys.includes(task.owner_role);
   if (!isOwner && !hasOwnerRole && !isPrivileged) {
-    throw Object.assign(new Error("Not authorized to complete this task"), { statusCode: 403 });
+    throw Object.assign(new Error("Not authorized to complete this task"), {
+      statusCode: 403,
+    });
   }
 }
 
@@ -251,18 +281,20 @@ export async function assertTatTaskAccess(userId: string, taskId: string): Promi
 export async function extendTatDeadline(
   tatInstanceId: string,
   newDueAt: Date | string,
-  extendedBy: string
+  extendedBy: string,
 ): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT due_at, status FROM task_tat_instance WHERE id = ? LIMIT 1",
-    [tatInstanceId]
+    [tatInstanceId],
   );
   const task = (rows as RowDataPacket[])[0];
   if (!task) {
     throw Object.assign(new Error("TAT task not found"), { statusCode: 404 });
   }
   if (task.status === "completed" || task.status === "cancelled") {
-    throw Object.assign(new Error("TAT task already " + task.status), { statusCode: 400 });
+    throw Object.assign(new Error("TAT task already " + task.status), {
+      statusCode: 400,
+    });
   }
   const currentDueAt = new Date(task.due_at);
   const requestedDueAt = new Date(newDueAt);
@@ -270,7 +302,10 @@ export async function extendTatDeadline(
     throw Object.assign(new Error("Invalid due date"), { statusCode: 400 });
   }
   if (requestedDueAt.getTime() <= currentDueAt.getTime()) {
-    throw Object.assign(new Error("New deadline must be later than the current one"), { statusCode: 400 });
+    throw Object.assign(
+      new Error("New deadline must be later than the current one"),
+      { statusCode: 400 },
+    );
   }
 
   const [result] = await db.execute<ResultSetHeader>(
@@ -284,17 +319,19 @@ export async function extendTatDeadline(
             status = CASE WHEN status = 'sla_breached' THEN 'open' ELSE status END,
             updated_at = NOW()
       WHERE id = ? AND status NOT IN ('completed', 'cancelled')`,
-    [newDueAt, tatInstanceId]
+    [newDueAt, tatInstanceId],
   );
   if (!result.affectedRows) {
-    throw Object.assign(new Error("TAT task not found or already completed"), { statusCode: 409 });
+    throw Object.assign(new Error("TAT task not found or already completed"), {
+      statusCode: 409,
+    });
   }
 
   await db.execute(
     `INSERT INTO task_escalation_log
        (id, tat_instance_id, escalation_level, triggered_at, notified_user_id, action_taken)
      VALUES (UUID(), ?, -1, NOW(), ?, 'extended')`,
-    [tatInstanceId, extendedBy]
+    [tatInstanceId, extendedBy],
   );
 }
 
@@ -307,15 +344,20 @@ export async function extendTatDeadline(
  * than silently duplicating the audit trail, the same race class fixed on completeWorkItem
  * in modules/work-inbox/work-inbox.service.ts.
  */
-export async function completeTatInstance(id: string, completedBy: string): Promise<void> {
+export async function completeTatInstance(
+  id: string,
+  completedBy: string,
+): Promise<void> {
   const [result] = await db.execute<ResultSetHeader>(
     `UPDATE task_tat_instance
      SET status = 'completed', completed_at = NOW(), updated_at = NOW()
      WHERE id = ? AND status NOT IN ('completed', 'cancelled')`,
-    [id]
+    [id],
   );
   if (!result.affectedRows) {
-    throw Object.assign(new Error("TAT task not found or already completed"), { statusCode: 409 });
+    throw Object.assign(new Error("TAT task not found or already completed"), {
+      statusCode: 409,
+    });
   }
 
   // Real columns: tat_instance_id / triggered_at / notified_user_id / action_taken.
@@ -327,6 +369,6 @@ export async function completeTatInstance(id: string, completedBy: string): Prom
     `INSERT INTO task_escalation_log
        (id, tat_instance_id, escalation_level, triggered_at, notified_user_id, action_taken, resolved_at)
      VALUES (UUID(), ?, 0, NOW(), ?, 'completed', NOW())`,
-    [id, completedBy]
+    [id, completedBy],
   );
 }

@@ -71,11 +71,24 @@ export class NameValidationService {
     name_on_cheque?: string;
   }): NameValidationResult {
     const matches = {
-      profileName: { value: data.employee_name ?? "", source: "Profile (Section 1)" },
-      fatherHusbandName: { value: data.father_husband_name ?? "", source: "Father/Husband Name (Section 1)" },
-      accountHolderName: { value: data.account_holder_name ?? "", source: "Bank Account (Section 5)" },
-      nomineeName: data.nominee_name ? { value: data.nominee_name, source: "Nominee (Section 8)" } : undefined,
-      chequeHolderName: data.name_on_cheque ? { value: data.name_on_cheque, source: "Cheque (Section 5)" } : undefined,
+      profileName: {
+        value: data.employee_name ?? "",
+        source: "Profile (Section 1)",
+      },
+      fatherHusbandName: {
+        value: data.father_husband_name ?? "",
+        source: "Father/Husband Name (Section 1)",
+      },
+      accountHolderName: {
+        value: data.account_holder_name ?? "",
+        source: "Bank Account (Section 5)",
+      },
+      nomineeName: data.nominee_name
+        ? { value: data.nominee_name, source: "Nominee (Section 8)" }
+        : undefined,
+      chequeHolderName: data.name_on_cheque
+        ? { value: data.name_on_cheque, source: "Cheque (Section 5)" }
+        : undefined,
     };
 
     const mismatches: NameValidationResult["mismatches"] = [];
@@ -84,7 +97,7 @@ export class NameValidationService {
     if (matches.profileName.value && matches.accountHolderName.value) {
       const score = this.calculateNameMatch(
         matches.profileName.value,
-        matches.accountHolderName.value
+        matches.accountHolderName.value,
       );
       if (score < 70) {
         mismatches.push({
@@ -101,7 +114,7 @@ export class NameValidationService {
     if (matches.profileName.value && matches.chequeHolderName?.value) {
       const score = this.calculateNameMatch(
         matches.profileName.value,
-        matches.chequeHolderName.value
+        matches.chequeHolderName.value,
       );
       if (score < 70) {
         mismatches.push({
@@ -118,7 +131,7 @@ export class NameValidationService {
     if (matches.accountHolderName.value && matches.chequeHolderName?.value) {
       const score = this.calculateNameMatch(
         matches.accountHolderName.value,
-        matches.chequeHolderName.value
+        matches.chequeHolderName.value,
       );
       if (score < 70) {
         mismatches.push({

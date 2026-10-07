@@ -12,7 +12,9 @@ async function runSync(): Promise<void> {
   try {
     const results = await syncRecentEmailTickets(2);
     for (const r of results) {
-      console.log(`[${WORKER_NAME}] ${r.dashboardLabel}: ${r.daysUpserted} day(s) upserted`);
+      console.log(
+        `[${WORKER_NAME}] ${r.dashboardLabel}: ${r.daysUpserted} day(s) upserted`,
+      );
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -21,7 +23,9 @@ async function runSync(): Promise<void> {
 }
 
 export async function startMolecularEmailSyncWorker(): Promise<void> {
-  console.log(`[${WORKER_NAME}] Sources: ${EMAIL_DASHBOARD_SOURCES.map((s) => s.database).join(", ")}`);
+  console.log(
+    `[${WORKER_NAME}] Sources: ${EMAIL_DASHBOARD_SOURCES.map((s) => s.database).join(", ")}`,
+  );
   await runSync();
 
   const SYNC_INTERVAL_MS = 60 * 60 * 1000;

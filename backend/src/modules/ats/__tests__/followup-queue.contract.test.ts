@@ -20,17 +20,33 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(process.cwd(), "..");
-const routes = readFileSync(resolve(process.cwd(), "src/modules/ats/recruiter-hiring.routes.ts"), "utf8");
-const service = readFileSync(resolve(process.cwd(), "src/modules/ats/recruiter-hiring.service.ts"), "utf8");
-const page = readFileSync(resolve(repoRoot, "src/pages/NativeATSHiringEntry.tsx"), "utf8");
-const queue = readFileSync(resolve(repoRoot, "src/components/ats/FollowupQueue.tsx"), "utf8");
+const routes = readFileSync(
+  resolve(process.cwd(), "src/modules/ats/recruiter-hiring.routes.ts"),
+  "utf8",
+);
+const service = readFileSync(
+  resolve(process.cwd(), "src/modules/ats/recruiter-hiring.service.ts"),
+  "utf8",
+);
+const page = readFileSync(
+  resolve(repoRoot, "src/pages/NativeATSHiringEntry.tsx"),
+  "utf8",
+);
+const queue = readFileSync(
+  resolve(repoRoot, "src/components/ats/FollowupQueue.tsx"),
+  "utf8",
+);
 
 /** The service body of listFollowups, where the predicate lives. */
-const listFollowupsBody = service.slice(service.indexOf("export async function listFollowups"));
+const listFollowupsBody = service.slice(
+  service.indexOf("export async function listFollowups"),
+);
 
 describe("followup queue — the route resolves", () => {
   it("is declared on the recruiter hiring router", () => {
-    expect(routes).toContain('recruiterHiringRouter.get("/recruiter/hiring-activity/followups"');
+    expect(routes).toContain(
+      'recruiterHiringRouter.get("/recruiter/hiring-activity/followups"',
+    );
   });
 
   it("is registered BEFORE /:id, or Express matches 'followups' as an activity id", () => {
@@ -58,7 +74,9 @@ describe("followup queue — the predicate shows work that is actually due", () 
   });
 
   it("computes overdue days on the server, never in the browser", () => {
-    expect(listFollowupsBody).toContain("DATEDIFF(CURDATE(), arha.followup_date)");
+    expect(listFollowupsBody).toContain(
+      "DATEDIFF(CURDATE(), arha.followup_date)",
+    );
     expect(queue).not.toContain("new Date()");
   });
 
@@ -79,13 +97,17 @@ describe("followup queue — row scope", () => {
   });
 
   it("matches branches the way the analytics follow-up arm does, not by exact string", () => {
-    const scopeBody = service.slice(service.indexOf("export async function buildFollowupScopeSql"));
+    const scopeBody = service.slice(
+      service.indexOf("export async function buildFollowupScopeSql"),
+    );
     expect(scopeBody).toContain("LOWER(TRIM(COALESCE(arha.branch_name, '')))");
     expect(scopeBody).toContain("arha.created_by = ?");
   });
 
   it("falls back to the user's own rows when their branch cannot be resolved", () => {
-    const scopeBody = service.slice(service.indexOf("export async function buildFollowupScopeSql"));
+    const scopeBody = service.slice(
+      service.indexOf("export async function buildFollowupScopeSql"),
+    );
     expect(scopeBody).toContain("branchResolved: false");
   });
 });
@@ -96,14 +118,25 @@ describe("followup queue — actions reuse the existing endpoint", () => {
   });
 
   it("sends Rescheduled only for a reschedule, with the new date", () => {
-    expect(queue).toContain('followup_call_outcome: mode === "reschedule" ? "Rescheduled" : outcome');
-    expect(queue).toContain('followup_rescheduled_to: mode === "reschedule" ? newDate : null');
+    expect(queue).toContain(
+      'followup_call_outcome: mode === "reschedule" ? "Rescheduled" : outcome',
+    );
+    expect(queue).toContain(
+      'followup_rescheduled_to: mode === "reschedule" ? newDate : null',
+    );
   });
 
   it("never invents an outcome the server would reject", () => {
     // FOLLOWUP_CALL_OUTCOMES is the server allow-list; a "Done" value is not in it.
     expect(queue).not.toContain('followup_call_outcome: "Done"');
-    for (const outcome of ["Interested", "Not Interested", "No Response", "Already Joined", "Declined Offer", "Wrong Number"]) {
+    for (const outcome of [
+      "Interested",
+      "Not Interested",
+      "No Response",
+      "Already Joined",
+      "Declined Offer",
+      "Wrong Number",
+    ]) {
       expect(queue).toContain(`"${outcome}"`);
       expect(routes).toContain(`"${outcome}"`);
     }
@@ -120,7 +153,9 @@ describe("rapid entry — marking a follow-up while typing", () => {
     // Without this the previous candidate's follow-up date is silently attached
     // to the next person entered in the same session.
     const clear = page.slice(page.indexOf("const clearCandidateFields"));
-    expect(clear.slice(0, 500)).toContain('followup_date: "", followup_note: ""');
+    expect(clear.slice(0, 500)).toContain(
+      'followup_date: "", followup_note: ""',
+    );
   });
 
   it("tells the recruiter when the follow-up write failed", () => {
@@ -133,7 +168,9 @@ describe("rapid entry — marking a follow-up while typing", () => {
 
   it("lets what the recruiter typed beat the walk-in auto-reminder", () => {
     const save = page.slice(page.indexOf("const saveEntry"));
-    expect(save).toContain("const followup = normalizeText(form.followup_date)");
+    expect(save).toContain(
+      "const followup = normalizeText(form.followup_date)",
+    );
   });
 });
 

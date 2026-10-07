@@ -19,9 +19,20 @@ import "dotenv/config";
 import { db } from "../src/db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
-const PROCESSES = ["GNC", "Viega", "Exicom", "DU Digital", "Clovia", "Neemans Private Limited"];
+const PROCESSES = [
+  "GNC",
+  "Viega",
+  "Exicom",
+  "DU Digital",
+  "Clovia",
+  "Neemans Private Limited",
+];
 
-async function setTarget(metricCode: string, targetValue: number, label: string) {
+async function setTarget(
+  metricCode: string,
+  targetValue: number,
+  label: string,
+) {
   const placeholders = PROCESSES.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT sd.id, pm.process_name, sd.target_value
@@ -33,19 +44,24 @@ async function setTarget(metricCode: string, targetValue: number, label: string)
   );
   console.log(`${label} (${metricCode}): found ${rows.length} rows`);
   for (const r of rows) {
-    await db.execute(`UPDATE kpi_studio_definition SET target_value = ? WHERE id = ?`, [targetValue, r.id]);
-    console.log(`  ${r.process_name}: ${r.target_value ?? "NULL"} -> ${targetValue}`);
+    await db.execute(
+      `UPDATE kpi_studio_definition SET target_value = ? WHERE id = ?`,
+      [targetValue, r.id],
+    );
+    console.log(
+      `  ${r.process_name}: ${r.target_value ?? "NULL"} -> ${targetValue}`,
+    );
   }
   return rows.length;
 }
 
 async function setAchtTargets(targetValue: number) {
   const codeByProcess: Record<string, string> = {
-    "GNC": "INBOUND_GNC_ACHT",
-    "Viega": "INBOUND_VIEGA_ACHT",
-    "Exicom": "INBOUND_EXICOM_ACHT",
+    GNC: "INBOUND_GNC_ACHT",
+    Viega: "INBOUND_VIEGA_ACHT",
+    Exicom: "INBOUND_EXICOM_ACHT",
     "DU Digital": "INBOUND_DU_BANGLADESH_ACHT",
-    "Clovia": "INBOUND_CLOVIA_ACHT",
+    Clovia: "INBOUND_CLOVIA_ACHT",
     "Neemans Private Limited": "INBOUND_NEEMANS_ACHT",
   };
   let count = 0;
@@ -59,8 +75,13 @@ async function setAchtTargets(targetValue: number) {
       [metricCode, processName],
     );
     for (const r of rows) {
-      await db.execute(`UPDATE kpi_studio_definition SET target_value = ? WHERE id = ?`, [targetValue, r.id]);
-      console.log(`  ACHT ${processName}: ${r.target_value ?? "NULL"} -> ${targetValue}`);
+      await db.execute(
+        `UPDATE kpi_studio_definition SET target_value = ? WHERE id = ?`,
+        [targetValue, r.id],
+      );
+      console.log(
+        `  ACHT ${processName}: ${r.target_value ?? "NULL"} -> ${targetValue}`,
+      );
       count++;
     }
   }
@@ -77,4 +98,7 @@ async function main() {
 
 main()
   .then(() => process.exit(0))
-  .catch((e) => { console.error("FAILED", e); process.exit(1); });
+  .catch((e) => {
+    console.error("FAILED", e);
+    process.exit(1);
+  });

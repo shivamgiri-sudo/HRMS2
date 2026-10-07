@@ -17,9 +17,9 @@
  * exit_probability_30d = ROUND(score / 100 * 85, 1)
  */
 
-import { Request, Response } from 'express';
-import type { RowDataPacket } from 'mysql2';
-import { db as pool } from '../../db/mysql.js';
+import { Request, Response } from "express";
+import type { RowDataPacket } from "mysql2";
+import { db as pool } from "../../db/mysql.js";
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -300,7 +300,7 @@ interface AtRiskEmployeeIdRow extends RowDataPacket {
  */
 export async function getAtRiskEmployeeIds(
   minScore = 55,
-  limit = 300
+  limit = 300,
 ): Promise<Array<{ id: string; predictionScore: number }>> {
   const query = `
     WITH ${SCORING_CTES}
@@ -315,7 +315,10 @@ export async function getAtRiskEmployeeIds(
     ORDER BY prediction_score DESC
     LIMIT ?
   `;
-  const [rows] = await pool.query<AtRiskEmployeeIdRow[]>(query, [minScore, limit]);
+  const [rows] = await pool.query<AtRiskEmployeeIdRow[]>(query, [
+    minScore,
+    limit,
+  ]);
   return rows.map((r) => ({ id: r.id, predictionScore: r.prediction_score }));
 }
 
@@ -330,38 +333,42 @@ export async function getAtRiskEmployeeIds(
  */
 export async function getAtRiskEmployees(req: Request, res: Response) {
   try {
-    const {
-      branchId,
-      processId,
-      tier,
-      limit = 50
-    } = req.query;
+    const { branchId, processId, tier, limit = 50 } = req.query;
 
     const params: (string | number)[] = [];
     const filterClauses: string[] = [];
 
     if (branchId) {
-      filterClauses.push('e.branch_id = ?');
+      filterClauses.push("e.branch_id = ?");
       params.push(parseInt(branchId as string));
     }
 
     if (processId) {
-      filterClauses.push('e.process_id = ?');
+      filterClauses.push("e.process_id = ?");
       params.push(parseInt(processId as string));
     }
 
-    const baseWhereClause = filterClauses.length > 0
-      ? `AND ${filterClauses.join(' AND ')}`
-      : '';
+    const baseWhereClause =
+      filterClauses.length > 0 ? `AND ${filterClauses.join(" AND ")}` : "";
 
     // Tier filter applied in outer query against the computed score
-    let tierHaving = '';
+    let tierHaving = "";
     if (tier) {
       switch ((tier as string).toUpperCase()) {
-        case 'CRITICAL': tierHaving = 'HAVING prediction_score >= 75'; break;
-        case 'HIGH':     tierHaving = 'HAVING prediction_score >= 55 AND prediction_score < 75'; break;
-        case 'MEDIUM':   tierHaving = 'HAVING prediction_score >= 35 AND prediction_score < 55'; break;
-        case 'LOW':      tierHaving = 'HAVING prediction_score < 35'; break;
+        case "CRITICAL":
+          tierHaving = "HAVING prediction_score >= 75";
+          break;
+        case "HIGH":
+          tierHaving =
+            "HAVING prediction_score >= 55 AND prediction_score < 75";
+          break;
+        case "MEDIUM":
+          tierHaving =
+            "HAVING prediction_score >= 35 AND prediction_score < 55";
+          break;
+        case "LOW":
+          tierHaving = "HAVING prediction_score < 35";
+          break;
       }
     }
 
@@ -417,15 +424,21 @@ export async function getAtRiskEmployees(req: Request, res: Response) {
 
     res.json({
       success: true,
-      analysis_type: 'PREDICTIVE_AT_RISK',
+      analysis_type: "PREDICTIVE_AT_RISK",
       count: rows.length,
-      filters: { branchId: branchId || null, processId: processId || null, tier: tier || null },
+      filters: {
+        branchId: branchId || null,
+        processId: processId || null,
+        tier: tier || null,
+      },
       data: rows,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error in getAtRiskEmployees:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch at-risk employees' });
+    console.error("Error in getAtRiskEmployees:", error);
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch at-risk employees" });
   }
 }
 
@@ -437,13 +450,21 @@ export async function getAtRiskEmployees(req: Request, res: Response) {
  * GET /api/analytics/predictive-attrition/:employeeId
  * Returns a single employee's full prediction breakdown with each factor shown separately.
  */
-export async function getPredictiveScoreForEmployee(req: Request, res: Response) {
+export async function getPredictiveScoreForEmployee(
+  req: Request,
+  res: Response,
+) {
   try {
     const { employeeId } = req.params;
     const empIdNum = parseInt(employeeId, 10);
 
     if (isNaN(empIdNum)) {
-      return res.status(400).json({ success: false, error: 'Invalid employeeId — must be a numeric employee id' });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "Invalid employeeId — must be a numeric employee id",
+        });
     }
 
     const query = `
@@ -537,12 +558,14 @@ export async function getPredictiveScoreForEmployee(req: Request, res: Response)
       LIMIT 1
     `;
 
-    const [rows] = await pool.query<EmployeeScoreBreakdown[]>(query, [empIdNum]);
+    const [rows] = await pool.query<EmployeeScoreBreakdown[]>(query, [
+      empIdNum,
+    ]);
 
     if (rows.length === 0) {
       return res.status(404).json({
         success: false,
-        error: `No active employee found with id ${empIdNum}`
+        error: `No active employee found with id ${empIdNum}`,
       });
     }
 
@@ -550,25 +573,30 @@ export async function getPredictiveScoreForEmployee(req: Request, res: Response)
 
     res.json({
       success: true,
-      analysis_type: 'PREDICTIVE_SCORE_BREAKDOWN',
+      analysis_type: "PREDICTIVE_SCORE_BREAKDOWN",
       data: {
         ...record,
         factor_breakdown: {
-          tenure:     record.factor_tenure,
+          tenure: record.factor_tenure,
           attendance: record.factor_attendance,
-          quality:    record.factor_quality,
-          source:     record.factor_source,
-          ctc:        record.factor_ctc,
+          quality: record.factor_quality,
+          source: record.factor_source,
+          ctc: record.factor_ctc,
           late_marks: record.factor_late_marks,
-          pip:        record.factor_pip,
-          stability:  record.factor_stability
-        }
+          pip: record.factor_pip,
+          stability: record.factor_stability,
+        },
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error in getPredictiveScoreForEmployee:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch predictive score for employee' });
+    console.error("Error in getPredictiveScoreForEmployee:", error);
+    res
+      .status(500)
+      .json({
+        success: false,
+        error: "Failed to fetch predictive score for employee",
+      });
   }
 }
 
@@ -638,7 +666,7 @@ export async function getAttritionRiskSummary(req: Request, res: Response) {
 
     const [[tierRows], [totalRows]] = await Promise.all([
       pool.query<AttritionSummaryRow[]>(summaryQuery),
-      pool.query<TotalActiveRow[]>(totalActiveQuery)
+      pool.query<TotalActiveRow[]>(totalActiveQuery),
     ]);
 
     // Map tier rows into named counts
@@ -646,7 +674,7 @@ export async function getAttritionRiskSummary(req: Request, res: Response) {
       CRITICAL: 0,
       HIGH: 0,
       MEDIUM: 0,
-      LOW: 0
+      LOW: 0,
     };
 
     for (const row of tierRows) {
@@ -661,28 +689,33 @@ export async function getAttritionRiskSummary(req: Request, res: Response) {
     //   MEDIUM ≈ 45 → 0.383; LOW ≈ 17 → 0.144
     const predictedExits30d = parseFloat(
       (
-        tierMap.CRITICAL * 0.70 +
-        tierMap.HIGH      * 0.55 +
-        tierMap.MEDIUM    * 0.38 +
-        tierMap.LOW       * 0.14
-      ).toFixed(1)
+        tierMap.CRITICAL * 0.7 +
+        tierMap.HIGH * 0.55 +
+        tierMap.MEDIUM * 0.38 +
+        tierMap.LOW * 0.14
+      ).toFixed(1),
     );
 
     res.json({
       success: true,
-      analysis_type: 'ATTRITION_RISK_SUMMARY',
+      analysis_type: "ATTRITION_RISK_SUMMARY",
       data: {
-        total_active:         totalActive,
-        critical_count:       tierMap.CRITICAL,
-        high_count:           tierMap.HIGH,
-        medium_count:         tierMap.MEDIUM,
-        low_count:            tierMap.LOW,
-        predicted_exits_30d:  predictedExits30d
+        total_active: totalActive,
+        critical_count: tierMap.CRITICAL,
+        high_count: tierMap.HIGH,
+        medium_count: tierMap.MEDIUM,
+        low_count: tierMap.LOW,
+        predicted_exits_30d: predictedExits30d,
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error in getAttritionRiskSummary:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch attrition risk summary' });
+    console.error("Error in getAttritionRiskSummary:", error);
+    res
+      .status(500)
+      .json({
+        success: false,
+        error: "Failed to fetch attrition risk summary",
+      });
   }
 }

@@ -5,7 +5,6 @@ import { calculate, type HcInput } from "./hcCalculation.service.js";
 import { planningRuleService } from "./planningRule.service.js";
 
 export const slotRequirementService = {
-
   async list(params: {
     processId: string;
     branchId?: string;
@@ -17,10 +16,22 @@ export const slotRequirementService = {
     const conds: string[] = ["s.process_id = ?", "s.is_active = 1"];
     const vals: unknown[] = [processId];
 
-    if (branchId) { conds.push("(s.branch_id = ? OR s.branch_id IS NULL)"); vals.push(branchId); }
-    if (fromDate) { conds.push("s.requirement_date >= ?"); vals.push(fromDate); }
-    if (toDate)   { conds.push("s.requirement_date <= ?"); vals.push(toDate); }
-    if (coverageStatus) { conds.push("s.coverage_status = ?"); vals.push(coverageStatus); }
+    if (branchId) {
+      conds.push("(s.branch_id = ? OR s.branch_id IS NULL)");
+      vals.push(branchId);
+    }
+    if (fromDate) {
+      conds.push("s.requirement_date >= ?");
+      vals.push(fromDate);
+    }
+    if (toDate) {
+      conds.push("s.requirement_date <= ?");
+      vals.push(toDate);
+    }
+    if (coverageStatus) {
+      conds.push("s.coverage_status = ?");
+      vals.push(coverageStatus);
+    }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT s.*, pm.process_name
@@ -28,55 +39,105 @@ export const slotRequirementService = {
          JOIN process_master pm ON pm.id = s.process_id
         WHERE ${conds.join(" AND ")}
         ORDER BY s.requirement_date ASC, s.slot_start ASC`,
-      vals
+      vals,
     );
     return rows;
   },
 
-  async upsert(input: Record<string, unknown>, userId: string): Promise<RowDataPacket> {
-    const { process_id, requirement_date, slot_start = "00:00:00", workload_type } = input as any;
+  async upsert(
+    input: Record<string, unknown>,
+    userId: string,
+  ): Promise<RowDataPacket> {
+    const {
+      process_id,
+      requirement_date,
+      slot_start = "00:00:00",
+      workload_type,
+    } = input as any;
     if (!process_id || !requirement_date || !workload_type) {
-      throw new Error("process_id, requirement_date and workload_type are required");
+      throw new Error(
+        "process_id, requirement_date and workload_type are required",
+      );
     }
 
     // Check for existing active row
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM wfm_slot_requirement WHERE process_id = ? AND requirement_date = ? AND slot_start = ? AND workload_type = ? AND is_active = 1 LIMIT 1",
-      [process_id, requirement_date, slot_start, workload_type]
+      [process_id, requirement_date, slot_start, workload_type],
     );
 
     const id = (existing as RowDataPacket[])[0]?.id ?? randomUUID();
     const isNew = !(existing as RowDataPacket[])[0];
 
     const WRITABLE = new Set([
-      "branch_id", "slot_end", "forecast_calls", "chat_volume", "new_email_volume",
-      "backlog_volume", "sla_due_volume", "case_volume", "production_volume",
-      "target_attempts", "target_contacts", "target_sales", "connect_rate_pct",
-      "conversion_rate_pct", "aht_seconds_override", "shrinkage_pct_override",
-      "chat_concurrency_override", "emails_per_agent_hour_override",
-      "cases_per_agent_hour_override", "audit_sample_pct_override",
-      "audits_per_qa_hour_override", "required_skill", "required_certification",
-      "source_type", "source_file_id",
+      "branch_id",
+      "slot_end",
+      "forecast_calls",
+      "chat_volume",
+      "new_email_volume",
+      "backlog_volume",
+      "sla_due_volume",
+      "case_volume",
+      "production_volume",
+      "target_attempts",
+      "target_contacts",
+      "target_sales",
+      "connect_rate_pct",
+      "conversion_rate_pct",
+      "aht_seconds_override",
+      "shrinkage_pct_override",
+      "chat_concurrency_override",
+      "emails_per_agent_hour_override",
+      "cases_per_agent_hour_override",
+      "audit_sample_pct_override",
+      "audits_per_qa_hour_override",
+      "required_skill",
+      "required_certification",
+      "source_type",
+      "source_file_id",
     ]);
 
     if (isNew) {
-      const cols = ["id", "process_id", "requirement_date", "slot_start", "workload_type", "created_by"];
-      const vals: unknown[] = [id, process_id, requirement_date, slot_start, workload_type, userId];
+      const cols = [
+        "id",
+        "process_id",
+        "requirement_date",
+        "slot_start",
+        "workload_type",
+        "created_by",
+      ];
+      const vals: unknown[] = [
+        id,
+        process_id,
+        requirement_date,
+        slot_start,
+        workload_type,
+        userId,
+      ];
       for (const [k, v] of Object.entries(input)) {
-        if (WRITABLE.has(k) && v !== undefined) { cols.push(k); vals.push(v); }
+        if (WRITABLE.has(k) && v !== undefined) {
+          cols.push(k);
+          vals.push(v);
+        }
       }
       await db.execute(
         `INSERT INTO wfm_slot_requirement (${cols.join(", ")}) VALUES (${vals.map(() => "?").join(", ")})`,
-        vals
+        vals,
       );
     } else {
       const sets = ["updated_by = ?"];
       const vals: unknown[] = [userId];
       for (const [k, v] of Object.entries(input)) {
-        if (WRITABLE.has(k) && v !== undefined) { sets.push(`${k} = ?`); vals.push(v); }
+        if (WRITABLE.has(k) && v !== undefined) {
+          sets.push(`${k} = ?`);
+          vals.push(v);
+        }
       }
       vals.push(id);
-      await db.execute(`UPDATE wfm_slot_requirement SET ${sets.join(", ")} WHERE id = ?`, vals);
+      await db.execute(
+        `UPDATE wfm_slot_requirement SET ${sets.join(", ")} WHERE id = ?`,
+        vals,
+      );
     }
 
     return this.getById(id);
@@ -84,22 +145,29 @@ export const slotRequirementService = {
 
   async calculateHc(slotId: string, userId: string): Promise<RowDataPacket> {
     const [slotRows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM wfm_slot_requirement WHERE id = ? LIMIT 1", [slotId]
+      "SELECT * FROM wfm_slot_requirement WHERE id = ? LIMIT 1",
+      [slotId],
     );
     const slot = (slotRows as RowDataPacket[])[0];
     if (!slot) throw new Error("Slot requirement not found");
 
     // Load active planning rule for this process/workload_type/date
     const rule = await planningRuleService.getActive(
-      slot.process_id, slot.workload_type, slot.requirement_date
+      slot.process_id,
+      slot.workload_type,
+      slot.requirement_date,
     );
 
     // Build HcInput — slot overrides take precedence over planning rule values
     const slotHours = slot.slot_end
       ? (() => {
-          const [sh, sm] = String(slot.slot_start || "00:00").split(":").map(Number);
-          const [eh, em] = String(slot.slot_end || "23:59").split(":").map(Number);
-          const mins = (eh * 60 + em) - (sh * 60 + sm);
+          const [sh, sm] = String(slot.slot_start || "00:00")
+            .split(":")
+            .map(Number);
+          const [eh, em] = String(slot.slot_end || "23:59")
+            .split(":")
+            .map(Number);
+          const mins = eh * 60 + em - (sh * 60 + sm);
           return mins > 0 ? mins / 60 : 8;
         })()
       : 8;
@@ -108,32 +176,39 @@ export const slotRequirementService = {
       workload_type: slot.workload_type as any,
       slot_hours: slotHours,
       shrinkage_pct: slot.shrinkage_pct_override ?? rule?.shrinkage_pct ?? 0,
-      forecast_calls:     slot.forecast_calls,
-      aht_seconds:        slot.aht_seconds_override ?? rule?.aht_seconds,
-      chat_volume:        slot.chat_volume,
+      forecast_calls: slot.forecast_calls,
+      aht_seconds: slot.aht_seconds_override ?? rule?.aht_seconds,
+      chat_volume: slot.chat_volume,
       avg_chat_duration_seconds: rule?.avg_chat_duration_seconds,
-      chat_concurrency:   slot.chat_concurrency_override ?? rule?.chat_concurrency,
-      new_email_volume:   slot.new_email_volume,
-      backlog_volume:     slot.backlog_volume,
-      sla_due_volume:     slot.sla_due_volume,
-      emails_per_agent_hour: slot.emails_per_agent_hour_override ?? rule?.emails_per_agent_hour,
-      case_volume:        slot.case_volume,
-      cases_per_agent_hour: slot.cases_per_agent_hour_override ?? rule?.cases_per_agent_hour,
+      chat_concurrency:
+        slot.chat_concurrency_override ?? rule?.chat_concurrency,
+      new_email_volume: slot.new_email_volume,
+      backlog_volume: slot.backlog_volume,
+      sla_due_volume: slot.sla_due_volume,
+      emails_per_agent_hour:
+        slot.emails_per_agent_hour_override ?? rule?.emails_per_agent_hour,
+      case_volume: slot.case_volume,
+      cases_per_agent_hour:
+        slot.cases_per_agent_hour_override ?? rule?.cases_per_agent_hour,
       quality_recheck_pct: rule?.quality_recheck_pct,
-      production_volume:  slot.production_volume,
-      audit_sample_pct:   slot.audit_sample_pct_override ?? rule?.audit_sample_pct,
-      audits_per_qa_hour: slot.audits_per_qa_hour_override ?? rule?.audits_per_qa_hour,
+      production_volume: slot.production_volume,
+      audit_sample_pct:
+        slot.audit_sample_pct_override ?? rule?.audit_sample_pct,
+      audits_per_qa_hour:
+        slot.audits_per_qa_hour_override ?? rule?.audits_per_qa_hour,
       campaign_target_type: rule?.campaign_target_type,
-      target_attempts:    slot.target_attempts ?? rule?.target_attempts,
-      target_contacts:    slot.target_contacts ?? rule?.target_contacts,
-      target_sales:       slot.target_sales ?? rule?.target_sales,
-      connect_rate_pct:   slot.connect_rate_pct ?? rule?.connect_rate_pct,
-      conversion_rate_pct: slot.conversion_rate_pct ?? rule?.conversion_rate_pct,
+      target_attempts: slot.target_attempts ?? rule?.target_attempts,
+      target_contacts: slot.target_contacts ?? rule?.target_contacts,
+      target_sales: slot.target_sales ?? rule?.target_sales,
+      connect_rate_pct: slot.connect_rate_pct ?? rule?.connect_rate_pct,
+      conversion_rate_pct:
+        slot.conversion_rate_pct ?? rule?.conversion_rate_pct,
       dials_per_agent_hour: rule?.dials_per_agent_hour,
       // Erlang-C SLA inputs — from planning rule (slot-level overrides not yet supported)
-      service_level_target_pct: rule?.service_level_target_pct ?? rule?.sla_target_pct,
-      answer_time_seconds:      rule?.answer_time_seconds,
-      occupancy_target_pct:     rule?.occupancy_target_pct,
+      service_level_target_pct:
+        rule?.service_level_target_pct ?? rule?.sla_target_pct,
+      answer_time_seconds: rule?.answer_time_seconds,
+      occupancy_target_pct: rule?.occupancy_target_pct,
     };
 
     const result = calculate(hcInput);
@@ -145,19 +220,28 @@ export const slotRequirementService = {
               planning_rule_id = ?, updated_by = ?
         WHERE id = ?`,
       [
-        result.productive_hc, result.planned_hc,
-        result.calculation_method, JSON.stringify({ ...result.notes, errors: result.errors }),
-        rule?.id ?? null, userId, slotId
-      ]
+        result.productive_hc,
+        result.planned_hc,
+        result.calculation_method,
+        JSON.stringify({ ...result.notes, errors: result.errors }),
+        rule?.id ?? null,
+        userId,
+        slotId,
+      ],
     );
 
     return this.getById(slotId);
   },
 
-  async calculateHcBulk(processId: string, fromDate: string, toDate: string, userId: string): Promise<{ calculated: number; errors: string[] }> {
+  async calculateHcBulk(
+    processId: string,
+    fromDate: string,
+    toDate: string,
+    userId: string,
+  ): Promise<{ calculated: number; errors: string[] }> {
     const [slots] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM wfm_slot_requirement WHERE process_id = ? AND requirement_date BETWEEN ? AND ?",
-      [processId, fromDate, toDate]
+      [processId, fromDate, toDate],
     );
 
     let calculated = 0;
@@ -175,7 +259,11 @@ export const slotRequirementService = {
     return { calculated, errors };
   },
 
-  async updateCoverageAfterRoster(processId: string, date: string, scheduledHcBySlot: Record<string, number>): Promise<void> {
+  async updateCoverageAfterRoster(
+    processId: string,
+    date: string,
+    scheduledHcBySlot: Record<string, number>,
+  ): Promise<void> {
     for (const [slotKey, scheduledHc] of Object.entries(scheduledHcBySlot)) {
       const [slotStart] = slotKey.split("|");
       await db.execute(
@@ -188,16 +276,26 @@ export const slotRequirementService = {
                   ELSE 'ok'
                 END
           WHERE process_id = ? AND requirement_date = ? AND slot_start = ?`,
-        [scheduledHc, scheduledHc, scheduledHc, scheduledHc, processId, date, slotStart]
+        [
+          scheduledHc,
+          scheduledHc,
+          scheduledHc,
+          scheduledHc,
+          processId,
+          date,
+          slotStart,
+        ],
       );
     }
   },
 
   async getById(id: string): Promise<RowDataPacket> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM wfm_slot_requirement WHERE id = ? AND is_active = 1 LIMIT 1", [id]
+      "SELECT * FROM wfm_slot_requirement WHERE id = ? AND is_active = 1 LIMIT 1",
+      [id],
     );
-    if (!(rows as RowDataPacket[])[0]) throw new Error("Slot requirement not found");
+    if (!(rows as RowDataPacket[])[0])
+      throw new Error("Slot requirement not found");
     return (rows as RowDataPacket[])[0];
   },
 
@@ -209,7 +307,7 @@ export const slotRequirementService = {
       `UPDATE wfm_slot_requirement
           SET is_active = 0, deleted_by = ?, deleted_at = NOW(), delete_reason = ?
         WHERE id = ? AND is_active = 1`,
-      [userId, reason.trim(), id]
+      [userId, reason.trim(), id],
     );
     if (!result.affectedRows) {
       throw new Error("Slot requirement not found or already deleted");
@@ -219,63 +317,120 @@ export const slotRequirementService = {
   // ── Forecast import: bulk upsert + auto-calculate HC ──────────────────────
   async forecastImport(
     rows: Array<Record<string, unknown>>,
-    userId: string
-  ): Promise<{ inserted: number; updated: number; calculated: number; errors: string[] }> {
-    if (!Array.isArray(rows) || rows.length === 0) throw new Error("rows array is required and must be non-empty");
+    userId: string,
+  ): Promise<{
+    inserted: number;
+    updated: number;
+    calculated: number;
+    errors: string[];
+  }> {
+    if (!Array.isArray(rows) || rows.length === 0)
+      throw new Error("rows array is required and must be non-empty");
     if (rows.length > 5000) throw new Error("Maximum 5000 rows per import");
 
     const WRITABLE_VOLUMES = new Set([
-      "forecast_calls", "chat_volume", "new_email_volume", "backlog_volume",
-      "sla_due_volume", "case_volume", "production_volume", "target_attempts",
-      "target_contacts", "target_sales", "connect_rate_pct", "conversion_rate_pct",
-      "aht_seconds_override", "shrinkage_pct_override", "chat_concurrency_override",
-      "emails_per_agent_hour_override", "cases_per_agent_hour_override",
-      "audit_sample_pct_override", "audits_per_qa_hour_override",
-      "slot_end", "branch_id", "required_skill", "required_certification",
+      "forecast_calls",
+      "chat_volume",
+      "new_email_volume",
+      "backlog_volume",
+      "sla_due_volume",
+      "case_volume",
+      "production_volume",
+      "target_attempts",
+      "target_contacts",
+      "target_sales",
+      "connect_rate_pct",
+      "conversion_rate_pct",
+      "aht_seconds_override",
+      "shrinkage_pct_override",
+      "chat_concurrency_override",
+      "emails_per_agent_hour_override",
+      "cases_per_agent_hour_override",
+      "audit_sample_pct_override",
+      "audits_per_qa_hour_override",
+      "slot_end",
+      "branch_id",
+      "required_skill",
+      "required_certification",
     ]);
 
     let inserted = 0;
     let updated = 0;
     const errors: string[] = [];
     const affectedSlotIds: string[] = [];
-    const affectedDates = new Map<string, { processId: string; fromDate: string; toDate: string }>();
+    const affectedDates = new Map<
+      string,
+      { processId: string; fromDate: string; toDate: string }
+    >();
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i] as any;
       try {
-        const { process_id, requirement_date, slot_start = "00:00", workload_type } = row;
+        const {
+          process_id,
+          requirement_date,
+          slot_start = "00:00",
+          workload_type,
+        } = row;
         if (!process_id || !requirement_date || !workload_type) {
-          errors.push(`Row ${i + 1}: process_id, requirement_date and workload_type are required`);
+          errors.push(
+            `Row ${i + 1}: process_id, requirement_date and workload_type are required`,
+          );
           continue;
         }
 
         // Check if row exists
         const [existing] = await db.execute<RowDataPacket[]>(
           "SELECT id FROM wfm_slot_requirement WHERE process_id = ? AND requirement_date = ? AND slot_start = ? AND workload_type = ? AND is_active = 1 LIMIT 1",
-          [process_id, requirement_date, slot_start, workload_type]
+          [process_id, requirement_date, slot_start, workload_type],
         );
         const existingRow = (existing as RowDataPacket[])[0];
         const id = existingRow?.id ?? randomUUID();
 
         if (!existingRow) {
-          const cols = ["id", "process_id", "requirement_date", "slot_start", "workload_type", "source_type", "created_by"];
-          const vals: unknown[] = [id, process_id, requirement_date, slot_start, workload_type, "api_push", userId];
+          const cols = [
+            "id",
+            "process_id",
+            "requirement_date",
+            "slot_start",
+            "workload_type",
+            "source_type",
+            "created_by",
+          ];
+          const vals: unknown[] = [
+            id,
+            process_id,
+            requirement_date,
+            slot_start,
+            workload_type,
+            "api_push",
+            userId,
+          ];
           for (const [k, v] of Object.entries(row)) {
-            if (WRITABLE_VOLUMES.has(k) && v !== undefined && v !== null) { cols.push(k); vals.push(v); }
+            if (WRITABLE_VOLUMES.has(k) && v !== undefined && v !== null) {
+              cols.push(k);
+              vals.push(v);
+            }
           }
           await db.execute(
             `INSERT INTO wfm_slot_requirement (${cols.join(", ")}) VALUES (${vals.map(() => "?").join(", ")})`,
-            vals
+            vals,
           );
           inserted++;
         } else {
           const sets = ["source_type = ?", "updated_by = ?"];
           const vals: unknown[] = ["api_push", userId];
           for (const [k, v] of Object.entries(row)) {
-            if (WRITABLE_VOLUMES.has(k) && v !== undefined && v !== null) { sets.push(`${k} = ?`); vals.push(v); }
+            if (WRITABLE_VOLUMES.has(k) && v !== undefined && v !== null) {
+              sets.push(`${k} = ?`);
+              vals.push(v);
+            }
           }
           vals.push(id);
-          await db.execute(`UPDATE wfm_slot_requirement SET ${sets.join(", ")} WHERE id = ?`, vals);
+          await db.execute(
+            `UPDATE wfm_slot_requirement SET ${sets.join(", ")} WHERE id = ?`,
+            vals,
+          );
           updated++;
         }
 
@@ -285,10 +440,16 @@ export const slotRequirementService = {
         const key = process_id;
         const existing2 = affectedDates.get(key);
         if (!existing2) {
-          affectedDates.set(key, { processId: process_id, fromDate: requirement_date, toDate: requirement_date });
+          affectedDates.set(key, {
+            processId: process_id,
+            fromDate: requirement_date,
+            toDate: requirement_date,
+          });
         } else {
-          if (requirement_date < existing2.fromDate) existing2.fromDate = requirement_date;
-          if (requirement_date > existing2.toDate) existing2.toDate = requirement_date;
+          if (requirement_date < existing2.fromDate)
+            existing2.fromDate = requirement_date;
+          if (requirement_date > existing2.toDate)
+            existing2.toDate = requirement_date;
         }
       } catch (e: any) {
         errors.push(`Row ${i + 1}: ${e.message}`);
@@ -299,7 +460,12 @@ export const slotRequirementService = {
     let calculated = 0;
     for (const { processId, fromDate, toDate } of affectedDates.values()) {
       try {
-        const result = await this.calculateHcBulk(processId, fromDate, toDate, userId);
+        const result = await this.calculateHcBulk(
+          processId,
+          fromDate,
+          toDate,
+          userId,
+        );
         calculated += result.calculated;
         result.errors.forEach((e) => errors.push(`HC calc: ${e}`));
       } catch (e: any) {

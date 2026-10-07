@@ -32,7 +32,10 @@ const METRIC = readFileSync(
   "utf8",
 );
 const DRILLDOWN = readFileSync(
-  resolve(process.cwd(), "src/modules/dashboards/dashboard-drilldown.service.ts"),
+  resolve(
+    process.cwd(),
+    "src/modules/dashboards/dashboard-drilldown.service.ts",
+  ),
   "utf8",
 );
 
@@ -72,6 +75,8 @@ describe("payslip reads stay anchored on line_id", () => {
     );
     // If this ever becomes a run_id/employee_id lookup, orphaned components would
     // reach an actual payslip, which is a different and much worse problem.
-    expect(payslipService).toMatch(/FROM salary_prep_line_component\s+WHERE line_id = \?/);
+    expect(payslipService).toMatch(
+      /FROM salary_prep_line_component\s+WHERE line_id = \?/,
+    );
   });
 });

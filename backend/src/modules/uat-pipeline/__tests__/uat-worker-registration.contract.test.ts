@@ -17,8 +17,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const backendSrc = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const allWorkers = readFileSync(join(backendSrc, "workers", "all-workers.ts"), "utf8");
+const backendSrc = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+);
+const allWorkers = readFileSync(
+  join(backendSrc, "workers", "all-workers.ts"),
+  "utf8",
+);
 const server = readFileSync(join(backendSrc, "server.ts"), "utf8");
 
 describe("uat-job-runner registration", () => {
@@ -46,10 +54,13 @@ describe("uat-job-runner registration", () => {
     const line = allWorkers
       .split("\n")
       .find((l) => l.includes("startUatJobRunner()") && l.includes("start:"));
-    expect(line, "expected a WORKERS entry that starts the runner").toBeDefined();
+    expect(
+      line,
+      "expected a WORKERS entry that starts the runner",
+    ).toBeDefined();
     expect(line!.indexOf("registerUatJobHandlers()")).toBeGreaterThanOrEqual(0);
     expect(line!.indexOf("registerUatJobHandlers()")).toBeLessThan(
-      line!.indexOf("startUatJobRunner()")
+      line!.indexOf("startUatJobRunner()"),
     );
   });
 
@@ -62,7 +73,7 @@ describe("uat-job-runner registration", () => {
 describe("the runner claims work safely", () => {
   const runner = readFileSync(
     join(backendSrc, "modules", "uat-pipeline", "uat-job-runner.ts"),
-    "utf8"
+    "utf8",
   );
 
   it("claims with an UPDATE, not a SELECT-then-UPDATE", () => {

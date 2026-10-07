@@ -1,8 +1,14 @@
-import axios from 'axios';
-import type { CommunicationProvider, Attachment } from '../provider.interface.js';
-import type { ProviderResponse, DeliveryStatus } from '../../communication.types.js';
+import axios from "axios";
+import type {
+  CommunicationProvider,
+  Attachment,
+} from "../provider.interface.js";
+import type {
+  ProviderResponse,
+  DeliveryStatus,
+} from "../../communication.types.js";
 
-const BASE_URL = 'https://pgapi.sparc.smartping.io/fe/api/v1';
+const BASE_URL = "https://pgapi.sparc.smartping.io/fe/api/v1";
 
 interface SmartPingSendResponse {
   messageId?: string;
@@ -32,10 +38,11 @@ export class SmartPingProvider implements CommunicationProvider {
     senderId?: string,
     entityId?: string,
   ) {
-    this.username = username ?? process.env.SMARTPING_USERNAME ?? '';
-    this.password = password ?? process.env.SMARTPING_PASSWORD ?? '';
-    this.senderId = senderId ?? process.env.SMARTPING_SENDER_ID ?? 'Ispark';
-    this.entityId = entityId ?? process.env.SMARTPING_ENTITY_ID ?? '1001485540000016211';
+    this.username = username ?? process.env.SMARTPING_USERNAME ?? "";
+    this.password = password ?? process.env.SMARTPING_PASSWORD ?? "";
+    this.senderId = senderId ?? process.env.SMARTPING_SENDER_ID ?? "Ispark";
+    this.entityId =
+      entityId ?? process.env.SMARTPING_ENTITY_ID ?? "1001485540000016211";
   }
 
   /**
@@ -47,15 +54,24 @@ export class SmartPingProvider implements CommunicationProvider {
     return Boolean(this.username && this.password);
   }
 
-  async send(recipient: string, subject: string, body: string, _attachments?: Attachment[]): Promise<ProviderResponse> {
+  async send(
+    recipient: string,
+    subject: string,
+    body: string,
+    _attachments?: Attachment[],
+  ): Promise<ProviderResponse> {
     try {
       const mobile = this.normalizeMobile(recipient);
       if (!mobile) {
-        return { success: false, error: `Invalid Indian mobile number: ${recipient}` };
+        return {
+          success: false,
+          error: `Invalid Indian mobile number: ${recipient}`,
+        };
       }
 
       // subject carries dltContentId when called via sms.helper; fall back to env
-      const dltContentId = subject || process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID || '';
+      const dltContentId =
+        subject || process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID || "";
 
       // Refuse anything that is not a registered DLT content id.
       //
@@ -87,7 +103,7 @@ export class SmartPingProvider implements CommunicationProvider {
       const params = new URLSearchParams({
         username: this.username,
         password: this.password,
-        unicode: 'false',
+        unicode: "false",
         from: this.senderId,
         text: body,
         to: `91${mobile}`,
@@ -107,7 +123,8 @@ export class SmartPingProvider implements CommunicationProvider {
 
       const data = res.data;
       const msgId =
-        data?.messageId ?? data?.message_id ??
+        data?.messageId ??
+        data?.message_id ??
         (data?.transactionId ? String(data.transactionId) : String(res.status));
 
       // Judge the BODY, not the HTTP status. Live responses from this account,
@@ -131,7 +148,7 @@ export class SmartPingProvider implements CommunicationProvider {
       // states that positively announce a problem count as failures.
       // Note this reports SUBMISSION, not delivery — an accepted message can
       // still be dropped by the operator (DLT registration, DND).
-      const state = String(data?.state ?? '').toUpperCase();
+      const state = String(data?.state ?? "").toUpperCase();
       const refused = /FAIL|REJECT|ERROR|INVALID|EXPIRED|DENIED/.test(state);
       const submitted = !refused && res.status < 300;
 
@@ -139,16 +156,19 @@ export class SmartPingProvider implements CommunicationProvider {
         return { success: true, message_id: msgId };
       }
 
-      const detail = data?.description ?? data?.error ?? '';
+      const detail = data?.description ?? data?.error ?? "";
       return {
         success: false,
         error:
           `SmartPing refused the send${state ? ` (${state}` : ` (HTTP ${res.status}`}` +
-          `${data?.statusCode ? `/${data.statusCode}` : ''})` +
-          `${detail ? `: ${detail}` : ''}`,
+          `${data?.statusCode ? `/${data.statusCode}` : ""})` +
+          `${detail ? `: ${detail}` : ""}`,
       };
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
     }
   }
 
@@ -163,15 +183,21 @@ export class SmartPingProvider implements CommunicationProvider {
         `${BASE_URL}/report`,
         { params, timeout: 8000 },
       );
-      const raw = res.data?.status?.toLowerCase() ?? '';
+      const raw = res.data?.status?.toLowerCase() ?? "";
       const status =
-        raw === 'delivered' ? 'delivered' :
-        raw === 'failed' || raw === 'rejected' ? 'failed' :
-        raw === 'sent' || raw === 'submitted' ? 'sent' :
-        'sent';
+        raw === "delivered"
+          ? "delivered"
+          : raw === "failed" || raw === "rejected"
+            ? "failed"
+            : raw === "sent" || raw === "submitted"
+              ? "sent"
+              : "sent";
       return { status, delivered_at: res.data?.delivered_at };
     } catch (e) {
-      return { status: 'failed', error: e instanceof Error ? e.message : String(e) };
+      return {
+        status: "failed",
+        error: e instanceof Error ? e.message : String(e),
+      };
     }
   }
 
@@ -179,13 +205,15 @@ export class SmartPingProvider implements CommunicationProvider {
     return !!this.normalizeMobile(contact);
   }
 
-  getName(): string { return 'smartping'; }
+  getName(): string {
+    return "smartping";
+  }
 
   private normalizeMobile(raw: string): string | null {
     // Accept: 10-digit, +91XXXXXXXXXX, 91XXXXXXXXXX
-    const digits = raw.replace(/\D/g, '');
+    const digits = raw.replace(/\D/g, "");
     if (digits.length === 10) return digits;
-    if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2);
+    if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
     return null;
   }
 }

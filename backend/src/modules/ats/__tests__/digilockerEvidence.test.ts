@@ -36,34 +36,55 @@ describe("digilockerVerifiedCheckTypes", () => {
   });
 
   it("credits PAN when the returned document is a PAN", () => {
-    for (const fileName of ["PAN_ABCDE1234F.pdf", "pancard.xml", "Digilocker-PAN-Verification.pdf"]) {
-      expect(digilockerVerifiedCheckTypes({ fileName }), fileName).toContain("pan");
+    for (const fileName of [
+      "PAN_ABCDE1234F.pdf",
+      "pancard.xml",
+      "Digilocker-PAN-Verification.pdf",
+    ]) {
+      expect(digilockerVerifiedCheckTypes({ fileName }), fileName).toContain(
+        "pan",
+      );
     }
   });
 
   it("credits PAN when the document list names it", () => {
-    expect(digilockerVerifiedCheckTypes({ documentTypes: ["AADHAAR", "PAN"] })).toContain("pan");
+    expect(
+      digilockerVerifiedCheckTypes({ documentTypes: ["AADHAAR", "PAN"] }),
+    ).toContain("pan");
   });
 
   it("is not fooled by the word appearing inside another word", () => {
     // "company", "panel", "japan" must not read as a PAN document.
-    for (const fileName of ["company-letter.pdf", "panel-report.pdf", "japan-visa.pdf"]) {
-      expect(digilockerVerifiedCheckTypes({ fileName }), fileName).not.toContain("pan");
+    for (const fileName of [
+      "company-letter.pdf",
+      "panel-report.pdf",
+      "japan-visa.pdf",
+    ]) {
+      expect(
+        digilockerVerifiedCheckTypes({ fileName }),
+        fileName,
+      ).not.toContain("pan");
     }
   });
 
   it("credits Aadhaar from an Aadhaar document name too", () => {
-    expect(digilockerVerifiedCheckTypes({ fileName: "AADHAAR_XXXX1234.xml" })).toContain("aadhaar");
+    expect(
+      digilockerVerifiedCheckTypes({ fileName: "AADHAAR_XXXX1234.xml" }),
+    ).toContain("aadhaar");
   });
 
   it("never returns anything other than the two check types it can evidence", () => {
-    const types = digilockerVerifiedCheckTypes({ documentTypes: ["AADHAAR", "PAN", "DRIVING_LICENCE"] });
+    const types = digilockerVerifiedCheckTypes({
+      documentTypes: ["AADHAAR", "PAN", "DRIVING_LICENCE"],
+    });
     expect(types.sort()).toEqual(["aadhaar", "pan"]);
   });
 
   it("survives a download failure without crediting anything it cannot see", () => {
     // documentMeta carries only downloadError in that case.
-    const types = digilockerVerifiedCheckTypes({ downloadError: "provider timed out" });
+    const types = digilockerVerifiedCheckTypes({
+      downloadError: "provider timed out",
+    });
     expect(types).toContain("aadhaar");
     expect(types).not.toContain("pan");
   });

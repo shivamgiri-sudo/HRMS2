@@ -43,12 +43,18 @@ describe("weekOffDefaultConfigService", () => {
       dbExecute.mockResolvedValueOnce([[ROW], []]);
       const rows = await weekOffDefaultConfigService.list({});
       expect(rows).toEqual([ROW]);
-      expect(dbExecute).toHaveBeenCalledWith(expect.stringContaining("SELECT * FROM week_off_policy_default"), []);
+      expect(dbExecute).toHaveBeenCalledWith(
+        expect.stringContaining("SELECT * FROM week_off_policy_default"),
+        [],
+      );
     });
 
     it("filters by scope_type and active_status together", async () => {
       dbExecute.mockResolvedValueOnce([[], []]);
-      await weekOffDefaultConfigService.list({ scope_type: "process", active_status: "1" });
+      await weekOffDefaultConfigService.list({
+        scope_type: "process",
+        active_status: "1",
+      });
       const [sql, params] = dbExecute.mock.calls[0];
       expect(sql).toMatch(/scope_type = \?/);
       expect(sql).toMatch(/active_status = \?/);
@@ -59,69 +65,103 @@ describe("weekOffDefaultConfigService", () => {
   describe("get", () => {
     it("404s when nothing matches", async () => {
       dbExecute.mockResolvedValueOnce([[], []]);
-      await expect(weekOffDefaultConfigService.get("missing")).rejects.toMatchObject({ statusCode: 404 });
+      await expect(
+        weekOffDefaultConfigService.get("missing"),
+      ).rejects.toMatchObject({ statusCode: 404 });
     });
   });
 
   describe("create — validation", () => {
     it("rejects an unknown scope_type", async () => {
       await expect(
-        weekOffDefaultConfigService.create({ scope_type: "employee" as any, default_week_off_day: 0 }, "user-1")
+        weekOffDefaultConfigService.create(
+          { scope_type: "employee" as any, default_week_off_day: 0 },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
       expect(dbExecute).not.toHaveBeenCalled();
     });
 
     it("rejects scope_type=global with a process_id supplied", async () => {
       await expect(
-        weekOffDefaultConfigService.create({ scope_type: "global", process_id: "p1", default_week_off_day: 0 }, "user-1")
+        weekOffDefaultConfigService.create(
+          { scope_type: "global", process_id: "p1", default_week_off_day: 0 },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it("rejects scope_type=process with no process_id", async () => {
       await expect(
-        weekOffDefaultConfigService.create({ scope_type: "process", default_week_off_day: 0 }, "user-1")
+        weekOffDefaultConfigService.create(
+          { scope_type: "process", default_week_off_day: 0 },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it("rejects scope_type=branch with a process_id also supplied", async () => {
       await expect(
         weekOffDefaultConfigService.create(
-          { scope_type: "branch", branch_id: "b1", process_id: "p1", default_week_off_day: 0 },
-          "user-1"
-        )
+          {
+            scope_type: "branch",
+            branch_id: "b1",
+            process_id: "p1",
+            default_week_off_day: 0,
+          },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it("rejects default_week_off_day outside 0-6", async () => {
       await expect(
-        weekOffDefaultConfigService.create({ scope_type: "global", default_week_off_day: 7 }, "user-1")
+        weekOffDefaultConfigService.create(
+          { scope_type: "global", default_week_off_day: 7 },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
       await expect(
-        weekOffDefaultConfigService.create({ scope_type: "global", default_week_off_day: -1 }, "user-1")
+        weekOffDefaultConfigService.create(
+          { scope_type: "global", default_week_off_day: -1 },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it("rejects a non-integer default_week_off_day", async () => {
       await expect(
-        weekOffDefaultConfigService.create({ scope_type: "global", default_week_off_day: 2.5 }, "user-1")
+        weekOffDefaultConfigService.create(
+          { scope_type: "global", default_week_off_day: 2.5 },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it("rejects effective_to before effective_from", async () => {
       await expect(
         weekOffDefaultConfigService.create(
-          { scope_type: "global", default_week_off_day: 0, effective_from: "2026-08-14", effective_to: "2026-08-01" },
-          "user-1"
-        )
+          {
+            scope_type: "global",
+            default_week_off_day: 0,
+            effective_from: "2026-08-14",
+            effective_to: "2026-08-01",
+          },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it("rejects a malformed date string", async () => {
       await expect(
         weekOffDefaultConfigService.create(
-          { scope_type: "global", default_week_off_day: 0, effective_from: "14-08-2026" },
-          "user-1"
-        )
+          {
+            scope_type: "global",
+            default_week_off_day: 0,
+            effective_from: "14-08-2026",
+          },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
   });
@@ -130,14 +170,24 @@ describe("weekOffDefaultConfigService", () => {
     it("400s when process_id does not exist in process_master", async () => {
       dbExecute.mockResolvedValueOnce([[], []]); // assertScopeRefExists: process_master lookup misses
       await expect(
-        weekOffDefaultConfigService.create({ scope_type: "process", process_id: "ghost", default_week_off_day: 0 }, "user-1")
+        weekOffDefaultConfigService.create(
+          {
+            scope_type: "process",
+            process_id: "ghost",
+            default_week_off_day: 0,
+          },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it("400s when branch_id does not exist in branch_master", async () => {
       dbExecute.mockResolvedValueOnce([[], []]); // assertScopeRefExists: branch_master lookup misses
       await expect(
-        weekOffDefaultConfigService.create({ scope_type: "branch", branch_id: "ghost", default_week_off_day: 0 }, "user-1")
+        weekOffDefaultConfigService.create(
+          { scope_type: "branch", branch_id: "ghost", default_week_off_day: 0 },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
   });
@@ -148,7 +198,10 @@ describe("weekOffDefaultConfigService", () => {
         .mockResolvedValueOnce([[{ id: "existing" }], []]) // findOverlappingActiveRow
         .mockResolvedValueOnce([[], []]);
       await expect(
-        weekOffDefaultConfigService.create({ scope_type: "global", default_week_off_day: 0 }, "user-1")
+        weekOffDefaultConfigService.create(
+          { scope_type: "global", default_week_off_day: 0 },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 409 });
     });
   });
@@ -161,8 +214,12 @@ describe("weekOffDefaultConfigService", () => {
         .mockResolvedValueOnce([[ROW], []]); // get() re-fetch
 
       const result = await weekOffDefaultConfigService.create(
-        { scope_type: "global", default_week_off_day: 0, change_reason: "initial org default" },
-        "user-1"
+        {
+          scope_type: "global",
+          default_week_off_day: 0,
+          change_reason: "initial org default",
+        },
+        "user-1",
       );
 
       expect(result).toEqual(ROW);
@@ -172,7 +229,7 @@ describe("weekOffDefaultConfigService", () => {
           action_type: "WEEK_OFF_DEFAULT_CREATED",
           module_key: "week_off_policy_default",
           entity_type: "week_off_policy_default",
-        })
+        }),
       );
     });
 
@@ -182,7 +239,10 @@ describe("weekOffDefaultConfigService", () => {
         .mockResolvedValueOnce([{ affectedRows: 1 }, []])
         .mockResolvedValueOnce([[ROW], []]);
 
-      await weekOffDefaultConfigService.create({ scope_type: "global", default_week_off_day: 0 }, "user-1");
+      await weekOffDefaultConfigService.create(
+        { scope_type: "global", default_week_off_day: 0 },
+        "user-1",
+      );
 
       const insertCall = dbExecute.mock.calls[1];
       const today = new Date().toISOString().slice(0, 10);
@@ -198,7 +258,7 @@ describe("weekOffDefaultConfigService", () => {
 
       await weekOffDefaultConfigService.create(
         { scope_type: "process", process_id: "p1", default_week_off_day: 3 },
-        "user-1"
+        "user-1",
       );
 
       const insertCall = dbExecute.mock.calls[2];
@@ -211,13 +271,21 @@ describe("weekOffDefaultConfigService", () => {
     it("400s on an out-of-range default_week_off_day", async () => {
       dbExecute.mockResolvedValueOnce([[ROW], []]); // get() inside update
       await expect(
-        weekOffDefaultConfigService.update("policy-1", { default_week_off_day: 9 }, "user-1")
+        weekOffDefaultConfigService.update(
+          "policy-1",
+          { default_week_off_day: 9 },
+          "user-1",
+        ),
       ).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it("is a no-op (no UPDATE issued) when the input has no recognized fields", async () => {
       dbExecute.mockResolvedValueOnce([[ROW], []]); // get()
-      const result = await weekOffDefaultConfigService.update("policy-1", {}, "user-1");
+      const result = await weekOffDefaultConfigService.update(
+        "policy-1",
+        {},
+        "user-1",
+      );
       expect(result).toEqual(ROW);
       expect(dbExecute).toHaveBeenCalledTimes(1); // only the get(), no UPDATE
       expect(logSensitiveAction).not.toHaveBeenCalled();
@@ -229,10 +297,17 @@ describe("weekOffDefaultConfigService", () => {
         .mockResolvedValueOnce([{ affectedRows: 1 }, []]) // UPDATE
         .mockResolvedValueOnce([[{ ...ROW, default_week_off_day: 6 }], []]); // get() after update
 
-      const result = await weekOffDefaultConfigService.update("policy-1", { default_week_off_day: 6 }, "user-1");
+      const result = await weekOffDefaultConfigService.update(
+        "policy-1",
+        { default_week_off_day: 6 },
+        "user-1",
+      );
       expect(result.default_week_off_day).toBe(6);
       expect(logSensitiveAction).toHaveBeenCalledWith(
-        expect.objectContaining({ action_type: "WEEK_OFF_DEFAULT_UPDATED", entity_id: "policy-1" })
+        expect.objectContaining({
+          action_type: "WEEK_OFF_DEFAULT_UPDATED",
+          entity_id: "policy-1",
+        }),
       );
     });
 
@@ -242,7 +317,11 @@ describe("weekOffDefaultConfigService", () => {
         .mockResolvedValueOnce([[ROW], []]); // no UPDATE issued since only unrecognized fields given
 
       // @ts-expect-error — intentionally passing fields UpdateWeekOffDefaultInput doesn't declare
-      const result = await weekOffDefaultConfigService.update("policy-1", { scope_type: "process", process_id: "p9" }, "user-1");
+      const result = await weekOffDefaultConfigService.update(
+        "policy-1",
+        { scope_type: "process", process_id: "p9" },
+        "user-1",
+      );
       expect(result).toEqual(ROW);
       expect(dbExecute).toHaveBeenCalledTimes(1); // only the initial get(), no UPDATE statement built
     });
@@ -251,14 +330,18 @@ describe("weekOffDefaultConfigService", () => {
   describe("deactivate", () => {
     it("404s when the row does not exist", async () => {
       dbExecute.mockResolvedValueOnce([[], []]); // get() misses
-      await expect(weekOffDefaultConfigService.deactivate("missing", "user-1")).rejects.toMatchObject({ statusCode: 404 });
+      await expect(
+        weekOffDefaultConfigService.deactivate("missing", "user-1"),
+      ).rejects.toMatchObject({ statusCode: 404 });
     });
 
     it("409s when the row is already inactive (affectedRows=0)", async () => {
       dbExecute
         .mockResolvedValueOnce([[ROW], []]) // get() finds it
         .mockResolvedValueOnce([{ affectedRows: 0 }, []]); // UPDATE matches nothing (already inactive)
-      await expect(weekOffDefaultConfigService.deactivate("policy-1", "user-1")).rejects.toMatchObject({ statusCode: 409 });
+      await expect(
+        weekOffDefaultConfigService.deactivate("policy-1", "user-1"),
+      ).rejects.toMatchObject({ statusCode: 409 });
     });
 
     it("deactivates and audits", async () => {
@@ -267,7 +350,10 @@ describe("weekOffDefaultConfigService", () => {
         .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
       await weekOffDefaultConfigService.deactivate("policy-1", "user-1");
       expect(logSensitiveAction).toHaveBeenCalledWith(
-        expect.objectContaining({ action_type: "WEEK_OFF_DEFAULT_DEACTIVATED", entity_id: "policy-1" })
+        expect.objectContaining({
+          action_type: "WEEK_OFF_DEFAULT_DEACTIVATED",
+          entity_id: "policy-1",
+        }),
       );
     });
   });

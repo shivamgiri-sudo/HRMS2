@@ -15,14 +15,17 @@
  * one. Shadow mode is fully functional now — that is the point: it produces the evidence
  * you review before anything is allowed to send.
  */
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { resolveRecipients } from '../../shared/recipient-resolver.js';
-import { RecipientResolutionError } from '../../shared/recipient-resolver.types.js';
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { resolveRecipients } from "../../shared/recipient-resolver.js";
+import { RecipientResolutionError } from "../../shared/recipient-resolver.types.js";
 import type {
-  RecipientContext, RecipientResolution, RecipientSpec, Sensitivity,
-} from '../../shared/recipient-resolver.types.js';
-import { maskEmail } from '../../shared/email-domains.js';
+  RecipientContext,
+  RecipientResolution,
+  RecipientSpec,
+  Sensitivity,
+} from "../../shared/recipient-resolver.types.js";
+import { maskEmail } from "../../shared/email-domains.js";
 
 export interface NotifyInput {
   eventCode: string;
@@ -44,27 +47,27 @@ export interface NotifyInput {
 }
 
 export type NotifyOutcome =
-  | 'sent'
-  | 'shadow'        // resolved and claimed; deliberately not delivered
-  | 'duplicate'     // another claim already exists for this dedupe key
-  | 'cooldown'      // same event+entity notified inside the cooldown window
-  | 'disabled'      // kill switch off, or event not registered
-  | 'capped'        // daily cap reached
-  | 'undeliverable' // nobody resolvable — see `dropped`
-  | 'blocked';      // deny-list refused it
+  | "sent"
+  | "shadow" // resolved and claimed; deliberately not delivered
+  | "duplicate" // another claim already exists for this dedupe key
+  | "cooldown" // same event+entity notified inside the cooldown window
+  | "disabled" // kill switch off, or event not registered
+  | "capped" // daily cap reached
+  | "undeliverable" // nobody resolvable — see `dropped`
+  | "blocked"; // deny-list refused it
 
 export interface NotifyResult {
   outcome: NotifyOutcome;
   claimId?: string;
   recipients?: { to: number; cc: number; bcc: number };
-  dropped?: RecipientResolution['dropped'];
+  dropped?: RecipientResolution["dropped"];
   reason?: string;
 }
 
 interface EventConfigRow extends RowDataPacket {
   event_code: string;
   enabled: number;
-  dispatch_mode: 'shadow' | 'live' | 'off';
+  dispatch_mode: "shadow" | "live" | "off";
   sensitivity: Sensitivity;
   is_critical: number;
   recipient_spec: string | Record<string, unknown>;
@@ -101,7 +104,9 @@ export function __resetDeliverer(): void {
   deliverer = null;
 }
 
-async function loadEventConfig(eventCode: string): Promise<EventConfigRow | null> {
+async function loadEventConfig(
+  eventCode: string,
+): Promise<EventConfigRow | null> {
   try {
     const [rows] = await db.execute<EventConfigRow[]>(
       `SELECT event_code, enabled, dispatch_mode, sensitivity, is_critical, recipient_spec,
@@ -124,12 +129,20 @@ export const notificationGateway = {
     const cfg = await loadEventConfig(input.eventCode);
 
     // Unregistered or switched off. Fail closed, and say which.
-    if (!cfg) return { outcome: 'disabled', reason: `event '${input.eventCode}' is not registered` };
-    if (!cfg.enabled || cfg.dispatch_mode === 'off') {
-      return { outcome: 'disabled', reason: `event '${input.eventCode}' is disabled` };
+    if (!cfg)
+      return {
+        outcome: "disabled",
+        reason: `event '${input.eventCode}' is not registered`,
+      };
+    if (!cfg.enabled || cfg.dispatch_mode === "off") {
+      return {
+        outcome: "disabled",
+        reason: `event '${input.eventCode}' is disabled`,
+      };
     }
 
-    const mode: 'shadow' | 'live' = cfg.dispatch_mode === 'live' ? 'live' : 'shadow';
+    const mode: "shadow" | "live" =
+      cfg.dispatch_mode === "live" ? "live" : "shadow";
 
     // Daily cap, counted from real claims rather than an in-memory tally.
     const [[capRow]] = await db.execute<RowDataPacket[]>(
@@ -138,26 +151,42 @@ export const notificationGateway = {
       [input.eventCode],
     );
     if (Number(capRow?.n ?? 0) >= Number(cfg.max_per_day)) {
-      return { outcome: 'capped', reason: `daily cap ${cfg.max_per_day} reached for '${input.eventCode}'` };
+      return {
+        outcome: "capped",
+        reason: `daily cap ${cfg.max_per_day} reached for '${input.eventCode}'`,
+      };
     }
 
     // Cooldown: the same entity should not re-notify while the situation is unchanged.
     // An overdue task stays overdue; nobody needs a daily reminder of the same breach.
-    if (Number(cfg.cooldown_minutes) > 0 && input.entityType && input.entityId) {
+    if (
+      Number(cfg.cooldown_minutes) > 0 &&
+      input.entityType &&
+      input.entityId
+    ) {
       const [[recent]] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS n FROM notification_dispatch_claim
           WHERE event_code = ? AND entity_type = ? AND entity_id = ?
             AND status IN ('claimed','sent')
             AND claimed_at >= DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
-        [input.eventCode, input.entityType, input.entityId, cfg.cooldown_minutes],
+        [
+          input.eventCode,
+          input.entityType,
+          input.entityId,
+          cfg.cooldown_minutes,
+        ],
       );
       if (Number(recent?.n ?? 0) > 0) {
-        return { outcome: 'cooldown', reason: `within ${cfg.cooldown_minutes}m cooldown` };
+        return {
+          outcome: "cooldown",
+          reason: `within ${cfg.cooldown_minutes}m cooldown`,
+        };
       }
     }
 
     // Resolve. Both refusals below are thrown by the resolver, never silently filtered.
-    const spec: RecipientSpec = input.specOverride ?? normaliseSpec(cfg.recipient_spec);
+    const spec: RecipientSpec =
+      input.specOverride ?? normaliseSpec(cfg.recipient_spec);
     let resolution: RecipientResolution;
     try {
       resolution = await resolveRecipients(spec, {
@@ -170,9 +199,18 @@ export const notificationGateway = {
         // Record the refusal so it is visible in the Recipients tab rather than lost in a log.
         // null here means a concurrent worker already claimed it — the refusal is still
         // reported to this caller, it is simply already recorded.
-        const claimId = await writeClaim(input, mode, 'suppressed', null, err.message);
+        const claimId = await writeClaim(
+          input,
+          mode,
+          "suppressed",
+          null,
+          err.message,
+        );
         return {
-          outcome: err.code === 'CLIENT_AUDIENCE' || err.code === 'FIN_HAS_CC' ? 'blocked' : 'undeliverable',
+          outcome:
+            err.code === "CLIENT_AUDIENCE" || err.code === "FIN_HAS_CC"
+              ? "blocked"
+              : "undeliverable",
           claimId: claimId ?? undefined,
           dropped: err.resolution?.dropped,
           reason: err.message,
@@ -183,23 +221,38 @@ export const notificationGateway = {
 
     // Claim BEFORE delivering. A duplicate key here means a concurrent worker already
     // owns this notification — losing the race is the correct outcome, not an error.
-    const claimId = await writeClaim(input, mode, 'claimed', resolution, null);
-    if (!claimId) return { outcome: 'duplicate', reason: 'claim already exists' };
+    const claimId = await writeClaim(input, mode, "claimed", resolution, null);
+    if (!claimId)
+      return { outcome: "duplicate", reason: "claim already exists" };
 
-    const counts = { to: resolution.to.length, cc: resolution.cc.length, bcc: resolution.bcc.length };
+    const counts = {
+      to: resolution.to.length,
+      cc: resolution.cc.length,
+      bcc: resolution.bcc.length,
+    };
 
-    if (mode === 'shadow') {
-      await completeClaim(claimId, 'suppressed', null, null);
-      return { outcome: 'shadow', claimId, recipients: counts, dropped: resolution.dropped };
+    if (mode === "shadow") {
+      await completeClaim(claimId, "suppressed", null, null);
+      return {
+        outcome: "shadow",
+        claimId,
+        recipients: counts,
+        dropped: resolution.dropped,
+      };
     }
 
     if (!deliverer) {
       // Phase 1a. Loud rather than silent: an event configured 'live' with no sender is a
       // misconfiguration, and pretending to succeed would hide it.
-      await completeClaim(claimId, 'failed', null, 'NOT_WIRED: no deliverer registered');
+      await completeClaim(
+        claimId,
+        "failed",
+        null,
+        "NOT_WIRED: no deliverer registered",
+      );
       throw new Error(
         `Event '${input.eventCode}' is configured live but no NotificationDeliverer is registered ` +
-        `(phase 1c wires this). Set dispatch_mode='shadow' until then.`,
+          `(phase 1c wires this). Set dispatch_mode='shadow' until then.`,
       );
     }
 
@@ -214,10 +267,20 @@ export const notificationGateway = {
         entityType: input.entityType,
         entityId: input.entityId,
       });
-      await completeClaim(claimId, 'sent', dispatchLogId ?? null, null);
-      return { outcome: 'sent', claimId, recipients: counts, dropped: resolution.dropped };
+      await completeClaim(claimId, "sent", dispatchLogId ?? null, null);
+      return {
+        outcome: "sent",
+        claimId,
+        recipients: counts,
+        dropped: resolution.dropped,
+      };
     } catch (err) {
-      await completeClaim(claimId, 'failed', null, (err as Error).message.slice(0, 500));
+      await completeClaim(
+        claimId,
+        "failed",
+        null,
+        (err as Error).message.slice(0, 500),
+      );
       throw err;
     }
   },
@@ -225,7 +288,7 @@ export const notificationGateway = {
 
 /** Accepts a JSON column that mysql2 may hand back already parsed. */
 function normaliseSpec(raw: string | Record<string, unknown>): RecipientSpec {
-  const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
   return obj as RecipientSpec;
 }
 
@@ -235,8 +298,8 @@ function normaliseSpec(raw: string | Record<string, unknown>): RecipientSpec {
  */
 async function writeClaim(
   input: NotifyInput,
-  mode: 'shadow' | 'live',
-  status: 'claimed' | 'suppressed',
+  mode: "shadow" | "live",
+  status: "claimed" | "suppressed",
   resolution: RecipientResolution | null,
   errorMessage: string | null,
 ): Promise<string | null> {
@@ -245,7 +308,9 @@ async function writeClaim(
         to: resolution.to.map((r) => maskEmail(r.email)),
         cc: resolution.cc.map((r) => maskEmail(r.email)),
         bcc: resolution.bcc.map((r) => maskEmail(r.email)),
-        via: [...resolution.to, ...resolution.cc, ...resolution.bcc].map((r) => r.viaSelector),
+        via: [...resolution.to, ...resolution.cc, ...resolution.bcc].map(
+          (r) => r.viaSelector,
+        ),
         dropped: resolution.dropped,
       }
     : null;
@@ -257,29 +322,36 @@ async function writeClaim(
           dropped_count, recipient_digest, entity_type, entity_id, correlation_id, error_message)
        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        input.eventCode, input.dedupeKey, mode, status,
-        resolution?.to.length ?? 0, resolution?.cc.length ?? 0, resolution?.bcc.length ?? 0,
+        input.eventCode,
+        input.dedupeKey,
+        mode,
+        status,
+        resolution?.to.length ?? 0,
+        resolution?.cc.length ?? 0,
+        resolution?.bcc.length ?? 0,
         resolution?.dropped.length ?? 0,
         digest ? JSON.stringify(digest) : null,
-        input.entityType ?? null, input.entityId ?? null, input.correlationId ?? null,
+        input.entityType ?? null,
+        input.entityId ?? null,
+        input.correlationId ?? null,
         errorMessage,
       ],
     );
     if (!res.affectedRows) return null;
     const [[row]] = await db.execute<RowDataPacket[]>(
-      'SELECT id FROM notification_dispatch_claim WHERE event_code = ? AND dedupe_key = ? LIMIT 1',
+      "SELECT id FROM notification_dispatch_claim WHERE event_code = ? AND dedupe_key = ? LIMIT 1",
       [input.eventCode, input.dedupeKey],
     );
     return (row?.id as string) ?? null;
   } catch (err) {
-    if ((err as { code?: string }).code === 'ER_DUP_ENTRY') return null;
+    if ((err as { code?: string }).code === "ER_DUP_ENTRY") return null;
     throw err;
   }
 }
 
 async function completeClaim(
   claimId: string,
-  status: 'sent' | 'failed' | 'suppressed',
+  status: "sent" | "failed" | "suppressed",
   dispatchLogId: string | null,
   errorMessage: string | null,
 ): Promise<void> {

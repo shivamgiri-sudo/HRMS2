@@ -16,22 +16,22 @@
  *   npx ts-node scripts/migrate-imprest-negative-adjustments.ts --apply   # write
  */
 
-import * as mysql from 'mysql2/promise';
-import 'dotenv/config';
-import { randomUUID } from 'crypto';
+import * as mysql from "mysql2/promise";
+import "dotenv/config";
+import { randomUUID } from "crypto";
 
-const APPLY = process.argv.includes('--apply');
-const MIGRATION_USER = '00000000-0000-0000-0000-dbbill000001';
+const APPLY = process.argv.includes("--apply");
+const MIGRATION_USER = "00000000-0000-0000-0000-dbbill000001";
 
 // db_bill PaymentMode int → string
 const PAYMENT_MODE_MAP: Record<number, string> = {
-  1: 'Cash',
-  2: 'Adjustment',
-  3: 'NEFT',
-  4: 'Cheque',
-  5: 'RTGS',
-  6: 'IMPS',
-  7: 'UPI',
+  1: "Cash",
+  2: "Adjustment",
+  3: "NEFT",
+  4: "Cheque",
+  5: "RTGS",
+  6: "IMPS",
+  7: "UPI",
 };
 
 async function main() {
@@ -52,25 +52,30 @@ async function main() {
   });
 
   try {
-    console.log('\n════════════════════════════════════════════════════════');
-    console.log(' Migrate Imprest Negative Adjustments from db_bill');
-    console.log('════════════════════════════════════════════════════════');
-    console.log(` Mode: ${APPLY ? 'APPLY (writes to DB)' : 'DRY RUN (no writes)'}\n`);
+    console.log("\n════════════════════════════════════════════════════════");
+    console.log(" Migrate Imprest Negative Adjustments from db_bill");
+    console.log("════════════════════════════════════════════════════════");
+    console.log(
+      ` Mode: ${APPLY ? "APPLY (writes to DB)" : "DRY RUN (no writes)"}\n`,
+    );
 
     // ── Branch map: db_bill BranchId → mas_hrms branch UUID ─────────────────
     const [branchMapRows] = await hrms.query<any[]>(
-      'SELECT dbbill_branch_id, hrms_branch_id FROM grn_migration_branch_map'
+      "SELECT dbbill_branch_id, hrms_branch_id FROM grn_migration_branch_map",
     );
     const branchMap = new Map<number, string>(
-      branchMapRows.map(r => [Number(r.dbbill_branch_id), String(r.hrms_branch_id)])
+      branchMapRows.map((r) => [
+        Number(r.dbbill_branch_id),
+        String(r.hrms_branch_id),
+      ]),
     );
 
     // ── Manager map: db_bill imprest_manager → mas_hrms imprest_manager ──────
     const [billMgrs] = await bill.query<any[]>(
-      'SELECT Id, TallyHead, BranchId FROM imprest_manager'
+      "SELECT Id, TallyHead, BranchId FROM imprest_manager",
     );
     const [hrmsMgrs] = await hrms.query<any[]>(
-      'SELECT id, tally_name, branch_id FROM imprest_manager'
+      "SELECT id, tally_name, branch_id FROM imprest_manager",
     );
     const hrmsMgrByNameBranch = new Map<string, string>();
     const hrmsMgrByName = new Map<string, string[]>(); // tally_name → [id, ...] (for fallback)
@@ -80,7 +85,10 @@ async function main() {
       existing.push(String(m.id));
       hrmsMgrByName.set(String(m.tally_name), existing);
     }
-    const billToHrmsMgr = new Map<number, { hrmsId: string; branchUuid: string }>();
+    const billToHrmsMgr = new Map<
+      number,
+      { hrmsId: string; branchUuid: string }
+    >();
     for (const m of billMgrs) {
       const branchUuid = branchMap.get(Number(m.BranchId));
       if (!branchUuid) continue;
@@ -98,11 +106,13 @@ async function main() {
           if (mgrRow) resolvedBranch = String(mgrRow.branch_id);
         }
       }
-      if (hrmsId) billToHrmsMgr.set(Number(m.Id), { hrmsId, branchUuid: resolvedBranch });
+      if (hrmsId)
+        billToHrmsMgr.set(Number(m.Id), { hrmsId, branchUuid: resolvedBranch });
     }
 
     // ── Already-migrated bill_source_ids ─────────────────────────────────────
-    const [alreadyMig] = await hrms.query<any[]>(`
+    const [alreadyMig] = await hrms.query<any[]>(
+      `
       SELECT ia.bill_source_id
         FROM imprest_allocation ia
         JOIN imprest_transaction_ledger l
@@ -110,8 +120,12 @@ async function main() {
        WHERE l.entry_type IN ('return','adjustment')
          AND l.created_by = ?
          AND ia.bill_source_id IS NOT NULL
-    `, [MIGRATION_USER]);
-    const alreadyMigIds = new Set(alreadyMig.map(r => Number(r.bill_source_id)));
+    `,
+      [MIGRATION_USER],
+    );
+    const alreadyMigIds = new Set(
+      alreadyMig.map((r) => Number(r.bill_source_id)),
+    );
 
     // ── Load negative entries from db_bill ───────────────────────────────────
     const [negEntries] = await bill.query<any[]>(`
@@ -123,7 +137,9 @@ async function main() {
        ORDER BY a.EntryDate ASC, a.Id ASC
     `);
 
-    const toMigrate = negEntries.filter(r => !alreadyMigIds.has(Number(r.Id)));
+    const toMigrate = negEntries.filter(
+      (r) => !alreadyMigIds.has(Number(r.Id)),
+    );
     console.log(`db_bill negative entries: ${negEntries.length}`);
     console.log(`Already migrated: ${alreadyMigIds.size}`);
     console.log(`To migrate: ${toMigrate.length}`);
@@ -143,29 +159,46 @@ async function main() {
     if (skipNoMapping.length > 0) {
       console.log(`\n⚠  Skipped (no manager mapping): ${skipNoMapping.length}`);
       for (const r of skipNoMapping) {
-        console.log(`   Id=${r.Id} | mgr=${r.TallyHead} (BranchId=${r.BranchId}) | amt=${r.Amount}`);
+        console.log(
+          `   Id=${r.Id} | mgr=${r.TallyHead} (BranchId=${r.BranchId}) | amt=${r.Amount}`,
+        );
       }
     }
 
     console.log(`\nReady to insert: ${canMigrate.length} adjustment entries`);
 
     // ── Print preview ─────────────────────────────────────────────────────────
-    console.log('\n── Preview (by manager) ────────────────────────────────────────');
-    const previewByMgr = new Map<string, { branch: string; cnt: number; total: number }>();
+    console.log(
+      "\n── Preview (by manager) ────────────────────────────────────────",
+    );
+    const previewByMgr = new Map<
+      string,
+      { branch: string; cnt: number; total: number }
+    >();
     for (const r of canMigrate) {
       const mgr = billToHrmsMgr.get(Number(r.ImprestManagerId))!;
       const key = String(r.TallyHead);
-      const existing = previewByMgr.get(key) ?? { branch: String(r.Branch), cnt: 0, total: 0 };
+      const existing = previewByMgr.get(key) ?? {
+        branch: String(r.Branch),
+        cnt: 0,
+        total: 0,
+      };
       existing.cnt++;
       existing.total += Number(r.Amount);
       previewByMgr.set(key, existing);
     }
-    for (const [name, v] of Array.from(previewByMgr.entries()).sort((a, b) => a[1].total - b[1].total)) {
-      console.log(`  ${String(name).padEnd(42)} | ${String(v.branch).padEnd(22)} | cnt=${v.cnt} | adj=₹${v.total.toLocaleString('en-IN')}`);
+    for (const [name, v] of Array.from(previewByMgr.entries()).sort(
+      (a, b) => a[1].total - b[1].total,
+    )) {
+      console.log(
+        `  ${String(name).padEnd(42)} | ${String(v.branch).padEnd(22)} | cnt=${v.cnt} | adj=₹${v.total.toLocaleString("en-IN")}`,
+      );
     }
 
     if (!APPLY) {
-      console.log('\n DRY RUN complete — nothing written. Re-run with --apply to execute.\n');
+      console.log(
+        "\n DRY RUN complete — nothing written. Re-run with --apply to execute.\n",
+      );
       return;
     }
 
@@ -179,60 +212,71 @@ async function main() {
       const toIsoDate = (v: any): string | null => {
         if (!v) return null;
         if (v instanceof Date) {
-          const y = v.getFullYear(), mo = v.getMonth() + 1, d = v.getDate();
-          return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+          const y = v.getFullYear(),
+            mo = v.getMonth() + 1,
+            d = v.getDate();
+          return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
         }
         const s = String(v).slice(0, 10);
-        return /^\d{4}-\d{2}-\d{2}$/.test(s) && s > '1900-01-01' ? s : null;
+        return /^\d{4}-\d{2}-\d{2}$/.test(s) && s > "1900-01-01" ? s : null;
       };
-      const entryDate = toIsoDate(r.EntryDate) ?? toIsoDate(r.CreateDate) ?? '2017-04-01';
+      const entryDate =
+        toIsoDate(r.EntryDate) ?? toIsoDate(r.CreateDate) ?? "2017-04-01";
       const periodCode = entryDate.slice(0, 7);
-      const payMode = PAYMENT_MODE_MAP[Number(r.PaymentMode)] ?? 'Adjustment';
-      const remarks = r.Remarks ? String(r.Remarks).substring(0, 999) : `Adjustment Id ${r.Id}`;
+      const payMode = PAYMENT_MODE_MAP[Number(r.PaymentMode)] ?? "Adjustment";
+      const remarks = r.Remarks
+        ? String(r.Remarks).substring(0, 999)
+        : `Adjustment Id ${r.Id}`;
       const allocationId = randomUUID();
 
       // 1. Create imprest_allocation record (negative amount, disbursed)
-      await hrms.execute(`
+      await hrms.execute(
+        `
         INSERT INTO imprest_allocation
           (id, allocation_no, imprest_manager_id, branch_id, allocation_date, amount,
            payment_mode, reference_no, remarks, status, submitted_by, submitted_at,
            disbursed_at, created_by, created_at, updated_at, accounting_period, bill_source_id)
         VALUES (?,?,?,?,?,?,?,?,?,'disbursed',NULL,NOW(),NOW(),?,NOW(),NOW(),?,?)
-      `, [
-        allocationId,
-        `ADJ/${String(r.Id).padStart(5, '0')}`,
-        mgr.hrmsId,
-        mgr.branchUuid,
-        entryDate,
-        -amount,                  // negative amount signals this is a reduction
-        payMode,
-        '',                       // no cheque/ref for adjustments
-        remarks,
-        MIGRATION_USER,
-        periodCode,
-        Number(r.Id),
-      ]);
+      `,
+        [
+          allocationId,
+          `ADJ/${String(r.Id).padStart(5, "0")}`,
+          mgr.hrmsId,
+          mgr.branchUuid,
+          entryDate,
+          -amount, // negative amount signals this is a reduction
+          payMode,
+          "", // no cheque/ref for adjustments
+          remarks,
+          MIGRATION_USER,
+          periodCode,
+          Number(r.Id),
+        ],
+      );
       allocInserted++;
 
       // 2. Post adjustment DEBIT to ledger
       const ledgerId = randomUUID();
-      await hrms.execute(`
+      await hrms.execute(
+        `
         INSERT INTO imprest_transaction_ledger
           (id, imprest_manager_id, branch_id, entry_type, direction, amount, balance_after,
            reference_type, reference_id, period_code, transaction_date, narration,
            created_by, created_at)
         VALUES (?,?,?,'adjustment','debit',?,0,'imprest_allocation',?,?,?,?,?,NOW())
-      `, [
-        ledgerId,
-        mgr.hrmsId,
-        mgr.branchUuid,
-        amount,
-        allocationId,
-        periodCode,
-        entryDate,
-        remarks,
-        MIGRATION_USER,
-      ]);
+      `,
+        [
+          ledgerId,
+          mgr.hrmsId,
+          mgr.branchUuid,
+          amount,
+          allocationId,
+          periodCode,
+          entryDate,
+          remarks,
+          MIGRATION_USER,
+        ],
+      );
       ledgerInserted++;
     }
 
@@ -242,10 +286,15 @@ async function main() {
 
     // ── Final balance check for affected managers ──────────────────────────
     const affectedMgrIds = Array.from(
-      new Set(canMigrate.map(r => billToHrmsMgr.get(Number(r.ImprestManagerId))!.hrmsId))
+      new Set(
+        canMigrate.map(
+          (r) => billToHrmsMgr.get(Number(r.ImprestManagerId))!.hrmsId,
+        ),
+      ),
     );
-    const ph = affectedMgrIds.map(() => '?').join(',');
-    const [finalBals] = await hrms.query<any[]>(`
+    const ph = affectedMgrIds.map(() => "?").join(",");
+    const [finalBals] = await hrms.query<any[]>(
+      `
       SELECT im.tally_name, b.branch_name,
              ROUND(SUM(CASE WHEN l.direction='credit' THEN l.amount ELSE 0 END),2) AS credits,
              ROUND(SUM(CASE WHEN l.direction='debit' THEN l.amount ELSE 0 END),2) AS debits,
@@ -257,21 +306,26 @@ async function main() {
        WHERE im.id IN (${ph})
        GROUP BY im.id, im.tally_name, b.branch_name
        ORDER BY balance ASC
-    `, affectedMgrIds);
+    `,
+      affectedMgrIds,
+    );
 
-    console.log('\n════ Affected manager balances after adjustment migration ════');
+    console.log(
+      "\n════ Affected manager balances after adjustment migration ════",
+    );
     for (const r of finalBals) {
-      const sign = Number(r.balance) < 0 ? '⚠' : '✓';
-      console.log(`  ${sign} ${String(r.tally_name ?? '(null)').padEnd(42)} | ${String(r.branch_name).padEnd(22)} | ₹${Number(r.balance).toLocaleString('en-IN')}`);
+      const sign = Number(r.balance) < 0 ? "⚠" : "✓";
+      console.log(
+        `  ${sign} ${String(r.tally_name ?? "(null)").padEnd(42)} | ${String(r.branch_name).padEnd(22)} | ₹${Number(r.balance).toLocaleString("en-IN")}`,
+      );
     }
-
   } finally {
     await hrms.end();
     await bill.end();
   }
 }
 
-main().catch(err => {
-  console.error('\nMIGRATION FAILED:', err?.message ?? err);
+main().catch((err) => {
+  console.error("\nMIGRATION FAILED:", err?.message ?? err);
   process.exit(1);
 });

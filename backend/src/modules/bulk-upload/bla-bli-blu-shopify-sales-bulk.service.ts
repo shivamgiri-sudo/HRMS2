@@ -2,7 +2,10 @@ import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Bla Bli Blu's real direct Shopify order export -- see sql/1745 for the
@@ -11,7 +14,15 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  * corruption found in several helper columns.
  */
 
-export const ERROR_CODES = new Set(["0x00", "0x07", "0x0f", "0x17", "0x1d", "0x24", "0x2a"]);
+export const ERROR_CODES = new Set([
+  "0x00",
+  "0x07",
+  "0x0f",
+  "0x17",
+  "0x1d",
+  "0x24",
+  "0x2a",
+]);
 
 export function isErrorCode(raw: unknown): boolean {
   return ERROR_CODES.has(String(raw ?? "").trim());
@@ -49,7 +60,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importBlaBliBluShopifySalesBatch(
   batchId: string,
@@ -95,21 +108,28 @@ export async function importBlaBliBluShopifySalesBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Bla Bli Blu" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     const orderName = cleanText(data["Name"]);
     const lineitemSku = cleanText(data["Lineitem sku"]);
     if (!orderName || !lineitemSku) {
       const msg = `Row ${row.row_no}: "Name" and "Lineitem sku" are both required -- together they are this row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, orderName, lineitemSku,
+        randomUUID(),
+        processId,
+        orderName,
+        lineitemSku,
         cleanText(data["Id"]),
         cleanText(data["Financial Status"]),
         parseShopifyDateTime(data["Paid at"]),
@@ -146,7 +166,8 @@ export async function importBlaBliBluShopifySalesBatch(
             order_created_at, lineitem_quantity, lineitem_name, lineitem_price,
             lineitem_compare_at_price, shipping_phone, notes, employee, tags, risk_level, source,
             ob_sale_raw, gokwik, order_id_lookup, order_id_mobile, data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
             financial_status = VALUES(financial_status),
             fulfillment_status = VALUES(fulfillment_status),
@@ -160,22 +181,33 @@ export async function importBlaBliBluShopifySalesBatch(
 
   if (importedRows > 0) {
     const failedRowIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
-    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
+    const successRowIds = toInsert
+      .filter((r) => !failedRowIds.has(r.rowId))
+      .map((r) => r.rowId);
     await markRowsImported(successRowIds);
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

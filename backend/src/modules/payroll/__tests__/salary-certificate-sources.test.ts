@@ -26,11 +26,15 @@ const SOURCE = readFileSync(
   "utf8",
 );
 /** Assert on code, not on the prose that necessarily quotes the broken form. */
-const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+  /^\s*\/\/.*$/gm,
+  "",
+);
 
 describe("no column is read that the table does not have", () => {
   it("never selects basic_salary, gross_salary or net_salary from employee_salary_assignment", () => {
-    const stmts = CODE.match(/FROM\s+employee_salary_assignment[\s\S]{0,400}?`/gi) ?? [];
+    const stmts =
+      CODE.match(/FROM\s+employee_salary_assignment[\s\S]{0,400}?`/gi) ?? [];
     for (const s of stmts) {
       expect(s).not.toMatch(/\bbasic_salary\b/);
       expect(s).not.toMatch(/\bnet_salary\b/);
@@ -40,7 +44,10 @@ describe("no column is read that the table does not have", () => {
   });
 
   it("reads only columns employee_salary_assignment actually has", () => {
-    const block = CODE.slice(CODE.indexOf("FROM employee_salary_assignment") - 300, CODE.indexOf("FROM employee_salary_assignment") + 300);
+    const block = CODE.slice(
+      CODE.indexOf("FROM employee_salary_assignment") - 300,
+      CODE.indexOf("FROM employee_salary_assignment") + 300,
+    );
     expect(block).toMatch(/esa\.ctc_annual/);
     expect(block).toMatch(/esa\.active_status = 1/);
   });
@@ -78,7 +85,9 @@ describe("each figure comes from a source that can actually produce it", () => {
 
 describe("it refuses rather than printing a figure it cannot stand behind", () => {
   it("refuses a salary certificate when there is no calculated payroll line", () => {
-    expect(CODE).toMatch(/template === "salary" && \(sal\?\.gross_salary == null \|\| sal\?\.net_salary == null\)/);
+    expect(CODE).toMatch(
+      /template === "salary" && \(sal\?\.gross_salary == null \|\| sal\?\.net_salary == null\)/,
+    );
     expect(CODE).toMatch(/Cannot issue a salary certificate/);
   });
 
@@ -88,13 +97,18 @@ describe("it refuses rather than printing a figure it cannot stand behind", () =
   });
 
   it("refuses with a 409 the caller can act on, not a 500", () => {
-    const block = CODE.slice(CODE.indexOf("Cannot issue a salary certificate") - 400, CODE.indexOf("Cannot issue a CTC certificate") + 400);
+    const block = CODE.slice(
+      CODE.indexOf("Cannot issue a salary certificate") - 400,
+      CODE.indexOf("Cannot issue a CTC certificate") + 400,
+    );
     expect(block).toMatch(/status\(409\)/);
   });
 
   it("still issues an employment certificate, which needs no salary figure", () => {
     // 116 of 1,327 active employees have no calculated line; they must still be able to get the
     // certificate that does not depend on one.
-    expect(CODE).toMatch(/template !== "employment" \? await getCertificateSalaryFigures/);
+    expect(CODE).toMatch(
+      /template !== "employment" \? await getCertificateSalaryFigures/,
+    );
   });
 });

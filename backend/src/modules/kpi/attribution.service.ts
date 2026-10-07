@@ -75,7 +75,11 @@ export async function resolveProcessAtDate(
     [employeeId, eventDate, eventDate],
   );
   if (assigned[0]?.process_id) {
-    return { processId: String(assigned[0].process_id), source: "lob_assignment", dateAccurate: true };
+    return {
+      processId: String(assigned[0].process_id),
+      source: "lob_assignment",
+      dateAccurate: true,
+    };
   }
 
   const [current] = await db.execute<RowDataPacket[]>(

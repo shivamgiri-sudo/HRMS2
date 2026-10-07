@@ -5,7 +5,10 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+  pingDb: vi.fn(),
+}));
 vi.mock("../src/modules/kpi/kpi.service.js", () => ({
   kpiService: {
     listMetrics: vi.fn(),
@@ -23,15 +26,22 @@ vi.mock("../src/modules/kpi/kpi.service.js", () => ({
   },
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
+  requireRole:
+    (..._roles: string[]) =>
+    (_req: any, _res: any, next: any) =>
+      next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
-  getRosterPlanScope: vi.fn().mockResolvedValue({ branchId: null, processId: null }),
-  getEmployeeForUser: vi.fn().mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
+  getRosterPlanScope: vi
+    .fn()
+    .mockResolvedValue({ branchId: null, processId: null }),
+  getEmployeeForUser: vi
+    .fn()
+    .mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
@@ -52,12 +62,17 @@ import { kpiService } from "../src/modules/kpi/kpi.service.js";
 import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
-const svc = kpiService as { [K in keyof typeof kpiService]: ReturnType<typeof vi.fn> };
+const svc = kpiService as {
+  [K in keyof typeof kpiService]: ReturnType<typeof vi.fn>;
+};
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetUser.mockResolvedValue({ data: { user: { id: "user-1", email: "admin@mcn.com" } }, error: null });
+  mockGetUser.mockResolvedValue({
+    data: { user: { id: "user-1", email: "admin@mcn.com" } },
+    error: null,
+  });
 });
 
 const fakeMetric = { id: "met-1", metric_code: "AHT", category: "operations" };
@@ -81,13 +96,21 @@ describe("POST /api/kpi/metrics", () => {
   it("creates metric", async () => {
     svc.createMetric.mockResolvedValueOnce(fakeMetric);
     const r = await request(app).post("/api/kpi/metrics").set(AUTH).send({
-      metricCode: "AHT", metricName: "Avg Handle Time", category: "operations", unit: "seconds", direction: "lower_is_better",
+      metricCode: "AHT",
+      metricName: "Avg Handle Time",
+      category: "operations",
+      unit: "seconds",
+      direction: "lower_is_better",
     });
     expect(r.status).toBe(201);
   });
   it("returns 400 for invalid category", async () => {
     const r = await request(app).post("/api/kpi/metrics").set(AUTH).send({
-      metricCode: "X", metricName: "X", category: "invalid", unit: "count", direction: "higher_is_better",
+      metricCode: "X",
+      metricName: "X",
+      category: "invalid",
+      unit: "count",
+      direction: "higher_is_better",
     });
     expect(r.status).toBe(400);
   });
@@ -105,7 +128,9 @@ describe("GET /api/kpi/templates", () => {
 describe("POST /api/kpi/templates", () => {
   it("creates template", async () => {
     svc.createTemplate.mockResolvedValueOnce(fakeTemplate);
-    const r = await request(app).post("/api/kpi/templates").set(AUTH)
+    const r = await request(app)
+      .post("/api/kpi/templates")
+      .set(AUTH)
       .send({ templateName: "Ops Agent BPO" });
     expect(r.status).toBe(201);
   });
@@ -117,24 +142,41 @@ describe("POST /api/kpi/templates", () => {
 
 describe("GET /api/kpi/templates/:id/metrics", () => {
   it("returns template metrics", async () => {
-    svc.listTemplateMetrics.mockResolvedValueOnce([{ metric_code: "AHT", weight_pct: 40 }]);
-    const r = await request(app).get("/api/kpi/templates/tpl-1/metrics").set(AUTH);
+    svc.listTemplateMetrics.mockResolvedValueOnce([
+      { metric_code: "AHT", weight_pct: 40 },
+    ]);
+    const r = await request(app)
+      .get("/api/kpi/templates/tpl-1/metrics")
+      .set(AUTH);
     expect(r.status).toBe(200);
   });
 });
 
 describe("POST /api/kpi/templates/:id/metrics", () => {
   it("adds metric to template", async () => {
-    svc.addTemplateMetric.mockResolvedValueOnce({ target_value: 300, weight_pct: 40 });
-    const r = await request(app).post("/api/kpi/templates/tpl-1/metrics").set(AUTH).send({
-      metricId: "550e8400-e29b-41d4-a716-446655440000", targetValue: 300, weightPct: 40,
+    svc.addTemplateMetric.mockResolvedValueOnce({
+      target_value: 300,
+      weight_pct: 40,
     });
+    const r = await request(app)
+      .post("/api/kpi/templates/tpl-1/metrics")
+      .set(AUTH)
+      .send({
+        metricId: "550e8400-e29b-41d4-a716-446655440000",
+        targetValue: 300,
+        weightPct: 40,
+      });
     expect(r.status).toBe(201);
   });
   it("returns 400 when weightPct > 100", async () => {
-    const r = await request(app).post("/api/kpi/templates/tpl-1/metrics").set(AUTH).send({
-      metricId: "550e8400-e29b-41d4-a716-446655440000", targetValue: 300, weightPct: 150,
-    });
+    const r = await request(app)
+      .post("/api/kpi/templates/tpl-1/metrics")
+      .set(AUTH)
+      .send({
+        metricId: "550e8400-e29b-41d4-a716-446655440000",
+        targetValue: 300,
+        weightPct: 150,
+      });
     expect(r.status).toBe(400);
   });
 });
@@ -142,7 +184,10 @@ describe("POST /api/kpi/templates/:id/metrics", () => {
 // Assignments
 describe("POST /api/kpi/assignments", () => {
   it("assigns template to designation", async () => {
-    svc.assignTemplate.mockResolvedValueOnce({ id: "asgn-1", designation_id: "des-1" });
+    svc.assignTemplate.mockResolvedValueOnce({
+      id: "asgn-1",
+      designation_id: "des-1",
+    });
     const r = await request(app).post("/api/kpi/assignments").set(AUTH).send({
       templateId: "550e8400-e29b-41d4-a716-446655440001",
       designationId: "550e8400-e29b-41d4-a716-446655440002",
@@ -160,7 +205,9 @@ describe("POST /api/kpi/assignments", () => {
 describe("GET /api/kpi/assignments/employee/:employeeId", () => {
   it("returns active template for employee", async () => {
     svc.getEmployeeTemplate.mockResolvedValueOnce({ template_id: "tpl-1" });
-    const r = await request(app).get("/api/kpi/assignments/employee/emp-1").set(AUTH);
+    const r = await request(app)
+      .get("/api/kpi/assignments/employee/emp-1")
+      .set(AUTH);
     expect(r.status).toBe(200);
   });
 });
@@ -191,12 +238,19 @@ describe("POST /api/kpi/scores", () => {
 describe("POST /api/kpi/scores/bulk", () => {
   it("records multiple scores", async () => {
     svc.bulkRecordScores.mockResolvedValueOnce({ recorded: 3 });
-    const r = await request(app).post("/api/kpi/scores/bulk").set(AUTH).send({
-      period: "2026-05",
-      scores: [
-        { employeeId: "550e8400-e29b-41d4-a716-446655440000", metricId: "550e8400-e29b-41d4-a716-446655440001", actualValue: 280 },
-      ],
-    });
+    const r = await request(app)
+      .post("/api/kpi/scores/bulk")
+      .set(AUTH)
+      .send({
+        period: "2026-05",
+        scores: [
+          {
+            employeeId: "550e8400-e29b-41d4-a716-446655440000",
+            metricId: "550e8400-e29b-41d4-a716-446655440001",
+            actualValue: 280,
+          },
+        ],
+      });
     expect(r.status).toBe(200);
     expect(r.body.data.recorded).toBe(3);
   });
@@ -206,7 +260,9 @@ describe("POST /api/kpi/scores/bulk", () => {
 describe("GET /api/kpi/summary/:employeeId/:templateId/:period", () => {
   it("returns weighted score and rating", async () => {
     svc.getEmployeeSummary.mockResolvedValueOnce(fakeSummary);
-    const r = await request(app).get("/api/kpi/summary/emp-1/tpl-1/2026-05").set(AUTH);
+    const r = await request(app)
+      .get("/api/kpi/summary/emp-1/tpl-1/2026-05")
+      .set(AUTH);
     expect(r.status).toBe(200);
     expect(r.body.data.rating).toBe("A");
   });
@@ -218,7 +274,11 @@ describe("GET /api/kpi/leaderboard", () => {
     svc.getLeaderboard.mockResolvedValueOnce([
       { employee_id: "emp-1", weighted_score_pct: 102, rating: "S" },
     ]);
-    const r = await request(app).get("/api/kpi/leaderboard?period=2026-05&templateId=550e8400-e29b-41d4-a716-446655440001").set(AUTH);
+    const r = await request(app)
+      .get(
+        "/api/kpi/leaderboard?period=2026-05&templateId=550e8400-e29b-41d4-a716-446655440001",
+      )
+      .set(AUTH);
     expect(r.status).toBe(200);
     expect(r.body.data).toHaveLength(1);
   });

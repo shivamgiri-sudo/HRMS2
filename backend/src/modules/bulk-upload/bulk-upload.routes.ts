@@ -8,15 +8,27 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { getBatchJob, readBatchProgress } from "./batch-job.js";
 import { deleteBatchRowsChunked } from "./batch-row-status.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
-import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
+import {
+  loadRowsWithLiveStatus,
+  reconcileStuckRows,
+} from "./bulk-approval.service.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 import { tpzAllowsUploadType } from "../tpz-access/tpz-access.middleware.js";
 import { getUploadCoverage } from "./upload-coverage.service.js";
-import { dispatchImport, assertGatedUploader, assertDepartmentStructureUploader, assertEmployeeLobUploader } from "./bulk-dispatch.js";
+import {
+  dispatchImport,
+  assertGatedUploader,
+  assertDepartmentStructureUploader,
+  assertEmployeeLobUploader,
+} from "./bulk-dispatch.js";
 import { ONFIDO_REPORT_CONFIGS } from "./onfido-report-configs.js";
 import {
-  HUB_ROLES, denyLobOnly, filterTemplatesForCaller, lobOnlyBatchFilter,
-  restrictLobOnlyBatchAccess, restrictLobOnlyBatchCreate,
+  HUB_ROLES,
+  denyLobOnly,
+  filterTemplatesForCaller,
+  lobOnlyBatchFilter,
+  restrictLobOnlyBatchAccess,
+  restrictLobOnlyBatchCreate,
 } from "./bulk-role-restriction.js";
 
 /**
@@ -26,8 +38,10 @@ import {
 const STALE_IMPORT_MINUTES = 15;
 
 const router = Router();
-const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: import("express").Request, res: Response, next: NextFunction) => fn(req as AuthenticatedRequest, res).catch(next);
+const h =
+  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: import("express").Request, res: Response, next: NextFunction) =>
+    fn(req as AuthenticatedRequest, res).catch(next);
 
 interface UploadBatchRow extends RowDataPacket {
   id: string;
@@ -41,52 +55,78 @@ router.use(requireAuth);
  * file's headers changed, which blocked every real upload at the Hub's header check.
  */
 const CONFIG_TEMPLATE_BY_CODE = new Map(
-  ONFIDO_REPORT_CONFIGS.filter((c) => c.templateFromConfig).map((c) => [c.uploadTypeCode, c])
+  ONFIDO_REPORT_CONFIGS.filter((c) => c.templateFromConfig).map((c) => [
+    c.uploadTypeCode,
+    c,
+  ]),
 );
 
 function withConfigTemplate(row: RowDataPacket): RowDataPacket {
   const cfg = CONFIG_TEMPLATE_BY_CODE.get(String(row.upload_type_code));
   if (!cfg) return row;
-  const existingRules = row.validation_rules && typeof row.validation_rules === "object" ? row.validation_rules : {};
+  const existingRules =
+    row.validation_rules && typeof row.validation_rules === "object"
+      ? row.validation_rules
+      : {};
   return {
     ...row,
     required_columns: [],
     optional_columns: cfg.headers,
-    validation_rules: { ...existingRules, header_aliases: cfg.headerAliases ?? {} },
+    validation_rules: {
+      ...existingRules,
+      header_aliases: cfg.headerAliases ?? {},
+    },
   } as RowDataPacket;
 }
 
-router.get("/templates", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM upload_template_master WHERE active_status = 1 ORDER BY upload_type_code ASC"
-    );
-    // TPZ Process grants (modules/tpz-access): a narrowed or grant-only user sees only the TPZ upload types they may use.
-    res.json({ success: true, data: filterTemplatesForCaller(req, rows).filter((r) => tpzAllowsUploadType(req, String(r.upload_type_code))).map(withConfigTemplate) });
-  } catch (err: unknown) {
-    // Table may not exist yet â€” return empty array gracefully
-    if (typeof err === "object" && err !== null) {
-      const code = String((err as { code?: unknown }).code ?? "");
-      const message = String((err as { message?: unknown }).message ?? "");
-      if (code === "ER_NO_SUCH_TABLE" || message.includes("doesn't exist")) {
-        return res.json({ success: true, data: [] });
+router.get(
+  "/templates",
+  requireRole(...HUB_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT * FROM upload_template_master WHERE active_status = 1 ORDER BY upload_type_code ASC",
+      );
+      // TPZ Process grants (modules/tpz-access): a narrowed or grant-only user sees only the TPZ upload types they may use.
+      res.json({
+        success: true,
+        data: filterTemplatesForCaller(req, rows)
+          .filter((r) => tpzAllowsUploadType(req, String(r.upload_type_code)))
+          .map(withConfigTemplate),
+      });
+    } catch (err: unknown) {
+      // Table may not exist yet â€” return empty array gracefully
+      if (typeof err === "object" && err !== null) {
+        const code = String((err as { code?: unknown }).code ?? "");
+        const message = String((err as { message?: unknown }).message ?? "");
+        if (code === "ER_NO_SUCH_TABLE" || message.includes("doesn't exist")) {
+          return res.json({ success: true, data: [] });
+        }
       }
+      throw err;
     }
-    throw err;
-  }
-}));
+  }),
+);
 
 /**
  * GET /coverage?codes=A,B[&refresh=1] -- "data uploaded till <date>" per upload type: the latest data date present in the type's
  * target table (see upload-coverage.service.ts), so the uploader knows where to continue from. Narrowed for TPZ grants like the
  * template list.
  */
-router.get("/coverage", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const codes = String(req.query.codes ?? "").split(",").map((c) => c.trim()).filter(Boolean).slice(0, 60)
-    .filter((c) => tpzAllowsUploadType(req, c));
-  const data = await getUploadCoverage(codes, req.query.refresh === "1");
-  res.json({ success: true, data });
-}));
+router.get(
+  "/coverage",
+  requireRole(...HUB_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const codes = String(req.query.codes ?? "")
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean)
+      .slice(0, 60)
+      .filter((c) => tpzAllowsUploadType(req, c));
+    const data = await getUploadCoverage(codes, req.query.refresh === "1");
+    res.json({ success: true, data });
+  }),
+);
 
 /**
  * Aggregate counters for Process Performance V2's landing page header
@@ -100,61 +140,125 @@ router.get("/coverage", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRe
  * their own branch/process, not the whole company's.
  */
 const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
-  "AW_BILLING_MASMIS", "AW_INBOUND_MASMIS", "AW_MANDATE_MASMIS", "AW_NEW_CDR_MASMIS", "AW_OUT_MASMIS", "AW_CHAT_MASMIS",
-  "BB_APR_MASMIS", "BB_CART_MASMIS", "BB_CHAT_MASMIS", "BB_SALE_MASMIS",
-  "BIRLANU_APR_MASMIS", "BIRLANU_SALE_MASMIS",
-  "CL_APR_MASMIS", "CL_CHAT_MASMIS", "CL_DISPO_MASMIS", "CL_EMAIL_RAW_MASMIS", "CL_FEEDBACK_MASMIS",
-  "CL_IB_CDR_MASMIS", "CL_OUTBOUND_MASMIS", "CL_QUALITY_MASMIS", "CL_RECHURN_CALL_MASMIS",
-  "GNC_ALLOCATION_MASMIS", "GNC_APR", "GNC_CHAT_MASMIS", "GNC_SALE_MASMIS",
-  "LP_FEEDBACK_APR_MASMIS", "LP_FEEDBACK_CDR_MASMIS", "LP_ONBOARDING_APR_MASMIS", "LP_ONBOARDING_CDR_MASMIS",
-  "NEEMANS_AGENT_DETAILS_MASMIS", "NEEMANS_ALLOCATION_MASMIS", "NEEMANS_APR_MASMIS", "NEEMANS_CHAT_MASMIS",
-  "NEEMANS_MONTH_TARGET_MASMIS", "NEEMANS_SALE_RAW_MASMIS",
-  "OWNER_AGENT_DETAILS_MASMIS", "OWNER_CDR_MASMIS", "OWNER_SALE_MASMIS",
-  "PRE_AGENT_DETAILS_MASMIS", "PRE_CDR_MASMIS", "PRE_SALE_MASMIS",
-  "SATYA_ALLOCATION_MASMIS", "SATYA_CDR_MASMIS",
-  "DALMIA_DD_RAW", "DALMIA_OUTBOUND_RAW", "DALMIA_APR", "DALMIA_AFTER_HOUR",
+  "AW_BILLING_MASMIS",
+  "AW_INBOUND_MASMIS",
+  "AW_MANDATE_MASMIS",
+  "AW_NEW_CDR_MASMIS",
+  "AW_OUT_MASMIS",
+  "AW_CHAT_MASMIS",
+  "BB_APR_MASMIS",
+  "BB_CART_MASMIS",
+  "BB_CHAT_MASMIS",
+  "BB_SALE_MASMIS",
+  "BIRLANU_APR_MASMIS",
+  "BIRLANU_SALE_MASMIS",
+  "CL_APR_MASMIS",
+  "CL_CHAT_MASMIS",
+  "CL_DISPO_MASMIS",
+  "CL_EMAIL_RAW_MASMIS",
+  "CL_FEEDBACK_MASMIS",
+  "CL_IB_CDR_MASMIS",
+  "CL_OUTBOUND_MASMIS",
+  "CL_QUALITY_MASMIS",
+  "CL_RECHURN_CALL_MASMIS",
+  "GNC_ALLOCATION_MASMIS",
+  "GNC_APR",
+  "GNC_CHAT_MASMIS",
+  "GNC_SALE_MASMIS",
+  "LP_FEEDBACK_APR_MASMIS",
+  "LP_FEEDBACK_CDR_MASMIS",
+  "LP_ONBOARDING_APR_MASMIS",
+  "LP_ONBOARDING_CDR_MASMIS",
+  "NEEMANS_AGENT_DETAILS_MASMIS",
+  "NEEMANS_ALLOCATION_MASMIS",
+  "NEEMANS_APR_MASMIS",
+  "NEEMANS_CHAT_MASMIS",
+  "NEEMANS_MONTH_TARGET_MASMIS",
+  "NEEMANS_SALE_RAW_MASMIS",
+  "OWNER_AGENT_DETAILS_MASMIS",
+  "OWNER_CDR_MASMIS",
+  "OWNER_SALE_MASMIS",
+  "PRE_AGENT_DETAILS_MASMIS",
+  "PRE_CDR_MASMIS",
+  "PRE_SALE_MASMIS",
+  "SATYA_ALLOCATION_MASMIS",
+  "SATYA_CDR_MASMIS",
+  "DALMIA_DD_RAW",
+  "DALMIA_OUTBOUND_RAW",
+  "DALMIA_APR",
+  "DALMIA_AFTER_HOUR",
 ];
 
-router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), denyLobOnly, h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  const scope = await buildScopeWhereClause(
-    userId,
-    ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
-    { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
-    { allowAdminBypass: true },
-  );
+router.get(
+  "/process-performance-v2-stats",
+  requireRole(
+    "admin",
+    "hr",
+    "super_admin",
+    "wfm",
+    "wfm_analyst",
+    "payroll",
+    "payroll_hr",
+  ),
+  denyLobOnly,
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const scope = await buildScopeWhereClause(
+      userId,
+      [
+        "admin",
+        "hr",
+        "wfm",
+        "wfm_analyst",
+        "payroll",
+        "payroll_hr",
+        "branch_head",
+        "branch_admin",
+      ],
+      { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
+      { allowAdminBypass: true },
+    );
 
-  // Optional ?codes=A,B,C narrows the same aggregate to one company's own
-  // upload types (e.g. the BellaVita hub card asking only about BB_*),
-  // instead of the whole page's 41-code total. Any code not in the known
-  // list is dropped rather than passed to SQL — cheap guard since these
-  // reach a raw IN(...) list, even though every value is parameterized.
-  const requestedCodes = String(req.query.codes ?? "")
-    .split(",")
-    .map((c) => c.trim())
-    .filter((c) => PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES.includes(c));
-  // Narrowed / grant-only TPZ users are counted only over the upload types they may use.
-  const typeCodes = (requestedCodes.length ? requestedCodes : PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES).filter((c) => tpzAllowsUploadType(req, c));
-  if (typeCodes.length === 0) return res.json({ success: true, data: { totalFilesUploaded: 0, activeUsers: 0 } });
+    // Optional ?codes=A,B,C narrows the same aggregate to one company's own
+    // upload types (e.g. the BellaVita hub card asking only about BB_*),
+    // instead of the whole page's 41-code total. Any code not in the known
+    // list is dropped rather than passed to SQL — cheap guard since these
+    // reach a raw IN(...) list, even though every value is parameterized.
+    const requestedCodes = String(req.query.codes ?? "")
+      .split(",")
+      .map((c) => c.trim())
+      .filter((c) => PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES.includes(c));
+    // Narrowed / grant-only TPZ users are counted only over the upload types they may use.
+    const typeCodes = (
+      requestedCodes.length
+        ? requestedCodes
+        : PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES
+    ).filter((c) => tpzAllowsUploadType(req, c));
+    if (typeCodes.length === 0)
+      return res.json({
+        success: true,
+        data: { totalFilesUploaded: 0, activeUsers: 0 },
+      });
 
-  const typeCodePlaceholders = typeCodes.map(() => "?").join(",");
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total_files, COUNT(DISTINCT ub.uploaded_by) AS active_users
+    const typeCodePlaceholders = typeCodes.map(() => "?").join(",");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total_files, COUNT(DISTINCT ub.uploaded_by) AS active_users
        FROM upload_batch ub
        LEFT JOIN employees uploader_emp ON uploader_emp.user_id = ub.uploaded_by
       WHERE ub.upload_type_code IN (${typeCodePlaceholders})
         AND (ub.uploaded_by = ? OR (${scope.sql}))`,
-    [...typeCodes, userId, ...scope.params],
-  );
+      [...typeCodes, userId, ...scope.params],
+    );
 
-  res.json({
-    success: true,
-    data: {
-      totalFilesUploaded: Number(rows[0]?.total_files ?? 0),
-      activeUsers: Number(rows[0]?.active_users ?? 0),
-    },
-  });
-}));
+    res.json({
+      success: true,
+      data: {
+        totalFilesUploaded: Number(rows[0]?.total_files ?? 0),
+        activeUsers: Number(rows[0]?.active_users ?? 0),
+      },
+    });
+  }),
+);
 
 /**
  * Upload Batch History.
@@ -180,48 +284,81 @@ router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_ad
  * WHO RAISED IT. auth_user carries no name (email only), so the display name comes from the
  * employee record joined on user_id â€” populated for all 65 rows â€” falling back to the login email.
  */
-router.get("/batches", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  const scope = await buildScopeWhereClause(
-    userId,
-    ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
-    { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
-    { allowAdminBypass: true },
-  );
+router.get(
+  "/batches",
+  requireRole(...HUB_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const scope = await buildScopeWhereClause(
+      userId,
+      [
+        "admin",
+        "hr",
+        "wfm",
+        "wfm_analyst",
+        "payroll",
+        "payroll_hr",
+        "branch_head",
+        "branch_admin",
+      ],
+      { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
+      { allowAdminBypass: true },
+    );
 
-  const where: string[] = [`(ub.uploaded_by = ? OR (${scope.sql}))`];
-  const params: unknown[] = [userId, ...scope.params];
+    const where: string[] = [`(ub.uploaded_by = ? OR (${scope.sql}))`];
+    const params: unknown[] = [userId, ...scope.params];
 
-  // LOB-only callers (bulk-role-restriction.ts) see only their own Employee LOB Mapping batches.
-  const lobOnly = lobOnlyBatchFilter(req, "ub");
-  if (lobOnly.sql) { where.push(lobOnly.sql.replace(/^ AND /, "")); params.push(...lobOnly.params); }
+    // LOB-only callers (bulk-role-restriction.ts) see only their own Employee LOB Mapping batches.
+    const lobOnly = lobOnlyBatchFilter(req, "ub");
+    if (lobOnly.sql) {
+      where.push(lobOnly.sql.replace(/^ AND /, ""));
+      params.push(...lobOnly.params);
+    }
 
-  // Filters. Each is optional and additive; an absent filter never narrows the result.
-  const uploadType = String(req.query.uploadType ?? "").trim();
-  if (uploadType) { where.push("ub.upload_type_code = ?"); params.push(uploadType); }
+    // Filters. Each is optional and additive; an absent filter never narrows the result.
+    const uploadType = String(req.query.uploadType ?? "").trim();
+    if (uploadType) {
+      where.push("ub.upload_type_code = ?");
+      params.push(uploadType);
+    }
 
-  const status = String(req.query.status ?? "").trim();
-  if (status) { where.push("ub.batch_status = ?"); params.push(status); }
+    const status = String(req.query.status ?? "").trim();
+    if (status) {
+      where.push("ub.batch_status = ?");
+      params.push(status);
+    }
 
-  const uploadedBy = String(req.query.uploadedBy ?? "").trim();
-  if (uploadedBy) { where.push("ub.uploaded_by = ?"); params.push(uploadedBy); }
+    const uploadedBy = String(req.query.uploadedBy ?? "").trim();
+    if (uploadedBy) {
+      where.push("ub.uploaded_by = ?");
+      params.push(uploadedBy);
+    }
 
-  // Dates are compared on the date part so an inclusive "to" does not silently drop same-day rows.
-  const from = String(req.query.from ?? "").trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) { where.push("DATE(ub.created_at) >= ?"); params.push(from); }
-  const to = String(req.query.to ?? "").trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) { where.push("DATE(ub.created_at) <= ?"); params.push(to); }
+    // Dates are compared on the date part so an inclusive "to" does not silently drop same-day rows.
+    const from = String(req.query.from ?? "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      where.push("DATE(ub.created_at) >= ?");
+      params.push(from);
+    }
+    const to = String(req.query.to ?? "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      where.push("DATE(ub.created_at) <= ?");
+      params.push(to);
+    }
 
-  const search = String(req.query.search ?? "").trim();
-  if (search) {
-    where.push("(ub.upload_batch_no LIKE ? OR ub.original_file_name LIKE ?)");
-    params.push(`%${search}%`, `%${search}%`);
-  }
+    const search = String(req.query.search ?? "").trim();
+    if (search) {
+      where.push("(ub.upload_batch_no LIKE ? OR ub.original_file_name LIKE ?)");
+      params.push(`%${search}%`, `%${search}%`);
+    }
 
-  const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50) || 50));
+    const limit = Math.min(
+      200,
+      Math.max(1, Number(req.query.limit ?? 50) || 50),
+    );
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ub.*,
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ub.*,
             COALESCE(NULLIF(TRIM(uploader_emp.full_name), ''), uploader_user.email, ub.uploaded_by)
               AS uploaded_by_name,
             uploader_emp.employee_code AS uploaded_by_code,
@@ -234,10 +371,11 @@ router.get("/batches", requireRole(...HUB_ROLES), h(async (req: AuthenticatedReq
       WHERE ${where.join(" AND ")}
       ORDER BY ub.created_at DESC
       LIMIT ${limit}`,
-    params,
-  );
-  res.json({ success: true, data: rows });
-}));
+      params,
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
 
 /**
  * The filter dropdown options, built from what this caller can actually see.
@@ -247,39 +385,58 @@ router.get("/batches", requireRole(...HUB_ROLES), h(async (req: AuthenticatedReq
  * Scoped identically to the list above, so the options can never hint at the existence of another
  * branch's uploads.
  */
-router.get("/batches/filter-options", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  const scope = await buildScopeWhereClause(
-    userId,
-    ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
-    { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
-    { allowAdminBypass: true },
-  );
-  const lobOnly = lobOnlyBatchFilter(req, "ub");
-  const visible = `(ub.uploaded_by = ? OR (${scope.sql}))${lobOnly.sql}`;
-  const params = [userId, ...scope.params, ...lobOnly.params];
+router.get(
+  "/batches/filter-options",
+  requireRole(...HUB_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const scope = await buildScopeWhereClause(
+      userId,
+      [
+        "admin",
+        "hr",
+        "wfm",
+        "wfm_analyst",
+        "payroll",
+        "payroll_hr",
+        "branch_head",
+        "branch_admin",
+      ],
+      { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
+      { allowAdminBypass: true },
+    );
+    const lobOnly = lobOnlyBatchFilter(req, "ub");
+    const visible = `(ub.uploaded_by = ? OR (${scope.sql}))${lobOnly.sql}`;
+    const params = [userId, ...scope.params, ...lobOnly.params];
 
-  const [types] = await db.execute<RowDataPacket[]>(
-    `SELECT ub.upload_type_code AS value, COUNT(*) AS n
+    const [types] = await db.execute<RowDataPacket[]>(
+      `SELECT ub.upload_type_code AS value, COUNT(*) AS n
        FROM upload_batch ub
        LEFT JOIN employees uploader_emp ON uploader_emp.user_id = ub.uploaded_by
-      WHERE ${visible} GROUP BY ub.upload_type_code ORDER BY n DESC`, params);
-  const [statuses] = await db.execute<RowDataPacket[]>(
-    `SELECT ub.batch_status AS value, COUNT(*) AS n
+      WHERE ${visible} GROUP BY ub.upload_type_code ORDER BY n DESC`,
+      params,
+    );
+    const [statuses] = await db.execute<RowDataPacket[]>(
+      `SELECT ub.batch_status AS value, COUNT(*) AS n
        FROM upload_batch ub
        LEFT JOIN employees uploader_emp ON uploader_emp.user_id = ub.uploaded_by
-      WHERE ${visible} GROUP BY ub.batch_status ORDER BY n DESC`, params);
-  const [uploaders] = await db.execute<RowDataPacket[]>(
-    `SELECT ub.uploaded_by AS value,
+      WHERE ${visible} GROUP BY ub.batch_status ORDER BY n DESC`,
+      params,
+    );
+    const [uploaders] = await db.execute<RowDataPacket[]>(
+      `SELECT ub.uploaded_by AS value,
             COALESCE(NULLIF(TRIM(uploader_emp.full_name), ''), uploader_user.email, ub.uploaded_by) AS label,
             COUNT(*) AS n
        FROM upload_batch ub
        LEFT JOIN employees uploader_emp ON uploader_emp.user_id = ub.uploaded_by
        LEFT JOIN auth_user uploader_user ON uploader_user.id    = ub.uploaded_by
-      WHERE ${visible} GROUP BY ub.uploaded_by, label ORDER BY n DESC`, params);
+      WHERE ${visible} GROUP BY ub.uploaded_by, label ORDER BY n DESC`,
+      params,
+    );
 
-  res.json({ success: true, data: { types, statuses, uploaders } });
-}));
+    res.json({ success: true, data: { types, statuses, uploaders } });
+  }),
+);
 
 /**
  * Each row now carries the ground truth alongside its own row_status:
@@ -290,10 +447,15 @@ router.get("/batches/filter-options", requireRole(...HUB_ROLES), h(async (req: A
  * this, was the only thing shown â€” see loadRowsWithLiveStatus's own comment for why
  * that alone was not trustworthy.
  */
-router.get("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
-  const rows = await loadRowsWithLiveStatus(req.params.id);
-  res.json({ success: true, data: rows });
-}));
+router.get(
+  "/batches/:id/rows",
+  requireRole(...HUB_ROLES),
+  restrictLobOnlyBatchAccess(),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const rows = await loadRowsWithLiveStatus(req.params.id);
+    res.json({ success: true, data: rows });
+  }),
+);
 
 /**
  * On-demand healing for a batch stuck with rows that never reached a final outcome
@@ -303,89 +465,141 @@ router.get("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchA
  * SQL access. It only ever force-resolves rows that are already stuck; it never
  * touches a row that has a real outcome.
  */
-router.post("/batches/:id/reconcile", requireRole("admin", "super_admin"), denyLobOnly, h(async (req: AuthenticatedRequest, res: Response) => {
-  const result = await reconcileStuckRows(req.params.id);
-  res.json({ success: true, data: result });
-}));
+router.post(
+  "/batches/:id/reconcile",
+  requireRole("admin", "super_admin"),
+  denyLobOnly,
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const result = await reconcileStuckRows(req.params.id);
+    res.json({ success: true, data: result });
+  }),
+);
 
-router.post("/batches", requireRole(...HUB_ROLES), restrictLobOnlyBatchCreate, h(async (req: AuthenticatedRequest, res: Response) => {
-  const body = req.body as {
-    upload_batch_no?: string; upload_type_code: string; original_file_name?: string;
-    file_path?: string; file_size_bytes?: number; total_rows: number; valid_rows: number;
-    error_rows: number; batch_status?: string; error_summary?: string; metadata?: Record<string, unknown>;
-  };
-  if (!body.upload_type_code) {
-    return res.status(400).json({ error: "upload_type_code is required" });
-  }
-  if (body.total_rows === undefined || body.valid_rows === undefined || body.error_rows === undefined) {
-    return res.status(400).json({ error: "total_rows, valid_rows, and error_rows are required" });
-  }
-  const id = randomUUID();
-  const batchNo = body.upload_batch_no || `BATCH-${Date.now()}`;
-  // withDeadlockRetry is safe here: this is one autocommit statement (no explicit
-  // transaction), and it is idempotent on retry â€” a lost deadlock rolls the whole INSERT
-  // back (nothing partially written), and `id` was generated once above, so a retry
-  // replays the exact same row rather than creating a duplicate.
-  await withDeadlockRetry(() => db.execute(
-    `INSERT INTO upload_batch (id, upload_batch_no, upload_type_code, original_file_name, file_path,
+router.post(
+  "/batches",
+  requireRole(...HUB_ROLES),
+  restrictLobOnlyBatchCreate,
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as {
+      upload_batch_no?: string;
+      upload_type_code: string;
+      original_file_name?: string;
+      file_path?: string;
+      file_size_bytes?: number;
+      total_rows: number;
+      valid_rows: number;
+      error_rows: number;
+      batch_status?: string;
+      error_summary?: string;
+      metadata?: Record<string, unknown>;
+    };
+    if (!body.upload_type_code) {
+      return res.status(400).json({ error: "upload_type_code is required" });
+    }
+    if (
+      body.total_rows === undefined ||
+      body.valid_rows === undefined ||
+      body.error_rows === undefined
+    ) {
+      return res
+        .status(400)
+        .json({ error: "total_rows, valid_rows, and error_rows are required" });
+    }
+    const id = randomUUID();
+    const batchNo = body.upload_batch_no || `BATCH-${Date.now()}`;
+    // withDeadlockRetry is safe here: this is one autocommit statement (no explicit
+    // transaction), and it is idempotent on retry â€” a lost deadlock rolls the whole INSERT
+    // back (nothing partially written), and `id` was generated once above, so a retry
+    // replays the exact same row rather than creating a duplicate.
+    await withDeadlockRetry(() =>
+      db.execute(
+        `INSERT INTO upload_batch (id, upload_batch_no, upload_type_code, original_file_name, file_path,
      file_size_bytes, total_rows, valid_rows, error_rows, batch_status, error_summary, metadata,
      uploaded_by, validated_by, validated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, batchNo, body.upload_type_code, body.original_file_name ?? null, body.file_path ?? null,
-     body.file_size_bytes ?? null, body.total_rows, body.valid_rows, body.error_rows,
-     body.batch_status ?? "pending", body.error_summary ?? null,
-     body.metadata ? JSON.stringify(body.metadata) : null,
-     req.authUser!.id,
-     body.valid_rows > 0 ? req.authUser!.id : null,
-     body.valid_rows > 0 ? new Date().toISOString().slice(0, 19).replace("T", " ") : null]
-  ));
-  const [rows] = await db.execute<UploadBatchRow[]>("SELECT * FROM upload_batch WHERE id = ? LIMIT 1", [id]);
-  res.status(201).json({ success: true, data: rows[0] ?? null });
-}));
+        [
+          id,
+          batchNo,
+          body.upload_type_code,
+          body.original_file_name ?? null,
+          body.file_path ?? null,
+          body.file_size_bytes ?? null,
+          body.total_rows,
+          body.valid_rows,
+          body.error_rows,
+          body.batch_status ?? "pending",
+          body.error_summary ?? null,
+          body.metadata ? JSON.stringify(body.metadata) : null,
+          req.authUser!.id,
+          body.valid_rows > 0 ? req.authUser!.id : null,
+          body.valid_rows > 0
+            ? new Date().toISOString().slice(0, 19).replace("T", " ")
+            : null,
+        ],
+      ),
+    );
+    const [rows] = await db.execute<UploadBatchRow[]>(
+      "SELECT * FROM upload_batch WHERE id = ? LIMIT 1",
+      [id],
+    );
+    res.status(201).json({ success: true, data: rows[0] ?? null });
+  }),
+);
 
-router.post("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
-  const rows = req.body as Array<{
-    row_no: number;
-    raw_data?: Record<string, unknown> | unknown[] | string | null;
-    normalized_data?: Record<string, unknown> | unknown[] | string | null;
-    row_status?: string;
-    error_messages?: string[] | string | null;
-  }>;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({ error: "rows array required" });
-  }
-  // Build pre-assigned row objects with IDs fixed before any chunking, so a deadlock
-  // retry on any chunk replays the identical INSERT and never double-stages a row.
-  // IDs are assigned here once â€” not inside the retry lambda â€” for the same reason.
-  const staged: Array<unknown[]> = rows.map((row) => [
-    randomUUID(), req.params.id, row.row_no,
-    row.raw_data ? JSON.stringify(row.raw_data) : null,
-    row.normalized_data ? JSON.stringify(row.normalized_data) : null,
-    row.row_status ?? "pending",
-    row.error_messages ? JSON.stringify(row.error_messages) : null,
-  ]);
+router.post(
+  "/batches/:id/rows",
+  requireRole(...HUB_ROLES),
+  restrictLobOnlyBatchAccess(),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const rows = req.body as Array<{
+      row_no: number;
+      raw_data?: Record<string, unknown> | unknown[] | string | null;
+      normalized_data?: Record<string, unknown> | unknown[] | string | null;
+      row_status?: string;
+      error_messages?: string[] | string | null;
+    }>;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "rows array required" });
+    }
+    // Build pre-assigned row objects with IDs fixed before any chunking, so a deadlock
+    // retry on any chunk replays the identical INSERT and never double-stages a row.
+    // IDs are assigned here once â€” not inside the retry lambda â€” for the same reason.
+    const staged: Array<unknown[]> = rows.map((row) => [
+      randomUUID(),
+      req.params.id,
+      row.row_no,
+      row.raw_data ? JSON.stringify(row.raw_data) : null,
+      row.normalized_data ? JSON.stringify(row.normalized_data) : null,
+      row.row_status ?? "pending",
+      row.error_messages ? JSON.stringify(row.error_messages) : null,
+    ]);
 
-  // Large Onfido/POA files send 20k+ rows in a single call. One monolithic INSERT
-  // of 20k rows and their JSON blobs can exceed MySQL's lock-wait timeout and collide
-  // with sibling uploads on the same table (the 2026-09-14 DOC_RAW staging failures).
-  // Chunk at 2 000 rows: each INSERT stays under ~4 MB, retries are fast, and the
-  // full 20k completes in ~10 chunks instead of one slow giant statement.
-  //
-  // withDeadlockRetry is still correct per-chunk: each chunk is one autocommit
-  // statement and its IDs were generated once above, so a retry is idempotent.
-  const STAGE_CHUNK = 2000;
-  for (let i = 0; i < staged.length; i += STAGE_CHUNK) {
-    const slice = staged.slice(i, i + STAGE_CHUNK);
-    const placeholders = slice.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ");
-    const values = slice.flat();
-    await withDeadlockRetry(() => db.execute(
-      `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status, error_messages)
+    // Large Onfido/POA files send 20k+ rows in a single call. One monolithic INSERT
+    // of 20k rows and their JSON blobs can exceed MySQL's lock-wait timeout and collide
+    // with sibling uploads on the same table (the 2026-09-14 DOC_RAW staging failures).
+    // Chunk at 2 000 rows: each INSERT stays under ~4 MB, retries are fast, and the
+    // full 20k completes in ~10 chunks instead of one slow giant statement.
+    //
+    // withDeadlockRetry is still correct per-chunk: each chunk is one autocommit
+    // statement and its IDs were generated once above, so a retry is idempotent.
+    const STAGE_CHUNK = 2000;
+    for (let i = 0; i < staged.length; i += STAGE_CHUNK) {
+      const slice = staged.slice(i, i + STAGE_CHUNK);
+      const placeholders = slice.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const values = slice.flat();
+      await withDeadlockRetry(
+        () =>
+          db.execute(
+            `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status, error_messages)
        VALUES ${placeholders}`,
-      values
-    ), { attempts: 6, delayMs: 400 });
-  }
-  res.status(201).json({ success: true, count: rows.length });
-}));
+            values,
+          ),
+        { attempts: 6, delayMs: 400 },
+      );
+    }
+    res.status(201).json({ success: true, count: rows.length });
+  }),
+);
 
 const KNOWN_IMPORT_RPCS = new Set([
   "import_official_email_update_batch",
@@ -610,143 +824,155 @@ const KNOWN_IMPORT_RPCS = new Set([
 ]);
 
 // POST /batches/:id/import â€” dispatch import by rpc_name
-router.post("/batches/:id/import", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess({ requireImportRpc: true }), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const { rpc_name } = req.body as { rpc_name?: string };
+router.post(
+  "/batches/:id/import",
+  requireRole(...HUB_ROLES),
+  restrictLobOnlyBatchAccess({ requireImportRpc: true }),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const { rpc_name } = req.body as { rpc_name?: string };
 
-  if (!rpc_name || !KNOWN_IMPORT_RPCS.has(rpc_name)) {
-    return res.status(501).json({
-      success: false,
-      error: `Import function '${rpc_name || "unknown"}' for batch ${id} is not yet implemented in the MySQL backend.`,
-    });
-  }
+    if (!rpc_name || !KNOWN_IMPORT_RPCS.has(rpc_name)) {
+      return res.status(501).json({
+        success: false,
+        error: `Import function '${rpc_name || "unknown"}' for batch ${id} is not yet implemented in the MySQL backend.`,
+      });
+    }
 
-  // A claim left behind by a crashed or restarted API would otherwise block the batch
-  // forever: the claim below refuses any batch already 'importing', and nothing ever
-  // cleared it. Release one that has not been touched for STALE_IMPORT_MINUTES, the
-  // same treatment the approval claim already gets in bulk-approval.service.ts.
-  //
-  // 'validated' is where a batch sits before an import, and re-importing it is safe:
-  // the importers only pick up rows still in 'valid'/'pending', so whatever the dead
-  // run managed to write is not written twice.
-  await db.execute(
-    `UPDATE upload_batch SET batch_status = 'validated', updated_at = NOW()
+    // A claim left behind by a crashed or restarted API would otherwise block the batch
+    // forever: the claim below refuses any batch already 'importing', and nothing ever
+    // cleared it. Release one that has not been touched for STALE_IMPORT_MINUTES, the
+    // same treatment the approval claim already gets in bulk-approval.service.ts.
+    //
+    // 'validated' is where a batch sits before an import, and re-importing it is safe:
+    // the importers only pick up rows still in 'valid'/'pending', so whatever the dead
+    // run managed to write is not written twice.
+    await db.execute(
+      `UPDATE upload_batch SET batch_status = 'validated', updated_at = NOW()
       WHERE id = ? AND batch_status = 'importing'
         AND updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
-    [id, STALE_IMPORT_MINUTES]
-  );
+      [id, STALE_IMPORT_MINUTES],
+    );
 
-  // Atomically claim the batch before running the (possibly long-running) import.
-  // Without this, a client retry after a false request-timeout â€” the import
-  // itself keeps running server-side even after the client gives up â€” can fire
-  // a second concurrent import of the same batch. The second call finds no
-  // 'valid'/'pending' rows left (the first call already flipped them), computes
-  // 0 imported / 0 errors, and overwrites the first call's correct summary with
-  // a misleading "imported, 0 rows" â€” which is exactly what happened to
-  // BATCH-1787062644877. Rejecting the concurrent call instead keeps the
-  // summary that the completed import actually wrote.
-  const [claim] = await db.execute<ResultSetHeader>(
-    `UPDATE upload_batch SET batch_status = 'importing', updated_at = NOW()
+    // Atomically claim the batch before running the (possibly long-running) import.
+    // Without this, a client retry after a false request-timeout â€” the import
+    // itself keeps running server-side even after the client gives up â€” can fire
+    // a second concurrent import of the same batch. The second call finds no
+    // 'valid'/'pending' rows left (the first call already flipped them), computes
+    // 0 imported / 0 errors, and overwrites the first call's correct summary with
+    // a misleading "imported, 0 rows" â€” which is exactly what happened to
+    // BATCH-1787062644877. Rejecting the concurrent call instead keeps the
+    // summary that the completed import actually wrote.
+    const [claim] = await db.execute<ResultSetHeader>(
+      `UPDATE upload_batch SET batch_status = 'importing', updated_at = NOW()
      WHERE id = ? AND batch_status NOT IN ('importing')`,
-    [id]
-  );
-  if (claim.affectedRows === 0) {
-    return res.status(409).json({
-      success: false,
-      error: "This batch is already being imported. Wait for it to finish, then refresh the page â€” do not resubmit.",
-    });
-  }
-
-  // The permission checks have to run before the request is answered â€” a 202 must
-  // mean the import is genuinely under way, not that it will fail unseen.
-  try {
-    await assertGatedUploader(rpc_name, req.authUser!.id);
-    await assertDepartmentStructureUploader(rpc_name, req.authUser!.id);
-    await assertEmployeeLobUploader(rpc_name, req.authUser!.id);
-  } catch (err) {
-    await db.execute(
-      `UPDATE upload_batch SET batch_status = 'validated', updated_at = NOW() WHERE id = ?`,
-      [id]
+      [id],
     );
-    throw err;
-  }
-
-  // Importing runs a domain engine per row â€” submitRegularization and
-  // submitRequest each open a transaction â€” so a few hundred rows take minutes.
-  // Waiting for that inside the request meant nginx closed the connection at 60s
-  // and the uploader saw a 502 while the import was still running fine. Detach it
-  // and let the page poll /batches/:id/import-status instead.
-  const [pending] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS n FROM upload_batch_row
-      WHERE upload_batch_id = ? AND row_status IN ('valid','pending')`,
-    [id]
-  );
-
-  /*
-   * Guard against BATCH-1788948395588-R6909's failure mode: a batch that claims valid
-   * rows (from its own creation payload) but has ZERO rows actually staged in
-   * upload_batch_row â€” at ANY status, not just 'valid'/'pending' â€” used to run the
-   * import anyway, find nothing to do, and report a clean "imported, 0 rows" success,
-   * because every importer only checks for ERRORS, never for whether it did anything
-   * at all. Root cause there was the staging INSERT (POST /batches/:id/rows) losing a
-   * database deadlock after the batch header already claimed "14 valid" â€” the two are
-   * separate requests, so one can succeed while the other silently fails.
-   *
-   * This must NOT fire for the ordinary, legitimate case of re-importing a batch whose
-   * rows already all got consumed by an earlier successful run â€” those rows still
-   * exist, just as 'imported'/'error', which is exactly why `pending` above is 0 for
-   * that case too. The only reliable way to tell "nothing left to do" apart from
-   * "nothing was ever there" is whether upload_batch_row holds ANY row for this batch,
-   * regardless of status â€” so that is checked separately, only in this already-rare
-   * pending===0 branch.
-   */
-  if (Number((pending as RowDataPacket[])[0]?.n ?? 0) === 0) {
-    const [batchRows] = await db.execute<RowDataPacket[]>(
-      `SELECT valid_rows FROM upload_batch WHERE id = ? LIMIT 1`, [id]
-    );
-    const [stagedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT EXISTS(SELECT 1 FROM upload_batch_row WHERE upload_batch_id = ?) AS n`, [id]
-    );
-    const validRows = Number((batchRows as RowDataPacket[])[0]?.valid_rows ?? 0);
-    const stagedCount = Number((stagedRows as RowDataPacket[])[0]?.n ?? 0);
-    if (validRows > 0 && stagedCount === 0) {
-      const message = `This batch claims ${validRows} valid row(s), but none were ever saved to the `
-        + `database â€” the upload's row-staging step likely failed or timed out partway through. `
-        + `There is nothing here to import. Re-upload the file (or redo Edit & Resubmit) instead.`;
-      await db.execute(
-        `UPDATE upload_batch SET batch_status = 'validation_failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
-        [message.slice(0, 1000), id]
-      );
-      return res.status(409).json({ success: false, error: message });
+    if (claim.affectedRows === 0) {
+      return res.status(409).json({
+        success: false,
+        error:
+          "This batch is already being imported. Wait for it to finish, then refresh the page â€” do not resubmit.",
+      });
     }
-  }
 
-  // Hand off to hrms-workers via the DB queue. The worker polls bulk_import_queue
-  // every few seconds, claims this row, and runs dispatchImport â€” completely off
-  // the API process, zero impact on live users during large imports.
-  // Remember how to re-run this import, so batch-auto-recovery can re-queue it after a transient
-  // failure without a person having to open the batch and press Import again.
-  await db.execute(
-    `UPDATE upload_batch SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()),
+    // The permission checks have to run before the request is answered â€” a 202 must
+    // mean the import is genuinely under way, not that it will fail unseen.
+    try {
+      await assertGatedUploader(rpc_name, req.authUser!.id);
+      await assertDepartmentStructureUploader(rpc_name, req.authUser!.id);
+      await assertEmployeeLobUploader(rpc_name, req.authUser!.id);
+    } catch (err) {
+      await db.execute(
+        `UPDATE upload_batch SET batch_status = 'validated', updated_at = NOW() WHERE id = ?`,
+        [id],
+      );
+      throw err;
+    }
+
+    // Importing runs a domain engine per row â€” submitRegularization and
+    // submitRequest each open a transaction â€” so a few hundred rows take minutes.
+    // Waiting for that inside the request meant nginx closed the connection at 60s
+    // and the uploader saw a 502 while the import was still running fine. Detach it
+    // and let the page poll /batches/:id/import-status instead.
+    const [pending] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM upload_batch_row
+      WHERE upload_batch_id = ? AND row_status IN ('valid','pending')`,
+      [id],
+    );
+
+    /*
+     * Guard against BATCH-1788948395588-R6909's failure mode: a batch that claims valid
+     * rows (from its own creation payload) but has ZERO rows actually staged in
+     * upload_batch_row â€” at ANY status, not just 'valid'/'pending' â€” used to run the
+     * import anyway, find nothing to do, and report a clean "imported, 0 rows" success,
+     * because every importer only checks for ERRORS, never for whether it did anything
+     * at all. Root cause there was the staging INSERT (POST /batches/:id/rows) losing a
+     * database deadlock after the batch header already claimed "14 valid" â€” the two are
+     * separate requests, so one can succeed while the other silently fails.
+     *
+     * This must NOT fire for the ordinary, legitimate case of re-importing a batch whose
+     * rows already all got consumed by an earlier successful run â€” those rows still
+     * exist, just as 'imported'/'error', which is exactly why `pending` above is 0 for
+     * that case too. The only reliable way to tell "nothing left to do" apart from
+     * "nothing was ever there" is whether upload_batch_row holds ANY row for this batch,
+     * regardless of status â€” so that is checked separately, only in this already-rare
+     * pending===0 branch.
+     */
+    if (Number((pending as RowDataPacket[])[0]?.n ?? 0) === 0) {
+      const [batchRows] = await db.execute<RowDataPacket[]>(
+        `SELECT valid_rows FROM upload_batch WHERE id = ? LIMIT 1`,
+        [id],
+      );
+      const [stagedRows] = await db.execute<RowDataPacket[]>(
+        `SELECT EXISTS(SELECT 1 FROM upload_batch_row WHERE upload_batch_id = ?) AS n`,
+        [id],
+      );
+      const validRows = Number(
+        (batchRows as RowDataPacket[])[0]?.valid_rows ?? 0,
+      );
+      const stagedCount = Number((stagedRows as RowDataPacket[])[0]?.n ?? 0);
+      if (validRows > 0 && stagedCount === 0) {
+        const message =
+          `This batch claims ${validRows} valid row(s), but none were ever saved to the ` +
+          `database â€” the upload's row-staging step likely failed or timed out partway through. ` +
+          `There is nothing here to import. Re-upload the file (or redo Edit & Resubmit) instead.`;
+        await db.execute(
+          `UPDATE upload_batch SET batch_status = 'validation_failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
+          [message.slice(0, 1000), id],
+        );
+        return res.status(409).json({ success: false, error: message });
+      }
+    }
+
+    // Hand off to hrms-workers via the DB queue. The worker polls bulk_import_queue
+    // every few seconds, claims this row, and runs dispatchImport â€” completely off
+    // the API process, zero impact on live users during large imports.
+    // Remember how to re-run this import, so batch-auto-recovery can re-queue it after a transient
+    // failure without a person having to open the batch and press Import again.
+    await db.execute(
+      `UPDATE upload_batch SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()),
        '$.import_rpc_name', ?, '$.import_user_id', ?) WHERE id = ?`,
-    [rpc_name, req.authUser!.id, id]
-  );
-  await db.execute(
-    `INSERT INTO bulk_import_queue (id, batch_id, rpc_name, user_id, queued_at)
+      [rpc_name, req.authUser!.id, id],
+    );
+    await db.execute(
+      `INSERT INTO bulk_import_queue (id, batch_id, rpc_name, user_id, queued_at)
      VALUES (UUID(), ?, ?, ?, NOW())
      ON DUPLICATE KEY UPDATE rpc_name = VALUES(rpc_name), user_id = VALUES(user_id), queued_at = NOW(), claimed_at = NULL`,
-    [id, rpc_name, req.authUser!.id]
-  );
+      [id, rpc_name, req.authUser!.id],
+    );
 
-  return res.status(202).json({
-    success: true,
-    processing: true,
-    job: "import",
-    batch_id: id,
-    total_rows: Number((pending as RowDataPacket[])[0]?.n ?? 0),
-    message: "Import started. Large files are processed a row at a time â€” the page will keep itself updated.",
-  });
-}));
+    return res.status(202).json({
+      success: true,
+      processing: true,
+      job: "import",
+      batch_id: id,
+      total_rows: Number((pending as RowDataPacket[])[0]?.n ?? 0),
+      message:
+        "Import started. Large files are processed a row at a time â€” the page will keep itself updated.",
+    });
+  }),
+);
 
 /**
  * GET /batches/:id/import-status â€” where the upload page collects the import result.
@@ -766,69 +992,99 @@ router.post("/batches/:id/import", requireRole(...HUB_ROLES), restrictLobOnlyBat
  * approval_status is NULL (import still claiming) to cover the edge case where the
  * claim was recorded but the job map was lost in a restart.
  */
-router.get("/batches/active", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const lobOnly = lobOnlyBatchFilter(req, "upload_batch");
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, upload_batch_no, upload_type_code, batch_status, approval_status,
+router.get(
+  "/batches/active",
+  requireRole(...HUB_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const lobOnly = lobOnlyBatchFilter(req, "upload_batch");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, upload_batch_no, upload_type_code, batch_status, approval_status,
             total_rows, valid_rows, imported_rows, error_rows, updated_at
        FROM upload_batch
       WHERE uploaded_by = ?
         AND batch_status = 'importing'${lobOnly.sql}
       ORDER BY updated_at DESC
       LIMIT 5`,
-    [req.authUser!.id, ...lobOnly.params],
-  );
-  res.json({ success: true, data: rows });
-}));
+      [req.authUser!.id, ...lobOnly.params],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
 
-router.get("/batches/:id/import-status", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const [batchRows] = await db.execute<RowDataPacket[]>(
-    "SELECT id, batch_status, approval_status, imported_rows, error_rows, total_rows, error_summary FROM upload_batch WHERE id = ? LIMIT 1",
-    [id]
-  );
-  const batch = (batchRows as RowDataPacket[])[0];
-  if (!batch) return res.status(404).json({ success: false, error: "Upload batch not found" });
+router.get(
+  "/batches/:id/import-status",
+  requireRole(...HUB_ROLES),
+  restrictLobOnlyBatchAccess(),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const [batchRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, batch_status, approval_status, imported_rows, error_rows, total_rows, error_summary FROM upload_batch WHERE id = ? LIMIT 1",
+      [id],
+    );
+    const batch = (batchRows as RowDataPacket[])[0];
+    if (!batch)
+      return res
+        .status(404)
+        .json({ success: false, error: "Upload batch not found" });
 
-  const job = getBatchJob(id);
-  const progress = await readBatchProgress(id, "import");
-  const running = batch.batch_status === "importing";
-  const phase =
-    running ? "running"
-    : job?.phase === "failed" || batch.batch_status === "failed" ? "failed"
-    : job?.phase === "done" || ["imported", "pending_approval"].includes(String(batch.batch_status)) ? "done"
-    : "idle";
+    const job = getBatchJob(id);
+    const progress = await readBatchProgress(id, "import");
+    const running = batch.batch_status === "importing";
+    const phase = running
+      ? "running"
+      : job?.phase === "failed" || batch.batch_status === "failed"
+        ? "failed"
+        : job?.phase === "done" ||
+            ["imported", "pending_approval"].includes(
+              String(batch.batch_status),
+            )
+          ? "done"
+          : "idle";
 
-  return res.json({
-    success: true,
-    phase,
-    job: "import",
-    batch_status: batch.batch_status,
-    approval_status: batch.approval_status,
-    progress,
-    error: job?.phase === "failed" ? job.error : undefined,
-    message: job?.phase === "failed" ? job.error : (batch.error_summary ?? null),
-    result: job?.phase === "done" ? job.result : undefined,
-  });
-}));
-
+    return res.json({
+      success: true,
+      phase,
+      job: "import",
+      batch_status: batch.batch_status,
+      approval_status: batch.approval_status,
+      progress,
+      error: job?.phase === "failed" ? job.error : undefined,
+      message:
+        job?.phase === "failed" ? job.error : (batch.error_summary ?? null),
+      result: job?.phase === "done" ? job.result : undefined,
+    });
+  }),
+);
 
 // DELETE /batches/:id — remove a batch log entry (does not undo already-imported rows)
-router.delete("/batches/:id", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const [rows] = await db.query<RowDataPacket[]>(
-    "SELECT id, batch_status FROM upload_batch WHERE id = ? LIMIT 1",
-    [id]
-  );
-  const batch = rows[0];
-  if (!batch) return res.status(404).json({ success: false, error: "Upload batch not found" });
-  if (batch.batch_status === "importing") {
-    return res.status(409).json({ success: false, error: "Cannot delete a batch that is currently importing" });
-  }
-  // Chunked: one statement over a large JSON-heavy batch ran for minutes holding row locks.
-  await deleteBatchRowsChunked(id);
-  await db.query("DELETE FROM upload_batch WHERE id = ?", [id]);
-  return res.json({ success: true });
-}));
+router.delete(
+  "/batches/:id",
+  requireRole(...HUB_ROLES),
+  restrictLobOnlyBatchAccess(),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const [rows] = await db.query<RowDataPacket[]>(
+      "SELECT id, batch_status FROM upload_batch WHERE id = ? LIMIT 1",
+      [id],
+    );
+    const batch = rows[0];
+    if (!batch)
+      return res
+        .status(404)
+        .json({ success: false, error: "Upload batch not found" });
+    if (batch.batch_status === "importing") {
+      return res
+        .status(409)
+        .json({
+          success: false,
+          error: "Cannot delete a batch that is currently importing",
+        });
+    }
+    // Chunked: one statement over a large JSON-heavy batch ran for minutes holding row locks.
+    await deleteBatchRowsChunked(id);
+    await db.query("DELETE FROM upload_batch WHERE id = ?", [id]);
+    return res.json({ success: true });
+  }),
+);
 
 export { router as bulkUploadRouter };

@@ -31,7 +31,9 @@ export const createStructureSchema = z.object({
 export const bulkAssignSchema = z.object({
   structureId: z.string().uuid(),
   ctcAnnual: z.number().positive(),
-  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
+  effectiveFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
   processId: z.string().uuid().optional(),
   branchId: z.string().uuid().optional(),
   // Salary governance fields
@@ -152,7 +154,9 @@ export type NetSalaryParamsInput = z.infer<typeof netSalaryParamsSchema>;
 export type CreateStructureInput = z.infer<typeof createStructureSchema>;
 export type BulkAssignSchemaInput = z.infer<typeof bulkAssignSchema>;
 export type CreateComponentInput = z.infer<typeof createComponentSchema>;
-export type AddStructureComponentInput = z.infer<typeof addStructureComponentSchema>;
+export type AddStructureComponentInput = z.infer<
+  typeof addStructureComponentSchema
+>;
 export type AssignSalaryInput = z.infer<typeof assignSalarySchema>;
 export type CreateRunInput = z.infer<typeof createRunSchema>;
 export type UpdateRunStatusInput = z.infer<typeof updateRunStatusSchema>;

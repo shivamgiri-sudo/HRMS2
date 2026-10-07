@@ -46,16 +46,29 @@ require("dotenv").config();
 const APPLY = process.argv.includes("--apply");
 // --only=a / --only=b. The two gaps are NOT equally safe (see header), so an
 // apply run must name the one it means.
-const ONLY = (process.argv.find((a) => a.startsWith("--only=")) || "").split("=")[1] || "";
+const ONLY =
+  (process.argv.find((a) => a.startsWith("--only=")) || "").split("=")[1] || "";
 const DO_A = !ONLY || ONLY === "a";
 const DO_B = !ONLY || ONLY === "b";
-const BRANCH_SIDE_ROLES = ["wfm", "branch_head", "process_manager", "payroll_branch"];
+const BRANCH_SIDE_ROLES = [
+  "wfm",
+  "branch_head",
+  "process_manager",
+  "payroll_branch",
+];
 
 function table(rows, cols) {
   if (!rows.length) return "    (none)";
-  const w = cols.map((c) => Math.max(c.length, ...rows.map((r) => String(r[c] ?? "").length)));
-  const line = (vals) => "    " + vals.map((v, i) => String(v ?? "").padEnd(w[i])).join("  ");
-  return [line(cols), line(w.map((n) => "-".repeat(n))), ...rows.map((r) => line(cols.map((c) => r[c])))].join("\n");
+  const w = cols.map((c) =>
+    Math.max(c.length, ...rows.map((r) => String(r[c] ?? "").length)),
+  );
+  const line = (vals) =>
+    "    " + vals.map((v, i) => String(v ?? "").padEnd(w[i])).join("  ");
+  return [
+    line(cols),
+    line(w.map((n) => "-".repeat(n))),
+    ...rows.map((r) => line(cols.map((c) => r[c]))),
+  ].join("\n");
 }
 
 (async () => {
@@ -68,7 +81,9 @@ function table(rows, cols) {
   });
   const q = async (sql, p = []) => (await c.execute(sql, p))[0];
 
-  console.log(`\n=== Branch scope backfill for payroll readiness — ${APPLY ? "APPLY" : "DRY RUN"} ===`);
+  console.log(
+    `\n=== Branch scope backfill for payroll readiness — ${APPLY ? "APPLY" : "DRY RUN"} ===`,
+  );
   console.log(`    db: ${process.env.DB_NAME} @ ${process.env.DB_HOST}\n`);
 
   const roleList = BRANCH_SIDE_ROLES.map(() => "?").join(",");
@@ -99,15 +114,25 @@ function table(rows, cols) {
       WHERE uas.active_status = 1
         AND uas.scope_type IN ('process','branch_process')
         AND (uas.branch_id IS NULL OR uas.branch_id = '')
-      ORDER BY source, au.email`
+      ORDER BY source, au.email`,
   );
 
   console.log(`GAP A — process scopes missing branch_id: ${gapA.length}`);
-  console.log(table(gapA, ["email", "role_key", "process_name", "source", "resolved_branch_name"]));
+  console.log(
+    table(gapA, [
+      "email",
+      "role_key",
+      "process_name",
+      "source",
+      "resolved_branch_name",
+    ]),
+  );
   const aFix = gapA.filter((r) => r.resolved_branch);
   const aStuck = gapA.filter((r) => !r.resolved_branch);
-  console.log(`\n    resolvable: ${aFix.length}   unresolved: ${aStuck.length}` +
-              `   conflicts: ${gapA.filter((r) => r.source === "CONFLICT").length}\n`);
+  console.log(
+    `\n    resolvable: ${aFix.length}   unresolved: ${aStuck.length}` +
+      `   conflicts: ${gapA.filter((r) => r.source === "CONFLICT").length}\n`,
+  );
 
   // ── GAP B ────────────────────────────────────────────────────────────────
   const gapB = await q(
@@ -127,19 +152,33 @@ function table(rows, cols) {
                WHERE s.user_id = ur.user_id AND s.active_status = 1
                  AND s.branch_id IS NOT NULL AND s.branch_id <> '')
       ORDER BY ur.role_key, au.email`,
-    BRANCH_SIDE_ROLES
+    BRANCH_SIDE_ROLES,
   );
 
   console.log(`GAP B — branch-side users with no branch scope: ${gapB.length}`);
-  console.log(table(gapB, ["email", "role_key", "employee_code", "current_scopes", "resolved_branch_name"]));
+  console.log(
+    table(gapB, [
+      "email",
+      "role_key",
+      "employee_code",
+      "current_scopes",
+      "resolved_branch_name",
+    ]),
+  );
   const bFix = gapB.filter((r) => r.resolved_branch);
   const bStuck = gapB.filter((r) => !r.resolved_branch);
-  console.log(`\n    resolvable: ${bFix.length}   unresolved: ${bStuck.length}\n`);
+  console.log(
+    `\n    resolvable: ${bFix.length}   unresolved: ${bStuck.length}\n`,
+  );
 
   if (!APPLY) {
     console.log("DRY RUN — nothing written. To write:");
-    console.log(`  · --apply --only=b  → INSERT ${bFix.length} scope_type='branch' rows   (additive, safe)`);
-    console.log(`  · --apply --only=a  → UPDATE ${aFix.length} process rows branch_id      (NARROWS access — read the header)`);
+    console.log(
+      `  · --apply --only=b  → INSERT ${bFix.length} scope_type='branch' rows   (additive, safe)`,
+    );
+    console.log(
+      `  · --apply --only=a  → UPDATE ${aFix.length} process rows branch_id      (NARROWS access — read the header)`,
+    );
     console.log("");
     await c.end();
     return;
@@ -148,16 +187,16 @@ function table(rows, cols) {
   await c.beginTransaction();
   try {
     let updated = 0;
-    for (const r of (DO_A ? aFix : [])) {
+    for (const r of DO_A ? aFix : []) {
       const [res] = await c.execute(
         `UPDATE user_assignment_scope SET branch_id = ? WHERE id = ? AND (branch_id IS NULL OR branch_id = '')`,
-        [r.resolved_branch, r.id]
+        [r.resolved_branch, r.id],
       );
       updated += res.affectedRows;
     }
 
     let inserted = 0;
-    for (const r of (DO_B ? bFix : [])) {
+    for (const r of DO_B ? bFix : []) {
       // Additive only: a new branch row never removes the 'all' scope some of
       // these users already hold, so nobody loses access — they gain a branch
       // the readiness page can default to.
@@ -168,15 +207,26 @@ function table(rows, cols) {
             SELECT 1 FROM (SELECT * FROM user_assignment_scope) s
              WHERE s.user_id = ? AND s.role_key = ? AND s.scope_type = 'branch'
                AND CONVERT(s.branch_id USING utf8mb4) = CONVERT(? USING utf8mb4))`,
-        [r.user_id, r.role_key, r.resolved_branch, r.user_id, r.role_key, r.resolved_branch]
+        [
+          r.user_id,
+          r.role_key,
+          r.resolved_branch,
+          r.user_id,
+          r.role_key,
+          r.resolved_branch,
+        ],
       );
       inserted += res.affectedRows;
     }
 
     await c.commit();
-    console.log(`APPLIED — updated ${updated} scope rows, inserted ${inserted} branch scope rows.`);
+    console.log(
+      `APPLIED — updated ${updated} scope rows, inserted ${inserted} branch scope rows.`,
+    );
     if (aStuck.length || bStuck.length) {
-      console.log(`SKIPPED — ${aStuck.length + bStuck.length} rows had no derivable branch; listed above.`);
+      console.log(
+        `SKIPPED — ${aStuck.length + bStuck.length} rows had no derivable branch; listed above.`,
+      );
     }
   } catch (e) {
     await c.rollback();

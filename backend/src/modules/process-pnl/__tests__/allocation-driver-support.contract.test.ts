@@ -26,9 +26,15 @@ describe("Process P&L allocation drivers", () => {
   });
 
   it("supports exactly the drivers the resolver can satisfy from a P&L row", () => {
-    expect([...SUPPORTED_ALLOCATION_DRIVERS].sort()).toEqual(
-      ["active_hc", "billable_hc", "contracted_seats", "direct", "equal", "manual", "revenue"]
-    );
+    expect([...SUPPORTED_ALLOCATION_DRIVERS].sort()).toEqual([
+      "active_hc",
+      "billable_hc",
+      "contracted_seats",
+      "direct",
+      "equal",
+      "manual",
+      "revenue",
+    ]);
   });
 
   it("refuses to save a policy with an unsupported driver", () => {
@@ -49,8 +55,12 @@ describe("Process P&L allocation drivers", () => {
       "src/modules/process-pnl/bpo-pnl-allocation-overlay.service.ts",
     ]) {
       const source = read(file);
-      expect(source, `${file} must name floor_area explicitly`).toMatch(/case "floor_area":/);
-      expect(source, `${file} must name device_count explicitly`).toMatch(/case "device_count":/);
+      expect(source, `${file} must name floor_area explicitly`).toMatch(
+        /case "floor_area":/,
+      );
+      expect(source, `${file} must name device_count explicitly`).toMatch(
+        /case "device_count":/,
+      );
     }
   });
 });

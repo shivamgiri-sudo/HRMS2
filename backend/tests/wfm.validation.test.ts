@@ -13,7 +13,12 @@ import {
 } from "../src/modules/wfm/wfm.validation.js";
 
 describe("createShiftSchema", () => {
-  const valid = { shiftCode: "GEN", shiftName: "General", startTime: "09:00", endTime: "18:00" };
+  const valid = {
+    shiftCode: "GEN",
+    shiftName: "General",
+    startTime: "09:00",
+    endTime: "18:00",
+  };
 
   it("accepts valid shift", () => {
     const r = createShiftSchema.parse(valid);
@@ -21,11 +26,15 @@ describe("createShiftSchema", () => {
   });
 
   it("rejects shiftCode shorter than 2 chars", () => {
-    expect(() => createShiftSchema.parse({ ...valid, shiftCode: "X" })).toThrow();
+    expect(() =>
+      createShiftSchema.parse({ ...valid, shiftCode: "X" }),
+    ).toThrow();
   });
 
   it("rejects invalid time format", () => {
-    expect(() => createShiftSchema.parse({ ...valid, startTime: "9am" })).toThrow();
+    expect(() =>
+      createShiftSchema.parse({ ...valid, startTime: "9am" }),
+    ).toThrow();
   });
 
   it("defaults requiredMinutes to 540", () => {
@@ -50,7 +59,11 @@ describe("updateShiftSchema", () => {
 });
 
 describe("rosterPlanSchema", () => {
-  const valid = { planName: "May Roster", fromDate: "2026-05-01", toDate: "2026-05-31" };
+  const valid = {
+    planName: "May Roster",
+    fromDate: "2026-05-01",
+    toDate: "2026-05-31",
+  };
 
   it("accepts valid plan", () => {
     expect(() => rosterPlanSchema.parse(valid)).not.toThrow();
@@ -61,12 +74,18 @@ describe("rosterPlanSchema", () => {
   });
 
   it("rejects invalid date format", () => {
-    expect(() => rosterPlanSchema.parse({ ...valid, fromDate: "01-05-2026" })).toThrow();
+    expect(() =>
+      rosterPlanSchema.parse({ ...valid, fromDate: "01-05-2026" }),
+    ).toThrow();
   });
 
   it("rejects toDate before fromDate", () => {
     expect(() =>
-      rosterPlanSchema.parse({ ...valid, fromDate: "2026-05-31", toDate: "2026-05-01" })
+      rosterPlanSchema.parse({
+        ...valid,
+        fromDate: "2026-05-31",
+        toDate: "2026-05-01",
+      }),
     ).toThrow();
   });
 });
@@ -93,7 +112,10 @@ describe("attendanceSessionFiltersSchema", () => {
   });
 
   it("accepts date filters", () => {
-    const r = attendanceSessionFiltersSchema.parse({ fromDate: "2026-05-01", toDate: "2026-05-31" });
+    const r = attendanceSessionFiltersSchema.parse({
+      fromDate: "2026-05-01",
+      toDate: "2026-05-31",
+    });
     expect(r.fromDate).toBe("2026-05-01");
   });
 });
@@ -118,7 +140,7 @@ describe("clockInSchema", () => {
         employeeId: "550e8400-e29b-41d4-a716-446655440000",
         sessionDate: "2026-05-21",
         punchSource: "UNKNOWN",
-      })
+      }),
     ).toThrow();
   });
 });
@@ -137,7 +159,10 @@ describe("breakSchema", () => {
   it("accepts valid break types", () => {
     for (const t of ["Break", "Lunch", "Bio", "Training"]) {
       expect(() =>
-        breakSchema.parse({ sessionId: "550e8400-e29b-41d4-a716-446655440000", breakType: t })
+        breakSchema.parse({
+          sessionId: "550e8400-e29b-41d4-a716-446655440000",
+          breakType: t,
+        }),
       ).not.toThrow();
     }
   });
@@ -154,7 +179,7 @@ describe("regularizationSchema", () => {
         employeeId: "550e8400-e29b-41d4-a716-446655440000",
         sessionDate: "2026-05-21",
         reason: "",
-      })
+      }),
     ).toThrow();
   });
 });
@@ -165,8 +190,14 @@ describe("reviewRegularizationSchema", () => {
   });
 
   it("only accepts approved or rejected", () => {
-    expect(() => reviewRegularizationSchema.parse({ status: "pending" })).toThrow();
-    expect(() => reviewRegularizationSchema.parse({ status: "approved" })).not.toThrow();
-    expect(() => reviewRegularizationSchema.parse({ status: "rejected" })).not.toThrow();
+    expect(() =>
+      reviewRegularizationSchema.parse({ status: "pending" }),
+    ).toThrow();
+    expect(() =>
+      reviewRegularizationSchema.parse({ status: "approved" }),
+    ).not.toThrow();
+    expect(() =>
+      reviewRegularizationSchema.parse({ status: "rejected" }),
+    ).not.toThrow();
   });
 });

@@ -97,9 +97,10 @@ async function writeAudit(
       JSON.stringify({
         from_reserved_amount: fromAmount,
         to_reserved_amount: toAmount,
-        reason: "reserved_amount undercounted relative to sum of its own 'reserved'-status "
-          + "grn_cost_allocation.pnl_cost_amount rows — root-caused 2026-09-01, no surviving "
-          + "audit trail for the original shortfall. See fix-budget-line-reserved-shortfall.ts.",
+        reason:
+          "reserved_amount undercounted relative to sum of its own 'reserved'-status " +
+          "grn_cost_allocation.pnl_cost_amount rows — root-caused 2026-09-01, no surviving " +
+          "audit trail for the original shortfall. See fix-budget-line-reserved-shortfall.ts.",
       }),
     ],
   );
@@ -118,7 +119,9 @@ async function main() {
     console.log("\n════════════════════════════════════════════════════════");
     console.log(" Budget Line Reserved-Amount Shortfall Correction");
     console.log("════════════════════════════════════════════════════════");
-    console.log(` Mode: ${APPLY ? "APPLY (writes to DB)" : "DRY RUN (no writes)"}\n`);
+    console.log(
+      ` Mode: ${APPLY ? "APPLY (writes to DB)" : "DRY RUN (no writes)"}\n`,
+    );
 
     // ── System-wide re-scan, every run — proves these 2 lines are still the only mismatch ──
     const [allLines] = await conn.query<any[]>(
@@ -128,26 +131,34 @@ async function main() {
       `SELECT budget_line_id, SUM(pnl_cost_amount) AS alloc_sum
          FROM grn_cost_allocation WHERE lifecycle_status = 'reserved' GROUP BY budget_line_id`,
     );
-    const allocByLine = new Map<string, number>(allAlloc.map((r) => [String(r.budget_line_id), Number(r.alloc_sum)]));
+    const allocByLine = new Map<string, number>(
+      allAlloc.map((r) => [String(r.budget_line_id), Number(r.alloc_sum)]),
+    );
     const mismatches = allLines
       .map((l) => ({ ...l, allocSum: allocByLine.get(String(l.id)) ?? 0 }))
       .filter((l) => Math.abs(Number(l.reserved_amount) - l.allocSum) > 0.01);
 
-    console.log(` System-wide scan: ${mismatches.length} line(s) with reserved_amount != allocation sum`);
+    console.log(
+      ` System-wide scan: ${mismatches.length} line(s) with reserved_amount != allocation sum`,
+    );
     for (const m of mismatches) {
       const inScope = TARGET_LINE_IDS.includes(String(m.id));
       console.log(
-        `   ${String(m.id).slice(0, 8)} (${m.head} / ${m.sub_head}) line=${m.reserved_amount} `
-        + `allocSum=${m.allocSum.toFixed(2)} diff=${(Number(m.reserved_amount) - m.allocSum).toFixed(2)} `
-        + (inScope ? "[IN SCOPE for this script]" : "[NOT touched — see script header, no confirmed cause]"),
+        `   ${String(m.id).slice(0, 8)} (${m.head} / ${m.sub_head}) line=${m.reserved_amount} ` +
+          `allocSum=${m.allocSum.toFixed(2)} diff=${(Number(m.reserved_amount) - m.allocSum).toFixed(2)} ` +
+          (inScope
+            ? "[IN SCOPE for this script]"
+            : "[NOT touched — see script header, no confirmed cause]"),
       );
     }
-    const unexpected = mismatches.filter((m) => !TARGET_LINE_IDS.includes(String(m.id)) && m.allocSum > 0);
+    const unexpected = mismatches.filter(
+      (m) => !TARGET_LINE_IDS.includes(String(m.id)) && m.allocSum > 0,
+    );
     if (unexpected.length) {
       console.log(
-        `\n ⚠  ${unexpected.length} mismatch(es) found OUTSIDE this script's hard-coded target list `
-        + `that also have a nonzero allocation sum (the "shortfall" shape, not the already-shipped `
-        + `"simple GRN fallback" shape). Investigate before relying on this script alone.`,
+        `\n ⚠  ${unexpected.length} mismatch(es) found OUTSIDE this script's hard-coded target list ` +
+          `that also have a nonzero allocation sum (the "shortfall" shape, not the already-shipped ` +
+          `"simple GRN fallback" shape). Investigate before relying on this script alone.`,
       );
     }
 
@@ -155,10 +166,13 @@ async function main() {
     for (const lineId of TARGET_LINE_IDS) {
       const line = allLines.find((l: any) => String(l.id) === lineId);
       if (!line) {
-        console.log(`   SKIP ${lineId}: not found or reserved_amount is now 0 (already resolved?)`);
+        console.log(
+          `   SKIP ${lineId}: not found or reserved_amount is now 0 (already resolved?)`,
+        );
         continue;
       }
-      const correctAmount = Math.round((allocByLine.get(lineId) ?? 0) * 100) / 100;
+      const correctAmount =
+        Math.round((allocByLine.get(lineId) ?? 0) * 100) / 100;
       const currentAmount = Number(line.reserved_amount);
       console.log(
         `   ${lineId} (${line.head} / ${line.sub_head}): current=${currentAmount} -> correct=${correctAmount}`,
@@ -179,7 +193,9 @@ async function main() {
         [correctAmount, lineId, currentAmount],
       );
       if (result.affectedRows !== 1) {
-        console.log(`     → SKIPPED: reserved_amount changed concurrently since this run started. Re-run the script.`);
+        console.log(
+          `     → SKIPPED: reserved_amount changed concurrently since this run started. Re-run the script.`,
+        );
         continue;
       }
       await writeAudit(conn, lineId, currentAmount, correctAmount);
@@ -187,7 +203,9 @@ async function main() {
     }
 
     if (!APPLY) {
-      console.log("\n DRY RUN complete — nothing written. Re-run with --apply to execute.\n");
+      console.log(
+        "\n DRY RUN complete — nothing written. Re-run with --apply to execute.\n",
+      );
     } else {
       console.log("\n Apply complete.\n");
     }

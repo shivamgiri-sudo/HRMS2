@@ -64,7 +64,10 @@ type ModerationEvaluation = {
   reason: string | null;
 };
 
-type CompanyPostRow = Omit<CompanyPostDTO, "media" | "active_status" | "my_reaction"> & {
+type CompanyPostRow = Omit<
+  CompanyPostDTO,
+  "media" | "active_status" | "my_reaction"
+> & {
   active_status: number | boolean;
   author_name: string | null;
   author_code: string | null;
@@ -105,18 +108,27 @@ type TransactionConnection = QueryExecutor & {
 };
 
 function canonicalRole(role: unknown): string {
-  return String(role ?? "").trim().replace(/[\s-]+/g, "_").toLowerCase();
+  return String(role ?? "")
+    .trim()
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
 }
 
 function accessDenied(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), { statusCode: 403 });
 }
 
-function inputEmployeeId(input: { employeeId?: string; employee_id?: string }): string {
+function inputEmployeeId(input: {
+  employeeId?: string;
+  employee_id?: string;
+}): string {
   return input.employeeId ?? input.employee_id ?? "";
 }
 
-async function userHasRole(userId: string, allowedRoles: Set<string>): Promise<boolean> {
+async function userHasRole(
+  userId: string,
+  allowedRoles: Set<string>,
+): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT role_key
        FROM user_roles
@@ -125,7 +137,9 @@ async function userHasRole(userId: string, allowedRoles: Set<string>): Promise<b
   );
 
   const normalizedRoles = normalizeRoleInputs(
-    (rows as Array<{ role_key?: unknown }>).map((row) => canonicalRole(row.role_key)),
+    (rows as Array<{ role_key?: unknown }>).map((row) =>
+      canonicalRole(row.role_key),
+    ),
   );
   return normalizedRoles.some((role) => allowedRoles.has(canonicalRole(role)));
 }
@@ -141,25 +155,38 @@ async function hasActiveCreatorAccess(userId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function assertCanCreateCompanyPost(userId: string): Promise<void> {
+export async function assertCanCreateCompanyPost(
+  userId: string,
+): Promise<void> {
   if (!(await hasActiveCreatorAccess(userId))) {
     throw accessDenied("Company post creator access is required");
   }
 }
 
-export async function assertCanModerateCompanyPosts(userId: string): Promise<void> {
+export async function assertCanModerateCompanyPosts(
+  userId: string,
+): Promise<void> {
   if (!(await userHasRole(userId, MODERATION_ROLES))) {
-    throw accessDenied("Access denied: company post moderation requires an authorized role");
+    throw accessDenied(
+      "Access denied: company post moderation requires an authorized role",
+    );
   }
 }
 
 async function assertCanManageCreators(userId: string): Promise<void> {
-  if (!(await userHasRole(userId, new Set([canonicalRole(Role.SUPER_ADMIN)])))) {
-    throw accessDenied("Only a super administrator can manage company post creators");
+  if (
+    !(await userHasRole(userId, new Set([canonicalRole(Role.SUPER_ADMIN)])))
+  ) {
+    throw accessDenied(
+      "Only a super administrator can manage company post creators",
+    );
   }
 }
 
-function mapCompanyPostRow(row: CompanyPostRow, media: CompanyPostMediaDTO[]): CompanyPostDTO {
+function mapCompanyPostRow(
+  row: CompanyPostRow,
+  media: CompanyPostMediaDTO[],
+): CompanyPostDTO {
   return {
     ...row,
     active_status: Boolean(row.active_status),
@@ -179,7 +206,9 @@ function evaluateCompanyPostModeration(input: {
   contentText?: string | null;
   mediaCount: number;
 }): ModerationEvaluation {
-  const text = String(input.contentText ?? "").trim().toLowerCase();
+  const text = String(input.contentText ?? "")
+    .trim()
+    .toLowerCase();
 
   if (VIOLATION_TERMS.some((term) => text.includes(term))) {
     return {
@@ -215,12 +244,16 @@ async function resolveEmployeeIdForUser(userId: string): Promise<string> {
 
   const employeeId = String(rows[0]?.id ?? "");
   if (!employeeId) {
-    throw new Error("Active employee mapping not found for company post author");
+    throw new Error(
+      "Active employee mapping not found for company post author",
+    );
   }
   return employeeId;
 }
 
-async function loadCompanyPostMedia(postIds: string[]): Promise<Map<string, CompanyPostMediaDTO[]>> {
+async function loadCompanyPostMedia(
+  postIds: string[],
+): Promise<Map<string, CompanyPostMediaDTO[]>> {
   if (postIds.length === 0) return new Map();
 
   const placeholders = postIds.map(() => "?").join(", ");
@@ -235,7 +268,8 @@ async function loadCompanyPostMedia(postIds: string[]): Promise<Map<string, Comp
 
   const mediaMap = new Map<string, CompanyPostMediaDTO[]>();
   for (const row of rows as CompanyPostMediaRow[]) {
-    const current = mediaMap.get(String((row as { post_id?: unknown }).post_id ?? "")) ?? [];
+    const current =
+      mediaMap.get(String((row as { post_id?: unknown }).post_id ?? "")) ?? [];
     current.push({
       id: row.id,
       file_id: row.file_id,
@@ -260,7 +294,10 @@ async function listCompanyPosts(
   executor: QueryExecutor = db,
 ): Promise<CompanyPostListResult> {
   const page = Math.max(1, paginationOpts.page ?? 1);
-  const limit = Math.min(MAX_PAGE_LIMIT, Math.max(1, paginationOpts.limit ?? DEFAULT_PAGE_LIMIT));
+  const limit = Math.min(
+    MAX_PAGE_LIMIT,
+    Math.max(1, paginationOpts.limit ?? DEFAULT_PAGE_LIMIT),
+  );
   const offset = (page - 1) * limit;
 
   const [countRows] = await executor.execute<RowDataPacket[]>(
@@ -298,11 +335,16 @@ async function listCompanyPosts(
 
   const postRows = rows as CompanyPostRow[];
   const mediaMap = await loadCompanyPostMedia(postRows.map((row) => row.id));
-  const posts = postRows.map((row) => mapCompanyPostRow(row, mediaMap.get(row.id) ?? []));
+  const posts = postRows.map((row) =>
+    mapCompanyPostRow(row, mediaMap.get(row.id) ?? []),
+  );
   return { posts, total, page, limit };
 }
 
-async function getCompanyPostById(postId: string, executor: QueryExecutor = db): Promise<CompanyPostDTO> {
+async function getCompanyPostById(
+  postId: string,
+  executor: QueryExecutor = db,
+): Promise<CompanyPostDTO> {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT id, author_user_id, author_employee_id, content_text, status,
             post_type, is_system_post, celebrated_employee_id,
@@ -366,7 +408,10 @@ async function auditCompanyPostAction(
   );
 }
 
-function assertQueuedModerationTransition(status: CompanyPostStatus, action: "approve" | "reject"): void {
+function assertQueuedModerationTransition(
+  status: CompanyPostStatus,
+  action: "approve" | "reject",
+): void {
   const verb = action === "approve" ? "approved" : "rejected";
   if (!MODERATION_QUEUE_STATUSES.has(status)) {
     throw new Error(
@@ -393,12 +438,16 @@ async function withCompanyPostTransaction<T>(
   }
 }
 
-export async function createCompanyPost(input: CreatePostInput): Promise<CompanyPostDTO> {
+export async function createCompanyPost(
+  input: CreatePostInput,
+): Promise<CompanyPostDTO> {
   await assertCanCreateCompanyPost(input.actorUserId);
 
   const authorEmployeeId = await resolveEmployeeIdForUser(input.actorUserId);
   const contentText = input.content_text?.trim() || null;
-  const media = [...(input.media ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+  const media = [...(input.media ?? [])].sort(
+    (a, b) => a.sort_order - b.sort_order,
+  );
   const moderation = evaluateCompanyPostModeration({
     contentText,
     mediaCount: media.length,
@@ -479,11 +528,18 @@ export async function getMyReactions(
 export async function listApprovedCompanyFeed(
   opts: { page?: number; limit?: number; actorUserId?: string } = {},
 ): Promise<CompanyPostListResult> {
-  const result = await listCompanyPosts(`cp.status = 'approved' AND cp.active_status = 1`, [], opts);
+  const result = await listCompanyPosts(
+    `cp.status = 'approved' AND cp.active_status = 1`,
+    [],
+    opts,
+  );
 
   if (!opts.actorUserId || result.posts.length === 0) return result;
 
-  const reactionMap = await getMyReactions(opts.actorUserId, result.posts.map((p) => p.id));
+  const reactionMap = await getMyReactions(
+    opts.actorUserId,
+    result.posts.map((p) => p.id),
+  );
   return {
     ...result,
     posts: result.posts.map((p) => ({
@@ -493,7 +549,9 @@ export async function listApprovedCompanyFeed(
   };
 }
 
-export async function listMyCompanyPosts(input: ListMyCompanyPostsInput): Promise<CompanyPostListResult> {
+export async function listMyCompanyPosts(
+  input: ListMyCompanyPostsInput,
+): Promise<CompanyPostListResult> {
   await assertCanCreateCompanyPost(input.actorUserId);
   return listCompanyPosts(
     `cp.author_user_id = ? AND cp.active_status = 1 AND cp.status <> 'deleted'`,
@@ -549,7 +607,9 @@ export async function approveCompanyPost(
     );
 
     if (approveResult.affectedRows === 0) {
-      throw new Error("Company post approval failed because the queued state changed");
+      throw new Error(
+        "Company post approval failed because the queued state changed",
+      );
     }
 
     await auditCompanyPostAction(connection, {
@@ -597,7 +657,9 @@ export async function rejectCompanyPost(
     );
 
     if (rejectResult.affectedRows === 0) {
-      throw new Error("Company post rejection failed because the queued state changed");
+      throw new Error(
+        "Company post rejection failed because the queued state changed",
+      );
     }
 
     await auditCompanyPostAction(connection, {
@@ -618,7 +680,9 @@ export async function rejectCompanyPost(
   return getCompanyPostById(input.post_id);
 }
 
-export async function deleteCompanyPost(input: DeleteCompanyPostInput): Promise<void> {
+export async function deleteCompanyPost(
+  input: DeleteCompanyPostInput,
+): Promise<void> {
   await assertCanModerateCompanyPosts(input.actorUserId);
 
   await withCompanyPostTransaction(async (connection) => {
@@ -638,7 +702,9 @@ export async function deleteCompanyPost(input: DeleteCompanyPostInput): Promise<
     );
 
     if (deleteResult.affectedRows === 0) {
-      throw new Error("Company post deletion failed because the record changed");
+      throw new Error(
+        "Company post deletion failed because the record changed",
+      );
     }
 
     await auditCompanyPostAction(connection, {
@@ -656,7 +722,9 @@ export async function deleteCompanyPost(input: DeleteCompanyPostInput): Promise<
   });
 }
 
-export async function listCompanyPostCreators(input: { actorUserId: string }): Promise<CompanyPostCreatorAccessRowDTO[]> {
+export async function listCompanyPostCreators(input: {
+  actorUserId: string;
+}): Promise<CompanyPostCreatorAccessRowDTO[]> {
   await assertCanManageCreators(input.actorUserId);
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -673,7 +741,9 @@ export async function listCompanyPostCreators(input: { actorUserId: string }): P
   return rows as CompanyPostCreatorAccessRowDTO[];
 }
 
-export async function grantCompanyPostCreator(input: GrantInput): Promise<CompanyPostCreatorAccessRowDTO> {
+export async function grantCompanyPostCreator(
+  input: GrantInput,
+): Promise<CompanyPostCreatorAccessRowDTO> {
   await assertCanManageCreators(input.actorUserId);
 
   const employeeId = inputEmployeeId(input);
@@ -691,7 +761,8 @@ export async function grantCompanyPostCreator(input: GrantInput): Promise<Compan
     resolvedUserId = String(employeeRows[0]?.user_id ?? "");
   }
 
-  if (!resolvedUserId) throw new Error("Active employee user mapping not found");
+  if (!resolvedUserId)
+    throw new Error("Active employee user mapping not found");
 
   const [existingRows] = await db.execute<RowDataPacket[]>(
     `SELECT id
@@ -742,7 +813,9 @@ export async function grantCompanyPostCreator(input: GrantInput): Promise<Compan
   return rows[0] as CompanyPostCreatorAccessRowDTO;
 }
 
-export async function revokeCompanyPostCreator(input: RevokeInput): Promise<CompanyPostCreatorAccessRowDTO> {
+export async function revokeCompanyPostCreator(
+  input: RevokeInput,
+): Promise<CompanyPostCreatorAccessRowDTO> {
   await assertCanManageCreators(input.actorUserId);
   const employeeId = inputEmployeeId(input);
 
@@ -790,7 +863,8 @@ export async function reactToPost(input: {
     `SELECT id, reaction FROM company_post_likes WHERE post_id = ? AND user_id = ? LIMIT 1`,
     [input.postId, input.actorUserId],
   );
-  const existing = existingRows[0] as { id?: string; reaction?: string } | undefined;
+  const existing = existingRows[0] as
+    { id?: string; reaction?: string } | undefined;
 
   if (existing?.reaction === input.reaction) {
     // Same reaction — toggle off
@@ -816,7 +890,8 @@ export async function reactToPost(input: {
         [input.reaction, input.postId, input.actorUserId],
       );
       const addCol = input.reaction === "like" ? "like_count" : "dislike_count";
-      const subCol = existing.reaction === "like" ? "like_count" : "dislike_count";
+      const subCol =
+        existing.reaction === "like" ? "like_count" : "dislike_count";
       await conn.execute(
         `UPDATE company_posts SET ${addCol} = ${addCol} + 1, ${subCol} = GREATEST(0, ${subCol} - 1) WHERE id = ?`,
         [input.postId],
@@ -856,21 +931,35 @@ export async function createComment(input: {
   body: string;
 }): Promise<CommentDTO> {
   const body = input.body.trim();
-  if (!body) throw Object.assign(new Error("Comment body cannot be empty"), { statusCode: 400 });
-  if (body.length > 1000) throw Object.assign(new Error("Comment must be 1000 characters or fewer"), { statusCode: 400 });
+  if (!body)
+    throw Object.assign(new Error("Comment body cannot be empty"), {
+      statusCode: 400,
+    });
+  if (body.length > 1000)
+    throw Object.assign(new Error("Comment must be 1000 characters or fewer"), {
+      statusCode: 400,
+    });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT full_name, employee_code FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
     [input.actorUserId],
   );
-  const emp = empRows[0] as { full_name?: string; employee_code?: string } | undefined;
+  const emp = empRows[0] as
+    { full_name?: string; employee_code?: string } | undefined;
 
   const commentId = randomUUID();
   await withCompanyPostTransaction(async (conn) => {
     await conn.execute(
       `INSERT INTO company_post_comments (id, post_id, user_id, author_name, author_code, body)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [commentId, input.postId, input.actorUserId, emp?.full_name ?? null, emp?.employee_code ?? null, body],
+      [
+        commentId,
+        input.postId,
+        input.actorUserId,
+        emp?.full_name ?? null,
+        emp?.employee_code ?? null,
+        body,
+      ],
     );
     await conn.execute(
       `UPDATE company_posts SET comment_count = comment_count + 1 WHERE id = ?`,
@@ -894,8 +983,10 @@ export async function deleteComment(input: {
     `SELECT id, post_id, user_id FROM company_post_comments WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
     [input.commentId],
   );
-  const row = rows[0] as { id?: string; post_id?: string; user_id?: string } | undefined;
-  if (!row) throw Object.assign(new Error("Comment not found"), { statusCode: 404 });
+  const row = rows[0] as
+    { id?: string; post_id?: string; user_id?: string } | undefined;
+  if (!row)
+    throw Object.assign(new Error("Comment not found"), { statusCode: 404 });
 
   const isModerator = await userHasRole(input.actorUserId, MODERATION_ROLES);
   if (row.user_id !== input.actorUserId && !isModerator) {
@@ -929,7 +1020,10 @@ export async function listTodayCelebrations(
 
   if (!actorUserId || result.posts.length === 0) return result;
 
-  const reactionMap = await getMyReactions(actorUserId, result.posts.map((p) => p.id));
+  const reactionMap = await getMyReactions(
+    actorUserId,
+    result.posts.map((p) => p.id),
+  );
   return {
     ...result,
     posts: result.posts.map((p) => ({

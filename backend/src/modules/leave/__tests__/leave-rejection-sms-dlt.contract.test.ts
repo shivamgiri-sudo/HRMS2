@@ -24,17 +24,26 @@ import { describe, expect, it } from "vitest";
 
 import { SMARTPING_DLT_REGISTRY } from "../../communication/smartping-dlt-registry.js";
 
-const source = readFileSync(resolve(process.cwd(), "src/modules/leave/leave.service.ts"), "utf8");
+const source = readFileSync(
+  resolve(process.cwd(), "src/modules/leave/leave.service.ts"),
+  "utf8",
+);
 // The fix's own explanatory comment mentions the old sendSMS(phone, 'request_rejected', ...)
 // call by name (that's the point — it documents what NOT to do and why) — strip // comment
 // lines before regex-checking for real code, or that documentation trips the very check it's
 // explaining.
-const codeOnly = source.split("\n").filter(line => !line.trim().startsWith("//")).join("\n");
+const codeOnly = source
+  .split("\n")
+  .filter((line) => !line.trim().startsWith("//"))
+  .join("\n");
 
 describe("leave rejection no longer attempts an unregistered DLT template", () => {
   it("'request_rejected' is not a registered template — documents why the old code always failed", () => {
     expect(
-      Object.prototype.hasOwnProperty.call(SMARTPING_DLT_REGISTRY, "request_rejected"),
+      Object.prototype.hasOwnProperty.call(
+        SMARTPING_DLT_REGISTRY,
+        "request_rejected",
+      ),
       "if this ever becomes true, leave.service.ts should be updated to use it instead of skipping",
     ).toBe(false);
   });
@@ -48,13 +57,22 @@ describe("leave rejection no longer attempts an unregistered DLT template", () =
     expect(approvedTpl.registeredText.toLowerCase()).toContain("approved");
     // If leave.service.ts's rejection branch ever calls sendSMS at all, it must not be with
     // request_approved's key — that would send a factually wrong message.
-    const rejectionBranch = source.slice(source.indexOf("input.status === 'rejected'"));
-    const nextFewLines = rejectionBranch.slice(0, rejectionBranch.indexOf("}") + 1);
-    expect(/sendSMS\([^)]*['"]request_approved['"]/.test(nextFewLines)).toBe(false);
+    const rejectionBranch = source.slice(
+      source.indexOf("input.status === 'rejected'"),
+    );
+    const nextFewLines = rejectionBranch.slice(
+      0,
+      rejectionBranch.indexOf("}") + 1,
+    );
+    expect(/sendSMS\([^)]*['"]request_approved['"]/.test(nextFewLines)).toBe(
+      false,
+    );
   });
 
   it("approval SMS is untouched — still uses the real registered leave_approved template", () => {
-    expect(/sendSMS\(\s*phone\s*,\s*['"]leave_approved['"]/.test(source)).toBe(true);
+    expect(/sendSMS\(\s*phone\s*,\s*['"]leave_approved['"]/.test(source)).toBe(
+      true,
+    );
     const approvedTpl = SMARTPING_DLT_REGISTRY.leave_approved;
     expect(approvedTpl.dltContentId).toMatch(/^\d{12,25}$/);
   });

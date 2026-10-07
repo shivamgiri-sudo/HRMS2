@@ -73,7 +73,13 @@ describe("a re-grade cannot repay a half day as a full day", () => {
 
   it("never lands on leave_approved for a half day", () => {
     // leave_approved is the exact value the old engine wrote, and it pays a FULL day.
-    for (const graded of ["absent", "missing_punch", "unreconciled", "half_day", "present"]) {
+    for (const graded of [
+      "absent",
+      "missing_punch",
+      "unreconciled",
+      "half_day",
+      "present",
+    ]) {
       expect(regrade(graded).status).not.toBe("leave_approved");
     }
   });
@@ -94,7 +100,10 @@ describe("a re-grade cannot repay a half day as a full day", () => {
 });
 
 describe("lwp_value always matches the status it ships with", () => {
-  it.each([["half_day", 0.5], ["present", 0]])("%s carries lwp %d", (status, lwp) => {
+  it.each([
+    ["half_day", 0.5],
+    ["present", 0],
+  ])("%s carries lwp %d", (status, lwp) => {
     expect(halfDayLwpValue(status)).toBe(lwp);
   });
 

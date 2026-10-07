@@ -23,7 +23,9 @@ const [rows]: any = await db.query(
     WHERE run_id = ? AND manual_override_locked = 0
       AND (arrears_note LIKE '%force-match-dbbill%' OR arrears_note LIKE '%owner-directed%'
            OR arrears_note LIKE '%Healed by heal-dbbill-alignment%'
-           OR arrears_note LIKE '%July 2026 arrears%')`, [RUN]);
+           OR arrears_note LIKE '%July 2026 arrears%')`,
+  [RUN],
+);
 
 console.log(`${APPLY ? "APPLY" : "DRY RUN"}`);
 console.log(`Rows to lock: ${rows.length}`);
@@ -39,6 +41,8 @@ const [res]: any = await db.query(
     WHERE run_id = ? AND manual_override_locked = 0
       AND (arrears_note LIKE '%force-match-dbbill%' OR arrears_note LIKE '%owner-directed%'
            OR arrears_note LIKE '%Healed by heal-dbbill-alignment%'
-           OR arrears_note LIKE '%July 2026 arrears%')`, [ACTOR, RUN]);
+           OR arrears_note LIKE '%July 2026 arrears%')`,
+  [ACTOR, RUN],
+);
 console.log(`Locked ${res.affectedRows} rows.`);
 process.exit(0);

@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseFlag, parsePct, parseDate, COMPLIANCE_AUDIT_HEADERS,
+  parseFlag,
+  parsePct,
+  parseDate,
+  COMPLIANCE_AUDIT_HEADERS,
 } from "../compliance-audit-bulk.service.js";
 
 /**
@@ -69,7 +72,9 @@ describe("headers", () => {
   it("carries all 29 columns the Form emits, in its order", () => {
     expect(COMPLIANCE_AUDIT_HEADERS).toHaveLength(29);
     expect(COMPLIANCE_AUDIT_HEADERS[0]).toBe("Audit Date");
-    expect(COMPLIANCE_AUDIT_HEADERS).toContain("Pen, Paper Access on the floor");
+    expect(COMPLIANCE_AUDIT_HEADERS).toContain(
+      "Pen, Paper Access on the floor",
+    );
     expect(COMPLIANCE_AUDIT_HEADERS[28]).toBe("Additional Remarks");
   });
 });

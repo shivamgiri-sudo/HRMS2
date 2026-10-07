@@ -53,7 +53,10 @@ export function encrypt(plaintext: string): string {
   const [primaryKey] = encryptionKeys();
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, primaryKey, iv);
-  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const encrypted = Buffer.concat([
+    cipher.update(plaintext, "utf8"),
+    cipher.final(),
+  ]);
   return iv.toString("hex") + ":" + encrypted.toString("hex");
 }
 
@@ -67,7 +70,10 @@ export function decrypt(ciphertext: string): string {
   for (const key of encryptionKeys()) {
     try {
       const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-      return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+      return Buffer.concat([
+        decipher.update(encrypted),
+        decipher.final(),
+      ]).toString("utf8");
     } catch (error) {
       // A wrong key fails the PKCS#7 padding check. Try the next one before
       // giving up — that is the entire point of keeping legacy keys.

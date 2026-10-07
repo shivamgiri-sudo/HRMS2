@@ -24,7 +24,10 @@ export class PerformanceFeedbackService {
   /**
    * Create new feedback cycle
    */
-  async createCycle(data: CreateCycleDto, createdBy: string): Promise<PerformanceFeedbackCycle> {
+  async createCycle(
+    data: CreateCycleDto,
+    createdBy: string,
+  ): Promise<PerformanceFeedbackCycle> {
     const query = `
       INSERT INTO performance_feedback_cycle
       (cycle_name, period, start_date, end_date, deadline, appraisal_cycle_id, created_by)
@@ -43,7 +46,7 @@ export class PerformanceFeedbackService {
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM performance_feedback_cycle WHERE cycle_id = ?",
-      [result.insertId]
+      [result.insertId],
     );
 
     return rows[0] as PerformanceFeedbackCycle;
@@ -52,7 +55,10 @@ export class PerformanceFeedbackService {
   /**
    * Get all cycles with optional filters
    */
-  async getCycles(filters: { status?: string; period?: string }): Promise<PerformanceFeedbackCycle[]> {
+  async getCycles(filters: {
+    status?: string;
+    period?: string;
+  }): Promise<PerformanceFeedbackCycle[]> {
     let query = "SELECT * FROM performance_feedback_cycle WHERE 1=1";
     const params: any[] = [];
 
@@ -75,10 +81,12 @@ export class PerformanceFeedbackService {
   /**
    * Get single cycle by ID
    */
-  async getCycleById(cycleId: string): Promise<PerformanceFeedbackCycle | null> {
+  async getCycleById(
+    cycleId: string,
+  ): Promise<PerformanceFeedbackCycle | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM performance_feedback_cycle WHERE cycle_id = ?",
-      [cycleId]
+      [cycleId],
     );
 
     return rows.length > 0 ? (rows[0] as PerformanceFeedbackCycle) : null;
@@ -87,7 +95,10 @@ export class PerformanceFeedbackService {
   /**
    * Update cycle
    */
-  async updateCycle(cycleId: string, updates: Partial<CreateCycleDto>): Promise<void> {
+  async updateCycle(
+    cycleId: string,
+    updates: Partial<CreateCycleDto>,
+  ): Promise<void> {
     const fields: string[] = [];
     const values: any[] = [];
 
@@ -117,7 +128,7 @@ export class PerformanceFeedbackService {
     values.push(cycleId);
     await db.execute(
       `UPDATE performance_feedback_cycle SET ${fields.join(", ")} WHERE cycle_id = ?`,
-      values
+      values,
     );
   }
 
@@ -127,7 +138,7 @@ export class PerformanceFeedbackService {
   async closeCycle(cycleId: string): Promise<void> {
     await db.execute(
       "UPDATE performance_feedback_cycle SET status = 'closed' WHERE cycle_id = ?",
-      [cycleId]
+      [cycleId],
     );
   }
 
@@ -136,7 +147,7 @@ export class PerformanceFeedbackService {
    */
   async launchCycle(
     cycleId: string,
-    data: LaunchCycleDto
+    data: LaunchCycleDto,
   ): Promise<{ created: number; skipped: number; total: number }> {
     let created = 0;
     let skipped = 0;
@@ -145,7 +156,7 @@ export class PerformanceFeedbackService {
       // Get employee's manager from reporting_to
       const [empRows] = await db.execute<RowDataPacket[]>(
         "SELECT emp_id, reporting_to FROM employees WHERE emp_id = ?",
-        [empId]
+        [empId],
       );
 
       if (empRows.length === 0 || !empRows[0].reporting_to) {
@@ -164,7 +175,7 @@ export class PerformanceFeedbackService {
       // Check if request already exists
       const [existingRows] = await db.execute<RowDataPacket[]>(
         "SELECT request_id FROM performance_feedback_request WHERE cycle_id = ? AND employee_id = ?",
-        [cycleId, empId]
+        [cycleId, empId],
       );
 
       if (existingRows.length > 0) {
@@ -177,7 +188,7 @@ export class PerformanceFeedbackService {
         `INSERT INTO performance_feedback_request
         (request_id, cycle_id, employee_id, reviewer_id, reviewer_type, status)
         VALUES (?, ?, ?, ?, 'manager', 'pending')`,
-        [randomUUID(), cycleId, empId, reviewerId]
+        [randomUUID(), cycleId, empId, reviewerId],
       );
 
       created++;
@@ -186,7 +197,7 @@ export class PerformanceFeedbackService {
     // Update cycle status to active
     await db.execute(
       "UPDATE performance_feedback_cycle SET status = 'active' WHERE cycle_id = ?",
-      [cycleId]
+      [cycleId],
     );
 
     return {
@@ -243,10 +254,12 @@ export class PerformanceFeedbackService {
   /**
    * Get single request by ID
    */
-  async getRequestById(requestId: string): Promise<PerformanceFeedbackRequest | null> {
+  async getRequestById(
+    requestId: string,
+  ): Promise<PerformanceFeedbackRequest | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM performance_feedback_request WHERE request_id = ?",
-      [requestId]
+      [requestId],
     );
 
     return rows.length > 0 ? (rows[0] as PerformanceFeedbackRequest) : null;
@@ -258,7 +271,7 @@ export class PerformanceFeedbackService {
   async deleteRequest(requestId: string): Promise<void> {
     await db.execute(
       "DELETE FROM performance_feedback_request WHERE request_id = ?",
-      [requestId]
+      [requestId],
     );
   }
 
@@ -311,7 +324,7 @@ export class PerformanceFeedbackService {
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM competency_master WHERE competency_id = ?",
-      [result.insertId]
+      [result.insertId],
     );
 
     return rows[0] as CompetencyMaster;
@@ -327,7 +340,7 @@ export class PerformanceFeedbackService {
       description?: string;
       category?: string;
       display_order?: number;
-    }
+    },
   ): Promise<void> {
     const fields: string[] = [];
     const values: any[] = [];
@@ -354,7 +367,7 @@ export class PerformanceFeedbackService {
     values.push(competencyId);
     await db.execute(
       `UPDATE competency_master SET ${fields.join(", ")} WHERE competency_id = ?`,
-      values
+      values,
     );
   }
 
@@ -364,7 +377,7 @@ export class PerformanceFeedbackService {
   async deactivateCompetency(competencyId: string): Promise<void> {
     await db.execute(
       "UPDATE competency_master SET is_active = 0 WHERE competency_id = ?",
-      [competencyId]
+      [competencyId],
     );
   }
 
@@ -381,7 +394,7 @@ export class PerformanceFeedbackService {
     // Get employee info
     const [empRows] = await db.execute<RowDataPacket[]>(
       "SELECT emp_id, full_name, designation FROM employees WHERE emp_id = ?",
-      [request.employee_id]
+      [request.employee_id],
     );
 
     if (empRows.length === 0) {
@@ -399,7 +412,7 @@ export class PerformanceFeedbackService {
        FROM kpi k
        WHERE k.employee_id = ?
          AND k.is_active = 1`,
-      [request.employee_id]
+      [request.employee_id],
     );
 
     return {
@@ -418,7 +431,7 @@ export class PerformanceFeedbackService {
    */
   async submitFeedback(
     data: SubmitFeedbackDto,
-    managerId: string
+    managerId: string,
   ): Promise<{ request_id: string; competencies_recorded: number }> {
     // Verify request exists and manager is authorized
     const request = await this.getRequestById(data.request_id);
@@ -438,10 +451,13 @@ export class PerformanceFeedbackService {
     const kpis = data.ratings_json?.kpis ?? [];
 
     if (competencies.length === 0) {
-      throw Object.assign(new Error("At least one competency rating is required."), {
-        statusCode: 400,
-        code: "NO_COMPETENCY_RATINGS",
-      });
+      throw Object.assign(
+        new Error("At least one competency rating is required."),
+        {
+          statusCode: 400,
+          code: "NO_COMPETENCY_RATINGS",
+        },
+      );
     }
 
     if (kpis.length > 0) {
@@ -450,20 +466,25 @@ export class PerformanceFeedbackService {
       throw Object.assign(
         new Error(
           "KPI ratings cannot be recorded here: the performance feedback schema " +
-            "stores competency ratings only. KPI scoring belongs to the KPI module."
+            "stores competency ratings only. KPI scoring belongs to the KPI module.",
         ),
-        { statusCode: 400, code: "KPI_RATINGS_UNSUPPORTED" }
+        { statusCode: 400, code: "KPI_RATINGS_UNSUPPORTED" },
       );
     }
 
     for (const c of competencies) {
       const rating = Number(c.rating);
-      if (!c.competency_id || !Number.isFinite(rating) || rating < 1 || rating > 5) {
+      if (
+        !c.competency_id ||
+        !Number.isFinite(rating) ||
+        rating < 1 ||
+        rating > 5
+      ) {
         throw Object.assign(
           new Error(
-            `Competency ${c.competency_id ?? "(missing id)"} needs a rating between 1 and 5.`
+            `Competency ${c.competency_id ?? "(missing id)"} needs a rating between 1 and 5.`,
           ),
-          { statusCode: 400, code: "INVALID_COMPETENCY_RATING" }
+          { statusCode: 400, code: "INVALID_COMPETENCY_RATING" },
         );
       }
 
@@ -475,7 +496,13 @@ export class PerformanceFeedbackService {
          VALUES (?, ?, ?, ?, ?, NOW())
          ON DUPLICATE KEY UPDATE
            rating = VALUES(rating), comments = VALUES(comments), submitted_at = NOW()`,
-        [randomUUID(), data.request_id, c.competency_id, Math.round(rating), c.comment ?? null]
+        [
+          randomUUID(),
+          data.request_id,
+          c.competency_id,
+          Math.round(rating),
+          c.comment ?? null,
+        ],
       );
     }
 
@@ -487,17 +514,25 @@ export class PerformanceFeedbackService {
       `UPDATE performance_feedback_request
           SET status = 'completed', completed_at = NOW(), overall_comments = ?
         WHERE request_id = ?`,
-      [data.development_areas || data.overall_strengths || null, data.request_id]
+      [
+        data.development_areas || data.overall_strengths || null,
+        data.request_id,
+      ],
     );
 
-    return { request_id: data.request_id, competencies_recorded: competencies.length };
+    return {
+      request_id: data.request_id,
+      competencies_recorded: competencies.length,
+    };
   }
 
   /**
    * Generate performance feedback report
    * Aggregates scores, creates training needs for low scores (< 3.0)
    */
-  async generateReport(requestId: string): Promise<{ report_id: string; training_need_ids: string[] }> {
+  async generateReport(
+    requestId: string,
+  ): Promise<{ report_id: string; training_need_ids: string[] }> {
     // Get request
     const request = await this.getRequestById(requestId);
     if (!request) {
@@ -515,7 +550,7 @@ export class PerformanceFeedbackService {
          JOIN performance_feedback_request req ON req.request_id = resp.request_id
          LEFT JOIN competency_master cm ON cm.competency_id = resp.competency_id
         WHERE req.cycle_id = ? AND req.employee_id = ?`,
-      [request.cycle_id, request.employee_id]
+      [request.cycle_id, request.employee_id],
     );
 
     if (ratingRows.length === 0) {
@@ -523,7 +558,10 @@ export class PerformanceFeedbackService {
     }
 
     // Mean per competency across reviewers
-    const perCompetency = new Map<number, { name: string; total: number; count: number }>();
+    const perCompetency = new Map<
+      number,
+      { name: string; total: number; count: number }
+    >();
     for (const row of ratingRows) {
       const key = Number(row.competency_id);
       const entry = perCompetency.get(key) ?? {
@@ -536,11 +574,13 @@ export class PerformanceFeedbackService {
       perCompetency.set(key, entry);
     }
 
-    const competencyScores = [...perCompetency.entries()].map(([competencyId, v]) => ({
-      competency_id: competencyId,
-      competency_name: v.name,
-      score: v.total / v.count,
-    }));
+    const competencyScores = [...perCompetency.entries()].map(
+      ([competencyId, v]) => ({
+        competency_id: competencyId,
+        competency_name: v.name,
+        score: v.total / v.count,
+      }),
+    );
 
     const allRatings = ratingRows.map((r) => Number(r.rating));
     const overallScore =
@@ -555,7 +595,7 @@ export class PerformanceFeedbackService {
         ...new Set(
           ratingRows
             .filter((r) => r.reviewer_type === "manager" && r.overall_comments)
-            .map((r) => String(r.overall_comments))
+            .map((r) => String(r.overall_comments)),
         ),
       ].join("\n\n") || null;
 
@@ -574,7 +614,7 @@ export class PerformanceFeedbackService {
     // Check if report already exists for this cycle and employee
     const [existingReport] = await db.execute<RowDataPacket[]>(
       "SELECT report_id FROM performance_feedback_report WHERE cycle_id = ? AND employee_id = ?",
-      [request.cycle_id, request.employee_id]
+      [request.cycle_id, request.employee_id],
     );
 
     let reportId: string;
@@ -593,7 +633,7 @@ export class PerformanceFeedbackService {
           developmentAreas || null,
           managerFeedback,
           reportId,
-        ]
+        ],
       );
     } else {
       // Create new report
@@ -612,7 +652,7 @@ export class PerformanceFeedbackService {
           developmentAreas || null,
           managerFeedback,
           totalReviewers,
-        ]
+        ],
       );
     }
 
@@ -624,10 +664,13 @@ export class PerformanceFeedbackService {
         // Get competency details for better description
         const [compRows] = await db.execute<RowDataPacket[]>(
           "SELECT competency_name, category FROM competency_master WHERE competency_id = ?",
-          [compScore.competency_id]
+          [compScore.competency_id],
         );
 
-        const competencyName = compRows.length > 0 ? compRows[0].competency_name : compScore.competency_name;
+        const competencyName =
+          compRows.length > 0
+            ? compRows[0].competency_name
+            : compScore.competency_name;
         const description = `Low score on ${competencyName} (${compScore.score.toFixed(1)}/5) from performance feedback${
           managerFeedback ? `. Reviewer notes: ${managerFeedback}` : ""
         }`;
@@ -645,7 +688,7 @@ export class PerformanceFeedbackService {
             description,
             compScore.score < 2.0 ? "high" : "medium",
             request.reviewer_id || null,
-          ]
+          ],
         );
 
         trainingNeedIds.push(trainingNeedId);
@@ -749,7 +792,10 @@ export class PerformanceFeedbackService {
   /**
    * Create development plan with goals in transaction
    */
-  async createDevelopmentPlan(data: CreateDevelopmentPlanDto, createdBy: string): Promise<DevelopmentPlan> {
+  async createDevelopmentPlan(
+    data: CreateDevelopmentPlanDto,
+    createdBy: string,
+  ): Promise<DevelopmentPlan> {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
@@ -759,16 +805,16 @@ export class PerformanceFeedbackService {
       // plan_start_date/plan_end_date range, all NOT NULL.
       const [reportRows] = await connection.execute<RowDataPacket[]>(
         "SELECT report_id FROM performance_feedback_report WHERE cycle_id = ? AND employee_id = ?",
-        [data.cycle_id, data.employee_id]
+        [data.cycle_id, data.employee_id],
       );
 
       if (reportRows.length === 0) {
         throw Object.assign(
           new Error(
             "No feedback report exists for this employee and cycle. Generate the " +
-              "report before creating a development plan against it."
+              "report before creating a development plan against it.",
           ),
-          { statusCode: 409, code: "REPORT_NOT_GENERATED" }
+          { statusCode: 409, code: "REPORT_NOT_GENERATED" },
         );
       }
 
@@ -778,22 +824,25 @@ export class PerformanceFeedbackService {
       // a real employee rather than whatever the caller's auth id happens to be.
       const [managerRows] = await connection.execute<RowDataPacket[]>(
         "SELECT id FROM employees WHERE id = ? LIMIT 1",
-        [createdBy]
+        [createdBy],
       );
 
       let managerId: string | null = managerRows.length > 0 ? createdBy : null;
       if (!managerId) {
         const [reportsTo] = await connection.execute<RowDataPacket[]>(
           "SELECT reporting_to FROM employees WHERE id = ? LIMIT 1",
-          [data.employee_id]
+          [data.employee_id],
         );
-        managerId = reportsTo.length > 0 ? (reportsTo[0].reporting_to as string) : null;
+        managerId =
+          reportsTo.length > 0 ? (reportsTo[0].reporting_to as string) : null;
       }
 
       if (!managerId) {
         throw Object.assign(
-          new Error("A development plan needs an owning manager, and none could be resolved."),
-          { statusCode: 400, code: "PLAN_MANAGER_UNRESOLVED" }
+          new Error(
+            "A development plan needs an owning manager, and none could be resolved.",
+          ),
+          { statusCode: 400, code: "PLAN_MANAGER_UNRESOLVED" },
         );
       }
 
@@ -802,12 +851,15 @@ export class PerformanceFeedbackService {
         .map((g) => g.target_date)
         .filter((d): d is string => Boolean(d))
         .sort();
-      const planEndDate = targetDates[targetDates.length - 1] || data.target_date || null;
+      const planEndDate =
+        targetDates[targetDates.length - 1] || data.target_date || null;
 
       if (!planEndDate) {
         throw Object.assign(
-          new Error("A development plan needs an end date: give at least one goal a target date."),
-          { statusCode: 400, code: "PLAN_END_DATE_REQUIRED" }
+          new Error(
+            "A development plan needs an end date: give at least one goal a target date.",
+          ),
+          { statusCode: 400, code: "PLAN_END_DATE_REQUIRED" },
         );
       }
 
@@ -818,7 +870,7 @@ export class PerformanceFeedbackService {
         `INSERT INTO development_plan
          (plan_id, report_id, employee_id, manager_id, plan_start_date, plan_end_date, status)
          VALUES (?, ?, ?, ?, CURDATE(), ?, 'draft')`,
-        [planId, reportId, data.employee_id, managerId, planEndDate]
+        [planId, reportId, data.employee_id, managerId, planEndDate],
       );
 
       // Insert goals if provided
@@ -828,7 +880,7 @@ export class PerformanceFeedbackService {
             `INSERT INTO development_plan_goal
              (goal_id, plan_id, goal_description, target_date, status)
              VALUES (?, ?, ?, ?, 'not-started')`,
-            [randomUUID(), planId, goal.description, goal.target_date || null]
+            [randomUUID(), planId, goal.description, goal.target_date || null],
           );
         }
       }
@@ -838,7 +890,7 @@ export class PerformanceFeedbackService {
       // Fetch created plan
       const [planRows] = await db.execute<RowDataPacket[]>(
         "SELECT * FROM development_plan WHERE plan_id = ?",
-        [planId]
+        [planId],
       );
 
       return planRows[0] as DevelopmentPlan;
@@ -884,7 +936,7 @@ export class PerformanceFeedbackService {
     updates: {
       target_date?: string;
       status?: string;
-    }
+    },
   ): Promise<void> {
     const fields: string[] = [];
     const values: any[] = [];
@@ -904,7 +956,7 @@ export class PerformanceFeedbackService {
     values.push(planId);
     await db.execute(
       `UPDATE development_plan SET ${fields.join(", ")} WHERE plan_id = ?`,
-      values
+      values,
     );
   }
 
@@ -918,7 +970,7 @@ export class PerformanceFeedbackService {
       target_date?: string;
       status?: string;
       actual_date?: string;
-    }
+    },
   ): Promise<void> {
     const fields: string[] = [];
     const values: any[] = [];
@@ -948,7 +1000,7 @@ export class PerformanceFeedbackService {
     values.push(goalId);
     await db.execute(
       `UPDATE development_plan_goal SET ${fields.join(", ")} WHERE goal_id = ?`,
-      values
+      values,
     );
   }
 }

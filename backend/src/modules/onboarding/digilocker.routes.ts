@@ -26,13 +26,21 @@
  * Do not reintroduce DigiLockerService here. If this surface is ever retired
  * properly, unmount it in app.ts and delete digilocker.service.ts with it.
  */
-import { Router, type Request, type Response, type NextFunction } from "express";
+import {
+  Router,
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { syncDigilockerStatus } from "../integrations/luckpay/luckpay-status.service.js";
 
 const router = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: Request, res: Response, next: NextFunction) =>
+    fn(req, res).catch(next);
 
 /** The live endpoint, named in every response that turns a caller away. */
 const LIVE_START_ENDPOINT = "/api/ats/bgv/digilocker/start";
@@ -78,16 +86,19 @@ async function candidateIdForState(state: string): Promise<string | null> {
  * could see. Failing here is worse for the caller and far better for the
  * candidate.
  */
-router.post("/initiate", h(async (_req: any, res: Response) => {
-  return res.status(410).json({
-    success: false,
-    error:
-      "This DigiLocker endpoint is retired. It recorded sessions in a table the " +
-      "verification flow does not read, so documents fetched through it were never " +
-      `visible. Use ${LIVE_START_ENDPOINT} instead.`,
-    useInstead: LIVE_START_ENDPOINT,
-  });
-}));
+router.post(
+  "/initiate",
+  h(async (_req: any, res: Response) => {
+    return res.status(410).json({
+      success: false,
+      error:
+        "This DigiLocker endpoint is retired. It recorded sessions in a table the " +
+        "verification flow does not read, so documents fetched through it were never " +
+        `visible. Use ${LIVE_START_ENDPOINT} instead.`,
+      useInstead: LIVE_START_ENDPOINT,
+    });
+  }),
+);
 
 /**
  * GET /api/onboarding/digilocker/status?token=...
@@ -95,24 +106,31 @@ router.post("/initiate", h(async (_req: any, res: Response) => {
  * Reads the table the live flow writes, so it can no longer report "no session"
  * to a candidate who has in fact already connected.
  */
-router.get("/status", h(async (req: any, res: Response) => {
-  const token = String(req.query.token ?? "");
-  if (!token) return res.status(400).json({ success: false, error: "token required" });
+router.get(
+  "/status",
+  h(async (req: any, res: Response) => {
+    const token = String(req.query.token ?? "");
+    if (!token)
+      return res.status(400).json({ success: false, error: "token required" });
 
-  const candidateId = await candidateIdForToken(token);
-  if (!candidateId) return res.status(401).json({ success: false, error: "Invalid onboarding token" });
+    const candidateId = await candidateIdForToken(token);
+    if (!candidateId)
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid onboarding token" });
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id AS sessionId, session_status AS status, auth_url AS authUrl,
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id AS sessionId, session_status AS status, auth_url AS authUrl,
             requested_documents_json AS requestedDocuments,
             created_at AS createdAt, expires_at AS expiresAt
        FROM candidate_digilocker_session
       WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
-    [candidateId],
-  );
+      [candidateId],
+    );
 
-  return res.json({ success: true, data: rows[0] ?? null });
-}));
+    return res.json({ success: true, data: rows[0] ?? null });
+  }),
+);
 
 /**
  * POST /api/onboarding/digilocker/callback
@@ -125,45 +143,68 @@ router.get("/status", h(async (req: any, res: Response) => {
  * the next scheduled one. `documents` is accepted and ignored for
  * compatibility with the previous contract.
  */
-router.post("/callback", h(async (req: any, res: Response) => {
-  const state = String(req.body?.state ?? "");
-  if (!state) return res.status(400).json({ success: false, error: "state required" });
+router.post(
+  "/callback",
+  h(async (req: any, res: Response) => {
+    const state = String(req.body?.state ?? "");
+    if (!state)
+      return res.status(400).json({ success: false, error: "state required" });
 
-  const candidateId = await candidateIdForState(state);
-  if (!candidateId) {
-    return res.status(404).json({ success: false, error: "No DigiLocker session matches that state" });
-  }
+    const candidateId = await candidateIdForState(state);
+    if (!candidateId) {
+      return res
+        .status(404)
+        .json({
+          success: false,
+          error: "No DigiLocker session matches that state",
+        });
+    }
 
-  try {
-    const outcome = await syncDigilockerStatus(candidateId);
-    return res.json({
-      success: true,
-      message: "DigiLocker status reconciled with the provider",
-      data: { state: outcome.state, changed: outcome.changed ?? false },
-    });
-  } catch (error) {
-    // 502, not 500: the failure is the provider's, and a provider that retries
-    // on 5xx is doing the right thing here.
-    console.error(`[DigiLocker] callback sync failed for ${candidateId}:`, (error as Error)?.message);
-    return res.status(502).json({ success: false, error: "Could not reconcile with the provider" });
-  }
-}));
+    try {
+      const outcome = await syncDigilockerStatus(candidateId);
+      return res.json({
+        success: true,
+        message: "DigiLocker status reconciled with the provider",
+        data: { state: outcome.state, changed: outcome.changed ?? false },
+      });
+    } catch (error) {
+      // 502, not 500: the failure is the provider's, and a provider that retries
+      // on 5xx is doing the right thing here.
+      console.error(
+        `[DigiLocker] callback sync failed for ${candidateId}:`,
+        (error as Error)?.message,
+      );
+      return res
+        .status(502)
+        .json({
+          success: false,
+          error: "Could not reconcile with the provider",
+        });
+    }
+  }),
+);
 
 /**
  * GET /api/onboarding/digilocker/:sessionId — admin view, live table.
  */
-router.get("/:sessionId", h(async (req: any, res: Response) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id AS sessionId, candidate_id AS candidateId, session_status AS status,
+router.get(
+  "/:sessionId",
+  h(async (req: any, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id AS sessionId, candidate_id AS candidateId, session_status AS status,
             requested_documents_json AS requestedDocuments,
             returned_documents_json AS returnedDocuments,
             created_at AS createdAt, expires_at AS expiresAt
        FROM candidate_digilocker_session WHERE id = ? LIMIT 1`,
-    [req.params.sessionId],
-  );
+      [req.params.sessionId],
+    );
 
-  if (!rows[0]) return res.status(404).json({ success: false, error: "Session not found" });
-  return res.json({ success: true, data: rows[0] });
-}));
+    if (!rows[0])
+      return res
+        .status(404)
+        .json({ success: false, error: "Session not found" });
+    return res.json({ success: true, data: rows[0] });
+  }),
+);
 
 export { router as digiLockerRouter };

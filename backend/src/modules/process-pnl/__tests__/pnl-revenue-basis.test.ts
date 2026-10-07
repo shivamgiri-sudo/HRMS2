@@ -15,17 +15,25 @@ import { getStatement } from "../pnl-statement.service.js";
  * month closes — which has already happened twice in this suite.
  */
 
-const { queryRows, tableExists, getSummary, getProcessSummary } = vi.hoisted(() => ({
-  queryRows: vi.fn(),
-  tableExists: vi.fn(),
-  getSummary: vi.fn(),
-  getProcessSummary: vi.fn(),
-}));
+const { queryRows, tableExists, getSummary, getProcessSummary } = vi.hoisted(
+  () => ({
+    queryRows: vi.fn(),
+    tableExists: vi.fn(),
+    getSummary: vi.fn(),
+    getProcessSummary: vi.fn(),
+  }),
+);
 
 vi.mock("../../../shared/dbHelpers.js", () => ({ queryRows, tableExists }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) } }));
-vi.mock("../canonical-pnl.service.js", () => ({ canonicalPnlService: { getSummary } }));
-vi.mock("../process-lob.service.js", () => ({ processLobService: { getProcessSummary } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+}));
+vi.mock("../canonical-pnl.service.js", () => ({
+  canonicalPnlService: { getSummary },
+}));
+vi.mock("../process-lob.service.js", () => ({
+  processLobService: { getProcessSummary },
+}));
 
 const PROCESS_ID = "proc-1";
 const BRANCH_ID = "branch-1";
@@ -57,14 +65,28 @@ const seatActuals = (earned: number, rateMissing: number) => ({
   rateMissingByKey: actuals(rateMissing),
 });
 
-async function statementFor(periodCode: string, opts: {
-  planned: number; invoiced: number; seatEarned?: number; rateMissing?: number; estimate?: number;
-}) {
+async function statementFor(
+  periodCode: string,
+  opts: {
+    planned: number;
+    invoiced: number;
+    seatEarned?: number;
+    rateMissing?: number;
+    estimate?: number;
+  },
+) {
   const componentRow = (key: string, field: string, order: number) => ({
-    component_key: key, display_name: key, section_key: "revenue",
-    parent_component_key: null, display_order: order, component_type: "SOURCE_ACTUAL",
-    source_field: field, format_type: "CURRENCY", sign_convention: "+",
-    is_subtotal: 0, active_status: 1,
+    component_key: key,
+    display_name: key,
+    section_key: "revenue",
+    parent_component_key: null,
+    display_order: order,
+    component_type: "SOURCE_ACTUAL",
+    source_field: field,
+    format_type: "CURRENCY",
+    sign_convention: "+",
+    is_subtotal: 0,
+    active_status: 1,
   });
   const components = [
     componentRow("recognized_revenue", "recognizedRevenue", 1),
@@ -75,27 +97,41 @@ async function statementFor(periodCode: string, opts: {
   return getStatement({ period: periodCode } as never, "process", {
     getComponents: async () => components,
     getSummary: async () => ({
-      rows: [{
-        processId: PROCESS_ID, processName: "P1", branchId: BRANCH_ID, branchName: "B1",
-        recognizedRevenue: 0, directPeopleCost: 0, activeHc: 10,
-      }],
+      rows: [
+        {
+          processId: PROCESS_ID,
+          processName: "P1",
+          branchId: BRANCH_ID,
+          branchName: "B1",
+          recognizedRevenue: 0,
+          directPeopleCost: 0,
+          activeHc: 10,
+        },
+      ],
     }),
     getIndirectCost: async () => actuals(0),
     getDriverRevenue: async () => actuals(opts.planned),
     getInvoicedRevenue: async () => actuals(opts.invoiced),
-    getSeatRevenue: async () => seatActuals(opts.seatEarned ?? 0, opts.rateMissing ?? 0),
-    getPeopleCost: async () => ({ byBranch: new Map(), byProcess: new Map() }) as never,
+    getSeatRevenue: async () =>
+      seatActuals(opts.seatEarned ?? 0, opts.rateMissing ?? 0),
+    getPeopleCost: async () =>
+      ({ byBranch: new Map(), byProcess: new Map() }) as never,
     getRevenueEstimate: async () => actuals(opts.estimate ?? 0),
     getProcessSummary,
   } as never);
 }
 
 const revenueOf = (statement: Awaited<ReturnType<typeof statementFor>>) =>
-  statement.rows.find((r) => r.componentKey === "recognized_revenue")?.values[PROCESS_ID];
+  statement.rows.find((r) => r.componentKey === "recognized_revenue")?.values[
+    PROCESS_ID
+  ];
 
 describe("statement revenue basis", () => {
   it("uses what was actually invoiced once the month has closed", async () => {
-    const statement = await statementFor(CLOSED, { planned: 11_900_000, invoiced: 35_537_000 });
+    const statement = await statementFor(CLOSED, {
+      planned: 11_900_000,
+      invoiced: 35_537_000,
+    });
     expect(
       revenueOf(statement),
       "a closed month must report billed revenue, not the budgeting driver",
@@ -105,12 +141,18 @@ describe("statement revenue basis", () => {
   it("keeps the planned figure while the month is still running", async () => {
     // Invoicing lags delivery: July showed Rs 77 lakh mid-month against a Rs 325-372 lakh run
     // rate. Switching to it live would report a collapse that has not happened.
-    const statement = await statementFor(OPEN, { planned: 11_900_000, invoiced: 7_705_000 });
+    const statement = await statementFor(OPEN, {
+      planned: 11_900_000,
+      invoiced: 7_705_000,
+    });
     expect(revenueOf(statement)).toBe(11_900_000);
   });
 
   it("falls back to planned on a closed month with no invoicing at all", async () => {
-    const statement = await statementFor(CLOSED, { planned: 11_900_000, invoiced: 0 });
+    const statement = await statementFor(CLOSED, {
+      planned: 11_900_000,
+      invoiced: 0,
+    });
     expect(
       revenueOf(statement),
       "no invoice data must not zero the revenue line",
@@ -120,29 +162,49 @@ describe("statement revenue basis", () => {
   it("adds Live P&L's seat estimate for the month just closed, matching Live P&L and CEO Overview", async () => {
     // Last month is closed (invoices win over the plan) but still inside the estimate window, so
     // cost centres not billed yet carry the same seat-rate estimate Live P&L and CEO add.
-    const statement = await statementFor(LAST, { planned: 11_900_000, invoiced: 30_000_000, estimate: 2_000_000 });
+    const statement = await statementFor(LAST, {
+      planned: 11_900_000,
+      invoiced: 30_000_000,
+      estimate: 2_000_000,
+    });
     expect(revenueOf(statement)).toBe(32_000_000);
     expect(statement.revenueEstimated).toBe(2_000_000);
   });
 
   it("never adds a seat estimate to an older closed month or to the running month", async () => {
-    const older = await statementFor(CLOSED, { planned: 11_900_000, invoiced: 30_000_000, estimate: 2_000_000 });
+    const older = await statementFor(CLOSED, {
+      planned: 11_900_000,
+      invoiced: 30_000_000,
+      estimate: 2_000_000,
+    });
     expect(revenueOf(older)).toBe(30_000_000);
-    const running = await statementFor(OPEN, { planned: 11_900_000, invoiced: 7_705_000, estimate: 2_000_000 });
+    const running = await statementFor(OPEN, {
+      planned: 11_900_000,
+      invoiced: 7_705_000,
+      estimate: 2_000_000,
+    });
     expect(revenueOf(running)).toBe(11_900_000);
   });
 
   it("publishes a seat shortfall only when every billable person has a rate", async () => {
     const withGaps = await statementFor(CLOSED, {
-      planned: 11_900_000, invoiced: 35_537_000, seatEarned: 8_180_000, rateMissing: 512,
+      planned: 11_900_000,
+      invoiced: 35_537_000,
+      seatEarned: 8_180_000,
+      rateMissing: 512,
     });
     const complete = await statementFor(CLOSED, {
-      planned: 11_900_000, invoiced: 35_537_000, seatEarned: 8_180_000, rateMissing: 0,
+      planned: 11_900_000,
+      invoiced: 35_537_000,
+      seatEarned: 8_180_000,
+      rateMissing: 0,
     });
     // Rates cover 7 of ~95 trading cost centres, so a blanket subtraction would report roughly
     // Rs 290 lakh of "lost revenue" that is really unconfigured rates.
     const shortfallOf = (st: Awaited<ReturnType<typeof statementFor>>) =>
-      st.rows.find((r) => r.componentKey === "seat_shortfall")?.values[PROCESS_ID] ?? null;
+      st.rows.find((r) => r.componentKey === "seat_shortfall")?.values[
+        PROCESS_ID
+      ] ?? null;
     expect(shortfallOf(withGaps)).toBeNull();
     expect(shortfallOf(complete)).toBe(11_900_000 - 8_180_000);
   });
@@ -156,32 +218,62 @@ describe("people cost source", () => {
    * months and reported an 82% operating margin.
    */
   const peopleSnapshot = (amount: number) => ({
-    byProcess: new Map([[PROCESS_ID, { agent_salary: amount, dsc_people: 0, bmc_people: 0 }]]),
-    byBranch: new Map([[BRANCH_ID, { agent_salary: amount, dsc_people: 0, bmc_people: 0 }]]),
+    byProcess: new Map([
+      [PROCESS_ID, { agent_salary: amount, dsc_people: 0, bmc_people: 0 }],
+    ]),
+    byBranch: new Map([
+      [BRANCH_ID, { agent_salary: amount, dsc_people: 0, bmc_people: 0 }],
+    ]),
   });
 
-  async function agentSalaryFor(periodCode: string, rowAgentSalary: number, snapshotAmount: number) {
-    const statement = await getStatement({ period: periodCode } as never, "process", {
-      getComponents: async () => [{
-        component_key: "agent_salary", display_name: "Agent Salary", section_key: "cost",
-        parent_component_key: null, display_order: 1, component_type: "SOURCE_ACTUAL",
-        source_field: "agentSalary", format_type: "CURRENCY", sign_convention: "-",
-        is_subtotal: 0, active_status: 1,
-      }],
-      getSummary: async () => ({
-        rows: [{
-          processId: PROCESS_ID, processName: "P1", branchId: BRANCH_ID, branchName: "B1",
-          recognizedRevenue: 0, directPeopleCost: 0, activeHc: 10, agentSalary: rowAgentSalary,
-        }],
-      }),
-      getIndirectCost: async () => actuals(0),
-      getDriverRevenue: async () => actuals(0),
-      getInvoicedRevenue: async () => actuals(0),
-      getSeatRevenue: async () => seatActuals(0, 0),
-      getPeopleCost: async () => peopleSnapshot(snapshotAmount) as never,
-      getProcessSummary,
-    } as never);
-    return statement.rows.find((r) => r.componentKey === "agent_salary")?.values[PROCESS_ID];
+  async function agentSalaryFor(
+    periodCode: string,
+    rowAgentSalary: number,
+    snapshotAmount: number,
+  ) {
+    const statement = await getStatement(
+      { period: periodCode } as never,
+      "process",
+      {
+        getComponents: async () => [
+          {
+            component_key: "agent_salary",
+            display_name: "Agent Salary",
+            section_key: "cost",
+            parent_component_key: null,
+            display_order: 1,
+            component_type: "SOURCE_ACTUAL",
+            source_field: "agentSalary",
+            format_type: "CURRENCY",
+            sign_convention: "-",
+            is_subtotal: 0,
+            active_status: 1,
+          },
+        ],
+        getSummary: async () => ({
+          rows: [
+            {
+              processId: PROCESS_ID,
+              processName: "P1",
+              branchId: BRANCH_ID,
+              branchName: "B1",
+              recognizedRevenue: 0,
+              directPeopleCost: 0,
+              activeHc: 10,
+              agentSalary: rowAgentSalary,
+            },
+          ],
+        }),
+        getIndirectCost: async () => actuals(0),
+        getDriverRevenue: async () => actuals(0),
+        getInvoicedRevenue: async () => actuals(0),
+        getSeatRevenue: async () => seatActuals(0, 0),
+        getPeopleCost: async () => peopleSnapshot(snapshotAmount) as never,
+        getProcessSummary,
+      } as never,
+    );
+    return statement.rows.find((r) => r.componentKey === "agent_salary")
+      ?.values[PROCESS_ID];
   }
 
   it("uses the snapshot on a CLOSED month when the row carries no people cost", async () => {
@@ -201,7 +293,9 @@ describe("people cost source", () => {
      * undifferentiated people figure. So it replaces that figure even when the row is populated —
      * a row-first rule would keep the lump and lose the split.
      */
-    expect(await agentSalaryFor(CLOSED, 9_000_000, 14_123_000)).toBe(14_123_000);
+    expect(await agentSalaryFor(CLOSED, 9_000_000, 14_123_000)).toBe(
+      14_123_000,
+    );
     expect(await agentSalaryFor(OPEN, 9_000_000, 14_123_000)).toBe(14_123_000);
   });
 
@@ -219,40 +313,88 @@ describe("DSC/BMC subtotals track the salary figures", () => {
    * statement showed "DSC Salary Rs 23.13 lakh" with "Total DSC Rs 0" on the line beneath.
    */
   it("does not report zero beside a non-zero salary line", async () => {
-    const statement = await getStatement({ period: CLOSED } as never, "process", {
-      getComponents: async () => [
-        { component_key: "dsc_salary", display_name: "DSC Salary", section_key: "cost",
-          parent_component_key: null, display_order: 1, component_type: "SOURCE_ACTUAL",
-          source_field: "dscSalary", format_type: "CURRENCY", sign_convention: "-",
-          is_subtotal: 0, active_status: 1 },
-        { component_key: "total_dsc", display_name: "Total DSC", section_key: "cost",
-          parent_component_key: null, display_order: 2, component_type: "SUBTOTAL",
-          source_field: "dsc", format_type: "CURRENCY", sign_convention: "-",
-          is_subtotal: 1, active_status: 1 },
-        { component_key: "total_bmc", display_name: "Total BMC", section_key: "cost",
-          parent_component_key: null, display_order: 3, component_type: "SUBTOTAL",
-          source_field: "bmc", format_type: "CURRENCY", sign_convention: "-",
-          is_subtotal: 1, active_status: 1 },
-      ],
-      getSummary: async () => ({
-        rows: [{
-          processId: PROCESS_ID, processName: "P1", branchId: BRANCH_ID, branchName: "B1",
-          recognizedRevenue: 0, directPeopleCost: 0, activeHc: 10,
-        }],
-      }),
-      getIndirectCost: async () => actuals(0),
-      getDriverRevenue: async () => actuals(0),
-      getInvoicedRevenue: async () => actuals(0),
-      getSeatRevenue: async () => seatActuals(0, 0),
-      getPeopleCost: async () => ({
-        byProcess: new Map([[PROCESS_ID, { agent_salary: 0, dsc_people: 2_313_000, bmc_people: 773_000 }]]),
-        byBranch: new Map(),
-      }) as never,
-      getProcessSummary,
-    } as never);
-    const val = (k: string) => statement.rows.find((r) => r.componentKey === k)?.values[PROCESS_ID];
+    const statement = await getStatement(
+      { period: CLOSED } as never,
+      "process",
+      {
+        getComponents: async () => [
+          {
+            component_key: "dsc_salary",
+            display_name: "DSC Salary",
+            section_key: "cost",
+            parent_component_key: null,
+            display_order: 1,
+            component_type: "SOURCE_ACTUAL",
+            source_field: "dscSalary",
+            format_type: "CURRENCY",
+            sign_convention: "-",
+            is_subtotal: 0,
+            active_status: 1,
+          },
+          {
+            component_key: "total_dsc",
+            display_name: "Total DSC",
+            section_key: "cost",
+            parent_component_key: null,
+            display_order: 2,
+            component_type: "SUBTOTAL",
+            source_field: "dsc",
+            format_type: "CURRENCY",
+            sign_convention: "-",
+            is_subtotal: 1,
+            active_status: 1,
+          },
+          {
+            component_key: "total_bmc",
+            display_name: "Total BMC",
+            section_key: "cost",
+            parent_component_key: null,
+            display_order: 3,
+            component_type: "SUBTOTAL",
+            source_field: "bmc",
+            format_type: "CURRENCY",
+            sign_convention: "-",
+            is_subtotal: 1,
+            active_status: 1,
+          },
+        ],
+        getSummary: async () => ({
+          rows: [
+            {
+              processId: PROCESS_ID,
+              processName: "P1",
+              branchId: BRANCH_ID,
+              branchName: "B1",
+              recognizedRevenue: 0,
+              directPeopleCost: 0,
+              activeHc: 10,
+            },
+          ],
+        }),
+        getIndirectCost: async () => actuals(0),
+        getDriverRevenue: async () => actuals(0),
+        getInvoicedRevenue: async () => actuals(0),
+        getSeatRevenue: async () => seatActuals(0, 0),
+        getPeopleCost: async () =>
+          ({
+            byProcess: new Map([
+              [
+                PROCESS_ID,
+                { agent_salary: 0, dsc_people: 2_313_000, bmc_people: 773_000 },
+              ],
+            ]),
+            byBranch: new Map(),
+          }) as never,
+        getProcessSummary,
+      } as never,
+    );
+    const val = (k: string) =>
+      statement.rows.find((r) => r.componentKey === k)?.values[PROCESS_ID];
     expect(val("dsc_salary")).toBe(2_313_000);
-    expect(val("total_dsc"), "Total DSC must not read 0 under a non-zero DSC Salary").toBe(2_313_000);
+    expect(
+      val("total_dsc"),
+      "Total DSC must not read 0 under a non-zero DSC Salary",
+    ).toBe(2_313_000);
     expect(val("total_bmc")).toBe(773_000);
   });
 });

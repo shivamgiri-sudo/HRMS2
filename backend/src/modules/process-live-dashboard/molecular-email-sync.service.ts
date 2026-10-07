@@ -63,7 +63,10 @@
 import type { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { getMolecularEmailPool, type EmailTicketSource } from "../../db/molecularEmailDb.js";
+import {
+  getMolecularEmailPool,
+  type EmailTicketSource,
+} from "../../db/molecularEmailDb.js";
 
 export const LIVE_SYNC_SOURCE_REFERENCE = "live_sync";
 
@@ -77,8 +80,16 @@ interface DashboardSource {
 }
 
 export const EMAIL_DASHBOARD_SOURCES: DashboardSource[] = [
-  { dashboardLabel: "REGINALD_MEN", database: "db_email", excludedSenderLike: "info@reginaldmen.com" },
-  { dashboardLabel: "MOLECULAR", database: "molecular_db_email", excludedSenderLike: "info@molecularcompany.com" },
+  {
+    dashboardLabel: "REGINALD_MEN",
+    database: "db_email",
+    excludedSenderLike: "info@reginaldmen.com",
+  },
+  {
+    dashboardLabel: "MOLECULAR",
+    database: "molecular_db_email",
+    excludedSenderLike: "info@molecularcompany.com",
+  },
 ];
 
 interface DayCounts {
@@ -108,7 +119,11 @@ async function fetchTicketDayTotals(
       ORDER BY d`,
   );
   const m = new Map<string, { total: number; notClosed: number }>();
-  for (const r of rows) m.set(String(r.d), { total: Number(r.total) || 0, notClosed: Number(r.notClosed) || 0 });
+  for (const r of rows)
+    m.set(String(r.d), {
+      total: Number(r.total) || 0,
+      notClosed: Number(r.notClosed) || 0,
+    });
   return m;
 }
 
@@ -186,11 +201,21 @@ async function fetchAnalystDayCounts(
 ): Promise<Map<string, AnalystDayCounts>> {
   const pool = await getMolecularEmailPool(source.database);
   const counts = new Map<string, AnalystDayCounts>();
-  const ensure = (day: string, userId: number, name: string): AnalystDayCounts => {
+  const ensure = (
+    day: string,
+    userId: number,
+    name: string,
+  ): AnalystDayCounts => {
     const key = `${day}|${userId}`;
     let c = counts.get(key);
     if (!c) {
-      c = { analystName: name, received: 0, closed: 0, reopened: 0, openPending: 0 };
+      c = {
+        analystName: name,
+        received: 0,
+        closed: 0,
+        reopened: 0,
+        openPending: 0,
+      };
       counts.set(key, c);
     }
     return c;
@@ -204,7 +229,9 @@ async function fetchAnalystDayCounts(
       GROUP BY DATE(t.created_at), t.assigned_to, u.name`,
     [fromDate, toDate],
   );
-  for (const r of received) ensure(String(r.d), Number(r.uid), String(r.uname)).received = Number(r.c) || 0;
+  for (const r of received)
+    ensure(String(r.d), Number(r.uid), String(r.uname)).received =
+      Number(r.c) || 0;
 
   const [openPending] = await pool.execute<RowDataPacket[]>(
     `SELECT DATE(t.created_at) AS d, t.assigned_to AS uid, u.name AS uname, COUNT(*) AS c
@@ -214,7 +241,9 @@ async function fetchAnalystDayCounts(
       GROUP BY DATE(t.created_at), t.assigned_to, u.name`,
     [fromDate, toDate],
   );
-  for (const r of openPending) ensure(String(r.d), Number(r.uid), String(r.uname)).openPending = Number(r.c) || 0;
+  for (const r of openPending)
+    ensure(String(r.d), Number(r.uid), String(r.uname)).openPending =
+      Number(r.c) || 0;
 
   const [reopened] = await pool.execute<RowDataPacket[]>(
     `SELECT DATE(e.created_at) AS d, t.assigned_to AS uid, u.name AS uname, COUNT(*) AS c
@@ -225,7 +254,9 @@ async function fetchAnalystDayCounts(
       GROUP BY DATE(e.created_at), t.assigned_to, u.name`,
     [fromDate, toDate],
   );
-  for (const r of reopened) ensure(String(r.d), Number(r.uid), String(r.uname)).reopened = Number(r.c) || 0;
+  for (const r of reopened)
+    ensure(String(r.d), Number(r.uid), String(r.uname)).reopened =
+      Number(r.c) || 0;
 
   const [closed] = await pool.execute<RowDataPacket[]>(
     `SELECT DATE(m.sent_at) AS d, m.created_by AS uid, u.name AS uname, COUNT(*) AS c
@@ -238,7 +269,9 @@ async function fetchAnalystDayCounts(
       GROUP BY DATE(m.sent_at), m.created_by, u.name`,
     [fromDate, toDate, `%${source.excludedSenderLike.toLowerCase()}%`],
   );
-  for (const r of closed) ensure(String(r.d), Number(r.uid), String(r.uname)).closed = Number(r.c) || 0;
+  for (const r of closed)
+    ensure(String(r.d), Number(r.uid), String(r.uname)).closed =
+      Number(r.c) || 0;
 
   return counts;
 }
@@ -262,7 +295,9 @@ export async function syncEmailDashboard(
 ): Promise<SyncResult> {
   const processId = await fetchProcessId();
   if (!processId) {
-    throw new Error('No active "Reginald" process found to attach email ticket rows to');
+    throw new Error(
+      'No active "Reginald" process found to attach email ticket rows to',
+    );
   }
 
   const [dayTotals, counts, analystCounts] = await Promise.all([
@@ -291,7 +326,12 @@ export async function syncEmailDashboard(
   let d = fromDate;
   let daysUpserted = 0;
   while (d <= toDate) {
-    const c = counts.get(d) ?? { created: 0, closed: 0, reopened: 0, openStatus: 0 };
+    const c = counts.get(d) ?? {
+      created: 0,
+      closed: 0,
+      reopened: 0,
+      openStatus: 0,
+    };
     const opening = openingBeforeDay.get(d) ?? 0;
 
     await db.execute(
@@ -306,8 +346,15 @@ export async function syncEmailDashboard(
           email_reopen = VALUES(email_reopen),
           opening_pending = VALUES(opening_pending)`,
       [
-        randomUUID(), processId, source.dashboardLabel, d,
-        c.created, c.closed, c.openStatus, c.reopened, opening,
+        randomUUID(),
+        processId,
+        source.dashboardLabel,
+        d,
+        c.created,
+        c.closed,
+        c.openStatus,
+        c.reopened,
+        opening,
         LIVE_SYNC_SOURCE_REFERENCE,
       ],
     );
@@ -331,8 +378,16 @@ export async function syncEmailDashboard(
           tickets_reopened      = VALUES(tickets_reopened),
           tickets_open_pending  = VALUES(tickets_open_pending)`,
       [
-        randomUUID(), processId, source.dashboardLabel, day, Number(uidStr), a.analystName,
-        a.received, a.closed, a.reopened, a.openPending,
+        randomUUID(),
+        processId,
+        source.dashboardLabel,
+        day,
+        Number(uidStr),
+        a.analystName,
+        a.received,
+        a.closed,
+        a.reopened,
+        a.openPending,
         LIVE_SYNC_SOURCE_REFERENCE,
       ],
     );
@@ -342,7 +397,9 @@ export async function syncEmailDashboard(
 }
 
 /** Syncs the last `daysBack` days (plus today) for both dashboards — used by the recurring worker. */
-export async function syncRecentEmailTickets(daysBack = 2): Promise<SyncResult[]> {
+export async function syncRecentEmailTickets(
+  daysBack = 2,
+): Promise<SyncResult[]> {
   const today = new Date().toISOString().slice(0, 10);
   const fromDate = addDays(today, -daysBack);
   const results: SyncResult[] = [];
@@ -353,13 +410,16 @@ export async function syncRecentEmailTickets(daysBack = 2): Promise<SyncResult[]
 }
 
 /** Full historical backfill for one dashboard, starting from the earliest ticket in the source DB. */
-export async function backfillEmailDashboard(source: DashboardSource): Promise<SyncResult> {
+export async function backfillEmailDashboard(
+  source: DashboardSource,
+): Promise<SyncResult> {
   const pool = await getMolecularEmailPool(source.database);
   const [range] = await pool.execute<RowDataPacket[]>(
     `SELECT DATE(MIN(created_at)) AS mn FROM tickets`,
   );
   const earliest = range[0]?.mn as string | undefined;
-  if (!earliest) return { dashboardLabel: source.dashboardLabel, daysUpserted: 0 };
+  if (!earliest)
+    return { dashboardLabel: source.dashboardLabel, daysUpserted: 0 };
   const today = new Date().toISOString().slice(0, 10);
   return syncEmailDashboard(source, earliest, today);
 }

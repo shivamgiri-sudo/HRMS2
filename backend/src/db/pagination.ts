@@ -31,11 +31,13 @@ export function sqlLimitOffset(
   const { defaultLimit = 50, maxLimit = 500 } = options;
 
   const rawLimit = Math.trunc(Number(limit));
-  const usableLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : defaultLimit;
+  const usableLimit =
+    Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : defaultLimit;
   const safeLimit = Math.max(1, Math.min(usableLimit, maxLimit));
 
   const rawOffset = Math.trunc(Number(offset));
-  const safeOffset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+  const safeOffset =
+    Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
 
   return `LIMIT ${safeLimit} OFFSET ${safeOffset}`;
 }

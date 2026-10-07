@@ -6,13 +6,13 @@
  */
 
 export interface BgvRequirements {
-  pan: boolean;              // PAN verification via Luckpay
-  aadhaar: boolean;          // Aadhaar verification via Befisc
-  bank: boolean;             // Bank account penny drop via Luckpay
-  uan_employment: boolean;   // UAN/employment history via Luckpay
-  criminal: boolean;         // Criminal record via Crimescan
-  aml: boolean;              // AML verification via Prescreening
-  documents: boolean;        // Mandatory document upload
+  pan: boolean; // PAN verification via Luckpay
+  aadhaar: boolean; // Aadhaar verification via Befisc
+  bank: boolean; // Bank account penny drop via Luckpay
+  uan_employment: boolean; // UAN/employment history via Luckpay
+  criminal: boolean; // Criminal record via Crimescan
+  aml: boolean; // AML verification via Prescreening
+  documents: boolean; // Mandatory document upload
 }
 
 export interface MandatoryDocuments {
@@ -31,7 +31,7 @@ export interface MandatoryDocuments {
  */
 export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
   // Entry-level roles (Telecaller, Agent, Associate)
-  'telecaller': {
+  telecaller: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -40,7 +40,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: false,
     documents: true,
   },
-  'agent': {
+  agent: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -49,7 +49,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: false,
     documents: true,
   },
-  'associate': {
+  associate: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -60,7 +60,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
   },
 
   // Team Leaders
-  'team leader': {
+  "team leader": {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -69,7 +69,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: false,
     documents: true,
   },
-  'tl': {
+  tl: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -80,7 +80,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
   },
 
   // Quality & Training
-  'quality analyst': {
+  "quality analyst": {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -89,7 +89,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: false,
     documents: true,
   },
-  'qa': {
+  qa: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -98,7 +98,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: false,
     documents: true,
   },
-  'trainer': {
+  trainer: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -109,7 +109,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
   },
 
   // Management roles (Process Manager, Operations Manager)
-  'process manager': {
+  "process manager": {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -118,7 +118,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: false,
     documents: true,
   },
-  'operations manager': {
+  "operations manager": {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -127,7 +127,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: false,
     documents: true,
   },
-  'manager': {
+  manager: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -138,7 +138,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
   },
 
   // Finance & Payroll (highest risk)
-  'finance': {
+  finance: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -147,7 +147,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: true,
     documents: true,
   },
-  'payroll': {
+  payroll: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -156,7 +156,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: true,
     documents: true,
   },
-  'accounts': {
+  accounts: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -167,7 +167,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
   },
 
   // HR & Recruitment
-  'hr': {
+  hr: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -176,7 +176,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: false,
     documents: true,
   },
-  'recruitment': {
+  recruitment: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -187,7 +187,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
   },
 
   // IT & Admin
-  'it': {
+  it: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -196,7 +196,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: false,
     documents: true,
   },
-  'admin': {
+  admin: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -207,7 +207,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
   },
 
   // Senior Management (Branch Head, Directors)
-  'branch head': {
+  "branch head": {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -216,7 +216,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: true,
     documents: true,
   },
-  'director': {
+  director: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -225,7 +225,7 @@ export const BGV_REQUIREMENTS_BY_ROLE: Record<string, BgvRequirements> = {
     aml: true,
     documents: true,
   },
-  'head': {
+  head: {
     pan: true,
     aadhaar: true,
     bank: true,
@@ -253,19 +253,30 @@ export const MANDATORY_DOCUMENTS: MandatoryDocuments = {
  * Document type mappings to database enum values
  */
 export const DOCUMENT_TYPE_MAPPINGS = {
-  pan_card: ['pan_card', 'pan'],
-  aadhaar_card: ['aadhaar_card', 'aadhaar', 'aadhar_card'],
-  bank_proof: ['bank_statement', 'cancelled_cheque', 'passbook'],
-  photo: ['passport_photo', 'photo'],
-  educational_certificates: ['10th_certificate', '12th_certificate', 'degree_certificate', 'diploma'],
-  address_proof: ['address_proof', 'utility_bill', 'rental_agreement'],
-  previous_employment_letters: ['experience_letter', 'relieving_letter', 'appointment_letter'],
+  pan_card: ["pan_card", "pan"],
+  aadhaar_card: ["aadhaar_card", "aadhaar", "aadhar_card"],
+  bank_proof: ["bank_statement", "cancelled_cheque", "passbook"],
+  photo: ["passport_photo", "photo"],
+  educational_certificates: [
+    "10th_certificate",
+    "12th_certificate",
+    "degree_certificate",
+    "diploma",
+  ],
+  address_proof: ["address_proof", "utility_bill", "rental_agreement"],
+  previous_employment_letters: [
+    "experience_letter",
+    "relieving_letter",
+    "appointment_letter",
+  ],
 };
 
 /**
  * Get BGV requirements for a designation
  */
-export function getBgvRequirementsByDesignation(designationName: string): BgvRequirements {
+export function getBgvRequirementsByDesignation(
+  designationName: string,
+): BgvRequirements {
   const normalized = designationName.toLowerCase().trim();
 
   // Direct match
@@ -281,7 +292,9 @@ export function getBgvRequirementsByDesignation(designationName: string): BgvReq
   }
 
   // Default: Most restrictive (assume high-risk if unknown)
-  console.warn(`[BGV] Unknown designation: ${designationName}, applying default high-risk requirements`);
+  console.warn(
+    `[BGV] Unknown designation: ${designationName}, applying default high-risk requirements`,
+  );
   return {
     pan: true,
     aadhaar: true,
@@ -307,17 +320,27 @@ export function isLateralHire(candidateData: {
   previous_company?: string | null;
 }): boolean {
   // Explicit fresher flag
-  if (candidateData.fresher === true || candidateData.fresher === 'yes' || candidateData.fresher === '1') {
+  if (
+    candidateData.fresher === true ||
+    candidateData.fresher === "yes" ||
+    candidateData.fresher === "1"
+  ) {
     return false;
   }
 
   // Has experience
-  if (candidateData.total_experience_years && candidateData.total_experience_years > 0) {
+  if (
+    candidateData.total_experience_years &&
+    candidateData.total_experience_years > 0
+  ) {
     return true;
   }
 
   // Has previous company mentioned
-  if (candidateData.previous_company && candidateData.previous_company.trim().length > 0) {
+  if (
+    candidateData.previous_company &&
+    candidateData.previous_company.trim().length > 0
+  ) {
     return true;
   }
 
@@ -346,9 +369,12 @@ export function isLateralHire(candidateData: {
  * other way silently drops a check that should have run.
  */
 export function isLateralFromExperienceLabel(experience: unknown): boolean {
-  const label = String(experience ?? '').trim().toLowerCase();
+  const label = String(experience ?? "")
+    .trim()
+    .toLowerCase();
   if (!label) return false;
-  if (/^(fresher|fresh|fresher's|na|n\/a|none|nil|no|null)$/.test(label)) return false;
+  if (/^(fresher|fresh|fresher's|na|n\/a|none|nil|no|null)$/.test(label))
+    return false;
   // A stated zero — '0', '0 years', '0 yrs', '0 months' — is not experience.
   if (/^0+\s*(years?|yrs?|months?|mos?)?$/.test(label)) return false;
   return true;

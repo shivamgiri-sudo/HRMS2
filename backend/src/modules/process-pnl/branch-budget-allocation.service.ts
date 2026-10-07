@@ -2,8 +2,14 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
-import { allocatePoolAmount, type AllocationShare } from "./bpo-pnl.calculation.js";
-import { getBranchMeterConsumption, type MeterUtilityType } from "./meter.service.js";
+import {
+  allocatePoolAmount,
+  type AllocationShare,
+} from "./bpo-pnl.calculation.js";
+import {
+  getBranchMeterConsumption,
+  type MeterUtilityType,
+} from "./meter.service.js";
 import { getCostCentreGradeWeightedCost } from "./grade-engine.service.js";
 
 import { refuse } from "./finance-error.js";
@@ -45,8 +51,14 @@ interface Executor {
 export interface AllocationLookupCache {
   costCentres: Map<string, Promise<CostCentreOption[]>>;
   monthlyDrivers: Map<string, Promise<MonthlyDriverRecord[]>>;
-  meterConsumption: Map<string, Promise<Awaited<ReturnType<typeof getBranchMeterConsumption>>>>;
-  gradeCost: Map<string, Promise<Awaited<ReturnType<typeof getCostCentreGradeWeightedCost>>>>;
+  meterConsumption: Map<
+    string,
+    Promise<Awaited<ReturnType<typeof getBranchMeterConsumption>>>
+  >;
+  gradeCost: Map<
+    string,
+    Promise<Awaited<ReturnType<typeof getCostCentreGradeWeightedCost>>>
+  >;
 }
 
 export function createAllocationLookupCache(): AllocationLookupCache {
@@ -59,7 +71,11 @@ export function createAllocationLookupCache(): AllocationLookupCache {
 }
 
 /** Memoises the in-flight promise, not just the result, so concurrent callers share one query. */
-function memo<T>(store: Map<string, Promise<T>> | undefined, key: string, run: () => Promise<T>): Promise<T> {
+function memo<T>(
+  store: Map<string, Promise<T>> | undefined,
+  key: string,
+  run: () => Promise<T>,
+): Promise<T> {
   if (!store) return run();
   const existing = store.get(key);
   if (existing) return existing;
@@ -175,7 +191,7 @@ export interface LineAllocationRow {
 
 export async function listActiveCostCentres(
   branchId: string,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<CostCentreOption[]> {
   // active_status alone is not reliable on the live table — confirmed by direct query that at
   // least one cost centre has active_status = 1 but a close_date years in the past (the flag was
@@ -211,10 +227,12 @@ export async function listActiveCostCentres(
         AND (ccm.close_date IS NULL OR ccm.close_date > CURDATE())
         AND (ccm.go_live_date IS NULL OR ccm.go_live_date <= CURDATE())
       ORDER BY ccm.cost_centre_name`,
-    [branchId]
+    [branchId],
   )) as [RowDataPacket[], unknown];
   return rows.map((row) => {
-    const processName = row.resolved_process_name ? String(row.resolved_process_name).trim() : null;
+    const processName = row.resolved_process_name
+      ? String(row.resolved_process_name).trim()
+      : null;
     return {
       id: String(row.id),
       costCentreCode: String(row.cost_centre_code ?? ""),
@@ -229,7 +247,7 @@ export async function listActiveCostCentres(
 export async function getMonthlyDrivers(
   branchId: string,
   periodCode: string,
-  executor: Executor = db
+  executor: Executor = db,
 ): Promise<MonthlyDriverRecord[]> {
   const costCentres = await listActiveCostCentres(branchId, executor);
   const [driverRows] = (await executor.execute(
@@ -238,9 +256,11 @@ export async function getMonthlyDrivers(
             status, updated_by, updated_at
        FROM finance_cost_centre_monthly_driver
       WHERE branch_id = ? AND period_code = ?`,
-    [branchId, periodCode]
+    [branchId, periodCode],
   )) as [RowDataPacket[], unknown];
-  const byCostCentre = new Map(driverRows.map((row) => [String(row.cost_centre_id), row]));
+  const byCostCentre = new Map(
+    driverRows.map((row) => [String(row.cost_centre_id), row]),
+  );
 
   /*
    * HEADCOUNT FALLS BACK TO THE PEOPLE ACTUALLY POSTED TO THE COST CENTRE.
@@ -263,26 +283,32 @@ export async function getMonthlyDrivers(
        JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
       WHERE cc.branch_id = ? AND e.active_status = 1 AND e.cost_centre_id IS NOT NULL
       GROUP BY e.cost_centre_id`,
-    [branchId]
+    [branchId],
   )) as [RowDataPacket[], unknown];
   const liveHeadcount = new Map(
-    liveHeadcountRows.map((row) => [String(row.cost_centre_id), Number(row.live_headcount ?? 0)])
+    liveHeadcountRows.map((row) => [
+      String(row.cost_centre_id),
+      Number(row.live_headcount ?? 0),
+    ]),
   );
 
   return costCentres.map((cc) => {
     const row = byCostCentre.get(cc.id);
     const typedHeadcount = Number(row?.planned_headcount ?? 0);
-    const plannedHeadcount = typedHeadcount > 0 ? typedHeadcount : (liveHeadcount.get(cc.id) ?? 0);
+    const plannedHeadcount =
+      typedHeadcount > 0 ? typedHeadcount : (liveHeadcount.get(cc.id) ?? 0);
     const revenueRatePerHead = Number(row?.revenue_rate_per_head ?? 0);
     return {
       costCentreId: cc.id,
       costCentreName: cc.costCentreName,
       plannedHeadcount,
       revenueRatePerHead,
-      calculatedPlannedRevenue: Math.round(plannedHeadcount * revenueRatePerHead * 100) / 100,
+      calculatedPlannedRevenue:
+        Math.round(plannedHeadcount * revenueRatePerHead * 100) / 100,
       /** Where plannedHeadcount came from, so a screen can show a derived number as derived
        *  rather than passing it off as something Finance entered. */
-      headcountSource: typedHeadcount > 0 ? ("planned" as const) : ("live_employees" as const),
+      headcountSource:
+        typedHeadcount > 0 ? ("planned" as const) : ("live_employees" as const),
       seatCount: Number(row?.seat_count ?? 0),
       floorAreaSqft: Number(row?.floor_area_sqft ?? 0),
       deviceCount: Number(row?.device_count ?? 0),
@@ -299,21 +325,45 @@ export async function saveMonthlyDrivers(
   branchId: string,
   periodCode: string,
   drivers: MonthlyDriverInput[],
-  actorUserId: string
+  actorUserId: string,
 ): Promise<MonthlyDriverRecord[]> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) {
-    throw refuse(400, "ALLOCATION_PERIOD_INVALID", "A valid budget period (YYYY-MM) is required");
+    throw refuse(
+      400,
+      "ALLOCATION_PERIOD_INVALID",
+      "A valid budget period (YYYY-MM) is required",
+    );
   }
-  const activeCostCentres = new Set((await listActiveCostCentres(branchId)).map((cc) => cc.id));
+  const activeCostCentres = new Set(
+    (await listActiveCostCentres(branchId)).map((cc) => cc.id),
+  );
   for (const driver of drivers) {
     if (!activeCostCentres.has(driver.costCentreId)) {
-      throw refuse(400, "COST_CENTRE_NOT_ACTIVE", `Cost centre ${driver.costCentreId} is not an active cost centre for this branch`);
+      throw refuse(
+        400,
+        "COST_CENTRE_NOT_ACTIVE",
+        `Cost centre ${driver.costCentreId} is not an active cost centre for this branch`,
+      );
     }
-    if (!Number.isFinite(driver.plannedHeadcount) || driver.plannedHeadcount < 0) {
-      throw refuse(400, "HEADCOUNT_NEGATIVE", "Planned headcount cannot be negative");
+    if (
+      !Number.isFinite(driver.plannedHeadcount) ||
+      driver.plannedHeadcount < 0
+    ) {
+      throw refuse(
+        400,
+        "HEADCOUNT_NEGATIVE",
+        "Planned headcount cannot be negative",
+      );
     }
-    if (!Number.isFinite(driver.revenueRatePerHead) || driver.revenueRatePerHead < 0) {
-      throw refuse(400, "REVENUE_RATE_NEGATIVE", "Revenue rate per head cannot be negative");
+    if (
+      !Number.isFinite(driver.revenueRatePerHead) ||
+      driver.revenueRatePerHead < 0
+    ) {
+      throw refuse(
+        400,
+        "REVENUE_RATE_NEGATIVE",
+        "Revenue rate per head cannot be negative",
+      );
     }
     for (const [label, value] of [
       ["Seat count", driver.seatCount],
@@ -322,7 +372,11 @@ export async function saveMonthlyDrivers(
       ["Hiring volume", driver.hiringVolume],
     ] as const) {
       if (value != null && (!Number.isFinite(value) || value < 0)) {
-        throw refuse(400, "DRIVER_VALUE_NEGATIVE", `${label} cannot be negative`);
+        throw refuse(
+          400,
+          "DRIVER_VALUE_NEGATIVE",
+          `${label} cannot be negative`,
+        );
       }
     }
   }
@@ -359,7 +413,7 @@ export async function saveMonthlyDrivers(
           driver.hiringVolume ?? 0,
           driver.remarks?.trim() || null,
           actorUserId,
-        ]
+        ],
       );
     }
     await connection.commit();
@@ -385,7 +439,10 @@ const DRIVER_LABELS: Partial<Record<SharingMethod, string>> = {
 
 /** The per-cost-centre quantity a method divides by. Kept in one place so driverWeight and
  *  unitFor cannot drift apart — they returned different values for the same method before. */
-function driverQuantity(driverMethod: SharingMethod, driver: MonthlyDriverRecord): number | null {
+function driverQuantity(
+  driverMethod: SharingMethod,
+  driver: MonthlyDriverRecord,
+): number | null {
   switch (driverMethod) {
     case "total_manpower":
     case "agent_headcount":
@@ -405,11 +462,17 @@ function driverQuantity(driverMethod: SharingMethod, driver: MonthlyDriverRecord
   }
 }
 
-function driverWeight(driverMethod: SharingMethod, driver: MonthlyDriverRecord): number {
+function driverWeight(
+  driverMethod: SharingMethod,
+  driver: MonthlyDriverRecord,
+): number {
   return driverQuantity(driverMethod, driver) ?? 1; // equal_split
 }
 
-function unitFor(driverMethod: SharingMethod, driver: MonthlyDriverRecord): number {
+function unitFor(
+  driverMethod: SharingMethod,
+  driver: MonthlyDriverRecord,
+): number {
   return driverQuantity(driverMethod, driver) ?? 0;
 }
 
@@ -440,22 +503,28 @@ export async function computeLineAllocations(
    *  the only way to exclude a cost centre was a manual split giving it 0%. */
   includedCostCentreIds?: string[] | null,
   /** Share one cache across every line of a save — see AllocationLookupCache. */
-  cache?: AllocationLookupCache
+  cache?: AllocationLookupCache,
 ): Promise<LineAllocationRow[]> {
-  const method = (SEEDED_DRIVER_ALIASES[(sharingMethod ?? "").trim()]
-    ?? (sharingMethod ?? "").trim()) as SharingMethod;
+  const method = (SEEDED_DRIVER_ALIASES[(sharingMethod ?? "").trim()] ??
+    (sharingMethod ?? "").trim()) as SharingMethod;
   if (!SUPPORTED_SHARING_METHODS.includes(method)) {
-    throw refuse(400, "SHARING_METHOD_UNSUPPORTED",
+    throw refuse(
+      400,
+      "SHARING_METHOD_UNSUPPORTED",
       `Sharing method "${sharingMethod ?? ""}" is not yet supported for branch-level splitting. ` +
-      `Supported methods: ${SUPPORTED_SHARING_METHODS.join(", ")}.`
+        `Supported methods: ${SUPPORTED_SHARING_METHODS.join(", ")}.`,
     );
   }
 
   const allActive = await memo(cache?.costCentres, branchId, () =>
-    listActiveCostCentres(branchId, executor)
+    listActiveCostCentres(branchId, executor),
   );
   if (allActive.length === 0) {
-    throw refuse(409, "NO_ACTIVE_COST_CENTRES", "This branch has no active cost centres to allocate a branch-level line to");
+    throw refuse(
+      409,
+      "NO_ACTIVE_COST_CENTRES",
+      "This branch has no active cost centres to allocate a branch-level line to",
+    );
   }
 
   // Narrow to the line's own cost-centre scope. Everything downstream — driver checks, manual
@@ -467,14 +536,20 @@ export async function computeLineAllocations(
     const activeIds = new Set(allActive.map((cc) => cc.id));
     const unknown = scopeIds.filter((id) => !activeIds.has(id));
     if (unknown.length) {
-      throw refuse(400, "COST_CENTRE_NOT_ACTIVE",
-        `Cost centre scope names ${unknown.length} cost centre(s) that are not active for this branch`
+      throw refuse(
+        400,
+        "COST_CENTRE_NOT_ACTIVE",
+        `Cost centre scope names ${unknown.length} cost centre(s) that are not active for this branch`,
       );
     }
     const wanted = new Set(scopeIds);
     costCentres = allActive.filter((cc) => wanted.has(cc.id));
     if (costCentres.length === 0) {
-      throw refuse(400, "COST_CENTRE_SCOPE_REQUIRED", "Select at least one cost centre for this branch-level line");
+      throw refuse(
+        400,
+        "COST_CENTRE_SCOPE_REQUIRED",
+        "Select at least one cost centre for this branch-level line",
+      );
     }
   }
 
@@ -485,23 +560,42 @@ export async function computeLineAllocations(
 
   if (method === "manual") {
     if (!manualAllocations?.length) {
-      throw refuse(400, "MANUAL_SPLIT_INCOMPLETE", "Manual sharing requires a percentage for at least one cost centre");
-    }
-    const activeIds = new Set(costCentres.map((cc) => cc.id));
-    const missing = costCentres.filter((cc) => !manualAllocations.some((m) => m.costCentreId === cc.id));
-    if (missing.length > 0) {
-      throw refuse(400, "MANUAL_SPLIT_INCOMPLETE",
-        `Manual sharing requires a percentage for every ${scopeIds.length ? "selected" : "active"} cost centre. Missing: ` +
-        missing.map((cc) => cc.costCentreName).join(", ")
+      throw refuse(
+        400,
+        "MANUAL_SPLIT_INCOMPLETE",
+        "Manual sharing requires a percentage for at least one cost centre",
       );
     }
-    const unknown = manualAllocations.filter((m) => !activeIds.has(m.costCentreId));
-    if (unknown.length > 0) {
-      throw refuse(400, "COST_CENTRE_NOT_ACTIVE", "Manual sharing references a cost centre that is not active for this branch");
+    const activeIds = new Set(costCentres.map((cc) => cc.id));
+    const missing = costCentres.filter(
+      (cc) => !manualAllocations.some((m) => m.costCentreId === cc.id),
+    );
+    if (missing.length > 0) {
+      throw refuse(
+        400,
+        "MANUAL_SPLIT_INCOMPLETE",
+        `Manual sharing requires a percentage for every ${scopeIds.length ? "selected" : "active"} cost centre. Missing: ` +
+          missing.map((cc) => cc.costCentreName).join(", "),
+      );
     }
-    shares = manualAllocations.map((m) => ({ key: m.costCentreId, weight: m.percentage }));
+    const unknown = manualAllocations.filter(
+      (m) => !activeIds.has(m.costCentreId),
+    );
+    if (unknown.length > 0) {
+      throw refuse(
+        400,
+        "COST_CENTRE_NOT_ACTIVE",
+        "Manual sharing references a cost centre that is not active for this branch",
+      );
+    }
+    shares = manualAllocations.map((m) => ({
+      key: m.costCentreId,
+      weight: m.percentage,
+    }));
     mode = "manual_percentage";
-    driverValueByCostCentre = new Map(manualAllocations.map((m) => [m.costCentreId, m.percentage]));
+    driverValueByCostCentre = new Map(
+      manualAllocations.map((m) => [m.costCentreId, m.percentage]),
+    );
   } else if (method === "equal_split") {
     shares = costCentres.map((cc) => ({ key: cc.id, weight: 1 }));
     mode = "equal";
@@ -511,12 +605,13 @@ export async function computeLineAllocations(
     const branchConsumption = await memo(
       cache?.meterConsumption,
       `${branchId}|${periodCode}|${utilityType ?? "*"}`,
-      () => getBranchMeterConsumption(branchId, periodCode, executor, utilityType)
+      () =>
+        getBranchMeterConsumption(branchId, periodCode, executor, utilityType),
     );
     const consumptionByCostCentre = new Map(
       costCentres
         .filter((cc) => branchConsumption.has(cc.id))
-        .map((cc) => [cc.id, branchConsumption.get(cc.id)!])
+        .map((cc) => [cc.id, branchConsumption.get(cc.id)!]),
     );
     // An unmetered cost centre carries no share of a metered cost, so it gets weight 0 rather
     // than blocking the whole line. Requiring EVERY active cost centre to be metered rejected the
@@ -524,10 +619,12 @@ export async function computeLineAllocations(
     // exactly what meter-wise sharing exists for. Only a branch with no meter data anywhere is an
     // error, because then there is nothing to apportion by.
     if (consumptionByCostCentre.size === 0) {
-      throw refuse(409, "METER_READING_MISSING",
-        "No meter reading exists for this branch and period"
-        + (utilityType ? ` for ${utilityType}` : "")
-        + ". Record at least one meter reading before using meter-wise sharing."
+      throw refuse(
+        409,
+        "METER_READING_MISSING",
+        "No meter reading exists for this branch and period" +
+          (utilityType ? ` for ${utilityType}` : "") +
+          ". Record at least one meter reading before using meter-wise sharing.",
       );
     }
     shares = costCentres.map((cc) => ({
@@ -535,31 +632,47 @@ export async function computeLineAllocations(
       weight: consumptionByCostCentre.get(cc.id)?.consumption ?? 0,
     }));
     unitByCostCentre = new Map(
-      costCentres.map((cc) => [cc.id, consumptionByCostCentre.get(cc.id)?.consumption ?? 0])
+      costCentres.map((cc) => [
+        cc.id,
+        consumptionByCostCentre.get(cc.id)?.consumption ?? 0,
+      ]),
     );
     driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
     mode = "weighted";
   } else if (method === "grade_weighted_headcount") {
-    const costByCostCentre = new Map<string, { totalHeadcount: number; blendedMonthlyCost: number }>();
+    const costByCostCentre = new Map<
+      string,
+      { totalHeadcount: number; blendedMonthlyCost: number }
+    >();
     // Sequential per cost centre, but memoised across lines: the same cost centre's grade cost was
     // otherwise re-read once per branch-level line.
     for (const cc of costCentres) {
       const cost = await memo(cache?.gradeCost, `${cc.id}|${periodCode}`, () =>
-        getCostCentreGradeWeightedCost(cc.id, periodCode, executor)
+        getCostCentreGradeWeightedCost(cc.id, periodCode, executor),
       );
       if (cost) costByCostCentre.set(cc.id, cost);
     }
-    const missingGradeData = costCentres.filter((cc) => !costByCostCentre.has(cc.id));
+    const missingGradeData = costCentres.filter(
+      (cc) => !costByCostCentre.has(cc.id),
+    );
     if (missingGradeData.length > 0) {
-      throw refuse(409, "GRADE_HEADCOUNT_MISSING",
+      throw refuse(
+        409,
+        "GRADE_HEADCOUNT_MISSING",
         `Grade-wise headcount data is missing for: ` +
-        missingGradeData.map((cc) => cc.costCentreName).join(", ") +
-        ". Set grade drivers for every active cost centre before using grade-weighted sharing."
+          missingGradeData.map((cc) => cc.costCentreName).join(", ") +
+          ". Set grade drivers for every active cost centre before using grade-weighted sharing.",
       );
     }
-    shares = costCentres.map((cc) => ({ key: cc.id, weight: costByCostCentre.get(cc.id)!.blendedMonthlyCost }));
+    shares = costCentres.map((cc) => ({
+      key: cc.id,
+      weight: costByCostCentre.get(cc.id)!.blendedMonthlyCost,
+    }));
     unitByCostCentre = new Map(
-      costCentres.map((cc) => [cc.id, costByCostCentre.get(cc.id)!.totalHeadcount])
+      costCentres.map((cc) => [
+        cc.id,
+        costByCostCentre.get(cc.id)!.totalHeadcount,
+      ]),
     );
     driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
     mode = "weighted";
@@ -571,22 +684,32 @@ export async function computeLineAllocations(
     // carries no share of the pool, the same treatment meter_wise already gives an unmetered cost
     // centre. The gap is still surfaced as a non-blocking caution via checkSharingMethodReadiness
     // (Exceptions & Readiness tab), which is where "add revenue" belongs — not a save-time throw.
-    const drivers = await memo(cache?.monthlyDrivers, `${branchId}|${periodCode}`, () =>
-      getMonthlyDrivers(branchId, periodCode, executor)
+    const drivers = await memo(
+      cache?.monthlyDrivers,
+      `${branchId}|${periodCode}`,
+      () => getMonthlyDrivers(branchId, periodCode, executor),
     );
     const driverByCostCentre = new Map(drivers.map((d) => [d.costCentreId, d]));
     shares = costCentres.map((cc) => ({
       key: cc.id,
-      weight: Math.max(0, driverByCostCentre.get(cc.id)?.calculatedPlannedRevenue ?? 0),
+      weight: Math.max(
+        0,
+        driverByCostCentre.get(cc.id)?.calculatedPlannedRevenue ?? 0,
+      ),
     }));
     unitByCostCentre = new Map(
-      costCentres.map((cc) => [cc.id, driverByCostCentre.get(cc.id)?.calculatedPlannedRevenue ?? 0])
+      costCentres.map((cc) => [
+        cc.id,
+        driverByCostCentre.get(cc.id)?.calculatedPlannedRevenue ?? 0,
+      ]),
     );
     driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
     mode = "weighted";
   } else {
-    const drivers = await memo(cache?.monthlyDrivers, `${branchId}|${periodCode}`, () =>
-      getMonthlyDrivers(branchId, periodCode, executor)
+    const drivers = await memo(
+      cache?.monthlyDrivers,
+      `${branchId}|${periodCode}`,
+      () => getMonthlyDrivers(branchId, periodCode, executor),
     );
     const driverByCostCentre = new Map(drivers.map((d) => [d.costCentreId, d]));
     /*
@@ -610,19 +733,24 @@ export async function computeLineAllocations(
      */
     shares = costCentres.map((cc) => {
       const driver = driverByCostCentre.get(cc.id);
-      return { key: cc.id, weight: driver ? Math.max(0, driverWeight(method, driver)) : 0 };
+      return {
+        key: cc.id,
+        weight: driver ? Math.max(0, driverWeight(method, driver)) : 0,
+      };
     });
     if (shares.every((share) => share.weight <= 0)) {
-      throw refuse(409, "MONTHLY_DRIVER_MISSING",
+      throw refuse(
+        409,
+        "MONTHLY_DRIVER_MISSING",
         `No cost centre in this branch has any ${DRIVER_LABELS[method] ?? "driver data"} for ${periodCode}, ` +
-        "so there is nothing to share this cost out by. Set monthly drivers, or pick a different sharing method."
+          "so there is nothing to share this cost out by. Set monthly drivers, or pick a different sharing method.",
       );
     }
     unitByCostCentre = new Map(
       costCentres.map((cc) => {
         const driver = driverByCostCentre.get(cc.id);
         return [cc.id, driver ? unitFor(method, driver) : 0];
-      })
+      }),
     );
     driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
     mode = "weighted";
@@ -643,29 +771,50 @@ export async function computeLineAllocations(
   // Where all four are whole rupees this is identical to the previous behaviour, which is every
   // allocation row in production today: 0 of 410 currently mismatch.
   const wholeRupeeLine = [
-    amounts.baseAmount, amounts.taxAmount, amounts.grossAmount, amounts.pnlCostAmount,
+    amounts.baseAmount,
+    amounts.taxAmount,
+    amounts.grossAmount,
+    amounts.pnlCostAmount,
   ].every((value) => Number.isInteger(Number(value)));
   const granularity = wholeRupeeLine ? "rupee" : "paise";
 
-  const base = allocatePoolAmount(amounts.baseAmount, shares, mode, granularity);
+  const base = allocatePoolAmount(
+    amounts.baseAmount,
+    shares,
+    mode,
+    granularity,
+  );
   const tax = allocatePoolAmount(amounts.taxAmount, shares, mode, granularity);
-  const gross = allocatePoolAmount(amounts.grossAmount, shares, mode, granularity);
-  const pnl = allocatePoolAmount(amounts.pnlCostAmount, shares, mode, granularity);
+  const gross = allocatePoolAmount(
+    amounts.grossAmount,
+    shares,
+    mode,
+    granularity,
+  );
+  const pnl = allocatePoolAmount(
+    amounts.pnlCostAmount,
+    shares,
+    mode,
+    granularity,
+  );
 
   // Backend-authoritative block for manual splits (the frontend already validates this
   // pre-save, but the API must not silently persist an unbalanced split reached by any other
   // caller). balanced/percentTotal are identical across all four calls above since they share
   // the same `shares` — checking one is sufficient.
   if (mode === "manual_percentage" && !gross.balanced) {
-    throw refuse(400, "MANUAL_SPLIT_NOT_100", 
-      `Manual cost-centre split must total 100% (currently ${(gross.percentTotal ?? 0).toFixed(2)}%)`
+    throw refuse(
+      400,
+      "MANUAL_SPLIT_NOT_100",
+      `Manual cost-centre split must total 100% (currently ${(gross.percentTotal ?? 0).toFixed(2)}%)`,
     );
   }
 
   return costCentres.map((cc) => {
     const grossShare = gross.amounts.get(cc.id) ?? 0;
     const expectedGross = amounts.grossAmount > 0 ? amounts.grossAmount : 1;
-    const allocationPercentage = Math.round((grossShare / expectedGross) * 100 * 1_000_000) / 1_000_000;
+    const allocationPercentage =
+      Math.round((grossShare / expectedGross) * 100 * 1_000_000) / 1_000_000;
     return {
       costCentreId: cc.id,
       driverValue: driverValueByCostCentre.get(cc.id) ?? 0,
@@ -684,15 +833,20 @@ export async function replaceLineAllocations(
   connection: PoolConnection,
   budgetLineId: string,
   rows: LineAllocationRow[],
-  actorUserId: string
+  actorUserId: string,
 ): Promise<void> {
-  await connection.execute(`DELETE FROM finance_budget_line_allocation WHERE budget_line_id = ?`, [budgetLineId]);
+  await connection.execute(
+    `DELETE FROM finance_budget_line_allocation WHERE budget_line_id = ?`,
+    [budgetLineId],
+  );
   if (rows.length === 0) return;
 
   // One multi-row INSERT rather than one per cost centre. Every row here is generated by
   // computeLineAllocations above — no user-supplied text reaches the SQL, and the values are still
   // bound as parameters; only the placeholder list is built from rows.length.
-  const placeholders = rows.map(() => "(?,?,?,?,?,?,?,?,?,?,?,'calculated',?,?)").join(",");
+  const placeholders = rows
+    .map(() => "(?,?,?,?,?,?,?,?,?,?,?,'calculated',?,?)")
+    .join(",");
   const params = rows.flatMap((row) => [
     randomUUID(),
     budgetLineId,
@@ -714,7 +868,7 @@ export async function replaceLineAllocations(
        planned_unit, base_amount, tax_amount, gross_amount, pnl_cost_amount,
        rounding_adjustment, entry_source, created_by, updated_by)
      VALUES ${placeholders}`,
-    params
+    params,
   );
 }
 
@@ -749,8 +903,12 @@ export async function replaceLineAllocations(
 export async function resyncLineAllocations(
   connection: PoolConnection,
   budgetLineId: string,
-  actorUserId: string
-): Promise<{ status: "written" | "not_applicable" | "skipped"; rows?: number; reason?: string }> {
+  actorUserId: string,
+): Promise<{
+  status: "written" | "not_applicable" | "skipped";
+  rows?: number;
+  reason?: string;
+}> {
   const [lineRows] = await connection.execute<RowDataPacket[]>(
     `SELECT l.id, l.planning_level, l.allocation_driver,
             l.base_amount, l.tax_amount, l.gross_amount, l.pnl_cost_amount,
@@ -759,11 +917,12 @@ export async function resyncLineAllocations(
        JOIN finance_budget_header h ON h.id = l.budget_id
       WHERE l.id = ?
       LIMIT 1`,
-    [budgetLineId]
+    [budgetLineId],
   );
   const line = lineRows[0] as any;
   if (!line) return { status: "not_applicable", reason: "LINE_NOT_FOUND" };
-  if (String(line.planning_level) !== "branch") return { status: "not_applicable" };
+  if (String(line.planning_level) !== "branch")
+    return { status: "not_applicable" };
 
   // The cost centres this line actually covers. A branch-level line may deliberately exclude part
   // of the branch (one floor's air conditioning), and that scope lives only in the split it
@@ -772,9 +931,11 @@ export async function resyncLineAllocations(
     `SELECT cost_centre_id, allocation_percentage
        FROM finance_budget_line_allocation
       WHERE budget_line_id = ?`,
-    [budgetLineId]
+    [budgetLineId],
   );
-  const scope = (existing as RowDataPacket[]).map((row) => String(row.cost_centre_id));
+  const scope = (existing as RowDataPacket[]).map((row) =>
+    String(row.cost_centre_id),
+  );
 
   const method = String(line.allocation_driver ?? "").trim();
   let manualAllocations: ManualAllocationInput[] | undefined;
@@ -802,7 +963,7 @@ export async function resyncLineAllocations(
       manualAllocations,
       connection,
       undefined,
-      scope.length ? scope : undefined
+      scope.length ? scope : undefined,
     );
     await replaceLineAllocations(connection, budgetLineId, rows, actorUserId);
     return { status: "written", rows: rows.length };
@@ -819,11 +980,16 @@ export async function resyncLineAllocations(
      * in fact succeeded and only the write failed.
      */
     if (typeof refusal.statusCode !== "number") throw error;
-    return { status: "skipped", reason: refusal.code ?? `HTTP_${refusal.statusCode}` };
+    return {
+      status: "skipped",
+      reason: refusal.code ?? `HTTP_${refusal.statusCode}`,
+    };
   }
 }
 
-export async function getLineAllocations(budgetLineId: string): Promise<RowDataPacket[]> {
+export async function getLineAllocations(
+  budgetLineId: string,
+): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.*, ccm.cost_centre_name, ccm.cost_centre_code, ${ccProcessNameSql()} AS cost_centre_process
        FROM finance_budget_line_allocation a
@@ -831,7 +997,7 @@ export async function getLineAllocations(budgetLineId: string): Promise<RowDataP
        ${ccProcessJoin()}
       WHERE a.budget_line_id = ?
       ORDER BY ccm.cost_centre_name`,
-    [budgetLineId]
+    [budgetLineId],
   );
   return rows;
 }

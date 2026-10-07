@@ -22,22 +22,31 @@ import { createExitRequestSchema } from "../exit.validation.js";
 
 const UUID = "8e3e0434-6584-11f1-adb1-00155d0ab410";
 
-beforeEach(() => { execute.mockReset(); });
+beforeEach(() => {
+  execute.mockReset();
+});
 
 describe("createExitRequestSchema accepts a code", () => {
   const base = { exitDate: "2026-08-15", exitType: "involuntary" as const };
 
   it("accepts employeeCode without a uuid", () => {
-    const parsed = createExitRequestSchema.parse({ ...base, employeeCode: "MAS63193" });
+    const parsed = createExitRequestSchema.parse({
+      ...base,
+      employeeCode: "MAS63193",
+    });
     expect(parsed.employeeCode).toBe("MAS63193");
   });
 
   it("still accepts a uuid", () => {
-    expect(createExitRequestSchema.parse({ ...base, employeeId: UUID }).employeeId).toBe(UUID);
+    expect(
+      createExitRequestSchema.parse({ ...base, employeeId: UUID }).employeeId,
+    ).toBe(UUID);
   });
 
   it("rejects a request identifying nobody", () => {
-    expect(() => createExitRequestSchema.parse(base)).toThrow(/employeeId or employeeCode/i);
+    expect(() => createExitRequestSchema.parse(base)).toThrow(
+      /employeeId or employeeCode/i,
+    );
   });
 });
 
@@ -64,7 +73,9 @@ describe("resolveEmployeeRef", () => {
 
   it("throws a message naming the code when it matches nobody", async () => {
     execute.mockResolvedValueOnce([[], []]);
-    await expect(resolveEmployeeRef(undefined, "MAS99999")).rejects.toThrow(/MAS99999/);
+    await expect(resolveEmployeeRef(undefined, "MAS99999")).rejects.toThrow(
+      /MAS99999/,
+    );
   });
 
   it("never falls back to a name or email match", async () => {
@@ -75,6 +86,8 @@ describe("resolveEmployeeRef", () => {
   });
 
   it("throws when neither identifier is supplied", async () => {
-    await expect(resolveEmployeeRef(undefined, undefined)).rejects.toThrow(/employeeId or employeeCode/i);
+    await expect(resolveEmployeeRef(undefined, undefined)).rejects.toThrow(
+      /employeeId or employeeCode/i,
+    );
   });
 });

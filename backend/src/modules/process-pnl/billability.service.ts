@@ -113,7 +113,13 @@ export async function resolveBillability(
         END,
         effective_from DESC
       LIMIT 1`,
-    [date, date, employee.employeeId, employee.processId, employee.designationId],
+    [
+      date,
+      date,
+      employee.employeeId,
+      employee.processId,
+      employee.designationId,
+    ],
   );
 
   const rule = rows[0];
@@ -125,7 +131,11 @@ export async function resolveBillability(
         : rule.process_id
           ? "process"
           : "designation";
-    return { isBillable: Number(rule.is_billable) === 1, source, ruleId: String(rule.id) };
+    return {
+      isBillable: Number(rule.is_billable) === 1,
+      source,
+      ruleId: String(rule.id),
+    };
   }
 
   // No rule reaches this person. Fall back to the classification the P&L already made —
@@ -174,12 +184,18 @@ export async function resolveSeatRate(
       seatRateMonthly: Number(override[0].seat_rate_monthly),
       source: "employee_override",
       ruleId: String(override[0].id),
-      prorationMethod: override[0].proration_method as "payable_days" | "full_month",
+      prorationMethod: override[0].proration_method as
+        "payable_days" | "full_month",
     };
   }
 
   if (!employee.costCentreId) {
-    return { seatRateMonthly: 0, source: "missing", ruleId: null, prorationMethod: "payable_days" };
+    return {
+      seatRateMonthly: 0,
+      source: "missing",
+      ruleId: null,
+      prorationMethod: "payable_days",
+    };
   }
 
   // 2 and 3. Cost-centre rate, designation-specific before flat. Ordering by
@@ -258,7 +274,12 @@ export async function resolveSeatRate(
     };
   }
 
-  return { seatRateMonthly: 0, source: "missing", ruleId: null, prorationMethod: "payable_days" };
+  return {
+    seatRateMonthly: 0,
+    source: "missing",
+    ruleId: null,
+    prorationMethod: "payable_days",
+  };
 }
 
 // ─── Allocation splits ────────────────────────────────────────────────────────
@@ -331,7 +352,10 @@ export async function replaceEmployeeAllocation(
   changeReason: string,
 ): Promise<{ ok: true; rows: number }> {
   if (allocations.length > 0) {
-    const total = allocations.reduce((sum, a) => sum + Number(a.allocationPct || 0), 0);
+    const total = allocations.reduce(
+      (sum, a) => sum + Number(a.allocationPct || 0),
+      0,
+    );
     if (Math.abs(total - 100) > 0.01) {
       throw Object.assign(
         new Error(`Allocation must total 100% — received ${total.toFixed(2)}%`),
@@ -339,16 +363,21 @@ export async function replaceEmployeeAllocation(
       );
     }
     if (allocations.some((a) => Number(a.allocationPct) <= 0)) {
-      throw Object.assign(new Error("Each allocation percentage must be greater than zero"), {
-        statusCode: 400,
-        code: "ALLOCATION_NON_POSITIVE",
-      });
+      throw Object.assign(
+        new Error("Each allocation percentage must be greater than zero"),
+        {
+          statusCode: 400,
+          code: "ALLOCATION_NON_POSITIVE",
+        },
+      );
     }
     const seen = new Set<string>();
     for (const a of allocations) {
       if (seen.has(a.costCentreId)) {
         throw Object.assign(
-          new Error("The same cost centre appears more than once in this split"),
+          new Error(
+            "The same cost centre appears more than once in this split",
+          ),
           { statusCode: 400, code: "ALLOCATION_DUPLICATE_COST_CENTRE" },
         );
       }
@@ -384,8 +413,16 @@ export async function replaceEmployeeAllocation(
            (id, employee_id, cost_centre_id, allocation_pct, allocation_basis,
             effective_from, status, change_reason, created_by, approved_by, approved_at)
          VALUES (?, ?, ?, ?, 'manual', ?, 'approved', ?, ?, ?, NOW())`,
-        [randomUUID(), employeeId, a.costCentreId, a.allocationPct, effectiveFrom,
-         changeReason, actorId, actorId],
+        [
+          randomUUID(),
+          employeeId,
+          a.costCentreId,
+          a.allocationPct,
+          effectiveFrom,
+          changeReason,
+          actorId,
+          actorId,
+        ],
       );
     }
 
@@ -393,7 +430,10 @@ export async function replaceEmployeeAllocation(
     return { ok: true, rows: allocations.length };
   } catch (error) {
     await conn.rollback();
-    logger.error({ err: error, employeeId, effectiveFrom }, "[billability] allocation replace failed");
+    logger.error(
+      { err: error, employeeId, effectiveFrom },
+      "[billability] allocation replace failed",
+    );
     throw error;
   } finally {
     conn.release();

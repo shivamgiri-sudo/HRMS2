@@ -3,8 +3,14 @@ import { describe, expect, it } from "vitest";
 
 const manifestPath = new URL("../runPendingMigrations.ts", import.meta.url);
 const bootstrapPath = new URL("../../../sql/000_run_all.sql", import.meta.url);
-const migrationPath = new URL("../../../sql/460_ats_performance_indexes.sql", import.meta.url);
-const authLockoutMigrationPath = new URL("../../../sql/504_auth_account_lockout.sql", import.meta.url);
+const migrationPath = new URL(
+  "../../../sql/460_ats_performance_indexes.sql",
+  import.meta.url,
+);
+const authLockoutMigrationPath = new URL(
+  "../../../sql/504_auth_account_lockout.sql",
+  import.meta.url,
+);
 
 describe("runPendingMigrations manifest", () => {
   it("keeps ATS performance indexes registered in runtime and bootstrap order", () => {

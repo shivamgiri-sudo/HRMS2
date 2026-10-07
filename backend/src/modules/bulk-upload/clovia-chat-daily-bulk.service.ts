@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's Chat dashboard (Botlytics chat dump, per its own SOP -- no DB
@@ -23,7 +26,9 @@ export const CLOVIA_CHAT_DAILY_HEADERS = [
 
 /** NOT NULL with a 0 default -- a blank cell means zero, not null. */
 export function parseCount(raw: unknown): number {
-  const v = String(raw ?? "").trim().replace(/,/g, "");
+  const v = String(raw ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!v) return 0;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
@@ -41,12 +46,24 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
+    const d = new Date(
+      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
+    );
     return d.toISOString().slice(0, 10);
   }
   const MONTHS: Record<string, number> = {
-    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+    jan: 1,
+    feb: 2,
+    mar: 3,
+    apr: 4,
+    may: 5,
+    jun: 6,
+    jul: 7,
+    aug: 8,
+    sep: 9,
+    oct: 10,
+    nov: 11,
+    dec: 12,
   };
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
@@ -64,7 +81,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importCloviaChatDailyBatch(
   batchId: string,
@@ -76,7 +95,8 @@ export async function importCloviaChatDailyBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const [procRows] = await db.execute<Ref[]>(
     "SELECT id FROM process_master WHERE process_name = 'Clovia' AND active_status = 1 LIMIT 1",
@@ -112,11 +132,13 @@ export async function importCloviaChatDailyBatch(
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, reportDate,
+        randomUUID(),
+        processId,
+        reportDate,
         parseCount(data["Total Chat"]),
         parseCount(data["Total Response"]),
         parseCount(data["C-Sat Count"]),
-        'bulk_upload',
+        "bulk_upload",
         batchId,
         importedByUserId,
       ],
@@ -140,12 +162,17 @@ export async function importCloviaChatDailyBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 

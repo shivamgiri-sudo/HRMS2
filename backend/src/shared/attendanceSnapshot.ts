@@ -61,7 +61,7 @@ export async function captureAttendanceSnapshot(
     employeeId: string;
     dates: string[];
     capturedBy?: string | null;
-  }
+  },
 ): Promise<number> {
   const dates = params.dates.map((d) => String(d).slice(0, 10)).filter(Boolean);
   if (dates.length === 0) return 0;
@@ -70,7 +70,7 @@ export async function captureAttendanceSnapshot(
   const [existingRows] = await conn.execute<RowDataPacket[]>(
     `SELECT * FROM attendance_daily_record
       WHERE employee_id = ? AND record_date IN (${placeholders})`,
-    [params.employeeId, ...dates]
+    [params.employeeId, ...dates],
   );
 
   const byDate = new Map<string, RowDataPacket>();
@@ -90,7 +90,7 @@ export async function captureAttendanceSnapshot(
       date,
       existing ? 1 : 0,
       existing ? JSON.stringify(existing) : null,
-      params.capturedBy ?? null
+      params.capturedBy ?? null,
     );
   }
 
@@ -98,7 +98,7 @@ export async function captureAttendanceSnapshot(
     `INSERT IGNORE INTO attendance_state_snapshot
        (id, source_type, source_id, employee_id, record_date, row_existed, snapshot_json, captured_by)
      VALUES ${tuples.join(", ")}`,
-    values
+    values,
   );
   return Number((result as any)?.affectedRows ?? 0);
 }
@@ -107,15 +107,20 @@ export async function captureAttendanceSnapshot(
 export async function readAttendanceSnapshots(
   conn: PoolConnection,
   sourceType: SnapshotSourceType,
-  sourceId: string
-): Promise<Map<string, { row_existed: number; snapshot: Record<string, unknown> | null }>> {
+  sourceId: string,
+): Promise<
+  Map<string, { row_existed: number; snapshot: Record<string, unknown> | null }>
+> {
   const [rows] = await conn.execute<RowDataPacket[]>(
     `SELECT record_date, row_existed, snapshot_json
        FROM attendance_state_snapshot
       WHERE source_type = ? AND source_id = ?`,
-    [sourceType, sourceId]
+    [sourceType, sourceId],
   );
-  const out = new Map<string, { row_existed: number; snapshot: Record<string, unknown> | null }>();
+  const out = new Map<
+    string,
+    { row_existed: number; snapshot: Record<string, unknown> | null }
+  >();
   for (const row of rows as RowDataPacket[]) {
     const raw = (row as any).snapshot_json;
     // mysql2 hands back JSON columns already parsed, but a driver or column-type
@@ -123,7 +128,11 @@ export async function readAttendanceSnapshots(
     let parsed: Record<string, unknown> | null = null;
     if (raw && typeof raw === "object") parsed = raw as Record<string, unknown>;
     else if (typeof raw === "string" && raw.trim()) {
-      try { parsed = JSON.parse(raw); } catch { parsed = null; }
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = null;
+      }
     }
     out.set(String((row as any).record_date).slice(0, 10), {
       row_existed: Number((row as any).row_existed ?? 0),

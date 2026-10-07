@@ -50,7 +50,9 @@ const flush = () => new Promise((r) => setImmediate(r));
 /** Every action string handed to the audit INSERT. */
 function loggedActions(): string[] {
   return execute.mock.calls
-    .filter((c) => String(c[0]).includes("INSERT INTO dpdp_withdrawal_audit_log"))
+    .filter((c) =>
+      String(c[0]).includes("INSERT INTO dpdp_withdrawal_audit_log"),
+    )
     .map((c) => String((c[1] as unknown[])[1]));
 }
 
@@ -59,8 +61,10 @@ beforeEach(() => execute.mockReset());
 describe("DPDP withdrawal — audit events on already-implemented paths", () => {
   it("records VIEWED when HR opens a withdrawal record", async () => {
     execute
-      .mockResolvedValueOnce([[{ id: WITHDRAWAL_ID, requester_id: OWNER_USER }]]) // SELECT record
-      .mockResolvedValue([{}]);                                                    // audit INSERT
+      .mockResolvedValueOnce([
+        [{ id: WITHDRAWAL_ID, requester_id: OWNER_USER }],
+      ]) // SELECT record
+      .mockResolvedValue([{}]); // audit INSERT
 
     await svc.getById(WITHDRAWAL_ID, HR_USER, true, true);
     await flush();
@@ -70,7 +74,9 @@ describe("DPDP withdrawal — audit events on already-implemented paths", () => 
 
   it("does NOT log a view when the data principal reads their own request", async () => {
     execute
-      .mockResolvedValueOnce([[{ id: WITHDRAWAL_ID, requester_id: OWNER_USER }]])
+      .mockResolvedValueOnce([
+        [{ id: WITHDRAWAL_ID, requester_id: OWNER_USER }],
+      ])
       .mockResolvedValue([{}]);
 
     await svc.getById(WITHDRAWAL_ID, OWNER_USER, false, true);
@@ -82,7 +88,9 @@ describe("DPDP withdrawal — audit events on already-implemented paths", () => 
   it("does NOT log a view for the audit endpoint's own access check", async () => {
     // The audit route calls getById without opting in, purely to authorise the caller.
     execute
-      .mockResolvedValueOnce([[{ id: WITHDRAWAL_ID, requester_id: OWNER_USER }]])
+      .mockResolvedValueOnce([
+        [{ id: WITHDRAWAL_ID, requester_id: OWNER_USER }],
+      ])
       .mockResolvedValue([{}]);
 
     await svc.getById(WITHDRAWAL_ID, HR_USER, true /* isHr */);
@@ -93,8 +101,8 @@ describe("DPDP withdrawal — audit events on already-implemented paths", () => 
 
   it("records AUDIT_VIEWED when the audit trail is opened", async () => {
     execute
-      .mockResolvedValueOnce([[]])   // SELECT audit rows
-      .mockResolvedValue([{}]);      // audit INSERT
+      .mockResolvedValueOnce([[]]) // SELECT audit rows
+      .mockResolvedValue([{}]); // audit INSERT
 
     await svc.getAudit(WITHDRAWAL_ID, HR_USER);
     await flush();
@@ -104,15 +112,18 @@ describe("DPDP withdrawal — audit events on already-implemented paths", () => 
 
   it("records MODULE_ACTION_COMPLETED when a withdrawal task is completed", async () => {
     execute
-      .mockResolvedValueOnce([{}])                                                   // UPDATE task
-      .mockResolvedValueOnce([[{ withdrawal_id: WITHDRAWAL_ID, module_key: "payroll" }]]) // SELECT back
-      .mockResolvedValue([{}]);                                                      // audit INSERT
+      .mockResolvedValueOnce([{}]) // UPDATE task
+      .mockResolvedValueOnce([
+        [{ withdrawal_id: WITHDRAWAL_ID, module_key: "payroll" }],
+      ]) // SELECT back
+      .mockResolvedValue([{}]); // audit INSERT
 
     await svc.completeTask(TASK_ID, HR_USER, "done");
     await flush();
 
     const insert = execute.mock.calls.find((c) =>
-      String(c[0]).includes("INSERT INTO dpdp_withdrawal_audit_log"));
+      String(c[0]).includes("INSERT INTO dpdp_withdrawal_audit_log"),
+    );
     expect(insert).toBeTruthy();
     const params = insert![1] as unknown[];
     expect(params[1]).toBe("DPDP_WITHDRAWAL_MODULE_ACTION_COMPLETED");
@@ -122,7 +133,7 @@ describe("DPDP withdrawal — audit events on already-implemented paths", () => 
   it("records HOLD_ENFORCED when the restriction guard actually blocks a read", async () => {
     execute
       .mockResolvedValueOnce([[{ id: WITHDRAWAL_ID }]]) // active restriction found
-      .mockResolvedValue([{}]);                        // audit INSERT
+      .mockResolvedValue([{}]); // audit INSERT
 
     const req = {
       params: { employeeId: OWNER_USER },
@@ -148,16 +159,21 @@ describe("DPDP withdrawal — audit events on already-implemented paths", () => 
 
   it("still returns 403 even if the audit write fails — the guard must fail closed", async () => {
     execute
-      .mockResolvedValueOnce([[{ id: WITHDRAWAL_ID }]])            // restriction found
+      .mockResolvedValueOnce([[{ id: WITHDRAWAL_ID }]]) // restriction found
       .mockRejectedValueOnce(new Error("audit table unavailable")) // the audit write only
       .mockResolvedValue([{}]);
 
     const req = {
-      params: { employeeId: OWNER_USER }, query: {}, method: "GET",
-      path: "/x", originalUrl: "/x", authUser: { id: HR_USER },
+      params: { employeeId: OWNER_USER },
+      query: {},
+      method: "GET",
+      path: "/x",
+      originalUrl: "/x",
+      authUser: { id: HR_USER },
     } as unknown as Request;
     const res = {
-      status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis(),
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn().mockReturnThis(),
     } as unknown as Response;
     const next = vi.fn() as unknown as NextFunction;
 

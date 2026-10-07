@@ -31,7 +31,7 @@ benefitsRouter.get(
     }
     const plans = await benefitsService.listPlans(activeOnly);
     return res.json({ success: true, data: plans });
-  })
+  }),
 );
 
 // POST /plans — admin/hr only
@@ -39,20 +39,26 @@ benefitsRouter.post(
   "/plans",
   requireRole("admin", "hr"),
   h(async (req, res) => {
-    const { plan_name, plan_type, description, eligibility_rule } = req.body as {
-      plan_name: string;
-      plan_type: string;
-      description?: string;
-      eligibility_rule?: string;
-    };
+    const { plan_name, plan_type, description, eligibility_rule } =
+      req.body as {
+        plan_name: string;
+        plan_type: string;
+        description?: string;
+        eligibility_rule?: string;
+      };
     if (!plan_name?.trim()) {
-      return res.status(400).json({ success: false, error: "plan_name is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "plan_name is required" });
     }
     const validTypes = ["insurance", "transport", "meal", "wellness", "other"];
     if (!plan_type || !validTypes.includes(plan_type)) {
       return res
         .status(400)
-        .json({ success: false, error: `plan_type must be one of: ${validTypes.join(", ")}` });
+        .json({
+          success: false,
+          error: `plan_type must be one of: ${validTypes.join(", ")}`,
+        });
     }
     const plan = await benefitsService.createPlan({
       plan_name: plan_name.trim(),
@@ -61,7 +67,7 @@ benefitsRouter.post(
       eligibility_rule: eligibility_rule ?? null,
     });
     return res.status(201).json({ success: true, data: plan });
-  })
+  }),
 );
 
 // ─── Enrollments ──────────────────────────────────────────────────────────
@@ -83,7 +89,7 @@ benefitsRouter.get(
 
     const enrollments = await benefitsService.listEnrollments(employeeId);
     return res.json({ success: true, data: enrollments });
-  })
+  }),
 );
 
 // POST /enrollments — admin/hr only
@@ -91,7 +97,13 @@ benefitsRouter.post(
   "/enrollments",
   requireRole("admin", "hr"),
   h(async (req, res) => {
-    const { employee_id, plan_id, enrolled_date, effective_from, effective_to } = req.body as {
+    const {
+      employee_id,
+      plan_id,
+      enrolled_date,
+      effective_from,
+      effective_to,
+    } = req.body as {
       employee_id: string;
       plan_id: string;
       enrolled_date: string;
@@ -101,7 +113,8 @@ benefitsRouter.post(
     if (!employee_id || !plan_id || !enrolled_date || !effective_from) {
       return res.status(400).json({
         success: false,
-        error: "employee_id, plan_id, enrolled_date, and effective_from are required",
+        error:
+          "employee_id, plan_id, enrolled_date, and effective_from are required",
       });
     }
     const enrollment = await benefitsService.enroll({
@@ -112,7 +125,7 @@ benefitsRouter.post(
       effective_to: effective_to ?? null,
     });
     return res.status(201).json({ success: true, data: enrollment });
-  })
+  }),
 );
 
 // PATCH /enrollments/:id — admin/hr only
@@ -120,16 +133,24 @@ benefitsRouter.patch(
   "/enrollments/:id",
   requireRole("admin", "hr"),
   h(async (req, res) => {
-    const { status } = req.body as { status: "active" | "inactive" | "pending" };
+    const { status } = req.body as {
+      status: "active" | "inactive" | "pending";
+    };
     const validStatuses = ["active", "inactive", "pending"];
     if (!status || !validStatuses.includes(status)) {
       return res
         .status(400)
-        .json({ success: false, error: `status must be one of: ${validStatuses.join(", ")}` });
+        .json({
+          success: false,
+          error: `status must be one of: ${validStatuses.join(", ")}`,
+        });
     }
-    const enrollment = await benefitsService.updateEnrollmentStatus(req.params.id, status);
+    const enrollment = await benefitsService.updateEnrollmentStatus(
+      req.params.id,
+      status,
+    );
     return res.json({ success: true, data: enrollment });
-  })
+  }),
 );
 
 // ─── Claims ───────────────────────────────────────────────────────────────
@@ -139,7 +160,10 @@ benefitsRouter.get(
   "/claims",
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    const { status, employee_id } = req.query as { status?: string; employee_id?: string };
+    const { status, employee_id } = req.query as {
+      status?: string;
+      employee_id?: string;
+    };
     const privileged = await hasRole(userId, "admin", "hr");
 
     if (privileged) {
@@ -154,11 +178,19 @@ benefitsRouter.get(
     // Non-privileged: only own claims
     const emp = await getEmployeeForUser(userId);
     if (!emp) {
-      return res.status(403).json({ success: false, error: "No employee record linked to account" });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "No employee record linked to account",
+        });
     }
-    const claims = await benefitsService.listClaims({ employeeId: emp.id, status });
+    const claims = await benefitsService.listClaims({
+      employeeId: emp.id,
+      status,
+    });
     return res.json({ success: true, data: claims });
-  })
+  }),
 );
 
 // POST /claims — employee submits own claim
@@ -173,30 +205,42 @@ benefitsRouter.post(
       if (!privileged || !req.body.employee_id) {
         return res
           .status(403)
-          .json({ success: false, error: "No employee record linked to account" });
+          .json({
+            success: false,
+            error: "No employee record linked to account",
+          });
       }
     }
 
-    const employee_id = (emp?.id ?? (req.body as { employee_id?: string }).employee_id) as string;
-    const { claim_type, amount, claim_date, description, receipt_ref } = req.body as {
-      claim_type: string;
-      amount: number;
-      claim_date: string;
-      description?: string;
-      receipt_ref?: string;
-    };
+    const employee_id = (emp?.id ??
+      (req.body as { employee_id?: string }).employee_id) as string;
+    const { claim_type, amount, claim_date, description, receipt_ref } =
+      req.body as {
+        claim_type: string;
+        amount: number;
+        claim_date: string;
+        description?: string;
+        receipt_ref?: string;
+      };
 
     const validTypes = ["travel", "medical", "meal", "equipment", "other"];
     if (!claim_type || !validTypes.includes(claim_type)) {
       return res
         .status(400)
-        .json({ success: false, error: `claim_type must be one of: ${validTypes.join(", ")}` });
+        .json({
+          success: false,
+          error: `claim_type must be one of: ${validTypes.join(", ")}`,
+        });
     }
     if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
-      return res.status(400).json({ success: false, error: "amount must be a positive number" });
+      return res
+        .status(400)
+        .json({ success: false, error: "amount must be a positive number" });
     }
     if (!claim_date) {
-      return res.status(400).json({ success: false, error: "claim_date is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "claim_date is required" });
     }
 
     const claim = await benefitsService.submitClaim({
@@ -208,7 +252,7 @@ benefitsRouter.post(
       receipt_ref: receipt_ref ?? null,
     });
     return res.status(201).json({ success: true, data: claim });
-  })
+  }),
 );
 
 // PATCH /claims/:id/review — admin/hr only
@@ -223,25 +267,32 @@ benefitsRouter.patch(
     if (!["approved", "rejected"].includes(action)) {
       return res
         .status(400)
-        .json({ success: false, error: "action must be 'approved' or 'rejected'" });
+        .json({
+          success: false,
+          error: "action must be 'approved' or 'rejected'",
+        });
     }
     const claim = await benefitsService.reviewClaim(
       req.params.id,
       action,
       req.authUser!.id,
-      remarks ?? null
+      remarks ?? null,
     );
     // fire-and-forget: notify the employee of the claim decision
     try {
       const [uRows] = await db.execute(
         "SELECT user_id FROM employees WHERE id = ? LIMIT 1",
-        [claim.employee_id]
+        [claim.employee_id],
       );
-      const recipientUserId = (uRows as { user_id: string | null }[])[0]?.user_id;
+      const recipientUserId = (uRows as { user_id: string | null }[])[0]
+        ?.user_id;
       if (recipientUserId) {
         await inboxService.createItem({
           user_id: recipientUserId,
-          type: action === "approved" ? "benefit_claim_approved" : "benefit_claim_rejected",
+          type:
+            action === "approved"
+              ? "benefit_claim_approved"
+              : "benefit_claim_rejected",
           title:
             action === "approved"
               ? "Your benefit claim has been approved"
@@ -257,7 +308,7 @@ benefitsRouter.patch(
       /* notifications are fire-and-forget */
     }
     return res.json({ success: true, data: claim });
-  })
+  }),
 );
 
 // POST /claims/:id/pay — admin/hr only
@@ -271,14 +322,18 @@ benefitsRouter.post(
         .status(400)
         .json({ success: false, error: "paymentReference is required" });
     }
-    const claim = await benefitsService.payClaim(req.params.id, paymentReference.trim());
+    const claim = await benefitsService.payClaim(
+      req.params.id,
+      paymentReference.trim(),
+    );
     // fire-and-forget: notify the employee that their claim has been paid
     try {
       const [uRows] = await db.execute(
         "SELECT user_id FROM employees WHERE id = ? LIMIT 1",
-        [claim.employee_id]
+        [claim.employee_id],
       );
-      const recipientUserId = (uRows as { user_id: string | null }[])[0]?.user_id;
+      const recipientUserId = (uRows as { user_id: string | null }[])[0]
+        ?.user_id;
       if (recipientUserId) {
         await inboxService.createItem({
           user_id: recipientUserId,
@@ -295,7 +350,7 @@ benefitsRouter.post(
       /* notifications are fire-and-forget */
     }
     return res.json({ success: true, data: claim });
-  })
+  }),
 );
 
 // PATCH /plans/:id — admin/hr/super_admin only
@@ -305,9 +360,14 @@ benefitsRouter.patch(
   h(async (req, res) => {
     const { is_active } = req.body as { is_active?: boolean };
     if (is_active === undefined || is_active === null) {
-      return res.status(400).json({ success: false, error: "is_active (boolean) is required" });
+      return res
+        .status(400)
+        .json({ success: false, error: "is_active (boolean) is required" });
     }
-    const plan = await benefitsService.updatePlan(req.params.id, Boolean(is_active));
+    const plan = await benefitsService.updatePlan(
+      req.params.id,
+      Boolean(is_active),
+    );
     return res.json({ success: true, data: plan });
-  })
+  }),
 );

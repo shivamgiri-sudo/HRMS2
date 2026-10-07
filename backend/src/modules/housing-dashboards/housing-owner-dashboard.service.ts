@@ -2,8 +2,13 @@ import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import {
-  FieldSpec, parseFlexibleSheet, normalizeDate, normalizeDurationSeconds,
-  normalizeNumber, normalizeText, normalizeName,
+  FieldSpec,
+  parseFlexibleSheet,
+  normalizeDate,
+  normalizeDurationSeconds,
+  normalizeNumber,
+  normalizeText,
+  normalizeName,
 } from "./flexible-parser.js";
 
 const SALE_FIELDS: FieldSpec[] = [
@@ -16,7 +21,10 @@ const SALE_FIELDS: FieldSpec[] = [
   { key: "packageName", aliases: ["Package Name", "Package_Name"] },
   { key: "packageType", aliases: ["Package Type", "Package_Type"] },
   { key: "oppId", aliases: ["Opp ID", "Opp_ID", "OppId"] },
-  { key: "discountPct", aliases: ["Discount %", "Discount Pct", "Discount_Pct"] },
+  {
+    key: "discountPct",
+    aliases: ["Discount %", "Discount Pct", "Discount_Pct"],
+  },
   { key: "tlName", aliases: ["TL Name", "TL_Name", "TLName"] },
   { key: "week", aliases: ["Week"] },
 ];
@@ -51,7 +59,11 @@ async function resolveProcessId(): Promise<string | null> {
 }
 
 export async function uploadSaleRaw(buffer: Buffer, uploadedBy: string) {
-  const parsed = parseFlexibleSheet(buffer, SALE_FIELDS, ["oppId", "date", "agentName"]);
+  const parsed = parseFlexibleSheet(buffer, SALE_FIELDS, [
+    "oppId",
+    "date",
+    "agentName",
+  ]);
   const processId = await resolveProcessId();
   if (!processId) throw new Error('No "Housing Owner" process found');
 
@@ -64,13 +76,23 @@ export async function uploadSaleRaw(buffer: Buffer, uploadedBy: string) {
           tl_name, week_label, created_by)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        randomUUID(), processId, batchId,
+        randomUUID(),
+        processId,
+        batchId,
         normalizeDate(r.date),
-        normalizeText(r.agentId), normalizeText(r.agentName), normalizeName(r.agentName),
-        normalizeNumber(r.value), normalizeNumber(r.count) ?? 1,
-        normalizeText(r.paymentMode), normalizeText(r.packageName), normalizeText(r.packageType),
-        normalizeText(r.oppId), normalizeNumber(r.discountPct),
-        normalizeText(r.tlName), normalizeText(r.week), uploadedBy,
+        normalizeText(r.agentId),
+        normalizeText(r.agentName),
+        normalizeName(r.agentName),
+        normalizeNumber(r.value),
+        normalizeNumber(r.count) ?? 1,
+        normalizeText(r.paymentMode),
+        normalizeText(r.packageName),
+        normalizeText(r.packageType),
+        normalizeText(r.oppId),
+        normalizeNumber(r.discountPct),
+        normalizeText(r.tlName),
+        normalizeText(r.week),
+        uploadedBy,
       ],
     );
   }
@@ -89,7 +111,11 @@ export async function uploadSaleRaw(buffer: Buffer, uploadedBy: string) {
 }
 
 export async function uploadCdrRaw(buffer: Buffer, uploadedBy: string) {
-  const parsed = parseFlexibleSheet(buffer, CDR_FIELDS, ["uid", "date", "agent"]);
+  const parsed = parseFlexibleSheet(buffer, CDR_FIELDS, [
+    "uid",
+    "date",
+    "agent",
+  ]);
   const processId = await resolveProcessId();
   if (!processId) throw new Error('No "Housing Owner" process found');
 
@@ -104,15 +130,29 @@ export async function uploadCdrRaw(buffer: Buffer, uploadedBy: string) {
           in_call_duration_seconds, break_duration_seconds, average_talk_time_seconds, created_by)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        randomUUID(), processId, batchId,
+        randomUUID(),
+        processId,
+        batchId,
         normalizeDate(r.date),
-        normalizeText(r.uid), normalizeText(r.agent), normalizeName(r.agent), normalizeText(r.email),
-        normalizeText(r.tlName), normalizeText(r.am),
-        normalizeNumber(r.totalCalls), normalizeNumber(r.inboundOffered), normalizeNumber(r.inboundAnswered),
-        normalizeNumber(r.inboundMissed), normalizeNumber(r.obAttempted), normalizeNumber(r.obAnswered),
-        normalizeNumber(r.callsHandled), normalizeNumber(r.connected), normalizeNumber(r.notConnected),
-        normalizeDurationSeconds(r.availableDuration), normalizeDurationSeconds(r.inCallDuration),
-        normalizeDurationSeconds(r.breakDuration), normalizeDurationSeconds(r.avgTalkTime),
+        normalizeText(r.uid),
+        normalizeText(r.agent),
+        normalizeName(r.agent),
+        normalizeText(r.email),
+        normalizeText(r.tlName),
+        normalizeText(r.am),
+        normalizeNumber(r.totalCalls),
+        normalizeNumber(r.inboundOffered),
+        normalizeNumber(r.inboundAnswered),
+        normalizeNumber(r.inboundMissed),
+        normalizeNumber(r.obAttempted),
+        normalizeNumber(r.obAnswered),
+        normalizeNumber(r.callsHandled),
+        normalizeNumber(r.connected),
+        normalizeNumber(r.notConnected),
+        normalizeDurationSeconds(r.availableDuration),
+        normalizeDurationSeconds(r.inCallDuration),
+        normalizeDurationSeconds(r.breakDuration),
+        normalizeDurationSeconds(r.avgTalkTime),
         uploadedBy,
       ],
     );
@@ -138,17 +178,29 @@ interface DashboardFilters {
   agentName?: string;
 }
 
-function dateClause(alias: string, f: DashboardFilters, params: unknown[]): string {
+function dateClause(
+  alias: string,
+  f: DashboardFilters,
+  params: unknown[],
+): string {
   let clause = "";
-  if (f.startDate) { clause += ` AND ${alias}.report_date >= ?`; params.push(f.startDate); }
-  if (f.endDate) { clause += ` AND ${alias}.report_date <= ?`; params.push(f.endDate); }
+  if (f.startDate) {
+    clause += ` AND ${alias}.report_date >= ?`;
+    params.push(f.startDate);
+  }
+  if (f.endDate) {
+    clause += ` AND ${alias}.report_date <= ?`;
+    params.push(f.endDate);
+  }
   return clause;
 }
 
 export async function getOverview(f: DashboardFilters) {
   const saleParams: unknown[] = [];
-  const saleWhere = dateClause("s", f, saleParams) +
-    (f.tlName ? " AND s.tl_name = ?" : "") + (f.agentName ? " AND s.agent_name_norm = ?" : "");
+  const saleWhere =
+    dateClause("s", f, saleParams) +
+    (f.tlName ? " AND s.tl_name = ?" : "") +
+    (f.agentName ? " AND s.agent_name_norm = ?" : "");
   if (f.tlName) saleParams.push(f.tlName);
   if (f.agentName) saleParams.push(f.agentName);
 
@@ -162,8 +214,10 @@ export async function getOverview(f: DashboardFilters) {
   );
 
   const cdrParams: unknown[] = [];
-  const cdrWhere = dateClause("c", f, cdrParams) +
-    (f.tlName ? " AND c.tl_name = ?" : "") + (f.agentName ? " AND c.agent_name_norm = ?" : "");
+  const cdrWhere =
+    dateClause("c", f, cdrParams) +
+    (f.tlName ? " AND c.tl_name = ?" : "") +
+    (f.agentName ? " AND c.agent_name_norm = ?" : "");
   if (f.tlName) cdrParams.push(f.tlName);
   if (f.agentName) cdrParams.push(f.agentName);
 
@@ -189,11 +243,15 @@ export async function getOverview(f: DashboardFilters) {
   const bothAvailable = totalSalesCount > 0 && totalCalls > 0;
 
   return {
-    dataSources: { saleRaw: totalSalesCount > 0 || totalSalesValue > 0, cdr: totalCalls > 0 },
+    dataSources: {
+      saleRaw: totalSalesCount > 0 || totalSalesValue > 0,
+      cdr: totalCalls > 0,
+    },
     sales: {
       totalSalesValue,
       totalSalesCount,
-      averageSaleValue: totalSalesCount > 0 ? totalSalesValue / totalSalesCount : 0,
+      averageSaleValue:
+        totalSalesCount > 0 ? totalSalesValue / totalSalesCount : 0,
       uniqueSellingAgents: Number(saleKpi?.uniqueAgents ?? 0),
     },
     calling: {
@@ -201,35 +259,55 @@ export async function getOverview(f: DashboardFilters) {
       totalConnected,
       totalNotConnected: Number(cdrKpi?.totalNotConnected ?? 0),
       callsHandled,
-      connectionRatePct: totalCalls > 0 ? (totalConnected / totalCalls) * 100 : 0,
-      callHandlingRatePct: totalCalls > 0 ? (callsHandled / totalCalls) * 100 : 0,
-      averageTalkTimeSeconds: Number(cdrKpi?.cdrRows) > 0 ? Number(cdrKpi.sumTalkTime) / Number(cdrKpi.cdrRows) : 0,
+      connectionRatePct:
+        totalCalls > 0 ? (totalConnected / totalCalls) * 100 : 0,
+      callHandlingRatePct:
+        totalCalls > 0 ? (callsHandled / totalCalls) * 100 : 0,
+      averageTalkTimeSeconds:
+        Number(cdrKpi?.cdrRows) > 0
+          ? Number(cdrKpi.sumTalkTime) / Number(cdrKpi.cdrRows)
+          : 0,
     },
     inbound: {
       offered: Number(cdrKpi?.inboundOffered ?? 0),
       answered: Number(cdrKpi?.inboundAnswered ?? 0),
       missed: Number(cdrKpi?.inboundMissed ?? 0),
-      answerRatePct: Number(cdrKpi?.inboundOffered) > 0 ? (Number(cdrKpi.inboundAnswered) / Number(cdrKpi.inboundOffered)) * 100 : 0,
-      missRatePct: Number(cdrKpi?.inboundOffered) > 0 ? (Number(cdrKpi.inboundMissed) / Number(cdrKpi.inboundOffered)) * 100 : 0,
+      answerRatePct:
+        Number(cdrKpi?.inboundOffered) > 0
+          ? (Number(cdrKpi.inboundAnswered) / Number(cdrKpi.inboundOffered)) *
+            100
+          : 0,
+      missRatePct:
+        Number(cdrKpi?.inboundOffered) > 0
+          ? (Number(cdrKpi.inboundMissed) / Number(cdrKpi.inboundOffered)) * 100
+          : 0,
     },
     outbound: {
       attempted: Number(cdrKpi?.obAttempted ?? 0),
       answered: Number(cdrKpi?.obAnswered ?? 0),
-      connectionRatePct: Number(cdrKpi?.obAttempted) > 0 ? (Number(cdrKpi.obAnswered) / Number(cdrKpi.obAttempted)) * 100 : 0,
+      connectionRatePct:
+        Number(cdrKpi?.obAttempted) > 0
+          ? (Number(cdrKpi.obAnswered) / Number(cdrKpi.obAttempted)) * 100
+          : 0,
     },
-    conversion: bothAvailable ? {
-      salesConversionPct: (totalSalesCount / totalConnected) * 100,
-      salesPer100Connected: (totalSalesCount / totalConnected) * 100,
-      revenuePerConnectedCall: totalSalesValue / totalConnected,
-      revenuePerHandledCall: callsHandled > 0 ? totalSalesValue / callsHandled : 0,
-      averageRevenuePerSale: totalSalesCount > 0 ? totalSalesValue / totalSalesCount : 0,
-    } : null,
+    conversion: bothAvailable
+      ? {
+          salesConversionPct: (totalSalesCount / totalConnected) * 100,
+          salesPer100Connected: (totalSalesCount / totalConnected) * 100,
+          revenuePerConnectedCall: totalSalesValue / totalConnected,
+          revenuePerHandledCall:
+            callsHandled > 0 ? totalSalesValue / callsHandled : 0,
+          averageRevenuePerSale:
+            totalSalesCount > 0 ? totalSalesValue / totalSalesCount : 0,
+        }
+      : null,
   };
 }
 
 export async function getAgentPerformance(f: DashboardFilters) {
   const saleParams: unknown[] = [];
-  const saleWhere = dateClause("s", f, saleParams) + (f.tlName ? " AND s.tl_name = ?" : "");
+  const saleWhere =
+    dateClause("s", f, saleParams) + (f.tlName ? " AND s.tl_name = ?" : "");
   if (f.tlName) saleParams.push(f.tlName);
 
   const [saleAgg] = await db.execute<RowDataPacket[]>(
@@ -243,7 +321,8 @@ export async function getAgentPerformance(f: DashboardFilters) {
   );
 
   const cdrParams: unknown[] = [];
-  const cdrWhere = dateClause("c", f, cdrParams) + (f.tlName ? " AND c.tl_name = ?" : "");
+  const cdrWhere =
+    dateClause("c", f, cdrParams) + (f.tlName ? " AND c.tl_name = ?" : "");
   if (f.tlName) cdrParams.push(f.tlName);
 
   const [cdrAgg] = await db.execute<RowDataPacket[]>(
@@ -260,16 +339,31 @@ export async function getAgentPerformance(f: DashboardFilters) {
   const byAgent = new Map<string, Record<string, unknown>>();
   for (const s of saleAgg) {
     byAgent.set(s.agent_name_norm as string, {
-      agentKey: s.agent_name_norm, agent: s.agentName, tl: s.tlName, am: null,
-      salesCount: Number(s.salesCount ?? 0), salesValue: Number(s.salesValue ?? 0),
-      totalCalls: 0, connected: 0, callsHandled: 0, avgTalkTime: 0,
+      agentKey: s.agent_name_norm,
+      agent: s.agentName,
+      tl: s.tlName,
+      am: null,
+      salesCount: Number(s.salesCount ?? 0),
+      salesValue: Number(s.salesValue ?? 0),
+      totalCalls: 0,
+      connected: 0,
+      callsHandled: 0,
+      avgTalkTime: 0,
     });
   }
   for (const c of cdrAgg) {
     const key = c.agent_name_norm as string;
     const existing = byAgent.get(key) ?? {
-      agentKey: key, agent: c.agentName, tl: null, am: c.amName,
-      salesCount: 0, salesValue: 0, totalCalls: 0, connected: 0, callsHandled: 0, avgTalkTime: 0,
+      agentKey: key,
+      agent: c.agentName,
+      tl: null,
+      am: c.amName,
+      salesCount: 0,
+      salesValue: 0,
+      totalCalls: 0,
+      connected: 0,
+      callsHandled: 0,
+      avgTalkTime: 0,
     };
     existing.am = c.amName;
     existing.totalCalls = Number(c.totalCalls ?? 0);
@@ -279,23 +373,29 @@ export async function getAgentPerformance(f: DashboardFilters) {
     byAgent.set(key, existing);
   }
 
-  return Array.from(byAgent.values()).map((a) => {
-    const connected = a.connected as number;
-    const salesCount = a.salesCount as number;
-    const salesValue = a.salesValue as number;
-    return {
-      ...a,
-      // Named explicitly (not just via the ...a spread above) purely so TypeScript can see
-      // them: `a`'s type is Record<string, unknown>, so spreading it carries the values at
-      // runtime but erases named-property visibility for the .sort() below. Same values
-      // either way -- no behavior change, just makes the static type match the real shape.
-      salesCount, salesValue,
-      connectionPct: (a.totalCalls as number) > 0 ? (connected / (a.totalCalls as number)) * 100 : 0,
-      conversionPct: connected > 0 ? (salesCount / connected) * 100 : 0,
-      avgSale: salesCount > 0 ? salesValue / salesCount : 0,
-      revenuePerConnected: connected > 0 ? salesValue / connected : 0,
-    };
-  }).sort((a, b) => b.salesValue - a.salesValue);
+  return Array.from(byAgent.values())
+    .map((a) => {
+      const connected = a.connected as number;
+      const salesCount = a.salesCount as number;
+      const salesValue = a.salesValue as number;
+      return {
+        ...a,
+        // Named explicitly (not just via the ...a spread above) purely so TypeScript can see
+        // them: `a`'s type is Record<string, unknown>, so spreading it carries the values at
+        // runtime but erases named-property visibility for the .sort() below. Same values
+        // either way -- no behavior change, just makes the static type match the real shape.
+        salesCount,
+        salesValue,
+        connectionPct:
+          (a.totalCalls as number) > 0
+            ? (connected / (a.totalCalls as number)) * 100
+            : 0,
+        conversionPct: connected > 0 ? (salesCount / connected) * 100 : 0,
+        avgSale: salesCount > 0 ? salesValue / salesCount : 0,
+        revenuePerConnected: connected > 0 ? salesValue / connected : 0,
+      };
+    })
+    .sort((a, b) => b.salesValue - a.salesValue);
 }
 
 export async function getDailyTrend(f: DashboardFilters) {
@@ -322,16 +422,30 @@ export async function getDailyTrend(f: DashboardFilters) {
   const byDate = new Map<string, Record<string, unknown>>();
   for (const s of saleDaily) {
     const d = String(s.report_date).slice(0, 10);
-    byDate.set(d, { date: d, salesValue: Number(s.salesValue ?? 0), salesCount: Number(s.salesCount ?? 0), calls: 0, connected: 0 });
+    byDate.set(d, {
+      date: d,
+      salesValue: Number(s.salesValue ?? 0),
+      salesCount: Number(s.salesCount ?? 0),
+      calls: 0,
+      connected: 0,
+    });
   }
   for (const c of cdrDaily) {
     const d = String(c.report_date).slice(0, 10);
-    const existing = byDate.get(d) ?? { date: d, salesValue: 0, salesCount: 0, calls: 0, connected: 0 };
+    const existing = byDate.get(d) ?? {
+      date: d,
+      salesValue: 0,
+      salesCount: 0,
+      calls: 0,
+      connected: 0,
+    };
     existing.calls = Number(c.calls ?? 0);
     existing.connected = Number(c.connected ?? 0);
     byDate.set(d, existing);
   }
-  return Array.from(byDate.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return Array.from(byDate.values()).sort((a, b) =>
+    String(a.date).localeCompare(String(b.date)),
+  );
 }
 
 export async function getFilterOptions() {
@@ -345,7 +459,10 @@ export async function getFilterOptions() {
        (SELECT COUNT(*) FROM housing_owner_dashboard_cdr_raw) cdrRows`,
   );
   return {
-    tlNames: tls.map((r) => r.tl_name as string).filter(Boolean).sort(),
+    tlNames: tls
+      .map((r) => r.tl_name as string)
+      .filter(Boolean)
+      .sort(),
     saleRawLoaded: Number(dataStatus[0]?.saleRows ?? 0) > 0,
     cdrLoaded: Number(dataStatus[0]?.cdrRows ?? 0) > 0,
   };

@@ -18,14 +18,20 @@ import fs from "fs";
 import path from "path";
 
 const SOURCE = fs.readFileSync(
-  path.resolve(__dirname, "..", "team-attendance-month.routes.ts"), "utf8");
+  path.resolve(__dirname, "..", "team-attendance-month.routes.ts"),
+  "utf8",
+);
 const APP = fs.readFileSync(
-  path.resolve(__dirname, "..", "..", "..", "app.ts"), "utf8");
+  path.resolve(__dirname, "..", "..", "..", "app.ts"),
+  "utf8",
+);
 
 describe("team-month grid is scoped and gated", () => {
   it("gates on role AND scopes rows — never one without the other", () => {
     expect(SOURCE).toMatch(/requireRole\(/);
-    expect(SOURCE).toMatch(/e\.reporting_manager_id = \? OR e\.manager_id = \? OR e\.id = \?/);
+    expect(SOURCE).toMatch(
+      /e\.reporting_manager_id = \? OR e\.manager_id = \? OR e\.id = \?/,
+    );
   });
 
   it("only admin/hr/wfm-class roles escape the team predicate", () => {
@@ -36,7 +42,9 @@ describe("team-month grid is scoped and gated", () => {
     for (const role of ["admin", "hr", "wfm", "ceo", "super_admin"]) {
       expect(block).toContain(`"${role}"`);
     }
-    expect(block, "manager must not be treated as org-wide").not.toMatch(/"manager"/);
+    expect(block, "manager must not be treated as org-wide").not.toMatch(
+      /"manager"/,
+    );
   });
 
   it("refuses a caller with no employee record rather than falling through unscoped", () => {
@@ -56,10 +64,13 @@ describe("team-month grid is scoped and gated", () => {
     const after = SOURCE.slice(scopeAt);
     expect(after).toMatch(/req\.query\.branchId/);
     // Every filter after the scope predicate appends; none rebuilds the array.
-    expect(after, "`where` is reassigned after scoping — the team predicate would be lost")
-      .not.toMatch(/\bwhere\s*=\s*\[/);
-    expect(after, "`params` is reassigned after scoping")
-      .not.toMatch(/\bparams\s*=\s*\[/);
+    expect(
+      after,
+      "`where` is reassigned after scoping — the team predicate would be lost",
+    ).not.toMatch(/\bwhere\s*=\s*\[/);
+    expect(after, "`params` is reassigned after scoping").not.toMatch(
+      /\bparams\s*=\s*\[/,
+    );
   });
 
   it("returns a cell for every calendar day, not only days that have a record", () => {
@@ -71,7 +82,9 @@ describe("team-month grid is scoped and gated", () => {
 
   it("does not count days outside employment or in the future as gaps", () => {
     expect(SOURCE).toMatch(/applicable: false/);
-    expect(SOURCE).toMatch(/date >= startsOn && date <= endsOn && date <= today/);
+    expect(SOURCE).toMatch(
+      /date >= startsOn && date <= endsOn && date <= today/,
+    );
   });
 
   it("mirrors the payroll blockers when deciding a day needs attention", () => {
@@ -93,8 +106,10 @@ describe("team-month grid is scoped and gated", () => {
     const at = SOURCE.indexOf("function needsAttention");
     const body = SOURCE.slice(at, SOURCE.indexOf("\n}", at) + 2);
     expect(body).toMatch(/missing_punch/);
-    expect(body, "mismatch_flag is back in needsAttention — the grid will turn 77% orange")
-      .not.toMatch(/mismatch_flag/);
+    expect(
+      body,
+      "mismatch_flag is back in needsAttention — the grid will turn 77% orange",
+    ).not.toMatch(/mismatch_flag/);
     // It still travels to the UI, just not as an alarm.
     expect(SOURCE).toMatch(/function hasSourceMismatch/);
     expect(SOURCE).toMatch(/sourceMismatch: hasSourceMismatch\(row\)/);
@@ -113,7 +128,9 @@ describe("team-month grid is scoped and gated", () => {
     const at = SOURCE.indexOf('"/team-month/flag"');
     expect(at).toBeGreaterThan(-1);
     const block = SOURCE.slice(at);
-    expect(block).toMatch(/e\.reporting_manager_id = \? OR e\.manager_id = \? OR e\.id = \?/);
+    expect(block).toMatch(
+      /e\.reporting_manager_id = \? OR e\.manager_id = \? OR e\.id = \?/,
+    );
     expect(block).toMatch(/skippedOutOfScope/);
   });
 

@@ -10,8 +10,14 @@ import { describe, expect, it } from "vitest";
  * is tied to an open MAS Callnet cost centre. The nightly backfill must also not create new
  * processes from closed cost centres.
  */
-const serviceCode = fs.readFileSync(path.resolve(__dirname, "../job-requisition.service.ts"), "utf8");
-const syncCode = fs.readFileSync(path.resolve(__dirname, "../../../shared/cost-centre-sync.ts"), "utf8");
+const serviceCode = fs.readFileSync(
+  path.resolve(__dirname, "../job-requisition.service.ts"),
+  "utf8",
+);
+const syncCode = fs.readFileSync(
+  path.resolve(__dirname, "../../../shared/cost-centre-sync.ts"),
+  "utf8",
+);
 
 function body(code: string, signature: string): string {
   const start = code.indexOf(signature);
@@ -28,7 +34,9 @@ describe("getProcessesForBranch lists only live MAS Callnet processes", () => {
   });
 
   it("counts only open cost centres of the MAS Callnet company", () => {
-    expect(serviceCode).toMatch(/const MAS_COMPANY_NAME = "Mas Callnet India Pvt Ltd";/);
+    expect(serviceCode).toMatch(
+      /const MAS_COMPANY_NAME = "Mas Callnet India Pvt Ltd";/,
+    );
     expect(fn).toContain("company_name = ?");
     expect(fn).toContain("active_status = 1");
     expect(fn).toContain("LOWER(COALESCE(status, '')) <> 'closed'");
@@ -40,14 +48,25 @@ describe("getProcessesForBranch lists only live MAS Callnet processes", () => {
   });
 
   it("ties by process_id, by derived code only for unmapped cost centres, or by active staff", () => {
-    expect(fn).toContain("SELECT process_id AS id FROM open_cc WHERE process_id IS NOT NULL");
-    expect(fn).toContain("oc.process_id IS NULL AND oc.derived_code = pm2.process_code");
-    expect(fn).toMatch(/JOIN open_cc oc ON oc\.id = e\.cost_centre_id\s*WHERE e\.employment_status = 'active'/);
+    expect(fn).toContain(
+      "SELECT process_id AS id FROM open_cc WHERE process_id IS NOT NULL",
+    );
+    expect(fn).toContain(
+      "oc.process_id IS NULL AND oc.derived_code = pm2.process_code",
+    );
+    expect(fn).toMatch(
+      /JOIN open_cc oc ON oc\.id = e\.cost_centre_id\s*WHERE e\.employment_status = 'active'/,
+    );
   });
 
   it("derives the cost-centre code the same way the backfill does", () => {
-    expect(fn).toContain("LEFT(UPPER(REGEXP_REPLACE(cost_centre_code, '[^A-Za-z0-9]+', '_')), 50) AS derived_code");
-    const backfill = body(syncCode, "export async function backfillProcessMasterForOrphanedCostCentres(");
+    expect(fn).toContain(
+      "LEFT(UPPER(REGEXP_REPLACE(cost_centre_code, '[^A-Za-z0-9]+', '_')), 50) AS derived_code",
+    );
+    const backfill = body(
+      syncCode,
+      "export async function backfillProcessMasterForOrphanedCostCentres(",
+    );
     expect(backfill).toContain('.replace(/[^A-Za-z0-9]/g, "_")');
     expect(backfill).toContain(".toUpperCase()");
     expect(backfill).toContain(".slice(0, 50)");
@@ -56,7 +75,10 @@ describe("getProcessesForBranch lists only live MAS Callnet processes", () => {
 
 describe("backfillProcessMasterForOrphanedCostCentres skips closed cost centres", () => {
   it("filters out cost centres whose status is closed", () => {
-    const backfill = body(syncCode, "export async function backfillProcessMasterForOrphanedCostCentres(");
+    const backfill = body(
+      syncCode,
+      "export async function backfillProcessMasterForOrphanedCostCentres(",
+    );
     expect(backfill).toContain("cc.active_status = 1");
     expect(backfill).toContain("LOWER(COALESCE(cc.status, '')) <> 'closed'");
   });

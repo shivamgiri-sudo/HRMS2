@@ -7,7 +7,10 @@ import { portalAuthService } from "./portal.auth.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 /**
  * Super-admin impersonation: mint a real client-portal session for any active
@@ -44,18 +47,21 @@ router.post(
       reason?: string;
     };
     if (!client_email?.trim() && !client_user_id?.trim()) {
-      return res.status(400).json({ error: "client_email or client_user_id is required" });
+      return res
+        .status(400)
+        .json({ error: "client_email or client_user_id is required" });
     }
-    if (!reason?.trim()) return res.status(400).json({ error: "reason is required for audit" });
+    if (!reason?.trim())
+      return res.status(400).json({ error: "reason is required for audit" });
 
     const [rows] = client_user_id?.trim()
       ? await db.execute<RowDataPacket[]>(
           "SELECT id, client_id, email, process_ids FROM client_user WHERE id = ? AND is_active = 1 LIMIT 1",
-          [client_user_id.trim()]
+          [client_user_id.trim()],
         )
       : await db.execute<RowDataPacket[]>(
           "SELECT id, client_id, email, process_ids FROM client_user WHERE email = ? AND is_active = 1 LIMIT 1",
-          [client_email!.trim()]
+          [client_email!.trim()],
         );
     const portalUser = (rows as RowDataPacket[])[0];
     if (!portalUser) {
@@ -64,11 +70,14 @@ router.post(
 
     let processIds: string[];
     try {
-      processIds = typeof portalUser.process_ids === "string"
-        ? JSON.parse(portalUser.process_ids)
-        : (portalUser.process_ids as string[]);
+      processIds =
+        typeof portalUser.process_ids === "string"
+          ? JSON.parse(portalUser.process_ids)
+          : (portalUser.process_ids as string[]);
     } catch {
-      return res.status(500).json({ error: "Portal user has invalid process_ids data" });
+      return res
+        .status(500)
+        .json({ error: "Portal user has invalid process_ids data" });
     }
 
     // Same function real OTP login uses (portal.auth.service.ts's verifyOtp calls this
@@ -91,7 +100,7 @@ router.post(
       `INSERT INTO portal_admin_impersonation_log
          (admin_user_id, portal_user_id, client_email, reason, jti, created_at)
        VALUES (?, ?, ?, ?, ?, NOW())`,
-      [req.authUser?.id, portalUser.id, portalUser.email, reason.trim(), jti]
+      [req.authUser?.id, portalUser.id, portalUser.email, reason.trim(), jti],
     );
 
     return res.json({
@@ -99,9 +108,10 @@ router.post(
       clientUserId: portalUser.id,
       clientEmail: portalUser.email,
       expiresIn: 2 * 60 * 60,
-      message: "Impersonation session created — expires in 2 hours, shorter than a real client login.",
+      message:
+        "Impersonation session created — expires in 2 hours, shorter than a real client login.",
     });
-  })
+  }),
 );
 
 /**
@@ -114,11 +124,13 @@ router.get(
   requireAuth,
   requireRole("super_admin", "admin"),
   h(async (req, res) => {
-    const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : "";
     const params: unknown[] = [];
     let where = "cu.is_active = 1";
     if (search) {
-      where += " AND (cu.email LIKE ? OR cu.name LIKE ? OR cm.client_name LIKE ?)";
+      where +=
+        " AND (cu.email LIKE ? OR cu.name LIKE ? OR cm.client_name LIKE ?)";
       const like = `%${search}%`;
       params.push(like, like, like);
     }
@@ -129,10 +141,10 @@ router.get(
        WHERE ${where}
        ORDER BY cm.client_name
        LIMIT 200`,
-      params
+      params,
     );
     return res.json({ data: rows });
-  })
+  }),
 );
 
 export default router;

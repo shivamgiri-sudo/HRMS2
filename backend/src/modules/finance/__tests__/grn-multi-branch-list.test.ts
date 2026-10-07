@@ -15,7 +15,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 // listGrns runs its main SELECT through db.query (LIMIT/OFFSET are interpolated, which
 // db.execute's prepared-statement path rejects); getGrnSummary uses db.execute. Both have to
 // be mocked or the failure looks like a scope bug rather than a missing stub.
-const { execute, query } = vi.hoisted(() => ({ execute: vi.fn(), query: vi.fn() }));
+const { execute, query } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  query: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, query } }));
 
 /**
@@ -28,7 +31,7 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute, query } }));
  * out on an assertion that was never reached — so the failure named the wrong thing. Paying
  * it once here keeps the per-test timeout meaningful.
  */
-let grnService: typeof import("../grn.service.js")["grnService"];
+let grnService: (typeof import("../grn.service.js"))["grnService"];
 beforeAll(async () => {
   ({ grnService } = await import("../grn.service.js"));
 }, 120_000);
@@ -55,7 +58,10 @@ function callWith(fragment: string) {
 describe("grnService.listGrns — branch scope", () => {
   it("emits an IN clause with one placeholder per granted branch", async () => {
     await grnService.listGrns({
-      branchScope: { mode: "branches", branchIds: ["noida", "noida-2", "ahmedabad"] },
+      branchScope: {
+        mode: "branches",
+        branchIds: ["noida", "noida-2", "ahmedabad"],
+      },
     });
     const { sql, params } = callWith("FROM grn_request");
     expect(sql).toContain("g.branch_id IN (?, ?, ?)");
@@ -69,7 +75,10 @@ describe("grnService.listGrns — branch scope", () => {
     // is a join, not a filter — so assert on the predicate forms specifically.
     expect(sql).not.toContain("g.branch_id IN (");
     expect(sql).not.toContain("g.branch_id = ?");
-    expect(sql, "'1=1' would be dead weight on the hottest finance query").not.toContain("1=1");
+    expect(
+      sql,
+      "'1=1' would be dead weight on the hottest finance query",
+    ).not.toContain("1=1");
   });
 
   it("still honours a plain branchId from an unmigrated caller", async () => {
@@ -108,6 +117,8 @@ describe("grnService.getGrnSummary — branch scope", () => {
   it("emits no branch predicate for global scope", async () => {
     await grnService.getGrnSummary({ branchScope: { mode: "all" } });
     // The own-company filter (DialDesk/IDC) reads g.branch_id in a subquery; what must be absent is a branch SCOPE predicate.
-    expect(callWith("GROUP BY g.status").sql).not.toMatch(/g\.branch_id\s*(IN|=)(?!\s*\(SELECT)/);
+    expect(callWith("GROUP BY g.status").sql).not.toMatch(
+      /g\.branch_id\s*(IN|=)(?!\s*\(SELECT)/,
+    );
   });
 });

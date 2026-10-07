@@ -39,12 +39,18 @@ function readRepo(relativePath: string) {
 describe("funding_cost_centre_id surfaced where a person actually looks", () => {
   it("loadAllocations() resolves the funding cost centre's NAME, not just the raw id", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
-    const fn = service.slice(service.indexOf("async function loadAllocations("));
+    const fn = service.slice(
+      service.indexOf("async function loadAllocations("),
+    );
     const body = fn.slice(0, fn.indexOf("\n}\n"));
     // a.* already carries the raw funding_cost_centre_id column (migration 1630) — what was
     // missing was resolving it to something a reviewer can read without a second query.
-    expect(body).toContain("LEFT JOIN cost_centre_master funding_ccm ON funding_ccm.id = a.funding_cost_centre_id");
-    expect(body).toContain("funding_ccm.cost_centre_name AS funding_cost_centre_name");
+    expect(body).toContain(
+      "LEFT JOIN cost_centre_master funding_ccm ON funding_ccm.id = a.funding_cost_centre_id",
+    );
+    expect(body).toContain(
+      "funding_ccm.cost_centre_name AS funding_cost_centre_name",
+    );
   });
 
   it("getGrnsForLine() names WHO INCURRED the spend, on a view already scoped to WHOSE BUDGET paid", () => {
@@ -55,15 +61,23 @@ describe("funding_cost_centre_id surfaced where a person actually looks", () => 
     // caller already knows who paid. The missing half was who the spend actually belonged to.
     expect(body).toContain("WHERE ca.budget_line_id = ?");
     expect(body).toContain("ca.cost_centre_id AS incurred_cost_centre_id");
-    expect(body).toContain("LEFT JOIN cost_centre_master incurred_ccm ON incurred_ccm.id = ca.cost_centre_id");
+    expect(body).toContain(
+      "LEFT JOIN cost_centre_master incurred_ccm ON incurred_ccm.id = ca.cost_centre_id",
+    );
   });
 
   it("the approval screen shows 'funded from X' only when it actually differs from the row's own cost centre", () => {
-    const form = readRepo("src/components/finance/grn/SmartGrnApprovalQueue.tsx");
+    const form = readRepo(
+      "src/components/finance/grn/SmartGrnApprovalQueue.tsx",
+    );
     // Conditioned on inequality (or a NULL funding centre — the branch pool), not shown
     // unconditionally: a row funded by its own cost centre must read exactly as it always has.
     expect(form).toContain("alloc.funding_cost_centre_id == null");
-    expect(form).toContain('String(alloc.funding_cost_centre_id) !== String(alloc.cost_centre_id ?? "")');
-    expect(form).toContain("funded from {alloc.funding_cost_centre_name ?? \"branch pool\"}");
+    expect(form).toContain(
+      'String(alloc.funding_cost_centre_id) !== String(alloc.cost_centre_id ?? "")',
+    );
+    expect(form).toContain(
+      'funded from {alloc.funding_cost_centre_name ?? "branch pool"}',
+    );
   });
 });

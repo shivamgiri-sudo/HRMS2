@@ -13,15 +13,15 @@
  * - Dashboard shows SLA compliance violations
  */
 
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket } from "mysql2";
 import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
-import { randomUUID, randomBytes } from 'crypto';
-import bcrypt from 'bcryptjs';
-import { db } from '../../db/mysql.js';
-import { sendSMS } from '../communication/sms.helper.js';
+import { randomUUID, randomBytes } from "crypto";
+import bcrypt from "bcryptjs";
+import { db } from "../../db/mysql.js";
+import { sendSMS } from "../communication/sms.helper.js";
 
 function generateTempPassword(): string {
-  return randomBytes(12).toString('base64url') + 'A1!';
+  return randomBytes(12).toString("base64url") + "A1!";
 }
 
 export interface ActivationResult {
@@ -58,13 +58,13 @@ export interface SlaViolation {
 export async function activateEmployee(
   employeeId: string,
   actorUserId: string | null,
-  reason: string = 'Joining date reached'
+  reason: string = "Joining date reached",
 ): Promise<{ activated: boolean; alreadyActive: boolean }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT active_status, employment_status, date_of_joining, employee_code,
             user_id, COALESCE(official_email, email) AS login_email
      FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
 
   if (rows.length === 0) {
@@ -82,7 +82,7 @@ export async function activateEmployee(
     `UPDATE employees
      SET active_status = 1, employment_status = 'Active', updated_at = NOW()
      WHERE id = ?`,
-    [employeeId]
+    [employeeId],
   );
 
   // Write lifecycle event.
@@ -109,10 +109,10 @@ export async function activateEmployee(
         employment_status: emp.employment_status ?? null,
         active_status: 0,
       }),
-      JSON.stringify({ employment_status: 'Active', active_status: 1 }),
-      actorUserId ?? 'system',
+      JSON.stringify({ employment_status: "Active", active_status: 1 }),
+      actorUserId ?? "system",
       reason,
-    ]
+    ],
   );
 
   // Auto-create auth account on activation date when no account exists yet.
@@ -124,22 +124,23 @@ export async function activateEmployee(
     if (loginEmail) {
       try {
         const newUserId = randomUUID();
-        const tempPwd   = generateTempPassword();
-        const pwdHash   = await bcrypt.hash(tempPwd, 10);
+        const tempPwd = generateTempPassword();
+        const pwdHash = await bcrypt.hash(tempPwd, 10);
 
         await db.execute(
           `INSERT IGNORE INTO auth_user (id, email, password_hash, must_change_password, created_at)
            VALUES (?, ?, ?, 1, NOW())`,
-          [newUserId, loginEmail, pwdHash]
+          [newUserId, loginEmail, pwdHash],
         );
 
         // If another account already existed for this email (e.g., merged login),
         // find it instead of using the just-inserted row.
         const [existingRows] = await db.execute<RowDataPacket[]>(
           `SELECT id FROM auth_user WHERE email = ? LIMIT 1`,
-          [loginEmail]
+          [loginEmail],
         );
-        const resolvedUserId: string = (existingRows[0] as any)?.id ?? newUserId;
+        const resolvedUserId: string =
+          (existingRows[0] as any)?.id ?? newUserId;
 
         // System grant with no human actor: granted_by NULL, granted_at stamped (migration 1614).
         // INSERT IGNORE never touches an existing row, so unlike the ON DUPLICATE KEY sites
@@ -147,27 +148,31 @@ export async function activateEmployee(
         await db.execute(
           `INSERT IGNORE INTO user_roles (id, user_id, role_key, active_status, created_at, granted_by, granted_at)
            VALUES (UUID(), ?, 'Employee', 1, NOW(), NULL, NOW())`,
-          [resolvedUserId]
+          [resolvedUserId],
         );
 
-        await db.execute(
-          `UPDATE employees SET user_id = ? WHERE id = ?`,
-          [resolvedUserId, employeeId]
-        );
+        await db.execute(`UPDATE employees SET user_id = ? WHERE id = ?`, [
+          resolvedUserId,
+          employeeId,
+        ]);
 
         // Password-setup invitation token (7-day expiry)
-        const invToken = randomBytes(32).toString('hex');
-        const invTokenHash = randomBytes(16).toString('hex') + invToken.slice(0, 16); // opaque stored value
+        const invToken = randomBytes(32).toString("hex");
+        const invTokenHash =
+          randomBytes(16).toString("hex") + invToken.slice(0, 16); // opaque stored value
         await db.execute(
           `INSERT INTO auth_invitation
              (id, email, invited_by, invitation_type, token_hash, expires_at, created_at)
            VALUES (UUID(), ?, ?, 'password_setup', ?, DATE_ADD(NOW(), INTERVAL 7 DAY), NOW())`,
-          [loginEmail, actorUserId ?? 'system', invTokenHash]
+          [loginEmail, actorUserId ?? "system", invTokenHash],
         );
       } catch (authErr) {
         // Auth account creation failure is logged but must not roll back activation —
         // the employee is now Active; auth can be retried by IT provisioning.
-        console.error(`[EmployeeActivation] Auth account creation failed for ${emp.employee_code}:`, authErr);
+        console.error(
+          `[EmployeeActivation] Auth account creation failed for ${emp.employee_code}:`,
+          authErr,
+        );
       }
     }
   }
@@ -176,12 +181,16 @@ export async function activateEmployee(
   try {
     const [empRow] = await db.execute<RowDataPacket[]>(
       `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
-       FROM employees WHERE id = ? LIMIT 1`, [employeeId]
+       FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId],
     );
-    const e = (empRow[0] as any);
+    const e = empRow[0] as any;
     const phone = e?.mobile ?? e?.personal_phone ?? null;
-    if (phone) sendSMS(phone, 'hrms_access_created', { name: e.name }).catch(() => {});
-  } catch { /* non-fatal */ }
+    if (phone)
+      sendSMS(phone, "hrms_access_created", { name: e.name }).catch(() => {});
+  } catch {
+    /* non-fatal */
+  }
 
   return { activated: true, alreadyActive: false };
 }
@@ -251,7 +260,7 @@ export async function runDailyActivationJob(): Promise<ActivationReport> {
           WHERE sal.employee_id = e.id
             AND sal.action_type = 'EMPLOYEE_DEACTIVATED'
        )`,
-    []
+    [],
   );
 
   for (const emp of dueEmployees as any[]) {
@@ -259,7 +268,7 @@ export async function runDailyActivationJob(): Promise<ActivationReport> {
       const result = await activateEmployee(
         emp.id,
         null,
-        `Auto-activated by daily job on ${new Date().toISOString()}`
+        `Auto-activated by daily job on ${new Date().toISOString()}`,
       );
 
       if (result.activated) {
@@ -293,7 +302,9 @@ export async function runDailyActivationJob(): Promise<ActivationReport> {
 /**
  * Check provisioning SLA warnings for a newly activated employee
  */
-async function checkProvisioningSlaWarnings(employeeId: string): Promise<string[]> {
+async function checkProvisioningSlaWarnings(
+  employeeId: string,
+): Promise<string[]> {
   const warnings: string[] = [];
 
   const [tasks] = await db.execute<RowDataPacket[]>(
@@ -307,13 +318,15 @@ async function checkProvisioningSlaWarnings(employeeId: string): Promise<string[
      WHERE employee_id = ?
        AND task_code IN ('WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET',
                          'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
-    [employeeId]
+    [employeeId],
   );
 
   for (const task of tasks as any[]) {
-    if (['pending', 'pending_unassigned', 'assigned'].includes(task.status)) {
+    if (["pending", "pending_unassigned", "assigned"].includes(task.status)) {
       if (task.assignment_exception) {
-        warnings.push(`${task.task_code}: No users assigned - admin action required`);
+        warnings.push(
+          `${task.task_code}: No users assigned - admin action required`,
+        );
       } else {
         warnings.push(`${task.task_code}: Pending - 24h SLA clock started`);
       }
@@ -326,10 +339,13 @@ async function checkProvisioningSlaWarnings(employeeId: string): Promise<string[
 /**
  * Find all provisioning tasks that have exceeded the 24h SLA
  */
-export async function findSlaViolations(taskCode?: string, branchIds?: string[]): Promise<SlaViolation[]> {
+export async function findSlaViolations(
+  taskCode?: string,
+  branchIds?: string[],
+): Promise<SlaViolation[]> {
   const branchClause = branchIds?.length
-    ? `AND e.branch_id IN (${branchIds.map(() => '?').join(',')})`
-    : '';
+    ? `AND e.branch_id IN (${branchIds.map(() => "?").join(",")})`
+    : "";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        r.employee_id,
@@ -345,20 +361,20 @@ export async function findSlaViolations(taskCode?: string, branchIds?: string[])
        AND r.sla_due_at < NOW()
        AND r.status IN ('pending', 'pending_unassigned', 'assigned', 'in_progress')
        AND e.active_status = 1
-       ${taskCode ? 'AND r.task_code = ?' : ''}
+       ${taskCode ? "AND r.task_code = ?" : ""}
        ${branchClause}
      ORDER BY hours_overdue DESC`,
-    [...(taskCode ? [taskCode] : []), ...(branchIds ?? [])]
+    [...(taskCode ? [taskCode] : []), ...(branchIds ?? [])],
   );
 
   const taskNames: Record<string, string> = {
-    IT_EMAIL_DOMAIN_ASSET: 'IT Email & Asset Setup',
-    ADMIN_BIOMETRIC_ID_CARD: 'Admin Biometric & ID Card',
-    WFM_PROCESS_ALIGNMENT: 'WFM Process & Roster Alignment',
-    APPOINTMENT_LETTER_ESIGN: 'Appointment Letter E-Sign',
+    IT_EMAIL_DOMAIN_ASSET: "IT Email & Asset Setup",
+    ADMIN_BIOMETRIC_ID_CARD: "Admin Biometric & ID Card",
+    WFM_PROCESS_ALIGNMENT: "WFM Process & Roster Alignment",
+    APPOINTMENT_LETTER_ESIGN: "Appointment Letter E-Sign",
   };
 
-  return (rows as any[]).map(r => ({
+  return (rows as any[]).map((r) => ({
     employeeId: r.employee_id,
     employeeCode: r.employee_code,
     taskCode: r.task_code,
@@ -376,7 +392,7 @@ export async function findSlaViolations(taskCode?: string, branchIds?: string[])
 export async function activateIfJoiningDateReached(
   employeeId: string,
   joiningDate: string,
-  approverId: string
+  approverId: string,
 ): Promise<boolean> {
   const joining = new Date(joiningDate);
   const today = new Date();
@@ -387,7 +403,7 @@ export async function activateIfJoiningDateReached(
     const result = await activateEmployee(
       employeeId,
       approverId,
-      'Immediate activation - joining date is today or past'
+      "Immediate activation - joining date is today or past",
     );
     return result.activated;
   }

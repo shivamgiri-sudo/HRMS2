@@ -41,26 +41,43 @@ beforeEach(() => {
 
 /** The WHERE clause of the row-fetching SELECT. */
 function whereClause(): string {
-  const call = execute.mock.calls.find(([s]) => /FROM employees e/i.test(String(s)));
+  const call = execute.mock.calls.find(([s]) =>
+    /FROM employees e/i.test(String(s)),
+  );
   expect(call, "no employee SELECT was issued").toBeDefined();
   return String(call![0]);
 }
 
 describe("employee directory — recordStatus is honoured", () => {
   it("returns INACTIVE records when recordStatus=inactive", async () => {
-    await employeeService.listEmployees({ page: 1, limit: 50, recordStatus: "inactive", includeAnalytics: false } as never);
+    await employeeService.listEmployees({
+      page: 1,
+      limit: 50,
+      recordStatus: "inactive",
+      includeAnalytics: false,
+    } as never);
     const sql = whereClause();
     expect(sql).toMatch(/e\.active_status\s*=\s*0/);
     expect(sql).not.toMatch(/e\.active_status\s*=\s*1/);
   });
 
   it("returns ACTIVE records when recordStatus=active", async () => {
-    await employeeService.listEmployees({ page: 1, limit: 50, recordStatus: "active", includeAnalytics: false } as never);
+    await employeeService.listEmployees({
+      page: 1,
+      limit: 50,
+      recordStatus: "active",
+      includeAnalytics: false,
+    } as never);
     expect(whereClause()).toMatch(/e\.active_status\s*=\s*1/);
   });
 
   it("constrains neither when recordStatus=all", async () => {
-    await employeeService.listEmployees({ page: 1, limit: 50, recordStatus: "all", includeAnalytics: false } as never);
+    await employeeService.listEmployees({
+      page: 1,
+      limit: 50,
+      recordStatus: "all",
+      includeAnalytics: false,
+    } as never);
     expect(whereClause()).not.toMatch(/e\.active_status\s*=\s*[01]/);
   });
 
@@ -71,9 +88,13 @@ describe("employee directory — recordStatus is honoured", () => {
   });
 
   it("still applies employment_status when one is supplied", async () => {
-    await employeeService.listEmployees(
-      { page: 1, limit: 50, recordStatus: "inactive", status: "Terminated", includeAnalytics: false } as never,
-    );
+    await employeeService.listEmployees({
+      page: 1,
+      limit: 50,
+      recordStatus: "inactive",
+      status: "Terminated",
+      includeAnalytics: false,
+    } as never);
     const sql = whereClause();
     expect(sql).toMatch(/e\.employment_status\s*=\s*\?/);
     expect(sql).toMatch(/e\.active_status\s*=\s*0/);

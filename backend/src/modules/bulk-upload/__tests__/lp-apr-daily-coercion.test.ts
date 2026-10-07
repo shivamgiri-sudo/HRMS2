@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseCallCount, parseDurationSeconds, parseDate, LP_APR_DAILY_HEADERS,
+  parseCallCount,
+  parseDurationSeconds,
+  parseDate,
+  LP_APR_DAILY_HEADERS,
 } from "../lp-apr-daily-bulk.service.js";
 
 describe("parseCallCount", () => {

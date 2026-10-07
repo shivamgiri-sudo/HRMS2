@@ -9,7 +9,10 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
   },
 }));
 vi.mock("../../../shared/roleResolver.js", () => ({
-  getUserRoleContext: async () => ({ roleKeys: ["manager"], primaryRole: "manager" }),
+  getUserRoleContext: async () => ({
+    roleKeys: ["manager"],
+    primaryRole: "manager",
+  }),
 }));
 
 const mockAssertAccess = vi.fn().mockResolvedValue(undefined);
@@ -18,10 +21,13 @@ const mockConfirm = vi.fn();
 const mockReject = vi.fn();
 
 vi.mock("../work-inbox.service.js", async () => {
-  const actual = await vi.importActual<typeof import("../work-inbox.service.js")>(
-    "../work-inbox.service.js",
-  );
-  return { ...actual, assertWorkItemAccess: (...args: unknown[]) => mockAssertAccess(...args) };
+  const actual = await vi.importActual<
+    typeof import("../work-inbox.service.js")
+  >("../work-inbox.service.js");
+  return {
+    ...actual,
+    assertWorkItemAccess: (...args: unknown[]) => mockAssertAccess(...args),
+  };
 });
 vi.mock("../awol-confirm.service.js", () => ({
   getAwolContext: (...args: unknown[]) => mockGetContext(...args),
@@ -65,7 +71,9 @@ describe("AWOL confirm routes", () => {
   });
 
   it("POST /:id/awol/reject requires remarks and returns success", async () => {
-    const res = await request(app).post("/api/work-inbox/wi-1/awol/reject").send({ remarks: "on leave" });
+    const res = await request(app)
+      .post("/api/work-inbox/wi-1/awol/reject")
+      .send({ remarks: "on leave" });
     expect(res.status).toBe(200);
     expect(mockReject).toHaveBeenCalledWith("wi-1", "user-1", "on leave");
   });

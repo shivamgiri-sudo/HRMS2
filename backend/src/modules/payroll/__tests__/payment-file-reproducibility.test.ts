@@ -18,17 +18,26 @@ import { createHash } from "node:crypto";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 const stripComments = (s: string) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*--.*$/gm, "");
+  s
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/^\s*--.*$/gm, "");
 
 const ROUTES = stripComments(read("src/modules/payroll/payroll.routes.ts"));
-const SERVICE = stripComments(read("src/modules/payroll/payroll-readiness-categories.service.ts"));
-const MIGRATION = stripComments(read("sql/1215_payment_file_reproducibility.sql"));
+const SERVICE = stripComments(
+  read("src/modules/payroll/payroll-readiness-categories.service.ts"),
+);
+const MIGRATION = stripComments(
+  read("sql/1215_payment_file_reproducibility.sql"),
+);
 const MANIFEST = read("src/db/runPendingMigrations.ts");
 
 describe("the export records what it produced, before handing it over", () => {
   it("hashes the exact bytes that are sent", () => {
     // Hashing anything other than the sent payload would make the record unverifiable.
-    expect(ROUTES).toMatch(/createHash\("sha256"\)\.update\(csv, "utf8"\)\.digest\("hex"\)/);
+    expect(ROUTES).toMatch(
+      /createHash\("sha256"\)\.update\(csv, "utf8"\)\.digest\("hex"\)/,
+    );
   });
 
   it("writes the record before res.send, not after", () => {
@@ -39,8 +48,16 @@ describe("the export records what it produced, before handing it over", () => {
   });
 
   it("records name, hash, total and what was excluded", () => {
-    const stmt = ROUTES.slice(ROUTES.indexOf("INSERT INTO payroll_register_export_log"));
-    for (const col of ["file_name", "content_sha256", "total_amount", "excluded_count", "excluded_amount"]) {
+    const stmt = ROUTES.slice(
+      ROUTES.indexOf("INSERT INTO payroll_register_export_log"),
+    );
+    for (const col of [
+      "file_name",
+      "content_sha256",
+      "total_amount",
+      "excluded_count",
+      "excluded_amount",
+    ]) {
       expect(stmt.slice(0, 600)).toContain(col);
     }
   });
@@ -48,7 +65,10 @@ describe("the export records what it produced, before handing it over", () => {
   it("recording an incomplete picture would be worse than none, so exclusions are recorded too", () => {
     // A log of only what was paid makes an under-inclusive file indistinguishable from a
     // complete one — which is the very confusion the export fix was about.
-    const stmt = ROUTES.slice(ROUTES.indexOf("INSERT INTO payroll_register_export_log"), ROUTES.indexOf("res.setHeader(\"X-Payroll-File-Sha256\""));
+    const stmt = ROUTES.slice(
+      ROUTES.indexOf("INSERT INTO payroll_register_export_log"),
+      ROUTES.indexOf('res.setHeader("X-Payroll-File-Sha256"'),
+    );
     expect(stmt).toContain("unpayable.length");
     expect(stmt).toContain("excludedTotal");
   });
@@ -67,7 +87,9 @@ describe("the export records what it produced, before handing it over", () => {
     // A second payment-file log beside payroll_register_export_log would be the
     // two-rival-systems mistake this audit keeps finding elsewhere.
     expect(ROUTES).toContain("payroll_register_export_log");
-    expect(ROUTES).not.toMatch(/INSERT INTO (payroll_payment_file|payment_file_history|payroll_bank_file_log)\b/);
+    expect(ROUTES).not.toMatch(
+      /INSERT INTO (payroll_payment_file|payment_file_history|payroll_bank_file_log)\b/,
+    );
   });
 });
 
@@ -100,13 +122,17 @@ describe("the readiness gate is now a real check, not a permanent SOURCE_MISSING
   it("reports NOT_APPLICABLE, not PASS, when no file has been generated yet", () => {
     // "Nothing to reproduce" is not the same as "verified reproducible".
     expect(REPRO_CHECK).toMatch(/notApplicable\(/);
-    expect(REPRO_CHECK).toMatch(/No bank payment file has been generated for this run yet/);
+    expect(REPRO_CHECK).toMatch(
+      /No bank payment file has been generated for this run yet/,
+    );
   });
 
   it("degrades to SOURCE_MISSING — never CHECK_ERROR — while migration 1215 is unapplied", () => {
     // Verified live: the column does not exist yet, and the dry run reported SOURCE_MISSING with
     // checkErrors=0 rather than throwing.
-    expect(REPRO_CHECK).toMatch(/columnExists\("payroll_register_export_log", "content_sha256"\)/);
+    expect(REPRO_CHECK).toMatch(
+      /columnExists\("payroll_register_export_log", "content_sha256"\)/,
+    );
     expect(REPRO_CHECK).toContain("1215_payment_file_reproducibility.sql");
   });
 });
@@ -118,8 +144,16 @@ describe("migration 1215", () => {
   });
 
   it("adds every column NULLable, so the existing compliance writer keeps working", () => {
-    for (const col of ["file_name", "content_sha256", "total_amount", "excluded_count", "excluded_amount"]) {
-      expect(MIGRATION).toMatch(new RegExp(`ADD COLUMN ${col} [A-Z0-9(),]+ NULL`, "i"));
+    for (const col of [
+      "file_name",
+      "content_sha256",
+      "total_amount",
+      "excluded_count",
+      "excluded_amount",
+    ]) {
+      expect(MIGRATION).toMatch(
+        new RegExp(`ADD COLUMN ${col} [A-Z0-9(),]+ NULL`, "i"),
+      );
     }
     expect(MIGRATION).not.toMatch(/ADD COLUMN \w+ [A-Z0-9(),]+ NOT NULL/i);
   });
@@ -130,7 +164,11 @@ describe("migration 1215", () => {
   });
 
   it("guards every statement, so re-running is a no-op", () => {
-    const guards = (MIGRATION.match(/PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;/g) ?? []).length;
+    const guards = (
+      MIGRATION.match(
+        /PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;/g,
+      ) ?? []
+    ).length;
     expect(guards).toBe(6);
   });
 
@@ -143,7 +181,8 @@ describe("the hash is a real integrity check, not a formality", () => {
   it("distinguishes files that differ by a single rupee", () => {
     const a = "Sr No,Code,Amount\n1,MAS001,1000.00\nTOTAL,,1000.00";
     const b = "Sr No,Code,Amount\n1,MAS001,1000.01\nTOTAL,,1000.01";
-    const h = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
+    const h = (s: string) =>
+      createHash("sha256").update(s, "utf8").digest("hex");
     expect(h(a)).not.toBe(h(b));
     expect(h(a)).toBe(h(a));
     expect(h(a)).toHaveLength(64); // matches CHAR(64) in the migration

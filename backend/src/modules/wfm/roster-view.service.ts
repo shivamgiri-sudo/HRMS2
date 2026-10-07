@@ -17,9 +17,9 @@
  * - GREY (off): WO/Leave/Holiday — no adherence tracking
  * - FUTURE: Date is in the future — no adherence tracking yet
  */
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
-import { lobCondition, type LobFilter } from '../../shared/lobFilter.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { lobCondition, type LobFilter } from "../../shared/lobFilter.js";
 
 export interface RosterViewFilters {
   fromDate: string;
@@ -38,7 +38,8 @@ export interface RosterViewFilters {
 }
 
 /** Adherence status for color-coding */
-export type AdherenceStatus = 'GREEN' | 'AMBER' | 'RED' | 'BROWN' | 'GREY' | 'FUTURE';
+export type AdherenceStatus =
+  "GREEN" | "AMBER" | "RED" | "BROWN" | "GREY" | "FUTURE";
 
 /** Day cell with optional adherence info */
 export interface DayCell {
@@ -69,11 +70,11 @@ export interface RosterViewRow {
 
 /** Turn an assignment row into the single label a planner wants to see in a cell. */
 function cellLabel(r: RowDataPacket): string {
-  const type = String(r.assignment_type ?? '').toUpperCase();
-  if (type === 'WEEK_OFF') return 'WO';
-  if (type === 'LEAVE') return 'Leave';
-  if (type === 'HOLIDAY') return 'Holiday';
-  if (type === 'TRAINING') return 'Training';
+  const type = String(r.assignment_type ?? "").toUpperCase();
+  if (type === "WEEK_OFF") return "WO";
+  if (type === "LEAVE") return "Leave";
+  if (type === "HOLIDAY") return "Holiday";
+  if (type === "TRAINING") return "Training";
   if (r.start_time && r.end_time) {
     return `${String(r.start_time).slice(0, 5)}-${String(r.end_time).slice(0, 5)}`;
   }
@@ -86,19 +87,19 @@ function cellLabel(r: RowDataPacket): string {
     return `${String(r.own_start_time).slice(0, 5)}-${String(r.own_end_time).slice(0, 5)}`;
   }
   if (r.shift_name) return String(r.shift_name);
-  if (type && type !== 'UNASSIGNED') return type;
-  return '—';
+  if (type && type !== "UNASSIGNED") return type;
+  return "—";
 }
 
 /** Check if assignment type is a non-working day (no adherence tracking) */
 function isOffType(type: string): boolean {
   const t = type.toUpperCase();
-  return t === 'WEEK_OFF' || t === 'LEAVE' || t === 'HOLIDAY';
+  return t === "WEEK_OFF" || t === "LEAVE" || t === "HOLIDAY";
 }
 
 /** Convert HH:MM or HH:MM:SS time string to total minutes */
 function timeToMinutes(t: string): number {
-  const parts = t.split(':').map(Number);
+  const parts = t.split(":").map(Number);
   return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
 }
 
@@ -109,13 +110,13 @@ function getExpectedMinutes(r: RowDataPacket): number {
     const start = timeToMinutes(String(r.start_time));
     const end = timeToMinutes(String(r.end_time));
     // Handle overnight shifts
-    return end >= start ? end - start : (24 * 60 - start) + end;
+    return end >= start ? end - start : 24 * 60 - start + end;
   }
   // Try assignment's own times
   if (r.own_start_time && r.own_end_time) {
     const start = timeToMinutes(String(r.own_start_time));
     const end = timeToMinutes(String(r.own_end_time));
-    return end >= start ? end - start : (24 * 60 - start) + end;
+    return end >= start ? end - start : 24 * 60 - start + end;
   }
   return 480; // Default 8 hours
 }
@@ -123,9 +124,7 @@ function getExpectedMinutes(r: RowDataPacket): number {
 const GRACE_MINUTES = 5;
 const INCOMPLETE_THRESHOLD = 0.8; // < 80% worked = incomplete
 
-export async function getRosterView(
-  filters: RosterViewFilters
-): Promise<{
+export async function getRosterView(filters: RosterViewFilters): Promise<{
   rows: RosterViewRow[];
   dates: string[];
   total: number;
@@ -135,18 +134,30 @@ export async function getRosterView(
   const offset = Math.max(filters.offset ?? 0, 0);
   const includeAdherence = filters.includeAdherence ?? false;
 
-  const where: string[] = ['ra.roster_date BETWEEN ? AND ?'];
+  const where: string[] = ["ra.roster_date BETWEEN ? AND ?"];
   const params: unknown[] = [filters.fromDate, filters.toDate];
-  if (filters.branchId) { where.push('e.branch_id = ?'); params.push(filters.branchId); }
-  if (filters.processId) { where.push('e.process_id = ?'); params.push(filters.processId); }
-  if (filters.costCentreId) { where.push('e.cost_centre_id = ?'); params.push(filters.costCentreId); }
-  const lobCond = filters.lob ? lobCondition(filters.lob, 'e') : null;
-  if (lobCond) { where.push(lobCond.sql); params.push(...lobCond.params); }
+  if (filters.branchId) {
+    where.push("e.branch_id = ?");
+    params.push(filters.branchId);
+  }
+  if (filters.processId) {
+    where.push("e.process_id = ?");
+    params.push(filters.processId);
+  }
+  if (filters.costCentreId) {
+    where.push("e.cost_centre_id = ?");
+    params.push(filters.costCentreId);
+  }
+  const lobCond = filters.lob ? lobCondition(filters.lob, "e") : null;
+  if (lobCond) {
+    where.push(lobCond.sql);
+    params.push(...lobCond.params);
+  }
   if (filters.search) {
-    where.push('(e.employee_code LIKE ? OR e.full_name LIKE ?)');
+    where.push("(e.employee_code LIKE ? OR e.full_name LIKE ?)");
     params.push(`%${filters.search}%`, `%${filters.search}%`);
   }
-  const whereSql = where.join(' AND ');
+  const whereSql = where.join(" AND ");
 
   // Count distinct employees first so the page size means "employees", not "cells".
   // The count and the page query are independent, so run them concurrently (both are heavy).
@@ -155,7 +166,7 @@ export async function getRosterView(
        FROM wfm_roster_assignment ra
        JOIN employees e ON e.id = ra.employee_id
       WHERE ${whereSql}`,
-    params
+    params,
   );
 
   const rowsPromise = db.execute<RowDataPacket[]>(
@@ -189,7 +200,7 @@ export async function getRosterView(
             SELECT e2.id
               FROM wfm_roster_assignment ra2
               JOIN employees e2 ON e2.id = ra2.employee_id
-             WHERE ${whereSql.replace(/\bra\./g, 'ra2.').replace(/\be\./g, 'e2.')}
+             WHERE ${whereSql.replace(/\bra\./g, "ra2.").replace(/\be\./g, "e2.")}
              GROUP BY e2.id, e2.employee_code
              ORDER BY e2.employee_code
              -- Inlined, not bound: MySQL's prepared-statement protocol rejects placeholders in
@@ -198,14 +209,15 @@ export async function getRosterView(
           ) paged
         )
       ORDER BY e.employee_code, ra.roster_date`,
-    [...params, ...params]
+    [...params, ...params],
   );
   const [[countRows], [rows]] = await Promise.all([countPromise, rowsPromise]);
   const total = Number(countRows[0]?.n ?? 0);
 
   // Collect employee IDs for attendance lookup
   const employeeIds = new Set<string>();
-  const rosterData: Array<{ empId: string; date: string; row: RowDataPacket }> = [];
+  const rosterData: Array<{ empId: string; date: string; row: RowDataPacket }> =
+    [];
   const today = new Date().toISOString().slice(0, 10);
 
   for (const r of rows) {
@@ -218,7 +230,7 @@ export async function getRosterView(
   let attendanceMap = new Map<string, RowDataPacket>(); // key: `${empId}|${date}`
   if (includeAdherence && employeeIds.size > 0) {
     const empIdList = [...employeeIds];
-    const placeholders = empIdList.map(() => '?').join(', ');
+    const placeholders = empIdList.map(() => "?").join(", ");
     const [attRows] = await db.execute<RowDataPacket[]>(
       // clock_in_time/clock_out_time/raw_minutes/attendance_status are the real
       // attendance_daily_record columns - first_in/last_out/total_hours/status never existed on
@@ -234,7 +246,7 @@ export async function getRosterView(
          FROM attendance_daily_record
         WHERE employee_id IN (${placeholders})
           AND record_date BETWEEN ? AND ?`,
-      [...empIdList, filters.fromDate, filters.toDate]
+      [...empIdList, filters.fromDate, filters.toDate],
     );
     for (const att of attRows) {
       const key = `${att.employee_id}|${att.att_date}`;
@@ -243,21 +255,41 @@ export async function getRosterView(
   }
 
   // Build result with optional adherence
-  const byEmployee = new Map<string, RosterViewRow & { _adherenceStats: { green: number; amber: number; red: number; brown: number; total: number } }>();
+  const byEmployee = new Map<
+    string,
+    RosterViewRow & {
+      _adherenceStats: {
+        green: number;
+        amber: number;
+        red: number;
+        brown: number;
+        total: number;
+      };
+    }
+  >();
   const dates = new Set<string>();
 
   // Analytics accumulators
-  const byProcess = new Map<string, { name: string; green: number; total: number }>();
-  const byBranch = new Map<string, { name: string; green: number; total: number }>();
-  let globalGreen = 0, globalTotal = 0;
+  const byProcess = new Map<
+    string,
+    { name: string; green: number; total: number }
+  >();
+  const byBranch = new Map<
+    string,
+    { name: string; green: number; total: number }
+  >();
+  let globalGreen = 0,
+    globalTotal = 0;
 
   for (const { empId, date, row } of rosterData) {
     if (!byEmployee.has(empId)) {
       byEmployee.set(empId, {
         employeeId: empId,
-        employeeCode: String(row.employee_code ?? ''),
-        employeeName: String(row.employee_name ?? ''),
-        reportingManager: row.reporting_manager ? String(row.reporting_manager) : null,
+        employeeCode: String(row.employee_code ?? ""),
+        employeeName: String(row.employee_name ?? ""),
+        reportingManager: row.reporting_manager
+          ? String(row.reporting_manager)
+          : null,
         processName: row.process_name ? String(row.process_name) : null,
         branchName: row.branch_name ? String(row.branch_name) : null,
         costCentre: row.cost_centre ? String(row.cost_centre) : null,
@@ -273,46 +305,57 @@ export async function getRosterView(
     emp.days[date] = label;
 
     if (includeAdherence) {
-      const type = String(row.assignment_type ?? '').toUpperCase();
+      const type = String(row.assignment_type ?? "").toUpperCase();
       let adherence: AdherenceStatus;
       let lateMinutes: number | undefined;
       let workedPct: number | undefined;
 
       if (isOffType(type)) {
-        adherence = 'GREY';
+        adherence = "GREY";
       } else if (date > today) {
-        adherence = 'FUTURE';
+        adherence = "FUTURE";
       } else {
         const attKey = `${empId}|${date}`;
         const att = attendanceMap.get(attKey);
         const expectedMinutes = getExpectedMinutes(row);
-        const shiftStart = row.start_time ? timeToMinutes(String(row.start_time))
-          : (row.own_start_time ? timeToMinutes(String(row.own_start_time)) : null);
+        const shiftStart = row.start_time
+          ? timeToMinutes(String(row.start_time))
+          : row.own_start_time
+            ? timeToMinutes(String(row.own_start_time))
+            : null;
 
         if (!att || !att.first_in) {
           // No attendance record — unplanned absence
-          adherence = 'RED';
+          adherence = "RED";
           emp._adherenceStats.red++;
           emp._adherenceStats.total++;
         } else {
-          const loginMinutes = att.first_in ? timeToMinutes(String(att.first_in)) : 0;
+          const loginMinutes = att.first_in
+            ? timeToMinutes(String(att.first_in))
+            : 0;
           const workedMinutes = (Number(att.total_hours) || 0) * 60;
-          workedPct = expectedMinutes > 0 ? Math.round((workedMinutes / expectedMinutes) * 100) : 100;
+          workedPct =
+            expectedMinutes > 0
+              ? Math.round((workedMinutes / expectedMinutes) * 100)
+              : 100;
 
           if (workedPct < INCOMPLETE_THRESHOLD * 100) {
             // Incomplete shift
-            adherence = 'BROWN';
+            adherence = "BROWN";
             emp._adherenceStats.brown++;
             emp._adherenceStats.total++;
-          } else if (shiftStart !== null && loginMinutes > shiftStart + GRACE_MINUTES) {
+          } else if (
+            shiftStart !== null &&
+            loginMinutes > shiftStart + GRACE_MINUTES
+          ) {
             // Late
-            adherence = 'AMBER';
+            adherence = "AMBER";
             lateMinutes = loginMinutes - shiftStart;
             emp._adherenceStats.amber++;
             emp._adherenceStats.total++;
           } else {
             // On-time
-            adherence = 'GREEN';
+            adherence = "GREEN";
             emp._adherenceStats.green++;
             emp._adherenceStats.total++;
           }
@@ -322,19 +365,29 @@ export async function getRosterView(
         const processId = row.process_id ? String(row.process_id) : null;
         const branchId = row.branch_id ? String(row.branch_id) : null;
         if (processId) {
-          if (!byProcess.has(processId)) byProcess.set(processId, { name: String(row.process_name ?? ''), green: 0, total: 0 });
+          if (!byProcess.has(processId))
+            byProcess.set(processId, {
+              name: String(row.process_name ?? ""),
+              green: 0,
+              total: 0,
+            });
           const p = byProcess.get(processId)!;
           p.total++;
-          if (adherence === 'GREEN') p.green++;
+          if (adherence === "GREEN") p.green++;
         }
         if (branchId) {
-          if (!byBranch.has(branchId)) byBranch.set(branchId, { name: String(row.branch_name ?? ''), green: 0, total: 0 });
+          if (!byBranch.has(branchId))
+            byBranch.set(branchId, {
+              name: String(row.branch_name ?? ""),
+              green: 0,
+              total: 0,
+            });
           const b = byBranch.get(branchId)!;
           b.total++;
-          if (adherence === 'GREEN') b.green++;
+          if (adherence === "GREEN") b.green++;
         }
         globalTotal++;
-        if (adherence === 'GREEN') globalGreen++;
+        if (adherence === "GREEN") globalGreen++;
       }
 
       emp.dayCells![date] = { label, adherence, lateMinutes, workedPct };
@@ -345,23 +398,31 @@ export async function getRosterView(
   const resultRows: RosterViewRow[] = [];
   for (const emp of byEmployee.values()) {
     const stats = emp._adherenceStats;
-    const adherencePct = stats.total > 0
-      ? Math.round(((stats.green + stats.amber) / stats.total) * 100) // Green + Amber = attended
-      : undefined;
+    const adherencePct =
+      stats.total > 0
+        ? Math.round(((stats.green + stats.amber) / stats.total) * 100) // Green + Amber = attended
+        : undefined;
     const { _adherenceStats, ...rest } = emp;
-    resultRows.push({ ...rest, adherencePct: includeAdherence ? adherencePct : undefined });
+    resultRows.push({
+      ...rest,
+      adherencePct: includeAdherence ? adherencePct : undefined,
+    });
   }
 
   // LOB names by parameter (not a join): employees.lob_id and lob_master.id may not share a collation.
-  const lobIds = [...new Set(resultRows.map((r) => r.lobId).filter((v): v is string => !!v))];
+  const lobIds = [
+    ...new Set(resultRows.map((r) => r.lobId).filter((v): v is string => !!v)),
+  ];
   if (lobIds.length) {
     const [lobRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, lob_name FROM lob_master WHERE id IN (${lobIds.map(() => '?').join(', ')})`,
-      lobIds
+      `SELECT id, lob_name FROM lob_master WHERE id IN (${lobIds.map(() => "?").join(", ")})`,
+      lobIds,
     );
     const lobNames = new Map<string, string>();
-    for (const l of lobRows ?? []) lobNames.set(String(l.id), String(l.lob_name));
-    for (const r of resultRows) r.lobName = r.lobId ? (lobNames.get(r.lobId) ?? null) : null;
+    for (const l of lobRows ?? [])
+      lobNames.set(String(l.id), String(l.lob_name));
+    for (const r of resultRows)
+      r.lobName = r.lobId ? (lobNames.get(r.lobId) ?? null) : null;
   }
 
   // Build analytics summary
@@ -369,20 +430,25 @@ export async function getRosterView(
   if (includeAdherence) {
     analytics = {
       overall: {
-        adherencePct: globalTotal > 0 ? Math.round((globalGreen / globalTotal) * 100) : null,
+        adherencePct:
+          globalTotal > 0
+            ? Math.round((globalGreen / globalTotal) * 100)
+            : null,
         totalShifts: globalTotal,
         onTimeShifts: globalGreen,
       },
       byProcess: [...byProcess.entries()].map(([id, p]) => ({
         processId: id,
         processName: p.name,
-        adherencePct: p.total > 0 ? Math.round((p.green / p.total) * 100) : null,
+        adherencePct:
+          p.total > 0 ? Math.round((p.green / p.total) * 100) : null,
         totalShifts: p.total,
       })),
       byBranch: [...byBranch.entries()].map(([id, b]) => ({
         branchId: id,
         branchName: b.name,
-        adherencePct: b.total > 0 ? Math.round((b.green / b.total) * 100) : null,
+        adherencePct:
+          b.total > 0 ? Math.round((b.green / b.total) * 100) : null,
         totalShifts: b.total,
       })),
     };
@@ -445,7 +511,7 @@ export interface RosterStatusSummary {
  */
 export async function getEmployeeAdherenceTrend(
   employeeId: string,
-  months: number = 6
+  months: number = 6,
 ): Promise<{
   employeeId: string;
   months: Array<{
@@ -473,9 +539,9 @@ export async function getEmployeeAdherenceTrend(
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const year = d.getFullYear();
     const month = d.getMonth() + 1;
-    const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+    const monthStr = `${year}-${String(month).padStart(2, "0")}`;
     const firstDay = `${monthStr}-01`;
-    const lastDay = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+    const lastDay = `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
 
     // Get roster assignments for this month
     const [rosterRows] = await db.execute<RowDataPacket[]>(
@@ -489,7 +555,7 @@ export async function getEmployeeAdherenceTrend(
          LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
         WHERE ra.employee_id = ?
           AND ra.roster_date BETWEEN ? AND ?`,
-      [employeeId, firstDay, lastDay]
+      [employeeId, firstDay, lastDay],
     );
 
     // Get attendance for this month
@@ -502,36 +568,46 @@ export async function getEmployeeAdherenceTrend(
          FROM attendance_daily_record
         WHERE employee_id = ?
           AND record_date BETWEEN ? AND ?`,
-      [employeeId, firstDay, lastDay]
+      [employeeId, firstDay, lastDay],
     );
 
     const attMap = new Map<string, RowDataPacket>();
     for (const a of attRows) attMap.set(a.att_date, a);
 
-    let onTime = 0, late = 0, absent = 0, incomplete = 0;
+    let onTime = 0,
+      late = 0,
+      absent = 0,
+      incomplete = 0;
     const today = new Date().toISOString().slice(0, 10);
 
     for (const r of rosterRows) {
       const date = new Date(r.roster_date).toISOString().slice(0, 10);
-      const type = String(r.assignment_type ?? '').toUpperCase();
+      const type = String(r.assignment_type ?? "").toUpperCase();
       if (isOffType(type)) continue; // Skip WO/Leave/Holiday
       if (date > today) continue; // Skip future dates
 
       const att = attMap.get(date);
       const expectedMinutes = getExpectedMinutes(r);
-      const shiftStart = r.start_time ? timeToMinutes(String(r.start_time))
-        : (r.own_start_time ? timeToMinutes(String(r.own_start_time)) : null);
+      const shiftStart = r.start_time
+        ? timeToMinutes(String(r.start_time))
+        : r.own_start_time
+          ? timeToMinutes(String(r.own_start_time))
+          : null;
 
       if (!att || !att.first_in) {
         absent++;
       } else {
         const loginMinutes = timeToMinutes(String(att.first_in));
         const workedMinutes = (Number(att.total_hours) || 0) * 60;
-        const workedPct = expectedMinutes > 0 ? (workedMinutes / expectedMinutes) * 100 : 100;
+        const workedPct =
+          expectedMinutes > 0 ? (workedMinutes / expectedMinutes) * 100 : 100;
 
         if (workedPct < INCOMPLETE_THRESHOLD * 100) {
           incomplete++;
-        } else if (shiftStart !== null && loginMinutes > shiftStart + GRACE_MINUTES) {
+        } else if (
+          shiftStart !== null &&
+          loginMinutes > shiftStart + GRACE_MINUTES
+        ) {
           late++;
         } else {
           onTime++;
@@ -555,20 +631,29 @@ export async function getEmployeeAdherenceTrend(
 }
 
 export async function getRosterStatusSummary(
-  filters: RosterStatusSummaryFilters
+  filters: RosterStatusSummaryFilters,
 ): Promise<RosterStatusSummary> {
   // Same synthetic-cohort guard as the rest of the roster console (412k rows from one 2026-06-11
   // batch, all provenance columns NULL) — without it "never published" was ~99% synthetic rows.
   const where = [
-    'ra.roster_date BETWEEN ? AND ?',
-    'NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)',
+    "ra.roster_date BETWEEN ? AND ?",
+    "NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)",
   ];
   const params: unknown[] = [filters.fromDate, filters.toDate];
-  if (filters.branchId) { where.push('e.branch_id = ?'); params.push(filters.branchId); }
-  if (filters.processId) { where.push('e.process_id = ?'); params.push(filters.processId); }
+  if (filters.branchId) {
+    where.push("e.branch_id = ?");
+    params.push(filters.branchId);
+  }
+  if (filters.processId) {
+    where.push("e.process_id = ?");
+    params.push(filters.processId);
+  }
   const lobCond = filters.lob ? lobCondition(filters.lob) : null;
-  if (lobCond) { where.push(lobCond.sql); params.push(...lobCond.params); }
-  const whereSql = where.join(' AND ');
+  if (lobCond) {
+    where.push(lobCond.sql);
+    params.push(...lobCond.params);
+  }
+  const whereSql = where.join(" AND ");
 
   const [publishRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(ra.final_roster_status, 'generated') AS status, COUNT(*) AS cnt
@@ -576,7 +661,7 @@ export async function getRosterStatusSummary(
        JOIN employees e ON e.id = ra.employee_id
       WHERE ${whereSql}
       GROUP BY status`,
-    params
+    params,
   );
   const [ackRows] = await db.execute<RowDataPacket[]>(
     // employee_ack_status defaults to 'pending' on every unpublished row, so only rows that have
@@ -586,18 +671,27 @@ export async function getRosterStatusSummary(
        JOIN employees e ON e.id = ra.employee_id
       WHERE ${whereSql} AND COALESCE(ra.final_roster_status, 'generated') <> 'generated'
       GROUP BY status`,
-    params
+    params,
   );
 
   const byPublishStage = (publishRows as RowDataPacket[]).map((r) => ({
-    status: String(r.status), count: Number(r.cnt),
+    status: String(r.status),
+    count: Number(r.cnt),
   }));
   const byAckStatus = (ackRows as RowDataPacket[]).map((r) => ({
-    status: String(r.status), count: Number(r.cnt),
+    status: String(r.status),
+    count: Number(r.cnt),
   }));
   const totalAssignments = byPublishStage.reduce((sum, r) => sum + r.count, 0);
-  const unpublishedCount = byPublishStage.find((r) => r.status === 'generated')?.count ?? 0;
+  const unpublishedCount =
+    byPublishStage.find((r) => r.status === "generated")?.count ?? 0;
   const publishedCount = totalAssignments - unpublishedCount;
 
-  return { totalAssignments, byPublishStage, byAckStatus, publishedCount, unpublishedCount };
+  return {
+    totalAssignments,
+    byPublishStage,
+    byAckStatus,
+    publishedCount,
+    unpublishedCount,
+  };
 }

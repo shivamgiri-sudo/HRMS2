@@ -39,7 +39,7 @@ export function getMasmisDbName(): string {
 
 export async function queryMasmis<T = Record<string, unknown>>(
   sql: string,
-  params: (string | number | null)[] = []
+  params: (string | number | null)[] = [],
 ): Promise<T[]> {
   const [rows] = await getMasmisPool().execute(sql, params);
   return rows as T[];

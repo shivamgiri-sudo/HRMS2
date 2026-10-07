@@ -1,12 +1,12 @@
-import { db } from '../../db/mysql.js';
-import { RowDataPacket } from 'mysql2/promise';
+import { db } from "../../db/mysql.js";
+import { RowDataPacket } from "mysql2/promise";
 
 export interface BandPct {
   basicPct: number;
   hraPct: number;
   /** 'package_master' when a real row backed this; 'default' only when the
    *  band has no usable salary_package_master row at all. */
-  source: 'package_master' | 'default';
+  source: "package_master" | "default";
 }
 
 /**
@@ -37,16 +37,18 @@ export async function resolveBandPct(
   bandCode: string | null | undefined,
   monthlyCtc: number,
 ): Promise<BandPct> {
-  const DEFAULT: BandPct = { basicPct: 40, hraPct: 40, source: 'default' };
+  const DEFAULT: BandPct = { basicPct: 40, hraPct: 40, source: "default" };
   if (!bandCode || !Number.isFinite(monthlyCtc)) return DEFAULT;
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT basic, hra, gross FROM salary_package_master
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT basic, hra, gross FROM salary_package_master
       WHERE band_code = ? AND gross > 0 AND basic > 0
       ORDER BY (active_status = 1) DESC, ABS(package_amount - ?) ASC
       LIMIT 1`,
-    [bandCode, monthlyCtc],
-  ).catch(() => [[] as RowDataPacket[]]);
+      [bandCode, monthlyCtc],
+    )
+    .catch(() => [[] as RowDataPacket[]]);
 
   const row = (rows as RowDataPacket[])[0];
   if (!row) return DEFAULT; // this band has no package_master row to derive from at all
@@ -58,6 +60,6 @@ export async function resolveBandPct(
   return {
     basicPct: gross > 0 ? (basic / gross) * 100 : DEFAULT.basicPct,
     hraPct: basic > 0 ? (hra / basic) * 100 : 0, // a real row can legitimately carry 0 HRA
-    source: 'package_master',
+    source: "package_master",
   };
 }

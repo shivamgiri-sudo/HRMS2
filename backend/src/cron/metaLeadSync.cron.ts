@@ -31,7 +31,9 @@ const NOTIFY_FLOOR = new Date("2026-09-21T00:00:00+05:30");
 const NOTIFY_LOOKBACK_MS = 48 * 60 * 60 * 1000;
 
 function notifyWindowStart(now = new Date()): Date {
-  return new Date(Math.max(NOTIFY_FLOOR.getTime(), now.getTime() - NOTIFY_LOOKBACK_MS));
+  return new Date(
+    Math.max(NOTIFY_FLOOR.getTime(), now.getTime() - NOTIFY_LOOKBACK_MS),
+  );
 }
 
 // Forms on the Page that have no meta_campaign row are invisible to the linked-form poll, so
@@ -47,7 +49,10 @@ async function listUnlinkedPageFormIds(linked: Set<string>): Promise<string[]> {
       const forms = await metaCampaignService.listPageForms(pageId);
       for (const f of forms) if (!linked.has(f.id)) unlinked.push(f.id);
     } catch (err: any) {
-      console.error(`[meta-sync] Page ${pageId} form discovery failed:`, err?.message ?? err);
+      console.error(
+        `[meta-sync] Page ${pageId} form discovery failed:`,
+        err?.message ?? err,
+      );
     }
   }
   return unlinked;
@@ -75,17 +80,20 @@ async function runMetaLeadSync(): Promise<void> {
     const [activeForms] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT mc.meta_form_id, mc.campaign_name FROM meta_campaign mc
         WHERE mc.campaign_status IN ('active', 'draft')
-          AND mc.meta_form_id IS NOT NULL AND mc.meta_form_id <> ''`
+          AND mc.meta_form_id IS NOT NULL AND mc.meta_form_id <> ''`,
     );
 
     const [allLinked] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT meta_form_id FROM meta_campaign WHERE meta_form_id IS NOT NULL AND meta_form_id <> ''`
+      `SELECT DISTINCT meta_form_id FROM meta_campaign WHERE meta_form_id IS NOT NULL AND meta_form_id <> ''`,
     );
     const unlinkedIds = await listUnlinkedPageFormIds(
-      new Set((allLinked as any[]).map((r) => String(r.meta_form_id)))
+      new Set((allLinked as any[]).map((r) => String(r.meta_form_id))),
     );
     const formsToPull = [
-      ...(activeForms as any[]).map((r) => ({ id: String(r.meta_form_id), name: String(r.campaign_name) })),
+      ...(activeForms as any[]).map((r) => ({
+        id: String(r.meta_form_id),
+        name: String(r.campaign_name),
+      })),
       ...unlinkedIds.map((id) => ({ id, name: "unlinked form" })),
     ];
 
@@ -96,22 +104,27 @@ async function runMetaLeadSync(): Promise<void> {
         const result = await metaCampaignService.backfillFormLeads(form.id);
         totalImported += result.imported;
         if (result.imported > 0) {
-          console.log(`[meta-sync] ${result.imported} new lead(s) from "${form.name}" (${form.id})`);
+          console.log(
+            `[meta-sync] ${result.imported} new lead(s) from "${form.name}" (${form.id})`,
+          );
         }
       } catch (err: any) {
         formErrors++;
-        console.error(`[meta-sync] Form ${form.id} ("${form.name}") error:`, err?.message ?? err);
+        console.error(
+          `[meta-sync] Form ${form.id} ("${form.name}") error:`,
+          err?.message ?? err,
+        );
       }
     }
     console.log(
-      `[meta-sync] Lead sync complete: ${totalImported} imported across ${formsToPull.length} forms (${unlinkedIds.length} unlinked), ${formErrors} form errors`
+      `[meta-sync] Lead sync complete: ${totalImported} imported across ${formsToPull.length} forms (${unlinkedIds.length} unlinked), ${formErrors} form errors`,
     );
 
     // 2. Sync campaign metrics (impressions, reach, clicks, spend)
     const metricsResult = await metaCampaignService.syncAllCampaignMetrics();
     if (metricsResult.synced > 0 || metricsResult.failed > 0) {
       console.log(
-        `[meta-sync] Metrics sync: ${metricsResult.synced} synced, ${metricsResult.failed} failed`
+        `[meta-sync] Metrics sync: ${metricsResult.synced} synced, ${metricsResult.failed} failed`,
       );
     }
 
@@ -121,7 +134,7 @@ async function runMetaLeadSync(): Promise<void> {
       const healed = await metaCampaignService.healUnsyncedLeads();
       if (healed.candidatesCreated || healed.stubsRetried) {
         console.log(
-          `[meta-sync] Heal: ${healed.candidatesCreated} candidate(s) created, ${healed.stubsHealed}/${healed.stubsRetried} stub(s) recovered`
+          `[meta-sync] Heal: ${healed.candidatesCreated} candidate(s) created, ${healed.stubsHealed}/${healed.stubsRetried} stub(s) recovered`,
         );
       }
     } catch (err: any) {
@@ -134,11 +147,15 @@ async function runMetaLeadSync(): Promise<void> {
       const wa = await reconcileDeliveryStatuses();
       if (wa.checked) {
         const msg = `[meta-sync] WhatsApp delivery: ${wa.checked} checked, ${wa.updated} updated, ${wa.stillQueued} still queued`;
-        if (wa.stillQueued > 0) console.warn(`${msg} — Wassenger queue may be stuck`);
+        if (wa.stillQueued > 0)
+          console.warn(`${msg} — Wassenger queue may be stuck`);
         else console.log(msg);
       }
     } catch (err: any) {
-      console.error("[meta-sync] Delivery reconcile failed:", err?.message ?? err);
+      console.error(
+        "[meta-sync] Delivery reconcile failed:",
+        err?.message ?? err,
+      );
     }
 
     // 4. Notify newly qualified leads within the rolling window.
@@ -161,12 +178,14 @@ async function notifyNewQualifiedLeads(): Promise<void> {
         AND created_at >= ?
       ORDER BY created_at ASC
       LIMIT 100`,
-    [notifyWindowStart()]
+    [notifyWindowStart()],
   );
 
   if (!(leads as any[]).length) return;
 
-  console.log(`[meta-sync] Triggering outreach for ${(leads as any[]).length} new qualified lead(s)...`);
+  console.log(
+    `[meta-sync] Triggering outreach for ${(leads as any[]).length} new qualified lead(s)...`,
+  );
   let sent = 0;
   let failed = 0;
 
@@ -176,7 +195,10 @@ async function notifyNewQualifiedLeads(): Promise<void> {
       sent++;
     } catch (err: any) {
       failed++;
-      console.warn(`[meta-sync] Outreach failed for lead ${lead.id}:`, err?.message ?? err);
+      console.warn(
+        `[meta-sync] Outreach failed for lead ${lead.id}:`,
+        err?.message ?? err,
+      );
     }
   }
 
@@ -191,7 +213,9 @@ function scheduleNext(): void {
 
 export function startMetaLeadSyncScheduler(): void {
   if (scheduler) return;
-  console.log(`[meta-sync] 30-min Meta lead sync scheduler starting (notifying leads created >= ${notifyWindowStart().toISOString()}, rolling 48h)`);
+  console.log(
+    `[meta-sync] 30-min Meta lead sync scheduler starting (notifying leads created >= ${notifyWindowStart().toISOString()}, rolling 48h)`,
+  );
   runMetaLeadSync();
 }
 

@@ -35,8 +35,12 @@ export type EsignCertificateIdentity = {
 };
 
 /** True once `strict:false` still stops after the real BER content and reports the rest as unparsed trailing bytes. */
-function isUnparsedTrailingBytesError(e: unknown): e is { remaining: number; byteCount: number } {
-  return typeof e === "object" && e !== null && "remaining" in e && "byteCount" in e;
+function isUnparsedTrailingBytesError(
+  e: unknown,
+): e is { remaining: number; byteCount: number } {
+  return (
+    typeof e === "object" && e !== null && "remaining" in e && "byteCount" in e
+  );
 }
 
 function parseBerLeadingObject(buf: Buffer): forge.asn1.Asn1 {
@@ -45,7 +49,10 @@ function parseBerLeadingObject(buf: Buffer): forge.asn1.Asn1 {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const opts = { strict: false } as any;
   try {
-    return forge.asn1.fromDer(forge.util.createBuffer(buf.toString("binary")), opts);
+    return forge.asn1.fromDer(
+      forge.util.createBuffer(buf.toString("binary")),
+      opts,
+    );
   } catch (e: unknown) {
     // PDF /Contents is a fixed-size hex placeholder; the real BER-encoded PKCS#7 blob
     // is usually shorter than the reserved space and the rest is zero-padding. forge's
@@ -53,14 +60,19 @@ function parseBerLeadingObject(buf: Buffer): forge.asn1.Asn1 {
     // portion it actually used.
     if (isUnparsedTrailingBytesError(e)) {
       const consumed = e.byteCount - e.remaining;
-      return forge.asn1.fromDer(forge.util.createBuffer(buf.slice(0, consumed).toString("binary")), opts);
+      return forge.asn1.fromDer(
+        forge.util.createBuffer(buf.slice(0, consumed).toString("binary")),
+        opts,
+      );
     }
     throw e;
   }
 }
 
 /** Every `/Contents <hex...>` byte range found in a PDF signature dictionary (there can be more than one signature). */
-function findSignatureContentsHexRanges(pdfBytes: Buffer): Array<{ start: number; end: number }> {
+function findSignatureContentsHexRanges(
+  pdfBytes: Buffer,
+): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
   const marker = Buffer.from("/Contents");
   let searchFrom = 0;
@@ -88,9 +100,15 @@ type ParsedSignature = {
 };
 
 /** Reads the leaf certificate out of one `/Contents` hex string; null when it is not a parseable PKCS#7 signature. */
-function parseSignatureRange(pdfBytes: Buffer, range: { start: number; end: number }): ParsedSignature | null {
+function parseSignatureRange(
+  pdfBytes: Buffer,
+  range: { start: number; end: number },
+): ParsedSignature | null {
   try {
-    const hex = pdfBytes.slice(range.start, range.end).toString("latin1").replace(/[^0-9A-Fa-f]/g, "");
+    const hex = pdfBytes
+      .slice(range.start, range.end)
+      .toString("latin1")
+      .replace(/[^0-9A-Fa-f]/g, "");
     if (hex.length < 100) return null; // too short to be a real signature blob
     const der = Buffer.from(hex, "hex");
     const contentInfo = parseBerLeadingObject(der);
@@ -101,11 +119,15 @@ function parseSignatureRange(pdfBytes: Buffer, range: { start: number; end: numb
     // SignedData's `certificates [0] IMPLICIT CertificateSet` is the only child tagged
     // context-class (tagClass 128); position varies slightly by encoder.
     const certsField = signedData.value.find(
-      (v: forge.asn1.Asn1) => v.tagClass === forge.asn1.Class.CONTEXT_SPECIFIC && v.type === 0,
+      (v: forge.asn1.Asn1) =>
+        v.tagClass === forge.asn1.Class.CONTEXT_SPECIFIC && v.type === 0,
     );
     const certAsn1 = certsField?.value?.[0]; // first cert = the leaf/signer, by PKCS#7 convention
     if (!certAsn1) return null;
-    const certDer = Buffer.from(forge.asn1.toDer(certAsn1).getBytes(), "binary");
+    const certDer = Buffer.from(
+      forge.asn1.toDer(certAsn1).getBytes(),
+      "binary",
+    );
     const x509 = new X509Certificate(certDer);
     return {
       identity: {
@@ -133,7 +155,9 @@ function parseSignatureRange(pdfBytes: Buffer, range: { start: number; end: numb
  * joining kit). For a document that was already signed by someone else first, use
  * extractLatestEsignCertificateIdentity instead.
  */
-export function extractEsignCertificateIdentity(pdfBytes: Buffer): EsignCertificateIdentity | null {
+export function extractEsignCertificateIdentity(
+  pdfBytes: Buffer,
+): EsignCertificateIdentity | null {
   for (const range of findSignatureContentsHexRanges(pdfBytes)) {
     const parsed = parseSignatureRange(pdfBytes, range);
     if (parsed) return parsed.identity;
@@ -181,7 +205,9 @@ export function extractLatestEsignCertificateIdentity(
   opts: { excludeCommonNames?: readonly string[] } = {},
 ): EsignCertificateIdentity | null {
   try {
-    const excluded = new Set((opts.excludeCommonNames ?? []).map((n) => n.trim().toLowerCase()));
+    const excluded = new Set(
+      (opts.excludeCommonNames ?? []).map((n) => n.trim().toLowerCase()),
+    );
     const ends = byteRangeEndsByContentsOpen(pdfBytes);
     let best: ParsedSignature | null = null;
     for (const range of findSignatureContentsHexRanges(pdfBytes)) {
@@ -191,8 +217,11 @@ export function extractLatestEsignCertificateIdentity(
       if (cn && excluded.has(cn)) continue;
       // range.start is the offset just after '<'.
       const scoped = { ...parsed, coversUpTo: ends.get(range.start - 1) ?? -1 };
-      if (!best || scoped.coversUpTo > best.coversUpTo
-        || (scoped.coversUpTo === best.coversUpTo && scoped.order > best.order)) {
+      if (
+        !best ||
+        scoped.coversUpTo > best.coversUpTo ||
+        (scoped.coversUpTo === best.coversUpTo && scoped.order > best.order)
+      ) {
         best = scoped;
       }
     }
@@ -203,7 +232,10 @@ export function extractLatestEsignCertificateIdentity(
 }
 
 /** Node's X509Certificate.subject/.issuer come back as "K=V\nK=V\n...", not parsed fields. */
-function extractSubjectField(subjectString: string, field: string): string | null {
+function extractSubjectField(
+  subjectString: string,
+  field: string,
+): string | null {
   for (const line of subjectString.split("\n")) {
     const idx = line.indexOf("=");
     if (idx === -1) continue;

@@ -3,7 +3,10 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
-import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
+import {
+  financeBranchFilter,
+  type FinanceBranchScope,
+} from "../finance/finance-access-scope.js";
 
 export interface RewardPenaltyEntry {
   id: string;
@@ -44,7 +47,7 @@ export interface RewardPenaltySummary {
 export async function listRewardPenalty(
   periodCode: string,
   costCentreId?: string,
-  branchScope?: FinanceBranchScope
+  branchScope?: FinanceBranchScope,
 ): Promise<RewardPenaltyEntry[]> {
   if (!periodCode) return [];
   if (!(await tableExists("cost_centre_reward_penalty"))) return [];
@@ -62,7 +65,10 @@ export async function listRewardPenalty(
   // excluded for them, never treated as unrestricted.
   const isBranchBound = branchScope?.mode === "branches";
   if (isBranchBound) {
-    const { sql, params: branchParams } = financeBranchFilter(branchScope!, "ccm.branch_id");
+    const { sql, params: branchParams } = financeBranchFilter(
+      branchScope!,
+      "ccm.branch_id",
+    );
     where.push(sql);
     params.push(...branchParams);
   }
@@ -76,14 +82,14 @@ export async function listRewardPenalty(
        LEFT JOIN employees e ON e.id = rp.submitted_by
       WHERE ${where.join(" AND ")}
       ORDER BY rp.created_at DESC`,
-    params
+    params,
   );
   return rows as RewardPenaltyEntry[];
 }
 
 export async function createRewardPenaltyEntry(
   payload: CreateRewardPenaltyPayload,
-  submittedBy: string
+  submittedBy: string,
 ): Promise<RewardPenaltyEntry> {
   if (!(await tableExists("cost_centre_reward_penalty"))) {
     throw new Error("cost_centre_reward_penalty table not yet migrated");
@@ -93,8 +99,10 @@ export async function createRewardPenaltyEntry(
   }
   if (!payload.cost_centre_id) throw new Error("cost_centre_id is required");
   if (!payload.description?.trim()) throw new Error("description is required");
-  if (!payload.amount_inr || payload.amount_inr <= 0) throw new Error("amount_inr must be > 0");
-  if (!["reward", "penalty"].includes(payload.entry_type)) throw new Error("entry_type must be reward or penalty");
+  if (!payload.amount_inr || payload.amount_inr <= 0)
+    throw new Error("amount_inr must be > 0");
+  if (!["reward", "penalty"].includes(payload.entry_type))
+    throw new Error("entry_type must be reward or penalty");
 
   const id = uuidv4();
   await db.execute<ResultSetHeader>(
@@ -111,7 +119,7 @@ export async function createRewardPenaltyEntry(
       payload.amount_inr,
       payload.client_reference ?? null,
       submittedBy,
-    ]
+    ],
   );
 
   await writeAuditLog({
@@ -120,25 +128,30 @@ export async function createRewardPenaltyEntry(
     module_key: "finance_pnl",
     entity_type: "cost_centre_reward_penalty",
     entity_id: id,
-    metadata: { entry_type: payload.entry_type, period_code: payload.period_code, amount_inr: payload.amount_inr },
+    metadata: {
+      entry_type: payload.entry_type,
+      period_code: payload.period_code,
+      amount_inr: payload.amount_inr,
+    },
   });
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM cost_centre_reward_penalty WHERE id = ?`,
-    [id]
+    [id],
   );
   return rows[0] as RewardPenaltyEntry;
 }
 
 export async function approveRewardPenaltyEntry(
   id: string,
-  approvedBy: string
+  approvedBy: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!(await tableExists("cost_centre_reward_penalty"))) return { ok: false, error: "table missing" };
+  if (!(await tableExists("cost_centre_reward_penalty")))
+    return { ok: false, error: "table missing" };
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM cost_centre_reward_penalty WHERE id = ?`,
-    [id]
+    [id],
   );
   if (!rows.length) return { ok: false, error: "Entry not found" };
   const entry = rows[0];
@@ -150,7 +163,7 @@ export async function approveRewardPenaltyEntry(
     `UPDATE cost_centre_reward_penalty
         SET approval_status = 'approved', approved_by = ?, approved_at = NOW()
       WHERE id = ?`,
-    [approvedBy, id]
+    [approvedBy, id],
   );
 
   await writeAuditLog({
@@ -168,14 +181,16 @@ export async function approveRewardPenaltyEntry(
 export async function rejectRewardPenaltyEntry(
   id: string,
   rejectedBy: string,
-  reason: string
+  reason: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!(await tableExists("cost_centre_reward_penalty"))) return { ok: false, error: "table missing" };
-  if (!reason?.trim()) return { ok: false, error: "rejection_reason is required" };
+  if (!(await tableExists("cost_centre_reward_penalty")))
+    return { ok: false, error: "table missing" };
+  if (!reason?.trim())
+    return { ok: false, error: "rejection_reason is required" };
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM cost_centre_reward_penalty WHERE id = ?`,
-    [id]
+    [id],
   );
   if (!rows.length) return { ok: false, error: "Entry not found" };
   const entry = rows[0];
@@ -188,7 +203,7 @@ export async function rejectRewardPenaltyEntry(
         SET approval_status = 'rejected', approved_by = ?, approved_at = NOW(),
             rejection_reason = ?
       WHERE id = ?`,
-    [rejectedBy, reason.trim(), id]
+    [rejectedBy, reason.trim(), id],
   );
 
   await writeAuditLog({
@@ -205,7 +220,7 @@ export async function rejectRewardPenaltyEntry(
 
 export async function getRewardPenaltySummary(
   periodCode: string,
-  branchScope?: FinanceBranchScope
+  branchScope?: FinanceBranchScope,
 ): Promise<RewardPenaltySummary[]> {
   if (!periodCode) return [];
   if (!(await tableExists("cost_centre_reward_penalty"))) return [];
@@ -215,7 +230,10 @@ export async function getRewardPenaltySummary(
   const where = ["rp.period_code = ?", "rp.approval_status = 'approved'"];
   const params: unknown[] = [periodCode];
   if (isBranchBound) {
-    const { sql, params: branchParams } = financeBranchFilter(branchScope!, "ccm.branch_id");
+    const { sql, params: branchParams } = financeBranchFilter(
+      branchScope!,
+      "ccm.branch_id",
+    );
     where.push(sql);
     params.push(...branchParams);
   }
@@ -231,7 +249,7 @@ export async function getRewardPenaltySummary(
       WHERE ${where.join(" AND ")}
       GROUP BY rp.cost_centre_id, ccm.cost_centre_name
       ORDER BY net_impact DESC`,
-    params
+    params,
   );
   return rows as RewardPenaltySummary[];
 }

@@ -20,7 +20,12 @@ function keyFor(name: string): forge.pki.rsa.KeyPair {
   return made;
 }
 
-function makeCert(subjectCn: string, issuerCn: string, subjectKeys: forge.pki.rsa.KeyPair, issuerKeys: forge.pki.rsa.KeyPair) {
+function makeCert(
+  subjectCn: string,
+  issuerCn: string,
+  subjectKeys: forge.pki.rsa.KeyPair,
+  issuerKeys: forge.pki.rsa.KeyPair,
+) {
   const cert = forge.pki.createCertificate();
   cert.publicKey = subjectKeys.publicKey;
   cert.serialNumber = "01" + Math.floor(Math.random() * 1e12).toString(16);
@@ -51,7 +56,10 @@ export function signatureHex(party: Party): string {
     ],
   });
   p7.sign({ detached: true });
-  return Buffer.from(forge.asn1.toDer(p7.toAsn1()).getBytes(), "binary").toString("hex");
+  return Buffer.from(
+    forge.asn1.toDer(p7.toAsn1()).getBytes(),
+    "binary",
+  ).toString("hex");
 }
 
 const pad = (n: number) => String(n).padStart(NUM_W, "0");
@@ -62,7 +70,11 @@ const pad = (n: number) => String(n).padStart(NUM_W, "0");
  * runs to the end of the file as it stands once this signature is appended.
  * `coversUpTo` overrides the end for tests that pin ordering to /ByteRange.
  */
-export function appendSignature(pdf: Buffer, party: Party, opts: { coversUpTo?: number } = {}): Buffer {
+export function appendSignature(
+  pdf: Buffer,
+  party: Party,
+  opts: { coversUpTo?: number } = {},
+): Buffer {
   const hex = signatureHex(party).padEnd(CONTENTS_HEX_LEN, "0");
   const head = `\n7 0 obj\n<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /ByteRange [0 ${pad(0)} ${pad(0)} ${pad(0)}] /Contents <`;
   const tail = `>\n>>\nendobj\n%%EOF\n`;
@@ -79,5 +91,8 @@ export function appendSignature(pdf: Buffer, party: Party, opts: { coversUpTo?: 
 
 /** A minimal unsigned PDF-looking base. */
 export function basePdf(): Buffer {
-  return Buffer.from("%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Contents 2 0 R >>\nendobj\n%%EOF\n", "latin1");
+  return Buffer.from(
+    "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Contents 2 0 R >>\nendobj\n%%EOF\n",
+    "latin1",
+  );
 }

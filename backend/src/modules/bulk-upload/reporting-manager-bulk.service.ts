@@ -1,7 +1,7 @@
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
-import { logSensitiveAction } from '../../shared/auditLog.js';
-import { recordManagerChange } from '../management/manager-attribution.service.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { recordManagerChange } from "../management/manager-attribution.service.js";
 
 interface BatchRow extends RowDataPacket {
   id: string;
@@ -50,25 +50,31 @@ export async function importReportingManagerBatch(
   const codeSet = new Set<string>();
 
   for (const row of batchRows) {
-    const data = typeof row.normalized_data === 'string'
-      ? JSON.parse(row.normalized_data)
-      : (row.normalized_data ?? {});
+    const data =
+      typeof row.normalized_data === "string"
+        ? JSON.parse(row.normalized_data)
+        : (row.normalized_data ?? {});
 
-    const employeeCode: string = String(data.employee_code ?? '').trim();
-    const managerCode: string = String(data.manager_code ?? '').trim();
+    const employeeCode: string = String(data.employee_code ?? "").trim();
+    const managerCode: string = String(data.manager_code ?? "").trim();
 
     const rowErrors: string[] = [];
-    if (!employeeCode) rowErrors.push('employee_code is required');
-    if (!managerCode) rowErrors.push('manager_code is required');
+    if (!employeeCode) rowErrors.push("employee_code is required");
+    if (!managerCode) rowErrors.push("manager_code is required");
 
     if (rowErrors.length > 0) {
       errorRows++;
-      errors.push(`Row ${row.row_no}: ${rowErrors.join('; ')}`);
+      errors.push(`Row ${row.row_no}: ${rowErrors.join("; ")}`);
       errorUpdates.push({ rowId: row.id, messages: rowErrors });
       continue;
     }
 
-    parsed.push({ rowId: row.id, rowNo: row.row_no, employeeCode, managerCode });
+    parsed.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      employeeCode,
+      managerCode,
+    });
     codeSet.add(employeeCode);
     codeSet.add(managerCode);
   }
@@ -84,7 +90,7 @@ export async function importReportingManagerBatch(
     const [empRows] = await db.execute<EmployeeRow[]>(
       `SELECT id, employee_code, reporting_manager_id,
               CONCAT(first_name, ' ', COALESCE(last_name,'')) AS mgr_name
-       FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')}) AND active_status = 1`,
+       FROM employees WHERE employee_code IN (${codes.map(() => "?").join(",")}) AND active_status = 1`,
       codes,
     );
     for (const emp of empRows) employeeMap.set(emp.employee_code, emp);
@@ -94,7 +100,11 @@ export async function importReportingManagerBatch(
   const importedRowIds: string[] = [];
   const managerUpdates: Array<{ empId: string; mgrId: string }> = [];
   const auditEntries: Array<{
-    employeeCode: string; empId: string; previousManagerId: string | null; mgrId: string; mgrName: string | null;
+    employeeCode: string;
+    empId: string;
+    previousManagerId: string | null;
+    mgrId: string;
+    mgrName: string | null;
   }> = [];
 
   for (const row of parsed) {
@@ -145,12 +155,15 @@ export async function importReportingManagerBatch(
     const lastByEmployee = new Map<string, string>();
     for (const u of managerUpdates) lastByEmployee.set(u.empId, u.mgrId);
     const dedupedUpdates = Array.from(lastByEmployee.entries());
-    const cases = dedupedUpdates.map(() => 'WHEN ? THEN ?').join(' ');
-    const caseParams = dedupedUpdates.flatMap(([empId, mgrId]) => [empId, mgrId]);
+    const cases = dedupedUpdates.map(() => "WHEN ? THEN ?").join(" ");
+    const caseParams = dedupedUpdates.flatMap(([empId, mgrId]) => [
+      empId,
+      mgrId,
+    ]);
     const ids = dedupedUpdates.map(([empId]) => empId);
     await db.execute(
       `UPDATE employees SET reporting_manager_id = CASE id ${cases} END, updated_at = NOW()
-       WHERE id IN (${ids.map(() => '?').join(',')})`,
+       WHERE id IN (${ids.map(() => "?").join(",")})`,
       [...caseParams, ...ids],
     );
 
@@ -164,7 +177,7 @@ export async function importReportingManagerBatch(
         employeeId: empId,
         newManagerId: mgrId,
         changedBy: importedByUserId ?? null,
-        reason: 'Bulk reporting-manager upload',
+        reason: "Bulk reporting-manager upload",
       });
     }
   }
@@ -175,9 +188,9 @@ export async function importReportingManagerBatch(
   for (const entry of auditEntries) {
     await logSensitiveAction({
       actor_user_id: importedByUserId,
-      action_type: 'reporting_manager_bulk_update',
-      module_key: 'employees',
-      entity_type: 'employee',
+      action_type: "reporting_manager_bulk_update",
+      module_key: "employees",
+      entity_type: "employee",
       entity_id: entry.empId,
       change_summary: {
         employee_code: entry.employeeCode,
@@ -191,25 +204,31 @@ export async function importReportingManagerBatch(
   if (importedRowIds.length > 0) {
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'imported', error_messages = NULL
-       WHERE id IN (${importedRowIds.map(() => '?').join(',')})`,
+       WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
       importedRowIds,
     );
   }
 
   if (errorUpdates.length > 0) {
-    const cases = errorUpdates.map(() => 'WHEN ? THEN ?').join(' ');
-    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify(u.messages)]);
+    const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
+    const caseParams = errorUpdates.flatMap((u) => [
+      u.rowId,
+      JSON.stringify(u.messages),
+    ]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
-       WHERE id IN (${ids.map(() => '?').join(',')})`,
+       WHERE id IN (${ids.map(() => "?").join(",")})`,
       [...caseParams, ...ids],
     );
   }
 
-  const finalStatus = errorRows === 0
-    ? 'imported'
-    : importedRows === 0 ? 'validation_failed' : 'imported_with_errors';
+  const finalStatus =
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch

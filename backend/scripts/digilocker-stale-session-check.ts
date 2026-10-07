@@ -7,7 +7,14 @@
  */
 import { db } from "../src/db/mysql.js";
 
-const TERMINAL = new Set(["completed", "documents_received", "passed", "failed", "expired", "not_started"]);
+const TERMINAL = new Set([
+  "completed",
+  "documents_received",
+  "passed",
+  "failed",
+  "expired",
+  "not_started",
+]);
 const STALE_AFTER_MS = 2 * 60 * 60 * 1000;
 
 async function main() {
@@ -16,18 +23,19 @@ async function main() {
        FROM ats_provider_transaction_log
       WHERE provider = 'luckpay' AND service_type = 'digilocker'
       ORDER BY updated_at DESC
-      LIMIT 500`
+      LIMIT 500`,
   );
   const [sessionRows] = await db.execute(
     `SELECT candidate_id, session_status AS status, updated_at, created_at
        FROM candidate_digilocker_session
       ORDER BY created_at DESC
-      LIMIT 500`
+      LIMIT 500`,
   );
 
   const latestByCandidate = new Map<string, any>();
   for (const row of sessionRows as any[]) {
-    if (!latestByCandidate.has(row.candidate_id)) latestByCandidate.set(row.candidate_id, row);
+    if (!latestByCandidate.has(row.candidate_id))
+      latestByCandidate.set(row.candidate_id, row);
   }
   for (const row of providerRows as any[]) {
     latestByCandidate.set(row.candidate_id, row);
@@ -53,10 +61,15 @@ async function main() {
   nonTerminal.sort((a, b) => (a.ageHours ?? 0) - (b.ageHours ?? 0));
 
   console.log(`Non-terminal DigiLocker sessions found: ${nonTerminal.length}`);
-  console.log(`Of those, stale (>2h idle): ${nonTerminal.filter((r) => r.stale).length}`);
+  console.log(
+    `Of those, stale (>2h idle): ${nonTerminal.filter((r) => r.stale).length}`,
+  );
   console.log("");
 
-  const candidateIds = nonTerminal.filter((r) => r.stale).slice(0, 10).map((r) => r.candidateId);
+  const candidateIds = nonTerminal
+    .filter((r) => r.stale)
+    .slice(0, 10)
+    .map((r) => r.candidateId);
   if (candidateIds.length === 0) {
     process.exit(0);
   }
@@ -67,7 +80,7 @@ async function main() {
        FROM ats_candidate c
        LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = c.id
       WHERE c.id IN (${placeholders})`,
-    candidateIds
+    candidateIds,
   );
   const byId = new Map((candRows as any[]).map((r) => [r.id, r]));
 
@@ -75,8 +88,8 @@ async function main() {
     const cand = byId.get(row.candidateId);
     console.log(
       `${row.candidateId}  code=${cand?.candidate_code ?? "?"}  name=${cand?.full_name ?? "?"}  ` +
-      `status=${row.status}  age=${row.ageHours}h  token_valid=${cand?.token_still_valid ?? "?"}  ` +
-      `token_expires=${cand?.onboarding_token_expires_at ?? "?"}`
+        `status=${row.status}  age=${row.ageHours}h  token_valid=${cand?.token_still_valid ?? "?"}  ` +
+        `token_expires=${cand?.onboarding_token_expires_at ?? "?"}`,
     );
   }
 

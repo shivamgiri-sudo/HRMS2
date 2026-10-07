@@ -24,7 +24,9 @@ export async function checkRequiredTables(
   )) as [RowDataPacket[], unknown];
 
   const present = new Set(
-    (result[0] ?? []).map((r) => String((r as { TABLE_NAME: string }).TABLE_NAME).toLowerCase()),
+    (result[0] ?? []).map((r) =>
+      String((r as { TABLE_NAME: string }).TABLE_NAME).toLowerCase(),
+    ),
   );
 
   const missing = required

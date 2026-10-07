@@ -35,7 +35,11 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { getBillPool, closeBillPool } from "../src/db/billDb.js";
 import { encryptAccountForSync } from "../src/shared/syncPiiEncryption.js";
-import { blindIndex, isUsingDevBlindIndexKey, isUsingDevEncryptionKey } from "../src/shared/fieldEncryption.js";
+import {
+  blindIndex,
+  isUsingDevBlindIndexKey,
+  isUsingDevEncryptionKey,
+} from "../src/shared/fieldEncryption.js";
 
 const APPLY = process.argv.includes("--apply");
 const ALLOW_CORRECTIONS = process.argv.includes("--allow-corrections");
@@ -50,13 +54,40 @@ const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
  * a rule that can silently mis-route salary. `attestedBy` is the number of OTHER masjclrentry
  * records already using the corrected value — independent corroboration, counted on 2026-08-17.
  */
-const IFSC_CORRECTIONS: Record<string, { from: string; to: string; bank: string; attestedBy: number; note: string }> = {
-  MAS63220: { from: "INB0000005",  to: "INDB0000005", bank: "INDUSLAND BANK", attestedBy: 265, note: "IndusInd is INDB; missing D" },
-  "63149C": { from: "BKI00002036", to: "BKID0002036", bank: "BANK OF INDIA",  attestedBy: 3,   note: "Bank of India is BKID; missing D" },
-  MAS63127: { from: "BARBOLOHIYA", to: "BARB0LOHIYA", bank: "BANK OF BARODA", attestedBy: 0,   note: "letter O typed for zero — NOT independently attested, verify against passbook" },
+const IFSC_CORRECTIONS: Record<
+  string,
+  { from: string; to: string; bank: string; attestedBy: number; note: string }
+> = {
+  MAS63220: {
+    from: "INB0000005",
+    to: "INDB0000005",
+    bank: "INDUSLAND BANK",
+    attestedBy: 265,
+    note: "IndusInd is INDB; missing D",
+  },
+  "63149C": {
+    from: "BKI00002036",
+    to: "BKID0002036",
+    bank: "BANK OF INDIA",
+    attestedBy: 3,
+    note: "Bank of India is BKID; missing D",
+  },
+  MAS63127: {
+    from: "BARBOLOHIYA",
+    to: "BARB0LOHIYA",
+    bank: "BANK OF BARODA",
+    attestedBy: 0,
+    note: "letter O typed for zero — NOT independently attested, verify against passbook",
+  },
 };
 
-type Verdict = "DIRECT" | "CORRECTION" | "COLLECT" | "NOT_REAL" | "SKIP_HAS_BANK" | "CONFLICT";
+type Verdict =
+  | "DIRECT"
+  | "CORRECTION"
+  | "COLLECT"
+  | "NOT_REAL"
+  | "SKIP_HAS_BANK"
+  | "CONFLICT";
 
 interface Candidate {
   employeeId: string;
@@ -77,7 +108,7 @@ async function main() {
   if (APPLY && isUsingDevEncryptionKey()) {
     console.error(
       "REFUSING to --apply: FIELD_ENCRYPTION_KEY is the all-zeros dev key.\n" +
-      "Ciphertext written now could never be decrypted in production. Run this on the server."
+        "Ciphertext written now could never be decrypted in production. Run this on the server.",
     );
     process.exitCode = 1;
     return;
@@ -91,7 +122,7 @@ async function main() {
   if (APPLY && isUsingDevBlindIndexKey()) {
     console.error(
       "REFUSING to --apply: FIELD_BLIND_INDEX_KEY is the all-zeros dev key.\n" +
-      "A blind index written now would never match a real lookup in production. Run this on the server."
+        "A blind index written now would never match a real lookup in production. Run this on the server.",
     );
     process.exitCode = 1;
     return;
@@ -137,7 +168,9 @@ async function main() {
        FROM salary_data WHERE TRIM(EmpCode) IN (${ph}) GROUP BY TRIM(EmpCode)`,
     codes,
   );
-  const fromSalary = new Map(sal.map((r) => [String(r.code), String(r.ac ?? "")]));
+  const fromSalary = new Map(
+    sal.map((r) => [String(r.code), String(r.ac ?? "")]),
+  );
 
   // ── 3. Classify ────────────────────────────────────────────────────────────
   const candidates: Candidate[] = [];
@@ -151,76 +184,147 @@ async function main() {
     };
 
     if (isSeedAccount(code)) {
-      candidates.push({ ...base, accountNumber: "", ifsc: "", bank: "", verdict: "NOT_REAL",
-        reason: "demo/seed account in the active headcount — not a person" });
+      candidates.push({
+        ...base,
+        accountNumber: "",
+        ifsc: "",
+        bank: "",
+        verdict: "NOT_REAL",
+        reason: "demo/seed account in the active headcount — not a person",
+      });
       continue;
     }
 
     const src = fromJclr.get(code);
     const ac = String(src?.ac ?? "").trim();
     if (!ac) {
-      candidates.push({ ...base, accountNumber: "", ifsc: "", bank: "", verdict: "COLLECT",
-        reason: src ? "masjclrentry row exists but holds no account number" : "absent from every bank-bearing db_bill table" });
+      candidates.push({
+        ...base,
+        accountNumber: "",
+        ifsc: "",
+        bank: "",
+        verdict: "COLLECT",
+        reason: src
+          ? "masjclrentry row exists but holds no account number"
+          : "absent from every bank-bearing db_bill table",
+      });
       continue;
     }
 
     const salAc = fromSalary.get(code);
     if (salAc && salAc !== ac) {
-      candidates.push({ ...base, accountNumber: ac, ifsc: "", bank: String(src?.bank ?? ""), verdict: "CONFLICT",
-        reason: `account number differs between masjclrentry and salary_data — adjudicate, do not guess` });
+      candidates.push({
+        ...base,
+        accountNumber: ac,
+        ifsc: "",
+        bank: String(src?.bank ?? ""),
+        verdict: "CONFLICT",
+        reason: `account number differs between masjclrentry and salary_data — adjudicate, do not guess`,
+      });
       continue;
     }
 
-    const rawIfsc = String(src?.ifsc ?? "").trim().toUpperCase();
+    const rawIfsc = String(src?.ifsc ?? "")
+      .trim()
+      .toUpperCase();
     if (IFSC_RE.test(rawIfsc)) {
-      candidates.push({ ...base, accountNumber: ac, ifsc: rawIfsc, bank: String(src?.bank ?? ""), verdict: "DIRECT", reason: "" });
+      candidates.push({
+        ...base,
+        accountNumber: ac,
+        ifsc: rawIfsc,
+        bank: String(src?.bank ?? ""),
+        verdict: "DIRECT",
+        reason: "",
+      });
       continue;
     }
 
     const fix = IFSC_CORRECTIONS[code];
     if (fix && fix.from === rawIfsc && IFSC_RE.test(fix.to)) {
-      candidates.push({ ...base, accountNumber: ac, ifsc: fix.to, bank: String(src?.bank ?? ""), verdict: "CORRECTION",
-        reason: `${fix.from} -> ${fix.to} (${fix.note}; attested by ${fix.attestedBy} other record(s))` });
+      candidates.push({
+        ...base,
+        accountNumber: ac,
+        ifsc: fix.to,
+        bank: String(src?.bank ?? ""),
+        verdict: "CORRECTION",
+        reason: `${fix.from} -> ${fix.to} (${fix.note}; attested by ${fix.attestedBy} other record(s))`,
+      });
       continue;
     }
 
-    candidates.push({ ...base, accountNumber: ac, ifsc: "", bank: String(src?.bank ?? ""), verdict: "COLLECT",
-      reason: `account number present but IFSC is "${rawIfsc}" — not an IFSC` });
+    candidates.push({
+      ...base,
+      accountNumber: ac,
+      ifsc: "",
+      bank: String(src?.bank ?? ""),
+      verdict: "COLLECT",
+      reason: `account number present but IFSC is "${rawIfsc}" — not an IFSC`,
+    });
   }
 
   // ── 4. Report ──────────────────────────────────────────────────────────────
   const by = (v: Verdict) => candidates.filter((c) => c.verdict === v);
   const mask = (a: string) => (a.length > 4 ? "***" + a.slice(-4) : a);
 
-  console.log(`\n${APPLY ? "APPLY" : "DRY RUN"} — unbanked active employees: ${candidates.length}\n`);
-  console.log(`  DIRECT      (account + valid IFSC)      : ${by("DIRECT").length}`);
-  console.log(`  CORRECTION  (IFSC repaired, needs flag) : ${by("CORRECTION").length}`);
-  console.log(`  COLLECT     (HR must obtain)            : ${by("COLLECT").length}`);
-  console.log(`  NOT_REAL    (demo/seed accounts)        : ${by("NOT_REAL").length}`);
-  console.log(`  CONFLICT    (sources disagree)          : ${by("CONFLICT").length}`);
+  console.log(
+    `\n${APPLY ? "APPLY" : "DRY RUN"} — unbanked active employees: ${candidates.length}\n`,
+  );
+  console.log(
+    `  DIRECT      (account + valid IFSC)      : ${by("DIRECT").length}`,
+  );
+  console.log(
+    `  CORRECTION  (IFSC repaired, needs flag) : ${by("CORRECTION").length}`,
+  );
+  console.log(
+    `  COLLECT     (HR must obtain)            : ${by("COLLECT").length}`,
+  );
+  console.log(
+    `  NOT_REAL    (demo/seed accounts)        : ${by("NOT_REAL").length}`,
+  );
+  console.log(
+    `  CONFLICT    (sources disagree)          : ${by("CONFLICT").length}`,
+  );
 
   if (by("CORRECTION").length) {
-    console.log(`\n  ── IFSC corrections ${ALLOW_CORRECTIONS ? "(WILL be applied)" : "(withheld — pass --allow-corrections)"} ──`);
-    for (const c of by("CORRECTION")) console.log(`    ${c.code.padEnd(10)} ${c.reason}`);
+    console.log(
+      `\n  ── IFSC corrections ${ALLOW_CORRECTIONS ? "(WILL be applied)" : "(withheld — pass --allow-corrections)"} ──`,
+    );
+    for (const c of by("CORRECTION"))
+      console.log(`    ${c.code.padEnd(10)} ${c.reason}`);
   }
   if (by("CONFLICT").length) {
     console.log(`\n  ── CONFLICTS (never auto-resolved) ──`);
-    for (const c of by("CONFLICT")) console.log(`    ${c.code.padEnd(10)} ${c.reason}`);
+    for (const c of by("CONFLICT"))
+      console.log(`    ${c.code.padEnd(10)} ${c.reason}`);
   }
   console.log(`\n  ── HR must collect (${by("COLLECT").length}) ──`);
-  for (const c of by("COLLECT")) console.log(`    ${c.code.padEnd(10)} ${c.name.slice(0, 24).padEnd(25)} ${c.branch.padEnd(22)} ${c.reason}`);
-  console.log(`\n  ── Not real employees (${by("NOT_REAL").length}) — review whether these belong in active headcount ──`);
-  for (const c of by("NOT_REAL")) console.log(`    ${c.code.padEnd(12)} ${c.name}`);
+  for (const c of by("COLLECT"))
+    console.log(
+      `    ${c.code.padEnd(10)} ${c.name.slice(0, 24).padEnd(25)} ${c.branch.padEnd(22)} ${c.reason}`,
+    );
+  console.log(
+    `\n  ── Not real employees (${by("NOT_REAL").length}) — review whether these belong in active headcount ──`,
+  );
+  for (const c of by("NOT_REAL"))
+    console.log(`    ${c.code.padEnd(12)} ${c.name}`);
 
-  const writable = [...by("DIRECT"), ...(ALLOW_CORRECTIONS ? by("CORRECTION") : [])];
+  const writable = [
+    ...by("DIRECT"),
+    ...(ALLOW_CORRECTIONS ? by("CORRECTION") : []),
+  ];
   console.log(`\n  ── Would write ${writable.length} bank record(s) ──`);
   for (const c of writable.slice(0, 15)) {
-    console.log(`    ${c.code.padEnd(10)} ac=${mask(c.accountNumber).padEnd(9)} ifsc=${c.ifsc.padEnd(12)} ${c.bank.slice(0, 24)}`);
+    console.log(
+      `    ${c.code.padEnd(10)} ac=${mask(c.accountNumber).padEnd(9)} ifsc=${c.ifsc.padEnd(12)} ${c.bank.slice(0, 24)}`,
+    );
   }
-  if (writable.length > 15) console.log(`    ... and ${writable.length - 15} more`);
+  if (writable.length > 15)
+    console.log(`    ... and ${writable.length - 15} more`);
 
   if (!APPLY) {
-    console.log(`\nDRY RUN — nothing was written. Re-run with --apply${by("CORRECTION").length ? " --allow-corrections" : ""} on the server to write.`);
+    console.log(
+      `\nDRY RUN — nothing was written. Re-run with --apply${by("CORRECTION").length ? " --allow-corrections" : ""} on the server to write.`,
+    );
     return;
   }
 
@@ -230,7 +334,10 @@ async function main() {
   for (const c of writable) {
     try {
       const enc = encryptAccountForSync(c.accountNumber, "unbanked-backfill");
-      if (!enc) throw new Error("account ciphertext unavailable — refusing to write plaintext only");
+      if (!enc)
+        throw new Error(
+          "account ciphertext unavailable — refusing to write plaintext only",
+        );
       await db.execute(
         `INSERT INTO employee_bank_detail
            (id, employee_id, account_number, account_number_enc, account_number_blind_index,
@@ -250,15 +357,25 @@ async function main() {
       written++;
     } catch (err: unknown) {
       failed++;
-      console.error(`  FAILED ${c.code}: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(
+        `  FAILED ${c.code}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
-  console.log(`\nAPPLIED — ${written} written, ${failed} failed. All rows carry verified = 0; penny-drop is still required.`);
+  console.log(
+    `\nAPPLIED — ${written} written, ${failed} failed. All rows carry verified = 0; penny-drop is still required.`,
+  );
 }
 
 main()
-  .catch((err) => { console.error("FATAL", err); process.exitCode = 1; })
+  .catch((err) => {
+    console.error("FATAL", err);
+    process.exitCode = 1;
+  })
   // Both pools, or the process hangs after printing a complete report and dies to a timeout —
   // which on a WRITE script is genuinely dangerous, because the operator cannot tell "finished"
   // from "still writing".
-  .finally(async () => { await db.end().catch(() => {}); await closeBillPool().catch(() => {}); });
+  .finally(async () => {
+    await db.end().catch(() => {});
+    await closeBillPool().catch(() => {});
+  });

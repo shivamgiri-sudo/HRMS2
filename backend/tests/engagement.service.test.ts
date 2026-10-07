@@ -78,22 +78,24 @@ describe("engagement kudos service", () => {
     expect(id).toEqual(expect.any(String));
     expect(mockExecute).toHaveBeenLastCalledWith(
       expect.stringContaining("INSERT INTO kudos_transaction"),
-      expect.arrayContaining([id, "employee-1", "employee-2", 10])
+      expect.arrayContaining([id, "employee-1", "employee-2", 10]),
     );
     expect(mockAddPoints).toHaveBeenCalledWith(
       "employee-2",
       10,
       "kudos_received",
       "Kudos received",
-      id
+      id,
     );
   });
 
   it("blocks self-kudos before touching the database", async () => {
-    await expect(sendKudos({
-      sender_id: "employee-1",
-      receiver_id: "employee-1",
-    })).rejects.toThrow("Cannot give kudos to yourself");
+    await expect(
+      sendKudos({
+        sender_id: "employee-1",
+        receiver_id: "employee-1",
+      }),
+    ).rejects.toThrow("Cannot give kudos to yourself");
     expect(mockExecute).not.toHaveBeenCalled();
   });
 
@@ -101,7 +103,9 @@ describe("engagement kudos service", () => {
     mockExecute.mockResolvedValueOnce([[], []]);
     await listKudos();
     expect(mockExecute.mock.calls[0][0]).toContain("sender.id = kt.sender_id");
-    expect(mockExecute.mock.calls[0][0]).toContain("receiver.id = kt.receiver_id");
+    expect(mockExecute.mock.calls[0][0]).toContain(
+      "receiver.id = kt.receiver_id",
+    );
     expect(mockExecute.mock.calls[0][0]).toContain("LIMIT 50");
     expect(mockExecute.mock.calls[0][1]).toEqual([]);
   });
@@ -115,21 +119,25 @@ describe("engagement kudos service", () => {
 
 describe("engagement pulse validation", () => {
   it("accepts 1-5 ratings", () => {
-    expect(SubmitPulseCheckSchema.safeParse({
-      employee_id: "00000000-0000-0000-0000-000000000001",
-      mood_rating: 5,
-      energy_level: 4,
-      stress_level: 2,
-      week_start_date: "2026-05-25",
-    }).success).toBe(true);
+    expect(
+      SubmitPulseCheckSchema.safeParse({
+        employee_id: "00000000-0000-0000-0000-000000000001",
+        mood_rating: 5,
+        energy_level: 4,
+        stress_level: 2,
+        week_start_date: "2026-05-25",
+      }).success,
+    ).toBe(true);
   });
 
   it("rejects ratings above the database scale", () => {
-    expect(SubmitPulseCheckSchema.safeParse({
-      employee_id: "00000000-0000-0000-0000-000000000001",
-      mood_rating: 6,
-      week_start_date: "2026-05-25",
-    }).success).toBe(false);
+    expect(
+      SubmitPulseCheckSchema.safeParse({
+        employee_id: "00000000-0000-0000-0000-000000000001",
+        mood_rating: 6,
+        week_start_date: "2026-05-25",
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -142,7 +150,9 @@ describe("engagement auto awards", () => {
     mockExecute.mockResolvedValueOnce([[{ acknowledgement_count: 10 }], []]);
     mockBadgeAward("Payslip Champion");
 
-    await expect(checkAutoAwards("employee-1", "payslip_acknowledged")).resolves.toHaveLength(1);
+    await expect(
+      checkAutoAwards("employee-1", "payslip_acknowledged"),
+    ).resolves.toHaveLength(1);
     expect(mockExecuteRun).toHaveBeenCalledWith(
       // INSERT IGNORE, not INSERT — so "INSERT INTO" is not a substring of the
       // statement any more. The IGNORE is the point: awarding a badge is
@@ -150,7 +160,7 @@ describe("engagement auto awards", () => {
       // twice. Matching it explicitly keeps that visible rather than asserting
       // a weaker fragment.
       expect.stringContaining("INSERT IGNORE INTO employee_badge_earned"),
-      expect.arrayContaining(["employee-1", "badge-Payslip Champion"])
+      expect.arrayContaining(["employee-1", "badge-Payslip Champion"]),
     );
   });
 
@@ -158,7 +168,9 @@ describe("engagement auto awards", () => {
     mockExecute.mockResolvedValueOnce([[{ participation_count: 10 }], []]);
     mockBadgeAward("Survey Champion");
 
-    await expect(checkAutoAwards("employee-1", "survey_completed")).resolves.toHaveLength(1);
+    await expect(
+      checkAutoAwards("employee-1", "survey_completed"),
+    ).resolves.toHaveLength(1);
     // pulse_check is the QUESTION table, not the response table: 8 rows live, columns
     // pulse_question / pulse_type / response_type, and NO employee_id at all — so a
     // participation count cannot be taken from it, and the query this test used to pin
@@ -172,25 +184,35 @@ describe("engagement auto awards", () => {
   });
 
   it("awards Top Performer for three KPI periods at or above target", async () => {
-    mockExecute.mockResolvedValueOnce([[
-      { period: "2026-05", weighted_score_pct: 105 },
-      { period: "2026-04", weighted_score_pct: 101 },
-      { period: "2026-03", weighted_score_pct: 100 },
-    ], []]);
+    mockExecute.mockResolvedValueOnce([
+      [
+        { period: "2026-05", weighted_score_pct: 105 },
+        { period: "2026-04", weighted_score_pct: 101 },
+        { period: "2026-03", weighted_score_pct: 100 },
+      ],
+      [],
+    ]);
     mockBadgeAward("Top Performer");
 
-    await expect(checkAutoAwards("employee-1", "kpi_score_recorded")).resolves.toHaveLength(1);
+    await expect(
+      checkAutoAwards("employee-1", "kpi_score_recorded"),
+    ).resolves.toHaveLength(1);
     expect(mockExecute.mock.calls[0][0]).toContain("LIMIT 3");
   });
 
   it("does not award Top Performer when KPI months have a gap", async () => {
-    mockExecute.mockResolvedValueOnce([[
-      { period: "2026-05", weighted_score_pct: 105 },
-      { period: "2026-03", weighted_score_pct: 101 },
-      { period: "2026-02", weighted_score_pct: 100 },
-    ], []]);
+    mockExecute.mockResolvedValueOnce([
+      [
+        { period: "2026-05", weighted_score_pct: 105 },
+        { period: "2026-03", weighted_score_pct: 101 },
+        { period: "2026-02", weighted_score_pct: 100 },
+      ],
+      [],
+    ]);
 
-    await expect(checkAutoAwards("employee-1", "kpi_score_recorded")).resolves.toEqual([]);
+    await expect(
+      checkAutoAwards("employee-1", "kpi_score_recorded"),
+    ).resolves.toEqual([]);
     expect(mockExecuteRun).not.toHaveBeenCalled();
   });
 });

@@ -27,7 +27,9 @@ const svc = await import("../payrollMasters.service.js");
 const sqlOf = (call: number) => String(execute.mock.calls[call][0]);
 
 describe("listPackages — retired packages leave the dropdowns", () => {
-  beforeEach(() => { execute.mockReset().mockResolvedValue([[]]); });
+  beforeEach(() => {
+    execute.mockReset().mockResolvedValue([[]]);
+  });
 
   it("excludes inactive packages by default", async () => {
     await svc.listPackages({ branch: "NOIDA" });
@@ -54,7 +56,9 @@ describe("listPackages — retired packages leave the dropdowns", () => {
 });
 
 describe("getPackageById — an existing assignment must not break", () => {
-  beforeEach(() => { execute.mockReset().mockResolvedValue([[]]); });
+  beforeEach(() => {
+    execute.mockReset().mockResolvedValue([[]]);
+  });
 
   it("does NOT filter on active_status", async () => {
     // Employees already assigned to a package keep resolving it after it is
@@ -66,17 +70,34 @@ describe("getPackageById — an existing assignment must not break", () => {
 
 describe("the admin screen retires rather than deletes", () => {
   const PAGE = readFileSync(
-    resolve(process.cwd(), "..", "src", "pages", "NativeSalaryPackageAdmin.tsx"),
+    resolve(
+      process.cwd(),
+      "..",
+      "src",
+      "pages",
+      "NativeSalaryPackageAdmin.tsx",
+    ),
     "utf8",
   );
   const ROUTES = readFileSync(
-    resolve(process.cwd(), "..", "src", "config", "routes", "payroll.routes.tsx"),
+    resolve(
+      process.cwd(),
+      "..",
+      "src",
+      "config",
+      "routes",
+      "payroll.routes.tsx",
+    ),
     "utf8",
   );
 
   it("sets active_status instead of calling DELETE", () => {
-    expect(PAGE).toMatch(/hrmsApi\.put\(`\/api\/payroll-masters\/packages\/\$\{p\.id\}`, \{ active_status: next \}\)/);
-    expect(PAGE).not.toMatch(/hrmsApi\.delete\(`\/api\/payroll-masters\/packages/);
+    expect(PAGE).toMatch(
+      /hrmsApi\.put\(`\/api\/payroll-masters\/packages\/\$\{p\.id\}`, \{ active_status: next \}\)/,
+    );
+    expect(PAGE).not.toMatch(
+      /hrmsApi\.delete\(`\/api\/payroll-masters\/packages/,
+    );
   });
 
   it("asks for retired rows, so a deactivated package can be reactivated", () => {
@@ -85,17 +106,26 @@ describe("the admin screen retires rather than deletes", () => {
 
   it("is actually rendered, not just imported", () => {
     // It was imported and never mounted; the path redirected elsewhere.
-    expect(ROUTES).toMatch(/element=\{<ProtectedRoute[^>]*>[\s\S]{0,200}<NativeSalaryPackageAdmin \/>/);
-    expect(ROUTES).not.toMatch(/path="\/payroll\/package-admin"\s+element=\{<Navigate/);
+    expect(ROUTES).toMatch(
+      /element=\{<ProtectedRoute[^>]*>[\s\S]{0,200}<NativeSalaryPackageAdmin \/>/,
+    );
+    expect(ROUTES).not.toMatch(
+      /path="\/payroll\/package-admin"\s+element=\{<Navigate/,
+    );
   });
 
   it("lets payroll_head reach it, and the endpoint that writes the flag", () => {
     const ROUTES_BE = readFileSync(
-      resolve(process.cwd(), "src/modules/payroll-masters/payrollMasters.routes.ts"),
+      resolve(
+        process.cwd(),
+        "src/modules/payroll-masters/payrollMasters.routes.ts",
+      ),
       "utf8",
     );
     expect(ROUTES).toMatch(/payroll\/package-admin[\s\S]{0,160}payroll_head/);
     // super_admin is intentionally absent: requireRole short-circuits for it.
-    expect(ROUTES_BE).toMatch(/put\('\/packages\/:id', requireRole\('admin', 'finance', 'payroll_head'\)/);
+    expect(ROUTES_BE).toMatch(
+      /put\('\/packages\/:id', requireRole\('admin', 'finance', 'payroll_head'\)/,
+    );
   });
 });

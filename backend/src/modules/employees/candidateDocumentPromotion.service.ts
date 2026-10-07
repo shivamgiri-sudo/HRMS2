@@ -20,22 +20,26 @@
  * those cannot be "shown" without literally asking the candidate to re-upload.
  */
 
-import { randomUUID, createHash } from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { resolveOnboardingDocumentFile } from '../ats/onboardingDocumentPath.js';
-import { registerUpload } from '../document-vault/documentVault.service.js';
+import { randomUUID, createHash } from "crypto";
+import fs from "fs";
+import path from "path";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { resolveOnboardingDocumentFile } from "../ats/onboardingDocumentPath.js";
+import { registerUpload } from "../document-vault/documentVault.service.js";
 
 // Mirrors employee.documents.routes.ts's multer destination exactly, so the
 // existing GET /api/employee-docs/:employeeId/:docId/download route (which
 // hardcodes this directory) finds the file with no changes to that route.
-const EMPLOYEE_DOCS_DIR = path.resolve(process.cwd(), 'uploads', 'employee-documents');
+const EMPLOYEE_DOCS_DIR = path.resolve(
+  process.cwd(),
+  "uploads",
+  "employee-documents",
+);
 
 // Live Selfie is promoted separately to the avatar photo, not into
 // employee_documents — skip it here so it is never double-handled.
-const SKIP_DOC_TYPES = new Set(['Live Selfie']);
+const SKIP_DOC_TYPES = new Set(["Live Selfie"]);
 
 export interface DocumentPromotionResult {
   promoted: number;
@@ -48,7 +52,11 @@ export async function promoteCandidateDocumentsToEmployee(
   candidateId: string,
   actorUserId: string,
 ): Promise<DocumentPromotionResult> {
-  const result: DocumentPromotionResult = { promoted: 0, skippedFileMissing: 0, skippedAlreadyPresent: 0 };
+  const result: DocumentPromotionResult = {
+    promoted: 0,
+    skippedFileMissing: 0,
+    skippedAlreadyPresent: 0,
+  };
   if (!candidateId) return result;
 
   const [candidateDocs] = await db.execute<RowDataPacket[]>(
@@ -69,7 +77,7 @@ export async function promoteCandidateDocumentsToEmployee(
   fs.mkdirSync(EMPLOYEE_DOCS_DIR, { recursive: true });
 
   for (const doc of candidateDocs) {
-    const docType = String(doc.doc_type ?? '');
+    const docType = String(doc.doc_type ?? "");
     if (!docType || SKIP_DOC_TYPES.has(docType)) continue;
 
     if (alreadyPresent.has(docType)) {
@@ -77,7 +85,9 @@ export async function promoteCandidateDocumentsToEmployee(
       continue;
     }
 
-    const sourcePath = resolveOnboardingDocumentFile(doc.file_path ?? doc.file_url);
+    const sourcePath = resolveOnboardingDocumentFile(
+      doc.file_path ?? doc.file_url,
+    );
     if (!sourcePath) {
       result.skippedFileMissing += 1;
       console.warn(
@@ -86,23 +96,29 @@ export async function promoteCandidateDocumentsToEmployee(
       continue;
     }
 
-    const ext = path.extname(sourcePath) || path.extname(String(doc.file_url ?? '')) || '';
+    const ext =
+      path.extname(sourcePath) ||
+      path.extname(String(doc.file_url ?? "")) ||
+      "";
     const storedFilename = `${randomUUID()}${ext}`;
     const destPath = path.join(EMPLOYEE_DOCS_DIR, storedFilename);
 
     const fileBuffer = fs.readFileSync(sourcePath);
     fs.writeFileSync(destPath, fileBuffer);
 
-    const sha256 = createHash('sha256').update(fileBuffer).digest('hex');
+    const sha256 = createHash("sha256").update(fileBuffer).digest("hex");
     await registerUpload({
       uploadedByUser: actorUserId,
-      category: 'employee-documents',
+      category: "employee-documents",
       storedFilename,
       originalFilename: path.basename(sourcePath),
       mimeType: doc.mime_type ? String(doc.mime_type) : undefined,
-      fileSizeBytes: doc.file_size_bytes != null ? Number(doc.file_size_bytes) : fileBuffer.length,
+      fileSizeBytes:
+        doc.file_size_bytes != null
+          ? Number(doc.file_size_bytes)
+          : fileBuffer.length,
       sha256Hash: sha256,
-      accessLevel: 'pii',
+      accessLevel: "pii",
       ownerEmployeeId: employeeId,
     });
 
@@ -110,7 +126,14 @@ export async function promoteCandidateDocumentsToEmployee(
     await db.execute(
       `INSERT INTO employee_documents (id, employee_id, doc_type, doc_name, file_url, uploaded_by)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), employeeId, docType, doc.doc_name ?? docType, fileUrl, actorUserId],
+      [
+        randomUUID(),
+        employeeId,
+        docType,
+        doc.doc_name ?? docType,
+        fileUrl,
+        actorUserId,
+      ],
     );
 
     alreadyPresent.add(docType);

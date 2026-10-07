@@ -41,11 +41,16 @@ describe("the producer for pending_employee_ack exists", () => {
     // Without this an employee who had acknowledged, or a rejection already sitting in the
     // manager queue, would be dragged back to pending on the next publish.
     const publishBlock = SRC.slice(SRC.indexOf("publish-to-employees"));
-    expect(publishBlock).toMatch(/WHERE cycle_id = \?\s*\n\s*AND final_roster_status = 'generated'/);
+    expect(publishBlock).toMatch(
+      /WHERE cycle_id = \?\s*\n\s*AND final_roster_status = 'generated'/,
+    );
   });
 
   it("runs the whole publish in one transaction and releases the connection", () => {
-    const block = SRC.slice(SRC.indexOf("publish-to-employees"), SRC.indexOf("FINAL ROSTER PUBLISH"));
+    const block = SRC.slice(
+      SRC.indexOf("publish-to-employees"),
+      SRC.indexOf("FINAL ROSTER PUBLISH"),
+    );
     expect(block).toMatch(/beginTransaction/);
     expect(block).toMatch(/FOR UPDATE/);
     expect(block).toMatch(/rollback/);
@@ -55,11 +60,15 @@ describe("the producer for pending_employee_ack exists", () => {
   it("raises a work-inbox item per employee, not per assignment", () => {
     // A week is seven rows per person; an inbox listing them separately is one nobody reads.
     expect(SRC).toMatch(/ROSTER_ACK_PENDING/);
-    expect(SRC).toMatch(/SELECT DISTINCT employee_id FROM wfm_roster_assignment/);
+    expect(SRC).toMatch(
+      /SELECT DISTINCT employee_id FROM wfm_roster_assignment/,
+    );
   });
 
   it("does not stack duplicate inbox items when a cycle is re-published", () => {
-    expect(SRC).toMatch(/NOT EXISTS \(\s*\n?\s*SELECT 1 FROM work_inbox_item w/);
+    expect(SRC).toMatch(
+      /NOT EXISTS \(\s*\n?\s*SELECT 1 FROM work_inbox_item w/,
+    );
   });
 
   it("only notifies employees who actually have a login", () => {
@@ -75,9 +84,14 @@ describe("the producer for pending_employee_ack exists", () => {
     // mistaken call against an already-acknowledged/locked/closed cycle would silently force
     // its status field back to 'published', even though the per-assignment
     // final_roster_status='generated' guard above already protects the assignment rows.
-    const publishBlock = SRC.slice(SRC.indexOf('"/roster/publish-to-employees"'), SRC.indexOf("FINAL ROSTER PUBLISH"));
+    const publishBlock = SRC.slice(
+      SRC.indexOf('"/roster/publish-to-employees"'),
+      SRC.indexOf("FINAL ROSTER PUBLISH"),
+    );
     expect(publishBlock).toMatch(/POST_PUBLISH_STATUSES = new Set\(/);
-    expect(publishBlock).toMatch(/"acknowledged", "active", "variance_review", "attendance_locked", "payroll_input_ready", "closed"/);
+    expect(publishBlock).toMatch(
+      /"acknowledged", "active", "variance_review", "attendance_locked", "payroll_input_ready", "closed"/,
+    );
     expect(publishBlock).toMatch(/CYCLE_ALREADY_ADVANCED/);
     expect(publishBlock).toMatch(/statusCode = 409/);
   });
@@ -86,13 +100,13 @@ describe("the producer for pending_employee_ack exists", () => {
 describe("the employee's answer cannot overwrite a decision already taken", () => {
   it("acknowledge is guarded on pending_employee_ack", () => {
     expect(SRC).toMatch(
-      /SET employee_ack_status = 'acknowledged'[\s\S]{0,220}AND final_roster_status = 'pending_employee_ack'/
+      /SET employee_ack_status = 'acknowledged'[\s\S]{0,220}AND final_roster_status = 'pending_employee_ack'/,
     );
   });
 
   it("reject is guarded on pending_employee_ack", () => {
     expect(SRC).toMatch(
-      /SET employee_ack_status = 'rejected'[\s\S]{0,260}AND final_roster_status = 'pending_employee_ack'/
+      /SET employee_ack_status = 'rejected'[\s\S]{0,260}AND final_roster_status = 'pending_employee_ack'/,
     );
   });
 
@@ -110,7 +124,9 @@ describe("the employee's answer cannot overwrite a decision already taken", () =
 
 describe("the inbox item closes only when the employee has nothing left to answer", () => {
   it("is not cleared by the first of seven days being acknowledged", () => {
-    const helper = SRC.slice(SRC.indexOf("async function closeRosterAckInboxItem"));
+    const helper = SRC.slice(
+      SRC.indexOf("async function closeRosterAckInboxItem"),
+    );
     expect(helper).toMatch(/NOT EXISTS/);
     expect(helper).toMatch(/a\.final_roster_status = 'pending_employee_ack'/);
   });

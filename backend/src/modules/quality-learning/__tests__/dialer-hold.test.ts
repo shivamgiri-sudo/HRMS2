@@ -24,7 +24,10 @@ const WORKER = readFileSync(
   "utf8",
 );
 const ROUTES = readFileSync(
-  resolve(process.cwd(), "src/modules/quality-learning/quality-learning.routes.ts"),
+  resolve(
+    process.cwd(),
+    "src/modules/quality-learning/quality-learning.routes.ts",
+  ),
   "utf8",
 );
 const REGISTRY = readFileSync(
@@ -49,9 +52,13 @@ describe("dialer-hold never writes to Vicidial/the dialer", () => {
   });
 
   it("uses only the standard mas_hrms pool (db.execute), never a cross-DB write helper, in the service", () => {
-    expect(SERVICE).toMatch(/import \{ db \} from "\.\.\/\.\.\/db\/mysql\.js";/);
+    expect(SERVICE).toMatch(
+      /import \{ db \} from "\.\.\/\.\.\/db\/mysql\.js";/,
+    );
     // No other db import at all — this module talks to exactly one connection.
-    const dbImports = [...SERVICE.matchAll(/from ["'][^"']*\/db\/[^"']+["']/g)].map((m) => m[0]);
+    const dbImports = [
+      ...SERVICE.matchAll(/from ["'][^"']*\/db\/[^"']+["']/g),
+    ].map((m) => m[0]);
     expect(dbImports).toEqual(['from "../../db/mysql.js"']);
   });
 
@@ -102,7 +109,9 @@ describe("action item registry — TRAINING_DIALER_HOLD is registered correctly"
   });
 
   it("is assigned to roles that actually hold Vicidial admin access (wfm/ops), not admin/hr", () => {
-    expect(entry).toMatch(/defaultAssigneeRoles:\s*\["wfm", "operations_head", "branch_head"\]/);
+    expect(entry).toMatch(
+      /defaultAssigneeRoles:\s*\["wfm", "operations_head", "branch_head"\]/,
+    );
   });
 
   it("has a short TTL appropriate to a critical hold, not a multi-day one", () => {
@@ -113,13 +122,19 @@ describe("action item registry — TRAINING_DIALER_HOLD is registered correctly"
 describe("dialer-hold routes require a governance-shaped role", () => {
   it("every dialer-holds route is gated by requireRole, not open to any authenticated user", () => {
     const section = ROUTES.slice(ROUTES.indexOf("// ── Dialer Holds"));
-    const routeDeclarations = [...section.matchAll(/router\.(get|post)\(\s*"\/dialer-holds[^,]*",\s*\n?\s*requireRole\(/g)];
+    const routeDeclarations = [
+      ...section.matchAll(
+        /router\.(get|post)\(\s*"\/dialer-holds[^,]*",\s*\n?\s*requireRole\(/g,
+      ),
+    ];
     expect(routeDeclarations.length).toBeGreaterThanOrEqual(3);
   });
 
   it("includes wfm in the allowed roles for every dialer-holds route, since they are who actually acts", () => {
     const section = ROUTES.slice(ROUTES.indexOf("// ── Dialer Holds"));
-    const requireRoleCalls = [...section.matchAll(/requireRole\(([^)]*)\)/g)].map((m) => m[1]);
+    const requireRoleCalls = [
+      ...section.matchAll(/requireRole\(([^)]*)\)/g),
+    ].map((m) => m[1]);
     expect(requireRoleCalls.length).toBeGreaterThan(0);
     for (const call of requireRoleCalls) {
       expect(call).toMatch(/"wfm"/);
@@ -134,7 +149,9 @@ describe("quality-gap-detector worker's dialer-hold sweep only acts on real TAT 
       WORKER.indexOf("async function tick"),
     );
     expect(fn).toMatch(/t\.due_at < NOW\(\)/);
-    expect(fn).toMatch(/t\.status IN \('open', 'in_progress', 'sla_breached'\)/);
+    expect(fn).toMatch(
+      /t\.status IN \('open', 'in_progress', 'sla_breached'\)/,
+    );
   });
 
   it("only considers assignments whose trigger rule opted into block_dialer", () => {
@@ -150,7 +167,9 @@ describe("quality-gap-detector worker's dialer-hold sweep only acts on real TAT 
       WORKER.indexOf("async function sweepDialerHoldCandidates"),
       WORKER.indexOf("async function tick"),
     );
-    expect(fn).toMatch(/NOT EXISTS[\s\S]*?FROM training_dialer_hold h WHERE h\.training_assignment_id = ta\.id/);
+    expect(fn).toMatch(
+      /NOT EXISTS[\s\S]*?FROM training_dialer_hold h WHERE h\.training_assignment_id = ta\.id/,
+    );
   });
 
   it("one bad candidate does not abort the sweep", () => {
@@ -158,6 +177,8 @@ describe("quality-gap-detector worker's dialer-hold sweep only acts on real TAT 
       WORKER.indexOf("async function sweepDialerHoldCandidates"),
       WORKER.indexOf("async function tick"),
     );
-    expect(fn).toMatch(/try \{[\s\S]*?requestDialerHold[\s\S]*?\} catch \(err\) \{/);
+    expect(fn).toMatch(
+      /try \{[\s\S]*?requestDialerHold[\s\S]*?\} catch \(err\) \{/,
+    );
   });
 });

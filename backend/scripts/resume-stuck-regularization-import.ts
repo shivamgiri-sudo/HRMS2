@@ -26,9 +26,8 @@ const APPLY = process.env.APPLY === "1";
 
 async function main() {
   const { db } = await import("../src/db/mysql.js");
-  const { importRegularizationBatch } = await import(
-    "../src/modules/bulk-upload/attendance-regularization-bulk.service.js"
-  );
+  const { importRegularizationBatch } =
+    await import("../src/modules/bulk-upload/attendance-regularization-bulk.service.js");
 
   const [batchRows]: any = await db.query(
     `SELECT id, upload_batch_no, batch_status, total_rows, imported_rows, error_rows, uploaded_by,
@@ -47,8 +46,12 @@ async function main() {
     .filter((r: any) => r.row_status === "valid" || r.row_status === "pending")
     .reduce((a: number, r: any) => a + Number(r.n), 0);
 
-  console.log(`${BATCH_NO}: status=${batch.batch_status} total=${batch.total_rows}`);
-  console.log(`  created ${batch.created_at}  last touched ${batch.updated_at}`);
+  console.log(
+    `${BATCH_NO}: status=${batch.batch_status} total=${batch.total_rows}`,
+  );
+  console.log(
+    `  created ${batch.created_at}  last touched ${batch.updated_at}`,
+  );
   console.table(counts);
   console.log(`rows still to import: ${pendingRows}`);
 
@@ -76,7 +79,9 @@ async function main() {
   console.log("\nrows after:");
   console.table(after);
   const [[b2]]: any = await db.query(
-    `SELECT batch_status, imported_rows, error_rows FROM upload_batch WHERE id = ?`, [batch.id]);
+    `SELECT batch_status, imported_rows, error_rows FROM upload_batch WHERE id = ?`,
+    [batch.id],
+  );
   console.log("batch after:", b2);
 
   await (db as any).end?.();

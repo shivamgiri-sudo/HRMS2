@@ -60,8 +60,12 @@ describe("salary is selected as of the run month", () => {
     // The old rule. If this string comes back as the join predicate, the run is
     // once again being calculated at today's salary.
     const q = employeeQuery();
-    expect(q).not.toMatch(/JOIN employee_salary_assignment esa ON esa\.employee_id = e\.id/);
-    expect(CALC).not.toMatch(/const empConds: string\[\] = \["esa\.active_status = 1"\]/);
+    expect(q).not.toMatch(
+      /JOIN employee_salary_assignment esa ON esa\.employee_id = e\.id/,
+    );
+    expect(CALC).not.toMatch(
+      /const empConds: string\[\] = \["esa\.active_status = 1"\]/,
+    );
   });
 
   it("orders by effective_from descending so the most recent assignment in force wins", () => {
@@ -83,7 +87,10 @@ describe("salary is selected as of the run month", () => {
     // parse time, taking five unrelated test files down with it.
     const comments = employeeQuery().match(/--[^\n]*/g) ?? [];
     for (const line of comments) {
-      expect(line, "use plain quotes in SQL comments inside a template literal").not.toContain("`");
+      expect(
+        line,
+        "use plain quotes in SQL comments inside a template literal",
+      ).not.toContain("`");
     }
   });
 });
@@ -101,7 +108,10 @@ describe("no employee can be dropped from a run by the new join", () => {
     // silent employee-dropping filter.
     const q = employeeQuery();
     const coalesceArms = (q.match(/SELECT (p|a)\.id/g) ?? []).length;
-    expect(coalesceArms, "expected both the point-in-time arm and the active-row fallback").toBe(2);
+    expect(
+      coalesceArms,
+      "expected both the point-in-time arm and the active-row fallback",
+    ).toBe(2);
   });
 });
 

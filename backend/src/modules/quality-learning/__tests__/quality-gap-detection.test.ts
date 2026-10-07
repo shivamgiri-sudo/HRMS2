@@ -42,7 +42,9 @@ describe("US2.1 scenario 1 — consecutive-calls trigger pattern", () => {
       SOURCE.indexOf('if (rule.trigger_pattern === "consecutive")'),
       SOURCE.indexOf("// 'average'"),
     );
-    expect(fn).toMatch(/window\.every\(\(s\) => Number\(s\.quality_percentage\) < Number\(rule\.threshold_score\)\)/);
+    expect(fn).toMatch(
+      /window\.every\(\(s\) => Number\(s\.quality_percentage\) < Number\(rule\.threshold_score\)\)/,
+    );
   });
 
   it("does not trigger when fewer calls exist than threshold_count requires", () => {
@@ -50,7 +52,9 @@ describe("US2.1 scenario 1 — consecutive-calls trigger pattern", () => {
       SOURCE.indexOf('if (rule.trigger_pattern === "consecutive")'),
       SOURCE.indexOf("// 'average'"),
     );
-    expect(fn).toMatch(/if \(scores\.length < count\) return \{ triggered: false, evidence: \[\] \};/);
+    expect(fn).toMatch(
+      /if \(scores\.length < count\) return \{ triggered: false, evidence: \[\] \};/,
+    );
   });
 
   it("captures call date and score for every triggering call as evidence", () => {
@@ -58,13 +62,17 @@ describe("US2.1 scenario 1 — consecutive-calls trigger pattern", () => {
       SOURCE.indexOf('if (rule.trigger_pattern === "consecutive")'),
       SOURCE.indexOf("// 'average'"),
     );
-    expect(fn).toMatch(/call_date: s\.CallDate, score: Number\(s\.quality_percentage\)/);
+    expect(fn).toMatch(
+      /call_date: s\.CallDate, score: Number\(s\.quality_percentage\)/,
+    );
   });
 });
 
 describe("US2.1 scenario 1 — assignment creation reuses the existing governance engine", () => {
   it("calls the existing createTatInstance rather than tracking its own deadline", () => {
-    expect(SOURCE).toMatch(/import \{ createTatInstance \} from "\.\.\/governance\/tat\.service\.js";/);
+    expect(SOURCE).toMatch(
+      /import \{ createTatInstance \} from "\.\.\/governance\/tat\.service\.js";/,
+    );
     expect(SOURCE).toMatch(/createTatInstance\(\s*"quality_coaching_required"/);
   });
 
@@ -119,7 +127,9 @@ describe("US2.1 scenario 2 — no duplicate assignment for an already-pending sk
       SOURCE.indexOf("async function hasPendingAssignment"),
       SOURCE.indexOf("/** Appends a note"),
     );
-    expect(fn).toMatch(/LEFT JOIN task_tat_instance t ON t\.id = ta\.tat_instance_id/);
+    expect(fn).toMatch(
+      /LEFT JOIN task_tat_instance t ON t\.id = ta\.tat_instance_id/,
+    );
     expect(fn).toMatch(/t\.status NOT IN \('completed', 'cancelled'\)/);
   });
 });
@@ -130,16 +140,22 @@ describe("US2.1 scenario 3 — no content mapped for the detected skill gap", ()
       SOURCE.indexOf("export async function evaluateRuleForDialerUser"),
       SOURCE.length,
     );
-    expect(fn).toMatch(/const content = await fetchMappedContent\(rule\.skill_category_id\);/);
+    expect(fn).toMatch(
+      /const content = await fetchMappedContent\(rule\.skill_category_id\);/,
+    );
     expect(fn).toMatch(/if \(!content\.length\) \{/);
   });
 
   it("records a content-missing alert row with no TAT instance, rather than silently dropping the gap", () => {
     const fn = SOURCE.slice(
       SOURCE.indexOf("async function recordContentMissingGap"),
-      SOURCE.indexOf("/**\n * Creates the training_assignment plus its TAT instance"),
+      SOURCE.indexOf(
+        "/**\n * Creates the training_assignment plus its TAT instance",
+      ),
     );
-    expect(fn).toMatch(/severity, assigned_content, tat_instance_id, assigned_by/);
+    expect(fn).toMatch(
+      /severity, assigned_content, tat_instance_id, assigned_by/,
+    );
     expect(fn).toMatch(/NULL, NULL, 'SYSTEM'/);
   });
 
@@ -182,7 +198,9 @@ describe("identity bridge — unmapped dialer users are skipped, not guessed", (
 
 describe("database boundary — db_audit is read-only from this module", () => {
   it("uses querySource (cross-schema read pool) for every call_quality_assessment access, and never writes to db_audit", () => {
-    expect(SOURCE).toMatch(/import \{ querySource \} from "\.\.\/\.\.\/db\/sourceDb\.js";/);
+    expect(SOURCE).toMatch(
+      /import \{ querySource \} from "\.\.\/\.\.\/db\/sourceDb\.js";/,
+    );
     expect(SOURCE).not.toMatch(/(INSERT INTO|UPDATE|DELETE FROM)\s+db_audit\./);
   });
 });

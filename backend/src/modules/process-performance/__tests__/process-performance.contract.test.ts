@@ -33,7 +33,10 @@ const { execute, buildScopeWhereClause, hasAnyRole } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../../shared/scopeAccess.js", () => ({ buildScopeWhereClause, hasAnyRole }));
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  buildScopeWhereClause,
+  hasAnyRole,
+}));
 
 const svc = await import("../process-performance.service.js");
 
@@ -46,27 +49,43 @@ const anySqlMatches = (re: RegExp) =>
 
 beforeEach(() => {
   execute.mockReset().mockResolvedValue([[]]);
-  buildScopeWhereClause.mockReset().mockResolvedValue({ sql: "1=1", params: [] });
+  buildScopeWhereClause
+    .mockReset()
+    .mockResolvedValue({ sql: "1=1", params: [] });
 });
 
 describe("scope is enforced in SQL at every grain", () => {
-  it.each(["process", "manager", "agent"] as const)("applies the scope predicate for the %s grain", async (grain) => {
-    buildScopeWhereClause.mockResolvedValue({ sql: "e.process_id = ?", params: ["proc-owned"] });
-    const fn = grain === "process" ? svc.getProcessRows : grain === "manager" ? svc.getManagerRows : svc.getAgentRows;
-    await fn("user-1", FILTERS);
-    expect(sqlOf()).toContain("e.process_id = ?");
-    expect(paramsOf()).toContain("proc-owned");
-  });
+  it.each(["process", "manager", "agent"] as const)(
+    "applies the scope predicate for the %s grain",
+    async (grain) => {
+      buildScopeWhereClause.mockResolvedValue({
+        sql: "e.process_id = ?",
+        params: ["proc-owned"],
+      });
+      const fn =
+        grain === "process"
+          ? svc.getProcessRows
+          : grain === "manager"
+            ? svc.getManagerRows
+            : svc.getAgentRows;
+      await fn("user-1", FILTERS);
+      expect(sqlOf()).toContain("e.process_id = ?");
+      expect(paramsOf()).toContain("proc-owned");
+    },
+  );
 
   it("scopes by the caller, never by the id supplied in the request", async () => {
     // The manager id is a filter ON TOP of the caller's scope, not a substitute
     // for it: asking for someone else's team still runs inside your own predicate.
-    buildScopeWhereClause.mockResolvedValue({ sql: "e.reporting_manager_id = ?", params: ["me"] });
+    buildScopeWhereClause.mockResolvedValue({
+      sql: "e.reporting_manager_id = ?",
+      params: ["me"],
+    });
     await svc.getAgentRows("user-1", { ...FILTERS, managerId: "someone-else" });
     const sql = sqlOf();
     expect(sql).toContain("e.reporting_manager_id = ?");
     const params = paramsOf();
-    expect(params).toContain("me");          // caller's own scope survives
+    expect(params).toContain("me"); // caller's own scope survives
     expect(params).toContain("someone-else"); // and the request narrows within it
   });
 
@@ -79,7 +98,10 @@ describe("scope is enforced in SQL at every grain", () => {
   });
 
   it("scopes the metric detail view too, not just the table", async () => {
-    buildScopeWhereClause.mockResolvedValue({ sql: "e.process_id = ?", params: ["proc-owned"] });
+    buildScopeWhereClause.mockResolvedValue({
+      sql: "e.process_id = ?",
+      params: ["proc-owned"],
+    });
     execute.mockResolvedValue([[{ late_marks: 1, issues: 1, exits: 1 }]]);
     await svc.getMetricDetail("user-1", "late_comers", FILTERS);
     const queries = execute.mock.calls.map((c) => String(c[0]));
@@ -94,7 +116,9 @@ describe("scope is enforced in SQL at every grain", () => {
     // that is what is guarded rather than which tables it touches.
     const probe = queries.find((q) => q.includes("AS late_marks"))!;
     expect(probe).not.toMatch(/(full_name|employee_code|e\.id|\*\s*FROM)/);
-    expect(probe.match(/SELECT/g)!.length).toBe(probe.match(/COUNT\(\*\)|MAX\(/g)!.length + 1);
+    expect(probe.match(/SELECT/g)!.length).toBe(
+      probe.match(/COUNT\(\*\)|MAX\(/g)!.length + 1,
+    );
   });
 });
 
@@ -102,15 +126,34 @@ describe("a value is either real or explicitly absent", () => {
   // The same shape answers every call in these tests: the aggregate, the exits
   // and mandate lookups, and the coverage probe (late_marks / issues non-zero,
   // i.e. both producing engines ran in the window).
-  const rowWith = (over: Record<string, unknown> = {}) => ([[{
-    group_id: "p1", group_name: "Onfido", group_subtitle: "ONF",
-    headcount: 10, manager_count: 2,
-    present_days: 100, late_days: 30, absent_days: 5, half_days: 4, leave_days: 1,
-    missing_punch_days: 0, off_days: 0, total_days: 120,
-    issue_days: 0, missing_adr_days: 0, people_cost: null,
-    exits: 1, quality_score: null, aht: null,
-    late_marks: 1, issues: 1, ...over,
-  }]]);
+  const rowWith = (over: Record<string, unknown> = {}) => [
+    [
+      {
+        group_id: "p1",
+        group_name: "Onfido",
+        group_subtitle: "ONF",
+        headcount: 10,
+        manager_count: 2,
+        present_days: 100,
+        late_days: 30,
+        absent_days: 5,
+        half_days: 4,
+        leave_days: 1,
+        missing_punch_days: 0,
+        off_days: 0,
+        total_days: 120,
+        issue_days: 0,
+        missing_adr_days: 0,
+        people_cost: null,
+        exits: 1,
+        quality_score: null,
+        aht: null,
+        late_marks: 1,
+        issues: 1,
+        ...over,
+      },
+    ],
+  ];
 
   it("computes late comers % from real numerator and denominator", async () => {
     execute.mockResolvedValue(rowWith());
@@ -125,10 +168,10 @@ describe("a value is either real or explicitly absent", () => {
     // attendance_reconciliation_issue holds nothing before July. "0% late" and
     // "100% hygiene" there are flattering fictions, not clean months.
     execute.mockReset();
-    execute.mockResolvedValueOnce(rowWith());                          // aggregate
-    execute.mockResolvedValueOnce([[{ group_id: "p1", exits: 1 }]]);   // exits
+    execute.mockResolvedValueOnce(rowWith()); // aggregate
+    execute.mockResolvedValueOnce([[{ group_id: "p1", exits: 1 }]]); // exits
     execute.mockResolvedValueOnce([[{ late_marks: 0, issues: 0, exits: 0 }]]); // coverage
-    execute.mockResolvedValueOnce([[]]);                              // mandate
+    execute.mockResolvedValueOnce([[]]); // mandate
     const [row] = await svc.getProcessRows("u", FILTERS);
     for (const key of ["late_comers", "hygiene"] as const) {
       const s = row.sections.find((x) => x.key === key)!;
@@ -147,7 +190,9 @@ describe("a value is either real or explicitly absent", () => {
   it("counts an unresolved missing punch as lost capacity", async () => {
     // 5 absent + 1 leave + 8 missing_punch + 4/2 half = 16 lost over
     // (140 total - 20 week off/holiday) = 120 scheduled days.
-    execute.mockResolvedValue(rowWith({ missing_punch_days: 8, off_days: 20, total_days: 140 }));
+    execute.mockResolvedValue(
+      rowWith({ missing_punch_days: 8, off_days: 20, total_days: 140 }),
+    );
     const [row] = await svc.getProcessRows("u", FILTERS);
     const shrink = row.sections.find((s) => s.key === "shrinkage")!;
     expect(shrink.value).toBeCloseTo(13.33, 2);
@@ -156,9 +201,14 @@ describe("a value is either real or explicitly absent", () => {
   it("keeps week offs and holidays out of the shrinkage denominator", async () => {
     // Same lost time, but every day is scheduled: the rate must be lower when
     // unscheduled days inflate the denominator, so they are excluded.
-    execute.mockResolvedValue(rowWith({ missing_punch_days: 8, off_days: 0, total_days: 140 }));
+    execute.mockResolvedValue(
+      rowWith({ missing_punch_days: 8, off_days: 0, total_days: 140 }),
+    );
     const [row] = await svc.getProcessRows("u", FILTERS);
-    expect(row.sections.find((s) => s.key === "shrinkage")!.value).toBeCloseTo(11.43, 2);
+    expect(row.sections.find((s) => s.key === "shrinkage")!.value).toBeCloseTo(
+      11.43,
+      2,
+    );
   });
 
   it("counts exits OUTSIDE the active-employee filter", async () => {
@@ -176,10 +226,10 @@ describe("a value is either real or explicitly absent", () => {
 
   it("reports attrition against the population that was there, not the survivors", async () => {
     execute.mockReset();
-    execute.mockResolvedValueOnce(rowWith({ headcount: 90 }));         // aggregate
-    execute.mockResolvedValueOnce([[{ group_id: "p1", exits: 10 }]]);  // exits
+    execute.mockResolvedValueOnce(rowWith({ headcount: 90 })); // aggregate
+    execute.mockResolvedValueOnce([[{ group_id: "p1", exits: 10 }]]); // exits
     execute.mockResolvedValueOnce([[{ late_marks: 1, issues: 1, exits: 10 }]]); // coverage
-    execute.mockResolvedValueOnce([[]]);                               // mandate
+    execute.mockResolvedValueOnce([[]]); // mandate
     const [row] = await svc.getProcessRows("u", FILTERS);
     // 10 exits out of the 100 people who were in the group, not 10 of 90.
     expect(row.sections.find((s) => s.key === "attrition")!.value).toBe(10);
@@ -194,7 +244,9 @@ describe("a value is either real or explicitly absent", () => {
     expect(mandateSql).toBeTruthy();
     // The DISTINCT is the whole guard: without it the mandate is multiplied by
     // the headcount sitting in the cost centre.
-    expect(mandateSql).toMatch(/SELECT DISTINCT e\.process_id AS group_id, e\.cost_centre_id/);
+    expect(mandateSql).toMatch(
+      /SELECT DISTINCT e\.process_id AS group_id, e\.cost_centre_id/,
+    );
   });
 
   it("never reports a late percentage above 100", async () => {
@@ -202,7 +254,9 @@ describe("a value is either real or explicitly absent", () => {
     // unrestricted numerator over present days alone produced 232% live.
     execute.mockResolvedValue(rowWith());
     const sql = String((await svc.getProcessRows("u", FILTERS), sqlOf()));
-    expect(sql).toMatch(/SUM\(a\.attendance_status = 'present' AND a\.late_mark = 1\)/);
+    expect(sql).toMatch(
+      /SUM\(a\.attendance_status = 'present' AND a\.late_mark = 1\)/,
+    );
   });
 
   it("marks a metric with no rows as no_data rather than zero", async () => {
@@ -231,7 +285,9 @@ describe("a value is either real or explicitly absent", () => {
   it("computes hygiene from unresolved reconciliation issues", async () => {
     // 120 attendance days + 10 missing_adr day-slots = 130 slots, 30 of which
     // still carry an unresolved issue -> 100 clean.
-    execute.mockResolvedValue(rowWith({ total_days: 120, issue_days: 30, missing_adr_days: 10 }));
+    execute.mockResolvedValue(
+      rowWith({ total_days: 120, issue_days: 30, missing_adr_days: 10 }),
+    );
     const [row] = await svc.getProcessRows("u", FILTERS);
     const hyg = row.sections.find((s) => s.key === "hygiene")!;
     expect(hyg.availability).toBe("ok");
@@ -245,7 +301,9 @@ describe("a value is either real or explicitly absent", () => {
     execute.mockReset().mockResolvedValue([[{}]]);
     await svc.getProcessRows("u", FILTERS);
     const agg = sqlOf();
-    expect(agg).toContain("SUM(q.quality_sum) / NULLIF(SUM(q.audited_calls), 0)");
+    expect(agg).toContain(
+      "SUM(q.quality_sum) / NULLIF(SUM(q.audited_calls), 0)",
+    );
     expect(agg).toContain("SUM(o.aht_sum) / NULLIF(SUM(o.aht_days), 0)");
     expect(agg).not.toMatch(/AVG\(q\.quality_score\)|AVG\(o\.aht\)/);
   });
@@ -270,7 +328,9 @@ describe("a value is either real or explicitly absent", () => {
   it("offers a root cause only where the schema categorises one", async () => {
     execute.mockResolvedValue(rowWith({ quality_score: 81.5, aht: 42 }));
     const [row] = await svc.getProcessRows("u", FILTERS);
-    const by = Object.fromEntries(row.sections.map((s) => [s.key, s.hasRootCause]));
+    const by = Object.fromEntries(
+      row.sections.map((s) => [s.key, s.hasRootCause]),
+    );
     expect(by.late_comers).toBe(true);
     expect(by.shrinkage).toBe(true);
     // No categorised exit reason exists on `employees`, so a breakdown would be invented.
@@ -296,7 +356,9 @@ describe("metric detail refuses to invent a breakdown", () => {
     // each person's attendance-day count under a Quality heading.
     execute.mockReset().mockResolvedValue([[]]);
     await svc.getMetricDetail("u", "quality", FILTERS);
-    const sql = execute.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    const sql = execute.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .join("\n");
     // Quality is the call audit warehouse. mas_hrms.qa_audit is empty and the
     // QUALITY_SCORE rows in kpi_daily_actual reach two processes; this table
     // holds 13,513 assessed August calls, all matching an employee_code.
@@ -308,42 +370,63 @@ describe("metric detail refuses to invent a breakdown", () => {
 
     execute.mockReset().mockResolvedValue([[]]);
     await svc.getMetricDetail("u", "operations", FILTERS);
-    expect(execute.mock.calls.map((c: unknown[]) => String(c[0])).join("\n"))
-      .toContain("kpi_daily_actual");
+    expect(
+      execute.mock.calls.map((c: unknown[]) => String(c[0])).join("\n"),
+    ).toContain("kpi_daily_actual");
 
     execute.mockReset().mockResolvedValue([[]]);
     await svc.getMetricDetail("u", "pnl", FILTERS);
-    expect(execute.mock.calls.map((c: unknown[]) => String(c[0])).join("\n"))
-      .toContain("pnl_running_salary_snapshot");
+    expect(
+      execute.mock.calls.map((c: unknown[]) => String(c[0])).join("\n"),
+    ).toContain("pnl_running_salary_snapshot");
 
-    execute.mockReset().mockResolvedValue([[{ late_marks: 1, issues: 1, exits: 1 }]]);
+    execute
+      .mockReset()
+      .mockResolvedValue([[{ late_marks: 1, issues: 1, exits: 1 }]]);
     await svc.getMetricDetail("u", "hygiene", FILTERS);
-    expect(execute.mock.calls.map((c: unknown[]) => String(c[0])).join("\n"))
-      .toContain("attendance_reconciliation_issue");
+    expect(
+      execute.mock.calls.map((c: unknown[]) => String(c[0])).join("\n"),
+    ).toContain("attendance_reconciliation_issue");
   });
 
   it("marks a record as drillable only where its id is a filter one level down", async () => {
     // A leaver is not a manager: pushing their id as managerId opened an empty
     // level that read as "no data".
-    execute.mockReset().mockResolvedValue([[{ id: "e1", name: "A", subtitle: "E1", value: 12, exits: 1 }]]);
+    execute
+      .mockReset()
+      .mockResolvedValue([
+        [{ id: "e1", name: "A", subtitle: "E1", value: 12, exits: 1 }],
+      ]);
     const leavers = await svc.getMetricDetail("u", "attrition", FILTERS);
     expect(leavers.records.every((r) => r.drillAs === null)).toBe(true);
 
-    execute.mockReset().mockResolvedValue([[{ id: "m1", name: "M", subtitle: "M1", value: 5 }]]);
-    const atProcess = await svc.getMetricDetail("u", "shrinkage", { ...FILTERS, processId: "p1" });
+    execute
+      .mockReset()
+      .mockResolvedValue([[{ id: "m1", name: "M", subtitle: "M1", value: 5 }]]);
+    const atProcess = await svc.getMetricDetail("u", "shrinkage", {
+      ...FILTERS,
+      processId: "p1",
+    });
     expect(atProcess.records[0].drillAs).toBe("manager");
 
-    execute.mockReset().mockResolvedValue([[{ id: "a1", name: "A", subtitle: "A1", value: 5 }]]);
-    const atAgent = await svc.getMetricDetail("u", "shrinkage", { ...FILTERS, employeeId: "a1" });
+    execute
+      .mockReset()
+      .mockResolvedValue([[{ id: "a1", name: "A", subtitle: "A1", value: 5 }]]);
+    const atAgent = await svc.getMetricDetail("u", "shrinkage", {
+      ...FILTERS,
+      employeeId: "a1",
+    });
     expect(atAgent.records[0].drillAs).toBeNull();
   });
 
   it("returns a real breakdown for shrinkage, summing to 100%", async () => {
-    execute.mockResolvedValue([[
-      { label: "present", value: 60 },
-      { label: "absent", value: 30 },
-      { label: "half_day", value: 10 },
-    ]]);
+    execute.mockResolvedValue([
+      [
+        { label: "present", value: 60 },
+        { label: "absent", value: 30 },
+        { label: "half_day", value: 10 },
+      ],
+    ]);
     const d = await svc.getMetricDetail("u", "shrinkage", FILTERS);
     expect(d.rootCause).not.toBeNull();
     const total = d.rootCause!.reduce((a, r) => a + r.share, 0);
@@ -363,7 +446,10 @@ describe("metric detail refuses to invent a breakdown", () => {
 
 describe("route registration", () => {
   const ROUTES = readFileSync(
-    resolve(process.cwd(), "src/modules/process-performance/process-performance.routes.ts"),
+    resolve(
+      process.cwd(),
+      "src/modules/process-performance/process-performance.routes.ts",
+    ),
     "utf8",
   );
 
@@ -371,7 +457,9 @@ describe("route registration", () => {
     // Express matches in registration order. /detail/:section is the only
     // parameterised route and must come last, for the same reason
     // /my-processes needed to sit above /:id.
-    const literals = ["/processes", "/filters", "/managers", "/agents"].map((p) => ROUTES.indexOf(`"${p}"`));
+    const literals = ["/processes", "/filters", "/managers", "/agents"].map(
+      (p) => ROUTES.indexOf(`"${p}"`),
+    );
     const param = ROUTES.indexOf('"/detail/:section"');
     expect(Math.min(...literals)).toBeGreaterThan(-1);
     expect(param).toBeGreaterThan(Math.max(...literals));
@@ -380,12 +468,19 @@ describe("route registration", () => {
   it("guards every route with auth and a role check", () => {
     const handlers = [...ROUTES.matchAll(/router\.get\(/g)];
     expect(handlers.length).toBe(5);
-    const guarded = [...ROUTES.matchAll(/router\.get\([^)]*requireAuth, requireRole\(\.\.\.VIEWER_ROLES\)/g)];
+    const guarded = [
+      ...ROUTES.matchAll(
+        /router\.get\([^)]*requireAuth, requireRole\(\.\.\.VIEWER_ROLES\)/g,
+      ),
+    ];
     expect(guarded.length).toBe(5);
   });
 
   it("does not list super_admin, which requireRole already short-circuits", () => {
-    const block = ROUTES.slice(ROUTES.indexOf("const VIEWER_ROLES"), ROUTES.indexOf("] as const;"));
+    const block = ROUTES.slice(
+      ROUTES.indexOf("const VIEWER_ROLES"),
+      ROUTES.indexOf("] as const;"),
+    );
     expect(block).not.toContain("super_admin");
   });
 

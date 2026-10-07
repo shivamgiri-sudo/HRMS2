@@ -48,7 +48,10 @@ const LIMIT = (() => {
   return a ? parseInt(a.split("=")[1], 10) : Number.POSITIVE_INFINITY;
 })();
 
-const norm = (v: unknown) => String(v ?? "").trim().replace(/\s+/g, "");
+const norm = (v: unknown) =>
+  String(v ?? "")
+    .trim()
+    .replace(/\s+/g, "");
 const mask = (v: string) => (v.length >= 4 ? `XXXX${v.slice(-4)}` : "XXXX");
 
 function isPlausibleAccount(v: string): boolean {
@@ -59,12 +62,18 @@ function isPlausibleAccount(v: string): boolean {
 }
 
 function normName(s: unknown): string {
-  return String(s ?? "").trim().toLowerCase().replace(/[^a-z\s]/g, "").replace(/\s+/g, " ").trim();
+  return String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Word-overlap score 0-100, same metric used by ats.onboarding.service.ts's penny-drop name match. */
 function nameOverlap(a: unknown, b: unknown): number {
-  const na = normName(a), nb = normName(b);
+  const na = normName(a),
+    nb = normName(b);
   if (!na || !nb) return 0;
   if (na === nb) return 100;
   const wa = new Set(na.split(" ").filter(Boolean));
@@ -75,24 +84,33 @@ function nameOverlap(a: unknown, b: unknown): number {
   return Math.round((common / union) * 100);
 }
 
-interface Skip { code: string; reason: string }
+interface Skip {
+  code: string;
+  reason: string;
+}
 
 async function main(): Promise<void> {
-  console.log(`[masjclrentry-backfill] mode: ${APPLY ? "APPLY (will write)" : "DRY RUN (writes nothing)"}`);
+  console.log(
+    `[masjclrentry-backfill] mode: ${APPLY ? "APPLY (will write)" : "DRY RUN (writes nothing)"}`,
+  );
 
   const [ctRows] = await db.query<RowDataPacket[]>(
     `SELECT account_number_enc FROM employee_bank_detail
       WHERE account_number_enc IS NOT NULL AND account_number_enc <> '' LIMIT 25`,
   );
   const parity = checkKeyParity(
-    (ctRows as Array<{ account_number_enc: string }>).map((r) => r.account_number_enc),
+    (ctRows as Array<{ account_number_enc: string }>).map(
+      (r) => r.account_number_enc,
+    ),
   );
-  console.log(`[masjclrentry-backfill] key parity: ${parity.decrypted}/${parity.sampled} decrypt`);
+  console.log(
+    `[masjclrentry-backfill] key parity: ${parity.decrypted}/${parity.sampled} decrypt`,
+  );
   if (!parity.ok) {
     console.error(
       "[masjclrentry-backfill] REFUSING TO RUN — the loaded FIELD_ENCRYPTION_KEY cannot read " +
-      "ciphertext already stored in this database. Off the production host this is the all-zeros " +
-      "dev key, and every row written would be permanently unreadable. Run this on the production host.",
+        "ciphertext already stored in this database. Off the production host this is the all-zeros " +
+        "dev key, and every row written would be permanently unreadable. Run this on the production host.",
     );
     process.exitCode = 1;
     return;
@@ -108,33 +126,58 @@ async function main(): Promise<void> {
                          WHERE b.employee_id = e.id AND b.active_status = 1 AND b.is_primary = 1)
       ORDER BY e.employee_code`,
   );
-  console.log(`[masjclrentry-backfill] active employees with no primary bank record: ${(targets as unknown[]).length}`);
+  console.log(
+    `[masjclrentry-backfill] active employees with no primary bank record: ${(targets as unknown[]).length}`,
+  );
 
   const codes = (targets as any[]).map((t) => norm(t.employee_code));
   const staffRows = codes.length
-    ? await billQuery<RowDataPacket & {
-        EmpCode: string; EmpName: string; AcNo: string; AcBank: string | null;
-        BankBranch: string | null; IFSCCode: string | null; Mobile: string | null; Mobile1: string | null;
-      }>(
+    ? await billQuery<
+        RowDataPacket & {
+          EmpCode: string;
+          EmpName: string;
+          AcNo: string;
+          AcBank: string | null;
+          BankBranch: string | null;
+          IFSCCode: string | null;
+          Mobile: string | null;
+          Mobile1: string | null;
+        }
+      >(
         `SELECT EmpCode, EmpName, AcNo, AcBank, BankBranch, IFSCCode, Mobile, Mobile1
            FROM masjclrentry WHERE EmpCode IN (${codes.map(() => "?").join(",")})`,
         codes,
       )
     : [];
-  const staffMap = new Map(staffRows.map((r) => [norm(r.EmpCode).toUpperCase(), r]));
+  const staffMap = new Map(
+    staffRows.map((r) => [norm(r.EmpCode).toUpperCase(), r]),
+  );
 
   const skips: Skip[] = [];
-  const planned: Array<{ id: string; code: string; account: string; ifsc: string;
-                         bank: string | null; branch: string | null; holder: string | null;
-                         corroboratedBy: string }> = [];
+  const planned: Array<{
+    id: string;
+    code: string;
+    account: string;
+    ifsc: string;
+    bank: string | null;
+    branch: string | null;
+    holder: string | null;
+    corroboratedBy: string;
+  }> = [];
 
   for (const t of targets as any[]) {
     const code = norm(t.employee_code).toUpperCase();
     const staff = staffMap.get(code);
-    if (!staff) { skips.push({ code, reason: "no row in masjclrentry" }); continue; }
+    if (!staff) {
+      skips.push({ code, reason: "no row in masjclrentry" });
+      continue;
+    }
     const account = norm(staff.AcNo);
     if (!isPlausibleAccount(account)) {
-      skips.push({ code, reason: `no usable account number (${mask(account) || "(blank)"})` });
+      skips.push({
+        code,
+        reason: `no usable account number (${mask(account) || "(blank)"})`,
+      });
       continue;
     }
     const ifsc = norm(staff.IFSCCode).toUpperCase();
@@ -142,39 +185,60 @@ async function main(): Promise<void> {
       skips.push({ code, reason: "no usable IFSC in masjclrentry" });
       continue;
     }
-    const mobileMatch = t.mobile && (t.mobile === staff.Mobile || t.mobile === staff.Mobile1);
+    const mobileMatch =
+      t.mobile && (t.mobile === staff.Mobile || t.mobile === staff.Mobile1);
     const overlap = nameOverlap(t.full_name, staff.EmpName);
     if (!mobileMatch && overlap < 50) {
-      skips.push({ code, reason: `name/mobile corroboration failed (name overlap ${overlap}%, mobile ${mobileMatch ? "match" : "no match"})` });
+      skips.push({
+        code,
+        reason: `name/mobile corroboration failed (name overlap ${overlap}%, mobile ${mobileMatch ? "match" : "no match"})`,
+      });
       continue;
     }
     planned.push({
-      id: t.id, code, account, ifsc,
-      bank: staff.AcBank ?? null, branch: staff.BankBranch ?? null, holder: staff.EmpName ?? null,
+      id: t.id,
+      code,
+      account,
+      ifsc,
+      bank: staff.AcBank ?? null,
+      branch: staff.BankBranch ?? null,
+      holder: staff.EmpName ?? null,
       corroboratedBy: mobileMatch ? "mobile" : "name",
     });
   }
 
-  console.log(`\n[masjclrentry-backfill] eligible to create: ${planned.length}`);
+  console.log(
+    `\n[masjclrentry-backfill] eligible to create: ${planned.length}`,
+  );
   console.log(`[masjclrentry-backfill] skipped:             ${skips.length}`);
   const byReason = new Map<string, number>();
   for (const s of skips) {
     const key = s.reason.replace(/\(.*\)/, "(…)");
     byReason.set(key, (byReason.get(key) ?? 0) + 1);
   }
-  for (const [reason, n] of [...byReason.entries()].sort((a, b) => b[1] - a[1])) {
+  for (const [reason, n] of [...byReason.entries()].sort(
+    (a, b) => b[1] - a[1],
+  )) {
     console.log(`    ${String(n).padStart(5)}  ${reason}`);
   }
   const byMobile = planned.filter((p) => p.corroboratedBy === "mobile").length;
-  console.log(`\n[masjclrentry-backfill] corroborated by mobile: ${byMobile}, by name only: ${planned.length - byMobile}`);
+  console.log(
+    `\n[masjclrentry-backfill] corroborated by mobile: ${byMobile}, by name only: ${planned.length - byMobile}`,
+  );
 
-  console.log(`\n[masjclrentry-backfill] sample of planned rows (accounts masked):`);
+  console.log(
+    `\n[masjclrentry-backfill] sample of planned rows (accounts masked):`,
+  );
   for (const p of planned.slice(0, 15)) {
-    console.log(`    ${p.code.padEnd(12)} ${mask(p.account)}  ${p.ifsc.padEnd(12)} corroborated-by-${p.corroboratedBy}  ${p.bank ?? ""}`);
+    console.log(
+      `    ${p.code.padEnd(12)} ${mask(p.account)}  ${p.ifsc.padEnd(12)} corroborated-by-${p.corroboratedBy}  ${p.bank ?? ""}`,
+    );
   }
 
   if (!APPLY) {
-    console.log(`\n[masjclrentry-backfill] DRY RUN — nothing written. Re-run with --apply to create ${planned.length} record(s).`);
+    console.log(
+      `\n[masjclrentry-backfill] DRY RUN — nothing written. Re-run with --apply to create ${planned.length} record(s).`,
+    );
     return;
   }
 
@@ -196,19 +260,31 @@ async function main(): Promise<void> {
            (id, employee_id, is_primary, account_seq, bank_name, account_holder_name, bank_branch,
             account_number_enc, ifsc_code, account_type, verified, active_status)
          VALUES (UUID(), ?, 1, ?, ?, ?, ?, ?, ?, 'Savings', 0, 1)`,
-        [p.id, nextSeq, p.bank, p.holder, p.branch, encryptField(p.account), p.ifsc],
+        [
+          p.id,
+          nextSeq,
+          p.bank,
+          p.holder,
+          p.branch,
+          encryptField(p.account),
+          p.ifsc,
+        ],
       );
       if (result.affectedRows === 1) created++;
     } catch (err) {
       const e = err as { code?: string; message?: string };
-      failures.push({ code: p.code, reason: `${e?.code ?? ""} ${e?.message ?? String(err)}`.trim() });
+      failures.push({
+        code: p.code,
+        reason: `${e?.code ?? ""} ${e?.message ?? String(err)}`.trim(),
+      });
     }
   }
 
   console.log(`\n[masjclrentry-backfill] created: ${created}`);
   if (failures.length) {
     console.log(`[masjclrentry-backfill] failed:  ${failures.length}`);
-    for (const f of failures.slice(0, 20)) console.log(`    ${f.code.padEnd(12)} ${f.reason}`);
+    for (const f of failures.slice(0, 20))
+      console.log(`    ${f.code.padEnd(12)} ${f.reason}`);
   }
 
   await logSensitiveAction({
@@ -229,13 +305,26 @@ async function main(): Promise<void> {
 
 main()
   .catch((err) => {
-    const e = err as { name?: string; code?: string; errno?: number; message?: string };
-    const parts = [e?.name, e?.code, e?.errno != null ? `errno=${e.errno}` : "", e?.message]
-      .filter((p) => p !== undefined && p !== null && String(p).trim() !== "");
-    console.error(`[masjclrentry-backfill] FATAL ${parts.join(" | ") || String(err)}`);
+    const e = err as {
+      name?: string;
+      code?: string;
+      errno?: number;
+      message?: string;
+    };
+    const parts = [
+      e?.name,
+      e?.code,
+      e?.errno != null ? `errno=${e.errno}` : "",
+      e?.message,
+    ].filter((p) => p !== undefined && p !== null && String(p).trim() !== "");
+    console.error(
+      `[masjclrentry-backfill] FATAL ${parts.join(" | ") || String(err)}`,
+    );
     process.exitCode = 1;
   })
   .finally(async () => {
-    await (db as unknown as { end?: () => Promise<void> }).end?.().catch(() => {});
+    await (db as unknown as { end?: () => Promise<void> })
+      .end?.()
+      .catch(() => {});
     await closeBillPool().catch(() => {});
   });

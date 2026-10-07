@@ -23,7 +23,8 @@ import type { PoolConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
-type UatConnection = PoolConnection | Awaited<ReturnType<typeof db.getConnection>>;
+type UatConnection =
+  PoolConnection | Awaited<ReturnType<typeof db.getConnection>>;
 
 export interface PricingRate {
   id: string;
@@ -49,7 +50,7 @@ interface PricingRow extends RowDataPacket {
 export async function resolveRate(
   providerKey: string,
   modelId: string,
-  conn?: UatConnection
+  conn?: UatConnection,
 ): Promise<PricingRate | null> {
   const runner = conn ?? db;
   const [rows] = await runner.query<PricingRow[]>(
@@ -60,7 +61,7 @@ export async function resolveRate(
         AND (effective_to IS NULL OR effective_to > NOW())
       ORDER BY effective_from DESC
       LIMIT 1`,
-    [providerKey, modelId]
+    [providerKey, modelId],
   );
   if (!rows.length) return null;
   const r = rows[0];
@@ -87,7 +88,10 @@ export interface TokenUsage {
  * would understate cost on every cached call — which is most of them, since the checklist
  * prefix is deliberately cacheable.
  */
-export function computeCostMicros(usage: TokenUsage, rate: PricingRate): number {
+export function computeCostMicros(
+  usage: TokenUsage,
+  rate: PricingRate,
+): number {
   const input = Math.max(0, usage.inputTokens ?? 0);
   const output = Math.max(0, usage.outputTokens ?? 0);
   const cached = Math.max(0, usage.cacheReadTokens ?? 0);
@@ -109,7 +113,7 @@ export async function spendTodayMicros(conn?: UatConnection): Promise<number> {
   const [rows] = await runner.query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(cost_usd_micros), 0) AS total
        FROM uat_llm_call
-      WHERE created_at >= CURDATE()`
+      WHERE created_at >= CURDATE()`,
   );
   return Number(rows[0]?.total ?? 0);
 }
@@ -132,7 +136,7 @@ export interface BudgetVerdict {
  */
 export async function checkDailyBudget(
   capUsd: number,
-  conn?: UatConnection
+  conn?: UatConnection,
 ): Promise<BudgetVerdict> {
   const spentMicros = await spendTodayMicros(conn);
   const spentUsd = spentMicros / 1_000_000;
@@ -185,11 +189,12 @@ export interface RecordCallInput {
  */
 export async function recordLlmCall(
   input: RecordCallInput,
-  conn?: UatConnection
+  conn?: UatConnection,
 ): Promise<{ id: string; costMicros: number | null; priced: boolean }> {
   const runner = conn ?? db;
   const rate = await resolveRate(input.providerKey, input.modelId, conn);
-  const costMicros = rate && input.usage ? computeCostMicros(input.usage, rate) : null;
+  const costMicros =
+    rate && input.usage ? computeCostMicros(input.usage, rate) : null;
 
   const [res] = await runner.query(
     `INSERT INTO uat_llm_call
@@ -223,7 +228,7 @@ export async function recordLlmCall(
       input.latencyMs ?? null,
       input.errorMessage ? String(input.errorMessage).slice(0, 1000) : null,
       input.responseJson ? JSON.stringify(input.responseJson) : null,
-    ]
+    ],
   );
 
   const insertId = (res as { insertId?: number }).insertId;
@@ -232,7 +237,7 @@ export async function recordLlmCall(
     `SELECT id FROM uat_llm_call
       WHERE feedback_id = ? AND prompt_sha256 = ? AND attempt_no = ?
       ORDER BY created_at DESC LIMIT 1`,
-    [input.feedbackId, input.promptSha256, input.attemptNo ?? 1]
+    [input.feedbackId, input.promptSha256, input.attemptNo ?? 1],
   );
 
   return {

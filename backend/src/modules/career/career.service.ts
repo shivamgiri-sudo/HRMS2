@@ -60,7 +60,7 @@ export const careerService = {
        LEFT JOIN employees e ON e.id = cp.employee_id
        WHERE cp.employee_id = ?
        LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     const result = rows as CareerPath[];
     return result[0] ?? null;
@@ -76,7 +76,7 @@ export const careerService = {
       skills_gap?: string | null;
       notes?: string | null;
       reviewed_by?: string | null;
-    }
+    },
   ): Promise<CareerPath> {
     await db.execute(
       `INSERT INTO career_path
@@ -100,7 +100,7 @@ export const careerService = {
         input.skills_gap ?? null,
         input.notes ?? null,
         input.reviewed_by ?? null,
-      ]
+      ],
     );
 
     const record = await careerService.getCareerPath(employeeId);
@@ -115,7 +115,7 @@ export const careerService = {
               e.employee_code
        FROM career_path cp
        LEFT JOIN employees e ON e.id = cp.employee_id
-       ORDER BY cp.readiness_pct DESC`
+       ORDER BY cp.readiness_pct DESC`,
     );
     return rows as CareerPath[];
   },
@@ -128,15 +128,21 @@ export const careerService = {
    * callers — an employee_id query param alone must never be trusted as proof
    * of a manager relationship (HRMS2 delta-audit, 2026-08-14, P0).
    */
-  async isManagerOf(managerEmployeeId: string, targetEmployeeId: string): Promise<boolean> {
+  async isManagerOf(
+    managerEmployeeId: string,
+    targetEmployeeId: string,
+  ): Promise<boolean> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT 1 FROM employees WHERE id = ? AND reporting_manager_id = ?`,
-      [targetEmployeeId, managerEmployeeId]
+      [targetEmployeeId, managerEmployeeId],
     );
     return rows.length > 0;
   },
 
-  async listPips(filters: { employeeId?: string; status?: string }): Promise<PipRecord[]> {
+  async listPips(filters: {
+    employeeId?: string;
+    status?: string;
+  }): Promise<PipRecord[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
 
@@ -159,12 +165,14 @@ export const careerService = {
        LEFT JOIN employees e ON e.id = pr.employee_id
        ${where}
        ORDER BY pr.created_at DESC`,
-      params
+      params,
     );
     return rows as PipRecord[];
   },
 
-  async getPip(id: string): Promise<(PipRecord & { checkpoints: PipCheckpoint[] }) | null> {
+  async getPip(
+    id: string,
+  ): Promise<(PipRecord & { checkpoints: PipCheckpoint[] }) | null> {
     const [pipRows] = await db.execute<RowDataPacket[]>(
       `SELECT pr.*,
               CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
@@ -173,7 +181,7 @@ export const careerService = {
        LEFT JOIN employees e ON e.id = pr.employee_id
        WHERE pr.id = ?
        LIMIT 1`,
-      [id]
+      [id],
     );
 
     const pip = (pipRows as PipRecord[])[0];
@@ -181,7 +189,7 @@ export const careerService = {
 
     const [checkRows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM pip_checkpoint WHERE pip_id = ? ORDER BY checkpoint_date ASC`,
-      [id]
+      [id],
     );
 
     return { ...pip, checkpoints: checkRows as PipCheckpoint[] };
@@ -208,7 +216,7 @@ export const careerService = {
         input.end_date,
         input.reason,
         goalsJson,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -218,7 +226,7 @@ export const careerService = {
        FROM pip_record pr
        LEFT JOIN employees e ON e.id = pr.employee_id
        WHERE pr.id = LAST_INSERT_ID()
-       LIMIT 1`
+       LIMIT 1`,
     );
     return (rows as PipRecord[])[0];
   },
@@ -230,13 +238,14 @@ export const careerService = {
       outcome?: "improved" | "not_improved" | "resigned" | "terminated" | null;
       review_notes?: string | null;
       closed_by?: string | null;
-    }
+    },
   ): Promise<PipRecord> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM pip_record WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
-    if (!(check as RowDataPacket[]).length) throw new Error("PIP record not found");
+    if (!(check as RowDataPacket[]).length)
+      throw new Error("PIP record not found");
 
     const setClauses: string[] = ["updated_at = NOW()"];
     const params: unknown[] = [];
@@ -265,7 +274,7 @@ export const careerService = {
 
     await db.execute(
       `UPDATE pip_record SET ${setClauses.join(", ")} WHERE id = ?`,
-      params
+      params,
     );
 
     const record = await careerService.getPip(id);
@@ -282,9 +291,10 @@ export const careerService = {
   }): Promise<PipCheckpoint> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM pip_record WHERE id = ? LIMIT 1",
-      [input.pip_id]
+      [input.pip_id],
     );
-    if (!(check as RowDataPacket[]).length) throw new Error("PIP record not found");
+    if (!(check as RowDataPacket[]).length)
+      throw new Error("PIP record not found");
 
     await db.execute(
       `INSERT INTO pip_checkpoint (pip_id, checkpoint_date, rating, notes, recorded_by)
@@ -295,11 +305,11 @@ export const careerService = {
         input.rating,
         input.notes ?? null,
         input.recorded_by ?? null,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM pip_checkpoint WHERE id = LAST_INSERT_ID() LIMIT 1"
+      "SELECT * FROM pip_checkpoint WHERE id = LAST_INSERT_ID() LIMIT 1",
     );
     return (rows as PipCheckpoint[])[0];
   },

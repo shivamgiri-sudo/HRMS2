@@ -66,8 +66,18 @@ export interface UpdatePaymentPayload {
 
 function monthLabelToPeriod(monthLabel: string, finYear: string): string {
   const months: Record<string, string> = {
-    Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-    Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+    Jan: "01",
+    Feb: "02",
+    Mar: "03",
+    Apr: "04",
+    May: "05",
+    Jun: "06",
+    Jul: "07",
+    Aug: "08",
+    Sep: "09",
+    Oct: "10",
+    Nov: "11",
+    Dec: "12",
   };
   const [mon] = monthLabel.split("-");
   const monthNum = months[mon] ?? "01";
@@ -79,7 +89,11 @@ function monthLabelToPeriod(monthLabel: string, finYear: string): string {
 export async function getClientInvoices(filters: PaymentFilters): Promise<{
   invoices: ClientInvoice[];
   total: number;
-  summary: { totalInvoiced: number; totalReceived: number; totalPending: number };
+  summary: {
+    totalInvoiced: number;
+    totalReceived: number;
+    totalPending: number;
+  };
 }> {
   const page = filters.page ?? 1;
   const limit = filters.limit ?? 50;
@@ -105,7 +119,9 @@ export async function getClientInvoices(filters: PaymentFilters): Promise<{
     params.push(filters.branchName);
   }
 
-  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const whereClause = conditions.length
+    ? `WHERE ${conditions.join(" AND ")}`
+    : "";
 
   const invoices = await billQuery<RowDataPacket>(
     `SELECT
@@ -121,12 +137,12 @@ export async function getClientInvoices(filters: PaymentFilters): Promise<{
      ${whereClause}
      ORDER BY i.id DESC
      LIMIT ${limit} OFFSET ${offset}`,
-    params
+    params,
   );
 
   const [countRow] = await billQuery<RowDataPacket>(
     `SELECT COUNT(*) AS total FROM tbl_invoice i ${whereClause}`,
-    params
+    params,
   );
   const total = Number(countRow?.total ?? 0);
 
@@ -138,7 +154,7 @@ export async function getClientInvoices(filters: PaymentFilters): Promise<{
       `SELECT invoice_ref_id, payment_status, amount_received, payment_date, updated_at
        FROM client_invoice_payment_status
        WHERE invoice_ref_id IN (${invoiceIds.map(() => "?").join(",")})`,
-      invoiceIds
+      invoiceIds,
     );
     for (const row of rows) {
       hrmsStatuses.set(row.invoice_ref_id, row);
@@ -156,7 +172,8 @@ export async function getClientInvoices(filters: PaymentFilters): Promise<{
       finance_year: i.finance_year,
       invoice_amount: Number(i.invoice_amount),
       db_bill_status: i.db_bill_status === "Y" ? "paid" : "pending",
-      hrms_status: hrms?.payment_status ?? (i.db_bill_status === "Y" ? "paid" : "pending"),
+      hrms_status:
+        hrms?.payment_status ?? (i.db_bill_status === "Y" ? "paid" : "pending"),
       amount_received: Number(hrms?.amount_received ?? 0),
       payment_date: hrms?.payment_date ?? null,
       last_updated: hrms?.updated_at ?? null,
@@ -180,7 +197,7 @@ export async function getClientInvoices(filters: PaymentFilters): Promise<{
 export async function getClientPaymentTrends(
   clientName?: string,
   branchName?: string,
-  months = 12
+  months = 12,
 ): Promise<PaymentTrend[]> {
   const conditions: string[] = [];
   const params: (string | number)[] = [];
@@ -194,7 +211,9 @@ export async function getClientPaymentTrends(
     params.push(branchName);
   }
 
-  const whereClause = conditions.length ? `AND ${conditions.join(" AND ")}` : "";
+  const whereClause = conditions.length
+    ? `AND ${conditions.join(" AND ")}`
+    : "";
 
   const trends = await billQuery<RowDataPacket>(
     `SELECT
@@ -209,7 +228,7 @@ export async function getClientPaymentTrends(
      ORDER BY i.finance_year DESC,
        FIELD(i.month, 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar') DESC
      LIMIT ?`,
-    [...params, months]
+    [...params, months],
   );
 
   return trends.map((t) => {
@@ -220,20 +239,21 @@ export async function getClientPaymentTrends(
       invoiced,
       received,
       pending: invoiced - received,
-      collection_rate: invoiced > 0 ? Math.round((received / invoiced) * 100) : 0,
+      collection_rate:
+        invoiced > 0 ? Math.round((received / invoiced) * 100) : 0,
     };
   });
 }
 
 export async function updateInvoicePayment(
   payload: UpdatePaymentPayload,
-  userId: string
+  userId: string,
 ): Promise<{ success: boolean; id: string }> {
   const id = randomUUID();
 
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM client_invoice_payment_status WHERE invoice_ref_id = ?`,
-    [payload.invoice_ref_id]
+    [payload.invoice_ref_id],
   );
 
   if (existing.length > 0) {
@@ -256,7 +276,7 @@ export async function updateInvoicePayment(
         payload.remarks ?? null,
         userId,
         payload.invoice_ref_id,
-      ]
+      ],
     );
 
     if (payload.amount_received > 0) {
@@ -274,7 +294,7 @@ export async function updateInvoicePayment(
           payload.transaction_ref ?? null,
           payload.remarks ?? null,
           userId,
-        ]
+        ],
       );
     }
 
@@ -303,7 +323,7 @@ export async function updateInvoicePayment(
       payload.transaction_ref ?? null,
       payload.remarks ?? null,
       userId,
-    ]
+    ],
   );
 
   if (payload.amount_received > 0) {
@@ -321,7 +341,7 @@ export async function updateInvoicePayment(
         payload.transaction_ref ?? null,
         payload.remarks ?? null,
         userId,
-      ]
+      ],
     );
   }
 
@@ -337,7 +357,7 @@ export async function getPaymentHistory(invoiceRefId: number): Promise<any[]> {
        SELECT id FROM client_invoice_payment_status WHERE invoice_ref_id = ?
      )
      ORDER BY l.recorded_at DESC`,
-    [invoiceRefId]
+    [invoiceRefId],
   );
   return logs;
 }
@@ -345,7 +365,7 @@ export async function getPaymentHistory(invoiceRefId: number): Promise<any[]> {
 export async function getSeatRatesFromDbBill(
   financeYear: string,
   month: string,
-  branchName?: string
+  branchName?: string,
 ): Promise<SeatRateInfo[]> {
   const conditions: string[] = ["p.fin_year = ?", "p.month_for = ?"];
   const params: (string | number)[] = [financeYear, month];
@@ -377,7 +397,7 @@ export async function getSeatRatesFromDbBill(
        AND ${conditions.join(" AND ")}
      ORDER BY cm.branch, cm.client, CAST(p.amount AS DECIMAL(14,2)) DESC
      LIMIT 300`,
-    params
+    params,
   );
 
   return rates.map((r) => ({
@@ -394,7 +414,7 @@ export async function getSeatRatesFromDbBill(
 
 export async function getPredictiveRevenue(
   financeYear: string,
-  month: string
+  month: string,
 ): Promise<{
   total_seats: number;
   average_rate: number;
@@ -415,11 +435,13 @@ export async function getPredictiveRevenue(
   const predicted_revenue = rates.reduce((sum, r) => sum + r.monthly_value, 0);
   const average_rate = total_seats > 0 ? predicted_revenue / total_seats : 0;
 
-  const branch_breakdown = Array.from(branchMap.entries()).map(([branch, data]) => ({
-    branch,
-    seats: data.seats,
-    predicted: data.total,
-  }));
+  const branch_breakdown = Array.from(branchMap.entries()).map(
+    ([branch, data]) => ({
+      branch,
+      seats: data.seats,
+      predicted: data.total,
+    }),
+  );
 
   return {
     total_seats,
@@ -429,14 +451,16 @@ export async function getPredictiveRevenue(
   };
 }
 
-export async function getClientSummary(): Promise<Array<{
-  client_name: string;
-  total_invoiced: number;
-  total_received: number;
-  pending: number;
-  invoice_count: number;
-  avg_collection_days: number;
-}>> {
+export async function getClientSummary(): Promise<
+  Array<{
+    client_name: string;
+    total_invoiced: number;
+    total_received: number;
+    pending: number;
+    invoice_count: number;
+    avg_collection_days: number;
+  }>
+> {
   const clients = await billQuery<RowDataPacket>(
     `SELECT
        i.cost_client AS client_name,
@@ -448,7 +472,7 @@ export async function getClientSummary(): Promise<Array<{
        AND i.cost_client IS NOT NULL AND i.cost_client != ''
      GROUP BY i.cost_client
      ORDER BY total_invoiced DESC
-     LIMIT 50`
+     LIMIT 50`,
   );
 
   return clients.map((c) => {

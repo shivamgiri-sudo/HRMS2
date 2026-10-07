@@ -28,25 +28,39 @@ const OPENING_SUCCESS_PCT_METRIC_ID = "dbf09fd6-ac4d-4013-9f54-9994fb405cb5";
 const CREATED_BY = "demo-super-admin-id";
 
 const targets = [
-  { label: "GNC", processId: "05073ef4-67ba-11f1-adb1-00155d0ab410", sourceId: "921e8cdc-aef7-4b2e-9b65-d182cadc3bd3" },
-  { label: "Neemans", processId: "05150ba3-67ba-11f1-adb1-00155d0ab410", sourceId: "779df2c4-84e5-4bb6-9a69-e275a63fe4c1" },
+  {
+    label: "GNC",
+    processId: "05073ef4-67ba-11f1-adb1-00155d0ab410",
+    sourceId: "921e8cdc-aef7-4b2e-9b65-d182cadc3bd3",
+  },
+  {
+    label: "Neemans",
+    processId: "05150ba3-67ba-11f1-adb1-00155d0ab410",
+    sourceId: "779df2c4-84e5-4bb6-9a69-e275a63fe4c1",
+  },
 ];
 
 async function main() {
   for (const t of targets) {
-    const def = await saveDefinition({
-      metric_id: OPENING_SUCCESS_PCT_METRIC_ID,
-      grain: "process",
-      process_id: t.processId,
-      data_source_id: t.sourceId,
-      formula_expression: "PCT(opening_success, opening_scored)",
-      aggregation_method: "average",
-      scoring_type: "raw",
-      target_source: "none",
-      created_by: CREATED_BY,
-    } as never, CREATED_BY);
+    const def = await saveDefinition(
+      {
+        metric_id: OPENING_SUCCESS_PCT_METRIC_ID,
+        grain: "process",
+        process_id: t.processId,
+        data_source_id: t.sourceId,
+        formula_expression: "PCT(opening_success, opening_scored)",
+        aggregation_method: "average",
+        scoring_type: "raw",
+        target_source: "none",
+        created_by: CREATED_BY,
+      } as never,
+      CREATED_BY,
+    );
     console.log(t.label, "created:", JSON.stringify(def));
   }
   process.exit(0);
 }
-main().catch((e) => { console.error("FAILED", e); process.exit(1); });
+main().catch((e) => {
+  console.error("FAILED", e);
+  process.exit(1);
+});

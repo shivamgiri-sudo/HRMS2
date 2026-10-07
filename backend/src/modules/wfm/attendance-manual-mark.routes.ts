@@ -1,38 +1,72 @@
-import { Router } from 'express';
-import { randomUUID } from 'crypto';
-import { z } from 'zod';
-import { requireAuth } from '../../middleware/authMiddleware.js';
-import { requireRole } from '../../middleware/requireRole.js';
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
+import { Router } from "express";
+import { randomUUID } from "crypto";
+import { z } from "zod";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 const router = Router();
 router.use(requireAuth);
 
 const manualMarkSchema = z.object({
-  employee_id:       z.string().uuid(),
-  attendance_date:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD'),
-  attendance_status: z.enum(['present', 'half_day', 'absent', 'leave_approved', 'holiday', 'week_off']),
-  override_reason:   z.string().min(5).max(500),
-  clock_in_time:     z.string().regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/).optional().nullable(),
-  clock_out_time:    z.string().regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/).optional().nullable(),
+  employee_id: z.string().uuid(),
+  attendance_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
+  attendance_status: z.enum([
+    "present",
+    "half_day",
+    "absent",
+    "leave_approved",
+    "holiday",
+    "week_off",
+  ]),
+  override_reason: z.string().min(5).max(500),
+  clock_in_time: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+    .optional()
+    .nullable(),
+  clock_out_time: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+    .optional()
+    .nullable(),
 });
 
 const LWP_MAP: Record<string, number> = {
-  present: 0.0, leave_approved: 0.0, holiday: 0.0, week_off: 0.0,
-  half_day: 0.5, absent: 1.0,
+  present: 0.0,
+  leave_approved: 0.0,
+  holiday: 0.0,
+  week_off: 0.0,
+  half_day: 0.5,
+  absent: 1.0,
 };
 
 router.post(
-  '/',
-  requireRole('payroll_head', 'super_admin', 'admin'),
+  "/",
+  requireRole("payroll_head", "super_admin", "admin"),
   async (req: any, res: any) => {
     const parsed = manualMarkSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ success: false, message: 'Validation error', errors: parsed.error.flatten().fieldErrors });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "Validation error",
+          errors: parsed.error.flatten().fieldErrors,
+        });
     }
 
-    const { employee_id, attendance_date, attendance_status, override_reason, clock_in_time, clock_out_time } = parsed.data;
+    const {
+      employee_id,
+      attendance_date,
+      attendance_status,
+      override_reason,
+      clock_in_time,
+      clock_out_time,
+    } = parsed.data;
     const actorId = (req.authUser as any).id;
     const lwpValue = LWP_MAP[attendance_status] ?? 0;
 
@@ -42,10 +76,17 @@ router.post(
       [employee_id],
     );
     if (!(empRows as any[]).length) {
-      return res.status(404).json({ success: false, message: 'Employee not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found" });
     }
     if (Number((empRows as any[])[0].active_status) !== 1) {
-      return res.status(409).json({ success: false, message: 'Cannot mark attendance for an inactive (exited) employee' });
+      return res
+        .status(409)
+        .json({
+          success: false,
+          message: "Cannot mark attendance for an inactive (exited) employee",
+        });
     }
 
     // Capture old status for audit
@@ -85,23 +126,28 @@ router.post(
          is_locked         = 1,
          processed_at      = NOW()`,
       [
-        recordId, employee_id, attendance_date,
-        attendance_status, lwpValue,
-        clock_in_time ?? null, clock_out_time ?? null,
-        actorId, override_reason,
+        recordId,
+        employee_id,
+        attendance_date,
+        attendance_status,
+        lwpValue,
+        clock_in_time ?? null,
+        clock_out_time ?? null,
+        actorId,
+        override_reason,
         actorId,
       ],
     );
 
     // Audit log
     try {
-      const { writeAuditLog } = await import('../../shared/auditLog.js');
+      const { writeAuditLog } = await import("../../shared/auditLog.js");
       await writeAuditLog({
         actor_user_id: actorId,
-        actor_role: (req.authUser as any).role ?? 'unknown',
-        action_type: 'MANUAL_ATTENDANCE_MARK',
-        module_key: 'attendance',
-        entity_type: 'attendance_daily_record',
+        actor_role: (req.authUser as any).role ?? "unknown",
+        action_type: "MANUAL_ATTENDANCE_MARK",
+        module_key: "attendance",
+        entity_type: "attendance_daily_record",
         entity_id: recordId,
         employee_id,
         metadata: {

@@ -1,9 +1,16 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db as pool } from "../../db/mysql.js";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { canViewEmployee, resolveUserBusinessScope, buildEmployeeScopeCondition } from "../../shared/enterpriseScope.js";
+import {
+  canViewEmployee,
+  resolveUserBusinessScope,
+  buildEmployeeScopeCondition,
+} from "../../shared/enterpriseScope.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 
 export const employeeReactivationRouter = Router();
@@ -50,33 +57,38 @@ type ReactivationRow = {
 // ── GET /reactivation/pending ─────────────────────────────────────────────────
 // Returns all requests pending action for the current user's role
 
-employeeReactivationRouter.get("/reactivation/pending", async (req: AuthenticatedRequest, res) => {
-  try {
-    const role = req.authUser?.role ?? "";
-    const userId = req.authUser?.id;
-    const isHR = ["hr", "admin", "super_admin"].includes(role);
-    const isBranchHead = role === "branch_head";
+employeeReactivationRouter.get(
+  "/reactivation/pending",
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const role = req.authUser?.role ?? "";
+      const userId = req.authUser?.id;
+      const isHR = ["hr", "admin", "super_admin"].includes(role);
+      const isBranchHead = role === "branch_head";
 
-    if (!isHR && !isBranchHead) {
-      return res.json({ success: true, data: [] });
-    }
+      if (!isHR && !isBranchHead) {
+        return res.json({ success: true, data: [] });
+      }
 
-    // branch_head previously saw every pending reactivation request company-wide — this
-    // handler's own prior comment admitted it ("branch heads see all for now"). Scoped via
-    // the same employee-scope mechanism (shared/enterpriseScope.ts) used across the rest of
-    // this delta-audit remediation (delta-audit 2026-08-14, P1). hr/admin/super_admin stay
-    // unrestricted (buildEmployeeScopeCondition's own admin/hr/super_admin/ceo bypass).
-    let scopeCondition: { sql: string; params: unknown[] } = { sql: "1=1", params: [] };
-    if (isBranchHead && !isHR) {
-      const scope = await resolveUserBusinessScope(userId!);
-      scopeCondition = buildEmployeeScopeCondition(scope, {
-        employeeId: "e.id",
-        branchId: "e.branch_id",
-        processId: "e.process_id",
-      });
-    }
+      // branch_head previously saw every pending reactivation request company-wide — this
+      // handler's own prior comment admitted it ("branch heads see all for now"). Scoped via
+      // the same employee-scope mechanism (shared/enterpriseScope.ts) used across the rest of
+      // this delta-audit remediation (delta-audit 2026-08-14, P1). hr/admin/super_admin stay
+      // unrestricted (buildEmployeeScopeCondition's own admin/hr/super_admin/ceo bypass).
+      let scopeCondition: { sql: string; params: unknown[] } = {
+        sql: "1=1",
+        params: [],
+      };
+      if (isBranchHead && !isHR) {
+        const scope = await resolveUserBusinessScope(userId!);
+        scopeCondition = buildEmployeeScopeCondition(scope, {
+          employeeId: "e.id",
+          branchId: "e.branch_id",
+          processId: "e.process_id",
+        });
+      }
 
-    const query = `
+      const query = `
       SELECT
         r.*,
         e.employee_code,
@@ -88,46 +100,64 @@ employeeReactivationRouter.get("/reactivation/pending", async (req: Authenticate
       ORDER BY r.created_at DESC
     `;
 
-    const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(query, scopeCondition.params);
+      const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(
+        query,
+        scopeCondition.params,
+      );
 
-    res.json({ success: true, data: rows });
-  } catch (err: any) {
-    console.error("[Reactivation] Failed to fetch pending:", err);
-    res.status(500).json({ success: false, message: err.message ?? "Failed to load pending requests" });
-  }
-});
+      res.json({ success: true, data: rows });
+    } catch (err: any) {
+      console.error("[Reactivation] Failed to fetch pending:", err);
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: err.message ?? "Failed to load pending requests",
+        });
+    }
+  },
+);
 
 // ── GET /reactivation/all ─────────────────────────────────────────────────────
 // Returns all requests with pagination and optional status filter
 
-employeeReactivationRouter.get("/reactivation/all", async (req: AuthenticatedRequest, res) => {
-  try {
-    const role = req.authUser?.role ?? "";
-    const isHR = ["hr", "admin", "super_admin"].includes(role);
-    const isPayrollHead = role === "payroll_head";
+employeeReactivationRouter.get(
+  "/reactivation/all",
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const role = req.authUser?.role ?? "";
+      const isHR = ["hr", "admin", "super_admin"].includes(role);
+      const isPayrollHead = role === "payroll_head";
 
-    if (!isHR && !isPayrollHead) {
-      return res.status(403).json({ success: false, message: "Unauthorized" });
-    }
+      if (!isHR && !isPayrollHead) {
+        return res
+          .status(403)
+          .json({ success: false, message: "Unauthorized" });
+      }
 
-    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-    const limit = Math.max(1, Math.min(100, parseInt(String(req.query.limit ?? "20"), 10)));
-    const offset = (page - 1) * limit;
-    const statusFilter = req.query.status ? String(req.query.status) : "";
+      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
+      const limit = Math.max(
+        1,
+        Math.min(100, parseInt(String(req.query.limit ?? "20"), 10)),
+      );
+      const offset = (page - 1) * limit;
+      const statusFilter = req.query.status ? String(req.query.status) : "";
 
-    let whereClause = "";
-    const params: any[] = [];
+      let whereClause = "";
+      const params: any[] = [];
 
-    if (statusFilter) {
-      whereClause = "WHERE r.status = ?";
-      params.push(statusFilter);
-    }
+      if (statusFilter) {
+        whereClause = "WHERE r.status = ?";
+        params.push(statusFilter);
+      }
 
-    const countQuery = `SELECT COUNT(*) as total FROM employee_reactivation_requests r ${whereClause}`;
-    const [countRows] = await pool.execute<(RowDataPacket & { total: number })[]>(countQuery, params);
-    const total = countRows[0]?.total ?? 0;
+      const countQuery = `SELECT COUNT(*) as total FROM employee_reactivation_requests r ${whereClause}`;
+      const [countRows] = await pool.execute<
+        (RowDataPacket & { total: number })[]
+      >(countQuery, params);
+      const total = countRows[0]?.total ?? 0;
 
-    const dataQuery = `
+      const dataQuery = `
       SELECT
         r.*,
         e.employee_code,
@@ -139,14 +169,23 @@ employeeReactivationRouter.get("/reactivation/all", async (req: AuthenticatedReq
       LIMIT ${limit} OFFSET ${offset}
     `;
 
-    const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(dataQuery, params);
+      const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(
+        dataQuery,
+        params,
+      );
 
-    res.json({ success: true, data: rows, total, page, limit });
-  } catch (err: any) {
-    console.error("[Reactivation] Failed to fetch all:", err);
-    res.status(500).json({ success: false, message: err.message ?? "Failed to load reactivations" });
-  }
-});
+      res.json({ success: true, data: rows, total, page, limit });
+    } catch (err: any) {
+      console.error("[Reactivation] Failed to fetch all:", err);
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: err.message ?? "Failed to load reactivations",
+        });
+    }
+  },
+);
 
 // ── GET /reactivation/:id ─────────────────────────────────────────────────────
 // Returns single request detail
@@ -159,10 +198,10 @@ employeeReactivationRouter.get(
   // 2026-08-14, P0: missing auth, not just missing scope).
   requireRole("hr", "admin", "super_admin", "branch_head"),
   async (req: AuthenticatedRequest, res) => {
-  try {
-    const { id } = req.params;
+    try {
+      const { id } = req.params;
 
-    const query = `
+      const query = `
       SELECT
         r.*,
         e.employee_code,
@@ -197,25 +236,42 @@ employeeReactivationRouter.get(
       WHERE r.id = ?
     `;
 
-    const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(query, [id]);
+      const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(
+        query,
+        [id],
+      );
 
-    if (!rows.length) {
-      return res.status(404).json({ success: false, message: "Request not found" });
+      if (!rows.length) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Request not found" });
+      }
+
+      // branch_head previously had no scope check here either — combined with the missing
+      // role gate above, any branch_head (or, before this fix, any authenticated user at all)
+      // could read a reactivation request for an employee outside their own branch.
+      if (
+        !(await canViewEmployee(req.authUser!.id, String(rows[0].employee_id)))
+      ) {
+        return res
+          .status(403)
+          .json({
+            success: false,
+            message: "This reactivation request is not in your assigned scope",
+          });
+      }
+
+      res.json({ success: true, data: rows[0] });
+    } catch (err: any) {
+      console.error("[Reactivation] Failed to fetch detail:", err);
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: err.message ?? "Failed to load request",
+        });
     }
-
-    // branch_head previously had no scope check here either — combined with the missing
-    // role gate above, any branch_head (or, before this fix, any authenticated user at all)
-    // could read a reactivation request for an employee outside their own branch.
-    if (!(await canViewEmployee(req.authUser!.id, String(rows[0].employee_id)))) {
-      return res.status(403).json({ success: false, message: "This reactivation request is not in your assigned scope" });
-    }
-
-    res.json({ success: true, data: rows[0] });
-  } catch (err: any) {
-    console.error("[Reactivation] Failed to fetch detail:", err);
-    res.status(500).json({ success: false, message: err.message ?? "Failed to load request" });
-  }
-  }
+  },
 );
 
 // ── POST /reactivation/initiate ───────────────────────────────────────────────
@@ -237,43 +293,65 @@ employeeReactivationRouter.post(
       const initiatedBy = req.authUser!.id;
 
       // Check employee exists and is inactive
-      const [empRows] = await pool.execute<(RowDataPacket & { employment_status: string; date_of_exit: string | null; cost_centre_id: string | null })[]>(
+      const [empRows] = await pool.execute<
+        (RowDataPacket & {
+          employment_status: string;
+          date_of_exit: string | null;
+          cost_centre_id: string | null;
+        })[]
+      >(
         "SELECT employment_status, date_of_exit, cost_centre_id FROM employees WHERE id = ?",
-        [body.employee_id]
+        [body.employee_id],
       );
 
       if (!empRows.length) {
-        return res.status(404).json({ success: false, message: "Employee not found" });
+        return res
+          .status(404)
+          .json({ success: false, message: "Employee not found" });
       }
 
       const emp = empRows[0];
 
       if (emp.employment_status === "Active") {
-        return res.status(400).json({ success: false, message: "Employee is already active" });
+        return res
+          .status(400)
+          .json({ success: false, message: "Employee is already active" });
       }
 
       // Check if there's already a pending request
       const [existingRows] = await pool.execute<RowDataPacket[]>(
         "SELECT id FROM employee_reactivation_requests WHERE employee_id = ? AND status IN ('pending', 'branch_head_approved')",
-        [body.employee_id]
+        [body.employee_id],
       );
 
       if (existingRows.length > 0) {
-        return res.status(400).json({ success: false, message: "A pending reactivation request already exists for this employee" });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "A pending reactivation request already exists for this employee",
+          });
       }
 
       // Calculate gap days
       const exitDate = emp.date_of_exit ? new Date(emp.date_of_exit) : null;
       const proposedDate = new Date(body.proposed_joining_date);
-      const gapDays = exitDate ? Math.floor((proposedDate.getTime() - exitDate.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+      const gapDays = exitDate
+        ? Math.floor(
+            (proposedDate.getTime() - exitDate.getTime()) /
+              (1000 * 60 * 60 * 24),
+          )
+        : 0;
 
       // Reactivation only allowed within 30 days
       // Beyond 30 days = fresh onboarding through ATS required
       if (gapDays > 30) {
         return res.status(400).json({
           success: false,
-          message: "Gap exceeds 30 days. Employee must complete fresh onboarding through ATS with new documentation and background verification.",
-          reason: "REQUIRES_FRESH_ONBOARDING"
+          message:
+            "Gap exceeds 30 days. Employee must complete fresh onboarding through ATS with new documentation and background verification.",
+          reason: "REQUIRES_FRESH_ONBOARDING",
         });
       }
 
@@ -281,9 +359,11 @@ employeeReactivationRouter.post(
       const sameCostCentre = 1;
 
       // Check if F&F was already paid (placeholder logic - adjust based on your exit schema)
-      const [ffRows] = await pool.execute<(RowDataPacket & { ff_paid: number })[]>(
+      const [ffRows] = await pool.execute<
+        (RowDataPacket & { ff_paid: number })[]
+      >(
         "SELECT IF(ff_paid_at IS NOT NULL, 1, 0) as ff_paid FROM full_final_calculation WHERE employee_id = ? ORDER BY created_at DESC LIMIT 1",
-        [body.employee_id]
+        [body.employee_id],
       );
       const ffAlreadyPaid = ffRows.length > 0 ? ffRows[0].ff_paid : 0;
 
@@ -307,15 +387,32 @@ employeeReactivationRouter.post(
         initiatedBy,
       ]);
 
-      res.status(201).json({ success: true, id: result.insertId, message: "Reactivation request created successfully" });
+      res
+        .status(201)
+        .json({
+          success: true,
+          id: result.insertId,
+          message: "Reactivation request created successfully",
+        });
     } catch (err: any) {
       if (err.name === "ZodError") {
-        return res.status(400).json({ success: false, message: "Invalid input", errors: err.errors });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "Invalid input",
+            errors: err.errors,
+          });
       }
       console.error("[Reactivation] Failed to initiate:", err);
-      res.status(500).json({ success: false, message: err.message ?? "Failed to create request" });
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: err.message ?? "Failed to create request",
+        });
     }
-  }
+  },
 );
 
 // ── POST /reactivation/:id/branch-action ──────────────────────────────────────
@@ -338,11 +435,13 @@ employeeReactivationRouter.post(
       // Fetch current request
       const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(
         "SELECT * FROM employee_reactivation_requests WHERE id = ?",
-        [id]
+        [id],
       );
 
       if (!rows.length) {
-        return res.status(404).json({ success: false, message: "Request not found" });
+        return res
+          .status(404)
+          .json({ success: false, message: "Request not found" });
       }
 
       const request = rows[0];
@@ -352,31 +451,56 @@ employeeReactivationRouter.post(
       // 2026-08-14, P1). hr/admin/super_admin stay unrestricted, matching every other role
       // in this module and canViewEmployee's own admin/hr/super_admin/ceo bypass.
       if (!(await canViewEmployee(actionedBy, String(request.employee_id)))) {
-        return res.status(403).json({ success: false, message: "This reactivation request is not in your assigned scope" });
+        return res
+          .status(403)
+          .json({
+            success: false,
+            message: "This reactivation request is not in your assigned scope",
+          });
       }
 
       if (request.status !== "pending") {
-        return res.status(400).json({ success: false, message: "Request is not pending branch head action" });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "Request is not pending branch head action",
+          });
       }
 
-      const newStatus = body.action === "approved" ? "branch_head_approved" : "rejected";
+      const newStatus =
+        body.action === "approved" ? "branch_head_approved" : "rejected";
 
       await pool.execute(
         `UPDATE employee_reactivation_requests
          SET status = ?, branch_head_actioned_by = ?, branch_head_actioned_at = NOW(), branch_head_remarks = ?
          WHERE id = ?`,
-        [newStatus, actionedBy, body.remarks.trim(), id]
+        [newStatus, actionedBy, body.remarks.trim(), id],
       );
 
-      res.json({ success: true, message: `Request ${body.action} by branch head` });
+      res.json({
+        success: true,
+        message: `Request ${body.action} by branch head`,
+      });
     } catch (err: any) {
       if (err.name === "ZodError") {
-        return res.status(400).json({ success: false, message: "Invalid input", errors: err.errors });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "Invalid input",
+            errors: err.errors,
+          });
       }
       console.error("[Reactivation] Branch action failed:", err);
-      res.status(500).json({ success: false, message: err.message ?? "Failed to process action" });
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: err.message ?? "Failed to process action",
+        });
     }
-  }
+  },
 );
 
 // ── POST /reactivation/:id/hr-action ──────────────────────────────────────────
@@ -403,19 +527,26 @@ employeeReactivationRouter.post(
         // Fetch request
         const [rows] = await conn.execute<(ReactivationRow & RowDataPacket)[]>(
           "SELECT * FROM employee_reactivation_requests WHERE id = ? FOR UPDATE",
-          [id]
+          [id],
         );
 
         if (!rows.length) {
           await conn.rollback();
-          return res.status(404).json({ success: false, message: "Request not found" });
+          return res
+            .status(404)
+            .json({ success: false, message: "Request not found" });
         }
 
         const request = rows[0];
 
         if (request.status !== "branch_head_approved") {
           await conn.rollback();
-          return res.status(400).json({ success: false, message: "Request is not pending HR final action" });
+          return res
+            .status(400)
+            .json({
+              success: false,
+              message: "Request is not pending HR final action",
+            });
         }
 
         const newStatus = body.action === "confirmed" ? "approved" : "rejected";
@@ -424,7 +555,7 @@ employeeReactivationRouter.post(
           `UPDATE employee_reactivation_requests
            SET status = ?, hr_final_actioned_by = ?, hr_final_actioned_at = NOW(), hr_final_remarks = ?
            WHERE id = ?`,
-          [newStatus, actionedBy, body.remarks.trim(), id]
+          [newStatus, actionedBy, body.remarks.trim(), id],
         );
 
         // If confirmed, reactivate the employee (same employee code, same placement)
@@ -436,7 +567,7 @@ employeeReactivationRouter.post(
                  date_of_exit = NULL,
                  date_of_joining = ?
              WHERE id = ?`,
-            [request.proposed_joining_date, request.employee_id]
+            [request.proposed_joining_date, request.employee_id],
           );
         }
 
@@ -444,7 +575,10 @@ employeeReactivationRouter.post(
 
         res.json({
           success: true,
-          message: body.action === "confirmed" ? "Employee reactivated successfully" : "Request rejected",
+          message:
+            body.action === "confirmed"
+              ? "Employee reactivated successfully"
+              : "Request rejected",
         });
       } catch (err) {
         await conn.rollback();
@@ -454,10 +588,21 @@ employeeReactivationRouter.post(
       }
     } catch (err: any) {
       if (err.name === "ZodError") {
-        return res.status(400).json({ success: false, message: "Invalid input", errors: err.errors });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "Invalid input",
+            errors: err.errors,
+          });
       }
       console.error("[Reactivation] HR action failed:", err);
-      res.status(500).json({ success: false, message: err.message ?? "Failed to process action" });
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: err.message ?? "Failed to process action",
+        });
     }
-  }
+  },
 );

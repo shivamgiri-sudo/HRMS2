@@ -9,7 +9,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -28,7 +33,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -53,20 +58,23 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 export async function ffSettlementRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+  const to = dateParam(filters.to, new Date().toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) BETWEEN ? AND ?");
+  clauses.push(
+    "COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) BETWEEN ? AND ?",
+  );
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("ffc.id > ?"); params.push(options.cursor);
+    clauses.push("ffc.id > ?");
+    params.push(options.cursor);
   }
 
   const base = `    SELECT
@@ -95,24 +103,31 @@ export async function ffSettlementRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 export async function resignationRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   // `eer.id IS NOT NULL` used to sit here, which turned the LEFT JOIN below into an inner
@@ -175,12 +190,22 @@ export async function resignationRegister(
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-    const rows  = await query(sql, params) as Record<string, unknown>[];
-    const nextCursor = (options.mode === "worker" && rows.length > 0)
-      ? (rows[rows.length - 1]._cursor as number) : null;
+    const sql =
+      options.mode === "worker"
+        ? `${base} LIMIT ${options.limit}`
+        : applyPagination(base, options);
+    const rows = (await query(sql, params)) as Record<string, unknown>[];
+    const nextCursor =
+      options.mode === "worker" && rows.length > 0
+        ? (rows[rows.length - 1]._cursor as number)
+        : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
-    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+    return {
+      rows: out,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: total > out.length,
+      nextCursor,
+    };
   } catch (err: unknown) {
     // Was: return an empty result on a missing table or column. For an exit report that
     // reads as "nobody left and nothing is owed", which is the reassuring answer and so the
@@ -197,10 +222,10 @@ export async function resignationRegister(
 export async function fnfPendingRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   // employment_status is stored in mixed case: 28,200 rows 'Resigned' against 2,118
@@ -251,12 +276,22 @@ export async function fnfPendingRegister(
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-    const rows  = await query(sql, params) as Record<string, unknown>[];
-    const nextCursor = (options.mode === "worker" && rows.length > 0)
-      ? (rows[rows.length - 1]._cursor as number) : null;
+    const sql =
+      options.mode === "worker"
+        ? `${base} LIMIT ${options.limit}`
+        : applyPagination(base, options);
+    const rows = (await query(sql, params)) as Record<string, unknown>[];
+    const nextCursor =
+      options.mode === "worker" && rows.length > 0
+        ? (rows[rows.length - 1]._cursor as number)
+        : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
-    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+    return {
+      rows: out,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: total > out.length,
+      nextCursor,
+    };
   } catch (err: unknown) {
     // Was: return an empty result on a missing table or column. For an exit report that
     // reads as "nobody left and nothing is owed", which is the reassuring answer and so the
@@ -274,14 +309,14 @@ export async function fnfPendingRegister(
 export async function fnfSettlementRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.employment_status IN ('Exited','Separated','Resigned')");
@@ -322,11 +357,18 @@ export async function fnfSettlementRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -342,10 +384,10 @@ export async function fnfSettlementRegister(
 export async function clearanceStatusRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.employment_status IN ('resigned','separated','exited')");
@@ -386,11 +428,18 @@ export async function clearanceStatusRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -399,11 +448,11 @@ export async function clearanceStatusRegister(
 export async function monthlyAttritionSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   // Joiners and exits are counted in two passes and unioned, because they are different
   // employees: someone who joined in July and someone who left in July share a month but
@@ -418,7 +467,9 @@ export async function monthlyAttritionSummary(
   const joinParams: unknown[] = [];
   appendScopeConditions(scope, joinClauses, joinParams);
   appendFilterConditions(filters, joinClauses, joinParams);
-  joinClauses.push("e.date_of_joining >= ? AND e.date_of_joining < DATE_ADD(?, INTERVAL 1 DAY)");
+  joinClauses.push(
+    "e.date_of_joining >= ? AND e.date_of_joining < DATE_ADD(?, INTERVAL 1 DAY)",
+  );
   joinParams.push(from, to);
 
   const exitClauses: string[] = ["e.id IS NOT NULL"];
@@ -427,7 +478,7 @@ export async function monthlyAttritionSummary(
   appendFilterConditions(filters, exitClauses, exitParams);
   exitClauses.push(
     "COALESCE(e.date_of_exit, e.resignation_date) >= ? " +
-    "AND COALESCE(e.date_of_exit, e.resignation_date) < DATE_ADD(?, INTERVAL 1 DAY)",
+      "AND COALESCE(e.date_of_exit, e.resignation_date) < DATE_ADD(?, INTERVAL 1 DAY)",
   );
   exitParams.push(from, to);
 
@@ -471,9 +522,13 @@ export async function monthlyAttritionSummary(
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql   = applyPagination(base, options);
-    const rows  = await query(sql, params) as Record<string, unknown>[];
-    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+    const sql = applyPagination(base, options);
+    const rows = (await query(sql, params)) as Record<string, unknown>[];
+    return {
+      rows,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: total > rows.length,
+    };
   } catch (err: unknown) {
     // Was: return an empty result on a missing table or column. For an exit report that
     // reads as "nobody left and nothing is owed", which is the reassuring answer and so the
@@ -490,10 +545,10 @@ export async function monthlyAttritionSummary(
 export async function exitReasonAnalysis(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("COALESCE(e.date_of_exit, e.resignation_date) IS NOT NULL");
@@ -516,9 +571,13 @@ export async function exitReasonAnalysis(
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql   = applyPagination(base, options);
-    const rows  = await query(sql, params) as Record<string, unknown>[];
-    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+    const sql = applyPagination(base, options);
+    const rows = (await query(sql, params)) as Record<string, unknown>[];
+    return {
+      rows,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: total > rows.length,
+    };
   } catch (err: unknown) {
     // Was: return an empty result on a missing table or column. For an exit report that
     // reads as "nobody left and nothing is owed", which is the reassuring answer and so the
@@ -535,10 +594,10 @@ export async function exitReasonAnalysis(
 export async function tenureDistribution(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -567,8 +626,12 @@ export async function tenureDistribution(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -577,14 +640,14 @@ export async function tenureDistribution(
 export async function earlyAttritionReport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.date_of_exit IS NOT NULL");
@@ -623,9 +686,16 @@ export async function earlyAttritionReport(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }

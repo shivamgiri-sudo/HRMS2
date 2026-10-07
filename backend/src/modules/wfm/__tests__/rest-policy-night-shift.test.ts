@@ -27,13 +27,19 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const { execute, getConnection } = vi.hoisted(() => {
   const lockConn = { execute: vi.fn(), query: vi.fn(), release: vi.fn() };
-  return { execute: vi.fn(), getConnection: vi.fn().mockResolvedValue(lockConn) };
+  return {
+    execute: vi.fn(),
+    getConnection: vi.fn().mockResolvedValue(lockConn),
+  };
 });
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
-const { findAdjacentShifts, restGapMinutes, shiftEndDate, validateMinimumRest } = await import(
-  "../rest-policy.service.js"
-);
+const {
+  findAdjacentShifts,
+  restGapMinutes,
+  shiftEndDate,
+  validateMinimumRest,
+} = await import("../rest-policy.service.js");
 
 const policyRow = (over: Record<string, unknown> = {}) => ({
   id: "pol-1",
@@ -75,7 +81,16 @@ describe("the guard reads times from the shift template when the snapshot is NUL
     execute.mockImplementation(async (rawSql?: unknown) => {
       const sql = String(rawSql ?? "");
       if (sql.includes("roster_date < ?")) {
-        return [[{ roster_date: "2026-08-16", start_time: "13:00:00", end_time: "22:00:00" }], []];
+        return [
+          [
+            {
+              roster_date: "2026-08-16",
+              start_time: "13:00:00",
+              end_time: "22:00:00",
+            },
+          ],
+          [],
+        ];
       }
       return [[], []];
     });
@@ -95,7 +110,16 @@ describe("the guard reads times from the shift template when the snapshot is NUL
     execute.mockImplementation(async (rawSql?: unknown) => {
       const sql = String(rawSql ?? "");
       if (sql.includes("roster_date < ?")) {
-        return [[{ roster_date: "2026-08-16", start_time: "21:00:00", end_time: "06:00:00" }], []];
+        return [
+          [
+            {
+              roster_date: "2026-08-16",
+              start_time: "21:00:00",
+              end_time: "06:00:00",
+            },
+          ],
+          [],
+        ];
       }
       return [[], []];
     });
@@ -110,17 +134,28 @@ describe("rest after a night shift is now measured, not waved through", () => {
     // Real rest is 06:00 -> 13:00 = 7h. Dating the end on the 16th made it look like 31h.
     execute.mockImplementation(async (rawSql?: unknown) => {
       const sql = String(rawSql ?? "");
-      if (sql.includes("INFORMATION_SCHEMA.TABLES")) return [[{ TABLE_NAME: "wfm_rest_policy" }], []];
-      if (sql.includes("FROM wfm_rest_policy")) return [[policyRow({ minimum_rest_minutes: 660 })], []];
+      if (sql.includes("INFORMATION_SCHEMA.TABLES"))
+        return [[{ TABLE_NAME: "wfm_rest_policy" }], []];
+      if (sql.includes("FROM wfm_rest_policy"))
+        return [[policyRow({ minimum_rest_minutes: 660 })], []];
       if (sql.includes("roster_date < ?")) {
-        return [[{ roster_date: "2026-08-16", start_time: "21:00:00", end_time: "06:00:00" }], []];
+        return [
+          [
+            {
+              roster_date: "2026-08-16",
+              start_time: "21:00:00",
+              end_time: "06:00:00",
+            },
+          ],
+          [],
+        ];
       }
       return [[], []];
     });
 
     const result: any = await validateMinimumRest(
       { employeeId: "emp-1", forDate: "2026-08-17" },
-      { startTime: "13:00", endTime: "22:00" }
+      { startTime: "13:00", endTime: "22:00" },
     );
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("INSUFFICIENT_REST");
@@ -132,15 +167,18 @@ describe("rest after a night shift is now measured, not waved through", () => {
     // Candidate 22:00-07:00 on the 17th ends 07:00 on the 18th; next starts 14:00 that day = 7h.
     execute.mockImplementation(async (rawSql?: unknown) => {
       const sql = String(rawSql ?? "");
-      if (sql.includes("INFORMATION_SCHEMA.TABLES")) return [[{ TABLE_NAME: "wfm_rest_policy" }], []];
-      if (sql.includes("FROM wfm_rest_policy")) return [[policyRow({ minimum_rest_minutes: 660 })], []];
-      if (sql.includes("roster_date > ?")) return [[{ roster_date: "2026-08-18", start_time: "14:00:00" }], []];
+      if (sql.includes("INFORMATION_SCHEMA.TABLES"))
+        return [[{ TABLE_NAME: "wfm_rest_policy" }], []];
+      if (sql.includes("FROM wfm_rest_policy"))
+        return [[policyRow({ minimum_rest_minutes: 660 })], []];
+      if (sql.includes("roster_date > ?"))
+        return [[{ roster_date: "2026-08-18", start_time: "14:00:00" }], []];
       return [[], []];
     });
 
     const result: any = await validateMinimumRest(
       { employeeId: "emp-1", forDate: "2026-08-17" },
-      { startTime: "22:00", endTime: "07:00" }
+      { startTime: "22:00", endTime: "07:00" },
     );
     expect(result.ok).toBe(false);
     expect(result.against).toBe("next");
@@ -151,17 +189,28 @@ describe("rest after a night shift is now measured, not waved through", () => {
     // 21:00-06:00 on the 16th ends 06:00 on the 17th; next starts 17:00 = 11h exactly.
     execute.mockImplementation(async (rawSql?: unknown) => {
       const sql = String(rawSql ?? "");
-      if (sql.includes("INFORMATION_SCHEMA.TABLES")) return [[{ TABLE_NAME: "wfm_rest_policy" }], []];
-      if (sql.includes("FROM wfm_rest_policy")) return [[policyRow({ minimum_rest_minutes: 660 })], []];
+      if (sql.includes("INFORMATION_SCHEMA.TABLES"))
+        return [[{ TABLE_NAME: "wfm_rest_policy" }], []];
+      if (sql.includes("FROM wfm_rest_policy"))
+        return [[policyRow({ minimum_rest_minutes: 660 })], []];
       if (sql.includes("roster_date < ?")) {
-        return [[{ roster_date: "2026-08-16", start_time: "21:00:00", end_time: "06:00:00" }], []];
+        return [
+          [
+            {
+              roster_date: "2026-08-16",
+              start_time: "21:00:00",
+              end_time: "06:00:00",
+            },
+          ],
+          [],
+        ];
       }
       return [[], []];
     });
 
     const result: any = await validateMinimumRest(
       { employeeId: "emp-1", forDate: "2026-08-17" },
-      { startTime: "17:00", endTime: "02:00" }
+      { startTime: "17:00", endTime: "02:00" },
     );
     expect(result.ok).toBe(true);
   });
@@ -169,6 +218,11 @@ describe("rest after a night shift is now measured, not waved through", () => {
 
 describe("restGapMinutes stays a pure function of two instants", () => {
   it("spans a month boundary", () => {
-    expect(restGapMinutes({ date: "2026-08-31", time: "22:00" }, { date: "2026-09-01", time: "06:00" })).toBe(480);
+    expect(
+      restGapMinutes(
+        { date: "2026-08-31", time: "22:00" },
+        { date: "2026-09-01", time: "06:00" },
+      ),
+    ).toBe(480);
   });
 });

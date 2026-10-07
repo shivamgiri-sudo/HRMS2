@@ -31,7 +31,8 @@ export interface CdrSource {
   pattern: "A" | "B";
 }
 
-export type CdrField = "al_pct" | "sl_pct" | "abn_pct" | "repeat_pct" | "acht_sec";
+export type CdrField =
+  "al_pct" | "sl_pct" | "abn_pct" | "repeat_pct" | "acht_sec";
 
 interface CdrDayRow extends RowDataPacket {
   /**
@@ -92,11 +93,22 @@ function metricFromDay(field: CdrField, r: CdrDayRow): number | null {
   const sl_num = Number(r.sl_num) || 0;
   const unique_phones = Number(r.unique_phones) || 0;
   switch (field) {
-    case "al_pct": return offered > 0 ? Math.round((answered * 10000) / offered) / 100 : null;
-    case "sl_pct": return offered > 0 ? Math.round((sl_num * 10000) / offered) / 100 : null;
-    case "abn_pct": return offered > 0 ? Math.round(((offered - answered) * 10000) / offered) / 100 : null;
-    case "repeat_pct": return offered > 0 ? Math.round(((offered - unique_phones) * 10000) / offered) / 100 : null;
-    case "acht_sec": return r.acht == null ? null : Number(r.acht);
+    case "al_pct":
+      return offered > 0
+        ? Math.round((answered * 10000) / offered) / 100
+        : null;
+    case "sl_pct":
+      return offered > 0 ? Math.round((sl_num * 10000) / offered) / 100 : null;
+    case "abn_pct":
+      return offered > 0
+        ? Math.round(((offered - answered) * 10000) / offered) / 100
+        : null;
+    case "repeat_pct":
+      return offered > 0
+        ? Math.round(((offered - unique_phones) * 10000) / offered) / 100
+        : null;
+    case "acht_sec":
+      return r.acht == null ? null : Number(r.acht);
   }
 }
 
@@ -107,8 +119,17 @@ export interface CdrScorecardResult {
 }
 
 /** Level 1: overall value for the window + a monthly trend, for the scorecard card. */
-export async function resolveCdrScorecard(source: CdrSource, field: CdrField, from: string, to: string): Promise<CdrScorecardResult> {
-  const rows = await dialerQuery<CdrDayRow>(buildDayQuery(source), [from, to, ...source.campaigns]);
+export async function resolveCdrScorecard(
+  source: CdrSource,
+  field: CdrField,
+  from: string,
+  to: string,
+): Promise<CdrScorecardResult> {
+  const rows = await dialerQuery<CdrDayRow>(buildDayQuery(source), [
+    from,
+    to,
+    ...source.campaigns,
+  ]);
   if (!rows.length) return { value: null, count: 0, trend: [] };
 
   const totals = rows.reduce(
@@ -117,13 +138,26 @@ export async function resolveCdrScorecard(source: CdrSource, field: CdrField, fr
       acc.answered += Number(r.answered) || 0;
       acc.sl_num += Number(r.sl_num) || 0;
       acc.unique_phones += Number(r.unique_phones) || 0;
-      if (r.acht != null) { acc.achtSum += Number(r.acht) * (Number(r.offered) || 0); acc.achtWeight += Number(r.offered) || 0; }
+      if (r.acht != null) {
+        acc.achtSum += Number(r.acht) * (Number(r.offered) || 0);
+        acc.achtWeight += Number(r.offered) || 0;
+      }
       return acc;
     },
-    { offered: 0, answered: 0, sl_num: 0, unique_phones: 0, achtSum: 0, achtWeight: 0 },
+    {
+      offered: 0,
+      answered: 0,
+      sl_num: 0,
+      unique_phones: 0,
+      achtSum: 0,
+      achtWeight: 0,
+    },
   );
   const overall: CdrDayRow = {
-    date: "", offered: totals.offered, answered: totals.answered, sl_num: totals.sl_num,
+    date: "",
+    offered: totals.offered,
+    answered: totals.answered,
+    sl_num: totals.sl_num,
     unique_phones: totals.unique_phones,
     acht: totals.achtWeight > 0 ? totals.achtSum / totals.achtWeight : null,
   } as CdrDayRow;
@@ -144,15 +178,31 @@ export async function resolveCdrScorecard(source: CdrSource, field: CdrField, fr
           acc.answered += Number(r.answered) || 0;
           acc.sl_num += Number(r.sl_num) || 0;
           acc.unique_phones += Number(r.unique_phones) || 0;
-          if (r.acht != null) { acc.achtSum += Number(r.acht) * (Number(r.offered) || 0); acc.achtWeight += Number(r.offered) || 0; }
+          if (r.acht != null) {
+            acc.achtSum += Number(r.acht) * (Number(r.offered) || 0);
+            acc.achtWeight += Number(r.offered) || 0;
+          }
           return acc;
         },
-        { offered: 0, answered: 0, sl_num: 0, unique_phones: 0, achtSum: 0, achtWeight: 0 },
+        {
+          offered: 0,
+          answered: 0,
+          sl_num: 0,
+          unique_phones: 0,
+          achtSum: 0,
+          achtWeight: 0,
+        },
       );
       const monthRow: CdrDayRow = {
-        date: "", offered: monthTotals.offered, answered: monthTotals.answered, sl_num: monthTotals.sl_num,
+        date: "",
+        offered: monthTotals.offered,
+        answered: monthTotals.answered,
+        sl_num: monthTotals.sl_num,
         unique_phones: monthTotals.unique_phones,
-        acht: monthTotals.achtWeight > 0 ? monthTotals.achtSum / monthTotals.achtWeight : null,
+        acht:
+          monthTotals.achtWeight > 0
+            ? monthTotals.achtSum / monthTotals.achtWeight
+            : null,
       } as CdrDayRow;
       return { period, value: metricFromDay(field, monthRow) };
     });
@@ -199,8 +249,17 @@ export interface CdrAgentBreakdownRow {
 }
 
 /** Level 2: by agent, worst/best ordered by the caller. */
-export async function getCdrAgentBreakdown(source: CdrSource, field: CdrField, from: string, to: string): Promise<CdrAgentBreakdownRow[]> {
-  const rows = await dialerQuery<CdrAgentRow>(buildAgentQuery(source), [from, to, ...source.campaigns]);
+export async function getCdrAgentBreakdown(
+  source: CdrSource,
+  field: CdrField,
+  from: string,
+  to: string,
+): Promise<CdrAgentBreakdownRow[]> {
+  const rows = await dialerQuery<CdrAgentRow>(buildAgentQuery(source), [
+    from,
+    to,
+    ...source.campaigns,
+  ]);
   return rows.map((r) => ({
     agentId: r.AgentId,
     agentName: r.AgentName || r.AgentId,
@@ -219,7 +278,12 @@ interface CdrCallRow extends RowDataPacket {
 }
 
 /** Level 3 (leaf): raw calls for one agent. */
-export async function getCdrAgentCalls(source: CdrSource, agentId: string, from: string, to: string): Promise<CdrCallRow[]> {
+export async function getCdrAgentCalls(
+  source: CdrSource,
+  agentId: string,
+  from: string,
+  to: string,
+): Promise<CdrCallRow[]> {
   const placeholders = source.campaigns.map(() => "?").join(",");
   const rows = await dialerQuery<CdrCallRow>(
     `SELECT id, CallDate, Disposition, DisconnBy, CallDurationSecond, QueueDuration

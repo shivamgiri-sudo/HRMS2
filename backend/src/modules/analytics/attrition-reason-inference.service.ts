@@ -6,22 +6,22 @@
  *          we derive it from quality trends, attendance, PIP status, manager churn, etc.
  */
 
-import { Request, Response } from 'express';
-import type { RowDataPacket } from 'mysql2';
-import { db as pool } from '../../db/mysql.js';
+import { Request, Response } from "express";
+import type { RowDataPacket } from "mysql2";
+import { db as pool } from "../../db/mysql.js";
 
 type ReasonCode =
-  | 'PERFORMANCE_EXIT'
-  | 'BURNOUT'
-  | 'MANAGER_DRIVEN'
-  | 'BETTER_OFFER'
-  | 'EARLY_ATTRITION'
-  | 'TRAINING_DIFFICULTY'
-  | 'SALARY_DISSATISFACTION'
-  | 'WORK_LIFE'
-  | 'UNKNOWN';
+  | "PERFORMANCE_EXIT"
+  | "BURNOUT"
+  | "MANAGER_DRIVEN"
+  | "BETTER_OFFER"
+  | "EARLY_ATTRITION"
+  | "TRAINING_DIFFICULTY"
+  | "SALARY_DISSATISFACTION"
+  | "WORK_LIFE"
+  | "UNKNOWN";
 
-type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW';
+type ConfidenceLevel = "HIGH" | "MEDIUM" | "LOW";
 
 interface InferenceResult {
   employee_code: string;
@@ -58,84 +58,127 @@ function applyInferenceRules(signals: {
   lateMarks30d: number;
 }): { reason: ReasonCode; confidence: ConfidenceLevel; triggered: string[] } {
   const {
-    isOnPip, avgQuality, qualityDeclining, gradualDecline4w,
-    attendancePct, aonDays, managerExitCount, qualityVolatility,
-    isWalkIn, auditCount, ctc, lateMarks30d
+    isOnPip,
+    avgQuality,
+    qualityDeclining,
+    gradualDecline4w,
+    attendancePct,
+    aonDays,
+    managerExitCount,
+    qualityVolatility,
+    isWalkIn,
+    auditCount,
+    ctc,
+    lateMarks30d,
   } = signals;
 
   // Rule 1 — PERFORMANCE_EXIT (HIGH): active PIP + quality < 65 + quality declining
   if (isOnPip && avgQuality !== null && avgQuality < 65 && qualityDeclining) {
     return {
-      reason: 'PERFORMANCE_EXIT',
-      confidence: 'HIGH',
-      triggered: ['ACTIVE_PIP', 'QUALITY_BELOW_65', 'QUALITY_DECLINING']
+      reason: "PERFORMANCE_EXIT",
+      confidence: "HIGH",
+      triggered: ["ACTIVE_PIP", "QUALITY_BELOW_65", "QUALITY_DECLINING"],
     };
   }
 
   // Rule 2 — BURNOUT (HIGH): gradual quality decline 4+ weeks, avg < 75, attendance < 85, aon > 60
-  if (gradualDecline4w && avgQuality !== null && avgQuality < 75
-    && attendancePct !== null && attendancePct < 85 && aonDays > 60) {
+  if (
+    gradualDecline4w &&
+    avgQuality !== null &&
+    avgQuality < 75 &&
+    attendancePct !== null &&
+    attendancePct < 85 &&
+    aonDays > 60
+  ) {
     return {
-      reason: 'BURNOUT',
-      confidence: 'HIGH',
-      triggered: ['GRADUAL_QUALITY_DECLINE_4W', 'AVG_QUALITY_BELOW_75', 'ATTENDANCE_BELOW_85', 'AON_ABOVE_60']
+      reason: "BURNOUT",
+      confidence: "HIGH",
+      triggered: [
+        "GRADUAL_QUALITY_DECLINE_4W",
+        "AVG_QUALITY_BELOW_75",
+        "ATTENDANCE_BELOW_85",
+        "AON_ABOVE_60",
+      ],
     };
   }
 
   // Rule 3 — MANAGER_DRIVEN (HIGH): manager had >= 3 exits in last 30 days
   if (managerExitCount >= 3) {
     return {
-      reason: 'MANAGER_DRIVEN',
-      confidence: 'HIGH',
-      triggered: [`MANAGER_EXIT_COUNT_${managerExitCount}`]
+      reason: "MANAGER_DRIVEN",
+      confidence: "HIGH",
+      triggered: [`MANAGER_EXIT_COUNT_${managerExitCount}`],
     };
   }
 
   // Rule 4 — BETTER_OFFER (HIGH): stable quality (volatility < 10), good attendance (> 85%), aon > 90
-  if (qualityVolatility < 10 && attendancePct !== null && attendancePct > 85 && aonDays > 90) {
+  if (
+    qualityVolatility < 10 &&
+    attendancePct !== null &&
+    attendancePct > 85 &&
+    aonDays > 90
+  ) {
     return {
-      reason: 'BETTER_OFFER',
-      confidence: 'HIGH',
-      triggered: ['STABLE_QUALITY', 'GOOD_ATTENDANCE', 'AON_ABOVE_90']
+      reason: "BETTER_OFFER",
+      confidence: "HIGH",
+      triggered: ["STABLE_QUALITY", "GOOD_ATTENDANCE", "AON_ABOVE_90"],
     };
   }
 
   // Rule 5 — EARLY_ATTRITION (MEDIUM): walk-in source + aon <= 30 + attendance < 90
-  if (isWalkIn && aonDays <= 30 && attendancePct !== null && attendancePct < 90) {
+  if (
+    isWalkIn &&
+    aonDays <= 30 &&
+    attendancePct !== null &&
+    attendancePct < 90
+  ) {
     return {
-      reason: 'EARLY_ATTRITION',
-      confidence: 'MEDIUM',
-      triggered: ['WALK_IN_SOURCE', 'AON_BELOW_30', 'ATTENDANCE_BELOW_90']
+      reason: "EARLY_ATTRITION",
+      confidence: "MEDIUM",
+      triggered: ["WALK_IN_SOURCE", "AON_BELOW_30", "ATTENDANCE_BELOW_90"],
     };
   }
 
   // Rule 6 — TRAINING_DIFFICULTY (MEDIUM): aon 31-90 + no quality data or avg < 70
-  if (aonDays >= 31 && aonDays <= 90 && (auditCount === 0 || (avgQuality !== null && avgQuality < 70))) {
-    const triggered = ['AON_31_TO_90'];
-    if (auditCount === 0) triggered.push('NO_QUALITY_DATA');
-    else triggered.push('LOW_QUALITY_BELOW_70');
-    return { reason: 'TRAINING_DIFFICULTY', confidence: 'MEDIUM', triggered };
+  if (
+    aonDays >= 31 &&
+    aonDays <= 90 &&
+    (auditCount === 0 || (avgQuality !== null && avgQuality < 70))
+  ) {
+    const triggered = ["AON_31_TO_90"];
+    if (auditCount === 0) triggered.push("NO_QUALITY_DATA");
+    else triggered.push("LOW_QUALITY_BELOW_70");
+    return { reason: "TRAINING_DIFFICULTY", confidence: "MEDIUM", triggered };
   }
 
   // Rule 7 — SALARY_DISSATISFACTION (MEDIUM): ctc < 12000 + aon > 90 + quality declining (not catastrophic)
   if (ctc !== null && ctc < 12000 && aonDays > 90 && qualityDeclining) {
     return {
-      reason: 'SALARY_DISSATISFACTION',
-      confidence: 'MEDIUM',
-      triggered: ['CTC_BELOW_12000', 'AON_ABOVE_90', 'QUALITY_DECLINING']
+      reason: "SALARY_DISSATISFACTION",
+      confidence: "MEDIUM",
+      triggered: ["CTC_BELOW_12000", "AON_ABOVE_90", "QUALITY_DECLINING"],
     };
   }
 
   // Rule 8 — WORK_LIFE (MEDIUM): late_marks > 5 + quality declining + attendance < 90
-  if (lateMarks30d > 5 && qualityDeclining && attendancePct !== null && attendancePct < 90) {
+  if (
+    lateMarks30d > 5 &&
+    qualityDeclining &&
+    attendancePct !== null &&
+    attendancePct < 90
+  ) {
     return {
-      reason: 'WORK_LIFE',
-      confidence: 'MEDIUM',
-      triggered: [`LATE_MARKS_${lateMarks30d}`, 'QUALITY_DECLINING', 'ATTENDANCE_BELOW_90']
+      reason: "WORK_LIFE",
+      confidence: "MEDIUM",
+      triggered: [
+        `LATE_MARKS_${lateMarks30d}`,
+        "QUALITY_DECLINING",
+        "ATTENDANCE_BELOW_90",
+      ],
     };
   }
 
-  return { reason: 'UNKNOWN', confidence: 'LOW', triggered: [] };
+  return { reason: "UNKNOWN", confidence: "LOW", triggered: [] };
 }
 
 /**
@@ -145,9 +188,11 @@ function applyInferenceRules(signals: {
  */
 export async function inferAttritionReason(req: Request, res: Response) {
   try {
-    const { employeeId, mode = 'realtime' } = req.query;
+    const { employeeId, mode = "realtime" } = req.query;
     if (!employeeId) {
-      return res.status(400).json({ success: false, error: 'employeeId is required' });
+      return res
+        .status(400)
+        .json({ success: false, error: "employeeId is required" });
     }
 
     // Base employee record
@@ -166,16 +211,20 @@ export async function inferAttritionReason(req: Request, res: Response) {
        FROM employees e
        WHERE e.id = ? OR e.employee_code = ?
        LIMIT 1`,
-      [employeeId, employeeId]
+      [employeeId, employeeId],
     );
 
     if (!empRows.length) {
-      return res.status(404).json({ success: false, error: 'Employee not found' });
+      return res
+        .status(404)
+        .json({ success: false, error: "Employee not found" });
     }
 
     const emp = empRows[0] as any;
-    const isHistorical = mode === 'historical' && emp.date_of_exit != null;
-    const referenceDate: Date = isHistorical ? new Date(emp.date_of_exit) : new Date();
+    const isHistorical = mode === "historical" && emp.date_of_exit != null;
+    const referenceDate: Date = isHistorical
+      ? new Date(emp.date_of_exit)
+      : new Date();
 
     // Attendance signals (60-day window ending at referenceDate)
     const [attRows] = await pool.query<RowDataPacket[]>(
@@ -191,11 +240,12 @@ export async function inferAttritionReason(req: Request, res: Response) {
        FROM attendance_daily_record adr
        WHERE adr.employee_id = ?
          AND adr.record_date BETWEEN DATE_SUB(?, INTERVAL 60 DAY) AND ?`,
-      [referenceDate, emp.id, referenceDate, referenceDate]
+      [referenceDate, emp.id, referenceDate, referenceDate],
     );
 
     const attData = (attRows[0] || {}) as any;
-    const attendancePct: number | null = attData.attendance_pct != null ? Number(attData.attendance_pct) : null;
+    const attendancePct: number | null =
+      attData.attendance_pct != null ? Number(attData.attendance_pct) : null;
     const lateMarks30d: number = Number(attData.late_marks_30d ?? 0);
 
     // Quality signals (60-day window ending at referenceDate)
@@ -209,16 +259,26 @@ export async function inferAttritionReason(req: Request, res: Response) {
        FROM db_audit.call_quality_assessment cqa
        WHERE cqa.User = ?
          AND cqa.CallDate BETWEEN DATE_SUB(?, INTERVAL 60 DAY) AND ?`,
-      [referenceDate, referenceDate, emp.employee_code, referenceDate, referenceDate]
+      [
+        referenceDate,
+        referenceDate,
+        emp.employee_code,
+        referenceDate,
+        referenceDate,
+      ],
     );
 
     const qualData = (qualRows[0] || {}) as any;
-    const avgQuality: number | null = qualData.avg_quality != null ? Number(qualData.avg_quality) : null;
+    const avgQuality: number | null =
+      qualData.avg_quality != null ? Number(qualData.avg_quality) : null;
     const qualityVolatility: number = Number(qualData.quality_volatility ?? 0);
     const auditCount: number = Number(qualData.audit_count ?? 0);
-    const recentQ: number | null = qualData.recent_quality != null ? Number(qualData.recent_quality) : null;
-    const priorQ: number | null = qualData.prior_quality != null ? Number(qualData.prior_quality) : null;
-    const qualityDeclining = recentQ !== null && priorQ !== null && recentQ < priorQ;
+    const recentQ: number | null =
+      qualData.recent_quality != null ? Number(qualData.recent_quality) : null;
+    const priorQ: number | null =
+      qualData.prior_quality != null ? Number(qualData.prior_quality) : null;
+    const qualityDeclining =
+      recentQ !== null && priorQ !== null && recentQ < priorQ;
 
     // Weekly quality trend for gradual-decline check (4+ week streak)
     const [weeklyRows] = await pool.query<RowDataPacket[]>(
@@ -231,17 +291,20 @@ export async function inferAttritionReason(req: Request, res: Response) {
          AND cqa.CallDate BETWEEN DATE_SUB(?, INTERVAL 60 DAY) AND ?
        GROUP BY YEAR(cqa.CallDate), WEEK(cqa.CallDate, 1)
        ORDER BY YEAR(cqa.CallDate), WEEK(cqa.CallDate, 1)`,
-      [emp.employee_code, referenceDate, referenceDate]
+      [emp.employee_code, referenceDate, referenceDate],
     );
 
     let gradualDecline4w = false;
     if (weeklyRows.length >= 4) {
-      const weekAverages = weeklyRows.map(r => Number((r as any).weekly_avg));
+      const weekAverages = weeklyRows.map((r) => Number((r as any).weekly_avg));
       let streak = 0;
       for (let i = 1; i < weekAverages.length; i++) {
         if (weekAverages[i] < weekAverages[i - 1]) {
           streak++;
-          if (streak >= 3) { gradualDecline4w = true; break; }
+          if (streak >= 3) {
+            gradualDecline4w = true;
+            break;
+          }
         } else {
           streak = 0;
         }
@@ -254,7 +317,7 @@ export async function inferAttritionReason(req: Request, res: Response) {
        FROM pip_action_plan
        WHERE employee_id = ?
          AND status NOT IN ('closed', 'cancelled', 'completed')`,
-      [emp.id]
+      [emp.id],
     );
     const isOnPip = Number((pipRows[0] as any)?.cnt ?? 0) > 0;
 
@@ -265,21 +328,21 @@ export async function inferAttritionReason(req: Request, res: Response) {
        WHERE reporting_manager_id = ?
          AND id != ?
          AND date_of_exit >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
-      [emp.reporting_manager_id, emp.id]
+      [emp.reporting_manager_id, emp.id],
     );
     const managerExitCount = Number((mgrRows[0] as any)?.cnt ?? 0);
 
     // Comparable exits: count of historical exits with same employment status
     const [compRows] = await pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM employees WHERE date_of_exit IS NOT NULL AND id != ?`,
-      [emp.id]
+      [emp.id],
     );
     const comparableExits = Number((compRows[0] as any)?.cnt ?? 0);
 
     const aonDays = Number(emp.aon_days ?? 0);
     const ctc = emp.ctc ? Number(emp.ctc) : null;
-    const srcHire = (emp.source_of_hire || '').toLowerCase();
-    const isWalkIn = srcHire.includes('walk') || srcHire.includes('walkin');
+    const srcHire = (emp.source_of_hire || "").toLowerCase();
+    const isWalkIn = srcHire.includes("walk") || srcHire.includes("walkin");
 
     const { reason, confidence, triggered } = applyInferenceRules({
       isOnPip,
@@ -293,7 +356,7 @@ export async function inferAttritionReason(req: Request, res: Response) {
       isWalkIn,
       auditCount,
       ctc,
-      lateMarks30d
+      lateMarks30d,
     });
 
     const result: InferenceResult = {
@@ -310,18 +373,20 @@ export async function inferAttritionReason(req: Request, res: Response) {
       ctc,
       is_on_pip: isOnPip,
       quality_declining: qualityDeclining,
-      mode: mode as string
+      mode: mode as string,
     };
 
     res.json({
       success: true,
-      analysis_type: 'ATTRITION_REASON_INFERENCE',
+      analysis_type: "ATTRITION_REASON_INFERENCE",
       data: result,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error in inferAttritionReason:', error);
-    res.status(500).json({ success: false, error: 'Failed to infer attrition reason' });
+    console.error("Error in inferAttritionReason:", error);
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to infer attrition reason" });
   }
 }
 
@@ -337,17 +402,21 @@ export async function getInferredReasonBreakdown(req: Request, res: Response) {
     let periodStart: string;
     let periodEnd: string;
 
-    if (period && typeof period === 'string' && /^\d{4}-\d{2}$/.test(period)) {
-      const [yr, mo] = period.split('-').map(Number);
+    if (period && typeof period === "string" && /^\d{4}-\d{2}$/.test(period)) {
+      const [yr, mo] = period.split("-").map(Number);
       periodStart = `${period}-01`;
       periodEnd = new Date(yr, mo, 0).toISOString().slice(0, 10);
     } else {
       const now = new Date();
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-      periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+      periodStart = new Date(now.getFullYear(), now.getMonth(), 1)
+        .toISOString()
+        .slice(0, 10);
+      periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+        .toISOString()
+        .slice(0, 10);
     }
 
-    const branchClause = branchId ? 'AND e.branch_id = ?' : '';
+    const branchClause = branchId ? "AND e.branch_id = ?" : "";
     const baseParams: unknown[] = branchId
       ? [periodStart, periodEnd, branchId]
       : [periodStart, periodEnd];
@@ -440,7 +509,7 @@ export async function getInferredReasonBreakdown(req: Request, res: Response) {
        WHERE e.date_of_exit BETWEEN ? AND ?
          ${branchClause}
        ORDER BY e.date_of_exit`,
-      baseParams
+      baseParams,
     );
 
     // Accumulate counts by inferred reason
@@ -453,17 +522,19 @@ export async function getInferredReasonBreakdown(req: Request, res: Response) {
       TRAINING_DIFFICULTY: 0,
       SALARY_DISSATISFACTION: 0,
       WORK_LIFE: 0,
-      UNKNOWN: 0
+      UNKNOWN: 0,
     };
 
     for (const emp of rows) {
       const r = emp as any;
       const aonDays = Number(r.aon_days ?? 0);
       const ctc = r.ctc ? Number(r.ctc) : null;
-      const srcHire = (r.source_of_hire || '').toLowerCase();
-      const isWalkIn = srcHire.includes('walk') || srcHire.includes('walkin');
-      const attendancePct: number | null = r.attendance_pct != null ? Number(r.attendance_pct) : null;
-      const avgQuality: number | null = r.avg_quality != null ? Number(r.avg_quality) : null;
+      const srcHire = (r.source_of_hire || "").toLowerCase();
+      const isWalkIn = srcHire.includes("walk") || srcHire.includes("walkin");
+      const attendancePct: number | null =
+        r.attendance_pct != null ? Number(r.attendance_pct) : null;
+      const avgQuality: number | null =
+        r.avg_quality != null ? Number(r.avg_quality) : null;
       const qualityVolatility: number = Number(r.quality_volatility ?? 0);
       const qualityDeclining = Number(r.quality_declining) === 1;
       const auditCount = Number(r.audit_count ?? 0);
@@ -476,7 +547,8 @@ export async function getInferredReasonBreakdown(req: Request, res: Response) {
         isOnPip,
         avgQuality,
         qualityDeclining,
-        gradualDecline4w: qualityDeclining && avgQuality !== null && avgQuality < 75,
+        gradualDecline4w:
+          qualityDeclining && avgQuality !== null && avgQuality < 75,
         attendancePct,
         aonDays,
         managerExitCount,
@@ -484,7 +556,7 @@ export async function getInferredReasonBreakdown(req: Request, res: Response) {
         isWalkIn,
         auditCount,
         ctc,
-        lateMarks30d
+        lateMarks30d,
       });
 
       reasonCounts[reason]++;
@@ -495,20 +567,25 @@ export async function getInferredReasonBreakdown(req: Request, res: Response) {
       .map(([inferred_reason, count]) => ({
         inferred_reason,
         count,
-        pct: totalExits > 0 ? Math.round((count / totalExits) * 1000) / 10 : 0
+        pct: totalExits > 0 ? Math.round((count / totalExits) * 1000) / 10 : 0,
       }))
       .sort((a, b) => b.count - a.count);
 
     res.json({
       success: true,
-      analysis_type: 'INFERRED_REASON_BREAKDOWN',
+      analysis_type: "INFERRED_REASON_BREAKDOWN",
       period: { start: periodStart, end: periodEnd },
       total_exits: totalExits,
       breakdown,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error in getInferredReasonBreakdown:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch inferred reason breakdown' });
+    console.error("Error in getInferredReasonBreakdown:", error);
+    res
+      .status(500)
+      .json({
+        success: false,
+        error: "Failed to fetch inferred reason breakdown",
+      });
   }
 }

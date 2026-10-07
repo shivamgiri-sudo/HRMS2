@@ -10,15 +10,24 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole: (..._roles: string[]) =>
-    (_req: express.Request, _res: express.Response, next: express.NextFunction) => {
+  requireRole:
+    (..._roles: string[]) =>
+    (
+      _req: express.Request,
+      _res: express.Response,
+      next: express.NextFunction,
+    ) => {
       (_req as any).authUser = { id: "user-1", roles: ["payroll_head"] };
       next();
     },
 }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (_req: express.Request, _res: express.Response, next: express.NextFunction) => {
+  requireAuth: (
+    _req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
     (_req as any).authUser = { id: "user-1", roles: ["payroll_head"] };
     next();
   },
@@ -49,7 +58,10 @@ vi.mock("archiver", () => {
     this.append = vi.fn().mockReturnThis();
     this.file = vi.fn().mockReturnThis();
     this.on = vi.fn().mockReturnThis();
-    this.pipe = vi.fn((dest: any) => { _dest = dest; return this; });
+    this.pipe = vi.fn((dest: any) => {
+      _dest = dest;
+      return this;
+    });
     this.finalize = vi.fn(() => {
       if (_dest && typeof _dest.end === "function") _dest.end();
       return Promise.resolve();
@@ -118,7 +130,19 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
     // is. A trailing mockResolvedValue says that once, for however many lookups
     // the pack grows to make.
     vi.mocked(db.execute)
-      .mockResolvedValueOnce([[{ emp_code: "EMP001", first_name: "Alice", last_name: "Smith", esic_number: "123", photo_url: null, avatar_url: null }] as any, []])
+      .mockResolvedValueOnce([
+        [
+          {
+            emp_code: "EMP001",
+            first_name: "Alice",
+            last_name: "Smith",
+            esic_number: "123",
+            photo_url: null,
+            avatar_url: null,
+          },
+        ] as any,
+        [],
+      ])
       .mockResolvedValue([[] as any, []]);
 
     const res = await request(app)
@@ -140,7 +164,11 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
     // markers). candidate_onboarding_document is where a real file exists — 38
     // of 567 employees. This pins that fallback actually fires and is included
     // in the zip, not merely that the code compiles.
-    const onboardingRoot = path.resolve(process.cwd(), "private-storage", "onboarding-documents");
+    const onboardingRoot = path.resolve(
+      process.cwd(),
+      "private-storage",
+      "onboarding-documents",
+    );
     fs.mkdirSync(onboardingRoot, { recursive: true });
     const pan = path.join(onboardingRoot, "esi-test-pan.jpg");
     const aadhaar = path.join(onboardingRoot, "esi-test-aadhaar.jpg");
@@ -151,12 +179,27 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
       vi.mocked(db.execute).mockImplementation(async (sql: unknown) => {
         const s = String(sql);
         if (s.includes("FROM employees WHERE id")) {
-          return [[{ emp_code: "EMP001", first_name: "Alice", last_name: "Smith", esic_number: "123", photo_url: null, avatar_url: null }], []] as any;
+          return [
+            [
+              {
+                emp_code: "EMP001",
+                first_name: "Alice",
+                last_name: "Smith",
+                esic_number: "123",
+                photo_url: null,
+                avatar_url: null,
+              },
+            ],
+            [],
+          ] as any;
         }
         // employee_documents: nothing resolvable, matching live reality.
         if (s.includes("FROM employee_documents")) return [[], []] as any;
         // candidate_onboarding_document: a real PAN and a real Aadhaar file.
-        if (s.includes("FROM candidate_onboarding_document") && s.includes("'pan'")) {
+        if (
+          s.includes("FROM candidate_onboarding_document") &&
+          s.includes("'pan'")
+        ) {
           return [[{ file_path: pan }], []] as any;
         }
         if (s.includes("FROM candidate_onboarding_document")) {
@@ -189,7 +232,9 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
 
   it("returns 404 when employee not found", async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([[] as any, []]);
-    const res = await request(app).get("/api/payroll/esi-reg-docs/nonexistent/download");
+    const res = await request(app).get(
+      "/api/payroll/esi-reg-docs/nonexistent/download",
+    );
     expect(res.status).toBe(404);
   });
 });
@@ -218,7 +263,19 @@ describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
     // reads per employee and pinning the count would test the implementation
     // rather than "this employee has no documents".
     vi.mocked(db.execute)
-      .mockResolvedValueOnce([[{ id: "emp-1", emp_code: "EMP001", name: "Alice Smith", esic_number: "123", photo_url: null, avatar_url: null }] as any, []])
+      .mockResolvedValueOnce([
+        [
+          {
+            id: "emp-1",
+            emp_code: "EMP001",
+            name: "Alice Smith",
+            esic_number: "123",
+            photo_url: null,
+            avatar_url: null,
+          },
+        ] as any,
+        [],
+      ])
       .mockResolvedValue([[] as any, []]);
 
     const res = await request(app)
@@ -241,20 +298,22 @@ describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
 
   it("returns CSV with BOM, all 12 column headers, and masked account number", async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([
-      [{
-        emp_code: "EMP001",
-        name: "Alice Smith",
-        branch: "Chennai",
-        esic_number: "1234567890",
-        pan_number: "ABCDE1234F",
-        bank_name: "SBI",
-        account_number: "9876543210",
-        ifsc_code: "SBIN0001234",
-        account_type: "savings",
-        pan_ready: 1,
-        photo_ready: 1,
-        bank_ready: 1,
-      }] as any,
+      [
+        {
+          emp_code: "EMP001",
+          name: "Alice Smith",
+          branch: "Chennai",
+          esic_number: "1234567890",
+          pan_number: "ABCDE1234F",
+          bank_name: "SBI",
+          account_number: "9876543210",
+          ifsc_code: "SBIN0001234",
+          account_type: "savings",
+          pan_ready: 1,
+          photo_ready: 1,
+          bank_ready: 1,
+        },
+      ] as any,
       [],
     ]);
 
@@ -263,9 +322,18 @@ describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
     expect(res.text.charCodeAt(0)).toBe(0xfeff);
     const expectedColumns = [
-      "Emp Code", "Name", "Branch", "ESIC Number", "PAN Number",
-      "Bank Name", "Account Number (Masked)", "IFSC Code",
-      "Account Type", "PAN Ready", "Photo Ready", "Bank Ready",
+      "Emp Code",
+      "Name",
+      "Branch",
+      "ESIC Number",
+      "PAN Number",
+      "Bank Name",
+      "Account Number (Masked)",
+      "IFSC Code",
+      "Account Type",
+      "PAN Ready",
+      "Photo Ready",
+      "Bank Ready",
     ];
     for (const col of expectedColumns) {
       expect(res.text).toContain(col);

@@ -28,9 +28,23 @@ interface PendingPreference extends RowDataPacket {
   process_id: string;
 }
 
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 const DAY_NAME_TO_INT: Record<string, number> = {
-  Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6,
+  Sunday: 0,
+  Monday: 1,
+  Tuesday: 2,
+  Wednesday: 3,
+  Thursday: 4,
+  Friday: 5,
+  Saturday: 6,
 };
 
 export const weekoffAllocationService = {
@@ -38,17 +52,23 @@ export const weekoffAllocationService = {
     processId: string,
     cycleId: string,
     userId: string,
-    req?: Request
+    req?: Request,
   ): Promise<FcfsAllocationResult> {
     // Load the cycle to get week_start_date for allocation_date anchor
     const [cycleRows] = await db.execute<RowDataPacket[]>(
       "SELECT id, process_id, week_start_date, status FROM weekly_roster_cycle WHERE id = ? LIMIT 1",
-      [cycleId]
+      [cycleId],
     );
     const cycle = cycleRows[0];
-    if (!cycle) throw Object.assign(new Error("Cycle not found"), { statusCode: 404 });
+    if (!cycle)
+      throw Object.assign(new Error("Cycle not found"), { statusCode: 404 });
     if (!["draft", "submitted", "reviewed"].includes(cycle.status)) {
-      throw Object.assign(new Error("FCFS allocation can only run on draft/submitted/reviewed cycles"), { statusCode: 409 });
+      throw Object.assign(
+        new Error(
+          "FCFS allocation can only run on draft/submitted/reviewed cycles",
+        ),
+        { statusCode: 409 },
+      );
     }
 
     // Load pending preferences for this process, ordered by submission_order (FCFS)
@@ -61,7 +81,7 @@ export const weekoffAllocationService = {
           AND e.active_status = 1
           AND (wop.approved = 0 OR (wop.approved = 1 AND wop.auto_approved = 1))
         ORDER BY COALESCE(wop.submission_order, 999999) ASC, wop.created_at ASC`,
-      [processId]
+      [processId],
     );
 
     // Also load approved preferences from the governance route table (employee_roster_preference)
@@ -77,11 +97,13 @@ export const weekoffAllocationService = {
           -- week_start_date. The wrong name raised ER_BAD_FIELD_ERROR, so no
           -- approved week-off preference was ever picked up by allocation.
           AND (erp.effective_from <= ? OR erp.effective_from IS NULL)`,
-      [processId, cycle.week_start_date]
+      [processId, cycle.week_start_date],
     );
 
     // Convert governance rows to PendingPreference shape and skip duplicates already in prefs
-    const existingEmployeeIds = new Set(prefs.map((p: PendingPreference) => p.employee_id));
+    const existingEmployeeIds = new Set(
+      prefs.map((p: PendingPreference) => p.employee_id),
+    );
     for (const gp of govPrefs) {
       if (existingEmployeeIds.has(gp.employee_id)) continue;
       const dayInt = DAY_NAME_TO_INT[gp.preferred_week_off as string] ?? -1;
@@ -115,13 +137,16 @@ export const weekoffAllocationService = {
       result.processed++;
 
       // Calculate the actual date for this day-of-week in the cycle's week
-      const allocationDate = getDateForDayOfWeek(cycle.week_start_date, pref.preferred_day);
+      const allocationDate = getDateForDayOfWeek(
+        cycle.week_start_date,
+        pref.preferred_day,
+      );
 
       try {
         const capacityCheck = await rosterCapacityService.checkCapacity(
           processId,
           allocationDate,
-          pref.preferred_day
+          pref.preferred_day,
         );
 
         if (capacityCheck.can_allocate) {
@@ -129,7 +154,7 @@ export const weekoffAllocationService = {
           const autoApprove = await rosterCapacityService.shouldAutoApprove(
             processId,
             pref.preferred_day,
-            capacityCheck.current_count
+            capacityCheck.current_count,
           );
 
           // Record allocation
@@ -151,13 +176,13 @@ export const weekoffAllocationService = {
               pref.id,
               capacityCheck.allocation_sequence,
               autoApprove ? 1 : 0,
-            ]
+            ],
           );
 
           // Update week_off_preference
           await db.execute(
             "UPDATE week_off_preference SET approved = ?, auto_approved = ? WHERE id = ?",
-            [autoApprove ? 1 : 0, autoApprove ? 1 : 0, pref.id]
+            [autoApprove ? 1 : 0, autoApprove ? 1 : 0, pref.id],
           );
 
           // Write in-app notification
@@ -175,12 +200,18 @@ export const weekoffAllocationService = {
         } else {
           // Capacity full — try alternate day if set
           let waitlisted = false;
-          if (pref.alternate_day !== null && pref.alternate_day !== pref.preferred_day) {
-            const altDate = getDateForDayOfWeek(cycle.week_start_date, pref.alternate_day);
+          if (
+            pref.alternate_day !== null &&
+            pref.alternate_day !== pref.preferred_day
+          ) {
+            const altDate = getDateForDayOfWeek(
+              cycle.week_start_date,
+              pref.alternate_day,
+            );
             const altCapacity = await rosterCapacityService.checkCapacity(
               processId,
               altDate,
-              pref.alternate_day
+              pref.alternate_day,
             );
             if (altCapacity.can_allocate) {
               await db.execute(
@@ -190,9 +221,14 @@ export const weekoffAllocationService = {
                  VALUES (?, ?, ?, ?, ?, ?, ?, 'waitlisted', 0)
                  ON DUPLICATE KEY UPDATE allocation_status = 'waitlisted'`,
                 [
-                  randomUUID(), processId, pref.alternate_day, altDate,
-                  pref.employee_id, pref.id, altCapacity.allocation_sequence,
-                ]
+                  randomUUID(),
+                  processId,
+                  pref.alternate_day,
+                  altDate,
+                  pref.employee_id,
+                  pref.id,
+                  altCapacity.allocation_sequence,
+                ],
               );
               await rosterCapacityService.createNotification({
                 employee_id: pref.employee_id,
@@ -213,7 +249,14 @@ export const weekoffAllocationService = {
                   allocation_sequence, allocation_status, auto_approved)
                VALUES (?, ?, ?, ?, ?, ?, 0, 'denied', 0)
                ON DUPLICATE KEY UPDATE allocation_status = 'denied'`,
-              [randomUUID(), processId, pref.preferred_day, allocationDate, pref.employee_id, pref.id]
+              [
+                randomUUID(),
+                processId,
+                pref.preferred_day,
+                allocationDate,
+                pref.employee_id,
+                pref.id,
+              ],
             );
             await rosterCapacityService.createNotification({
               employee_id: pref.employee_id,
@@ -227,7 +270,9 @@ export const weekoffAllocationService = {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        result.errors.push(`emp:${pref.employee_id} day:${pref.preferred_day} — ${msg}`);
+        result.errors.push(
+          `emp:${pref.employee_id} day:${pref.preferred_day} — ${msg}`,
+        );
       }
     }
 
@@ -251,15 +296,34 @@ export const weekoffAllocationService = {
 
   async getCapacitySummary(
     processId: string,
-    weekStartDate: string
-  ): Promise<Array<{ day_of_week: number; day_name: string; allocated: number; max_count: number; max_percentage: number | null; slots_remaining: number }>> {
-    const summary: Array<{ day_of_week: number; day_name: string; allocated: number; max_count: number; max_percentage: number | null; slots_remaining: number }> = [];
+    weekStartDate: string,
+  ): Promise<
+    Array<{
+      day_of_week: number;
+      day_name: string;
+      allocated: number;
+      max_count: number;
+      max_percentage: number | null;
+      slots_remaining: number;
+    }>
+  > {
+    const summary: Array<{
+      day_of_week: number;
+      day_name: string;
+      allocated: number;
+      max_count: number;
+      max_percentage: number | null;
+      slots_remaining: number;
+    }> = [];
     for (let day = 0; day <= 6; day++) {
-      const config = await rosterCapacityService.getCapacityConfig(processId, day);
+      const config = await rosterCapacityService.getCapacityConfig(
+        processId,
+        day,
+      );
       const allocationDate = getDateForDayOfWeek(weekStartDate, day);
       const [allocated] = await db.execute<RowDataPacket[]>(
         "SELECT COUNT(*) AS cnt FROM weekoff_allocation_log WHERE process_id = ? AND allocation_date = ? AND allocation_status = 'allocated'",
-        [processId, allocationDate]
+        [processId, allocationDate],
       );
       const allocCount = (allocated[0] as any).cnt ?? 0;
       const maxCount = config?.max_weekoff_count ?? 0;

@@ -30,7 +30,11 @@ vi.mock("../../process-pnl/finance-period-lock.js", () => ({
 
 /** credits/debits are the scripted starting balance; the fake connection answers every query
  *  imprestService.postAdjustment and imprestLedgerService.post issue against it. */
-function makeConnection(opts: { credits: number; debits: number; managerExists?: boolean }) {
+function makeConnection(opts: {
+  credits: number;
+  debits: number;
+  managerExists?: boolean;
+}) {
   const inserted: Record<string, unknown>[] = [];
   const conn = {
     beginTransaction: vi.fn(async () => {}),
@@ -50,7 +54,10 @@ function makeConnection(opts: { credits: number; debits: number; managerExists?:
         return [[{ balance: opts.credits - opts.debits }], []];
       }
       // imprestLedgerService.post()'s own two-column credits/debits read.
-      if (/AS credits.*AS debits/.test(s) || (/credits/.test(s) && /debits/.test(s))) {
+      if (
+        /AS credits.*AS debits/.test(s) ||
+        (/credits/.test(s) && /debits/.test(s))
+      ) {
         return [[{ credits: opts.credits, debits: opts.debits }], []];
       }
       if (/^INSERT INTO imprest_transaction_ledger/.test(s)) {
@@ -90,8 +97,15 @@ describe("postAdjustment", () => {
     const svc = await loadService(makeConnection({ credits: 1000, debits: 0 }));
     await expect(
       svc.postAdjustment(
-        { imprestManagerId: "mgr-1", direction: "credit", amount: 0, transactionDate: "2026-08-05", reason: "Migration gap correction" },
-        "u1", "finance_head",
+        {
+          imprestManagerId: "mgr-1",
+          direction: "credit",
+          amount: 0,
+          transactionDate: "2026-08-05",
+          reason: "Migration gap correction",
+        },
+        "u1",
+        "finance_head",
       ),
     ).rejects.toThrow(/greater than zero/);
   });
@@ -100,18 +114,34 @@ describe("postAdjustment", () => {
     const svc = await loadService(makeConnection({ credits: 1000, debits: 0 }));
     await expect(
       svc.postAdjustment(
-        { imprestManagerId: "mgr-1", direction: "credit", amount: 500, transactionDate: "2026-08-05", reason: "fix" },
-        "u1", "finance_head",
+        {
+          imprestManagerId: "mgr-1",
+          direction: "credit",
+          amount: 500,
+          transactionDate: "2026-08-05",
+          reason: "fix",
+        },
+        "u1",
+        "finance_head",
       ),
     ).rejects.toThrow(/reason of at least 10 characters/);
   });
 
   it("refuses when the manager does not exist or is inactive", async () => {
-    const svc = await loadService(makeConnection({ credits: 0, debits: 0, managerExists: false }));
+    const svc = await loadService(
+      makeConnection({ credits: 0, debits: 0, managerExists: false }),
+    );
     await expect(
       svc.postAdjustment(
-        { imprestManagerId: "mgr-x", direction: "credit", amount: 500, transactionDate: "2026-08-05", reason: "Migration gap correction" },
-        "u1", "finance_head",
+        {
+          imprestManagerId: "mgr-x",
+          direction: "credit",
+          amount: 500,
+          transactionDate: "2026-08-05",
+          reason: "Migration gap correction",
+        },
+        "u1",
+        "finance_head",
       ),
     ).rejects.toThrow(/not found or inactive/);
   });
@@ -121,11 +151,15 @@ describe("postAdjustment", () => {
     const svc = await loadService(conn);
     const result = await svc.postAdjustment(
       {
-        imprestManagerId: "mgr-1", direction: "credit", amount: 5_000,
+        imprestManagerId: "mgr-1",
+        direction: "credit",
+        amount: 5_000,
         transactionDate: "2026-08-05",
-        reason: "db_bill migration: top-up payment dated 2026-03-12 never matched to a manager",
+        reason:
+          "db_bill migration: top-up payment dated 2026-03-12 never matched to a manager",
       },
-      "u1", "finance_head",
+      "u1",
+      "finance_head",
     );
     expect(result.balanceBefore).toBe(7_000);
     expect(result.balanceAfter).toBe(12_000);
@@ -147,11 +181,15 @@ describe("postAdjustment", () => {
     const svc = await loadService(conn);
     const result = await svc.postAdjustment(
       {
-        imprestManagerId: "mgr-1", direction: "debit", amount: 2_000,
+        imprestManagerId: "mgr-1",
+        direction: "debit",
+        amount: 2_000,
         transactionDate: "2026-08-05",
-        reason: "Reversing a duplicate migration credit found during reconciliation",
+        reason:
+          "Reversing a duplicate migration credit found during reconciliation",
       },
-      "u1", "finance_head",
+      "u1",
+      "finance_head",
     );
     expect(result.balanceBefore).toBe(10_000);
     expect(result.balanceAfter).toBe(8_000);
@@ -162,8 +200,15 @@ describe("postAdjustment", () => {
     const conn = makeConnection({ credits: 10_000, debits: 3_000 });
     const svc = await loadService(conn);
     await svc.postAdjustment(
-      { imprestManagerId: "mgr-1", direction: "credit", amount: 5_000, transactionDate: "2026-08-05", reason: "Migration gap correction, verified" },
-      "u1", "finance_head",
+      {
+        imprestManagerId: "mgr-1",
+        direction: "credit",
+        amount: 5_000,
+        transactionDate: "2026-08-05",
+        reason: "Migration gap correction, verified",
+      },
+      "u1",
+      "finance_head",
     );
     expect(recordFinanceApprovalEvent).toHaveBeenCalledTimes(1);
     const [event] = recordFinanceApprovalEvent.mock.calls[0]!;
@@ -176,8 +221,10 @@ describe("postAdjustment", () => {
 
   it("rolls back and records nothing if the posting fails", async () => {
     const conn = makeConnection({ credits: 1000, debits: 0 });
-    conn.execute.mockImplementationOnce(async () => [[{ id: "mgr-1", branch_id: "branch-1" }], []]) // manager lookup ok
-    ;
+    conn.execute.mockImplementationOnce(async () => [
+      [{ id: "mgr-1", branch_id: "branch-1" }],
+      [],
+    ]); // manager lookup ok
     // Force the "before balance" read to blow up.
     const original = conn.execute;
     let call = 0;
@@ -189,8 +236,15 @@ describe("postAdjustment", () => {
     const svc = await loadService(conn);
     await expect(
       svc.postAdjustment(
-        { imprestManagerId: "mgr-1", direction: "credit", amount: 500, transactionDate: "2026-08-05", reason: "Migration gap correction" },
-        "u1", "finance_head",
+        {
+          imprestManagerId: "mgr-1",
+          direction: "credit",
+          amount: 500,
+          transactionDate: "2026-08-05",
+          reason: "Migration gap correction",
+        },
+        "u1",
+        "finance_head",
       ),
     ).rejects.toThrow(/connection lost/);
     expect(conn.rollback).toHaveBeenCalledTimes(1);

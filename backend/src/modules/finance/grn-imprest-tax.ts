@@ -21,7 +21,9 @@ export type BudgetLineAmounts = ReturnType<typeof calculateBudgetLine>;
  * Applied to the amounts of every imprest allocation row and imprest GRN header, so gross, base
  * and P&L cost are all the same number and the tax columns are zero.
  */
-export function applyImprestNoGst(amounts: BudgetLineAmounts): BudgetLineAmounts {
+export function applyImprestNoGst(
+  amounts: BudgetLineAmounts,
+): BudgetLineAmounts {
   return {
     ...amounts,
     baseAmount: amounts.grossAmount,

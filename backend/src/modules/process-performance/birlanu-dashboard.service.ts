@@ -19,11 +19,24 @@ import { db } from "../../db/mysql.js";
  */
 
 const MONTH_ABBR: Record<string, number> = {
-  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
 };
 
 function parseShortDate(raw: unknown): string | null {
-  const m = String(raw ?? "").trim().match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
+  const m = String(raw ?? "")
+    .trim()
+    .match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
   if (!m) return null;
   const month = MONTH_ABBR[m[2].toLowerCase()];
   if (!month) return null;
@@ -45,7 +58,10 @@ function clean(raw: unknown): string {
   return s === "-" || s === "" ? "" : s;
 }
 
-const CONVERTED_STATUSES = new Set(["closed_with_order", "closed_with_dealership"]);
+const CONVERTED_STATUSES = new Set([
+  "closed_with_order",
+  "closed_with_dealership",
+]);
 /** Reference workbook's "Leads Qualified" stage = Data!T (Sub Sub Calling
  * Status) = "Lead assign to Sales team" -- verified against Performance
  * Dashboard's H5 formula: COUNTIFS(Data!T:T,"lead assign to sales team", ...). */
@@ -68,9 +84,20 @@ function parseMonthLabel(raw: unknown): { key: string; label: string } | null {
  * appended alphabetically rather than dropped, so a new bucket label never
  * silently disappears. */
 const TAT_BUCKET_ORDER = [
-  "0-30 Min", "30 Min-2hrs", "2hr-4hrs", "4hrs-6hrs", "6hrs-8hrs", "8hrs-10hrs",
-  "10hrs-12hrs", "12hrs-14hrs", "14hrs-16hrs", "16hrs-18hrs", "18hrs-20hrs",
-  "20hrs-22hrs", "22hrs-24hrs", "More Than 24 Hrs",
+  "0-30 Min",
+  "30 Min-2hrs",
+  "2hr-4hrs",
+  "4hrs-6hrs",
+  "6hrs-8hrs",
+  "8hrs-10hrs",
+  "10hrs-12hrs",
+  "12hrs-14hrs",
+  "14hrs-16hrs",
+  "16hrs-18hrs",
+  "18hrs-20hrs",
+  "20hrs-22hrs",
+  "22hrs-24hrs",
+  "More Than 24 Hrs",
 ];
 
 export interface BirlanuMonthlyFunnelRow {
@@ -164,14 +191,27 @@ interface SaleRow {
   lead_register_month: unknown;
 }
 
-function buildGroup(rows: SaleRow[], keyField: keyof SaleRow, fallback = "Unassigned"): BirlanuGroupRow[] {
-  const map = new Map<string, { leads: number; connected: number; converted: number; saleValue: number }>();
+function buildGroup(
+  rows: SaleRow[],
+  keyField: keyof SaleRow,
+  fallback = "Unassigned",
+): BirlanuGroupRow[] {
+  const map = new Map<
+    string,
+    { leads: number; connected: number; converted: number; saleValue: number }
+  >();
   for (const r of rows) {
     const key = clean(r[keyField]) || fallback;
-    const cur = map.get(key) ?? { leads: 0, connected: 0, converted: 0, saleValue: 0 };
+    const cur = map.get(key) ?? {
+      leads: 0,
+      connected: 0,
+      converted: 0,
+      saleValue: 0,
+    };
     cur.leads += 1;
     if (String(r.calling_status).trim() === "Connect") cur.connected += 1;
-    if (CONVERTED_STATUSES.has(String(r.lead_closer_status).trim())) cur.converted += 1;
+    if (CONVERTED_STATUSES.has(String(r.lead_closer_status).trim()))
+      cur.converted += 1;
     cur.saleValue += parseInr(r.sale_inr);
     map.set(key, cur);
   }
@@ -180,9 +220,13 @@ function buildGroup(rows: SaleRow[], keyField: keyof SaleRow, fallback = "Unassi
       label,
       leads: v.leads,
       connected: v.connected,
-      connectedPct: v.leads ? Math.round((v.connected / v.leads) * 10000) / 100 : 0,
+      connectedPct: v.leads
+        ? Math.round((v.connected / v.leads) * 10000) / 100
+        : 0,
       converted: v.converted,
-      conversionPct: v.leads ? Math.round((v.converted / v.leads) * 10000) / 100 : 0,
+      conversionPct: v.leads
+        ? Math.round((v.converted / v.leads) * 10000) / 100
+        : 0,
       saleValue: v.saleValue,
     }))
     .sort((a, b) => b.saleValue - a.saleValue || b.leads - a.leads);
@@ -198,18 +242,27 @@ export async function getBirlanuDashboard(): Promise<BirlanuDashboardData> {
   const rows = saleRows as SaleRow[];
 
   const totalLeads = rows.length;
-  const connected = rows.filter((r) => String(r.calling_status).trim() === "Connect").length;
-  const interested = rows.filter((r) => String(r.interested_status).trim() === "Interested").length;
-  const isQualified = (r: SaleRow) => String(r.sub_sub_calling_status).trim().toLowerCase() === QUALIFIED_TEXT;
+  const connected = rows.filter(
+    (r) => String(r.calling_status).trim() === "Connect",
+  ).length;
+  const interested = rows.filter(
+    (r) => String(r.interested_status).trim() === "Interested",
+  ).length;
+  const isQualified = (r: SaleRow) =>
+    String(r.sub_sub_calling_status).trim().toLowerCase() === QUALIFIED_TEXT;
   const qualified = rows.filter(isQualified).length;
-  const converted = rows.filter((r) => CONVERTED_STATUSES.has(String(r.lead_closer_status).trim())).length;
+  const converted = rows.filter((r) =>
+    CONVERTED_STATUSES.has(String(r.lead_closer_status).trim()),
+  ).length;
   const totalSaleValue = rows.reduce((s, r) => s + parseInr(r.sale_inr), 0);
   const totalVolumeMt = rows
     .filter((r) => CONVERTED_STATUSES.has(String(r.lead_closer_status).trim()))
     .reduce((s, r) => s + parseInr(r.sale_mt), 0);
 
   const tatRows = rows.filter((r) => clean(r.within_tat) !== "");
-  const tatWithin = tatRows.filter((r) => String(r.within_tat).trim() !== "Out Of TAT").length;
+  const tatWithin = tatRows.filter(
+    (r) => String(r.within_tat).trim() !== "Out Of TAT",
+  ).length;
 
   const tatBucketMap = new Map<string, number>();
   for (const r of rows) {
@@ -240,12 +293,21 @@ export async function getBirlanuDashboard(): Promise<BirlanuDashboardData> {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([monthKey, { label, rows: mRows }]) => {
       const enquiriesReceived = mRows.length;
-      const mConnected = mRows.filter((r) => String(r.calling_status).trim() === "Connect").length;
-      const validated = mRows.filter((r) => String(r.interested_status).trim() === "Interested").length;
+      const mConnected = mRows.filter(
+        (r) => String(r.calling_status).trim() === "Connect",
+      ).length;
+      const validated = mRows.filter(
+        (r) => String(r.interested_status).trim() === "Interested",
+      ).length;
       const mQualified = mRows.filter(isQualified).length;
-      const convertedRows = mRows.filter((r) => CONVERTED_STATUSES.has(String(r.lead_closer_status).trim()));
+      const convertedRows = mRows.filter((r) =>
+        CONVERTED_STATUSES.has(String(r.lead_closer_status).trim()),
+      );
       const mConverted = convertedRows.length;
-      const pct = (n: number) => (enquiriesReceived ? Math.round((n / enquiriesReceived) * 10000) / 100 : 0);
+      const pct = (n: number) =>
+        enquiriesReceived
+          ? Math.round((n / enquiriesReceived) * 10000) / 100
+          : 0;
       return {
         monthKey,
         month: label,
@@ -282,30 +344,50 @@ export async function getBirlanuDashboard(): Promise<BirlanuDashboardData> {
     dailyMap.set(d, cur);
   }
 
-  const [aprRows] = await db.execute<any[]>(`SELECT agent_name, total_calls, login_time FROM db_masmis.birlanu_apr`);
-  const agentsInRoster = new Set((aprRows as any[]).map((r) => String(r.agent_name).trim()).filter(Boolean)).size;
-  const agentsWithMetrics = (aprRows as any[]).filter((r) => r.total_calls !== null || r.login_time !== null).length;
+  const [aprRows] = await db.execute<any[]>(
+    `SELECT agent_name, total_calls, login_time FROM db_masmis.birlanu_apr`,
+  );
+  const agentsInRoster = new Set(
+    (aprRows as any[]).map((r) => String(r.agent_name).trim()).filter(Boolean),
+  ).size;
+  const agentsWithMetrics = (aprRows as any[]).filter(
+    (r) => r.total_calls !== null || r.login_time !== null,
+  ).length;
 
   return {
     headline: {
       totalLeads,
       connected,
-      connectedPct: totalLeads ? Math.round((connected / totalLeads) * 10000) / 100 : 0,
+      connectedPct: totalLeads
+        ? Math.round((connected / totalLeads) * 10000) / 100
+        : 0,
       interested,
-      interestedPct: totalLeads ? Math.round((interested / totalLeads) * 10000) / 100 : 0,
+      interestedPct: totalLeads
+        ? Math.round((interested / totalLeads) * 10000) / 100
+        : 0,
       converted,
-      conversionPct: totalLeads ? Math.round((converted / totalLeads) * 10000) / 100 : 0,
+      conversionPct: totalLeads
+        ? Math.round((converted / totalLeads) * 10000) / 100
+        : 0,
       totalSaleValue,
       avgOrderValue: converted ? Math.round(totalSaleValue / converted) : 0,
       tatTracked: tatRows.length,
       tatWithin,
-      tatCompliancePct: tatRows.length ? Math.round((tatWithin / tatRows.length) * 10000) / 100 : 0,
+      tatCompliancePct: tatRows.length
+        ? Math.round((tatWithin / tatRows.length) * 10000) / 100
+        : 0,
       qualified,
-      qualifiedPct: totalLeads ? Math.round((qualified / totalLeads) * 10000) / 100 : 0,
+      qualifiedPct: totalLeads
+        ? Math.round((qualified / totalLeads) * 10000) / 100
+        : 0,
       totalVolumeMt,
     },
     byLeadCloserStatus: [...leadCloserMap.entries()]
-      .map(([status, v]) => ({ status, count: v.count, saleValue: v.saleValue }))
+      .map(([status, v]) => ({
+        status,
+        count: v.count,
+        saleValue: v.saleValue,
+      }))
       .sort((a, b) => b.count - a.count),
     byBusiness: buildGroup(rows, "select_business"),
     byBrand: buildGroup(rows, "brand"),
@@ -321,9 +403,10 @@ export async function getBirlanuDashboard(): Promise<BirlanuDashboardData> {
     productivity: {
       agentsInRoster,
       agentsWithMetrics,
-      note: agentsWithMetrics === 0
-        ? "Agent roster uploaded, but this batch's APR file did not carry call/login/talk-time figures -- productivity metrics will appear once an APR upload includes them."
-        : `${agentsWithMetrics} of ${agentsInRoster} agents have productivity metrics in the latest upload.`,
+      note:
+        agentsWithMetrics === 0
+          ? "Agent roster uploaded, but this batch's APR file did not carry call/login/talk-time figures -- productivity metrics will appear once an APR upload includes them."
+          : `${agentsWithMetrics} of ${agentsInRoster} agents have productivity metrics in the latest upload.`,
     },
   };
 }

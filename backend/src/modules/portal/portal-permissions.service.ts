@@ -51,7 +51,7 @@ export const portalPermissionsService = {
          FROM portal_user_permissions
         ${clientUserId ? "WHERE client_user_id = ?" : ""}
         ORDER BY granted_at DESC`,
-      clientUserId ? [clientUserId] : []
+      clientUserId ? [clientUserId] : [],
     );
     return (rows as RowDataPacket[]).map((row) => ({
       ...(row as unknown as PortalPermission),
@@ -92,7 +92,7 @@ export const portalPermissionsService = {
         input.resourceIds ? JSON.stringify(input.resourceIds) : null,
         input.grantedBy,
         input.expiresAt ?? null,
-      ]
+      ],
     );
   },
 
@@ -100,7 +100,7 @@ export const portalPermissionsService = {
   async revoke(id: string): Promise<boolean> {
     const [result] = await db.execute(
       "UPDATE portal_user_permissions SET active_status = 0 WHERE id = ? AND active_status = 1",
-      [id]
+      [id],
     );
     return (result as { affectedRows?: number }).affectedRows ? true : false;
   },
@@ -116,7 +116,7 @@ export const portalPermissionsService = {
   async hasPermission(
     clientUserId: string,
     permissionType: string,
-    resourceId?: string
+    resourceId?: string,
   ): Promise<boolean> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT 1
@@ -131,7 +131,7 @@ export const portalPermissionsService = {
              OR JSON_CONTAINS(resource_ids, JSON_QUOTE(?))
           )
         LIMIT 1`,
-      [clientUserId, permissionType, resourceId ?? null, resourceId ?? ""]
+      [clientUserId, permissionType, resourceId ?? null, resourceId ?? ""],
     );
     return (rows as RowDataPacket[]).length > 0;
   },

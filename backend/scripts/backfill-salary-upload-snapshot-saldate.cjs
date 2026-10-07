@@ -70,14 +70,18 @@ const chunk = (arr, n) => {
     dateStrings: true,
   });
 
-  console.log(`\n=== salary_upload_snapshot.sal_date backfill — ${APPLY ? "APPLY" : "DRY RUN"} ===`);
-  console.log(`    source: ${process.env.BILL_DB_NAME} @ ${process.env.BILL_DB_HOST} (MySQL 5.5)`);
+  console.log(
+    `\n=== salary_upload_snapshot.sal_date backfill — ${APPLY ? "APPLY" : "DRY RUN"} ===`,
+  );
+  console.log(
+    `    source: ${process.env.BILL_DB_NAME} @ ${process.env.BILL_DB_HOST} (MySQL 5.5)`,
+  );
   console.log(`    target: ${process.env.DB_NAME} @ ${process.env.DB_HOST}\n`);
 
   const [src] = await bill.query(
     `SELECT DataId, ${PARSE_SQL} AS parsed,
             (SalDate IS NOT NULL AND TRIM(SalDate) <> '' AND ${PARSE_SQL} IS NULL) AS unparsed
-       FROM salary_master_upload`
+       FROM salary_master_upload`,
   );
 
   const unparsed = src.filter((r) => Number(r.unparsed) === 1);
@@ -87,15 +91,19 @@ const chunk = (arr, n) => {
   console.log(`source rows        : ${src.length}`);
   console.log(`  parseable        : ${withDate.length}`);
   console.log(`  blank in db_bill : ${blanks}  -> NULL`);
-  console.log(`  UNPARSEABLE      : ${unparsed.length}${unparsed.length ? "  <-- investigate before applying" : ""}`);
+  console.log(
+    `  UNPARSEABLE      : ${unparsed.length}${unparsed.length ? "  <-- investigate before applying" : ""}`,
+  );
 
   const [[before]] = await hrms.query(
     `SELECT COUNT(*) total,
             SUM(CAST(sal_date AS CHAR) LIKE '0000-00-00%') zero_dates,
             SUM(sal_date IS NULL) nulls
-       FROM salary_upload_snapshot`
+       FROM salary_upload_snapshot`,
   );
-  console.log(`\ntarget before      : ${before.total} rows, ${before.zero_dates} zero-dates, ${before.nulls} nulls`);
+  console.log(
+    `\ntarget before      : ${before.total} rows, ${before.zero_dates} zero-dates, ${before.nulls} nulls`,
+  );
 
   // Dates repeat heavily (one per payroll month), so grouping by value turns
   // ~39k row updates into a few dozen statements.
@@ -108,18 +116,24 @@ const chunk = (arr, n) => {
   console.log(`distinct dates     : ${byDate.size}`);
 
   if (!APPLY) {
-    const sample = [...byDate.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 5);
+    const sample = [...byDate.entries()]
+      .sort((a, b) => b[1].length - a[1].length)
+      .slice(0, 5);
     console.log(`\nlargest groups:`);
     for (const [d, ids] of sample) console.log(`    ${d}  ${ids.length} rows`);
     console.log(`\nDRY RUN — nothing written. Re-run with --apply.`);
-    await bill.end(); await hrms.end();
+    await bill.end();
+    await hrms.end();
     return;
   }
 
   if (unparsed.length) {
-    console.error(`REFUSING TO APPLY — ${unparsed.length} source rows did not parse. Fix the parser first.`);
+    console.error(
+      `REFUSING TO APPLY — ${unparsed.length} source rows did not parse. Fix the parser first.`,
+    );
     process.exitCode = 1;
-    await bill.end(); await hrms.end();
+    await bill.end();
+    await hrms.end();
     return;
   }
 
@@ -130,19 +144,21 @@ const chunk = (arr, n) => {
       for (const part of chunk(ids, 5000)) {
         const [res] = await hrms.query(
           `UPDATE salary_upload_snapshot SET sal_date = ? WHERE data_id IN (?)`,
-          [date, part]
+          [date, part],
         );
         updated += res.affectedRows;
       }
     }
 
     // Blanks in db_bill become NULL, not a zero date.
-    const blankIds = src.filter((r) => !r.parsed && Number(r.unparsed) === 0).map((r) => r.DataId);
+    const blankIds = src
+      .filter((r) => !r.parsed && Number(r.unparsed) === 0)
+      .map((r) => r.DataId);
     let nulled = 0;
     for (const part of chunk(blankIds, 5000)) {
       const [res] = await hrms.query(
         `UPDATE salary_upload_snapshot SET sal_date = NULL WHERE data_id IN (?)`,
-        [part]
+        [part],
       );
       nulled += res.affectedRows;
     }
@@ -155,9 +171,11 @@ const chunk = (arr, n) => {
               SUM(CAST(sal_date AS CHAR) LIKE '0000-00-00%') zero_dates,
               SUM(sal_date IS NULL) nulls,
               MIN(sal_date) earliest, MAX(sal_date) latest
-         FROM salary_upload_snapshot`
+         FROM salary_upload_snapshot`,
     );
-    console.log(`target after       : ${after.total} rows, ${after.zero_dates} zero-dates, ${after.nulls} nulls`);
+    console.log(
+      `target after       : ${after.total} rows, ${after.zero_dates} zero-dates, ${after.nulls} nulls`,
+    );
     console.log(`date range         : ${after.earliest} .. ${after.latest}`);
   } catch (e) {
     await hrms.rollback();

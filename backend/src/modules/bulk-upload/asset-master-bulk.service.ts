@@ -28,22 +28,30 @@ const CHUNK_SIZE = 200;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  for (let i = 0; i < items.length; i += size)
+    out.push(items.slice(i, i + size));
   return out;
 }
 
 // Mirrors asset_master.status's live ENUM exactly.
-const VALID_STATUSES = new Set(["available", "assigned", "maintenance", "repair", "retired", "lost"]);
+const VALID_STATUSES = new Set([
+  "available",
+  "assigned",
+  "maintenance",
+  "repair",
+  "retired",
+  "lost",
+]);
 
 export async function importAssetMasterBatch(
   batchId: string,
-  importedByUserId: string
+  importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
   const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
       ORDER BY row_no`,
-    [batchId]
+    [batchId],
   );
 
   if (batchRows.length === 0) {
@@ -77,7 +85,9 @@ export async function importAssetMasterBatch(
       continue;
     }
 
-    const statusRaw = String(data.status ?? "").trim().toLowerCase();
+    const statusRaw = String(data.status ?? "")
+      .trim()
+      .toLowerCase();
     if (!statusRaw || !VALID_STATUSES.has(statusRaw)) {
       const msg = `Row ${row.row_no}: status "${data.status ?? ""}" must be one of ${[...VALID_STATUSES].sort().join(", ")}`;
       errors.push(msg);
@@ -86,19 +96,34 @@ export async function importAssetMasterBatch(
       continue;
     }
 
-    const branchCode = data.branch_code ? String(data.branch_code).trim() : null;
+    const branchCode = data.branch_code
+      ? String(data.branch_code).trim()
+      : null;
     if (branchCode) branchCodes.add(branchCode);
 
     parsed.push({
-      rowId: row.id, rowNo: row.row_no, assetCode, assetName, category, status: statusRaw,
+      rowId: row.id,
+      rowNo: row.row_no,
+      assetCode,
+      assetName,
+      category,
+      status: statusRaw,
       assetType: data.asset_type ? String(data.asset_type).trim() : null,
-      serialNumber: data.serial_number ? String(data.serial_number).trim() : null,
+      serialNumber: data.serial_number
+        ? String(data.serial_number).trim()
+        : null,
       // The template's cost column is purchase_cost, not cost — same class of
       // key-name mismatch as asset_category above.
-      purchaseDate: data.purchase_date ? String(data.purchase_date).slice(0, 10) : null,
-      purchaseCost: data.purchase_cost ? parseFloat(String(data.purchase_cost)) : null,
+      purchaseDate: data.purchase_date
+        ? String(data.purchase_date).slice(0, 10)
+        : null,
+      purchaseCost: data.purchase_cost
+        ? parseFloat(String(data.purchase_cost))
+        : null,
       vendor: data.vendor ? String(data.vendor).trim() : null,
-      warrantyExpiry: data.warranty_expiry ? String(data.warranty_expiry).slice(0, 10) : null,
+      warrantyExpiry: data.warranty_expiry
+        ? String(data.warranty_expiry).slice(0, 10)
+        : null,
       notes: data.notes ? String(data.notes).trim() : null,
       branchCode,
     });
@@ -111,9 +136,10 @@ export async function importAssetMasterBatch(
     const codes = Array.from(branchCodes);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, branch_code FROM branch_master WHERE branch_code IN (${codes.map(() => "?").join(",")})`,
-      codes
+      codes,
     );
-    for (const r of rows) branchIdByCode.set(r.branch_code as string, r.id as string);
+    for (const r of rows)
+      branchIdByCode.set(r.branch_code as string, r.id as string);
   }
 
   let importedRows = 0;
@@ -125,11 +151,21 @@ export async function importAssetMasterBatch(
   // as an error — every other row in the batch still lands, matching the
   // original per-row loop's error isolation.
   for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?)").join(", ");
+    const placeholders = rowsInChunk
+      .map(() => "(?,?,?,?,?,?,?,?,?,?,?,?)")
+      .join(", ");
     const params = rowsInChunk.flatMap((r) => [
-      r.assetCode, r.assetName, r.category, r.assetType, r.serialNumber,
-      r.purchaseDate, r.purchaseCost, r.vendor, r.warrantyExpiry, r.notes,
-      r.branchCode ? branchIdByCode.get(r.branchCode) ?? null : null,
+      r.assetCode,
+      r.assetName,
+      r.category,
+      r.assetType,
+      r.serialNumber,
+      r.purchaseDate,
+      r.purchaseCost,
+      r.vendor,
+      r.warrantyExpiry,
+      r.notes,
+      r.branchCode ? (branchIdByCode.get(r.branchCode) ?? null) : null,
       r.status,
     ]);
 
@@ -159,7 +195,7 @@ export async function importAssetMasterBatch(
            notes = COALESCE(VALUES(notes), notes),
            branch_id = COALESCE(VALUES(branch_id), branch_id),
            status = VALUES(status)`,
-        params
+        params,
       );
       for (const r of rowsInChunk) {
         importedRowIds.push(r.rowId);
@@ -185,10 +221,20 @@ export async function importAssetMasterBatch(
                notes = COALESCE(VALUES(notes), notes),
                branch_id = COALESCE(VALUES(branch_id), branch_id),
                status = VALUES(status)`,
-            [r.assetCode, r.assetName, r.category, r.assetType, r.serialNumber,
-             r.purchaseDate, r.purchaseCost, r.vendor, r.warrantyExpiry, r.notes,
-             r.branchCode ? branchIdByCode.get(r.branchCode) ?? null : null,
-             r.status]
+            [
+              r.assetCode,
+              r.assetName,
+              r.category,
+              r.assetType,
+              r.serialNumber,
+              r.purchaseDate,
+              r.purchaseCost,
+              r.vendor,
+              r.warrantyExpiry,
+              r.notes,
+              r.branchCode ? (branchIdByCode.get(r.branchCode) ?? null) : null,
+              r.status,
+            ],
           );
           importedRowIds.push(r.rowId);
           importedRows++;
@@ -206,17 +252,20 @@ export async function importAssetMasterBatch(
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'imported'
        WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
-      importedRowIds
+      importedRowIds,
     );
   }
   if (errorUpdates.length > 0) {
     const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
-    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+    const caseParams = errorUpdates.flatMap((u) => [
+      u.rowId,
+      JSON.stringify([u.message]),
+    ]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids]
+      [...caseParams, ...ids],
     );
   }
 
@@ -224,12 +273,12 @@ export async function importAssetMasterBatch(
     errorRows === 0
       ? "imported"
       : importedRows === 0
-      ? "validation_failed"
-      : "imported_with_errors";
+        ? "validation_failed"
+        : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId]
+    [finalStatus, importedRows, errorRows, batchId],
   );
 
   return { importedRows, errorRows, errors };

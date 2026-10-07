@@ -52,7 +52,7 @@ interface CostTypeRow extends RowDataPacket {
  */
 export async function configuredCostTypes(
   period: string,
-  scope: ConfiguredCostScope = {}
+  scope: ConfiguredCostScope = {},
 ): Promise<Set<string>> {
   if (!(await tableExists("process_pnl_cost_component"))) return new Set();
 
@@ -78,7 +78,7 @@ export async function configuredCostTypes(
        FROM process_pnl_cost_component c
        ${needsProcessJoin ? "LEFT JOIN process_master pm ON pm.id = c.process_id" : ""}
       WHERE ${where.join(" AND ")}`,
-    params
+    params,
   );
   return new Set(rows.map((r) => String(r.cost_type)));
 }
@@ -95,7 +95,7 @@ export interface CostComponentDataFlags {
 
 export async function costComponentDataFlags(
   period: string,
-  scope: ConfiguredCostScope = {}
+  scope: ConfiguredCostScope = {},
 ): Promise<CostComponentDataFlags> {
   const types = await configuredCostTypes(period, scope);
   return {

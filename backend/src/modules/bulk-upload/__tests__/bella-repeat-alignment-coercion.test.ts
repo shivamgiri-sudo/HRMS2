@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { parseDate, BELLA_REPEAT_ALIGNMENT_HEADERS } from "../bella-repeat-alignment-bulk.service.js";
+import {
+  parseDate,
+  BELLA_REPEAT_ALIGNMENT_HEADERS,
+} from "../bella-repeat-alignment-bulk.service.js";
 
 describe("parseDate", () => {
   it("reads the real DOJ Excel serial from the sample (44829 = 2022-09-25)", () => {

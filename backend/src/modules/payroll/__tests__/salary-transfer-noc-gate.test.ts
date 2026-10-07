@@ -21,8 +21,10 @@ const { execute, getConnection } = vi.hoisted(() => ({
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 vi.mock("../../../shared/fieldEncryption.js", () => ({
   // Pass the legacy plaintext straight through — decryption correctness is out of scope here.
-  resolveAccountNumber: (row: { account_number_enc?: string | null; account_number?: string | null }) =>
-    row.account_number_enc ?? row.account_number ?? null,
+  resolveAccountNumber: (row: {
+    account_number_enc?: string | null;
+    account_number?: string | null;
+  }) => row.account_number_enc ?? row.account_number ?? null,
 }));
 
 const {
@@ -31,7 +33,8 @@ const {
   getFilteredEligibleTransferRows,
   getFilteredEligibleTransferRowsWithNocExclusions,
 } = await import("../salary-transfer.service.js");
-const { buildBankReadinessReport } = await import("../bank-payment-readiness.service.js");
+const { buildBankReadinessReport } =
+  await import("../bank-payment-readiness.service.js");
 
 vi.mock("../bank-payment-readiness.service.js", async (orig) => {
   const actual = await orig<Record<string, unknown>>();
@@ -83,11 +86,20 @@ function mockReadinessReport(ids: string[]) {
 function mockRun(opts: {
   lines: Array<Record<string, unknown>>;
   gateEnabled?: boolean;
-  nocBlocked?: Array<{ employee_id: string; employee_code: string; employee_name: string; net_salary: number; case_status: string | null; pending_stages: string | null }>;
+  nocBlocked?: Array<{
+    employee_id: string;
+    employee_code: string;
+    employee_name: string;
+    net_salary: number;
+    case_status: string | null;
+    pending_stages: string | null;
+  }>;
 }) {
   execute.mockReset();
   execute.mockResolvedValueOnce([[]]); // no already-open items
-  execute.mockResolvedValueOnce([[{ config_value: opts.gateEnabled === false ? "false" : "true" }]]); // kill-switch flag
+  execute.mockResolvedValueOnce([
+    [{ config_value: opts.gateEnabled === false ? "false" : "true" }],
+  ]); // kill-switch flag
   if (opts.gateEnabled !== false) {
     execute.mockResolvedValueOnce([opts.nocBlocked ?? []]); // nocBlockedEmployeesForRuns' own query
   }
@@ -100,22 +112,30 @@ beforeEach(() => {
 
 describe("getEligibleTransferRowsWithNocExclusions", () => {
   it("excludes an employee the NOC gate has withheld, and reports why", async () => {
-    mockReadinessReport([READY_EMPLOYEE.employee_id, NOC_PENDING_EMPLOYEE.employee_id]);
+    mockReadinessReport([
+      READY_EMPLOYEE.employee_id,
+      NOC_PENDING_EMPLOYEE.employee_id,
+    ]);
     mockRun({
       lines: [READY_EMPLOYEE, NOC_PENDING_EMPLOYEE],
-      nocBlocked: [{
-        employee_id: NOC_PENDING_EMPLOYEE.employee_id,
-        employee_code: NOC_PENDING_EMPLOYEE.employee_code,
-        employee_name: NOC_PENDING_EMPLOYEE.employee_name,
-        net_salary: 30000,
-        case_status: "in_progress",
-        pending_stages: "Finance",
-      }],
+      nocBlocked: [
+        {
+          employee_id: NOC_PENDING_EMPLOYEE.employee_id,
+          employee_code: NOC_PENDING_EMPLOYEE.employee_code,
+          employee_name: NOC_PENDING_EMPLOYEE.employee_name,
+          net_salary: 30000,
+          case_status: "in_progress",
+          pending_stages: "Finance",
+        },
+      ],
     });
 
-    const { rows, excludedByNoc } = await getEligibleTransferRowsWithNocExclusions(RUN_ID);
+    const { rows, excludedByNoc } =
+      await getEligibleTransferRowsWithNocExclusions(RUN_ID);
 
-    expect(rows.map((r) => r.employee_id)).toEqual([READY_EMPLOYEE.employee_id]);
+    expect(rows.map((r) => r.employee_id)).toEqual([
+      READY_EMPLOYEE.employee_id,
+    ]);
     expect(excludedByNoc).toHaveLength(1);
     expect(excludedByNoc[0]).toMatchObject({
       employee_id: NOC_PENDING_EMPLOYEE.employee_id,
@@ -128,7 +148,8 @@ describe("getEligibleTransferRowsWithNocExclusions", () => {
     mockReadinessReport([READY_EMPLOYEE.employee_id]);
     mockRun({ lines: [READY_EMPLOYEE], nocBlocked: [] });
 
-    const { rows, excludedByNoc } = await getEligibleTransferRowsWithNocExclusions(RUN_ID);
+    const { rows, excludedByNoc } =
+      await getEligibleTransferRowsWithNocExclusions(RUN_ID);
 
     expect(rows).toHaveLength(1);
     expect(excludedByNoc).toEqual([]);
@@ -138,10 +159,17 @@ describe("getEligibleTransferRowsWithNocExclusions", () => {
     // Owner ruling 2026-09-12 shipped with the gate defaulting ON — see the flag's own default
     // ("An unset flag means the gate applies") — but this pins that turning it OFF genuinely
     // restores the exact pre-wiring behaviour rather than half-applying it.
-    mockReadinessReport([READY_EMPLOYEE.employee_id, NOC_PENDING_EMPLOYEE.employee_id]);
-    mockRun({ lines: [READY_EMPLOYEE, NOC_PENDING_EMPLOYEE], gateEnabled: false });
+    mockReadinessReport([
+      READY_EMPLOYEE.employee_id,
+      NOC_PENDING_EMPLOYEE.employee_id,
+    ]);
+    mockRun({
+      lines: [READY_EMPLOYEE, NOC_PENDING_EMPLOYEE],
+      gateEnabled: false,
+    });
 
-    const { rows, excludedByNoc } = await getEligibleTransferRowsWithNocExclusions(RUN_ID);
+    const { rows, excludedByNoc } =
+      await getEligibleTransferRowsWithNocExclusions(RUN_ID);
 
     expect(rows.map((r) => r.employee_id).sort()).toEqual(
       [READY_EMPLOYEE.employee_id, NOC_PENDING_EMPLOYEE.employee_id].sort(),
@@ -153,17 +181,20 @@ describe("getEligibleTransferRowsWithNocExclusions", () => {
     mockReadinessReport([NOC_PENDING_EMPLOYEE.employee_id]);
     mockRun({
       lines: [NOC_PENDING_EMPLOYEE],
-      nocBlocked: [{
-        employee_id: NOC_PENDING_EMPLOYEE.employee_id,
-        employee_code: NOC_PENDING_EMPLOYEE.employee_code,
-        employee_name: NOC_PENDING_EMPLOYEE.employee_name,
-        net_salary: 30000,
-        case_status: null,
-        pending_stages: null,
-      }],
+      nocBlocked: [
+        {
+          employee_id: NOC_PENDING_EMPLOYEE.employee_id,
+          employee_code: NOC_PENDING_EMPLOYEE.employee_code,
+          employee_name: NOC_PENDING_EMPLOYEE.employee_name,
+          net_salary: 30000,
+          case_status: null,
+          pending_stages: null,
+        },
+      ],
     });
 
-    const { excludedByNoc } = await getEligibleTransferRowsWithNocExclusions(RUN_ID);
+    const { excludedByNoc } =
+      await getEligibleTransferRowsWithNocExclusions(RUN_ID);
 
     expect(excludedByNoc[0].reason).toMatch(/has not been raised/i);
   });
@@ -171,17 +202,22 @@ describe("getEligibleTransferRowsWithNocExclusions", () => {
 
 describe("back-compat wrappers keep prior callers working", () => {
   it("getEligibleTransferRows returns only the row list — existing callers see no shape change", async () => {
-    mockReadinessReport([READY_EMPLOYEE.employee_id, NOC_PENDING_EMPLOYEE.employee_id]);
+    mockReadinessReport([
+      READY_EMPLOYEE.employee_id,
+      NOC_PENDING_EMPLOYEE.employee_id,
+    ]);
     mockRun({
       lines: [READY_EMPLOYEE, NOC_PENDING_EMPLOYEE],
-      nocBlocked: [{
-        employee_id: NOC_PENDING_EMPLOYEE.employee_id,
-        employee_code: NOC_PENDING_EMPLOYEE.employee_code,
-        employee_name: NOC_PENDING_EMPLOYEE.employee_name,
-        net_salary: 30000,
-        case_status: "in_progress",
-        pending_stages: null,
-      }],
+      nocBlocked: [
+        {
+          employee_id: NOC_PENDING_EMPLOYEE.employee_id,
+          employee_code: NOC_PENDING_EMPLOYEE.employee_code,
+          employee_name: NOC_PENDING_EMPLOYEE.employee_name,
+          net_salary: 30000,
+          case_status: "in_progress",
+          pending_stages: null,
+        },
+      ],
     });
 
     const rows = await getEligibleTransferRows(RUN_ID);
@@ -189,49 +225,68 @@ describe("back-compat wrappers keep prior callers working", () => {
     // An array, not { rows, excludedByNoc } — generateSalaryTransferBatch and every other
     // existing caller does rows.length / rows.filter directly on the return value.
     expect(Array.isArray(rows)).toBe(true);
-    expect(rows.map((r) => r.employee_id)).toEqual([READY_EMPLOYEE.employee_id]);
+    expect(rows.map((r) => r.employee_id)).toEqual([
+      READY_EMPLOYEE.employee_id,
+    ]);
   });
 
   it("getFilteredEligibleTransferRows applies the NOC exclusion before the branch/status filter", async () => {
-    mockReadinessReport([READY_EMPLOYEE.employee_id, NOC_PENDING_EMPLOYEE.employee_id]);
+    mockReadinessReport([
+      READY_EMPLOYEE.employee_id,
+      NOC_PENDING_EMPLOYEE.employee_id,
+    ]);
     mockRun({
       lines: [READY_EMPLOYEE, NOC_PENDING_EMPLOYEE],
-      nocBlocked: [{
-        employee_id: NOC_PENDING_EMPLOYEE.employee_id,
-        employee_code: NOC_PENDING_EMPLOYEE.employee_code,
-        employee_name: NOC_PENDING_EMPLOYEE.employee_name,
-        net_salary: 30000,
-        case_status: "in_progress",
-        pending_stages: null,
-      }],
+      nocBlocked: [
+        {
+          employee_id: NOC_PENDING_EMPLOYEE.employee_id,
+          employee_code: NOC_PENDING_EMPLOYEE.employee_code,
+          employee_name: NOC_PENDING_EMPLOYEE.employee_name,
+          net_salary: 30000,
+          case_status: "in_progress",
+          pending_stages: null,
+        },
+      ],
     });
 
-    const rows = await getFilteredEligibleTransferRows(RUN_ID, { status: "both" });
+    const rows = await getFilteredEligibleTransferRows(RUN_ID, {
+      status: "both",
+    });
 
-    expect(rows.map((r) => r.employee_id)).toEqual([READY_EMPLOYEE.employee_id]);
+    expect(rows.map((r) => r.employee_id)).toEqual([
+      READY_EMPLOYEE.employee_id,
+    ]);
   });
 
   it("getFilteredEligibleTransferRowsWithNocExclusions filters rows but keeps the full excluded list", async () => {
-    mockReadinessReport([READY_EMPLOYEE.employee_id, NOC_PENDING_EMPLOYEE.employee_id]);
+    mockReadinessReport([
+      READY_EMPLOYEE.employee_id,
+      NOC_PENDING_EMPLOYEE.employee_id,
+    ]);
     mockRun({
       lines: [READY_EMPLOYEE, NOC_PENDING_EMPLOYEE],
-      nocBlocked: [{
-        employee_id: NOC_PENDING_EMPLOYEE.employee_id,
-        employee_code: NOC_PENDING_EMPLOYEE.employee_code,
-        employee_name: NOC_PENDING_EMPLOYEE.employee_name,
-        net_salary: 30000,
-        case_status: "in_progress",
-        pending_stages: null,
-      }],
+      nocBlocked: [
+        {
+          employee_id: NOC_PENDING_EMPLOYEE.employee_id,
+          employee_code: NOC_PENDING_EMPLOYEE.employee_code,
+          employee_name: NOC_PENDING_EMPLOYEE.employee_name,
+          net_salary: 30000,
+          case_status: "in_progress",
+          pending_stages: null,
+        },
+      ],
     });
 
     // Filtering to branch_id that only READY_EMPLOYEE belongs to must not touch excludedByNoc:
     // the UI needs the whole withheld list regardless of which branch panel is open.
-    const { rows, excludedByNoc } = await getFilteredEligibleTransferRowsWithNocExclusions(RUN_ID, {
-      branchId: READY_EMPLOYEE.branch_id,
-    });
+    const { rows, excludedByNoc } =
+      await getFilteredEligibleTransferRowsWithNocExclusions(RUN_ID, {
+        branchId: READY_EMPLOYEE.branch_id,
+      });
 
-    expect(rows.map((r) => r.employee_id)).toEqual([READY_EMPLOYEE.employee_id]);
+    expect(rows.map((r) => r.employee_id)).toEqual([
+      READY_EMPLOYEE.employee_id,
+    ]);
     expect(excludedByNoc).toHaveLength(1);
   });
 });

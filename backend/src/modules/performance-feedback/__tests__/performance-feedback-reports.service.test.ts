@@ -17,7 +17,9 @@ describe("PerformanceFeedbackService report reads", () => {
   it("maps the live report schema and limits employees to their own reports", async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
 
-    await new PerformanceFeedbackService().getReports({ employee_id: "employee-1" });
+    await new PerformanceFeedbackService().getReports({
+      employee_id: "employee-1",
+    });
 
     const [sql, params] = vi.mocked(db.execute).mock.calls[0];
     expect(sql).toContain("pfr.report_id AS id");
@@ -29,7 +31,9 @@ describe("PerformanceFeedbackService report reads", () => {
   it("limits manager report lists to direct reports", async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
 
-    await new PerformanceFeedbackService().getReports({ manager_id: "manager-1" });
+    await new PerformanceFeedbackService().getReports({
+      manager_id: "manager-1",
+    });
 
     const [sql, params] = vi.mocked(db.execute).mock.calls[0];
     expect(sql).toContain("e.reporting_manager_id = ?");
@@ -39,13 +43,18 @@ describe("PerformanceFeedbackService report reads", () => {
   it("enforces employee and manager scope when loading a report detail", async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
 
-    const report = await new PerformanceFeedbackService().getReportById("report-1", {
-      employee_id: "manager-1",
-      manager_id: "manager-1",
-    });
+    const report = await new PerformanceFeedbackService().getReportById(
+      "report-1",
+      {
+        employee_id: "manager-1",
+        manager_id: "manager-1",
+      },
+    );
 
     const [sql, params] = vi.mocked(db.execute).mock.calls[0];
-    expect(sql).toContain("(pfr.employee_id = ? OR e.reporting_manager_id = ?)");
+    expect(sql).toContain(
+      "(pfr.employee_id = ? OR e.reporting_manager_id = ?)",
+    );
     expect(params).toEqual(["report-1", "manager-1", "manager-1"]);
     expect(report).toBeNull();
   });

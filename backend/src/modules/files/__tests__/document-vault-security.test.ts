@@ -46,7 +46,10 @@ describe("Document Vault Security", () => {
       ".xlsx": Buffer.from([0x50, 0x4b, 0x03, 0x04]),
     };
 
-    function validateFileMagicBytes(filePath: string, extension: string): boolean {
+    function validateFileMagicBytes(
+      filePath: string,
+      extension: string,
+    ): boolean {
       const ext = extension.toLowerCase();
       const expected = MAGIC_BYTES[ext];
       if (!expected) return true;
@@ -124,12 +127,16 @@ describe("Document Vault Security", () => {
 
     beforeEach(async () => {
       const { db } = await import("../../../db/mysql.js");
-      const { authorizeDocumentAccess } = await import("../documentVaultAuth.js");
-      const { getUserRoleContext } = await import("../../../shared/roleResolver.js");
+      const { authorizeDocumentAccess } =
+        await import("../documentVaultAuth.js");
+      const { getUserRoleContext } =
+        await import("../../../shared/roleResolver.js");
       const { authService } = await import("../../auth/auth.service.js");
 
       mockDb = db as typeof mockDb;
-      mockAuthorizeDocumentAccess = authorizeDocumentAccess as ReturnType<typeof vi.fn>;
+      mockAuthorizeDocumentAccess = authorizeDocumentAccess as ReturnType<
+        typeof vi.fn
+      >;
       mockGetUserRoleContext = getUserRoleContext as ReturnType<typeof vi.fn>;
       mockAuthService = authService as typeof mockAuthService;
 
@@ -146,7 +153,10 @@ describe("Document Vault Security", () => {
     it("should enforce authorization even without DPDP flag", async () => {
       mockAuthService.verifyAccessToken.mockReturnValue({ id: "user-123" });
       mockGetUserRoleContext.mockResolvedValue({ primaryRole: "employee" });
-      mockAuthorizeDocumentAccess.mockResolvedValue({ allowed: false, reasonCode: "ACCESS_DENIED" });
+      mockAuthorizeDocumentAccess.mockResolvedValue({
+        allowed: false,
+        reasonCode: "ACCESS_DENIED",
+      });
 
       expect(mockAuthorizeDocumentAccess).toBeDefined();
     });
@@ -171,7 +181,7 @@ describe("Document Vault Security", () => {
 
       const result = await mockDb.execute(
         "SELECT id, hold_reason FROM document_legal_hold WHERE is_active = 1 AND (vault_item_id = ? OR category = ?)",
-        ["item-1", "employee-documents"]
+        ["item-1", "employee-documents"],
       );
 
       expect(result[0].length).toBeGreaterThan(0);
@@ -187,18 +197,22 @@ describe("Document Vault Security", () => {
           return [[]];
         }
         if (query.includes("document_retention_policy")) {
-          return [[{
-            retention_days: 2555,
-            deletion_requires_approval: 1,
-            created_at: createdAt.toISOString(),
-          }]];
+          return [
+            [
+              {
+                retention_days: 2555,
+                deletion_requires_approval: 1,
+                created_at: createdAt.toISOString(),
+              },
+            ],
+          ];
         }
         return [[]];
       });
 
       const [retentionRows] = await mockDb.execute(
         "SELECT retention_days FROM document_retention_policy",
-        []
+        [],
       );
 
       expect(retentionRows[0].retention_days).toBe(2555);
@@ -206,7 +220,9 @@ describe("Document Vault Security", () => {
       const policy = retentionRows[0];
       const docCreatedAt = new Date(policy.created_at);
       const retentionExpiry = new Date(docCreatedAt);
-      retentionExpiry.setDate(retentionExpiry.getDate() + policy.retention_days);
+      retentionExpiry.setDate(
+        retentionExpiry.getDate() + policy.retention_days,
+      );
 
       expect(new Date() < retentionExpiry).toBe(true);
     });
@@ -217,11 +233,17 @@ describe("Document Vault Security", () => {
           return [[]];
         }
         if (query.includes("document_retention_policy")) {
-          return [[{
-            retention_days: 1,
-            deletion_requires_approval: 1,
-            created_at: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(),
-          }]];
+          return [
+            [
+              {
+                retention_days: 1,
+                deletion_requires_approval: 1,
+                created_at: new Date(
+                  Date.now() - 100 * 24 * 60 * 60 * 1000,
+                ).toISOString(),
+              },
+            ],
+          ];
         }
         if (query.includes("document_deletion_request")) {
           return [[]];
@@ -231,7 +253,7 @@ describe("Document Vault Security", () => {
 
       const [approvalRows] = await mockDb.execute(
         "SELECT id FROM document_deletion_request WHERE vault_item_id = ? AND status = 'approved'",
-        ["item-1"]
+        ["item-1"],
       );
 
       expect(approvalRows.length).toBe(0);
@@ -242,23 +264,28 @@ describe("Document Vault Security", () => {
     let mockRegisterUpload: ReturnType<typeof vi.fn>;
 
     beforeEach(async () => {
-      const { registerUpload } = await import("../../document-vault/documentVault.service.js");
+      const { registerUpload } =
+        await import("../../document-vault/documentVault.service.js");
       mockRegisterUpload = registerUpload as ReturnType<typeof vi.fn>;
       vi.clearAllMocks();
     });
 
     it("should fail upload when vault registration fails", async () => {
-      mockRegisterUpload.mockRejectedValue(new Error("Database connection failed"));
+      mockRegisterUpload.mockRejectedValue(
+        new Error("Database connection failed"),
+      );
 
-      await expect(mockRegisterUpload({
-        uploadedByUser: "user-123",
-        category: "employee-documents",
-        storedFilename: "test-file.pdf",
-        originalFilename: "original.pdf",
-        mimeType: "application/pdf",
-        fileSizeBytes: 1024,
-        accessLevel: "internal",
-      })).rejects.toThrow("Database connection failed");
+      await expect(
+        mockRegisterUpload({
+          uploadedByUser: "user-123",
+          category: "employee-documents",
+          storedFilename: "test-file.pdf",
+          originalFilename: "original.pdf",
+          mimeType: "application/pdf",
+          fileSizeBytes: 1024,
+          accessLevel: "internal",
+        }),
+      ).rejects.toThrow("Database connection failed");
     });
 
     it("should succeed upload when vault registration succeeds", async () => {
@@ -283,9 +310,12 @@ describe("Document Vault Security", () => {
     let mockConsumeDownloadToken: ReturnType<typeof vi.fn>;
 
     beforeEach(async () => {
-      const { issueDownloadToken, consumeDownloadToken } = await import("../../document-vault/documentVault.service.js");
+      const { issueDownloadToken, consumeDownloadToken } =
+        await import("../../document-vault/documentVault.service.js");
       mockIssueDownloadToken = issueDownloadToken as ReturnType<typeof vi.fn>;
-      mockConsumeDownloadToken = consumeDownloadToken as ReturnType<typeof vi.fn>;
+      mockConsumeDownloadToken = consumeDownloadToken as ReturnType<
+        typeof vi.fn
+      >;
       vi.clearAllMocks();
     });
 

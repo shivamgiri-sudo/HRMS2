@@ -48,9 +48,13 @@ export function daysIntersectWithMonth(
   windowTo: string,
 ): number {
   const start = leaveFrom > windowFrom ? leaveFrom : windowFrom;
-  const end   = leaveTo   < windowTo   ? leaveTo   : windowTo;
+  const end = leaveTo < windowTo ? leaveTo : windowTo;
   if (start > end) return 0;
-  return Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 86_400_000) + 1;
+  return (
+    Math.floor(
+      (new Date(end).getTime() - new Date(start).getTime()) / 86_400_000,
+    ) + 1
+  );
 }
 
 // ─── Main function ────────────────────────────────────────────────────────────
@@ -93,7 +97,7 @@ export async function checkAndReverseLeave(params: {
   // ── Step 4: Fetch approved paid leave for this employee in this month ─────
   const lastDay = lastDayOfMonth(runMonth);
   const dateFrom = `${runMonth}-01`;
-  const dateTo   = `${runMonth}-${String(lastDay).padStart(2, "0")}`;
+  const dateTo = `${runMonth}-${String(lastDay).padStart(2, "0")}`;
 
   // Use date-range overlap (A<=D AND B>=C) instead of from_date BETWEEN.
   // The old BETWEEN missed cross-month leaves whose from_date preceded the
@@ -108,7 +112,7 @@ export async function checkAndReverseLeave(params: {
        AND lr.from_date <= ?
        AND lr.to_date   >= ?
      ORDER BY lr.from_date ASC`,
-    [employeeId, dateTo, dateFrom]
+    [employeeId, dateTo, dateFrom],
   );
 
   const leaveRequests = leaveRows as LeaveRequestRow[];
@@ -156,12 +160,12 @@ export async function checkAndReverseLeave(params: {
       const alreadyReversed = Number(prior.reversed_days ?? 0);
       reversedLog.push({
         leaveRequestId: leave.id,
-        leaveTypeId:    leave.leave_type_id,
-        leaveDate:      leave.from_date,
-        daysReversed:   alreadyReversed,
+        leaveTypeId: leave.leave_type_id,
+        leaveDate: leave.from_date,
+        daysReversed: alreadyReversed,
       });
       totalDaysReversed += alreadyReversed;
-      excessDays        -= alreadyReversed;
+      excessDays -= alreadyReversed;
       continue;
     }
 
@@ -171,10 +175,12 @@ export async function checkAndReverseLeave(params: {
       `SELECT (COALESCE(allocated_days, 0) + COALESCE(adjusted_days, 0) - COALESCE(used_days, 0)) AS balance_days
        FROM leave_balance_ledger
        WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-      [employeeId, leave.leave_type_id, balanceYear]
+      [employeeId, leave.leave_type_id, balanceYear],
     );
-    const balanceBefore = Number((balanceRows as BalanceRow[])[0]?.balance_days ?? 0);
-    const balanceAfter  = balanceBefore + daysToReverse;
+    const balanceBefore = Number(
+      (balanceRows as BalanceRow[])[0]?.balance_days ?? 0,
+    );
+    const balanceAfter = balanceBefore + daysToReverse;
 
     // ── 6c. Restore balance by reducing used_days (reverses the deduction
     //        that happened when the leave was approved) ────────────────────
@@ -182,7 +188,7 @@ export async function checkAndReverseLeave(params: {
       `UPDATE leave_balance_ledger
        SET used_days = GREATEST(0, used_days - ?)
        WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-      [daysToReverse, employeeId, leave.leave_type_id, balanceYear]
+      [daysToReverse, employeeId, leave.leave_type_id, balanceYear],
     );
 
     // ── 6d. Insert reversal log ────────────────────────────────────────────
@@ -209,7 +215,7 @@ export async function checkAndReverseLeave(params: {
         runId,
         calculatedPayable,
         daysInMonth,
-      ]
+      ],
     );
 
     // ── 6e. Insert sensitive action log ───────────────────────────────────
@@ -226,7 +232,10 @@ export async function checkAndReverseLeave(params: {
       entity_id: leave.id,
       employee_id: employeeId,
       reason: `Payroll month cap exceeded; reversed ${daysToReverse} paid leave day(s) for ${runMonth}`,
-      old_value_json: { balance_before: balanceBefore, leave_type_id: leave.leave_type_id },
+      old_value_json: {
+        balance_before: balanceBefore,
+        leave_type_id: leave.leave_type_id,
+      },
       new_value_json: {
         balance_after: balanceAfter,
         reversed_days: daysToReverse,
@@ -236,20 +245,20 @@ export async function checkAndReverseLeave(params: {
 
     reversedLog.push({
       leaveRequestId: leave.id,
-      leaveTypeId:    leave.leave_type_id,
-      leaveDate:      leave.from_date,
-      daysReversed:   daysToReverse,
+      leaveTypeId: leave.leave_type_id,
+      leaveDate: leave.from_date,
+      daysReversed: daysToReverse,
     });
 
     totalDaysReversed += daysToReverse;
-    excessDays        -= daysToReverse;
+    excessDays -= daysToReverse;
   }
 
   // ── Steps 7–9: Build and return result ────────────────────────────────────
   return {
-    reversed:     totalDaysReversed > 0,
+    reversed: totalDaysReversed > 0,
     daysReversed: totalDaysReversed,
-    newPaidBase:  paidBase - totalDaysReversed,
-    log:          reversedLog,
+    newPaidBase: paidBase - totalDaysReversed,
+    log: reversedLog,
   };
 }

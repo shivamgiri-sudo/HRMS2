@@ -258,12 +258,10 @@ lmsCoachingRouter.get(
   wrap(async (req, res) => {
     const employeeId = String(req.params.employeeId).slice(0, 36);
     if (!(await canSeeCoaching(req, employeeId)))
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "You cannot view this person's coaching record.",
-        });
+      return res.status(403).json({
+        success: false,
+        message: "You cannot view this person's coaching record.",
+      });
     return res.json({ success: true, data: await coachingDetail(employeeId) });
   }),
 );
@@ -288,24 +286,20 @@ lmsCoachingRouter.get(
       [email],
     );
     if (rows.length !== 1) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message:
-            rows.length === 0
-              ? "No employee has that official email."
-              : "More than one employee has that official email.",
-        });
+      return res.status(404).json({
+        success: false,
+        message:
+          rows.length === 0
+            ? "No employee has that official email."
+            : "More than one employee has that official email.",
+      });
     }
     const employeeId = String(rows[0].id);
     if (!(await canSeeCoaching(req, employeeId)))
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "You cannot view this person's coaching record.",
-        });
+      return res.status(403).json({
+        success: false,
+        message: "You cannot view this person's coaching record.",
+      });
     return res.json({ success: true, data: await coachingDetail(employeeId) });
   }),
 );
@@ -318,8 +312,14 @@ lmsCoachingRouter.get(
 lmsCoachingRouter.get(
   "/coaching/onfido-analyst",
   wrap(async (req, res) => {
-    const email = String(req.query.email ?? "").trim().toLowerCase().slice(0, 255);
-    if (!email) return res.status(400).json({ success: false, message: "email is required" });
+    const email = String(req.query.email ?? "")
+      .trim()
+      .toLowerCase()
+      .slice(0, 255);
+    if (!email)
+      return res
+        .status(400)
+        .json({ success: false, message: "email is required" });
     const pool = await getOnfidoPool();
     const [feed] = await pool.query<RowDataPacket[]>(
       `SELECT emp_id FROM onfido_agent_daily_raw
@@ -328,11 +328,33 @@ lmsCoachingRouter.get(
       [email],
     );
     const code = String(feed[0]?.emp_id ?? "").trim();
-    if (!code) return res.status(404).json({ success: false, message: "This analyst has no MAS employee code in the Onfido roster feed." });
-    const [rows] = await db.execute<RowDataPacket[]>("SELECT id FROM employees WHERE active_status = 1 AND UPPER(employee_code) = UPPER(?) LIMIT 2", [code]);
-    if (rows.length !== 1) return res.status(404).json({ success: false, message: `No active HRMS employee has the code ${code}.` });
+    if (!code)
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message:
+            "This analyst has no MAS employee code in the Onfido roster feed.",
+        });
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employees WHERE active_status = 1 AND UPPER(employee_code) = UPPER(?) LIMIT 2",
+      [code],
+    );
+    if (rows.length !== 1)
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: `No active HRMS employee has the code ${code}.`,
+        });
     const employeeId = String(rows[0].id);
-    if (!(await canSeeCoaching(req, employeeId))) return res.status(403).json({ success: false, message: "You cannot view this person's coaching record." });
+    if (!(await canSeeCoaching(req, employeeId)))
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "You cannot view this person's coaching record.",
+        });
     return res.json({ success: true, data: await coachingDetail(employeeId) });
   }),
 );

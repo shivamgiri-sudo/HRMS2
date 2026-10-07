@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from "vitest";
 import {
   joinBucketFor,
   emptyBucketTally,
@@ -7,82 +7,113 @@ import {
   JOINING_DOCUMENT_SLA_DAYS,
   APPOINTMENT_LETTER_SLA_DAYS,
   JOIN_BUCKETS,
-} from '../ops-control-tower.logic.js';
+} from "../ops-control-tower.logic.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-describe('joinBucketFor', () => {
-  it('buckets 0 as Same day and 1-5 as -1..-5', () => {
-    expect(joinBucketFor(0)).toBe('Same day');
-    expect(joinBucketFor(1)).toBe('-1');
-    expect(joinBucketFor(5)).toBe('-5');
+describe("joinBucketFor", () => {
+  it("buckets 0 as Same day and 1-5 as -1..-5", () => {
+    expect(joinBucketFor(0)).toBe("Same day");
+    expect(joinBucketFor(1)).toBe("-1");
+    expect(joinBucketFor(5)).toBe("-5");
   });
 
-  it('buckets anything past 5 days as >5', () => {
-    expect(joinBucketFor(6)).toBe('>5');
-    expect(joinBucketFor(40)).toBe('>5');
+  it("buckets anything past 5 days as >5", () => {
+    expect(joinBucketFor(6)).toBe(">5");
+    expect(joinBucketFor(40)).toBe(">5");
   });
 
-  it('treats a negative lag (joined before the code existed) as Same day, not a crash', () => {
-    expect(joinBucketFor(-2)).toBe('Same day');
+  it("treats a negative lag (joined before the code existed) as Same day, not a crash", () => {
+    expect(joinBucketFor(-2)).toBe("Same day");
   });
 });
 
-describe('emptyBucketTally', () => {
-  it('has one zeroed slot per bucket, in display order', () => {
+describe("emptyBucketTally", () => {
+  it("has one zeroed slot per bucket, in display order", () => {
     const tally = emptyBucketTally();
     expect(Object.keys(tally)).toEqual([...JOIN_BUCKETS]);
     expect(Object.values(tally).every((v) => v === 0)).toBe(true);
   });
 });
 
-describe('classifyIdCreationSla', () => {
+describe("classifyIdCreationSla", () => {
   const createdAtMs = Date.UTC(2026, 8, 15); // 15 Sep
 
-  it('is due, not pending, before the deadline', () => {
-    const r = classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs: createdAtMs + 1 * DAY_MS }, APPOINTMENT_LETTER_SLA_DAYS);
-    expect(r).toMatchObject({ status: 'due', pending: false, daysOverdue: null });
+  it("is due, not pending, before the deadline", () => {
+    const r = classifyIdCreationSla(
+      { createdAtMs, doneAtMs: null, nowMs: createdAtMs + 1 * DAY_MS },
+      APPOINTMENT_LETTER_SLA_DAYS,
+    );
+    expect(r).toMatchObject({
+      status: "due",
+      pending: false,
+      daysOverdue: null,
+    });
   });
 
-  it('is on time exactly at the deadline', () => {
+  it("is on time exactly at the deadline", () => {
     const dueAt = createdAtMs + APPOINTMENT_LETTER_SLA_DAYS * DAY_MS;
-    expect(classifyIdCreationSla({ createdAtMs, doneAtMs: dueAt, nowMs: dueAt }, APPOINTMENT_LETTER_SLA_DAYS).status).toBe('done_on_time');
+    expect(
+      classifyIdCreationSla(
+        { createdAtMs, doneAtMs: dueAt, nowMs: dueAt },
+        APPOINTMENT_LETTER_SLA_DAYS,
+      ).status,
+    ).toBe("done_on_time");
   });
 
-  it('is overdue and pending one millisecond past the deadline with nothing done', () => {
+  it("is overdue and pending one millisecond past the deadline with nothing done", () => {
     const dueAt = createdAtMs + APPOINTMENT_LETTER_SLA_DAYS * DAY_MS;
-    const r = classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs: dueAt + 1 }, APPOINTMENT_LETTER_SLA_DAYS);
-    expect(r.status).toBe('overdue');
+    const r = classifyIdCreationSla(
+      { createdAtMs, doneAtMs: null, nowMs: dueAt + 1 },
+      APPOINTMENT_LETTER_SLA_DAYS,
+    );
+    expect(r.status).toBe("overdue");
     expect(r.pending).toBe(true);
     expect(r.daysOverdue).toBe(0);
   });
 
-  it('reports whole days overdue', () => {
+  it("reports whole days overdue", () => {
     const dueAt = createdAtMs + APPOINTMENT_LETTER_SLA_DAYS * DAY_MS;
-    const r = classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs: dueAt + 5 * DAY_MS + 1 }, APPOINTMENT_LETTER_SLA_DAYS);
+    const r = classifyIdCreationSla(
+      { createdAtMs, doneAtMs: null, nowMs: dueAt + 5 * DAY_MS + 1 },
+      APPOINTMENT_LETTER_SLA_DAYS,
+    );
     expect(r.daysOverdue).toBe(5);
   });
 
-  it('is done_late when it eventually completes after the deadline — and never pending', () => {
+  it("is done_late when it eventually completes after the deadline — and never pending", () => {
     const dueAt = createdAtMs + APPOINTMENT_LETTER_SLA_DAYS * DAY_MS;
-    const r = classifyIdCreationSla({ createdAtMs, doneAtMs: dueAt + 2 * DAY_MS, nowMs: dueAt + 3 * DAY_MS }, APPOINTMENT_LETTER_SLA_DAYS);
-    expect(r.status).toBe('done_late');
+    const r = classifyIdCreationSla(
+      { createdAtMs, doneAtMs: dueAt + 2 * DAY_MS, nowMs: dueAt + 3 * DAY_MS },
+      APPOINTMENT_LETTER_SLA_DAYS,
+    );
+    expect(r.status).toBe("done_late");
     expect(r.pending).toBe(false);
   });
 
-  it('applies whatever slaDays it is given — the 3-day eSign deadline lands 4 days earlier than the 7-day letter deadline', () => {
+  it("applies whatever slaDays it is given — the 3-day eSign deadline lands 4 days earlier than the 7-day letter deadline", () => {
     const nowMs = createdAtMs + 4 * DAY_MS;
-    expect(classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs }, JOINING_DOCUMENT_SLA_DAYS).status).toBe('overdue');
-    expect(classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs }, APPOINTMENT_LETTER_SLA_DAYS).status).toBe('due');
+    expect(
+      classifyIdCreationSla(
+        { createdAtMs, doneAtMs: null, nowMs },
+        JOINING_DOCUMENT_SLA_DAYS,
+      ).status,
+    ).toBe("overdue");
+    expect(
+      classifyIdCreationSla(
+        { createdAtMs, doneAtMs: null, nowMs },
+        APPOINTMENT_LETTER_SLA_DAYS,
+      ).status,
+    ).toBe("due");
   });
 });
 
-describe('severityForCount', () => {
-  it('is none at zero, low under the medium threshold, medium under high, high at or above', () => {
-    expect(severityForCount(0, 3, 8)).toBe('none');
-    expect(severityForCount(2, 3, 8)).toBe('low');
-    expect(severityForCount(3, 3, 8)).toBe('medium');
-    expect(severityForCount(7, 3, 8)).toBe('medium');
-    expect(severityForCount(8, 3, 8)).toBe('high');
+describe("severityForCount", () => {
+  it("is none at zero, low under the medium threshold, medium under high, high at or above", () => {
+    expect(severityForCount(0, 3, 8)).toBe("none");
+    expect(severityForCount(2, 3, 8)).toBe("low");
+    expect(severityForCount(3, 3, 8)).toBe("medium");
+    expect(severityForCount(7, 3, 8)).toBe("medium");
+    expect(severityForCount(8, 3, 8)).toBe("high");
   });
 });

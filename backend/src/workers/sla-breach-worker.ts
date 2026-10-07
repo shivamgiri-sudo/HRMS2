@@ -1,7 +1,11 @@
 import { notifySLABreach } from "../services/ats-notification.helper.js";
 import { inboxService } from "../modules/inbox/inbox.service.js";
 import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
-import { shouldAlert, markAlerted, cleanupCooldowns } from "../shared/alert-cooldown.js";
+import {
+  shouldAlert,
+  markAlerted,
+  cleanupCooldowns,
+} from "../shared/alert-cooldown.js";
 
 // Database connection
 let db: any;
@@ -9,7 +13,9 @@ try {
   const dbModule = await import("../db/mysql.js");
   db = dbModule.db;
 } catch {
-  console.error("[SLABreachWorker] Database module not found - worker will not run");
+  console.error(
+    "[SLABreachWorker] Database module not found - worker will not run",
+  );
   process.exit(1);
 }
 
@@ -33,7 +39,7 @@ async function getSlaThresholdMinutes(): Promise<number> {
   try {
     const [rows]: any = await db.execute(
       `SELECT default_tat_hours FROM tat_matrix_master
-       WHERE task_type = 'ATS_QUEUE_WAIT' AND is_active = 1 LIMIT 1`
+       WHERE task_type = 'ATS_QUEUE_WAIT' AND is_active = 1 LIMIT 1`,
     );
     const hours = rows?.[0]?.default_tat_hours ?? 0.5;
     return Math.round(hours * 60);
@@ -59,7 +65,9 @@ let isProcessing = false;
 /**
  * Find candidates waiting beyond SLA threshold
  */
-async function findSLABreachCandidates(slaThresholdMinutes: number): Promise<any[]> {
+async function findSLABreachCandidates(
+  slaThresholdMinutes: number,
+): Promise<any[]> {
   try {
     const [rows]: any = await db.execute(
       `SELECT
@@ -93,12 +101,15 @@ async function findSLABreachCandidates(slaThresholdMinutes: number): Promise<any
          AND COALESCE(qt.arrival_time, qt.created_at) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
        ORDER BY pending_minutes ASC
        LIMIT ${CANDIDATE_SCAN_LIMIT}`,
-      [slaThresholdMinutes]
+      [slaThresholdMinutes],
     );
 
     return rows || [];
   } catch (error: any) {
-    console.error("[SLABreachWorker] Failed to fetch candidates:", error.message);
+    console.error(
+      "[SLABreachWorker] Failed to fetch candidates:",
+      error.message,
+    );
     return [];
   }
 }
@@ -120,14 +131,18 @@ async function processSLABreaches(): Promise<void> {
   }
 
   if (isProcessing) {
-    console.log("[SLABreachWorker] Previous check is still running; skipping overlap");
+    console.log(
+      "[SLABreachWorker] Previous check is still running; skipping overlap",
+    );
     return;
   }
 
   isProcessing = true;
   try {
     const slaThreshold = await getSlaThresholdMinutes();
-    console.log(`[SLABreachWorker] Checking for SLA breaches (threshold: ${slaThreshold} min)...`);
+    console.log(
+      `[SLABreachWorker] Checking for SLA breaches (threshold: ${slaThreshold} min)...`,
+    );
 
     const candidates = await findSLABreachCandidates(slaThreshold);
 
@@ -136,14 +151,25 @@ async function processSLABreaches(): Promise<void> {
       return;
     }
 
-    console.log(`[SLABreachWorker] Found ${candidates.length} recent candidates beyond SLA`);
+    console.log(
+      `[SLABreachWorker] Found ${candidates.length} recent candidates beyond SLA`,
+    );
     let alertsSent = 0;
 
     for (const candidate of candidates) {
       if (alertsSent >= MAX_ALERTS_PER_RUN) break;
-      if (!(await shouldAlert(WORKER_NAME, candidate.candidate_id, ALERT_COOLDOWN_MS))) continue;
+      if (
+        !(await shouldAlert(
+          WORKER_NAME,
+          candidate.candidate_id,
+          ALERT_COOLDOWN_MS,
+        ))
+      )
+        continue;
 
-      console.log(`[SLABreachWorker] Alerting for ${candidate.candidate_name} (${candidate.pending_minutes} mins)`);
+      console.log(
+        `[SLABreachWorker] Alerting for ${candidate.candidate_name} (${candidate.pending_minutes} mins)`,
+      );
 
       await notifySLABreach({
         candidateId: candidate.candidate_id,
@@ -157,16 +183,20 @@ async function processSLABreaches(): Promise<void> {
 
       // Inbox alert so the recruiter sees a toast + bell notification
       if (candidate.recruiter_user_id) {
-        await inboxService.createItem({
-          user_id: candidate.recruiter_user_id,
-          type: "sla_breach_uncalled",
-          title: `Candidate not called — ${candidate.candidate_name}`,
-          description: `Token ${candidate.q_token || "N/A"} has been waiting ${candidate.pending_minutes} min without being called. SLA threshold: ${slaThreshold} min.`,
-          entity_type: "ats_candidate",
-          entity_id: candidate.candidate_id,
-          action_url: "/ats/walkin-queue",
-          priority: "urgent",
-        }).catch((e: unknown) => console.warn("[SLABreachWorker] inbox write failed:", e));
+        await inboxService
+          .createItem({
+            user_id: candidate.recruiter_user_id,
+            type: "sla_breach_uncalled",
+            title: `Candidate not called — ${candidate.candidate_name}`,
+            description: `Token ${candidate.q_token || "N/A"} has been waiting ${candidate.pending_minutes} min without being called. SLA threshold: ${slaThreshold} min.`,
+            entity_type: "ats_candidate",
+            entity_id: candidate.candidate_id,
+            action_url: "/ats/walkin-queue",
+            priority: "urgent",
+          })
+          .catch((e: unknown) =>
+            console.warn("[SLABreachWorker] inbox write failed:", e),
+          );
       }
 
       await markAlerted(WORKER_NAME, candidate.candidate_id);
@@ -187,7 +217,9 @@ async function processSLABreaches(): Promise<void> {
  */
 function startWorker(): Promise<void> {
   console.log("[SLABreachWorker] Starting...");
-  console.log(`[SLABreachWorker] Check interval: ${CHECK_INTERVAL_MS / 1000} seconds`);
+  console.log(
+    `[SLABreachWorker] Check interval: ${CHECK_INTERVAL_MS / 1000} seconds`,
+  );
 
   // Let the API finish warming up before any external notification work begins.
   startupTimeoutRef = setTimeout(() => {
@@ -223,4 +255,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { startWorker as startSLABreachWorker, stopWorker as stopSLABreachWorker, processSLABreaches };
+export {
+  startWorker as startSLABreachWorker,
+  stopWorker as stopSLABreachWorker,
+  processSLABreaches,
+};

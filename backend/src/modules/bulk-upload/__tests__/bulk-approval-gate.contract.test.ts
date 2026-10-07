@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
-import { normalizeDate, normalizeMonth, resolveSingleBranch, APPROVER_ROLES, UPLOADER_ROLES } from "../bulk-approval.service.js";
+import {
+  normalizeDate,
+  normalizeMonth,
+  resolveSingleBranch,
+  APPROVER_ROLES,
+  UPLOADER_ROLES,
+} from "../bulk-approval.service.js";
 
 /**
  * Guards for the approval-gated bulk uploads (leave, attendance regularization,
@@ -30,7 +36,9 @@ const readCode = (f: string) =>
 
 describe("separation of duties", () => {
   it("no role can both upload and approve", () => {
-    const overlap = UPLOADER_ROLES.filter((r) => (APPROVER_ROLES as string[]).includes(r));
+    const overlap = UPLOADER_ROLES.filter((r) =>
+      (APPROVER_ROLES as string[]).includes(r),
+    );
     expect(overlap).toEqual([]);
   });
 
@@ -62,7 +70,9 @@ describe("separation of duties", () => {
   it("refuses to let the branch approver also give final approval", () => {
     const src = read("bulk-approval.service.ts");
     const fn = src.slice(src.indexOf("export async function assertCanApprove"));
-    const crossStage = fn.indexOf('stage === "payroll" && batch.branch_head_approved_by === userId');
+    const crossStage = fn.indexOf(
+      'stage === "payroll" && batch.branch_head_approved_by === userId',
+    );
     const roleCheck = fn.indexOf("hasAnyRole(userId, ...rule.roles)");
     expect(crossStage).toBeGreaterThan(-1);
     expect(crossStage).toBeLessThan(roleCheck);
@@ -87,7 +97,9 @@ describe("nothing applies before approval", () => {
     const src = read("incentive-bulk.service.ts");
     // payrollCalculate pays on status IN ('approved','applied'); staging must use neither.
     expect(src).toContain("'pending_approval', 1, ?)");
-    expect(src).not.toMatch(/VALUES[^;]*'approved'[^;]*\)`,\s*\[\s*id,\s*master\.id/);
+    expect(src).not.toMatch(
+      /VALUES[^;]*'approved'[^;]*\)`,\s*\[\s*id,\s*master\.id/,
+    );
   });
 
   it("leave approval reuses the leave engine rather than touching the ledger directly", () => {
@@ -111,7 +123,9 @@ describe("nothing applies before approval", () => {
   it("regularization approval reuses the WFM review engine, not a direct attendance write", () => {
     const src = read("attendance-regularization-bulk.service.ts");
     expect(src).toContain("wfmService.reviewRegularization(");
-    expect(readCode("attendance-regularization-bulk.service.ts")).not.toContain("attendance_daily_record");
+    expect(readCode("attendance-regularization-bulk.service.ts")).not.toContain(
+      "attendance_daily_record",
+    );
   });
 });
 
@@ -160,7 +174,9 @@ describe("the immutability lock", () => {
      * prefix plus the call count above establishes.
      */
     expect(src).toContain('assertNotBulkLocked("leave_request", id');
-    expect(src).toContain('assertNotBulkLocked("attendance_regularization", id');
+    expect(src).toContain(
+      'assertNotBulkLocked("attendance_regularization", id',
+    );
   });
 
   it("the lock fails open only when the table does not exist yet", () => {
@@ -203,8 +219,12 @@ describe("spreadsheet date handling", () => {
 
 describe("branch resolution", () => {
   const emp = (branch: string | null) => ({
-    id: "e", employee_code: "X", branch_id: branch,
-    process_id: null, first_name: null, last_name: null,
+    id: "e",
+    employee_code: "X",
+    branch_id: branch,
+    process_id: null,
+    first_name: null,
+    last_name: null,
   });
 
   it("resolves a single-branch file to that branch", () => {

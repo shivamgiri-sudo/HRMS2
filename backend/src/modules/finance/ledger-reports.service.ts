@@ -17,9 +17,12 @@ import { db } from "../../db/mysql.js";
  * bank-ledger.service.ts's own report already uses for payable_account/vendor/employee names.
  */
 
-type AccountType = "bank_account" | "vendor" | "expense_sub_head" | "payable_account";
+type AccountType =
+  "bank_account" | "vendor" | "expense_sub_head" | "payable_account";
 
-async function resolveAccountNames(refs: { accountType: AccountType; accountId: string }[]): Promise<Map<string, string>> {
+async function resolveAccountNames(
+  refs: { accountType: AccountType; accountId: string }[],
+): Promise<Map<string, string>> {
   const byType = new Map<AccountType, Set<string>>();
   for (const r of refs) {
     if (!byType.has(r.accountType)) byType.set(r.accountType, new Set());
@@ -33,7 +36,11 @@ async function resolveAccountNames(refs: { accountType: AccountType; accountId: 
       `SELECT id, account_name, bank_name FROM company_bank_account WHERE id IN (${bankIds.map(() => "?").join(",")})`,
       bankIds,
     );
-    for (const r of rows as RowDataPacket[]) names.set(`bank_account:${r.id}`, `${r.account_name ?? r.bank_name ?? r.id} (Bank)`);
+    for (const r of rows as RowDataPacket[])
+      names.set(
+        `bank_account:${r.id}`,
+        `${r.account_name ?? r.bank_name ?? r.id} (Bank)`,
+      );
   }
 
   const vendorIds = [...(byType.get("vendor") ?? [])];
@@ -42,7 +49,8 @@ async function resolveAccountNames(refs: { accountType: AccountType; accountId: 
       `SELECT id, vendor_name FROM vendor_master WHERE id IN (${vendorIds.map(() => "?").join(",")})`,
       vendorIds,
     );
-    for (const r of rows as RowDataPacket[]) names.set(`vendor:${r.id}`, `${r.vendor_name} (Sundry Creditor)`);
+    for (const r of rows as RowDataPacket[])
+      names.set(`vendor:${r.id}`, `${r.vendor_name} (Sundry Creditor)`);
   }
 
   const subHeadIds = [...(byType.get("expense_sub_head") ?? [])];
@@ -54,7 +62,11 @@ async function resolveAccountNames(refs: { accountType: AccountType; accountId: 
         WHERE sh.id IN (${subHeadIds.map(() => "?").join(",")})`,
       subHeadIds,
     );
-    for (const r of rows as RowDataPacket[]) names.set(`expense_sub_head:${r.id}`, `${r.head_name} / ${r.sub_head_name}`);
+    for (const r of rows as RowDataPacket[])
+      names.set(
+        `expense_sub_head:${r.id}`,
+        `${r.head_name} / ${r.sub_head_name}`,
+      );
   }
 
   const payableIds = [...(byType.get("payable_account") ?? [])];
@@ -63,7 +75,8 @@ async function resolveAccountNames(refs: { accountType: AccountType; accountId: 
       `SELECT id, account_name FROM payable_account_master WHERE id IN (${payableIds.map(() => "?").join(",")})`,
       payableIds,
     );
-    for (const r of rows as RowDataPacket[]) names.set(`payable_account:${r.id}`, r.account_name);
+    for (const r of rows as RowDataPacket[])
+      names.set(`payable_account:${r.id}`, r.account_name);
   }
 
   return names;
@@ -81,8 +94,12 @@ async function resolveDimensionNames(rows: RowDataPacket[]): Promise<{
   processNames: Map<string, string>;
 }> {
   const branchIds = [...new Set(rows.map((r) => r.branch_id).filter(Boolean))];
-  const costCentreIds = [...new Set(rows.map((r) => r.cost_centre_id).filter(Boolean))];
-  const processIds = [...new Set(rows.map((r) => r.process_id).filter(Boolean))];
+  const costCentreIds = [
+    ...new Set(rows.map((r) => r.cost_centre_id).filter(Boolean)),
+  ];
+  const processIds = [
+    ...new Set(rows.map((r) => r.process_id).filter(Boolean)),
+  ];
 
   const branchNames = new Map<string, string>();
   if (branchIds.length) {
@@ -90,7 +107,8 @@ async function resolveDimensionNames(rows: RowDataPacket[]): Promise<{
       `SELECT id, branch_name FROM branch_master WHERE id IN (${branchIds.map(() => "?").join(",")})`,
       branchIds,
     );
-    for (const row of r as RowDataPacket[]) branchNames.set(String(row.id), row.branch_name);
+    for (const row of r as RowDataPacket[])
+      branchNames.set(String(row.id), row.branch_name);
   }
 
   const costCentreNames = new Map<string, string>();
@@ -99,7 +117,8 @@ async function resolveDimensionNames(rows: RowDataPacket[]): Promise<{
       `SELECT id, cost_centre_name FROM cost_centre_master WHERE id IN (${costCentreIds.map(() => "?").join(",")})`,
       costCentreIds,
     );
-    for (const row of r as RowDataPacket[]) costCentreNames.set(String(row.id), row.cost_centre_name);
+    for (const row of r as RowDataPacket[])
+      costCentreNames.set(String(row.id), row.cost_centre_name);
   }
 
   const processNames = new Map<string, string>();
@@ -108,7 +127,8 @@ async function resolveDimensionNames(rows: RowDataPacket[]): Promise<{
       `SELECT id, process_name FROM process_master WHERE id IN (${processIds.map(() => "?").join(",")})`,
       processIds,
     );
-    for (const row of r as RowDataPacket[]) processNames.set(String(row.id), row.process_name);
+    for (const row of r as RowDataPacket[])
+      processNames.set(String(row.id), row.process_name);
   }
 
   return { branchNames, costCentreNames, processNames };
@@ -146,9 +166,18 @@ export const ledgerReportsService = {
       `SELECT id, process_name FROM process_master WHERE active_status = 1 ORDER BY process_name`,
     );
     return {
-      branches: (branches as RowDataPacket[]).map((r) => ({ id: String(r.id), name: r.branch_name })),
-      costCentres: (costCentres as RowDataPacket[]).map((r) => ({ id: String(r.id), name: r.cost_centre_name })),
-      processes: (processes as RowDataPacket[]).map((r) => ({ id: String(r.id), name: r.process_name })),
+      branches: (branches as RowDataPacket[]).map((r) => ({
+        id: String(r.id),
+        name: r.branch_name,
+      })),
+      costCentres: (costCentres as RowDataPacket[]).map((r) => ({
+        id: String(r.id),
+        name: r.cost_centre_name,
+      })),
+      processes: (processes as RowDataPacket[]).map((r) => ({
+        id: String(r.id),
+        name: r.process_name,
+      })),
     };
   },
 
@@ -163,13 +192,30 @@ export const ledgerReportsService = {
   async trialBalance(
     asOfDate?: string,
     filters?: { branchId?: string; costCentreId?: string; processId?: string },
-  ): Promise<{ rows: TrialBalanceRow[]; balanced: boolean; totalDebit: number; totalCredit: number }> {
+  ): Promise<{
+    rows: TrialBalanceRow[];
+    balanced: boolean;
+    totalDebit: number;
+    totalCredit: number;
+  }> {
     const conditions = ["je.reversed_by_entry_id IS NULL"];
     const params: unknown[] = [];
-    if (asOfDate) { conditions.push("je.entry_date <= ?"); params.push(asOfDate); }
-    if (filters?.branchId) { conditions.push("je.branch_id = ?"); params.push(filters.branchId); }
-    if (filters?.costCentreId) { conditions.push("je.cost_centre_id = ?"); params.push(filters.costCentreId); }
-    if (filters?.processId) { conditions.push("je.process_id = ?"); params.push(filters.processId); }
+    if (asOfDate) {
+      conditions.push("je.entry_date <= ?");
+      params.push(asOfDate);
+    }
+    if (filters?.branchId) {
+      conditions.push("je.branch_id = ?");
+      params.push(filters.branchId);
+    }
+    if (filters?.costCentreId) {
+      conditions.push("je.cost_centre_id = ?");
+      params.push(filters.costCentreId);
+    }
+    if (filters?.processId) {
+      conditions.push("je.process_id = ?");
+      params.push(filters.processId);
+    }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT jel.account_type, jel.account_id,
@@ -182,7 +228,10 @@ export const ledgerReportsService = {
       params,
     );
 
-    const refs = (rows as RowDataPacket[]).map((r) => ({ accountType: r.account_type as AccountType, accountId: String(r.account_id) }));
+    const refs = (rows as RowDataPacket[]).map((r) => ({
+      accountType: r.account_type as AccountType,
+      accountId: String(r.account_id),
+    }));
     const names = await resolveAccountNames(refs);
 
     let totalDebit = 0;
@@ -195,14 +244,21 @@ export const ledgerReportsService = {
       return {
         accountType: r.account_type,
         accountId: String(r.account_id),
-        accountName: names.get(`${r.account_type}:${r.account_id}`) ?? `(unresolved ${r.account_type} ${r.account_id})`,
+        accountName:
+          names.get(`${r.account_type}:${r.account_id}`) ??
+          `(unresolved ${r.account_type} ${r.account_id})`,
         totalDebit: totalD,
         totalCredit: totalC,
         netBalance: money(totalD - totalC),
       };
     });
 
-    return { rows: result, balanced: money(totalDebit) === money(totalCredit), totalDebit: money(totalDebit), totalCredit: money(totalCredit) };
+    return {
+      rows: result,
+      balanced: money(totalDebit) === money(totalCredit),
+      totalDebit: money(totalDebit),
+      totalCredit: money(totalCredit),
+    };
   },
 
   /**
@@ -216,11 +272,26 @@ export const ledgerReportsService = {
    * can drill down into the same underlying entries (the Drill-Down Mandate) without a second,
    * near-duplicate query — vendorLedger() below is now a thin wrapper over this.
    */
-  async accountLedger(accountType: AccountType, accountId: string, from?: string, to?: string) {
-    const conditions = ["jel.account_type = ?", "jel.account_id = ?", "je.reversed_by_entry_id IS NULL"];
+  async accountLedger(
+    accountType: AccountType,
+    accountId: string,
+    from?: string,
+    to?: string,
+  ) {
+    const conditions = [
+      "jel.account_type = ?",
+      "jel.account_id = ?",
+      "je.reversed_by_entry_id IS NULL",
+    ];
     const params: unknown[] = [accountType, accountId];
-    if (from) { conditions.push("je.entry_date >= ?"); params.push(from); }
-    if (to) { conditions.push("je.entry_date <= ?"); params.push(to); }
+    if (from) {
+      conditions.push("je.entry_date >= ?");
+      params.push(from);
+    }
+    if (to) {
+      conditions.push("je.entry_date <= ?");
+      params.push(to);
+    }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT je.id AS journal_entry_id, je.entry_date, je.narration, je.source_type, je.source_id,
@@ -233,11 +304,14 @@ export const ledgerReportsService = {
       params,
     );
 
-    const { branchNames, costCentreNames, processNames } = await resolveDimensionNames(rows as RowDataPacket[]);
+    const { branchNames, costCentreNames, processNames } =
+      await resolveDimensionNames(rows as RowDataPacket[]);
 
     let runningBalance = 0;
     const entries = (rows as RowDataPacket[]).map((r) => {
-      runningBalance = money(runningBalance + Number(r.debit_amount) - Number(r.credit_amount));
+      runningBalance = money(
+        runningBalance + Number(r.debit_amount) - Number(r.credit_amount),
+      );
       return {
         journalEntryId: r.journal_entry_id,
         entryDate: r.entry_date,
@@ -245,11 +319,17 @@ export const ledgerReportsService = {
         sourceType: r.source_type,
         sourceId: r.source_id,
         branchId: r.branch_id,
-        branchName: r.branch_id ? (branchNames.get(String(r.branch_id)) ?? null) : null,
+        branchName: r.branch_id
+          ? (branchNames.get(String(r.branch_id)) ?? null)
+          : null,
         costCentreId: r.cost_centre_id,
-        costCentreName: r.cost_centre_id ? (costCentreNames.get(String(r.cost_centre_id)) ?? null) : null,
+        costCentreName: r.cost_centre_id
+          ? (costCentreNames.get(String(r.cost_centre_id)) ?? null)
+          : null,
         processId: r.process_id,
-        processName: r.process_id ? (processNames.get(String(r.process_id)) ?? null) : null,
+        processName: r.process_id
+          ? (processNames.get(String(r.process_id)) ?? null)
+          : null,
         debitAmount: money(Number(r.debit_amount)),
         creditAmount: money(Number(r.credit_amount)),
         runningBalance,
@@ -274,13 +354,31 @@ export const ledgerReportsService = {
     to?: string,
     filters?: { branchId?: string; costCentreId?: string; processId?: string },
   ) {
-    const conditions = ["jel.account_type = 'expense_sub_head'", "je.reversed_by_entry_id IS NULL"];
+    const conditions = [
+      "jel.account_type = 'expense_sub_head'",
+      "je.reversed_by_entry_id IS NULL",
+    ];
     const params: unknown[] = [];
-    if (from) { conditions.push("je.entry_date >= ?"); params.push(from); }
-    if (to) { conditions.push("je.entry_date <= ?"); params.push(to); }
-    if (filters?.branchId) { conditions.push("je.branch_id = ?"); params.push(filters.branchId); }
-    if (filters?.costCentreId) { conditions.push("je.cost_centre_id = ?"); params.push(filters.costCentreId); }
-    if (filters?.processId) { conditions.push("je.process_id = ?"); params.push(filters.processId); }
+    if (from) {
+      conditions.push("je.entry_date >= ?");
+      params.push(from);
+    }
+    if (to) {
+      conditions.push("je.entry_date <= ?");
+      params.push(to);
+    }
+    if (filters?.branchId) {
+      conditions.push("je.branch_id = ?");
+      params.push(filters.branchId);
+    }
+    if (filters?.costCentreId) {
+      conditions.push("je.cost_centre_id = ?");
+      params.push(filters.costCentreId);
+    }
+    if (filters?.processId) {
+      conditions.push("je.process_id = ?");
+      params.push(filters.processId);
+    }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT jel.account_id, SUM(jel.debit_amount) AS total_spent, COUNT(DISTINCT je.source_id) AS grn_count
@@ -292,12 +390,17 @@ export const ledgerReportsService = {
       params,
     );
 
-    const refs = (rows as RowDataPacket[]).map((r) => ({ accountType: "expense_sub_head" as const, accountId: String(r.account_id) }));
+    const refs = (rows as RowDataPacket[]).map((r) => ({
+      accountType: "expense_sub_head" as const,
+      accountId: String(r.account_id),
+    }));
     const names = await resolveAccountNames(refs);
 
     return (rows as RowDataPacket[]).map((r) => ({
       accountId: String(r.account_id),
-      headSubHead: names.get(`expense_sub_head:${r.account_id}`) ?? `(unresolved ${r.account_id})`,
+      headSubHead:
+        names.get(`expense_sub_head:${r.account_id}`) ??
+        `(unresolved ${r.account_id})`,
       totalSpent: money(Number(r.total_spent)),
       grnCount: Number(r.grn_count),
     }));

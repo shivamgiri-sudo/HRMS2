@@ -105,9 +105,20 @@ export interface GncChatDashboardData {
     paidNet: number;
   };
   dateWiseTrend: Array<{
-    date: string; totalChats: number; uniqueChats: number; repeatChats: number;
-    frtInTatCount: number; frtOutTatCount: number; frtInTatPct: number; resolutionInTatPct: number;
-    orders: number; revenue: number; netRevenue: number; aov: number; codCount: number; paidCount: number;
+    date: string;
+    totalChats: number;
+    uniqueChats: number;
+    repeatChats: number;
+    frtInTatCount: number;
+    frtOutTatCount: number;
+    frtInTatPct: number;
+    resolutionInTatPct: number;
+    orders: number;
+    revenue: number;
+    netRevenue: number;
+    aov: number;
+    codCount: number;
+    paidCount: number;
   }>;
   /** One row per (date, qrc bucket) -- pivoted client-side into the Chat Type Trend stacked bar. */
   qrcDailyTrend: Array<{ date: string; qrc: string; count: number }>;
@@ -117,17 +128,28 @@ export interface GncChatDashboardData {
   csatBreakdown: Array<{ rating: number; count: number }>;
   tagBreakdown: Array<{ tag: string; count: number }>;
   agents: Array<{
-    agent: string; totalChats: number; uniqueChats: number;
-    frtInTatPct: number; resolutionInTatPct: number;
+    agent: string;
+    totalChats: number;
+    uniqueChats: number;
+    frtInTatPct: number;
+    resolutionInTatPct: number;
   }>;
   saleLinkage: {
     matched: Array<{ agent: string; saleCount: number; revenue: number }>;
-    unmatchedSaleNames: Array<{ name: string; saleCount: number; revenue: number }>;
+    unmatchedSaleNames: Array<{
+      name: string;
+      saleCount: number;
+      revenue: number;
+    }>;
   };
 }
 
-const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
+const num = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const pct = (part: number, whole: number): number =>
+  whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
 
 /** Case/spacing/trailing-dot normalization only -- never merges two
  * genuinely different names (see the module header's fourth finding). */
@@ -138,19 +160,36 @@ function normalizeAgentName(v: string): string {
 function currentMonthRange(): { from: string; to: string } {
   const pad = (n: number) => String(n).padStart(2, "0");
   const now = new Date();
-  const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(now) };
+  const ymd = (d: Date) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return {
+    from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)),
+    to: ymd(now),
+  };
 }
 
-export async function getGncChatDashboard(fromInput: string, toInput: string): Promise<GncChatDashboardData> {
+export async function getGncChatDashboard(
+  fromInput: string,
+  toInput: string,
+): Promise<GncChatDashboardData> {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
   const range = [from, to];
 
   const [
-    [headlineRows], [saleHeadlineRows], [trendRows], [saleTrendRows],
-    [qrcRows], [channelRows], [statusRows], [csatRows], [tagRows], [agentRows], [saleAgentRows], [qrcDailyRows],
+    [headlineRows],
+    [saleHeadlineRows],
+    [trendRows],
+    [saleTrendRows],
+    [qrcRows],
+    [channelRows],
+    [statusRows],
+    [csatRows],
+    [tagRows],
+    [agentRows],
+    [saleAgentRows],
+    [qrcDailyRows],
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT
@@ -254,23 +293,43 @@ export async function getGncChatDashboard(fromInput: string, toInput: string): P
   const uniqueChats = num(h?.uniq);
   const orders = num(sh?.orders);
 
-  const revenueByDay = new Map<string, { orders: number; revenue: number; netRevenue: number; codCount: number; paidCount: number }>();
+  const revenueByDay = new Map<
+    string,
+    {
+      orders: number;
+      revenue: number;
+      netRevenue: number;
+      codCount: number;
+      paidCount: number;
+    }
+  >();
   for (const r of saleTrendRows) {
     revenueByDay.set(String(r.d), {
-      orders: num(r.orders), revenue: num(r.revenue), netRevenue: num(r.net_revenue),
-      codCount: num(r.cod_count), paidCount: num(r.paid_count),
+      orders: num(r.orders),
+      revenue: num(r.revenue),
+      netRevenue: num(r.net_revenue),
+      codCount: num(r.cod_count),
+      paidCount: num(r.paid_count),
     });
   }
 
-  const agentNameSet = new Set(agentRows.map((r) => normalizeAgentName(String(r.agent))));
+  const agentNameSet = new Set(
+    agentRows.map((r) => normalizeAgentName(String(r.agent))),
+  );
   const matched: GncChatDashboardData["saleLinkage"]["matched"] = [];
-  const unmatchedSaleNames: GncChatDashboardData["saleLinkage"]["unmatchedSaleNames"] = [];
-  const saleByNormalizedName = new Map<string, { agent: string; saleCount: number; revenue: number }>();
+  const unmatchedSaleNames: GncChatDashboardData["saleLinkage"]["unmatchedSaleNames"] =
+    [];
+  const saleByNormalizedName = new Map<
+    string,
+    { agent: string; saleCount: number; revenue: number }
+  >();
   for (const r of saleAgentRows) {
     const rawName = String(r.emp_name);
     const key = normalizeAgentName(rawName);
     if (agentNameSet.has(key)) {
-      const agentRow = agentRows.find((a) => normalizeAgentName(String(a.agent)) === key);
+      const agentRow = agentRows.find(
+        (a) => normalizeAgentName(String(a.agent)) === key,
+      );
       const displayName = agentRow ? String(agentRow.agent) : rawName;
       const existing = saleByNormalizedName.get(key);
       saleByNormalizedName.set(key, {
@@ -279,7 +338,11 @@ export async function getGncChatDashboard(fromInput: string, toInput: string): P
         revenue: (existing?.revenue ?? 0) + num(r.revenue),
       });
     } else {
-      unmatchedSaleNames.push({ name: rawName, saleCount: num(r.n), revenue: num(r.revenue) });
+      unmatchedSaleNames.push({
+        name: rawName,
+        saleCount: num(r.n),
+        revenue: num(r.revenue),
+      });
     }
   }
   matched.push(...saleByNormalizedName.values());
@@ -334,12 +397,34 @@ export async function getGncChatDashboard(fromInput: string, toInput: string): P
         paidCount: sale?.paidCount ?? 0,
       };
     }),
-    qrcDailyTrend: qrcDailyRows.map((r) => ({ date: String(r.d), qrc: String(r.qrc), count: num(r.n) })),
-    qrcBreakdown: qrcRows.map((r) => ({ qrc: String(r.qrc), count: num(r.n), pct: pct(num(r.n), totalChats) })),
-    channelBreakdown: channelRows.map((r) => ({ channel: String(r.channel), count: num(r.n), pct: pct(num(r.n), totalChats) })),
-    statusBreakdown: statusRows.map((r) => ({ status: String(r.ticket_status), count: num(r.n), pct: pct(num(r.n), totalChats) })),
-    csatBreakdown: csatRows.map((r) => ({ rating: num(r.rating), count: num(r.n) })),
-    tagBreakdown: tagRows.map((r) => ({ tag: String(r.tags), count: num(r.n) })),
+    qrcDailyTrend: qrcDailyRows.map((r) => ({
+      date: String(r.d),
+      qrc: String(r.qrc),
+      count: num(r.n),
+    })),
+    qrcBreakdown: qrcRows.map((r) => ({
+      qrc: String(r.qrc),
+      count: num(r.n),
+      pct: pct(num(r.n), totalChats),
+    })),
+    channelBreakdown: channelRows.map((r) => ({
+      channel: String(r.channel),
+      count: num(r.n),
+      pct: pct(num(r.n), totalChats),
+    })),
+    statusBreakdown: statusRows.map((r) => ({
+      status: String(r.ticket_status),
+      count: num(r.n),
+      pct: pct(num(r.n), totalChats),
+    })),
+    csatBreakdown: csatRows.map((r) => ({
+      rating: num(r.rating),
+      count: num(r.n),
+    })),
+    tagBreakdown: tagRows.map((r) => ({
+      tag: String(r.tags),
+      count: num(r.n),
+    })),
     agents: agentRows.map((r) => {
       const total = num(r.total);
       return {

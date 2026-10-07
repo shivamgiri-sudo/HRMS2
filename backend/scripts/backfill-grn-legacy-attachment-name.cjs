@@ -9,54 +9,63 @@
  *   node backend/scripts/backfill-grn-legacy-attachment-name.cjs            # dry-run
  *   node backend/scripts/backfill-grn-legacy-attachment-name.cjs --apply    # write
  */
-const mysql = require('mysql2/promise');
-require('dotenv').config();
+const mysql = require("mysql2/promise");
+require("dotenv").config();
 
-const APPLY = process.argv.includes('--apply');
-const TMP_TABLE = 'grn_legacy_attachment_name_backfill_tmp';
+const APPLY = process.argv.includes("--apply");
+const TMP_TABLE = "grn_legacy_attachment_name_backfill_tmp";
 
 async function main() {
   const hrms = await mysql.createConnection({
-    host: process.env.DB_HOST, port: process.env.DB_PORT,
-    user: process.env.DB_USER, password: process.env.DB_PASSWORD,
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
   });
   const bill = await mysql.createConnection({
-    host: '192.168.10.22', port: process.env.BILL_DB_PORT,
-    user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD,
+    host: "192.168.10.22",
+    port: process.env.BILL_DB_PORT,
+    user: process.env.BILL_DB_USER,
+    password: process.env.BILL_DB_PASSWORD,
     database: process.env.BILL_DB_NAME,
   });
 
   try {
     const [grnRows] = await hrms.query(
       `SELECT id, bill_source_id FROM grn_request
-       WHERE bill_source_id IS NOT NULL AND attachment_original_name IS NULL`
+       WHERE bill_source_id IS NOT NULL AND attachment_original_name IS NULL`,
     );
-    console.log(`Candidate rows (legacy, no attachment name yet): ${grnRows.length}`);
+    console.log(
+      `Candidate rows (legacy, no attachment name yet): ${grnRows.length}`,
+    );
 
-    const ids = grnRows.map(r => r.bill_source_id);
+    const ids = grnRows.map((r) => r.bill_source_id);
     const fileById = new Map();
     const chunkSize = 2000;
     for (let i = 0; i < ids.length; i += chunkSize) {
       const chunk = ids.slice(i, i + chunkSize);
       const [srcRows] = await bill.query(
-        `SELECT Id, grn_file FROM expense_entry_master WHERE Id IN (${chunk.map(() => '?').join(',')})`,
-        chunk
+        `SELECT Id, grn_file FROM expense_entry_master WHERE Id IN (${chunk.map(() => "?").join(",")})`,
+        chunk,
       );
       for (const r of srcRows) {
-        const name = r.grn_file && String(r.grn_file).trim() ? String(r.grn_file).trim() : null;
+        const name =
+          r.grn_file && String(r.grn_file).trim()
+            ? String(r.grn_file).trim()
+            : null;
         if (name) fileById.set(r.Id, name);
       }
     }
 
     const staged = grnRows
-      .filter(g => fileById.has(g.bill_source_id))
-      .map(g => [g.id, fileById.get(g.bill_source_id)]);
+      .filter((g) => fileById.has(g.bill_source_id))
+      .map((g) => [g.id, fileById.get(g.bill_source_id)]);
     console.log(`Rows with a known legacy filename: ${staged.length}`);
 
     if (!APPLY) {
-      console.log('\nDRY RUN — no writes made. Re-run with --apply to write.');
-      console.log('Sample:', staged.slice(0, 5));
+      console.log("\nDRY RUN — no writes made. Re-run with --apply to write.");
+      console.log("Sample:", staged.slice(0, 5));
       return;
     }
 
@@ -70,10 +79,10 @@ async function main() {
     const insertChunk = 1000;
     for (let i = 0; i < staged.length; i += insertChunk) {
       const chunk = staged.slice(i, i + insertChunk);
-      const placeholders = chunk.map(() => '(?,?)').join(',');
+      const placeholders = chunk.map(() => "(?,?)").join(",");
       await hrms.query(
         `INSERT INTO ${TMP_TABLE} (grn_request_id, file_name) VALUES ${placeholders}`,
-        chunk.flat()
+        chunk.flat(),
       );
     }
 
@@ -91,4 +100,7 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error('BACKFILL FAILED:', e); process.exit(1); });
+main().catch((e) => {
+  console.error("BACKFILL FAILED:", e);
+  process.exit(1);
+});

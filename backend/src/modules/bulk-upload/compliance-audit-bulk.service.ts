@@ -1,6 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Floor compliance audit import.
@@ -56,31 +59,109 @@ const COLUMNS: Array<{ column: string; header: string; type: Coerce }> = [
   { column: "desk_no", header: "Desk No.", type: "text" },
   { column: "am_name", header: "AM Name", type: "text" },
 
-  { column: "pen_paper_access", header: "Pen, Paper Access on the floor", type: "flag" },
-  { column: "unattended_system", header: "Unattended / Unlocked System", type: "flag" },
-  { column: "personal_devices", header: "Unauthorized use of personal devices (phones, tablets, etc.)", type: "flag" },
-  { column: "food_drinks", header: "No food / drinks near workstations", type: "flag" },
-  { column: "id_card_displayed", header: "ID Card not displayed or missing", type: "flag" },
-  { column: "clean_desk", header: "Clean desk policy adherence (no notes, stickies, printed data)", type: "flag" },
+  {
+    column: "pen_paper_access",
+    header: "Pen, Paper Access on the floor",
+    type: "flag",
+  },
+  {
+    column: "unattended_system",
+    header: "Unattended / Unlocked System",
+    type: "flag",
+  },
+  {
+    column: "personal_devices",
+    header: "Unauthorized use of personal devices (phones, tablets, etc.)",
+    type: "flag",
+  },
+  {
+    column: "food_drinks",
+    header: "No food / drinks near workstations",
+    type: "flag",
+  },
+  {
+    column: "id_card_displayed",
+    header: "ID Card not displayed or missing",
+    type: "flag",
+  },
+  {
+    column: "clean_desk",
+    header: "Clean desk policy adherence (no notes, stickies, printed data)",
+    type: "flag",
+  },
 
-  { column: "foreign_domain_login", header: "Logged in from another domain ID", type: "flag" },
-  { column: "dual_id_login", header: "Dual ID logged in (same user on multiple systems)", type: "flag" },
-  { column: "personal_email_access", header: "Access to personal emails / messaging sites (e.g. Gmail, WhatsApp Web)", type: "flag" },
-  { column: "suspicious_software", header: "Any suspicious software or browser extensions installed", type: "flag" },
+  {
+    column: "foreign_domain_login",
+    header: "Logged in from another domain ID",
+    type: "flag",
+  },
+  {
+    column: "dual_id_login",
+    header: "Dual ID logged in (same user on multiple systems)",
+    type: "flag",
+  },
+  {
+    column: "personal_email_access",
+    header:
+      "Access to personal emails / messaging sites (e.g. Gmail, WhatsApp Web)",
+    type: "flag",
+  },
+  {
+    column: "suspicious_software",
+    header: "Any suspicious software or browser extensions installed",
+    type: "flag",
+  },
 
-  { column: "pi_visible_in_sheet", header: "Google Sheet Review – PKT, Document Number or any other PI information visibility", type: "flag" },
-  { column: "pi_phi_outside_tools", header: "Storing or sharing PI/PHI data outside authorized tools", type: "flag" },
-  { column: "unapproved_screenshots", header: "Screenshots or screen recording without approval", type: "flag" },
-  { column: "local_file_downloads", header: "Files downloaded locally instead of shared drive", type: "flag" },
-  { column: "sensitive_copy_paste", header: "Copy-pasting sensitive info to chat / notes", type: "flag" },
-  { column: "edit_links_shared", header: "Sharing links with edit access to unauthorized personnel", type: "flag" },
+  {
+    column: "pi_visible_in_sheet",
+    header:
+      "Google Sheet Review – PKT, Document Number or any other PI information visibility",
+    type: "flag",
+  },
+  {
+    column: "pi_phi_outside_tools",
+    header: "Storing or sharing PI/PHI data outside authorized tools",
+    type: "flag",
+  },
+  {
+    column: "unapproved_screenshots",
+    header: "Screenshots or screen recording without approval",
+    type: "flag",
+  },
+  {
+    column: "local_file_downloads",
+    header: "Files downloaded locally instead of shared drive",
+    type: "flag",
+  },
+  {
+    column: "sensitive_copy_paste",
+    header: "Copy-pasting sensitive info to chat / notes",
+    type: "flag",
+  },
+  {
+    column: "edit_links_shared",
+    header: "Sharing links with edit access to unauthorized personnel",
+    type: "flag",
+  },
 
   { column: "week_label", header: "Week", type: "text" },
   { column: "month_label", header: "Month", type: "text" },
   { column: "overall_score", header: "Overall Score", type: "pct" },
-  { column: "physical_score", header: "Physical & Floor Compliance", type: "pct" },
-  { column: "system_access_score", header: "System & Access Compliance", type: "pct" },
-  { column: "data_security_score", header: "Data & Information Security", type: "pct" },
+  {
+    column: "physical_score",
+    header: "Physical & Floor Compliance",
+    type: "pct",
+  },
+  {
+    column: "system_access_score",
+    header: "System & Access Compliance",
+    type: "pct",
+  },
+  {
+    column: "data_security_score",
+    header: "Data & Information Security",
+    type: "pct",
+  },
   { column: "remarks", header: "Additional Remarks", type: "text" },
 ];
 
@@ -92,7 +173,10 @@ const COLUMNS: Array<{ column: string; header: string; type: Coerce }> = [
  * failure, and scoring it as one would understate every rate built on it.
  */
 export function parseFlag(raw: unknown): 0 | 1 | null {
-  const v = String(raw ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  const v = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
   if (!v) return null;
   if (v.startsWith("non")) return 0;
   if (v.startsWith("compliant") || v === "yes" || v === "1") return 1;
@@ -102,7 +186,9 @@ export function parseFlag(raw: unknown): 0 | 1 | null {
 
 /** "93.75%" and "93.75" both mean the same thing here. */
 export function parsePct(raw: unknown): number | null {
-  const v = String(raw ?? "").trim().replace("%", "");
+  const v = String(raw ?? "")
+    .trim()
+    .replace("%", "");
   if (!v) return null;
   const n = Number(v);
   if (!Number.isFinite(n)) return null;
@@ -115,16 +201,28 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   const MONTHS: Record<string, number> = {
-    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+    jan: 1,
+    feb: 2,
+    mar: 3,
+    apr: 4,
+    may: 5,
+    jun: 6,
+    jul: 7,
+    aug: 8,
+    sep: 9,
+    oct: 10,
+    nov: 11,
+    dec: 12,
   };
   const dMonY = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/.exec(v);
   if (dMonY) {
     const m = MONTHS[dMonY[2].toLowerCase()];
-    if (m) return `${dMonY[3]}-${String(m).padStart(2, "0")}-${dMonY[1].padStart(2, "0")}`;
+    if (m)
+      return `${dMonY[3]}-${String(m).padStart(2, "0")}-${dMonY[1].padStart(2, "0")}`;
   }
   const mdY = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(v);
-  if (mdY) return `${mdY[3]}-${mdY[1].padStart(2, "0")}-${mdY[2].padStart(2, "0")}`;
+  if (mdY)
+    return `${mdY[3]}-${mdY[1].padStart(2, "0")}-${mdY[2].padStart(2, "0")}`;
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (iso) return iso[0];
   return null;
@@ -154,12 +252,23 @@ export async function importComplianceAuditBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const cols = COLUMNS.map((c) => c.column);
-  const insertCols = ["id", "audit_key", ...cols, "raw_data", "upload_batch_id", "source_row_no", "uploaded_by"];
+  const insertCols = [
+    "id",
+    "audit_key",
+    ...cols,
+    "raw_data",
+    "upload_batch_id",
+    "source_row_no",
+    "uploaded_by",
+  ];
   const placeholders = `(${insertCols.map(() => "?").join(",")})`;
-  const update = [...cols, "raw_data"].map((c) => `${c} = VALUES(${c})`).join(", ");
+  const update = [...cols, "raw_data"]
+    .map((c) => `${c} = VALUES(${c})`)
+    .join(", ");
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
@@ -175,7 +284,9 @@ export async function importComplianceAuditBatch(
     // One person is audited once per day at one desk. Desk is part of the key
     // because the same analyst can be audited at a different desk on the same day,
     // and dropping it would silently overwrite one of those two audits.
-    const parts = ["Date", "Analyst Name", "Desk No."].map((h) => String(data[h] ?? "").trim());
+    const parts = ["Date", "Analyst Name", "Desk No."].map((h) =>
+      String(data[h] ?? "").trim(),
+    );
     if (!parts[0] || !parts[1]) {
       const msg = `Row ${row.row_no}: "Date" and "Analyst Name" are both required to identify an audit`;
       errors.push(msg);
@@ -185,7 +296,10 @@ export async function importComplianceAuditBatch(
     const auditKey = parts.join("|");
     const n = (occurrence.get(auditKey) ?? 0) + 1;
     occurrence.set(auditKey, n);
-    const id = `compliance_audit:${auditKey}${n > 1 ? `:${n}` : ""}`.slice(0, 191);
+    const id = `compliance_audit:${auditKey}${n > 1 ? `:${n}` : ""}`.slice(
+      0,
+      191,
+    );
 
     toInsert.push({
       rowId: row.id,
@@ -214,12 +328,17 @@ export async function importComplianceAuditBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 

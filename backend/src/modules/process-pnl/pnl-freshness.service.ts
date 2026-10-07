@@ -1,4 +1,9 @@
-import { getPnlReconciliation, type PnlReconciliationFilters, type PnlReconciliationMode, type PnlSourceFreshness } from "./pnl-reconciliation.service.js";
+import {
+  getPnlReconciliation,
+  type PnlReconciliationFilters,
+  type PnlReconciliationMode,
+  type PnlSourceFreshness,
+} from "./pnl-reconciliation.service.js";
 
 /**
  * Every P&L view needs one small, consistent signal — "is this number I'm looking at final,
@@ -14,7 +19,12 @@ export interface PnlFreshnessSummary {
   generatedAt: string;
   blockers: string[];
   freshness: PnlSourceFreshness[];
-  exceptions: Array<{ code: string; label: string; amount: number; count: number }>;
+  exceptions: Array<{
+    code: string;
+    label: string;
+    amount: number;
+    count: number;
+  }>;
 }
 
 export async function getPnlFreshness(

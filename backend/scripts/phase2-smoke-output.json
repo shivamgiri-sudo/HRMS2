@@ -60,10 +60,7 @@
       "e0eb15b7-2f5c-494b-8eb0-80c2789b241d",
       "ca79323b-afc2-4b0e-bdab-798837f4ed2d"
     ],
-    "bgvDetails": [
-      "9",
-      "10"
-    ],
+    "bgvDetails": ["9", "10"],
     "payrollValidation": "8da7d64f-dfcd-4c19-9c08-6cbe21001e8f",
     "salaryProposal": "8c13b02e-fa92-4e8c-bf79-13f69608731d",
     "offer": "71e6315d-1b3c-48c7-94d0-1ff65f6b548f",
@@ -73,9 +70,7 @@
     "authUser": "792f209c-16bc-42d5-9201-2180ead66bb1",
     "salarySnapshot": "7a8ddfe2-15c6-411a-a8b6-0bd7b17537b0",
     "salaryAssignment": "ea06e0ce-9d9e-4bc1-8cd7-4a2710c688f2",
-    "leaveLedgerIds": [
-      "a844c54b-9423-4b63-a6a6-de7295c1f9e7"
-    ],
+    "leaveLedgerIds": ["a844c54b-9423-4b63-a6a6-de7295c1f9e7"],
     "nominee": "efc5bd2f-446d-46ef-b5be-57c8be6c3ab2",
     "provisioningTaskIds": [
       "7dba10e0-a944-4810-b811-95fba916c473",

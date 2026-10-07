@@ -27,17 +27,23 @@ import { closeBillPool } from "../src/db/billDb.js";
 const month = process.argv[2] || "2026-07";
 
 async function main() {
-  console.log(`Cross-checking UAN/PF filing readiness resolvers for ${month}...\n`);
+  console.log(
+    `Cross-checking UAN/PF filing readiness resolvers for ${month}...\n`,
+  );
 
   const a = await resolveUanFilingReadinessForPeriod(month);
   const summaryA = summariseUanFilingReadiness(a.values());
-  console.log("=== Resolver 1: pf-applicability.service.ts (resolveUanFilingReadinessForPeriod) ===");
+  console.log(
+    "=== Resolver 1: pf-applicability.service.ts (resolveUanFilingReadinessForPeriod) ===",
+  );
   console.log(`Population: ${a.size}`);
   console.log(JSON.stringify(summaryA, null, 2));
 
   const b = await resolveStatutoryFilingReadinessForPeriod(month);
   const summaryB = summariseFilingReadiness(b.values(), "pf");
-  console.log("\n=== Resolver 2: statutory-filing-readiness.service.ts (resolveStatutoryFilingReadinessForPeriod, pf scheme) ===");
+  console.log(
+    "\n=== Resolver 2: statutory-filing-readiness.service.ts (resolveStatutoryFilingReadinessForPeriod, pf scheme) ===",
+  );
   console.log(`Population: ${b.size}`);
   console.log(JSON.stringify(summaryB, null, 2));
 
@@ -50,15 +56,21 @@ async function main() {
     if (resultA.status !== resultB.pf.status) {
       disagreements++;
       if (sample.length < 15) {
-        sample.push(`  ${code}: resolver1=${resultA.status} resolver2=${resultB.pf.status}`);
+        sample.push(
+          `  ${code}: resolver1=${resultA.status} resolver2=${resultB.pf.status}`,
+        );
       }
     }
   }
-  console.log(`\n=== Per-employee status disagreement: ${disagreements} of ${a.size} ===`);
+  console.log(
+    `\n=== Per-employee status disagreement: ${disagreements} of ${a.size} ===`,
+  );
   if (sample.length) {
     console.log(sample.join("\n"));
   } else if (disagreements === 0) {
-    console.log("Zero disagreement - the two resolvers agree on every employee's status label.");
+    console.log(
+      "Zero disagreement - the two resolvers agree on every employee's status label.",
+    );
   }
 
   await closeBillPool();

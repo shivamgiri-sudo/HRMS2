@@ -11,14 +11,18 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1" }; next(); },
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.authUser = { id: "u1" };
+    next();
+  },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole:
     (...roles: string[]) =>
     (req: any, res: any, next: any) => {
       const role = String(req.headers["x-test-role"] ?? "wfm");
-      if (!roles.includes(role)) return res.status(403).json({ success: false, message: "Forbidden" });
+      if (!roles.includes(role))
+        return res.status(403).json({ success: false, message: "Forbidden" });
       next();
     },
 }));
@@ -28,7 +32,8 @@ vi.mock("../attendance-engine.service.js", () => ({
   resolveHalfDayFloorMinutes: async () => 240,
 }));
 
-const { attendanceAprBulkRouter } = await import("../attendance-apr-bulk.routes.js");
+const { attendanceAprBulkRouter } =
+  await import("../attendance-apr-bulk.routes.js");
 
 function app() {
   const a = express();
@@ -37,11 +42,21 @@ function app() {
 }
 
 const SAMPLE_ROW = {
-  id: "batch-1", batch_reference: "batch-1", file_name: "july-apr.csv",
-  date_from: "2026-07-01", date_to: "2026-07-31", submitted_at: "2026-07-01 10:00:00",
-  submitted_row_count: 100, accepted_row_count: 95, rejected_row_count: 5,
-  status: "accepted", supersedes_batch_id: null, superseded_by_batch_id: null,
-  dialler_source_name: "APR Bulk (Manual)", branch_name: "Noida", process_name: "Onfido",
+  id: "batch-1",
+  batch_reference: "batch-1",
+  file_name: "july-apr.csv",
+  date_from: "2026-07-01",
+  date_to: "2026-07-31",
+  submitted_at: "2026-07-01 10:00:00",
+  submitted_row_count: 100,
+  accepted_row_count: 95,
+  rejected_row_count: 5,
+  status: "accepted",
+  supersedes_batch_id: null,
+  superseded_by_batch_id: null,
+  dialler_source_name: "APR Bulk (Manual)",
+  branch_name: "Noida",
+  process_name: "Onfido",
   uploaded_by_name: "Priya Sharma",
 };
 
@@ -53,7 +68,9 @@ describe("GET /api/wfm/attendance/apr-bulk-upload/batches", () => {
   it("returns the batch history for a wfm/hr/payroll_head/super_admin/admin caller", async () => {
     execute.mockResolvedValueOnce([[SAMPLE_ROW]]);
 
-    const res = await request(app()).get("/api/wfm/attendance/apr-bulk-upload/batches");
+    const res = await request(app()).get(
+      "/api/wfm/attendance/apr-bulk-upload/batches",
+    );
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual([SAMPLE_ROW]);
@@ -85,7 +102,9 @@ describe("GET /api/wfm/attendance/apr-bulk-upload/batches", () => {
   it("orders newest first and caps the limit at 500", async () => {
     execute.mockResolvedValueOnce([[]]);
 
-    await request(app()).get("/api/wfm/attendance/apr-bulk-upload/batches?limit=9999");
+    await request(app()).get(
+      "/api/wfm/attendance/apr-bulk-upload/batches?limit=9999",
+    );
 
     const [sql] = execute.mock.calls[0];
     expect(String(sql)).toContain("ORDER BY pub.submitted_at DESC");
@@ -95,7 +114,9 @@ describe("GET /api/wfm/attendance/apr-bulk-upload/batches", () => {
   it("answers 500 with a plain message rather than leaking a driver error, on a DB failure", async () => {
     execute.mockRejectedValueOnce(new Error("connection reset"));
 
-    const res = await request(app()).get("/api/wfm/attendance/apr-bulk-upload/batches");
+    const res = await request(app()).get(
+      "/api/wfm/attendance/apr-bulk-upload/batches",
+    );
 
     expect(res.status).toBe(500);
     expect(res.body.message).not.toContain("connection reset");

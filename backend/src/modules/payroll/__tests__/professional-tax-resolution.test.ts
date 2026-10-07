@@ -19,21 +19,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection: vi.fn() } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute, getConnection: vi.fn() },
+}));
 
-import { resolveProfessionalTax, buildStatutoryRow } from "../payrollCalculate.service.js";
+import {
+  resolveProfessionalTax,
+  buildStatutoryRow,
+} from "../payrollCalculate.service.js";
 
 describe("professional tax is no longer resolved or applied (removed 2026-09-11)", () => {
   beforeEach(() => execute.mockReset());
 
   it("resolves to 0 for a state that used to levy professional tax", async () => {
-    await expect(resolveProfessionalTax("MAS1234", "Gujarat", 30000)).resolves.toBe(0);
+    await expect(
+      resolveProfessionalTax("MAS1234", "Gujarat", 30000),
+    ).resolves.toBe(0);
     // No slab lookup happens any more -- there is nothing left to look up.
     expect(execute).not.toHaveBeenCalled();
   });
 
   it("resolves to 0 for a state that never levied professional tax", async () => {
-    await expect(resolveProfessionalTax("MAS1234", "Uttar Pradesh", 30000)).resolves.toBe(0);
+    await expect(
+      resolveProfessionalTax("MAS1234", "Uttar Pradesh", 30000),
+    ).resolves.toBe(0);
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -41,8 +50,12 @@ describe("professional tax is no longer resolved or applied (removed 2026-09-11)
     // Previously this threw ("cannot be determined") to avoid inventing a figure --
     // with PT gone entirely, 0 is not a guess, it is the removed value, so there is
     // nothing left to block the run on.
-    await expect(resolveProfessionalTax("MAS9999", null, 30000)).resolves.toBe(0);
-    await expect(resolveProfessionalTax("MAS9999", undefined, 30000)).resolves.toBe(0);
+    await expect(resolveProfessionalTax("MAS9999", null, 30000)).resolves.toBe(
+      0,
+    );
+    await expect(
+      resolveProfessionalTax("MAS9999", undefined, 30000),
+    ).resolves.toBe(0);
     await expect(resolveProfessionalTax("MAS9999", "", 30000)).resolves.toBe(0);
     expect(execute).not.toHaveBeenCalled();
   });
@@ -67,18 +80,26 @@ describe("PF and ESIC parameters", () => {
     // ₹15,000 EPF ceiling, which is permitted and deliberate. If this assertion
     // ever fails because someone hardcoded 15000, that change cuts every
     // employee's PF — it is not a correction. Unrelated to PT removal; kept as-is.
-    const row = buildStatutoryRow({ pf_wage_limit: 999999, pf_employee_pct: 12 });
+    const row = buildStatutoryRow({
+      pf_wage_limit: 999999,
+      pf_employee_pct: 12,
+    });
     expect(row.pf_wage_limit).toBe(999999);
   });
 
   it("carries PF and ESIC rates through from configuration", () => {
     const row = buildStatutoryRow({
-      pf_employee_pct: 12, esic_employee_pct: 0.75, esic_employer_pct: 3.25,
-      esic_wage_limit: 21000, pf_wage_limit: 999999,
+      pf_employee_pct: 12,
+      esic_employee_pct: 0.75,
+      esic_employer_pct: 3.25,
+      esic_wage_limit: 21000,
+      pf_wage_limit: 999999,
     });
     expect(row).toMatchObject({
-      pf_employee_pct: 12, esic_employee_pct: 0.75,
-      esic_employer_pct: 3.25, esic_wage_limit: 21000,
+      pf_employee_pct: 12,
+      esic_employee_pct: 0.75,
+      esic_employer_pct: 3.25,
+      esic_wage_limit: 21000,
     });
   });
 
@@ -87,6 +108,8 @@ describe("PF and ESIC parameters", () => {
     // it), but it is not a fallback any more: nothing computes a nonzero value for
     // it, and passing one in explicitly is ignored too -- PT is off, full stop.
     expect(buildStatutoryRow({}).professional_tax).toBe(0);
-    expect(buildStatutoryRow({ professional_tax: 200 }).professional_tax).toBe(0);
+    expect(buildStatutoryRow({ professional_tax: 200 }).professional_tax).toBe(
+      0,
+    );
   });
 });

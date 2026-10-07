@@ -12,12 +12,14 @@
  * accumulating the full workbook in memory). This file uses the streaming API.
  */
 
-import ExcelJS from 'exceljs';
-import type { ExecResult } from './executors/types.js';
+import ExcelJS from "exceljs";
+import type { ExecResult } from "./executors/types.js";
 
 // ── Configurable thresholds (read from env with defaults) ──────────────────────
 const MAX_XLSX_ROWS = Number(process.env.REPORT_MAX_XLSX_ROWS ?? 100_000);
-const ATTACHMENT_MAX_BYTES = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520); // 20 MB
+const ATTACHMENT_MAX_BYTES = Number(
+  process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520,
+); // 20 MB
 
 // Columns whose values must be preserved as text (leading zeros matter)
 const TEXT_COLUMN_PATTERNS = [
@@ -37,24 +39,30 @@ const TEXT_COLUMN_PATTERNS = [
 // ── Error classes ──────────────────────────────────────────────────────────────
 
 export class XlsxRowLimitError extends Error {
-  constructor(public readonly rowCount: number, public readonly limit: number) {
+  constructor(
+    public readonly rowCount: number,
+    public readonly limit: number,
+  ) {
     super(`Row count ${rowCount} exceeds limit ${limit}`);
-    this.name = 'XlsxRowLimitError';
+    this.name = "XlsxRowLimitError";
   }
 }
 
 export class XlsxFileSizeError extends Error {
-  constructor(public readonly bytes: number, public readonly limit: number) {
+  constructor(
+    public readonly bytes: number,
+    public readonly limit: number,
+  ) {
     super(`File size ${bytes} bytes exceeds limit ${limit} bytes`);
-    this.name = 'XlsxFileSizeError';
+    this.name = "XlsxFileSizeError";
   }
 }
 
 // ── Formula injection sanitiser ────────────────────────────────────────────────
 
 function sanitiseCellValue(value: unknown, columnName: string): unknown {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" || typeof value === "boolean") return value;
   if (value instanceof Date) return value.toISOString().slice(0, 10);
 
   const str = String(value);
@@ -66,7 +74,7 @@ function sanitiseCellValue(value: unknown, columnName: string): unknown {
 }
 
 function isTextColumn(columnName: string): boolean {
-  return TEXT_COLUMN_PATTERNS.some(p => p.test(columnName));
+  return TEXT_COLUMN_PATTERNS.some((p) => p.test(columnName));
 }
 
 // ── Filename sanitiser ─────────────────────────────────────────────────────────
@@ -80,10 +88,17 @@ function isTextColumn(columnName: string): boolean {
  * screen; using the code here produced filenames like "PUNCH_RAW_EXPORT_..."
  * for a report the UI labelled "Punch Raw Data Export".
  */
-export function buildSecureFilename(reportName: string, requestReference: string): string {
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const name = reportName.toUpperCase().trim().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  const ref = requestReference.replace(/[^A-Z0-9_\-]/gi, '_');
+export function buildSecureFilename(
+  reportName: string,
+  requestReference: string,
+): string {
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const name = reportName
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const ref = requestReference.replace(/[^A-Z0-9_\-]/gi, "_");
   return `${name}_${ref}_${dateStr}.xlsx`;
 }
 
@@ -106,7 +121,9 @@ export interface XlsxBuildParams {
   skipSizeCap?: boolean;
 }
 
-export async function buildSecureXlsxBuffer(params: XlsxBuildParams): Promise<Buffer> {
+export async function buildSecureXlsxBuffer(
+  params: XlsxBuildParams,
+): Promise<Buffer> {
   const { rows, totalRows } = params;
 
   // Row count guard
@@ -115,21 +132,21 @@ export async function buildSecureXlsxBuffer(params: XlsxBuildParams): Promise<Bu
   }
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'MAS PeopleOS';
+  wb.creator = "MAS PeopleOS";
 
   // ── Sheet 1: REPORT DATA (streaming add) ────────────────────────────────────
-  const dataSheet = wb.addWorksheet('REPORT DATA');
+  const dataSheet = wb.addWorksheet("REPORT DATA");
 
   if (rows.length > 0) {
     const columnKeys = Object.keys(rows[0]);
 
     // Column definitions with header formatting and text-cell enforcement
-    dataSheet.columns = columnKeys.map(key => ({
+    dataSheet.columns = columnKeys.map((key) => ({
       header: key.toUpperCase(),
       key,
       width: Math.max(key.length + 4, 18),
       style: isTextColumn(key)
-        ? { numFmt: '@' } // @ = text format — preserves leading zeros
+        ? { numFmt: "@" } // @ = text format — preserves leading zeros
         : undefined,
     }));
 
@@ -137,12 +154,14 @@ export async function buildSecureXlsxBuffer(params: XlsxBuildParams): Promise<Bu
     if (dataSheet.getRow(1).getCell(1)) {
       dataSheet.getRow(1).font = { bold: true };
       dataSheet.getRow(1).fill = {
-        type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' },
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFD6E4F0" },
       };
     }
 
     // Freeze first row
-    dataSheet.views = [{ state: 'frozen', xSplit: 0, ySplit: 1 }];
+    dataSheet.views = [{ state: "frozen", xSplit: 0, ySplit: 1 }];
 
     // Stream rows — ExcelJS addRow is O(row) not O(total)
     for (const row of rows) {
@@ -153,30 +172,33 @@ export async function buildSecureXlsxBuffer(params: XlsxBuildParams): Promise<Bu
       dataSheet.addRow(sanitised);
     }
   } else {
-    dataSheet.addRow({ notice: 'NO DATA RETURNED FOR THE SELECTED FILTERS' });
+    dataSheet.addRow({ notice: "NO DATA RETURNED FOR THE SELECTED FILTERS" });
   }
 
   // ── Sheet 2: REPORT METADATA ─────────────────────────────────────────────────
-  const metaSheet = wb.addWorksheet('REPORT METADATA');
+  const metaSheet = wb.addWorksheet("REPORT METADATA");
   metaSheet.columns = [{ width: 36 }, { width: 62 }];
-  metaSheet.getRow(1).values = ['FIELD', 'VALUE'];
+  metaSheet.getRow(1).values = ["FIELD", "VALUE"];
   metaSheet.getRow(1).font = { bold: true };
 
   const now = new Date().toISOString();
   const metaRows: [string, string][] = [
-    ['REPORT NAME',                  params.reportName],
-    ['REQUEST REFERENCE',            params.requestReference],
-    ['REQUESTER EMPLOYEE CODE',      params.requesterEmployeeCode],
-    ['GENERATED AT (UTC)',           now],
-    ['ROW COUNT',                    String(rows.length)],
-    ['CONFIDENTIALITY',              'CONFIDENTIAL — DO NOT FORWARD OUTSIDE AUTHORISED RECIPIENTS'],
-    ['',                             ''],
-    ['DATA SCOPE',                   params.scopeSummary],
+    ["REPORT NAME", params.reportName],
+    ["REQUEST REFERENCE", params.requestReference],
+    ["REQUESTER EMPLOYEE CODE", params.requesterEmployeeCode],
+    ["GENERATED AT (UTC)", now],
+    ["ROW COUNT", String(rows.length)],
+    [
+      "CONFIDENTIALITY",
+      "CONFIDENTIAL — DO NOT FORWARD OUTSIDE AUTHORISED RECIPIENTS",
+    ],
+    ["", ""],
+    ["DATA SCOPE", params.scopeSummary],
   ];
 
   const filterEntries = Object.entries(params.filters);
   if (filterEntries.length > 0) {
-    metaRows.push(['', ''], ['FILTERS APPLIED', '']);
+    metaRows.push(["", ""], ["FILTERS APPLIED", ""]);
     for (const [k, v] of filterEntries) {
       metaRows.push([k.toUpperCase(), sanitiseCellValue(v, k) as string]);
     }
@@ -206,9 +228,13 @@ export async function buildSecureXlsxBuffer(params: XlsxBuildParams): Promise<Bu
  * Strip the internal keyset cursor field (_cursor) from executor output rows.
  * Each executor adds _cursor for pagination; it must not appear in XLSX output.
  */
-export function stripCursorField(rows: Record<string, unknown>[]): Record<string, unknown>[] {
-  return rows.map(row => {
-    const { _cursor: _, ...rest } = row as Record<string, unknown> & { _cursor?: unknown };
+export function stripCursorField(
+  rows: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  return rows.map((row) => {
+    const { _cursor: _, ...rest } = row as Record<string, unknown> & {
+      _cursor?: unknown;
+    };
     return rest;
   });
 }

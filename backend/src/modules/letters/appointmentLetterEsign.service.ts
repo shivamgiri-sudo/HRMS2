@@ -39,7 +39,12 @@ const RECONCILE_BATCH = 10;
 const RECONCILE_GIVE_UP_DAYS = 14;
 const MAX_ARTEFACT_HEAL_ATTEMPTS = 12;
 
-const CLOSED_STATUSES = new Set(["expired", "cancelled", "abandoned_unresolved", "provider_error"]);
+const CLOSED_STATUSES = new Set([
+  "expired",
+  "cancelled",
+  "abandoned_unresolved",
+  "provider_error",
+]);
 const SIGNED_LETTER_STATUSES = new Set(["signed", "completed"]);
 
 export const appointmentLetterStorageRoot = () =>
@@ -94,22 +99,34 @@ type TxRow = RowDataPacket & {
   age_s: number | null;
 };
 
-function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000} s`)), ms);
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms / 1000} s`)),
+      ms,
+    );
   });
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
 const isDuplicateKey = (error: unknown) =>
-  (error as { code?: string })?.code === "ER_DUP_ENTRY" || (error as { errno?: number })?.errno === 1062;
+  (error as { code?: string })?.code === "ER_DUP_ENTRY" ||
+  (error as { errno?: number })?.errno === 1062;
 
 function nextPollMinutes(attempts: number): number {
-  return POLL_LADDER_MINUTES[Math.min(Math.max(attempts, 1) - 1, POLL_LADDER_MINUTES.length - 1)];
+  return POLL_LADDER_MINUTES[
+    Math.min(Math.max(attempts, 1) - 1, POLL_LADDER_MINUTES.length - 1)
+  ];
 }
 
-async function loadOpenTransaction(issueId: string): Promise<TxRow | undefined> {
+async function loadOpenTransaction(
+  issueId: string,
+): Promise<TxRow | undefined> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, status, provider_url, provider_reference_id, client_transaction_id,
             TIMESTAMPDIFF(SECOND, initiated_at, NOW()) AS age_s
@@ -121,7 +138,11 @@ async function loadOpenTransaction(issueId: string): Promise<TxRow | undefined> 
   return (rows as TxRow[])[0];
 }
 
-async function closeTransaction(id: string, status: string, error: string | null): Promise<void> {
+async function closeTransaction(
+  id: string,
+  status: string,
+  error: string | null,
+): Promise<void> {
   await db.execute(
     `UPDATE appointment_letter_esign_transaction
         SET status = ?, open_marker = NULL, error_message = COALESCE(?, error_message)
@@ -135,7 +156,9 @@ async function loadLetterStatus(issueId: string): Promise<string> {
     `SELECT employee_esign_status FROM appointment_letter_issue WHERE id = ? LIMIT 1`,
     [issueId],
   );
-  return String((rows as RowDataPacket[])[0]?.employee_esign_status ?? "not_sent");
+  return String(
+    (rows as RowDataPacket[])[0]?.employee_esign_status ?? "not_sent",
+  );
 }
 
 /** The signed PDF must still be the exact file the company signed. */
@@ -144,14 +167,22 @@ async function readableLetterFile(letter: EsignLetter): Promise<string | null> {
   if (!filePath) return null;
   try {
     const bytes = await fs.promises.readFile(filePath);
-    if (letter.fileSha256 && createHash("sha256").update(bytes).digest("hex") !== letter.fileSha256) return null;
+    if (
+      letter.fileSha256 &&
+      createHash("sha256").update(bytes).digest("hex") !== letter.fileSha256
+    )
+      return null;
     return filePath;
   } catch {
     return null;
   }
 }
 
-function outcome(code: StartCode, letterStatus: string, extra: Partial<StartOutcome> = {}): StartOutcome {
+function outcome(
+  code: StartCode,
+  letterStatus: string,
+  extra: Partial<StartOutcome> = {},
+): StartOutcome {
   return {
     code,
     providerUrl: null,
@@ -172,13 +203,19 @@ function outcome(code: StartCode, letterStatus: string, extra: Partial<StartOutc
  * replaced. UNIQUE(issue_id, open_marker) is what makes "one live session per
  * letter" true under concurrent clicks, not an in-process check.
  */
-export async function startAppointmentEsign(letter: EsignLetter, ctx: {
-  ipAddress?: string | null; userAgent?: string | null;
-}): Promise<StartOutcome> {
-  if (SIGNED_LETTER_STATUSES.has(letter.esignStatus)) return outcome("ALREADY_SIGNED", letter.esignStatus);
+export async function startAppointmentEsign(
+  letter: EsignLetter,
+  ctx: {
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<StartOutcome> {
+  if (SIGNED_LETTER_STATUSES.has(letter.esignStatus))
+    return outcome("ALREADY_SIGNED", letter.esignStatus);
   if (!env.LUCKPAY_PROVIDER_ENABLED) {
     return outcome("PROVIDER_UNAVAILABLE", letter.esignStatus, {
-      message: "Electronic signing is not available right now. Please contact HR — your letter can be accepted another way.",
+      message:
+        "Electronic signing is not available right now. Please contact HR — your letter can be accepted another way.",
     });
   }
 
@@ -187,14 +224,21 @@ export async function startAppointmentEsign(letter: EsignLetter, ctx: {
     const open = await loadOpenTransaction(letter.id);
     if (open) {
       const status = String(open.status);
-      const abandoned = status === "initiating" && Number(open.age_s ?? 0) > INITIATING_STALE_SECONDS;
+      const abandoned =
+        status === "initiating" &&
+        Number(open.age_s ?? 0) > INITIATING_STALE_SECONDS;
       if (CLOSED_STATUSES.has(status) || abandoned) {
-        await closeTransaction(String(open.id), abandoned ? "abandoned_unresolved" : status, null);
+        await closeTransaction(
+          String(open.id),
+          abandoned ? "abandoned_unresolved" : status,
+          null,
+        );
         continue;
       }
       if (!open.provider_url) {
         return outcome("PREPARING", letter.esignStatus, {
-          message: "Your signing session is being prepared. Please try again in a few seconds.",
+          message:
+            "Your signing session is being prepared. Please try again in a few seconds.",
           retryAfterSeconds: 5,
         });
       }
@@ -202,9 +246,13 @@ export async function startAppointmentEsign(letter: EsignLetter, ctx: {
       // employee may have signed already, or the provider may have let it lapse.
       if (!syncedThisCall) {
         syncedThisCall = true;
-        await syncAppointmentEsignForIssue(letter.id, { minIntervalSeconds: 60, timeoutMs: 8_000 }).catch(() => undefined);
+        await syncAppointmentEsignForIssue(letter.id, {
+          minIntervalSeconds: 60,
+          timeoutMs: 8_000,
+        }).catch(() => undefined);
         const current = await loadLetterStatus(letter.id);
-        if (SIGNED_LETTER_STATUSES.has(current)) return outcome("ALREADY_SIGNED", current);
+        if (SIGNED_LETTER_STATUSES.has(current))
+          return outcome("ALREADY_SIGNED", current);
         continue;
       }
       await db.execute(
@@ -213,7 +261,9 @@ export async function startAppointmentEsign(letter: EsignLetter, ctx: {
         [letter.id],
       );
       await auditAppointmentLetter(letter.id, "ESIGN_OPENED", null, {
-        ipAddress: ctx.ipAddress ?? null, userAgent: ctx.userAgent ?? null, reused: true,
+        ipAddress: ctx.ipAddress ?? null,
+        userAgent: ctx.userAgent ?? null,
+        reused: true,
       });
       const latest = await loadLetterStatus(letter.id);
       return outcome("OK", latest, { providerUrl: String(open.provider_url) });
@@ -223,14 +273,19 @@ export async function startAppointmentEsign(letter: EsignLetter, ctx: {
     if (created !== "retry") return created;
   }
   return outcome("PREPARING", letter.esignStatus, {
-    message: "Your signing session is being prepared. Please try again in a few seconds.",
+    message:
+      "Your signing session is being prepared. Please try again in a few seconds.",
     retryAfterSeconds: 5,
   });
 }
 
-async function createSession(letter: EsignLetter, ctx: {
-  ipAddress?: string | null; userAgent?: string | null;
-}): Promise<StartOutcome | "retry"> {
+async function createSession(
+  letter: EsignLetter,
+  ctx: {
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<StartOutcome | "retry"> {
   const [recent] = await db.execute<RowDataPacket[]>(
     `SELECT 1 AS hit FROM appointment_letter_esign_transaction
       WHERE issue_id = ? AND status = 'provider_error'
@@ -239,28 +294,41 @@ async function createSession(letter: EsignLetter, ctx: {
   );
   if ((recent as RowDataPacket[]).length > 0) {
     return outcome("COOLDOWN", letter.esignStatus, {
-      message: "The signing service did not respond. Please wait a moment and try again.",
+      message:
+        "The signing service did not respond. Please wait a moment and try again.",
       retryAfterSeconds: PROVIDER_ERROR_COOLDOWN_SECONDS,
     });
   }
 
   const filePath = await readableLetterFile(letter);
   if (!filePath) {
-    await auditAppointmentLetter(letter.id, "ESIGN_FILE_UNAVAILABLE", null, { letterNumber: letter.letterNumber });
+    await auditAppointmentLetter(letter.id, "ESIGN_FILE_UNAVAILABLE", null, {
+      letterNumber: letter.letterNumber,
+    });
     return outcome("DOCUMENT_UNAVAILABLE", letter.esignStatus, {
-      message: "The letter document is not available for signing right now. Please contact HR.",
+      message:
+        "The letter document is not available for signing right now. Please contact HR.",
     });
   }
 
-  const { luckpayClient, esignWithUrl } = await import("../integrations/luckpay/luckpay.client.js");
+  const { luckpayClient, esignWithUrl } =
+    await import("../integrations/luckpay/luckpay.client.js");
   const txId = randomUUID();
-  const clientTransactionId = luckpayClient.generateClientTransactionId("appointment-letter");
+  const clientTransactionId =
+    luckpayClient.generateClientTransactionId("appointment-letter");
   try {
     await db.execute(
       `INSERT INTO appointment_letter_esign_transaction
          (id, issue_id, employee_id, provider, client_transaction_id, signer_name, status, open_marker)
        VALUES (?, ?, ?, ?, ?, ?, 'initiating', 'Y')`,
-      [txId, letter.id, letter.employeeId, PROVIDER, clientTransactionId, letter.employeeName],
+      [
+        txId,
+        letter.id,
+        letter.employeeId,
+        PROVIDER,
+        clientTransactionId,
+        letter.employeeName,
+      ],
     );
   } catch (error) {
     // Another click created the live session first; the loop will find it.
@@ -292,17 +360,27 @@ async function createSession(letter: EsignLetter, ctx: {
     // already have been billed. The next click uses a fresh id, after a cooldown.
     const message = error instanceof Error ? error.message : String(error);
     await closeTransaction(txId, "provider_error", message.slice(0, 1000));
-    await auditAppointmentLetter(letter.id, "ESIGN_PROVIDER_FAILED", null, { error: message });
+    await auditAppointmentLetter(letter.id, "ESIGN_PROVIDER_FAILED", null, {
+      error: message,
+    });
     return outcome("PROVIDER_ERROR", letter.esignStatus, {
-      message: "We could not start electronic signing just now. Please try again in a minute, or contact HR.",
+      message:
+        "We could not start electronic signing just now. Please try again in a minute, or contact HR.",
     });
   }
 
   if (!providerUrl) {
-    await closeTransaction(txId, "provider_error", "Provider accepted the request but returned no signing URL");
-    await auditAppointmentLetter(letter.id, "ESIGN_PROVIDER_FAILED", null, { error: "no signing url returned" });
+    await closeTransaction(
+      txId,
+      "provider_error",
+      "Provider accepted the request but returned no signing URL",
+    );
+    await auditAppointmentLetter(letter.id, "ESIGN_PROVIDER_FAILED", null, {
+      error: "no signing url returned",
+    });
     return outcome("PROVIDER_ERROR", letter.esignStatus, {
-      message: "We could not start electronic signing just now. Please try again in a minute, or contact HR.",
+      message:
+        "We could not start electronic signing just now. Please try again in a minute, or contact HR.",
     });
   }
 
@@ -319,7 +397,9 @@ async function createSession(letter: EsignLetter, ctx: {
     [txId, letter.id],
   );
   await auditAppointmentLetter(letter.id, "ESIGN_STARTED", null, {
-    transactionId: txId, ipAddress: ctx.ipAddress ?? null, userAgent: ctx.userAgent ?? null,
+    transactionId: txId,
+    ipAddress: ctx.ipAddress ?? null,
+    userAgent: ctx.userAgent ?? null,
   });
   return outcome("OK", "sent", { providerUrl });
 }
@@ -347,9 +427,13 @@ type SyncRow = RowDataPacket & {
  * retried, because the provider confirming a signature and us holding the file
  * are two separate events.
  */
-export async function syncAppointmentEsignForIssue(issueId: string, opts: {
-  minIntervalSeconds?: number; timeoutMs?: number;
-} = {}): Promise<AppointmentSyncOutcome> {
+export async function syncAppointmentEsignForIssue(
+  issueId: string,
+  opts: {
+    minIntervalSeconds?: number;
+    timeoutMs?: number;
+  } = {},
+): Promise<AppointmentSyncOutcome> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT t.id, t.employee_id, t.client_transaction_id, t.provider_reference_id, t.status,
             t.signed_file_path, t.poll_attempts,
@@ -364,16 +448,34 @@ export async function syncAppointmentEsignForIssue(issueId: string, opts: {
     [issueId],
   );
   const tx = (rows as SyncRow[])[0];
-  if (!tx) return { synced: false, state: "not_started", message: "No live eSign session for this letter." };
+  if (!tx)
+    return {
+      synced: false,
+      state: "not_started",
+      message: "No live eSign session for this letter.",
+    };
   if (!tx.provider_reference_id) {
-    return { synced: false, state: "not_started", message: "The signing session is still being created." };
+    return {
+      synced: false,
+      state: "not_started",
+      message: "The signing session is still being created.",
+    };
   }
   const ref = {
     clientTransactionId: String(tx.client_transaction_id),
     transactionId: String(tx.provider_reference_id),
   };
-  if (opts.minIntervalSeconds && tx.since_poll_s !== null && Number(tx.since_poll_s) < opts.minIntervalSeconds) {
-    return { synced: false, state: "pending", message: "Checked moments ago.", ...ref };
+  if (
+    opts.minIntervalSeconds &&
+    tx.since_poll_s !== null &&
+    Number(tx.since_poll_s) < opts.minIntervalSeconds
+  ) {
+    return {
+      synced: false,
+      state: "pending",
+      message: "Checked moments ago.",
+      ...ref,
+    };
   }
 
   const attempts = Number(tx.poll_attempts ?? 0) + 1;
@@ -387,7 +489,8 @@ export async function syncAppointmentEsignForIssue(issueId: string, opts: {
     [attempts, nextPollMinutes(attempts), tx.id],
   );
 
-  const { luckpayClient } = await import("../integrations/luckpay/luckpay.client.js");
+  const { luckpayClient } =
+    await import("../integrations/luckpay/luckpay.client.js");
   if (String(tx.status) === "signed") {
     // Provider already confirmed; only the artefact is missing.
     await completeSigned(tx, null);
@@ -396,7 +499,11 @@ export async function syncAppointmentEsignForIssue(issueId: string, opts: {
 
   let status;
   try {
-    status = await withTimeout(luckpayClient.checkESignStatus(ref), opts.timeoutMs ?? 20_000, "eSign status check");
+    status = await withTimeout(
+      luckpayClient.checkESignStatus(ref),
+      opts.timeoutMs ?? 20_000,
+      "eSign status check",
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await db.execute(
@@ -408,7 +515,13 @@ export async function syncAppointmentEsignForIssue(issueId: string, opts: {
 
   if (status.state === "completed") {
     await completeSigned(tx, status.sanitized);
-    return { synced: true, state: "completed", providerStatus: status.providerStatus, changed: true, ...ref };
+    return {
+      synced: true,
+      state: "completed",
+      providerStatus: status.providerStatus,
+      changed: true,
+      ...ref,
+    };
   }
 
   if (status.state === "expired") {
@@ -424,8 +537,16 @@ export async function syncAppointmentEsignForIssue(issueId: string, opts: {
         WHERE id = ? AND employee_esign_status NOT IN ('signed', 'completed')`,
       [issueId],
     );
-    await auditAppointmentLetter(issueId, "ESIGN_EXPIRED", null, { transactionId: tx.id });
-    return { synced: true, state: "expired", providerStatus: status.providerStatus, changed: true, ...ref };
+    await auditAppointmentLetter(issueId, "ESIGN_EXPIRED", null, {
+      transactionId: tx.id,
+    });
+    return {
+      synced: true,
+      state: "expired",
+      providerStatus: status.providerStatus,
+      changed: true,
+      ...ref,
+    };
   }
 
   // pending or failed: recorded, session kept alive (a provider FAILED can still be completed).
@@ -433,16 +554,31 @@ export async function syncAppointmentEsignForIssue(issueId: string, opts: {
     `UPDATE appointment_letter_esign_transaction
         SET status = ?, response_payload = CAST(? AS JSON), error_message = ?
       WHERE id = ?`,
-    [status.state, JSON.stringify(status.sanitized ?? {}), status.state === "failed" ? status.message ?? null : null, tx.id],
+    [
+      status.state,
+      JSON.stringify(status.sanitized ?? {}),
+      status.state === "failed" ? (status.message ?? null) : null,
+      tx.id,
+    ],
   );
-  return { synced: true, state: status.state, providerStatus: status.providerStatus, changed: true, ...ref };
+  return {
+    synced: true,
+    state: status.state,
+    providerStatus: status.providerStatus,
+    changed: true,
+    ...ref,
+  };
 }
 
 /** Record the signature, and keep the employee-signed file next to the letter. */
-async function completeSigned(tx: SyncRow, providerPayload: Record<string, unknown> | null): Promise<void> {
+async function completeSigned(
+  tx: SyncRow,
+  providerPayload: Record<string, unknown> | null,
+): Promise<void> {
   let bytes: Buffer | null = null;
   try {
-    const { luckpayClient } = await import("../integrations/luckpay/luckpay.client.js");
+    const { luckpayClient } =
+      await import("../integrations/luckpay/luckpay.client.js");
     const doc = await luckpayClient.downloadESignDocument({
       clientTransactionId: String(tx.client_transaction_id),
       transactionId: String(tx.provider_reference_id ?? ""),
@@ -451,13 +587,19 @@ async function completeSigned(tx: SyncRow, providerPayload: Record<string, unkno
   } catch (error) {
     // The signature happened; only the download failed. Say so and retry later
     // rather than claiming a file we do not hold.
-    console.warn("[appointment-letter] signed artefact not retrieved:", error instanceof Error ? error.message : error);
+    console.warn(
+      "[appointment-letter] signed artefact not retrieved:",
+      error instanceof Error ? error.message : error,
+    );
   }
 
   let storedPath: string | null = null;
   let sha: string | null = null;
   if (bytes) {
-    const dir = path.join(appointmentLetterStorageRoot(), String(tx.employee_id));
+    const dir = path.join(
+      appointmentLetterStorageRoot(),
+      String(tx.employee_id),
+    );
     await fs.promises.mkdir(dir, { recursive: true });
     storedPath = path.join(dir, `${tx.letter_number}-accepted.pdf`);
     await fs.promises.writeFile(storedPath, bytes);
@@ -476,7 +618,12 @@ async function completeSigned(tx: SyncRow, providerPayload: Record<string, unkno
               response_payload = COALESCE(CAST(? AS JSON), response_payload),
               error_message = NULL, completed_at = COALESCE(completed_at, NOW())
         WHERE id = ?`,
-      [storedPath, sha, providerPayload ? JSON.stringify(providerPayload) : null, tx.id],
+      [
+        storedPath,
+        sha,
+        providerPayload ? JSON.stringify(providerPayload) : null,
+        tx.id,
+      ],
     );
     await conn.execute(
       `UPDATE appointment_letter_issue
@@ -496,7 +643,8 @@ async function completeSigned(tx: SyncRow, providerPayload: Record<string, unkno
   const issueId = await issueIdOfTransaction(String(tx.id));
   if (firstCompletion) {
     await auditAppointmentLetter(issueId, "EMPLOYEE_SIGNED", null, {
-      transactionId: tx.id, artefactRetrieved: Boolean(bytes),
+      transactionId: tx.id,
+      artefactRetrieved: Boolean(bytes),
     });
   }
   if (bytes && !tx.signed_file_path) {
@@ -504,7 +652,9 @@ async function completeSigned(tx: SyncRow, providerPayload: Record<string, unkno
   }
 }
 
-async function issueIdOfTransaction(transactionId: string): Promise<string | null> {
+async function issueIdOfTransaction(
+  transactionId: string,
+): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT issue_id FROM appointment_letter_esign_transaction WHERE id = ? LIMIT 1`,
     [transactionId],
@@ -521,16 +671,25 @@ const COMPANY_SIGNER_COMMON_NAME = "Mas Callnet India Pvt. Ltd.";
  * signer named in the eSign certificate with the person the letter was issued
  * to. Never blocks or reverses a signature.
  */
-export async function recordSignerIdentity(tx: SyncRow, issueId: string | null, signedBytes: Buffer): Promise<void> {
+export async function recordSignerIdentity(
+  tx: SyncRow,
+  issueId: string | null,
+  signedBytes: Buffer,
+): Promise<void> {
   try {
-    const { extractLatestEsignCertificateIdentity } = await import("../../shared/esignCertificateIdentity.js");
+    const { extractLatestEsignCertificateIdentity } =
+      await import("../../shared/esignCertificateIdentity.js");
     const { classifyNameMatch } = await import("../ats/indian-name-match.js");
     // The letter is company-signed BEFORE the employee signs, so the returned PDF
     // carries two signatures. The employee's is the last one; the company's own
     // certificate must never be read as the signer (it would always mismatch).
-    const identity = extractLatestEsignCertificateIdentity(signedBytes, { excludeCommonNames: [COMPANY_SIGNER_COMMON_NAME] });
+    const identity = extractLatestEsignCertificateIdentity(signedBytes, {
+      excludeCommonNames: [COMPANY_SIGNER_COMMON_NAME],
+    });
     const ownerName = String(tx.employee_name ?? "");
-    const match = identity?.commonName ? classifyNameMatch(ownerName, identity.commonName) : null;
+    const match = identity?.commonName
+      ? classifyNameMatch(ownerName, identity.commonName)
+      : null;
     const matchTier = match?.tier ?? "unverifiable";
     const suspicious = match?.suspicious ?? false;
     await db.execute(
@@ -540,24 +699,46 @@ export async function recordSignerIdentity(tx: SyncRow, issueId: string | null, 
           certificate_valid_from, certificate_valid_to, match_tier, is_suspicious, match_reason)
        VALUES (?, ?, ?, 'appointment_letter', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        randomUUID(), String(tx.employee_id), tx.candidate_id ?? null, issueId, String(tx.id),
-        ownerName, identity?.commonName ?? null, identity?.issuerCommonName ?? null,
-        identity?.validFrom ?? null, identity?.validTo ?? null,
-        matchTier, suspicious ? 1 : 0, match?.reason ?? (identity ? null : "No embedded eSign certificate found"),
+        randomUUID(),
+        String(tx.employee_id),
+        tx.candidate_id ?? null,
+        issueId,
+        String(tx.id),
+        ownerName,
+        identity?.commonName ?? null,
+        identity?.issuerCommonName ?? null,
+        identity?.validFrom ?? null,
+        identity?.validTo ?? null,
+        matchTier,
+        suspicious ? 1 : 0,
+        match?.reason ??
+          (identity ? null : "No embedded eSign certificate found"),
       ],
     );
     if (suspicious) {
-      await auditAppointmentLetter(issueId, "ESIGN_SIGNER_IDENTITY_MISMATCH", null, {
-        documentOwnerName: ownerName, certificateCommonName: identity?.commonName ?? null, matchTier,
-      });
+      await auditAppointmentLetter(
+        issueId,
+        "ESIGN_SIGNER_IDENTITY_MISMATCH",
+        null,
+        {
+          documentOwnerName: ownerName,
+          certificateCommonName: identity?.commonName ?? null,
+          matchTier,
+        },
+      );
     }
   } catch (error) {
-    console.warn("[appointment-letter] signer-identity check failed:", error instanceof Error ? error.message : error);
+    console.warn(
+      "[appointment-letter] signer-identity check failed:",
+      error instanceof Error ? error.message : error,
+    );
   }
 }
 
 /** Provider identifiers -> letter, for the webhook and the shared status sync. */
-export async function findIssueIdByClientTransaction(clientTransactionId: string): Promise<string | null> {
+export async function findIssueIdByClientTransaction(
+  clientTransactionId: string,
+): Promise<string | null> {
   const id = String(clientTransactionId ?? "").trim();
   if (!id) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -590,7 +771,11 @@ export async function syncAppointmentEsignByClientTransaction(
  * RECONCILE_GIVE_UP_DAYS. Deliberately independent of the joining-document
  * budget, which is pinned by its own contract test.
  */
-export async function reconcileAppointmentEsigns(): Promise<{ examined: number; completed: number; errors: number }> {
+export async function reconcileAppointmentEsigns(): Promise<{
+  examined: number;
+  completed: number;
+  errors: number;
+}> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT issue_id FROM appointment_letter_esign_transaction
       WHERE provider = ?
@@ -610,7 +795,10 @@ export async function reconcileAppointmentEsigns(): Promise<{ examined: number; 
       if (result.state === "completed") completed += 1;
     } catch (error) {
       errors += 1;
-      console.warn("[appointment-esign] reconcile failed:", error instanceof Error ? error.message : error);
+      console.warn(
+        "[appointment-esign] reconcile failed:",
+        error instanceof Error ? error.message : error,
+      );
     }
   }
   return { examined: (rows as RowDataPacket[]).length, completed, errors };

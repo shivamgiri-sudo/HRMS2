@@ -134,13 +134,17 @@ async function generateRequisitionCode(
   // Count existing JRs for this branch+process combination to derive sequence
   let seq = 1;
   try {
-    const whereClause = branchId && processId
-      ? "branch_id = ? AND process_id = ?"
-      : "branch_name = ? AND process_name = ?";
-    const params = branchId && processId ? [branchId, processId] : [branchName ?? "", processName ?? ""];
+    const whereClause =
+      branchId && processId
+        ? "branch_id = ? AND process_id = ?"
+        : "branch_name = ? AND process_name = ?";
+    const params =
+      branchId && processId
+        ? [branchId, processId]
+        : [branchName ?? "", processName ?? ""];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM job_requisition WHERE ${whereClause}`,
-      params
+      params,
     );
     seq = ((rows[0]?.cnt as number) ?? 0) + 1;
   } catch {
@@ -165,7 +169,7 @@ async function getEmailListSetting(settingKey: string): Promise<string[]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT setting_value FROM org_settings WHERE setting_key = ? LIMIT 1`,
-      [settingKey]
+      [settingKey],
     );
     const raw = rows[0]?.setting_value as string | null | undefined;
     if (!raw) return [];
@@ -173,7 +177,9 @@ async function getEmailListSetting(settingKey: string): Promise<string[]> {
     let list: string[];
     if (trimmed.startsWith("[")) {
       const parsed: unknown = JSON.parse(trimmed);
-      list = Array.isArray(parsed) ? parsed.filter((e): e is string => typeof e === "string") : [];
+      list = Array.isArray(parsed)
+        ? parsed.filter((e): e is string => typeof e === "string")
+        : [];
     } else {
       list = trimmed.split(",");
     }
@@ -184,7 +190,10 @@ async function getEmailListSetting(settingKey: string): Promise<string[]> {
     }
     return [...seen];
   } catch (e: unknown) {
-    console.warn(`[JobRequisition getEmailListSetting:${settingKey}] failed:`, e instanceof Error ? e.message : e);
+    console.warn(
+      `[JobRequisition getEmailListSetting:${settingKey}] failed:`,
+      e instanceof Error ? e.message : e,
+    );
     return [];
   }
 }
@@ -196,7 +205,8 @@ const MAS_COMPANY_NAME = "Mas Callnet India Pvt Ltd";
 const getMarketingEmails = () => getEmailListSetting("marketing_team_emails");
 
 /** The brief's fixed Cc list. The requisition's branch head is added on top of this, not stored in it. */
-const getMarketingCcEmails = () => getEmailListSetting("marketing_team_cc_emails");
+const getMarketingCcEmails = () =>
+  getEmailListSetting("marketing_team_cc_emails");
 
 /**
  * Official email of the branch head for one requisition's branch, or null.
@@ -208,7 +218,9 @@ const getMarketingCcEmails = () => getEmailListSetting("marketing_team_cc_emails
  * scoping models live in this codebase (see branch-head-approval.service.ts's resolveBranchScope
  * for the same union), so a branch head assigned via either path is found.
  */
-async function getBranchHeadEmail(branchName: string | null | undefined): Promise<string | null> {
+async function getBranchHeadEmail(
+  branchName: string | null | undefined,
+): Promise<string | null> {
   if (!branchName) return null;
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -225,14 +237,17 @@ async function getBranchHeadEmail(branchName: string | null | undefined): Promis
          JOIN auth_user au2 ON au2.id = e2.user_id
         WHERE uas.scope_type = 'branch_head'
         LIMIT 1`,
-      [branchName, branchName]
+      [branchName, branchName],
     );
     const email = rows[0]?.email as string | undefined;
     return email && email.includes("@") ? email.trim() : null;
   } catch (e: unknown) {
     // Missing table/column on an older schema, or a bad join, must not block the brief from
     // sending to its To+fixed-Cc list — the branch head is an addition, not a precondition.
-    console.warn("[JobRequisition getBranchHeadEmail] failed:", e instanceof Error ? e.message : e);
+    console.warn(
+      "[JobRequisition getBranchHeadEmail] failed:",
+      e instanceof Error ? e.message : e,
+    );
     return null;
   }
 }
@@ -257,11 +272,14 @@ function escapeHtml(value: unknown): string {
 
 /** Parse a MySQL JSON column that may arrive as an object (mysql2 auto-parses) or a string. */
 function parseJsonArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
+  if (Array.isArray(value))
+    return value.filter((v): v is string => typeof v === "string");
   if (typeof value !== "string" || !value.trim()) return [];
   try {
     const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((v): v is string => typeof v === "string")
+      : [];
   } catch {
     return [];
   }
@@ -308,12 +326,23 @@ export const jobRequisitionService = {
    * Returns true = allowed. Caller answers a refusal with 403, not 404: the branch is
    * something the user supplied, so there is no existence to conceal.
    */
-  async canCreateForBranch(actor: EnterpriseUser, branchName: string): Promise<boolean> {
+  async canCreateForBranch(
+    actor: EnterpriseUser,
+    branchName: string,
+  ): Promise<boolean> {
     const scope = await resolveUserBusinessScope(actor);
-    if (scope.isSuperAdmin || scope.isAdmin || scope.isHr || scope.roles.includes("ceo")) return true;
+    if (
+      scope.isSuperAdmin ||
+      scope.isAdmin ||
+      scope.isHr ||
+      scope.roles.includes("ceo")
+    )
+      return true;
     if (scope.assignments.some((a) => a.scopeType === "all")) return true;
 
-    const branchIds = scope.assignments.map((a) => a.branchId).filter((b): b is string => Boolean(b));
+    const branchIds = scope.assignments
+      .map((a) => a.branchId)
+      .filter((b): b is string => Boolean(b));
     if (branchIds.length === 0) return true;
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -404,7 +433,7 @@ export const jobRequisitionService = {
     }
     if (filters.search) {
       conditions.push(
-        "(jr.requisition_code LIKE ? OR jr.designation_name LIKE ? OR jr.branch_name LIKE ? OR jr.process_name LIKE ?)"
+        "(jr.requisition_code LIKE ? OR jr.designation_name LIKE ? OR jr.branch_name LIKE ? OR jr.process_name LIKE ?)",
       );
       const searchTerm = `%${filters.search}%`;
       params.push(searchTerm, searchTerm, searchTerm, searchTerm);
@@ -413,12 +442,13 @@ export const jobRequisitionService = {
       conditions.push("jr.approval_status NOT IN ('closed', 'cancelled')");
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     // Count and page are independent reads over the same filter — issued together below.
     const countPromise = db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM job_requisition jr ${whereClause}`,
-      params
+      params,
     );
     countPromise.catch(() => undefined); // awaited below; avoids an unhandled rejection if the page query throws first
 
@@ -469,7 +499,7 @@ export const jobRequisitionService = {
          CASE jr.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,
          jr.created_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
-      params
+      params,
     );
     const [countRows] = await countPromise;
     const total = Number(countRows[0]?.total ?? 0);
@@ -529,7 +559,7 @@ export const jobRequisitionService = {
        ) cand ON cand.requisition_id = jr.id
        WHERE jr.id = ? AND jr.active_status = 1
        LIMIT 1`,
-      [id]
+      [id],
     );
     return (rows[0] as JobRequisitionSummary) ?? null;
   },
@@ -537,10 +567,12 @@ export const jobRequisitionService = {
   /**
    * Get requisition by code
    */
-  async getRequisitionByCode(code: string): Promise<JobRequisitionSummary | null> {
+  async getRequisitionByCode(
+    code: string,
+  ): Promise<JobRequisitionSummary | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM job_requisition WHERE requisition_code = ? AND active_status = 1 LIMIT 1",
-      [code]
+      [code],
     );
     if (!rows[0]) return null;
     return this.getRequisition(rows[0].id as string);
@@ -552,7 +584,7 @@ export const jobRequisitionService = {
   async createRequisition(
     input: CreateRequisitionInput,
     requestedBy: string,
-    requestedByName: string | null
+    requestedByName: string | null,
   ): Promise<JobRequisition> {
     const id = randomUUID();
     const code = await generateRequisitionCode(
@@ -612,17 +644,29 @@ export const jobRequisitionService = {
         input.bmi_assessment_url ?? null,
         input.meta_target_age_min ?? null,
         input.meta_target_age_max ?? null,
-        input.meta_target_locations ? JSON.stringify(input.meta_target_locations) : null,
+        input.meta_target_locations
+          ? JSON.stringify(input.meta_target_locations)
+          : null,
         input.meta_target_radius_km ?? null,
-        input.meta_screening_config ? JSON.stringify(input.meta_screening_config) : null,
-      ]
+        input.meta_screening_config
+          ? JSON.stringify(input.meta_screening_config)
+          : null,
+      ],
     );
 
-    await this.logApprovalAction(id, 1, "submitted", requestedBy, requestedByName, null, "Requisition created as draft");
+    await this.logApprovalAction(
+      id,
+      1,
+      "submitted",
+      requestedBy,
+      requestedByName,
+      null,
+      "Requisition created as draft",
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return rows[0] as JobRequisition;
   },
@@ -633,21 +677,30 @@ export const jobRequisitionService = {
   async updateRequisition(
     id: string,
     input: UpdateRequisitionInput,
-    actorId: string
+    actorId: string,
   ): Promise<JobRequisition> {
     const existing = await this.getRequisition(id);
     if (!existing) {
-      throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Requisition not found"), {
+        statusCode: 404,
+      });
     }
 
-    if (existing.approval_status === "approved" || existing.approval_status === "closed") {
+    if (
+      existing.approval_status === "approved" ||
+      existing.approval_status === "closed"
+    ) {
       const allowedFields = ["owner_recruiter_id"];
       const attemptedFields = Object.keys(input);
-      const disallowedChanges = attemptedFields.filter((f) => !allowedFields.includes(f));
+      const disallowedChanges = attemptedFields.filter(
+        (f) => !allowedFields.includes(f),
+      );
       if (disallowedChanges.length > 0) {
         throw Object.assign(
-          new Error(`Cannot modify approved/closed requisition. Only recruiter assignment is allowed.`),
-          { statusCode: 409 }
+          new Error(
+            `Cannot modify approved/closed requisition. Only recruiter assignment is allowed.`,
+          ),
+          { statusCode: 409 },
         );
       }
     }
@@ -656,16 +709,40 @@ export const jobRequisitionService = {
     const params: unknown[] = [];
 
     const allowedFields: (keyof UpdateRequisitionInput)[] = [
-      "designation_id", "designation_name", "department_id", "department_name",
-      "branch_id", "branch_name", "process_id", "process_name", "requested_headcount",
-      "employment_type", "salary_min", "salary_max", "experience_min_years", "experience_max_years",
-      "education_requirement", "skills_required", "job_description", "shift_requirement",
-      "rotational_shift", "night_shift_required", "target_joining_date", "requisition_validity",
-      "priority", "requisition_type", "business_justification", "preferred_sources",
-      "internal_posting", "owner_recruiter_id",
+      "designation_id",
+      "designation_name",
+      "department_id",
+      "department_name",
+      "branch_id",
+      "branch_name",
+      "process_id",
+      "process_name",
+      "requested_headcount",
+      "employment_type",
+      "salary_min",
+      "salary_max",
+      "experience_min_years",
+      "experience_max_years",
+      "education_requirement",
+      "skills_required",
+      "job_description",
+      "shift_requirement",
+      "rotational_shift",
+      "night_shift_required",
+      "target_joining_date",
+      "requisition_validity",
+      "priority",
+      "requisition_type",
+      "business_justification",
+      "preferred_sources",
+      "internal_posting",
+      "owner_recruiter_id",
       // META campaign targeting (migration 1810).
-      "bmi_assessment_url", "meta_target_age_min", "meta_target_age_max",
-      "meta_target_locations", "meta_target_radius_km",
+      "bmi_assessment_url",
+      "meta_target_age_min",
+      "meta_target_age_max",
+      "meta_target_locations",
+      "meta_target_radius_km",
       // META screening config (migration 1829).
       "meta_screening_config",
     ];
@@ -676,13 +753,25 @@ export const jobRequisitionService = {
         // meta_target_locations is a JSON column like preferred_sources, so it needs the same
         // stringify treatment. Without it mysql2 would bind a JS array by flattening it into the
         // placeholder list and the statement would fail on argument count.
-        if ((field === "preferred_sources" || field === "meta_target_locations") && Array.isArray(value)) {
+        if (
+          (field === "preferred_sources" ||
+            field === "meta_target_locations") &&
+          Array.isArray(value)
+        ) {
           sets.push(`${field} = ?`);
           params.push(JSON.stringify(value));
-        } else if (field === "meta_screening_config" && value !== null && typeof value === "object") {
+        } else if (
+          field === "meta_screening_config" &&
+          value !== null &&
+          typeof value === "object"
+        ) {
           sets.push(`${field} = ?`);
           params.push(JSON.stringify(value));
-        } else if (field === "rotational_shift" || field === "night_shift_required" || field === "internal_posting") {
+        } else if (
+          field === "rotational_shift" ||
+          field === "night_shift_required" ||
+          field === "internal_posting"
+        ) {
           sets.push(`${field} = ?`);
           params.push(value ? 1 : 0);
         } else {
@@ -701,12 +790,12 @@ export const jobRequisitionService = {
 
     await db.execute(
       `UPDATE job_requisition SET ${sets.join(", ")} WHERE id = ?`,
-      params
+      params,
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return rows[0] as JobRequisition;
   },
@@ -718,17 +807,24 @@ export const jobRequisitionService = {
     id: string,
     actorId: string,
     actorName: string | null,
-    actorRole: string | null
+    actorRole: string | null,
   ): Promise<JobRequisition> {
     const existing = await this.getRequisition(id);
     if (!existing) {
-      throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Requisition not found"), {
+        statusCode: 404,
+      });
     }
 
-    if (existing.approval_status !== "draft" && existing.approval_status !== "rejected") {
+    if (
+      existing.approval_status !== "draft" &&
+      existing.approval_status !== "rejected"
+    ) {
       throw Object.assign(
-        new Error(`Cannot submit requisition with status: ${existing.approval_status}`),
-        { statusCode: 409 }
+        new Error(
+          `Cannot submit requisition with status: ${existing.approval_status}`,
+        ),
+        { statusCode: 409 },
       );
     }
 
@@ -744,31 +840,44 @@ export const jobRequisitionService = {
       });
       approvalRequestId = request.id;
     } catch (err) {
-      console.warn("[JobRequisition] Workflow creation failed, using direct approval:", err);
+      console.warn(
+        "[JobRequisition] Workflow creation failed, using direct approval:",
+        err,
+      );
     }
 
     await db.execute(
       `UPDATE job_requisition
        SET approval_status = 'pending_approval', approval_request_id = ?, updated_at = NOW()
        WHERE id = ?`,
-      [approvalRequestId, id]
+      [approvalRequestId, id],
     );
 
-    await this.logApprovalAction(id, 1, "submitted", actorId, actorName, actorRole, "Submitted for approval");
+    await this.logApprovalAction(
+      id,
+      1,
+      "submitted",
+      actorId,
+      actorName,
+      actorRole,
+      "Submitted for approval",
+    );
 
     // Notify approver-role users (branch_head, hr, super_admin) — fire-and-forget
     this.notifyApprovers(
       existing,
       `Requisition Approval Needed: ${existing.requisition_code}`,
       `${existing.designation_name} at ${existing.branch_name} — ${existing.requested_headcount} headcount — submitted by ${actorName ?? "recruiter"}`,
-      `/recruitment/job-requisition`
+      `/recruitment/job-requisition`,
     ).catch((e: unknown) => console.warn("[JR notify]", e));
 
-    this.notifyRequisitionRaised(existing).catch((e: unknown) => console.warn("[JR notifyRequisitionRaised]", e));
+    this.notifyRequisitionRaised(existing).catch((e: unknown) =>
+      console.warn("[JR notifyRequisitionRaised]", e),
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return rows[0] as JobRequisition;
   },
@@ -781,23 +890,32 @@ export const jobRequisitionService = {
     actorId: string,
     actorName: string | null,
     actorRole: string | null,
-    remarks?: string
+    remarks?: string,
   ): Promise<JobRequisition> {
     const existing = await this.getRequisition(id);
     if (!existing) {
-      throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Requisition not found"), {
+        statusCode: 404,
+      });
     }
 
     if (existing.approval_status !== "pending_approval") {
       throw Object.assign(
-        new Error(`Cannot approve requisition with status: ${existing.approval_status}`),
-        { statusCode: 409 }
+        new Error(
+          `Cannot approve requisition with status: ${existing.approval_status}`,
+        ),
+        { statusCode: 409 },
       );
     }
 
     if (existing.approval_request_id) {
       try {
-        await workflowService.act(existing.approval_request_id, actorId, "approved", remarks);
+        await workflowService.act(
+          existing.approval_request_id,
+          actorId,
+          "approved",
+          remarks,
+        );
       } catch (err) {
         console.warn("[JobRequisition] Workflow action failed:", err);
       }
@@ -807,33 +925,43 @@ export const jobRequisitionService = {
       `UPDATE job_requisition
        SET approval_status = 'approved', approved_by = ?, approved_at = NOW(), updated_at = NOW()
        WHERE id = ?`,
-      [actorId, id]
+      [actorId, id],
     );
 
-    await this.logApprovalAction(id, 2, "approved", actorId, actorName, actorRole, remarks ?? "Approved");
+    await this.logApprovalAction(
+      id,
+      2,
+      "approved",
+      actorId,
+      actorName,
+      actorRole,
+      remarks ?? "Approved",
+    );
 
     // Notify the requisition raiser
-    inboxService.createItem({
-      user_id: existing.requested_by,
-      type: "requisition_approved",
-      title: `Requisition Approved: ${existing.requisition_code}`,
-      description: `${existing.designation_name} at ${existing.branch_name} has been approved by ${actorName ?? "management"}. Recruitment can begin.`,
-      entity_type: "job_requisition",
-      entity_id: id,
-      action_url: `/recruitment/job-requisition`,
-      priority: "high",
-    }).catch((e: unknown) => console.warn("[JR notify]", e));
+    inboxService
+      .createItem({
+        user_id: existing.requested_by,
+        type: "requisition_approved",
+        title: `Requisition Approved: ${existing.requisition_code}`,
+        description: `${existing.designation_name} at ${existing.branch_name} has been approved by ${actorName ?? "management"}. Recruitment can begin.`,
+        entity_type: "job_requisition",
+        entity_id: id,
+        action_url: `/recruitment/job-requisition`,
+        priority: "high",
+      })
+      .catch((e: unknown) => console.warn("[JR notify]", e));
 
     // META campaign brief to marketing. Fired without awaiting: the approval is already committed
     // above, and an email failure must not surface as a failed approval to the approver. The
     // method swallows its own errors too, so this .catch is belt-and-braces.
     this.notifyMarketingTeam(id).catch((e: unknown) =>
-      console.warn("[JR notifyMarketingTeam]", e)
+      console.warn("[JR notifyMarketingTeam]", e),
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return rows[0] as JobRequisition;
   },
@@ -846,23 +974,32 @@ export const jobRequisitionService = {
     actorId: string,
     actorName: string | null,
     actorRole: string | null,
-    reason: string
+    reason: string,
   ): Promise<JobRequisition> {
     const existing = await this.getRequisition(id);
     if (!existing) {
-      throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Requisition not found"), {
+        statusCode: 404,
+      });
     }
 
     if (existing.approval_status !== "pending_approval") {
       throw Object.assign(
-        new Error(`Cannot reject requisition with status: ${existing.approval_status}`),
-        { statusCode: 409 }
+        new Error(
+          `Cannot reject requisition with status: ${existing.approval_status}`,
+        ),
+        { statusCode: 409 },
       );
     }
 
     if (existing.approval_request_id) {
       try {
-        await workflowService.act(existing.approval_request_id, actorId, "rejected", reason);
+        await workflowService.act(
+          existing.approval_request_id,
+          actorId,
+          "rejected",
+          reason,
+        );
       } catch (err) {
         console.warn("[JobRequisition] Workflow action failed:", err);
       }
@@ -872,26 +1009,36 @@ export const jobRequisitionService = {
       `UPDATE job_requisition
        SET approval_status = 'rejected', rejection_reason = ?, updated_at = NOW()
        WHERE id = ?`,
-      [reason, id]
+      [reason, id],
     );
 
-    await this.logApprovalAction(id, 2, "rejected", actorId, actorName, actorRole, reason);
+    await this.logApprovalAction(
+      id,
+      2,
+      "rejected",
+      actorId,
+      actorName,
+      actorRole,
+      reason,
+    );
 
     // Notify the requisition raiser
-    inboxService.createItem({
-      user_id: existing.requested_by,
-      type: "requisition_rejected",
-      title: `Requisition Rejected: ${existing.requisition_code}`,
-      description: `${existing.designation_name} at ${existing.branch_name} was rejected by ${actorName ?? "management"}. Reason: ${reason}`,
-      entity_type: "job_requisition",
-      entity_id: id,
-      action_url: `/recruitment/job-requisition`,
-      priority: "high",
-    }).catch((e: unknown) => console.warn("[JR notify]", e));
+    inboxService
+      .createItem({
+        user_id: existing.requested_by,
+        type: "requisition_rejected",
+        title: `Requisition Rejected: ${existing.requisition_code}`,
+        description: `${existing.designation_name} at ${existing.branch_name} was rejected by ${actorName ?? "management"}. Reason: ${reason}`,
+        entity_type: "job_requisition",
+        entity_id: id,
+        action_url: `/recruitment/job-requisition`,
+        priority: "high",
+      })
+      .catch((e: unknown) => console.warn("[JR notify]", e));
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return rows[0] as JobRequisition;
   },
@@ -917,14 +1064,18 @@ export const jobRequisitionService = {
   async closeRequisition(
     id: string,
     actorId: string,
-    reason: string
+    reason: string,
   ): Promise<JobRequisition> {
     const existing = await this.getRequisition(id);
     if (!existing) {
-      throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Requisition not found"), {
+        statusCode: 404,
+      });
     }
     if (existing.approval_status === "closed") {
-      throw Object.assign(new Error("This requisition is already closed"), { statusCode: 409 });
+      throw Object.assign(new Error("This requisition is already closed"), {
+        statusCode: 409,
+      });
     }
 
     const scope = await resolveUserBusinessScope(actorId);
@@ -932,8 +1083,10 @@ export const jobRequisitionService = {
     const isBranchHead = scope.roles.includes("branch_head");
     if (!scope.isSuperAdmin && !isBranchHead && !isCreator) {
       throw Object.assign(
-        new Error("Only the requisition's creator, a branch head, or a super admin can close it directly. Use \"Request Close\" to ask one of them to close it."),
-        { statusCode: 403 }
+        new Error(
+          'Only the requisition\'s creator, a branch head, or a super admin can close it directly. Use "Request Close" to ask one of them to close it.',
+        ),
+        { statusCode: 403 },
       );
     }
 
@@ -941,14 +1094,14 @@ export const jobRequisitionService = {
       `UPDATE job_requisition
        SET approval_status = 'closed', closed_at = NOW(), closed_reason = ?, updated_at = NOW()
        WHERE id = ?`,
-      [reason, id]
+      [reason, id],
     );
 
     await this.logApprovalAction(id, 0, "closed", actorId, null, null, reason);
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return rows[0] as JobRequisition;
   },
@@ -970,17 +1123,29 @@ export const jobRequisitionService = {
     actorId: string,
     actorName: string | null,
     actorRole: string | null,
-    reason: string
+    reason: string,
   ): Promise<JobRequisition> {
     const existing = await this.getRequisition(id);
     if (!existing) {
-      throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Requisition not found"), {
+        statusCode: 404,
+      });
     }
     if (existing.approval_status === "closed") {
-      throw Object.assign(new Error("This requisition is already closed"), { statusCode: 409 });
+      throw Object.assign(new Error("This requisition is already closed"), {
+        statusCode: 409,
+      });
     }
 
-    await this.logApprovalAction(id, 0, "close_requested", actorId, actorName, actorRole, reason);
+    await this.logApprovalAction(
+      id,
+      0,
+      "close_requested",
+      actorId,
+      actorName,
+      actorRole,
+      reason,
+    );
 
     const title = `Close requested: ${existing.requisition_code}`;
     const description = `${actorName ?? "An HR user"} requested closing ${existing.designation_name} at ${existing.branch_name}. Reason: ${reason}`;
@@ -988,8 +1153,8 @@ export const jobRequisitionService = {
 
     // notifyApprovers already resolves super_admin (org-wide) + branch_head
     // (this branch) — the two direct-close roles that aren't the creator.
-    await this.notifyApprovers(existing, title, description, actionUrl).catch((e: unknown) =>
-      console.warn("[JR notify]", e)
+    await this.notifyApprovers(existing, title, description, actionUrl).catch(
+      (e: unknown) => console.warn("[JR notify]", e),
     );
     // The creator may hold neither role (e.g. hr/recruitment_hr who raised
     // it), so they are notified explicitly rather than relying on the query
@@ -1016,33 +1181,40 @@ export const jobRequisitionService = {
     id: string,
     newValidity: string,
     reason: string,
-    actorId: string
+    actorId: string,
   ): Promise<JobRequisition> {
     const existing = await this.getRequisition(id);
     if (!existing) {
-      throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Requisition not found"), {
+        statusCode: 404,
+      });
     }
     if (existing.approval_status !== "approved") {
       throw Object.assign(
         new Error("Deadline can only be extended on approved requisitions"),
-        { statusCode: 409 }
+        { statusCode: 409 },
       );
     }
 
     const newDate = new Date(newValidity);
     if (isNaN(newDate.getTime())) {
-      throw Object.assign(new Error("Invalid date format for new_validity"), { statusCode: 400 });
+      throw Object.assign(new Error("Invalid date format for new_validity"), {
+        statusCode: 400,
+      });
     }
-    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     if (newDate <= today) {
-      throw Object.assign(new Error("New deadline must be in the future"), { statusCode: 400 });
+      throw Object.assign(new Error("New deadline must be in the future"), {
+        statusCode: 400,
+      });
     }
 
     await db.execute(
       `UPDATE job_requisition
           SET requisition_validity = ?, updated_at = NOW()
         WHERE id = ?`,
-      [newValidity, id]
+      [newValidity, id],
     );
 
     // Write audit log entry reusing the existing approval_log table
@@ -1050,12 +1222,17 @@ export const jobRequisitionService = {
       `INSERT INTO job_requisition_approval_log
          (id, requisition_id, approval_step, action, actor_id, actor_name, actor_role, remarks)
        VALUES (?, ?, 0, 'deadline_extended', ?, NULL, NULL, ?)`,
-      [randomUUID(), id, actorId, `Extended deadline to ${newValidity}. Reason: ${reason}`]
+      [
+        randomUUID(),
+        id,
+        actorId,
+        `Extended deadline to ${newValidity}. Reason: ${reason}`,
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return rows[0] as JobRequisition;
   },
@@ -1068,35 +1245,37 @@ export const jobRequisitionService = {
     candidateId: string,
     linkedBy: string,
     linkSource: "manual" | "auto_match" | "candidate_applied" = "manual",
-    remarks?: string
+    remarks?: string,
   ): Promise<RequisitionCandidate> {
     const requisition = await this.getRequisition(requisitionId);
     if (!requisition) {
-      throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Requisition not found"), {
+        statusCode: 404,
+      });
     }
 
     if (requisition.approval_status !== "approved") {
       throw Object.assign(
         new Error("Can only link candidates to approved requisitions"),
-        { statusCode: 409 }
+        { statusCode: 409 },
       );
     }
 
     const [existingLink] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM job_requisition_candidate WHERE requisition_id = ? AND candidate_id = ? LIMIT 1",
-      [requisitionId, candidateId]
+      [requisitionId, candidateId],
     );
 
     if (existingLink[0]) {
       throw Object.assign(
         new Error("Candidate is already linked to this requisition"),
-        { statusCode: 409 }
+        { statusCode: 409 },
       );
     }
 
     const [candidateRows] = await db.execute<RowDataPacket[]>(
       "SELECT current_stage FROM ats_candidate WHERE id = ? LIMIT 1",
-      [candidateId]
+      [candidateId],
     );
     const currentStage = candidateRows[0]?.current_stage ?? null;
 
@@ -1104,17 +1283,25 @@ export const jobRequisitionService = {
     await db.execute(
       `INSERT INTO job_requisition_candidate (id, requisition_id, candidate_id, linked_by, link_source, current_stage, outcome, remarks)
        VALUES (?, ?, ?, ?, ?, ?, 'in_progress', ?)`,
-      [id, requisitionId, candidateId, linkedBy, linkSource, currentStage, remarks ?? null]
+      [
+        id,
+        requisitionId,
+        candidateId,
+        linkedBy,
+        linkSource,
+        currentStage,
+        remarks ?? null,
+      ],
     );
 
     await db.execute(
       "UPDATE ats_candidate SET requisition_id = ? WHERE id = ?",
-      [requisitionId, candidateId]
+      [requisitionId, candidateId],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition_candidate WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     return rows[0] as RequisitionCandidate;
   },
@@ -1126,13 +1313,13 @@ export const jobRequisitionService = {
     requisitionId: string,
     candidateId: string,
     outcome: CandidateOutcome,
-    remarks?: string
+    remarks?: string,
   ): Promise<void> {
     await db.execute(
       `UPDATE job_requisition_candidate
        SET outcome = ?, outcome_at = NOW(), remarks = COALESCE(?, remarks)
        WHERE requisition_id = ? AND candidate_id = ?`,
-      [outcome, remarks ?? null, requisitionId, candidateId]
+      [outcome, remarks ?? null, requisitionId, candidateId],
     );
 
     if (outcome === "selected") {
@@ -1140,17 +1327,20 @@ export const jobRequisitionService = {
         `UPDATE job_requisition
          SET fulfilled_headcount = fulfilled_headcount + 1, updated_at = NOW()
          WHERE id = ? AND fulfilled_headcount < requested_headcount`,
-        [requisitionId]
+        [requisitionId],
       );
 
       const [check] = await db.execute<RowDataPacket[]>(
         "SELECT fulfilled_headcount, requested_headcount FROM job_requisition WHERE id = ?",
-        [requisitionId]
+        [requisitionId],
       );
-      if (check[0] && check[0].fulfilled_headcount >= check[0].requested_headcount) {
+      if (
+        check[0] &&
+        check[0].fulfilled_headcount >= check[0].requested_headcount
+      ) {
         await db.execute(
           `UPDATE job_requisition SET approval_status = 'closed', closed_at = NOW(), closed_reason = 'All positions filled' WHERE id = ?`,
-          [requisitionId]
+          [requisitionId],
         );
       }
     }
@@ -1159,7 +1349,21 @@ export const jobRequisitionService = {
   /**
    * Get candidates linked to a requisition
    */
-  async getRequisitionCandidates(requisitionId: string): Promise<Array<RequisitionCandidate & { candidate_name: string; mobile: string; email: string; alternate_mobile?: string; current_address?: string; recruiter_name: string | null; date_of_selection: string | null }>> {
+  async getRequisitionCandidates(
+    requisitionId: string,
+  ): Promise<
+    Array<
+      RequisitionCandidate & {
+        candidate_name: string;
+        mobile: string;
+        email: string;
+        alternate_mobile?: string;
+        current_address?: string;
+        recruiter_name: string | null;
+        date_of_selection: string | null;
+      }
+    >
+  > {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
           jrc.*,
@@ -1178,20 +1382,32 @@ export const jobRequisitionService = {
        LEFT JOIN employees rec_emp2 ON rec_emp2.id = jrc.linked_by AND rec_emp2.active_status = 1
        WHERE jrc.requisition_id = ?
        ORDER BY jrc.linked_at DESC`,
-      [requisitionId]
+      [requisitionId],
     );
-    return rows as Array<RequisitionCandidate & { candidate_name: string; mobile: string; email: string; alternate_mobile?: string; current_address?: string; recruiter_name: string | null; date_of_selection: string | null }>;
+    return rows as Array<
+      RequisitionCandidate & {
+        candidate_name: string;
+        mobile: string;
+        email: string;
+        alternate_mobile?: string;
+        current_address?: string;
+        recruiter_name: string | null;
+        date_of_selection: string | null;
+      }
+    >;
   },
 
   /**
    * Get approval history for a requisition
    */
-  async getApprovalHistory(requisitionId: string): Promise<RequisitionApprovalLog[]> {
+  async getApprovalHistory(
+    requisitionId: string,
+  ): Promise<RequisitionApprovalLog[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM job_requisition_approval_log
        WHERE requisition_id = ?
        ORDER BY action_at ASC`,
-      [requisitionId]
+      [requisitionId],
     );
     return rows as RequisitionApprovalLog[];
   },
@@ -1199,7 +1415,17 @@ export const jobRequisitionService = {
   /**
    * Get dashboard metrics
    */
-  async getDashboardMetrics(filters: { branch_id?: string; branch_name?: string; approval_status?: string; priority?: string; from_date?: string; to_date?: string } = {}, actor: EnterpriseUser): Promise<RequisitionDashboardMetrics> {
+  async getDashboardMetrics(
+    filters: {
+      branch_id?: string;
+      branch_name?: string;
+      approval_status?: string;
+      priority?: string;
+      from_date?: string;
+      to_date?: string;
+    } = {},
+    actor: EnterpriseUser,
+  ): Promise<RequisitionDashboardMetrics> {
     const conditions: string[] = ["active_status = 1"];
     const params: unknown[] = [];
 
@@ -1235,12 +1461,14 @@ export const jobRequisitionService = {
       params.push(filters.to_date);
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     // The four aggregates read the same filtered set independently, so they run concurrently.
-    const [[metrics], [byPriority], [byBranch], [byStatus]] = await Promise.all([
-      db.execute<RowDataPacket[]>(
-      `SELECT
+    const [[metrics], [byPriority], [byBranch], [byStatus]] = await Promise.all(
+      [
+        db.execute<RowDataPacket[]>(
+          `SELECT
         COUNT(*) AS total_requisitions,
         SUM(CASE WHEN approval_status NOT IN ('closed', 'cancelled') THEN 1 ELSE 0 END) AS open_requisitions,
         SUM(CASE WHEN approval_status = 'pending_approval' THEN 1 ELSE 0 END) AS pending_approval,
@@ -1258,35 +1486,41 @@ export const jobRequisitionService = {
         ) AS avg_time_to_fill_days
        FROM job_requisition
        ${whereClause}`,
-      params
-    ),
-      db.execute<RowDataPacket[]>(
-      `SELECT priority, COUNT(*) AS count
+          params,
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT priority, COUNT(*) AS count
        FROM job_requisition
        ${whereClause}
        GROUP BY priority`,
-      params
-    ),
-      db.execute<RowDataPacket[]>(
-      `SELECT branch_name, COUNT(*) AS count,
+          params,
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT branch_name, COUNT(*) AS count,
         SUM(CASE WHEN approval_status = 'approved' THEN (requested_headcount - fulfilled_headcount) ELSE 0 END) AS open_positions
        FROM job_requisition
        ${whereClause}
        GROUP BY branch_name
        ORDER BY count DESC
        LIMIT 10`,
-      params
-    ),
-      db.execute<RowDataPacket[]>(
-      `SELECT approval_status, COUNT(*) AS count
+          params,
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT approval_status, COUNT(*) AS count
        FROM job_requisition
        ${whereClause}
        GROUP BY approval_status`,
-      params
-    ),
-    ]);
+          params,
+        ),
+      ],
+    );
 
-    const priorityMap: Record<string, number> = { low: 0, normal: 0, high: 0, urgent: 0 };
+    const priorityMap: Record<string, number> = {
+      low: 0,
+      normal: 0,
+      high: 0,
+      urgent: 0,
+    };
     for (const row of byPriority) {
       priorityMap[row.priority as string] = Number(row.count);
     }
@@ -1305,7 +1539,10 @@ export const jobRequisitionService = {
       total_fulfilled: Number(metrics[0]?.total_fulfilled ?? 0),
       fill_rate_percent: Number(metrics[0]?.fill_rate_percent ?? 0),
       avg_time_to_fill_days: Number(metrics[0]?.avg_time_to_fill_days ?? 0),
-      by_priority: priorityMap as Record<"low" | "normal" | "high" | "urgent", number>,
+      by_priority: priorityMap as Record<
+        "low" | "normal" | "high" | "urgent",
+        number
+      >,
       by_branch: byBranch.map((r) => ({
         branch_name: r.branch_name as string,
         count: Number(r.count),
@@ -1327,12 +1564,17 @@ export const jobRequisitionService = {
    * 141_branch_head_approval.sql intends. The parameter is left in place rather than
    * removed so no caller signature breaks.
    */
-  async getPendingForApproval(approverRole: string, actor: EnterpriseUser): Promise<JobRequisitionSummary[]> {
+  async getPendingForApproval(
+    approverRole: string,
+    actor: EnterpriseUser,
+  ): Promise<JobRequisitionSummary[]> {
     void approverRole;
     // includeOwnRequisitions: false — this is the approver's queue, not a "my requisitions"
     // view. Without the opt-out, a requester who also holds an approver role would see (and
     // could act on) their own pending item here purely because they authored it.
-    const scope = await requisitionScope(actor, "jr", { includeOwnRequisitions: false });
+    const scope = await requisitionScope(actor, "jr", {
+      includeOwnRequisitions: false,
+    });
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
         jr.*,
@@ -1363,7 +1605,7 @@ export const jobRequisitionService = {
     requisition: JobRequisition,
     title: string,
     description: string,
-    actionUrl: string
+    actionUrl: string,
   ): Promise<void> {
     // Find all active users with approver roles for this branch
     const [users] = await db.execute<RowDataPacket[]>(
@@ -1382,7 +1624,7 @@ export const jobRequisitionService = {
            OR b.branch_code = ?
          )
        LIMIT 50`,
-      [requisition.branch_name, requisition.branch_name]
+      [requisition.branch_name, requisition.branch_name],
     );
     await Promise.allSettled(
       (users as RowDataPacket[]).map((u) =>
@@ -1395,8 +1637,8 @@ export const jobRequisitionService = {
           entity_id: requisition.id,
           action_url: actionUrl,
           priority: "high",
-        })
-      )
+        }),
+      ),
     );
   },
 
@@ -1415,7 +1657,10 @@ export const jobRequisitionService = {
     if (!emailService.isConfigured()) return;
     if (!requisition.branch_id) return;
 
-    const recipients = await getConfiguredRecipients(requisition.branch_id, "JOB_REQUISITION_RAISED");
+    const recipients = await getConfiguredRecipients(
+      requisition.branch_id,
+      "JOB_REQUISITION_RAISED",
+    );
     if (!recipients) return;
 
     try {
@@ -1436,12 +1681,17 @@ export const jobRequisitionService = {
       await emailService.send({
         to: recipients.to.map((r) => r.email).join(", "),
         ...(recipients.cc.length ? { cc: recipients.cc.join(", ") } : {}),
-        subject: rendered.subject ?? `Requisition Raised: ${requisition.requisition_code}`,
+        subject:
+          rendered.subject ??
+          `Requisition Raised: ${requisition.requisition_code}`,
         html: rendered.html,
         text: rendered.text,
       });
     } catch (e: unknown) {
-      console.warn("[JobRequisition notifyRequisitionRaised] email send failed:", e instanceof Error ? e.message : e);
+      console.warn(
+        "[JobRequisition notifyRequisitionRaised] email send failed:",
+        e instanceof Error ? e.message : e,
+      );
     }
   },
 
@@ -1473,7 +1723,7 @@ export const jobRequisitionService = {
 
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT * FROM job_requisition WHERE id = ? LIMIT 1`,
-        [requisitionId]
+        [requisitionId],
       );
       const req = rows[0];
       if (!req) return;
@@ -1482,10 +1732,18 @@ export const jobRequisitionService = {
       // one is assigned. Deduped against the To list so the marketing owner is never both To and
       // Cc, and lower-cased so a differently-cased duplicate does not slip through.
       const toSet = new Set(recipients.map((e) => e.toLowerCase()));
-      const branchHeadEmail = await getBranchHeadEmail(req.branch_name as string | null);
-      const ccList = [...(await getMarketingCcEmails()), ...(branchHeadEmail ? [branchHeadEmail] : [])]
+      const branchHeadEmail = await getBranchHeadEmail(
+        req.branch_name as string | null,
+      );
+      const ccList = [
+        ...(await getMarketingCcEmails()),
+        ...(branchHeadEmail ? [branchHeadEmail] : []),
+      ]
         .map((e) => e.trim().toLowerCase())
-        .filter((e, i, arr) => e.includes("@") && !toSet.has(e) && arr.indexOf(e) === i);
+        .filter(
+          (e, i, arr) =>
+            e.includes("@") && !toSet.has(e) && arr.indexOf(e) === i,
+        );
 
       const locations = parseJsonArray(req.meta_target_locations);
       const sources = parseJsonArray(req.preferred_sources);
@@ -1498,7 +1756,9 @@ export const jobRequisitionService = {
           ? `${formatInr(req.salary_min)} – ${formatInr(req.salary_max)}`
           : "Not specified";
       const targetDate = req.target_joining_date
-        ? new Date(req.target_joining_date as string).toLocaleDateString("en-IN")
+        ? new Date(req.target_joining_date as string).toLocaleDateString(
+            "en-IN",
+          )
         : "—";
       const frontendUrl = process.env.FRONTEND_URL ?? "";
 
@@ -1522,10 +1782,21 @@ export const jobRequisitionService = {
         ],
         ["Education Requirement", escapeHtml(req.education_requirement)],
         ["Target Age Group", escapeHtml(ageBand)],
-        ["Target Locations", locations.length ? escapeHtml(locations.join(", ")) : "Not specified"],
-        ["Target Radius", req.meta_target_radius_km ? `${escapeHtml(req.meta_target_radius_km)} km` : "—"],
+        [
+          "Target Locations",
+          locations.length ? escapeHtml(locations.join(", ")) : "Not specified",
+        ],
+        [
+          "Target Radius",
+          req.meta_target_radius_km
+            ? `${escapeHtml(req.meta_target_radius_km)} km`
+            : "—",
+        ],
         ["Skills Required", escapeHtml(req.skills_required)],
-        ["Preferred Sources", sources.length ? escapeHtml(sources.join(", ")) : "—"],
+        [
+          "Preferred Sources",
+          sources.length ? escapeHtml(sources.join(", ")) : "—",
+        ],
       ];
 
       const bmiUrl = req.bmi_assessment_url as string | null;
@@ -1562,7 +1833,7 @@ ${bmiBlock}
     } catch (e: unknown) {
       console.warn(
         "[JobRequisition notifyMarketingTeam] failed:",
-        e instanceof Error ? e.message : e
+        e instanceof Error ? e.message : e,
       );
     }
   },
@@ -1570,36 +1841,58 @@ ${bmiBlock}
   async logApprovalAction(
     requisitionId: string,
     step: number,
-    action: "submitted" | "approved" | "rejected" | "returned" | "escalated" | "cancelled"
-      | "deadline_extended" | "closed" | "close_requested",
+    action:
+      | "submitted"
+      | "approved"
+      | "rejected"
+      | "returned"
+      | "escalated"
+      | "cancelled"
+      | "deadline_extended"
+      | "closed"
+      | "close_requested",
     actorId: string,
     actorName: string | null,
     actorRole: string | null,
-    remarks: string | null
+    remarks: string | null,
   ): Promise<void> {
     await db.execute(
       `INSERT INTO job_requisition_approval_log (id, requisition_id, approval_step, action, actor_id, actor_name, actor_role, remarks)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), requisitionId, step, action, actorId, actorName, actorRole, remarks]
+      [
+        randomUUID(),
+        requisitionId,
+        step,
+        action,
+        actorId,
+        actorName,
+        actorRole,
+        remarks,
+      ],
     );
   },
 
   /**
    * Get open requisitions for a branch (for recruiter selection)
    */
-  async getOpenRequisitionsForBranch(branchName: string, processId?: string, processName?: string): Promise<JobRequisitionSummary[]> {
+  async getOpenRequisitionsForBranch(
+    branchName: string,
+    processId?: string,
+    processName?: string,
+  ): Promise<JobRequisitionSummary[]> {
     const params: unknown[] = [branchName];
-    let processClause = '';
+    let processClause = "";
     if (processId && processName) {
       // Match by UUID OR by name for legacy records where process_id was not saved
-      processClause = 'AND (jr.process_id = ? OR (jr.process_id IS NULL AND jr.process_name = ?))';
+      processClause =
+        "AND (jr.process_id = ? OR (jr.process_id IS NULL AND jr.process_name = ?))";
       params.push(processId, processName);
     } else if (processId) {
-      processClause = 'AND jr.process_id = ?';
+      processClause = "AND jr.process_id = ?";
       params.push(processId);
     } else if (processName) {
       // Fallback: match by name when ID not available (e.g. recruiter workspace using config options)
-      processClause = 'AND jr.process_name = ?';
+      processClause = "AND jr.process_name = ?";
       params.push(processName);
     }
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1613,7 +1906,7 @@ ${bmiBlock}
          AND jr.active_status = 1
          ${processClause}
        ORDER BY jr.priority DESC, jr.created_at ASC`,
-      params
+      params,
     );
     return rows as JobRequisitionSummary[];
   },
@@ -1638,7 +1931,11 @@ ${bmiBlock}
    * GENLEAP) and auto-created duplicates (IDAM / IDAM NATURAL WELLNESS PRIVATE LIMITED)
    * all dropped out.
    */
-  async getProcessesForBranch(branchName: string): Promise<Array<{id: string; process_name: string; process_code: string}>> {
+  async getProcessesForBranch(
+    branchName: string,
+  ): Promise<
+    Array<{ id: string; process_name: string; process_code: string }>
+  > {
     const [rows] = await db.execute<RowDataPacket[]>(
       `WITH open_cc AS (
          SELECT id, process_id,
@@ -1665,9 +1962,13 @@ ${bmiBlock}
         WHERE LOWER(TRIM(bm.branch_name)) = LOWER(TRIM(?))
           AND pm.active_status = 1
         ORDER BY pm.process_name ASC`,
-      [MAS_COMPANY_NAME, branchName]
+      [MAS_COMPANY_NAME, branchName],
     );
-    return rows as Array<{id: string; process_name: string; process_code: string}>;
+    return rows as Array<{
+      id: string;
+      process_name: string;
+      process_code: string;
+    }>;
   },
 
   /**
@@ -1741,7 +2042,7 @@ ${bmiBlock}
        LEFT JOIN lms_employee_mapping lm ON lm.employee_id = e.id
        WHERE jr.id = ? AND jr.active_status = 1
        GROUP BY jr.id`,
-      [id]
+      [id],
     );
 
     if (!rows[0]) return null;
@@ -1782,24 +2083,28 @@ ${bmiBlock}
     id: string,
     batchNo: string | null,
     batchName: string | null,
-    trainingStartDate: string | null
+    trainingStartDate: string | null,
   ): Promise<void> {
     await db.execute(
       `UPDATE job_requisition
        SET planned_batch_no = ?, planned_batch_name = ?, training_start_date = ?, updated_at = NOW()
        WHERE id = ?`,
-      [batchNo, batchName, trainingStartDate, id]
+      [batchNo, batchName, trainingStartDate, id],
     );
   },
 
   /**
    * Get available batches from external LMS for dropdown
    */
-  async getAvailableBatches(filters: { branch?: string; process?: string } = {}): Promise<LmsBatchOption[]> {
+  async getAvailableBatches(
+    filters: { branch?: string; process?: string } = {},
+  ): Promise<LmsBatchOption[]> {
     try {
       const { lmsQuery } = await import("../lms/lms.service.js");
 
-      const conditions: string[] = ["batch_status IN ('Planned', 'Active', 'In Progress')"];
+      const conditions: string[] = [
+        "batch_status IN ('Planned', 'Active', 'In Progress')",
+      ];
       const params: unknown[] = [];
 
       if (filters.branch) {
@@ -1811,7 +2116,8 @@ ${bmiBlock}
         params.push(filters.process);
       }
 
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
       const rows = await lmsQuery<RowDataPacket[]>(
         `SELECT batch_no, batch_name, batch_status, branch, process, lob, start_date, end_date, expected_trainees, total_trainees
@@ -1819,7 +2125,7 @@ ${bmiBlock}
          ${whereClause}
          ORDER BY start_date DESC, batch_no DESC
          LIMIT 100`,
-        params
+        params,
       );
 
       return rows.map((r) => ({
@@ -1849,37 +2155,49 @@ ${bmiBlock}
     actorName: string | null,
     notes?: string,
     emailRecipientUserIds?: string[],
-    manualCcEmails?: string[]
+    manualCcEmails?: string[],
   ): Promise<void> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT approval_status, requested_headcount, fulfilled_headcount, handover_status,
               branch_name, process_name, requisition_code, planned_batch_no, planned_batch_name, training_start_date
        FROM job_requisition WHERE id = ? AND active_status = 1`,
-      [id]
+      [id],
     );
     if (!rows[0]) {
       throw Object.assign(new Error("Requisition not found"), { status: 404 });
     }
     const req = rows[0];
     if (req.approval_status !== "approved") {
-      throw Object.assign(new Error("Only approved requisitions can be handed over"), { status: 422 });
+      throw Object.assign(
+        new Error("Only approved requisitions can be handed over"),
+        { status: 422 },
+      );
     }
     if (Number(req.fulfilled_headcount) < Number(req.requested_headcount)) {
-      throw Object.assign(new Error("Headcount not fully fulfilled — cannot mark as handed over"), { status: 422 });
+      throw Object.assign(
+        new Error("Headcount not fully fulfilled — cannot mark as handed over"),
+        { status: 422 },
+      );
     }
     if (req.handover_status === "handed_over") {
-      throw Object.assign(new Error("Requisition already handed over"), { status: 422 });
+      throw Object.assign(new Error("Requisition already handed over"), {
+        status: 422,
+      });
     }
 
     await db.execute(
       `UPDATE job_requisition
        SET handover_status = 'handed_over', handover_at = NOW(), handover_by = ?, handover_notes = ?, updated_at = NOW()
        WHERE id = ?`,
-      [actorId, notes ?? null, id]
+      [actorId, notes ?? null, id],
     );
 
-    const processLabel = (req.process_name as string) ?? (req.branch_name as string);
-    const batchLabel = (req.planned_batch_name as string) ?? (req.planned_batch_no as string) ?? "—";
+    const processLabel =
+      (req.process_name as string) ?? (req.branch_name as string);
+    const batchLabel =
+      (req.planned_batch_name as string) ??
+      (req.planned_batch_no as string) ??
+      "—";
 
     // Inbox notifications — use canonical user_roles + auth_user tables
     try {
@@ -1887,21 +2205,25 @@ ${bmiBlock}
         `SELECT DISTINCT ur.user_id
          FROM user_roles ur
          WHERE ur.role_key IN ('super_admin', 'hr', 'operations_manager') AND ur.active_status = 1`,
-        []
+        [],
       );
       for (const r of roleRecipients as RowDataPacket[]) {
         await inboxService.createItem({
           user_id: r.user_id as string,
           type: "requisition_handover",
           title: `Batch Handed Over: ${req.requisition_code as string}`,
-          description: `${req.requisition_code as string} (${processLabel}) batch ${batchLabel} handed over by ${actorName ?? actorId}. ${notes ? `Note: ${notes}` : ""}`.trim(),
+          description:
+            `${req.requisition_code as string} (${processLabel}) batch ${batchLabel} handed over by ${actorName ?? actorId}. ${notes ? `Note: ${notes}` : ""}`.trim(),
           entity_type: "job_requisition",
           entity_id: id,
           priority: "normal",
         });
       }
     } catch (e) {
-      console.warn("[JobRequisition markHandover] inbox notification failed:", e instanceof Error ? e.message : e);
+      console.warn(
+        "[JobRequisition markHandover] inbox notification failed:",
+        e instanceof Error ? e.message : e,
+      );
     }
 
     // Email notification (graceful fail)
@@ -1915,7 +2237,7 @@ ${bmiBlock}
         const placeholders = allUserIds.map(() => "?").join(",");
         const [userRows] = await db.execute<RowDataPacket[]>(
           `SELECT email FROM auth_user WHERE id IN (${placeholders}) AND email IS NOT NULL`,
-          allUserIds
+          allUserIds,
         );
         for (const u of userRows as RowDataPacket[]) {
           if (u.email) toEmails.push(u.email as string);
@@ -1924,7 +2246,9 @@ ${bmiBlock}
 
       if (toEmails.length > 0 && emailService.isConfigured()) {
         const trainingDate = req.training_start_date
-          ? new Date(req.training_start_date as string).toLocaleDateString("en-IN")
+          ? new Date(req.training_start_date as string).toLocaleDateString(
+              "en-IN",
+            )
           : "TBD";
         const htmlBody = `
           <table style="width:100%;border-collapse:collapse;margin-bottom:18px">
@@ -1945,14 +2269,20 @@ ${bmiBlock}
         });
       }
     } catch (e) {
-      console.warn("[JobRequisition markHandover] email send failed:", e instanceof Error ? e.message : e);
+      console.warn(
+        "[JobRequisition markHandover] email send failed:",
+        e instanceof Error ? e.message : e,
+      );
     }
   },
 
   /**
    * Aggregate funnel across all approved/active requisitions (or filtered subset)
    */
-  async getAggregateFunnel(filters: { branch_name?: string; approval_status?: string } = {}, actor: EnterpriseUser): Promise<AggregateFunnel> {
+  async getAggregateFunnel(
+    filters: { branch_name?: string; approval_status?: string } = {},
+    actor: EnterpriseUser,
+  ): Promise<AggregateFunnel> {
     const conditions: string[] = ["jr.active_status = 1"];
     const params: unknown[] = [];
 
@@ -1961,8 +2291,14 @@ ${bmiBlock}
     const scope = await requisitionScope(actor, "jr");
     conditions.push(`(${scope.sql})`);
     params.push(...scope.params);
-    if (filters.branch_name) { conditions.push("jr.branch_name = ?"); params.push(filters.branch_name); }
-    if (filters.approval_status) { conditions.push("jr.approval_status = ?"); params.push(filters.approval_status); }
+    if (filters.branch_name) {
+      conditions.push("jr.branch_name = ?");
+      params.push(filters.branch_name);
+    }
+    if (filters.approval_status) {
+      conditions.push("jr.approval_status = ?");
+      params.push(filters.approval_status);
+    }
     const where = conditions.join(" AND ");
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1983,18 +2319,18 @@ ${bmiBlock}
        LEFT JOIN employees e                  ON e.id = ob.employee_id
        LEFT JOIN lms_employee_mapping lm      ON lm.employee_id = e.id
        WHERE ${where}`,
-      params
+      params,
     );
     const r = rows[0] ?? {};
     return {
-      linked:     Number(r.linked ?? 0),
-      walkin:     Number(r.walkin ?? 0),
-      screened:   Number(r.screened ?? 0),
-      selected:   Number(r.selected_cnt ?? 0),
-      offered:    Number(r.offered ?? 0),
+      linked: Number(r.linked ?? 0),
+      walkin: Number(r.walkin ?? 0),
+      screened: Number(r.screened ?? 0),
+      selected: Number(r.selected_cnt ?? 0),
+      offered: Number(r.offered ?? 0),
       onboarding: Number(r.onboarding ?? 0),
-      joined:     Number(r.joined ?? 0),
-      lms:        Number(r.lms ?? 0),
+      joined: Number(r.joined ?? 0),
+      lms: Number(r.lms ?? 0),
     };
   },
 
@@ -2048,16 +2384,16 @@ ${bmiBlock}
        WHERE jrc.requisition_id = ?
 
        ORDER BY date_of_joining ASC`,
-      [requisitionId, requisitionId]
+      [requisitionId, requisitionId],
     );
-    return (rows as RowDataPacket[]).map(r => ({
-      employee_id:    r.employee_id as string,
-      full_name:      r.full_name as string,
-      employee_code:  r.employee_code as string | null,
+    return (rows as RowDataPacket[]).map((r) => ({
+      employee_id: r.employee_id as string,
+      full_name: r.full_name as string,
+      employee_code: r.employee_code as string | null,
       date_of_joining: r.date_of_joining as string | null,
-      bridge_status:  r.bridge_status as string,
-      lms_enrolled:   Boolean(r.lms_enrolled),
-      candidate_id:   r.candidate_id as string,
+      bridge_status: r.bridge_status as string,
+      lms_enrolled: Boolean(r.lms_enrolled),
+      candidate_id: r.candidate_id as string,
       candidate_name: r.candidate_name as string,
     }));
   },
@@ -2071,15 +2407,16 @@ ${bmiBlock}
               planned_batch_no, planned_batch_name, training_start_date, requisition_validity,
               requested_headcount, fulfilled_headcount, handover_at, handover_notes
        FROM job_requisition WHERE id = ? AND active_status = 1`,
-      [id]
+      [id],
     );
-    if (!reqRows[0]) throw Object.assign(new Error("Requisition not found"), { status: 404 });
+    if (!reqRows[0])
+      throw Object.assign(new Error("Requisition not found"), { status: 404 });
     const req = reqRows[0];
 
     // Funnel, joined employees and pipeline are independent reads keyed on the same id.
     const [[funnelRows], joinedEmployees, [pipelineRows]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-      `SELECT
+        `SELECT
          COUNT(DISTINCT jrc.candidate_id) AS linked,
          COUNT(DISTINCT CASE WHEN c.walk_in_date IS NOT NULL OR qt.id IS NOT NULL THEN c.id END) AS walkin,
          COUNT(DISTINCT CASE WHEN c.current_stage NOT IN ('Applied','New','Registered') THEN c.id END) AS screened,
@@ -2095,51 +2432,51 @@ ${bmiBlock}
        LEFT JOIN employees e              ON e.id = ob.employee_id
        LEFT JOIN lms_employee_mapping lm  ON lm.employee_id = e.id
        WHERE jrc.requisition_id = ?`,
-      [id]
-    ),
+        [id],
+      ),
       this.getJoinedEmployees(id),
       db.execute<RowDataPacket[]>(
-      `SELECT jrc.candidate_id, c.full_name, jrc.outcome, jrc.linked_at
+        `SELECT jrc.candidate_id, c.full_name, jrc.outcome, jrc.linked_at
        FROM job_requisition_candidate jrc
        JOIN ats_candidate c ON c.id = jrc.candidate_id
        WHERE jrc.requisition_id = ?
        ORDER BY jrc.linked_at ASC`,
-      [id]
-    ),
+        [id],
+      ),
     ]);
     const fr = funnelRows[0] ?? {};
 
     return {
       summary: {
-        requisition_code:   req.requisition_code as string,
-        designation_name:   req.designation_name as string,
-        branch_name:        req.branch_name as string,
-        process_name:       req.process_name as string | null,
-        planned_batch_no:   req.planned_batch_no as string | null,
+        requisition_code: req.requisition_code as string,
+        designation_name: req.designation_name as string,
+        branch_name: req.branch_name as string,
+        process_name: req.process_name as string | null,
+        planned_batch_no: req.planned_batch_no as string | null,
         planned_batch_name: req.planned_batch_name as string | null,
         training_start_date: req.training_start_date as string | null,
         requisition_validity: req.requisition_validity as string | null,
         requested_headcount: Number(req.requested_headcount),
         fulfilled_headcount: Number(req.fulfilled_headcount),
-        handover_at:        req.handover_at as string | null,
-        handover_notes:     req.handover_notes as string | null,
+        handover_at: req.handover_at as string | null,
+        handover_notes: req.handover_notes as string | null,
       },
       funnel: {
-        linked:     Number(fr.linked ?? 0),
-        walkin:     Number(fr.walkin ?? 0),
-        screened:   Number(fr.screened ?? 0),
-        selected:   Number(fr.selected_cnt ?? 0),
-        offered:    Number(fr.offered ?? 0),
+        linked: Number(fr.linked ?? 0),
+        walkin: Number(fr.walkin ?? 0),
+        screened: Number(fr.screened ?? 0),
+        selected: Number(fr.selected_cnt ?? 0),
+        offered: Number(fr.offered ?? 0),
         onboarding: Number(fr.onboarding ?? 0),
-        joined:     Number(fr.joined ?? 0),
-        lms:        Number(fr.lms ?? 0),
+        joined: Number(fr.joined ?? 0),
+        lms: Number(fr.lms ?? 0),
       },
       joined_employees: joinedEmployees,
-      candidate_pipeline: (pipelineRows as RowDataPacket[]).map(r => ({
+      candidate_pipeline: (pipelineRows as RowDataPacket[]).map((r) => ({
         candidate_id: r.candidate_id as string,
-        full_name:    r.full_name as string,
-        outcome:      r.outcome as string,
-        linked_at:    r.linked_at as string,
+        full_name: r.full_name as string,
+        outcome: r.outcome as string,
+        linked_at: r.linked_at as string,
       })),
     };
   },
@@ -2150,19 +2487,22 @@ ${bmiBlock}
   async deleteRequisition(id: string): Promise<void> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM job_requisition WHERE id = ? AND active_status = 1`,
-      [id]
+      [id],
     );
-    if (!rows[0]) throw Object.assign(new Error("Requisition not found"), { status: 404 });
+    if (!rows[0])
+      throw Object.assign(new Error("Requisition not found"), { status: 404 });
     await db.execute(
       `UPDATE job_requisition SET active_status = 0, updated_at = NOW() WHERE id = ?`,
-      [id]
+      [id],
     );
   },
 
   /**
    * Get list of users with a given role (for handover email recipient picker)
    */
-  async getHandoverRecipientOptions(roles: string[]): Promise<Array<{ user_id: string; email: string; role_key: string }>> {
+  async getHandoverRecipientOptions(
+    roles: string[],
+  ): Promise<Array<{ user_id: string; email: string; role_key: string }>> {
     if (roles.length === 0) return [];
     const placeholders = roles.map(() => "?").join(",");
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -2171,11 +2511,11 @@ ${bmiBlock}
        JOIN auth_user au ON au.id = ur.user_id
        WHERE ur.role_key IN (${placeholders}) AND ur.active_status = 1 AND au.email IS NOT NULL
        ORDER BY ur.role_key, au.email`,
-      roles
+      roles,
     );
-    return (rows as RowDataPacket[]).map(r => ({
-      user_id:  r.user_id as string,
-      email:    r.email as string,
+    return (rows as RowDataPacket[]).map((r) => ({
+      user_id: r.user_id as string,
+      email: r.email as string,
       role_key: r.role_key as string,
     }));
   },

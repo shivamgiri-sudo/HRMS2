@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 // Skip if no live DB — honour explicit SKIP_LIVE_DB=false override.
 //
@@ -9,16 +9,17 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 // evaluated — the guard read false, this live-DB suite ran under the global
 // db mock from tests/setup.ts, and all 12 data assertions failed on empty rows.
 // VITEST is set by the runner and never appears in .env, so it cannot be clobbered.
-const SKIP_LIVE_DB = process.env.SKIP_LIVE_DB === 'false'
-  ? false
-  : process.env.SKIP_LIVE_DB === 'true' || process.env.VITEST === 'true';
+const SKIP_LIVE_DB =
+  process.env.SKIP_LIVE_DB === "false"
+    ? false
+    : process.env.SKIP_LIVE_DB === "true" || process.env.VITEST === "true";
 
-import { db } from '../../../db/mysql.js';
-import { templateService } from '../template.service.js';
-import { dispatchService } from '../dispatch.service.js';
-import { notificationPreferencesService } from '../notification-preferences.service.js';
-import type { RowDataPacket } from 'mysql2';
-import { randomUUID } from 'crypto';
+import { db } from "../../../db/mysql.js";
+import { templateService } from "../template.service.js";
+import { dispatchService } from "../dispatch.service.js";
+import { notificationPreferencesService } from "../notification-preferences.service.js";
+import type { RowDataPacket } from "mysql2";
+import { randomUUID } from "crypto";
 
 interface DispatchLogRow extends RowDataPacket {
   template_id: string | null;
@@ -27,7 +28,7 @@ interface DispatchLogRow extends RowDataPacket {
   status: string;
 }
 
-describe.skipIf(SKIP_LIVE_DB)('Communication Module Integration Tests', () => {
+describe.skipIf(SKIP_LIVE_DB)("Communication Module Integration Tests", () => {
   let testTemplateId: string;
   let testEmployeeId: string;
 
@@ -41,82 +42,94 @@ describe.skipIf(SKIP_LIVE_DB)('Communication Module Integration Tests', () => {
                (SELECT id FROM process_master LIMIT 1),
                (SELECT id FROM designation_master LIMIT 1),
                (SELECT id FROM department_master LIMIT 1))`,
-      [testEmployeeId]
+      [testEmployeeId],
     );
   });
 
   afterAll(async () => {
     // Cleanup
     if (testTemplateId) {
-      await db.execute('DELETE FROM communication_template WHERE id = ?', [testTemplateId]);
+      await db.execute("DELETE FROM communication_template WHERE id = ?", [
+        testTemplateId,
+      ]);
     }
     if (testEmployeeId) {
-      await db.execute('DELETE FROM dispatch_log WHERE recipient_employee_id = ?', [testEmployeeId]);
-      await db.execute('DELETE FROM notification_preferences WHERE employee_id = ?', [testEmployeeId]);
-      await db.execute('DELETE FROM employees WHERE id = ?', [testEmployeeId]);
+      await db.execute(
+        "DELETE FROM dispatch_log WHERE recipient_employee_id = ?",
+        [testEmployeeId],
+      );
+      await db.execute(
+        "DELETE FROM notification_preferences WHERE employee_id = ?",
+        [testEmployeeId],
+      );
+      await db.execute("DELETE FROM employees WHERE id = ?", [testEmployeeId]);
     }
   });
 
-  describe('Template Service', () => {
-    it('should create template', async () => {
+  describe("Template Service", () => {
+    it("should create template", async () => {
       const template = await templateService.createTemplate({
-        name: 'Test Welcome Template',
-        subject: 'Welcome {{employee.name}}!',
-        body_html: '<p>Hello {{employee.name}}, welcome to MAS HRMS!</p>',
-        body_text: 'Hello {{employee.name}}, welcome to MAS HRMS!',
-        category: 'onboarding',
-        channel: 'email',
+        name: "Test Welcome Template",
+        subject: "Welcome {{employee.name}}!",
+        body_html: "<p>Hello {{employee.name}}, welcome to MAS HRMS!</p>",
+        body_text: "Hello {{employee.name}}, welcome to MAS HRMS!",
+        category: "onboarding",
+        channel: "email",
         is_critical: false,
         created_by: testEmployeeId,
       });
 
       expect(template).toBeDefined();
       expect(template.id).toBeDefined();
-      expect(template.name).toBe('Test Welcome Template');
-      expect(template.category).toBe('onboarding');
+      expect(template.name).toBe("Test Welcome Template");
+      expect(template.category).toBe("onboarding");
 
       testTemplateId = template.id;
     });
 
-    it('should list templates', async () => {
-      const templates = await templateService.getTemplates({ category: 'onboarding' });
+    it("should list templates", async () => {
+      const templates = await templateService.getTemplates({
+        category: "onboarding",
+      });
 
       expect(Array.isArray(templates)).toBe(true);
       expect(templates.length).toBeGreaterThan(0);
-      expect(templates.some(t => t.id === testTemplateId)).toBe(true);
+      expect(templates.some((t) => t.id === testTemplateId)).toBe(true);
     });
 
-    it('should get template by ID', async () => {
+    it("should get template by ID", async () => {
       const template = await templateService.getTemplateById(testTemplateId);
 
       expect(template).toBeDefined();
       expect(template?.id).toBe(testTemplateId);
-      expect(template?.name).toBe('Test Welcome Template');
+      expect(template?.name).toBe("Test Welcome Template");
     });
 
-    it('should render template with variables', async () => {
+    it("should render template with variables", async () => {
       const rendered = await templateService.renderTemplate({
         template_id: testTemplateId,
         data: {
-          employee: { name: 'John Doe', id: testEmployeeId },
+          employee: { name: "John Doe", id: testEmployeeId },
         },
       });
 
-      expect(rendered.html).toContain('John Doe');
-      expect(rendered.html).toContain('welcome to MAS HRMS');
-      expect(rendered.text).toContain('John Doe');
+      expect(rendered.html).toContain("John Doe");
+      expect(rendered.html).toContain("welcome to MAS HRMS");
+      expect(rendered.text).toContain("John Doe");
     });
 
-    it('should update template', async () => {
+    it("should update template", async () => {
       const updated = await templateService.updateTemplate(testTemplateId, {
-        subject: 'Welcome Aboard {{employee.name}}!',
+        subject: "Welcome Aboard {{employee.name}}!",
       });
 
-      expect(updated.subject).toBe('Welcome Aboard {{employee.name}}!');
+      expect(updated.subject).toBe("Welcome Aboard {{employee.name}}!");
     });
 
-    it('should toggle template active status', async () => {
-      await templateService.updateTemplate(testTemplateId, { is_active: false });
+    it("should toggle template active status", async () => {
+      await templateService.updateTemplate(testTemplateId, {
+        is_active: false,
+      });
       let template = await templateService.getTemplateById(testTemplateId);
       expect(template?.is_active).toBe(0);
 
@@ -126,48 +139,53 @@ describe.skipIf(SKIP_LIVE_DB)('Communication Module Integration Tests', () => {
     });
   });
 
-  describe('Notification Preferences', () => {
-    it('should get default preference (email)', async () => {
+  describe("Notification Preferences", () => {
+    it("should get default preference (email)", async () => {
       const channel = await notificationPreferencesService.getPreferredChannel(
         testEmployeeId,
-        'onboarding'
+        "onboarding",
       );
 
-      expect(channel).toBe('email'); // Default
+      expect(channel).toBe("email"); // Default
     });
 
-    it('should update preference', async () => {
+    it("should update preference", async () => {
       await notificationPreferencesService.updatePreference(testEmployeeId, {
-        category: 'onboarding',
-        preferred_channel: 'sms',
+        category: "onboarding",
+        preferred_channel: "sms",
         enabled: true,
       });
 
       const channel = await notificationPreferencesService.getPreferredChannel(
         testEmployeeId,
-        'onboarding'
+        "onboarding",
       );
 
-      expect(channel).toBe('sms');
+      expect(channel).toBe("sms");
     });
 
-    it('should get all preferences for employee', async () => {
-      const prefs = await notificationPreferencesService.getPreferences(testEmployeeId);
+    it("should get all preferences for employee", async () => {
+      const prefs =
+        await notificationPreferencesService.getPreferences(testEmployeeId);
 
       expect(Array.isArray(prefs)).toBe(true);
-      expect(prefs.some(p => p.category === 'onboarding' && p.preferred_channel === 'sms')).toBe(true);
+      expect(
+        prefs.some(
+          (p) => p.category === "onboarding" && p.preferred_channel === "sms",
+        ),
+      ).toBe(true);
     });
   });
 
-  describe('Dispatch Service', () => {
-    it('should queue message for dispatch', async () => {
+  describe("Dispatch Service", () => {
+    it("should queue message for dispatch", async () => {
       const result = await dispatchService.send({
         template_id: testTemplateId,
         recipient_employee_ids: [testEmployeeId],
         data: {
-          employee: { name: 'Test Employee', id: testEmployeeId },
+          employee: { name: "Test Employee", id: testEmployeeId },
         },
-        channel: 'email',
+        channel: "email",
         is_critical: false,
       });
 
@@ -176,21 +194,21 @@ describe.skipIf(SKIP_LIVE_DB)('Communication Module Integration Tests', () => {
       expect(result.dispatch_ids.length).toBe(1);
     });
 
-    it('should log dispatch in dispatch_log table', async () => {
+    it("should log dispatch in dispatch_log table", async () => {
       const [rows] = await db.execute<DispatchLogRow[]>(
-        'SELECT * FROM dispatch_log WHERE recipient_employee_id = ? ORDER BY created_at DESC LIMIT 1',
-        [testEmployeeId]
+        "SELECT * FROM dispatch_log WHERE recipient_employee_id = ? ORDER BY created_at DESC LIMIT 1",
+        [testEmployeeId],
       );
 
       expect(rows.length).toBeGreaterThan(0);
       const log = rows[0];
       expect(log.template_id).toBe(testTemplateId);
       expect(log.recipient_employee_id).toBe(testEmployeeId);
-      expect(log.channel).toBe('email');
+      expect(log.channel).toBe("email");
       expect(log.status).toBeDefined(); // queued or sent
     });
 
-    it('should get dispatch logs', async () => {
+    it("should get dispatch logs", async () => {
       const result = await dispatchService.getLogs({
         employee_id: testEmployeeId,
         page: 1,
@@ -203,33 +221,33 @@ describe.skipIf(SKIP_LIVE_DB)('Communication Module Integration Tests', () => {
       expect(result.total).toBeGreaterThan(0);
     });
 
-    it('should get dispatch stats', async () => {
+    it("should get dispatch stats", async () => {
       const stats = await dispatchService.getStats();
 
       expect(stats).toBeDefined();
-      expect(typeof stats.total_sent_today).toBe('number');
-      expect(typeof stats.delivery_rate).toBe('number');
+      expect(typeof stats.total_sent_today).toBe("number");
+      expect(typeof stats.delivery_rate).toBe("number");
       expect(stats.by_channel).toBeDefined();
-      expect(typeof stats.by_channel.email).toBe('number');
+      expect(typeof stats.by_channel.email).toBe("number");
     });
   });
 
-  describe('End-to-End Flow', () => {
-    it('should complete full workflow: create template → set preference → send message → verify log', async () => {
+  describe("End-to-End Flow", () => {
+    it("should complete full workflow: create template → set preference → send message → verify log", async () => {
       // 1. Create template
       const template = await templateService.createTemplate({
-        name: 'E2E Test Template',
-        subject: 'Test {{type}}',
-        body_html: '<p>E2E test for {{employee.name}}</p>',
-        category: 'alerts',
-        channel: 'multi',
+        name: "E2E Test Template",
+        subject: "Test {{type}}",
+        body_html: "<p>E2E test for {{employee.name}}</p>",
+        category: "alerts",
+        channel: "multi",
         created_by: testEmployeeId,
       });
 
       // 2. Set preference to WhatsApp
       await notificationPreferencesService.updatePreference(testEmployeeId, {
-        category: 'alerts',
-        preferred_channel: 'whatsapp',
+        category: "alerts",
+        preferred_channel: "whatsapp",
         enabled: true,
       });
 
@@ -238,8 +256,8 @@ describe.skipIf(SKIP_LIVE_DB)('Communication Module Integration Tests', () => {
         template_id: template.id,
         recipient_employee_ids: [testEmployeeId],
         data: {
-          type: 'Alert',
-          employee: { name: 'Test User', id: testEmployeeId },
+          type: "Alert",
+          employee: { name: "Test User", id: testEmployeeId },
         },
       });
 
@@ -252,13 +270,15 @@ describe.skipIf(SKIP_LIVE_DB)('Communication Module Integration Tests', () => {
         limit: 5,
       });
 
-      const latestLog = logs.logs.find(l => l.template_id === template.id);
+      const latestLog = logs.logs.find((l) => l.template_id === template.id);
       expect(latestLog).toBeDefined();
-      expect(latestLog?.channel).toBe('whatsapp'); // Should use preference
-      expect(latestLog?.template_name).toBe('E2E Test Template');
+      expect(latestLog?.channel).toBe("whatsapp"); // Should use preference
+      expect(latestLog?.template_name).toBe("E2E Test Template");
 
       // Cleanup
-      await db.execute('DELETE FROM communication_template WHERE id = ?', [template.id]);
+      await db.execute("DELETE FROM communication_template WHERE id = ?", [
+        template.id,
+      ]);
     });
   });
 });

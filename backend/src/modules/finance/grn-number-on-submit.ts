@@ -47,18 +47,30 @@ export function financialYearFromPeriodCode(periodCode: string): string {
  * legacy rows migrated from db_bill, must not be renumbered. Callers should still write it with
  * `grn_number = COALESCE(grn_number, ?)` so a concurrent approval cannot overwrite one either.
  */
-export async function resolveGrnNumberOnSubmit(grn: RowDataPacket | Record<string, unknown>): Promise<string> {
-  const existing = String((grn as Record<string, unknown>).grn_number ?? "").trim();
+export async function resolveGrnNumberOnSubmit(
+  grn: RowDataPacket | Record<string, unknown>,
+): Promise<string> {
+  const existing = String(
+    (grn as Record<string, unknown>).grn_number ?? "",
+  ).trim();
   if (existing) return existing;
 
-  const accountingPeriod = String((grn as Record<string, unknown>).accounting_period ?? "");
-  const storedFinancialYear = String((grn as Record<string, unknown>).financial_year ?? "").trim();
-  const financialYear = storedFinancialYear || financialYearFromPeriodCode(accountingPeriod);
+  const accountingPeriod = String(
+    (grn as Record<string, unknown>).accounting_period ?? "",
+  );
+  const storedFinancialYear = String(
+    (grn as Record<string, unknown>).financial_year ?? "",
+  ).trim();
+  const financialYear =
+    storedFinancialYear || financialYearFromPeriodCode(accountingPeriod);
 
   // Which format runs is a config flag (finance_config.grn_number_format), not a deploy. The two
   // formats draw on different sequence tables, so flipping it never renumbers what already exists.
   const format = await resolveGrnNumberFormat();
   return format === "monthly_company"
     ? allocateMonthlyGrnNumber({ periodCode: accountingPeriod })
-    : allocateGrnNumber(String((grn as Record<string, unknown>).branch_id ?? ""), financialYear);
+    : allocateGrnNumber(
+        String((grn as Record<string, unknown>).branch_id ?? ""),
+        financialYear,
+      );
 }

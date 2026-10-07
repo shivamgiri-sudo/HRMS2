@@ -39,26 +39,43 @@ const QUALITY_AND_OPS_PAGES = [
 ] as const;
 
 describe("Quality and Operations pages are reachable without super_admin", () => {
-  it.each(QUALITY_AND_OPS_PAGES)("%s is granted to at least one role", (code) => {
-    const roles = rolesGranting(code);
-    expect(
-      roles.length,
-      `${code} is on a mounted route but no role grants it, so only super_admin can open it`,
-    ).toBeGreaterThan(0);
-  });
+  it.each(QUALITY_AND_OPS_PAGES)(
+    "%s is granted to at least one role",
+    (code) => {
+      const roles = rolesGranting(code);
+      expect(
+        roles.length,
+        `${code} is on a mounted route but no role grants it, so only super_admin can open it`,
+      ).toBeGreaterThan(0);
+    },
+  );
 
   it("gives the quality roles a quality page", () => {
     // A QA analyst who cannot open a quality page is not a configured role.
     for (const role of ["qa", "quality_analyst", "tq_head"]) {
-      const codes = ROLE_SPECIFIC_PAGE_CODES[role as keyof typeof ROLE_SPECIFIC_PAGE_CODES] as readonly string[];
-      expect(codes.some((c) => c.startsWith("QUALITY_")), `${role} has no QUALITY_* page`).toBe(true);
+      const codes = ROLE_SPECIFIC_PAGE_CODES[
+        role as keyof typeof ROLE_SPECIFIC_PAGE_CODES
+      ] as readonly string[];
+      expect(
+        codes.some((c) => c.startsWith("QUALITY_")),
+        `${role} has no QUALITY_* page`,
+      ).toBe(true);
     }
   });
 
   it("gives the operations roles an operations page", () => {
-    for (const role of ["operations_manager", "process_manager", "branch_head"]) {
-      const codes = ROLE_SPECIFIC_PAGE_CODES[role as keyof typeof ROLE_SPECIFIC_PAGE_CODES] as readonly string[];
-      expect(codes.includes("OPERATIONS_DASHBOARD"), `${role} cannot open the operations dashboard`).toBe(true);
+    for (const role of [
+      "operations_manager",
+      "process_manager",
+      "branch_head",
+    ]) {
+      const codes = ROLE_SPECIFIC_PAGE_CODES[
+        role as keyof typeof ROLE_SPECIFIC_PAGE_CODES
+      ] as readonly string[];
+      expect(
+        codes.includes("OPERATIONS_DASHBOARD"),
+        `${role} cannot open the operations dashboard`,
+      ).toBe(true);
     }
   });
 });
@@ -67,9 +84,24 @@ describe("roles with real users have a matrix entry", () => {
   // Live counts from user_roles on 2026-08-01. A role missing from the matrix
   // silently collapses to COMMON_USER_PAGE_CODES no matter what the routers say.
   const ROLES_WITH_USERS = [
-    "employee", "process_manager", "hr", "recruiter", "wfm", "admin",
-    "interviewer", "it", "team_leader", "manager", "branch_head", "ceo",
-    "branch_admin", "payroll_hr", "trainer", "qa", "payroll", "finance",
+    "employee",
+    "process_manager",
+    "hr",
+    "recruiter",
+    "wfm",
+    "admin",
+    "interviewer",
+    "it",
+    "team_leader",
+    "manager",
+    "branch_head",
+    "ceo",
+    "branch_admin",
+    "payroll_hr",
+    "trainer",
+    "qa",
+    "payroll",
+    "finance",
   ] as const;
 
   it.each(ROLES_WITH_USERS)("%s is defined in the matrix", (role) => {
@@ -83,6 +115,8 @@ describe("roles with real users have a matrix entry", () => {
     // coo appears in ~15 route role lists and three dashboard registries while
     // being absent from every role definition source.
     expect(ROLE_SPECIFIC_PAGE_CODES).toHaveProperty("coo");
-    expect((ROLE_SPECIFIC_PAGE_CODES.coo as readonly string[]).length).toBeGreaterThan(0);
+    expect(
+      (ROLE_SPECIFIC_PAGE_CODES.coo as readonly string[]).length,
+    ).toBeGreaterThan(0);
   });
 });

@@ -15,10 +15,17 @@ import { errorHandler } from "../errorHandler.js";
  * them — a user told "the file is too large" can act; a user given a hex string cannot.
  */
 function app() {
-  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024, files: 1 } });
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 1024, files: 1 },
+  });
   const a = express();
-  a.post("/upload", upload.single("file"), (_req, res) => res.json({ success: true }));
-  a.get("/boom", (_req, _res) => { throw new Error("connect ECONNREFUSED 10.0.0.1:3306"); });
+  a.post("/upload", upload.single("file"), (_req, res) =>
+    res.json({ success: true }),
+  );
+  a.get("/boom", (_req, _res) => {
+    throw new Error("connect ECONNREFUSED 10.0.0.1:3306");
+  });
   a.use(errorHandler);
   return a;
 }
@@ -27,7 +34,10 @@ describe("errorHandler answers multer rejections with a reason", () => {
   it("names the size limit instead of a reference", async () => {
     const res = await request(app())
       .post("/upload")
-      .attach("file", Buffer.alloc(4096, 97), { filename: "big.csv", contentType: "text/csv" });
+      .attach("file", Buffer.alloc(4096, 97), {
+        filename: "big.csv",
+        contentType: "text/csv",
+      });
 
     expect(res.status).toBe(400);
     expect(res.body.errorCode).toBe("LIMIT_FILE_SIZE");
@@ -39,7 +49,10 @@ describe("errorHandler answers multer rejections with a reason", () => {
   it("names the wrong field instead of a reference", async () => {
     const res = await request(app())
       .post("/upload")
-      .attach("attachment", Buffer.from("x"), { filename: "a.csv", contentType: "text/csv" });
+      .attach("attachment", Buffer.from("x"), {
+        filename: "a.csv",
+        contentType: "text/csv",
+      });
 
     expect(res.status).toBe(400);
     expect(res.body.errorCode).toBe("LIMIT_UNEXPECTED_FILE");

@@ -12,7 +12,8 @@
  */
 import { randomBytes, createHash } from "crypto";
 
-export const sha256Hex = (value: string): string => createHash("sha256").update(value).digest("hex");
+export const sha256Hex = (value: string): string =>
+  createHash("sha256").update(value).digest("hex");
 
 /** A fresh accept token. The plaintext exists once, in the email that carries it. */
 export function mintAcceptToken(): { token: string; tokenHash: string } {

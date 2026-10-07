@@ -43,7 +43,13 @@ async function main() {
     const values: unknown[] = [];
     chunk.forEach((row, i) => {
       placeholders.push("(?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), 'valid')");
-      values.push(randomUUID(), batchId, start + i + 1, JSON.stringify(row), JSON.stringify(row));
+      values.push(
+        randomUUID(),
+        batchId,
+        start + i + 1,
+        JSON.stringify(row),
+        JSON.stringify(row),
+      );
     });
     await db.execute(
       `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status)
@@ -54,7 +60,10 @@ async function main() {
   console.log("[IMPORT] batch rows staged:", rows.length);
 
   const result = await importReginaldAbandonedCartSalesBatch(batchId, USER_ID);
-  console.log("[IMPORT] result:", JSON.stringify({ ...result, errors: result.errors.slice(0, 10) }, null, 2));
+  console.log(
+    "[IMPORT] result:",
+    JSON.stringify({ ...result, errors: result.errors.slice(0, 10) }, null, 2),
+  );
   console.log("[IMPORT] total errors:", result.errors.length);
 
   await db.execute(
@@ -64,4 +73,7 @@ async function main() {
 
   process.exit(result.errorRows > 0 && result.importedRows === 0 ? 1 : 0);
 }
-main().catch((e) => { console.error("[IMPORT] FAILED", e); process.exit(1); });
+main().catch((e) => {
+  console.error("[IMPORT] FAILED", e);
+  process.exit(1);
+});

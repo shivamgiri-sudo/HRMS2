@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { parseReportDate, BB_APR_HEADERS } from "../bb-apr-masmis-bulk.service.js";
+import {
+  parseReportDate,
+  BB_APR_HEADERS,
+} from "../bb-apr-masmis-bulk.service.js";
 
 describe("parseReportDate", () => {
   it("reads a real ISO sample", () => {

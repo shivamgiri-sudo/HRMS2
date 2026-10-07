@@ -42,11 +42,11 @@ export async function reportStaleQueuedDispatches(): Promise<number> {
   const stuck = Number(rows[0]?.stuck ?? 0);
   if (stuck > 0) {
     console.warn(
-      `[CommunicationCleanup] ${stuck} dispatch(es) abandoned in 'queued' for over `
-      + `${STALE_QUEUED_HOURS}h (oldest ${String(rows[0]?.oldest)}, ${rows[0]?.critical ?? 0} critical). `
-      + `These were never sent and nothing retries them — a process died between writing the `
-      + `row and calling the provider. Not auto-resent: the row predates the provider call, so `
-      + `a resend risks delivering twice.`,
+      `[CommunicationCleanup] ${stuck} dispatch(es) abandoned in 'queued' for over ` +
+        `${STALE_QUEUED_HOURS}h (oldest ${String(rows[0]?.oldest)}, ${rows[0]?.critical ?? 0} critical). ` +
+        `These were never sent and nothing retries them — a process died between writing the ` +
+        `row and calling the provider. Not auto-resent: the row predates the provider call, so ` +
+        `a resend risks delivering twice.`,
     );
   }
   return stuck;
@@ -83,10 +83,10 @@ export async function reportStalePendingNotifications(): Promise<number> {
   const stuck = Number(rows[0]?.stuck ?? 0);
   if (stuck > 0) {
     console.warn(
-      `[CommunicationCleanup] ${stuck} notification(s) abandoned in 'pending' for over `
-      + `${STALE_QUEUED_HOURS}h (oldest ${String(rows[0]?.oldest)}, ${rows[0]?.templates ?? 0} template(s)). `
-      + `Same shape as the dispatch_log case: the gateway claims before it delivers, so a `
-      + `process death in between strands the row. Not auto-resent.`,
+      `[CommunicationCleanup] ${stuck} notification(s) abandoned in 'pending' for over ` +
+        `${STALE_QUEUED_HOURS}h (oldest ${String(rows[0]?.oldest)}, ${rows[0]?.templates ?? 0} template(s)). ` +
+        `Same shape as the dispatch_log case: the gateway claims before it delivers, so a ` +
+        `process death in between strands the row. Not auto-resent.`,
     );
   }
   return stuck;
@@ -102,7 +102,7 @@ export async function runCommunicationCleanup(): Promise<{
     `DELETE FROM dispatch_log
      WHERE is_critical = 0
        AND retention_category = 'routine'
-       AND sent_at < NOW() - INTERVAL 30 DAY`
+       AND sent_at < NOW() - INTERVAL 30 DAY`,
   );
   const routineDeleted = routineResult.affectedRows;
 
@@ -110,12 +110,12 @@ export async function runCommunicationCleanup(): Promise<{
     `DELETE FROM dispatch_log
      WHERE is_critical = 0
        AND retention_category = 'standard'
-       AND sent_at < NOW() - INTERVAL 90 DAY`
+       AND sent_at < NOW() - INTERVAL 90 DAY`,
   );
   const standardDeleted = standardResult.affectedRows;
 
   console.log(
-    `[CommunicationCleanup] Deleted ${routineDeleted} routine rows (>30d), ${standardDeleted} standard rows (>90d)`
+    `[CommunicationCleanup] Deleted ${routineDeleted} routine rows (>30d), ${standardDeleted} standard rows (>90d)`,
   );
 
   // After the deletes, so the count reflects what is actually left. Never allowed to

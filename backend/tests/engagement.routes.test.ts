@@ -40,20 +40,23 @@ describe("engagement routes", () => {
       data: { user: { id: "user-1", email: "employee@example.com" } },
       error: null,
     });
-    mockExecute.mockResolvedValueOnce([[
-      {
-        badge_id: "badge-1",
-        badge_name: "Early Bird",
-        badge_description: "Logged in early",
-        badge_icon: null,
-        badge_category: "activity",
-        points_value: 50,
-        criteria_json: null,
-        is_active: 1,
-        created_at: "2026-06-01T00:00:00Z",
-        updated_at: "2026-06-01T00:00:00Z",
-      },
-    ], []]);
+    mockExecute.mockResolvedValueOnce([
+      [
+        {
+          badge_id: "badge-1",
+          badge_name: "Early Bird",
+          badge_description: "Logged in early",
+          badge_icon: null,
+          badge_category: "activity",
+          points_value: 50,
+          criteria_json: null,
+          is_active: 1,
+          created_at: "2026-06-01T00:00:00Z",
+          updated_at: "2026-06-01T00:00:00Z",
+        },
+      ],
+      [],
+    ]);
 
     const response = await request(app)
       .get("/api/engagement/badges")
@@ -61,6 +64,8 @@ describe("engagement routes", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.data[0].badge_name).toBe("Early Bird");
-    expect(mockExecute.mock.calls[0][0]).toContain("FROM gamification_badge_master");
+    expect(mockExecute.mock.calls[0][0]).toContain(
+      "FROM gamification_badge_master",
+    );
   });
 });

@@ -105,7 +105,8 @@ export function computeGstType(input: GstTypeInput): {
   const branchStateCode = (input.branchStateCode ?? "").trim();
   if (GSTIN_RE.test(gstin) && branchStateCode !== "") {
     const vendorStateCode = gstin.slice(0, 2);
-    const gstType = vendorStateCode === branchStateCode ? "Intrastate" : "Integrated";
+    const gstType =
+      vendorStateCode === branchStateCode ? "Intrastate" : "Integrated";
     return { target_gst_type: gstType, target_apply_gst: 1 };
   }
   return { target_gst_type: "Not Applicable", target_apply_gst: 0 };
@@ -169,7 +170,10 @@ export function buildDescription(
 // authoritative parse pass against the real client_invoice column types. Extraction
 // never lets a cast failure here abort the row: the raw src_ value is always written
 // regardless of what this returns.
-export function parseLegacyDecimal(raw: string | null): { value: number | null; ok: boolean } {
+export function parseLegacyDecimal(raw: string | null): {
+  value: number | null;
+  ok: boolean;
+} {
   if (raw === null) return { value: null, ok: true }; // NULL is not a parse failure — it's absent
   const trimmed = raw.trim();
   if (trimmed === "") return { value: null, ok: true };

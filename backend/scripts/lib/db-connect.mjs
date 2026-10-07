@@ -16,24 +16,26 @@
  * problem. The grant is shivam_user@% (any host), so a host whitelist is never
  * the cause. Always strip the quotes.
  */
-import mysql from 'mysql2/promise';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import mysql from "mysql2/promise";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function envValue(key) {
   try {
-    const env = fs.readFileSync(path.join(__dirname, '../../.env'), 'utf8');
-    const m = env.match(new RegExp(`^${key}=(.*)$`, 'm'));
-    return m?.[1]?.trim().replace(/^["']|["']$/g, '') ?? null;
-  } catch { return null; }
+    const env = fs.readFileSync(path.join(__dirname, "../../.env"), "utf8");
+    const m = env.match(new RegExp(`^${key}=(.*)$`, "m"));
+    return m?.[1]?.trim().replace(/^["']|["']$/g, "") ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export const HOSTS = {
-  mas_hrms: ['192.168.10.6', '122.184.128.90'],
-  db_bill:  ['192.168.10.22', '14.97.30.236'],
+  mas_hrms: ["192.168.10.6", "122.184.128.90"],
+  db_bill: ["192.168.10.22", "14.97.30.236"],
 };
 
 /**
@@ -48,8 +50,8 @@ export async function connect(database, { host = null, log = () => {} } = {}) {
 
   const cfg = {
     port: 3306,
-    user: envValue('DB_USER'),
-    password: envValue('DB_PASSWORD'),
+    user: envValue("DB_USER"),
+    password: envValue("DB_PASSWORD"),
     database,
     connectTimeout: 20000,
     dateStrings: true,
@@ -66,7 +68,13 @@ export async function connect(database, { host = null, log = () => {} } = {}) {
       // Only a reachability failure is worth retrying elsewhere. An auth or
       // unknown-database error will fail identically on the other host, and
       // retrying it just doubles the failed-login count against fail2ban.
-      const reachability = ['ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND'];
+      const reachability = [
+        "ETIMEDOUT",
+        "ECONNREFUSED",
+        "EHOSTUNREACH",
+        "ENETUNREACH",
+        "ENOTFOUND",
+      ];
       if (!reachability.includes(e.code)) throw e;
       log(`  ${database} @ ${h}: ${e.code} — trying next address`);
     }

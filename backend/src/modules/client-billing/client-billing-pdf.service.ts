@@ -147,9 +147,11 @@ const CORPORATE_ADDRESS_LINES = [
 ];
 const CORPORATE_EMAIL = "care@teammas.in";
 const CORPORATE_WEB = "teammas.in";
-const MSME_NOTE = "Covered under MSME Act vide letter No : F/5/CL/EM/2012/2062 dated 19.12.12";
+const MSME_NOTE =
+  "Covered under MSME Act vide letter No : F/5/CL/EM/2012/2062 dated 19.12.12";
 const ENTREPRENEURS_MEMO_NOTE = "Enterpreneurs Memorandum No. : '070092201354'";
-const PAYMENT_NOTE = "Note : Please issue Ch/DD in favour of SBI A/c. MAS Callnet India Pvt. Ltd. Payable at Delhi";
+const PAYMENT_NOTE =
+  "Note : Please issue Ch/DD in favour of SBI A/c. MAS Callnet India Pvt. Ltd. Payable at Delhi";
 const TDS_NOTE =
   'TDS for this invoice to be deducted @ 2% "Under section 4th Provision to section 194J(1) of the Income Tax Act, 1961. ' +
   'The Finance Act, 2017" for the payee engaged only in the business of operation of call centre.';
@@ -164,7 +166,11 @@ const BADGE_PATHS = [
   path.join(ASSET_DIR, "iso-27001-badge.jpeg"),
 ];
 function existingPath(p: string): string | null {
-  try { return fs.existsSync(p) ? p : null; } catch { return null; }
+  try {
+    return fs.existsSync(p) ? p : null;
+  } catch {
+    return null;
+  }
 }
 
 const PAGE = { size: "A4" as const, margin: 36 };
@@ -181,38 +187,103 @@ function displayDate(value: string | null | undefined): string {
   const s = String(value);
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (!m) return s;
-  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const MONTHS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
   return `${m[3]}-${MONTHS[Number(m[2]) - 1]}-${m[1]}`;
 }
 
 function generatedTimestamp(): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit", hour12: true,
-  }).format(new Date()) + " IST";
+  return (
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(new Date()) + " IST"
+  );
 }
 
 function money(n: number | null | undefined): string {
-  return Number(n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return Number(n ?? 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
 }
 
-function addressLines(a1: string | null, a2: string | null, a3: string | null): string[] {
-  return [a1, a2, a3].filter((x): x is string => Boolean(x && x.trim().length > 0));
+function addressLines(
+  a1: string | null,
+  a2: string | null,
+  a3: string | null,
+): string[] {
+  return [a1, a2, a3].filter((x): x is string =>
+    Boolean(x && x.trim().length > 0),
+  );
 }
 
 /** A GSTIN's chars 3-12 (1-indexed) ARE the PAN by statutory GSTIN format — not a guess. */
 function panFromGstin(gstin: string | null | undefined): string {
-  const s = String(gstin ?? "").trim().toUpperCase();
-  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z][Z][0-9A-Z]$/.test(s) ? s.slice(2, 12) : "";
+  const s = String(gstin ?? "")
+    .trim()
+    .toUpperCase();
+  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z][Z][0-9A-Z]$/.test(s)
+    ? s.slice(2, 12)
+    : "";
 }
 
-const ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-  "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
-const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+const ONES = [
+  "",
+  "One",
+  "Two",
+  "Three",
+  "Four",
+  "Five",
+  "Six",
+  "Seven",
+  "Eight",
+  "Nine",
+  "Ten",
+  "Eleven",
+  "Twelve",
+  "Thirteen",
+  "Fourteen",
+  "Fifteen",
+  "Sixteen",
+  "Seventeen",
+  "Eighteen",
+  "Nineteen",
+];
+const TENS = [
+  "",
+  "",
+  "Twenty",
+  "Thirty",
+  "Forty",
+  "Fifty",
+  "Sixty",
+  "Seventy",
+  "Eighty",
+  "Ninety",
+];
 
 function underThousand(n: number): string {
   if (n < 20) return ONES[n];
-  if (n < 100) return `${TENS[Math.floor(n / 10)]}${n % 10 ? ` ${ONES[n % 10]}` : ""}`;
+  if (n < 100)
+    return `${TENS[Math.floor(n / 10)]}${n % 10 ? ` ${ONES[n % 10]}` : ""}`;
   return `${ONES[Math.floor(n / 100)]} Hundred${n % 100 ? ` ${underThousand(n % 100)}` : ""}`;
 }
 
@@ -232,7 +303,9 @@ function amountInWords(value: number): string {
   return `Rupees ${parts.join(" ")} Only`;
 }
 
-async function loadCostCentre(costCentreId: string): Promise<CostCentreRow | undefined> {
+async function loadCostCentre(
+  costCentreId: string,
+): Promise<CostCentreRow | undefined> {
   const [rows] = await db.execute<CostCentreRow[]>(
     `SELECT cc.bill_to_address1 AS billToAddress1, cc.bill_to_address2 AS billToAddress2, cc.bill_to_address3 AS billToAddress3,
             cc.ship_to_address1 AS shipToAddress1, cc.ship_to_address2 AS shipToAddress2, cc.ship_to_address3 AS shipToAddress3,
@@ -244,18 +317,24 @@ async function loadCostCentre(costCentreId: string): Promise<CostCentreRow | und
      FROM cost_centre_master cc
      LEFT JOIN branch_master b ON b.id = cc.branch_id
      WHERE cc.id = ?`,
-    [costCentreId]
+    [costCentreId],
   );
   return rows[0];
 }
 
-async function loadInvoice(invoiceId: string): Promise<{ doc: PrintableDoc; lines: LineRow[]; costCentre: CostCentreRow | undefined }> {
+async function loadInvoice(
+  invoiceId: string,
+): Promise<{
+  doc: PrintableDoc;
+  lines: LineRow[];
+  costCentre: CostCentreRow | undefined;
+}> {
   const [invoiceRows] = await db.execute<InvoiceRow[]>(
     `SELECT id, cost_centre_id, invoice_status, category, finance_year, month_label, invoice_date,
             description, proforma_no, bill_no, gst_type, apply_gst, total_amount, igst_amount,
             cgst_amount, sgst_amount, grand_total, created_at
      FROM client_invoice WHERE id = ?`,
-    [invoiceId]
+    [invoiceId],
   );
   const invoice = invoiceRows[0];
   if (!invoice) {
@@ -265,19 +344,25 @@ async function loadInvoice(invoiceId: string): Promise<{ doc: PrintableDoc; line
   const [lineRows] = await db.execute<LineRow[]>(
     `SELECT line_type, particulars, qty, rate, amount
      FROM client_invoice_line WHERE invoice_id = ? ORDER BY created_at`,
-    [invoiceId]
+    [invoiceId],
   );
 
   const costCentre = await loadCostCentre(invoice.cost_centre_id);
   return { doc: invoiceToPrintableDoc(invoice), lines: lineRows, costCentre };
 }
 
-async function loadCreditNote(creditNoteId: string): Promise<{ doc: PrintableDoc; lines: LineRow[]; costCentre: CostCentreRow | undefined }> {
+async function loadCreditNote(
+  creditNoteId: string,
+): Promise<{
+  doc: PrintableDoc;
+  lines: LineRow[];
+  costCentre: CostCentreRow | undefined;
+}> {
   const [creditNoteRows] = await db.execute<CreditNoteRow[]>(
     `SELECT id, invoice_id, cost_centre_id, credit_status, category, finance_year, month_label, credit_date,
             description, credit_no, gst_type, apply_gst, total_amount, igst_amount, cgst_amount, sgst_amount, grand_total
      FROM client_credit_note WHERE id = ?`,
-    [creditNoteId]
+    [creditNoteId],
   );
   const creditNote = creditNoteRows[0];
   if (!creditNote) {
@@ -287,11 +372,15 @@ async function loadCreditNote(creditNoteId: string): Promise<{ doc: PrintableDoc
   const [lineRows] = await db.execute<LineRow[]>(
     `SELECT 'charge' AS line_type, particulars, qty, rate, amount
      FROM client_credit_note_line WHERE credit_note_id = ?`,
-    [creditNoteId]
+    [creditNoteId],
   );
 
   const costCentre = await loadCostCentre(creditNote.cost_centre_id);
-  return { doc: creditNoteToPrintableDoc(creditNote), lines: lineRows, costCentre };
+  return {
+    doc: creditNoteToPrintableDoc(creditNote),
+    lines: lineRows,
+    costCentre,
+  };
 }
 
 function invoiceToPrintableDoc(invoice: InvoiceRow): PrintableDoc {
@@ -299,9 +388,16 @@ function invoiceToPrintableDoc(invoice: InvoiceRow): PrintableDoc {
   const isRejected = invoice.invoice_status === "rejected";
   return {
     kind: "invoice",
-    titleLabel: isProforma ? "Proforma Invoice" : isRejected ? "Tax Invoice — Rejected" : "Tax Invoice",
+    titleLabel: isProforma
+      ? "Proforma Invoice"
+      : isRejected
+        ? "Tax Invoice — Rejected"
+        : "Tax Invoice",
     numberLabel: "Bill No",
-    docNumber: (isProforma ? invoice.proforma_no : invoice.bill_no ?? invoice.proforma_no) ?? "—",
+    docNumber:
+      (isProforma
+        ? invoice.proforma_no
+        : (invoice.bill_no ?? invoice.proforma_no)) ?? "—",
     docDate: invoice.invoice_date,
     costCentreId: invoice.cost_centre_id,
     gstType: invoice.gst_type,
@@ -318,7 +414,10 @@ function invoiceToPrintableDoc(invoice: InvoiceRow): PrintableDoc {
 function creditNoteToPrintableDoc(creditNote: CreditNoteRow): PrintableDoc {
   return {
     kind: "credit_note",
-    titleLabel: creditNote.credit_status === "draft" ? "Credit Note — Draft" : "Credit Note",
+    titleLabel:
+      creditNote.credit_status === "draft"
+        ? "Credit Note — Draft"
+        : "Credit Note",
     numberLabel: "Credit Note No",
     docNumber: creditNote.credit_no ?? "—",
     docDate: creditNote.credit_date,
@@ -352,23 +451,39 @@ function drawLetterheadHeader(doc: Doc, costCentre: CostCentreRow | undefined) {
   const logo = existingPath(LOGO_PATH);
 
   const textWidth = logo ? width - 130 : width;
-  doc.font("Helvetica-Bold").fontSize(15).fillColor(INK).text(COMPANY_NAME, left, doc.y, { width: textWidth });
-  doc.font("Helvetica").fontSize(7.5).fillColor(MUTED)
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(15)
+    .fillColor(INK)
+    .text(COMPANY_NAME, left, doc.y, { width: textWidth });
+  doc
+    .font("Helvetica")
+    .fontSize(7.5)
+    .fillColor(MUTED)
     .text(`CIN : ${COMPANY_CIN}`, { width: textWidth });
   // branch_master.address, when populated, is already a complete multi-line address
   // (frequently with city/state/pincode embedded as free text) — only fall back to
   // building one from the separate city/state/pincode columns when address is blank,
   // so a populated address is never duplicated with those same parts appended again.
-  const branchAddr = (costCentre?.branchAddress && costCentre.branchAddress.trim().length > 0)
-    ? costCentre.branchAddress.replace(/\n/g, ", ")
-    : [costCentre?.branchCity, costCentre?.branchState].filter(Boolean).join(", ") +
-      (costCentre?.branchPincode ? ` - ${costCentre.branchPincode}` : "");
+  const branchAddr =
+    costCentre?.branchAddress && costCentre.branchAddress.trim().length > 0
+      ? costCentre.branchAddress.replace(/\n/g, ", ")
+      : [costCentre?.branchCity, costCentre?.branchState]
+          .filter(Boolean)
+          .join(", ") +
+        (costCentre?.branchPincode ? ` - ${costCentre.branchPincode}` : "");
   if (branchAddr.trim().length > 1) {
     doc.text(`Branch Address: ${branchAddr}`, { width: textWidth });
   }
 
   if (logo) {
-    try { doc.image(logo, doc.page.width - PAGE.margin - 120, PAGE.margin - 2, { width: 120 }); } catch { /* ignore */ }
+    try {
+      doc.image(logo, doc.page.width - PAGE.margin - 120, PAGE.margin - 2, {
+        width: 120,
+      });
+    } catch {
+      /* ignore */
+    }
   }
   doc.moveDown(0.6);
 }
@@ -377,21 +492,36 @@ function drawLetterheadHeader(doc: Doc, costCentre: CostCentreRow | undefined) {
 function drawLetterheadFooter(doc: Doc) {
   const left = PAGE.margin;
   const width = doc.page.width - PAGE.margin * 2;
-  const badges = BADGE_PATHS.map(existingPath).filter((p): p is string => Boolean(p));
+  const badges = BADGE_PATHS.map(existingPath).filter((p): p is string =>
+    Boolean(p),
+  );
   const y = doc.page.height - PAGE.margin - 60;
 
-  doc.font("Helvetica-Bold").fontSize(7.5).fillColor(INK).text("Corporate Address:", left, y, { width: 220, continued: false });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(7.5)
+    .fillColor(INK)
+    .text("Corporate Address:", left, y, { width: 220, continued: false });
   doc.font("Helvetica").fontSize(7.5).fillColor(MUTED);
-  for (const line of CORPORATE_ADDRESS_LINES) doc.text(line, left, doc.y, { width: 220 });
+  for (const line of CORPORATE_ADDRESS_LINES)
+    doc.text(line, left, doc.y, { width: 220 });
   doc.text(`E-mail : ${CORPORATE_EMAIL}`, left, doc.y, { width: 220 });
   doc.text(`Web : ${CORPORATE_WEB}`, left, doc.y, { width: 220 });
 
   if (badges.length) {
     const badgeSize = 46;
     const gap = 8;
-    let x = doc.page.width - PAGE.margin - badges.length * badgeSize - (badges.length - 1) * gap;
+    let x =
+      doc.page.width -
+      PAGE.margin -
+      badges.length * badgeSize -
+      (badges.length - 1) * gap;
     for (const badge of badges) {
-      try { doc.image(badge, x, y, { width: badgeSize, height: badgeSize }); } catch { /* ignore */ }
+      try {
+        doc.image(badge, x, y, { width: badgeSize, height: badgeSize });
+      } catch {
+        /* ignore */
+      }
       x += badgeSize + gap;
     }
   }
@@ -399,7 +529,9 @@ function drawLetterheadFooter(doc: Doc) {
 
 function drawTitle(doc: Doc, printable: PrintableDoc) {
   const width = doc.page.width - PAGE.margin * 2;
-  doc.font("Helvetica-Bold").fontSize(13)
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(13)
     .fillColor(printable.isRejected ? DANGER : INK)
     .text(printable.titleLabel, PAGE.margin, doc.y, { width, align: "center" });
   doc.moveDown(0.4);
@@ -408,24 +540,43 @@ function drawTitle(doc: Doc, printable: PrintableDoc) {
 /** The bordered 3-column grid: Bill To | Ship To | invoice meta (Bill No, PO No, GST No,
  *  HSN/SAC, Pan No, GRN No/Date, Place Of Supply, TAX PAYABLE UNDER RCM) — matches the
  *  reference sample's layout exactly, including which fields sit in the meta column. */
-function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentreRow | undefined) {
+function drawPartyGrid(
+  doc: Doc,
+  printable: PrintableDoc,
+  costCentre: CostCentreRow | undefined,
+) {
   const left = PAGE.margin;
   const width = doc.page.width - PAGE.margin * 2;
   const col1 = width * 0.32;
   const col2 = width * 0.32;
   const col3 = width - col1 - col2;
-  const x1 = left, x2 = left + col1, x3 = left + col1 + col2;
+  const x1 = left,
+    x2 = left + col1,
+    x3 = left + col1 + col2;
 
   const clientName = printableClientName(costCentre);
-  const billTo = addressLines(costCentre?.billToAddress1 ?? null, costCentre?.billToAddress2 ?? null, costCentre?.billToAddress3 ?? null);
-  const shipToRaw = addressLines(costCentre?.shipToAddress1 ?? null, costCentre?.shipToAddress2 ?? null, costCentre?.shipToAddress3 ?? null);
+  const billTo = addressLines(
+    costCentre?.billToAddress1 ?? null,
+    costCentre?.billToAddress2 ?? null,
+    costCentre?.billToAddress3 ?? null,
+  );
+  const shipToRaw = addressLines(
+    costCentre?.shipToAddress1 ?? null,
+    costCentre?.shipToAddress2 ?? null,
+    costCentre?.shipToAddress3 ?? null,
+  );
   const shipTo = shipToRaw.length ? shipToRaw : billTo;
 
-  const gstBlock = (label: string) => [
-    costCentre?.vendorGstNo ? `GST No : ${costCentre.vendorGstNo}` : null,
-    costCentre?.vendorGstState ? `GST STATE NAME : ${costCentre.vendorGstState}` : null,
-    costCentre?.vendorStateCode ? `GST STATE CODE : ${costCentre.vendorStateCode}` : null,
-  ].filter((x): x is string => Boolean(x));
+  const gstBlock = (label: string) =>
+    [
+      costCentre?.vendorGstNo ? `GST No : ${costCentre.vendorGstNo}` : null,
+      costCentre?.vendorGstState
+        ? `GST STATE NAME : ${costCentre.vendorGstState}`
+        : null,
+      costCentre?.vendorStateCode
+        ? `GST STATE CODE : ${costCentre.vendorStateCode}`
+        : null,
+    ].filter((x): x is string => Boolean(x));
 
   const meta: Array<[string, string]> = [
     [printable.numberLabel, printable.docNumber],
@@ -449,28 +600,60 @@ function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentre
   doc.text("Bill to Address", x1 + 3, top + 3, { width: col1 - 6 });
   doc.text("Ship to Address", x2 + 3, top + 3, { width: col2 - 6 });
   doc.text("Date", x3 + 3, top + 3, { width: col3 * 0.4 - 6 });
-  doc.font("Helvetica").fontSize(7.5).text(displayDate(printable.docDate), x3 + col3 * 0.4, top + 3, { width: col3 * 0.6 - 3 });
+  doc
+    .font("Helvetica")
+    .fontSize(7.5)
+    .text(displayDate(printable.docDate), x3 + col3 * 0.4, top + 3, {
+      width: col3 * 0.6 - 3,
+    });
 
   const bodyTop = top + headerH;
   let y1 = bodyTop + 3;
-  doc.font("Helvetica-Bold").fontSize(8).fillColor(INK).text(clientName, x1 + 3, y1, { width: col1 - 6 });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .fillColor(INK)
+    .text(clientName, x1 + 3, y1, { width: col1 - 6 });
   y1 = doc.y;
   doc.font("Helvetica").fontSize(7.5);
-  for (const line of billTo) { doc.text(line, x1 + 3, y1, { width: col1 - 6 }); y1 = doc.y; }
-  for (const line of gstBlock("bill")) { doc.text(line, x1 + 3, y1, { width: col1 - 6 }); y1 = doc.y; }
+  for (const line of billTo) {
+    doc.text(line, x1 + 3, y1, { width: col1 - 6 });
+    y1 = doc.y;
+  }
+  for (const line of gstBlock("bill")) {
+    doc.text(line, x1 + 3, y1, { width: col1 - 6 });
+    y1 = doc.y;
+  }
 
   let y2 = bodyTop + 3;
-  doc.font("Helvetica-Bold").fontSize(8).fillColor(INK).text(clientName, x2 + 3, y2, { width: col2 - 6 });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .fillColor(INK)
+    .text(clientName, x2 + 3, y2, { width: col2 - 6 });
   y2 = doc.y;
   doc.font("Helvetica").fontSize(7.5);
-  for (const line of shipTo) { doc.text(line, x2 + 3, y2, { width: col2 - 6 }); y2 = doc.y; }
-  for (const line of gstBlock("ship")) { doc.text(line, x2 + 3, y2, { width: col2 - 6 }); y2 = doc.y; }
+  for (const line of shipTo) {
+    doc.text(line, x2 + 3, y2, { width: col2 - 6 });
+    y2 = doc.y;
+  }
+  for (const line of gstBlock("ship")) {
+    doc.text(line, x2 + 3, y2, { width: col2 - 6 });
+    y2 = doc.y;
+  }
 
   let y3 = bodyTop + 3;
   const metaLabelW = col3 * 0.55;
   for (const [label, value] of meta) {
-    doc.font("Helvetica-Bold").fontSize(7.2).fillColor(INK).text(label, x3 + 3, y3, { width: metaLabelW - 3 });
-    doc.font("Helvetica").fontSize(7.2).text(value || "", x3 + metaLabelW, y3, { width: col3 - metaLabelW - 3 });
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(7.2)
+      .fillColor(INK)
+      .text(label, x3 + 3, y3, { width: metaLabelW - 3 });
+    doc
+      .font("Helvetica")
+      .fontSize(7.2)
+      .text(value || "", x3 + metaLabelW, y3, { width: col3 - metaLabelW - 3 });
     y3 = Math.max(y3 + 10, doc.y);
   }
 
@@ -478,7 +661,12 @@ function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentre
   doc.rect(x1, top, col1, bottom - top).stroke(BORDER);
   doc.rect(x2, top, col2, bottom - top).stroke(BORDER);
   doc.rect(x3, top, col3, bottom - top).stroke(BORDER);
-  doc.moveTo(x1, bodyTop).lineTo(x1 + width, bodyTop).strokeColor(BORDER).lineWidth(0.6).stroke();
+  doc
+    .moveTo(x1, bodyTop)
+    .lineTo(x1 + width, bodyTop)
+    .strokeColor(BORDER)
+    .lineWidth(0.6)
+    .stroke();
 
   doc.y = bottom;
   doc.x = left;
@@ -488,47 +676,109 @@ function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentre
 function drawLineItemsTable(doc: Doc, lines: LineRow[]): void {
   const left = PAGE.margin;
   const width = doc.page.width - PAGE.margin * 2;
-  const cols = { sno: width * 0.06, particulars: width * 0.54, qty: width * 0.12, rate: width * 0.13, amount: width * 0.15 };
+  const cols = {
+    sno: width * 0.06,
+    particulars: width * 0.54,
+    qty: width * 0.12,
+    rate: width * 0.13,
+    amount: width * 0.15,
+  };
   const rowH = 15;
 
   const headerY = doc.y;
   doc.rect(left, headerY, width, rowH).fillAndStroke("#F3F4F6", BORDER);
   doc.font("Helvetica-Bold").fontSize(8).fillColor(INK);
   let x = left;
-  doc.text("S.No", x + 2, headerY + 4, { width: cols.sno - 4 }); x += cols.sno;
-  doc.text("Particulars", x + 2, headerY + 4, { width: cols.particulars - 4 }); x += cols.particulars;
-  doc.text("Qty", x, headerY + 4, { width: cols.qty - 4, align: "right" }); x += cols.qty;
-  doc.text("Rate", x, headerY + 4, { width: cols.rate - 4, align: "right" }); x += cols.rate;
-  doc.text("Amount", x, headerY + 4, { width: cols.amount - 6, align: "right" });
+  doc.text("S.No", x + 2, headerY + 4, { width: cols.sno - 4 });
+  x += cols.sno;
+  doc.text("Particulars", x + 2, headerY + 4, { width: cols.particulars - 4 });
+  x += cols.particulars;
+  doc.text("Qty", x, headerY + 4, { width: cols.qty - 4, align: "right" });
+  x += cols.qty;
+  doc.text("Rate", x, headerY + 4, { width: cols.rate - 4, align: "right" });
+  x += cols.rate;
+  doc.text("Amount", x, headerY + 4, {
+    width: cols.amount - 6,
+    align: "right",
+  });
 
   doc.font("Helvetica").fontSize(8).fillColor(INK);
   let y = headerY + rowH;
   const minBodyH = 90;
   const bodyTop = y;
   lines.forEach((line, i) => {
-    const signedAmount = line.line_type === "deduction" ? -Number(line.amount) : Number(line.amount);
+    const signedAmount =
+      line.line_type === "deduction"
+        ? -Number(line.amount)
+        : Number(line.amount);
     x = left;
     const rowTop = y;
-    doc.text(String(i + 1) + ".", x + 2, rowTop + 3, { width: cols.sno - 4 }); x += cols.sno;
-    doc.text(line.particulars, x + 2, rowTop + 3, { width: cols.particulars - 4 }); x += cols.particulars;
-    doc.text(String(line.qty), x, rowTop + 3, { width: cols.qty - 4, align: "right" }); x += cols.qty;
-    doc.text(money(line.rate), x, rowTop + 3, { width: cols.rate - 4, align: "right" }); x += cols.rate;
-    doc.text(money(signedAmount), x, rowTop + 3, { width: cols.amount - 6, align: "right" });
+    doc.text(String(i + 1) + ".", x + 2, rowTop + 3, { width: cols.sno - 4 });
+    x += cols.sno;
+    doc.text(line.particulars, x + 2, rowTop + 3, {
+      width: cols.particulars - 4,
+    });
+    x += cols.particulars;
+    doc.text(String(line.qty), x, rowTop + 3, {
+      width: cols.qty - 4,
+      align: "right",
+    });
+    x += cols.qty;
+    doc.text(money(line.rate), x, rowTop + 3, {
+      width: cols.rate - 4,
+      align: "right",
+    });
+    x += cols.rate;
+    doc.text(money(signedAmount), x, rowTop + 3, {
+      width: cols.amount - 6,
+      align: "right",
+    });
     y = Math.max(y + rowH, doc.y + 4);
   });
   const bodyH = Math.max(minBodyH, y - bodyTop);
   y = bodyTop + bodyH;
 
   // Grid lines
-  doc.moveTo(left, headerY).lineTo(left, y).strokeColor(BORDER).lineWidth(0.6).stroke();
+  doc
+    .moveTo(left, headerY)
+    .lineTo(left, y)
+    .strokeColor(BORDER)
+    .lineWidth(0.6)
+    .stroke();
   let gx = left;
-  for (const w of [cols.sno, cols.particulars, cols.qty, cols.rate, cols.amount]) {
+  for (const w of [
+    cols.sno,
+    cols.particulars,
+    cols.qty,
+    cols.rate,
+    cols.amount,
+  ]) {
     gx += w;
-    doc.moveTo(gx, headerY).lineTo(gx, y).strokeColor(BORDER).lineWidth(0.6).stroke();
+    doc
+      .moveTo(gx, headerY)
+      .lineTo(gx, y)
+      .strokeColor(BORDER)
+      .lineWidth(0.6)
+      .stroke();
   }
-  doc.moveTo(left, headerY).lineTo(left + width, headerY).strokeColor(BORDER).lineWidth(0.6).stroke();
-  doc.moveTo(left, bodyTop).lineTo(left + width, bodyTop).strokeColor(BORDER).lineWidth(0.6).stroke();
-  doc.moveTo(left, y).lineTo(left + width, y).strokeColor(BORDER).lineWidth(0.6).stroke();
+  doc
+    .moveTo(left, headerY)
+    .lineTo(left + width, headerY)
+    .strokeColor(BORDER)
+    .lineWidth(0.6)
+    .stroke();
+  doc
+    .moveTo(left, bodyTop)
+    .lineTo(left + width, bodyTop)
+    .strokeColor(BORDER)
+    .lineWidth(0.6)
+    .stroke();
+  doc
+    .moveTo(left, y)
+    .lineTo(left + width, y)
+    .strokeColor(BORDER)
+    .lineWidth(0.6)
+    .stroke();
 
   doc.y = y;
   doc.x = left;
@@ -547,10 +797,21 @@ function drawTaxSummary(doc: Doc, printable: PrintableDoc) {
   const row = (label: string, amount: number, bold = false) => {
     const y = doc.y;
     doc.rect(left, y, width, rowH).stroke(BORDER);
-    doc.moveTo(left + labelW, y).lineTo(left + labelW, y + rowH).strokeColor(BORDER).lineWidth(0.6).stroke();
-    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(8).fillColor(INK)
+    doc
+      .moveTo(left + labelW, y)
+      .lineTo(left + labelW, y + rowH)
+      .strokeColor(BORDER)
+      .lineWidth(0.6)
+      .stroke();
+    doc
+      .font(bold ? "Helvetica-Bold" : "Helvetica")
+      .fontSize(8)
+      .fillColor(INK)
       .text(label, left, y + 3, { width: labelW - 6, align: "right" })
-      .text(money(amount), left + labelW, y + 3, { width: amountW - 6, align: "right" });
+      .text(money(amount), left + labelW, y + 3, {
+        width: amountW - 6,
+        align: "right",
+      });
     doc.y = y + rowH;
   };
 
@@ -572,8 +833,16 @@ function drawAmountInWordsAndNotes(doc: Doc, printable: PrintableDoc) {
   const left = PAGE.margin;
   const width = doc.page.width - PAGE.margin * 2;
 
-  doc.font("Helvetica-Oblique").fontSize(8).fillColor(INK)
-    .text(`Amount In Words : ${amountInWords(printable.grandTotal)}`, left, doc.y, { width });
+  doc
+    .font("Helvetica-Oblique")
+    .fontSize(8)
+    .fillColor(INK)
+    .text(
+      `Amount In Words : ${amountInWords(printable.grandTotal)}`,
+      left,
+      doc.y,
+      { width },
+    );
   doc.moveDown(0.3);
 
   doc.font("Helvetica").fontSize(7.5).fillColor(INK);
@@ -581,14 +850,27 @@ function drawAmountInWordsAndNotes(doc: Doc, printable: PrintableDoc) {
 
   const noteY = doc.y;
   doc.text(MSME_NOTE, left, noteY, { width: width * 0.65 });
-  doc.font("Helvetica").fontSize(7.5).text(`for ${COMPANY_NAME}.`, left + width * 0.65, noteY, { width: width * 0.35, align: "right" });
+  doc
+    .font("Helvetica")
+    .fontSize(7.5)
+    .text(`for ${COMPANY_NAME}.`, left + width * 0.65, noteY, {
+      width: width * 0.35,
+      align: "right",
+    });
   doc.text(ENTREPRENEURS_MEMO_NOTE, left, doc.y, { width: width * 0.65 });
 
   doc.moveDown(1.4);
-  doc.font("Helvetica-Bold").fontSize(7.5).text("Authorised Signatory", left, doc.y, { width, align: "right" });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(7.5)
+    .text("Authorised Signatory", left, doc.y, { width, align: "right" });
   doc.moveDown(0.4);
 
-  doc.font("Helvetica").fontSize(7).fillColor(MUTED).text(TDS_NOTE, left, doc.y, { width });
+  doc
+    .font("Helvetica")
+    .fontSize(7)
+    .fillColor(MUTED)
+    .text(TDS_NOTE, left, doc.y, { width });
 }
 
 function drawFooter(doc: Doc, withLetterhead: boolean) {
@@ -598,18 +880,30 @@ function drawFooter(doc: Doc, withLetterhead: boolean) {
   }
   const left = PAGE.margin;
   const width = doc.page.width - PAGE.margin * 2;
-  doc.font("Helvetica").fontSize(7).fillColor(MUTED)
-    .text(`This is a system-generated invoice. Generated: ${generatedTimestamp()}`, left, doc.page.height - PAGE.margin - 12, { width });
+  doc
+    .font("Helvetica")
+    .fontSize(7)
+    .fillColor(MUTED)
+    .text(
+      `This is a system-generated invoice. Generated: ${generatedTimestamp()}`,
+      left,
+      doc.page.height - PAGE.margin - 12,
+      { width },
+    );
 }
 
 function renderPdf(
   printable: PrintableDoc,
   lines: LineRow[],
   costCentre: CostCentreRow | undefined,
-  withLetterhead: boolean
+  withLetterhead: boolean,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: PAGE.size, margin: PAGE.margin, bufferPages: true });
+    const doc = new PDFDocument({
+      size: PAGE.size,
+      margin: PAGE.margin,
+      bufferPages: true,
+    });
     const chunks: Buffer[] = [];
     doc.on("data", (c: Buffer) => chunks.push(c));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -627,14 +921,23 @@ function renderPdf(
   });
 }
 
-async function generateInvoicePdf(invoiceId: string, withLetterhead = true): Promise<Buffer> {
+async function generateInvoicePdf(
+  invoiceId: string,
+  withLetterhead = true,
+): Promise<Buffer> {
   const { doc, lines, costCentre } = await loadInvoice(invoiceId);
   return renderPdf(doc, lines, costCentre, withLetterhead);
 }
 
-async function generateCreditNotePdf(creditNoteId: string, withLetterhead = true): Promise<Buffer> {
+async function generateCreditNotePdf(
+  creditNoteId: string,
+  withLetterhead = true,
+): Promise<Buffer> {
   const { doc, lines, costCentre } = await loadCreditNote(creditNoteId);
   return renderPdf(doc, lines, costCentre, withLetterhead);
 }
 
-export const clientBillingPdfService = { generateInvoicePdf, generateCreditNotePdf };
+export const clientBillingPdfService = {
+  generateInvoicePdf,
+  generateCreditNotePdf,
+};

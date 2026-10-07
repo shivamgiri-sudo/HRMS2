@@ -1,26 +1,26 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll } from "vitest";
 
 // E2E test scenarios for customization system
-describe('Customization E2E Scenarios', () => {
-  describe('Scenario 1: Mumbai Branch Extended Leave', () => {
-    it('should apply branch-specific leave policy', () => {
+describe("Customization E2E Scenarios", () => {
+  describe("Scenario 1: Mumbai Branch Extended Leave", () => {
+    it("should apply branch-specific leave policy", () => {
       // Given: Mumbai branch rule (max_days_per_year: 15)
       const baseLeaveType = {
-        id: 'casual-leave',
-        leave_name: 'Casual Leave',
+        id: "casual-leave",
+        leave_name: "Casual Leave",
         max_days_per_year: 12,
       };
 
       const mumbaiRule = {
-        branch_ids: ['mumbai-branch-id'],
-        config_type: 'override',
+        branch_ids: ["mumbai-branch-id"],
+        config_type: "override",
         config_data: { max_days_per_year: 15 },
         priority: 10,
       };
 
       const mumbaiEmployee = {
-        employeeId: 'emp-mumbai-1',
-        branchId: 'mumbai-branch-id',
+        employeeId: "emp-mumbai-1",
+        branchId: "mumbai-branch-id",
       };
 
       // When: Rule applied
@@ -33,19 +33,19 @@ describe('Customization E2E Scenarios', () => {
       expect(effectiveConfig.max_days_per_year).toBe(15);
     });
 
-    it('should NOT apply to Delhi branch', () => {
+    it("should NOT apply to Delhi branch", () => {
       const baseLeaveType = {
-        id: 'casual-leave',
+        id: "casual-leave",
         max_days_per_year: 12,
       };
 
       const mumbaiRule = {
-        branch_ids: ['mumbai-branch-id'],
+        branch_ids: ["mumbai-branch-id"],
         config_data: { max_days_per_year: 15 },
       };
 
       const delhiEmployee = {
-        branchId: 'delhi-branch-id',
+        branchId: "delhi-branch-id",
       };
 
       // When: Rule NOT matched
@@ -59,42 +59,42 @@ describe('Customization E2E Scenarios', () => {
     });
   });
 
-  describe('Scenario 2: Sales Travel Allowance', () => {
-    it('should add travel allowance for Sales dept', () => {
+  describe("Scenario 2: Sales Travel Allowance", () => {
+    it("should add travel allowance for Sales dept", () => {
       // Given: Sales dept rule (extend components)
       const baseComponents = [
-        { code: 'BASIC', amount: 10000 },
-        { code: 'HRA', amount: 5000 },
+        { code: "BASIC", amount: 10000 },
+        { code: "HRA", amount: 5000 },
       ];
 
       const salesRule = {
-        department_ids: ['sales-dept-id'],
-        config_type: 'extend',
+        department_ids: ["sales-dept-id"],
+        config_type: "extend",
         config_data: {
-          additional_components: [
-            { code: 'TRAVEL', amount: 5000 },
-          ],
+          additional_components: [{ code: "TRAVEL", amount: 5000 }],
         },
       };
 
       const salesEmployee = {
-        departmentId: 'sales-dept-id',
+        departmentId: "sales-dept-id",
       };
 
       // When: Rule applied
-      const matches = salesRule.department_ids.includes(salesEmployee.departmentId);
+      const matches = salesRule.department_ids.includes(
+        salesEmployee.departmentId,
+      );
       const effectiveComponents = matches
         ? [...baseComponents, ...salesRule.config_data.additional_components]
         : baseComponents;
 
       // Then: Sales employee has 3 components
       expect(effectiveComponents).toHaveLength(3);
-      expect(effectiveComponents[2].code).toBe('TRAVEL');
+      expect(effectiveComponents[2].code).toBe("TRAVEL");
     });
   });
 
-  describe('Scenario 3: BPO Flexible Attendance', () => {
-    it('should merge grace period for BPO process', () => {
+  describe("Scenario 3: BPO Flexible Attendance", () => {
+    it("should merge grace period for BPO process", () => {
       // Given: BPO process rule (merge policy)
       const basePolicy = {
         grace_period_minutes: 0,
@@ -103,8 +103,8 @@ describe('Customization E2E Scenarios', () => {
       };
 
       const bpoRule = {
-        process_ids: ['bpo-process-id'],
-        config_type: 'merge',
+        process_ids: ["bpo-process-id"],
+        config_type: "merge",
         config_data: {
           grace_period_minutes: 15,
           allow_self_regularization: true,
@@ -112,7 +112,7 @@ describe('Customization E2E Scenarios', () => {
       };
 
       const bpoEmployee = {
-        processId: 'bpo-process-id',
+        processId: "bpo-process-id",
       };
 
       // When: Rule applied
@@ -128,18 +128,18 @@ describe('Customization E2E Scenarios', () => {
     });
   });
 
-  describe('Scenario 4: Multi-Dimensional Rule', () => {
-    it('should apply when ALL dimensions match', () => {
+  describe("Scenario 4: Multi-Dimensional Rule", () => {
+    it("should apply when ALL dimensions match", () => {
       // Given: Senior Sales Manager rule (dept + designation)
       const rule = {
-        department_ids: ['sales-dept-id'],
-        designation_ids: ['senior-manager-id'],
+        department_ids: ["sales-dept-id"],
+        designation_ids: ["senior-manager-id"],
         config_data: { max_days_per_year: 30 },
       };
 
       const seniorSalesManager = {
-        departmentId: 'sales-dept-id',
-        designationId: 'senior-manager-id',
+        departmentId: "sales-dept-id",
+        designationId: "senior-manager-id",
       };
 
       // When: Both dimensions match
@@ -151,15 +151,15 @@ describe('Customization E2E Scenarios', () => {
       expect(matches).toBe(true);
     });
 
-    it('should NOT apply when one dimension fails', () => {
+    it("should NOT apply when one dimension fails", () => {
       const rule = {
-        department_ids: ['sales-dept-id'],
-        designation_ids: ['senior-manager-id'],
+        department_ids: ["sales-dept-id"],
+        designation_ids: ["senior-manager-id"],
       };
 
       const juniorSalesEmployee = {
-        departmentId: 'sales-dept-id',
-        designationId: 'junior-id', // Different designation
+        departmentId: "sales-dept-id",
+        designationId: "junior-id", // Different designation
       };
 
       // When: Only one dimension matches
@@ -172,8 +172,8 @@ describe('Customization E2E Scenarios', () => {
     });
   });
 
-  describe('Scenario 5: Priority Resolution', () => {
-    it('should apply highest priority rule', () => {
+  describe("Scenario 5: Priority Resolution", () => {
+    it("should apply highest priority rule", () => {
       // Given: Multiple conflicting rules
       const baseConfig = { value: 1 };
 
@@ -194,7 +194,7 @@ describe('Customization E2E Scenarios', () => {
 
       // When: All rules apply (sorted by priority)
       const rules = [globalRule, branchRule, departmentRule].sort(
-        (a, b) => a.priority - b.priority
+        (a, b) => a.priority - b.priority,
       );
 
       let result = { ...baseConfig };
@@ -207,14 +207,14 @@ describe('Customization E2E Scenarios', () => {
     });
   });
 
-  describe('Scenario 6: Date Range', () => {
-    it('should apply rule within date range', () => {
+  describe("Scenario 6: Date Range", () => {
+    it("should apply rule within date range", () => {
       const rule = {
-        effective_from: '2026-01-01',
-        effective_to: '2026-12-31',
+        effective_from: "2026-01-01",
+        effective_to: "2026-12-31",
       };
 
-      const currentDate = new Date('2026-06-15');
+      const currentDate = new Date("2026-06-15");
 
       // When: Current date within range
       const isActive =
@@ -225,13 +225,13 @@ describe('Customization E2E Scenarios', () => {
       expect(isActive).toBe(true);
     });
 
-    it('should NOT apply rule outside date range', () => {
+    it("should NOT apply rule outside date range", () => {
       const rule = {
-        effective_from: '2026-01-01',
-        effective_to: '2026-12-31',
+        effective_from: "2026-01-01",
+        effective_to: "2026-12-31",
       };
 
-      const futureDate = new Date('2027-01-01');
+      const futureDate = new Date("2027-01-01");
 
       // When: Current date outside range
       const isActive =
@@ -243,18 +243,18 @@ describe('Customization E2E Scenarios', () => {
     });
   });
 
-  describe('Scenario 7: Caching', () => {
-    it('should use same cache key for same request', () => {
+  describe("Scenario 7: Caching", () => {
+    it("should use same cache key for same request", () => {
       const request1 = {
-        employeeId: 'emp-123',
-        entityType: 'leave_type',
-        entityId: 'casual-leave',
+        employeeId: "emp-123",
+        entityType: "leave_type",
+        entityId: "casual-leave",
       };
 
       const request2 = {
-        employeeId: 'emp-123',
-        entityType: 'leave_type',
-        entityId: 'casual-leave',
+        employeeId: "emp-123",
+        entityType: "leave_type",
+        entityId: "casual-leave",
       };
 
       const key1 = `${request1.employeeId}:${request1.entityType}:${request1.entityId}`;
@@ -263,17 +263,17 @@ describe('Customization E2E Scenarios', () => {
       expect(key1).toBe(key2);
     });
 
-    it('should use different cache keys for different employees', () => {
+    it("should use different cache keys for different employees", () => {
       const request1 = {
-        employeeId: 'emp-123',
-        entityType: 'leave_type',
-        entityId: 'casual-leave',
+        employeeId: "emp-123",
+        entityType: "leave_type",
+        entityId: "casual-leave",
       };
 
       const request2 = {
-        employeeId: 'emp-456',
-        entityType: 'leave_type',
-        entityId: 'casual-leave',
+        employeeId: "emp-456",
+        entityType: "leave_type",
+        entityId: "casual-leave",
       };
 
       const key1 = `${request1.employeeId}:${request1.entityType}:${request1.entityId}`;

@@ -28,14 +28,25 @@ const actuals = (amount: number) => ({
   byProcess: new Map([[PROC, amount]]),
   byCostCentre: new Map([["cc-1", amount]]),
 });
-const empty = () => ({ byBranch: new Map(), byProcess: new Map(), byCostCentre: new Map() });
+const empty = () => ({
+  byBranch: new Map(),
+  byProcess: new Map(),
+  byCostCentre: new Map(),
+});
 
 function component(key: string, field: string, order: number, subtotal = 0) {
   return {
-    component_key: key, display_name: key, section_key: key.startsWith("operating") ? "profitability" : "cost",
-    parent_component_key: null, display_order: order, component_type: subtotal ? "SUBTOTAL" : "SOURCE_ACTUAL",
-    source_field: field, format_type: field.endsWith("Pct") ? "PERCENTAGE" : "CURRENCY", sign_convention: "+",
-    is_subtotal: subtotal, active_status: 1,
+    component_key: key,
+    display_name: key,
+    section_key: key.startsWith("operating") ? "profitability" : "cost",
+    parent_component_key: null,
+    display_order: order,
+    component_type: subtotal ? "SUBTOTAL" : "SOURCE_ACTUAL",
+    source_field: field,
+    format_type: field.endsWith("Pct") ? "PERCENTAGE" : "CURRENCY",
+    sign_convention: "+",
+    is_subtotal: subtotal,
+    active_status: 1,
   };
 }
 
@@ -54,11 +65,23 @@ function deps(overrides: Record<string, unknown> = {}) {
   return {
     getComponents: async () => COMPONENTS,
     getSummary: async () => ({
-      rows: [{
-        processId: PROC, processName: "Proc", branchId: BRANCH_ID, branchName: "Branch",
-        processStatus: "active", recognizedRevenue: 1000, agentSalary: 500,
-        dscSalary: 0, bmcSalary: 0, dscPeople: 0, bmcPeople: 0, dscNonPeople: 0, bmcNonPeople: 0,
-      }],
+      rows: [
+        {
+          processId: PROC,
+          processName: "Proc",
+          branchId: BRANCH_ID,
+          branchName: "Branch",
+          processStatus: "active",
+          recognizedRevenue: 1000,
+          agentSalary: 500,
+          dscSalary: 0,
+          bmcSalary: 0,
+          dscPeople: 0,
+          bmcPeople: 0,
+          dscNonPeople: 0,
+          bmcNonPeople: 0,
+        },
+      ],
       generatedAt: new Date().toISOString(),
     }),
     getProcessSummary: async () => ({ rows: [] }),
@@ -68,7 +91,11 @@ function deps(overrides: Record<string, unknown> = {}) {
     getInvoicedRevenue: async () => actuals(1000),
     getSeatRevenue: async () => ({ ...empty(), rateMissingByKey: empty() }),
     getPeopleCost: async () => ({
-      byBranch: new Map(), byProcess: new Map(), coverageByBranch: new Map(), coverageByProcess: new Map(), asOfDate: null,
+      byBranch: new Map(),
+      byProcess: new Map(),
+      coverageByBranch: new Map(),
+      coverageByProcess: new Map(),
+      asOfDate: null,
     }),
     getManualAdjustments: async () => new Map(),
     getRevenueEstimate: async () => empty(),
@@ -76,31 +103,49 @@ function deps(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
-const value = (statement: Awaited<ReturnType<typeof getStatement>>, key: string, column: string) =>
-  statement.rows.find((r) => r.componentKey === key)?.values[column];
+const value = (
+  statement: Awaited<ReturnType<typeof getStatement>>,
+  key: string,
+  column: string,
+) => statement.rows.find((r) => r.componentKey === key)?.values[column];
 
 describe("P&L Statement — GRN Committed (reserved) inside Indirect Cost, every month", () => {
   for (const viewBy of ["process", "branch"] as const) {
     const column = viewBy === "process" ? PROC : BRANCH_ID;
 
     it(`${viewBy} view: Total Indirect Cost = consumed 100 + reserved 40 = 140 for a closed month outside the window`, async () => {
-      const statement = await getStatement({ period: closedMonthOutsideWindow() } as never, viewBy, deps());
+      const statement = await getStatement(
+        { period: closedMonthOutsideWindow() } as never,
+        viewBy,
+        deps(),
+      );
       expect(value(statement, "total_idc", column)).toBe(140);
       expect(value(statement, "grn_consumed", column)).toBe(100);
       expect(value(statement, "grn_committed", column)).toBe(40);
       expect(value(statement, "total_cost", column)).toBe(640);
       // Operating Profit = Revenue − Total Cost, reserved inside Total Cost.
       expect(value(statement, "operating_profit", column)).toBe(1000 - 640);
-      expect(value(statement, "operating_profit_pct", column)).toBeCloseTo(36, 5);
+      expect(value(statement, "operating_profit_pct", column)).toBeCloseTo(
+        36,
+        5,
+      );
       expect(value(statement, "idc_pct", column)).toBeCloseTo(14, 5);
     });
   }
 
   it("shows GRN Consumed and GRN Committed (reserved) as breakdown lines directly under Total Indirect Cost", async () => {
-    const statement = await getStatement({ period: closedMonthOutsideWindow() } as never, "process", deps());
+    const statement = await getStatement(
+      { period: closedMonthOutsideWindow() } as never,
+      "process",
+      deps(),
+    );
     const keys = statement.rows.map((r) => r.componentKey);
     const idc = keys.indexOf("total_idc");
-    expect(keys.slice(idc, idc + 3)).toEqual(["total_idc", "grn_consumed", "grn_committed"]);
+    expect(keys.slice(idc, idc + 3)).toEqual([
+      "total_idc",
+      "grn_consumed",
+      "grn_committed",
+    ]);
     const consumed = statement.rows[idc + 1];
     const committed = statement.rows[idc + 2];
     expect(consumed.displayName).toBe("GRN Consumed");
@@ -112,20 +157,35 @@ describe("P&L Statement — GRN Committed (reserved) inside Indirect Cost, every
   });
 
   it("does not insert the breakdown twice once the component master carries these keys", async () => {
-    const statement = await getStatement({ period: closedMonthOutsideWindow() } as never, "process", deps({
-      getComponents: async () => [
-        ...COMPONENTS,
-        { ...component("grn_committed", "grnCommitted", 252), parent_component_key: "total_idc" },
-      ],
-    }));
-    expect(statement.rows.filter((r) => r.componentKey === "grn_committed")).toHaveLength(1);
-    expect(statement.rows.filter((r) => r.componentKey === "grn_consumed")).toHaveLength(1);
+    const statement = await getStatement(
+      { period: closedMonthOutsideWindow() } as never,
+      "process",
+      deps({
+        getComponents: async () => [
+          ...COMPONENTS,
+          {
+            ...component("grn_committed", "grnCommitted", 252),
+            parent_component_key: "total_idc",
+          },
+        ],
+      }),
+    );
+    expect(
+      statement.rows.filter((r) => r.componentKey === "grn_committed"),
+    ).toHaveLength(1);
+    expect(
+      statement.rows.filter((r) => r.componentKey === "grn_consumed"),
+    ).toHaveLength(1);
   });
 
   it("a caller that injects only the consumed reader gets no reserved (never the live reader)", async () => {
-    const statement = await getStatement({ period: closedMonthOutsideWindow() } as never, "process", deps({
-      getCommittedIndirectCost: undefined,
-    }));
+    const statement = await getStatement(
+      { period: closedMonthOutsideWindow() } as never,
+      "process",
+      deps({
+        getCommittedIndirectCost: undefined,
+      }),
+    );
     expect(value(statement, "total_idc", PROC)).toBe(100);
     expect(value(statement, "grn_committed", PROC)).toBe(0);
   });

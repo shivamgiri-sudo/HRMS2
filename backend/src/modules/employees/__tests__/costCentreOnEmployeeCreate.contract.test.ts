@@ -22,7 +22,8 @@ import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 
-const ORCHESTRATOR = "src/modules/employees/employee-creation-orchestrator.service.ts";
+const ORCHESTRATOR =
+  "src/modules/employees/employee-creation-orchestrator.service.ts";
 const EMPLOYEE_SERVICE = "src/modules/employees/employee.service.ts";
 
 /**
@@ -53,11 +54,15 @@ const stripComments = (s: string): string =>
  * truncating 18 values to 17 and failing a statement that balances perfectly. Depth-aware
  * splitting also keeps such a subquery as ONE value even when it later grows a comma.
  */
-function readParenGroup(src: string, openIdx: number): { body: string; end: number } {
+function readParenGroup(
+  src: string,
+  openIdx: number,
+): { body: string; end: number } {
   let depth = 0;
   for (let i = openIdx; i < src.length; i++) {
     if (src[i] === "(") depth++;
-    else if (src[i] === ")" && --depth === 0) return { body: src.slice(openIdx + 1, i), end: i };
+    else if (src[i] === ")" && --depth === 0)
+      return { body: src.slice(openIdx + 1, i), end: i };
   }
   throw new Error("unbalanced parentheses in INSERT INTO employees");
 }
@@ -70,10 +75,13 @@ function splitTopLevel(s: string): string[] {
   for (const ch of s) {
     if (ch === "(") depth++;
     else if (ch === ")") depth--;
-    if (ch === "," && depth === 0) { out.push(cur); cur = ""; } else cur += ch;
+    if (ch === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
   }
   out.push(cur);
-  return out.map(x => x.trim()).filter(Boolean);
+  return out.map((x) => x.trim()).filter(Boolean);
 }
 
 function employeeInsert(src: string): { columns: string[]; values: string[] } {
@@ -82,10 +90,16 @@ function employeeInsert(src: string): { columns: string[]; values: string[] } {
 
   const cols = readParenGroup(src, src.indexOf("(", at));
   const valuesAt = src.indexOf("VALUES", cols.end);
-  expect(valuesAt, "INSERT INTO employees has no VALUES list").toBeGreaterThanOrEqual(0);
+  expect(
+    valuesAt,
+    "INSERT INTO employees has no VALUES list",
+  ).toBeGreaterThanOrEqual(0);
   const vals = readParenGroup(src, src.indexOf("(", valuesAt));
 
-  return { columns: splitTopLevel(cols.body), values: splitTopLevel(vals.body) };
+  return {
+    columns: splitTopLevel(cols.body),
+    values: splitTopLevel(vals.body),
+  };
 }
 
 describe("cost centre is written when an employee is created", () => {
@@ -125,7 +139,9 @@ describe("cost centre is written when an employee is created", () => {
   it("an unresolvable cost centre leaves the employee unassigned instead of failing", () => {
     // Fail-open is correct HERE specifically: the alternative blocks a real joiner over a
     // reference-data gap. It must stay visible, hence the warning.
-    expect(orchestrator).toMatch(/costCentreId\s*=\s*\(ccRows\[0\][\s\S]{0,80}\?\?\s*null/);
+    expect(orchestrator).toMatch(
+      /costCentreId\s*=\s*\(ccRows\[0\][\s\S]{0,80}\?\?\s*null/,
+    );
     expect(
       orchestrator,
       "a silently unassigned cost centre is how 185 employees ended up NULL — warn on it",
@@ -139,7 +155,9 @@ describe("cost centre is written when an employee is created", () => {
       "updateEmployee sets cost_centre_id, so createEmployee omitting it means the same " +
         "field succeeds or is dropped depending only on which screen created the row",
     ).toContain("cost_centre_id");
-    expect(values.length, "createEmployee column/value count mismatch").toBe(columns.length);
+    expect(values.length, "createEmployee column/value count mismatch").toBe(
+      columns.length,
+    );
   });
 
   it("updateEmployee still writes the column it always did", () => {

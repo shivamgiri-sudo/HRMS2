@@ -28,7 +28,11 @@ import {
 } from "../src/modules/employees/universalDigitalFormFill.service.js";
 
 const DRY_RUN = process.argv.includes("--dry-run");
-const TEMPLATE_DIR = path.resolve(process.cwd(), "private-storage", "document-templates");
+const TEMPLATE_DIR = path.resolve(
+  process.cwd(),
+  "private-storage",
+  "document-templates",
+);
 const ACTOR = "system-template-registration";
 
 type Spec = {
@@ -46,23 +50,82 @@ type Spec = {
  * hand-fill and upload a scan is exactly the manual step this removes.
  */
 const SPECS: Spec[] = [
-  { code: "EMPLOYMENT_CONTRACT", name: "Employment Agreement", file: "EMPLOYMENT_CONTRACT-v1.docx", fillMode: "placeholder", category: "agreement", esign: true },
-  { code: "NDA_CONFIDENTIALITY", name: "Confidentiality and Non-Disclosure Agreement", file: "NDA_CONFIDENTIALITY-v1.docx", fillMode: "placeholder", category: "agreement", esign: true },
-  { code: "IT_COMPLIANCE", name: "IT Compliance Declaration", file: "IT_COMPLIANCE-v1.docx", fillMode: "placeholder", category: "declaration", esign: true },
-  { code: "BAMS_DECLARATION", name: "BAMS Declaration", file: "BAMS_DECLARATION-v1.docx", fillMode: "placeholder", category: "declaration", esign: true },
-  { code: "PI_PROCESSING_CONSENT", name: "Personal Information Processing Consent", file: "PI_PROCESSING_CONSENT-v1.docx", fillMode: "placeholder", category: "consent", esign: true },
-  { code: "ZERO_TOLERANCE_ACK", name: "Zero Tolerance Policy Acknowledgement", file: "ZERO_TOLERANCE_ACK-v1.docx", fillMode: "placeholder", category: "acknowledgement", esign: true },
-  { code: "EPF_DECLARATION", name: "EPF Declaration Form (Form 11)", file: "EPF_DECLARATION-v1.pdf", fillMode: "acroform", category: "statutory", esign: true },
-  { code: "EPF_NOMINATION_FORM2", name: "EPF & EPS Nomination and Declaration Form (Form 2)", file: "EPF_NOMINATION_FORM2-v1.pdf", fillMode: "acroform", category: "statutory", esign: true },
+  {
+    code: "EMPLOYMENT_CONTRACT",
+    name: "Employment Agreement",
+    file: "EMPLOYMENT_CONTRACT-v1.docx",
+    fillMode: "placeholder",
+    category: "agreement",
+    esign: true,
+  },
+  {
+    code: "NDA_CONFIDENTIALITY",
+    name: "Confidentiality and Non-Disclosure Agreement",
+    file: "NDA_CONFIDENTIALITY-v1.docx",
+    fillMode: "placeholder",
+    category: "agreement",
+    esign: true,
+  },
+  {
+    code: "IT_COMPLIANCE",
+    name: "IT Compliance Declaration",
+    file: "IT_COMPLIANCE-v1.docx",
+    fillMode: "placeholder",
+    category: "declaration",
+    esign: true,
+  },
+  {
+    code: "BAMS_DECLARATION",
+    name: "BAMS Declaration",
+    file: "BAMS_DECLARATION-v1.docx",
+    fillMode: "placeholder",
+    category: "declaration",
+    esign: true,
+  },
+  {
+    code: "PI_PROCESSING_CONSENT",
+    name: "Personal Information Processing Consent",
+    file: "PI_PROCESSING_CONSENT-v1.docx",
+    fillMode: "placeholder",
+    category: "consent",
+    esign: true,
+  },
+  {
+    code: "ZERO_TOLERANCE_ACK",
+    name: "Zero Tolerance Policy Acknowledgement",
+    file: "ZERO_TOLERANCE_ACK-v1.docx",
+    fillMode: "placeholder",
+    category: "acknowledgement",
+    esign: true,
+  },
+  {
+    code: "EPF_DECLARATION",
+    name: "EPF Declaration Form (Form 11)",
+    file: "EPF_DECLARATION-v1.pdf",
+    fillMode: "acroform",
+    category: "statutory",
+    esign: true,
+  },
+  {
+    code: "EPF_NOMINATION_FORM2",
+    name: "EPF & EPS Nomination and Declaration Form (Form 2)",
+    file: "EPF_NOMINATION_FORM2-v1.pdf",
+    fillMode: "acroform",
+    category: "statutory",
+    esign: true,
+  },
 ];
 
 const MIME: Record<string, string> = {
-  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".pdf": "application/pdf",
 };
 
 async function main() {
-  const missing = SPECS.filter((s) => !fs.existsSync(path.join(TEMPLATE_DIR, s.file)));
+  const missing = SPECS.filter(
+    (s) => !fs.existsSync(path.join(TEMPLATE_DIR, s.file)),
+  );
   if (missing.length) {
     console.error(`Template files are not on disk in ${TEMPLATE_DIR}:`);
     for (const s of missing) console.error(`  - ${s.file}`);
@@ -76,7 +139,8 @@ async function main() {
   for (const spec of SPECS) {
     const filePath = path.join(TEMPLATE_DIR, spec.file);
     const buffer = fs.readFileSync(filePath);
-    const mime = MIME[path.extname(spec.file).toLowerCase()] ?? "application/octet-stream";
+    const mime =
+      MIME[path.extname(spec.file).toLowerCase()] ?? "application/octet-stream";
 
     const [[existing]] = await db.execute<RowDataPacket[]>(
       `SELECT id, fill_mode, template_storage_path, requires_hr_upload
@@ -91,7 +155,9 @@ async function main() {
       : "NOT REGISTERED";
 
     if (DRY_RUN) {
-      console.log(`${spec.code.padEnd(24)} ${before}  ->  ${spec.fillMode} hr_upload=0 ${spec.file}  (${maps.length} maps)`);
+      console.log(
+        `${spec.code.padEnd(24)} ${before}  ->  ${spec.fillMode} hr_upload=0 ${spec.file}  (${maps.length} maps)`,
+      );
       continue;
     }
 
@@ -104,7 +170,15 @@ async function main() {
                 requires_candidate_esign = ?, requires_hr_upload = 0,
                 is_mandatory = 1, active_status = 1, updated_at = NOW()
           WHERE id = ?`,
-        [spec.name, spec.category, spec.fillMode, filePath, mime, spec.esign ? 1 : 0, templateId],
+        [
+          spec.name,
+          spec.category,
+          spec.fillMode,
+          filePath,
+          mime,
+          spec.esign ? 1 : 0,
+          templateId,
+        ],
       );
     } else {
       templateId = randomUUID();
@@ -115,7 +189,16 @@ async function main() {
             requires_candidate_esign, requires_hr_upload, requires_hr_verification,
             is_mandatory, active_status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 'v1', ?, ?, ?, 0, 1, 1, 1, NOW(), NOW())`,
-        [templateId, spec.code, spec.name, spec.category, spec.fillMode, filePath, mime, spec.esign ? 1 : 0],
+        [
+          templateId,
+          spec.code,
+          spec.name,
+          spec.category,
+          spec.fillMode,
+          filePath,
+          mime,
+          spec.esign ? 1 : 0,
+        ],
       );
     }
 
@@ -123,7 +206,7 @@ async function main() {
     const autofilled = maps.filter((m) => m.source_path).length;
     console.log(
       `${spec.code.padEnd(24)} ${before}  ->  ${spec.fillMode} ${spec.file}  ` +
-      `(${maps.length} maps, ${autofilled} auto-filled, ${maps.length - autofilled} completed by hand)`,
+        `(${maps.length} maps, ${autofilled} auto-filled, ${maps.length - autofilled} completed by hand)`,
     );
   }
 

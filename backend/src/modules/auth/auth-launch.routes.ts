@@ -5,7 +5,10 @@ import crypto, { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { authService } from "./auth.service.js";
 import { emailService } from "../communication/email.service.js";
@@ -21,8 +24,10 @@ import {
 } from "./launch-eligibility.js";
 
 const router = Router();
-const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) => fn(req, res).catch(next);
+const h =
+  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) =>
+    fn(req, res).catch(next);
 
 router.use(requireAuth);
 router.use(requireRole("admin"));
@@ -64,7 +69,11 @@ function resetUrl(token: string): string {
   return `${env.FRONTEND_URL.replace(/\/$/, "")}/reset-password?token=${encodeURIComponent(token)}`;
 }
 
-function inviteEmailHtml(input: { name: string; employeeCode?: string | null; link: string }) {
+function inviteEmailHtml(input: {
+  name: string;
+  employeeCode?: string | null;
+  link: string;
+}) {
   return `
   <div style="font-family:Arial,sans-serif;background:#f6f8fc;padding:24px;color:#0f172a">
     <div style="max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;overflow:hidden">
@@ -83,10 +92,13 @@ function inviteEmailHtml(input: { name: string; employeeCode?: string | null; li
   </div>`;
 }
 
-function inviteEmailText(input: { name: string; employeeCode?: string | null; link: string }) {
+function inviteEmailText(input: {
+  name: string;
+  employeeCode?: string | null;
+  link: string;
+}) {
   return `Dear ${input.name},\n\nYour MAS Callnet HRMS login has been created.\n${input.employeeCode ? `Employee Code: ${input.employeeCode}\n` : ""}\nSet your password here: ${input.link}\n\nThis link is valid for 24 hours. After setting your password, you can login using your Employee Code or official email ID.\n\nMAS Callnet HRMS`;
 }
-
 
 /**
  * The ONLY role this tool may grant.
@@ -97,13 +109,20 @@ function inviteEmailText(input: { name: string; employeeCode?: string | null; li
  */
 const BOOTSTRAP_GRANTABLE_ROLES: ReadonlySet<string> = new Set(["employee"]);
 
-async function assignRole(userId: string, roleKey: string, actorUserId: string) {
+async function assignRole(
+  userId: string,
+  roleKey: string,
+  actorUserId: string,
+) {
   // Hard allowlist. A privileged role must never be reachable from here, no
   // matter what a future caller passes in.
   if (!BOOTSTRAP_GRANTABLE_ROLES.has(roleKey)) {
     throw new Error(`launch bootstrap may not grant role '${roleKey}'`);
   }
-  const [roleRows] = await db.execute<RowDataPacket[]>("SELECT role_key FROM workforce_role_catalog WHERE role_key=? AND active_status=1 LIMIT 1", [roleKey]);
+  const [roleRows] = await db.execute<RowDataPacket[]>(
+    "SELECT role_key FROM workforce_role_catalog WHERE role_key=? AND active_status=1 LIMIT 1",
+    [roleKey],
+  );
   if (!roleRows[0]) return;
   // ON DUPLICATE KEY reactivation is safe only because the allowlist above keeps
   // this to the baseline role. It previously ran for inferred privileged roles,
@@ -118,7 +137,7 @@ async function assignRole(userId: string, roleKey: string, actorUserId: string) 
     `INSERT INTO user_roles (id, user_id, role_key, active_status, granted_by, granted_at)
      VALUES (?, ?, ?, 1, ?, NOW())
      ON DUPLICATE KEY UPDATE active_status = 1, granted_by = VALUES(granted_by), granted_at = VALUES(granted_at)`,
-    [randomUUID(), userId, roleKey, actorUserId]
+    [randomUUID(), userId, roleKey, actorUserId],
   );
 }
 
@@ -137,30 +156,44 @@ async function assignRole(userId: string, roleKey: string, actorUserId: string) 
  * If you need this for anything other than a KPI template lookup, you need the
  * approved mapping table instead.
  */
-function inferKpiRoleCodes(row: { designation_name?: string | null; department_name?: string | null }): string[] {
-  const text = `${row.designation_name ?? ""} ${row.department_name ?? ""}`.toLowerCase();
+function inferKpiRoleCodes(row: {
+  designation_name?: string | null;
+  department_name?: string | null;
+}): string[] {
+  const text =
+    `${row.designation_name ?? ""} ${row.department_name ?? ""}`.toLowerCase();
   const roles = new Set<string>(["employee"]);
   if (text.includes("payroll")) roles.add("payroll");
   if (text.includes("finance")) roles.add("finance");
   if (text.includes("wfm")) roles.add("wfm");
-  if (text.includes("trainer") || text.includes("training")) roles.add("trainer");
+  if (text.includes("trainer") || text.includes("training"))
+    roles.add("trainer");
   if (text.includes("quality") || text.includes("qa")) roles.add("qa");
   if (text.includes("recruit")) roles.add("recruiter");
   if (text.includes("hr")) roles.add("hr");
   if (text.includes("branch head")) roles.add("branch_head");
   if (text.includes("manager")) roles.add("process_manager");
-  if (text.includes("tl") || text.includes("team leader")) roles.add("team_leader");
+  if (text.includes("tl") || text.includes("team leader"))
+    roles.add("team_leader");
   return Array.from(roles);
 }
 
-async function createInboxForRole(roleKey: string, title: string, description: string, priority = "normal") {
+async function createInboxForRole(
+  roleKey: string,
+  title: string,
+  description: string,
+  priority = "normal",
+) {
   try {
-    const [users] = await db.execute<RowDataPacket[]>("SELECT DISTINCT user_id FROM user_roles WHERE role_key=? AND active_status=1 LIMIT 25", [roleKey]);
+    const [users] = await db.execute<RowDataPacket[]>(
+      "SELECT DISTINCT user_id FROM user_roles WHERE role_key=? AND active_status=1 LIMIT 25",
+      [roleKey],
+    );
     for (const user of users) {
       await db.execute(
         `INSERT INTO work_inbox_item (id, user_id, type, title, description, entity_type, action_url, priority)
          VALUES (?, ?, 'LAUNCH_READINESS', ?, ?, 'auth_user', '/settings/access-control', ?)`,
-        [randomUUID(), user.user_id, title, description, priority]
+        [randomUUID(), user.user_id, title, description, priority],
       );
     }
   } catch {
@@ -168,35 +201,56 @@ async function createInboxForRole(roleKey: string, title: string, description: s
   }
 }
 
-async function addJourney(employeeId: string, eventType: string, description: string, userId?: string) {
+async function addJourney(
+  employeeId: string,
+  eventType: string,
+  description: string,
+  userId?: string,
+) {
   try {
     await db.execute(
       `INSERT INTO employee_journey_log (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
        VALUES (?, ?, ?, CURDATE(), ?, 'AUTH', ?, ?)`,
-      [randomUUID(), employeeId, eventType, description, userId ?? null, JSON.stringify({ source: "launch_bootstrap" })]
+      [
+        randomUUID(),
+        employeeId,
+        eventType,
+        description,
+        userId ?? null,
+        JSON.stringify({ source: "launch_bootstrap" }),
+      ],
     );
   } catch {
     // Non-fatal: journey table may not exist in older deployments.
   }
 }
 
-router.get("/email-config", h(async (_req, res) => {
-  res.json({ success: true, data: emailService.safeConfig() });
-}));
+router.get(
+  "/email-config",
+  h(async (_req, res) => {
+    res.json({ success: true, data: emailService.safeConfig() });
+  }),
+);
 
-router.post("/email-config/test", h(async (req, res) => {
-  const to = normalizeEmail(req.body?.to);
-  if (!to) return res.status(400).json({ success: false, error: "Valid test email is required" });
+router.post(
+  "/email-config/test",
+  h(async (req, res) => {
+    const to = normalizeEmail(req.body?.to);
+    if (!to)
+      return res
+        .status(400)
+        .json({ success: false, error: "Valid test email is required" });
 
-  const link = env.FRONTEND_URL;
-  const result = await emailService.send({
-    to,
-    subject: "MAS HRMS email configuration test",
-    html: inviteEmailHtml({ name: "Admin", employeeCode: "TEST", link }),
-    text: inviteEmailText({ name: "Admin", employeeCode: "TEST", link }),
-  });
-  res.json({ success: true, data: result });
-}));
+    const link = env.FRONTEND_URL;
+    const result = await emailService.send({
+      to,
+      subject: "MAS HRMS email configuration test",
+      html: inviteEmailHtml({ name: "Admin", employeeCode: "TEST", link }),
+      text: inviteEmailText({ name: "Admin", employeeCode: "TEST", link }),
+    });
+    res.json({ success: true, data: result });
+  }),
+);
 
 /**
  * Readiness is now derived from the SAME resolver the bootstrap runs on, so the
@@ -207,204 +261,367 @@ router.post("/email-config/test", h(async (req, res) => {
  *
  * `verdict` is RED while any single active employee lacks a usable login path.
  */
-router.get("/launch-readiness", h(async (req, res) => {
-  const allowPersonalEmailFallback = String(req.query?.allowPersonalEmailFallback ?? "") === "true";
-  const [rows, authUserEmails] = await Promise.all([loadLaunchPopulation(), loadAuthUserEmailIndex()]);
-  const classified = rows.map((row) => classifyLaunchEmployee(row, authUserEmails, { allowPersonalEmailFallback }));
-  const summary = summariseLaunchEligibility(classified);
+router.get(
+  "/launch-readiness",
+  h(async (req, res) => {
+    const allowPersonalEmailFallback =
+      String(req.query?.allowPersonalEmailFallback ?? "") === "true";
+    const [rows, authUserEmails] = await Promise.all([
+      loadLaunchPopulation(),
+      loadAuthUserEmailIndex(),
+    ]);
+    const classified = rows.map((row) =>
+      classifyLaunchEmployee(row, authUserEmails, {
+        allowPersonalEmailFallback,
+      }),
+    );
+    const summary = summariseLaunchEligibility(classified);
 
-  res.json({
-    success: true,
-    data: {
-      ...summary,
-      // Retained so any existing caller keeps working — but computed from the
-      // resolver, so these numbers are now the true ones.
-      active_employees: summary.activePopulation,
-      employees_without_user: classified.filter((r) => r.authUserId === null).length,
-      employees_without_email: classified.filter((r) => r.loginEmail === null).length,
-      missing_branch: classified.filter((r) => !r.branch).length,
-      missing_process: classified.filter((r) => !r.process).length,
-    },
-  });
-}));
+    res.json({
+      success: true,
+      data: {
+        ...summary,
+        // Retained so any existing caller keeps working — but computed from the
+        // resolver, so these numbers are now the true ones.
+        active_employees: summary.activePopulation,
+        employees_without_user: classified.filter((r) => r.authUserId === null)
+          .length,
+        employees_without_email: classified.filter((r) => r.loginEmail === null)
+          .length,
+        missing_branch: classified.filter((r) => !r.branch).length,
+        missing_process: classified.filter((r) => !r.process).length,
+      },
+    });
+  }),
+);
 
 /**
  * The per-employee sheet behind the readiness aggregate: who is blocked, why,
  * and where they sit. Without this an admin can see "217 blocked" and have no
  * way to act on it.
  */
-router.get("/launch-readiness/employees", h(async (req, res) => {
-  const allowPersonalEmailFallback = String(req.query?.allowPersonalEmailFallback ?? "") === "true";
-  const stateFilter = String(req.query?.state ?? "").trim().toUpperCase();
-  const blockedOnly = String(req.query?.blockedOnly ?? "") === "true";
+router.get(
+  "/launch-readiness/employees",
+  h(async (req, res) => {
+    const allowPersonalEmailFallback =
+      String(req.query?.allowPersonalEmailFallback ?? "") === "true";
+    const stateFilter = String(req.query?.state ?? "")
+      .trim()
+      .toUpperCase();
+    const blockedOnly = String(req.query?.blockedOnly ?? "") === "true";
 
-  const [rows, authUserEmails] = await Promise.all([loadLaunchPopulation(), loadAuthUserEmailIndex()]);
-  let classified: LaunchEligibility[] = rows.map((row) =>
-    classifyLaunchEmployee(row, authUserEmails, { allowPersonalEmailFallback })
-  );
-  if (stateFilter) classified = classified.filter((r) => r.state === stateFilter);
-  if (blockedOnly) classified = classified.filter((r) => BLOCKING_STATES.has(r.state));
+    const [rows, authUserEmails] = await Promise.all([
+      loadLaunchPopulation(),
+      loadAuthUserEmailIndex(),
+    ]);
+    let classified: LaunchEligibility[] = rows.map((row) =>
+      classifyLaunchEmployee(row, authUserEmails, {
+        allowPersonalEmailFallback,
+      }),
+    );
+    if (stateFilter)
+      classified = classified.filter((r) => r.state === stateFilter);
+    if (blockedOnly)
+      classified = classified.filter((r) => BLOCKING_STATES.has(r.state));
 
-  res.json({ success: true, data: { count: classified.length, employees: classified } });
-}));
+    res.json({
+      success: true,
+      data: { count: classified.length, employees: classified },
+    });
+  }),
+);
 
-router.post("/bootstrap-existing-users", h(async (req, res) => {
-  const dryRun = req.body?.dryRun === true;
-  // Option C: a non-company address is usable but must be approved explicitly.
-  // Default false so no reset link is ever mailed to a personal inbox by accident.
-  const allowPersonalEmailFallback = req.body?.allowPersonalEmailFallback === true;
-  const runId = randomUUID();
+router.post(
+  "/bootstrap-existing-users",
+  h(async (req, res) => {
+    const dryRun = req.body?.dryRun === true;
+    // Option C: a non-company address is usable but must be approved explicitly.
+    // Default false so no reset link is ever mailed to a personal inbox by accident.
+    const allowPersonalEmailFallback =
+      req.body?.allowPersonalEmailFallback === true;
+    const runId = randomUUID();
 
-  // Same resolver, same population query as GET /launch-readiness.
-  const [employees, authUserEmails] = await Promise.all([loadLaunchPopulation(), loadAuthUserEmailIndex()]);
+    // Same resolver, same population query as GET /launch-readiness.
+    const [employees, authUserEmails] = await Promise.all([
+      loadLaunchPopulation(),
+      loadAuthUserEmailIndex(),
+    ]);
 
-  const result = { runId, created: 0, updated: 0, skipped: 0, failed: 0, kpiAssigned: 0, kpiMissing: 0, invitesQueued: 0 };
-  const skippedByState: Record<string, number> = {};
-  const hasKpiTables = await tableExists("kpi_employee_assignment") && await tableExists("kpi_role_template");
+    const result = {
+      runId,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      kpiAssigned: 0,
+      kpiMissing: 0,
+      invitesQueued: 0,
+    };
+    const skippedByState: Record<string, number> = {};
+    const hasKpiTables =
+      (await tableExists("kpi_employee_assignment")) &&
+      (await tableExists("kpi_role_template"));
 
-  for (const emp of employees) {
-    const eligibility = classifyLaunchEmployee(emp, authUserEmails, { allowPersonalEmailFallback });
-    const email = eligibility.loginEmail;
-    const employeeId = String(emp.id);
-    const employeeCode = String(emp.employee_code ?? "");
-    try {
-      // Skip on any state the bootstrap cannot resolve by itself. Previously this
-      // was a bare "no email or no code" test that silently lumped together very
-      // different problems; the state now says which one it is.
-      const unprovisionable: string[] = ["BLOCKED", "NO_EMPLOYEE_CODE", "NO_LOGIN_IDENTITY", "INVALID_EMAIL", "EMAIL_NEEDS_APPROVAL"];
-      if (!email || unprovisionable.includes(eligibility.state)) {
-        result.skipped++;
-        skippedByState[eligibility.state] = (skippedByState[eligibility.state] ?? 0) + 1;
-        if (!dryRun) await db.execute("INSERT INTO hrms_launch_bootstrap_log (id, run_id, employee_id, employee_code, status, message) VALUES (?, ?, ?, ?, 'skipped', ?)", [randomUUID(), runId, employeeId, employeeCode, `${eligibility.state}: ${eligibility.reason}`]);
-        continue;
-      }
-
-      const [existing] = await db.execute<RowDataPacket[]>("SELECT id FROM auth_user WHERE email=? LIMIT 1", [email]);
-
-      // employees.user_id can point at an auth_user row that does not exist. Verified
-      // live 2026-08-15: 51 active employees carry a dangling user_id, and they share
-      // just TWO values between them — 5af2cd7b-159e-46e0-ac05-605508347e3f alone is
-      // referenced by 177 employee rows. It is migration residue, not 51 real accounts.
-      //
-      // Trusting the column alone sent those employees down the "already provisioned"
-      // branch below, whose `UPDATE auth_user ... WHERE id=?` matches ZERO rows. The
-      // run then logged them as provisioned while they still had no account and could
-      // not log in — a silent no-op reported as success, on the one tool whose whole
-      // job is to confirm every employee can get in.
-      //
-      // Only 1 of the 51 reaches this line today; the other 50 are skipped above for
-      // having email 'NA'. That is exactly why this must be fixed now rather than when
-      // it bites: as HR fills in the 389 missing official emails, each of those rows
-      // stops being skipped and starts hitting this branch instead.
-      let userId: string | null = null;
-      if (emp.user_id) {
-        const [linked] = await db.execute<RowDataPacket[]>(
-          "SELECT id FROM auth_user WHERE id=? LIMIT 1",
-          [String(emp.user_id)],
-        );
-        if (linked[0]?.id) userId = String(emp.user_id);
-      }
-      let status: "created" | "updated" = "updated";
-      if (!userId && existing[0]?.id) userId = String(existing[0].id);
-
-      if (!userId) {
-        status = "created";
-        userId = randomUUID();
-        const hash = await bcrypt.hash(tempPassword(), 10);
-        if (!dryRun) await db.execute("INSERT INTO auth_user (id, email, password_hash, must_change_password) VALUES (?, ?, ?, 1)", [userId, email, hash]);
-      } else if (!dryRun) {
-        await db.execute("UPDATE auth_user SET must_change_password=1 WHERE id=?", [userId]);
-      }
-
-      if (!dryRun) {
-        await db.execute("UPDATE employees SET user_id=? WHERE id=?", [userId, employeeId]);
-        // Baseline access only. Privilege comes from the approved designation ->
-        // role -> scope mapping, never from a department name.
-        await assignRole(userId, "employee", req.authUser!.id);
-        await db.execute("INSERT INTO hrms_launch_invite_log (id, employee_id, user_id, email, invite_status, message) VALUES (?, ?, ?, ?, 'pending', ?)", [randomUUID(), employeeId, userId, email, `Account prepared on ${eligibility.emailSource} (${eligibility.companyEmail ? "company" : "approved personal"}). Invite email pending.`]);
-        result.invitesQueued++;
-        await addJourney(employeeId, "login_account_prepared", "HRMS login account prepared", req.authUser!.id);
-
-        if (hasKpiTables && emp.process_id) {
-          const roleCodes = inferKpiRoleCodes(emp);
-          const placeholders = roleCodes.map(() => "?").join(",");
-          const [templates] = await db.execute<RowDataPacket[]>(
-            `SELECT rt.id FROM kpi_role_template rt JOIN kpi_process_template pt ON pt.id=rt.process_template_id
-             WHERE pt.process_id=? AND pt.status='active' AND rt.status='active' AND rt.role_code IN (${placeholders})
-             ORDER BY FIELD(rt.role_code, ${placeholders}), pt.effective_from DESC LIMIT 1`,
-            [emp.process_id, ...roleCodes, ...roleCodes]
-          );
-          if (templates[0]) {
-            await db.execute("INSERT INTO kpi_employee_assignment (id, employee_id, process_id, role_template_id, effective_from, assignment_type, created_by) VALUES (UUID(), ?, ?, ?, CURDATE(), 'auto', ?) ON DUPLICATE KEY UPDATE effective_to=NULL", [employeeId, emp.process_id, templates[0].id, req.authUser!.id]);
-            result.kpiAssigned++;
-          } else {
-            result.kpiMissing++;
-            await createInboxForRole("hr", "KPI template missing during launch", `Employee ${employeeCode} has no active process-role KPI template.`, "high");
-          }
+    for (const emp of employees) {
+      const eligibility = classifyLaunchEmployee(emp, authUserEmails, {
+        allowPersonalEmailFallback,
+      });
+      const email = eligibility.loginEmail;
+      const employeeId = String(emp.id);
+      const employeeCode = String(emp.employee_code ?? "");
+      try {
+        // Skip on any state the bootstrap cannot resolve by itself. Previously this
+        // was a bare "no email or no code" test that silently lumped together very
+        // different problems; the state now says which one it is.
+        const unprovisionable: string[] = [
+          "BLOCKED",
+          "NO_EMPLOYEE_CODE",
+          "NO_LOGIN_IDENTITY",
+          "INVALID_EMAIL",
+          "EMAIL_NEEDS_APPROVAL",
+        ];
+        if (!email || unprovisionable.includes(eligibility.state)) {
+          result.skipped++;
+          skippedByState[eligibility.state] =
+            (skippedByState[eligibility.state] ?? 0) + 1;
+          if (!dryRun)
+            await db.execute(
+              "INSERT INTO hrms_launch_bootstrap_log (id, run_id, employee_id, employee_code, status, message) VALUES (?, ?, ?, ?, 'skipped', ?)",
+              [
+                randomUUID(),
+                runId,
+                employeeId,
+                employeeCode,
+                `${eligibility.state}: ${eligibility.reason}`,
+              ],
+            );
+          continue;
         }
 
-        await db.execute("INSERT INTO hrms_launch_bootstrap_log (id, run_id, employee_id, employee_code, status, message) VALUES (?, ?, ?, ?, ?, ?)", [randomUUID(), runId, employeeId, employeeCode, status, "Employee login account prepared"]);
+        const [existing] = await db.execute<RowDataPacket[]>(
+          "SELECT id FROM auth_user WHERE email=? LIMIT 1",
+          [email],
+        );
+
+        // employees.user_id can point at an auth_user row that does not exist. Verified
+        // live 2026-08-15: 51 active employees carry a dangling user_id, and they share
+        // just TWO values between them — 5af2cd7b-159e-46e0-ac05-605508347e3f alone is
+        // referenced by 177 employee rows. It is migration residue, not 51 real accounts.
+        //
+        // Trusting the column alone sent those employees down the "already provisioned"
+        // branch below, whose `UPDATE auth_user ... WHERE id=?` matches ZERO rows. The
+        // run then logged them as provisioned while they still had no account and could
+        // not log in — a silent no-op reported as success, on the one tool whose whole
+        // job is to confirm every employee can get in.
+        //
+        // Only 1 of the 51 reaches this line today; the other 50 are skipped above for
+        // having email 'NA'. That is exactly why this must be fixed now rather than when
+        // it bites: as HR fills in the 389 missing official emails, each of those rows
+        // stops being skipped and starts hitting this branch instead.
+        let userId: string | null = null;
+        if (emp.user_id) {
+          const [linked] = await db.execute<RowDataPacket[]>(
+            "SELECT id FROM auth_user WHERE id=? LIMIT 1",
+            [String(emp.user_id)],
+          );
+          if (linked[0]?.id) userId = String(emp.user_id);
+        }
+        let status: "created" | "updated" = "updated";
+        if (!userId && existing[0]?.id) userId = String(existing[0].id);
+
+        if (!userId) {
+          status = "created";
+          userId = randomUUID();
+          const hash = await bcrypt.hash(tempPassword(), 10);
+          if (!dryRun)
+            await db.execute(
+              "INSERT INTO auth_user (id, email, password_hash, must_change_password) VALUES (?, ?, ?, 1)",
+              [userId, email, hash],
+            );
+        } else if (!dryRun) {
+          await db.execute(
+            "UPDATE auth_user SET must_change_password=1 WHERE id=?",
+            [userId],
+          );
+        }
+
+        if (!dryRun) {
+          await db.execute("UPDATE employees SET user_id=? WHERE id=?", [
+            userId,
+            employeeId,
+          ]);
+          // Baseline access only. Privilege comes from the approved designation ->
+          // role -> scope mapping, never from a department name.
+          await assignRole(userId, "employee", req.authUser!.id);
+          await db.execute(
+            "INSERT INTO hrms_launch_invite_log (id, employee_id, user_id, email, invite_status, message) VALUES (?, ?, ?, ?, 'pending', ?)",
+            [
+              randomUUID(),
+              employeeId,
+              userId,
+              email,
+              `Account prepared on ${eligibility.emailSource} (${eligibility.companyEmail ? "company" : "approved personal"}). Invite email pending.`,
+            ],
+          );
+          result.invitesQueued++;
+          await addJourney(
+            employeeId,
+            "login_account_prepared",
+            "HRMS login account prepared",
+            req.authUser!.id,
+          );
+
+          if (hasKpiTables && emp.process_id) {
+            const roleCodes = inferKpiRoleCodes(emp);
+            const placeholders = roleCodes.map(() => "?").join(",");
+            const [templates] = await db.execute<RowDataPacket[]>(
+              `SELECT rt.id FROM kpi_role_template rt JOIN kpi_process_template pt ON pt.id=rt.process_template_id
+             WHERE pt.process_id=? AND pt.status='active' AND rt.status='active' AND rt.role_code IN (${placeholders})
+             ORDER BY FIELD(rt.role_code, ${placeholders}), pt.effective_from DESC LIMIT 1`,
+              [emp.process_id, ...roleCodes, ...roleCodes],
+            );
+            if (templates[0]) {
+              await db.execute(
+                "INSERT INTO kpi_employee_assignment (id, employee_id, process_id, role_template_id, effective_from, assignment_type, created_by) VALUES (UUID(), ?, ?, ?, CURDATE(), 'auto', ?) ON DUPLICATE KEY UPDATE effective_to=NULL",
+                [employeeId, emp.process_id, templates[0].id, req.authUser!.id],
+              );
+              result.kpiAssigned++;
+            } else {
+              result.kpiMissing++;
+              await createInboxForRole(
+                "hr",
+                "KPI template missing during launch",
+                `Employee ${employeeCode} has no active process-role KPI template.`,
+                "high",
+              );
+            }
+          }
+
+          await db.execute(
+            "INSERT INTO hrms_launch_bootstrap_log (id, run_id, employee_id, employee_code, status, message) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+              randomUUID(),
+              runId,
+              employeeId,
+              employeeCode,
+              status,
+              "Employee login account prepared",
+            ],
+          );
+        }
+        if (status === "created") result.created++;
+        else result.updated++;
+      } catch (error) {
+        result.failed++;
+        if (!dryRun)
+          await db.execute(
+            "INSERT INTO hrms_launch_bootstrap_log (id, run_id, employee_id, employee_code, status, message) VALUES (?, ?, ?, ?, 'failed', ?)",
+            [
+              randomUUID(),
+              runId,
+              employeeId,
+              employeeCode,
+              error instanceof Error ? error.message : String(error),
+            ],
+          );
       }
-      if (status === "created") result.created++; else result.updated++;
-    } catch (error) {
-      result.failed++;
-      if (!dryRun) await db.execute("INSERT INTO hrms_launch_bootstrap_log (id, run_id, employee_id, employee_code, status, message) VALUES (?, ?, ?, ?, 'failed', ?)", [randomUUID(), runId, employeeId, employeeCode, error instanceof Error ? error.message : String(error)]);
     }
-  }
 
-  res.json({ success: true, data: { ...result, skippedByState }, dryRun });
-}));
+    res.json({ success: true, data: { ...result, skippedByState }, dryRun });
+  }),
+);
 
-router.post("/send-invites", h(async (req, res) => {
-  if (!emailService.isConfigured()) {
-    return res.status(400).json({ success: false, error: "SMTP is not configured", data: emailService.safeConfig() });
-  }
+router.post(
+  "/send-invites",
+  h(async (req, res) => {
+    if (!emailService.isConfigured()) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "SMTP is not configured",
+          data: emailService.safeConfig(),
+        });
+    }
 
-  const limit = Math.min(Number(req.body?.limit ?? 100), 500);
-  const resend = req.body?.resend === true;
-  const whereStatus = resend ? "invite_status IN ('pending','failed','sent')" : "invite_status IN ('pending','failed')";
+    const limit = Math.min(Number(req.body?.limit ?? 100), 500);
+    const resend = req.body?.resend === true;
+    const whereStatus = resend
+      ? "invite_status IN ('pending','failed','sent')"
+      : "invite_status IN ('pending','failed')";
 
-  const [pendingRows] = await db.execute<InviteRow[]>(
-    `SELECT il.id, il.employee_id, il.user_id, il.email, e.employee_code, e.first_name, e.last_name
+    const [pendingRows] = await db.execute<InviteRow[]>(
+      `SELECT il.id, il.employee_id, il.user_id, il.email, e.employee_code, e.first_name, e.last_name
        FROM hrms_launch_invite_log il
        LEFT JOIN employees e ON e.id = il.employee_id
       WHERE ${whereStatus}
       ORDER BY il.created_at ASC
       ${sqlLimit(limit)}`,
-    []
-  );
+      [],
+    );
 
-  const result = { attempted: pendingRows.length, sent: 0, failed: 0, skipped: 0 };
+    const result = {
+      attempted: pendingRows.length,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+    };
 
-  for (const invite of pendingRows) {
-    try {
-      const email = normalizeEmail(invite.email);
-      if (!email || !invite.user_id) {
-        result.skipped++;
-        await db.execute("UPDATE hrms_launch_invite_log SET invite_status='skipped', message=? WHERE id=?", ["Missing email or user_id", invite.id]);
-        continue;
+    for (const invite of pendingRows) {
+      try {
+        const email = normalizeEmail(invite.email);
+        if (!email || !invite.user_id) {
+          result.skipped++;
+          await db.execute(
+            "UPDATE hrms_launch_invite_log SET invite_status='skipped', message=? WHERE id=?",
+            ["Missing email or user_id", invite.id],
+          );
+          continue;
+        }
+
+        const token = await authService.createPasswordResetTokenByUserId(
+          invite.user_id,
+          24,
+        );
+        const link = resetUrl(token);
+        const name = employeeName(invite);
+        await emailService.send({
+          to: email,
+          subject: "Set your MAS Callnet HRMS password",
+          html: inviteEmailHtml({
+            name,
+            employeeCode: invite.employee_code,
+            link,
+          }),
+          text: inviteEmailText({
+            name,
+            employeeCode: invite.employee_code,
+            link,
+          }),
+        });
+
+        await db.execute(
+          "UPDATE hrms_launch_invite_log SET invite_status='sent', message=? WHERE id=?",
+          ["Invite email sent with 24-hour reset link", invite.id],
+        );
+        await addJourney(
+          invite.employee_id,
+          "login_invite_sent",
+          "HRMS login invite email sent",
+          req.authUser!.id,
+        );
+        result.sent++;
+      } catch (error) {
+        result.failed++;
+        await db.execute(
+          "UPDATE hrms_launch_invite_log SET invite_status='failed', message=? WHERE id=?",
+          [error instanceof Error ? error.message : String(error), invite.id],
+        );
       }
-
-      const token = await authService.createPasswordResetTokenByUserId(invite.user_id, 24);
-      const link = resetUrl(token);
-      const name = employeeName(invite);
-      await emailService.send({
-        to: email,
-        subject: "Set your MAS Callnet HRMS password",
-        html: inviteEmailHtml({ name, employeeCode: invite.employee_code, link }),
-        text: inviteEmailText({ name, employeeCode: invite.employee_code, link }),
-      });
-
-      await db.execute("UPDATE hrms_launch_invite_log SET invite_status='sent', message=? WHERE id=?", ["Invite email sent with 24-hour reset link", invite.id]);
-      await addJourney(invite.employee_id, "login_invite_sent", "HRMS login invite email sent", req.authUser!.id);
-      result.sent++;
-    } catch (error) {
-      result.failed++;
-      await db.execute("UPDATE hrms_launch_invite_log SET invite_status='failed', message=? WHERE id=?", [error instanceof Error ? error.message : String(error), invite.id]);
     }
-  }
 
-  res.json({ success: true, data: result });
-}));
+    res.json({ success: true, data: result });
+  }),
+);
 
 export { router as authLaunchRouter };

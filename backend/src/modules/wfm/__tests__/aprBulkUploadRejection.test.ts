@@ -17,7 +17,10 @@ import { describe, expect, it, vi } from "vitest";
  */
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn() } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1" }; next(); },
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.authUser = { id: "u1" };
+    next();
+  },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: any, _res: any, next: any) => next(),
@@ -28,7 +31,8 @@ vi.mock("../attendance-engine.service.js", () => ({
   resolveHalfDayFloorMinutes: async () => 240,
 }));
 
-const { attendanceAprBulkRouter } = await import("../attendance-apr-bulk.routes.js");
+const { attendanceAprBulkRouter } =
+  await import("../attendance-apr-bulk.routes.js");
 
 function app() {
   const a = express();
@@ -38,7 +42,8 @@ function app() {
   a.use((_err: any, _req: any, res: any, _next: any) => {
     res.status(500).json({
       success: false,
-      message: "An unexpected server error occurred. Please quote reference deadbeef if you contact HR.",
+      message:
+        "An unexpected server error occurred. Please quote reference deadbeef if you contact HR.",
     });
   });
   return a;
@@ -50,7 +55,8 @@ describe("APR bulk upload rejects bad files with a reason", () => {
       .post("/api/wfm/attendance/apr-bulk-upload")
       .attach("file", Buffer.from("PK"), {
         filename: "apr.xlsx",
-        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        contentType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
 
     expect(res.status).toBe(400);
@@ -73,7 +79,9 @@ describe("APR bulk upload rejects bad files with a reason", () => {
   });
 
   it("still answers a missing file with the existing 400", async () => {
-    const res = await request(app()).post("/api/wfm/attendance/apr-bulk-upload");
+    const res = await request(app()).post(
+      "/api/wfm/attendance/apr-bulk-upload",
+    );
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/No CSV file uploaded/i);
   });

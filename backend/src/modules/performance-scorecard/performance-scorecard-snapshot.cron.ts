@@ -10,7 +10,11 @@ const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 function istHour(): number {
   return Number(
-    new Intl.DateTimeFormat("en-US", { hour: "numeric", hourCycle: "h23", timeZone: "Asia/Kolkata" }).format(new Date()),
+    new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      hourCycle: "h23",
+      timeZone: "Asia/Kolkata",
+    }).format(new Date()),
   );
 }
 
@@ -22,8 +26,11 @@ async function runPerformanceScorecardSnapshot(): Promise<void> {
     const yesterday = new Date(date);
     yesterday.setDate(yesterday.getDate() - 1);
     const targetDate = yesterday.toISOString().slice(0, 10);
-    const { written, errors } = await writeEmployeePerformanceSnapshots(targetDate);
-    console.log(`[performance-scorecard-cron] wrote ${written} snapshot rows for ${targetDate}`);
+    const { written, errors } =
+      await writeEmployeePerformanceSnapshots(targetDate);
+    console.log(
+      `[performance-scorecard-cron] wrote ${written} snapshot rows for ${targetDate}`,
+    );
     if (errors.length > 0) {
       console.error(
         `[performance-scorecard-cron] ${errors.length} employee(s) failed for ${targetDate}:`,
@@ -47,7 +54,9 @@ export function startPerformanceScorecardSnapshotScheduler(): void {
     void runPerformanceScorecardSnapshot();
   };
   _timer = setInterval(tick, CHECK_INTERVAL_MS);
-  console.log(`[performance-scorecard-cron] scheduler started (daily at ${RUN_AT_HOUR_IST}:00 IST)`);
+  console.log(
+    `[performance-scorecard-cron] scheduler started (daily at ${RUN_AT_HOUR_IST}:00 IST)`,
+  );
 }
 
 export function stopPerformanceScorecardSnapshotScheduler(): void {

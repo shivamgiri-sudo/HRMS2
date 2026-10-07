@@ -47,7 +47,10 @@ describe("nocRequired — salary-pending run-status check", () => {
 
     const result = await nocRequired(EMPLOYEE_ID);
 
-    expect(result).toEqual({ required: true, reason: "Salary pending for 2026-08" });
+    expect(result).toEqual({
+      required: true,
+      reason: "Salary pending for 2026-08",
+    });
   });
 
   it("returns not-required for an active employee without querying runs at all", async () => {

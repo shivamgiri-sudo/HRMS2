@@ -30,8 +30,16 @@ const assignSchema = z.object({
   rosterDate: z.string().regex(DATE_RE, "rosterDate must be YYYY-MM-DD"),
   shiftId: z.string().uuid().nullable().optional(),
   planId: z.string().uuid().nullable().optional(),
-  shiftStartTime: z.string().regex(TIME_RE, "shift_start_time must be HH:MM").nullable().optional(),
-  shiftEndTime: z.string().regex(TIME_RE, "shift_end_time must be HH:MM").nullable().optional(),
+  shiftStartTime: z
+    .string()
+    .regex(TIME_RE, "shift_start_time must be HH:MM")
+    .nullable()
+    .optional(),
+  shiftEndTime: z
+    .string()
+    .regex(TIME_RE, "shift_end_time must be HH:MM")
+    .nullable()
+    .optional(),
   branchName: z.string().trim().max(255).nullable().optional(),
   processName: z.string().trim().max(255).nullable().optional(),
   rosterStatus: z.string().max(50).default("Rostered"),
@@ -67,7 +75,9 @@ export const rosterController = {
   async createPlan(req: AuthenticatedRequest, res: Response) {
     const input = createPlanSchema.parse(req.body);
     const data = await rosterService.createPlan(input, req.authUser!.id);
-    return res.status(201).json({ success: true, data, message: "Roster plan created" });
+    return res
+      .status(201)
+      .json({ success: true, data, message: "Roster plan created" });
   },
 
   async listPlans(req: AuthenticatedRequest, res: Response) {
@@ -77,7 +87,10 @@ export const rosterController = {
   },
 
   async publishPlan(req: AuthenticatedRequest, res: Response) {
-    const data = await rosterService.publishPlan(req.params.id, req.authUser!.id);
+    const data = await rosterService.publishPlan(
+      req.params.id,
+      req.authUser!.id,
+    );
     return res.json({ success: true, data, message: "Roster plan published" });
   },
 
@@ -95,9 +108,11 @@ export const rosterController = {
         processName: input.processName,
         rosterStatus: input.rosterStatus,
       },
-      req.authUser!.id
+      req.authUser!.id,
     );
-    return res.status(201).json({ success: true, data, message: "Assignment saved" });
+    return res
+      .status(201)
+      .json({ success: true, data, message: "Assignment saved" });
   },
 
   async listAssignments(req: AuthenticatedRequest, res: Response) {
@@ -117,14 +132,24 @@ export const rosterController = {
     return res.json({ success: true, data });
   },
 
-  async uploadCsv(req: AuthenticatedRequest & { file?: Express.Multer.File }, res: Response) {
+  async uploadCsv(
+    req: AuthenticatedRequest & { file?: Express.Multer.File },
+    res: Response,
+  ) {
     if (!req.file) {
-      return res.status(400).json({ success: false, message: "No file uploaded. Attach a CSV as multipart field 'file'." });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "No file uploaded. Attach a CSV as multipart field 'file'.",
+        });
     }
 
     const planId = (req.query.planId as string)?.trim();
     if (!planId) {
-      return res.status(400).json({ success: false, message: "planId query param is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "planId query param is required" });
     }
 
     const csvText = req.file.buffer.toString("utf-8");
@@ -151,7 +176,11 @@ export const rosterController = {
       branchName: r.branch_name,
     }));
 
-    const result = await rosterService.bulkAssign(bulkRows, planId, req.authUser!.id);
+    const result = await rosterService.bulkAssign(
+      bulkRows,
+      planId,
+      req.authUser!.id,
+    );
 
     return res.json({
       success: true,

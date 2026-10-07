@@ -41,7 +41,19 @@
 
 /** Honorifics carried by ID documents and bank records alike. */
 const HONORIFICS = new Set([
-  "mr", "mrs", "ms", "miss", "dr", "prof", "shri", "sri", "smt", "late", "kum", "col", "capt",
+  "mr",
+  "mrs",
+  "ms",
+  "miss",
+  "dr",
+  "prof",
+  "shri",
+  "sri",
+  "smt",
+  "late",
+  "kum",
+  "col",
+  "capt",
 ]);
 
 /**
@@ -50,9 +62,37 @@ const HONORIFICS = new Set([
  * from carrying a match on its own.
  */
 const COMMON_SURNAMES = new Set([
-  "kumar", "singh", "devi", "sharma", "khan", "das", "roy", "patel", "shah", "gupta",
-  "yadav", "reddy", "rao", "nair", "mishra", "verma", "chauhan", "thakur", "jain", "bibi",
-  "begum", "ali", "ahmed", "prasad", "lal", "chand", "ram", "bai", "kaur", "pillai", "menon",
+  "kumar",
+  "singh",
+  "devi",
+  "sharma",
+  "khan",
+  "das",
+  "roy",
+  "patel",
+  "shah",
+  "gupta",
+  "yadav",
+  "reddy",
+  "rao",
+  "nair",
+  "mishra",
+  "verma",
+  "chauhan",
+  "thakur",
+  "jain",
+  "bibi",
+  "begum",
+  "ali",
+  "ahmed",
+  "prasad",
+  "lal",
+  "chand",
+  "ram",
+  "bai",
+  "kaur",
+  "pillai",
+  "menon",
 ]);
 
 export type NameMatchTier =
@@ -90,7 +130,10 @@ export interface NameMatchResult {
 export function normalizeIndianName(name?: string | null): string {
   let value = String(name ?? "").toLowerCase();
   value = value.replace(/\b[sdwc]\s*[\/.]?\s*o\b.*$/i, " ");
-  value = value.replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+  value = value
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!value) return "";
   return value
     .split(" ")
@@ -183,10 +226,15 @@ function sameWord(a: string, b: string): boolean {
 
 /** A surname shared by millions, whichever way it is spelled. */
 function isCommonSurname(word: string): boolean {
-  return COMMON_SURNAMES.has(word) || COMMON_SURNAME_KEYS.has(spellingKey(word));
+  return (
+    COMMON_SURNAMES.has(word) || COMMON_SURNAME_KEYS.has(spellingKey(word))
+  );
 }
 
-interface NameParts { words: string[]; initials: string[] }
+interface NameParts {
+  words: string[];
+  initials: string[];
+}
 
 function parts(normalized: string): NameParts {
   const tokens = normalized ? normalized.split(" ") : [];
@@ -218,19 +266,31 @@ function freeInitials(mine: NameParts, other: NameParts): string[] {
 }
 
 /** A word is satisfied by the same word, or by an unpaired initial standing for it. */
-function wordSatisfiedBy(word: string, other: NameParts, otherFreeInitials: string[]): boolean {
-  return other.words.some((candidate) => sameWord(candidate, word))
-    || otherFreeInitials.some((i) => word.startsWith(i));
+function wordSatisfiedBy(
+  word: string,
+  other: NameParts,
+  otherFreeInitials: string[],
+): boolean {
+  return (
+    other.words.some((candidate) => sameWord(candidate, word)) ||
+    otherFreeInitials.some((i) => word.startsWith(i))
+  );
 }
 
-export function classifyNameMatch(expected?: string | null, actual?: string | null): NameMatchResult {
+export function classifyNameMatch(
+  expected?: string | null,
+  actual?: string | null,
+): NameMatchResult {
   const left = normalizeIndianName(expected);
   const right = normalizeIndianName(actual);
   const base = { normalizedExpected: left, normalizedActual: right };
 
   if (!left || !right) {
     return {
-      ...base, tier: "unknown", score: 0, suspicious: false,
+      ...base,
+      tier: "unknown",
+      score: 0,
+      suspicious: false,
       reason: "one side has no usable name, so no conclusion can be drawn",
     };
   }
@@ -240,20 +300,36 @@ export function classifyNameMatch(expected?: string | null, actual?: string | nu
 
   if (!a.words.length || !b.words.length) {
     return {
-      ...base, tier: "unknown", score: 0, suspicious: false,
+      ...base,
+      tier: "unknown",
+      score: 0,
+      suspicious: false,
       reason: "one side is initials only, which cannot identify a person",
     };
   }
 
   if ([...a.words].sort().join(" ") === [...b.words].sort().join(" ")) {
-    return { ...base, tier: "exact", score: 100, suspicious: false, reason: "same substantive words" };
+    return {
+      ...base,
+      tier: "exact",
+      score: 100,
+      suspicious: false,
+      reason: "same substantive words",
+    };
   }
 
   // The same words, spelled the way another clerk would spell them.
-  if ([...a.words].map(spellingKey).sort().join(" ") === [...b.words].map(spellingKey).sort().join(" ")) {
+  if (
+    [...a.words].map(spellingKey).sort().join(" ") ===
+    [...b.words].map(spellingKey).sort().join(" ")
+  ) {
     return {
-      ...base, tier: "variant", score: 90, suspicious: false,
-      reason: "same substantive words, differing only in transliterated spelling",
+      ...base,
+      tier: "variant",
+      score: 90,
+      suspicious: false,
+      reason:
+        "same substantive words, differing only in transliterated spelling",
     };
   }
 
@@ -270,15 +346,23 @@ export function classifyNameMatch(expected?: string | null, actual?: string | nu
   // Counted one side at a time. Deduplicating the combined list only worked while
   // a match meant an identical string: once two spellings of one word can match,
   // they are two entries in a set and the score ran over 100.
-  const score = Math.round((
-    Math.max(
+  const score = Math.round(
+    (Math.max(
       a.words.filter((word) => wordSatisfiedBy(word, b, bFree)).length,
       b.words.filter((word) => wordSatisfiedBy(word, a, aFree)).length,
-    ) / Math.max(a.words.length, b.words.length)
-  ) * 100);
+    ) /
+      Math.max(a.words.length, b.words.length)) *
+      100,
+  );
 
   if (!matchedWords.length) {
-    return { ...base, tier: "none", score: 0, suspicious: true, reason: "no substantive word in common" };
+    return {
+      ...base,
+      tier: "none",
+      score: 0,
+      suspicious: true,
+      reason: "no substantive word in common",
+    };
   }
 
   // Agreement has to rest on something more distinctive than a surname millions
@@ -286,7 +370,10 @@ export function classifyNameMatch(expected?: string | null, actual?: string | nu
   const distinctive = matchedWords.some((word) => !isCommonSurname(word));
   if (!distinctive) {
     return {
-      ...base, tier: "weak", score, suspicious: true,
+      ...base,
+      tier: "weak",
+      score,
+      suspicious: true,
       reason: "the names agree only on a common surname",
     };
   }
@@ -294,16 +381,27 @@ export function classifyNameMatch(expected?: string | null, actual?: string | nu
   // One name being a fuller or abbreviated form of the other is the ordinary
   // shape of this variance: an added house name, a dropped father's name, an
   // abbreviated middle name.
-  const [shorter, longer, longerFree] = a.words.length <= b.words.length ? [a, b, bFree] : [b, a, aFree];
-  if (shorter.words.every((word) => wordSatisfiedBy(word, longer, longerFree))) {
+  const [shorter, longer, longerFree] =
+    a.words.length <= b.words.length ? [a, b, bFree] : [b, a, aFree];
+  if (
+    shorter.words.every((word) => wordSatisfiedBy(word, longer, longerFree))
+  ) {
     return {
-      ...base, tier: "variant", score: Math.max(score, 75), suspicious: false,
-      reason: "every substantive word of the shorter name appears in the longer, including a distinctive one",
+      ...base,
+      tier: "variant",
+      score: Math.max(score, 75),
+      suspicious: false,
+      reason:
+        "every substantive word of the shorter name appears in the longer, including a distinctive one",
     };
   }
 
   return {
-    ...base, tier: "weak", score, suspicious: true,
-    reason: "the names share a distinctive word but each carries words the other does not",
+    ...base,
+    tier: "weak",
+    score,
+    suspicious: true,
+    reason:
+      "the names share a distinctive word but each carries words the other does not",
   };
 }

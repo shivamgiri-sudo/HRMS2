@@ -25,12 +25,18 @@ function requestIdFrom(entry: AuditLogEntry): string | null {
   const headerValue = entry.req?.headers["x-request-id"];
   if (entry.request_id) return entry.request_id;
   if (typeof headerValue === "string") return headerValue.slice(0, 100);
-  if (Array.isArray(headerValue)) return String(headerValue[0] ?? "").slice(0, 100) || null;
+  if (Array.isArray(headerValue))
+    return String(headerValue[0] ?? "").slice(0, 100) || null;
   return null;
 }
 
 function userAgentFrom(entry: AuditLogEntry): string | null {
-  return String(entry.user_agent ?? entry.req?.headers["user-agent"] ?? "").slice(0, 512) || null;
+  return (
+    String(entry.user_agent ?? entry.req?.headers["user-agent"] ?? "").slice(
+      0,
+      512,
+    ) || null
+  );
 }
 
 function ipAddressFrom(entry: AuditLogEntry): string | null {
@@ -63,7 +69,7 @@ export async function writeAuditLog(entry: AuditLogEntry): Promise<void> {
         ipAddressFrom(entry),
         userAgentFrom(entry),
         jsonOrNull(entry.metadata ?? entry.change_summary),
-      ]
+      ],
     );
   } catch (err) {
     process.stderr.write(
@@ -75,7 +81,7 @@ export async function writeAuditLog(entry: AuditLogEntry): Promise<void> {
         actor_user_id: entry.actor_user_id,
         error: err instanceof Error ? err.message : String(err),
         timestamp: new Date().toISOString(),
-      }) + "\n"
+      }) + "\n",
     );
   }
 }
@@ -84,7 +90,9 @@ export async function writeAuditLog(entry: AuditLogEntry): Promise<void> {
  * Write a sensitive action to sensitive_action_log.
  * Non-throwing — audit failures must never break the primary operation.
  */
-export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<void> {
+export async function writeSensitiveActionLog(
+  entry: AuditLogEntry,
+): Promise<void> {
   try {
     await db.execute(
       `INSERT INTO sensitive_action_log
@@ -108,7 +116,7 @@ export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<voi
         entry.old_value_json ? JSON.stringify(entry.old_value_json) : null,
         entry.new_value_json ? JSON.stringify(entry.new_value_json) : null,
         entry.employee_id ?? null,
-      ]
+      ],
     );
   } catch (err) {
     process.stderr.write(
@@ -120,7 +128,7 @@ export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<voi
         actor_user_id: entry.actor_user_id,
         error: err instanceof Error ? err.message : String(err),
         timestamp: new Date().toISOString(),
-      }) + "\n"
+      }) + "\n",
     );
   }
 }

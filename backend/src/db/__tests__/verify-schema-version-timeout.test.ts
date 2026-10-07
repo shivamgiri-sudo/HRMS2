@@ -16,12 +16,15 @@
  * the whole operation resolves (with a clear error state, not a hang) well within
  * VERIFY_SCHEMA_TIMEOUT_MS even when the mocked connection's queries never settle.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ createConnection: vi.fn() }));
-vi.mock('mysql2/promise', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('mysql2/promise')>();
-  return { ...actual, default: { ...actual.default, createConnection: mocks.createConnection } };
+vi.mock("mysql2/promise", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("mysql2/promise")>();
+  return {
+    ...actual,
+    default: { ...actual.default, createConnection: mocks.createConnection },
+  };
 });
 
 /**
@@ -40,14 +43,14 @@ vi.mock('mysql2/promise', async (importOriginal) => {
  * exist only to get past the guard.
  */
 const FAKE_DB_ENV = {
-  DB_HOST: '127.0.0.1',
-  DB_PORT: '3306',
-  DB_USER: 'test-user',
-  DB_PASSWORD: 'test-password',
-  DB_NAME: 'test_db',
+  DB_HOST: "127.0.0.1",
+  DB_PORT: "3306",
+  DB_USER: "test-user",
+  DB_PASSWORD: "test-password",
+  DB_NAME: "test_db",
 } as const;
 
-describe('verifySchemaVersion — bounded against a hanging DB connection', () => {
+describe("verifySchemaVersion — bounded against a hanging DB connection", () => {
   const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
@@ -66,7 +69,7 @@ describe('verifySchemaVersion — bounded against a hanging DB connection', () =
     vi.useRealTimers();
   });
 
-  it('passes an explicit connectTimeout to createConnection, not the mysql2 default of none', async () => {
+  it("passes an explicit connectTimeout to createConnection, not the mysql2 default of none", async () => {
     const destroy = vi.fn();
     mocks.createConnection.mockResolvedValue({
       execute: vi.fn().mockResolvedValue([[]]),
@@ -74,16 +77,16 @@ describe('verifySchemaVersion — bounded against a hanging DB connection', () =
       destroy,
     });
 
-    const { verifySchemaVersion } = await import('../runPendingMigrations.js');
+    const { verifySchemaVersion } = await import("../runPendingMigrations.js");
     await verifySchemaVersion();
 
     expect(mocks.createConnection).toHaveBeenCalledTimes(1);
     const [args] = mocks.createConnection.mock.calls[0];
-    expect(args.connectTimeout).toBeTypeOf('number');
+    expect(args.connectTimeout).toBeTypeOf("number");
     expect(args.connectTimeout).toBeGreaterThan(0);
   });
 
-  it('resolves with an error state — never hangs — when every query on the connection stalls forever', async () => {
+  it("resolves with an error state — never hangs — when every query on the connection stalls forever", async () => {
     // A connection whose execute() never resolves, simulating exactly the live symptom:
     // the connect phase succeeds but a query stalls indefinitely under contention.
     const destroy = vi.fn();
@@ -93,7 +96,7 @@ describe('verifySchemaVersion — bounded against a hanging DB connection', () =
       destroy,
     });
 
-    const { verifySchemaVersion } = await import('../runPendingMigrations.js');
+    const { verifySchemaVersion } = await import("../runPendingMigrations.js");
 
     const start = Date.now();
     const result = await verifySchemaVersion();
@@ -104,20 +107,22 @@ describe('verifySchemaVersion — bounded against a hanging DB connection', () =
     // actually returns instead of hanging — a source-text check on VERIFY_SCHEMA_TIMEOUT_MS
     // alone would not catch a Promise.race wired up wrong.
     expect(elapsedMs).toBeLessThan(15000);
-    expect(result.state).toBe('error');
+    expect(result.state).toBe("error");
     expect(result.valid).toBe(false);
     // Best-effort cleanup: the stalled connection should be force-closed, not leaked.
     expect(destroy).toHaveBeenCalled();
   }, 20000);
 
-  it('resolves quickly and successfully when the connection behaves normally', async () => {
+  it("resolves quickly and successfully when the connection behaves normally", async () => {
     mocks.createConnection.mockResolvedValue({
-      execute: vi.fn().mockResolvedValue([[{ TABLE_NAME: 'schema_migrations' }]]),
+      execute: vi
+        .fn()
+        .mockResolvedValue([[{ TABLE_NAME: "schema_migrations" }]]),
       end: vi.fn().mockResolvedValue(undefined),
       destroy: vi.fn(),
     });
 
-    const { verifySchemaVersion } = await import('../runPendingMigrations.js');
+    const { verifySchemaVersion } = await import("../runPendingMigrations.js");
     const start = Date.now();
     await verifySchemaVersion();
     const elapsedMs = Date.now() - start;

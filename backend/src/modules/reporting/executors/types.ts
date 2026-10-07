@@ -11,7 +11,10 @@
  *   - companyId must appear in every executor query (WHERE employee.company_id = :companyId).
  */
 import type { RowDataPacket } from "mysql2";
-import { lobCondition, parseLobFilterParam } from "../../../shared/lobFilter.js";
+import {
+  lobCondition,
+  parseLobFilterParam,
+} from "../../../shared/lobFilter.js";
 
 export interface ExecFilters {
   branchId?: string;
@@ -75,12 +78,12 @@ export interface ExecScope {
   departmentScope: DimensionScope;
   costCentreScope: DimensionScope;
 
-  managerEmployeeId?: string;        // for manager-scoped reports
+  managerEmployeeId?: string; // for manager-scoped reports
   subordinateEmployeeIds?: string[]; // pre-resolved for team reports
-  selfEmployeeId?: string;           // for employee self-service reports
+  selfEmployeeId?: string; // for employee self-service reports
 
-  canViewAllEmployees: boolean;       // false → restricted to scope above
-  canViewSensitiveFields: boolean;    // false → mask bank/PAN/UAN in output
+  canViewAllEmployees: boolean; // false → restricted to scope above
+  canViewSensitiveFields: boolean; // false → mask bank/PAN/UAN in output
   canExportSensitiveReports: boolean; // false → 403 on sensitive export endpoint
 
   // User roles (raw) — used by executors to gate highly_restricted fields
@@ -98,12 +101,12 @@ export interface ExecScope {
  *          pagination cannot guarantee a stable dataset
  */
 export interface ExecOptions {
-  limit: number;       // > 0 always; enforced by callers
-  offset: number;      // for preview/export offset pagination
+  limit: number; // > 0 always; enforced by callers
+  offset: number; // for preview/export offset pagination
   cursor?: string | number | null; // for worker keyset pagination
   includeTotal: boolean;
   mode: "preview" | "export" | "worker";
-  asOf?: string;       // ISO datetime for snapshot-isolation reads
+  asOf?: string; // ISO datetime for snapshot-isolation reads
 }
 
 /**
@@ -128,7 +131,7 @@ export const EXPORT_OPTIONS: ExecOptions = {
 export function workerOptions(
   chunkSize: number,
   cursor: string | number | null,
-  asOf: string
+  asOf: string,
 ): ExecOptions {
   return {
     limit: chunkSize,
@@ -142,15 +145,15 @@ export function workerOptions(
 
 export interface ExecResult {
   rows: Record<string, unknown>[];
-  rowCount: number;       // COUNT(*) result or rows.length for worker chunks
-  isTruncated: boolean;   // true when rowCount > rows.length
+  rowCount: number; // COUNT(*) result or rows.length for worker chunks
+  isTruncated: boolean; // true when rowCount > rows.length
   nextCursor?: string | number | null; // null/absent = no more pages
 }
 
 export type ExecutorFn = (
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ) => Promise<ExecResult>;
 
 // ---------------------------------------------------------------------------
@@ -167,7 +170,7 @@ export class ReportExecutorNotFoundError extends Error {
 export class ReportExecutionError extends Error {
   constructor(
     public readonly code: string,
-    public readonly cause: unknown
+    public readonly cause: unknown,
   ) {
     super(`Execution failed for report code: ${code}`);
     this.name = "ReportExecutionError";
@@ -196,11 +199,11 @@ export class ReportSourceUnavailableError extends Error {
   constructor(
     public readonly code: string,
     public readonly missingTable: string,
-    public readonly detail?: string
+    public readonly detail?: string,
   ) {
     super(
       `Report "${code}" is unavailable: required table \`${missingTable}\` does not exist in this database.` +
-        (detail ? ` ${detail}` : "")
+        (detail ? ` ${detail}` : ""),
     );
     this.name = "ReportSourceUnavailableError";
   }
@@ -221,20 +224,29 @@ export class ReportSourceUnavailableError extends Error {
  * something it does not have — borrowing the table wording there would send whoever reads
  * the error looking for the wrong thing.
  */
-export function rethrowReportSchemaError(reportCode: string, err: unknown, sql: string): never {
+export function rethrowReportSchemaError(
+  reportCode: string,
+  err: unknown,
+  sql: string,
+): never {
   const e = err as { code?: string; sqlMessage?: string };
   const code = String(e?.code ?? "");
 
   if (code === "ER_NO_SUCH_TABLE" || code === "ER_BAD_TABLE_ERROR") {
-    const table = /\bFROM\s+`?([a-z_][a-z0-9_.]*)`?/i.exec(sql)?.[1] ?? "unknown";
-    throw new ReportSourceUnavailableError(reportCode, table, e.sqlMessage ?? "");
+    const table =
+      /\bFROM\s+`?([a-z_][a-z0-9_.]*)`?/i.exec(sql)?.[1] ?? "unknown";
+    throw new ReportSourceUnavailableError(
+      reportCode,
+      table,
+      e.sqlMessage ?? "",
+    );
   }
 
   if (code === "ER_BAD_FIELD_ERROR" || code === "ER_PARSE_ERROR") {
     throw new Error(
       `Report "${reportCode}" cannot run against this database's schema — ${code}: ` +
         `${e.sqlMessage ?? ""}. The table exists; the report asks for a column it does not ` +
-        `have. This previously returned an empty result, which read as "no rows found".`
+        `have. This previously returned an empty result, which read as "no rows found".`,
     );
   }
 
@@ -258,14 +270,16 @@ export function appendScopeConditions(
   scope: ExecScope,
   clauses: string[],
   params: unknown[],
-  alias = "e"
+  alias = "e",
 ): void {
   // Branch scope
   if (scope.branchScope.mode === "none") {
     throw new ReportScopeAccessDeniedError("branchScope");
   }
   if (scope.branchScope.mode === "restricted") {
-    const ids = scope.branchScope.ids.filter(id => id !== NO_BRANCH_SCOPE_SENTINEL);
+    const ids = scope.branchScope.ids.filter(
+      (id) => id !== NO_BRANCH_SCOPE_SENTINEL,
+    );
     if (ids.length === 0) {
       // Sentinel only — no valid branch
       clauses.push("1 = 0");
@@ -279,8 +293,13 @@ export function appendScopeConditions(
   if (scope.processScope.mode === "none") {
     throw new ReportScopeAccessDeniedError("processScope");
   }
-  if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
-    clauses.push(`${alias}.process_id IN (${scope.processScope.ids.map(() => "?").join(",")})`);
+  if (
+    scope.processScope.mode === "restricted" &&
+    scope.processScope.ids.length > 0
+  ) {
+    clauses.push(
+      `${alias}.process_id IN (${scope.processScope.ids.map(() => "?").join(",")})`,
+    );
     params.push(...scope.processScope.ids);
   }
 
@@ -288,8 +307,13 @@ export function appendScopeConditions(
   if (scope.departmentScope.mode === "none") {
     throw new ReportScopeAccessDeniedError("departmentScope");
   }
-  if (scope.departmentScope.mode === "restricted" && scope.departmentScope.ids.length > 0) {
-    clauses.push(`${alias}.department_id IN (${scope.departmentScope.ids.map(() => "?").join(",")})`);
+  if (
+    scope.departmentScope.mode === "restricted" &&
+    scope.departmentScope.ids.length > 0
+  ) {
+    clauses.push(
+      `${alias}.department_id IN (${scope.departmentScope.ids.map(() => "?").join(",")})`,
+    );
     params.push(...scope.departmentScope.ids);
   }
 
@@ -297,8 +321,13 @@ export function appendScopeConditions(
   if (scope.costCentreScope.mode === "none") {
     throw new ReportScopeAccessDeniedError("costCentreScope");
   }
-  if (scope.costCentreScope.mode === "restricted" && scope.costCentreScope.ids.length > 0) {
-    clauses.push(`${alias}.cost_centre_id IN (${scope.costCentreScope.ids.map(() => "?").join(",")})`);
+  if (
+    scope.costCentreScope.mode === "restricted" &&
+    scope.costCentreScope.ids.length > 0
+  ) {
+    clauses.push(
+      `${alias}.cost_centre_id IN (${scope.costCentreScope.ids.map(() => "?").join(",")})`,
+    );
     params.push(...scope.costCentreScope.ids);
   }
 }
@@ -312,7 +341,7 @@ export function appendFilterConditions(
   filters: ExecFilters,
   clauses: string[],
   params: unknown[],
-  alias = "e"
+  alias = "e",
 ): void {
   if (filters.branchId) {
     clauses.push(`${alias}.branch_id = ?`);
@@ -342,7 +371,9 @@ export function appendFilterConditions(
     }
   }
   if (filters.managerId) {
-    clauses.push(`(${alias}.reporting_manager_id = ? OR ${alias}.manager_id = ?)`);
+    clauses.push(
+      `(${alias}.reporting_manager_id = ? OR ${alias}.manager_id = ?)`,
+    );
     params.push(String(filters.managerId), String(filters.managerId));
   }
   if (filters.employeeCode) {
@@ -350,7 +381,9 @@ export function appendFilterConditions(
     params.push(String(filters.employeeCode));
   }
   if (filters.employeeName) {
-    clauses.push(`CONCAT(${alias}.first_name, ' ', COALESCE(${alias}.last_name, '')) LIKE ?`);
+    clauses.push(
+      `CONCAT(${alias}.first_name, ' ', COALESCE(${alias}.last_name, '')) LIKE ?`,
+    );
     params.push(`%${String(filters.employeeName)}%`);
   }
 }
@@ -380,7 +413,8 @@ export function businessToday(): string {
 }
 
 export function dateParam(value: unknown, fallback: string): string {
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))
+    return value;
   return fallback;
 }
 
@@ -455,7 +489,11 @@ export const employeeInForce = {
     };
   },
 
-  byTenure(from: string, to: string, alias = "e"): { clause: string; params: unknown[] } {
+  byTenure(
+    from: string,
+    to: string,
+    alias = "e",
+  ): { clause: string; params: unknown[] } {
     return {
       clause:
         `(${alias}.date_of_joining IS NULL OR ${alias}.date_of_joining <= ?) ` +
@@ -486,18 +524,30 @@ export function appendEmployeeStatusFilter(
   params: unknown[],
   alias = "e",
 ): void {
-  const raw = String(filters.employeeStatus ?? "").trim().toLowerCase();
+  const raw = String(filters.employeeStatus ?? "")
+    .trim()
+    .toLowerCase();
 
-  if (raw === "active")   { clauses.push(`${alias}.active_status = 1`); return; }
-  if (raw === "inactive") { clauses.push(`${alias}.active_status = 0`); return; }
+  if (raw === "active") {
+    clauses.push(`${alias}.active_status = 1`);
+    return;
+  }
+  if (raw === "inactive") {
+    clauses.push(`${alias}.active_status = 0`);
+    return;
+  }
   if (raw === "all" || raw === "both") return;
 
   // No explicit choice. `includeInactive: false` is the only remaining way to ask for
   // active-only, and it is what the pre-existing call sites meant.
-  if (filters.includeInactive === false) clauses.push(`${alias}.active_status = 1`);
+  if (filters.includeInactive === false)
+    clauses.push(`${alias}.active_status = 1`);
 }
 
-export function monthRange(month: string): { start: string; endExclusive: string } {
+export function monthRange(month: string): {
+  start: string;
+  endExclusive: string;
+} {
   const [y, m] = month.split("-").map(Number);
   const start = `${month}-01`;
   const ny = m === 12 ? y + 1 : y;
@@ -507,7 +557,9 @@ export function monthRange(month: string): { start: string; endExclusive: string
 
 export function yearParam(value: unknown): number {
   const n = Number(value);
-  return Number.isFinite(n) && n > 2000 && n < 2100 ? n : new Date().getFullYear();
+  return Number.isFinite(n) && n > 2000 && n < 2100
+    ? n
+    : new Date().getFullYear();
 }
 
 /**
@@ -551,7 +603,7 @@ export async function fetchPageWithTotal(
   params: unknown[],
   options: ExecOptions,
   run: (sql: string, params: unknown[]) => Promise<RowDataPacket[]>,
-  countRows: (sql: string, params: unknown[]) => Promise<number>
+  countRows: (sql: string, params: unknown[]) => Promise<number>,
 ): Promise<{ rows: RowDataPacket[]; total: number }> {
   if (options.mode === "worker") {
     const rows = await run(`${base} LIMIT ${options.limit}`, params);
@@ -559,7 +611,10 @@ export async function fetchPageWithTotal(
   }
 
   const probe = Math.max(options.limit, COUNT_FREE_PROBE);
-  const probed = await run(`${base} LIMIT ${probe} OFFSET ${options.offset}`, params);
+  const probed = await run(
+    `${base} LIMIT ${probe} OFFSET ${options.offset}`,
+    params,
+  );
   const page = probed.slice(0, options.limit);
 
   // Short of the probe means this is the end of the result: the total is known exactly —
@@ -576,12 +631,20 @@ export async function fetchPageWithTotal(
   if (probed.length === 0) {
     return {
       rows: page,
-      total: options.offset === 0 ? 0 : (options.includeTotal ? await countRows(base, params) : 0),
+      total:
+        options.offset === 0
+          ? 0
+          : options.includeTotal
+            ? await countRows(base, params)
+            : 0,
     };
   }
 
   // Genuinely more rows than the probe — only now is a second execution warranted.
-  return { rows: page, total: options.includeTotal ? await countRows(base, params) : page.length };
+  return {
+    rows: page,
+    total: options.includeTotal ? await countRows(base, params) : page.length,
+  };
 }
 
 export function applyPagination(sql: string, options: ExecOptions): string {

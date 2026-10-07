@@ -6,30 +6,76 @@
  */
 import { Router, type NextFunction, type Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { db } from "../../db/mysql.js";
-import { hasAnyRole, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
 import {
-  APPROVAL_GATED_TYPES, APPROVER_ROLES, PAYROLL_APPROVER_ROLES, TWO_STAGE_TYPES,
-  STAGE_RULES, BulkUploadError,
-  getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
-  claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction,
-  sendPartialApplyEmail, resolveStage, stageOutcome, verifyRowsActuallyApplied,
-  type ApprovalStage, type BulkApprovalStatus,
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
+import { db } from "../../db/mysql.js";
+import {
+  hasAnyRole,
+  getUserAssignmentScopes,
+} from "../../shared/scopeAccess.js";
+import {
+  APPROVAL_GATED_TYPES,
+  APPROVER_ROLES,
+  PAYROLL_APPROVER_ROLES,
+  TWO_STAGE_TYPES,
+  STAGE_RULES,
+  BulkUploadError,
+  getBatch,
+  assertCanApprove,
+  markDecided,
+  markStageDecided,
+  markStageRejected,
+  claimForDecision,
+  releaseClaim,
+  releaseStuckClaim,
+  auditBatchAction,
+  sendPartialApplyEmail,
+  resolveStage,
+  stageOutcome,
+  verifyRowsActuallyApplied,
+  type ApprovalStage,
+  type BulkApprovalStatus,
 } from "./bulk-approval.service.js";
 import {
-  getBatchReview, getBatchEmployees, discardRows, isReviewable,
+  getBatchReview,
+  getBatchEmployees,
+  discardRows,
+  isReviewable,
   BATCH_ENTITY_TYPE,
 } from "./bulk-approval-review.service.js";
 import { notifyBatchCreator } from "./bulk-approval-notify.service.js";
 import { triggerBulkBatchApproval } from "../work-inbox/work-inbox.triggers.js";
-import { recordFinanceApprovalEvent, listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js";
-import { applyRegularizationBatch, rejectRegularizationBatch, reapplyPartialBatch } from "./attendance-regularization-bulk.service.js";
-import { applyLeaveBatch, rejectLeaveBatch, reapplyLeaveBatch } from "./leave-application-bulk.service.js";
-import { applyIncentiveBatch, rejectIncentiveBatch, reapplyIncentiveBatch } from "./incentive-bulk.service.js";
-import { applyDeductionBatch, rejectDeductionBatch, reapplyDeductionBatch } from "./deduction-bulk.service.js";
 import {
-  startBatchJob, getBatchJob, readBatchProgress, type BatchJobKind,
+  recordFinanceApprovalEvent,
+  listFinanceApprovalEvents,
+} from "../../shared/financeApprovalEvent.js";
+import {
+  applyRegularizationBatch,
+  rejectRegularizationBatch,
+  reapplyPartialBatch,
+} from "./attendance-regularization-bulk.service.js";
+import {
+  applyLeaveBatch,
+  rejectLeaveBatch,
+  reapplyLeaveBatch,
+} from "./leave-application-bulk.service.js";
+import {
+  applyIncentiveBatch,
+  rejectIncentiveBatch,
+  reapplyIncentiveBatch,
+} from "./incentive-bulk.service.js";
+import {
+  applyDeductionBatch,
+  rejectDeductionBatch,
+  reapplyDeductionBatch,
+} from "./deduction-bulk.service.js";
+import {
+  startBatchJob,
+  getBatchJob,
+  readBatchProgress,
+  type BatchJobKind,
 } from "./batch-job.js";
 
 /**
@@ -54,7 +100,9 @@ const h =
 
 function fail(res: Response, err: unknown): Response {
   if (err instanceof BulkUploadError) {
-    return res.status(err.statusCode).json({ success: false, message: err.message });
+    return res
+      .status(err.statusCode)
+      .json({ success: false, message: err.message });
   }
   throw err;
 }
@@ -69,19 +117,24 @@ function fail(res: Response, err: unknown): Response {
 async function approverBranchFilter(
   userId: string,
 ): Promise<{ sql: string; params: unknown[] } | null> {
-  if (await hasAnyRole(userId, "super_admin")) return { sql: "1=1", params: [] };
+  if (await hasAnyRole(userId, "super_admin"))
+    return { sql: "1=1", params: [] };
 
   // The Payroll Head decides stage 2 for every branch — they are an HO role and hold no
   // user_assignment_scope rows at all (verified live 2026-09-03), so the branch filter
   // below would fail closed and hide every batch they are supposed to act on.
-  if (await hasAnyRole(userId, ...PAYROLL_APPROVER_ROLES)) return { sql: "1=1", params: [] };
+  if (await hasAnyRole(userId, ...PAYROLL_APPROVER_ROLES))
+    return { sql: "1=1", params: [] };
 
   if (!(await hasAnyRole(userId, ...APPROVER_ROLES))) return null;
 
   const scopes = await getUserAssignmentScopes(userId, APPROVER_ROLES);
-  if (scopes.some((s) => s.scope_type === "all")) return { sql: "1=1", params: [] };
+  if (scopes.some((s) => s.scope_type === "all"))
+    return { sql: "1=1", params: [] };
 
-  const branchIds = [...new Set(scopes.map((s) => s.branch_id).filter(Boolean))] as string[];
+  const branchIds = [
+    ...new Set(scopes.map((s) => s.branch_id).filter(Boolean)),
+  ] as string[];
   if (branchIds.length === 0) {
     // A branch_head with no assignment scope row sees nothing rather than everything.
     // Failing closed matters here: the alternative silently grants org-wide approval
@@ -95,18 +148,20 @@ async function approverBranchFilter(
 }
 
 // GET /approvals/pending — the branch head's queue
-bulkApprovalRouter.get("/approvals/pending", h(async (req, res) => {
-  const filter = await approverBranchFilter(req.authUser!.id);
-  if (!filter) {
-    return res.status(403).json({
-      success: false,
-      message: "Only a Branch Head can view the bulk upload approval queue.",
-    });
-  }
+bulkApprovalRouter.get(
+  "/approvals/pending",
+  h(async (req, res) => {
+    const filter = await approverBranchFilter(req.authUser!.id);
+    if (!filter) {
+      return res.status(403).json({
+        success: false,
+        message: "Only a Branch Head can view the bulk upload approval queue.",
+      });
+    }
 
-  const types = [...APPROVAL_GATED_TYPES];
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ub.id, ub.upload_batch_no, ub.upload_type_code, ub.original_file_name,
+    const types = [...APPROVAL_GATED_TYPES];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ub.id, ub.upload_batch_no, ub.upload_type_code, ub.original_file_name,
             ub.total_rows, ub.imported_rows, ub.error_rows, ub.batch_status,
             ub.approval_status, ub.branch_id, ub.submitted_for_approval_at, ub.created_at,
             ub.uploaded_by,
@@ -124,21 +179,26 @@ bulkApprovalRouter.get("/approvals/pending", h(async (req, res) => {
         AND ${filter.sql}
       ORDER BY ub.submitted_for_approval_at DESC, ub.created_at DESC
       LIMIT 200`,
-    [...types, ...filter.params],
-  );
+      [...types, ...filter.params],
+    );
 
-  res.json({ success: true, data: rows });
-}));
+    res.json({ success: true, data: rows });
+  }),
+);
 
 // GET /approvals/history — decided batches, same branch scope
-bulkApprovalRouter.get("/approvals/history", h(async (req, res) => {
-  const filter = await approverBranchFilter(req.authUser!.id);
-  if (!filter) {
-    return res.status(403).json({ success: false, message: "Not an approver." });
-  }
-  const types = [...APPROVAL_GATED_TYPES];
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ub.id, ub.upload_batch_no, ub.upload_type_code, ub.total_rows, ub.imported_rows,
+bulkApprovalRouter.get(
+  "/approvals/history",
+  h(async (req, res) => {
+    const filter = await approverBranchFilter(req.authUser!.id);
+    if (!filter) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Not an approver." });
+    }
+    const types = [...APPROVAL_GATED_TYPES];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ub.id, ub.upload_batch_no, ub.upload_type_code, ub.total_rows, ub.imported_rows,
             ub.error_rows, ub.approval_status, ub.approved_at, ub.approval_remarks,
             ub.error_summary, bm.branch_name,
             ub.last_rejected_stage, ub.last_rejected_reason, ub.last_rejected_at,
@@ -150,10 +210,11 @@ bulkApprovalRouter.get("/approvals/history", h(async (req, res) => {
         AND ${filter.sql}
       ORDER BY ub.approved_at DESC
       LIMIT 100`,
-    [...types, ...filter.params],
-  );
-  res.json({ success: true, data: rows });
-}));
+      [...types, ...filter.params],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
 
 /**
  * GET /approvals/batches/:id/preview — what the approver is actually agreeing to.
@@ -161,79 +222,88 @@ bulkApprovalRouter.get("/approvals/history", h(async (req, res) => {
  * A branch head approving a leave batch is deducting real balances from real people.
  * The queue therefore has to show the per-employee detail, not just a row count.
  */
-bulkApprovalRouter.get("/approvals/batches/:id/preview", h(async (req, res) => {
-  try {
-    const batch = await getBatch(req.params.id);
-    // Reading is gated by assertCanView, NOT assertCanApprove.
-    //
-    // assertCanApprove is stage-specific, and its default stage is 'branch' — which
-    // applies the BRANCH SCOPE test. The Payroll Head is an HO role whose scope is Head
-    // Office, so opening a Noida batch at stage 2 was refused with "This batch belongs to
-    // a branch outside your scope" on the very queue that had just listed it to them. The
-    // decision endpoints below still resolve the real stage and enforce it properly; this
-    // one only decides who may LOOK.
-    await assertCanView(req.authUser!.id, batch);
+bulkApprovalRouter.get(
+  "/approvals/batches/:id/preview",
+  h(async (req, res) => {
+    try {
+      const batch = await getBatch(req.params.id);
+      // Reading is gated by assertCanView, NOT assertCanApprove.
+      //
+      // assertCanApprove is stage-specific, and its default stage is 'branch' — which
+      // applies the BRANCH SCOPE test. The Payroll Head is an HO role whose scope is Head
+      // Office, so opening a Noida batch at stage 2 was refused with "This batch belongs to
+      // a branch outside your scope" on the very queue that had just listed it to them. The
+      // decision endpoints below still resolve the real stage and enforce it properly; this
+      // one only decides who may LOOK.
+      await assertCanView(req.authUser!.id, batch);
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT row_no, normalized_data, raw_data, row_status, error_messages,
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT row_no, normalized_data, raw_data, row_status, error_messages,
               created_entity_type, created_entity_id
          FROM upload_batch_row
         WHERE upload_batch_id = ?
         ORDER BY row_no ASC
         LIMIT 1000`,
-      [req.params.id],
-    );
+        [req.params.id],
+      );
 
-    // Resolve employee codes → names so the approver sees who they are deciding for.
-    // normalized_data keys vary by upload type; try the common variants.
-    const EMP_CODE_KEYS = ["emp_code", "employee_code", "EmpCode", "employeeCode"];
-    // normalized_data is what the upload UI writes, but a row staged through the API
-    // carries raw_data alone — and reading only normalized_data left the approver
-    // looking at a column of dashes where the names should be. loadStagedRows()
-    // already falls back the same way.
-    function rowEmpCode(row: RowDataPacket): string | null {
-      const source = row.normalized_data ?? row.raw_data;
-      const nd: Record<string, unknown> =
-        (typeof source === "string"
-          ? (JSON.parse(source) as Record<string, unknown>)
-          : (source as Record<string, unknown>)) ?? {};
-      for (const key of EMP_CODE_KEYS) {
-        if (nd[key]) return String(nd[key]).trim();
+      // Resolve employee codes → names so the approver sees who they are deciding for.
+      // normalized_data keys vary by upload type; try the common variants.
+      const EMP_CODE_KEYS = [
+        "emp_code",
+        "employee_code",
+        "EmpCode",
+        "employeeCode",
+      ];
+      // normalized_data is what the upload UI writes, but a row staged through the API
+      // carries raw_data alone — and reading only normalized_data left the approver
+      // looking at a column of dashes where the names should be. loadStagedRows()
+      // already falls back the same way.
+      function rowEmpCode(row: RowDataPacket): string | null {
+        const source = row.normalized_data ?? row.raw_data;
+        const nd: Record<string, unknown> =
+          (typeof source === "string"
+            ? (JSON.parse(source) as Record<string, unknown>)
+            : (source as Record<string, unknown>)) ?? {};
+        for (const key of EMP_CODE_KEYS) {
+          if (nd[key]) return String(nd[key]).trim();
+        }
+        return null;
       }
-      return null;
-    }
 
-    const codeSet = new Set<string>();
-    for (const row of rows) {
-      const code = rowEmpCode(row);
-      if (code) codeSet.add(code);
-    }
+      const codeSet = new Set<string>();
+      for (const row of rows) {
+        const code = rowEmpCode(row);
+        if (code) codeSet.add(code);
+      }
 
-    const nameMap = new Map<string, string>();
-    if (codeSet.size > 0) {
-      const codes = [...codeSet];
-      const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT employee_code, TRIM(CONCAT(first_name, ' ', COALESCE(last_name, ''))) AS full_name
+      const nameMap = new Map<string, string>();
+      if (codeSet.size > 0) {
+        const codes = [...codeSet];
+        const [empRows] = await db.execute<RowDataPacket[]>(
+          `SELECT employee_code, TRIM(CONCAT(first_name, ' ', COALESCE(last_name, ''))) AS full_name
            FROM employees
           WHERE employee_code IN (${codes.map(() => "?").join(",")})`,
-        codes,
-      );
-      for (const e of empRows) nameMap.set(String(e.employee_code), String(e.full_name));
+          codes,
+        );
+        for (const e of empRows)
+          nameMap.set(String(e.employee_code), String(e.full_name));
+      }
+
+      const enriched = rows.map((row) => {
+        const empCode = rowEmpCode(row);
+        return {
+          ...row,
+          employee_name: empCode ? (nameMap.get(empCode) ?? null) : null,
+        };
+      });
+
+      return res.json({ success: true, batch, data: enriched });
+    } catch (err) {
+      return fail(res, err);
     }
-
-    const enriched = rows.map((row) => {
-      const empCode = rowEmpCode(row);
-      return {
-        ...row,
-        employee_name: empCode ? (nameMap.get(empCode) ?? null) : null,
-      };
-    });
-
-    return res.json({ success: true, batch, data: enriched });
-  } catch (err) {
-    return fail(res, err);
-  }
-}));
+  }),
+);
 
 type Decision = "approve" | "reject";
 
@@ -305,7 +375,9 @@ async function performDecision(
       actorRole: stageRule.roles[0],
       remarks: remarks || null,
       details: { upload_batch_no: batch.upload_batch_no, stage },
-    }).catch(() => { /* the timeline must never fail a committed decision */ });
+    }).catch(() => {
+      /* the timeline must never fail a committed decision */
+    });
 
     // The Payroll Head has work now — put it in their inbox.
     void triggerBulkBatchApproval(
@@ -314,7 +386,9 @@ async function performDecision(
       batch.upload_type_code,
       STAGE_RULES.payroll.roles[0],
       batch.branch_id,
-    ).catch(() => { /* a missing inbox item must not fail the approval */ });
+    ).catch(() => {
+      /* a missing inbox item must not fail the approval */
+    });
 
     return {
       success: true,
@@ -330,15 +404,26 @@ async function performDecision(
   if (decision === "approve") {
     switch (batch.upload_type_code) {
       case "ATTENDANCE_REGULARIZATION_BULK":
-        outcome = await applyRegularizationBatch(batch, userId, remarks || null); break;
+        outcome = await applyRegularizationBatch(
+          batch,
+          userId,
+          remarks || null,
+        );
+        break;
       case "LEAVE_APPLICATION_BULK":
-        outcome = await applyLeaveBatch(batch, userId, remarks || null); break;
+        outcome = await applyLeaveBatch(batch, userId, remarks || null);
+        break;
       case "INCENTIVE_BULK":
-        outcome = await applyIncentiveBatch(batch, userId, remarks || null); break;
+        outcome = await applyIncentiveBatch(batch, userId, remarks || null);
+        break;
       case "DEDUCTION_BULK":
-        outcome = await applyDeductionBatch(batch, userId, remarks || null); break;
+        outcome = await applyDeductionBatch(batch, userId, remarks || null);
+        break;
       default:
-        throw new BulkUploadError(`No apply handler for ${batch.upload_type_code}`, 501);
+        throw new BulkUploadError(
+          `No apply handler for ${batch.upload_type_code}`,
+          501,
+        );
     }
 
     // Do not trust apply*Batch's own applied/failed tally at face value: on success
@@ -365,20 +450,31 @@ async function performDecision(
   } else {
     switch (batch.upload_type_code) {
       case "ATTENDANCE_REGULARIZATION_BULK":
-        outcome = await rejectRegularizationBatch(batch, userId, remarks); break;
+        outcome = await rejectRegularizationBatch(batch, userId, remarks);
+        break;
       case "LEAVE_APPLICATION_BULK":
-        outcome = await rejectLeaveBatch(batch, userId, remarks); break;
+        outcome = await rejectLeaveBatch(batch, userId, remarks);
+        break;
       case "INCENTIVE_BULK":
-        outcome = await rejectIncentiveBatch(batch, userId, remarks); break;
+        outcome = await rejectIncentiveBatch(batch, userId, remarks);
+        break;
       case "DEDUCTION_BULK":
-        outcome = await rejectDeductionBatch(batch, userId, remarks); break;
+        outcome = await rejectDeductionBatch(batch, userId, remarks);
+        break;
       default:
-        throw new BulkUploadError(`No reject handler for ${batch.upload_type_code}`, 501);
+        throw new BulkUploadError(
+          `No reject handler for ${batch.upload_type_code}`,
+          501,
+        );
     }
   }
 
   const finalStatus: BulkApprovalStatus =
-    decision === "reject" ? "rejected" : outcome.failed > 0 ? "partially_applied" : "approved";
+    decision === "reject"
+      ? "rejected"
+      : outcome.failed > 0
+        ? "partially_applied"
+        : "approved";
   const summary =
     decision === "reject"
       ? `Rejected by ${stageRule.label}: ${outcome.applied} row(s) cancelled. ${remarks}`
@@ -405,7 +501,8 @@ async function performDecision(
     }
   } else {
     await markDecided(batch.id, finalStatus, userId, remarks || null, summary, {
-      applied: outcome.applied, failed: outcome.failed,
+      applied: outcome.applied,
+      failed: outcome.failed,
     });
     // Record the final stage too, so "who released the money" survives.
     await markStageDecided({
@@ -417,16 +514,22 @@ async function performDecision(
       userId,
       remarks: remarks || null,
       summary,
-    }).catch(() => { /* markDecided already wrote the authoritative status */ });
+    }).catch(() => {
+      /* markDecided already wrote the authoritative status */
+    });
   }
 
   await auditBatchAction({
     userId,
-    actionType: decision === "approve" ? "BULK_UPLOAD_APPROVED" : "BULK_UPLOAD_REJECTED",
+    actionType:
+      decision === "approve" ? "BULK_UPLOAD_APPROVED" : "BULK_UPLOAD_REJECTED",
     batch,
     reason: remarks || undefined,
     detail: {
-      stage, applied: outcome.applied, failed: outcome.failed, final_status: finalStatus,
+      stage,
+      applied: outcome.applied,
+      failed: outcome.failed,
+      final_status: finalStatus,
     },
     req,
   });
@@ -441,8 +544,14 @@ async function performDecision(
     actorUserId: userId,
     actorRole: stageRule.roles[0],
     remarks: remarks || null,
-    details: { upload_batch_no: batch.upload_batch_no, stage, applied: outcome.applied },
-  }).catch(() => { /* the timeline must never fail a committed decision */ });
+    details: {
+      upload_batch_no: batch.upload_batch_no,
+      stage,
+      applied: outcome.applied,
+    },
+  }).catch(() => {
+    /* the timeline must never fail a committed decision */
+  });
 
   // The creator hears about every outcome that needs them to act — a rejection above
   // all, which previously told nobody anything.
@@ -453,7 +562,9 @@ async function performDecision(
       stage,
       actorUserId: userId,
       reason: remarks || null,
-    }).catch(() => { /* never fails a committed decision */ });
+    }).catch(() => {
+      /* never fails a committed decision */
+    });
   }
 
   // Notify uploader of failed rows so they can fix and re-submit
@@ -470,7 +581,9 @@ async function performDecision(
         WHERE au.id = ? LIMIT 1`,
       [userId],
     );
-    const approverName = String((approverRows as RowDataPacket[])[0]?.display ?? "Branch Head").trim();
+    const approverName = String(
+      (approverRows as RowDataPacket[])[0]?.display ?? "Branch Head",
+    ).trim();
     void sendPartialApplyEmail({
       batch,
       appliedCount: outcome.applied,
@@ -504,12 +617,15 @@ async function runDecision(
   res: Response,
 ): Promise<Response> {
   const userId = req.authUser!.id;
-  const remarks = String((req.body as { remarks?: string })?.remarks ?? "").trim();
+  const remarks = String(
+    (req.body as { remarks?: string })?.remarks ?? "",
+  ).trim();
 
   if (decision === "reject" && remarks.length < 10) {
     return res.status(400).json({
       success: false,
-      message: "A rejection needs a remark of at least 10 characters — it is what the uploader has to act on.",
+      message:
+        "A rejection needs a remark of at least 10 characters — it is what the uploader has to act on.",
     });
   }
 
@@ -540,7 +656,8 @@ async function runDecision(
   if (!(await claimForDecision(batch.id, STAGE_RULES[stage].from))) {
     return res.status(409).json({
       success: false,
-      message: "This batch is already being decided. Wait for it to finish, then refresh — do not resubmit.",
+      message:
+        "This batch is already being decided. Wait for it to finish, then refresh — do not resubmit.",
     });
   }
 
@@ -550,7 +667,9 @@ async function runDecision(
     () => performDecision(decision, batch, userId, remarks, req, stage),
     // Put the batch back in the queue rather than leaving it stuck in 'approving'.
     // The request has already been answered, so this is the only place left to do it.
-    async () => { await releaseClaim(batch.id); },
+    async () => {
+      await releaseClaim(batch.id);
+    },
   );
 
   return res.status(202).json({
@@ -575,62 +694,73 @@ async function runDecision(
  * Terminal state is read from upload_batch, not from the in-process job map, so an
  * approval that finished before an API restart still reports correctly afterwards.
  */
-bulkApprovalRouter.get("/approvals/batches/:id/job-status", h(async (req, res) => {
-  try {
-    const batch = await getBatch(req.params.id);
-    // A decided batch has no stage left to resolve, and the Branch Head who released it
-    // at stage 1 must still be able to watch stage 2 finish — so polling uses the looser
-    // view check, not the stage-specific approval check.
-    await assertCanView(req.authUser!.id, batch);
+bulkApprovalRouter.get(
+  "/approvals/batches/:id/job-status",
+  h(async (req, res) => {
+    try {
+      const batch = await getBatch(req.params.id);
+      // A decided batch has no stage left to resolve, and the Branch Head who released it
+      // at stage 1 must still be able to watch stage 2 finish — so polling uses the looser
+      // view check, not the stage-specific approval check.
+      await assertCanView(req.authUser!.id, batch);
 
-    const job = getBatchJob(batch.id);
-    const kind: BatchJobKind = job?.kind ?? "approve";
-    const progress = await readBatchProgress(batch.id, kind);
+      const job = getBatchJob(batch.id);
+      const kind: BatchJobKind = job?.kind ?? "approve";
+      const progress = await readBatchProgress(batch.id, kind);
 
-    const decided = ["approved", "rejected", "partially_applied"].includes(
-      String(batch.approval_status ?? ""),
-    );
-    const running = batch.batch_status === "approving";
+      const decided = ["approved", "rejected", "partially_applied"].includes(
+        String(batch.approval_status ?? ""),
+      );
+      const running = batch.batch_status === "approving";
 
-    // The batch itself is the authority, and it is read in that order: decided beats
-    // everything, and a batch still claimed as 'approving' is running even if the job
-    // map holds a failure — that failure belongs to an earlier attempt, not this one.
-    // The map is only consulted for the richer payload and for a failure that never
-    // made it onto the batch.
-    const phase = decided ? "done" : running ? "running" : job?.phase === "failed" ? "failed" : "idle";
+      // The batch itself is the authority, and it is read in that order: decided beats
+      // everything, and a batch still claimed as 'approving' is running even if the job
+      // map holds a failure — that failure belongs to an earlier attempt, not this one.
+      // The map is only consulted for the richer payload and for a failure that never
+      // made it onto the batch.
+      const phase = decided
+        ? "done"
+        : running
+          ? "running"
+          : job?.phase === "failed"
+            ? "failed"
+            : "idle";
 
-    let errors: string[] = [];
-    if (phase === "done" || phase === "failed") {
-      const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT row_no, error_messages FROM upload_batch_row
+      let errors: string[] = [];
+      if (phase === "done" || phase === "failed") {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT row_no, error_messages FROM upload_batch_row
           WHERE upload_batch_id = ? AND row_status IN ('error','failed')
           ORDER BY row_no ASC LIMIT 100`,
-        [batch.id],
-      );
-      errors = (rows as RowDataPacket[]).map((r) => {
-        const parsed = typeof r.error_messages === "string"
-          ? (JSON.parse(r.error_messages) as string[])
-          : ((r.error_messages as string[]) ?? []);
-        return `Row ${r.row_no}: ${(parsed ?? []).join("; ")}`;
-      });
-    }
+          [batch.id],
+        );
+        errors = (rows as RowDataPacket[]).map((r) => {
+          const parsed =
+            typeof r.error_messages === "string"
+              ? (JSON.parse(r.error_messages) as string[])
+              : ((r.error_messages as string[]) ?? []);
+          return `Row ${r.row_no}: ${(parsed ?? []).join("; ")}`;
+        });
+      }
 
-    return res.json({
-      success: true,
-      phase,
-      job: kind,
-      batch_status: batch.batch_status,
-      approval_status: batch.approval_status,
-      progress,
-      errors,
-      error: job?.phase === "failed" ? job.error : undefined,
-      message: job?.phase === "failed" ? job.error : (batch.error_summary ?? null),
-      result: job?.phase === "done" ? job.result : undefined,
-    });
-  } catch (err) {
-    return fail(res, err);
-  }
-}));
+      return res.json({
+        success: true,
+        phase,
+        job: kind,
+        batch_status: batch.batch_status,
+        approval_status: batch.approval_status,
+        progress,
+        errors,
+        error: job?.phase === "failed" ? job.error : undefined,
+        message:
+          job?.phase === "failed" ? job.error : (batch.error_summary ?? null),
+        result: job?.phase === "done" ? job.result : undefined,
+      });
+    } catch (err) {
+      return fail(res, err);
+    }
+  }),
+);
 
 /**
  * Can this user LOOK at this batch?
@@ -645,8 +775,12 @@ async function assertCanView(
 ): Promise<void> {
   if (await hasAnyRole(userId, "super_admin")) return;
   if (batch.uploaded_by === userId) return;
-  if (await hasAnyRole(userId, ...APPROVER_ROLES, ...PAYROLL_APPROVER_ROLES)) return;
-  throw new BulkUploadError("You do not have access to this upload batch.", 403);
+  if (await hasAnyRole(userId, ...APPROVER_ROLES, ...PAYROLL_APPROVER_ROLES))
+    return;
+  throw new BulkUploadError(
+    "You do not have access to this upload batch.",
+    403,
+  );
 }
 
 /** Guard the two review endpoints: only the money types have a cost-centre view. */
@@ -669,15 +803,18 @@ async function loadReviewableBatch(req: AuthenticatedRequest) {
  * column per incentive/deduction type present, and a total. Discarded rows are counted
  * but excluded from every amount — the decision is about what would actually be paid.
  */
-bulkApprovalRouter.get("/approvals/batches/:id/cost-centres", h(async (req, res) => {
-  try {
-    const batch = await loadReviewableBatch(req);
-    const review = await getBatchReview(batch);
-    return res.json({ success: true, batch, data: review });
-  } catch (err) {
-    return fail(res, err);
-  }
-}));
+bulkApprovalRouter.get(
+  "/approvals/batches/:id/cost-centres",
+  h(async (req, res) => {
+    try {
+      const batch = await loadReviewableBatch(req);
+      const review = await getBatchReview(batch);
+      return res.json({ success: true, batch, data: review });
+    } catch (err) {
+      return fail(res, err);
+    }
+  }),
+);
 
 /**
  * GET /approvals/batches/:id/employees?costCentreId=…
@@ -686,16 +823,22 @@ bulkApprovalRouter.get("/approvals/batches/:id/cost-centres", h(async (req, res)
  * one column per type and a total — the grid the approved design specifies. Omit
  * costCentreId for the whole batch (used by the CSV export).
  */
-bulkApprovalRouter.get("/approvals/batches/:id/employees", h(async (req, res) => {
-  try {
-    const batch = await loadReviewableBatch(req);
-    const costCentreId = typeof req.query.costCentreId === "string" ? req.query.costCentreId : null;
-    const { types, rows } = await getBatchEmployees(batch, costCentreId);
-    return res.json({ success: true, batch, types, data: rows });
-  } catch (err) {
-    return fail(res, err);
-  }
-}));
+bulkApprovalRouter.get(
+  "/approvals/batches/:id/employees",
+  h(async (req, res) => {
+    try {
+      const batch = await loadReviewableBatch(req);
+      const costCentreId =
+        typeof req.query.costCentreId === "string"
+          ? req.query.costCentreId
+          : null;
+      const { types, rows } = await getBatchEmployees(batch, costCentreId);
+      return res.json({ success: true, batch, types, data: rows });
+    } catch (err) {
+      return fail(res, err);
+    }
+  }),
+);
 
 /**
  * GET /approvals/batches/:id/timeline — every stage transition and row discard.
@@ -703,16 +846,22 @@ bulkApprovalRouter.get("/approvals/batches/:id/employees", h(async (req, res) =>
  * Reads finance_approval_event, the same polymorphic timeline the cost-centre attendance
  * sign-off uses, so no new audit table was needed.
  */
-bulkApprovalRouter.get("/approvals/batches/:id/timeline", h(async (req, res) => {
-  try {
-    const batch = await getBatch(req.params.id);
-    await assertCanView(req.authUser!.id, batch);
-    const events = await listFinanceApprovalEvents(BATCH_ENTITY_TYPE, batch.id);
-    return res.json({ success: true, data: events });
-  } catch (err) {
-    return fail(res, err);
-  }
-}));
+bulkApprovalRouter.get(
+  "/approvals/batches/:id/timeline",
+  h(async (req, res) => {
+    try {
+      const batch = await getBatch(req.params.id);
+      await assertCanView(req.authUser!.id, batch);
+      const events = await listFinanceApprovalEvents(
+        BATCH_ENTITY_TYPE,
+        batch.id,
+      );
+      return res.json({ success: true, data: events });
+    } catch (err) {
+      return fail(res, err);
+    }
+  }),
+);
 
 /**
  * POST /approvals/batches/:id/rows/discard — drop individual employees, with a reason.
@@ -721,76 +870,88 @@ bulkApprovalRouter.get("/approvals/batches/:id/timeline", h(async (req, res) => 
  * of the batch stays in the queue and can still be approved: a 500-row branch file must
  * not bounce because one employee's amount is wrong.
  */
-bulkApprovalRouter.post("/approvals/batches/:id/rows/discard", h(async (req, res) => {
-  try {
-    const userId = req.authUser!.id;
-    const body = (req.body ?? {}) as { rowIds?: unknown; reason?: unknown };
-    const rowIds = Array.isArray(body.rowIds) ? body.rowIds.map((r) => String(r)) : [];
-    const reason = String(body.reason ?? "").trim();
+bulkApprovalRouter.post(
+  "/approvals/batches/:id/rows/discard",
+  h(async (req, res) => {
+    try {
+      const userId = req.authUser!.id;
+      const body = (req.body ?? {}) as { rowIds?: unknown; reason?: unknown };
+      const rowIds = Array.isArray(body.rowIds)
+        ? body.rowIds.map((r) => String(r))
+        : [];
+      const reason = String(body.reason ?? "").trim();
 
-    const batch = await getBatch(req.params.id);
-    if (!isReviewable(batch.upload_type_code)) {
-      return res.status(400).json({
-        success: false,
-        message: "Single-line discard is available for incentive and deduction uploads only.",
+      const batch = await getBatch(req.params.id);
+      if (!isReviewable(batch.upload_type_code)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Single-line discard is available for incentive and deduction uploads only.",
+        });
+      }
+
+      // Which stage the batch is on decides who may discard from it — the same rule as
+      // approving. A batch that is no longer pending cannot be edited here at all; a row
+      // inside an approved batch is locked in bulk_upload_locked_entity and belongs to the
+      // discard module.
+      const stage = resolveStage(batch);
+      if (!stage) {
+        return res.status(409).json({
+          success: false,
+          message:
+            `This batch is '${batch.approval_status ?? batch.batch_status}' and can no longer be edited here. ` +
+            "An approved row is reversed through the Discard screen.",
+        });
+      }
+      await assertCanApprove(userId, batch, stage);
+
+      const result = await discardRows({
+        batch,
+        rowIds,
+        stage,
+        actorRole: STAGE_RULES[stage].roles[0],
+        userId,
+        reason,
       });
-    }
 
-    // Which stage the batch is on decides who may discard from it — the same rule as
-    // approving. A batch that is no longer pending cannot be edited here at all; a row
-    // inside an approved batch is locked in bulk_upload_locked_entity and belongs to the
-    // discard module.
-    const stage = resolveStage(batch);
-    if (!stage) {
-      return res.status(409).json({
-        success: false,
+      // One notification for the whole action, not one per row.
+      const delivery = result.discarded.length
+        ? await notifyBatchCreator({
+            batch,
+            event: "rows_discarded",
+            stage,
+            actorUserId: userId,
+            reason,
+            lines: result.discarded,
+          }).catch(() => ({ email: false, inbox: false, sms: false }))
+        : { email: false, inbox: false, sms: false };
+
+      return res.json({
+        success: true,
+        discarded: result.discarded.length,
+        remaining: result.remaining,
+        remaining_amount: result.remainingAmount,
+        creator_notified: delivery,
         message:
-          `This batch is '${batch.approval_status ?? batch.batch_status}' and can no longer be edited here. ` +
-          "An approved row is reversed through the Discard screen.",
+          `${result.discarded.length} row(s) discarded. ${result.remaining} row(s) remain in this batch` +
+          (delivery.email || delivery.inbox
+            ? " and the uploader has been told why."
+            : ". The uploader could not be notified — check their email and mobile on file."),
       });
+    } catch (err) {
+      return fail(res, err);
     }
-    await assertCanApprove(userId, batch, stage);
+  }),
+);
 
-    const result = await discardRows({
-      batch,
-      rowIds,
-      stage,
-      actorRole: STAGE_RULES[stage].roles[0],
-      userId,
-      reason,
-    });
-
-    // One notification for the whole action, not one per row.
-    const delivery = result.discarded.length
-      ? await notifyBatchCreator({
-          batch,
-          event: "rows_discarded",
-          stage,
-          actorUserId: userId,
-          reason,
-          lines: result.discarded,
-        }).catch(() => ({ email: false, inbox: false, sms: false }))
-      : { email: false, inbox: false, sms: false };
-
-    return res.json({
-      success: true,
-      discarded: result.discarded.length,
-      remaining: result.remaining,
-      remaining_amount: result.remainingAmount,
-      creator_notified: delivery,
-      message:
-        `${result.discarded.length} row(s) discarded. ${result.remaining} row(s) remain in this batch` +
-        (delivery.email || delivery.inbox
-          ? " and the uploader has been told why."
-          : ". The uploader could not be notified — check their email and mobile on file."),
-    });
-  } catch (err) {
-    return fail(res, err);
-  }
-}));
-
-bulkApprovalRouter.post("/approvals/batches/:id/approve", h((req, res) => runDecision("approve", req, res)));
-bulkApprovalRouter.post("/approvals/batches/:id/reject", h((req, res) => runDecision("reject", req, res)));
+bulkApprovalRouter.post(
+  "/approvals/batches/:id/approve",
+  h((req, res) => runDecision("approve", req, res)),
+);
+bulkApprovalRouter.post(
+  "/approvals/batches/:id/reject",
+  h((req, res) => runDecision("reject", req, res)),
+);
 
 /**
  * Re-process the error rows of a partially_applied batch.
@@ -798,73 +959,108 @@ bulkApprovalRouter.post("/approvals/batches/:id/reject", h((req, res) => runDeci
  * Only retries rows still in row_status='error' whose underlying entity is still in a pending state.
  * Already-applied rows are untouched.
  */
-bulkApprovalRouter.post("/approvals/batches/:id/reapply", h(async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.authUser!.id;
-    const batch = await getBatch(req.params.id);
+bulkApprovalRouter.post(
+  "/approvals/batches/:id/reapply",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.authUser!.id;
+      const batch = await getBatch(req.params.id);
 
-    const REAPPLY_SUPPORTED = [
-      "ATTENDANCE_REGULARIZATION_BULK",
-      "LEAVE_APPLICATION_BULK",
-      "INCENTIVE_BULK",
-      "DEDUCTION_BULK",
-    ] as const;
-    if (!(REAPPLY_SUPPORTED as readonly string[]).includes(batch.upload_type_code)) {
-      return res.status(400).json({ success: false, message: `reapply is not supported for ${batch.upload_type_code} batches.` });
+      const REAPPLY_SUPPORTED = [
+        "ATTENDANCE_REGULARIZATION_BULK",
+        "LEAVE_APPLICATION_BULK",
+        "INCENTIVE_BULK",
+        "DEDUCTION_BULK",
+      ] as const;
+      if (
+        !(REAPPLY_SUPPORTED as readonly string[]).includes(
+          batch.upload_type_code,
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: `reapply is not supported for ${batch.upload_type_code} batches.`,
+          });
+      }
+      if (batch.approval_status !== "partially_applied") {
+        return res
+          .status(409)
+          .json({
+            success: false,
+            message: `This batch is '${batch.approval_status}', not partially_applied. Nothing to retry.`,
+          });
+      }
+      await assertCanView(req.authUser!.id, batch);
+
+      const remarks =
+        String((req.body as { remarks?: string })?.remarks ?? "").trim() ||
+        null;
+
+      let outcome: Awaited<ReturnType<typeof reapplyPartialBatch>>;
+      switch (batch.upload_type_code) {
+        case "LEAVE_APPLICATION_BULK":
+          outcome = await reapplyLeaveBatch(batch, userId, remarks);
+          break;
+        case "INCENTIVE_BULK":
+          outcome = await reapplyIncentiveBatch(batch, userId, remarks);
+          break;
+        case "DEDUCTION_BULK":
+          outcome = await reapplyDeductionBatch(batch, userId, remarks);
+          break;
+        default:
+          outcome = await reapplyPartialBatch(batch, userId, remarks);
+      }
+
+      const finalStatus: BulkApprovalStatus =
+        outcome.failed > 0 ? "partially_applied" : "approved";
+      const summary =
+        `Re-apply: ${outcome.applied} row(s) applied, ${outcome.failed} still failed.` +
+        (outcome.errors.length ? ` First error: ${outcome.errors[0]}` : "");
+
+      await markDecided(batch.id, finalStatus, userId, remarks, summary, {
+        applied: outcome.applied,
+        failed: outcome.failed,
+      });
+
+      return res.json({
+        success: true,
+        approval_status: finalStatus,
+        applied: outcome.applied,
+        failed: outcome.failed,
+        errors: outcome.errors.slice(0, 10),
+        message: summary,
+      });
+    } catch (err) {
+      return fail(res, err);
     }
-    if (batch.approval_status !== "partially_applied") {
-      return res.status(409).json({ success: false, message: `This batch is '${batch.approval_status}', not partially_applied. Nothing to retry.` });
-    }
-    await assertCanView(req.authUser!.id, batch);
-
-    const remarks = String((req.body as { remarks?: string })?.remarks ?? "").trim() || null;
-
-    let outcome: Awaited<ReturnType<typeof reapplyPartialBatch>>;
-    switch (batch.upload_type_code) {
-      case "LEAVE_APPLICATION_BULK":
-        outcome = await reapplyLeaveBatch(batch, userId, remarks);
-        break;
-      case "INCENTIVE_BULK":
-        outcome = await reapplyIncentiveBatch(batch, userId, remarks);
-        break;
-      case "DEDUCTION_BULK":
-        outcome = await reapplyDeductionBatch(batch, userId, remarks);
-        break;
-      default:
-        outcome = await reapplyPartialBatch(batch, userId, remarks);
-    }
-
-    const finalStatus: BulkApprovalStatus = outcome.failed > 0 ? "partially_applied" : "approved";
-    const summary = `Re-apply: ${outcome.applied} row(s) applied, ${outcome.failed} still failed.` +
-      (outcome.errors.length ? ` First error: ${outcome.errors[0]}` : "");
-
-    await markDecided(batch.id, finalStatus, userId, remarks, summary, { applied: outcome.applied, failed: outcome.failed });
-
-    return res.json({
-      success: true,
-      approval_status: finalStatus,
-      applied: outcome.applied,
-      failed: outcome.failed,
-      errors: outcome.errors.slice(0, 10),
-      message: summary,
-    });
-  } catch (err) {
-    return fail(res, err);
-  }
-}));
+  }),
+);
 
 // Force-release a batch stuck in 'approving' — super_admin / admin only.
 // Used when the server restarted mid-approval and claimForDecision's auto-release
 // (5-minute staleness window) hasn't fired yet.
-bulkApprovalRouter.post("/approvals/batches/:id/release-claim", h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  const isSuperAdmin = await hasAnyRole(userId, "super_admin", "admin");
-  if (!isSuperAdmin) {
-    return res.status(403).json({ success: false, message: "Only super_admin or admin can force-release a stuck batch claim." });
-  }
-  const released = await releaseStuckClaim(req.params.id);
-  return res.json({
-    success: released,
-    message: released ? "Batch claim released — it is back in the approval queue." : "Batch was not in approving state.",
-  });
-}));
+bulkApprovalRouter.post(
+  "/approvals/batches/:id/release-claim",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const isSuperAdmin = await hasAnyRole(userId, "super_admin", "admin");
+    if (!isSuperAdmin) {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message:
+            "Only super_admin or admin can force-release a stuck batch claim.",
+        });
+    }
+    const released = await releaseStuckClaim(req.params.id);
+    return res.json({
+      success: released,
+      message: released
+        ? "Batch claim released — it is back in the approval queue."
+        : "Batch was not in approving state.",
+    });
+  }),
+);

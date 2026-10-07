@@ -42,7 +42,8 @@ describe("getDashboardStats applies the caller's scope to its sub-queries", () =
 
   it("the scope fragment deliberately excludes the date window", () => {
     // Reusing the main `where` here would clobber each trend's own 30/60-day range.
-    const frag = /const scopeConds[\s\S]*?const scopeSql[^\n]*\n/.exec(body)?.[0] ?? "";
+    const frag =
+      /const scopeConds[\s\S]*?const scopeSql[^\n]*\n/.exec(body)?.[0] ?? "";
     expect(frag).toBeTruthy();
     expect(frag).not.toContain("walk_in_date");
     expect(frag).not.toContain("fromDate");
@@ -50,7 +51,8 @@ describe("getDashboardStats applies the caller's scope to its sub-queries", () =
 
   it("no sub-query still passes an empty params array while filtering ats_candidate", () => {
     // The tell for the old bug: a hardcoded WHERE over ats_candidate with `[]` for params.
-    const offenders = body.match(/FROM ats_candidate[\s\S]{0,600}?`,\s*\[\]/g) ?? [];
+    const offenders =
+      body.match(/FROM ats_candidate[\s\S]{0,600}?`,\s*\[\]/g) ?? [];
     expect(
       offenders.length,
       "A sub-query reading ats_candidate with no params ignores the caller's branch/process, " +

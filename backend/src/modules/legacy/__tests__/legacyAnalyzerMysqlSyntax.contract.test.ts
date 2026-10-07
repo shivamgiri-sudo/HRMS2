@@ -33,7 +33,9 @@ describe("legacy-analyzer.service.ts uses mysql2 syntax, not mssql", () => {
   });
 
   it("does not reference SQL Server system catalogs (sys.tables / sys.partitions / STATS_DATE)", () => {
-    expect(source).not.toMatch(/sys\.tables|sys\.partitions|sys\.indexes|STATS_DATE/);
+    expect(source).not.toMatch(
+      /sys\.tables|sys\.partitions|sys\.indexes|STATS_DATE/,
+    );
   });
 
   it("uses pool.execute( for both metadata queries, mysql2's real API", () => {

@@ -15,13 +15,23 @@ import path from "path";
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import { luckpayClient, type LuckpayStatusResult, type LuckpayDocumentResult } from "./luckpay.client.js";
+import {
+  luckpayClient,
+  type LuckpayStatusResult,
+  type LuckpayDocumentResult,
+} from "./luckpay.client.js";
 import { sanitizeProviderPayload } from "./luckpay.transport.js";
-import { withProviderFailureLogged, writeBgvApiLog } from "../../ats/bgv-api-log.service.js";
+import {
+  withProviderFailureLogged,
+  writeBgvApiLog,
+} from "../../ats/bgv-api-log.service.js";
 import { syncBridgeDigilockerStatus } from "../../ats/onboarding-bridge-status.js";
 
 /** Same private (never web-served) location the onboarding uploader writes to. */
-export const STORAGE_DIR = path.resolve(process.cwd(), "private-storage/onboarding-documents");
+export const STORAGE_DIR = path.resolve(
+  process.cwd(),
+  "private-storage/onboarding-documents",
+);
 
 export type SyncOutcome = {
   state: LuckpayStatusResult["state"] | "not_started";
@@ -52,7 +62,10 @@ function extensionFor(doc: LuckpayDocumentResult, fallback: string) {
  * in employeeJoiningDocuments.service.ts, so a signed file retrieved here is
  * found by the same readers that serve HR-uploaded and generated files.
  */
-export function joiningDocumentStorageDir(employeeId: string, documentCode: string) {
+export function joiningDocumentStorageDir(
+  employeeId: string,
+  documentCode: string,
+) {
   return path.resolve(
     process.cwd(),
     "private-storage/employee-joining-documents",
@@ -70,7 +83,10 @@ async function persistDocument(
 ): Promise<string | null> {
   if (!doc.buffer?.length) return null;
   await fs.promises.mkdir(targetDir, { recursive: true });
-  const filePath = path.join(targetDir, `${randomUUID()}${extensionFor(doc, fallbackExt)}`);
+  const filePath = path.join(
+    targetDir,
+    `${randomUUID()}${extensionFor(doc, fallbackExt)}`,
+  );
   await fs.promises.writeFile(filePath, doc.buffer);
   return filePath;
 }
@@ -89,13 +105,17 @@ async function upsertDigilockerCheck(params: {
   raw: unknown;
 }) {
   const status =
-    params.state === "completed" ? "verified"
-    : params.state === "failed" ? "failed"
-    : params.state === "expired" ? "failed"
-    : "pending";
+    params.state === "completed"
+      ? "verified"
+      : params.state === "failed"
+        ? "failed"
+        : params.state === "expired"
+          ? "failed"
+          : "pending";
 
-  await db.execute(
-    `INSERT INTO candidate_bgv_check
+  await db
+    .execute(
+      `INSERT INTO candidate_bgv_check
        (id, candidate_id, check_type, provider_key, provider_request_id, provider_reference_id,
         status, result_summary, result_json, verified_at)
      VALUES (?, ?, 'digilocker', 'luckpay', ?, ?, ?, ?, CAST(? AS JSON), ?)
@@ -107,17 +127,18 @@ async function upsertDigilockerCheck(params: {
        result_json           = VALUES(result_json),
        verified_at           = VALUES(verified_at),
        updated_at            = NOW()`,
-    [
-      randomUUID(),
-      params.candidateId,
-      params.providerRequestId,
-      params.providerReferenceId,
-      status,
-      params.summary,
-      JSON.stringify(sanitizeProviderPayload(params.raw)),
-      status === "verified" ? new Date() : null,
-    ],
-  ).catch(() => undefined);
+      [
+        randomUUID(),
+        params.candidateId,
+        params.providerRequestId,
+        params.providerReferenceId,
+        status,
+        params.summary,
+        JSON.stringify(sanitizeProviderPayload(params.raw)),
+        status === "verified" ? new Date() : null,
+      ],
+    )
+    .catch(() => undefined);
 }
 
 async function updateProviderLog(params: {
@@ -138,7 +159,9 @@ async function updateProviderLog(params: {
     [
       params.status,
       params.providerReferenceId ?? null,
-      params.responsePayload === undefined ? null : JSON.stringify(sanitizeProviderPayload(params.responsePayload)),
+      params.responsePayload === undefined
+        ? null
+        : JSON.stringify(sanitizeProviderPayload(params.responsePayload)),
       params.errorMessage ?? null,
       params.clientTransactionId,
     ],
@@ -170,27 +193,41 @@ async function updateProviderLog(params: {
  * the whole call rather than using `db.execute`, which draws a fresh
  * connection per call and would silently defeat the lock.
  */
-export async function syncDigilockerStatus(candidateId: string): Promise<SyncOutcome> {
+export async function syncDigilockerStatus(
+  candidateId: string,
+): Promise<SyncOutcome> {
   const lockKey = `digilocker_sync:${candidateId}`;
   const lockConn = await db.getConnection();
   let acquired = false;
   try {
-    const [lockRows] = await lockConn.execute<RowDataPacket[]>(`SELECT GET_LOCK(?, 5) AS acquired`, [lockKey]);
+    const [lockRows] = await lockConn.execute<RowDataPacket[]>(
+      `SELECT GET_LOCK(?, 5) AS acquired`,
+      [lockKey],
+    );
     acquired = Number(lockRows[0]?.acquired) === 1;
     if (!acquired) {
-      return { state: "pending", message: "A DigiLocker status check is already in progress for this candidate." };
+      return {
+        state: "pending",
+        message:
+          "A DigiLocker status check is already in progress for this candidate.",
+      };
     }
     return await syncDigilockerStatusLocked(candidateId);
   } finally {
     // Best-effort release — a held lock past this connection's release back
     // to the pool still self-clears when the underlying MySQL session ends,
     // so a failed RELEASE here is not a leak.
-    if (acquired) await lockConn.execute(`SELECT RELEASE_LOCK(?)`, [lockKey]).catch(() => {});
+    if (acquired)
+      await lockConn
+        .execute(`SELECT RELEASE_LOCK(?)`, [lockKey])
+        .catch(() => {});
     lockConn.release();
   }
 }
 
-async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutcome> {
+async function syncDigilockerStatusLocked(
+  candidateId: string,
+): Promise<SyncOutcome> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT client_transaction_id, provider_reference_id, status
        FROM ats_provider_transaction_log
@@ -207,10 +244,19 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
   // Without the provider's transactionId there is nothing to poll — the
   // initiate call never came back successfully.
   if (!clientTransactionId || !transactionId) {
-    return { state: "not_started", clientTransactionId: clientTransactionId || null, message: "No provider transaction id recorded" };
+    return {
+      state: "not_started",
+      clientTransactionId: clientTransactionId || null,
+      message: "No provider transaction id recorded",
+    };
   }
   if (["documents_received", "completed"].includes(String(row.status ?? ""))) {
-    return { state: "completed", clientTransactionId, transactionId, changed: false };
+    return {
+      state: "completed",
+      clientTransactionId,
+      transactionId,
+      changed: false,
+    };
   }
 
   // Logged into the same table the BGV API monitor and cost panel read, so
@@ -226,8 +272,16 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
     providerKey: "luckpay",
     requestRef: transactionId,
     httpStatus: 200,
-    outcome: status.state === "completed" ? "success" : status.state === "pending" ? "manual_review" : "provider_error",
-    errorMessage: status.state === "failed" || status.state === "expired" ? status.message : null,
+    outcome:
+      status.state === "completed"
+        ? "success"
+        : status.state === "pending"
+          ? "manual_review"
+          : "provider_error",
+    errorMessage:
+      status.state === "failed" || status.state === "expired"
+        ? status.message
+        : null,
     responsePayload: status.sanitized,
   });
 
@@ -244,45 +298,75 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
       state: status.state,
       providerRequestId: clientTransactionId,
       providerReferenceId: status.transactionId,
-      summary: status.message ?? `DigiLocker: ${status.providerStatus ?? status.state}`,
+      summary:
+        status.message ??
+        `DigiLocker: ${status.providerStatus ?? status.state}`,
       raw: status.sanitized,
     });
-    return { state: status.state, providerStatus: status.providerStatus, clientTransactionId, transactionId, message: status.message, changed: true };
+    return {
+      state: status.state,
+      providerStatus: status.providerStatus,
+      clientTransactionId,
+      transactionId,
+      message: status.message,
+      changed: true,
+    };
   }
 
   const storedFiles: string[] = [];
   let documentMeta: Record<string, unknown> = {};
   try {
     const doc = await withProviderFailureLogged(
-      { candidateId, endpointKey: "DIGILOCKER_DOWNLOAD", providerKey: "luckpay" },
-      () => luckpayClient.downloadKycDocument({ clientTransactionId, transactionId }),
+      {
+        candidateId,
+        endpointKey: "DIGILOCKER_DOWNLOAD",
+        providerKey: "luckpay",
+      },
+      () =>
+        luckpayClient.downloadKycDocument({
+          clientTransactionId,
+          transactionId,
+        }),
     );
     const stored = await persistDocument(doc, ".pdf");
     if (stored) storedFiles.push(stored);
-    documentMeta = { documentUrl: doc.url, fileName: doc.fileName, contentType: doc.contentType, stored: Boolean(stored) };
+    documentMeta = {
+      documentUrl: doc.url,
+      fileName: doc.fileName,
+      contentType: doc.contentType,
+      stored: Boolean(stored),
+    };
   } catch (error) {
     // The session genuinely completed; a download failure must not erase that.
     // Record it and let a later retry pick the documents up.
-    documentMeta = { downloadError: String((error as Error)?.message ?? error) };
+    documentMeta = {
+      downloadError: String((error as Error)?.message ?? error),
+    };
   }
 
-  await db.execute(
-    // The columns here must exist on the table, which is: id, candidate_id,
-    // state_token, provider_key, auth_url, session_status,
-    // requested_documents_json, returned_documents_json, expires_at,
-    // created_at, updated_at.
-    //
-    // This previously set fetched_documents_json and completed_at — neither of
-    // which exists — under a .catch(() => undefined). So every completion write
-    // failed silently and no session could ever leave 'created', which is a
-    // large part of why DigiLocker appeared to do nothing at all.
-    `UPDATE candidate_digilocker_session
+  await db
+    .execute(
+      // The columns here must exist on the table, which is: id, candidate_id,
+      // state_token, provider_key, auth_url, session_status,
+      // requested_documents_json, returned_documents_json, expires_at,
+      // created_at, updated_at.
+      //
+      // This previously set fetched_documents_json and completed_at — neither of
+      // which exists — under a .catch(() => undefined). So every completion write
+      // failed silently and no session could ever leave 'created', which is a
+      // large part of why DigiLocker appeared to do nothing at all.
+      `UPDATE candidate_digilocker_session
         SET session_status = 'completed',
             returned_documents_json = CAST(? AS JSON),
             updated_at = NOW()
       WHERE candidate_id = ? AND state_token = ?`,
-    [JSON.stringify({ files: storedFiles, ...documentMeta }), candidateId, clientTransactionId],
-  ).catch(() => undefined);
+      [
+        JSON.stringify({ files: storedFiles, ...documentMeta }),
+        candidateId,
+        clientTransactionId,
+      ],
+    )
+    .catch(() => undefined);
 
   await updateProviderLog({
     clientTransactionId,
@@ -316,7 +400,8 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
   // this point, and losing that over a convenience row would be a far worse
   // outcome than the row being missing.
   try {
-    const { autoCreateDigilockerVerifiedChecks } = await import("../../ats/bgv-verification.service.js");
+    const { autoCreateDigilockerVerifiedChecks } =
+      await import("../../ats/bgv-verification.service.js");
     // Only what the session actually returned is credited. documentMeta carries
     // the downloaded file's name, or a downloadError if nothing came back —
     // Aadhaar is evidenced by the session completing at all, PAN only if a PAN
@@ -337,13 +422,20 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
       const { extractDigilockerDemographics, applyDigilockerDemographics } =
         await import("../../ats/digilocker-demographics.js");
       const filled = await applyDigilockerDemographics(
-        db, candidateId, extractDigilockerDemographics(status.sanitized),
+        db,
+        candidateId,
+        extractDigilockerDemographics(status.sanitized),
       );
       if (filled.length) {
-        console.info(`[DigiLocker] pre-filled ${filled.length} field(s) for ${candidateId}: ${filled.join(", ")}`);
+        console.info(
+          `[DigiLocker] pre-filled ${filled.length} field(s) for ${candidateId}: ${filled.join(", ")}`,
+        );
       }
     } catch (error) {
-      console.error(`[DigiLocker] demographics pre-fill failed for ${candidateId}:`, (error as Error)?.message);
+      console.error(
+        `[DigiLocker] demographics pre-fill failed for ${candidateId}:`,
+        (error as Error)?.message,
+      );
     }
 
     await autoCreateDigilockerVerifiedChecks(candidateId, {
@@ -358,15 +450,20 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
   }
 
   // Mirror onto the BGV report immediately so HR sees it without a manual sync.
-  await db.execute(
-    `UPDATE candidate_bgv_report
+  await db
+    .execute(
+      `UPDATE candidate_bgv_report
         SET digilocker_status = IF(locked = 1, digilocker_status, 'passed'),
             digilocker_documents_json = IF(locked = 1, digilocker_documents_json, CAST(? AS JSON)),
             digilocker_completed_at = IF(locked = 1, digilocker_completed_at, NOW()),
             updated_at = NOW()
       WHERE candidate_id = ?`,
-    [JSON.stringify({ count: storedFiles.length, ...documentMeta }), candidateId],
-  ).catch(() => undefined);
+      [
+        JSON.stringify({ count: storedFiles.length, ...documentMeta }),
+        candidateId,
+      ],
+    )
+    .catch(() => undefined);
 
   // And onto the onboarding bridge, which uses its own vocabulary
   // ('documents_received', not 'passed'). Nothing wrote this column before, so
@@ -407,7 +504,9 @@ export type DigilockerFile = {
  * documentMeta.downloadError branch), which this treats the same as no
  * session at all.
  */
-export async function getLatestDigilockerFile(candidateId: string): Promise<DigilockerFile | null> {
+export async function getLatestDigilockerFile(
+  candidateId: string,
+): Promise<DigilockerFile | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, session_status, returned_documents_json, updated_at
        FROM candidate_digilocker_session
@@ -420,16 +519,23 @@ export async function getLatestDigilockerFile(candidateId: string): Promise<Digi
   if (!row) return null;
 
   try {
-    const meta = typeof row.returned_documents_json === "string"
-      ? JSON.parse(row.returned_documents_json)
-      : row.returned_documents_json;
+    const meta =
+      typeof row.returned_documents_json === "string"
+        ? JSON.parse(row.returned_documents_json)
+        : row.returned_documents_json;
     const filePath = Array.isArray(meta?.files) ? meta.files[0] : null;
     if (!filePath) return null;
     return {
       sessionId: row.id,
       filePath,
-      fileName: typeof meta.fileName === "string" ? meta.fileName : "digilocker-document",
-      contentType: typeof meta.contentType === "string" ? meta.contentType : "application/octet-stream",
+      fileName:
+        typeof meta.fileName === "string"
+          ? meta.fileName
+          : "digilocker-document",
+      contentType:
+        typeof meta.contentType === "string"
+          ? meta.contentType
+          : "application/octet-stream",
       sessionStatus: row.session_status,
       updatedAt: row.updated_at,
     };
@@ -442,7 +548,9 @@ export async function getLatestDigilockerFile(candidateId: string): Promise<Digi
  * Reconcile a joining-document eSign transaction against Luckpay and, on
  * success, download the signed PDF and attach it to the checklist item.
  */
-export async function syncEsignStatus(clientTransactionId: string): Promise<SyncOutcome> {
+export async function syncEsignStatus(
+  clientTransactionId: string,
+): Promise<SyncOutcome> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, checklist_id, employee_id, candidate_id, document_code,
             client_transaction_id, provider_reference_id, status, signed_file_id,
@@ -456,8 +564,10 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
   if (!row) {
     // Not a joining-document transaction: it may be an appointment letter's own
     // acceptance session, which lives in its own table (migration 1857).
-    const { syncAppointmentEsignByClientTransaction } = await import("../../letters/appointmentLetterEsign.service.js");
-    const appointment = await syncAppointmentEsignByClientTransaction(clientTransactionId);
+    const { syncAppointmentEsignByClientTransaction } =
+      await import("../../letters/appointmentLetterEsign.service.js");
+    const appointment =
+      await syncAppointmentEsignByClientTransaction(clientTransactionId);
     if (appointment) {
       return {
         state: appointment.state,
@@ -473,26 +583,53 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
 
   const transactionId = String(row.provider_reference_id ?? "");
   if (!transactionId) {
-    return { state: "not_started", clientTransactionId, message: "No provider transaction id recorded" };
+    return {
+      state: "not_started",
+      clientTransactionId,
+      message: "No provider transaction id recorded",
+    };
   }
   // Short-circuit only when the artefact is genuinely in hand. Returning early on
   // status alone left every 'signed but signed_file_id IS NULL' row permanently
   // unrecoverable — exactly the state the identifier bug created, and the state a
   // failed download creates. Those rows must be able to heal on a later pass.
-  if (["signed", "completed"].includes(String(row.status ?? "")) && row.signed_file_id) {
-    return { state: "completed", clientTransactionId, transactionId, changed: false };
+  if (
+    ["signed", "completed"].includes(String(row.status ?? "")) &&
+    row.signed_file_id
+  ) {
+    return {
+      state: "completed",
+      clientTransactionId,
+      transactionId,
+      changed: false,
+    };
   }
 
-  const status = await luckpayClient.checkESignStatus({ clientTransactionId, transactionId });
+  const status = await luckpayClient.checkESignStatus({
+    clientTransactionId,
+    transactionId,
+  });
 
   if (status.state !== "completed") {
     await db.execute(
       `UPDATE employee_document_esign_transaction
           SET status = ?, response_payload = CAST(? AS JSON), error_message = ?, updated_at = NOW()
         WHERE id = ?`,
-      [status.state, JSON.stringify(status.sanitized), status.state === "failed" ? status.message : null, row.id],
+      [
+        status.state,
+        JSON.stringify(status.sanitized),
+        status.state === "failed" ? status.message : null,
+        row.id,
+      ],
     );
-    return { state: status.state, providerStatus: status.providerStatus, clientTransactionId, transactionId, message: status.message, changed: true };
+    return {
+      state: status.state,
+      providerStatus: status.providerStatus,
+      clientTransactionId,
+      transactionId,
+      message: status.message,
+      changed: true,
+    };
   }
 
   // Kit transactions cover several documents under one signature. Delegate to
@@ -501,26 +638,43 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
   // this branch the reconciliation worker only updated the anchor checklist,
   // leaving the kit perpetually open and reminders firing indefinitely.
   if (String(row.scope ?? "document") === "kit" && row.kit_id) {
-    const { finalizeKitEsign } = await import("../../employees/joiningKitDispatch.service.js");
+    const { finalizeKitEsign } =
+      await import("../../employees/joiningKitDispatch.service.js");
     await finalizeKitEsign({
       kitId: String(row.kit_id),
       transactionId: String(row.id),
       clientTransactionId: clientTransactionId,
       providerReferenceId: transactionId,
     });
-    return { state: "completed", providerStatus: status.providerStatus, clientTransactionId, transactionId, changed: true };
+    return {
+      state: "completed",
+      providerStatus: status.providerStatus,
+      clientTransactionId,
+      transactionId,
+      changed: true,
+    };
   }
 
   const storedFiles: string[] = [];
   let documentMeta: Record<string, unknown> = {};
   let signedFileId: string | null = null;
   try {
-    const doc = await luckpayClient.downloadESignDocument({ clientTransactionId, transactionId });
+    const doc = await luckpayClient.downloadESignDocument({
+      clientTransactionId,
+      transactionId,
+    });
     // Joining-document artefacts belong beside the rest of that employee's
     // documents. persistDocument's default lands them in the onboarding tree,
     // which leaves employee_joining_document_file.storage_path pointing outside
     // the directory every joining-document reader looks in.
-    const stored = await persistDocument(doc, ".pdf", joiningDocumentStorageDir(String(row.employee_id), String(row.document_code)));
+    const stored = await persistDocument(
+      doc,
+      ".pdf",
+      joiningDocumentStorageDir(
+        String(row.employee_id),
+        String(row.document_code),
+      ),
+    );
     if (stored) {
       storedFiles.push(stored);
       const newFileId = randomUUID();
@@ -545,9 +699,16 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
       );
       signedFileId = newFileId;
     }
-    documentMeta = { documentUrl: doc.url, fileName: doc.fileName, contentType: doc.contentType, stored: Boolean(stored) };
+    documentMeta = {
+      documentUrl: doc.url,
+      fileName: doc.fileName,
+      contentType: doc.contentType,
+      stored: Boolean(stored),
+    };
   } catch (error) {
-    documentMeta = { downloadError: String((error as Error)?.message ?? error) };
+    documentMeta = {
+      downloadError: String((error as Error)?.message ?? error),
+    };
   }
 
   await db.execute(
@@ -559,15 +720,22 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
             completed_at = NOW(),
             updated_at = NOW()
       WHERE id = ?`,
-    [JSON.stringify(sanitizeProviderPayload({ ...status.sanitized, ...documentMeta })), signedFileId, row.id],
+    [
+      JSON.stringify(
+        sanitizeProviderPayload({ ...status.sanitized, ...documentMeta }),
+      ),
+      signedFileId,
+      row.id,
+    ],
   );
 
   // Mirror finalizeChecklistEsign: status alone leaves fill_status, signature_mode
   // and final_file_locked_at unset, so the document reads as signed on one screen
   // and unsigned on another. signature_mode stays honest about whether the
   // provider's artefact was actually retrieved.
-  await db.execute(
-    `UPDATE employee_joining_document_checklist
+  await db
+    .execute(
+      `UPDATE employee_joining_document_checklist
         SET status = 'esign_completed',
             fill_status = 'esign_completed',
             signature_mode = ?,
@@ -575,40 +743,57 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
             completed_at = NOW(),
             updated_at = NOW()
       WHERE id = ?`,
-    [signedFileId ? "aadhaar_esign_verified" : "aadhaar_esign_pending_artefact", row.checklist_id],
-  ).catch(() => undefined);
+      [
+        signedFileId
+          ? "aadhaar_esign_verified"
+          : "aadhaar_esign_pending_artefact",
+        row.checklist_id,
+      ],
+    )
+    .catch(() => undefined);
 
   // recalculateDocumentProgress is the documented single writer of
   // employees.joining_document_completion_pct. Without this the employee stays
   // below 100% forever even with every document signed.
   try {
-    const { recalculateDocumentProgress } = await import("../../employees/employeeJoiningDocuments.service.js");
+    const { recalculateDocumentProgress } =
+      await import("../../employees/employeeJoiningDocuments.service.js");
     await recalculateDocumentProgress(String(row.employee_id));
   } catch (error) {
-    console.warn("[syncEsignStatus] progress recalculation failed:", (error as Error)?.message ?? error);
+    console.warn(
+      "[syncEsignStatus] progress recalculation failed:",
+      (error as Error)?.message ?? error,
+    );
   }
 
   // Consume the public signing token so a completed link cannot be replayed.
-  await db.execute(
-    `UPDATE employee_joining_document_public_token
+  await db
+    .execute(
+      `UPDATE employee_joining_document_public_token
         SET token_status = 'consumed', consumed_at = NOW()
       WHERE checklist_id = ? AND token_status = 'active'`,
-    [row.checklist_id],
-  ).catch(() => undefined);
+      [row.checklist_id],
+    )
+    .catch(() => undefined);
 
   // candidate_bgv_report.esignature_status has existed since the original BGV
   // schema but was never written by anything. Populate it now that a real
   // signature outcome exists. Its enum is not_done/validated/invalid — distinct
   // from the not_run/passed/failed vocabulary used by the other columns.
   if (row.candidate_id) {
-    await db.execute(
-      `UPDATE candidate_bgv_report
+    await db
+      .execute(
+        `UPDATE candidate_bgv_report
           SET esignature_status = IF(locked = 1, esignature_status, 'validated'),
               esignature_remarks = IF(locked = 1, esignature_remarks, ?),
               updated_at = NOW()
         WHERE candidate_id = ?`,
-      [`Aadhaar eSign completed via Luckpay (${row.document_code})`, row.candidate_id],
-    ).catch(() => undefined);
+        [
+          `Aadhaar eSign completed via Luckpay (${row.document_code})`,
+          row.candidate_id,
+        ],
+      )
+      .catch(() => undefined);
   }
 
   return {

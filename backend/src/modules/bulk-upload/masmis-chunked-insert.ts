@@ -49,8 +49,18 @@ export async function chunkedMasmisInsert(params: {
    * for the one importer in this family (neemans_month_targets) whose target column has a
    * real UNIQUE key and must upsert rather than append-only insert. Omit for plain inserts. */
   insertSuffix?: string;
-}): Promise<{ importedRows: number; errorUpdates: Array<{ rowId: string; message: string }>; importedRowIds: string[] }> {
-  const { insertPrefix, placeholderGroup, rows, chunkSize = 300, insertSuffix = "" } = params;
+}): Promise<{
+  importedRows: number;
+  errorUpdates: Array<{ rowId: string; message: string }>;
+  importedRowIds: string[];
+}> {
+  const {
+    insertPrefix,
+    placeholderGroup,
+    rows,
+    chunkSize = 300,
+    insertSuffix = "",
+  } = params;
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
   const importedRowIds: string[] = [];
   const suffix = insertSuffix ? ` ${insertSuffix}` : "";
@@ -76,7 +86,10 @@ export async function chunkedMasmisInsert(params: {
       for (const row of chunk) {
         try {
           await withDeadlockRetry(() =>
-            db.execute(`${insertPrefix} VALUES ${placeholderGroup}${suffix}`, row.values as never[]),
+            db.execute(
+              `${insertPrefix} VALUES ${placeholderGroup}${suffix}`,
+              row.values as never[],
+            ),
           );
           importedRowIds.push(row.rowId);
         } catch (err: unknown) {
@@ -98,7 +111,11 @@ export async function chunkedMasmisInsert(params: {
    * UPDATE's IN-clause a reasonable size for a large file.
    */
   const MARK_IMPORTED_CHUNK = 1000;
-  for (let offset = 0; offset < importedRowIds.length; offset += MARK_IMPORTED_CHUNK) {
+  for (
+    let offset = 0;
+    offset < importedRowIds.length;
+    offset += MARK_IMPORTED_CHUNK
+  ) {
     const idChunk = importedRowIds.slice(offset, offset + MARK_IMPORTED_CHUNK);
     await withDeadlockRetry(() =>
       db.execute(

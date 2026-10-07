@@ -1,5 +1,5 @@
-import { PoolConnection, RowDataPacket } from 'mysql2/promise';
-import { logger } from '../../logger.js';
+import { PoolConnection, RowDataPacket } from "mysql2/promise";
+import { logger } from "../../logger.js";
 
 export interface TeamQualitySummary {
   avg_quality: number;
@@ -7,7 +7,12 @@ export interface TeamQualitySummary {
   calls_handled: number;
   top_performer: { agent_code: string; agent_name: string; quality: number };
   bottom_performer: { agent_code: string; agent_name: string; quality: number };
-  quality_distribution: { excellent: number; good: number; average: number; poor: number };
+  quality_distribution: {
+    excellent: number;
+    good: number;
+    average: number;
+    poor: number;
+  };
 }
 
 export interface AgentBreakdown {
@@ -28,13 +33,13 @@ export class QualityManagerService {
   async getTeamQuality(
     managerCode: string,
     daysBack: number = 7,
-    process: string = 'INBOUND'
+    process: string = "INBOUND",
   ): Promise<{
     team_summary: TeamQualitySummary;
     agent_breakdown: AgentBreakdown[];
   }> {
     const conn = await this.db.getConnection();
-    const isWide = managerCode === '__ALL__';
+    const isWide = managerCode === "__ALL__";
 
     try {
       let agentCodes: string[];
@@ -42,7 +47,7 @@ export class QualityManagerService {
       if (isWide) {
         // Admin/HR/CEO: return all active employees
         const [allEmps] = await conn.execute<RowDataPacket[]>(
-          `SELECT employee_code FROM mas_hrms.employees WHERE active_status = 1 AND employee_code IS NOT NULL LIMIT 500`
+          `SELECT employee_code FROM mas_hrms.employees WHERE active_status = 1 AND employee_code IS NOT NULL LIMIT 500`,
         );
         agentCodes = (allEmps as any[]).map((r) => r.employee_code);
       } else {
@@ -54,7 +59,7 @@ export class QualityManagerService {
              SELECT id FROM mas_hrms.employees WHERE employee_code = ? AND employment_status = 'Active'
            )
            AND employment_status = 'Active'`,
-          [managerCode]
+          [managerCode],
         );
         agentCodes = (directReports as any[]).map((r: any) => r.employee_code);
       }
@@ -66,16 +71,21 @@ export class QualityManagerService {
             avg_quality: 0,
             agent_count: 0,
             calls_handled: 0,
-            top_performer: { agent_code: '', agent_name: '', quality: 0 },
-            bottom_performer: { agent_code: '', agent_name: '', quality: 0 },
-            quality_distribution: { excellent: 0, good: 0, average: 0, poor: 0 }
+            top_performer: { agent_code: "", agent_name: "", quality: 0 },
+            bottom_performer: { agent_code: "", agent_name: "", quality: 0 },
+            quality_distribution: {
+              excellent: 0,
+              good: 0,
+              average: 0,
+              poor: 0,
+            },
           },
-          agent_breakdown: []
+          agent_breakdown: [],
         };
       }
 
       // Get quality metrics for all direct reports
-      const placeholders = agentCodes.map(() => '?').join(',');
+      const placeholders = agentCodes.map(() => "?").join(",");
       const [qualityMetrics] = await conn.execute<RowDataPacket[]>(
         `SELECT
            cqa.User as agent_code,
@@ -100,35 +110,54 @@ export class QualityManagerService {
            AND (? = '' OR ? = '__ALL__' OR cqa.Campaign LIKE CONCAT(?, '%'))
          GROUP BY cqa.User, e.first_name, e.last_name
          ORDER BY quality_pct DESC`,
-        [...agentCodes, daysBack, process, process, process]
+        [...agentCodes, daysBack, process, process, process],
       );
 
       if (!qualityMetrics || qualityMetrics.length === 0) {
-        logger.info(`No quality metrics found for team of manager: ${managerCode}`);
+        logger.info(
+          `No quality metrics found for team of manager: ${managerCode}`,
+        );
         return {
           team_summary: {
             avg_quality: 0,
             agent_count: 0,
             calls_handled: 0,
-            top_performer: { agent_code: '', agent_name: '', quality: 0 },
-            bottom_performer: { agent_code: '', agent_name: '', quality: 0 },
-            quality_distribution: { excellent: 0, good: 0, average: 0, poor: 0 }
+            top_performer: { agent_code: "", agent_name: "", quality: 0 },
+            bottom_performer: { agent_code: "", agent_name: "", quality: 0 },
+            quality_distribution: {
+              excellent: 0,
+              good: 0,
+              average: 0,
+              poor: 0,
+            },
           },
-          agent_breakdown: []
+          agent_breakdown: [],
         };
       }
 
       // Calculate team summary
-      const avgQuality = qualityMetrics.length > 0
-        ? qualityMetrics.reduce((sum: number, m: any) => sum + m.quality_pct, 0) / qualityMetrics.length
-        : 0;
+      const avgQuality =
+        qualityMetrics.length > 0
+          ? qualityMetrics.reduce(
+              (sum: number, m: any) => sum + m.quality_pct,
+              0,
+            ) / qualityMetrics.length
+          : 0;
 
-      const totalCalls = qualityMetrics.reduce((sum: number, m: any) => sum + m.calls_handled, 0);
+      const totalCalls = qualityMetrics.reduce(
+        (sum: number, m: any) => sum + m.calls_handled,
+        0,
+      );
 
       const distribution = {
-        excellent: qualityMetrics.filter((m: any) => m.quality_pct >= 90).length,
-        good: qualityMetrics.filter((m: any) => m.quality_pct >= 80 && m.quality_pct < 90).length,
-        average: qualityMetrics.filter((m: any) => m.quality_pct >= 70 && m.quality_pct < 80).length,
+        excellent: qualityMetrics.filter((m: any) => m.quality_pct >= 90)
+          .length,
+        good: qualityMetrics.filter(
+          (m: any) => m.quality_pct >= 80 && m.quality_pct < 90,
+        ).length,
+        average: qualityMetrics.filter(
+          (m: any) => m.quality_pct >= 70 && m.quality_pct < 80,
+        ).length,
         poor: qualityMetrics.filter((m: any) => m.quality_pct < 70).length,
       };
 
@@ -136,25 +165,34 @@ export class QualityManagerService {
         avg_quality: Math.round(avgQuality * 100) / 100,
         agent_count: qualityMetrics.length,
         calls_handled: totalCalls,
-        top_performer: qualityMetrics.length > 0 ? {
-          agent_code: qualityMetrics[0].agent_code,
-          agent_name: `${qualityMetrics[0].agent_first_name} ${qualityMetrics[0].agent_last_name || ''}`.trim(),
-          quality: qualityMetrics[0].quality_pct
-        } : { agent_code: '', agent_name: '', quality: 0 },
-        bottom_performer: qualityMetrics.length > 0 ? {
-          agent_code: qualityMetrics[qualityMetrics.length - 1].agent_code,
-          agent_name: `${qualityMetrics[qualityMetrics.length - 1].agent_first_name} ${qualityMetrics[qualityMetrics.length - 1].agent_last_name || ''}`.trim(),
-          quality: qualityMetrics[qualityMetrics.length - 1].quality_pct
-        } : { agent_code: '', agent_name: '', quality: 0 },
-        quality_distribution: distribution
+        top_performer:
+          qualityMetrics.length > 0
+            ? {
+                agent_code: qualityMetrics[0].agent_code,
+                agent_name:
+                  `${qualityMetrics[0].agent_first_name} ${qualityMetrics[0].agent_last_name || ""}`.trim(),
+                quality: qualityMetrics[0].quality_pct,
+              }
+            : { agent_code: "", agent_name: "", quality: 0 },
+        bottom_performer:
+          qualityMetrics.length > 0
+            ? {
+                agent_code:
+                  qualityMetrics[qualityMetrics.length - 1].agent_code,
+                agent_name:
+                  `${qualityMetrics[qualityMetrics.length - 1].agent_first_name} ${qualityMetrics[qualityMetrics.length - 1].agent_last_name || ""}`.trim(),
+                quality: qualityMetrics[qualityMetrics.length - 1].quality_pct,
+              }
+            : { agent_code: "", agent_name: "", quality: 0 },
+        quality_distribution: distribution,
       };
 
       // Build agent breakdown with weak areas and risk scoring
       const agentBreakdown: AgentBreakdown[] = qualityMetrics.map((m: any) => {
         const weakAreas: string[] = [];
-        if (m.quality_pct < 85) weakAreas.push('Communication');
-        if (m.quality_pct < 75) weakAreas.push('Problem Resolution');
-        if (m.poor_calls > 5) weakAreas.push('Consistency');
+        if (m.quality_pct < 85) weakAreas.push("Communication");
+        if (m.quality_pct < 75) weakAreas.push("Problem Resolution");
+        if (m.poor_calls > 5) weakAreas.push("Consistency");
 
         let riskScore = 30; // baseline
         if (m.quality_pct < 70) riskScore = 80;
@@ -164,12 +202,12 @@ export class QualityManagerService {
 
         return {
           agent_code: m.agent_code,
-          agent_name: `${m.agent_first_name} ${m.agent_last_name || ''}`.trim(),
+          agent_name: `${m.agent_first_name} ${m.agent_last_name || ""}`.trim(),
           quality_pct: m.quality_pct,
           calls_handled: m.calls_handled,
           weak_areas: weakAreas,
           coaching_needed: m.quality_pct < 70,
-          risk_score: riskScore
+          risk_score: riskScore,
         };
       });
 

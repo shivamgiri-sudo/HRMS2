@@ -22,9 +22,19 @@ import { fetchProcessMetricValues } from "../process-performance/process-metric-
  */
 
 const VIEWER_ROLES = [
-  "super_admin", "admin", "ceo", "coo", "manager", "process_manager",
-  "operations_manager", "branch_head", "qa", "quality_analyst", "tq_head",
-  "hr", "team_leader",
+  "super_admin",
+  "admin",
+  "ceo",
+  "coo",
+  "manager",
+  "process_manager",
+  "operations_manager",
+  "branch_head",
+  "qa",
+  "quality_analyst",
+  "tq_head",
+  "hr",
+  "team_leader",
 ];
 
 const WIDGET_TYPES = ["kpi_tile", "line", "bar", "pie", "table"] as const;
@@ -35,7 +45,12 @@ const METRIC_SOURCES = ["kpi_daily_actual", "process_metric_actual"] as const;
 // than "outside the window". Biometric shift hours end in June and the order
 // export in December, so both were invisible.
 const DATE_RANGES = [
-  "last_7_days", "last_30_days", "last_90_days", "last_365_days", "this_month", "last_month",
+  "last_7_days",
+  "last_30_days",
+  "last_90_days",
+  "last_365_days",
+  "this_month",
+  "last_month",
 ] as const;
 
 export type WidgetType = (typeof WIDGET_TYPES)[number];
@@ -68,14 +83,18 @@ export interface WidgetRow {
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
-const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const iso = (d: Date) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
 /**
  * Resolved at READ time, never stored as literal dates. A dashboard saved in
  * August must not still be showing August in October because its range was
  * frozen when it was built.
  */
-export function resolveDateRange(range: DateRange, today = new Date()): { from: string; to: string } {
+export function resolveDateRange(
+  range: DateRange,
+  today = new Date(),
+): { from: string; to: string } {
   const end = new Date(today);
   switch (range) {
     case "last_7_days": {
@@ -128,7 +147,8 @@ function toDashboard(row: RowDataPacket): DashboardRow {
     processId: row.process_id == null ? null : String(row.process_id),
     ownerUserId: row.owner_user_id == null ? null : String(row.owner_user_id),
     visibleRoles: parseRoles(row.visible_roles),
-    widgetCount: row.widget_count == null ? undefined : Number(row.widget_count),
+    widgetCount:
+      row.widget_count == null ? undefined : Number(row.widget_count),
   };
 }
 
@@ -136,7 +156,10 @@ function toWidget(row: RowDataPacket): WidgetRow {
   let config: Record<string, unknown> | null = null;
   const raw = row.config_json;
   if (raw) {
-    config = typeof raw === "string" ? safeParse(raw) : (raw as Record<string, unknown>);
+    config =
+      typeof raw === "string"
+        ? safeParse(raw)
+        : (raw as Record<string, unknown>);
   }
   return {
     id: String(row.id),
@@ -199,14 +222,19 @@ export async function isInstalled(): Promise<boolean> {
 export class DashboardBuilderNotInstalledError extends Error {
   readonly statusCode = 503;
   constructor() {
-    super("Dashboard Builder schema is not installed. Apply migration 1683_dashboard_builder.sql.");
+    super(
+      "Dashboard Builder schema is not installed. Apply migration 1683_dashboard_builder.sql.",
+    );
     this.name = "DashboardBuilderNotInstalledError";
   }
 }
 
 // ─── Dashboards ──────────────────────────────────────────────────────────────
 
-export async function listDashboards(userId: string, role: string): Promise<DashboardRow[]> {
+export async function listDashboards(
+  userId: string,
+  role: string,
+): Promise<DashboardRow[]> {
   // An empty list, not an error: somebody opening the page before the migration
   // lands should see "no dashboards yet", not a crash.
   if (!(await isInstalled())) return [];
@@ -227,7 +255,9 @@ export async function listDashboards(userId: string, role: string): Promise<Dash
 }
 
 export async function getDashboard(
-  userId: string, role: string, id: string,
+  userId: string,
+  role: string,
+  id: string,
 ): Promise<{ dashboard: DashboardRow; widgets: WidgetRow[] } | null> {
   if (!(await isInstalled())) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -262,7 +292,9 @@ export async function saveDashboard(input: {
 
   // Only roles this system knows: a typo here would silently share with nobody
   // and look like a permissions bug.
-  const roles = (input.visibleRoles ?? []).map((r) => String(r).trim()).filter(Boolean);
+  const roles = (input.visibleRoles ?? [])
+    .map((r) => String(r).trim())
+    .filter(Boolean);
   for (const role of roles) {
     if (!VIEWER_ROLES.includes(role)) throw new Error(`Unknown role "${role}"`);
   }
@@ -272,7 +304,14 @@ export async function saveDashboard(input: {
       `UPDATE builder_dashboard
           SET name = ?, description = ?, process_id = ?, visible_roles = ?
         WHERE id = ? AND owner_user_id = ?`,
-      [name, input.description?.trim() || null, input.processId || null, roles.join(",") || null, input.id, input.userId],
+      [
+        name,
+        input.description?.trim() || null,
+        input.processId || null,
+        roles.join(",") || null,
+        input.id,
+        input.userId,
+      ],
     );
     if (!result.affectedRows) {
       throw new Error("Dashboard not found, or it is not yours to edit");
@@ -284,12 +323,22 @@ export async function saveDashboard(input: {
   await db.execute(
     `INSERT INTO builder_dashboard (id, name, description, process_id, owner_user_id, visible_roles)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, name, input.description?.trim() || null, input.processId || null, input.userId, roles.join(",") || null],
+    [
+      id,
+      name,
+      input.description?.trim() || null,
+      input.processId || null,
+      input.userId,
+      roles.join(",") || null,
+    ],
   );
   return { id };
 }
 
-export async function deleteDashboard(userId: string, id: string): Promise<{ ok: boolean }> {
+export async function deleteDashboard(
+  userId: string,
+  id: string,
+): Promise<{ ok: boolean }> {
   // Soft delete: a dashboard somebody built is not worth destroying over a
   // misclick, and the widgets stay attached if it is restored.
   const [result] = await db.execute<ResultSetHeader>(
@@ -301,13 +350,17 @@ export async function deleteDashboard(userId: string, id: string): Promise<{ ok:
 
 // ─── Widgets ─────────────────────────────────────────────────────────────────
 
-async function assertOwnsDashboard(userId: string, dashboardId: string): Promise<void> {
+async function assertOwnsDashboard(
+  userId: string,
+  dashboardId: string,
+): Promise<void> {
   if (!(await isInstalled())) throw new DashboardBuilderNotInstalledError();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM builder_dashboard WHERE id = ? AND owner_user_id = ? AND active_status = 1 LIMIT 1`,
     [dashboardId, userId],
   );
-  if (!rows.length) throw new Error("Dashboard not found, or it is not yours to edit");
+  if (!rows.length)
+    throw new Error("Dashboard not found, or it is not yours to edit");
 }
 
 export async function saveWidget(input: {
@@ -331,14 +384,18 @@ export async function saveWidget(input: {
   // would be stored happily by MySQL's ENUM as '' and render as nothing, which
   // reads as a broken dashboard rather than a rejected input.
   if (!WIDGET_TYPES.includes(input.widgetType as WidgetType)) {
-    throw new Error(`Unknown chart type "${input.widgetType}". Use one of ${WIDGET_TYPES.join(", ")}.`);
+    throw new Error(
+      `Unknown chart type "${input.widgetType}". Use one of ${WIDGET_TYPES.join(", ")}.`,
+    );
   }
   if (!METRIC_SOURCES.includes(input.metricSource as MetricSource)) {
     throw new Error(`Unknown metric source "${input.metricSource}"`);
   }
   const dateRange = (input.dateRange || "this_month") as DateRange;
   if (!DATE_RANGES.includes(dateRange)) {
-    throw new Error(`Unknown date range "${dateRange}". Use one of ${DATE_RANGES.join(", ")}.`);
+    throw new Error(
+      `Unknown date range "${dateRange}". Use one of ${DATE_RANGES.join(", ")}.`,
+    );
   }
   const metricKey = String(input.metricKey ?? "").trim();
   if (!metricKey) throw new Error("Pick a metric for this widget");
@@ -357,9 +414,18 @@ export async function saveWidget(input: {
               date_range = ?, grid_width = ?, grid_height = ?, position = ?, config_json = ?
         WHERE id = ? AND dashboard_id = ?`,
       [
-        input.title?.trim() || null, input.widgetType, input.metricSource, metricKey,
-        input.processId || null, dateRange, width, height, position, config,
-        input.id, input.dashboardId,
+        input.title?.trim() || null,
+        input.widgetType,
+        input.metricSource,
+        metricKey,
+        input.processId || null,
+        dateRange,
+        width,
+        height,
+        position,
+        config,
+        input.id,
+        input.dashboardId,
       ],
     );
     return { id: input.id };
@@ -372,14 +438,28 @@ export async function saveWidget(input: {
         date_range, grid_width, grid_height, position, config_json)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      id, input.dashboardId, input.title?.trim() || null, input.widgetType, input.metricSource,
-      metricKey, input.processId || null, dateRange, width, height, position, config,
+      id,
+      input.dashboardId,
+      input.title?.trim() || null,
+      input.widgetType,
+      input.metricSource,
+      metricKey,
+      input.processId || null,
+      dateRange,
+      width,
+      height,
+      position,
+      config,
     ],
   );
   return { id };
 }
 
-export async function deleteWidget(userId: string, dashboardId: string, widgetId: string): Promise<{ ok: boolean }> {
+export async function deleteWidget(
+  userId: string,
+  dashboardId: string,
+  widgetId: string,
+): Promise<{ ok: boolean }> {
   await assertOwnsDashboard(userId, dashboardId);
   const [result] = await db.execute<ResultSetHeader>(
     `UPDATE builder_dashboard_widget SET active_status = 0 WHERE id = ? AND dashboard_id = ?`,
@@ -403,9 +483,15 @@ export interface RenderedWidget extends WidgetRow {
  * it — the author's entitlements are irrelevant here, only the reader's.
  */
 async function readableProcessIds(userId: string): Promise<Set<string>> {
-  const scope = await buildScopeWhereClause(userId, VIEWER_ROLES, {
-    processId: "p.id", branchId: "p.branch_id",
-  }, { allowAdminBypass: true, allowCeoAllRead: true });
+  const scope = await buildScopeWhereClause(
+    userId,
+    VIEWER_ROLES,
+    {
+      processId: "p.id",
+      branchId: "p.branch_id",
+    },
+    { allowAdminBypass: true, allowCeoAllRead: true },
+  );
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT p.id FROM process_master p WHERE ${scope.sql}`,
     scope.params,
@@ -439,7 +525,9 @@ async function metricUnit(metricKey: string): Promise<string | null> {
 }
 
 export async function renderDashboard(
-  userId: string, role: string, id: string,
+  userId: string,
+  role: string,
+  id: string,
 ): Promise<{ dashboard: DashboardRow; widgets: RenderedWidget[] } | null> {
   const loaded = await getDashboard(userId, role, id);
   if (!loaded) return null;
@@ -453,7 +541,10 @@ export async function renderDashboard(
 
     if (!processId) {
       rendered.push({
-        ...widget, availability: "no_data", value: null, series: [],
+        ...widget,
+        availability: "no_data",
+        value: null,
+        series: [],
         note: "This widget has no process — set one on the widget or the dashboard.",
       });
       continue;
@@ -463,7 +554,10 @@ export async function renderDashboard(
     // person cannot see reports that plainly rather than returning the numbers.
     if (!allowed.has(processId)) {
       rendered.push({
-        ...widget, availability: "out_of_scope", value: null, series: [],
+        ...widget,
+        availability: "out_of_scope",
+        value: null,
+        series: [],
         note: "This widget reads a process outside your access.",
       });
       continue;
@@ -478,7 +572,9 @@ export async function renderDashboard(
       // month. Everything else is averaged, which is right for a duration and
       // is the closest available answer for a rate — see the caveat below.
       const unit = (await metricUnit(widget.metricKey)) ?? "";
-      const isVolume = ["count", "currency", "number", "volume"].includes(unit.toLowerCase());
+      const isVolume = ["count", "currency", "number", "volume"].includes(
+        unit.toLowerCase(),
+      );
       const readings = await fetchProcessMetricValues(
         processId,
         [widget.metricKey],
@@ -487,7 +583,9 @@ export async function renderDashboard(
         isVolume ? [widget.metricKey] : [],
       );
       const reading = readings.get(widget.metricKey);
-      const isRate = ["percent", "percentage", "ratio"].includes(unit.toLowerCase());
+      const isRate = ["percent", "percentage", "ratio"].includes(
+        unit.toLowerCase(),
+      );
       rendered.push({
         ...widget,
         availability: reading && reading.count > 0 ? "ok" : "no_data",
@@ -497,12 +595,12 @@ export async function renderDashboard(
           !reading || reading.count === 0
             ? "Nothing supplied for this window yet."
             : isRate
-              // Which of the two numbers this is, stated rather than left to be
-              // assumed. Where every counted day recorded the parts its ratio was
-              // built from, the figure is the period's real rate; where any day
-              // did not, it falls back to the mean of the daily rates, and those
-              // differ whenever daily volumes differ.
-              ? reading.exactRatio
+              ? // Which of the two numbers this is, stated rather than left to be
+                // assumed. Where every counted day recorded the parts its ratio was
+                // built from, the figure is the period's real rate; where any day
+                // did not, it falls back to the mean of the daily rates, and those
+                // differ whenever daily volumes differ.
+                reading.exactRatio
                 ? undefined
                 : "Period figure is the mean of daily values, not the period's own ratio — " +
                   "some days did not record the numbers behind their rate."
@@ -532,7 +630,9 @@ export async function renderDashboard(
     // they are stored RAW, so a percent has to be scaled back up by 100 while a
     // duration is already in its own unit.
     const empUnit = ((await metricUnit(widget.metricKey)) ?? "").toLowerCase();
-    const empIsVolume = ["count", "currency", "number", "volume"].includes(empUnit);
+    const empIsVolume = ["count", "currency", "number", "volume"].includes(
+      empUnit,
+    );
     const empScale = ["percent", "percentage"].includes(empUnit) ? 100 : 1;
 
     // Guarded on EVERY counted row having a denominator: mixing rows that carry
@@ -540,13 +640,11 @@ export async function renderDashboard(
     // denominator and yields a number belonging to neither method. ATTENDANCE_PCT
     // is exactly that case — 24,240 of its 54,766 rows have parts — so it
     // correctly keeps averaging.
-    const exactExpr =
-      `CASE WHEN COUNT(k.denominator_value) = COUNT(k.actual_value) AND SUM(k.denominator_value) <> 0
+    const exactExpr = `CASE WHEN COUNT(k.denominator_value) = COUNT(k.actual_value) AND SUM(k.denominator_value) <> 0
              THEN SUM(k.numerator_value) / SUM(k.denominator_value) * ${empScale}
              ELSE AVG(k.actual_value) END`;
     const valueExpr = empIsVolume ? "SUM(k.actual_value)" : exactExpr;
-    const exactFlag =
-      `CASE WHEN COUNT(k.denominator_value) = COUNT(k.actual_value) AND SUM(k.denominator_value) <> 0
+    const exactFlag = `CASE WHEN COUNT(k.denominator_value) = COUNT(k.actual_value) AND SUM(k.denominator_value) <> 0
              THEN 1 ELSE 0 END`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -561,7 +659,10 @@ export async function renderDashboard(
     );
     const series = rows
       .filter((r) => Number(r.n) > 0)
-      .map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) }));
+      .map((r) => ({
+        period: String(r.period),
+        value: r.value == null ? null : Number(r.value),
+      }));
 
     // The headline is computed over the WHOLE window in one aggregate, not as the
     // mean of the periods above. Averaging monthly ratios would reintroduce the

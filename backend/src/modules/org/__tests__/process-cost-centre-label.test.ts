@@ -21,7 +21,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-let processService: typeof import("../org.service.js")["processService"];
+let processService: (typeof import("../org.service.js"))["processService"];
 beforeAll(async () => {
   ({ processService } = await import("../org.service.js"));
 }, 120_000);
@@ -54,7 +54,9 @@ describe("processService.list", () => {
     const seen = captureSql();
     await processService.list({});
     const sql = seen.find((s) => /FROM process_master/.test(s)) ?? "";
-    expect(sql).toMatch(/GROUP_CONCAT\(cc\.cost_centre_code ORDER BY cc\.cost_centre_code SEPARATOR ','\)/);
+    expect(sql).toMatch(
+      /GROUP_CONCAT\(cc\.cost_centre_code ORDER BY cc\.cost_centre_code SEPARATOR ','\)/,
+    );
   });
 
   it("counts only active cost centres", async () => {
@@ -69,14 +71,20 @@ describe("processService.list", () => {
   it("passes the derived codes straight through without touching process_name", async () => {
     execute.mockResolvedValue([
       [
-        { id: "p1", process_name: "BTM Ventures", cost_centre_codes: "BSS/FLD/NOIDA-2/1029,BSS/OB/NOIDA-2/972" },
+        {
+          id: "p1",
+          process_name: "BTM Ventures",
+          cost_centre_codes: "BSS/FLD/NOIDA-2/1029,BSS/OB/NOIDA-2/972",
+        },
         { id: "p2", process_name: "Unmapped Process", cost_centre_codes: null },
       ],
       [],
     ]);
     const rows = (await processService.list({})) as Record<string, unknown>[];
     expect(rows[0].process_name).toBe("BTM Ventures");
-    expect(rows[0].cost_centre_codes).toBe("BSS/FLD/NOIDA-2/1029,BSS/OB/NOIDA-2/972");
+    expect(rows[0].cost_centre_codes).toBe(
+      "BSS/FLD/NOIDA-2/1029,BSS/OB/NOIDA-2/972",
+    );
     // An unmapped process must stay NULL rather than become "" or "—": the UI distinguishes
     // "no cost centre points here" from "one does, and it is blank".
     expect(rows[1].cost_centre_codes).toBeNull();
@@ -95,12 +103,17 @@ describe("the label is derived, never stored", () => {
   it("no create or update path concatenates a code into process_name", async () => {
     const { readFileSync } = await import("fs");
     const src = readFileSync(
-      new URL("../org.service.ts", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
+      new URL("../org.service.ts", import.meta.url).pathname.replace(
+        /^\/([A-Za-z]:)/,
+        "$1",
+      ),
       "utf8",
     );
     // process_name is written by create/update from the caller's value alone. Any interpolation
     // of a cost centre code into it would corrupt the master for every joiner.
-    expect(src).not.toMatch(/process_name\s*[:=]\s*[`"'][^`"']*\$\{[^}]*cost_centre/i);
+    expect(src).not.toMatch(
+      /process_name\s*[:=]\s*[`"'][^`"']*\$\{[^}]*cost_centre/i,
+    );
     expect(src).not.toMatch(/cost_centre_code[^\n]*\+[^\n]*process_name/i);
   });
 });

@@ -45,7 +45,7 @@ const SITES = [
   "src/modules/reporting/executors/payroll.executor.ts",
 ] as const;
 
-const sources = SITES.map(path => ({ path, text: read(path) }));
+const sources = SITES.map((path) => ({ path, text: read(path) }));
 
 describe("account_number is cast to CHAR before it reaches JSON", () => {
   /**
@@ -109,7 +109,9 @@ describe("account_number is cast to CHAR before it reaches JSON", () => {
       // rather than per line because the select and the decode are necessarily far apart —
       // one is in the SQL string, the other in the row mapper below it.
       const decodesInTs = /resolveAccountNumber\s*\(/.test(text);
-      for (const m of text.matchAll(/^\s*ebd\.account_number\s*(?:AS\s+\w+)?\s*,/gm)) {
+      for (const m of text.matchAll(
+        /^\s*ebd\.account_number\s*(?:AS\s+\w+)?\s*,/gm,
+      )) {
         // Attribute the hit to the nearest preceding `case "..."` so an exemption names a
         // report rather than a line number that moves.
         const before = text.slice(0, m.index);
@@ -119,7 +121,9 @@ describe("account_number is cast to CHAR before it reaches JSON", () => {
         const lastSelect = before.toUpperCase().lastIndexOf("SELECT");
         const lastGroupBy = before.toUpperCase().lastIndexOf("GROUP BY");
         if (lastGroupBy > lastSelect) continue;
-        const owner = [...before.matchAll(/case\s+"([a-z0-9-]+)"/g)].pop()?.[1] ?? "unknown";
+        const owner =
+          [...before.matchAll(/case\s+"([a-z0-9-]+)"/g)].pop()?.[1] ??
+          "unknown";
         if (KNOWN_BARE_SELECT.test(owner)) continue;
         if (decodesInTs) continue;
         offenders.push(`${path}:${before.split("\n").length} (${owner})`);
@@ -132,7 +136,9 @@ describe("account_number is cast to CHAR before it reaches JSON", () => {
   });
 
   it("neft-transfer-file's GROUP BY still includes the raw column (functional dependency, not a leak)", () => {
-    const payroll = sources.find(s => s.path.endsWith("payroll.executor.ts"))!.text;
+    const payroll = sources.find((s) =>
+      s.path.endsWith("payroll.executor.ts"),
+    )!.text;
     expect(payroll).toMatch(/GROUP BY[\s\S]*?ebd\.account_number/);
   });
 });

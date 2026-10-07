@@ -19,7 +19,13 @@ export const exitController = {
 
     if (!isAdminHr && !isFinancePayroll) {
       const emp = await getEmployeeForUser(userId);
-      if (!emp) return res.status(403).json({ success: false, message: "Forbidden: no employee record linked to your account" });
+      if (!emp)
+        return res
+          .status(403)
+          .json({
+            success: false,
+            message: "Forbidden: no employee record linked to your account",
+          });
       if (isManager) {
         baseFilters.managerEmployeeId = emp.id;
       } else {
@@ -34,7 +40,10 @@ export const exitController = {
   async getExitRequest(req: AuthenticatedRequest, res: Response) {
     const data = await exitService.getExitRequest(req.params.id);
     const resolvedEmployeeId = (req as any).resolvedEmployeeId;
-    if (resolvedEmployeeId && (data as any).employee_id !== resolvedEmployeeId) {
+    if (
+      resolvedEmployeeId &&
+      (data as any).employee_id !== resolvedEmployeeId
+    ) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
     return res.json({ success: true, data });
@@ -49,12 +58,16 @@ export const exitController = {
     const input = createExitRequestSchema.parse(body);
     // Accepts an employee CODE as well as a uuid — see resolveEmployeeRef for why there is no
     // name fallback. Throws a 404 naming the code when it matches nobody.
-    const employeeId = await resolveEmployeeRef(input.employeeId, input.employeeCode);
+    const employeeId = await resolveEmployeeRef(
+      input.employeeId,
+      input.employeeCode,
+    );
     // Read off the request, never off the body: the route computed it from the caller's own
     // roles, and a client must not be able to claim an exit was HR-raised. Same pattern as
     // resolvedEmployeeId in getExitRequest below. Absent => 'employee', the previous constant.
-    const initiatedBy = (req as unknown as { exitInitiatedBy?: "employee" | "manager" | "hr" })
-      .exitInitiatedBy;
+    const initiatedBy = (
+      req as unknown as { exitInitiatedBy?: "employee" | "manager" | "hr" }
+    ).exitInitiatedBy;
     const data = await exitService.createExitRequest(
       {
         employeeId,
@@ -67,9 +80,11 @@ export const exitController = {
         noticePeriodDays: input.noticePeriodDays,
         initiatedBy,
       },
-      req.authUser!.id
+      req.authUser!.id,
     );
-    return res.status(201).json({ success: true, data, message: "Exit request submitted" });
+    return res
+      .status(201)
+      .json({ success: true, data, message: "Exit request submitted" });
   },
 
   async updateExitStatus(req: AuthenticatedRequest, res: Response) {
@@ -78,9 +93,13 @@ export const exitController = {
       req.params.id,
       input.status,
       input.remarks,
-      req.authUser!.id
+      req.authUser!.id,
     );
-    return res.json({ success: true, data, message: `Exit request status updated to ${input.status}` });
+    return res.json({
+      success: true,
+      data,
+      message: `Exit request status updated to ${input.status}`,
+    });
   },
 
   async getExitStats(_req: AuthenticatedRequest, res: Response) {

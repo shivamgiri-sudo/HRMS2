@@ -60,12 +60,10 @@ import { db } from "../../db/mysql.js";
 
 export type Scheme = "pf" | "esi";
 
-export type Applicability =
-  | "APPLICABLE"
-  | "NOT_APPLICABLE"
-  | "UNRESOLVED";
+export type Applicability = "APPLICABLE" | "NOT_APPLICABLE" | "UNRESOLVED";
 
-export type ApplicabilitySource = "db_bill_payroll" | "hrms_statutory_info" | "none";
+export type ApplicabilitySource =
+  "db_bill_payroll" | "hrms_statutory_info" | "none";
 
 export interface SchemeResult {
   status: Applicability;
@@ -81,7 +79,9 @@ export interface StatutoryApplicabilityResult {
 }
 
 const yesNo = (raw: unknown): boolean | null => {
-  const v = String(raw ?? "").trim().toUpperCase();
+  const v = String(raw ?? "")
+    .trim()
+    .toUpperCase();
   if (v === "YES" || v === "Y" || v === "1" || v === "TRUE") return true;
   if (v === "NO" || v === "N" || v === "0" || v === "FALSE") return false;
   // Anything else is NOT treated as "no". db_bill's eligibility columns are known to carry
@@ -92,12 +92,25 @@ const yesNo = (raw: unknown): boolean | null => {
 
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-const unresolved = (reason: string): SchemeResult => ({ status: "UNRESOLVED", source: "none", reason });
+const unresolved = (reason: string): SchemeResult => ({
+  status: "UNRESOLVED",
+  source: "none",
+  reason,
+});
 
-const fromFlag = (flag: boolean | null, source: ApplicabilitySource, resolved: string, unreadable: string): SchemeResult =>
+const fromFlag = (
+  flag: boolean | null,
+  source: ApplicabilitySource,
+  resolved: string,
+  unreadable: string,
+): SchemeResult =>
   flag === null
     ? { status: "UNRESOLVED", source, reason: unreadable }
-    : { status: flag ? "APPLICABLE" : "NOT_APPLICABLE", source, reason: resolved };
+    : {
+        status: flag ? "APPLICABLE" : "NOT_APPLICABLE",
+        source,
+        reason: resolved,
+      };
 
 /**
  * Resolve both schemes for the whole period in one pass.
@@ -110,12 +123,18 @@ export async function resolveStatutoryApplicabilityForPeriod(
   payrollMonth: string,
 ): Promise<Map<string, StatutoryApplicabilityResult>> {
   if (!PERIOD_RE.test(payrollMonth)) {
-    throw new Error(`Payroll month must be YYYY-MM, received "${payrollMonth}"`);
+    throw new Error(
+      `Payroll month must be YYYY-MM, received "${payrollMonth}"`,
+    );
   }
   const out = new Map<string, StatutoryApplicabilityResult>();
 
   // ── 1. db_bill payroll for the period — authoritative ─────────────────────
-  let billRows: Array<{ EmpCode?: unknown; PFELig?: unknown; ESIElig?: unknown }> = [];
+  let billRows: Array<{
+    EmpCode?: unknown;
+    PFELig?: unknown;
+    ESIElig?: unknown;
+  }> = [];
   try {
     billRows = (await billQuery(
       `SELECT EmpCode, PFELig, ESIElig FROM salary_data
@@ -127,20 +146,33 @@ export async function resolveStatutoryApplicabilityForPeriod(
     // db_bill unreachable is UNRESOLVED for everyone, never "not applicable". A statutory
     // population that silently empties when a remote host is down is the worst possible failure.
     throw new Error(
-      `Statutory applicability cannot be resolved for ${payrollMonth}: the payroll source (db_bill) `
-      + `is unreachable. ${err instanceof Error ? err.message : String(err)}`,
+      `Statutory applicability cannot be resolved for ${payrollMonth}: the payroll source (db_bill) ` +
+        `is unreachable. ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
   for (const row of billRows) {
-    const code = String(row.EmpCode ?? "").trim().toUpperCase();
+    const code = String(row.EmpCode ?? "")
+      .trim()
+      .toUpperCase();
     if (!code || out.has(code)) continue;
     const resolvedFrom = `Resolved from the ${payrollMonth} payroll run`;
-    const unreadableIn = (s: string) => `The ${payrollMonth} payroll row carries an unreadable ${s} eligibility value`;
+    const unreadableIn = (s: string) =>
+      `The ${payrollMonth} payroll row carries an unreadable ${s} eligibility value`;
     out.set(code, {
       employeeCode: code,
-      pf: fromFlag(yesNo(row.PFELig), "db_bill_payroll", resolvedFrom, unreadableIn("PF")),
-      esi: fromFlag(yesNo(row.ESIElig), "db_bill_payroll", resolvedFrom, unreadableIn("ESI")),
+      pf: fromFlag(
+        yesNo(row.PFELig),
+        "db_bill_payroll",
+        resolvedFrom,
+        unreadableIn("PF"),
+      ),
+      esi: fromFlag(
+        yesNo(row.ESIElig),
+        "db_bill_payroll",
+        resolvedFrom,
+        unreadableIn("ESI"),
+      ),
     });
   }
 
@@ -151,10 +183,17 @@ export async function resolveStatutoryApplicabilityForPeriod(
        JOIN employee_statutory_info s ON s.employee_id = e.id
       WHERE e.active_status = 1 AND e.employee_code IS NOT NULL`,
   );
-  for (const row of hrmsRows as Array<{ employee_code?: unknown; pf_eligible?: unknown; esi_eligible?: unknown }>) {
-    const code = String(row.employee_code ?? "").trim().toUpperCase();
+  for (const row of hrmsRows as Array<{
+    employee_code?: unknown;
+    pf_eligible?: unknown;
+    esi_eligible?: unknown;
+  }>) {
+    const code = String(row.employee_code ?? "")
+      .trim()
+      .toUpperCase();
     if (!code || out.has(code)) continue; // db_bill wins — it is what was actually paid
-    const native = "Not in that period's payroll; resolved from the HRMS statutory record";
+    const native =
+      "Not in that period's payroll; resolved from the HRMS statutory record";
     const pf = yesNo(row.pf_eligible);
     const esi = yesNo(row.esi_eligible);
     // Only record the employee if at least one scheme is actually readable. A row where both are
@@ -162,12 +201,18 @@ export async function resolveStatutoryApplicabilityForPeriod(
     if (pf === null && esi === null) continue;
     out.set(code, {
       employeeCode: code,
-      pf: pf === null
-        ? unresolved("The HRMS statutory record holds no readable PF eligibility")
-        : fromFlag(pf, "hrms_statutory_info", native, ""),
-      esi: esi === null
-        ? unresolved("The HRMS statutory record holds no readable ESI eligibility")
-        : fromFlag(esi, "hrms_statutory_info", native, ""),
+      pf:
+        pf === null
+          ? unresolved(
+              "The HRMS statutory record holds no readable PF eligibility",
+            )
+          : fromFlag(pf, "hrms_statutory_info", native, ""),
+      esi:
+        esi === null
+          ? unresolved(
+              "The HRMS statutory record holds no readable ESI eligibility",
+            )
+          : fromFlag(esi, "hrms_statutory_info", native, ""),
     });
   }
 
@@ -183,21 +228,47 @@ export async function resolveStatutoryApplicabilityForPeriod(
         AND (eso.effective_from_month IS NULL OR eso.effective_from_month <= ?)`,
     [payrollMonth],
   );
-  for (const row of overrideRows as Array<{ employee_code?: unknown; override_type?: unknown }>) {
-    const code = String(row.employee_code ?? "").trim().toUpperCase();
+  for (const row of overrideRows as Array<{
+    employee_code?: unknown;
+    override_type?: unknown;
+  }>) {
+    const code = String(row.employee_code ?? "")
+      .trim()
+      .toUpperCase();
     if (!code) continue;
-    const optOutReason = "HRMS statutory opt-out approved in employee_statutory_override — not applicable from the elected month";
-    const notApplicable: SchemeResult = { status: "NOT_APPLICABLE", source: "hrms_statutory_info", reason: optOutReason };
+    const optOutReason =
+      "HRMS statutory opt-out approved in employee_statutory_override — not applicable from the elected month";
+    const notApplicable: SchemeResult = {
+      status: "NOT_APPLICABLE",
+      source: "hrms_statutory_info",
+      reason: optOutReason,
+    };
     const existing = out.get(code);
     if (String(row.override_type) === "pf_opt_out") {
-      out.set(code, existing
-        ? { ...existing, pf: notApplicable }
-        : { employeeCode: code, pf: notApplicable, esi: unresolved("No ESI data available; employee has a PF opt-out on file") }
+      out.set(
+        code,
+        existing
+          ? { ...existing, pf: notApplicable }
+          : {
+              employeeCode: code,
+              pf: notApplicable,
+              esi: unresolved(
+                "No ESI data available; employee has a PF opt-out on file",
+              ),
+            },
       );
     } else if (String(row.override_type) === "esic_opt_out") {
-      out.set(code, existing
-        ? { ...existing, esi: notApplicable }
-        : { employeeCode: code, pf: unresolved("No PF data available; employee has an ESI opt-out on file"), esi: notApplicable }
+      out.set(
+        code,
+        existing
+          ? { ...existing, esi: notApplicable }
+          : {
+              employeeCode: code,
+              pf: unresolved(
+                "No PF data available; employee has an ESI opt-out on file",
+              ),
+              esi: notApplicable,
+            },
       );
     }
   }
@@ -211,13 +282,17 @@ export async function resolveStatutoryApplicability(
   payrollMonth: string,
 ): Promise<StatutoryApplicabilityResult> {
   const all = await resolveStatutoryApplicabilityForPeriod(payrollMonth);
-  const code = String(employeeCode ?? "").trim().toUpperCase();
+  const code = String(employeeCode ?? "")
+    .trim()
+    .toUpperCase();
   const none = (scheme: string) =>
     unresolved(
-      `Neither the ${payrollMonth} payroll run nor the HRMS statutory record says whether ${scheme} `
-      + `applies to this employee`,
+      `Neither the ${payrollMonth} payroll run nor the HRMS statutory record says whether ${scheme} ` +
+        `applies to this employee`,
     );
-  return all.get(code) ?? { employeeCode: code, pf: none("PF"), esi: none("ESI") };
+  return (
+    all.get(code) ?? { employeeCode: code, pf: none("PF"), esi: none("ESI") }
+  );
 }
 
 /** Population counts for a readiness screen. Unresolved is reported, never folded into "no". */
@@ -225,8 +300,11 @@ export function summariseApplicability(
   results: Iterable<StatutoryApplicabilityResult>,
   scheme: Scheme,
 ) {
-  let applicable = 0, notApplicable = 0, unresolvedCount = 0;
-  let fromPayroll = 0, fromHrms = 0;
+  let applicable = 0,
+    notApplicable = 0,
+    unresolvedCount = 0;
+  let fromPayroll = 0,
+    fromHrms = 0;
   for (const r of results) {
     const s = r[scheme];
     if (s.status === "APPLICABLE") applicable++;
@@ -235,5 +313,11 @@ export function summariseApplicability(
     if (s.source === "db_bill_payroll") fromPayroll++;
     else if (s.source === "hrms_statutory_info") fromHrms++;
   }
-  return { applicable, notApplicable, unresolved: unresolvedCount, fromPayroll, fromHrms };
+  return {
+    applicable,
+    notApplicable,
+    unresolved: unresolvedCount,
+    fromPayroll,
+    fromHrms,
+  };
 }

@@ -4,7 +4,10 @@ import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { inboxService } from "../inbox/inbox.service.js";
-import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
+import {
+  financeBranchFilter,
+  type FinanceBranchScope,
+} from "./finance-access-scope.js";
 
 /**
  * Latest Payment Voucher raised against each vendor_payment_tracking row, as a joinable
@@ -51,7 +54,9 @@ const ACTIVE_VOUCHER_STATUSES = ["raised", "ceo_approved", "changes_requested"];
 function withActiveVoucherFlag(row: RowDataPacket): Record<string, any> {
   return {
     ...(row as Record<string, any>),
-    active_voucher: ACTIVE_VOUCHER_STATUSES.includes(String(row.voucher_status ?? "")),
+    active_voucher: ACTIVE_VOUCHER_STATUSES.includes(
+      String(row.voucher_status ?? ""),
+    ),
   };
 }
 
@@ -141,7 +146,7 @@ async function writeFinanceAudit(
   actorUserId: string,
   actorRole: string | undefined,
   changeSummary: Record<string, unknown>,
-  executor: any = db
+  executor: any = db,
 ) {
   await executor.execute(
     `INSERT INTO finance_action_audit_log
@@ -154,17 +159,23 @@ async function writeFinanceAudit(
       actorUserId,
       actorRole ?? null,
       JSON.stringify(changeSummary),
-    ]
+    ],
   );
 }
 
-function ensureImmutableAttribution(existing: any, payload: UpdatePaymentPayload) {
-  if (payload.processId != null && payload.processId !== (existing.process_id ?? "")) {
+function ensureImmutableAttribution(
+  existing: any,
+  payload: UpdatePaymentPayload,
+) {
+  if (
+    payload.processId != null &&
+    payload.processId !== (existing.process_id ?? "")
+  ) {
     throw new Error("Process mapping is locked from the approved GRN");
   }
   if (
-    payload.costCentreId != null
-    && payload.costCentreId !== (existing.cost_centre_id ?? "")
+    payload.costCentreId != null &&
+    payload.costCentreId !== (existing.cost_centre_id ?? "")
   ) {
     throw new Error("Cost centre mapping is locked from the approved GRN");
   }
@@ -195,7 +206,7 @@ export const vendorPaymentService = {
       `SELECT id, bank_name, bank_code, ifsc_prefix
          FROM bank_master
         WHERE active_status = 1
-        ORDER BY bank_name`
+        ORDER BY bank_name`,
     );
     return rows;
   },
@@ -205,7 +216,10 @@ export const vendorPaymentService = {
     // migration-sentinel created_by — never raised live through this app. They carry no vendor,
     // invoice or process, so they clutter this grid with unreadable blank rows. Kept in the
     // database for audit; just excluded from the working view. Owner ruling 2026-09-16.
-    const conditions: string[] = ["1=1", "(vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')"];
+    const conditions: string[] = [
+      "1=1",
+      "(vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')",
+    ];
     const params: unknown[] = [];
 
     if (filters.financialYear) {
@@ -270,7 +284,7 @@ export const vendorPaymentService = {
     }
     if (filters.search) {
       conditions.push(
-        "(vpt.grn_number LIKE ? OR vpt.vendor_name LIKE ? OR vpt.transaction_id LIKE ?)"
+        "(vpt.grn_number LIKE ? OR vpt.vendor_name LIKE ? OR vpt.transaction_id LIKE ?)",
       );
       const like = `%${filters.search}%`;
       params.push(like, like, like);
@@ -283,7 +297,7 @@ export const vendorPaymentService = {
 
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM vendor_payment_tracking vpt ${where}`,
-      params
+      params,
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT vpt.*,
@@ -326,7 +340,7 @@ export const vendorPaymentService = {
          ${where}
         ORDER BY vpt.due_date DESC, vpt.created_at DESC
         LIMIT ${limit} OFFSET ${offset}`,
-      params
+      params,
     );
 
     return {
@@ -364,7 +378,7 @@ export const vendorPaymentService = {
          ${LATEST_VOUCHER_JOIN}
         WHERE vpt.id = ?
         LIMIT 1`,
-      [id]
+      [id],
     );
     if (!rows[0]) return null;
 
@@ -380,10 +394,13 @@ export const vendorPaymentService = {
          JOIN payment_voucher pv ON pv.id = pvga.payment_voucher_id
         WHERE pvga.vendor_payment_tracking_id = ?
         ORDER BY pv.raised_at DESC, pv.id DESC`,
-      [id]
+      [id],
     );
 
-    return { ...withActiveVoucherFlag(rows[0]), voucher_history: voucherHistory };
+    return {
+      ...withActiveVoucherFlag(rows[0]),
+      voucher_history: voucherHistory,
+    };
   },
 
   /**
@@ -404,10 +421,10 @@ export const vendorPaymentService = {
     payload: UpdatePaymentPayload,
     actorUserId: string,
     actorRole?: string,
-    externalConnection?: PoolConnection
+    externalConnection?: PoolConnection,
   ) {
     const owns = !externalConnection;
-    const connection = externalConnection ?? await db.getConnection();
+    const connection = externalConnection ?? (await db.getConnection());
     let auditSummary: Record<string, unknown> = {};
     try {
       if (owns) await connection.beginTransaction();
@@ -416,7 +433,7 @@ export const vendorPaymentService = {
            FROM vendor_payment_tracking
           WHERE id = ?
           FOR UPDATE`,
-        [id]
+        [id],
       );
       const existing = rows[0] as any;
       if (!existing) throw new Error("Vendor payment record not found");
@@ -426,14 +443,14 @@ export const vendorPaymentService = {
       const paidAmount = roundMoney(
         payload.paidAmount == null
           ? Number(existing.paid_amount ?? 0)
-          : Number(payload.paidAmount)
+          : Number(payload.paidAmount),
       );
       if (!Number.isFinite(paidAmount) || paidAmount < 0) {
         throw new Error("Paid amount must be zero or greater");
       }
       if (paidAmount > dueAmount + 0.01) {
         throw new Error(
-          `Paid amount (${paidAmount}) cannot exceed due amount (${dueAmount})`
+          `Paid amount (${paidAmount}) cannot exceed due amount (${dueAmount})`,
         );
       }
 
@@ -442,12 +459,15 @@ export const vendorPaymentService = {
         throw new Error("Invalid payment mode");
       }
       const paymentDate = payload.paymentDate ?? existing.payment_date ?? null;
-      if (paymentDate && !/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate).slice(0, 10))) {
+      if (
+        paymentDate &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate).slice(0, 10))
+      ) {
         throw new Error("Payment date must be a valid date");
       }
       if (
-        paymentDate
-        && String(paymentDate).slice(0, 10) > new Date().toISOString().slice(0, 10)
+        paymentDate &&
+        String(paymentDate).slice(0, 10) > new Date().toISOString().slice(0, 10)
       ) {
         throw new Error("Payment date cannot be in the future");
       }
@@ -460,9 +480,10 @@ export const vendorPaymentService = {
              FROM bank_master
             WHERE id = ? AND active_status = 1
             LIMIT 1`,
-          [bankId]
+          [bankId],
         );
-        if (!bankRows[0]) throw new Error("Selected bank is inactive or unavailable");
+        if (!bankRows[0])
+          throw new Error("Selected bank is inactive or unavailable");
         bankName = String(bankRows[0].bank_name);
       }
 
@@ -485,10 +506,12 @@ export const vendorPaymentService = {
              FROM vendor_payment_tracking
             WHERE transaction_id = ? AND id <> ?
             LIMIT 1`,
-          [transactionId, id]
+          [transactionId, id],
         );
         if (duplicates[0]) {
-          throw new Error("This transaction ID / UTR is already used on another payment");
+          throw new Error(
+            "This transaction ID / UTR is already used on another payment",
+          );
         }
       }
 
@@ -500,17 +523,20 @@ export const vendorPaymentService = {
         throw new Error("Hold reason is required");
       }
       if (["Rejected", "Closed"].includes(String(requestedStatus))) {
-        throw new Error("Rejected/Closed status cannot be set through payment dispatch");
+        throw new Error(
+          "Rejected/Closed status cannot be set through payment dispatch",
+        );
       }
 
       const balanceAmount = roundMoney(dueAmount - paidAmount);
-      const paymentStatus = requestedStatus === "On Hold"
-        ? "On Hold"
-        : paidAmount === 0
-          ? "Payment Pending"
-          : balanceAmount > 0.01
-            ? "Partially Paid"
-            : "Paid";
+      const paymentStatus =
+        requestedStatus === "On Hold"
+          ? "On Hold"
+          : paidAmount === 0
+            ? "Payment Pending"
+            : balanceAmount > 0.01
+              ? "Partially Paid"
+              : "Paid";
       const mappedStatus = grnPaymentStatus(paymentStatus, paidAmount);
 
       const [updateResult] = await connection.execute<ResultSetHeader>(
@@ -539,7 +565,7 @@ export const vendorPaymentService = {
           payload.remarks?.trim() || null,
           actorUserId,
           id,
-        ]
+        ],
       );
       if (updateResult.affectedRows !== 1) {
         throw new Error("Vendor payment update did not affect a record");
@@ -554,7 +580,7 @@ export const vendorPaymentService = {
             mappedStatus.grnStatus,
             mappedStatus.accountsStatus,
             existing.grn_request_id,
-          ]
+          ],
         );
       }
 
@@ -590,7 +616,7 @@ export const vendorPaymentService = {
         actorUserId,
         actorRole,
         auditSummary,
-        connection
+        connection,
       );
       if (owns) await connection.commit();
     } catch (error) {
@@ -618,7 +644,7 @@ export const vendorPaymentService = {
   async bulkUpdate(
     updates: Array<{ id: string } & UpdatePaymentPayload>,
     actorUserId: string,
-    actorRole?: string
+    actorRole?: string,
   ) {
     const results: Array<{ id: string; success: boolean; error?: string }> = [];
     for (const update of updates) {
@@ -630,7 +656,8 @@ export const vendorPaymentService = {
         results.push({
           id: update.id,
           success: false,
-          error: error instanceof Error ? error.message : "Payment update failed",
+          error:
+            error instanceof Error ? error.message : "Payment update failed",
         });
       }
     }
@@ -643,7 +670,7 @@ export const vendorPaymentService = {
     filePath: string,
     fileMime: string,
     actorUserId: string,
-    actorRole?: string
+    actorRole?: string,
   ) {
     const connection = await db.getConnection();
     try {
@@ -653,11 +680,13 @@ export const vendorPaymentService = {
            FROM vendor_payment_tracking
           WHERE id = ?
           FOR UPDATE`,
-        [id]
+        [id],
       );
       if (!rows[0]) throw new Error("Vendor payment record not found");
       if (Number(rows[0].paid_amount ?? 0) <= 0) {
-        throw new Error("Dispatch payment details before uploading payment proof");
+        throw new Error(
+          "Dispatch payment details before uploading payment proof",
+        );
       }
 
       const [result] = await connection.execute<ResultSetHeader>(
@@ -668,7 +697,7 @@ export const vendorPaymentService = {
                 updated_by = ?,
                 updated_at = NOW()
           WHERE id = ?`,
-        [fileName, filePath, fileMime, actorUserId, id]
+        [fileName, filePath, fileMime, actorUserId, id],
       );
       if (result.affectedRows !== 1) {
         throw new Error("Payment proof could not be saved");
@@ -679,7 +708,7 @@ export const vendorPaymentService = {
         actorUserId,
         actorRole,
         { file_name: fileName, file_mime: fileMime },
-        connection
+        connection,
       );
       await connection.commit();
     } catch (error) {
@@ -722,7 +751,7 @@ export const vendorPaymentService = {
           AND g.grn_type = 'vendor'
           AND g.status IN ('pending_accounts_payment','finance_head_approved','approved')
         LIMIT 1`,
-      [grnId]
+      [grnId],
     );
     const grn = rows[0] as any;
     if (!grn) throw new Error("Finance-approved vendor GRN not found");
@@ -739,13 +768,16 @@ export const vendorPaymentService = {
          FROM vendor_payment_tracking
         WHERE grn_request_id = ?
         LIMIT 1`,
-      [grnId]
+      [grnId],
     );
     if (existing[0]) return String(existing[0].id);
 
     const id = randomUUID();
-    const dueAmount = roundMoney(Number(grn.amount_with_tax ?? grn.amount ?? 0));
-    if (dueAmount <= 0) throw new Error("Vendor GRN payable amount must be positive");
+    const dueAmount = roundMoney(
+      Number(grn.amount_with_tax ?? grn.amount ?? 0),
+    );
+    if (dueAmount <= 0)
+      throw new Error("Vendor GRN payable amount must be positive");
 
     await executor.execute(
       `INSERT INTO vendor_payment_tracking
@@ -779,13 +811,13 @@ export const vendorPaymentService = {
         Number(grn.amount_without_tax || grn.amount || 0),
         Number(grn.tax_amount || 0),
         dueAmount,
-      ]
+      ],
     );
     await executor.execute(
       `UPDATE grn_request
           SET status = 'pending_accounts_payment', accounts_payment_status = 'pending'
         WHERE id = ?`,
-      [grnId]
+      [grnId],
     );
 
     if (!connection) {
@@ -797,7 +829,12 @@ export const vendorPaymentService = {
         id,
         actorUserId,
         undefined,
-        { grn_id: grnId, grn_number: grn.grn_number, due_amount: dueAmount, reason: remediationReason.trim() },
+        {
+          grn_id: grnId,
+          grn_number: grn.grn_number,
+          due_amount: dueAmount,
+          reason: remediationReason.trim(),
+        },
       );
     }
     return id;
@@ -807,7 +844,7 @@ export const vendorPaymentService = {
     const scope: FinanceBranchScope = options.branchScope ?? { mode: "all" };
     const { sql: branchClause, params: branchParams } = financeBranchFilter(
       scope,
-      "vpt.branch_id"
+      "vpt.branch_id",
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT vpt.id, gr.grn_number, gr.invoice_number,
@@ -825,16 +862,22 @@ export const vendorPaymentService = {
           AND vpt.due_date IS NOT NULL
           AND (vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')
         ORDER BY days_overdue DESC, vpt.due_date`,
-      branchParams
+      branchParams,
     );
-    const buckets: Record<string, RowDataPacket[]> = { current: [], "1-30": [], "31-60": [], "61-90": [], ">90": [] };
+    const buckets: Record<string, RowDataPacket[]> = {
+      current: [],
+      "1-30": [],
+      "31-60": [],
+      "61-90": [],
+      ">90": [],
+    };
     for (const row of rows as RowDataPacket[]) {
       const d = Number(row.days_overdue ?? 0);
-      if (d <= 0)       buckets.current.push(row);
+      if (d <= 0) buckets.current.push(row);
       else if (d <= 30) buckets["1-30"].push(row);
       else if (d <= 60) buckets["31-60"].push(row);
       else if (d <= 90) buckets["61-90"].push(row);
-      else              buckets[">90"].push(row);
+      else buckets[">90"].push(row);
     }
     return { rows: buckets };
   },
@@ -848,7 +891,7 @@ export const vendorPaymentService = {
     const scopeL: FinanceBranchScope = options.branchScope ?? { mode: "all" };
     const { sql: branchClause, params: branchParams } = financeBranchFilter(
       scopeL,
-      "vpt.branch_id"
+      "vpt.branch_id",
     );
     const extraParams: unknown[] = [options.vendorId, ...branchParams];
     let periodClause = "";
@@ -873,7 +916,7 @@ export const vendorPaymentService = {
         WHERE vpt.vendor_id = ? AND ${branchClause}${periodClause}
           AND (vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')
         ORDER BY gr.bill_date DESC, gr.grn_number`,
-      extraParams
+      extraParams,
     );
     return rows;
   },
@@ -911,7 +954,7 @@ export const vendorPaymentService = {
         budget_line_id: payment.budget_line_id ?? null,
         process_id: payment.process_id ?? null,
         cost_centre_id: payment.cost_centre_id ?? null,
-      }
+      },
     );
   },
 
@@ -942,7 +985,7 @@ export const vendorPaymentService = {
         WHERE ur.role_key = 'accounts_head'
           AND ur.active_status = 1
           AND (u.is_blocked IS NULL OR u.is_blocked = 0)
-        LIMIT 100`
+        LIMIT 100`,
     );
 
     for (const user of accountsUsers) {
@@ -955,7 +998,7 @@ export const vendorPaymentService = {
         description: `Branch: ${
           payment.branch_name ?? payment.branch_id
         } | Vendor: ${payment.vendor_name ?? "N/A"} | Due: Rs ${Number(
-          payment.due_amount
+          payment.due_amount,
         ).toLocaleString("en-IN")} | Due Date: ${payment.due_date ?? "TBD"}`,
         entity_type: "vendor_payment_tracking",
         entity_id: id,
@@ -992,7 +1035,7 @@ export const vendorPaymentService = {
          JOIN grn_request g ON g.id = vpt.grn_request_id
         WHERE vpt.payment_status NOT IN ('Paid', 'Closed')
           AND COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?${branchClause}`,
-      params
+      params,
     );
     const row = rows[0] ?? {};
     const pendingCount = Number(row.pending_count ?? 0);
@@ -1009,7 +1052,7 @@ export const vendorPaymentService = {
     const placeholders = scope.branchIds.map(() => "?").join(", ");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_name FROM branch_master WHERE id IN (${placeholders})`,
-      scope.branchIds
+      scope.branchIds,
     );
     return rows.map((row) => String(row.branch_name)).filter(Boolean);
   },

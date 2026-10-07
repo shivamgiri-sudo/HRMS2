@@ -30,21 +30,31 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 const WINDOW_ROUTES = read("src/modules/payroll/payroll-window.routes.ts");
 const WINDOW_CRON = read("src/modules/payroll/payroll-window.cron.ts");
 const PAYROLL_ROUTES = read("src/modules/payroll/payroll.routes.ts");
-const PAYROLL_EXTENDED_ROUTES = read("src/modules/payroll/payroll-extended.routes.ts");
+const PAYROLL_EXTENDED_ROUTES = read(
+  "src/modules/payroll/payroll-extended.routes.ts",
+);
 const PAYROLL_SERVICE = read("src/modules/payroll/payroll.service.ts");
 
 describe("payroll-window.routes.ts no longer hand-rolls the closed-run check", () => {
   it("imports isRunClosed instead of redefining the set", () => {
-    expect(WINDOW_ROUTES).toMatch(/import\s*{\s*isRunClosed\s*}\s*from\s*['"]\.\/run-status\.js['"]/);
+    expect(WINDOW_ROUTES).toMatch(
+      /import\s*{\s*isRunClosed\s*}\s*from\s*['"]\.\/run-status\.js['"]/,
+    );
   });
 
   it("window-status, tds-mode and manual-tds all route through isRunClosed, not a literal array", () => {
-    const occurrences = WINDOW_ROUTES.match(/isRunClosed\(run\.status\)/g) ?? [];
-    expect(occurrences.length, "expected 3 call sites: window-status, PATCH tds-mode, POST manual-tds").toBe(3);
+    const occurrences =
+      WINDOW_ROUTES.match(/isRunClosed\(run\.status\)/g) ?? [];
+    expect(
+      occurrences.length,
+      "expected 3 call sites: window-status, PATCH tds-mode, POST manual-tds",
+    ).toBe(3);
   });
 
   it("does not still contain the dead literal", () => {
-    expect(WINDOW_ROUTES).not.toMatch(/\[\s*['"]locked['"]\s*,\s*['"]disbursed['"]\s*\]\.includes/);
+    expect(WINDOW_ROUTES).not.toMatch(
+      /\[\s*['"]locked['"]\s*,\s*['"]disbursed['"]\s*\]\.includes/,
+    );
   });
 });
 
@@ -101,43 +111,64 @@ describe("NEFT export is reachable for finalized runs (two implementations)", ()
     // isRunClosed is still the check; it is now applied to every run in scope, because one handler
     // serves both /runs/:id/neft-export and /month/:month/neft-export and a month paid in several
     // runs must still produce a single bank file.
-    expect(handlerSource(PAYROLL_ROUTES, "/runs/:id/neft-export")).toMatch(/isRunClosed\(r\.status\)/);
+    expect(handlerSource(PAYROLL_ROUTES, "/runs/:id/neft-export")).toMatch(
+      /isRunClosed\(r\.status\)/,
+    );
   });
 
   it("payroll-extended.routes.ts NEFT export uses isRunClosed", () => {
-    expect(PAYROLL_EXTENDED_ROUTES).toMatch(/import\s*{\s*isRunClosed\s*}\s*from\s*['"]\.\/run-status\.js['"]/);
+    expect(PAYROLL_EXTENDED_ROUTES).toMatch(
+      /import\s*{\s*isRunClosed\s*}\s*from\s*['"]\.\/run-status\.js['"]/,
+    );
     expect(PAYROLL_EXTENDED_ROUTES).toMatch(/isRunClosed\(run\.status\)/);
   });
 });
 
 describe("TDS certificate FY summary counts finalized months", () => {
   it("the status allow-list includes finalized", () => {
-    const m = PAYROLL_ROUTES.match(/AND spr\.status IN \(([^)]*)\)\s*\n\s*AND spl\.status NOT IN \('excluded', 'blocked'\)/);
-    expect(m, "TDS certificate FY query has moved or changed shape").toBeTruthy();
+    const m = PAYROLL_ROUTES.match(
+      /AND spr\.status IN \(([^)]*)\)\s*\n\s*AND spl\.status NOT IN \('excluded', 'blocked'\)/,
+    );
+    expect(
+      m,
+      "TDS certificate FY query has moved or changed shape",
+    ).toBeTruthy();
     expect(m![1].toLowerCase()).toContain("'finalized'");
   });
 
   it("the per-month canonical-run ranking includes finalized", () => {
-    expect(PAYROLL_ROUTES).toMatch(/FIELD\(spr\.status, 'disbursed', 'finalized'/);
+    expect(PAYROLL_ROUTES).toMatch(
+      /FIELD\(spr\.status, 'disbursed', 'finalized'/,
+    );
   });
 });
 
 describe("self-service payslip-history ranking accounts for finalized runs", () => {
   it("the FIELD() ranking used for /payslip/history/:employeeId includes finalized", () => {
-    expect(PAYROLL_ROUTES).toMatch(/FIELD\(spr\.status,'disbursed','finalized'/);
+    expect(PAYROLL_ROUTES).toMatch(
+      /FIELD\(spr\.status,'disbursed','finalized'/,
+    );
   });
 });
 
 describe("payroll.service.ts getPayrollOverview picks the real settled run", () => {
   it("the canonical-run CASE ranking includes finalized ahead of draft/processing", () => {
     const m = PAYROLL_SERVICE.match(/CASE status([\s\S]*?)END,/);
-    expect(m, "getPayrollOverview ranking has moved or changed shape").toBeTruthy();
+    expect(
+      m,
+      "getPayrollOverview ranking has moved or changed shape",
+    ).toBeTruthy();
     expect(m![1]).toMatch(/WHEN 'finalized'\s*THEN/);
   });
 
   it("the no-run-for-month fallback query includes finalized", () => {
-    const m = PAYROLL_SERVICE.match(/WHERE status IN \(([^)]*)\)\s*\n\s*ORDER BY run_month DESC/);
-    expect(m, "getPayrollOverview fallback query has moved or changed shape").toBeTruthy();
+    const m = PAYROLL_SERVICE.match(
+      /WHERE status IN \(([^)]*)\)\s*\n\s*ORDER BY run_month DESC/,
+    );
+    expect(
+      m,
+      "getPayrollOverview fallback query has moved or changed shape",
+    ).toBeTruthy();
     expect(m![1].toLowerCase()).toContain("'finalized'");
   });
 });

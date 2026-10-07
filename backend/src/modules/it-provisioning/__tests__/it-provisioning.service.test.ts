@@ -76,7 +76,9 @@ describe("notifyOverdueProvisioning — 4-hour repeat dedupe key", () => {
     await notifyOverdueProvisioning();
 
     expect(mockNotify).toHaveBeenCalledWith(
-      expect.objectContaining({ dedupeKey: "it_provisioning_request:req-2:overdue:0" }),
+      expect.objectContaining({
+        dedupeKey: "it_provisioning_request:req-2:overdue:0",
+      }),
     );
   });
 });
@@ -105,7 +107,9 @@ describe("persistStructuredFields — bgv_result", () => {
     }));
     vi.doMock("../it-provisioning.service.js", () => ({
       listProvisioningRequests: vi.fn(),
-      getProvisioningRequest: vi.fn().mockResolvedValue({ id: "req-bgv-1", task_code: "HR_BGV_INITIATION" }),
+      getProvisioningRequest: vi
+        .fn()
+        .mockResolvedValue({ id: "req-bgv-1", task_code: "HR_BGV_INITIATION" }),
       actionProvisioningRequest: vi.fn().mockResolvedValue(undefined),
       waiveProvisioningRequest: vi.fn(),
       confirmAndLockRequest: vi.fn(),
@@ -114,7 +118,8 @@ describe("persistStructuredFields — bgv_result", () => {
       OFFICIAL_EMAIL_REGEX: /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/,
     }));
 
-    const { itProvisioningRouter } = await import("../it-provisioning.routes.js");
+    const { itProvisioningRouter } =
+      await import("../it-provisioning.routes.js");
     const app = express();
     app.use(express.json());
     app.use("/api/it-provisioning", itProvisioningRouter);
@@ -135,7 +140,10 @@ describe("persistStructuredFields — bgv_result", () => {
       .mockResolvedValueOnce([{}]); // any further db call inside actionProvisioningRequest mock path (mocked, so unused)
     const accepted = await request(app)
       .post("/api/it-provisioning/tasks/req-bgv-1/complete")
-      .send({ bgv_result: "green", evidence_note: "Vendor confirmed clean report, ref VEN-2026-441" });
+      .send({
+        bgv_result: "green",
+        evidence_note: "Vendor confirmed clean report, ref VEN-2026-441",
+      });
     expect(accepted.status).toBe(200);
 
     vi.doUnmock("../../../middleware/authMiddleware.js");
@@ -149,7 +157,9 @@ describe("JOIN_TASKS includes HR_BGV_INITIATION", () => {
   it("dispatches 5 join tasks including the new BGV task, assigned to hr", async () => {
     const mod = await import("../it-provisioning.service.js");
     expect((mod as any).JOIN_TASKS).toBeDefined();
-    const bgvTask = (mod as any).JOIN_TASKS.find((t: any) => t.taskCode === "HR_BGV_INITIATION");
+    const bgvTask = (mod as any).JOIN_TASKS.find(
+      (t: any) => t.taskCode === "HR_BGV_INITIATION",
+    );
     expect(bgvTask).toBeDefined();
     expect(bgvTask.assignedRole).toBe("hr");
   });

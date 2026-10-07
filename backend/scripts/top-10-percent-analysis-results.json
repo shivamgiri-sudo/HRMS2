@@ -4,7 +4,11 @@
     "description": "Identifies what makes top 10% agents excel by comparing trait mastery vs overall population",
     "generated_date": "2026-06-21",
     "analysis_period": "90 days",
-    "data_sources": ["mas_hrms", "db_audit.call_quality_assessment", "Shivamgiri KPI"],
+    "data_sources": [
+      "mas_hrms",
+      "db_audit.call_quality_assessment",
+      "Shivamgiri KPI"
+    ],
     "timeframe_start": "2026-03-21",
     "timeframe_end": "2026-06-21"
   },
@@ -396,31 +400,56 @@
       "method": "GET",
       "path": "/api/analytics/top-performers/summary",
       "description": "Executive summary of top 10% agents, trait excellence, teachability",
-      "access_roles": ["QA_Manager", "Quality_Manager", "Operations_Manager", "HR_Admin"]
+      "access_roles": [
+        "QA_Manager",
+        "Quality_Manager",
+        "Operations_Manager",
+        "HR_Admin"
+      ]
     },
     {
       "method": "GET",
       "path": "/api/analytics/top-performers/profile",
       "description": "Top 10% profile summary (count, avg quality, tenure)",
-      "access_roles": ["QA_Manager", "Quality_Manager", "Operations_Manager", "HR_Admin"]
+      "access_roles": [
+        "QA_Manager",
+        "Quality_Manager",
+        "Operations_Manager",
+        "HR_Admin"
+      ]
     },
     {
       "method": "GET",
       "path": "/api/analytics/top-performers/trait-mastery",
       "description": "Trait comparison: top 10% vs overall population (excellence deltas)",
-      "access_roles": ["QA_Manager", "Quality_Manager", "Operations_Manager", "HR_Admin"]
+      "access_roles": [
+        "QA_Manager",
+        "Quality_Manager",
+        "Operations_Manager",
+        "HR_Admin"
+      ]
     },
     {
       "method": "GET",
       "path": "/api/analytics/top-performers/teachability",
       "description": "Teachability metrics and replication difficulty for each trait",
-      "access_roles": ["QA_Manager", "Quality_Manager", "Operations_Manager", "HR_Admin"]
+      "access_roles": [
+        "QA_Manager",
+        "Quality_Manager",
+        "Operations_Manager",
+        "HR_Admin"
+      ]
     },
     {
       "method": "GET",
       "path": "/api/analytics/top-performers/profiles",
       "description": "Detailed profiles of top 10% agents with individual trait scores",
-      "access_roles": ["QA_Manager", "Quality_Manager", "Operations_Manager", "HR_Admin"],
+      "access_roles": [
+        "QA_Manager",
+        "Quality_Manager",
+        "Operations_Manager",
+        "HR_Admin"
+      ],
       "query_params": {
         "limit": "max results (default 50, max 500)"
       }

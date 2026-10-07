@@ -9,7 +9,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -26,7 +31,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -42,7 +47,7 @@ function sensitiveCol(canView: boolean, expr: string, alias: string): string {
 export async function attendanceIssuesRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -92,8 +97,10 @@ export async function attendanceIssuesRegister(
 
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
@@ -109,7 +116,7 @@ export async function attendanceIssuesRegister(
 export async function loanRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -151,8 +158,10 @@ export async function loanRegister(
 
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
@@ -168,7 +177,7 @@ export async function loanRegister(
 export async function dojChangeRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["1 = 1"];
   const params: unknown[] = [];
@@ -216,8 +225,10 @@ export async function dojChangeRegister(
 
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
@@ -233,7 +244,7 @@ export async function dojChangeRegister(
 export async function bankAccountRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL", "e.active_status = 1"];
   const params: unknown[] = [];
@@ -249,7 +260,7 @@ export async function bankAccountRegister(
   const bankExpr = sensitiveCol(
     scope.canViewSensitiveFields,
     "e.bank_account_number",
-    "account_number"
+    "account_number",
   );
 
   const base = `
@@ -270,8 +281,10 @@ export async function bankAccountRegister(
 
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
@@ -287,7 +300,7 @@ export async function bankAccountRegister(
 export async function nomineeRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL", "e.active_status = 1"];
   const params: unknown[] = [];
@@ -319,8 +332,10 @@ export async function nomineeRegister(
 
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,

@@ -15,7 +15,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -32,7 +37,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -50,11 +55,17 @@ function appendMasterBranchScope(
   scope: ExecScope,
   clauses: string[],
   params: unknown[],
-  column: string
+  column: string,
 ): void {
-  if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
-  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
-    clauses.push(`${column} IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
+  if (scope.branchScope.mode === "none")
+    throw new ReportScopeAccessDeniedError("branchScope");
+  if (
+    scope.branchScope.mode === "restricted" &&
+    scope.branchScope.ids.length > 0
+  ) {
+    clauses.push(
+      `${column} IN (${scope.branchScope.ids.map(() => "?").join(",")})`,
+    );
     params.push(...scope.branchScope.ids);
   }
 }
@@ -74,7 +85,7 @@ function appendMasterBranchScope(
 export async function costCentreMasterReport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["cc.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -88,7 +99,7 @@ export async function costCentreMasterReport(
     clauses.push("cc.id = ?");
     params.push(String(filters.costCentreId));
   }
-  if (filters.status === "active")   clauses.push("cc.active_status = 1");
+  if (filters.status === "active") clauses.push("cc.active_status = 1");
   if (filters.status === "inactive") clauses.push("cc.active_status = 0");
 
   const base = `
@@ -124,8 +135,12 @@ export async function costCentreMasterReport(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +153,7 @@ export async function costCentreMasterReport(
 export async function processMasterReport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["p.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -152,7 +167,7 @@ export async function processMasterReport(
     clauses.push("p.id = ?");
     params.push(String(filters.processId));
   }
-  if (filters.status === "active")   clauses.push("p.active_status = 1");
+  if (filters.status === "active") clauses.push("p.active_status = 1");
   if (filters.status === "inactive") clauses.push("p.active_status = 0");
 
   const base = `
@@ -184,8 +199,12 @@ export async function processMasterReport(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +223,7 @@ export async function processMasterReport(
 export async function headcountByCostCentreAndProcess(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -237,6 +256,10 @@ export async function headcountByCostCentreAndProcess(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }

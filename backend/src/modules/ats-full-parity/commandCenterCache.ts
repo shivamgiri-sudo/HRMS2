@@ -8,19 +8,30 @@
  */
 export const COMMAND_CENTER_TTL_MS = 30_000;
 const COMMAND_CENTER_CACHE_MAX = 200;
-export const commandCenterCache = new Map<string, { at: number; value: Record<string, unknown> }>();
+export const commandCenterCache = new Map<
+  string,
+  { at: number; value: Record<string, unknown> }
+>();
 
 export function commandCenterCacheKey(
   actorId: string | undefined,
   bypassScope: boolean,
   query: Record<string, unknown>,
 ): string {
-  const filters = Object.keys(query).sort().map((k) => [k, query[k]]);
+  const filters = Object.keys(query)
+    .sort()
+    .map((k) => [k, query[k]]);
   return `cc:${JSON.stringify([actorId ?? "", bypassScope, filters])}`;
 }
 
 export function pruneCommandCenterCache(): void {
   if (commandCenterCache.size <= COMMAND_CENTER_CACHE_MAX) return;
-  const oldest = [...commandCenterCache.entries()].sort((a, b) => a[1].at - b[1].at);
-  for (const [k] of oldest.slice(0, commandCenterCache.size - COMMAND_CENTER_CACHE_MAX)) commandCenterCache.delete(k);
+  const oldest = [...commandCenterCache.entries()].sort(
+    (a, b) => a[1].at - b[1].at,
+  );
+  for (const [k] of oldest.slice(
+    0,
+    commandCenterCache.size - COMMAND_CENTER_CACHE_MAX,
+  ))
+    commandCenterCache.delete(k);
 }

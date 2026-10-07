@@ -1,6 +1,9 @@
 import { Router } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  requireWriteAccess,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { bankMasterService, BankMasterError } from "./bank-master.service.js";
 
@@ -11,7 +14,13 @@ import { bankMasterService, BankMasterError } from "./bank-master.service.js";
  * Bank Ledger / Bank Reconciliation system depends on.
  */
 const WRITE_ROLES = ["finance_head", "accounts_head", "super_admin"] as const;
-const READ_ROLES = [...WRITE_ROLES, "ceo", "branch_head", "admin", "finance"] as const;
+const READ_ROLES = [
+  ...WRITE_ROLES,
+  "ceo",
+  "branch_head",
+  "admin",
+  "finance",
+] as const;
 
 export const bankMasterRouter = Router();
 
@@ -22,7 +31,12 @@ const h =
 
 function fail(res: any, error: unknown) {
   const statusCode = error instanceof BankMasterError ? error.statusCode : 400;
-  res.status(statusCode).json({ success: false, error: error instanceof Error ? error.message : "Unexpected error" });
+  res
+    .status(statusCode)
+    .json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unexpected error",
+    });
 }
 
 bankMasterRouter.use(requireAuth);
@@ -31,7 +45,9 @@ bankMasterRouter.get(
   "/",
   requireRole(...READ_ROLES),
   h(async (req, res) => {
-    const rows = await bankMasterService.list(req.query.includeInactive === "1");
+    const rows = await bankMasterService.list(
+      req.query.includeInactive === "1",
+    );
     res.json({ success: true, data: rows });
   }),
 );

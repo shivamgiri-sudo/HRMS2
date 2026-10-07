@@ -1,7 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import { resolve } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const modelDir = fs.mkdtempSync(resolve(os.tmpdir(), "hrms-face-models-"));
 const previousFaceModelsPath = process.env.FACE_MODELS_PATH;
@@ -71,16 +79,27 @@ const mockReady = mocks.ready as ReturnType<typeof vi.fn>;
 const mockMonkeyPatch = mocks.monkeyPatch as ReturnType<typeof vi.fn>;
 const mockLoadFromDisk = mocks.loadFromDisk as ReturnType<typeof vi.fn>;
 const mockDetectSingleFace = mocks.detectSingleFace as ReturnType<typeof vi.fn>;
-const mockEuclideanDistance = mocks.euclideanDistance as ReturnType<typeof vi.fn>;
+const mockEuclideanDistance = mocks.euclideanDistance as ReturnType<
+  typeof vi.fn
+>;
 const mockLoadImage = mocks.loadImage as ReturnType<typeof vi.fn>;
 const mockRecognize = mocks.recognize as ReturnType<typeof vi.fn>;
 const mockExecute = mocks.execute as ReturnType<typeof vi.fn>;
 
 beforeAll(async () => {
   process.env.FACE_MODELS_PATH = modelDir;
-  fs.writeFileSync(resolve(modelDir, "ssd_mobilenetv1_model-weights_manifest.json"), "{}");
-  fs.writeFileSync(resolve(modelDir, "face_landmark_68_model-weights_manifest.json"), "{}");
-  fs.writeFileSync(resolve(modelDir, "face_recognition_model-weights_manifest.json"), "{}");
+  fs.writeFileSync(
+    resolve(modelDir, "ssd_mobilenetv1_model-weights_manifest.json"),
+    "{}",
+  );
+  fs.writeFileSync(
+    resolve(modelDir, "face_landmark_68_model-weights_manifest.json"),
+    "{}",
+  );
+  fs.writeFileSync(
+    resolve(modelDir, "face_recognition_model-weights_manifest.json"),
+    "{}",
+  );
 
   const faceModule = await import("../face-match.service.js");
   const ocrModule = await import("../ocr.service.js");
@@ -109,7 +128,9 @@ beforeEach(() => {
   mockExecute.mockResolvedValue([[], []]);
   mockDetectSingleFace.mockImplementation(() => ({
     withFaceLandmarks: () => ({
-      withFaceDescriptor: async () => ({ descriptor: new Float32Array([0.1, 0.2, 0.3]) }),
+      withFaceDescriptor: async () => ({
+        descriptor: new Float32Array([0.1, 0.2, 0.3]),
+      }),
     }),
   }));
 });
@@ -133,7 +154,11 @@ describe("ATS OCR and face runtime", () => {
   });
 
   it("uses the configurable face model directory", async () => {
-    await compareFaces("candidate-1", resolve(modelDir, "selfie.png"), resolve(modelDir, "id.png"));
+    await compareFaces(
+      "candidate-1",
+      resolve(modelDir, "selfie.png"),
+      resolve(modelDir, "id.png"),
+    );
 
     expect(mockLoadImage).toHaveBeenCalledWith(resolve(modelDir, "selfie.png"));
     expect(mockLoadImage).toHaveBeenCalledWith(resolve(modelDir, "id.png"));
@@ -148,8 +173,16 @@ describe("ATS OCR and face runtime", () => {
 
     const result = await compareFaces("candidate-1", "selfie.png", "id.png");
 
-    expect(result).toEqual({ score: 0, matched: false, status: "no_face_detected" });
-    expect(mockExecute.mock.calls.some(([sql]) => String(sql).includes("candidate_face_match"))).toBe(true);
+    expect(result).toEqual({
+      score: 0,
+      matched: false,
+      status: "no_face_detected",
+    });
+    expect(
+      mockExecute.mock.calls.some(([sql]) =>
+        String(sql).includes("candidate_face_match"),
+      ),
+    ).toBe(true);
   });
 
   it("records failed face matching safely when the runtime throws", async () => {
@@ -163,7 +196,11 @@ describe("ATS OCR and face runtime", () => {
     const result = await compareFaces("candidate-1", "selfie.png", "id.png");
 
     expect(result).toEqual({ score: 0, matched: false, status: "failed" });
-    expect(mockExecute.mock.calls.some(([sql]) => String(sql).includes("match_status, details"))).toBe(true);
+    expect(
+      mockExecute.mock.calls.some(([sql]) =>
+        String(sql).includes("match_status, details"),
+      ),
+    ).toBe(true);
   });
 
   it("keeps OCR extraction behavior for Aadhaar documents", async () => {
@@ -181,24 +218,40 @@ describe("ATS OCR and face runtime", () => {
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []]);
 
-    const result = await crossValidateDocument("candidate-1", "doc-1", "aadhaar", {
-      rawText: "John Doe\n1234 5678 9012",
-      extractedNumber: "123456789012",
-      extractedName: "John Doe",
-      confidence: 91,
-      documentType: "aadhaar",
-    });
+    const result = await crossValidateDocument(
+      "candidate-1",
+      "doc-1",
+      "aadhaar",
+      {
+        rawText: "John Doe\n1234 5678 9012",
+        extractedNumber: "123456789012",
+        extractedName: "John Doe",
+        confidence: 91,
+        documentType: "aadhaar",
+      },
+    );
 
     expect(result.matched).toBe(false);
     expect(result.alertId).toBeDefined();
-    expect(mockExecute.mock.calls.some(([sql]) => String(sql).includes("candidate_fraud_alert"))).toBe(true);
+    expect(
+      mockExecute.mock.calls.some(([sql]) =>
+        String(sql).includes("candidate_fraud_alert"),
+      ),
+    ).toBe(true);
   });
 
   it("keeps duplicate detection behavior unchanged", async () => {
     mockExecute.mockResolvedValueOnce([[{ candidate_id: "candidate-2" }]]);
 
-    const result = await checkDuplicates("candidate-1", "aadhaar", "hashed-value");
+    const result = await checkDuplicates(
+      "candidate-1",
+      "aadhaar",
+      "hashed-value",
+    );
 
-    expect(result).toEqual({ isDuplicate: true, matchedCandidateId: "candidate-2" });
+    expect(result).toEqual({
+      isDuplicate: true,
+      matchedCandidateId: "candidate-2",
+    });
   });
 });

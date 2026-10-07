@@ -97,7 +97,10 @@ export function sourceLabel(value: unknown): string {
  */
 export function canonicalSourceSql(column: string): string {
   const arms = Object.entries(SOURCE_CANONICAL)
-    .map(([raw, code]) => `WHEN LOWER(TRIM(${column})) = ${quote(raw)} THEN ${quote(code)}`)
+    .map(
+      ([raw, code]) =>
+        `WHEN LOWER(TRIM(${column})) = ${quote(raw)} THEN ${quote(code)}`,
+    )
     .join("\n         ");
   return `CASE
          WHEN ${column} IS NULL OR TRIM(${column}) = '' THEN 'UNSPECIFIED'
@@ -159,7 +162,7 @@ export const BRANCH_CANONICAL: Readonly<Record<string, string>> = {
 export const BRANCH_REGION: Readonly<Record<string, string>> = {
   "AHMEDABAD-JALDARSHAN": "Gujarat",
   "AHMEDABAD-NEELAKANTH": "Gujarat",
-  "NOIDA": "Uttar Pradesh",
+  NOIDA: "Uttar Pradesh",
   "NOIDA-2": "Uttar Pradesh",
   "NOIDA-DIALDESK": "Uttar Pradesh",
   "HEAD OFFICE": "Uttar Pradesh",
@@ -167,8 +170,8 @@ export const BRANCH_REGION: Readonly<Record<string, string>> = {
   // branch_master carries `Head Office` with city Mumbai / state Maharashtra (inactive, 0
   // employees). Pune has no master row at all; it is placed by geography, which is a fact
   // rather than a business rule, and noted so nobody mistakes it for a configured branch.
-  "Mumbai": "Maharashtra",
-  "Pune": "Maharashtra",
+  Mumbai: "Maharashtra",
+  Pune: "Maharashtra",
 };
 
 /**
@@ -333,10 +336,18 @@ export function recruiterKey(_id: unknown, name: unknown): string {
  * `Mehar Sheikh`, `Sandeep Patel` inside `SANDEEP BABULAL PATEL` — or where the first and last
  * token match across a differing middle.
  */
-export function suspectedDuplicateRecruiters(names: readonly string[]): Array<{ a: string; b: string; reason: string }> {
+export function suspectedDuplicateRecruiters(
+  names: readonly string[],
+): Array<{ a: string; b: string; reason: string }> {
   const tokens = (n: string) => n.toLowerCase().split(/\s+/).filter(Boolean);
   const out: Array<{ a: string; b: string; reason: string }> = [];
-  const list = [...new Set(names.map((n) => String(n ?? "").trim()).filter((n) => n && n.toLowerCase() !== "unassigned"))];
+  const list = [
+    ...new Set(
+      names
+        .map((n) => String(n ?? "").trim())
+        .filter((n) => n && n.toLowerCase() !== "unassigned"),
+    ),
+  ];
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
       const ta = tokens(list[i]);
@@ -347,9 +358,20 @@ export function suspectedDuplicateRecruiters(names: readonly string[]): Array<{ 
       if (recruiterKey(null, list[i]) === recruiterKey(null, list[j])) continue;
       if (isConfirmedDistinct(list[i], list[j])) continue;
       if (short.every((t) => long.includes(t))) {
-        out.push({ a: list[i], b: list[j], reason: "one name's words are contained in the other" });
-      } else if (short[0] === long[0] && short[short.length - 1] === long[long.length - 1]) {
-        out.push({ a: list[i], b: list[j], reason: "same first and last name, different middle" });
+        out.push({
+          a: list[i],
+          b: list[j],
+          reason: "one name's words are contained in the other",
+        });
+      } else if (
+        short[0] === long[0] &&
+        short[short.length - 1] === long[long.length - 1]
+      ) {
+        out.push({
+          a: list[i],
+          b: list[j],
+          reason: "same first and last name, different middle",
+        });
       }
     }
   }
@@ -367,7 +389,9 @@ export function preferredRecruiterName(names: readonly string[]): string {
   const seen = names.map((n) => String(n ?? "").trim()).filter(Boolean);
   if (!seen.length) return "Unassigned";
   const score = (n: string) => (n === n.toUpperCase() ? 0 : 1);
-  return [...seen].sort((a, b) => score(b) - score(a) || b.length - a.length)[0];
+  return [...seen].sort(
+    (a, b) => score(b) - score(a) || b.length - a.length,
+  )[0];
 }
 
 function quote(value: string): string {
@@ -378,5 +402,7 @@ function quote(value: string): string {
 function isConfirmedDistinct(a: string, b: string): boolean {
   const x = normalizeRecruiterName(a).toLowerCase();
   const y = normalizeRecruiterName(b).toLowerCase();
-  return RECRUITER_DISTINCT.some(([p, q]) => (p === x && q === y) || (p === y && q === x));
+  return RECRUITER_DISTINCT.some(
+    ([p, q]) => (p === x && q === y) || (p === y && q === x),
+  );
 }

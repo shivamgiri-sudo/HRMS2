@@ -15,15 +15,22 @@ import path from "path";
  */
 
 const SOURCE = readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), "../minimum-rest-policy-impact-simulation.ts"),
-  "utf-8"
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../minimum-rest-policy-impact-simulation.ts",
+  ),
+  "utf-8",
 );
 
 describe("minimum-rest-policy-impact-simulation.ts", () => {
   it("is strictly read-only — no SQL write statement anywhere in the file", () => {
-    const writeVerbs = /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+TABLE|TRUNCATE\s+TABLE|REPLACE\s+INTO)\b/gi;
+    const writeVerbs =
+      /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+TABLE|TRUNCATE\s+TABLE|REPLACE\s+INTO)\b/gi;
     const matches = SOURCE.match(writeVerbs) ?? [];
-    expect(matches, `Found a SQL write statement: ${matches.join(", ")}`).toEqual([]);
+    expect(
+      matches,
+      `Found a SQL write statement: ${matches.join(", ")}`,
+    ).toEqual([]);
   });
 
   it("requires at least one candidate minute value and rejects non-positive/non-numeric input", () => {
@@ -36,7 +43,9 @@ describe("minimum-rest-policy-impact-simulation.ts", () => {
     // Mirrors restGapMinutes()'s deliberate choice: no overnight-rollover inference,
     // just date+time as stored — this must stay in lockstep with production logic,
     // not "improve" on it independently.
-    expect(SOURCE).toMatch(/TIMESTAMPDIFF\(MINUTE,\s*TIMESTAMP\(prev_date,\s*prev_end_time\),\s*TIMESTAMP\(roster_date,\s*shift_start_time\)\)/);
+    expect(SOURCE).toMatch(
+      /TIMESTAMPDIFF\(MINUTE,\s*TIMESTAMP\(prev_date,\s*prev_end_time\),\s*TIMESTAMP\(roster_date,\s*shift_start_time\)\)/,
+    );
   });
 
   it("uses LAG() over worked (non-week-off) shift rows only, per employee, ordered by date", () => {
@@ -68,6 +77,8 @@ describe("minimum-rest-policy-impact-simulation.ts", () => {
   });
 
   it("confirms in its own final output that nothing was written", () => {
-    expect(SOURCE).toMatch(/No wfm_rest_policy or wfm_rest_override_log row was written/);
+    expect(SOURCE).toMatch(
+      /No wfm_rest_policy or wfm_rest_override_log row was written/,
+    );
   });
 });

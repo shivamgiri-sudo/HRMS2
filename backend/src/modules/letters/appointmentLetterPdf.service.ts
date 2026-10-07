@@ -60,7 +60,12 @@ export type TopLeftRect = { x: number; y: number; w: number; h: number };
  * Do not change these numbers — they describe what the provider does, not what
  * we choose.
  */
-export const PROVIDER_STAMP_RECT_PDF: readonly [number, number, number, number] = [425, 100, 545, 160];
+export const PROVIDER_STAMP_RECT_PDF: readonly [
+  number,
+  number,
+  number,
+  number,
+] = [425, 100, 545, 160];
 
 /** Convert a native PDF rect ([x1,y1,x2,y2], bottom-left origin) to pdfkit space. */
 export function pdfRectToTopLeft(
@@ -83,7 +88,10 @@ const A4_HEIGHT = 841.89;
  * provider stamps the last page (the signature page), and the request carries no
  * placement of its own (luckpay eSignWithURL sends only file + signer details).
  */
-export const ESIGN_BOX: TopLeftRect = pdfRectToTopLeft(PROVIDER_STAMP_RECT_PDF, A4_HEIGHT);
+export const ESIGN_BOX: TopLeftRect = pdfRectToTopLeft(
+  PROVIDER_STAMP_RECT_PDF,
+  A4_HEIGHT,
+);
 
 /**
  * Verification QR: in the upper right of the signature page, beside the company
@@ -149,18 +157,37 @@ function drawLetterhead(doc: Doc, lh: BranchLetterhead) {
   const textW = doc.page.width - PAGE.margin - textX; // ~373pt remaining
   const logo = logoPath();
   if (logo) {
-    try { doc.image(logo, PAGE.margin, top, { fit: [logoMaxW, 26] }); } catch { /* text fallback below */ }
+    try {
+      doc.image(logo, PAGE.margin, top, { fit: [logoMaxW, 26] });
+    } catch {
+      /* text fallback below */
+    }
   }
-  doc.font("Helvetica-Bold").fontSize(9).fillColor(INK)
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(INK)
     .text(COMPANY_NAME, textX, top, { width: textW, align: "right" });
 
   const addr = [lh.branchName, ...lh.addressLines].filter(Boolean).join(", ");
-  doc.font("Helvetica").fontSize(7.5).fillColor(MUTED)
-    .text(addr, textX, top + 12, { width: textW, align: "right", height: 20, ellipsis: true });
+  doc
+    .font("Helvetica")
+    .fontSize(7.5)
+    .fillColor(MUTED)
+    .text(addr, textX, top + 12, {
+      width: textW,
+      align: "right",
+      height: 20,
+      ellipsis: true,
+    });
 
   const ruleY = top + 34;
-  doc.moveTo(PAGE.margin, ruleY).lineTo(doc.page.width - PAGE.margin, ruleY)
-    .lineWidth(1.2).strokeColor(ACCENT).stroke();
+  doc
+    .moveTo(PAGE.margin, ruleY)
+    .lineTo(doc.page.width - PAGE.margin, ruleY)
+    .lineWidth(1.2)
+    .strokeColor(ACCENT)
+    .stroke();
   // The company-name/address lines above are right-aligned at textX (~166pt in from the
   // margin), and pdfkit left doc.x sitting there afterwards — only doc.y was reset here.
   // Confirmed by rendering a sample letter: every unpositioned .text() call from "Original
@@ -186,7 +213,11 @@ function heading(doc: Doc, text: string) {
 
 function body(doc: Doc, text: string) {
   ensureRoom(doc, 26);
-  doc.font("Helvetica").fontSize(9).fillColor(INK).text(text, { align: "justify", lineGap: 1.5 });
+  doc
+    .font("Helvetica")
+    .fontSize(9)
+    .fillColor(INK)
+    .text(text, { align: "justify", lineGap: 1.5 });
   doc.moveDown(0.35);
 }
 
@@ -219,12 +250,22 @@ function salaryTable(doc: Doc, s: AppointmentLetterSalary) {
   for (const [label, amount, bold] of rows) {
     ensureRoom(doc, 16);
     const y = doc.y;
-    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9).fillColor(INK)
+    doc
+      .font(bold ? "Helvetica-Bold" : "Helvetica")
+      .fontSize(9)
+      .fillColor(INK)
       .text(label, left + 6, y, { width: width - 140 })
-      .text(`Rs. ${amount.toFixed(2)}`, amountX, y, { width: 114, align: "right" });
+      .text(`Rs. ${amount.toFixed(2)}`, amountX, y, {
+        width: 114,
+        align: "right",
+      });
     doc.y = y + 13;
-    doc.moveTo(left, doc.y - 2).lineTo(left + width, doc.y - 2)
-      .lineWidth(0.3).strokeColor("#E5E7EB").stroke();
+    doc
+      .moveTo(left, doc.y - 2)
+      .lineTo(left + width, doc.y - 2)
+      .lineWidth(0.3)
+      .strokeColor("#E5E7EB")
+      .stroke();
   }
   doc.moveDown(0.6);
   // The two-column .text() calls above leave doc.x at the right amount column.
@@ -250,13 +291,24 @@ function signaturePage(doc: Doc, input: AppointmentLetterInput) {
   const left = COMPANY_TEXT_X;
   let y = doc.y;
 
-  doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text("SIGNATURES", left, y);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .fillColor(INK)
+    .text("SIGNATURES", left, y);
   y = doc.y + 6;
-  doc.moveTo(left, y).lineTo(doc.page.width - PAGE.margin, y)
-    .lineWidth(0.8).strokeColor(ACCENT).stroke();
+  doc
+    .moveTo(left, y)
+    .lineTo(doc.page.width - PAGE.margin, y)
+    .lineWidth(0.8)
+    .strokeColor(ACCENT)
+    .stroke();
   y += 18;
 
-  doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9.5)
+    .fillColor(INK)
     .text(`For ${COMPANY_NAME}`, left, y, { width: 320 });
   y += 15;
   doc.font("Helvetica").fontSize(8.5).fillColor(INK);
@@ -269,82 +321,148 @@ function signaturePage(doc: Doc, input: AppointmentLetterInput) {
     doc.text(line, left, y, { width: 330 });
     y += 12;
   }
-  doc.fontSize(7).fillColor(MUTED).text(`Verify: ${input.verificationUrl}`, left, y, { width: COMPANY_TEXT_MAX_WIDTH });
+  doc
+    .fontSize(7)
+    .fillColor(MUTED)
+    .text(`Verify: ${input.verificationUrl}`, left, y, {
+      width: COMPANY_TEXT_MAX_WIDTH,
+    });
   // Capture bottom of company block before drawing the eSign box (which resets doc.y to box coords).
   const companyBlockBottom = doc.y + 6;
 
   // Aadhaar eSign box: drawn on the provider stamp rect (foot of the page, inside the reserved band).
-  doc.rect(ESIGN_BOX.x, ESIGN_BOX.y, ESIGN_BOX.w, ESIGN_BOX.h).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
-  doc.fontSize(6.5).fillColor(MUTED)
-    .text("Aadhaar eSign area", ESIGN_BOX.x + 6, ESIGN_BOX.y + ESIGN_BOX.h - 14, { width: ESIGN_BOX.w - 10 });
+  doc
+    .rect(ESIGN_BOX.x, ESIGN_BOX.y, ESIGN_BOX.w, ESIGN_BOX.h)
+    .lineWidth(0.8)
+    .strokeColor("#CBD5E1")
+    .stroke();
+  doc
+    .fontSize(6.5)
+    .fillColor(MUTED)
+    .text(
+      "Aadhaar eSign area",
+      ESIGN_BOX.x + 6,
+      ESIGN_BOX.y + ESIGN_BOX.h - 14,
+      { width: ESIGN_BOX.w - 10 },
+    );
 
   if (input.qrPngDataUrl) {
     try {
       const b64 = input.qrPngDataUrl.replace(/^data:image\/png;base64,/, "");
-      doc.image(Buffer.from(b64, "base64"), QR_RECT.x, QR_RECT.y, { width: QR_RECT.w, height: QR_RECT.h });
-      doc.font("Helvetica").fontSize(6.5).fillColor(MUTED)
-        .text(QR_CAPTION, QR_RECT.x, QR_RECT.y + QR_RECT.h + QR_CAPTION_GAP, { width: 130, lineBreak: false });
-    } catch { /* a missing QR must never stop issuance */ }
+      doc.image(Buffer.from(b64, "base64"), QR_RECT.x, QR_RECT.y, {
+        width: QR_RECT.w,
+        height: QR_RECT.h,
+      });
+      doc
+        .font("Helvetica")
+        .fontSize(6.5)
+        .fillColor(MUTED)
+        .text(QR_CAPTION, QR_RECT.x, QR_RECT.y + QR_RECT.h + QR_CAPTION_GAP, {
+          width: 130,
+          lineBreak: false,
+        });
+    } catch {
+      /* a missing QR must never stop issuance */
+    }
   }
 
   // Employee acceptance block — below the company block, in the left column (the QR is to the right).
   const acceptY = companyBlockBottom;
-  doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9.5)
+    .fillColor(INK)
     .text("Accepted by the employee", left, acceptY, { width: 320 });
-  doc.font("Helvetica").fontSize(8).fillColor(MUTED)
-    .text(`${input.employeeName} (${input.employeeCode})`, left, acceptY + 14, { width: 320 })
-    .text("Signed electronically under Aadhaar eSign.", left, acceptY + 26, { width: 320 });
+  doc
+    .font("Helvetica")
+    .fontSize(8)
+    .fillColor(MUTED)
+    .text(`${input.employeeName} (${input.employeeCode})`, left, acceptY + 14, {
+      width: 320,
+    })
+    .text("Signed electronically under Aadhaar eSign.", left, acceptY + 26, {
+      width: 320,
+    });
 
   if (input.selfSignedNotice) {
-    doc.font("Helvetica-Bold").fontSize(6.5).fillColor("#B45309")
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(6.5)
+      .fillColor("#B45309")
       .text(input.selfSignedNotice, left, doc.page.height - 26, {
-        width: doc.page.width - PAGE.margin * 2, align: "center",
+        width: doc.page.width - PAGE.margin * 2,
+        align: "center",
       });
   }
 }
 
 const TERMS: Array<[string, string[]]> = [
-  ["4. PROBATION", [
-    "4.1 You will be on probation for a period of six months from the date of your joining. This period of probation will be liable to such extension(s) as the management may deem fit at its sole discretion. Unless an order in writing confirming your services is issued and accepted by you, your services will not be deemed to have been confirmed. If the management is not satisfied with your work or conduct, your service shall be liable to termination without notice at any time, without assigning any reason, during or on completion of the initial or extended probationary period. On confirmation, termination of this employment can be effected with a notice period of one month, or the basic salary of one month in lieu of the notice period.",
-  ]],
-  ["5. PLACEMENT", [
-    "5.1 You will be liable to be transferred to any existing or future department, office or establishment forming part of the Company, as assigned or communicated to you by the management or those in authority over you from time to time.",
-  ]],
-  ["6. SECRECY", [
-    "6.1 You will not give out to any unauthorised person, by word of mouth or otherwise, particulars or details of processes, data, technical know-how, administration and organisational matters, or operations plans concerning the Company or its associates. You shall, both during and after your employment, take all reasonable precautions to keep such information secret. In the event of any breach you shall indemnify the Company from any legal action.",
-  ]],
-  ["7. DUTIES / RESPONSIBILITIES", [
-    "7.1 You will perform, observe and conform to such duties, directions and instructions as are assigned or communicated to you by the management and those in authority over you.",
-    "7.2 You will have responsibility for the efficient, satisfactory and economical discharge of the duties, directions and instructions assigned to you from time to time.",
-    "7.3 You shall at all times account for, and when required make over to the responsible authority, all monies, properties and things belonging to the Company which may have been placed in your custody or under your supervision, or may otherwise have come into your possession or control.",
-    "7.4 You may be required to travel on Company work as and when required. In such cases you will be entitled to travel expenses and allowances as may be in force from time to time.",
-    "7.5 You will devote your whole time during working hours to the work of the Company and will not undertake any part-time or other work, whether honorary or remunerative, without prior permission of the management.",
-  ]],
-  ["8. OTHER RULES AND REGULATIONS", [
-    "8.1 You will not, without prior permission of the management, engage or interest yourself in any other business or activity of any kind, whether directly or indirectly, nor publish any information about the affairs or business of the Company, nor enter the service of or be employed by any other firm, company or person.",
-    "8.2 You will not enter into any commitments or dealings on behalf of the management for which you have no express authority, nor alter or be party to any alteration of any principle or policy of the management, nor exceed the authority or discretion vested in you without prior sanction.",
-    "8.3 You will disclose to us forthwith any discovery, invention, process or improvement made or discovered by you while in our service, and such discovery, invention, process or improvement shall belong absolutely to and be the sole and absolute property of the Company.",
-    "8.4 You shall not seek membership or affiliation of any body, local, public or otherwise, including educational institutions, without first obtaining permission from the management.",
-  ]],
-  ["9. TERMINATION OF SERVICES", [
-    "9.1 You will automatically retire from the service of the Company on attaining the superannuation age of 58 years.",
-    "9.2 If you remain absent without prior permission or authorisation, or overstay leave for three consecutive calendar days beyond the period originally granted or subsequently extended, it shall be deemed that you have left the services of the Company of your own accord without notice, and the same shall be treated as abandonment of service on your part.",
-    "9.3 During probation, termination of your employment will be subject to fifteen days' notice in writing from you.",
-    "9.4 On satisfactory completion of the probation period and after your confirmation in writing, except for the reasons mentioned in this appointment letter, your services can be terminated by giving notice of one month or payment of basic salary in lieu thereof on either side. However, in the event of your resignation, the Company at its sole discretion will have the option to accept the same and relieve you prior to completion of the stipulated notice period, without any pay in lieu of the notice period.",
-    "9.5 If at any time in our opinion, which is final in this matter, you are insolvent, or found guilty of negligence, indiscipline or any other conduct considered by us as detrimental to our interest, or of violation of one or more terms of this letter, your services are liable to be terminated without any notice or compensation in lieu thereof.",
-    "9.6 You are required to keep yourself updated on the Code of Conduct guidelines, Company policies and procedures as framed and changed from time to time. Any violation of the above terms, or of any other Code of Conduct guidelines or Company policies and procedures, would result in immediate termination of service without notice, warning or compensation in lieu thereof.",
-    "9.7 If any declaration or particulars given by you in your application for employment is found to be wrong, or you are found to have wilfully suppressed any material information, this appointment will be liable to termination without notice or compensation in lieu thereof.",
-  ]],
+  [
+    "4. PROBATION",
+    [
+      "4.1 You will be on probation for a period of six months from the date of your joining. This period of probation will be liable to such extension(s) as the management may deem fit at its sole discretion. Unless an order in writing confirming your services is issued and accepted by you, your services will not be deemed to have been confirmed. If the management is not satisfied with your work or conduct, your service shall be liable to termination without notice at any time, without assigning any reason, during or on completion of the initial or extended probationary period. On confirmation, termination of this employment can be effected with a notice period of one month, or the basic salary of one month in lieu of the notice period.",
+    ],
+  ],
+  [
+    "5. PLACEMENT",
+    [
+      "5.1 You will be liable to be transferred to any existing or future department, office or establishment forming part of the Company, as assigned or communicated to you by the management or those in authority over you from time to time.",
+    ],
+  ],
+  [
+    "6. SECRECY",
+    [
+      "6.1 You will not give out to any unauthorised person, by word of mouth or otherwise, particulars or details of processes, data, technical know-how, administration and organisational matters, or operations plans concerning the Company or its associates. You shall, both during and after your employment, take all reasonable precautions to keep such information secret. In the event of any breach you shall indemnify the Company from any legal action.",
+    ],
+  ],
+  [
+    "7. DUTIES / RESPONSIBILITIES",
+    [
+      "7.1 You will perform, observe and conform to such duties, directions and instructions as are assigned or communicated to you by the management and those in authority over you.",
+      "7.2 You will have responsibility for the efficient, satisfactory and economical discharge of the duties, directions and instructions assigned to you from time to time.",
+      "7.3 You shall at all times account for, and when required make over to the responsible authority, all monies, properties and things belonging to the Company which may have been placed in your custody or under your supervision, or may otherwise have come into your possession or control.",
+      "7.4 You may be required to travel on Company work as and when required. In such cases you will be entitled to travel expenses and allowances as may be in force from time to time.",
+      "7.5 You will devote your whole time during working hours to the work of the Company and will not undertake any part-time or other work, whether honorary or remunerative, without prior permission of the management.",
+    ],
+  ],
+  [
+    "8. OTHER RULES AND REGULATIONS",
+    [
+      "8.1 You will not, without prior permission of the management, engage or interest yourself in any other business or activity of any kind, whether directly or indirectly, nor publish any information about the affairs or business of the Company, nor enter the service of or be employed by any other firm, company or person.",
+      "8.2 You will not enter into any commitments or dealings on behalf of the management for which you have no express authority, nor alter or be party to any alteration of any principle or policy of the management, nor exceed the authority or discretion vested in you without prior sanction.",
+      "8.3 You will disclose to us forthwith any discovery, invention, process or improvement made or discovered by you while in our service, and such discovery, invention, process or improvement shall belong absolutely to and be the sole and absolute property of the Company.",
+      "8.4 You shall not seek membership or affiliation of any body, local, public or otherwise, including educational institutions, without first obtaining permission from the management.",
+    ],
+  ],
+  [
+    "9. TERMINATION OF SERVICES",
+    [
+      "9.1 You will automatically retire from the service of the Company on attaining the superannuation age of 58 years.",
+      "9.2 If you remain absent without prior permission or authorisation, or overstay leave for three consecutive calendar days beyond the period originally granted or subsequently extended, it shall be deemed that you have left the services of the Company of your own accord without notice, and the same shall be treated as abandonment of service on your part.",
+      "9.3 During probation, termination of your employment will be subject to fifteen days' notice in writing from you.",
+      "9.4 On satisfactory completion of the probation period and after your confirmation in writing, except for the reasons mentioned in this appointment letter, your services can be terminated by giving notice of one month or payment of basic salary in lieu thereof on either side. However, in the event of your resignation, the Company at its sole discretion will have the option to accept the same and relieve you prior to completion of the stipulated notice period, without any pay in lieu of the notice period.",
+      "9.5 If at any time in our opinion, which is final in this matter, you are insolvent, or found guilty of negligence, indiscipline or any other conduct considered by us as detrimental to our interest, or of violation of one or more terms of this letter, your services are liable to be terminated without any notice or compensation in lieu thereof.",
+      "9.6 You are required to keep yourself updated on the Code of Conduct guidelines, Company policies and procedures as framed and changed from time to time. Any violation of the above terms, or of any other Code of Conduct guidelines or Company policies and procedures, would result in immediate termination of service without notice, warning or compensation in lieu thereof.",
+      "9.7 If any declaration or particulars given by you in your application for employment is found to be wrong, or you are found to have wilfully suppressed any material information, this appointment will be liable to termination without notice or compensation in lieu thereof.",
+    ],
+  ],
 ];
 
 /** Render the letter. Returns unsigned PDF bytes ready for the company DSC. */
-export async function renderAppointmentLetterPdf(input: AppointmentLetterInput): Promise<Buffer> {
+export async function renderAppointmentLetterPdf(
+  input: AppointmentLetterInput,
+): Promise<Buffer> {
   const issue = input.issueDate ?? new Date();
   const unsigned = await new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
       size: PAGE.size,
       // Body pages use an ordinary margin; the signature gets its own page.
-      margins: { top: PAGE.margin, bottom: BODY_BOTTOM, left: PAGE.margin, right: PAGE.margin },
+      margins: {
+        top: PAGE.margin,
+        bottom: BODY_BOTTOM,
+        left: PAGE.margin,
+        right: PAGE.margin,
+      },
       bufferPages: true,
     });
     const chunks: Buffer[] = [];
@@ -361,23 +479,40 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
     doc.font("Helvetica").fontSize(9).fillColor(INK);
     body(doc, "To,");
     doc.font("Helvetica-Bold").fontSize(10).text(input.employeeName);
-    doc.font("Helvetica").fontSize(9)
+    doc
+      .font("Helvetica")
+      .fontSize(9)
       .text(`EMP Code - ${input.employeeCode}`)
       .text(`Date : ${istDisplayDate(issue)}`);
     doc.moveDown(0.6);
 
-    doc.font("Helvetica-Bold").fontSize(11).text("Subject : APPOINTMENT LETTER");
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .text("Subject : APPOINTMENT LETTER");
     doc.moveDown(0.5);
     body(doc, `Dear ${input.employeeName},`);
-    body(doc, "With reference to your application and your subsequent interview with us, we have pleasure in informing you that we have agreed to provide you an appointment with us.");
+    body(
+      doc,
+      "With reference to your application and your subsequent interview with us, we have pleasure in informing you that we have agreed to provide you an appointment with us.",
+    );
 
     heading(doc, "ON THE FOLLOWING TERMS AND CONDITIONS");
     heading(doc, "1. APPOINTMENT DATE");
-    body(doc, `1.1 This appointment shall be effective from ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}.`);
+    body(
+      doc,
+      `1.1 This appointment shall be effective from ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}.`,
+    );
     heading(doc, "2. DESIGNATION");
-    body(doc, `2.1 You will be designated as '${input.designation || "—"}' and you would be reporting to your Reporting Manager.`);
+    body(
+      doc,
+      `2.1 You will be designated as '${input.designation || "—"}' and you would be reporting to your Reporting Manager.`,
+    );
     heading(doc, "3. REMUNERATION");
-    body(doc, `3.1 Salary Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}`);
+    body(
+      doc,
+      `3.1 Salary Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}`,
+    );
     body(doc, "3.2 Your monthly salary breakup would be as follows (in INR):");
     salaryTable(doc, input.salary);
 
@@ -386,16 +521,28 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
       for (const p of paras) body(doc, p);
     }
 
-    body(doc, "All terms and conditions will be governed by the Company's policies as stated from time to time, and the Company may at its sole discretion, as it deems fit, revoke or change such policies.");
+    body(
+      doc,
+      "All terms and conditions will be governed by the Company's policies as stated from time to time, and the Company may at its sole discretion, as it deems fit, revoke or change such policies.",
+    );
     body(doc, "The terms of this offer shall be kept strictly confidential.");
-    body(doc, "Please return the duplicate copy of this letter duly signed in token of your having accepted the offer, and initial each page in acceptance of the terms and conditions set out herein, within 10 days of the issuance of this letter, failing which this offer stands automatically withdrawn.");
-    body(doc, `We welcome you and wish you every success in your career with ${COMPANY_NAME}`);
+    body(
+      doc,
+      "Please return the duplicate copy of this letter duly signed in token of your having accepted the offer, and initial each page in acceptance of the terms and conditions set out herein, within 10 days of the issuance of this letter, failing which this offer stands automatically withdrawn.",
+    );
+    body(
+      doc,
+      `We welcome you and wish you every success in your career with ${COMPANY_NAME}`,
+    );
     // Keep the closing block together — ensureRoom for both lines prevents
     // "Sincerely," landing alone at the bottom with "Salary Start Date:" orphaned on the next page.
     ensureRoom(doc, 60);
     doc.moveDown(0.4);
     body(doc, "Sincerely,");
-    body(doc, `Salary Start Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}`);
+    body(
+      doc,
+      `Salary Start Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}`,
+    );
 
     // The company block goes on the final page, inside the reserved band.
     signaturePage(doc, { ...input, issueDate: issue });
@@ -411,11 +558,22 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
     // half, so it gets no footer at all.
     if (i === pages.length - 1) return;
     const { width } = page.getSize();
-    page.drawText(`${COMPANY_NAME} | Private & Confidential | ${input.letterNumber}`, {
-      x: PAGE.margin, y: 40, size: 6.5, font, color: rgb(0.42, 0.45, 0.5),
-    });
+    page.drawText(
+      `${COMPANY_NAME} | Private & Confidential | ${input.letterNumber}`,
+      {
+        x: PAGE.margin,
+        y: 40,
+        size: 6.5,
+        font,
+        color: rgb(0.42, 0.45, 0.5),
+      },
+    );
     page.drawText(`Page ${i + 1} of ${pages.length}`, {
-      x: width - PAGE.margin - 60, y: 40, size: 6.5, font, color: rgb(0.42, 0.45, 0.5),
+      x: width - PAGE.margin - 60,
+      y: 40,
+      size: 6.5,
+      font,
+      color: rgb(0.42, 0.45, 0.5),
     });
   });
   return Buffer.from(await lib.save());

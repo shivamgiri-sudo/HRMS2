@@ -71,7 +71,7 @@ async function main() {
       WHERE g.grn_type = 'imprest'
         AND g.status = 'approved'
         AND a.lifecycle_status = 'reserved'
-      ORDER BY g.accounting_period, g.grn_number`
+      ORDER BY g.accounting_period, g.grn_number`,
   );
 
   // Defensive: confirm every affected line's CURRENT reserved_amount actually covers the sum of
@@ -93,7 +93,7 @@ async function main() {
           FROM grn_cost_allocation a
           JOIN grn_request g ON g.id = a.grn_request_id
          WHERE g.grn_type = 'imprest' AND g.status = 'approved' AND a.lifecycle_status = 'reserved'
-      )`
+      )`,
   );
   const shortLines = new Set(
     (lineChecks as RowDataPacket[])
@@ -102,36 +102,56 @@ async function main() {
   );
   if (shortLines.size) {
     console.log(
-      `${shortLines.size} budget line(s) have LESS reserved_amount than this backfill would `
-      + `subtract from them — every row funded by one of these is excluded, not forced through:`,
+      `${shortLines.size} budget line(s) have LESS reserved_amount than this backfill would ` +
+        `subtract from them — every row funded by one of these is excluded, not forced through:`,
     );
     for (const id of shortLines) console.log(`    ${id}`);
   }
 
   console.log(`${candidates.length} candidate allocation row(s) found.`);
-  console.log(APPLY ? "MODE: --apply, writing.\n" : "MODE: dry run, writing nothing. Pass --apply to write.\n");
+  console.log(
+    APPLY
+      ? "MODE: --apply, writing.\n"
+      : "MODE: dry run, writing nothing. Pass --apply to write.\n",
+  );
 
   const eligible: RowDataPacket[] = [];
   const excluded: Array<{ row: RowDataPacket; reason: string }> = [];
   for (const row of candidates as RowDataPacket[]) {
     const isMigrationArtifact =
-      row.branch_head_reviewed_by == null
-      && row.finance_head_reviewed_by == null
-      && row.reviewed_by == null;
+      row.branch_head_reviewed_by == null &&
+      row.finance_head_reviewed_by == null &&
+      row.reviewed_by == null;
     if (!isMigrationArtifact) {
-      excluded.push({ row, reason: "has a review actor recorded — not the migration pattern, left untouched" });
+      excluded.push({
+        row,
+        reason:
+          "has a review actor recorded — not the migration pattern, left untouched",
+      });
       continue;
     }
     if (row.imprest_ledger_entry_id != null) {
-      excluded.push({ row, reason: "already has an imprest_ledger_entry_id — not the migration pattern, left untouched" });
+      excluded.push({
+        row,
+        reason:
+          "already has an imprest_ledger_entry_id — not the migration pattern, left untouched",
+      });
       continue;
     }
     if (!row.budget_line_id) {
-      excluded.push({ row, reason: "no budget_line_id — nothing on finance_budget_line to reclassify" });
+      excluded.push({
+        row,
+        reason:
+          "no budget_line_id — nothing on finance_budget_line to reclassify",
+      });
       continue;
     }
     if (shortLines.has(String(row.budget_line_id))) {
-      excluded.push({ row, reason: "funding line's reserved_amount is short of the matched sum — see warning above" });
+      excluded.push({
+        row,
+        reason:
+          "funding line's reserved_amount is short of the matched sum — see warning above",
+      });
       continue;
     }
     eligible.push(row);
@@ -143,11 +163,17 @@ async function main() {
     for (const { row, reason } of excluded.slice(0, 20)) {
       console.log(`    ${row.grn_number} (${row.grn_id}) — ${reason}`);
     }
-    if (excluded.length > 20) console.log(`    ... and ${excluded.length - 20} more`);
+    if (excluded.length > 20)
+      console.log(`    ... and ${excluded.length - 20} more`);
   }
 
-  const totalAmount = eligible.reduce((sum, r) => sum + Number(r.amount_with_tax), 0);
-  console.log(`\nTotal to reclassify: Rs ${totalAmount.toFixed(2)} across ${eligible.length} row(s).\n`);
+  const totalAmount = eligible.reduce(
+    (sum, r) => sum + Number(r.amount_with_tax),
+    0,
+  );
+  console.log(
+    `\nTotal to reclassify: Rs ${totalAmount.toFixed(2)} across ${eligible.length} row(s).\n`,
+  );
 
   let applied = 0;
   const rollbackLines: string[] = [];
@@ -155,13 +181,13 @@ async function main() {
   for (const row of eligible) {
     const amount = Number(row.amount_with_tax);
     console.log(
-      `  ${row.grn_number}  period=${row.accounting_period}  amount=${amount.toFixed(2)}`
-      + `  line=${row.budget_line_id}`,
+      `  ${row.grn_number}  period=${row.accounting_period}  amount=${amount.toFixed(2)}` +
+        `  line=${row.budget_line_id}`,
     );
     rollbackLines.push(
       `UPDATE grn_cost_allocation SET lifecycle_status='reserved', consumed_at=NULL WHERE id='${row.allocation_id}';`,
-      `UPDATE finance_budget_line SET reserved_amount = reserved_amount + ${amount}, `
-      + `consumed_amount = consumed_amount - ${amount} WHERE id='${row.budget_line_id}';`,
+      `UPDATE finance_budget_line SET reserved_amount = reserved_amount + ${amount}, ` +
+        `consumed_amount = consumed_amount - ${amount} WHERE id='${row.budget_line_id}';`,
     );
 
     if (!APPLY) continue;
@@ -176,7 +202,9 @@ async function main() {
         [row.allocation_id],
       );
       if ((allocResult as { affectedRows: number }).affectedRows !== 1) {
-        throw new Error(`allocation ${row.allocation_id} was not in 'reserved' at write time — refusing`);
+        throw new Error(
+          `allocation ${row.allocation_id} was not in 'reserved' at write time — refusing`,
+        );
       }
       // WHERE reserved_amount >= ? is the same defense as the pre-check above, applied again at
       // write time under the row lock this transaction already holds via the allocation UPDATE
@@ -188,13 +216,17 @@ async function main() {
         [amount, amount, row.budget_line_id, amount],
       );
       if ((lineResult as { affectedRows: number }).affectedRows !== 1) {
-        throw new Error(`budget line ${row.budget_line_id} no longer has enough reserved_amount — refusing`);
+        throw new Error(
+          `budget line ${row.budget_line_id} no longer has enough reserved_amount — refusing`,
+        );
       }
       await connection.commit();
       applied += 1;
     } catch (error) {
       await connection.rollback();
-      console.error(`  FAILED ${row.grn_number}: ${error instanceof Error ? error.message : error}`);
+      console.error(
+        `  FAILED ${row.grn_number}: ${error instanceof Error ? error.message : error}`,
+      );
     } finally {
       connection.release();
     }
@@ -204,7 +236,9 @@ async function main() {
     console.log(`\n${applied} of ${eligible.length} row(s) reclassified.`);
     console.log("\nRollback (paste to reverse):\n" + rollbackLines.join("\n"));
   } else {
-    console.log("Nothing was written. Re-run with --apply once the above reads correctly.");
+    console.log(
+      "Nothing was written. Re-run with --apply once the above reads correctly.",
+    );
   }
 }
 

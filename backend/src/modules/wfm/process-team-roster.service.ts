@@ -18,7 +18,10 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { lobAnd, type LobFilter } from "../../shared/lobFilter.js";
-import { classifyMember, dedupeByEmployee } from "./process-team-roster.util.js";
+import {
+  classifyMember,
+  dedupeByEmployee,
+} from "./process-team-roster.util.js";
 
 /** Excludes the synthetic 2026-06-11 roster cohort (see roster-analytics.routes.ts realRoster). */
 const REAL_ROSTER =
@@ -141,8 +144,12 @@ export async function getProcessTeamRosterView(
     const type = String(r.assignment_type ?? "").toUpperCase();
     // Assignment-level times (manual overrides) win over the template defaults.
     const hasOwn = r.shift_start_time && r.shift_end_time;
-    const shiftStart = hasOwn ? r.shift_start_time : r.template_start || r.shift_start_time;
-    const shiftEnd = hasOwn ? r.shift_end_time : r.template_end || r.shift_end_time;
+    const shiftStart = hasOwn
+      ? r.shift_start_time
+      : r.template_start || r.shift_start_time;
+    const shiftEnd = hasOwn
+      ? r.shift_end_time
+      : r.template_end || r.shift_end_time;
     const shiftTime =
       shiftStart && shiftEnd
         ? `${String(shiftStart).slice(0, 5)}-${String(shiftEnd).slice(0, 5)}`

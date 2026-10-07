@@ -38,7 +38,10 @@ const mysql = require("mysql2/promise");
 const APPLY = process.argv.includes("--apply");
 const BATCH = 2000;
 
-const strip = (v) => String(v ?? "").trim().replace(/^["']|["']$/g, "");
+const strip = (v) =>
+  String(v ?? "")
+    .trim()
+    .replace(/^["']|["']$/g, "");
 const conn = await mysql.createConnection({
   host: process.env.DB_HOST_OVERRIDE || strip(process.env.DB_HOST),
   port: Number(strip(process.env.DB_PORT) || 3306),
@@ -48,7 +51,9 @@ const conn = await mysql.createConnection({
   connectTimeout: 20000,
 });
 
-console.log(`mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  table=ats_candidate`);
+console.log(
+  `mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  table=ats_candidate`,
+);
 
 // Guard 1: the column must exist. Running before 1130 would fail per-statement anyway, but a
 // clear refusal beats an ER_BAD_FIELD_ERROR halfway through.
@@ -57,7 +62,9 @@ const [[col]] = await conn.query(
     WHERE table_schema = DATABASE() AND table_name = 'ats_candidate' AND column_name = 'record_type'`,
 );
 if (Number(col.n) === 0) {
-  console.error("REFUSING: ats_candidate.record_type does not exist — apply migration 1130 first.");
+  console.error(
+    "REFUSING: ats_candidate.record_type does not exist — apply migration 1130 first.",
+  );
   await conn.end();
   process.exit(1);
 }
@@ -70,25 +77,38 @@ const [[m]] = await conn.query(`
          SUM(e.id IS NOT NULL AND ac.record_type <> 'legacy_employee') AS pending
     FROM ats_candidate ac
     LEFT JOIN employees e ON e.employee_code = ac.candidate_code`);
-const total = Number(m.total), legacy = Number(m.legacy), genuine = Number(m.genuine), pending = Number(m.pending);
-console.log(`total=${total}  legacy=${legacy}  genuine=${genuine}  pending=${pending}`);
+const total = Number(m.total),
+  legacy = Number(m.legacy),
+  genuine = Number(m.genuine),
+  pending = Number(m.pending);
+console.log(
+  `total=${total}  legacy=${legacy}  genuine=${genuine}  pending=${pending}`,
+);
 
 // A join that silently matched everything (or nothing) is the failure that would matter here:
 // relabelling all 37,696 rows as legacy would empty every candidate report at once.
 if (legacy === 0 || legacy === total) {
-  console.error(`REFUSING: measured legacy=${legacy} of total=${total}. That is not a credible split —`);
-  console.error("the candidate_code -> employees.employee_code join is behaving unexpectedly. Nothing written.");
+  console.error(
+    `REFUSING: measured legacy=${legacy} of total=${total}. That is not a credible split —`,
+  );
+  console.error(
+    "the candidate_code -> employees.employee_code join is behaving unexpectedly. Nothing written.",
+  );
   await conn.end();
   process.exit(1);
 }
 if (genuine < 1000) {
-  console.error(`REFUSING: only ${genuine} rows would remain as genuine candidates. Expected ~7,700.`);
+  console.error(
+    `REFUSING: only ${genuine} rows would remain as genuine candidates. Expected ~7,700.`,
+  );
   await conn.end();
   process.exit(1);
 }
 
 if (!APPLY) {
-  console.log(`\n[DRY RUN] would set record_type='legacy_employee' on ${pending} row(s).`);
+  console.log(
+    `\n[DRY RUN] would set record_type='legacy_employee' on ${pending} row(s).`,
+  );
   console.log("Nothing was written. Re-run with --apply to write.");
   await conn.end();
   process.exit(0);
@@ -116,7 +136,9 @@ const [[after]] = await conn.query(`
          COUNT(*)                             AS total
     FROM ats_candidate`);
 console.log(`\n=== verification ===`);
-console.log(`legacy_employee=${after.legacy_labelled}  candidate=${after.candidate_labelled}  total=${after.total}`);
+console.log(
+  `legacy_employee=${after.legacy_labelled}  candidate=${after.candidate_labelled}  total=${after.total}`,
+);
 
 // The column must agree with the join it was derived from, exactly.
 const [[drift]] = await conn.query(`
@@ -124,7 +146,9 @@ const [[drift]] = await conn.query(`
          SUM(e.id IS NULL     AND ac.record_type <> 'candidate')       AS genuine_mislabelled
     FROM ats_candidate ac
     LEFT JOIN employees e ON e.employee_code = ac.candidate_code`);
-console.log(`drift vs the join: legacy_mislabelled=${drift.legacy_mislabelled} genuine_mislabelled=${drift.genuine_mislabelled} (both must be 0)`);
+console.log(
+  `drift vs the join: legacy_mislabelled=${drift.legacy_mislabelled} genuine_mislabelled=${drift.genuine_mislabelled} (both must be 0)`,
+);
 
 await conn.end();
 process.exit(0);

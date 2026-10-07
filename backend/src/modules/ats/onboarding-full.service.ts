@@ -7,7 +7,10 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
+import {
+  luckpayClient,
+  sanitizeProviderPayload,
+} from "../integrations/luckpay/luckpay.client.js";
 import { withProviderFailureLogged } from "./bgv-api-log.service.js";
 import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { encrypt, decrypt } from "../../utils/encryption.js";
@@ -19,8 +22,16 @@ import { decryptPii } from "../../shared/piiCiphertext.js";
 import { hashPiiForMatch } from "../../shared/piiHash.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
-import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
-import { assertEmployableAge, persistMinorFlag, resolveVerifiedDob } from "./ageVerification.service.js";
+import {
+  extractFromDocument,
+  crossValidateDocument,
+  checkDuplicates,
+} from "./ocr.service.js";
+import {
+  assertEmployableAge,
+  persistMinorFlag,
+  resolveVerifiedDob,
+} from "./ageVerification.service.js";
 import { toStoredName } from "../../shared/nameFormat.js";
 import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
 // face-match loaded lazily so onboarding only loads it when needed
@@ -72,8 +83,14 @@ function nonEmptyString(value: unknown): string | null {
 
 function normalizeCandidateScopeSql(sql: string) {
   return sql
-    .replaceAll("c.applied_for_branch", "COALESCE(br_scope.id, c.applied_for_branch)")
-    .replaceAll("c.applied_for_process", "COALESCE(pm_scope.id, c.applied_for_process)");
+    .replaceAll(
+      "c.applied_for_branch",
+      "COALESCE(br_scope.id, c.applied_for_branch)",
+    )
+    .replaceAll(
+      "c.applied_for_process",
+      "COALESCE(pm_scope.id, c.applied_for_process)",
+    );
 }
 
 export type OnboardingDocumentPermission = {
@@ -82,7 +99,11 @@ export type OnboardingDocumentPermission = {
   category: "general" | "sensitive" | "payroll";
   reason?: string;
 };
-export type OnboardingDocumentAccessDecision = { allowed: boolean; reason?: string; roleKeys?: string[] };
+export type OnboardingDocumentAccessDecision = {
+  allowed: boolean;
+  reason?: string;
+  roleKeys?: string[];
+};
 export type OnboardingDocumentAccessParams = {
   user?: AuthenticatedUser & { roleKeys?: string[] };
   candidateTokenData?: { candidate_id?: string | null };
@@ -141,25 +162,52 @@ const SENSITIVE_DOCUMENT_KEYWORDS = [
   "criminal",
 ];
 
-function normalizeDocumentText(doc: Partial<{ doc_type: unknown; doc_name: unknown; file_original_name: unknown }>) {
+function normalizeDocumentText(
+  doc: Partial<{
+    doc_type: unknown;
+    doc_name: unknown;
+    file_original_name: unknown;
+  }>,
+) {
   return [doc.doc_type, doc.doc_name, doc.file_original_name]
-    .map((value) => String(value ?? "").trim().toLowerCase())
+    .map((value) =>
+      String(value ?? "")
+        .trim()
+        .toLowerCase(),
+    )
     .filter(Boolean)
     .join(" ");
 }
 
-function classifyOnboardingDocument(doc: Partial<{ doc_type: unknown; doc_name: unknown; file_original_name: unknown }>) {
+function classifyOnboardingDocument(
+  doc: Partial<{
+    doc_type: unknown;
+    doc_name: unknown;
+    file_original_name: unknown;
+  }>,
+) {
   const text = normalizeDocumentText(doc);
-  const isPayrollRelated = PAYROLL_DOCUMENT_KEYWORDS.some((keyword) => text.includes(keyword));
-  const isSensitive = isPayrollRelated || SENSITIVE_DOCUMENT_KEYWORDS.some((keyword) => text.includes(keyword));
+  const isPayrollRelated = PAYROLL_DOCUMENT_KEYWORDS.some((keyword) =>
+    text.includes(keyword),
+  );
+  const isSensitive =
+    isPayrollRelated ||
+    SENSITIVE_DOCUMENT_KEYWORDS.some((keyword) => text.includes(keyword));
   return {
     isPayrollRelated,
     isSensitive,
-    category: (isPayrollRelated ? "payroll" : isSensitive ? "sensitive" : "general") as OnboardingDocumentPermission["category"],
+    category: (isPayrollRelated
+      ? "payroll"
+      : isSensitive
+        ? "sensitive"
+        : "general") as OnboardingDocumentPermission["category"],
   };
 }
 
-function buildOnboardingDocumentUrl(documentId: string, options?: { token?: string; download?: boolean }) {
+function buildOnboardingDocumentUrl(
+  documentId: string,
+  options?: { token?: string; download?: boolean },
+) {
   const base = options?.download
     ? `/api/ats/onboarding-full/documents/${documentId}/download`
     : `/api/ats/onboarding-full/documents/preview/${documentId}`;
@@ -170,16 +218,24 @@ function buildOnboardingDocumentUrl(documentId: string, options?: { token?: stri
 
 function sanitizeOnboardingDocument(
   row: Record<string, unknown>,
-  options?: { token?: string; permission?: OnboardingDocumentPermission }
+  options?: { token?: string; permission?: OnboardingDocumentPermission },
 ) {
-  const permission = options?.permission ?? { canPreview: true, canDownload: Boolean(options?.token), category: "general" };
+  const permission = options?.permission ?? {
+    canPreview: true,
+    canDownload: Boolean(options?.token),
+    category: "general",
+  };
   if (!permission.canPreview) return null;
   const { file_path: _filePath, ...rest } = row;
   const id = String(row.id ?? "");
   const previewUrl = buildOnboardingDocumentUrl(id, { token: options?.token });
-  const downloadUrl = permission.canDownload || Boolean(options?.token)
-    ? buildOnboardingDocumentUrl(id, { token: options?.token, download: true })
-    : null;
+  const downloadUrl =
+    permission.canDownload || Boolean(options?.token)
+      ? buildOnboardingDocumentUrl(id, {
+          token: options?.token,
+          download: true,
+        })
+      : null;
 
   return {
     ...rest,
@@ -193,14 +249,22 @@ function sanitizeOnboardingDocument(
 }
 
 export function getOnboardingDocumentPermission(
-  row: Partial<{ doc_type: unknown; doc_name: unknown; file_original_name: unknown }>,
-  roleKeys: string[]
+  row: Partial<{
+    doc_type: unknown;
+    doc_name: unknown;
+    file_original_name: unknown;
+  }>,
+  roleKeys: string[],
 ): OnboardingDocumentPermission {
   const roles = new Set(roleKeys);
   const classification = classifyOnboardingDocument(row);
 
   if (roles.has("super_admin") || roles.has("admin") || roles.has("hr")) {
-    return { canPreview: true, canDownload: true, category: classification.category };
+    return {
+      canPreview: true,
+      canDownload: true,
+      category: classification.category,
+    };
   }
 
   if (roles.has("payroll_hr") || roles.has("payroll")) {
@@ -212,11 +276,19 @@ export function getOnboardingDocumentPermission(
         reason: "Payroll access is restricted to payroll-related documents.",
       };
     }
-    return { canPreview: true, canDownload: true, category: classification.category };
+    return {
+      canPreview: true,
+      canDownload: true,
+      category: classification.category,
+    };
   }
 
   if (roles.has("manager") || roles.has("process_manager")) {
-    return { canPreview: true, canDownload: false, category: classification.category };
+    return {
+      canPreview: true,
+      canDownload: false,
+      category: classification.category,
+    };
   }
 
   if (roles.has("recruiter")) {
@@ -225,10 +297,15 @@ export function getOnboardingDocumentPermission(
         canPreview: false,
         canDownload: false,
         category: classification.category,
-        reason: "Recruiters cannot access sensitive payroll or statutory documents.",
+        reason:
+          "Recruiters cannot access sensitive payroll or statutory documents.",
       };
     }
-    return { canPreview: true, canDownload: false, category: classification.category };
+    return {
+      canPreview: true,
+      canDownload: false,
+      category: classification.category,
+    };
   }
 
   return {
@@ -240,16 +317,22 @@ export function getOnboardingDocumentPermission(
 }
 
 export async function canAccessOnboardingDocument(
-  params: OnboardingDocumentAccessParams
+  params: OnboardingDocumentAccessParams,
 ): Promise<OnboardingDocumentAccessDecision> {
   const candidateId = String(params.document.candidate_id ?? "");
   if (!candidateId) {
-    return { allowed: false, reason: "Document is missing candidate ownership metadata." };
+    return {
+      allowed: false,
+      reason: "Document is missing candidate ownership metadata.",
+    };
   }
 
   if (params.candidateTokenData) {
     if (String(params.candidateTokenData.candidate_id ?? "") !== candidateId) {
-      return { allowed: false, reason: "Candidate token cannot access another candidate's document." };
+      return {
+        allowed: false,
+        reason: "Candidate token cannot access another candidate's document.",
+      };
     }
     return { allowed: true, roleKeys: ["candidate"] };
   }
@@ -262,17 +345,24 @@ export async function canAccessOnboardingDocument(
     ? params.user.roleKeys
     : (await getUserRoleContext(params.user.id)).roleKeys;
 
-  if (!roleKeys.some((role) => [
-    "admin",
-    "super_admin",
-    "hr",
-    "manager",
-    "process_manager",
-    "payroll_hr",
-    "payroll",
-    "recruiter",
-  ].includes(role))) {
-    return { allowed: false, reason: "You are not authorized to access onboarding documents." };
+  if (
+    !roleKeys.some((role) =>
+      [
+        "admin",
+        "super_admin",
+        "hr",
+        "manager",
+        "process_manager",
+        "payroll_hr",
+        "payroll",
+        "recruiter",
+      ].includes(role),
+    )
+  ) {
+    return {
+      allowed: false,
+      reason: "You are not authorized to access onboarding documents.",
+    };
   }
 
   const scopedAllowed = await hasScopedAccess(
@@ -281,30 +371,49 @@ export async function canAccessOnboardingDocument(
     {
       branchId: params.document.branch_id_resolved
         ? String(params.document.branch_id_resolved)
-        : params.document.applied_for_branch ? String(params.document.applied_for_branch) : undefined,
+        : params.document.applied_for_branch
+          ? String(params.document.applied_for_branch)
+          : undefined,
       processId: params.document.process_id_resolved
         ? String(params.document.process_id_resolved)
-        : params.document.applied_for_process ? String(params.document.applied_for_process) : undefined,
+        : params.document.applied_for_process
+          ? String(params.document.applied_for_process)
+          : undefined,
     },
-    { allowAdminBypass: true, requireScopeForNonAdmin: true }
+    { allowAdminBypass: true, requireScopeForNonAdmin: true },
   );
 
   if (!scopedAllowed) {
-    return { allowed: false, reason: "Forbidden for this branch/process scope.", roleKeys };
+    return {
+      allowed: false,
+      reason: "Forbidden for this branch/process scope.",
+      roleKeys,
+    };
   }
 
   const permission = getOnboardingDocumentPermission(params.document, roleKeys);
-  const allowed = params.action === "download" ? permission.canDownload : permission.canPreview;
+  const allowed =
+    params.action === "download"
+      ? permission.canDownload
+      : permission.canPreview;
   if (!allowed) {
-    return { allowed: false, reason: permission.reason ?? "Access denied for this document.", roleKeys };
+    return {
+      allowed: false,
+      reason: permission.reason ?? "Access denied for this document.",
+      roleKeys,
+    };
   }
 
   return { allowed: true, roleKeys };
 }
 
 const hashValue = (value: unknown) => {
-  const normalized = String(value ?? "").trim().toUpperCase();
-  return normalized ? createHash("sha256").update(normalized).digest("hex") : null;
+  const normalized = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  return normalized
+    ? createHash("sha256").update(normalized).digest("hex")
+    : null;
 };
 
 const maskAadhaar = (value: unknown) => {
@@ -314,7 +423,9 @@ const maskAadhaar = (value: unknown) => {
 };
 
 const maskPan = (value: unknown) => {
-  const pan = String(value ?? "").trim().toUpperCase();
+  const pan = String(value ?? "")
+    .trim()
+    .toUpperCase();
   if (!pan) return null;
   return `${pan.slice(0, 3)}XXXX${pan.slice(-2)}`;
 };
@@ -345,37 +456,61 @@ async function recordFaceMatchSkipped(candidateId: string, reason: string) {
       `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = 'photo_match' LIMIT 1`,
       [candidateId],
     );
-    const existingId = (existing as RowDataPacket[])[0]?.id as string | undefined;
+    const existingId = (existing as RowDataPacket[])[0]?.id as
+      string | undefined;
     if (existingId) {
       await db.execute(
         `UPDATE candidate_bgv_check
             SET status = 'manual_review', provider_key = 'system',
                 result_summary = ?, result_json = CAST(? AS JSON), updated_at = NOW()
           WHERE id = ?`,
-        [reason.slice(0, 240), JSON.stringify({ skipped: true, reason }), existingId],
+        [
+          reason.slice(0, 240),
+          JSON.stringify({ skipped: true, reason }),
+          existingId,
+        ],
       );
     } else {
       await db.execute(
         `INSERT INTO candidate_bgv_check
            (id, candidate_id, check_type, provider_key, status, result_summary, result_json)
          VALUES (?, ?, 'photo_match', 'system', 'manual_review', ?, CAST(? AS JSON))`,
-        [randomUUID(), candidateId, reason.slice(0, 240), JSON.stringify({ skipped: true, reason })],
+        [
+          randomUUID(),
+          candidateId,
+          reason.slice(0, 240),
+          JSON.stringify({ skipped: true, reason }),
+        ],
       );
     }
   } catch (error) {
-    console.error("[FaceMatch] could not record a skipped comparison for", candidateId, (error as Error)?.message);
+    console.error(
+      "[FaceMatch] could not record a skipped comparison for",
+      candidateId,
+      (error as Error)?.message,
+    );
   }
 }
 
-async function triggerFaceMatch(candidateId: string, selfiePath: string, selfieDocId: string) {
+async function triggerFaceMatch(
+  candidateId: string,
+  selfiePath: string,
+  selfieDocId: string,
+) {
   const faceMatch = await getFaceMatch();
   if (!faceMatch) {
-    await recordFaceMatchSkipped(candidateId, "The face-match module could not be loaded on the server.");
+    await recordFaceMatchSkipped(
+      candidateId,
+      "The face-match module could not be loaded on the server.",
+    );
     return;
   }
   const available = await faceMatch.isModelAvailable();
   if (!available) {
-    await recordFaceMatchSkipped(candidateId, "The face-recognition models are not available on the server.");
+    await recordFaceMatchSkipped(
+      candidateId,
+      "The face-recognition models are not available on the server.",
+    );
     return;
   }
   // Find an uploaded Aadhaar or PAN image to compare against
@@ -387,9 +522,10 @@ async function triggerFaceMatch(candidateId: string, selfiePath: string, selfieD
        AND id <> ?
      ORDER BY FIELD(LOWER(doc_type), 'aadhaar', 'pan card')
      LIMIT 1`,
-    [candidateId, selfieDocId]
+    [candidateId, selfieDocId],
   );
-  const idDoc = docs[0] as { id: string; file_path: string; doc_type: string } | undefined;
+  const idDoc = docs[0] as
+    { id: string; file_path: string; doc_type: string } | undefined;
   if (!idDoc) {
     // Not necessarily permanent: the candidate may upload their Aadhaar next,
     // and faceMatchOnIdDocumentUpload will pick it up then.
@@ -401,10 +537,19 @@ async function triggerFaceMatch(candidateId: string, selfiePath: string, selfieD
   }
   const idDocPath = resolveOnboardingDocumentFile(idDoc.file_path);
   if (!idDocPath) {
-    await recordFaceMatchSkipped(candidateId, `The stored ${idDoc.doc_type} file could not be located on disk.`);
+    await recordFaceMatchSkipped(
+      candidateId,
+      `The stored ${idDoc.doc_type} file could not be located on disk.`,
+    );
     return;
   }
-  await faceMatch.compareFaces(candidateId, selfiePath, idDocPath, selfieDocId, idDoc.id);
+  await faceMatch.compareFaces(
+    candidateId,
+    selfiePath,
+    idDocPath,
+    selfieDocId,
+    idDoc.id,
+  );
 }
 
 /**
@@ -415,7 +560,10 @@ async function triggerFaceMatch(candidateId: string, selfiePath: string, selfieD
  * happened to upload in — something they have no way of knowing. 33 candidates
  * hold both documents today and not one was ever compared.
  */
-async function faceMatchOnIdDocumentUpload(candidateId: string, idDocId: string) {
+async function faceMatchOnIdDocumentUpload(
+  candidateId: string,
+  idDocId: string,
+) {
   const [selfies] = await db.execute<RowDataPacket[]>(
     `SELECT id, file_path FROM candidate_onboarding_document
       WHERE candidate_id = ? AND deleted_at IS NULL
@@ -434,7 +582,7 @@ async function faceMatchOnIdDocumentUpload(candidateId: string, idDocId: string)
       -- twice more in this file); this was the lone outlier.
       ORDER BY uploaded_at DESC
       LIMIT 1`,
-    [candidateId, idDocId]
+    [candidateId, idDocId],
   );
   const selfie = selfies[0] as { id: string; file_path: string } | undefined;
   if (!selfie) return;
@@ -443,7 +591,17 @@ async function faceMatchOnIdDocumentUpload(candidateId: string, idDocId: string)
   await triggerFaceMatch(candidateId, selfiePath, selfie.id);
 }
 
-async function logCandidateAction(candidateId: string, actionType: string, payload?: unknown, meta?: { ip?: string; userAgent?: string; actorType?: ActorType; actorId?: string | null }) {
+async function logCandidateAction(
+  candidateId: string,
+  actionType: string,
+  payload?: unknown,
+  meta?: {
+    ip?: string;
+    userAgent?: string;
+    actorType?: ActorType;
+    actorId?: string | null;
+  },
+) {
   await db.execute(
     `INSERT INTO candidate_onboarding_submission_log
        (id, candidate_id, action_type, action_by_type, action_by, action_payload, ip_address, user_agent)
@@ -457,7 +615,7 @@ async function logCandidateAction(candidateId: string, actionType: string, paylo
       payload ? JSON.stringify(payload) : null,
       meta?.ip ?? null,
       meta?.userAgent ?? null,
-    ]
+    ],
   );
 }
 
@@ -468,14 +626,25 @@ export async function auditOnboardingDocumentAccess(
     | "DOWNLOAD_DOCUMENT"
     | "PREVIEW_DOCUMENT_DENIED"
     | "DOWNLOAD_DOCUMENT_DENIED",
-  meta?: { ip?: string; userAgent?: string; actorType?: ActorType; actorId?: string | null; roleKeys?: string[] }
+  meta?: {
+    ip?: string;
+    userAgent?: string;
+    actorType?: ActorType;
+    actorId?: string | null;
+    roleKeys?: string[];
+  },
 ) {
   const candidateId = String(row.candidate_id ?? "");
-  await logCandidateAction(candidateId, actionType, {
-    documentId: row.id ?? null,
-    docType: row.doc_type ?? null,
-    fileName: row.file_original_name ?? null,
-  }, meta);
+  await logCandidateAction(
+    candidateId,
+    actionType,
+    {
+      documentId: row.id ?? null,
+      docType: row.doc_type ?? null,
+      fileName: row.file_original_name ?? null,
+    },
+    meta,
+  );
 
   if (meta?.actorType === "candidate" || !meta?.actorId) return;
 
@@ -498,8 +667,13 @@ export async function auditOnboardingDocumentAccess(
   });
 }
 
-async function ensureCandidateWithinScope(candidateId: string, scopeFilter?: OnboardingScopeFilter) {
-  const whereSql = scopeFilter?.sql ? ` AND (${normalizeCandidateScopeSql(scopeFilter.sql)})` : "";
+async function ensureCandidateWithinScope(
+  candidateId: string,
+  scopeFilter?: OnboardingScopeFilter,
+) {
+  const whereSql = scopeFilter?.sql
+    ? ` AND (${normalizeCandidateScopeSql(scopeFilter.sql)})`
+    : "";
   const params = scopeFilter?.params ?? [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id
@@ -514,10 +688,12 @@ async function ensureCandidateWithinScope(candidateId: string, scopeFilter?: Onb
          OR pm_scope.process_code = c.applied_for_process
       WHERE c.id = ?${whereSql}
       LIMIT 1`,
-    [candidateId, ...params]
+    [candidateId, ...params],
   );
   if (!(rows as RowDataPacket[]).length) {
-    throw Object.assign(new Error("Forbidden for this branch/process scope"), { statusCode: 403 });
+    throw Object.assign(new Error("Forbidden for this branch/process scope"), {
+      statusCode: 403,
+    });
   }
 }
 
@@ -526,7 +702,12 @@ async function ensureCandidateWithinScope(candidateId: string, scopeFilter?: Onb
 // failed/expired for a session the candidate abandoned (e.g. closed the tab mid-flow),
 // so without an age check "already started" can be permanent with no way out.
 const DIGILOCKER_TERMINAL_STATUSES = new Set([
-  "completed", "documents_received", "passed", "failed", "expired", "not_started",
+  "completed",
+  "documents_received",
+  "passed",
+  "failed",
+  "expired",
+  "not_started",
 ]);
 const DIGILOCKER_STALE_AFTER_MS = 2 * 60 * 60 * 1000; // 2 hours
 
@@ -539,14 +720,16 @@ function isDigilockerStale(status: unknown, updatedAt: unknown): boolean {
 }
 
 async function getLatestDigilockerStatus(candidateId: string) {
-  const [providerRows] = await db.execute<RowDataPacket[]>(
-    `SELECT service_type, status, provider_url, client_transaction_id, updated_at
+  const [providerRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT service_type, status, provider_url, client_transaction_id, updated_at
        FROM ats_provider_transaction_log
       WHERE candidate_id = ? AND provider = 'luckpay' AND service_type = 'digilocker'
       ORDER BY updated_at DESC, created_at DESC
       LIMIT 1`,
-    [candidateId]
-  ).catch(() => [[] as RowDataPacket[]]);
+      [candidateId],
+    )
+    .catch(() => [[] as RowDataPacket[]]);
 
   if ((providerRows as RowDataPacket[]).length) {
     const row = (providerRows as RowDataPacket[])[0];
@@ -568,14 +751,16 @@ async function getLatestDigilockerStatus(candidateId: string) {
   // resulting SQL error into an empty result, so the form always concluded no
   // session existed — which is exactly why a candidate who has already
   // completed DigiLocker is invited to do it again.
-  const [sessionRows] = await db.execute<RowDataPacket[]>(
-    `SELECT state_token, session_status, auth_url, updated_at, created_at
+  const [sessionRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT state_token, session_status, auth_url, updated_at, created_at
        FROM candidate_digilocker_session
       WHERE candidate_id = ?
       ORDER BY created_at DESC
       LIMIT 1`,
-    [candidateId]
-  ).catch(() => [[] as RowDataPacket[]]);
+      [candidateId],
+    )
+    .catch(() => [[] as RowDataPacket[]]);
 
   if ((sessionRows as RowDataPacket[]).length) {
     const row = (sessionRows as RowDataPacket[])[0];
@@ -590,19 +775,28 @@ async function getLatestDigilockerStatus(candidateId: string) {
     };
   }
 
-  return { provider: "luckpay", status: "not_started", verification_url: null, client_transaction_id: null, updated_at: null, stale: false };
+  return {
+    provider: "luckpay",
+    status: "not_started",
+    verification_url: null,
+    client_transaction_id: null,
+    updated_at: null,
+    stale: false,
+  };
 }
 
 async function getLatestEsignStatus(candidateId: string) {
-  const [requestRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, current_state, candidate_esign_status, candidate_esign_url, esign_provider,
+  const [requestRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id, current_state, candidate_esign_status, candidate_esign_url, esign_provider,
             esign_transaction_id, updated_at
        FROM appointment_letter_request
       WHERE candidate_id = ?
       ORDER BY updated_at DESC, created_at DESC
       LIMIT 1`,
-    [candidateId]
-  ).catch(() => [[] as RowDataPacket[]]);
+      [candidateId],
+    )
+    .catch(() => [[] as RowDataPacket[]]);
 
   if ((requestRows as RowDataPacket[]).length) {
     const row = (requestRows as RowDataPacket[])[0];
@@ -616,7 +810,14 @@ async function getLatestEsignStatus(candidateId: string) {
     };
   }
 
-  return { request_id: null, provider: "manual", status: "not_started", verification_url: null, client_transaction_id: null, updated_at: null };
+  return {
+    request_id: null,
+    provider: "manual",
+    status: "not_started",
+    verification_url: null,
+    client_transaction_id: null,
+    updated_at: null,
+  };
 }
 
 async function createProviderTransactionLog(params: {
@@ -643,7 +844,7 @@ async function createProviderTransactionLog(params: {
       JSON.stringify(sanitizeProviderPayload(params.requestPayload ?? null)),
       params.initiatedBy ?? null,
       params.initiatedByType ?? null,
-    ]
+    ],
   );
 }
 
@@ -673,35 +874,41 @@ async function updateProviderTransactionLog(params: {
       params.errorMessage ?? null,
       params.provider,
       params.clientTransactionId,
-    ]
+    ],
   );
 }
 
 async function resolveEsignSource(candidateId: string) {
-  const [requestRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, vault_path
+  const [requestRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id, vault_path
        FROM appointment_letter_request
       WHERE candidate_id = ?
       ORDER BY updated_at DESC, created_at DESC
       LIMIT 1`,
-    [candidateId]
-  ).catch(() => [[] as RowDataPacket[]]);
+      [candidateId],
+    )
+    .catch(() => [[] as RowDataPacket[]]);
 
   const requestRow = (requestRows as RowDataPacket[])[0];
   const requestId = requestRow?.id ? String(requestRow.id) : null;
-  const requestPath = requestRow?.vault_path ? String(requestRow.vault_path) : null;
+  const requestPath = requestRow?.vault_path
+    ? String(requestRow.vault_path)
+    : null;
   if (requestPath && fs.existsSync(requestPath)) {
     return { requestId, filePath: requestPath };
   }
 
-  const [offerRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, pdf_path
+  const [offerRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id, pdf_path
        FROM ats_offer_letters
       WHERE candidate_id = ? AND pdf_path IS NOT NULL
       ORDER BY created_at DESC
       LIMIT 1`,
-    [candidateId]
-  ).catch(() => [[] as RowDataPacket[]]);
+      [candidateId],
+    )
+    .catch(() => [[] as RowDataPacket[]]);
 
   const offerRow = (offerRows as RowDataPacket[])[0];
   const offerPath = offerRow?.pdf_path ? String(offerRow.pdf_path) : null;
@@ -713,7 +920,12 @@ async function resolveEsignSource(candidateId: string) {
     };
   }
 
-  throw Object.assign(new Error("No generated appointment or offer letter PDF was found for eSign."), { statusCode: 400 });
+  throw Object.assign(
+    new Error(
+      "No generated appointment or offer letter PDF was found for eSign.",
+    ),
+    { statusCode: 400 },
+  );
 }
 
 // REMOVED: triggerBgvAfterOnboardingSubmit.
@@ -753,14 +965,14 @@ async function resolveEsignSource(candidateId: string) {
  */
 async function triggerRealBgvChecksAsync(
   candidateId: string,
-  meta?: { ip?: string; userAgent?: string }
+  meta?: { ip?: string; userAgent?: string },
 ): Promise<void> {
   let context: AsyncBgvTriggerContext;
   try {
     context = await loadAsyncBgvTriggerContext(candidateId);
   } catch (error) {
     if ((error as { statusCode?: number })?.statusCode === 404) {
-      console.error('[BGV] Candidate not found for BGV trigger:', candidateId);
+      console.error("[BGV] Candidate not found for BGV trigger:", candidateId);
       return;
     }
     throw error;
@@ -772,12 +984,20 @@ async function triggerRealBgvChecksAsync(
   try {
     adapter = await getConfiguredBgvProviderAdapter();
   } catch (err) {
-    console.warn('[BGV] Provider not configured — checks queued for manual review:', err instanceof Error ? err.message : String(err));
+    console.warn(
+      "[BGV] Provider not configured — checks queued for manual review:",
+      err instanceof Error ? err.message : String(err),
+    );
     await createPendingBgvChecks(candidateId);
     return;
   }
 
-  const actorMeta = { actorType: 'system' as const, actorId: null, ip: meta?.ip, userAgent: meta?.userAgent };
+  const actorMeta = {
+    actorType: "system" as const,
+    actorId: null,
+    ip: meta?.ip,
+    userAgent: meta?.userAgent,
+  };
 
   // PAN verification.
   //
@@ -786,7 +1006,9 @@ async function triggerRealBgvChecksAsync(
   // test, so for a candidate who onboarded through this flow the check was
   // skipped without a trace: no row, no log, nothing for HR to action. Record it
   // as manual review instead of silently doing nothing.
-  const pan = String(cand.pan_number ?? '').trim().toUpperCase();
+  const pan = String(cand.pan_number ?? "")
+    .trim()
+    .toUpperCase();
   if (pan && /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan)) {
     try {
       const result = await adapter.verifyPan({
@@ -795,24 +1017,34 @@ async function triggerRealBgvChecksAsync(
         mobileNumber: cand.mobile ?? null,
         dateOfBirth: cand.date_of_birth ?? null,
       });
-      await storeBgvCheckResult(candidateId, 'pan', result, adapter.providerKey);
+      await storeBgvCheckResult(
+        candidateId,
+        "pan",
+        result,
+        adapter.providerKey,
+      );
       console.log(`[BGV] PAN check for ${candidateId}: ${result.status}`);
     } catch (err) {
-      await storeBgvCheckError(candidateId, 'pan', adapter.providerKey, err);
+      await storeBgvCheckError(candidateId, "pan", adapter.providerKey, err);
     }
   } else {
-    console.warn(`[BGV] PAN check for ${candidateId} cannot run automatically — no verifiable PAN on file`);
+    console.warn(
+      `[BGV] PAN check for ${candidateId} cannot run automatically — no verifiable PAN on file`,
+    );
     await storeBgvCheckManualReview(
       candidateId,
-      'pan',
-      'PAN could not be verified automatically. HR will verify it manually — this does not block your onboarding.',
-      { mode: 'no_verifiable_pan', note: 'Onboarding stores only a masked PAN and hash; the raw number is required for provider verification.' },
+      "pan",
+      "PAN could not be verified automatically. HR will verify it manually — this does not block your onboarding.",
+      {
+        mode: "no_verifiable_pan",
+        note: "Onboarding stores only a masked PAN and hash; the raw number is required for provider verification.",
+      },
     );
   }
 
   // Bank (Penny Drop) verification
-  const accountNo = String(bank.accountNo ?? '').trim();
-  const ifscCode = String(bank.ifscCode ?? '').trim();
+  const accountNo = String(bank.accountNo ?? "").trim();
+  const ifscCode = String(bank.ifscCode ?? "").trim();
   if (accountNo && ifscCode) {
     try {
       const result = await adapter.verifyBank({
@@ -821,30 +1053,47 @@ async function triggerRealBgvChecksAsync(
         accountHolderName: bank.accountHolderName ?? cand.full_name ?? null,
         candidateName: cand.full_name ?? null,
       });
-      await storeBgvCheckResult(candidateId, 'bank', result, adapter.providerKey);
+      await storeBgvCheckResult(
+        candidateId,
+        "bank",
+        result,
+        adapter.providerKey,
+      );
       console.log(`[BGV] Bank check for ${candidateId}: ${result.status}`);
     } catch (err) {
-      await storeBgvCheckError(candidateId, 'bank', adapter.providerKey, err);
+      await storeBgvCheckError(candidateId, "bank", adapter.providerKey, err);
     }
   }
 
   // UAN/Employment verification (skip for freshers without UAN)
-  const uan = String(cand.uan_number ?? '').trim();
+  const uan = String(cand.uan_number ?? "").trim();
   if (uan && /^\d{12}$/.test(uan) && adapter.verifyUan) {
     try {
       const result = await adapter.verifyUan({
         uanNumber: uan,
         candidateName: cand.full_name ?? null,
       });
-      await storeBgvCheckResult(candidateId, 'employment', result, adapter.providerKey);
-      console.log(`[BGV] UAN/Employment check for ${candidateId}: ${result.status}`);
+      await storeBgvCheckResult(
+        candidateId,
+        "employment",
+        result,
+        adapter.providerKey,
+      );
+      console.log(
+        `[BGV] UAN/Employment check for ${candidateId}: ${result.status}`,
+      );
     } catch (err) {
-      await storeBgvCheckError(candidateId, 'employment', adapter.providerKey, err);
+      await storeBgvCheckError(
+        candidateId,
+        "employment",
+        adapter.providerKey,
+        err,
+      );
     }
   }
 
   // Aadhaar offline verification (uses DigiLocker or manual)
-  const aadhaar = String(cand.aadhar_number ?? '').trim();
+  const aadhaar = String(cand.aadhar_number ?? "").trim();
   if (aadhaar) {
     try {
       const result = await adapter.verifyAadhaarOffline({
@@ -852,10 +1101,20 @@ async function triggerRealBgvChecksAsync(
         aadhaarLast4: aadhaar.slice(-4),
         documentId: null,
       });
-      await storeBgvCheckResult(candidateId, 'aadhaar_offline', result, adapter.providerKey);
+      await storeBgvCheckResult(
+        candidateId,
+        "aadhaar_offline",
+        result,
+        adapter.providerKey,
+      );
       console.log(`[BGV] Aadhaar check for ${candidateId}: ${result.status}`);
     } catch (err) {
-      await storeBgvCheckError(candidateId, 'aadhaar_offline', adapter.providerKey, err);
+      await storeBgvCheckError(
+        candidateId,
+        "aadhaar_offline",
+        adapter.providerKey,
+        err,
+      );
     }
   }
 
@@ -877,7 +1136,10 @@ export function decryptPanForProvider(encrypted: unknown): string | null {
     const pan = String(decryptPii(value)).trim().toUpperCase();
     return /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan) ? pan : null;
   } catch (error) {
-    console.warn("[BGV] Could not decrypt stored PAN - falling back to manual review:", error instanceof Error ? error.message : String(error));
+    console.warn(
+      "[BGV] Could not decrypt stored PAN - falling back to manual review:",
+      error instanceof Error ? error.message : String(error),
+    );
     return null;
   }
 }
@@ -894,7 +1156,10 @@ export function decryptAadhaarForProvider(encrypted: unknown): string | null {
     const aadhaar = String(decryptPii(value)).trim();
     return /^[0-9]{12}$/.test(aadhaar) ? aadhaar : null;
   } catch (error) {
-    console.warn("[BGV] Could not decrypt stored Aadhaar:", error instanceof Error ? error.message : String(error));
+    console.warn(
+      "[BGV] Could not decrypt stored Aadhaar:",
+      error instanceof Error ? error.message : String(error),
+    );
     return null;
   }
 }
@@ -938,15 +1203,22 @@ export async function loadAsyncBgvTriggerContext(
       WHERE candidate_id = ? LIMIT 1`,
     [candidateId],
   );
-  const bankRow = (bankRows[0] as (RowDataPacket & Record<string, unknown>) | undefined) ?? undefined;
+  const bankRow =
+    (bankRows[0] as (RowDataPacket & Record<string, unknown>) | undefined) ??
+    undefined;
 
   let accountNo: string | null = null;
-  const encryptedAccount = nonEmptyString(bankRow?.account_no_encrypted) ?? nonEmptyString(candidateRow.bank_account_no_encrypted);
+  const encryptedAccount =
+    nonEmptyString(bankRow?.account_no_encrypted) ??
+    nonEmptyString(candidateRow.bank_account_no_encrypted);
   if (encryptedAccount) {
     try {
       accountNo = nonEmptyString(decryptAccountNumber(encryptedAccount));
     } catch (error) {
-      console.error("[BGV] Failed to decrypt onboarding bank account for async trigger:", error instanceof Error ? error.message : String(error));
+      console.error(
+        "[BGV] Failed to decrypt onboarding bank account for async trigger:",
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 
@@ -955,7 +1227,9 @@ export async function loadAsyncBgvTriggerContext(
       full_name: nonEmptyString(candidateRow.full_name),
       mobile: nonEmptyString(candidateRow.mobile),
       email: nonEmptyString(candidateRow.email),
-      pan_number: decryptPanForProvider(candidateRow.pan_number_encrypted) ?? nonEmptyString(candidateRow.pan_number),
+      pan_number:
+        decryptPanForProvider(candidateRow.pan_number_encrypted) ??
+        nonEmptyString(candidateRow.pan_number),
       aadhar_number: nonEmptyString(candidateRow.aadhar_number),
       uan_number: nonEmptyString(candidateRow.uan_number),
       date_of_birth: nonEmptyString(candidateRow.date_of_birth),
@@ -964,7 +1238,9 @@ export async function loadAsyncBgvTriggerContext(
     },
     bank: {
       accountNo,
-      ifscCode: nonEmptyString(bankRow?.ifsc_code) ?? nonEmptyString(candidateRow.bank_ifsc),
+      ifscCode:
+        nonEmptyString(bankRow?.ifsc_code) ??
+        nonEmptyString(candidateRow.bank_ifsc),
       accountHolderName: nonEmptyString(bankRow?.account_holder_name),
     },
   };
@@ -976,13 +1252,22 @@ export async function loadAsyncBgvTriggerContext(
 export async function storeBgvCheckResult(
   candidateId: string,
   checkType: string,
-  result: { status: string; providerKey: string; providerRequestId: string; providerReferenceId: string; matchScore?: number | null; matchedName?: string | null; resultSummary: string; raw?: Record<string, unknown> },
-  providerKey: string
+  result: {
+    status: string;
+    providerKey: string;
+    providerRequestId: string;
+    providerReferenceId: string;
+    matchScore?: number | null;
+    matchedName?: string | null;
+    resultSummary: string;
+    raw?: Record<string, unknown>;
+  },
+  providerKey: string,
 ): Promise<void> {
-  const verifiedAt = result.status === 'verified' ? new Date() : null;
+  const verifiedAt = result.status === "verified" ? new Date() : null;
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
-    [candidateId, checkType]
+    [candidateId, checkType],
   );
 
   if ((existing as any[]).length > 0) {
@@ -993,12 +1278,18 @@ export async function storeBgvCheckResult(
            verified_at = ?, is_auto_approved = 0, updated_at = NOW()
        WHERE candidate_id = ? AND check_type = ?`,
       [
-        result.status, providerKey, result.providerRequestId, result.providerReferenceId,
-        result.matchScore ?? null, result.matchedName ?? null, result.resultSummary,
+        result.status,
+        providerKey,
+        result.providerRequestId,
+        result.providerReferenceId,
+        result.matchScore ?? null,
+        result.matchedName ?? null,
+        result.resultSummary,
         result.raw ? JSON.stringify(result.raw) : null,
         verifiedAt,
-        candidateId, checkType,
-      ]
+        candidateId,
+        checkType,
+      ],
     );
   } else {
     await db.execute(
@@ -1008,12 +1299,19 @@ export async function storeBgvCheckResult(
           verified_at, is_auto_approved)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       [
-        randomUUID(), candidateId, checkType, providerKey, result.status,
-        result.providerRequestId, result.providerReferenceId,
-        result.matchScore ?? null, result.matchedName ?? null, result.resultSummary,
+        randomUUID(),
+        candidateId,
+        checkType,
+        providerKey,
+        result.status,
+        result.providerRequestId,
+        result.providerReferenceId,
+        result.matchScore ?? null,
+        result.matchedName ?? null,
+        result.resultSummary,
         result.raw ? JSON.stringify(result.raw) : null,
         verifiedAt,
-      ]
+      ],
     );
   }
 
@@ -1042,14 +1340,21 @@ export async function storeBgvCheckResult(
    */
   if (verifiedAt) {
     try {
-      const r = await propagateIdentityVerification(candidateId, checkType, verifiedAt);
+      const r = await propagateIdentityVerification(
+        candidateId,
+        checkType,
+        verifiedAt,
+      );
       if (r.updated) {
-        console.log(`[bgv] ${checkType} verified — stamped employees.${r.column} for ${r.employeeId}`);
+        console.log(
+          `[bgv] ${checkType} verified — stamped employees.${r.column} for ${r.employeeId}`,
+        );
       }
     } catch (err) {
       console.error(
         `[bgv] could not propagate ${checkType} verification for candidate ${candidateId} ` +
-        `to the employee record:`, err instanceof Error ? err.message : err,
+          `to the employee record:`,
+        err instanceof Error ? err.message : err,
       );
     }
   }
@@ -1072,35 +1377,46 @@ async function storeBgvCheckError(
   candidateId: string,
   checkType: string,
   providerKey: string,
-  err: unknown
+  err: unknown,
 ): Promise<void> {
   const errMsg = err instanceof Error ? err.message : String(err);
   console.error(`[BGV] ${checkType} check failed for ${candidateId}:`, errMsg);
 
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
-    [candidateId, checkType]
+    [candidateId, checkType],
   );
 
   // result_summary is rendered to the candidate on Step 5, so it must not carry raw
   // provider text (which has leaked credential and IP-whitelist errors verbatim).
   // The technical detail is kept in result_json for HR and support.
   const errorSummary = `${CHECK_LABELS[checkType] ?? "This check"} could not be completed automatically. HR will verify it manually — this does not block your onboarding.`;
-  const errorDetail = JSON.stringify({ mode: "provider_error", provider_key: providerKey, error_message: errMsg.slice(0, 500) });
+  const errorDetail = JSON.stringify({
+    mode: "provider_error",
+    provider_key: providerKey,
+    error_message: errMsg.slice(0, 500),
+  });
 
   if ((existing as any[]).length > 0) {
     await db.execute(
       `UPDATE candidate_bgv_check
        SET status = 'manual_review', provider_key = ?, result_summary = ?, result_json = ?, is_auto_approved = 0, updated_at = NOW()
        WHERE candidate_id = ? AND check_type = ?`,
-      [providerKey, errorSummary, errorDetail, candidateId, checkType]
+      [providerKey, errorSummary, errorDetail, candidateId, checkType],
     );
   } else {
     await db.execute(
       `INSERT INTO candidate_bgv_check
          (id, candidate_id, check_type, provider_key, status, result_summary, result_json, is_auto_approved)
        VALUES (?, ?, ?, ?, 'manual_review', ?, ?, 0)`,
-      [randomUUID(), candidateId, checkType, providerKey, errorSummary, errorDetail]
+      [
+        randomUUID(),
+        candidateId,
+        checkType,
+        providerKey,
+        errorSummary,
+        errorDetail,
+      ],
     );
   }
 }
@@ -1142,11 +1458,11 @@ async function storeBgvCheckManualReview(
 }
 
 async function createPendingBgvChecks(candidateId: string): Promise<void> {
-  const checks = ['pan', 'aadhaar_offline', 'bank', 'employment', 'criminal'];
+  const checks = ["pan", "aadhaar_offline", "bank", "employment", "criminal"];
   for (const checkType of checks) {
     const [existing] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
-      [candidateId, checkType]
+      [candidateId, checkType],
     );
     if ((existing as any[]).length === 0) {
       // 'queued', not 'pending': candidate_bgv_check.status is an enum of
@@ -1160,7 +1476,7 @@ async function createPendingBgvChecks(candidateId: string): Promise<void> {
         `INSERT INTO candidate_bgv_check
            (id, candidate_id, check_type, provider_key, status, result_summary, is_auto_approved)
          VALUES (?, ?, ?, NULL, 'queued', 'Awaiting BGV provider configuration', 0)`,
-        [randomUUID(), candidateId, checkType]
+        [randomUUID(), candidateId, checkType],
       );
     }
   }
@@ -1169,21 +1485,28 @@ async function createPendingBgvChecks(candidateId: string): Promise<void> {
 /**
  * Sync all checks to the overall BGV report
  */
-async function syncBgvReport(candidateId: string, providerKey: string): Promise<void> {
+async function syncBgvReport(
+  candidateId: string,
+  providerKey: string,
+): Promise<void> {
   const [checks] = await db.execute<RowDataPacket[]>(
     `SELECT status FROM candidate_bgv_check WHERE candidate_id = ?`,
-    [candidateId]
+    [candidateId],
   );
 
-  const statuses = (checks as any[]).map(c => c.status);
-  const allVerified = statuses.length > 0 && statuses.every(s => s === 'verified');
-  const anyFailed = statuses.some(s => s === 'failed');
-  const anyManualReview = statuses.some(s => s === 'manual_review');
+  const statuses = (checks as any[]).map((c) => c.status);
+  const allVerified =
+    statuses.length > 0 && statuses.every((s) => s === "verified");
+  const anyFailed = statuses.some((s) => s === "failed");
+  const anyManualReview = statuses.some((s) => s === "manual_review");
 
-  const overallStatus = allVerified ? 'clear'
-    : anyFailed ? 'negative'
-    : anyManualReview ? 'refer'
-    : 'in_progress';
+  const overallStatus = allVerified
+    ? "clear"
+    : anyFailed
+      ? "negative"
+      : anyManualReview
+        ? "refer"
+        : "in_progress";
 
   const score = allVerified ? 100 : anyFailed ? 0 : 50;
 
@@ -1197,9 +1520,12 @@ async function syncBgvReport(candidateId: string, providerKey: string): Promise<
        hr_remarks = VALUES(hr_remarks),
        updated_at = NOW()`,
     [
-      randomUUID(), candidateId, overallStatus, score,
-      `BGV checks via ${providerKey} — ${statuses.join(', ')}`,
-    ]
+      randomUUID(),
+      candidateId,
+      overallStatus,
+      score,
+      `BGV checks via ${providerKey} — ${statuses.join(", ")}`,
+    ],
   );
 }
 
@@ -1220,18 +1546,23 @@ export async function validateOnboardingToken(token: string) {
                                    OR pm.process_code = c.applied_for_process
       WHERE b.onboarding_token = ?
       LIMIT 1`,
-    [token]
+    [token],
   );
 
-  if (!rows.length) throw Object.assign(new Error("Invalid onboarding token"), { statusCode: 400 });
+  if (!rows.length)
+    throw Object.assign(new Error("Invalid onboarding token"), {
+      statusCode: 400,
+    });
   const row = rows[0];
   if (new Date(row.onboarding_token_expires_at as string) < new Date()) {
-    throw Object.assign(new Error("Onboarding token expired"), { statusCode: 410 });
+    throw Object.assign(new Error("Onboarding token expired"), {
+      statusCode: 410,
+    });
   }
 
   const [profileRows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
-    [row.candidate_id]
+    [row.candidate_id],
   );
 
   return {
@@ -1291,38 +1622,40 @@ export async function getFullOnboardingStatus(token: string) {
          FROM candidate_onboarding_document
         WHERE candidate_id = ? AND deleted_at IS NULL
         ORDER BY uploaded_at DESC`,
-      [candidateId]
+      [candidateId],
     ),
     db.execute<RowDataPacket[]>(
       `SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
-      [candidateId]
+      [candidateId],
     ),
     db.execute<RowDataPacket[]>(
       `SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`,
-      [candidateId]
+      [candidateId],
     ),
     db.execute<RowDataPacket[]>(
       `SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`,
-      [candidateId]
+      [candidateId],
     ),
     db.execute<RowDataPacket[]>(
       `SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`,
-      [candidateId]
+      [candidateId],
     ),
     db.execute<RowDataPacket[]>(
       `SELECT * FROM candidate_onboarding_family_member WHERE candidate_id = ? ORDER BY created_at ASC`,
-      [candidateId]
+      [candidateId],
     ),
     db.execute<RowDataPacket[]>(
       `SELECT * FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`,
-      [candidateId]
+      [candidateId],
     ),
     getLatestDigilockerStatus(candidateId),
     getLatestEsignStatus(candidateId),
   ]);
 
   const sanitizedDocuments = (documents as RowDataPacket[])
-    .map((row) => sanitizeOnboardingDocument(row as Record<string, unknown>, { token }))
+    .map((row) =>
+      sanitizeOnboardingDocument(row as Record<string, unknown>, { token }),
+    )
     .filter(Boolean);
 
   return {
@@ -1339,19 +1672,28 @@ export async function getFullOnboardingStatus(token: string) {
   };
 }
 
-export async function saveEmployeeDetails(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
+export async function saveEmployeeDetails(
+  token: string,
+  input: Record<string, unknown>,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
 
   // Mobile and Emergency Contact numbers must differ — the frontend already
   // blocks this, but that check is bypassable (dev tools, a direct API call),
   // so it must also be enforced here before any write.
-  const normPhone = (v: unknown) => String(v ?? "").replace(/\D/g, "").slice(-10);
+  const normPhone = (v: unknown) =>
+    String(v ?? "")
+      .replace(/\D/g, "")
+      .slice(-10);
   const mobileNorm = normPhone(input.mobileNumber ?? tokenData.mobile);
   const emergencyNorm = normPhone(input.emergencyContactMobile);
   if (mobileNorm && emergencyNorm && mobileNorm === emergencyNorm) {
     throw Object.assign(
-      new Error("Emergency contact number must be different from your own mobile number."),
+      new Error(
+        "Emergency contact number must be different from your own mobile number.",
+      ),
       { statusCode: 400, code: "MOBILE_EQUALS_EMERGENCY_CONTACT" },
     );
   }
@@ -1365,8 +1707,12 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   // breaking hash-based PAN lookup/duplicate detection for anyone who reopened the step.
   // Fixed 2026-09-01: treat an incoming value that already matches our own mask shape as
   // "no new PAN provided" so COALESCE below preserves whatever was already on file.
-  const incomingPanRaw = String(input.panNumber ?? input.pan_number ?? "").trim().toUpperCase();
-  const incomingPanIsMasked = /^[A-Z0-9]{3}XXXX[A-Z0-9]{2}$/.test(incomingPanRaw);
+  const incomingPanRaw = String(input.panNumber ?? input.pan_number ?? "")
+    .trim()
+    .toUpperCase();
+  const incomingPanIsMasked = /^[A-Z0-9]{3}XXXX[A-Z0-9]{2}$/.test(
+    incomingPanRaw,
+  );
   const rawPan = incomingPanIsMasked ? "" : incomingPanRaw;
   const panMasked = rawPan ? maskPan(rawPan) : maskPan(input.pan_number_masked);
   const panHash = rawPan ? hashPiiForMatch(rawPan) : null;
@@ -1375,15 +1721,23 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   // why automatic PAN verification could never fire. Same treatment bank account
   // numbers already get: only the server decrypts it, and the browser still only
   // ever receives the masked value.
-  const panEncrypted = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(rawPan) ? encrypt(rawPan) : null;
+  const panEncrypted = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(rawPan)
+    ? encrypt(rawPan)
+    : null;
   // Same masked-value-echoed-back-on-autosave guard as PAN above (2026-09-01 fix),
   // applied proactively here rather than waiting to reproduce it: a KYC step that
   // seeds its Aadhaar input from maskAadhaar()'s own "XXXX-XXXX-1234" shape would
   // otherwise autosave that mask as if it were the real number.
-  const incomingAadhaarRaw = String(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number ?? "").trim();
+  const incomingAadhaarRaw = String(
+    input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number ?? "",
+  ).trim();
   const incomingAadhaarIsMasked = /^XXXX-XXXX-\d{4}$/i.test(incomingAadhaarRaw);
-  const rawAadhaar = incomingAadhaarIsMasked ? "" : incomingAadhaarRaw.replace(/\D/g, "");
-  const aadhaarMasked = rawAadhaar ? maskAadhaar(rawAadhaar) : maskAadhaar(input.aadhaar_number_masked);
+  const rawAadhaar = incomingAadhaarIsMasked
+    ? ""
+    : incomingAadhaarRaw.replace(/\D/g, "");
+  const aadhaarMasked = rawAadhaar
+    ? maskAadhaar(rawAadhaar)
+    : maskAadhaar(input.aadhaar_number_masked);
   const aadhaarHash = rawAadhaar ? hashPiiForMatch(rawAadhaar) : null;
   // candidate_onboarding_profile.aadhaar_number_encrypted DOES NOT EXIST on the live
   // database. Migration 1651_aadhaar_encrypted_storage_candidate_onboarding.sql was
@@ -1406,12 +1760,17 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   // value, and writing a mask into a column named "raw" corrupted it. A masked PAN
   // ("ABCXXXX12") and a masked Aadhaar ("XXXX-XXXX-1234") both fail these tests, so only
   // a genuine, well-formed number is ever written here.
-  const rawPanForCandidate = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(rawPan) ? rawPan : null;
-  const rawAadhaarForCandidate = /^[0-9]{12}$/.test(rawAadhaar) ? rawAadhaar : null;
+  const rawPanForCandidate = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(rawPan)
+    ? rawPan
+    : null;
+  const rawAadhaarForCandidate = /^[0-9]{12}$/.test(rawAadhaar)
+    ? rawAadhaar
+    : null;
 
   // Validate and prepare DOB (allow null, but convert empty strings to null)
   const dobValue = input.dateOfBirth ?? tokenData.date_of_birth;
-  const normalizedDob = dobValue === "" || dobValue === "0000-00-00" ? null : dobValue ?? null;
+  const normalizedDob =
+    dobValue === "" || dobValue === "0000-00-00" ? null : (dobValue ?? null);
 
   await db.execute(
     `INSERT INTO candidate_onboarding_profile
@@ -1490,7 +1849,10 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       panEncrypted,
       aadhaarMasked,
       aadhaarHash,
-      input.passportNo ?? input["passportNumber"] ?? input["passport_number"] ?? null,
+      input.passportNo ??
+        input["passportNumber"] ??
+        input["passport_number"] ??
+        null,
       input.drivingLicenseNo ?? input["dlNumber"] ?? input["dl_number"] ?? null,
       input.uanNumber ?? null,
       input.epfNumber ?? null,
@@ -1501,11 +1863,11 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       toStoredName(input.emergencyContactName),
       input.emergencyContactRelation ?? null,
       input.emergencyContactMobile ?? null,
-      input.nationality ?? 'Indian',
+      input.nationality ?? "Indian",
       input.religion ?? null,
       input.category ?? null,
       input.addressProofType ?? null,
-    ]
+    ],
   );
 
   await db.execute(
@@ -1580,7 +1942,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       aadhaarHash,
       nonEmptyString(input.source ?? tokenData.source),
       candidateId,
-    ]
+    ],
   );
   // Mirror the UAN onto ats_candidate, which is the only one of these columns
   // that table actually has.
@@ -1596,41 +1958,62 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   // Nothing is lost by narrowing it: the candidate_onboarding_profile upsert
   // directly above already stores all five, including in its ON DUPLICATE KEY
   // UPDATE clause.
-  await db.execute(
-    `UPDATE ats_candidate SET
+  await db
+    .execute(
+      `UPDATE ats_candidate SET
        uan_number = COALESCE(?, uan_number),
        updated_at = NOW()
      WHERE id = ?`,
-    // Same COALESCE sentinel problem as the UPDATE above: "" is not NULL, so a
-    // blank UAN field overwrote a stored UAN with an empty string instead of
-    // leaving it be.
-    [nonEmptyString(input.uanNumber), candidateId]
-  ).catch((error) => {
-    // Still non-fatal — a candidate must not lose their whole submission over
-    // a mirrored field — but no longer silent.
-    console.error(`[Onboarding] could not mirror UAN onto ats_candidate for ${candidateId}:`, (error as Error)?.message);
-  });
+      // Same COALESCE sentinel problem as the UPDATE above: "" is not NULL, so a
+      // blank UAN field overwrote a stored UAN with an empty string instead of
+      // leaving it be.
+      [nonEmptyString(input.uanNumber), candidateId],
+    )
+    .catch((error) => {
+      // Still non-fatal — a candidate must not lose their whole submission over
+      // a mirrored field — but no longer silent.
+      console.error(
+        `[Onboarding] could not mirror UAN onto ats_candidate for ${candidateId}:`,
+        (error as Error)?.message,
+      );
+    });
 
   // Fraud detection: check for duplicates (non-blocking)
   if (panHash) {
-    checkDuplicates(candidateId, "pan", panHash).catch(e => console.error("[Fraud] PAN duplicate check error:", e.message));
+    checkDuplicates(candidateId, "pan", panHash).catch((e) =>
+      console.error("[Fraud] PAN duplicate check error:", e.message),
+    );
   }
   if (aadhaarHash) {
-    checkDuplicates(candidateId, "aadhaar", aadhaarHash).catch(e => console.error("[Fraud] Aadhaar duplicate check error:", e.message));
+    checkDuplicates(candidateId, "aadhaar", aadhaarHash).catch((e) =>
+      console.error("[Fraud] Aadhaar duplicate check error:", e.message),
+    );
   }
 
-  await logCandidateAction(candidateId, "SAVE_EMPLOYEE_DETAILS", { fields: Object.keys(input) }, meta);
+  await logCandidateAction(
+    candidateId,
+    "SAVE_EMPLOYEE_DETAILS",
+    { fields: Object.keys(input) },
+    meta,
+  );
   return getFullOnboardingStatus(token);
 }
 
-export async function saveBankDetails(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
+export async function saveBankDetails(
+  token: string,
+  input: Record<string, unknown>,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
-  const accountNo = input.accountNo ?? input.bank_account_no ?? input.account_no;
+  const accountNo =
+    input.accountNo ?? input.bank_account_no ?? input.account_no;
   const id = randomUUID();
 
   // Encrypt account number for later penny drop verification (reversible, unlike hash)
-  const accountNoEncrypted = accountNo ? encrypt(String(accountNo).trim()) : null;
+  const accountNoEncrypted = accountNo
+    ? encrypt(String(accountNo).trim())
+    : null;
 
   // ── Penny-drop gate (owner decision 2026-09-02) ──────────────────────────────────
   // A bank account is only captured once a penny drop has come back positive for THAT
@@ -1672,15 +2055,15 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
           AND account_no_hash = ?
         ORDER BY (verification_status = 'verified') DESC, created_at DESC
         LIMIT 1`,
-      [candidateId, hashPiiForMatch(submittedAccountNo)]
+      [candidateId, hashPiiForMatch(submittedAccountNo)],
     );
     if (!verifiedRows.length) {
       throw Object.assign(
         new Error(
-          "This account could not be saved because its penny-drop verification has not passed. "
-          + "Run the account verification for this exact account number and IFSC, and save again once it succeeds."
+          "This account could not be saved because its penny-drop verification has not passed. " +
+            "Run the account verification for this exact account number and IFSC, and save again once it succeeds.",
         ),
-        { statusCode: 409 }
+        { statusCode: 409 },
       );
     }
     submittedVerificationStatus = String(verifiedRows[0].verification_status);
@@ -1722,19 +2105,21 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       maskAccount(accountNo),
       hashPiiForMatch(accountNo),
       accountNoEncrypted,
-      String(input.ifscCode ?? input.bank_ifsc ?? "").trim().toUpperCase() || null,
+      String(input.ifscCode ?? input.bank_ifsc ?? "")
+        .trim()
+        .toUpperCase() || null,
       input.accountType ?? null,
       input.cancelledChequeDocumentId ?? null,
       String(input.nameOnCheque ?? input.name_on_cheque ?? "").trim() || null,
       submittedVerificationStatus,
       submittedVerificationStatus,
-    ]
+    ],
   );
 
   await db.execute(
     `UPDATE candidate_onboarding_profile SET profile_status = IF(profile_status='submitted', profile_status, 'bank_saved'), updated_at = NOW()
       WHERE candidate_id = ?`,
-    [candidateId]
+    [candidateId],
   );
   await db.execute(
     `UPDATE ats_candidate SET
@@ -1767,35 +2152,41 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       hashPiiForMatch(accountNo),
       accountNoEncrypted,
       candidateId,
-    ]
+    ],
   );
 
   // Fraud detection: check for duplicate bank account (non-blocking)
   const bankHash = hashPiiForMatch(accountNo);
   if (bankHash) {
-    checkDuplicates(candidateId, "bank", bankHash).catch(e => console.error("[Fraud] Bank duplicate check error:", e.message));
+    checkDuplicates(candidateId, "bank", bankHash).catch((e) =>
+      console.error("[Fraud] Bank duplicate check error:", e.message),
+    );
   }
 
   // Cheque name validation: compare name_on_cheque against account_holder_name.
   // Mismatch is queued for Payroll HO review — onboarding is NEVER blocked.
-  const nameOnCheque = String(input.nameOnCheque ?? input.name_on_cheque ?? '').trim();
-  const accountHolderName = String(input.accountHolderName ?? '').trim();
-  const chequeDocId = (input.cancelledChequeDocumentId ?? null) as string | null;
+  const nameOnCheque = String(
+    input.nameOnCheque ?? input.name_on_cheque ?? "",
+  ).trim();
+  const accountHolderName = String(input.accountHolderName ?? "").trim();
+  const chequeDocId = (input.cancelledChequeDocumentId ?? null) as
+    string | null;
 
   if (nameOnCheque && accountHolderName) {
-    const namesMatch = nameOnCheque.toLowerCase() === accountHolderName.toLowerCase();
+    const namesMatch =
+      nameOnCheque.toLowerCase() === accountHolderName.toLowerCase();
 
     // Fetch the bank_detail row we just upserted
     const [bdRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM candidate_onboarding_bank_detail WHERE candidate_id = ? ORDER BY updated_at DESC LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
     const bankDetailId = bdRows[0]?.id ?? null;
 
     if (namesMatch) {
       await db.execute(
         `UPDATE candidate_onboarding_bank_detail SET name_validation_status = 'matched' WHERE id = ?`,
-        [bankDetailId]
+        [bankDetailId],
       );
     } else {
       // Insert mismatch record and route to Payroll HO queue
@@ -1807,22 +2198,41 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
          ON DUPLICATE KEY UPDATE
            name_on_cheque = VALUES(name_on_cheque), name_in_profile = VALUES(name_in_profile),
            match_status = 'mismatch', validated_by = NULL, validated_at = NULL`,
-        [valId, candidateId, bankDetailId, chequeDocId, nameOnCheque, accountHolderName]
+        [
+          valId,
+          candidateId,
+          bankDetailId,
+          chequeDocId,
+          nameOnCheque,
+          accountHolderName,
+        ],
       );
       await db.execute(
         `UPDATE candidate_onboarding_bank_detail
             SET name_validation_status = 'pending_review', cheque_validation_id = ?
           WHERE id = ?`,
-        [valId, bankDetailId]
+        [valId, bankDetailId],
       );
     }
   }
 
-  await logCandidateAction(candidateId, "SAVE_BANK_DETAILS", { bankName: input.bankName ?? input.bank_name, ifsc: input.ifscCode ?? input.bank_ifsc }, meta);
+  await logCandidateAction(
+    candidateId,
+    "SAVE_BANK_DETAILS",
+    {
+      bankName: input.bankName ?? input.bank_name,
+      ifsc: input.ifscCode ?? input.bank_ifsc,
+    },
+    meta,
+  );
   return getFullOnboardingStatus(token);
 }
 
-export async function addQualification(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
+export async function addQualification(
+  token: string,
+  input: Record<string, unknown>,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
   const id = randomUUID();
@@ -1841,26 +2251,39 @@ export async function addQualification(token: string, input: Record<string, unkn
       input.passedOutCity || null,
       input.passedOutPercentage || input.percentage || null,
       input.documentId || null,
-    ]
+    ],
   );
   await logCandidateAction(candidateId, "ADD_QUALIFICATION", input, meta);
   return getFullOnboardingStatus(token);
 }
 
-export async function saveFamilyDetails(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
+export async function saveFamilyDetails(
+  token: string,
+  input: Record<string, unknown>,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
   await db.execute(
     `INSERT INTO candidate_onboarding_family (id, candidate_id, annual_income, count_of_dependents)
      VALUES (?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE annual_income = VALUES(annual_income), count_of_dependents = VALUES(count_of_dependents), updated_at = NOW()`,
-    [randomUUID(), candidateId, input.annualIncome || null, input.countOfDependents || null]
+    [
+      randomUUID(),
+      candidateId,
+      input.annualIncome || null,
+      input.countOfDependents || null,
+    ],
   );
   await logCandidateAction(candidateId, "SAVE_FAMILY_DETAILS", input, meta);
   return getFullOnboardingStatus(token);
 }
 
-export async function saveExperienceDetails(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
+export async function saveExperienceDetails(
+  token: string,
+  input: Record<string, unknown>,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
   // from_date / to_date / reason_for_leaving are collected by the step, posted
@@ -1884,8 +2307,10 @@ export async function saveExperienceDetails(token: string, input: Record<string,
     [
       randomUUID(),
       candidateId,
-      (String(input.workingExperience ?? "fresher")).substring(0, 50),
-      (input.experienceYear || input.experienceYear === 0) ? Number(input.experienceYear) || null : null,
+      String(input.workingExperience ?? "fresher").substring(0, 50),
+      input.experienceYear || input.experienceYear === 0
+        ? Number(input.experienceYear) || null
+        : null,
       input.experienceDocType || null,
       input.experienceDocumentId || null,
       input.employerName || null,
@@ -1897,26 +2322,39 @@ export async function saveExperienceDetails(token: string, input: Record<string,
       normDate(input.fromDate),
       normDate(input.toDate),
       nonEmptyString(input.reasonForLeaving),
-    ]
+    ],
   );
   await logCandidateAction(candidateId, "SAVE_EXPERIENCE_DETAILS", input, meta);
   return getFullOnboardingStatus(token);
 }
 
-export async function saveFinalSection(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
+export async function saveFinalSection(
+  token: string,
+  input: Record<string, unknown>,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
   await db.execute(
     `UPDATE candidate_onboarding_profile SET profile_status = IF(profile_status='submitted', profile_status, 'final_saved'), updated_at = NOW()
       WHERE candidate_id = ?`,
-    [candidateId]
+    [candidateId],
   );
   await logCandidateAction(candidateId, "SAVE_FINAL_SECTION", input, meta);
   return getFullOnboardingStatus(token);
 }
 
-export async function savePfOptOutConsent(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
-  await logCandidateAction((await validateOnboardingToken(token)).candidate_id as string, "SAVE_PF_OPT_OUT_CONSENT", input, meta);
+export async function savePfOptOutConsent(
+  token: string,
+  input: Record<string, unknown>,
+  meta?: { ip?: string; userAgent?: string },
+) {
+  await logCandidateAction(
+    (await validateOnboardingToken(token)).candidate_id as string,
+    "SAVE_PF_OPT_OUT_CONSENT",
+    input,
+    meta,
+  );
   return saveStatutory(token, { ...input, pf_opt_out_consent: true });
 }
 
@@ -1939,7 +2377,10 @@ const MANDATORY_DOCUMENTS: Array<{ label: string; matches: string[] }> = [
   { label: "Aadhaar Card", matches: ["aadhaar", "aadhar"] },
   { label: "PAN Card", matches: ["pan"] },
   { label: "Address Proof", matches: ["address proof"] },
-  { label: "Passport Size Photo", matches: ["passport photo", "passport size", "photo"] },
+  {
+    label: "Passport Size Photo",
+    matches: ["passport photo", "passport size", "photo"],
+  },
   // Live Selfie is deliberately its own rule and NOT folded into the photo rule
   // above: a gallery-uploaded passport photo must not satisfy a *live* capture,
   // which exists to prove the candidate was physically present. Every live
@@ -1970,13 +2411,17 @@ const MANDATORY_DOCUMENTS: Array<{ label: string; matches: string[] }> = [
 export const NON_BLOCKING_DOCUMENT_LABELS = new Set<string>(["PAN Card"]);
 
 /** Returns the labels of mandatory documents this candidate has not provided. */
-export async function findMissingMandatoryDocuments(candidateId: string): Promise<string[]> {
+export async function findMissingMandatoryDocuments(
+  candidateId: string,
+): Promise<string[]> {
   const [docRows] = await db.execute<RowDataPacket[]>(
     `SELECT doc_type, doc_name FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL`,
     [candidateId],
   );
   const held = docRows
-    .map((r) => `${String(r.doc_type ?? "")} ${String(r.doc_name ?? "")}`.toLowerCase())
+    .map((r) =>
+      `${String(r.doc_type ?? "")} ${String(r.doc_name ?? "")}`.toLowerCase(),
+    )
     .filter(Boolean);
 
   // DigiLocker pulls straight from the government source, so a document type it
@@ -1997,11 +2442,15 @@ export async function findMissingMandatoryDocuments(candidateId: string): Promis
       WHERE candidate_id = ? AND check_type IN ('aadhaar', 'pan') AND status = 'verified'`,
     [candidateId],
   );
-  const digilockerVerified = new Set(verifiedRows.map((r) => String(r.check_type)));
+  const digilockerVerified = new Set(
+    verifiedRows.map((r) => String(r.check_type)),
+  );
 
   return MANDATORY_DOCUMENTS.filter((req) => {
-    if (digilockerVerified.has("aadhaar") && req.matches.includes("aadhaar")) return false;
-    if (digilockerVerified.has("pan") && req.matches.includes("pan")) return false;
+    if (digilockerVerified.has("aadhaar") && req.matches.includes("aadhaar"))
+      return false;
+    if (digilockerVerified.has("pan") && req.matches.includes("pan"))
+      return false;
     // "photo" must not be satisfied by "Photocopy of ..." style names, so compare
     // against the whole doc_type/doc_name text rather than a bare substring of one word.
     return !held.some((text) => req.matches.some((m) => text.includes(m)));
@@ -2015,17 +2464,24 @@ export async function findMissingMandatoryDocuments(candidateId: string): Promis
  * without duplicating the query or pulling in the unrelated DigiLocker/
  * Aadhaar/PAN logic that findMissingMandatoryDocuments() also handles.
  */
-export async function hasLiveSelfieDocument(candidateId: string): Promise<boolean> {
+export async function hasLiveSelfieDocument(
+  candidateId: string,
+): Promise<boolean> {
   const [docRows] = await db.execute<RowDataPacket[]>(
     `SELECT doc_type, doc_name FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL`,
     [candidateId],
   );
   return docRows.some((r) =>
-    `${String(r.doc_type ?? "")} ${String(r.doc_name ?? "")}`.toLowerCase().includes("selfie"),
+    `${String(r.doc_type ?? "")} ${String(r.doc_name ?? "")}`
+      .toLowerCase()
+      .includes("selfie"),
   );
 }
 
-export async function submitFullOnboarding(token: string, meta?: { ip?: string; userAgent?: string }) {
+export async function submitFullOnboarding(
+  token: string,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
 
@@ -2033,9 +2489,13 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
     `SELECT id, employee_name, mobile_number, personal_email_id, pan_number_hash, aadhaar_number_hash,
             bgv_consent, dpdp_consent, marital_status
        FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
-  if (!profileRows.length) throw Object.assign(new Error("Employee details are required before submit"), { statusCode: 400 });
+  if (!profileRows.length)
+    throw Object.assign(
+      new Error("Employee details are required before submit"),
+      { statusCode: 400 },
+    );
 
   const profile = profileRows[0];
 
@@ -2047,15 +2507,19 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   // truncation error.
   if (!String(profile.marital_status ?? "").trim()) {
     throw Object.assign(
-      new Error("Marital Status is required before submission. Please go to the Personal Details step and select your marital status."),
+      new Error(
+        "Marital Status is required before submission. Please go to the Personal Details step and select your marital status.",
+      ),
       { statusCode: 400, code: "MISSING_MARITAL_STATUS" },
     );
   }
 
   if (!profile.dpdp_consent) {
     throw Object.assign(
-      new Error("Privacy (DPDP) consent is required before submission. Please go to the Welcome & Consent step and accept the privacy policy."),
-      { statusCode: 400, code: "DPDP_CONSENT_REQUIRED" }
+      new Error(
+        "Privacy (DPDP) consent is required before submission. Please go to the Welcome & Consent step and accept the privacy policy.",
+      ),
+      { statusCode: 400, code: "DPDP_CONSENT_REQUIRED" },
     );
   }
   if (!profile.bgv_consent) {
@@ -2063,18 +2527,20 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
     // created (UPDATE matched 0 rows). Check the actual consent table and sync.
     const [consentCheck] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM candidate_bgv_consent WHERE candidate_id = ? AND consent_status = 'granted' LIMIT 1`,
-      [candidateId]
+      [candidateId],
     );
     if (!consentCheck.length) {
       throw Object.assign(
-        new Error("BGV consent is required before submission. Please go to the BGV & Verification step and grant consent for background verification."),
-        { statusCode: 400, code: "BGV_CONSENT_REQUIRED" }
+        new Error(
+          "BGV consent is required before submission. Please go to the BGV & Verification step and grant consent for background verification.",
+        ),
+        { statusCode: 400, code: "BGV_CONSENT_REQUIRED" },
       );
     }
     // Consent exists — sync the flag so subsequent reads are consistent.
     await db.execute(
       `UPDATE candidate_onboarding_profile SET bgv_consent = 1, updated_at = NOW() WHERE candidate_id = ?`,
-      [candidateId]
+      [candidateId],
     );
   }
 
@@ -2091,11 +2557,14 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   // from MANDATORY_DOCUMENTS, so the candidate is still asked for them everywhere
   // else — checklist, "still missing" hints, HR's review view — without the
   // submission itself being refused. See NON_BLOCKING_DOCUMENT_LABELS.
-  const missingDocuments = (await findMissingMandatoryDocuments(candidateId))
-    .filter((label) => !NON_BLOCKING_DOCUMENT_LABELS.has(label));
+  const missingDocuments = (
+    await findMissingMandatoryDocuments(candidateId)
+  ).filter((label) => !NON_BLOCKING_DOCUMENT_LABELS.has(label));
   if (missingDocuments.length) {
     throw Object.assign(
-      new Error(`Please upload these required documents before submitting: ${missingDocuments.join(", ")}.`),
+      new Error(
+        `Please upload these required documents before submitting: ${missingDocuments.join(", ")}.`,
+      ),
       { statusCode: 400, code: "MISSING_REQUIRED_DOCUMENTS" },
     );
   }
@@ -2112,7 +2581,9 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   // manually is blocked here until they do.
   if (!profile.aadhaar_number_hash) {
     throw Object.assign(
-      new Error("Aadhaar number is required before submitting. Please go to the Address & KYC step and enter your Aadhaar number."),
+      new Error(
+        "Aadhaar number is required before submitting. Please go to the Address & KYC step and enter your Aadhaar number.",
+      ),
       { statusCode: 400, code: "MISSING_AADHAAR_NUMBER" },
     );
   }
@@ -2130,7 +2601,9 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   );
   if (!qualRows.length) {
     throw Object.assign(
-      new Error("At least one qualification is required before submitting. Please go to the Education & Qualifications step and add your 10th / SSC qualification."),
+      new Error(
+        "At least one qualification is required before submitting. Please go to the Education & Qualifications step and add your 10th / SSC qualification.",
+      ),
       { statusCode: 400, code: "MISSING_QUALIFICATIONS" },
     );
   }
@@ -2159,43 +2632,53 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   await db.execute(
     `UPDATE candidate_onboarding_profile SET profile_status = 'submitted', submitted_at = NOW(), updated_at = NOW()
       WHERE candidate_id = ?`,
-    [candidateId]
+    [candidateId],
   );
   // Keep all three status tables in sync via syncOnboardingStatus
-  await syncOnboardingStatus(candidateId, 'submitted', 'profile_submitted', 'profile_submitted');
+  await syncOnboardingStatus(
+    candidateId,
+    "submitted",
+    "profile_submitted",
+    "profile_submitted",
+  );
   await db.execute(
     `UPDATE ats_candidate SET profile_submitted_at = NOW() WHERE id = ?`,
-    [candidateId]
+    [candidateId],
   );
   await db.execute(
     `INSERT INTO ats_candidate_stage_log
        (id, candidate_id, from_stage, to_stage, remarks, updated_by)
      VALUES (UUID(), ?, 'Onboarding Link Sent', 'Profile Submitted', 'Candidate completed onboarding profile', NULL)`,
-    [candidateId]
+    [candidateId],
   );
 
   // Trigger real BGV checks asynchronously — fire-and-forget after submission commits
   // Uses configured provider (befisc_luckpay / infinity_ai / digio) from org_settings
   // Failures are logged and visible in BGV review queue — do NOT throw here
   triggerRealBgvChecksAsync(candidateId, meta).catch((err: unknown) => {
-    console.error('[onboarding] BGV async trigger failed for', candidateId, ':', err instanceof Error ? err.message : String(err));
+    console.error(
+      "[onboarding] BGV async trigger failed for",
+      candidateId,
+      ":",
+      err instanceof Error ? err.message : String(err),
+    );
   });
 
   await db.execute(
     `INSERT INTO ats_candidate_stage_log
        (id, candidate_id, from_stage, to_stage, remarks, updated_by)
      VALUES (UUID(), ?, 'Profile Submitted', 'BGV In Progress', 'Real BGV provider checks initiated', NULL)`,
-    [candidateId]
+    [candidateId],
   );
   await logCandidateAction(candidateId, "SUBMIT_ONBOARDING", null, meta);
   return { candidateId, status: "submitted" };
 }
 
 const MAGIC_BYTES: Record<string, Uint8Array[]> = {
-  pdf:  [new Uint8Array([0x25, 0x50, 0x44, 0x46])],
-  jpg:  [new Uint8Array([0xFF, 0xD8, 0xFF])],
-  jpeg: [new Uint8Array([0xFF, 0xD8, 0xFF])],
-  png:  [new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])],
+  pdf: [new Uint8Array([0x25, 0x50, 0x44, 0x46])],
+  jpg: [new Uint8Array([0xff, 0xd8, 0xff])],
+  jpeg: [new Uint8Array([0xff, 0xd8, 0xff])],
+  png: [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
   // WebP: RIFF at offset 0 AND WEBP at offset 8 — checked together, not as alternatives
   webp: [new Uint8Array([0x52, 0x49, 0x46, 0x46])], // Only RIFF at 0; WEBP@8 verified separately
 };
@@ -2212,7 +2695,10 @@ function validateFileMagicBytes(filePath: string, ext: string): boolean {
       if (bytesRead < 12) return false;
       const riff = [0x52, 0x49, 0x46, 0x46];
       const webp = [0x57, 0x45, 0x42, 0x50];
-      return riff.every((b, i) => buf[i] === b) && webp.every((b, i) => buf[8 + i] === b);
+      return (
+        riff.every((b, i) => buf[i] === b) &&
+        webp.every((b, i) => buf[8 + i] === b)
+      );
     }
 
     const signatures = MAGIC_BYTES[normalExt];
@@ -2228,26 +2714,40 @@ function validateFileMagicBytes(filePath: string, ext: string): boolean {
   }
 }
 
-export async function uploadOnboardingDocument(token: string, file: Express.Multer.File, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
-  if (!file) throw Object.assign(new Error("File is required"), { statusCode: 400 });
+export async function uploadOnboardingDocument(
+  token: string,
+  file: Express.Multer.File,
+  input: Record<string, unknown>,
+  meta?: { ip?: string; userAgent?: string },
+) {
+  if (!file)
+    throw Object.assign(new Error("File is required"), { statusCode: 400 });
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
 
   const ext = path.extname(file.originalname).toLowerCase().replace(".", "");
   if (!validateFileMagicBytes(file.path, ext)) {
     fs.unlink(file.path, () => {});
-    throw Object.assign(new Error("File content does not match its extension. Upload cancelled."), { statusCode: 400 });
+    throw Object.assign(
+      new Error("File content does not match its extension. Upload cancelled."),
+      { statusCode: 400 },
+    );
   }
 
   const id = randomUUID();
   const fileUrl = `secure:onboarding:${file.filename}`;
-  const docTypeRaw = (input.docType ?? input.doc_type ?? "Other") as unknown as string;
+  const docTypeRaw = (input.docType ??
+    input.doc_type ??
+    "Other") as unknown as string;
   // Hoisted from further down (was computed again, unchanged, right before the OCR
   // trigger) so the supersede check below and the face-match routing further down
   // share one definition of "this is an identity document" instead of two that could
   // drift apart.
   const docType = String(input.docType ?? input.doc_type ?? "").toLowerCase();
-  const isFaceImage = docType.includes("selfie") || docType.includes("live") || docType.includes("photo");
+  const isFaceImage =
+    docType.includes("selfie") ||
+    docType.includes("live") ||
+    docType.includes("photo");
   const isIdImage = docType.includes("aadhaar") || docType.includes("pan");
 
   // Identity documents are already singular by the app's own logic: triggerFaceMatch
@@ -2269,7 +2769,7 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
         `UPDATE candidate_onboarding_document
             SET document_status = 'deleted', deleted_at = NOW(), deleted_by = NULL
           WHERE candidate_id = ? AND LOWER(doc_type) = ? AND deleted_at IS NULL`,
-        [candidateId, docType]
+        [candidateId, docType],
       );
     }
     await conn.execute(
@@ -2281,13 +2781,15 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
         candidateId,
         docTypeRaw,
         input.docName ?? input.doc_name ?? file.originalname,
-        (input.pageNo || input.page_no) ? Number(input.pageNo ?? input.page_no) || null : null,
+        input.pageNo || input.page_no
+          ? Number(input.pageNo ?? input.page_no) || null
+          : null,
         file.originalname,
         file.path,
         fileUrl,
         file.mimetype,
         file.size,
-      ]
+      ],
     );
     await conn.commit();
   } catch (err) {
@@ -2296,18 +2798,36 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
   } finally {
     conn.release();
   }
-  await logCandidateAction(candidateId, "UPLOAD_DOCUMENT", { documentId: id, docType: docTypeRaw }, meta);
+  await logCandidateAction(
+    candidateId,
+    "UPLOAD_DOCUMENT",
+    { documentId: id, docType: docTypeRaw },
+    meta,
+  );
 
   // Async OCR extraction and cross-validation (non-blocking — never delays upload response)
-  const isIdentityDoc = docType.includes("aadhaar") || docType.includes("aadhar") || docType.includes("pan") || docType.includes("cheque") || docType.includes("passbook") || docType.includes("bank");
+  const isIdentityDoc =
+    docType.includes("aadhaar") ||
+    docType.includes("aadhar") ||
+    docType.includes("pan") ||
+    docType.includes("cheque") ||
+    docType.includes("passbook") ||
+    docType.includes("bank");
   if (isIdentityDoc && file.mimetype.startsWith("image/")) {
     extractFromDocument(file.path, docType)
-      .then(ocrResult => crossValidateDocument(candidateId, id, docType, ocrResult))
-      .catch(e => {
-        console.error("[OCR] Extraction failed for document", id, ":", e.message);
+      .then((ocrResult) =>
+        crossValidateDocument(candidateId, id, docType, ocrResult),
+      )
+      .catch((e) => {
+        console.error(
+          "[OCR] Extraction failed for document",
+          id,
+          ":",
+          e.message,
+        );
         db.execute(
           `UPDATE candidate_onboarding_document SET ocr_extraction_status = 'failed' WHERE id = ?`,
-          [id]
+          [id],
         ).catch(() => {});
       });
   }
@@ -2328,12 +2848,22 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
   // (isFaceImage / isIdImage computed earlier, above the supersede transaction.)
   if (file.mimetype.startsWith("image/")) {
     if (isFaceImage) {
-      triggerFaceMatch(candidateId, file.path, id).catch(e =>
-        console.error("[FaceMatch] Failed for candidate", candidateId, ":", e.message)
+      triggerFaceMatch(candidateId, file.path, id).catch((e) =>
+        console.error(
+          "[FaceMatch] Failed for candidate",
+          candidateId,
+          ":",
+          e.message,
+        ),
       );
     } else if (isIdImage) {
-      faceMatchOnIdDocumentUpload(candidateId, id).catch(e =>
-        console.error("[FaceMatch] Retry on ID upload failed for candidate", candidateId, ":", e.message)
+      faceMatchOnIdDocumentUpload(candidateId, id).catch((e) =>
+        console.error(
+          "[FaceMatch] Retry on ID upload failed for candidate",
+          candidateId,
+          ":",
+          e.message,
+        ),
       );
     }
   }
@@ -2362,21 +2892,30 @@ export async function getOnboardingDocument(documentId: string) {
        LEFT JOIN employees      emp ON emp.employee_code = c.candidate_code
       WHERE doc.id = ? AND doc.deleted_at IS NULL
       LIMIT 1`,
-    [documentId]
+    [documentId],
   );
   return (rows as RowDataPacket[])[0] ?? null;
 }
 
-export async function deleteOnboardingDocument(token: string, documentId: string, meta?: { ip?: string; userAgent?: string }) {
+export async function deleteOnboardingDocument(
+  token: string,
+  documentId: string,
+  meta?: { ip?: string; userAgent?: string },
+) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
   await db.execute(
     `UPDATE candidate_onboarding_document
         SET document_status = 'deleted', deleted_at = NOW(), deleted_by = NULL
       WHERE id = ? AND candidate_id = ?`,
-    [documentId, candidateId]
+    [documentId, candidateId],
   );
-  await logCandidateAction(candidateId, "DELETE_DOCUMENT", { documentId }, meta);
+  await logCandidateAction(
+    candidateId,
+    "DELETE_DOCUMENT",
+    { documentId },
+    meta,
+  );
   return getFullOnboardingStatus(token);
 }
 
@@ -2394,13 +2933,17 @@ export async function getOnboardingCandidateScope(candidateId: string) {
                                    OR LOWER(pm.process_name) = LOWER(c.applied_for_process)
        WHERE c.id = ?
       LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
   return (rows as RowDataPacket[])[0] ?? null;
 }
 
-export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFilter) {
-  const whereSql = scopeFilter?.sql ? `WHERE (${normalizeCandidateScopeSql(scopeFilter.sql)})` : "";
+export async function listFullOnboardingRequests(
+  scopeFilter?: OnboardingScopeFilter,
+) {
+  const whereSql = scopeFilter?.sql
+    ? `WHERE (${normalizeCandidateScopeSql(scopeFilter.sql)})`
+    : "";
   const params = scopeFilter?.params ?? [];
   // br_scope/pm_scope only exist to give normalizeCandidateScopeSql() a
   // COALESCE(br_scope.id, c.applied_for_branch) target — applied_for_branch is
@@ -2412,7 +2955,8 @@ export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFi
   // most common) case — each OR-across-three-columns join fans a candidate row
   // out before GROUP BY collapses it back down, for nothing. Only pull them in
   // when the normalized WHERE text actually references one.
-  const needsScopeJoins = whereSql.includes("br_scope") || whereSql.includes("pm_scope");
+  const needsScopeJoins =
+    whereSql.includes("br_scope") || whereSql.includes("pm_scope");
   // db.query, not db.execute — this is the same class of multi-join query as
   // listOnboardingRequests() (ats.onboarding.service.ts), which measured 561ms
   // via db.query vs 8.7s via db.execute for identical SQL/data live on
@@ -2435,14 +2979,18 @@ export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFi
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = req.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
        LEFT JOIN process_master pm ON pm.id = c.applied_for_process
-       ${needsScopeJoins ? `LEFT JOIN branch_master br_scope
+       ${
+         needsScopeJoins
+           ? `LEFT JOIN branch_master br_scope
          ON br_scope.id = c.applied_for_branch
          OR br_scope.branch_name = c.applied_for_branch
          OR br_scope.branch_code = c.applied_for_branch
        LEFT JOIN process_master pm_scope
          ON pm_scope.id = c.applied_for_process
          OR pm_scope.process_name = c.applied_for_process
-         OR pm_scope.process_code = c.applied_for_process` : ""}
+         OR pm_scope.process_code = c.applied_for_process`
+           : ""
+       }
        LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = req.candidate_id
        LEFT JOIN candidate_onboarding_document doc ON doc.candidate_id = req.candidate_id AND doc.deleted_at IS NULL
        LEFT JOIN ats_employment_offer offer
@@ -2460,14 +3008,14 @@ export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFi
                br.branch_name, pm.process_name, offer.id, offer.status, offer.offered_ctc,
                bank.verification_status
       ORDER BY COALESCE(p.updated_at, req.updated_at, req.created_at) DESC`,
-    params
+    params,
   );
   return rows;
 }
 
 export async function getFullOnboardingByCandidate(
   candidateId: string,
-  options?: { viewerRoleKeys?: string[]; scopeFilter?: OnboardingScopeFilter }
+  options?: { viewerRoleKeys?: string[]; scopeFilter?: OnboardingScopeFilter },
 ) {
   await ensureCandidateWithinScope(candidateId, options?.scopeFilter);
   // Nine independent reads keyed on the same candidateId — issued together rather than as nine
@@ -2485,23 +3033,56 @@ export async function getFullOnboardingByCandidate(
     digilocker,
     esign,
   ] = await Promise.all([
-    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]),
-    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL ORDER BY uploaded_at DESC`, [candidateId]),
-    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]),
-    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]),
-    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`, [candidateId]),
-    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`, [candidateId]),
-    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family_member WHERE candidate_id = ? ORDER BY created_at ASC`, [candidateId]),
-    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`, [candidateId]),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+      [candidateId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL ORDER BY uploaded_at DESC`,
+      [candidateId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
+      [candidateId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`,
+      [candidateId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`,
+      [candidateId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`,
+      [candidateId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_family_member WHERE candidate_id = ? ORDER BY created_at ASC`,
+      [candidateId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`,
+      [candidateId],
+    ),
     getLatestDigilockerStatus(candidateId),
     getLatestEsignStatus(candidateId),
   ]);
   const viewerRoleKeys = options?.viewerRoleKeys ?? [];
   const sanitizedDocuments = (documents as RowDataPacket[])
-    .map((row) => sanitizeOnboardingDocument(
-      row as Record<string, unknown>,
-      viewerRoleKeys.length > 0 ? { permission: getOnboardingDocumentPermission(row as Record<string, unknown>, viewerRoleKeys) } : undefined
-    ))
+    .map((row) =>
+      sanitizeOnboardingDocument(
+        row as Record<string, unknown>,
+        viewerRoleKeys.length > 0
+          ? {
+              permission: getOnboardingDocumentPermission(
+                row as Record<string, unknown>,
+                viewerRoleKeys,
+              ),
+            }
+          : undefined,
+      ),
+    )
     .filter(Boolean);
 
   return {
@@ -2523,7 +3104,7 @@ export async function reviewFullOnboarding(
   candidateId: string,
   input: { status: "approved" | "rejected" | "hr_review"; remarks?: string },
   reviewedBy: string,
-  scopeFilter?: OnboardingScopeFilter
+  scopeFilter?: OnboardingScopeFilter,
 ) {
   await ensureCandidateWithinScope(candidateId, scopeFilter);
 
@@ -2541,7 +3122,13 @@ export async function reviewFullOnboarding(
       [candidateId],
     );
     if ((openAlerts as RowDataPacket[]).length > 0) {
-      const types = [...new Set((openAlerts as RowDataPacket[]).map((a) => String(a.alert_type).replace(/_/g, " ").toLowerCase()))];
+      const types = [
+        ...new Set(
+          (openAlerts as RowDataPacket[]).map((a) =>
+            String(a.alert_type).replace(/_/g, " ").toLowerCase(),
+          ),
+        ),
+      ];
       throw Object.assign(
         new Error(
           `This profile was flagged by the fraud check (${types.join(", ")}). Review the documents and the Fraud & Identity Review section and record a decision on each alert before approving.`,
@@ -2561,18 +3148,25 @@ export async function reviewFullOnboarding(
     candidateId,
     profileStatusMap[input.status] ?? "hr_review",
     profileStatusMap[input.status] ?? "hr_review",
-    profileStatusMap[input.status] ?? "hr_review"
+    profileStatusMap[input.status] ?? "hr_review",
   );
-  await logCandidateAction(candidateId, "HR_REVIEW", input, { actorType: "hr", actorId: reviewedBy });
+  await logCandidateAction(candidateId, "HR_REVIEW", input, {
+    actorType: "hr",
+    actorId: reviewedBy,
+  });
 
-  if ((input.status === "rejected" || input.status === "hr_review") && input.remarks) {
+  if (
+    (input.status === "rejected" || input.status === "hr_review") &&
+    input.remarks
+  ) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, review_remarks FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]
+      `SELECT id, review_remarks FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+      [candidateId],
     );
     if ((rows as RowDataPacket[]).length > 0) {
       await db.execute(
         `UPDATE candidate_onboarding_profile SET review_remarks = ?, updated_at = NOW() WHERE candidate_id = ?`,
-        [input.remarks, candidateId]
+        [input.remarks, candidateId],
       );
     }
   }
@@ -2584,24 +3178,36 @@ export async function payrollReviewFullOnboarding(
   candidateId: string,
   input: { status: "approved" | "rejected"; remarks?: string },
   reviewedBy: string,
-  scopeFilter?: OnboardingScopeFilter
+  scopeFilter?: OnboardingScopeFilter,
 ) {
   await ensureCandidateWithinScope(candidateId, scopeFilter);
-  const status = input.status === "approved" ? "payroll_hr_approved" : "rejected";
-  await syncOnboardingStatus(candidateId, status,
-    status,
-    status
-  );
-  await logCandidateAction(candidateId, "PAYROLL_REVIEW", input, { actorType: "hr", actorId: reviewedBy });
+  const status =
+    input.status === "approved" ? "payroll_hr_approved" : "rejected";
+  await syncOnboardingStatus(candidateId, status, status, status);
+  await logCandidateAction(candidateId, "PAYROLL_REVIEW", input, {
+    actorType: "hr",
+    actorId: reviewedBy,
+  });
   return getFullOnboardingByCandidate(candidateId, { scopeFilter });
 }
 
-export async function checkBgvReadiness(candidateId: string): Promise<{ ready: boolean; missing: string[]; score: number }> {
+export async function checkBgvReadiness(
+  candidateId: string,
+): Promise<{ ready: boolean; missing: string[]; score: number }> {
   const [rows] = await db.execute<BgvCheckRow[]>(
-    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`, [candidateId]
+    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`,
+    [candidateId],
   );
   const checks = rows;
-  const mandatoryChecks = ["pan", "aadhaar_offline", "bank", "address_doc", "education_doc", "employment", "criminal"];
+  const mandatoryChecks = [
+    "pan",
+    "aadhaar_offline",
+    "bank",
+    "address_doc",
+    "education_doc",
+    "employment",
+    "criminal",
+  ];
   const missing: string[] = [];
 
   let score = 0;
@@ -2616,7 +3222,10 @@ export async function checkBgvReadiness(candidateId: string): Promise<{ ready: b
     }
   }
 
-  score = mandatoryChecks.length > 0 ? Math.round((verifiedCount / mandatoryChecks.length) * 100) : 0;
+  score =
+    mandatoryChecks.length > 0
+      ? Math.round((verifiedCount / mandatoryChecks.length) * 100)
+      : 0;
 
   return {
     ready: missing.length === 0 && verifiedCount >= 3,
@@ -2631,7 +3240,7 @@ export async function syncOnboardingStatus(
   candidateId: string,
   profileStatus: string,
   requestStatus: string,
-  candidateProfileStatus: string
+  candidateProfileStatus: string,
 ) {
   const profileAllowed = new Set([
     "draft",
@@ -2713,18 +3322,25 @@ export async function syncOnboardingStatus(
     hr_pushback: "hr_review",
   };
   const mappedProfileStatus = profileStatusMap[profileStatus] ?? profileStatus;
-  const safeProfileStatus = profileAllowed.has(mappedProfileStatus) ? mappedProfileStatus : "submitted";
-  const safeRequestStatus = requestAllowed.has(requestStatus) ? requestStatus : "profile_submitted";
-  const mappedCandidateStatus = candidateStatusMap[candidateProfileStatus] ?? candidateProfileStatus;
-  const safeCandidateStatus = candidateAllowed.has(mappedCandidateStatus) ? mappedCandidateStatus : "profile_submitted";
+  const safeProfileStatus = profileAllowed.has(mappedProfileStatus)
+    ? mappedProfileStatus
+    : "submitted";
+  const safeRequestStatus = requestAllowed.has(requestStatus)
+    ? requestStatus
+    : "profile_submitted";
+  const mappedCandidateStatus =
+    candidateStatusMap[candidateProfileStatus] ?? candidateProfileStatus;
+  const safeCandidateStatus = candidateAllowed.has(mappedCandidateStatus)
+    ? mappedCandidateStatus
+    : "profile_submitted";
 
   await db.execute(
     `UPDATE ats_candidate SET profile_status = ?, status = ?, updated_at = NOW() WHERE id = ?`,
-    [safeCandidateStatus, safeRequestStatus, candidateId]
+    [safeCandidateStatus, safeRequestStatus, candidateId],
   );
   const [reqResult] = await db.execute<ResultSetHeader>(
     `UPDATE ats_onboarding_request SET status = ?, updated_at = NOW() WHERE candidate_id = ?`,
-    [safeRequestStatus, candidateId]
+    [safeRequestStatus, candidateId],
   );
   if (reqResult.affectedRows === 0) {
     // No ats_onboarding_request row exists (candidate's link was sent via a legacy path that skipped row creation).
@@ -2733,12 +3349,12 @@ export async function syncOnboardingStatus(
       `INSERT INTO ats_onboarding_request (id, candidate_id, status, created_at, updated_at)
        VALUES (UUID(), ?, ?, NOW(), NOW())
        ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = NOW()`,
-      [candidateId, safeRequestStatus]
+      [candidateId, safeRequestStatus],
     );
   }
   await db.execute(
     `UPDATE candidate_onboarding_profile SET profile_status = ?, updated_at = NOW() WHERE candidate_id = ?`,
-    [safeProfileStatus, candidateId]
+    [safeProfileStatus, candidateId],
   );
 }
 
@@ -2746,26 +3362,39 @@ export async function recordPrivacyConsent(token: string) {
   const { candidate_id } = await validateOnboardingToken(token);
   await db.execute(
     `UPDATE candidate_onboarding_profile SET dpdp_consent = 1, dpdp_consent_at = NOW(), updated_at = NOW() WHERE candidate_id = ?`,
-    [candidate_id]
+    [candidate_id],
   );
-  await logCandidateAction(candidate_id, "PRIVACY_CONSENT", null, { actorType: "candidate" });
+  await logCandidateAction(candidate_id, "PRIVACY_CONSENT", null, {
+    actorType: "candidate",
+  });
   return { candidateId: candidate_id, consented: true };
 }
 
-export async function initiateCandidateDigilocker(candidateId: string, actor?: { initiatedBy?: string | null; initiatedByType?: string | null }) {
+export async function initiateCandidateDigilocker(
+  candidateId: string,
+  actor?: { initiatedBy?: string | null; initiatedByType?: string | null },
+) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, full_name, mobile
        FROM ats_candidate
       WHERE id = ?
       LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
   const candidate = (rows as RowDataPacket[])[0];
-  if (!candidate) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+  if (!candidate)
+    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
 
-  const mobileNumber = String(candidate.mobile ?? "").replace(/\D/g, "").slice(-10);
+  const mobileNumber = String(candidate.mobile ?? "")
+    .replace(/\D/g, "")
+    .slice(-10);
   if (mobileNumber.length !== 10) {
-    throw Object.assign(new Error("Candidate mobile number is missing or invalid for DigiLocker initiation."), { statusCode: 400 });
+    throw Object.assign(
+      new Error(
+        "Candidate mobile number is missing or invalid for DigiLocker initiation.",
+      ),
+      { statusCode: 400 },
+    );
   }
 
   const clientTransactionId = luckpayClient.generateClientTransactionId("DIGI");
@@ -2788,8 +3417,13 @@ export async function initiateCandidateDigilocker(candidateId: string, actor?: {
 
   try {
     const result = await withProviderFailureLogged(
-      { candidateId, endpointKey: "DIGILOCKER_INITIATE", providerKey: "luckpay",
-        actorType: actor?.initiatedByType ?? null, actorId: actor?.initiatedBy ?? null },
+      {
+        candidateId,
+        endpointKey: "DIGILOCKER_INITIATE",
+        providerKey: "luckpay",
+        actorType: actor?.initiatedByType ?? null,
+        actorId: actor?.initiatedBy ?? null,
+      },
       () => luckpayClient.initiateDigilockerWithUrl(requestPayload),
     );
     await updateProviderTransactionLog({
@@ -2813,7 +3447,9 @@ export async function initiateCandidateDigilocker(candidateId: string, actor?: {
       clientTransactionId,
       status: "failed",
       errorMessage: String((error as Error)?.message ?? error),
-      responsePayload: sanitizeProviderPayload({ error: String((error as Error)?.message ?? error) }),
+      responsePayload: sanitizeProviderPayload({
+        error: String((error as Error)?.message ?? error),
+      }),
     });
     throw error;
   }
@@ -2827,45 +3463,56 @@ export async function initiateCandidateDigilockerByToken(token: string) {
   });
 }
 
-export async function initiateCandidateESignByToken(token: string, documentId: string) {
+export async function initiateCandidateESignByToken(
+  token: string,
+  documentId: string,
+) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = String(tokenData.candidate_id);
 
   // Fetch document from candidate_onboarding_document
   const [docRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, doc_name, file_path FROM candidate_onboarding_document WHERE id = ? AND candidate_id = ? LIMIT 1`,
-    [documentId, candidateId]
+    [documentId, candidateId],
   );
-  if (!docRows.length) throw Object.assign(new Error("Document not found"), { statusCode: 404 });
+  if (!docRows.length)
+    throw Object.assign(new Error("Document not found"), { statusCode: 404 });
   const doc = docRows[0];
 
   // Read file buffer
   const fs = await import("fs/promises");
   const filePath = resolveOnboardingDocumentFile(doc.file_path);
   if (!filePath) {
-    throw Object.assign(new Error("Document file is not available on this server"), { statusCode: 409 });
+    throw Object.assign(
+      new Error("Document file is not available on this server"),
+      { statusCode: 409 },
+    );
   }
   const documentBuffer = await fs.readFile(filePath);
 
   // Get candidate details
   const [candidateRows] = await db.execute<RowDataPacket[]>(
     `SELECT full_name, applied_for_branch FROM ats_candidate WHERE id = ? LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
   const candidate = candidateRows[0];
-  if (!candidate) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+  if (!candidate)
+    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
 
   // Get branch name
   const [branchRows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1`,
-    [candidate.applied_for_branch]
+    [candidate.applied_for_branch],
   );
   const branchName = branchRows[0]?.branch_name ?? "India";
 
   // Initiate e-Sign via BGV provider
   const adapter = await getConfiguredBgvProviderAdapter();
   if (!adapter.initiateESign) {
-    throw Object.assign(new Error("e-Sign not supported by current BGV provider"), { statusCode: 501 });
+    throw Object.assign(
+      new Error("e-Sign not supported by current BGV provider"),
+      { statusCode: 501 },
+    );
   }
 
   const session = await adapter.initiateESign({
@@ -2895,7 +3542,7 @@ export async function initiateCandidateESignByToken(token: string, documentId: s
       session.authUrl,
       JSON.stringify({ documentId, documentName: doc.doc_name }),
       session.expiresAt,
-    ]
+    ],
   );
 
   return {
@@ -2909,7 +3556,7 @@ export async function initiateCandidateESignByToken(token: string, documentId: s
 export async function initiateCandidateEsign(
   candidateId: string,
   input: { location?: string; reason?: string },
-  actor: { initiatedBy: string; initiatedByType: string }
+  actor: { initiatedBy: string; initiatedByType: string },
 ) {
   const [candidateRows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.full_name, br.branch_name
@@ -2917,13 +3564,15 @@ export async function initiateCandidateEsign(
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
       WHERE id = ?
       LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
   const candidate = (candidateRows as RowDataPacket[])[0];
-  if (!candidate) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+  if (!candidate)
+    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
 
   const source = await resolveEsignSource(candidateId);
-  const clientTransactionId = luckpayClient.generateClientTransactionId("ESIGN");
+  const clientTransactionId =
+    luckpayClient.generateClientTransactionId("ESIGN");
   const requestPayload = {
     clientTransactionId,
     signedBy: String(candidate.full_name ?? "Candidate"),
@@ -2949,17 +3598,18 @@ export async function initiateCandidateEsign(
       `INSERT INTO appointment_letter_request
          (id, candidate_id, created_by, current_state, esign_provider, candidate_esign_status, company_sign_status, pdf_locked, manual_override_approved, created_at)
        VALUES (?, ?, ?, 'candidate_esign_pending', 'luckpay', 'pending', 'pending', 0, 0, NOW())`,
-      [requestId, candidateId, actor.initiatedBy]
+      [requestId, candidateId, actor.initiatedBy],
     );
   }
 
   try {
     const result = await withProviderFailureLogged(
       { candidateId, endpointKey: "ESIGN_INITIATE", providerKey: "luckpay" },
-      () => luckpayClient.initiateEsignWithUrl({
-        filePath: source.filePath,
-        request: requestPayload,
-      }),
+      () =>
+        luckpayClient.initiateEsignWithUrl({
+          filePath: source.filePath,
+          request: requestPayload,
+        }),
     );
     await updateProviderTransactionLog({
       provider: "luckpay",
@@ -2979,7 +3629,7 @@ export async function initiateCandidateEsign(
               candidate_esign_status = ?,
               updated_at = NOW()
         WHERE id = ?`,
-      [clientTransactionId, result.verificationUrl, result.status, requestId]
+      [clientTransactionId, result.verificationUrl, result.status, requestId],
     );
 
     return {
@@ -2997,7 +3647,9 @@ export async function initiateCandidateEsign(
       clientTransactionId,
       status: "failed",
       errorMessage: String((error as Error)?.message ?? error),
-      responsePayload: sanitizeProviderPayload({ error: String((error as Error)?.message ?? error) }),
+      responsePayload: sanitizeProviderPayload({
+        error: String((error as Error)?.message ?? error),
+      }),
     });
     throw error;
   }
@@ -3009,24 +3661,45 @@ export function getLuckpayProviderRuntimeStatus() {
 
 export async function saveLanguages(
   token: string,
-  languages: Array<{ language_name: string; can_read?: boolean; can_write?: boolean; can_speak?: boolean; proficiency?: string }>
+  languages: Array<{
+    language_name: string;
+    can_read?: boolean;
+    can_write?: boolean;
+    can_speak?: boolean;
+    proficiency?: string;
+  }>,
 ) {
   const { candidate_id } = await validateOnboardingToken(token);
-  if (!Array.isArray(languages) || languages.length === 0) return { deleted: 0, inserted: 0 };
+  if (!Array.isArray(languages) || languages.length === 0)
+    return { deleted: 0, inserted: 0 };
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    const [del] = await conn.execute<ResultSetHeader>(`DELETE FROM candidate_onboarding_language WHERE candidate_id = ?`, [candidate_id]);
+    const [del] = await conn.execute<ResultSetHeader>(
+      `DELETE FROM candidate_onboarding_language WHERE candidate_id = ?`,
+      [candidate_id],
+    );
     for (const lang of languages) {
       if (!lang.language_name?.trim()) continue;
       await conn.execute(
         `INSERT INTO candidate_onboarding_language (id, candidate_id, language_name, can_read, can_write, can_speak, proficiency)
          VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
-        [candidate_id, lang.language_name.trim(), lang.can_read ? 1 : 0, lang.can_write ? 1 : 0, lang.can_speak ? 1 : 0, lang.proficiency ?? null]
+        [
+          candidate_id,
+          lang.language_name.trim(),
+          lang.can_read ? 1 : 0,
+          lang.can_write ? 1 : 0,
+          lang.can_speak ? 1 : 0,
+          lang.proficiency ?? null,
+        ],
       );
     }
     await conn.commit();
-    return { candidateId: candidate_id, deleted: del.affectedRows ?? 0, inserted: languages.length };
+    return {
+      candidateId: candidate_id,
+      deleted: del.affectedRows ?? 0,
+      inserted: languages.length,
+    };
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -3035,7 +3708,10 @@ export async function saveLanguages(
   }
 }
 
-export async function saveStatutory(token: string, input: Record<string, unknown>) {
+export async function saveStatutory(
+  token: string,
+  input: Record<string, unknown>,
+) {
   const { candidate_id } = await validateOnboardingToken(token);
   await db.execute(
     `UPDATE candidate_onboarding_profile SET
@@ -3050,7 +3726,7 @@ export async function saveStatutory(token: string, input: Record<string, unknown
       input.declarationAccepted ? 1 : 0,
       input.declarationAccepted ? 1 : 0,
       candidate_id,
-    ]
+    ],
   );
   return { candidateId: candidate_id, saved: true };
 }
@@ -3061,7 +3737,7 @@ export async function saveProgress(token: string, stepIdx: number) {
   const idx = Math.max(0, Math.min(10, Math.floor(stepIdx)));
   await db.execute(
     `UPDATE candidate_onboarding_profile SET current_step_idx = ?, updated_at = NOW() WHERE candidate_id = ?`,
-    [idx, candidateId]
+    [idx, candidateId],
   );
   return { candidateId, currentStepIdx: idx };
 }
@@ -3090,10 +3766,13 @@ export async function saveFamilyMembers(
     occupation?: string;
     isDependent?: boolean;
     isEpsNominee?: boolean;
-  }>
+  }>,
 ) {
   const { candidate_id } = await validateOnboardingToken(token);
-  if (!Array.isArray(members)) throw Object.assign(new Error("members must be an array"), { statusCode: 400 });
+  if (!Array.isArray(members))
+    throw Object.assign(new Error("members must be an array"), {
+      statusCode: 400,
+    });
   // A row with no name is not a family member. saveLanguages already skips its
   // blank drafts; this writer did not, so an untouched draft row was stored as
   // an all-NULL family member and would have printed an empty Part B line.
@@ -3101,7 +3780,10 @@ export async function saveFamilyMembers(
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    await conn.execute(`DELETE FROM candidate_onboarding_family_member WHERE candidate_id = ?`, [candidate_id]);
+    await conn.execute(
+      `DELETE FROM candidate_onboarding_family_member WHERE candidate_id = ?`,
+      [candidate_id],
+    );
     for (const m of rows) {
       await conn.execute(
         `INSERT INTO candidate_onboarding_family_member
@@ -3118,11 +3800,15 @@ export async function saveFamilyMembers(
           nonEmptyString(m.occupation),
           m.isDependent ? 1 : 0,
           m.isEpsNominee ? 1 : 0,
-        ]
+        ],
       );
     }
     await conn.commit();
-    return { candidateId: candidate_id, inserted: rows.length, skipped: members.length - rows.length };
+    return {
+      candidateId: candidate_id,
+      inserted: rows.length,
+      skipped: members.length - rows.length,
+    };
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -3140,23 +3826,34 @@ export async function saveNominees(
     sharePercentage?: number;
     aadharLast4?: string;
     isPrimary?: boolean;
-  }>
+  }>,
 ) {
   const { candidate_id } = await validateOnboardingToken(token);
-  if (!Array.isArray(nominees)) throw Object.assign(new Error("nominees must be an array"), { statusCode: 400 });
+  if (!Array.isArray(nominees))
+    throw Object.assign(new Error("nominees must be an array"), {
+      statusCode: 400,
+    });
 
-  const total = nominees.reduce((sum, n) => sum + (Number(n.sharePercentage) || 0), 0);
+  const total = nominees.reduce(
+    (sum, n) => sum + (Number(n.sharePercentage) || 0),
+    0,
+  );
   if (total > 100) {
     throw Object.assign(
-      new Error(`Total nominee share percentage is ${total}% which exceeds 100%`),
-      { statusCode: 400 }
+      new Error(
+        `Total nominee share percentage is ${total}% which exceeds 100%`,
+      ),
+      { statusCode: 400 },
     );
   }
 
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    await conn.execute(`DELETE FROM candidate_onboarding_nominee WHERE candidate_id = ?`, [candidate_id]);
+    await conn.execute(
+      `DELETE FROM candidate_onboarding_nominee WHERE candidate_id = ?`,
+      [candidate_id],
+    );
     for (const n of nominees) {
       await conn.execute(
         `INSERT INTO candidate_onboarding_nominee
@@ -3170,11 +3867,15 @@ export async function saveNominees(
           n.sharePercentage != null ? n.sharePercentage : null,
           n.aadharLast4 ?? null,
           n.isPrimary ? 1 : 0,
-        ]
+        ],
       );
     }
     await conn.commit();
-    return { candidateId: candidate_id, inserted: nominees.length, totalSharePct: total };
+    return {
+      candidateId: candidate_id,
+      inserted: nominees.length,
+      totalSharePct: total,
+    };
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -3186,7 +3887,7 @@ export async function saveNominees(
 export async function updateSectionStatus(
   candidateId: string,
   section: string,
-  isComplete: boolean
+  isComplete: boolean,
 ) {
   const id = randomUUID();
   await db.execute(
@@ -3197,20 +3898,32 @@ export async function updateSectionStatus(
        is_complete = VALUES(is_complete),
        completed_at = IF(VALUES(is_complete) = 1 AND completed_at IS NULL, NOW(), completed_at),
        last_updated = NOW()`,
-    [id, candidateId, section, isComplete ? 1 : 0, isComplete ? new Date() : null]
+    [
+      id,
+      candidateId,
+      section,
+      isComplete ? 1 : 0,
+      isComplete ? new Date() : null,
+    ],
   );
   return { candidateId, section, isComplete };
 }
 
 export async function getOnboardingBlockers(
-  candidateId: string
-): Promise<Array<{ code: string; message: string; severity: "hard" | "soft" }>> {
-  const blockers: Array<{ code: string; message: string; severity: "hard" | "soft" }> = [];
+  candidateId: string,
+): Promise<
+  Array<{ code: string; message: string; severity: "hard" | "soft" }>
+> {
+  const blockers: Array<{
+    code: string;
+    message: string;
+    severity: "hard" | "soft";
+  }> = [];
 
   const [profileRows] = await db.execute<OnboardingProfileBlockerRow[]>(
     `SELECT otp_verified, statutory_declaration_accepted, dpdp_consent, bgv_consent
        FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
   const profile = profileRows[0] ?? {
     otp_verified: null,
@@ -3220,33 +3933,57 @@ export async function getOnboardingBlockers(
   };
 
   if (!profile.otp_verified) {
-    blockers.push({ code: "OTP_NOT_VERIFIED", message: "Mobile OTP verification is required before submission.", severity: "hard" });
+    blockers.push({
+      code: "OTP_NOT_VERIFIED",
+      message: "Mobile OTP verification is required before submission.",
+      severity: "hard",
+    });
   }
   if (!profile.statutory_declaration_accepted) {
-    blockers.push({ code: "DECLARATION_NOT_ACCEPTED", message: "Statutory declaration must be accepted before submission.", severity: "hard" });
+    blockers.push({
+      code: "DECLARATION_NOT_ACCEPTED",
+      message: "Statutory declaration must be accepted before submission.",
+      severity: "hard",
+    });
   }
   if (!profile.dpdp_consent) {
-    blockers.push({ code: "DPDP_CONSENT_MISSING", message: "DPDP data privacy consent is required.", severity: "hard" });
+    blockers.push({
+      code: "DPDP_CONSENT_MISSING",
+      message: "DPDP data privacy consent is required.",
+      severity: "hard",
+    });
   }
 
   const [bankRows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
   if (!bankRows.length) {
-    blockers.push({ code: "BANK_DETAILS_MISSING", message: "Bank account details must be saved before submission.", severity: "hard" });
+    blockers.push({
+      code: "BANK_DETAILS_MISSING",
+      message: "Bank account details must be saved before submission.",
+      severity: "hard",
+    });
   }
 
   const [qualRows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM candidate_onboarding_qualification WHERE candidate_id = ? LIMIT 1`,
-    [candidateId]
+    [candidateId],
   );
   if (!qualRows.length) {
-    blockers.push({ code: "QUALIFICATION_MISSING", message: "At least one qualification record is recommended.", severity: "soft" });
+    blockers.push({
+      code: "QUALIFICATION_MISSING",
+      message: "At least one qualification record is recommended.",
+      severity: "soft",
+    });
   }
 
   if (!profile.bgv_consent) {
-    blockers.push({ code: "BGV_CONSENT_MISSING", message: "BGV consent is recommended for faster background verification.", severity: "soft" });
+    blockers.push({
+      code: "BGV_CONSENT_MISSING",
+      message: "BGV consent is recommended for faster background verification.",
+      severity: "soft",
+    });
   }
 
   return blockers;

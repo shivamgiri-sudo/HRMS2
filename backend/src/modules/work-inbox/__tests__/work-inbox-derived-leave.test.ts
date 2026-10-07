@@ -47,7 +47,9 @@ describe("work inbox derived leave approvals", () => {
     // Of the 27 pending, 9 have no reporting manager and only 5 of the 7 named managers
     // hold a user account — manager routing alone strands a third of the queue.
     const { code } = await capture("user-1", "hr");
-    expect(code).toContain("LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id");
+    expect(code).toContain(
+      "LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id",
+    );
     expect(code).toContain("mgr.user_id = ?");
     expect(code).toContain("? IN ('hr', 'hr_head', 'admin', 'super_admin')");
   });
@@ -64,7 +66,9 @@ describe("work inbox derived leave approvals", () => {
   it("formats whole and half days without exposing the DECIMAL", async () => {
     // total_days is DECIMAL(x,2), so a plain CONCAT renders a trailing ".00".
     const { code } = await capture("user-1", "hr");
-    expect(code).toContain("TRIM(TRAILING '0' FROM COALESCE(lr.total_days, 0))");
+    expect(code).toContain(
+      "TRIM(TRAILING '0' FROM COALESCE(lr.total_days, 0))",
+    );
     expect(code).toContain("' day from '");
     expect(code).toContain("' days from '");
     expect(code).not.toContain("day(s)");

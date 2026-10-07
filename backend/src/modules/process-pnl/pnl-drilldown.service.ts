@@ -2,9 +2,21 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { assertNotFuturePeriod } from "./pnl-period-guard.js";
-import { entriesForCodes, readBudgetEntries, topUpsForCodes, type BudgetEntry } from "./pnl-budget-source.js";
-import { readGrnSpend, type GrnSpendKind, type GrnSpendRow } from "./pnl-actuals.service.js";
-import { getSeatBillingEstimate, isEstimateWindow } from "./pnl-seat-billing.service.js";
+import {
+  entriesForCodes,
+  readBudgetEntries,
+  topUpsForCodes,
+  type BudgetEntry,
+} from "./pnl-budget-source.js";
+import {
+  readGrnSpend,
+  type GrnSpendKind,
+  type GrnSpendRow,
+} from "./pnl-actuals.service.js";
+import {
+  getSeatBillingEstimate,
+  isEstimateWindow,
+} from "./pnl-seat-billing.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
@@ -105,8 +117,12 @@ const OWN_COMPANY_SQL = `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name
  *  cost_centre_master as `ccm`) — mirrors revenueByBranch()/spendByBranch()'s own scope
  *  handling in ceo-overview.service.ts exactly, so a drilldown can never see a different set of
  *  cost centres than the summary cell it was clicked from. */
-function costCentreScopeSql(scope: PnlDrilldownScope): { sql: string; param: string } {
-  if (scope.costCentreId) return { sql: "ccm.id = ?", param: scope.costCentreId };
+function costCentreScopeSql(scope: PnlDrilldownScope): {
+  sql: string;
+  param: string;
+} {
+  if (scope.costCentreId)
+    return { sql: "ccm.id = ?", param: scope.costCentreId };
   if (scope.processId) {
     return {
       sql: `ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
@@ -130,18 +146,36 @@ function costCentreScopeSql(scope: PnlDrilldownScope): { sql: string; param: str
  */
 async function effectivePeopleScope(
   scope: PnlDrilldownScope,
-  cols: { personId: string; homeCostCentre: string; homeBranch: string; process: string },
+  cols: {
+    personId: string;
+    homeCostCentre: string;
+    homeBranch: string;
+    process: string;
+  },
 ): Promise<{ join: string; sql: string; param: string }> {
   // payrollAttributionSql: the one attribution the summaries use. Process scope too (2026-09-23,
   // owner rule): a mapped employee sits under the MAPPED cost centre's process, as on CEO Overview
   // and the Statement's process view, never under their home process as well.
   const ov = await payrollAttributionSql({
-    employeeIdExpr: cols.personId, homeCostCentreExpr: cols.homeCostCentre,
-    homeBranchExpr: cols.homeBranch, homeProcessExpr: cols.process, ccAlias: "pcc",
+    employeeIdExpr: cols.personId,
+    homeCostCentreExpr: cols.homeCostCentre,
+    homeBranchExpr: cols.homeBranch,
+    homeProcessExpr: cols.process,
+    ccAlias: "pcc",
   });
   const join = ov.join;
-  if (scope.costCentreId) return { join, sql: `${ov.effectiveCostCentreExpr} = ?`, param: scope.costCentreId };
-  if (scope.processId) return { join, sql: `${ov.effectiveProcessExpr} = ?`, param: scope.processId };
+  if (scope.costCentreId)
+    return {
+      join,
+      sql: `${ov.effectiveCostCentreExpr} = ?`,
+      param: scope.costCentreId,
+    };
+  if (scope.processId)
+    return {
+      join,
+      sql: `${ov.effectiveProcessExpr} = ?`,
+      param: scope.processId,
+    };
   return {
     join,
     sql: `(${ov.effectiveBranchExpr}) = ?`,
@@ -149,10 +183,23 @@ async function effectivePeopleScope(
   };
 }
 
-const EMPLOYEE_COLS = { personId: "e.id", homeCostCentre: "e.cost_centre_id", homeBranch: "e.branch_id", process: "e.process_id" };
-const SNAPSHOT_COLS = { personId: "s.employee_id", homeCostCentre: "s.cost_centre_id", homeBranch: "s.branch_id", process: "s.process_id" };
+const EMPLOYEE_COLS = {
+  personId: "e.id",
+  homeCostCentre: "e.cost_centre_id",
+  homeBranch: "e.branch_id",
+  process: "e.process_id",
+};
+const SNAPSHOT_COLS = {
+  personId: "s.employee_id",
+  homeCostCentre: "s.cost_centre_id",
+  homeBranch: "s.branch_id",
+  process: "s.process_id",
+};
 
-async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
+async function revenueDrilldownRows(
+  period: string,
+  scope: PnlDrilldownScope,
+): Promise<PnlDrilldownResult> {
   const rows: DrilldownRow[] = [];
   let hasEstimatedRows = false;
   const cc = costCentreScopeSql(scope);
@@ -170,7 +217,9 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
     for (const r of invoiceRows) {
       rows.push({
         id: `inv-${r.bill_source_id}`,
-        label: r.cost_centre_name ? String(r.cost_centre_name) : String(r.cost_centre_code ?? ""),
+        label: r.cost_centre_name
+          ? String(r.cost_centre_name)
+          : String(r.cost_centre_code ?? ""),
         detail: [r.service, r.particulars].filter(Boolean).join(" — ") || null,
         amount: n(r.amount),
         date: r.source_created_at ? String(r.source_created_at) : null,
@@ -188,7 +237,9 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
       for (const r of creditRows) {
         rows.push({
           id: `credit-${r.bill_source_id}-${r.credit_no}`,
-          label: r.cost_centre_name ? String(r.cost_centre_name) : String(r.cost_centre_code ?? ""),
+          label: r.cost_centre_name
+            ? String(r.cost_centre_name)
+            : String(r.cost_centre_code ?? ""),
           detail: `Credit note${r.description ? `: ${r.description}` : ""}`,
           amount: -n(r.total_amt),
           date: r.credit_date ? String(r.credit_date) : null,
@@ -231,10 +282,13 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
         hasEstimatedRows = true;
         rows.push({
           id: `prov-${r.cost_centre_code}`,
-          label: r.cost_centre_name ? String(r.cost_centre_name) : String(r.cost_centre_code ?? ""),
-          detail: invoiced > 0
-            ? `Provision not yet invoiced — provision ${n(r.provision_amount).toLocaleString("en-IN")} less ${invoiced.toLocaleString("en-IN")} invoiced`
-            : "Provision estimate — invoice not yet raised this period",
+          label: r.cost_centre_name
+            ? String(r.cost_centre_name)
+            : String(r.cost_centre_code ?? ""),
+          detail:
+            invoiced > 0
+              ? `Provision not yet invoiced — provision ${n(r.provision_amount).toLocaleString("en-IN")} less ${invoiced.toLocaleString("en-IN")} invoiced`
+              : "Provision estimate — invoice not yet raised this period",
           amount: accrual,
           date: null,
         });
@@ -243,7 +297,9 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
   }
   // Seat-rate estimate (audit item 17d): the Live P&L's "Est" revenue cell for a cost centre with no
   // invoice and no provision had no rows behind it at all, so the drawer opened empty.
-  const invoicedOrAccrued = rows.some((r) => r.id.startsWith("inv-") || r.id.startsWith("prov-"));
+  const invoicedOrAccrued = rows.some(
+    (r) => r.id.startsWith("inv-") || r.id.startsWith("prov-"),
+  );
   if (scope.costCentreId && !invoicedOrAccrued) {
     const estimate = await seatEstimateRows(period, scope.costCentreId);
     if (estimate.length) {
@@ -252,7 +308,13 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
     }
   }
   rows.sort((a, b) => b.amount - a.amount);
-  return { metric: "revenue", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows };
+  return {
+    metric: "revenue",
+    scope: { period, ...scope },
+    rows,
+    total: rows.reduce((s, r) => s + r.amount, 0),
+    hasEstimatedRows,
+  };
 }
 
 /**
@@ -263,7 +325,10 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
  * the last row absorbs rounding so the drawer total equals the cell exactly. Never invents a line:
  * no configured or invoiced rate means no rows.
  */
-async function seatEstimateRows(period: string, costCentreId: string): Promise<DrilldownRow[]> {
+async function seatEstimateRows(
+  period: string,
+  costCentreId: string,
+): Promise<DrilldownRow[]> {
   const asOfDate = getCurrentDateIST();
   if (!isEstimateWindow(period, asOfDate)) return [];
   const [status] = await db.execute<RowDataPacket[]>(
@@ -272,18 +337,33 @@ async function seatEstimateRows(period: string, costCentreId: string): Promise<D
       WHERE ccm.id = ?`,
     [costCentreId],
   );
-  const open = status[0] && Number(status[0].cc_active ?? 0) === 1 && Number(status[0].branch_active ?? 1) === 1;
+  const open =
+    status[0] &&
+    Number(status[0].cc_active ?? 0) === 1 &&
+    Number(status[0].branch_active ?? 1) === 1;
   if (!open) return [];
-  const estimate = await getSeatBillingEstimate(period, { costCentreId, asOfDate }).catch(() => null);
+  const estimate = await getSeatBillingEstimate(period, {
+    costCentreId,
+    asOfDate,
+  }).catch(() => null);
   const cc = estimate?.costCentres.find((c) => c.costCentreId === costCentreId);
-  if (!estimate || !cc || !(cc.toDate > 0) || !(cc.monthlyValue > 0) || cc.lines.length === 0) return [];
+  if (
+    !estimate ||
+    !cc ||
+    !(cc.toDate > 0) ||
+    !(cc.monthlyValue > 0) ||
+    cc.lines.length === 0
+  )
+    return [];
   const ratio = cc.toDate / cc.monthlyValue;
-  const basis = cc.source === "configured"
-    ? "configured under P&L Configuration > Seat billing"
-    : `from the ${cc.sourcePeriod ?? "last"} invoice`;
-  const days = estimate.daysElapsed < estimate.daysInMonth
-    ? `, counted for ${estimate.daysElapsed} of ${estimate.daysInMonth} days`
-    : "";
+  const basis =
+    cc.source === "configured"
+      ? "configured under P&L Configuration > Seat billing"
+      : `from the ${cc.sourcePeriod ?? "last"} invoice`;
+  const days =
+    estimate.daysElapsed < estimate.daysInMonth
+      ? `, counted for ${estimate.daysElapsed} of ${estimate.daysInMonth} days`
+      : "";
   const out: DrilldownRow[] = cc.lines.map((line, i) => ({
     id: `est-${costCentreId}-${line.id ?? i}`,
     label: line.lineLabel || "Seat billing line",
@@ -292,7 +372,10 @@ async function seatEstimateRows(period: string, costCentreId: string): Promise<D
     date: null,
   }));
   const drift = cc.toDate - out.reduce((t, r) => t + r.amount, 0);
-  out[out.length - 1] = { ...out[out.length - 1], amount: Math.round((out[out.length - 1].amount + drift) * 100) / 100 };
+  out[out.length - 1] = {
+    ...out[out.length - 1],
+    amount: Math.round((out[out.length - 1].amount + drift) * 100) / 100,
+  };
   return out;
 }
 
@@ -361,9 +444,12 @@ async function peopleSnapshotRows(
   for (const r of lineRows) {
     rows.push({
       id: `snap-${r.id}`,
-      label: r.full_name ? String(r.full_name) : String(r.employee_code ?? "Unnamed"),
+      label: r.full_name
+        ? String(r.full_name)
+        : String(r.employee_code ?? "Unnamed"),
       detail: [r.employee_code, r.designation_name, basisNote(bucket)]
-        .filter(Boolean).join(" · "),
+        .filter(Boolean)
+        .join(" · "),
       amount: n(r.amount),
       date: r.as_of_date ? String(r.as_of_date) : null,
     });
@@ -386,7 +472,10 @@ function basisNote(bucket?: PnlPeopleBucket): string {
  * gross + employer-contribution expression so a role that sees this and a role that sees the
  * per-employee list can never be shown two different numbers for the same cell.
  */
-async function peopleDrilldownRowsAggregated(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
+async function peopleDrilldownRowsAggregated(
+  period: string,
+  scope: PnlDrilldownScope,
+): Promise<PnlDrilldownResult> {
   const rows: DrilldownRow[] = [];
   if (await tableExists("salary_prep_line")) {
     const emp = await effectivePeopleScope(scope, EMPLOYEE_COLS);
@@ -418,14 +507,26 @@ async function peopleDrilldownRowsAggregated(period: string, scope: PnlDrilldown
   if (rows.length === 0) {
     const fallback = await peopleSnapshotRows(period, scope, true);
     return {
-      metric: "people", scope: { period, ...scope }, rows: fallback,
-      total: fallback.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: fallback.length > 0,
+      metric: "people",
+      scope: { period, ...scope },
+      rows: fallback,
+      total: fallback.reduce((s, r) => s + r.amount, 0),
+      hasEstimatedRows: fallback.length > 0,
     };
   }
-  return { metric: "people", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
+  return {
+    metric: "people",
+    scope: { period, ...scope },
+    rows,
+    total: rows.reduce((s, r) => s + r.amount, 0),
+    hasEstimatedRows: false,
+  };
 }
 
-async function peopleDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
+async function peopleDrilldownRows(
+  period: string,
+  scope: PnlDrilldownScope,
+): Promise<PnlDrilldownResult> {
   const rows: DrilldownRow[] = [];
   if (await tableExists("salary_prep_line")) {
     const emp = await effectivePeopleScope(scope, EMPLOYEE_COLS);
@@ -443,8 +544,12 @@ async function peopleDrilldownRows(period: string, scope: PnlDrilldownScope): Pr
     for (const r of lineRows) {
       rows.push({
         id: `sal-${r.id}`,
-        label: r.full_name ? String(r.full_name) : String(r.employee_code ?? "Unnamed"),
-        detail: [r.employee_code, r.cost_center_code].filter(Boolean).join(" · ") || null,
+        label: r.full_name
+          ? String(r.full_name)
+          : String(r.employee_code ?? "Unnamed"),
+        detail:
+          [r.employee_code, r.cost_center_code].filter(Boolean).join(" · ") ||
+          null,
         amount: n(r.amount),
         date: null,
       });
@@ -453,11 +558,20 @@ async function peopleDrilldownRows(period: string, scope: PnlDrilldownScope): Pr
   if (rows.length === 0) {
     const fallback = await peopleSnapshotRows(period, scope, false);
     return {
-      metric: "people", scope: { period, ...scope }, rows: fallback,
-      total: fallback.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: fallback.length > 0,
+      metric: "people",
+      scope: { period, ...scope },
+      rows: fallback,
+      total: fallback.reduce((s, r) => s + r.amount, 0),
+      hasEstimatedRows: fallback.length > 0,
     };
   }
-  return { metric: "people", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
+  return {
+    metric: "people",
+    scope: { period, ...scope },
+    rows,
+    total: rows.reduce((s, r) => s + r.amount, 0),
+    hasEstimatedRows: false,
+  };
 }
 
 const GRN_SOURCE_LABEL: Record<string, string> = {
@@ -487,31 +601,57 @@ async function indirectDrilldownRows(
 ): Promise<PnlDrilldownResult> {
   const readerScope = scope.costCentreId
     ? { costCentreIds: [scope.costCentreId] }
-    : scope.processId ? { processIds: [scope.processId] } : {};
-  const inBranch = (r: GrnSpendRow) => !scope.branchId || r.branchId === scope.branchId;
-  const toRow = (r: GrnSpendRow, reserved: boolean, i: number): DrilldownRow => ({
-    id: `grn-${reserved ? "reserved" : r.source ?? "grn"}-${r.grnRef ?? i}-${r.costCentreId ?? ""}-${i}`,
+    : scope.processId
+      ? { processIds: [scope.processId] }
+      : {};
+  const inBranch = (r: GrnSpendRow) =>
+    !scope.branchId || r.branchId === scope.branchId;
+  const toRow = (
+    r: GrnSpendRow,
+    reserved: boolean,
+    i: number,
+  ): DrilldownRow => ({
+    id: `grn-${reserved ? "reserved" : (r.source ?? "grn")}-${r.grnRef ?? i}-${r.costCentreId ?? ""}-${i}`,
     label: r.label || (r.grnRef ? `GRN ${r.grnRef}` : "GRN"),
-    detail: [
-      r.grnRef ? `GRN ${r.grnRef}` : null,
-      reserved ? "Approved, not yet consumed (committed estimate)" : GRN_SOURCE_LABEL[r.source ?? ""] ?? null,
-    ].filter(Boolean).join(" · ") || null,
+    detail:
+      [
+        r.grnRef ? `GRN ${r.grnRef}` : null,
+        reserved
+          ? "Approved, not yet consumed (committed estimate)"
+          : (GRN_SOURCE_LABEL[r.source ?? ""] ?? null),
+      ]
+        .filter(Boolean)
+        .join(" · ") || null,
     amount: r.amount,
     date: r.billDate ?? null,
   });
 
-  const consumed = grnKind === "reserved"
-    ? []
-    : (await readGrnSpend(period, "consumed", { ...readerScope, withDetail: true })).filter(inBranch);
-  const reserved = grnKind === "consumed"
-    ? []
-    : (await readGrnSpend(period, "reserved", { ...readerScope, withDetail: true })).filter(inBranch);
+  const consumed =
+    grnKind === "reserved"
+      ? []
+      : (
+          await readGrnSpend(period, "consumed", {
+            ...readerScope,
+            withDetail: true,
+          })
+        ).filter(inBranch);
+  const reserved =
+    grnKind === "consumed"
+      ? []
+      : (
+          await readGrnSpend(period, "reserved", {
+            ...readerScope,
+            withDetail: true,
+          })
+        ).filter(inBranch);
   const rows = [
     ...consumed.map((r, i) => toRow(r, false, i)),
     ...reserved.map((r, i) => toRow(r, true, i)),
   ].sort((a, b) => b.amount - a.amount);
   return {
-    metric: "indirect", scope: { period, ...scope, ...(grnKind ? { grnKind } : {}) }, rows,
+    metric: "indirect",
+    scope: { period, ...scope, ...(grnKind ? { grnKind } : {}) },
+    rows,
     total: rows.reduce((s, r) => s + r.amount, 0),
     hasEstimatedRows: reserved.length > 0,
   };
@@ -520,7 +660,9 @@ async function indirectDrilldownRows(
 /** The cost centre codes a process / cost-centre scope covers — the same resolution the CEO focus
  *  panel (buildFocus) uses for its budget lines. The mirror carries no cost_centre_id, only the
  *  centre's code (expense_type_name), so budget scope is always matched on the code. */
-async function scopeCostCentreCodes(scope: PnlDrilldownScope): Promise<string[]> {
+async function scopeCostCentreCodes(
+  scope: PnlDrilldownScope,
+): Promise<string[]> {
   const [codes] = await db.execute<RowDataPacket[]>(
     scope.costCentreId
       ? `SELECT cost_centre_code AS code FROM cost_centre_master WHERE id = ?`
@@ -532,17 +674,30 @@ async function scopeCostCentreCodes(scope: PnlDrilldownScope): Promise<string[]>
   return codes.map((r) => String(r.code ?? "")).filter(Boolean);
 }
 
-const BUDGET_SOURCE_LABEL: Record<string, string> = { hrms: "HRMS budget", mirror: "db_bill budget" };
+const BUDGET_SOURCE_LABEL: Record<string, string> = {
+  hrms: "HRMS budget",
+  mirror: "db_bill budget",
+};
 
 function budgetEntryRow(e: BudgetEntry): DrilldownRow {
-  const where = e.kind === "top_up"
-    ? `Header-level addition${e.branchName ? ` — ${e.branchName}` : ""}, not tied to a specific line`
-    : [e.costCentreCode && e.costCentreCode !== e.label ? e.costCentreCode : null, e.branchName]
-        .filter(Boolean).join(" · ");
+  const where =
+    e.kind === "top_up"
+      ? `Header-level addition${e.branchName ? ` — ${e.branchName}` : ""}, not tied to a specific line`
+      : [
+          e.costCentreCode && e.costCentreCode !== e.label
+            ? e.costCentreCode
+            : null,
+          e.branchName,
+        ]
+          .filter(Boolean)
+          .join(" · ");
   return {
     id: e.entryRef,
     label: e.label,
-    detail: [where || null, BUDGET_SOURCE_LABEL[e.source]].filter(Boolean).join(" · ") || null,
+    detail:
+      [where || null, BUDGET_SOURCE_LABEL[e.source]]
+        .filter(Boolean)
+        .join(" · ") || null,
     amount: e.amount,
     date: null,
   };
@@ -562,30 +717,44 @@ function budgetEntryRow(e: BudgetEntry): DrilldownRow {
  *     only those top-ups whose budget funds nothing but this scope (focusBudgetTopUps' rule, the
  *     CEO focus panel's figure). A shared budget's top-up is never pro-rated.
  */
-async function budgetDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
+async function budgetDrilldownRows(
+  period: string,
+  scope: PnlDrilldownScope,
+): Promise<PnlDrilldownResult> {
   const entries = await readBudgetEntries(period);
   const rows: DrilldownRow[] = [];
   if (!scope.costCentreId && !scope.processId) {
-    for (const e of entries) if (e.branchId === scope.branchId) rows.push(budgetEntryRow(e));
+    for (const e of entries)
+      if (e.branchId === scope.branchId) rows.push(budgetEntryRow(e));
   } else {
     const codes = await scopeCostCentreCodes(scope);
-    for (const e of entriesForCodes(entries, codes)) rows.push(budgetEntryRow(e));
+    for (const e of entriesForCodes(entries, codes))
+      rows.push(budgetEntryRow(e));
     const topUps = topUpsForCodes(entries, codes);
     if (topUps.attributable !== 0) {
       rows.push({
         id: "topup-in-scope",
         label: "Sanctioned top-up",
-        detail: "Header-level additions on budgets that fund only this scope's cost centres",
+        detail:
+          "Header-level additions on budgets that fund only this scope's cost centres",
         amount: topUps.attributable,
         date: null,
       });
     }
   }
   rows.sort((a, b) => b.amount - a.amount);
-  return { metric: "budget", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
+  return {
+    metric: "budget",
+    scope: { period, ...scope },
+    rows,
+    total: rows.reduce((s, r) => s + r.amount, 0),
+    hasEstimatedRows: false,
+  };
 }
 
-export async function getPnlDrilldown(query: PnlDrilldownQuery): Promise<PnlDrilldownResult> {
+export async function getPnlDrilldown(
+  query: PnlDrilldownQuery,
+): Promise<PnlDrilldownResult> {
   assertNotFuturePeriod(query.period);
   const scope: PnlDrilldownScope = {
     branchId: query.branchId,
@@ -593,25 +762,33 @@ export async function getPnlDrilldown(query: PnlDrilldownQuery): Promise<PnlDril
     costCentreId: query.costCentreId,
   };
   switch (query.metric) {
-    case "revenue": return revenueDrilldownRows(query.period, scope);
+    case "revenue":
+      return revenueDrilldownRows(query.period, scope);
     case "people": {
       // A bucketed request is answered from the snapshot outright — posted payroll carries no
       // Agent/DSC/BMC column to filter on, and the statement's own bucket lines read the same
       // snapshot, so this is the source that ties to the clicked cell.
       if (query.peopleBucket) {
         const rows = await peopleSnapshotRows(
-          query.period, scope, Boolean(query.aggregatePeople), query.peopleBucket,
+          query.period,
+          scope,
+          Boolean(query.aggregatePeople),
+          query.peopleBucket,
         );
         return {
-          metric: "people", scope: { period: query.period, ...scope, bucket: query.peopleBucket },
-          rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: rows.length > 0,
+          metric: "people",
+          scope: { period: query.period, ...scope, bucket: query.peopleBucket },
+          rows,
+          total: rows.reduce((s, r) => s + r.amount, 0),
+          hasEstimatedRows: rows.length > 0,
         };
       }
       return query.aggregatePeople
         ? peopleDrilldownRowsAggregated(query.period, scope)
         : peopleDrilldownRows(query.period, scope);
     }
-    case "indirect": return indirectDrilldownRows(query.period, scope, query.grnKind);
+    case "indirect":
+      return indirectDrilldownRows(query.period, scope, query.grnKind);
     case "budget":
       return budgetDrilldownRows(query.period, scope);
   }

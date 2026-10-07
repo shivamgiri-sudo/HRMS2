@@ -15,15 +15,20 @@ import { describe, expect, it } from "vitest";
 // those users got 403s on every tab despite the page letting them in. Widened
 // to match; the write action (/documents/:id/verify) intentionally stays
 // admin,hr-only.
-const routes = readFileSync(resolve(process.cwd(), "src/modules/lifecycle/lifecycle.routes.ts"), "utf8");
+const routes = readFileSync(
+  resolve(process.cwd(), "src/modules/lifecycle/lifecycle.routes.ts"),
+  "utf8",
+);
 
 describe("Document verification — access log id consistency", () => {
   it("no longer logs a synthetic non-lookupable list: access id", () => {
-    expect(routes).not.toContain('logDocumentAccess(`list:${req.params.id}`');
+    expect(routes).not.toContain("logDocumentAccess(`list:${req.params.id}`");
   });
 
   it("logs one real document id per document returned", () => {
-    const listDocsRoute = routes.slice(routes.indexOf('router.get("/employees/:id/documents"'));
+    const listDocsRoute = routes.slice(
+      routes.indexOf('router.get("/employees/:id/documents"'),
+    );
     expect(listDocsRoute).toContain("docs.map((d)");
     expect(listDocsRoute).toContain("logDocumentAccess(String(d.id)");
   });
@@ -40,7 +45,7 @@ describe("Document verification — read-route role gate matches live page grant
   it("keeps the write action /documents/:id/verify restricted to admin,hr", () => {
     const verifyRoute = routes.slice(
       routes.indexOf('router.post("/documents/:id/verify"'),
-      routes.indexOf('router.get("/documents/expiring"')
+      routes.indexOf('router.get("/documents/expiring"'),
     );
     expect(verifyRoute).toContain('requireRole("admin", "hr")');
   });

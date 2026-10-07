@@ -29,7 +29,9 @@ import { resolveLuckpayConfigFrom } from "../src/modules/integrations/luckpay/lu
 const PROD = "https://api-banking.luckpay.in/apibanking/api/v1";
 const STAGING = "https://staging-api-banking.luckpay.in/apibanking/api/v1";
 
-const cfg = (over: Partial<{ baseUrl: string; basicToken: string; clientId: string }> = {}) =>
+const cfg = (
+  over: Partial<{ baseUrl: string; basicToken: string; clientId: string }> = {},
+) =>
   normalizeLuckpayConfig({
     baseUrl: over.baseUrl ?? PROD,
     basicToken: over.basicToken ?? "basic-token",
@@ -97,7 +99,9 @@ describe("Luckpay auth URL resolution", () => {
       1,
       `${PROD}/auth/token`,
       undefined,
-      expect.objectContaining({ headers: { Authorization: "Basic basic-token" } }),
+      expect.objectContaining({
+        headers: { Authorization: "Basic basic-token" },
+      }),
     );
   });
 });
@@ -113,7 +117,8 @@ describe("Luckpay token cache", () => {
   });
 
   it("TC-LP-05: mints separate tokens for different client ids", async () => {
-    const post = vi.spyOn(axios, "post")
+    const post = vi
+      .spyOn(axios, "post")
       .mockResolvedValueOnce(tokenResponse("token-a"))
       .mockResolvedValueOnce(tokenResponse("token-b"));
 
@@ -152,7 +157,8 @@ describe("Luckpay request headers", () => {
    * TFBNMTQ= is base64 of "LPM14". Do not "simplify" this back to the raw id.
    */
   it("TC-LP-07: sends base64(clientId) as Authorization and the access token as Bearer", async () => {
-    const post = vi.spyOn(axios, "post")
+    const post = vi
+      .spyOn(axios, "post")
       .mockResolvedValueOnce(tokenResponse())
       .mockResolvedValueOnce({ data: { status: "success" } });
 
@@ -180,24 +186,37 @@ describe("pickLuckpayField", () => {
     const inner = envelope.data;
     return {
       envelope,
-      data: (inner && typeof inner === "object" && !Array.isArray(inner) ? inner : envelope) as Record<string, unknown>,
+      data: (inner && typeof inner === "object" && !Array.isArray(inner)
+        ? inner
+        : envelope) as Record<string, unknown>,
       sanitized: {},
     };
   };
 
   it("TC-LP-08: finds a field at the envelope top level", () => {
-    expect(pickLuckpayField(build({ redirectUrl: "https://a" }), ["redirectUrl"])).toBe("https://a");
+    expect(
+      pickLuckpayField(build({ redirectUrl: "https://a" }), ["redirectUrl"]),
+    ).toBe("https://a");
   });
 
   it("TC-LP-09: finds a field nested under `data`", () => {
     // The env-driven client previously only looked at the top level, so a nested
     // redirect URL silently resolved to null.
-    expect(pickLuckpayField(build({ status: "ok", data: { redirectUrl: "https://b" } }), ["redirectUrl"])).toBe("https://b");
+    expect(
+      pickLuckpayField(
+        build({ status: "ok", data: { redirectUrl: "https://b" } }),
+        ["redirectUrl"],
+      ),
+    ).toBe("https://b");
   });
 
   it("TC-LP-10: honours name order and skips blank values", () => {
-    const r = build({ data: { redirectUrl: "   ", redirect_url: "https://c" } });
-    expect(pickLuckpayField(r, ["redirectUrl", "redirect_url"])).toBe("https://c");
+    const r = build({
+      data: { redirectUrl: "   ", redirect_url: "https://c" },
+    });
+    expect(pickLuckpayField(r, ["redirectUrl", "redirect_url"])).toBe(
+      "https://c",
+    );
   });
 
   it("TC-LP-11: returns null when no name matches", () => {
@@ -208,12 +227,15 @@ describe("pickLuckpayField", () => {
 describe("Luckpay config resolution", () => {
   it("TC-LP-12: DigiLocker falls back to the core credentials when no override is set", () => {
     // The production shape: one account, one base URL for all five endpoints.
-    const resolved = resolveLuckpayConfigFrom({
-      bgv_provider: "befisc_luckpay",
-      luckpay_api_url: PROD,
-      luckpay_basic_token: "core-token",
-      luckpay_client_id: "LPM14",
-    }, "digilocker");
+    const resolved = resolveLuckpayConfigFrom(
+      {
+        bgv_provider: "befisc_luckpay",
+        luckpay_api_url: PROD,
+        luckpay_basic_token: "core-token",
+        luckpay_client_id: "LPM14",
+      },
+      "digilocker",
+    );
 
     expect(resolved.baseUrl).toBe(PROD);
     expect(resolved.basicToken).toBe("core-token");
@@ -222,15 +244,18 @@ describe("Luckpay config resolution", () => {
   });
 
   it("TC-LP-13: DigiLocker overrides win when configured", () => {
-    const resolved = resolveLuckpayConfigFrom({
-      bgv_provider: "befisc_luckpay",
-      luckpay_api_url: PROD,
-      luckpay_basic_token: "core-token",
-      luckpay_client_id: "LPM14",
-      luckpay_digilocker_base_url: STAGING,
-      luckpay_digilocker_basic_token: "dl-token",
-      luckpay_digilocker_client_id: "LPM153",
-    }, "digilocker");
+    const resolved = resolveLuckpayConfigFrom(
+      {
+        bgv_provider: "befisc_luckpay",
+        luckpay_api_url: PROD,
+        luckpay_basic_token: "core-token",
+        luckpay_client_id: "LPM14",
+        luckpay_digilocker_base_url: STAGING,
+        luckpay_digilocker_basic_token: "dl-token",
+        luckpay_digilocker_client_id: "LPM153",
+      },
+      "digilocker",
+    );
 
     expect(resolved.baseUrl).toBe(STAGING);
     expect(resolved.basicToken).toBe("dl-token");
@@ -238,24 +263,30 @@ describe("Luckpay config resolution", () => {
   });
 
   it("TC-LP-14: core scope ignores the DigiLocker overrides", () => {
-    const resolved = resolveLuckpayConfigFrom({
-      bgv_provider: "befisc_luckpay",
-      luckpay_api_url: PROD,
-      luckpay_basic_token: "core-token",
-      luckpay_client_id: "LPM14",
-      luckpay_digilocker_base_url: STAGING,
-    }, "core");
+    const resolved = resolveLuckpayConfigFrom(
+      {
+        bgv_provider: "befisc_luckpay",
+        luckpay_api_url: PROD,
+        luckpay_basic_token: "core-token",
+        luckpay_client_id: "LPM14",
+        luckpay_digilocker_base_url: STAGING,
+      },
+      "core",
+    );
 
     expect(resolved.baseUrl).toBe(PROD);
   });
 
   it("TC-LP-15: strips a trailing slash and embedded whitespace from pasted credentials", () => {
-    const resolved = resolveLuckpayConfigFrom({
-      bgv_provider: "befisc_luckpay",
-      luckpay_api_url: `${PROD}/`,
-      luckpay_basic_token: "tok en\n",
-      luckpay_client_id: " LPM14 ",
-    }, "core");
+    const resolved = resolveLuckpayConfigFrom(
+      {
+        bgv_provider: "befisc_luckpay",
+        luckpay_api_url: `${PROD}/`,
+        luckpay_basic_token: "tok en\n",
+        luckpay_client_id: " LPM14 ",
+      },
+      "core",
+    );
 
     expect(resolved.baseUrl).toBe(PROD);
     expect(resolved.basicToken).toBe("token");
@@ -263,7 +294,12 @@ describe("Luckpay config resolution", () => {
   });
 
   it("TC-LP-16: missing credentials raise a 503", () => {
-    const bare = normalizeLuckpayConfig({ baseUrl: PROD, basicToken: "", clientId: "", enabled: true });
+    const bare = normalizeLuckpayConfig({
+      baseUrl: PROD,
+      basicToken: "",
+      clientId: "",
+      enabled: true,
+    });
     expect(() => assertLuckpayCredentials(bare)).toThrow(/not configured/i);
     try {
       assertLuckpayCredentials(bare);

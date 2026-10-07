@@ -25,7 +25,10 @@ import { describe, expect, it } from "vitest";
  * scope", which is checkable without standing up the whole fan-out.
  */
 describe("getWorkforceDashboard scopes its non-employee queries", () => {
-  const source = readFileSync(resolve(__dirname, "../management.service.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(__dirname, "../management.service.ts"),
+    "utf-8",
+  );
 
   /** The body of getWorkforceDashboard, so assertions cannot pass on some other method. */
   const dashboard = (() => {
@@ -48,7 +51,9 @@ describe("getWorkforceDashboard scopes its non-employee queries", () => {
     expect(sql, "must reach employees to filter on branch/process").toMatch(
       /JOIN\s+employees\s+e\s+ON\s+e\.id\s*=\s*adr\.employee_id/,
     );
-    expect(sql, "must apply the caller's scope").toContain("${empScopeJoinWhere}");
+    expect(sql, "must apply the caller's scope").toContain(
+      "${empScopeJoinWhere}",
+    );
   });
 
   it("scopes the team roster instead of listing the whole company alphabetically", () => {
@@ -66,13 +71,17 @@ describe("getWorkforceDashboard scopes its non-employee queries", () => {
 
   it("scopes the 90-day leave summary", () => {
     const sql = statementContaining("INTERVAL 90 DAY");
-    expect(sql).toMatch(/JOIN\s+employees\s+e\s+ON\s+e\.id\s*=\s*lr\.employee_id/);
+    expect(sql).toMatch(
+      /JOIN\s+employees\s+e\s+ON\s+e\.id\s*=\s*lr\.employee_id/,
+    );
     expect(sql).toContain("${empScopeJoinWhere}");
   });
 
   it("scopes the submitted expense-claim queue", () => {
     const sql = statementContaining("expense_type = 'employee_claim'");
-    expect(sql).toMatch(/JOIN\s+employees\s+e\s+ON\s+e\.id\s*=\s*ec\.employee_id/);
+    expect(sql).toMatch(
+      /JOIN\s+employees\s+e\s+ON\s+e\.id\s*=\s*ec\.employee_id/,
+    );
     expect(sql).toContain("${empScopeJoinWhere}");
   });
 
@@ -81,7 +90,9 @@ describe("getWorkforceDashboard scopes its non-employee queries", () => {
     // scoped on itself rather than through a join that would not compile.
     const sql = statementContaining("as overdue");
     expect(sql).toContain("${workItemScopeWhere}");
-    expect(sql).not.toMatch(/JOIN\s+employees\s+e\s+ON\s+e\.id\s*=\s*wi\.employee_id/);
+    expect(sql).not.toMatch(
+      /JOIN\s+employees\s+e\s+ON\s+e\.id\s*=\s*wi\.employee_id/,
+    );
   });
 
   it("does not claim zero projects at risk when nothing computes that figure", () => {

@@ -68,12 +68,16 @@ function n(v: unknown): number {
 function periodsForFinancialYear(financialYear: string): string[] {
   const startYear = Number(financialYear.split("-")[0]);
   const periods: string[] = [];
-  for (let m = 4; m <= 12; m++) periods.push(`${startYear}-${String(m).padStart(2, "0")}`);
-  for (let m = 1; m <= 3; m++) periods.push(`${startYear + 1}-${String(m).padStart(2, "0")}`);
+  for (let m = 4; m <= 12; m++)
+    periods.push(`${startYear}-${String(m).padStart(2, "0")}`);
+  for (let m = 1; m <= 3; m++)
+    periods.push(`${startYear + 1}-${String(m).padStart(2, "0")}`);
   return periods;
 }
 
-async function budgetByBranchForPeriod(period: string): Promise<Map<string, number>> {
+async function budgetByBranchForPeriod(
+  period: string,
+): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("finance_budget_line_snapshot"))) return out;
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -101,9 +105,10 @@ async function budgetByBranchForPeriod(period: string): Promise<Map<string, numb
            AND b.reopen_additional_amount <> 0
      ) sanctioned
       GROUP BY branch_id`,
-    [period, period]
+    [period, period],
   );
-  for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
+  for (const r of rows)
+    out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
   return out;
 }
 
@@ -120,7 +125,9 @@ async function budgetByBranchForPeriod(period: string): Promise<Map<string, numb
  * rows, and without this, GRN actuals land on one id while budget (already deduped) lands on
  * the other, so a single real branch shows as two incomplete halves instead of one row.
  * Same fix, applied on the actual side this time instead of the budget side. */
-async function actualByBranchForPeriod(period: string): Promise<Map<string, number>> {
+async function actualByBranchForPeriod(
+  period: string,
+): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT bm.id AS branch_id, SUM(${grnRequestExGstSql("g")}) AS amount
@@ -132,15 +139,16 @@ async function actualByBranchForPeriod(period: string): Promise<Map<string, numb
            ) bm ON bm.nm COLLATE utf8mb4_unicode_ci = UPPER(TRIM(gb.branch_name)) COLLATE utf8mb4_unicode_ci
       WHERE g.accounting_period = ? AND g.status NOT IN ('rejected', 'cancelled')
       GROUP BY bm.id`,
-    [period]
+    [period],
   );
-  for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
+  for (const r of rows)
+    out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
   return out;
 }
 
 export async function getAnnualBudgetSummary(
   financialYear: string,
-  branchIds?: string[]
+  branchIds?: string[],
 ): Promise<AnnualBudgetSummary> {
   const periods = periodsForFinancialYear(financialYear);
 
@@ -156,14 +164,19 @@ export async function getAnnualBudgetSummary(
        JOIN branch_master bm ON bm.id = canon.id
        JOIN branch_master sib ON UPPER(TRIM(sib.branch_name)) = canon.nm
       GROUP BY canon.id, bm.branch_name
-      ORDER BY bm.branch_name`
+      ORDER BY bm.branch_name`,
   );
   const requestedIds = new Set(branchIds ?? []);
-  const branchRows = branchIds && branchIds.length
-    ? canonicalRows.filter((r) =>
-        String(r.sibling_ids).split(",").some((sib) => requestedIds.has(sib)) || requestedIds.has(String(r.id))
-      )
-    : canonicalRows;
+  const branchRows =
+    branchIds && branchIds.length
+      ? canonicalRows.filter(
+          (r) =>
+            String(r.sibling_ids)
+              .split(",")
+              .some((sib) => requestedIds.has(sib)) ||
+            requestedIds.has(String(r.id)),
+        )
+      : canonicalRows;
 
   // One pass per period (not per branch x period) — 12 queries each side regardless of how
   // many branches are selected, same shape ceo-overview.service.ts already uses per-period.
@@ -184,8 +197,12 @@ export async function getAnnualBudgetSummary(
     const annualBudget = months.reduce((s, m) => s + m.budget, 0);
     const annualActual = months.reduce((s, m) => s + m.actual, 0);
     return {
-      branchId, branchName: String(b.branch_name), months,
-      annualBudget, annualActual, annualVariance: annualBudget - annualActual,
+      branchId,
+      branchName: String(b.branch_name),
+      months,
+      annualBudget,
+      annualActual,
+      annualVariance: annualBudget - annualActual,
     };
   });
 
@@ -195,7 +212,7 @@ export async function getAnnualBudgetSummary(
       actual: acc.actual + b.annualActual,
       variance: acc.variance + b.annualVariance,
     }),
-    { budget: 0, actual: 0, variance: 0 }
+    { budget: 0, actual: 0, variance: 0 },
   );
 
   return { financialYear, periods, branches, grandTotal };
@@ -204,7 +221,9 @@ export async function getAnnualBudgetSummary(
 /** Branch options for the page's filter picker — same name-deduped canonical id every other
  *  function here resolves to (MIN(id) per distinct upper/trimmed branch_name), so a branchId
  *  picked from this list always matches a row getAnnualBudgetSummary() actually returns. */
-export async function getAnnualBudgetSummaryBranches(): Promise<{ id: string; branchName: string }[]> {
+export async function getAnnualBudgetSummaryBranches(): Promise<
+  { id: string; branchName: string }[]
+> {
   // Same MIN(id)-per-normalized-name canonicalization as getCompanyBudgetConsolidation's own
   // canonicalRows query, joined back to branch_master by that id (not by the GROUP BY
   // expression itself) so branch_name is read from a real row, not an ambiguous aggregate —
@@ -213,9 +232,15 @@ export async function getAnnualBudgetSummaryBranches(): Promise<{ id: string; br
     `SELECT bm.id, bm.branch_name
        FROM (SELECT MIN(id) AS id FROM branch_master GROUP BY UPPER(TRIM(branch_name))) canon
        JOIN branch_master bm ON bm.id = canon.id
-      ORDER BY bm.branch_name`
+      ORDER BY bm.branch_name`,
   );
-  return rows.map((r) => ({ id: String(r.id), branchName: String(r.branch_name) }));
+  return rows.map((r) => ({
+    id: String(r.id),
+    branchName: String(r.branch_name),
+  }));
 }
 
-export const annualBudgetSummaryService = { getAnnualBudgetSummary, getAnnualBudgetSummaryBranches };
+export const annualBudgetSummaryService = {
+  getAnnualBudgetSummary,
+  getAnnualBudgetSummaryBranches,
+};

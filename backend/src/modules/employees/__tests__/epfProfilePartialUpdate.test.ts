@@ -21,7 +21,10 @@ import { fileURLToPath } from "url";
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const src = fs.readFileSync(path.join(here, "..", "employee.compliance.routes.ts"), "utf8");
+const src = fs.readFileSync(
+  path.join(here, "..", "employee.compliance.routes.ts"),
+  "utf8",
+);
 
 // The profile handler, from its route declaration to the audit call that follows.
 const handler = (() => {
@@ -49,18 +52,28 @@ describe("EPF profile update only writes what was sent", () => {
     // The SET clause is interpolated, so the column names must never come from
     // user input.
     expect(src).toMatch(/const EPF_PROFILE_WRITABLE_COLUMNS = \[/);
-    expect(handler).toMatch(/for \(const column of EPF_PROFILE_WRITABLE_COLUMNS\)/);
+    expect(handler).toMatch(
+      /for \(const column of EPF_PROFILE_WRITABLE_COLUMNS\)/,
+    );
     // No request-derived key may reach the SQL string.
-    expect(handler).not.toMatch(/Object\.keys\(body\)[^)]*\)\s*\{[^}]*sets\.push/);
+    expect(handler).not.toMatch(
+      /Object\.keys\(body\)[^)]*\)\s*\{[^}]*sets\.push/,
+    );
   });
 
   it("does not let an absent boolean flag clear a stored true", () => {
     // `req.body.flag ? 1 : 0` outside a presence check turns an unsent flag into 0.
-    const flags = ["previous_pf_member", "previous_eps_member", "international_worker",
-      "specially_abled", "excluded_employee"];
+    const flags = [
+      "previous_pf_member",
+      "previous_eps_member",
+      "international_worker",
+      "specially_abled",
+      "excluded_employee",
+    ];
     for (const flag of flags) {
-      expect(handler, `${flag} still coerced unconditionally`)
-        .not.toMatch(new RegExp(`req\\.body\\.${flag} \\? 1 : 0`));
+      expect(handler, `${flag} still coerced unconditionally`).not.toMatch(
+        new RegExp(`req\\.body\\.${flag} \\? 1 : 0`),
+      );
     }
     expect(src).toMatch(/EPF_PROFILE_BOOLEAN_COLUMNS = new Set\(/);
   });

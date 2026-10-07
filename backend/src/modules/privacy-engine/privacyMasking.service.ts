@@ -50,17 +50,20 @@ export function maskUan(value: string | null | undefined): string {
  */
 export function applyFieldMasking(
   record: Record<string, unknown>,
-  fields: string[]
+  fields: string[],
 ): Record<string, unknown> {
   const result = { ...record };
   for (const field of fields) {
     if (!(field in result)) continue;
     const val = result[field] as string | null | undefined;
     if (field.includes("pan")) result[field] = maskPan(val);
-    else if (field.includes("aadhaar") || field.includes("aadhar")) result[field] = maskAadhaar(val);
-    else if (field.includes("bank_account") || field.includes("account_no")) result[field] = maskBankAccount(val);
+    else if (field.includes("aadhaar") || field.includes("aadhar"))
+      result[field] = maskAadhaar(val);
+    else if (field.includes("bank_account") || field.includes("account_no"))
+      result[field] = maskBankAccount(val);
     else if (field.includes("email")) result[field] = maskEmail(val);
-    else if (field.includes("mobile") || field.includes("phone")) result[field] = maskMobile(val);
+    else if (field.includes("mobile") || field.includes("phone"))
+      result[field] = maskMobile(val);
     else if (field.includes("uan")) result[field] = maskUan(val);
     else result[field] = "***";
   }

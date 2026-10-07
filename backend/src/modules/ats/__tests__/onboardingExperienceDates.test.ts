@@ -28,13 +28,17 @@ vi.mock("../../../db/mysql.js", () => ({
       // validateOnboardingToken reads the token off ats_onboarding_bridge and
       // rejects an expired one, so the row has to carry a future expiry.
       if (s.includes("ats_onboarding_bridge")) {
-        return [[{
-          candidate_id: CANDIDATE,
-          id: CANDIDATE,
-          onboarding_token_expires_at: "2099-01-01T00:00:00.000Z",
-          full_name: "TEST CANDIDATE",
-          profile_status: "in_progress",
-        }]];
+        return [
+          [
+            {
+              candidate_id: CANDIDATE,
+              id: CANDIDATE,
+              onboarding_token_expires_at: "2099-01-01T00:00:00.000Z",
+              full_name: "TEST CANDIDATE",
+              profile_status: "in_progress",
+            },
+          ],
+        ];
       }
       return [[]];
     }),
@@ -56,7 +60,9 @@ const INPUT = {
 
 function experienceInsert() {
   return calls.find(
-    (c) => c.sql.includes("candidate_onboarding_experience") && /INSERT/i.test(c.sql),
+    (c) =>
+      c.sql.includes("candidate_onboarding_experience") &&
+      /INSERT/i.test(c.sql),
   );
 }
 
@@ -69,7 +75,10 @@ describe("saveExperienceDetails persists previous-employment dates", () => {
     await saveExperienceDetails("any-token", INPUT).catch(() => undefined);
 
     const insert = experienceInsert();
-    expect(insert, "no INSERT into candidate_onboarding_experience was issued").toBeDefined();
+    expect(
+      insert,
+      "no INSERT into candidate_onboarding_experience was issued",
+    ).toBeDefined();
 
     expect(insert!.sql).toContain("from_date");
     expect(insert!.sql).toContain("to_date");
@@ -92,17 +101,24 @@ describe("saveExperienceDetails persists previous-employment dates", () => {
     await saveExperienceDetails("any-token", INPUT).catch(() => undefined);
 
     const insert = experienceInsert()!;
-    const onDuplicate = insert.sql.slice(insert.sql.search(/ON DUPLICATE KEY UPDATE/i));
+    const onDuplicate = insert.sql.slice(
+      insert.sql.search(/ON DUPLICATE KEY UPDATE/i),
+    );
     expect(onDuplicate).toContain("from_date = VALUES(from_date)");
     expect(onDuplicate).toContain("to_date = VALUES(to_date)");
-    expect(onDuplicate).toContain("reason_for_leaving = VALUES(reason_for_leaving)");
+    expect(onDuplicate).toContain(
+      "reason_for_leaving = VALUES(reason_for_leaving)",
+    );
   });
 
   it("stores an empty date as NULL rather than the empty string", async () => {
     // The inputs are type=date and post "" when cleared. '' is not a valid DATE
     // and MySQL would coerce it to 0000-00-00 under a lax sql_mode.
-    await saveExperienceDetails("any-token", { ...INPUT, fromDate: "", toDate: "" })
-      .catch(() => undefined);
+    await saveExperienceDetails("any-token", {
+      ...INPUT,
+      fromDate: "",
+      toDate: "",
+    }).catch(() => undefined);
 
     const insert = experienceInsert()!;
     expect(insert.params).not.toContain("");

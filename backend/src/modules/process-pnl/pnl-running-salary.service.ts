@@ -57,12 +57,19 @@ interface EmployeeRow extends RowDataPacket {
  * Same support test as bpo-pnl.service.ts's isSupportRole, used only where no classification rule
  * matches. Kept deliberately identical so the fallback cannot disagree between the two surfaces.
  */
-function isSupportRole(departmentName: string | null, designationName: string | null): boolean {
+function isSupportRole(
+  departmentName: string | null,
+  designationName: string | null,
+): boolean {
   const department = (departmentName ?? "").toLowerCase();
   const designation = (designationName ?? "").toLowerCase();
-  const supportDepartment = /(quality|training|learning|wfm|workforce|mis|human resource|\bhr\b|admin|information technology|\bit\b|finance|accounts|recruit|facility|security|maintenance|compliance|payroll)/;
-  const supportDesignation = /(team leader|\btl\b|assistant manager|\bam\b|manager|supervisor|trainer|quality|auditor|wfm|mis|hr|recruiter|admin|it support|engineer|accounts|finance|facility|security|coach|sme|subject matter)/;
-  return supportDepartment.test(department) || supportDesignation.test(designation);
+  const supportDepartment =
+    /(quality|training|learning|wfm|workforce|mis|human resource|\bhr\b|admin|information technology|\bit\b|finance|accounts|recruit|facility|security|maintenance|compliance|payroll)/;
+  const supportDesignation =
+    /(team leader|\btl\b|assistant manager|\bam\b|manager|supervisor|trainer|quality|auditor|wfm|mis|hr|recruiter|admin|it support|engineer|accounts|finance|facility|security|coach|sme|subject matter)/;
+  return (
+    supportDepartment.test(department) || supportDesignation.test(designation)
+  );
 }
 
 /**
@@ -79,11 +86,17 @@ export function resolveBucket(row: {
   designation_name: string | null;
   rule_bucket: string | null;
 }): PnlPeopleBucket {
-  if (row.rule_bucket === "agent_salary" || row.rule_bucket === "dsc_people" || row.rule_bucket === "bmc_people") {
+  if (
+    row.rule_bucket === "agent_salary" ||
+    row.rule_bucket === "dsc_people" ||
+    row.rule_bucket === "bmc_people"
+  ) {
     return row.rule_bucket;
   }
   if (!row.process_id) return "bmc_people";
-  return isSupportRole(row.department_name, row.designation_name) ? "dsc_people" : "agent_salary";
+  return isSupportRole(row.department_name, row.designation_name)
+    ? "dsc_people"
+    : "agent_salary";
 }
 
 /**
@@ -139,7 +152,7 @@ async function loadEmployees(
                           JOIN salary_prep_run spr ON spr.id = spl.run_id
                          WHERE spl.employee_id = e.id AND spr.run_month = ?))
         ${branchClause}`,
-    [periodCode, ...params]
+    [periodCode, ...params],
   );
   return rows;
 }
@@ -168,7 +181,11 @@ interface SnapshotRow {
   totalDays: number;
 }
 
-async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: string): Promise<void> {
+async function flushRows(
+  rows: SnapshotRow[],
+  periodCode: string,
+  asOfDate: string,
+): Promise<void> {
   if (rows.length === 0) return;
 
   // For employees with no cost centre, the unique key includes NULL which MySQL won't
@@ -181,11 +198,13 @@ async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: stri
     await db.execute(
       `DELETE FROM pnl_running_salary_snapshot
         WHERE period_code = ? AND employee_id IN (${nullPlaceholders}) AND cost_centre_id IS NULL`,
-      [periodCode, ...nullCcEmployeeIds]
+      [periodCode, ...nullCcEmployeeIds],
     );
   }
 
-  const placeholders = rows.map(() => "(UUID(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())").join(",");
+  const placeholders = rows
+    .map(() => "(UUID(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())")
+    .join(",");
   const params: unknown[] = [];
   for (const row of rows) {
     params.push(
@@ -202,7 +221,7 @@ async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: stri
       row.grossMonthly,
       row.earnedDays,
       row.totalDays,
-      asOfDate
+      asOfDate,
     );
   }
   await db.query(
@@ -225,7 +244,7 @@ async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: stri
        total_payable_days = VALUES(total_payable_days),
        as_of_date = VALUES(as_of_date),
        computed_at = NOW()`,
-    params
+    params,
   );
 }
 
@@ -238,17 +257,22 @@ async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: stri
  */
 export async function refreshRunningSalarySnapshot(
   periodCode: string,
-  options: { branchId?: string; asOfDate?: string; employeeId?: string } = {}
+  options: { branchId?: string; asOfDate?: string; employeeId?: string } = {},
 ): Promise<SnapshotResult> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) {
     throw new Error("A valid period (YYYY-MM) is required");
   }
   const runMonth = `${periodCode}-01`;
   // Default to today in IST, matching how running-salary.service.ts resolves month boundaries.
-  const asOfDate = options.asOfDate
-    ?? new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const asOfDate =
+    options.asOfDate ??
+    new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  const employees = await loadEmployees(periodCode, options.branchId, options.employeeId);
+  const employees = await loadEmployees(
+    periodCode,
+    options.branchId,
+    options.employeeId,
+  );
   const byBucket: Record<PnlPeopleBucket, number> = {
     agent_salary: 0,
     dsc_people: 0,
@@ -292,7 +316,11 @@ export async function refreshRunningSalarySnapshot(
       const [yr, mo] = periodCode.split("-").map(Number);
       const monthEnd = new Date(yr, mo, 0).toISOString().slice(0, 10); // last day of month
 
-      const ccPeriods = await getCostCentrePeriods(employee.id, monthStart, monthEnd);
+      const ccPeriods = await getCostCentrePeriods(
+        employee.id,
+        monthStart,
+        monthEnd,
+      );
 
       if (ccPeriods.length > 1) {
         // Mid-month transfer: apportion earned salary by days
@@ -301,11 +329,16 @@ export async function refreshRunningSalarySnapshot(
           const ratio = period.days / totalPeriodDays;
           const apportionedEarned = Math.round(earned * ratio * 100) / 100;
           const apportionedGross = Math.round(grossMonthly * ratio * 100) / 100;
-          const apportionedEarnedDays = Math.round(earnedDays * ratio * 100) / 100;
-          const apportionedTotalDays = Math.round(totalDays * ratio * 100) / 100;
+          const apportionedEarnedDays =
+            Math.round(earnedDays * ratio * 100) / 100;
+          const apportionedTotalDays =
+            Math.round(totalDays * ratio * 100) / 100;
 
           // Override employee's cost_centre_id for this snapshot row
-          const employeeForPeriod = { ...employee, cost_centre_id: period.costCentreId };
+          const employeeForPeriod = {
+            ...employee,
+            cost_centre_id: period.costCentreId,
+          };
           pending.push({
             employee: employeeForPeriod as typeof employee,
             bucket,
@@ -344,7 +377,10 @@ export async function refreshRunningSalarySnapshot(
   };
 
   await Promise.all(
-    Array.from({ length: Math.min(REFRESH_CONCURRENCY, employees.length) }, () => worker())
+    Array.from(
+      { length: Math.min(REFRESH_CONCURRENCY, employees.length) },
+      () => worker(),
+    ),
   );
   await flushRows(pending, periodCode, asOfDate);
 
@@ -387,11 +423,16 @@ export interface PeopleCostByKey {
   asOfDate: string | null;
 }
 
-const emptyBuckets = (): Record<PnlPeopleBucket, number> =>
-  ({ agent_salary: 0, dsc_people: 0, bmc_people: 0 });
+const emptyBuckets = (): Record<PnlPeopleBucket, number> => ({
+  agent_salary: 0,
+  dsc_people: 0,
+  bmc_people: 0,
+});
 
 /** Read the snapshot for a period, grouped the way the statement needs it. */
-export async function getRunningPeopleCost(periodCode: string): Promise<PeopleCostByKey> {
+export async function getRunningPeopleCost(
+  periodCode: string,
+): Promise<PeopleCostByKey> {
   const out: PeopleCostByKey = {
     byBranch: new Map(),
     byProcess: new Map(),
@@ -429,7 +470,7 @@ export async function getRunningPeopleCost(periodCode: string): Promise<PeopleCo
        ${attribution.join}
       WHERE s.period_code = ?
       GROUP BY ${attribution.effectiveBranchExpr}, ${attribution.effectiveProcessExpr}, s.pnl_bucket`,
-    [periodCode]
+    [periodCode],
   );
 
   for (const row of rows) {
@@ -475,10 +516,15 @@ export async function getRunningPeopleCost(periodCode: string): Promise<PeopleCo
        ${coverageAttribution.join}
       WHERE e.active_status = 1
       GROUP BY ${coverageAttribution.effectiveBranchExpr}, ${coverageAttribution.effectiveProcessExpr}`,
-    [periodCode]
+    [periodCode],
   );
 
-  const addCoverage = (map: Map<string, PeopleCoverage>, key: string, active: number, covered: number) => {
+  const addCoverage = (
+    map: Map<string, PeopleCoverage>,
+    key: string,
+    active: number,
+    covered: number,
+  ) => {
     const current = map.get(key) ?? { activeEmployees: 0, coveredEmployees: 0 };
     current.activeEmployees += active;
     current.coveredEmployees += covered;
@@ -488,10 +534,21 @@ export async function getRunningPeopleCost(periodCode: string): Promise<PeopleCo
   for (const row of coverage) {
     const active = Number(row.active_employees ?? 0);
     const covered = Number(row.covered_employees ?? 0);
-    if (row.branch_id) addCoverage(out.coverageByBranch, String(row.branch_id), active, covered);
-    if (row.process_id) addCoverage(out.coverageByProcess, String(row.process_id), active, covered);
+    if (row.branch_id)
+      addCoverage(out.coverageByBranch, String(row.branch_id), active, covered);
+    if (row.process_id)
+      addCoverage(
+        out.coverageByProcess,
+        String(row.process_id),
+        active,
+        covered,
+      );
   }
   return out;
 }
 
-export const pnlRunningSalaryService = { refreshRunningSalarySnapshot, getRunningPeopleCost, resolveBucket };
+export const pnlRunningSalaryService = {
+  refreshRunningSalarySnapshot,
+  getRunningPeopleCost,
+  resolveBucket,
+};

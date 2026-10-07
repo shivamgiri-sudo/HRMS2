@@ -24,7 +24,9 @@ function normalizeIfscPrefix(value: string | null | undefined): string | null {
   if (value === null || value === undefined || value === "") return null;
   const upper = value.trim().toUpperCase();
   if (!IFSC_PREFIX_RE.test(upper)) {
-    throw new BankMasterError("IFSC prefix must be exactly 4 letters (e.g. HDFC, SBIN) — the first 4 characters of any branch IFSC code at this bank.");
+    throw new BankMasterError(
+      "IFSC prefix must be exactly 4 letters (e.g. HDFC, SBIN) — the first 4 characters of any branch IFSC code at this bank.",
+    );
   }
   return upper;
 }
@@ -38,7 +40,9 @@ export interface BankMasterInput {
 export const bankMasterService = {
   async list(includeInactive = false): Promise<RowDataPacket[]> {
     const where = includeInactive ? "" : "WHERE active_status = 1";
-    const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM bank_master ${where} ORDER BY bank_name`);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM bank_master ${where} ORDER BY bank_name`,
+    );
     return rows as RowDataPacket[];
   },
 
@@ -55,14 +59,26 @@ export const bankMasterService = {
         [id, bankName, bankCode, ifscPrefix],
       );
     } catch (error: any) {
-      if (error?.code === "ER_DUP_ENTRY") throw new BankMasterError("A bank with this name already exists.", 409);
+      if (error?.code === "ER_DUP_ENTRY")
+        throw new BankMasterError("A bank with this name already exists.", 409);
       throw error;
     }
     return { id };
   },
 
-  async update(id: string, input: { bankName?: string; bankCode?: string | null; ifscPrefix?: string | null; activeStatus?: boolean }): Promise<void> {
-    const ifscPrefix = input.ifscPrefix !== undefined ? normalizeIfscPrefix(input.ifscPrefix) : undefined;
+  async update(
+    id: string,
+    input: {
+      bankName?: string;
+      bankCode?: string | null;
+      ifscPrefix?: string | null;
+      activeStatus?: boolean;
+    },
+  ): Promise<void> {
+    const ifscPrefix =
+      input.ifscPrefix !== undefined
+        ? normalizeIfscPrefix(input.ifscPrefix)
+        : undefined;
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE bank_master
           SET bank_name = COALESCE(?, bank_name),
@@ -74,11 +90,12 @@ export const bankMasterService = {
         input.bankName?.trim() ?? null,
         input.bankCode?.trim() ?? null,
         ifscPrefix ?? null,
-        input.activeStatus === undefined ? null : (input.activeStatus ? 1 : 0),
+        input.activeStatus === undefined ? null : input.activeStatus ? 1 : 0,
         id,
       ],
     );
-    if (result.affectedRows !== 1) throw new BankMasterError("Bank not found.", 404);
+    if (result.affectedRows !== 1)
+      throw new BankMasterError("Bank not found.", 404);
   },
 
   async delete(id: string): Promise<void> {

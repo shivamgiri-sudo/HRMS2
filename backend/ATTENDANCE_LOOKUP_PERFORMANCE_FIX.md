@@ -20,13 +20,14 @@
 ### Query Performance Bottlenecks
 
 **Before Optimization**:
+
 ```sql
 -- SLOW: Window function + full table scan
 LEFT JOIN (
   SELECT employee_id, net_salary, run_month
   FROM (
     SELECT spl.employee_id, spl.net_salary, spr.run_month,
-           ROW_NUMBER() OVER (PARTITION BY spl.employee_id 
+           ROW_NUMBER() OVER (PARTITION BY spl.employee_id
                               ORDER BY spr.run_month DESC, spr.created_at DESC) AS rn
     FROM salary_prep_line spl
     JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -36,6 +37,7 @@ LEFT JOIN (
 ```
 
 **Problems**:
+
 - Window function processes ALL rows for ALL employees
 - No early termination (must scan entire table)
 - Creates temporary result set with row numbers
@@ -51,12 +53,13 @@ LEFT JOIN (
 **File**: `backend/src/modules/employees/employee.routes.ts`
 
 **Before** (Window Function):
+
 ```sql
 LEFT JOIN (
   SELECT employee_id, net_salary, run_month
   FROM (
     SELECT spl.employee_id, spl.net_salary, spr.run_month,
-           ROW_NUMBER() OVER (PARTITION BY spl.employee_id 
+           ROW_NUMBER() OVER (PARTITION BY spl.employee_id
                               ORDER BY spr.run_month DESC) AS rn
     FROM salary_prep_line spl
     JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -66,6 +69,7 @@ LEFT JOIN (
 ```
 
 **After** (LATERAL Join):
+
 ```sql
 LEFT JOIN LATERAL (
   SELECT spl.net_salary, spr.run_month
@@ -78,6 +82,7 @@ LEFT JOIN LATERAL (
 ```
 
 **Benefits**:
+
 - ✅ Processes only rows for CURRENT employee (not all employees)
 - ✅ Early termination after LIMIT 1 (stops immediately)
 - ✅ Uses indexes on employee_id for direct lookup
@@ -89,18 +94,21 @@ LEFT JOIN LATERAL (
 ### 2. ✅ Attendance Aggregation Optimization
 
 **Before**:
+
 ```sql
 SUM(attendance_status = 'present') AS present_days,
 COALESCE(SUM(CASE ...)) AS lwp_days
 ```
 
 **After**:
+
 ```sql
 COUNT(CASE WHEN attendance_status = 'present' THEN 1 END) AS present_days,
 SUM(CASE WHEN attendance_status NOT IN (...) THEN COALESCE(lwp_value, 0) ELSE 0 END) AS lwp_days
 ```
 
 **Benefits**:
+
 - ✅ COUNT(CASE) is more explicit and can be optimized by query planner
 - ✅ Changed `record_date BETWEEN ? AND ?` to `record_date >= ? AND record_date <= ?`
 - ✅ Better index utilization with >= and <= operators
@@ -115,31 +123,32 @@ SUM(CASE WHEN attendance_status NOT IN (...) THEN COALESCE(lwp_value, 0) ELSE 0 
 
 ```sql
 -- Index 1: Composite for attendance monthly aggregation
-CREATE INDEX idx_adr_record_date_employee 
+CREATE INDEX idx_adr_record_date_employee
   ON attendance_daily_record(record_date, employee_id);
 
 -- Index 2: Covering index for attendance with status
-CREATE INDEX idx_adr_employee_date_status 
+CREATE INDEX idx_adr_employee_date_status
   ON attendance_daily_record(employee_id, record_date, attendance_status);
 
 -- Index 3: Salary latest lookup optimization
-CREATE INDEX idx_spl_employee_run 
+CREATE INDEX idx_spl_employee_run
   ON salary_prep_line(employee_id, run_id);
 
 -- Index 4: Salary run sorting optimization
-CREATE INDEX idx_spr_run_month_created 
+CREATE INDEX idx_spr_run_month_created
   ON salary_prep_run(run_month DESC, created_at DESC);
 
 -- Index 5: Employee search optimization (full_name)
-CREATE INDEX idx_employees_full_name 
+CREATE INDEX idx_employees_full_name
   ON employees(full_name);
 
 -- Index 6: Employee search optimization (code)
-CREATE INDEX idx_employees_code 
+CREATE INDEX idx_employees_code
   ON employees(employee_code);
 ```
 
 **Impact**:
+
 - ✅ Converts full table scans to index range scans
 - ✅ Attendance query: O(N) → O(log N + M) where M = rows in date range
 - ✅ Salary query: Uses index for direct employee_id lookup
@@ -152,6 +161,7 @@ CREATE INDEX idx_employees_code
 **File**: `backend/src/modules/employees/employee.routes.ts`
 
 **Implementation**:
+
 ```typescript
 // Simple in-memory cache with 30-second TTL
 const hrHubCache = new Map<string, CacheEntry>();
@@ -171,6 +181,7 @@ setCache(cacheKey, result);
 ```
 
 **Benefits**:
+
 - ✅ Repeated requests served instantly from memory
 - ✅ No database hit for duplicate queries within 30 seconds
 - ✅ Auto-cleanup of stale entries (max 100 cached items)
@@ -183,32 +194,33 @@ setCache(cacheKey, result);
 
 ### Before Optimization
 
-| Metric | Value |
-|--------|-------|
-| **Page Load Time** | 8-15 seconds |
-| **Database Query Time** | 6-12 seconds |
-| **Main Query Plan** | Full table scan + window function |
-| **Attendance Subquery** | Full table scan (500K+ rows) |
-| **Salary Subquery** | Window function over all employees |
-| **Caching** | None |
+| Metric                  | Value                              |
+| ----------------------- | ---------------------------------- |
+| **Page Load Time**      | 8-15 seconds                       |
+| **Database Query Time** | 6-12 seconds                       |
+| **Main Query Plan**     | Full table scan + window function  |
+| **Attendance Subquery** | Full table scan (500K+ rows)       |
+| **Salary Subquery**     | Window function over all employees |
+| **Caching**             | None                               |
 
 ### After Optimization
 
-| Metric | Value | Improvement |
-|--------|-------|-------------|
-| **Page Load Time (first)** | 0.5-1.5 seconds | **10-15x faster** |
-| **Page Load Time (cached)** | 50-150 ms | **100x faster** |
-| **Database Query Time** | 300-800 ms | **10-20x faster** |
-| **Main Query Plan** | Index range scan + LATERAL join | ✅ |
-| **Attendance Subquery** | Index range scan (date filter) | ✅ |
-| **Salary Subquery** | Index seek + LIMIT 1 early exit | ✅ |
-| **Caching** | 30-second TTL in-memory | ✅ |
+| Metric                      | Value                           | Improvement       |
+| --------------------------- | ------------------------------- | ----------------- |
+| **Page Load Time (first)**  | 0.5-1.5 seconds                 | **10-15x faster** |
+| **Page Load Time (cached)** | 50-150 ms                       | **100x faster**   |
+| **Database Query Time**     | 300-800 ms                      | **10-20x faster** |
+| **Main Query Plan**         | Index range scan + LATERAL join | ✅                |
+| **Attendance Subquery**     | Index range scan (date filter)  | ✅                |
+| **Salary Subquery**         | Index seek + LIMIT 1 early exit | ✅                |
+| **Caching**                 | 30-second TTL in-memory         | ✅                |
 
 ---
 
 ## Files Modified
 
 ### Backend (2 files)
+
 1. **`backend/src/modules/employees/employee.routes.ts`**
    - Added in-memory cache (lines 23-48)
    - Optimized hr-hub query with LATERAL join (lines 810-818)
@@ -239,6 +251,7 @@ SHOW INDEX FROM employees WHERE Key_name IN ('idx_employees_full_name', 'idx_emp
 ```
 
 **Expected Output**:
+
 ```
 +--------------------------+------------+-------------------------------+
 | Table                    | Key_name   | Column_name                   |

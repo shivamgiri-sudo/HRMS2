@@ -34,14 +34,21 @@ let pass = 0;
 let fail = 0;
 const ok = (label: string, cond: boolean, detail?: string) => {
   cond ? pass++ : fail++;
-  console.log(`${cond ? "PASS" : "FAIL"}  ${label}${detail ? `  :: ${detail}` : ""}`);
+  console.log(
+    `${cond ? "PASS" : "FAIL"}  ${label}${detail ? `  :: ${detail}` : ""}`,
+  );
 };
-const step = (s: string) => console.log(`\n--- ${s} ---------------------------------`);
+const step = (s: string) =>
+  console.log(`\n--- ${s} ---------------------------------`);
 
 async function main() {
   if (MONTH !== "2099-01") {
-    console.log(`WARNING: running against ${MONTH}, not the 2099-01 scratch month.`);
-    console.log("         Attendance freeze is IRREVERSIBLE and will lock real rows.\n");
+    console.log(
+      `WARNING: running against ${MONTH}, not the 2099-01 scratch month.`,
+    );
+    console.log(
+      "         Attendance freeze is IRREVERSIBLE and will lock real rows.\n",
+    );
   }
 
   step("A1  seed + tick the 5 branch checklist items");
@@ -77,7 +84,11 @@ async function main() {
   // This is a real finding about the product, not a defect in the run: the branch checklist
   // alone is not a sufficient path to 'ready'. HO override is the intended completion, which
   // is why A4 below overrides every branch including this one.
-  ok("checklist raises the score", rec.readiness_score > 0, `score ${rec.readiness_score}`);
+  ok(
+    "checklist raises the score",
+    rec.readiness_score > 0,
+    `score ${rec.readiness_score}`,
+  );
   ok(
     "checklist alone cannot reach 80 (needs incentives + freeze)",
     rec.readiness_score < 80,
@@ -87,36 +98,55 @@ async function main() {
   step("A2  branch head sign-off");
   await R.branchHeadSignOff(MONTH, BR, MAKER, TAG);
   rec = await R.getOrRefresh(MONTH, BR);
-  ok("branch_head_signoff recorded", rec.branch_head_signoff === 1, `flag=${rec.branch_head_signoff}`);
+  ok(
+    "branch_head_signoff recorded",
+    rec.branch_head_signoff === 1,
+    `flag=${rec.branch_head_signoff}`,
+  );
 
   step("A3  gate BEFORE any override");
   let v = await R.validatePayrollRunCreation(MONTH);
   console.log(`     ready=[${v.ready.join(", ")}]`);
   console.log(`     blocked=[${v.blocked.join(", ")}]`);
-  ok("the gate blocks run creation while branches are unready", v.blocked.length > 0, `${v.blocked.length} blocked`);
+  ok(
+    "the gate blocks run creation while branches are unready",
+    v.blocked.length > 0,
+    `${v.blocked.length} blocked`,
+  );
 
   step("A4  HO override on every active branch");
   // Every active branch, INCLUDING the target. createRun validates all of them, and per A1
   // the checklist alone cannot lift any branch to 80 — so overriding only the others leaves
   // the target itself blocking, and createRun still refuses.
-  const [brs] = await db.execute<any[]>("SELECT id,branch_name FROM branch_master WHERE active_status=1");
+  const [brs] = await db.execute<any[]>(
+    "SELECT id,branch_name FROM branch_master WHERE active_status=1",
+  );
   for (const b of brs) await R.hoOverride(MONTH, b.id, CHECKER, TAG);
   v = await R.validatePayrollRunCreation(MONTH);
-  ok("all active branches now ready", v.blocked.length === 0, `blocked=[${v.blocked.join(", ")}]`);
+  ok(
+    "all active branches now ready",
+    v.blocked.length === 0,
+    `blocked=[${v.blocked.join(", ")}]`,
+  );
 
   step("B1  create the run (as MAKER)");
   const run = (await P.createRun(
     { runMonth: MONTH, branchFilter: BR, processFilter: null } as never,
     MAKER,
   )) as Record<string, unknown>;
-  console.log(`     runId=${run.id}  status=${run.status}  created_by=${run.created_by}`);
+  console.log(
+    `     runId=${run.id}  status=${run.status}  created_by=${run.created_by}`,
+  );
   ok("run created", Boolean(run.id));
   ok("created_by is the maker", String(run.created_by) === MAKER);
   const runId = String(run.id);
 
   step("B2  duplicate guard");
   try {
-    await P.createRun({ runMonth: MONTH, branchFilter: BR, processFilter: null } as never, MAKER);
+    await P.createRun(
+      { runMonth: MONTH, branchFilter: BR, processFilter: null } as never,
+      MAKER,
+    );
     ok("duplicate rejected", false, "second create SUCCEEDED");
   } catch (e) {
     ok("duplicate rejected", true, (e as Error).message.slice(0, 80));
@@ -130,16 +160,25 @@ async function main() {
   } catch (e) {
     ok("calculate returned", false, (e as Error).message.slice(0, 140));
   }
-  const [st1] = await db.execute<any[]>("SELECT status,total_employees FROM salary_prep_run WHERE id=?", [runId]);
+  const [st1] = await db.execute<any[]>(
+    "SELECT status,total_employees FROM salary_prep_run WHERE id=?",
+    [runId],
+  );
   console.log(`     status after calculate = ${st1[0]?.status}`);
 
   step("B4  freeze attendance");
   try {
     const f = await G.freezeAttendance(runId, CHECKER);
-    console.log(`     lockedRows=${f.lockedRows}  issues=${f.issuesAtFreeze.length}`);
+    console.log(
+      `     lockedRows=${f.lockedRows}  issues=${f.issuesAtFreeze.length}`,
+    );
     ok("freeze succeeded", true);
   } catch (e) {
-    ok("freeze correctly blocked by readiness blockers", true, (e as Error).message.slice(0, 140));
+    ok(
+      "freeze correctly blocked by readiness blockers",
+      true,
+      (e as Error).message.slice(0, 140),
+    );
   }
 
   step("C1  separation of duties - MAKER tries to approve own run");
@@ -150,14 +189,20 @@ async function main() {
     const err = e as Error & { code?: string };
     ok(
       "self-approval blocked",
-      /PAYROLL_SELF_APPROVAL|approved by someone else/i.test(err.message + (err.code ?? "")),
+      /PAYROLL_SELF_APPROVAL|approved by someone else/i.test(
+        err.message + (err.code ?? ""),
+      ),
       err.message.slice(0, 90),
     );
   }
 
   step("C2  CHECKER approves");
   try {
-    const a = (await P.updateRunStatus(runId, { status: "approved" } as never, CHECKER)) as Record<string, unknown>;
+    const a = (await P.updateRunStatus(
+      runId,
+      { status: "approved" } as never,
+      CHECKER,
+    )) as Record<string, unknown>;
     ok("checker approval accepted", true, `status=${a.status}`);
   } catch (e) {
     ok("checker approval accepted", false, (e as Error).message.slice(0, 140));
@@ -168,7 +213,11 @@ async function main() {
     await P.updateRunStatus(runId, { status: "locked" } as never, CHECKER);
     ok("lock blocked without finance sign-off", false, "it was ALLOWED");
   } catch (e) {
-    ok("lock blocked without finance sign-off", true, (e as Error).message.slice(0, 110));
+    ok(
+      "lock blocked without finance sign-off",
+      true,
+      (e as Error).message.slice(0, 110),
+    );
   }
 
   step("RESULT");
@@ -179,7 +228,9 @@ async function main() {
   );
   console.log(JSON.stringify(fin[0], null, 1));
   console.log(`\n${pass} passed, ${fail} failed`);
-  console.log(`\nRUNID=${runId}      <-- now run payroll-finalization-cleanup.ts`);
+  console.log(
+    `\nRUNID=${runId}      <-- now run payroll-finalization-cleanup.ts`,
+  );
 }
 
 main()

@@ -17,7 +17,7 @@ The live system decides the source in two places that do not agree with each oth
   thresholds `full_day_minutes`, `half_day_minutes` and `grace_minutes`.
 - `apr_eligibility_config` (65 rows) carries no source column at all and **no effective dating at
   all**. It answers a yes/no question — is this employee judged on dialler productivity — scoped by
-  designation, department and process, with a *different* specificity weighting (process=4,
+  designation, department and process, with a _different_ specificity weighting (process=4,
   department=2, designation=1).
 
 `attendanceEngineService.processEmployee()` then combines the two with a logical OR
@@ -201,8 +201,7 @@ carries the Attendance_Source only.
 - **WFM_Uploader**: A branch workforce-management user holding the grant to submit an Upload_Batch for
   the branches within that user's resolved scope.
 - **Reporting_Manager**: The employee named in `employees.reporting_manager_id` for the employee
-  under review. This column is NULL for 1 of 1,123 active employees; `employees.manager_id` (NULL for
-  394) is not used.
+  under review. This column is NULL for 1 of 1,123 active employees; `employees.manager_id` (NULL for 394) is not used.
 - **Dual_Review**: The requirement that both a WFM_Reviewer and the Reporting_Manager record an
   outcome on a Variance_Record before that Variance_Record is treated as reviewed.
 - **Variance_Review_Queue**: The component that presents Variance_Records to their reviewers, records
@@ -1099,11 +1098,11 @@ recorded after A10.
   - Candidates beyond the ceiling are Recorded_Not_Queued: retained with the full field set, retrievable,
     counted in the variance exception report and the pre-close reconciliation view, and never silently
     discarded (criteria 6.11, 6.12, 6.13, 9.5, 13.4).
-  Rationale: 2,566 of 4,933 comparable July 2026 employee-days flag at 480/60 (E8), which is roughly
-  5,100 Dual_Review decisions a month concentrated on 218 employees and will not clear before
-  Payroll_Cut_Off. A ceiling of 100 per branch per Pay_Month is clearable by a branch WFM_Reviewer and the
-  corresponding Reporting_Managers, and ranking by unexplained gap puts the largest gaps first. Evidence:
-  E7, E8.
+    Rationale: 2,566 of 4,933 comparable July 2026 employee-days flag at 480/60 (E8), which is roughly
+    5,100 Dual_Review decisions a month concentrated on 218 employees and will not clear before
+    Payroll_Cut_Off. A ceiling of 100 per branch per Pay_Month is clearable by a branch WFM_Reviewer and the
+    corresponding Reporting_Managers, and ranking by unexplained gap puts the largest gaps first. Evidence:
+    E7, E8.
 - **A3 — Cut-off with pending review. SETTLED: pay on the resolved source, mark the line, carry the
   variance forward, settle any later approved adjustment as an arrear in the earliest open Pay_Month.**
   `payroll_lock_on_unresolved_mismatch` ships as 0, so an unreviewed Variance_Record never blocks a
@@ -1194,17 +1193,17 @@ month is July 2026, the most recent complete month. Active employee population i
 
 ### E1 — Rule dimension storage
 
-| Dimension | Column | Master table | Notes |
-| --- | --- | --- | --- |
-| Cost centre | `employees.cost_centre_id` char, nullable | `cost_centre_master.id` (FK) | First-class; a non-FK `cost_center_code` varchar also exists |
-| Branch | `employees.branch_id` | `branch_master.id` (FK) | Name column `branch_name` |
-| Process | `employees.process_id` | `process_master.id` (FK) | Name column `process_name` |
-| Department | `employees.department_id` | `department_master.id` (FK) | Name column `dept_name`; no `departments` table, no `department_name` column |
-| Designation | `employees.designation_id` | `designation_master.id` (FK) | Name column `designation_name` |
-| Employment profile | `employees.profile_type` varchar, nullable | none | **No foreign key — free text** |
-| Location | `employees.location_id` | — | NULL for all 1,123 active employees; unusable |
-| LOB | `employees.lob_id` | — | NULL for all 1,123 active employees; unusable |
-| Manager | `employees.reporting_manager_id` | — | NULL for 1 of 1,123; `manager_id` NULL for 394 and not used |
+| Dimension          | Column                                     | Master table                 | Notes                                                                        |
+| ------------------ | ------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------- |
+| Cost centre        | `employees.cost_centre_id` char, nullable  | `cost_centre_master.id` (FK) | First-class; a non-FK `cost_center_code` varchar also exists                 |
+| Branch             | `employees.branch_id`                      | `branch_master.id` (FK)      | Name column `branch_name`                                                    |
+| Process            | `employees.process_id`                     | `process_master.id` (FK)     | Name column `process_name`                                                   |
+| Department         | `employees.department_id`                  | `department_master.id` (FK)  | Name column `dept_name`; no `departments` table, no `department_name` column |
+| Designation        | `employees.designation_id`                 | `designation_master.id` (FK) | Name column `designation_name`                                               |
+| Employment profile | `employees.profile_type` varchar, nullable | none                         | **No foreign key — free text**                                               |
+| Location           | `employees.location_id`                    | —                            | NULL for all 1,123 active employees; unusable                                |
+| LOB                | `employees.lob_id`                         | —                            | NULL for all 1,123 active employees; unusable                                |
+| Manager            | `employees.reporting_manager_id`           | —                            | NULL for 1 of 1,123; `manager_id` NULL for 394 and not used                  |
 
 `employment_type` (ONROLL 961, MGMT. TRAINEE 153, NULL 8, OffRoll 1) is a contract type, not the
 business's profile. `cost_centre_master` carries `branch_id`, `department_id`, `process_id`, `client_id`
@@ -1216,61 +1215,61 @@ and `lob_id`, so cost centre already implies branch, department and process.
 process_id, branch_id, attendance_source, full_day_minutes, half_day_minutes, grace_minutes,
 effective_from, effective_to, notes, active_status, created_by, created_at, updated_at.
 
-| Fact | Measurement |
-| --- | --- |
-| `attendance_source` value set | `enum('dialler','biometric')` — no `apr` value anywhere in the schema |
-| Day thresholds carried on the same row | `full_day_minutes`, `half_day_minutes`, `grace_minutes` — declared out of scope but coupled |
-| Missing dimensions | no cost_centre_id, no department_id, no profile column |
-| Unconstrained active rows | 2, disagreeing on source: `arc-global-001` biometric 540/270 from 2026-06-01; `arc-apr-ops-exec` dialler 480/240 from 2026-06-13 |
-| Tiebreak between them | none — `ORDER BY ... LIMIT 1`. Non-determinism is live in production now |
-| Remaining rows | 28 designation-scoped biometric rules, one per Executive-family designation, 540/240, from 2026-01-01 |
+| Fact                                   | Measurement                                                                                                                      |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `attendance_source` value set          | `enum('dialler','biometric')` — no `apr` value anywhere in the schema                                                            |
+| Day thresholds carried on the same row | `full_day_minutes`, `half_day_minutes`, `grace_minutes` — declared out of scope but coupled                                      |
+| Missing dimensions                     | no cost_centre_id, no department_id, no profile column                                                                           |
+| Unconstrained active rows              | 2, disagreeing on source: `arc-global-001` biometric 540/270 from 2026-06-01; `arc-apr-ops-exec` dialler 480/240 from 2026-06-13 |
+| Tiebreak between them                  | none — `ORDER BY ... LIMIT 1`. Non-determinism is live in production now                                                         |
+| Remaining rows                         | 28 designation-scoped biometric rules, one per Executive-family designation, 540/240, from 2026-01-01                            |
 
 `apr_eligibility_config`: 65 rows. Columns id, rule_name, designation_id, department_id, process_id,
 active_status, notes, created_by, created_at, updated_at.
 
-| Fact | Measurement |
-| --- | --- |
-| Effective dating | **none at all** — no column |
-| Source column | **none** |
-| Active process-scoped rows | 60 (4 Executive designations x 15 processes), seeded by migration 1127 |
-| Active process-NULL row | `apr-elig-ops-executive`, notes "REACTIVATED 2026-08-28: admin directive — designation+department only, no process filter. All Ops Executives on APR regardless of process." |
-| Consequence | The 1127 scoping is nullified; both rule sets are active simultaneously. The earlier claim that 1127 is "deliberately unregistered and blocked pending sign-off" is out of date |
-| Deactivated rows | 4 (`apr-elig-ops-exec`, `--backend`, `--field`, `--voice`) |
+| Fact                       | Measurement                                                                                                                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Effective dating           | **none at all** — no column                                                                                                                                                     |
+| Source column              | **none**                                                                                                                                                                        |
+| Active process-scoped rows | 60 (4 Executive designations x 15 processes), seeded by migration 1127                                                                                                          |
+| Active process-NULL row    | `apr-elig-ops-executive`, notes "REACTIVATED 2026-08-28: admin directive — designation+department only, no process filter. All Ops Executives on APR regardless of process."    |
+| Consequence                | The 1127 scoping is nullified; both rule sets are active simultaneously. The earlier claim that 1127 is "deliberately unregistered and blocked pending sign-off" is out of date |
+| Deactivated rows           | 4 (`apr-elig-ops-exec`, `--backend`, `--field`, `--voice`)                                                                                                                      |
 
 ### E3 — Null coverage across 1,123 active employees
 
-| Column | NULL count | Share |
-| --- | --- | --- |
-| `location_id` | 1,123 | 100% |
-| `lob_id` | 1,123 | 100% |
-| `profile_type` | 196 | 17.5% |
-| `process_id` | 75 | 6.7% |
-| `cost_centre_id` | 34 | 3.0% |
-| `employment_type` | 8 | 0.7% |
-| `department_id` | 1 | 0.1% |
-| `designation_id` | 1 | 0.1% |
-| `reporting_manager_id` | 1 | 0.1% |
-| `branch_id` | 0 | 0% |
+| Column                 | NULL count | Share |
+| ---------------------- | ---------- | ----- |
+| `location_id`          | 1,123      | 100%  |
+| `lob_id`               | 1,123      | 100%  |
+| `profile_type`         | 196        | 17.5% |
+| `process_id`           | 75         | 6.7%  |
+| `cost_centre_id`       | 34         | 3.0%  |
+| `employment_type`      | 8          | 0.7%  |
+| `department_id`        | 1          | 0.1%  |
+| `designation_id`       | 1          | 0.1%  |
+| `reporting_manager_id` | 1          | 0.1%  |
+| `branch_id`            | 0          | 0%    |
 
 Supersedes the stale 185 / 144-of-1,125 figures previously carried in assumption A7.
 
 ### E4 — Real value sets
 
-| Fact | Measurement |
-| --- | --- |
-| `profile_type` | VOICE 574, NON-VOICE 331, NULL 196, HARDWARE ENGINEER 5, TRAINING AND DEVELOPMENT 4, BUSINESS DEVELOPMENT 3, FACILITY MGMT. 3, FINANCE 2, RECRUITMENT 2, ACCOUNTS 1, SOFTWARE ENGINEER 1, HR GENERALISTIC 1 |
-| `employee_category` | `'permanent'` for all 1,123 — no discriminating information |
-| Duplicate Operations departments | `department_master` holds `'OPERATIONS'` (897 active) and `'Operations'` (148) as separate rows. A rule keyed on one `department_id` reaches only one. Same defect class migration 1082 recorded once |
-| Operations Executives | 977 active: VOICE 529, NON-VOICE 259, NULL 189. The 189 with NULL `profile_type` cannot be matched by any profile-constraining rule |
-| Other Operations designations | TEAM LEADER 36, DATA-ANALYST 7, ASSISTANT MANAGER 7, DY. MANAGER 7, RTM 4, SR. MANAGER 3, remainder 1 each |
+| Fact                             | Measurement                                                                                                                                                                                                 |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profile_type`                   | VOICE 574, NON-VOICE 331, NULL 196, HARDWARE ENGINEER 5, TRAINING AND DEVELOPMENT 4, BUSINESS DEVELOPMENT 3, FACILITY MGMT. 3, FINANCE 2, RECRUITMENT 2, ACCOUNTS 1, SOFTWARE ENGINEER 1, HR GENERALISTIC 1 |
+| `employee_category`              | `'permanent'` for all 1,123 — no discriminating information                                                                                                                                                 |
+| Duplicate Operations departments | `department_master` holds `'OPERATIONS'` (897 active) and `'Operations'` (148) as separate rows. A rule keyed on one `department_id` reaches only one. Same defect class migration 1082 recorded once       |
+| Operations Executives            | 977 active: VOICE 529, NON-VOICE 259, NULL 189. The 189 with NULL `profile_type` cannot be matched by any profile-constraining rule                                                                         |
+| Other Operations designations    | TEAM LEADER 36, DATA-ANALYST 7, ASSISTANT MANAGER 7, DY. MANAGER 7, RTM 4, SR. MANAGER 3, remainder 1 each                                                                                                  |
 
 ### E5 — APR coverage and current over-reach
 
-| Fact | Measurement |
-| --- | --- |
-| Employees matched by active `apr_eligibility_config` rules | 832 |
-| Of those, never present in the APR feed | **445 (53%)** — worse than the 472-of-828 recorded by migration 1127, because the process-NULL rule was reactivated 2026-08-28 |
-| APR distinct users by month | 2026-08 490, 2026-07 277, 2026-06 329, 2026-05 342, 2026-04 357, 2026-03 322, against 1,123 active employees |
+| Fact                                                       | Measurement                                                                                                                    |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Employees matched by active `apr_eligibility_config` rules | 832                                                                                                                            |
+| Of those, never present in the APR feed                    | **445 (53%)** — worse than the 472-of-828 recorded by migration 1127, because the process-NULL rule was reactivated 2026-08-28 |
+| APR distinct users by month                                | 2026-08 490, 2026-07 277, 2026-06 329, 2026-05 342, 2026-04 357, 2026-03 322, against 1,123 active employees                   |
 
 ### E6 — `attendance_daily_record` already carries much of the proposed provenance
 
@@ -1285,28 +1284,28 @@ status_changed_at.
 July 2026: 42,181 rows, 1,682 employees; `biometric_minutes` present 24,329; `dialler_minutes` present
 15,831; **`mismatch_flag = 1` on 14,891 rows (35%)**.
 
-| July 2026 `source_system` / source | Rows |
-| --- | --- |
-| `wfm_attendance_session` / biometric | 18,932 |
-| `cosec_policy_absence` / biometric | 8,757 |
-| `dialer_session_log.session_date` / dialler | 7,366 |
-| `apr.ReportDate` / dialler | 5,186 |
-| NULL / biometric | 1,196 |
-| `ncosec_fixed` / biometric | 203 |
-| `apr.inferred_night_shift_window` / dialler | 196 |
-| `payroll_gap_absence` / biometric | 131 |
-| `attendance_override` | 86 dialler + 31 biometric |
-| `apr_no_activity` / dialler | 49 |
+| July 2026 `source_system` / source          | Rows                      |
+| ------------------------------------------- | ------------------------- |
+| `wfm_attendance_session` / biometric        | 18,932                    |
+| `cosec_policy_absence` / biometric          | 8,757                     |
+| `dialer_session_log.session_date` / dialler | 7,366                     |
+| `apr.ReportDate` / dialler                  | 5,186                     |
+| NULL / biometric                            | 1,196                     |
+| `ncosec_fixed` / biometric                  | 203                       |
+| `apr.inferred_night_shift_window` / dialler | 196                       |
+| `payroll_gap_absence` / biometric           | 131                       |
+| `attendance_override`                       | 86 dialler + 31 biometric |
+| `apr_no_activity` / dialler                 | 49                        |
 
 July 2026 status mix: present 15,821; missing_punch 9,851; absent 8,876; half_day 7,458; week_off 116;
 week_off_worked 54; leave_approved 5.
 
 ### E7 — Zero is not absent, and APR cannot corroborate biometric today
 
-| July 2026 population | Rows | `biometric_minutes` | `dialler_minutes` |
-| --- | --- | --- | --- |
+| July 2026 population              | Rows   | `biometric_minutes`                    | `dialler_minutes`                              |
+| --------------------------------- | ------ | -------------------------------------- | ---------------------------------------------- |
 | `attendance_source = 'biometric'` | 29,271 | NULL 10,318 / zero 0 / positive 18,953 | NULL 26,215 / **zero 3,016** / **positive 40** |
-| `attendance_source = 'dialler'` | 12,910 | NULL 7,534 / positive 5,376 | NULL 135 / zero 7,392 / positive 5,383 |
+| `attendance_source = 'dialler'`   | 12,910 | NULL 7,534 / positive 5,376            | NULL 135 / zero 7,392 / positive 5,383         |
 
 Consequences:
 
@@ -1329,10 +1328,10 @@ Population where variance comparison is meaningful (both feeds strictly positive
 employee-days across 218 employees**.
 
 | Threshold (tolerance 60) | Flagged employee-days | Share of 4,933 |
-| --- | --- | --- |
-| 480 minutes | **2,566** | 52% |
-| 450 minutes | 1,759 | 36% |
-| 420 minutes | 1,368 | 28% |
+| ------------------------ | --------------------- | -------------- |
+| 480 minutes              | **2,566**             | 52%            |
+| 450 minutes              | 1,759                 | 36%            |
+| 420 minutes              | 1,368                 | 28%            |
 
 Distribution within the population: productivity under 420 minutes 1,482; under 450 minutes 1,886; under
 480 minutes 2,717. At 480/60, Dual_Review means about 2,566 items and roughly 5,100 human decisions per
@@ -1341,15 +1340,15 @@ constraint on Requirements 6, 7 and 13.
 
 ### E9 — Existing review and payroll structures
 
-| Structure | Measurement |
-| --- | --- |
-| `payroll_attendance_conflict_review` | 268 rows. Columns id, conflict_key, employee_id, issue_date, issue_type, status `enum('open','notified','reviewed','no_issue','regularization_required')`, manager_user_id, reviewed_by, reviewed_at, review_note, created_at, updated_at. **Single reviewer field — no two-party review, no accept/dispute vocabulary, no SLA** |
-| Its contents | `dialler_missing_adr` 209 reviewed; `biometric_penalty_dialler_supports_better` 39 notified; `dialler_penalty_biometric_supports_better` 20 notified |
-| Mismatch review | no separate table; mismatch state lives on `attendance_daily_record` |
-| `salary_prep_line` | 130,331 rows. Payable days is `final_payable_days` decimal. Also paid_working_days, eligible_weekoff_days, eligible_holiday_days, active_calendar_days, working_days, present_days, leave_days, lwp_days, lwp_deduction, needs_recalculation, recalculation_reason, calculation_notes json, `attendance_data_source` `enum('ADR','SESSION_FALLBACK','NO_DATA')` |
-| `attendance_data_source` | records which store was read, not which feed decided the day. **Not the field for Attendance_Source; must not be overloaded** |
-| `salary_prep_line_adjustment` | exists, 0 rows |
-| `attendance_feature_config` | 7 key/value rows: biometric_half_day_floor_minutes 270, netlogin_half_day_floor_minutes 240, **mismatch_workflow_enabled 0 (existing mismatch queue is OFF)**, **payroll_lock_on_unresolved_mismatch 0**, doj_holiday_exclusion_enabled 1, missing_punch_notification_enabled 1, week_off_worked_wfm_review_required 1 |
+| Structure                            | Measurement                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `payroll_attendance_conflict_review` | 268 rows. Columns id, conflict_key, employee_id, issue_date, issue_type, status `enum('open','notified','reviewed','no_issue','regularization_required')`, manager_user_id, reviewed_by, reviewed_at, review_note, created_at, updated_at. **Single reviewer field — no two-party review, no accept/dispute vocabulary, no SLA**                                |
+| Its contents                         | `dialler_missing_adr` 209 reviewed; `biometric_penalty_dialler_supports_better` 39 notified; `dialler_penalty_biometric_supports_better` 20 notified                                                                                                                                                                                                            |
+| Mismatch review                      | no separate table; mismatch state lives on `attendance_daily_record`                                                                                                                                                                                                                                                                                            |
+| `salary_prep_line`                   | 130,331 rows. Payable days is `final_payable_days` decimal. Also paid_working_days, eligible_weekoff_days, eligible_holiday_days, active_calendar_days, working_days, present_days, leave_days, lwp_days, lwp_deduction, needs_recalculation, recalculation_reason, calculation_notes json, `attendance_data_source` `enum('ADR','SESSION_FALLBACK','NO_DATA')` |
+| `attendance_data_source`             | records which store was read, not which feed decided the day. **Not the field for Attendance_Source; must not be overloaded**                                                                                                                                                                                                                                   |
+| `salary_prep_line_adjustment`        | exists, 0 rows                                                                                                                                                                                                                                                                                                                                                  |
+| `attendance_feature_config`          | 7 key/value rows: biometric_half_day_floor_minutes 270, netlogin_half_day_floor_minutes 240, **mismatch_workflow_enabled 0 (existing mismatch queue is OFF)**, **payroll_lock_on_unresolved_mismatch 0**, doj_holiday_exclusion_enabled 1, missing_punch_notification_enabled 1, week_off_worked_wfm_review_required 1                                          |
 
 ### E10 — Cost centre granularity
 
@@ -1362,14 +1361,14 @@ process-scoped rule can encode contradictory intent about the same population.
 
 ### E11 — The current daily aggregation is arithmetically broken
 
-| Fact | Measurement |
-| --- | --- |
-| `apr` size | 48,912 rows over 36,594 distinct employee-days, keyed (ReportDate, UserID, campaign_id), 78 distinct `campaign_id` |
-| Rows per employee-day | 1 row 27,956 days; 2 rows 7,806; 3 rows 735; 4 rows 95; 5 rows 2 |
-| Multi-row employee-days | **8,638 (23.6%)** |
-| Result of summing net login | 3,603 employee-days over 10 hours; 2,505 over 12 hours; **218 over 24 hours — physically impossible** |
-| Maximum summed day | **6,282.8 minutes (104.7 hours)** |
-| Excess over largest single session | 3,552 of the 8,638 multi-row days exceed it by 60+ minutes; average excess 124.5 minutes |
+| Fact                               | Measurement                                                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `apr` size                         | 48,912 rows over 36,594 distinct employee-days, keyed (ReportDate, UserID, campaign_id), 78 distinct `campaign_id` |
+| Rows per employee-day              | 1 row 27,956 days; 2 rows 7,806; 3 rows 735; 4 rows 95; 5 rows 2                                                   |
+| Multi-row employee-days            | **8,638 (23.6%)**                                                                                                  |
+| Result of summing net login        | 3,603 employee-days over 10 hours; 2,505 over 12 hours; **218 over 24 hours — physically impossible**              |
+| Maximum summed day                 | **6,282.8 minutes (104.7 hours)**                                                                                  |
+| Excess over largest single session | 3,552 of the 8,638 multi-row days exceed it by 60+ minutes; average excess 124.5 minutes                           |
 
 Real concurrent-session examples: MAS60586 on 2026-04-08 across CHAT 00:57:43 + EMAIL 09:07:02 + INBOUND
 09:03:53 + OUTBOUND 07:28:16 (26h36m summed); MAS63067 on 2026-08-06 across ABANDON / KANNADA / KERALA /
@@ -1379,25 +1378,25 @@ productive time and defeats a control whose purpose is to catch inflated attenda
 
 ### E12 — Manual upload already happens, and it is completely unattributed
 
-| Fact | Measurement |
-| --- | --- |
-| `apr.source` | `enum('sync','manual')`. sync 42,353 rows / 503 users / 2026-03-13 to 2026-08-29. manual 3,810 rows / 224 users / 2026-08-01 to 2026-08-25 |
-| Manual `campaign_id` | **`'MANUAL_UPLOAD'` on all 3,810 rows** — a single sentinel. The originating dialler system is recorded nowhere |
-| Manual attribution | 0 distinct `process_name`, 0 distinct `branch_name` (all empty), 1 distinct `uploaded_by` |
-| `apr.upload_batch_id` | **0 distinct values across the table; 46,163 rows NULL.** No audit trail of who uploaded which file |
-| `apr_manual_upload` | Correct shape (id, employee_code, process_id, campaign_id, report_date, calls_handled, aht_seconds, login_minutes, bio_minutes, lunch_minutes, qa_minutes, training_minutes, uploaded_by, upload_batch_id, created_at) and **0 rows** — a dead path; manual data went straight into `apr` |
-| `campaign_master` | **0 rows**, so the 78 `apr.campaign_id` values are unmanaged free text with no owning process or dialler |
+| Fact                  | Measurement                                                                                                                                                                                                                                                                               |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apr.source`          | `enum('sync','manual')`. sync 42,353 rows / 503 users / 2026-03-13 to 2026-08-29. manual 3,810 rows / 224 users / 2026-08-01 to 2026-08-25                                                                                                                                                |
+| Manual `campaign_id`  | **`'MANUAL_UPLOAD'` on all 3,810 rows** — a single sentinel. The originating dialler system is recorded nowhere                                                                                                                                                                           |
+| Manual attribution    | 0 distinct `process_name`, 0 distinct `branch_name` (all empty), 1 distinct `uploaded_by`                                                                                                                                                                                                 |
+| `apr.upload_batch_id` | **0 distinct values across the table; 46,163 rows NULL.** No audit trail of who uploaded which file                                                                                                                                                                                       |
+| `apr_manual_upload`   | Correct shape (id, employee_code, process_id, campaign_id, report_date, calls_handled, aht_seconds, login_minutes, bio_minutes, lunch_minutes, qa_minutes, training_minutes, uploaded_by, upload_batch_id, created_at) and **0 rows** — a dead path; manual data went straight into `apr` |
+| `campaign_master`     | **0 rows**, so the 78 `apr.campaign_id` values are unmanaged free text with no owning process or dialler                                                                                                                                                                                  |
 
 ### E13 — Only one dialler is integrated, and its identity column is unused
 
-| Fact | Measurement |
-| --- | --- |
+| Fact                 | Measurement                                                                                                                                                                                                                      |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dialer_session_log` | 1,365 rows, 64 employees, 2026-05-27 to 2026-08-28. Columns id, employee_code, employee_id, session_date, integration_key, dialer_name, login_minutes, process_name, branch_name, run_id, source_system, imported_by, created_at |
-| `dialer_name` | **NULL on every row** |
-| `integration_key` | exactly one: `'dialer_1'` |
-| `source_system` | exactly one: `'dialer_db.vicidial_agent_log_249'` — a single ViciDial instance |
-| Materiality | July 2026 ADR shows `dialer_session_log.session_date` on 7,366 rows against `apr.ReportDate` on 5,186 |
-| Consequence | The schema anticipates multiple named diallers and records none. Three productivity feeds are in play (`apr`/sync, `apr`/manual, `dialer_session_log`) with no common source registry |
+| `dialer_name`        | **NULL on every row**                                                                                                                                                                                                            |
+| `integration_key`    | exactly one: `'dialer_1'`                                                                                                                                                                                                        |
+| `source_system`      | exactly one: `'dialer_db.vicidial_agent_log_249'` — a single ViciDial instance                                                                                                                                                   |
+| Materiality          | July 2026 ADR shows `dialer_session_log.session_date` on 7,366 rows against `apr.ReportDate` on 5,186                                                                                                                            |
+| Consequence          | The schema anticipates multiple named diallers and records none. Three productivity feeds are in play (`apr`/sync, `apr`/manual, `dialer_session_log`) with no common source registry                                            |
 
 ### E14 — The BPO metrics the consolidated view needs already exist
 

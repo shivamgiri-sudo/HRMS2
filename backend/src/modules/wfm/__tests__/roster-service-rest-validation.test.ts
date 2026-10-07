@@ -13,7 +13,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock, applyRestDecision } = vi.hoisted(() => ({
+const {
+  isRestPolicyFeatureActive,
+  validateMinimumRest,
+  logRestOverride,
+  withEmployeeRosterLock,
+  applyRestDecision,
+} = vi.hoisted(() => ({
   isRestPolicyFeatureActive: vi.fn(),
   validateMinimumRest: vi.fn(),
   logRestOverride: vi.fn().mockResolvedValue(undefined),
@@ -22,30 +28,56 @@ const { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmp
   // same mocked execute the rest of this file already configures — so every
   // existing assertion against `execute.mock.calls` still sees the calls
   // assignEmployee makes "through the lock connection".
-  withEmployeeRosterLock: vi.fn((_employeeId: string, fn: (conn: { execute: typeof execute }) => unknown) => fn({ execute })),
+  withEmployeeRosterLock: vi.fn(
+    (_employeeId: string, fn: (conn: { execute: typeof execute }) => unknown) =>
+      fn({ execute }),
+  ),
   // Mirrors applyRestDecision's real allow/warn logic (rest-policy-warn-mode.test.ts covers
   // that function's own internals — recording the warning, blocking REST_POLICY_MISSING
   // unconditionally, etc.). This file is scoped to assignEmployee's orchestration: does it
   // call the shared decision point at all, and does it respect what comes back.
-  applyRestDecision: vi.fn(async (result: { ok: boolean; reason?: string; policy?: { enforcementMode?: string } }) => {
-    if (result.ok) return { allowed: true, warned: false };
-    if (result.reason !== "INSUFFICIENT_REST") return { allowed: false, warned: false };
-    if (result.policy?.enforcementMode !== "warn") return { allowed: false, warned: false };
-    return { allowed: true, warned: true };
-  }),
+  applyRestDecision: vi.fn(
+    async (result: {
+      ok: boolean;
+      reason?: string;
+      policy?: { enforcementMode?: string };
+    }) => {
+      if (result.ok) return { allowed: true, warned: false };
+      if (result.reason !== "INSUFFICIENT_REST")
+        return { allowed: false, warned: false };
+      if (result.policy?.enforcementMode !== "warn")
+        return { allowed: false, warned: false };
+      return { allowed: true, warned: true };
+    },
+  ),
 }));
-vi.mock("../rest-policy.service.js", () => ({ isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock, applyRestDecision }));
+vi.mock("../rest-policy.service.js", () => ({
+  isRestPolicyFeatureActive,
+  validateMinimumRest,
+  logRestOverride,
+  withEmployeeRosterLock,
+  applyRestDecision,
+}));
 
 vi.mock("../shift-scheduling.util.js", () => ({
   computeScheduledMinutes: vi.fn().mockReturnValue(480),
-  rosterAssignmentColumns: vi.fn().mockResolvedValue(new Set(["id", "employee_id"])), // no versioning cols
+  rosterAssignmentColumns: vi
+    .fn()
+    .mockResolvedValue(new Set(["id", "employee_id"])), // no versioning cols
 }));
 
-import { rosterService, InsufficientRestError, RestPolicyMissingError } from "../roster.service.js";
+import {
+  rosterService,
+  InsufficientRestError,
+  RestPolicyMissingError,
+} from "../roster.service.js";
 
 const BASE_INPUT = {
-  employeeId: "emp-1", rosterDate: "2026-08-17", shiftId: "shift-1",
-  shiftStartTime: "09:00", shiftEndTime: "18:00",
+  employeeId: "emp-1",
+  rosterDate: "2026-08-17",
+  shiftId: "shift-1",
+  shiftStartTime: "09:00",
+  shiftEndTime: "18:00",
 };
 
 beforeEach(() => {
@@ -57,8 +89,10 @@ beforeEach(() => {
   // Default: employee lookup returns a process/branch, then the final
   // SELECT * FROM wfm_roster_assignment (post-insert re-fetch) returns a row.
   execute.mockImplementation(async (sql: string) => {
-    if (sql.includes("SELECT process_id, branch_id FROM employees")) return [[{ process_id: "proc-1", branch_id: "branch-1" }], []];
-    if (sql.startsWith("SELECT * FROM wfm_roster_assignment")) return [[{ id: "assignment-1" }], []];
+    if (sql.includes("SELECT process_id, branch_id FROM employees"))
+      return [[{ process_id: "proc-1", branch_id: "branch-1" }], []];
+    if (sql.startsWith("SELECT * FROM wfm_roster_assignment"))
+      return [[{ id: "assignment-1" }], []];
     return [[], []];
   });
 });
@@ -72,7 +106,10 @@ describe("assignEmployee - Area 2 minimum rest", () => {
 
   it("skips validation when the input has no shift times (e.g. a week-off assignment)", async () => {
     isRestPolicyFeatureActive.mockResolvedValue(true);
-    await rosterService.assignEmployee({ ...BASE_INPUT, shiftStartTime: null, shiftEndTime: null }, "user-1");
+    await rosterService.assignEmployee(
+      { ...BASE_INPUT, shiftStartTime: null, shiftEndTime: null },
+      "user-1",
+    );
     expect(validateMinimumRest).not.toHaveBeenCalled();
   });
 
@@ -81,51 +118,104 @@ describe("assignEmployee - Area 2 minimum rest", () => {
     validateMinimumRest.mockResolvedValue({ ok: true });
     const result = await rosterService.assignEmployee(BASE_INPUT, "user-1");
     expect(result).toBeDefined();
-    const insertCall = execute.mock.calls.find(([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"));
+    const insertCall = execute.mock.calls.find(
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
     expect(insertCall).toBeDefined();
   });
 
   it("throws RestPolicyMissingError and never inserts when no policy resolves", async () => {
     isRestPolicyFeatureActive.mockResolvedValue(true);
-    validateMinimumRest.mockResolvedValue({ ok: false, reason: "REST_POLICY_MISSING", policy: null });
-    await expect(rosterService.assignEmployee(BASE_INPUT, "user-1")).rejects.toThrow(RestPolicyMissingError);
-    const insertCall = execute.mock.calls.find(([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"));
+    validateMinimumRest.mockResolvedValue({
+      ok: false,
+      reason: "REST_POLICY_MISSING",
+      policy: null,
+    });
+    await expect(
+      rosterService.assignEmployee(BASE_INPUT, "user-1"),
+    ).rejects.toThrow(RestPolicyMissingError);
+    const insertCall = execute.mock.calls.find(
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
     expect(insertCall).toBeUndefined();
   });
 
   it("throws InsufficientRestError and never inserts when below minimum and no override is supplied", async () => {
     isRestPolicyFeatureActive.mockResolvedValue(true);
     validateMinimumRest.mockResolvedValue({
-      ok: false, reason: "INSUFFICIENT_REST", against: "previous", actualRestMinutes: 300,
-      requiredRestMinutes: 600, canOverride: true, neighborShift: { date: "2026-08-16", time: "18:00" },
+      ok: false,
+      reason: "INSUFFICIENT_REST",
+      against: "previous",
+      actualRestMinutes: 300,
+      requiredRestMinutes: 600,
+      canOverride: true,
+      neighborShift: { date: "2026-08-16", time: "18:00" },
     });
-    await expect(rosterService.assignEmployee(BASE_INPUT, "user-1")).rejects.toThrow(InsufficientRestError);
+    await expect(
+      rosterService.assignEmployee(BASE_INPUT, "user-1"),
+    ).rejects.toThrow(InsufficientRestError);
     expect(logRestOverride).not.toHaveBeenCalled();
-    const insertCall = execute.mock.calls.find(([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"));
+    const insertCall = execute.mock.calls.find(
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
     expect(insertCall).toBeUndefined();
   });
 
   it("blocks even with a reason+approver when the resolved policy does not allow override", async () => {
     isRestPolicyFeatureActive.mockResolvedValue(true);
     validateMinimumRest.mockResolvedValue({
-      ok: false, reason: "INSUFFICIENT_REST", against: "previous", actualRestMinutes: 300,
-      requiredRestMinutes: 600, canOverride: false, neighborShift: { date: "2026-08-16", time: "18:00" },
+      ok: false,
+      reason: "INSUFFICIENT_REST",
+      against: "previous",
+      actualRestMinutes: 300,
+      requiredRestMinutes: 600,
+      canOverride: false,
+      neighborShift: { date: "2026-08-16", time: "18:00" },
     });
-    await expect(rosterService.assignEmployee(
-      { ...BASE_INPUT, restOverrideReason: "Urgent coverage", restOverrideApprovedBy: "manager-1" }, "user-1"
-    )).rejects.toThrow(InsufficientRestError);
+    await expect(
+      rosterService.assignEmployee(
+        {
+          ...BASE_INPUT,
+          restOverrideReason: "Urgent coverage",
+          restOverrideApprovedBy: "manager-1",
+        },
+        "user-1",
+      ),
+    ).rejects.toThrow(InsufficientRestError);
     expect(logRestOverride).not.toHaveBeenCalled();
   });
 
   it("proceeds and logs an immutable audit row when canOverride is true and both reason+approver are supplied", async () => {
     isRestPolicyFeatureActive.mockResolvedValue(true);
     validateMinimumRest.mockResolvedValue({
-      ok: false, reason: "INSUFFICIENT_REST", against: "previous", actualRestMinutes: 300,
-      requiredRestMinutes: 600, canOverride: true, neighborShift: { date: "2026-08-16", time: "18:00" },
-      policy: { id: "policy-1", scopeType: "organization", scopeId: null, minimumRestMinutes: 600, allowsEmergencyOverride: true },
+      ok: false,
+      reason: "INSUFFICIENT_REST",
+      against: "previous",
+      actualRestMinutes: 300,
+      requiredRestMinutes: 600,
+      canOverride: true,
+      neighborShift: { date: "2026-08-16", time: "18:00" },
+      policy: {
+        id: "policy-1",
+        scopeType: "organization",
+        scopeId: null,
+        minimumRestMinutes: 600,
+        allowsEmergencyOverride: true,
+      },
     });
     const result = await rosterService.assignEmployee(
-      { ...BASE_INPUT, restOverrideReason: "Urgent coverage gap", restOverrideApprovedBy: "manager-1" }, "requester-1"
+      {
+        ...BASE_INPUT,
+        restOverrideReason: "Urgent coverage gap",
+        restOverrideApprovedBy: "manager-1",
+      },
+      "requester-1",
     );
     expect(result).toBeDefined();
     expect(logRestOverride).toHaveBeenCalledTimes(1);
@@ -139,19 +229,37 @@ describe("assignEmployee - Area 2 minimum rest", () => {
     expect(call.previousShiftEndAt).toBe("2026-08-16 18:00:00");
     expect(call.nextShiftStartAt).toBe("2026-08-17 09:00:00");
 
-    const insertCall = execute.mock.calls.find(([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"));
-    expect(insertCall, "override should still result in the assignment being written").toBeDefined();
+    const insertCall = execute.mock.calls.find(
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
+    expect(
+      insertCall,
+      "override should still result in the assignment being written",
+    ).toBeDefined();
   });
 
   it("requires BOTH reason and approver -- a reason alone is not sufficient to override", async () => {
     isRestPolicyFeatureActive.mockResolvedValue(true);
     validateMinimumRest.mockResolvedValue({
-      ok: false, reason: "INSUFFICIENT_REST", against: "previous", actualRestMinutes: 300,
-      requiredRestMinutes: 600, canOverride: true, neighborShift: { date: "2026-08-16", time: "18:00" },
+      ok: false,
+      reason: "INSUFFICIENT_REST",
+      against: "previous",
+      actualRestMinutes: 300,
+      requiredRestMinutes: 600,
+      canOverride: true,
+      neighborShift: { date: "2026-08-16", time: "18:00" },
     });
-    await expect(rosterService.assignEmployee(
-      { ...BASE_INPUT, restOverrideReason: "Urgent coverage gap" /* no approver */ }, "user-1"
-    )).rejects.toThrow(InsufficientRestError);
+    await expect(
+      rosterService.assignEmployee(
+        {
+          ...BASE_INPUT,
+          restOverrideReason: "Urgent coverage gap" /* no approver */,
+        },
+        "user-1",
+      ),
+    ).rejects.toThrow(InsufficientRestError);
     expect(logRestOverride).not.toHaveBeenCalled();
   });
 });
@@ -162,10 +270,21 @@ describe("assignEmployee - WARN mode (Section E audit fix, 2026-08-17)", () => {
   // enforcementMode, ignoring WARN entirely. Fixed to call the same shared decision point
   // generation/bulk-upload/swap already use.
   const warnShortfall = {
-    ok: false as const, reason: "INSUFFICIENT_REST" as const, against: "previous" as const,
-    actualRestMinutes: 300, requiredRestMinutes: 600, canOverride: false,
+    ok: false as const,
+    reason: "INSUFFICIENT_REST" as const,
+    against: "previous" as const,
+    actualRestMinutes: 300,
+    requiredRestMinutes: 600,
+    canOverride: false,
     neighborShift: { date: "2026-08-16", time: "18:00" },
-    policy: { id: "policy-1", scopeType: "organization" as const, scopeId: null, minimumRestMinutes: 600, allowsEmergencyOverride: false, enforcementMode: "warn" as const },
+    policy: {
+      id: "policy-1",
+      scopeType: "organization" as const,
+      scopeId: null,
+      minimumRestMinutes: 600,
+      allowsEmergencyOverride: false,
+      enforcementMode: "warn" as const,
+    },
   };
 
   it("consults the shared decision point on every INSUFFICIENT_REST, not just an internal check", async () => {
@@ -181,7 +300,11 @@ describe("assignEmployee - WARN mode (Section E audit fix, 2026-08-17)", () => {
     validateMinimumRest.mockResolvedValue(warnShortfall);
     const result = await rosterService.assignEmployee(BASE_INPUT, "user-1");
     expect(result).toBeDefined();
-    const insertCall = execute.mock.calls.find(([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"));
+    const insertCall = execute.mock.calls.find(
+      ([sql]: [string]) =>
+        typeof sql === "string" &&
+        sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
     expect(insertCall, "WARN mode must not block the write").toBeDefined();
   });
 
@@ -201,6 +324,8 @@ describe("assignEmployee - WARN mode (Section E audit fix, 2026-08-17)", () => {
       ...warnShortfall,
       policy: { ...warnShortfall.policy, enforcementMode: "block" as const },
     });
-    await expect(rosterService.assignEmployee(BASE_INPUT, "user-1")).rejects.toThrow(InsufficientRestError);
+    await expect(
+      rosterService.assignEmployee(BASE_INPUT, "user-1"),
+    ).rejects.toThrow(InsufficientRestError);
   });
 });

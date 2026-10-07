@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseDashboardLabel, parseCount, parseOpeningPending, parseDate, EMAIL_TICKET_DAILY_HEADERS,
+  parseDashboardLabel,
+  parseCount,
+  parseOpeningPending,
+  parseDate,
+  EMAIL_TICKET_DAILY_HEADERS,
 } from "../email-ticket-daily-bulk.service.js";
 
 describe("parseDashboardLabel", () => {

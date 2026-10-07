@@ -34,7 +34,9 @@ describe("kpi-studio compute lineage", () => {
   it("keeps the lineage current on re-computation", () => {
     // An employee who moved process must not keep the old lineage on a rerun,
     // so both columns belong in the ON DUPLICATE KEY UPDATE list as well.
-    const onDuplicate = insertBlock.slice(insertBlock.indexOf("ON DUPLICATE KEY UPDATE"));
+    const onDuplicate = insertBlock.slice(
+      insertBlock.indexOf("ON DUPLICATE KEY UPDATE"),
+    );
     expect(onDuplicate).toMatch(/process_id_at_event\s*=\s*VALUES/);
     expect(onDuplicate).toMatch(/branch_id_at_event\s*=\s*VALUES/);
   });

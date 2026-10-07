@@ -30,7 +30,9 @@ describe("salary TDS certificate naming follows the year it covers", () => {
   });
 
   it("issues Form 130 for FY 2026-27, the first year under the 2025 Act", () => {
-    const regime = statutoryRegimeForFinancialYear(financialYearStartFor("2026-04"));
+    const regime = statutoryRegimeForFinancialYear(
+      financialYearStartFor("2026-04"),
+    );
     expect(regime.act).toBe("2025");
     expect(regime.salaryCertificateForm).toBe("130");
     expect(regime.salaryTdsSection).toBe("392");
@@ -42,7 +44,9 @@ describe("salary TDS certificate naming follows the year it covers", () => {
     // Act commenced — but the income belongs to FY 2025-26 and its certificate
     // is a Form 16. Deriving from the payment date instead of the covered year
     // would silently relabel it.
-    const regime = statutoryRegimeForFinancialYear(financialYearStartFor("2026-03"));
+    const regime = statutoryRegimeForFinancialYear(
+      financialYearStartFor("2026-03"),
+    );
     expect(regime.act).toBe("1961");
     expect(regime.salaryCertificateForm).toBe("16");
     expect(regime.salaryTdsSection).toBe("192");
@@ -50,7 +54,9 @@ describe("salary TDS certificate naming follows the year it covers", () => {
 
   it("keeps every earlier year on Form 16 no matter how late it is reprinted", () => {
     for (const runMonth of ["2023-07", "2024-11", "2025-04", "2025-12"]) {
-      const regime = statutoryRegimeForFinancialYear(financialYearStartFor(runMonth));
+      const regime = statutoryRegimeForFinancialYear(
+        financialYearStartFor(runMonth),
+      );
       expect(regime.salaryCertificateForm).toBe("16");
     }
   });
@@ -58,10 +64,12 @@ describe("salary TDS certificate naming follows the year it covers", () => {
   it("changes form exactly at the FY boundary, not mid-year", () => {
     // FY 2025-26 runs Apr 2025 to Mar 2026 on Form 16; FY 2026-27 starts on 130.
     expect(
-      statutoryRegimeForFinancialYear(financialYearStartFor("2026-03")).salaryCertificateForm,
+      statutoryRegimeForFinancialYear(financialYearStartFor("2026-03"))
+        .salaryCertificateForm,
     ).toBe("16");
     expect(
-      statutoryRegimeForFinancialYear(financialYearStartFor("2026-04")).salaryCertificateForm,
+      statutoryRegimeForFinancialYear(financialYearStartFor("2026-04"))
+        .salaryCertificateForm,
     ).toBe("130");
   });
 });

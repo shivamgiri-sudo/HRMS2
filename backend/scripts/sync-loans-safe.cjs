@@ -9,28 +9,28 @@
  * - Detailed logging
  */
 
-const mysql = require('mysql2/promise');
+const mysql = require("mysql2/promise");
 
 const legacyConfig = {
   host: process.env.BILL_DB_HOST,
   port: 3306,
-  user: 'shivam_user',
+  user: "shivam_user",
   password: process.env.DB_PASSWORD,
-  database: 'db_bill',
+  database: "db_bill",
 };
 
 const hrmsConfig = {
   host: process.env.DB_HOST,
   port: 3306,
-  user: 'shivam_user',
+  user: "shivam_user",
   password: process.env.DB_PASSWORD,
-  database: 'mas_hrms',
+  database: "mas_hrms",
 };
 
 function generateUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
 }
@@ -39,9 +39,9 @@ async function syncLoans() {
   const legacyConn = await mysql.createConnection(legacyConfig);
   const hrmsConn = await mysql.createConnection(hrmsConfig);
 
-  console.log('='.repeat(80));
-  console.log('LOAN SYNC - SAFE MODE');
-  console.log('='.repeat(80));
+  console.log("=".repeat(80));
+  console.log("LOAN SYNC - SAFE MODE");
+  console.log("=".repeat(80));
 
   const stats = {
     fetched: 0,
@@ -54,7 +54,7 @@ async function syncLoans() {
 
   try {
     // Step 1: Fetch all loan records from legacy
-    console.log('\n📥 Fetching loan records from legacy...');
+    console.log("\n📥 Fetching loan records from legacy...");
 
     const [legacyLoans] = await legacyConn.execute(`
       SELECT * FROM LoanMaster
@@ -65,24 +65,32 @@ async function syncLoans() {
     console.log(`✅ Fetched ${stats.fetched} loan records`);
 
     // Step 2: Build employee mapping (employee_code -> employee_id)
-    console.log('\n👥 Building employee mapping...');
+    console.log("\n👥 Building employee mapping...");
 
-    const empCodes = [...new Set(legacyLoans.map(l => l.EmpCode).concat(legacyLoans.map(l => l.GuarantorEmpCode)))].filter(Boolean);
-    console.log(`   Unique employee codes (employees + guarantors): ${empCodes.length}`);
+    const empCodes = [
+      ...new Set(
+        legacyLoans
+          .map((l) => l.EmpCode)
+          .concat(legacyLoans.map((l) => l.GuarantorEmpCode)),
+      ),
+    ].filter(Boolean);
+    console.log(
+      `   Unique employee codes (employees + guarantors): ${empCodes.length}`,
+    );
 
-    const placeholders = empCodes.map(() => '?').join(',');
+    const placeholders = empCodes.map(() => "?").join(",");
     const [hrmsEmps] = await hrmsConn.execute(
       `SELECT id, employee_code FROM employees WHERE employee_code IN (${placeholders})`,
-      empCodes
+      empCodes,
     );
 
     const empMapping = new Map();
-    hrmsEmps.forEach(emp => empMapping.set(emp.employee_code, emp.id));
+    hrmsEmps.forEach((emp) => empMapping.set(emp.employee_code, emp.id));
 
     console.log(`✅ Mapped ${empMapping.size}/${empCodes.length} employees`);
 
     // Step 3: Process each loan record
-    console.log('\n⚙️  Processing loan records...\n');
+    console.log("\n⚙️  Processing loan records...\n");
 
     for (const loan of legacyLoans) {
       try {
@@ -90,12 +98,16 @@ async function syncLoans() {
         const employeeId = empMapping.get(loan.EmpCode);
         if (!employeeId) {
           stats.skipped++;
-          console.log(`⚠️  SKIP: Employee ${loan.EmpCode} not found (Loan ID: ${loan.Id})`);
+          console.log(
+            `⚠️  SKIP: Employee ${loan.EmpCode} not found (Loan ID: ${loan.Id})`,
+          );
           continue;
         }
 
         // Map guarantor (optional)
-        const guarantorId = loan.GuarantorEmpCode ? empMapping.get(loan.GuarantorEmpCode) : null;
+        const guarantorId = loan.GuarantorEmpCode
+          ? empMapping.get(loan.GuarantorEmpCode)
+          : null;
 
         // Parse amounts (may be strings)
         const amount = parseFloat(loan.Amount) || 0;
@@ -105,37 +117,38 @@ async function syncLoans() {
         const installments = parseInt(loan.Installments) || 1;
 
         // Determine status
-        let status = 'active';
+        let status = "active";
         if (loan.TransationStatus) {
           const normalized = loan.TransationStatus.toLowerCase().trim();
-          if (normalized === 'completed' || normalized === 'closed') {
-            status = 'completed';
-          } else if (normalized === 'cancelled' || normalized === 'rejected') {
-            status = 'cancelled';
+          if (normalized === "completed" || normalized === "closed") {
+            status = "completed";
+          } else if (normalized === "cancelled" || normalized === "rejected") {
+            status = "cancelled";
           }
         }
         // Also mark as completed if pending is 0
         if (pendingAmount <= 0) {
-          status = 'completed';
+          status = "completed";
         }
 
         // Parse approval
         let approved_by = null;
         let approved_at = null;
-        if (loan.ApproveFirst === 'Yes' || loan.ApproveFirst === 'yes') {
-          approved_by = 'Approved';
+        if (loan.ApproveFirst === "Yes" || loan.ApproveFirst === "yes") {
+          approved_by = "Approved";
           approved_at = loan.ApproveFirstDate;
         }
 
         // Check if already synced
         const [existing] = await hrmsConn.execute(
-          'SELECT id FROM employee_loans WHERE legacy_loan_id = ? LIMIT 1',
-          [loan.Id]
+          "SELECT id FROM employee_loans WHERE legacy_loan_id = ? LIMIT 1",
+          [loan.Id],
         );
 
         if (existing.length > 0) {
           // Update existing
-          await hrmsConn.execute(`
+          await hrmsConn.execute(
+            `
             UPDATE employee_loans SET
               employee_id = ?,
               employee_code = ?,
@@ -163,40 +176,45 @@ async function syncLoans() {
               cost_center = ?,
               legacy_updated_at = ?
             WHERE legacy_loan_id = ?
-          `, [
-            employeeId,
-            loan.EmpCode,
-            loan.Type || 'Loan',
-            amount,
-            loan.StartDate,
-            loan.EndDate,
-            installments,
-            deductionPerMonth,
-            deductedAmount,
-            pendingAmount,
-            status,
-            loan.GuarantorName,
-            loan.GuarantorEmpCode,
-            guarantorId,
-            loan.Reason,
-            approved_by,
-            approved_at,
-            loan.ChequeNumber,
-            loan.ChequeBankName,
-            loan.ChequeDate,
-            loan.RTGSNumber,
-            loan.RTGSDate,
-            loan.BranchName,
-            loan.CostCenter,
-            loan.LastUpdateDate,
-            loan.Id,
-          ]);
+          `,
+            [
+              employeeId,
+              loan.EmpCode,
+              loan.Type || "Loan",
+              amount,
+              loan.StartDate,
+              loan.EndDate,
+              installments,
+              deductionPerMonth,
+              deductedAmount,
+              pendingAmount,
+              status,
+              loan.GuarantorName,
+              loan.GuarantorEmpCode,
+              guarantorId,
+              loan.Reason,
+              approved_by,
+              approved_at,
+              loan.ChequeNumber,
+              loan.ChequeBankName,
+              loan.ChequeDate,
+              loan.RTGSNumber,
+              loan.RTGSDate,
+              loan.BranchName,
+              loan.CostCenter,
+              loan.LastUpdateDate,
+              loan.Id,
+            ],
+          );
           stats.updated++;
-          console.log(`✅ UPDATE: ${loan.EmpCode} - ${loan.Type} - ₹${amount} (${status})`);
+          console.log(
+            `✅ UPDATE: ${loan.EmpCode} - ${loan.Type} - ₹${amount} (${status})`,
+          );
         } else {
           // Insert new
           const newId = generateUUID();
-          await hrmsConn.execute(`
+          await hrmsConn.execute(
+            `
             INSERT INTO employee_loans (
               id, employee_id, employee_code, loan_type, amount,
               start_date, end_date, installments, deduction_per_month,
@@ -209,53 +227,60 @@ async function syncLoans() {
               legacy_loan_id, legacy_created_at, legacy_updated_at,
               created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `, [
-            newId,
-            employeeId,
-            loan.EmpCode,
-            loan.Type || 'Loan',
-            amount,
-            loan.StartDate,
-            loan.EndDate,
-            installments,
-            deductionPerMonth,
-            deductedAmount,
-            pendingAmount,
-            status,
-            loan.GuarantorName,
-            loan.GuarantorEmpCode,
-            guarantorId,
-            loan.Reason,
-            approved_by,
-            approved_at,
-            loan.ChequeNumber,
-            loan.ChequeBankName,
-            loan.ChequeDate,
-            loan.RTGSNumber,
-            loan.RTGSDate,
-            loan.BranchName,
-            loan.CostCenter,
-            loan.Id,
-            loan.CreateDate,
-            loan.LastUpdateDate,
-            loan.CreateDate,
-          ]);
+          `,
+            [
+              newId,
+              employeeId,
+              loan.EmpCode,
+              loan.Type || "Loan",
+              amount,
+              loan.StartDate,
+              loan.EndDate,
+              installments,
+              deductionPerMonth,
+              deductedAmount,
+              pendingAmount,
+              status,
+              loan.GuarantorName,
+              loan.GuarantorEmpCode,
+              guarantorId,
+              loan.Reason,
+              approved_by,
+              approved_at,
+              loan.ChequeNumber,
+              loan.ChequeBankName,
+              loan.ChequeDate,
+              loan.RTGSNumber,
+              loan.RTGSDate,
+              loan.BranchName,
+              loan.CostCenter,
+              loan.Id,
+              loan.CreateDate,
+              loan.LastUpdateDate,
+              loan.CreateDate,
+            ],
+          );
           stats.inserted++;
-          console.log(`✅ INSERT: ${loan.EmpCode} - ${loan.Type} - ₹${amount} (${status})`);
+          console.log(
+            `✅ INSERT: ${loan.EmpCode} - ${loan.Type} - ₹${amount} (${status})`,
+          );
         }
 
         stats.validated++;
-
       } catch (error) {
-        stats.errors.push({ loan_id: loan.Id, emp_code: loan.EmpCode, error: error.message });
+        stats.errors.push({
+          loan_id: loan.Id,
+          emp_code: loan.EmpCode,
+          error: error.message,
+        });
         console.error(`❌ ERROR processing loan ${loan.Id}:`, error.message);
       }
     }
 
     // Step 4: Summary
-    console.log('\n' + '='.repeat(80));
-    console.log('SYNC COMPLETE');
-    console.log('='.repeat(80));
+    console.log("\n" + "=".repeat(80));
+    console.log("SYNC COMPLETE");
+    console.log("=".repeat(80));
     console.log(`📥 Fetched:   ${stats.fetched}`);
     console.log(`✅ Validated: ${stats.validated}`);
     console.log(`➕ Inserted:  ${stats.inserted}`);
@@ -264,8 +289,8 @@ async function syncLoans() {
     console.log(`❌ Errors:    ${stats.errors.length}`);
 
     if (stats.errors.length > 0) {
-      console.log('\n❌ Errors:');
-      stats.errors.slice(0, 10).forEach(e => {
+      console.log("\n❌ Errors:");
+      stats.errors.slice(0, 10).forEach((e) => {
         console.log(`   Loan ${e.loan_id} (${e.emp_code}): ${e.error}`);
       });
       if (stats.errors.length > 10) {
@@ -284,14 +309,13 @@ async function syncLoans() {
       GROUP BY status
     `);
 
-    console.log('\n📊 Loan Summary:');
+    console.log("\n📊 Loan Summary:");
     console.table(summary);
 
-    console.log('\n✅ SYNC SUCCESSFUL - NO SOURCE DATA DELETED');
-    console.log('='.repeat(80));
-
+    console.log("\n✅ SYNC SUCCESSFUL - NO SOURCE DATA DELETED");
+    console.log("=".repeat(80));
   } catch (error) {
-    console.error('\n❌ SYNC FAILED:', error.message);
+    console.error("\n❌ SYNC FAILED:", error.message);
     throw error;
   } finally {
     await legacyConn.end();
@@ -300,7 +324,7 @@ async function syncLoans() {
 }
 
 // Run sync
-syncLoans().catch(error => {
-  console.error('Fatal error:', error);
+syncLoans().catch((error) => {
+  console.error("Fatal error:", error);
   process.exit(1);
 });

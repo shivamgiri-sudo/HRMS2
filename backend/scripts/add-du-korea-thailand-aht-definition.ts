@@ -13,26 +13,57 @@
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
-import { saveDefinition, createMetric } from "../src/modules/kpi/kpi-studio.service.js";
+import {
+  saveDefinition,
+  createMetric,
+} from "../src/modules/kpi/kpi-studio.service.js";
 import type { RowDataPacket } from "mysql2";
 
-async function ensureMetric(code: string, name: string, unit: string, direction: "higher_is_better" | "lower_is_better") {
-  const [rows] = await db.execute<RowDataPacket[]>(`SELECT id FROM kpi_metric_master WHERE metric_code = ? LIMIT 1`, [code]);
+async function ensureMetric(
+  code: string,
+  name: string,
+  unit: string,
+  direction: "higher_is_better" | "lower_is_better",
+) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM kpi_metric_master WHERE metric_code = ? LIMIT 1`,
+    [code],
+  );
   if (rows.length) return String(rows[0].id);
-  const created = await createMetric({ metric_code: code, metric_name: name, unit, direction } as never);
+  const created = await createMetric({
+    metric_code: code,
+    metric_name: name,
+    unit,
+    direction,
+  } as never);
   return String((created as { id: string }).id);
 }
 
 async function main() {
   const metricId = await ensureMetric(
-    "DU_KOREA_THAILAND_AHT", "DU Korea/Thailand average handle time", "seconds", "lower_is_better",
+    "DU_KOREA_THAILAND_AHT",
+    "DU Korea/Thailand average handle time",
+    "seconds",
+    "lower_is_better",
   );
-  const def = await saveDefinition({
-    metric_id: metricId, grain: "process", process_id: "050cc297-67ba-11f1-adb1-00155d0ab410",
-    data_source_id: "fa799157-abbb-11f1-8f5c-00155d0ab410", formula_expression: "SAFE_DIV(handle_seconds, answered)",
-    aggregation_method: "average", scoring_type: "raw", target_source: "none", created_by: "demo-super-admin-id",
-  } as never, "demo-super-admin-id");
+  const def = await saveDefinition(
+    {
+      metric_id: metricId,
+      grain: "process",
+      process_id: "050cc297-67ba-11f1-adb1-00155d0ab410",
+      data_source_id: "fa799157-abbb-11f1-8f5c-00155d0ab410",
+      formula_expression: "SAFE_DIV(handle_seconds, answered)",
+      aggregation_method: "average",
+      scoring_type: "raw",
+      target_source: "none",
+      created_by: "demo-super-admin-id",
+    } as never,
+    "demo-super-admin-id",
+  );
   console.log("created:", JSON.stringify(def));
   process.exit(0);
 }
-main().catch((e) => { console.error("FAILED", e); process.exit(1); });
+main().catch((e) => {
+  console.error("FAILED", e);
+  process.exit(1);
+});

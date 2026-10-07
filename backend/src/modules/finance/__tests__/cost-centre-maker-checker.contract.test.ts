@@ -37,7 +37,8 @@ function rowInPendingL1(over: Record<string, unknown> = {}) {
 }
 
 async function service() {
-  return (await import("../cost-centre-management.service.js")).costCentreManagementService;
+  return (await import("../cost-centre-management.service.js"))
+    .costCentreManagementService;
 }
 
 beforeEach(() => {
@@ -83,7 +84,10 @@ describe("cost centre L1 approval — maker-checker", () => {
   it("does not block legacy rows, where created_by and submitted_by are NULL", async () => {
     // All 927 production rows carry created_by NULL, so the guard has to stay inert for
     // them rather than refusing every historical cost centre.
-    execute.mockResolvedValue([[rowInPendingL1({ created_by: null, submitted_by: null })], []]);
+    execute.mockResolvedValue([
+      [rowInPendingL1({ created_by: null, submitted_by: null })],
+      [],
+    ]);
     const svc = await service();
     await expect(
       svc.approveL1(CC_ID, { id: APPROVER, role: "finance_head" }),
@@ -147,7 +151,10 @@ describe("cost centre L2 approval — maker-checker", () => {
   });
 
   it("does not block legacy rows, where created_by and submitted_by are NULL", async () => {
-    execute.mockResolvedValue([[rowInPendingL2({ created_by: null, submitted_by: null })], []]);
+    execute.mockResolvedValue([
+      [rowInPendingL2({ created_by: null, submitted_by: null })],
+      [],
+    ]);
     const svc = await service();
     await expect(
       svc.approveL2(CC_ID, { id: APPROVER, role: "admin" }),

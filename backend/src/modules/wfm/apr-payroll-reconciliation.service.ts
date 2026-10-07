@@ -49,13 +49,16 @@ export function parseAprNetLoginToMinutes(value: unknown): number {
   const parts = text.split(":").map(Number);
   if (parts.length >= 2 && parts.every((part) => Number.isFinite(part))) {
     const [hours, minutes, seconds = 0] = parts;
-    return Math.max(0, (hours * 60) + minutes + Math.round(seconds / 60));
+    return Math.max(0, hours * 60 + minutes + Math.round(seconds / 60));
   }
   const numeric = Number(text);
   return Number.isFinite(numeric) ? Math.max(0, Math.round(numeric)) : 0;
 }
 
-export function classifyAprMinutes(minutes: number): { status: "present" | "half_day" | "absent"; lwpValue: number } {
+export function classifyAprMinutes(minutes: number): {
+  status: "present" | "half_day" | "absent";
+  lwpValue: number;
+} {
   if (minutes >= 480) return { status: "present", lwpValue: 0 };
   if (minutes >= 240) return { status: "half_day", lwpValue: 0.5 };
   return { status: "absent", lwpValue: 1 };
@@ -68,11 +71,21 @@ function monthFromRange(from: string) {
 function monthRange(runMonth: string) {
   const [year, month] = runMonth.split("-").map(Number);
   const lastDay = new Date(year, month, 0).getDate();
-  return { start: `${runMonth}-01`, end: `${runMonth}-${String(lastDay).padStart(2, "0")}`, daysInMonth: lastDay };
+  return {
+    start: `${runMonth}-01`,
+    end: `${runMonth}-${String(lastDay).padStart(2, "0")}`,
+    daysInMonth: lastDay,
+  };
 }
 
 function issueKey(issue: AprIssue): string {
-  return [issue.issueDate, issue.issueType, issue.employeeId, issue.employeeCode, ""].join("__");
+  return [
+    issue.issueDate,
+    issue.issueType,
+    issue.employeeId,
+    issue.employeeCode,
+    "",
+  ].join("__");
 }
 
 async function latestRunIdForMonth(runMonth: string): Promise<string | null> {
@@ -120,7 +133,11 @@ async function upsertIssues(issues: AprIssue[]): Promise<number> {
   return count;
 }
 
-async function resolveGoneIssues(from: string, to: string, activeKeys: Set<string>) {
+async function resolveGoneIssues(
+  from: string,
+  to: string,
+  activeKeys: Set<string>,
+) {
   const placeholders = APR_ISSUE_TYPES.map(() => "?").join(",");
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT id, issue_key
@@ -147,10 +164,11 @@ async function resolveGoneIssues(from: string, to: string, activeKeys: Set<strin
 }
 
 async function repairAdrFromApr(row: any): Promise<"repaired" | "skipped"> {
-  const hasProtectedAdr = Number(row.is_locked ?? 0) === 1
-    || Boolean(row.override_by)
-    || Boolean(row.regularization_id)
-    || Boolean(row.approved_regularization_id);
+  const hasProtectedAdr =
+    Number(row.is_locked ?? 0) === 1 ||
+    Boolean(row.override_by) ||
+    Boolean(row.regularization_id) ||
+    Boolean(row.approved_regularization_id);
   if (hasProtectedAdr) return "skipped";
 
   const classification = classifyAprMinutes(Number(row.apr_minutes ?? 0));
@@ -189,10 +207,15 @@ async function repairAdrFromApr(row: any): Promise<"repaired" | "skipped"> {
 }
 
 export const aprPayrollReconciliationService = {
-  async audit(options: { from: string; to: string; runId?: string | null; apply?: boolean }): Promise<AprReconciliationResult> {
+  async audit(options: {
+    from: string;
+    to: string;
+    runId?: string | null;
+    apply?: boolean;
+  }): Promise<AprReconciliationResult> {
     const runMonth = monthFromRange(options.from);
     const range = monthRange(runMonth);
-    const runId = options.runId ?? await latestRunIdForMonth(runMonth);
+    const runId = options.runId ?? (await latestRunIdForMonth(runMonth));
 
     const [aprRows] = await db.query<RowDataPacket[]>(
       `SELECT e.id AS employee_id, e.employee_code, e.branch_id, e.process_id,
@@ -215,7 +238,8 @@ export const aprPayrollReconciliationService = {
       [options.from, options.to],
     );
     const adrByEmployeeDate = new Map<string, any>();
-    for (const row of adrRows as any[]) adrByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
+    for (const row of adrRows as any[])
+      adrByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
 
     const [regularizationRows] = await db.query<RowDataPacket[]>(
       `SELECT id, employee_id, DATE_FORMAT(session_date, '%Y-%m-%d') AS record_date
@@ -225,7 +249,11 @@ export const aprPayrollReconciliationService = {
       [options.from, options.to],
     );
     const approvedRegularizationByEmployeeDate = new Map<string, any>();
-    for (const row of regularizationRows as any[]) approvedRegularizationByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
+    for (const row of regularizationRows as any[])
+      approvedRegularizationByEmployeeDate.set(
+        `${row.employee_id}__${row.record_date}`,
+        row,
+      );
 
     const issues: AprIssue[] = [];
     let repairedRows = 0;
@@ -247,7 +275,12 @@ export const aprPayrollReconciliationService = {
         });
         continue;
       }
-      if (regularization || Number(adr?.is_locked ?? 0) === 1 || adr?.override_by || adr?.regularization_id) {
+      if (
+        regularization ||
+        Number(adr?.is_locked ?? 0) === 1 ||
+        adr?.override_by ||
+        adr?.regularization_id
+      ) {
         skippedRows += 1;
         continue;
       }
@@ -273,17 +306,24 @@ export const aprPayrollReconciliationService = {
           issueType: "apr_missing_adr",
           severity: "blocker",
           sourceMinutes: Number(apr.apr_minutes ?? 0),
-          payload: { aprMinutes: Number(apr.apr_minutes ?? 0), expectedStatus: classification.status },
+          payload: {
+            aprMinutes: Number(apr.apr_minutes ?? 0),
+            expectedStatus: classification.status,
+          },
         });
         if (options.apply) {
           const repair = await repairAdrFromApr(rowForRepair);
-          if (repair === "repaired") repairedRows += 1; else skippedRows += 1;
+          if (repair === "repaired") repairedRows += 1;
+          else skippedRows += 1;
         }
         continue;
       }
 
       const adrMinutes = Number(adr.raw_minutes ?? adr.dialler_minutes ?? 0);
-      if (adr.attendance_source === "dialler" && Math.abs(adrMinutes - Number(apr.apr_minutes ?? 0)) > 1) {
+      if (
+        adr.attendance_source === "dialler" &&
+        Math.abs(adrMinutes - Number(apr.apr_minutes ?? 0)) > 1
+      ) {
         issues.push({
           issueDate: apr.record_date,
           employeeId: apr.employee_id,
@@ -293,15 +333,23 @@ export const aprPayrollReconciliationService = {
           sourceMinutes: Number(apr.apr_minutes ?? 0),
           hrmsMinutes: adrMinutes,
           adrStatus: adr.attendance_status,
-          payload: { sourceSystem: adr.source_system, expectedStatus: classification.status, actualStatus: adr.attendance_status },
+          payload: {
+            sourceSystem: adr.source_system,
+            expectedStatus: classification.status,
+            actualStatus: adr.attendance_status,
+          },
         });
         if (options.apply) {
           const repair = await repairAdrFromApr(rowForRepair);
-          if (repair === "repaired") repairedRows += 1; else skippedRows += 1;
+          if (repair === "repaired") repairedRows += 1;
+          else skippedRows += 1;
         }
       }
 
-      if (adr.attendance_source === "dialler" && adr.source_system !== "apr.ReportDate") {
+      if (
+        adr.attendance_source === "dialler" &&
+        adr.source_system !== "apr.ReportDate"
+      ) {
         issues.push({
           issueDate: apr.record_date,
           employeeId: apr.employee_id,
@@ -315,7 +363,8 @@ export const aprPayrollReconciliationService = {
         });
         if (options.apply) {
           const repair = await repairAdrFromApr(rowForRepair);
-          if (repair === "repaired") repairedRows += 1; else skippedRows += 1;
+          if (repair === "repaired") repairedRows += 1;
+          else skippedRows += 1;
         }
       }
     }
@@ -360,7 +409,15 @@ export const aprPayrollReconciliationService = {
               + COALESCE(spl.eligible_holiday_days, 0),
               ?
             )) > 0.01`,
-        [range.daysInMonth, range.start, range.end, range.start, range.end, runId, range.daysInMonth],
+        [
+          range.daysInMonth,
+          range.start,
+          range.end,
+          range.start,
+          range.end,
+          runId,
+          range.daysInMonth,
+        ],
       );
       for (const line of lineRows as any[]) {
         issues.push({
@@ -374,7 +431,9 @@ export const aprPayrollReconciliationService = {
           payload: {
             runId,
             storedFinalPayableDays: Number(line.final_payable_days ?? 0),
-            recomputedFinalPayableDays: Number(line.recomputed_final_payable_days ?? 0),
+            recomputedFinalPayableDays: Number(
+              line.recomputed_final_payable_days ?? 0,
+            ),
           },
         });
       }
@@ -382,7 +441,11 @@ export const aprPayrollReconciliationService = {
 
     const activeKeys = new Set(issues.map(issueKey));
     const upsertedIssues = await upsertIssues(issues);
-    const resolvedIssues = await resolveGoneIssues(options.from, options.to, activeKeys);
+    const resolvedIssues = await resolveGoneIssues(
+      options.from,
+      options.to,
+      activeKeys,
+    );
     const countsByType = issues.reduce<Record<string, number>>((acc, issue) => {
       acc[issue.issueType] = (acc[issue.issueType] ?? 0) + 1;
       return acc;

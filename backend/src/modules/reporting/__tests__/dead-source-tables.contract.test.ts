@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
+const read = (path: string) =>
+  readFileSync(resolve(process.cwd(), path), "utf8");
 
 /**
  * Reports that query the wrong table, or filter on a column nobody populates.
@@ -35,9 +36,10 @@ describe("reports must read the table that holds the data", () => {
     // "paternity" (PL, PML, PTRL, and MTRL for maternity).
     const sql = block("maternity-paternity-register");
     expect(sql).toContain("lt.leave_name REGEXP 'Maternity|Paternity'");
-    expect(sql, "'ML' is Medical Leave — selecting it returns the wrong 875 rows").not.toMatch(
-      /leave_code\s+IN\s*\([^)]*'ML'/,
-    );
+    expect(
+      sql,
+      "'ML' is Medical Leave — selecting it returns the wrong 875 rows",
+    ).not.toMatch(/leave_code\s+IN\s*\([^)]*'ML'/);
   });
 
   it("clearance-status-register reads exit_clearance_task, not the empty checklist table", () => {
@@ -55,7 +57,9 @@ describe("reports must read the table that holds the data", () => {
     // was pointed at the right table. COALESCE to created_at, which the module does write,
     // and keep submitted_at first so the filter upgrades itself if it is ever populated.
     const sql = block("clearance-status-register");
-    expect(sql).toContain("COALESCE(er.submitted_at, er.created_at) BETWEEN ? AND ?");
+    expect(sql).toContain(
+      "COALESCE(er.submitted_at, er.created_at) BETWEEN ? AND ?",
+    );
   });
 
   it("clearance-status-register's EXPORT executor also reads exit_clearance_task, not the empty checklist table", () => {
@@ -67,10 +71,19 @@ describe("reports must read the table that holds the data", () => {
     // test file, the assertion above) showed the real 24. This is exactly the gap the
     // screen-vs-export duality this codebase has been burned by before: fixing one path does
     // not fix the other, and nothing enforced that until now.
-    const exitExecutor = read("src/modules/reporting/executors/exit.executor.ts");
-    const start = exitExecutor.indexOf("export async function clearanceStatusRegister");
-    expect(start, "clearanceStatusRegister executor not found").toBeGreaterThan(-1);
-    const fn = exitExecutor.slice(start, exitExecutor.indexOf("\nexport async function", start + 1));
+    const exitExecutor = read(
+      "src/modules/reporting/executors/exit.executor.ts",
+    );
+    const start = exitExecutor.indexOf(
+      "export async function clearanceStatusRegister",
+    );
+    expect(start, "clearanceStatusRegister executor not found").toBeGreaterThan(
+      -1,
+    );
+    const fn = exitExecutor.slice(
+      start,
+      exitExecutor.indexOf("\nexport async function", start + 1),
+    );
     expect(fn).toContain("exit_clearance_task");
     expect(fn).not.toContain("exit_clearance_checklist");
   });
@@ -82,22 +95,37 @@ describe("reports must read the table that holds the data", () => {
     // shadowed counts from employees.date_of_joining and COALESCE(date_of_exit,
     // resignation_date), and reconciles exactly with an independent control for all 7 months.
     expect(routes).not.toContain('case "monthly-attrition-summary":');
-    expect(routes, "nothing should read attrition_record — it is empty").not.toContain("FROM attrition_record");
+    expect(
+      routes,
+      "nothing should read attrition_record — it is empty",
+    ).not.toContain("FROM attrition_record");
   });
 
   it("the attrition executor counts joiners and exits from the employee dates", () => {
-    const exitExecutor = read("src/modules/reporting/executors/exit.executor.ts");
-    const start = exitExecutor.indexOf("export async function monthlyAttritionSummary");
+    const exitExecutor = read(
+      "src/modules/reporting/executors/exit.executor.ts",
+    );
+    const start = exitExecutor.indexOf(
+      "export async function monthlyAttritionSummary",
+    );
     expect(start, "monthlyAttritionSummary not found").toBeGreaterThan(-1);
-    const fn = exitExecutor.slice(start, exitExecutor.indexOf("\nexport async function", start + 1));
+    const fn = exitExecutor.slice(
+      start,
+      exitExecutor.indexOf("\nexport async function", start + 1),
+    );
     expect(fn).toContain("COALESCE(e.date_of_exit, e.resignation_date)");
     expect(fn).toContain("e.date_of_joining");
     // Point-in-time headcount is not derivable — 28,398 of 58,627 employees are inactive with
     // no exit date — so the report must not claim an attrition percentage built on it.
     // Comments are stripped first: the executor explains at length why these columns are
     // absent, and naming them in prose must not read as emitting them.
-    const code = fn.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(code, "attrition % needs a headcount this data cannot supply").not.toMatch(/attrition_pct|avg_hc|opening_hc/);
+    const code = fn
+      .replace(/^\s*\/\/.*$/gm, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(
+      code,
+      "attrition % needs a headcount this data cannot supply",
+    ).not.toMatch(/attrition_pct|avg_hc|opening_hc/);
   });
 
   it("leave-encashment-register has no inline block shadowing its executor", () => {

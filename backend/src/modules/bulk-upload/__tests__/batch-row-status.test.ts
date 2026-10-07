@@ -6,9 +6,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const execute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: (...a: unknown[]) => execute(...a) },
+}));
 
-const { markRowsImported, ROW_STATUS_CHUNK_SIZE } = await import("../batch-row-status.js");
+const { markRowsImported, ROW_STATUS_CHUNK_SIZE } =
+  await import("../batch-row-status.js");
 
 beforeEach(() => execute.mockReset());
 
@@ -16,9 +19,13 @@ describe("markRowsImported", () => {
   it("splits 26,924 ids into short statements, none larger than the chunk size", async () => {
     const ids = Array.from({ length: 26_924 }, (_, i) => `row-${i}`);
     await markRowsImported(ids);
-    expect(execute).toHaveBeenCalledTimes(Math.ceil(26_924 / ROW_STATUS_CHUNK_SIZE));
+    expect(execute).toHaveBeenCalledTimes(
+      Math.ceil(26_924 / ROW_STATUS_CHUNK_SIZE),
+    );
     for (const [, params] of execute.mock.calls) {
-      expect((params as string[]).length).toBeLessThanOrEqual(ROW_STATUS_CHUNK_SIZE);
+      expect((params as string[]).length).toBeLessThanOrEqual(
+        ROW_STATUS_CHUNK_SIZE,
+      );
     }
   });
 

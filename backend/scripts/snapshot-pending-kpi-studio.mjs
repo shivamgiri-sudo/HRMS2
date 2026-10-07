@@ -68,7 +68,17 @@ function docker(args, options = {}) {
 function mysql(sqlText) {
   return execFileSync(
     "docker",
-    ["exec", "-i", CONTAINER, "mysql", "-uroot", "-pthrowaway", "-N", "-B", "snapshot_probe"],
+    [
+      "exec",
+      "-i",
+      CONTAINER,
+      "mysql",
+      "-uroot",
+      "-pthrowaway",
+      "-N",
+      "-B",
+      "snapshot_probe",
+    ],
     { input: sqlText, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
   );
 }
@@ -85,10 +95,15 @@ process.on("exit", cleanup);
 
 console.log("Starting throwaway MySQL 8...");
 docker([
-  "run", "-d", "--rm",
-  "--name", CONTAINER,
-  "-e", "MYSQL_ROOT_PASSWORD=throwaway",
-  "-e", "MYSQL_DATABASE=snapshot_probe",
+  "run",
+  "-d",
+  "--rm",
+  "--name",
+  CONTAINER,
+  "-e",
+  "MYSQL_ROOT_PASSWORD=throwaway",
+  "-e",
+  "MYSQL_DATABASE=snapshot_probe",
   "mysql:8.0",
   // Matches the production server default, so a missing COLLATE in a migration is not masked here.
   "--collation-server=utf8mb4_0900_ai_ci",
@@ -143,13 +158,16 @@ for (const [table, column] of rows) {
   // Lowercased to honour the snapshot's first invariant: columnRefsIn() lowercases every identifier
   // it extracts, so a snapshot holding MySQL's real case would make the guard flag correct code.
   const tableName = table.toLowerCase();
-  if (!tableName.startsWith(LIFT_PREFIX) && !LIFT_EXACT.includes(tableName)) continue;
+  if (!tableName.startsWith(LIFT_PREFIX) && !LIFT_EXACT.includes(tableName))
+    continue;
   if (!observed.has(tableName)) observed.set(tableName, []);
   observed.get(tableName).push(column.toLowerCase());
 }
 
 if (!observed.size) {
-  console.error("Nothing was observed — the migrations did not create the expected tables.");
+  console.error(
+    "Nothing was observed — the migrations did not create the expected tables.",
+  );
   process.exit(1);
 }
 
@@ -176,12 +194,17 @@ for (const [table, columns] of [...observed.entries()].sort()) {
   if (merged.length !== before) {
     snapshot.tables[table] = merged;
     replaced += 1;
-    console.log(`  ~ ${table} (+${merged.length - before} columns: ${columns.filter((c) => !existing.includes(c)).join(", ")})`);
+    console.log(
+      `  ~ ${table} (+${merged.length - before} columns: ${columns.filter((c) => !existing.includes(c)).join(", ")})`,
+    );
   }
 }
 
 snapshot.tableCount = Object.keys(snapshot.tables).length;
-snapshot.columnCount = Object.values(snapshot.tables).reduce((total, columns) => total + columns.length, 0);
+snapshot.columnCount = Object.values(snapshot.tables).reduce(
+  (total, columns) => total + columns.length,
+  0,
+);
 // generatedFrom is LEFT ALONE on purpose. It names the database the snapshot mirrors, and
 // report-accuracy-guards.contract.test.ts asserts it is exactly "mas_hrms" before using the
 // snapshot as its oracle for which tables exist in production. An earlier version of this script

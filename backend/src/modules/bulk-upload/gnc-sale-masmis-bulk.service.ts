@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 
 /**
@@ -40,10 +43,27 @@ import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
  */
 
 export const GNC_SALE_HEADERS = [
-  "Week", "Date", "EMP ID", "Emp_Name", "TL", "T1", "T3", "CustomerNumber",
-  "E-mail ID", "Payment Status", "Gross Amount", "Sum Before GST", "OrderID",
-  "Campaign", "Discount Code", "Count", "Status", "Lineitem name", "Sale Lob",
-  "Target", "Sale Source",
+  "Week",
+  "Date",
+  "EMP ID",
+  "Emp_Name",
+  "TL",
+  "T1",
+  "T3",
+  "CustomerNumber",
+  "E-mail ID",
+  "Payment Status",
+  "Gross Amount",
+  "Sum Before GST",
+  "OrderID",
+  "Campaign",
+  "Discount Code",
+  "Count",
+  "Status",
+  "Lineitem name",
+  "Sale Lob",
+  "Target",
+  "Sale Source",
 ] as const;
 
 /** Lowercase, strip everything but letters/digits -- same convention as every other importer
@@ -58,7 +78,8 @@ function get(data: Record<string, unknown>, ...keys: string[]): string {
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
     const v = normalized[normalizeKey(k)];
-    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v).trim();
   }
   return "";
 }
@@ -91,13 +112,27 @@ export function parseGncDate(raw: unknown): string | null {
   // Day is 1-2 digits: the sibling Bellavita export uses "1-Sep-26" (no leading
   // zero) for the 1st-9th of a month, and the same bug (exactly 2 digits
   // required) meant every such row failed there -- fixed proactively here too.
-  const m = /^(\d{1,2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2})$/i.exec(v);
+  const m =
+    /^(\d{1,2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2})$/i.exec(
+      v,
+    );
   if (m) {
     const months: Record<string, string> = {
-      Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-      Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+      Jan: "01",
+      Feb: "02",
+      Mar: "03",
+      Apr: "04",
+      May: "05",
+      Jun: "06",
+      Jul: "07",
+      Aug: "08",
+      Sep: "09",
+      Oct: "10",
+      Nov: "11",
+      Dec: "12",
     };
-    const monthKey = m[2].charAt(0).toUpperCase() + m[2].slice(1, 3).toLowerCase();
+    const monthKey =
+      m[2].charAt(0).toUpperCase() + m[2].slice(1, 3).toLowerCase();
     const year = parseInt(m[3], 10) < 50 ? `20${m[3]}` : `19${m[3]}`;
     return `${year}-${months[monthKey]}-${m[1].padStart(2, "0")} 00:00:00`;
   }
@@ -148,12 +183,30 @@ interface ParsedRow {
 
 function toInsertValues(r: ParsedRow, batchId: string): unknown[] {
   return [
-    r.week, r.saleDate, r.empId, r.empName, r.tl, r.t1, r.t3, r.customerNumber, r.emailId,
-    r.paymentStatus, r.grossAmount, r.sumBeforeGst, r.orderId, r.campaign, r.discountCode,
-    r.saleCount, r.status, r.lineItemName, r.saleLob, r.target, r.saleSource,
+    r.week,
+    r.saleDate,
+    r.empId,
+    r.empName,
+    r.tl,
+    r.t1,
+    r.t3,
+    r.customerNumber,
+    r.emailId,
+    r.paymentStatus,
+    r.grossAmount,
+    r.sumBeforeGst,
+    r.orderId,
+    r.campaign,
+    r.discountCode,
+    r.saleCount,
+    r.status,
+    r.lineItemName,
+    r.saleLob,
+    r.target,
+    r.saleSource,
     null, // uploaded_by: My Dashboards' numeric user id space -- HRMS user ids are UUIDs
-          // and don't fit this int column; the real HRMS uploader is tracked on our own
-          // upload_batch row instead, never fabricated as a fake numeric id here.
+    // and don't fit this int column; the real HRMS uploader is tracked on our own
+    // upload_batch row instead, never fabricated as a fake numeric id here.
     batchId,
   ];
 }
@@ -168,7 +221,9 @@ interface ExistingOrderRow extends RowDataPacket {
  * file/overlapping date range updates the existing row instead of trying
  * to insert a second one. IN() is chunked (500/query) since a batch can
  * have thousands of rows. */
-async function findExistingOrderIds(orderIds: string[]): Promise<Map<string, number>> {
+async function findExistingOrderIds(
+  orderIds: string[],
+): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   const unique = Array.from(new Set(orderIds));
   const chunkSize = 500;
@@ -193,7 +248,8 @@ export async function importGncSaleMasmisBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
@@ -205,11 +261,19 @@ export async function importGncSaleMasmisBatch(
         ? JSON.parse(row.normalized_data)
         : ((row.normalized_data ?? {}) as Record<string, unknown>);
 
-    const orderId = get(data, "OrderID", "GNC Order ID", "gnc order id", "gnc_order_id");
+    const orderId = get(
+      data,
+      "OrderID",
+      "GNC Order ID",
+      "gnc order id",
+      "gnc_order_id",
+    );
     const saleDate = parseGncDate(get(data, "Date", "date"));
     if (!orderId || !saleDate) {
       const msg = `Row ${row.row_no}: "OrderID" and "Date" are both required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     parsedRows.push({
@@ -223,23 +287,33 @@ export async function importGncSaleMasmisBatch(
       tl: get(data, "TL", "tl"),
       t1: parseGncDate(get(data, "T1", "t1")), // t1 is a real DATE column, not free text
       t3: get(data, "T3", "t3"),
-      customerNumber: blankDash(get(data, "CustomerNumber", "customer number", "customer_number")),
+      customerNumber: blankDash(
+        get(data, "CustomerNumber", "customer number", "customer_number"),
+      ),
       emailId: blankDash(get(data, "E-mail ID", "email id", "email_id")),
       paymentStatus: get(data, "Payment Status", "payment_status"),
-      grossAmount: parseNullableFloat(get(data, "Gross Amount", "gross_amount")),
-      sumBeforeGst: parseNullableFloat(get(data, "Sum Before GST", "sum_before_gst")),
+      grossAmount: parseNullableFloat(
+        get(data, "Gross Amount", "gross_amount"),
+      ),
+      sumBeforeGst: parseNullableFloat(
+        get(data, "Sum Before GST", "sum_before_gst"),
+      ),
       campaign: get(data, "Campaign", "campaign"),
       discountCode: blankDash(get(data, "Discount Code", "discount_code")),
       saleCount: parseNullableInt(get(data, "Count", "count")),
       status: get(data, "Status", "status"),
-      lineItemName: blankDash(get(data, "Lineitem name", "line_item_name", "line item name")),
+      lineItemName: blankDash(
+        get(data, "Lineitem name", "line_item_name", "line item name"),
+      ),
       saleLob: get(data, "Sale Lob", "sale_lob"),
       target: parseNullableInt(get(data, "Target", "target")),
       saleSource: get(data, "Sale Source", "sale_source"),
     });
   }
 
-  const existingByOrderId = await findExistingOrderIds(parsedRows.map((r) => r.orderId));
+  const existingByOrderId = await findExistingOrderIds(
+    parsedRows.map((r) => r.orderId),
+  );
   const toInsert = parsedRows.filter((r) => !existingByOrderId.has(r.orderId));
   const toUpdate = parsedRows.filter((r) => existingByOrderId.has(r.orderId));
 
@@ -250,34 +324,65 @@ export async function importGncSaleMasmisBatch(
   }));
 
   // Concurrent UPDATEs — independent per row, bounded by pool size.
-  const updateOutcomes = await mapWithConcurrency(toUpdate, BULK_ROW_CONCURRENCY, async (r) => {
-    const existingId = existingByOrderId.get(r.orderId)!;
-    try {
-      await withDeadlockRetry(() =>
-        db.execute(
-          `UPDATE db_masmis.gnc_sale SET
+  const updateOutcomes = await mapWithConcurrency(
+    toUpdate,
+    BULK_ROW_CONCURRENCY,
+    async (r) => {
+      const existingId = existingByOrderId.get(r.orderId)!;
+      try {
+        await withDeadlockRetry(() =>
+          db.execute(
+            `UPDATE db_masmis.gnc_sale SET
              week = ?, sale_date = ?, emp_id = ?, emp_name = ?, tl = ?, t1 = ?, t3 = ?,
              customer_number = ?, email_id = ?, payment_status = ?, gross_amount = ?, sum_before_gst = ?,
              campaign = ?, discount_code = ?, sale_count = ?, status = ?, line_item_name = ?, sale_lob = ?,
              target = ?, sale_source = ?, uploaded_at = NOW(), upload_batch_id = ?
            WHERE id = ?`,
-          [
-            r.week, r.saleDate, r.empId, r.empName, r.tl, r.t1, r.t3, r.customerNumber, r.emailId,
-            r.paymentStatus, r.grossAmount, r.sumBeforeGst, r.campaign, r.discountCode, r.saleCount,
-            r.status, r.lineItemName, r.saleLob, r.target, r.saleSource, batchId, existingId,
-          ],
-        ),
-      );
-      return { ok: true as const };
-    } catch (err: unknown) {
-      const rawMsg = err instanceof Error ? err.message : String(err);
-      return { ok: false as const, msg: `Row ${r.rowNo}: ${rawMsg}`, rowId: r.rowId };
-    }
-  });
+            [
+              r.week,
+              r.saleDate,
+              r.empId,
+              r.empName,
+              r.tl,
+              r.t1,
+              r.t3,
+              r.customerNumber,
+              r.emailId,
+              r.paymentStatus,
+              r.grossAmount,
+              r.sumBeforeGst,
+              r.campaign,
+              r.discountCode,
+              r.saleCount,
+              r.status,
+              r.lineItemName,
+              r.saleLob,
+              r.target,
+              r.saleSource,
+              batchId,
+              existingId,
+            ],
+          ),
+        );
+        return { ok: true as const };
+      } catch (err: unknown) {
+        const rawMsg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false as const,
+          msg: `Row ${r.rowNo}: ${rawMsg}`,
+          rowId: r.rowId,
+        };
+      }
+    },
+  );
   let updatedRows = 0;
   for (const o of updateOutcomes) {
-    if (o.ok) { updatedRows++; }
-    else { errors.push(o.msg); errorUpdates.push({ rowId: o.rowId, message: o.msg.slice(0, 500) }); }
+    if (o.ok) {
+      updatedRows++;
+    } else {
+      errors.push(o.msg);
+      errorUpdates.push({ rowId: o.rowId, message: o.msg.slice(0, 500) });
+    }
   }
 
   const inserted = await chunkedMasmisInsert({
@@ -286,7 +391,8 @@ export async function importGncSaleMasmisBatch(
         payment_status, gross_amount, sum_before_gst, order_id, campaign, discount_code,
         sale_count, status, line_item_name, sale_lob, target, sale_source,
         uploaded_by, upload_batch_id)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: insertRows,
   });
   // importedRows counts both freshly inserted rows and rows that matched an
@@ -306,12 +412,17 @@ export async function importGncSaleMasmisBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
@@ -319,7 +430,11 @@ export async function importGncSaleMasmisBatch(
   // -- this was missing here, which is why a completed batch stayed stuck at 'importing' forever
   // regardless of outcome instead of ever reaching a terminal status.
   const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+    errorRows === 0
+      ? "imported"
+      : importedRows === 0
+        ? "validation_failed"
+        : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

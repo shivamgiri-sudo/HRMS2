@@ -32,7 +32,11 @@ import {
   type EsignLetter,
   type StartOutcome,
 } from "./appointmentLetterEsign.service.js";
-import { AcceptedCopyError, loadAcceptedCopy, type AcceptedCopyFile } from "./appointmentLetterSignedCopy.service.js";
+import {
+  AcceptedCopyError,
+  loadAcceptedCopy,
+  type AcceptedCopyFile,
+} from "./appointmentLetterSignedCopy.service.js";
 
 export const LETTER_LINK_INVALID = "LETTER_LINK_INVALID";
 export const LETTER_REVOKED = "LETTER_REVOKED";
@@ -96,7 +100,8 @@ const isoOrNull = (value: unknown): string | null => {
  * letter answers 410, which only a real token holder can reach.
  */
 export async function resolveLetterByToken(token: string): Promise<LetterRow> {
-  if (!looksLikeToken(token)) publicError(INVALID_MESSAGE, 404, LETTER_LINK_INVALID);
+  if (!looksLikeToken(token))
+    publicError(INVALID_MESSAGE, 404, LETTER_LINK_INVALID);
   const hash = sha256Hex(token);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, letter_number, employee_id, employee_name, employee_code, designation,
@@ -111,7 +116,8 @@ export async function resolveLetterByToken(token: string): Promise<LetterRow> {
   );
   const row = (rows as LetterRow[])[0];
   if (!row) publicError(INVALID_MESSAGE, 404, LETTER_LINK_INVALID);
-  if (row.revoked_at || String(row.status) === "revoked") publicError(REVOKED_MESSAGE, 410, LETTER_REVOKED);
+  if (row.revoked_at || String(row.status) === "revoked")
+    publicError(REVOKED_MESSAGE, 410, LETTER_REVOKED);
   return row;
 }
 
@@ -126,12 +132,16 @@ const toEsignLetter = (row: LetterRow): EsignLetter => ({
   esignStatus: String(row.employee_esign_status ?? "not_sent"),
 });
 
-export async function getPublicLetterSession(token: string): Promise<LetterSession> {
+export async function getPublicLetterSession(
+  token: string,
+): Promise<LetterSession> {
   let row = await resolveLetterByToken(token);
 
   // A returning employee should see "signed" without waiting for the scheduled
   // pull. Throttled and time-boxed: it must never slow or fail the page.
-  const pending = ["sent", "opened"].includes(String(row.employee_esign_status ?? ""));
+  const pending = ["sent", "opened"].includes(
+    String(row.employee_esign_status ?? ""),
+  );
   if (pending) {
     const result = await syncAppointmentEsignForIssue(String(row.id), {
       minIntervalSeconds: SESSION_SYNC_MIN_INTERVAL_SECONDS,
@@ -148,7 +158,9 @@ export async function getPublicLetterSession(token: string): Promise<LetterSessi
     employeeCode: row.employee_code ?? null,
     designation: row.designation ?? null,
     branchName: row.branch_name ?? null,
-    dateOfJoining: row.date_of_joining ? istDisplayDate(row.date_of_joining) || null : null,
+    dateOfJoining: row.date_of_joining
+      ? istDisplayDate(row.date_of_joining) || null
+      : null,
     companySignedAt: isoOrNull(row.company_signed_at),
     companySignedBy: row.signed_by_name ?? null,
     esignStatus,
@@ -163,7 +175,11 @@ function assertInsideStorage(filePath: string): string {
   const root = appointmentLetterStorageRoot();
   const resolved = path.resolve(filePath);
   if (resolved !== root && !resolved.startsWith(root + path.sep)) {
-    publicError("The letter document is not available. Please contact HR.", 404, "LETTER_FILE_MISSING");
+    publicError(
+      "The letter document is not available. Please contact HR.",
+      404,
+      "LETTER_FILE_MISSING",
+    );
   }
   return resolved;
 }
@@ -183,9 +199,13 @@ async function acceptedCopyPath(issueId: string): Promise<string | null> {
  * The PDF the employee is reading. Once they have signed, their own signed copy
  * is served from the same link; before that, the company-signed letter.
  */
-export async function getPublicLetterFile(token: string): Promise<{ storagePath: string; fileName: string }> {
+export async function getPublicLetterFile(
+  token: string,
+): Promise<{ storagePath: string; fileName: string }> {
   const row = await resolveLetterByToken(token);
-  const accepted = ["signed", "completed"].includes(String(row.employee_esign_status ?? ""))
+  const accepted = ["signed", "completed"].includes(
+    String(row.employee_esign_status ?? ""),
+  )
     ? await acceptedCopyPath(String(row.id))
     : null;
 
@@ -193,10 +213,17 @@ export async function getPublicLetterFile(token: string): Promise<{ storagePath:
     if (!candidate) continue;
     const resolved = assertInsideStorage(String(candidate));
     if (fs.existsSync(resolved)) {
-      return { storagePath: resolved, fileName: `${row.letter_number}${candidate === accepted ? "-accepted" : ""}.pdf` };
+      return {
+        storagePath: resolved,
+        fileName: `${row.letter_number}${candidate === accepted ? "-accepted" : ""}.pdf`,
+      };
     }
   }
-  publicError("The letter document is not available. Please contact HR.", 404, "LETTER_FILE_MISSING");
+  publicError(
+    "The letter document is not available. Please contact HR.",
+    404,
+    "LETTER_FILE_MISSING",
+  );
 }
 
 /**
@@ -207,19 +234,28 @@ export async function getPublicLetterFile(token: string): Promise<{ storagePath:
  * Unlike getPublicLetterFile there is no fallback to the company-signed original:
  * this button promises the signed copy, so absence is a 404, not a different file.
  */
-export async function getPublicSignedLetter(token: string): Promise<AcceptedCopyFile> {
+export async function getPublicSignedLetter(
+  token: string,
+): Promise<AcceptedCopyFile> {
   const row = await resolveLetterByToken(token);
-  if (!["signed", "completed"].includes(String(row.employee_esign_status ?? ""))) {
-    publicError("You have not signed this letter yet.", 404, "LETTER_NOT_SIGNED");
+  if (
+    !["signed", "completed"].includes(String(row.employee_esign_status ?? ""))
+  ) {
+    publicError(
+      "You have not signed this letter yet.",
+      404,
+      "LETTER_NOT_SIGNED",
+    );
   }
   try {
     return await loadAcceptedCopy(String(row.id), String(row.letter_number));
   } catch (error) {
     if (error instanceof AcceptedCopyError) {
       // Wording written for the employee; nothing about paths or hashes.
-      const message = error.statusCode === 409
-        ? "Your signed letter cannot be downloaded right now. Please contact HR."
-        : "Your signed letter is not available to download yet. Please contact HR.";
+      const message =
+        error.statusCode === 409
+          ? "Your signed letter cannot be downloaded right now. Please contact HR."
+          : "Your signed letter is not available to download yet. Please contact HR.";
       publicError(message, error.statusCode, error.code);
     }
     throw error;
@@ -230,10 +266,13 @@ export type StartResult = StartOutcome;
 
 /** Hand back the provider URL, creating the session if there is not a live one. */
 export async function startPublicLetterEsign(params: {
-  token: string; ipAddress?: string | null; userAgent?: string | null;
+  token: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
 }): Promise<StartResult> {
   const row = await resolveLetterByToken(params.token);
   return startAppointmentEsign(toEsignLetter(row), {
-    ipAddress: params.ipAddress ?? null, userAgent: params.userAgent ?? null,
+    ipAddress: params.ipAddress ?? null,
+    userAgent: params.userAgent ?? null,
   });
 }

@@ -10,12 +10,24 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { REAL_ROSTER, scopeSql, type ScopeFilters } from "./roster-trends.sql.js";
-import { HABITUAL_LATE_THRESHOLD, safePct, weekStartMonday } from "./roster-trends.calc.js";
+import {
+  REAL_ROSTER,
+  scopeSql,
+  type ScopeFilters,
+} from "./roster-trends.sql.js";
+import {
+  HABITUAL_LATE_THRESHOLD,
+  safePct,
+  weekStartMonday,
+} from "./roster-trends.calc.js";
 
-export interface RangeFilters extends ScopeFilters { from: string; to: string }
+export interface RangeFilters extends ScopeFilters {
+  from: string;
+  to: string;
+}
 
-const SHIFT_START = "COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME))";
+const SHIFT_START =
+  "COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME))";
 const GRACE = "COALESCE(arc.grace_minutes, 15)";
 
 const LATE_FROM = `
@@ -51,10 +63,14 @@ export async function getLatenessOverview(f: RangeFilters) {
               SUM(CASE WHEN adr.late_by_minutes <= 30 THEN 1 ELSE 0 END) AS mild,
               SUM(CASE WHEN adr.late_by_minutes > 30 AND adr.late_by_minutes <= 60 THEN 1 ELSE 0 END) AS moderate,
               SUM(CASE WHEN adr.late_by_minutes > 60 THEN 1 ELSE 0 END) AS severe
-       ${LATE_FROM} WHERE ${w.sql}`, p),
+       ${LATE_FROM} WHERE ${w.sql}`,
+      p,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS d, COUNT(*) AS events, COUNT(DISTINCT adr.employee_id) AS employees
-       ${LATE_FROM} WHERE ${w.sql} GROUP BY adr.record_date ORDER BY adr.record_date`, p),
+       ${LATE_FROM} WHERE ${w.sql} GROUP BY adr.record_date ORDER BY adr.record_date`,
+      p,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id, e.employee_code,
               COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -65,34 +81,60 @@ export async function getLatenessOverview(f: RangeFilters) {
        WHERE ${w.sql}
        GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, pm.process_name
        HAVING events >= ${HABITUAL_LATE_THRESHOLD}
-       ORDER BY events DESC, employee_name LIMIT 200`, p),
+       ORDER BY events DESC, employee_name LIMIT 200`,
+      p,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT pm.id AS process_id, COALESCE(pm.process_name,'Unassigned') AS name, COUNT(*) AS events, COUNT(DISTINCT adr.employee_id) AS employees
        ${LATE_FROM} LEFT JOIN process_master pm ON pm.id = e.process_id
-       WHERE ${w.sql} GROUP BY pm.id, name ORDER BY events DESC LIMIT 15`, p),
+       WHERE ${w.sql} GROUP BY pm.id, name ORDER BY events DESC LIMIT 15`,
+      p,
+    ),
   ]);
   const t = totals[0][0] ?? {};
   const events = Number(t.events ?? 0);
   const habitualTotalQ = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS n FROM (SELECT adr.employee_id ${LATE_FROM} WHERE ${w.sql}
-       GROUP BY adr.employee_id HAVING COUNT(*) >= ${HABITUAL_LATE_THRESHOLD}) x`, p);
+       GROUP BY adr.employee_id HAVING COUNT(*) >= ${HABITUAL_LATE_THRESHOLD}) x`,
+    p,
+  );
   return {
-    from: f.from, to: f.to, threshold: HABITUAL_LATE_THRESHOLD,
+    from: f.from,
+    to: f.to,
+    threshold: HABITUAL_LATE_THRESHOLD,
     totals: {
-      events, employees: Number(t.employees ?? 0),
-      avgNetMinutes: events > 0 ? Math.round(Number(t.net_minutes ?? 0) / events) : 0,
-      mild: Number(t.mild ?? 0), moderate: Number(t.moderate ?? 0), severe: Number(t.severe ?? 0),
+      events,
+      employees: Number(t.employees ?? 0),
+      avgNetMinutes:
+        events > 0 ? Math.round(Number(t.net_minutes ?? 0) / events) : 0,
+      mild: Number(t.mild ?? 0),
+      moderate: Number(t.moderate ?? 0),
+      severe: Number(t.severe ?? 0),
       severePct: safePct(Number(t.severe ?? 0), events),
       habitualEmployees: Number(habitualTotalQ[0][0]?.n ?? 0),
     },
-    daily: daily[0].map((r) => ({ date: String(r.d), events: Number(r.events), employees: Number(r.employees) })),
+    daily: daily[0].map((r) => ({
+      date: String(r.d),
+      events: Number(r.events),
+      employees: Number(r.employees),
+    })),
     habitual: byEmp[0].map((r) => ({
-      employeeId: String(r.employee_id), employeeCode: String(r.employee_code), employeeName: String(r.employee_name),
-      branchName: r.branch_name ? String(r.branch_name) : null, processName: r.process_name ? String(r.process_name) : null,
-      events: Number(r.events), avgNetMinutes: Number(r.avg_net_minutes ?? 0), maxMinutes: Number(r.max_minutes ?? 0),
+      employeeId: String(r.employee_id),
+      employeeCode: String(r.employee_code),
+      employeeName: String(r.employee_name),
+      branchName: r.branch_name ? String(r.branch_name) : null,
+      processName: r.process_name ? String(r.process_name) : null,
+      events: Number(r.events),
+      avgNetMinutes: Number(r.avg_net_minutes ?? 0),
+      maxMinutes: Number(r.max_minutes ?? 0),
     })),
     habitualTruncated: Number(habitualTotalQ[0][0]?.n ?? 0) > byEmp[0].length,
-    byProcess: byProc[0].map((r) => ({ processId: r.process_id ? String(r.process_id) : null, name: String(r.name), events: Number(r.events), employees: Number(r.employees) })),
+    byProcess: byProc[0].map((r) => ({
+      processId: r.process_id ? String(r.process_id) : null,
+      name: String(r.name),
+      events: Number(r.events),
+      employees: Number(r.employees),
+    })),
   };
 }
 
@@ -101,7 +143,11 @@ const EVENT_COLS = `DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS d,
   adr.late_by_minutes, ${GRACE} AS grace, (adr.regularization_id IS NOT NULL) AS has_exception`;
 
 /** One employee's late events in the range (no scope filter: the drawer is about that person). */
-export async function getLatenessEmployeeDetail(employeeId: string, from: string, to: string) {
+export async function getLatenessEmployeeDetail(
+  employeeId: string,
+  from: string,
+  to: string,
+) {
   const w = lateWhere({});
   const [emp, events] = await Promise.all([
     db.execute<RowDataPacket[]>(
@@ -109,29 +155,49 @@ export async function getLatenessEmployeeDetail(employeeId: string, from: string
               b.branch_name, p.process_name,
               COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS manager_name
          FROM employees e LEFT JOIN branch_master b ON b.id = e.branch_id LEFT JOIN process_master p ON p.id = e.process_id
-         LEFT JOIN employees m ON m.id = e.reporting_manager_id WHERE e.id = ? LIMIT 1`, [employeeId]),
+         LEFT JOIN employees m ON m.id = e.reporting_manager_id WHERE e.id = ? LIMIT 1`,
+      [employeeId],
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT ${EVENT_COLS} ${LATE_FROM} WHERE ${w.sql} AND adr.employee_id = ?
-        ORDER BY adr.record_date DESC LIMIT 200`, [from, to, employeeId]),
+        ORDER BY adr.record_date DESC LIMIT 200`,
+      [from, to, employeeId],
+    ),
   ]);
   const e = emp[0][0];
   if (!e) return null;
   const rows = events[0].map((r) => ({
-    date: String(r.d), scheduledStart: r.scheduled_start ? String(r.scheduled_start) : null,
-    punchIn: r.punch_in ? String(r.punch_in) : null, lateMinutes: Number(r.late_by_minutes),
-    netLateMinutes: Math.max(0, Number(r.late_by_minutes) - Number(r.grace)), exception: Number(r.has_exception) === 1,
+    date: String(r.d),
+    scheduledStart: r.scheduled_start ? String(r.scheduled_start) : null,
+    punchIn: r.punch_in ? String(r.punch_in) : null,
+    lateMinutes: Number(r.late_by_minutes),
+    netLateMinutes: Math.max(0, Number(r.late_by_minutes) - Number(r.grace)),
+    exception: Number(r.has_exception) === 1,
   }));
   const weeks = new Map<string, number>();
-  for (const r of rows) weeks.set(weekStartMonday(r.date), (weeks.get(weekStartMonday(r.date)) ?? 0) + 1);
+  for (const r of rows)
+    weeks.set(
+      weekStartMonday(r.date),
+      (weeks.get(weekStartMonday(r.date)) ?? 0) + 1,
+    );
   return {
     employee: {
-      employeeCode: String(e.employee_code), employeeName: String(e.employee_name),
-      branchName: e.branch_name ? String(e.branch_name) : null, processName: e.process_name ? String(e.process_name) : null,
+      employeeCode: String(e.employee_code),
+      employeeName: String(e.employee_name),
+      branchName: e.branch_name ? String(e.branch_name) : null,
+      processName: e.process_name ? String(e.process_name) : null,
       managerName: e.manager_name ? String(e.manager_name) : null,
     },
-    from, to, count: rows.length, exceptions: rows.filter((r) => r.exception).length,
-    avgNetMinutes: rows.length ? Math.round(rows.reduce((a, r) => a + r.netLateMinutes, 0) / rows.length) : 0,
-    weekly: [...weeks.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([week, count]) => ({ week, count })),
+    from,
+    to,
+    count: rows.length,
+    exceptions: rows.filter((r) => r.exception).length,
+    avgNetMinutes: rows.length
+      ? Math.round(rows.reduce((a, r) => a + r.netLateMinutes, 0) / rows.length)
+      : 0,
+    weekly: [...weeks.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([week, count]) => ({ week, count })),
     events: rows,
   };
 }
@@ -144,17 +210,28 @@ export async function getLatenessDayDetail(date: string, f: ScopeFilters) {
       `SELECT ${EVENT_COLS}, e.id AS employee_id, e.employee_code,
               COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name, pm.process_name
        ${LATE_FROM} LEFT JOIN process_master pm ON pm.id = e.process_id
-       WHERE ${w.sql} ORDER BY adr.late_by_minutes DESC LIMIT 100`, [date, date, ...w.params]),
-    db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n ${LATE_FROM} WHERE ${w.sql}`, [date, date, ...w.params]),
+       WHERE ${w.sql} ORDER BY adr.late_by_minutes DESC LIMIT 100`,
+      [date, date, ...w.params],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n ${LATE_FROM} WHERE ${w.sql}`,
+      [date, date, ...w.params],
+    ),
   ]);
   const n = Number(total[0][0]?.n ?? 0);
   return {
-    date, count: n, truncated: n > events[0].length,
+    date,
+    count: n,
+    truncated: n > events[0].length,
     events: events[0].map((r) => ({
-      employeeId: String(r.employee_id), employeeCode: String(r.employee_code), employeeName: String(r.employee_name),
+      employeeId: String(r.employee_id),
+      employeeCode: String(r.employee_code),
+      employeeName: String(r.employee_name),
       processName: r.process_name ? String(r.process_name) : null,
-      scheduledStart: r.scheduled_start ? String(r.scheduled_start) : null, punchIn: r.punch_in ? String(r.punch_in) : null,
-      lateMinutes: Number(r.late_by_minutes), netLateMinutes: Math.max(0, Number(r.late_by_minutes) - Number(r.grace)),
+      scheduledStart: r.scheduled_start ? String(r.scheduled_start) : null,
+      punchIn: r.punch_in ? String(r.punch_in) : null,
+      lateMinutes: Number(r.late_by_minutes),
+      netLateMinutes: Math.max(0, Number(r.late_by_minutes) - Number(r.grace)),
       exception: Number(r.has_exception) === 1,
     })),
   };
@@ -170,38 +247,70 @@ const JOIN_REF = "COALESCE(e.salary_start_date, e.date_of_joining)";
  * Exited employees in an age-on-network bucket, same population rules as aon-bucket-attrition:
  * dated exits only, and exits whose tenure is arithmetically possible (exit >= joining).
  */
-export async function getAttritionBucketDetail(bucket: string, f: RangeFilters) {
+export async function getAttritionBucketDetail(
+  bucket: string,
+  f: RangeFilters,
+) {
   if (!(AON_BUCKET_KEYS as readonly string[]).includes(bucket)) return null;
   const s = scopeSql(f);
-  const cond = bucket === "0-30" ? `DATEDIFF(e.date_of_exit, ${JOIN_REF}) <= 30`
-    : bucket === "31-60" ? `DATEDIFF(e.date_of_exit, ${JOIN_REF}) BETWEEN 31 AND 60`
-    : bucket === "61-90" ? `DATEDIFF(e.date_of_exit, ${JOIN_REF}) BETWEEN 61 AND 90`
-    : `DATEDIFF(e.date_of_exit, ${JOIN_REF}) > 90`;
+  const cond =
+    bucket === "0-30"
+      ? `DATEDIFF(e.date_of_exit, ${JOIN_REF}) <= 30`
+      : bucket === "31-60"
+        ? `DATEDIFF(e.date_of_exit, ${JOIN_REF}) BETWEEN 31 AND 60`
+        : bucket === "61-90"
+          ? `DATEDIFF(e.date_of_exit, ${JOIN_REF}) BETWEEN 61 AND 90`
+          : `DATEDIFF(e.date_of_exit, ${JOIN_REF}) > 90`;
   const where = `e.date_of_exit BETWEEN ? AND ? AND e.date_of_exit >= e.date_of_joining AND ${JOIN_REF} IS NOT NULL AND ${cond}${s.sql}`;
   const p = [f.from, f.to, ...s.params];
   const [tot, monthly, byProc, rows] = await Promise.all([
-    db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n, ROUND(AVG(DATEDIFF(e.date_of_exit, ${JOIN_REF}))) AS avg_days FROM employees e WHERE ${where}`, p),
-    db.execute<RowDataPacket[]>(`SELECT DATE_FORMAT(e.date_of_exit,'%Y-%m') AS month, COUNT(*) AS n FROM employees e WHERE ${where} GROUP BY month ORDER BY month`, p),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n, ROUND(AVG(DATEDIFF(e.date_of_exit, ${JOIN_REF}))) AS avg_days FROM employees e WHERE ${where}`,
+      p,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(e.date_of_exit,'%Y-%m') AS month, COUNT(*) AS n FROM employees e WHERE ${where} GROUP BY month ORDER BY month`,
+      p,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT COALESCE(pm.process_name,'Unassigned') AS name, COUNT(*) AS n FROM employees e
-         LEFT JOIN process_master pm ON pm.id = e.process_id WHERE ${where} GROUP BY name ORDER BY n DESC LIMIT 15`, p),
+         LEFT JOIN process_master pm ON pm.id = e.process_id WHERE ${where} GROUP BY name ORDER BY n DESC LIMIT 15`,
+      p,
+    ),
     db.execute<RowDataPacket[]>(
       `SELECT e.id, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
               b.branch_name, pm.process_name, DATE_FORMAT(${JOIN_REF},'%Y-%m-%d') AS joined,
               DATE_FORMAT(e.date_of_exit,'%Y-%m-%d') AS exited, DATEDIFF(e.date_of_exit, ${JOIN_REF}) AS tenure_days
          FROM employees e LEFT JOIN branch_master b ON b.id = e.branch_id LEFT JOIN process_master pm ON pm.id = e.process_id
-        WHERE ${where} ORDER BY e.date_of_exit DESC LIMIT 100`, p),
+        WHERE ${where} ORDER BY e.date_of_exit DESC LIMIT 100`,
+      p,
+    ),
   ]);
   const n = Number(tot[0][0]?.n ?? 0);
   return {
-    bucket, from: f.from, to: f.to, count: n, avgTenureDays: Number(tot[0][0]?.avg_days ?? 0),
-    monthly: monthly[0].map((r) => ({ month: String(r.month), count: Number(r.n) })),
-    byProcess: byProc[0].map((r) => ({ name: String(r.name), count: Number(r.n) })),
+    bucket,
+    from: f.from,
+    to: f.to,
+    count: n,
+    avgTenureDays: Number(tot[0][0]?.avg_days ?? 0),
+    monthly: monthly[0].map((r) => ({
+      month: String(r.month),
+      count: Number(r.n),
+    })),
+    byProcess: byProc[0].map((r) => ({
+      name: String(r.name),
+      count: Number(r.n),
+    })),
     truncated: n > rows[0].length,
     exits: rows[0].map((r) => ({
-      employeeId: String(r.id), employeeCode: String(r.employee_code), employeeName: String(r.employee_name),
-      branchName: r.branch_name ? String(r.branch_name) : null, processName: r.process_name ? String(r.process_name) : null,
-      joined: r.joined ? String(r.joined) : null, exited: String(r.exited), tenureDays: Number(r.tenure_days),
+      employeeId: String(r.id),
+      employeeCode: String(r.employee_code),
+      employeeName: String(r.employee_name),
+      branchName: r.branch_name ? String(r.branch_name) : null,
+      processName: r.process_name ? String(r.process_name) : null,
+      joined: r.joined ? String(r.joined) : null,
+      exited: String(r.exited),
+      tenureDays: Number(r.tenure_days),
     })),
   };
 }

@@ -123,11 +123,17 @@ export function applyUploadedValues(
 ): UtilizationDerived {
   if (!manual) return calculated;
   return {
-    utilizationForecast: manual.fixedUtilizationForecast ?? calculated.utilizationForecast,
-    utilizationWithAdhoc: manual.fixedUtilizationWithAdhoc ?? calculated.utilizationWithAdhoc,
-    utilizationWithoutAdhoc: manual.fixedUtilizationWithoutAdhoc ?? calculated.utilizationWithoutAdhoc,
-    utilizationWithAdhocPct: manual.fixedUtilizationWithAdhocPct ?? calculated.utilizationWithAdhocPct,
-    utilizationWithoutAdhocPct: manual.fixedUtilizationWithoutAdhocPct ?? calculated.utilizationWithoutAdhocPct,
+    utilizationForecast:
+      manual.fixedUtilizationForecast ?? calculated.utilizationForecast,
+    utilizationWithAdhoc:
+      manual.fixedUtilizationWithAdhoc ?? calculated.utilizationWithAdhoc,
+    utilizationWithoutAdhoc:
+      manual.fixedUtilizationWithoutAdhoc ?? calculated.utilizationWithoutAdhoc,
+    utilizationWithAdhocPct:
+      manual.fixedUtilizationWithAdhocPct ?? calculated.utilizationWithAdhocPct,
+    utilizationWithoutAdhocPct:
+      manual.fixedUtilizationWithoutAdhocPct ??
+      calculated.utilizationWithoutAdhocPct,
     poaAnsweringPct: manual.fixedPoaAnsweringPct ?? calculated.poaAnsweringPct,
     escalatedPct: manual.fixedEscalatedPct ?? calculated.escalatedPct,
   };

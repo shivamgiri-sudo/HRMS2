@@ -14,7 +14,7 @@
  * Best practice: Max 50-100 messages/hour, with random delays.
  */
 
-import { EventEmitter } from 'events';
+import { EventEmitter } from "events";
 
 // Types for whatsapp-web.js (installed separately)
 interface WAClient {
@@ -38,7 +38,9 @@ interface LocalAuthConstructor {
 
 let Client: WAClientConstructor | null = null;
 let LocalAuth: LocalAuthConstructor | null = null;
-let qrcodeTerminal: { generate: (text: string, opts: { small: boolean }) => void } | null = null;
+let qrcodeTerminal: {
+  generate: (text: string, opts: { small: boolean }) => void;
+} | null = null;
 
 // Lazy load the dependencies (they're heavy)
 async function loadDependencies(): Promise<boolean> {
@@ -59,7 +61,9 @@ async function loadDependencies(): Promise<boolean> {
     }>);
     return true;
   } catch {
-    console.warn('[whatsapp-web] whatsapp-web.js not installed. Run: npm install whatsapp-web.js qrcode-terminal');
+    console.warn(
+      "[whatsapp-web] whatsapp-web.js not installed. Run: npm install whatsapp-web.js qrcode-terminal",
+    );
     return false;
   }
 }
@@ -72,7 +76,8 @@ class WhatsAppWebProvider extends EventEmitter {
 
   constructor() {
     super();
-    this.sessionPath = process.env.WHATSAPP_SESSION_PATH ?? './whatsapp-session';
+    this.sessionPath =
+      process.env.WHATSAPP_SESSION_PATH ?? "./whatsapp-session";
   }
 
   async initialize(): Promise<boolean> {
@@ -80,8 +85,8 @@ class WhatsAppWebProvider extends EventEmitter {
     if (this.initializing) {
       // Wait for existing initialization
       return new Promise((resolve) => {
-        this.once('ready', () => resolve(true));
-        this.once('error', () => resolve(false));
+        this.once("ready", () => resolve(true));
+        this.once("error", () => resolve(false));
       });
     }
 
@@ -96,51 +101,51 @@ class WhatsAppWebProvider extends EventEmitter {
     try {
       this.client = new Client({
         authStrategy: new LocalAuth({
-          clientId: 'mas-hrms',
+          clientId: "mas-hrms",
           dataPath: this.sessionPath,
         }),
         puppeteer: {
           headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox'],
+          args: ["--no-sandbox", "--disable-setuid-sandbox"],
         },
       });
 
-      this.client.on('qr', (qr: string) => {
-        console.log('\n[WhatsApp] Scan QR code to connect:');
+      this.client.on("qr", (qr: string) => {
+        console.log("\n[WhatsApp] Scan QR code to connect:");
         qrcodeTerminal?.generate(qr, { small: true });
-        this.emit('qr', qr);
+        this.emit("qr", qr);
       });
 
-      this.client.on('ready', () => {
-        console.log('[WhatsApp] Connected and ready!');
+      this.client.on("ready", () => {
+        console.log("[WhatsApp] Connected and ready!");
         this.ready = true;
         this.initializing = false;
-        this.emit('ready');
+        this.emit("ready");
       });
 
-      this.client.on('authenticated', () => {
-        console.log('[WhatsApp] Authenticated');
+      this.client.on("authenticated", () => {
+        console.log("[WhatsApp] Authenticated");
       });
 
-      this.client.on('auth_failure', (msg: string) => {
-        console.error('[WhatsApp] Auth failed:', msg);
+      this.client.on("auth_failure", (msg: string) => {
+        console.error("[WhatsApp] Auth failed:", msg);
         this.ready = false;
         this.initializing = false;
-        this.emit('error', new Error(msg));
+        this.emit("error", new Error(msg));
       });
 
-      this.client.on('disconnected', (reason: string) => {
-        console.warn('[WhatsApp] Disconnected:', reason);
+      this.client.on("disconnected", (reason: string) => {
+        console.warn("[WhatsApp] Disconnected:", reason);
         this.ready = false;
-        this.emit('disconnected', reason);
+        this.emit("disconnected", reason);
       });
 
       await this.client.initialize();
       return true;
     } catch (err) {
-      console.error('[WhatsApp] Initialization failed:', err);
+      console.error("[WhatsApp] Initialization failed:", err);
       this.initializing = false;
-      this.emit('error', err);
+      this.emit("error", err);
       return false;
     }
   }
@@ -149,13 +154,13 @@ class WhatsAppWebProvider extends EventEmitter {
     return this.ready;
   }
 
-  async getStatus(): Promise<'connected' | 'disconnected' | 'not_initialized'> {
-    if (!this.client) return 'not_initialized';
+  async getStatus(): Promise<"connected" | "disconnected" | "not_initialized"> {
+    if (!this.client) return "not_initialized";
     try {
       const state = await this.client.getState();
-      return state === 'CONNECTED' ? 'connected' : 'disconnected';
+      return state === "CONNECTED" ? "connected" : "disconnected";
     } catch {
-      return 'disconnected';
+      return "disconnected";
     }
   }
 
@@ -164,30 +169,35 @@ class WhatsAppWebProvider extends EventEmitter {
    * @param phone Phone number (10 digit Indian or with country code)
    * @param message Text message to send
    */
-  async sendMessage(phone: string, message: string): Promise<{
+  async sendMessage(
+    phone: string,
+    message: string,
+  ): Promise<{
     success: boolean;
     messageId?: string;
     error?: string;
   }> {
     if (!this.ready || !this.client) {
-      return { success: false, error: 'WhatsApp not connected' };
+      return { success: false, error: "WhatsApp not connected" };
     }
 
     // Format phone number to WhatsApp format: 919876543210@c.us
-    let formatted = phone.replace(/\D/g, '');
+    let formatted = phone.replace(/\D/g, "");
     if (formatted.length === 10) {
       formatted = `91${formatted}`; // Add India code
     }
-    if (!formatted.startsWith('91')) {
+    if (!formatted.startsWith("91")) {
       formatted = `91${formatted}`;
     }
     const chatId = `${formatted}@c.us`;
 
     try {
-      const result = await this.client.sendMessage(chatId, message) as { id?: { id?: string } };
+      const result = (await this.client.sendMessage(chatId, message)) as {
+        id?: { id?: string };
+      };
       return {
         success: true,
-        messageId: result?.id?.id ?? 'sent',
+        messageId: result?.id?.id ?? "sent",
       };
     } catch (err) {
       return {
@@ -229,10 +239,13 @@ export async function sendWhatsAppNotification(
   name: string,
   designation: string | null,
   branch: string | null,
-  referenceId: string
+  referenceId: string,
 ): Promise<{ success: boolean; error?: string }> {
   if (!isWhatsAppWebConfigured()) {
-    return { success: false, error: 'WhatsApp Web not enabled (set ENABLE_WHATSAPP_WEB=true)' };
+    return {
+      success: false,
+      error: "WhatsApp Web not enabled (set ENABLE_WHATSAPP_WEB=true)",
+    };
   }
 
   const provider = getWhatsAppWebProvider();
@@ -240,12 +253,12 @@ export async function sendWhatsAppNotification(
   if (!provider.isReady()) {
     const initialized = await provider.initialize();
     if (!initialized) {
-      return { success: false, error: 'WhatsApp Web failed to initialize' };
+      return { success: false, error: "WhatsApp Web failed to initialize" };
     }
   }
 
-  const role = designation ?? 'Customer Service Executive';
-  const place = branch ? ` (${branch})` : '';
+  const role = designation ?? "Customer Service Executive";
+  const place = branch ? ` (${branch})` : "";
 
   const message = `नमस्ते ${name} ji! 🙏
 
@@ -278,10 +291,11 @@ Reply "CALL" if you'd like us to call you! 📞`;
  * Message templates for different scenarios
  */
 export const WHATSAPP_TEMPLATES = {
-  shortlisted: (name: string, role: string, branch: string | null) => `
+  shortlisted: (name: string, role: string, branch: string | null) =>
+    `
 नमस्ते ${name} ji! 🙏
 
-*MAS Callnet* में *${role}*${branch ? ` (${branch})` : ''} के लिए आपका application *shortlist* हो गया है! 🎉
+*MAS Callnet* में *${role}*${branch ? ` (${branch})` : ""} के लिए आपका application *shortlist* हो गया है! 🎉
 
 Interview के लिए office आएं:
 📄 Aadhaar, PAN, education proof लाएं
@@ -289,7 +303,8 @@ Interview के लिए office आएं:
 
 Reply "CALL" for a callback! 📞`.trim(),
 
-  reminder: (name: string, role: string) => `
+  reminder: (name: string, role: string) =>
+    `
 Hi ${name}!
 
 Reminder: आपका ${role} interview pending है।
@@ -300,7 +315,8 @@ Reply:
 2️⃣ - Date change करना है
 3️⃣ - Cancel करना है`.trim(),
 
-  interviewConfirm: (name: string, date: string, address: string) => `
+  interviewConfirm: (name: string, date: string, address: string) =>
+    `
 ${name} ji, आपका interview confirm है!
 
 📅 Date: ${date}

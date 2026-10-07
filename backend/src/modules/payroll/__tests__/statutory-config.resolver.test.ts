@@ -69,7 +69,10 @@ describe("statutory config resolution by period", () => {
     // even though a newer version exists. Without this, a re-run of an earlier
     // month silently recomputes at today's rates and stops matching the 24Q
     // already filed for it.
-    execute.mockResolvedValue([fullConfigRows({ tds_slab_400001_800000: 5 }), []]);
+    execute.mockResolvedValue([
+      fullConfigRows({ tds_slab_400001_800000: 5 }),
+      [],
+    ]);
 
     const resolved = await getStatutoryConfigForPeriod("2025-06");
 
@@ -82,7 +85,9 @@ describe("statutory config resolution by period", () => {
 
   it("reports every missing key by name rather than substituting a default", async () => {
     const rows = fullConfigRows().filter(
-      (r) => r.config_key !== "tds_slab_2400001_above" && r.config_key !== "tds_cess_pct",
+      (r) =>
+        r.config_key !== "tds_slab_2400001_above" &&
+        r.config_key !== "tds_cess_pct",
     );
     execute.mockResolvedValue([rows, []]);
 
@@ -98,7 +103,9 @@ describe("statutory config resolution by period", () => {
   it("blocks when the versioned table cannot be read at all", async () => {
     // Migration 1030 not applied yet. This must read as "not configured", never
     // as licence to fall back to hardcoded slabs.
-    execute.mockRejectedValue(new Error("Table 'statutory_config_version' doesn't exist"));
+    execute.mockRejectedValue(
+      new Error("Table 'statutory_config_version' doesn't exist"),
+    );
 
     const gate = await checkTdsConfigForPeriod("2026-07");
 
@@ -131,7 +138,9 @@ describe("statutory config resolution by period", () => {
   });
 
   it("rejects a malformed period instead of guessing one", async () => {
-    await expect(getStatutoryConfigForPeriod("2026")).rejects.toThrow(/YYYY-MM/);
+    await expect(getStatutoryConfigForPeriod("2026")).rejects.toThrow(
+      /YYYY-MM/,
+    );
     await expect(getStatutoryConfigForPeriod("")).rejects.toThrow(/YYYY-MM/);
     expect(execute).not.toHaveBeenCalled();
   });

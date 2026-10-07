@@ -33,60 +33,97 @@ export const nocCasePublicRouter = Router();
 function fail(res: Response, err: unknown): Response {
   const e = err as { statusCode?: number; code?: string; message?: string };
   if (e?.statusCode && e.statusCode < 500) {
-    return res.status(e.statusCode).json({ success: false, code: e.code ?? "NOC_LINK_INVALID", message: e.message });
+    return res
+      .status(e.statusCode)
+      .json({
+        success: false,
+        code: e.code ?? "NOC_LINK_INVALID",
+        message: e.message,
+      });
   }
   console.error("[noc-public] unexpected error:", err);
-  return res.status(500).json({ success: false, code: "NOC_FORM_ERROR", message: "Something went wrong. Please contact HR." });
+  return res
+    .status(500)
+    .json({
+      success: false,
+      code: "NOC_FORM_ERROR",
+      message: "Something went wrong. Please contact HR.",
+    });
 }
 
 /** req.ip / user-agent, the two-line idiom this codebase already uses for public-token audit. */
-function requestContext(req: Request): { ip: string | null; userAgent: string | null } {
+function requestContext(req: Request): {
+  ip: string | null;
+  userAgent: string | null;
+} {
   return { ip: req.ip ?? null, userAgent: req.get("user-agent") ?? null };
 }
 
 // GET /api/public/noc/:token — load the form
-nocCasePublicRouter.get("/:token", publicRegistrationLimiter, async (req: Request, res: Response) => {
-  try {
-    return res.json({ success: true, data: await nocCase.getPublicFormView(String(req.params.token)) });
-  } catch (err) {
-    return fail(res, err);
-  }
-});
+nocCasePublicRouter.get(
+  "/:token",
+  publicRegistrationLimiter,
+  async (req: Request, res: Response) => {
+    try {
+      return res.json({
+        success: true,
+        data: await nocCase.getPublicFormView(String(req.params.token)),
+      });
+    } catch (err) {
+      return fail(res, err);
+    }
+  },
+);
 
 // POST /api/public/noc/:token/submit — employee submits
-nocCasePublicRouter.post("/:token/submit", publicRegistrationLimiter, async (req: Request, res: Response) => {
-  try {
-    const { resignationDate, reasonForLeaving, assets } = req.body as {
-      resignationDate?: string;
-      reasonForLeaving?: string;
-      assets?: Array<{ itemCode: string; quantity?: number | null; status: nocCase.AssetStatus; remarks?: string | null }>;
-    };
-    const ctx = requestContext(req);
+nocCasePublicRouter.post(
+  "/:token/submit",
+  publicRegistrationLimiter,
+  async (req: Request, res: Response) => {
+    try {
+      const { resignationDate, reasonForLeaving, assets } = req.body as {
+        resignationDate?: string;
+        reasonForLeaving?: string;
+        assets?: Array<{
+          itemCode: string;
+          quantity?: number | null;
+          status: nocCase.AssetStatus;
+          remarks?: string | null;
+        }>;
+      };
+      const ctx = requestContext(req);
 
-    const { caseId } = await nocCase.submitEmployeeForm({
-      token: String(req.params.token),
-      input: {
-        resignationDate: String(resignationDate ?? ""),
-        reasonForLeaving: reasonForLeaving ?? null,
-        // Only ever an array. A malformed body must not reach the service's asset loop as
-        // something it will iterate the properties of.
-        assets: Array.isArray(assets) ? assets : [],
-      },
-      ip: ctx.ip,
-      userAgent: ctx.userAgent,
-    });
+      const { caseId } = await nocCase.submitEmployeeForm({
+        token: String(req.params.token),
+        input: {
+          resignationDate: String(resignationDate ?? ""),
+          reasonForLeaving: reasonForLeaving ?? null,
+          // Only ever an array. A malformed body must not reach the service's asset loop as
+          // something it will iterate the properties of.
+          assets: Array.isArray(assets) ? assets : [],
+        },
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+      });
 
-    // Fire-and-forget: the submission is committed, and a mail failure must not tell the employee
-    // their form did not save. Notification failures are recorded on the dispatch claim.
-    void import("./noc.notifications.js")
-      .then((m) => m.notifyEmployeeSubmitted(caseId))
-      .catch((e) => console.error("[noc-public] submit notification failed:", (e as Error).message));
+      // Fire-and-forget: the submission is committed, and a mail failure must not tell the employee
+      // their form did not save. Notification failures are recorded on the dispatch claim.
+      void import("./noc.notifications.js")
+        .then((m) => m.notifyEmployeeSubmitted(caseId))
+        .catch((e) =>
+          console.error(
+            "[noc-public] submit notification failed:",
+            (e as Error).message,
+          ),
+        );
 
-    return res.json({
-      success: true,
-      message: "Your NOC form has been submitted. HR and your reporting line have been notified.",
-    });
-  } catch (err) {
-    return fail(res, err);
-  }
-});
+      return res.json({
+        success: true,
+        message:
+          "Your NOC form has been submitted. HR and your reporting line have been notified.",
+      });
+    } catch (err) {
+      return fail(res, err);
+    }
+  },
+);

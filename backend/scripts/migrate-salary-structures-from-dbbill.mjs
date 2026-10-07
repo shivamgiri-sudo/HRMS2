@@ -14,28 +14,41 @@
  *
  * Usage: node scripts/migrate-salary-structures-from-dbbill.mjs
  */
-import mysql from 'mysql2/promise';
+import mysql from "mysql2/promise";
 
 // Credentials come from the environment, never from this file. This repository is
 // public and the value that used to sit here is burned. Run with:
 //   node --env-file=backend/.env <script>
 if (!process.env.DB_PASSWORD) {
-  console.error('Set DB_PASSWORD first: node --env-file=backend/.env ' + process.argv[1]);
+  console.error(
+    "Set DB_PASSWORD first: node --env-file=backend/.env " + process.argv[1],
+  );
   process.exit(1);
 }
 
-
-const HRMS = { host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 3306), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: 'mas_hrms' };
-const BILL = { host: process.env.BILL_DB_HOST, port: Number(process.env.BILL_DB_PORT ?? 3306), user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD, database: 'db_bill' };
+const HRMS = {
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT ?? 3306),
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: "mas_hrms",
+};
+const BILL = {
+  host: process.env.BILL_DB_HOST,
+  port: Number(process.env.BILL_DB_PORT ?? 3306),
+  user: process.env.BILL_DB_USER,
+  password: process.env.BILL_DB_PASSWORD,
+  database: "db_bill",
+};
 const BATCH = 200;
 
 async function run() {
   const hrms = await mysql.createConnection(HRMS);
   const bill = await mysql.createConnection(BILL);
-  console.log('[INIT] Connected to both databases\n');
+  console.log("[INIT] Connected to both databases\n");
 
   // Load masjclrentry component data (most recent row per EmpCode via MAX salary)
-  console.log('[LOAD] Reading db_bill.masjclrentry ...');
+  console.log("[LOAD] Reading db_bill.masjclrentry ...");
   const [jclr] = await bill.execute(
     `SELECT EmpCode,
             COALESCE(bs,0)    AS bs,
@@ -58,7 +71,7 @@ async function run() {
             COALESCE(ESICCO,0) AS esic_emp_co
      FROM masjclrentry
      WHERE EmpCode LIKE 'MAS%'
-     ORDER BY EmpCode, Gross DESC`
+     ORDER BY EmpCode, Gross DESC`,
   );
   // Keep only the highest-gross row per employee (most representative salary)
   const billMap = new Map();
@@ -92,37 +105,44 @@ async function run() {
          ORDER BY effective_date DESC, assigned_at DESC
          LIMIT 1
        )
-     WHERE e.employment_status = 'Active'`
+     WHERE e.employment_status = 'Active'`,
   );
-  console.log(`[LOAD] ${employees.length} unique active employees (most-recent SCA row per person)\n`);
+  console.log(
+    `[LOAD] ${employees.length} unique active employees (most-recent SCA row per person)\n`,
+  );
 
-  let updated = 0, inserted = 0, skipped = 0;
+  let updated = 0,
+    inserted = 0,
+    skipped = 0;
 
   for (let i = 0; i < employees.length; i += BATCH) {
     const batch = employees.slice(i, i + BATCH);
     for (const emp of batch) {
       const src = billMap.get(emp.employee_code);
-      if (!src) { skipped++; continue; }
+      if (!src) {
+        skipped++;
+        continue;
+      }
 
       const v = {
-        basic:   Number(src.bs)    || 0,
-        hra:     Number(src.hra)   || 0,
-        bonus:   Number(src.bonus) || 0,
-        conv:    Number(src.conv)  || 0,
-        portf:   Number(src.portf) || 0,
-        ma:      Number(src.ma)    || 0,
-        lta:     Number(src.lta)   || 0,
-        sa:      Number(src.sa)    || 0,
-        oa:      Number(src.oa)    || 0,
-        pli:     Number(src.pli)   || 0,
-        gross:   Number(src.gross) || 0,
-        net:     Number(src.net)   || 0,
-        pfAppl:  src.pfelig  === 'N' ? 0 : 1,
-        esiAppl: src.esielig === 'N' ? 0 : 1,
-        epfEmp:   Number(src.epf_emp)   || 0,
-        esicEmp:  Number(src.esic_emp)  || 0,
+        basic: Number(src.bs) || 0,
+        hra: Number(src.hra) || 0,
+        bonus: Number(src.bonus) || 0,
+        conv: Number(src.conv) || 0,
+        portf: Number(src.portf) || 0,
+        ma: Number(src.ma) || 0,
+        lta: Number(src.lta) || 0,
+        sa: Number(src.sa) || 0,
+        oa: Number(src.oa) || 0,
+        pli: Number(src.pli) || 0,
+        gross: Number(src.gross) || 0,
+        net: Number(src.net) || 0,
+        pfAppl: src.pfelig === "N" ? 0 : 1,
+        esiAppl: src.esielig === "N" ? 0 : 1,
+        epfEmp: Number(src.epf_emp) || 0,
+        esicEmp: Number(src.esic_emp) || 0,
         epfEmpCo: Number(src.epf_emp_co) || 0,
-        esicEmpCo:Number(src.esic_emp_co) || 0,
+        esicEmpCo: Number(src.esic_emp_co) || 0,
       };
 
       if (emp.sca_id) {
@@ -140,9 +160,19 @@ async function run() {
              conveyance        = CASE WHEN (conveyance IS NULL OR conveyance=0) THEN ? ELSE conveyance END,
              gross             = CASE WHEN (gross IS NULL OR gross=0)         THEN ? ELSE gross       END
            WHERE id = ?`,
-          [v.bonus, v.portf, v.ma, v.lta, v.oa, v.pli,
-           v.basic, v.hra, v.conv, v.gross,
-           emp.sca_id]
+          [
+            v.bonus,
+            v.portf,
+            v.ma,
+            v.lta,
+            v.oa,
+            v.pli,
+            v.basic,
+            v.hra,
+            v.conv,
+            v.gross,
+            emp.sca_id,
+          ],
         );
         updated++;
       } else {
@@ -162,29 +192,53 @@ async function run() {
                   ?, ?, ?, ?,
                   id, NOW(), 'active'
            FROM auth_user WHERE email = 'system@mas.in' LIMIT 1`,
-          [emp.id,
-           v.basic, v.hra, v.conv, v.sa,
-           v.bonus, v.portf, v.ma, v.lta, v.oa, v.pli,
-           v.gross, v.pfAppl, v.esiAppl, v.epfEmpCo, v.esicEmpCo,
-           v.epfEmp, v.esicEmp, v.gross * 12, v.net]
+          [
+            emp.id,
+            v.basic,
+            v.hra,
+            v.conv,
+            v.sa,
+            v.bonus,
+            v.portf,
+            v.ma,
+            v.lta,
+            v.oa,
+            v.pli,
+            v.gross,
+            v.pfAppl,
+            v.esiAppl,
+            v.epfEmpCo,
+            v.esicEmpCo,
+            v.epfEmp,
+            v.esicEmp,
+            v.gross * 12,
+            v.net,
+          ],
         );
         inserted++;
       }
     }
-    process.stdout.write(`\r[PROGRESS] ${Math.min(i + BATCH, employees.length)} / ${employees.length}`);
+    process.stdout.write(
+      `\r[PROGRESS] ${Math.min(i + BATCH, employees.length)} / ${employees.length}`,
+    );
   }
 
   await hrms.end();
   await bill.end();
 
-  console.log(`\n\n${'═'.repeat(60)}`);
-  console.log('  SALARY STRUCTURE MIGRATION COMPLETE');
-  console.log(`${'═'.repeat(60)}`);
+  console.log(`\n\n${"═".repeat(60)}`);
+  console.log("  SALARY STRUCTURE MIGRATION COMPLETE");
+  console.log(`${"═".repeat(60)}`);
   console.log(`  Updated existing SCA rows : ${updated}`);
   console.log(`  Inserted new SCA rows     : ${inserted}`);
   console.log(`  No db_bill data (skipped) : ${skipped}`);
-  console.log(`${'═'.repeat(60)}`);
-  console.log('\nNext step: run reconcile-payroll-vs-legacy.mjs 2026-07 to verify match %');
+  console.log(`${"═".repeat(60)}`);
+  console.log(
+    "\nNext step: run reconcile-payroll-vs-legacy.mjs 2026-07 to verify match %",
+  );
 }
 
-run().catch(e => { console.error('FATAL:', e.message); process.exit(1); });
+run().catch((e) => {
+  console.error("FATAL:", e.message);
+  process.exit(1);
+});

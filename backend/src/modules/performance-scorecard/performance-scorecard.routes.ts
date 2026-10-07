@@ -13,7 +13,10 @@ import { db } from "../../db/mysql.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 router.use(requireAuth);
 
 /**
@@ -52,9 +55,14 @@ router.get(
     "super_admin",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { dateFrom, dateTo } = req.query as { dateFrom?: string; dateTo?: string };
+    const { dateFrom, dateTo } = req.query as {
+      dateFrom?: string;
+      dateTo?: string;
+    };
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({ success: false, message: "dateFrom and dateTo are required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "dateFrom and dateTo are required" });
     }
 
     // Real branch/process/team scoping via the shared resolver (30+ call sites),
@@ -67,8 +75,14 @@ router.get(
     let scopeParams: string[];
     try {
       const context = await getUserRoleContext(req.authUser!.id);
-      const scope = await resolveDashboardScope(req.authUser!.id, context.primaryRole);
-      ({ sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e"));
+      const scope = await resolveDashboardScope(
+        req.authUser!.id,
+        context.primaryRole,
+      );
+      ({ sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(
+        scope,
+        "e",
+      ));
     } catch (err) {
       // resolveDashboardScope throws DashboardScopeConfigurationError (409) when it
       // cannot establish any scope for the caller's role (no employee mapping, no
@@ -77,7 +91,8 @@ router.get(
       if (err instanceof DashboardScopeConfigurationError) {
         return res.status(403).json({
           success: false,
-          message: "Unable to resolve your team scope — no employee record or organization-wide role found",
+          message:
+            "Unable to resolve your team scope — no employee record or organization-wide role found",
         });
       }
       throw err;

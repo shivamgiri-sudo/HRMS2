@@ -233,7 +233,14 @@ HAVING MAX(ris.captured_at) IS NULL OR MAX(ris.captured_at) < DATE_SUB(NOW(), IN
 
   return {
     sql,
-    params: [...params, ...params, ...params, ...params, ...params, ...params, ...params],
+    params: [
+      ...params,
+      ...params,
+      ...params,
+      ...params,
+      ...params,
+      ...params,
+      ...params,
+    ],
   };
 }
-

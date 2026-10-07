@@ -25,13 +25,18 @@ describe("attendance-engine calculateLateArrival reads the roster snapshot befor
     const start = source.indexOf("async calculateLateArrival");
     expect(start, "calculateLateArrival not found").toBeGreaterThan(-1);
     const shiftStartIdx = source.indexOf("Shift start:", start);
-    expect(shiftStartIdx, "shift-start resolution block not found").toBeGreaterThan(-1);
+    expect(
+      shiftStartIdx,
+      "shift-start resolution block not found",
+    ).toBeGreaterThan(-1);
     return source.slice(shiftStartIdx, shiftStartIdx + 1100);
   }
 
   it("prefers the assignment's own shift_start_time snapshot over wfm_shift_master", () => {
     const query = extractLateArrivalQuery();
-    expect(query).toMatch(/COALESCE\(wra\.shift_start_time,\s*wsm\.start_time\)/);
+    expect(query).toMatch(
+      /COALESCE\(wra\.shift_start_time,\s*wsm\.start_time\)/,
+    );
   });
 
   it("no longer reads wsm.start_time as the sole, unconditional source", () => {

@@ -33,15 +33,20 @@ describe("importProcessMasterBatch — batched rewrite", () => {
     execute.mockResolvedValueOnce([
       [
         row("row-1", 1, {
-          process_code: "ONF_KYC", process_name: "Onfido KYC", branch_code: "OKAYA",
-          business_lob: "KYC", client_name: "Onfido", workload_type: "backoffice",
+          process_code: "ONF_KYC",
+          process_name: "Onfido KYC",
+          branch_code: "OKAYA",
+          business_lob: "KYC",
+          client_name: "Onfido",
+          workload_type: "backoffice",
         }),
         row("row-2", 2, { process_code: "", process_name: "Missing code" }), // pre-validation error
       ],
       [],
     ]);
     execute.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM branch_master")) return [[{ id: "branch-1", branch_code: "OKAYA" }], []];
+      if (sql.includes("FROM branch_master"))
+        return [[{ id: "branch-1", branch_code: "OKAYA" }], []];
       return [{}, []];
     });
 
@@ -49,30 +54,48 @@ describe("importProcessMasterBatch — batched rewrite", () => {
 
     expect(result.importedRows).toBe(1);
     expect(result.errorRows).toBe(1);
-    expect(result.errors[0]).toMatch(/process_code and process_name are required/);
+    expect(result.errors[0]).toMatch(
+      /process_code and process_name are required/,
+    );
 
-    const insertCall = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO process_master"));
-    expect(insertCall![1]).toEqual(["ONF_KYC", "Onfido KYC", "branch-1", "KYC", "Onfido", "backoffice", 1]);
+    const insertCall = execute.mock.calls.find(
+      ([sql]) =>
+        typeof sql === "string" && sql.includes("INSERT INTO process_master"),
+    );
+    expect(insertCall![1]).toEqual([
+      "ONF_KYC",
+      "Onfido KYC",
+      "branch-1",
+      "KYC",
+      "Onfido",
+      "backoffice",
+      1,
+    ]);
   });
 
   it("isolates one bad row when the chunk's multi-row statement fails, so the rest of the chunk still lands", async () => {
-    execute.mockImplementationOnce(async () => [[
-      row("row-1", 1, { process_code: "P1", process_name: "Process 1" }),
-      row("row-2", 2, { process_code: "P2", process_name: "Process 2" }),
-      row("row-3", 3, { process_code: "P3", process_name: "Process 3" }),
-    ], []]);
+    execute.mockImplementationOnce(async () => [
+      [
+        row("row-1", 1, { process_code: "P1", process_name: "Process 1" }),
+        row("row-2", 2, { process_code: "P2", process_name: "Process 2" }),
+        row("row-3", 3, { process_code: "P3", process_name: "Process 3" }),
+      ],
+      [],
+    ]);
 
     let chunkAttempted = false;
     let fallbackCalls = 0;
     execute.mockImplementation(async (sql: string, params: unknown[]) => {
-      if (sql.includes("FROM branch_master") || sql.includes("FROM lob_master")) return [[], []];
+      if (sql.includes("FROM branch_master") || sql.includes("FROM lob_master"))
+        return [[], []];
       if (sql.includes("INSERT INTO process_master")) {
         if (!chunkAttempted) {
           chunkAttempted = true;
           throw new Error("Duplicate entry 'P2' for key 'process_code'"); // the whole chunk fails
         }
         fallbackCalls++;
-        if ((params as unknown[])[0] === "P2") throw new Error("Duplicate entry 'P2' for key 'process_code'");
+        if ((params as unknown[])[0] === "P2")
+          throw new Error("Duplicate entry 'P2' for key 'process_code'");
         return [{}, []];
       }
       return [{}, []];

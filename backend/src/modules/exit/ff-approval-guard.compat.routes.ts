@@ -1,6 +1,9 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { ffService } from "./ff.service.js";
@@ -9,7 +12,10 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 export const ffApprovalGuardCompatRouter = Router();
 ffApprovalGuardCompatRouter.use(requireAuth);
 
-const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 ffApprovalGuardCompatRouter.post(
   "/ff/:id/approve",
@@ -22,10 +28,16 @@ ffApprovalGuardCompatRouter.post(
       [req.params.id],
     );
     const ff = ffRows[0];
-    if (!ff) return res.status(404).json({ success: false, message: "F&F calculation not found" });
+    if (!ff)
+      return res
+        .status(404)
+        .json({ success: false, message: "F&F calculation not found" });
     // No longer a dead branch: markFfPaid (ff.service.ts) makes 'paid' reachable as of
     // migration 1220, so this guard can now actually fire.
-    if (String(ff.status) === "paid") return res.status(400).json({ success: false, message: "F&F already paid" });
+    if (String(ff.status) === "paid")
+      return res
+        .status(400)
+        .json({ success: false, message: "F&F already paid" });
 
     const [clearanceRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS open_count
@@ -45,11 +57,16 @@ ffApprovalGuardCompatRouter.post(
     if (Number(ff.is_ff_provisional) === 1) {
       return res.status(409).json({
         success: false,
-        message: "Cannot approve F&F while statutory/settlement values are still provisional.",
+        message:
+          "Cannot approve F&F while statutory/settlement values are still provisional.",
       });
     }
 
-    const data = await ffService.approveFF(req.params.id, req.authUser!.id, req);
+    const data = await ffService.approveFF(
+      req.params.id,
+      req.authUser!.id,
+      req,
+    );
     await logSensitiveAction({
       actor_user_id: req.authUser!.id,
       action_type: "FF_APPROVE_GUARDED",

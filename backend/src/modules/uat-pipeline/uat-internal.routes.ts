@@ -31,15 +31,21 @@ import {
   verifyOidcToken,
   type VerifiedToken,
 } from "./uat-oidc-verify.service.js";
-import { gateReport, recordCallback, recordResult } from "./uat-build-dispatch.service.js";
+import {
+  gateReport,
+  recordCallback,
+  recordResult,
+} from "./uat-build-dispatch.service.js";
 import { switchEnabled } from "./uat-governance.service.js";
 import { jsonArray, latestPrompt } from "./uat-prompt.repo.js";
 
 const router = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) =>
-  fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 interface OidcRequest extends Request {
   oidc?: VerifiedToken;
@@ -51,18 +57,26 @@ interface OidcRequest extends Request {
  * The gate check comes first so that while Phase 4 is held, an unauthenticated caller learns
  * only that the feature is off — not whether their token would have been valid.
  */
-async function requireOidc(req: OidcRequest, res: Response, next: NextFunction): Promise<void> {
+async function requireOidc(
+  req: OidcRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const gates = await gateReport();
     if (!gates.allMet) {
       res.status(503).json({
         success: false,
         message:
-          "Automated builds are held. Unmet gates: " + gates.unmet.map((g) => g.key).join(", "),
+          "Automated builds are held. Unmet gates: " +
+          gates.unmet.map((g) => g.key).join(", "),
       });
       return;
     }
-    const sw = await switchEnabled("builds_enabled", process.env.UAT_BUILDS_ENABLED);
+    const sw = await switchEnabled(
+      "builds_enabled",
+      process.env.UAT_BUILDS_ENABLED,
+    );
     if (!sw.enabled) {
       res.status(503).json({ success: false, message: sw.reason });
       return;
@@ -80,7 +94,7 @@ async function requireOidc(req: OidcRequest, res: Response, next: NextFunction):
     // repository was right but their event_name was wrong is a map of the controls.
     console.error(
       "[uat-internal] rejected a callback:",
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
     res.status(401).json({ success: false, message: "Unauthorized." });
   }
@@ -93,7 +107,7 @@ async function runFor(buildRunId: string): Promise<RowDataPacket | null> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT id, feedback_id, prompt_id, attempt_no, state, branch_name
        FROM uat_build_run WHERE id = ? LIMIT 1`,
-    [buildRunId]
+    [buildRunId],
   );
   return rows[0] ?? null;
 }
@@ -109,10 +123,12 @@ router.post(
   "/build/:id/prompt",
   h(async (req: OidcRequest, res: Response) => {
     const run = await runFor(req.params.id);
-    if (!run) return res.status(404).json({ success: false, message: "Not found." });
+    if (!run)
+      return res.status(404).json({ success: false, message: "Not found." });
 
     const prompt = await latestPrompt(String(run.feedback_id));
-    if (!prompt) return res.status(404).json({ success: false, message: "Not found." });
+    if (!prompt)
+      return res.status(404).json({ success: false, message: "Not found." });
     if (!prompt.approved_at) {
       return res.status(409).json({
         success: false,
@@ -124,7 +140,8 @@ router.post(
       // instructions the dispatcher did not authorise.
       return res.status(409).json({
         success: false,
-        message: "The stored prompt is not the one this build was dispatched for.",
+        message:
+          "The stored prompt is not the one this build was dispatched for.",
       });
     }
 
@@ -139,7 +156,7 @@ router.post(
       // Deliberately absent: the reporter, the title, the raw body, any attachment, any
       // employee identifier. A build needs instructions, not a person.
     });
-  })
+  }),
 );
 
 /** Job B: the allowlist on its own, for the guard's --allow argument. */
@@ -147,11 +164,13 @@ router.get(
   "/build/:id/allowed",
   h(async (req: OidcRequest, res: Response) => {
     const run = await runFor(req.params.id);
-    if (!run) return res.status(404).json({ success: false, message: "Not found." });
+    if (!run)
+      return res.status(404).json({ success: false, message: "Not found." });
     const prompt = await latestPrompt(String(run.feedback_id));
-    if (!prompt?.approved_at) return res.status(404).json({ success: false, message: "Not found." });
+    if (!prompt?.approved_at)
+      return res.status(404).json({ success: false, message: "Not found." });
     return res.json(jsonArray(prompt.allowed_paths_json));
-  })
+  }),
 );
 
 /**
@@ -164,23 +183,26 @@ router.post(
   "/build/:id/evidence",
   h(async (req: OidcRequest, res: Response) => {
     const run = await runFor(req.params.id);
-    if (!run) return res.status(404).json({ success: false, message: "Not found." });
+    if (!run)
+      return res.status(404).json({ success: false, message: "Not found." });
 
     const patchSha = String(req.headers["x-patch-sha256"] ?? "");
     if (!/^[0-9a-f]{64}$/.test(patchSha)) {
-      return res.status(400).json({ success: false, message: "A patch sha256 is required." });
+      return res
+        .status(400)
+        .json({ success: false, message: "A patch sha256 is required." });
     }
 
     const fresh = await recordCallback(
       { buildRunId: String(run.id), kind: "evidence" },
-      req.oidc as VerifiedToken
+      req.oidc as VerifiedToken,
     );
-    await db.query(`UPDATE uat_build_run SET patch_sha256 = ?, state = 'running' WHERE id = ?`, [
-      patchSha,
-      run.id,
-    ]);
+    await db.query(
+      `UPDATE uat_build_run SET patch_sha256 = ?, state = 'running' WHERE id = ?`,
+      [patchSha, run.id],
+    );
     return res.json({ success: true, data: { recorded: fresh } });
-  })
+  }),
 );
 
 /**
@@ -197,12 +219,15 @@ router.post(
   "/build/:id/result",
   h(async (req: OidcRequest, res: Response) => {
     const run = await runFor(req.params.id);
-    if (!run) return res.status(404).json({ success: false, message: "Not found." });
+    if (!run)
+      return res.status(404).json({ success: false, message: "Not found." });
 
     const body = req.body ?? {};
     const headSha = String(body.headSha ?? "");
     if (!/^[0-9a-f]{40}$/.test(headSha)) {
-      return res.status(400).json({ success: false, message: "A head SHA is required." });
+      return res
+        .status(400)
+        .json({ success: false, message: "A head SHA is required." });
     }
 
     const outcome = await recordResult(
@@ -214,16 +239,18 @@ router.post(
           passed: Boolean(body.passed),
           guardrailBreach: Boolean(body.guardrailBreach),
           failureStage: body.failureStage ? String(body.failureStage) : null,
-          failureMessage: body.failureMessage ? String(body.failureMessage) : null,
+          failureMessage: body.failureMessage
+            ? String(body.failureMessage)
+            : null,
           headSha,
           gates: (body.gates ?? {}) as Record<string, unknown>,
         },
       },
-      req.oidc as VerifiedToken
+      req.oidc as VerifiedToken,
     );
 
     return res.json({ success: true, data: outcome });
-  })
+  }),
 );
 
 export const uatInternalRouter = router;

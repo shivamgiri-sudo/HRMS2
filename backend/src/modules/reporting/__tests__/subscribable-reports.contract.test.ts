@@ -24,7 +24,9 @@ import { EXECUTOR_MAP } from "../executors/index.js";
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 
 describe("the subscribable-report gate is derived, not hardcoded", () => {
-  const adminSource = read("src/modules/communication/notification-admin.routes.ts");
+  const adminSource = read(
+    "src/modules/communication/notification-admin.routes.ts",
+  );
 
   it("no longer carries a hardcoded allowlist", () => {
     expect(
@@ -48,9 +50,14 @@ describe("the subscribable-report gate is derived, not hardcoded", () => {
 
   it("offers substantially more than the six it used to", () => {
     const withExecutor = new Set(Object.keys(EXECUTOR_MAP));
-    const subscribable = REPORT_CATALOG
-      .filter(r => withExecutor.has(r.code))
-      .filter(r => !["deprecated", "disabled", "blocked"].includes(r.availabilityStatus ?? "under_validation"));
+    const subscribable = REPORT_CATALOG.filter((r) =>
+      withExecutor.has(r.code),
+    ).filter(
+      (r) =>
+        !["deprecated", "disabled", "blocked"].includes(
+          r.availabilityStatus ?? "under_validation",
+        ),
+    );
 
     expect(subscribable.length).toBeGreaterThan(50);
   });
@@ -59,12 +66,22 @@ describe("the subscribable-report gate is derived, not hardcoded", () => {
     // The original fear was real — scheduling a report with no builder would email an empty
     // spreadsheet on a cadence. The derived rule prevents that by construction; this asserts it.
     const withExecutor = new Set(Object.keys(EXECUTOR_MAP));
-    const subscribable = REPORT_CATALOG
-      .filter(r => withExecutor.has(r.code))
-      .filter(r => !["deprecated", "disabled", "blocked"].includes(r.availabilityStatus ?? "under_validation"));
+    const subscribable = REPORT_CATALOG.filter((r) =>
+      withExecutor.has(r.code),
+    ).filter(
+      (r) =>
+        !["deprecated", "disabled", "blocked"].includes(
+          r.availabilityStatus ?? "under_validation",
+        ),
+    );
 
-    const unbuildable = subscribable.filter(r => !withExecutor.has(r.code)).map(r => r.code);
-    expect(unbuildable, `subscribable but with no executor: ${unbuildable.join(", ")}`).toEqual([]);
+    const unbuildable = subscribable
+      .filter((r) => !withExecutor.has(r.code))
+      .map((r) => r.code);
+    expect(
+      unbuildable,
+      `subscribable but with no executor: ${unbuildable.join(", ")}`,
+    ).toEqual([]);
   });
 });
 

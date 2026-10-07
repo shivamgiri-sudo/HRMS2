@@ -14,7 +14,9 @@ function millisecondsUntilNextHour(hour: number, now = new Date()): number {
   return next.getTime() - now.getTime();
 }
 
-export async function runAttendanceReconciliationOnce(options: { autoFix?: boolean } = {}) {
+export async function runAttendanceReconciliationOnce(
+  options: { autoFix?: boolean } = {},
+) {
   await recordWorkerRun(WORKER_NAME, "started", {
     autoFix: options.autoFix ?? env.NCOSEC_RECONCILIATION_AUTO_FIX,
     lookbackDays: env.NCOSEC_RECONCILIATION_LOOKBACK_DAYS,
@@ -24,7 +26,11 @@ export async function runAttendanceReconciliationOnce(options: { autoFix?: boole
     const result = await attendanceReconciliationService.auditDefaultWindow({
       autoFix: options.autoFix ?? env.NCOSEC_RECONCILIATION_AUTO_FIX,
     });
-    await recordWorkerRun(WORKER_NAME, "completed", result as unknown as Record<string, unknown>);
+    await recordWorkerRun(
+      WORKER_NAME,
+      "completed",
+      result as unknown as Record<string, unknown>,
+    );
     return result;
   } catch (error) {
     await recordWorkerRun(WORKER_NAME, "failed", {
@@ -39,7 +45,7 @@ async function execute() {
   const ran = await withWorkerLock(WORKER_NAME, async () => {
     const result = await runAttendanceReconciliationOnce();
     console.log(
-      `[${WORKER_NAME}] from=${result.from} to=${result.to} issues=${result.detectedIssues} resolved=${result.resolvedIssues} autoFix=${result.autoFix.status}`
+      `[${WORKER_NAME}] from=${result.from} to=${result.to} issues=${result.detectedIssues} resolved=${result.resolvedIssues} autoFix=${result.autoFix.status}`,
     );
     // Follow-up step in the same run: digest the *currently* open backlog (not just what
     // this run just wrote) into one Work Inbox item per branch. Isolated in its own
@@ -48,10 +54,16 @@ async function execute() {
     try {
       await runAttendanceMismatchBranchDigest();
     } catch (error) {
-      console.error(`[${WORKER_NAME}] branch digest failed:`, error instanceof Error ? error.message : String(error));
+      console.error(
+        `[${WORKER_NAME}] branch digest failed:`,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   });
-  if (!ran) console.log(`[${WORKER_NAME}] skipped because another instance owns the lock`);
+  if (!ran)
+    console.log(
+      `[${WORKER_NAME}] skipped because another instance owns the lock`,
+    );
 }
 
 export function startAttendanceReconciliationWorker(): void {
@@ -61,7 +73,10 @@ export function startAttendanceReconciliationWorker(): void {
       try {
         await execute();
       } catch (error) {
-        console.error(`[${WORKER_NAME}] failed`, error instanceof Error ? error.message : String(error));
+        console.error(
+          `[${WORKER_NAME}] failed`,
+          error instanceof Error ? error.message : String(error),
+        );
       } finally {
         nextRun = undefined;
         scheduleNext();
@@ -72,7 +87,7 @@ export function startAttendanceReconciliationWorker(): void {
 
   scheduleNext();
   console.log(
-    `[${WORKER_NAME}] scheduled daily hour=${env.NCOSEC_RECONCILIATION_HOUR} lookbackDays=${env.NCOSEC_RECONCILIATION_LOOKBACK_DAYS} autoFix=${env.NCOSEC_RECONCILIATION_AUTO_FIX}`
+    `[${WORKER_NAME}] scheduled daily hour=${env.NCOSEC_RECONCILIATION_HOUR} lookbackDays=${env.NCOSEC_RECONCILIATION_LOOKBACK_DAYS} autoFix=${env.NCOSEC_RECONCILIATION_AUTO_FIX}`,
   );
 }
 

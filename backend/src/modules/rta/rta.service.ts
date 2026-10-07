@@ -79,7 +79,7 @@ export const reconciliationService = {
    */
   async reconcileDate(
     date: string,
-    opts: { processName?: string; branchName?: string; userId: string }
+    opts: { processName?: string; branchName?: string; userId: string },
   ): Promise<{ reconciled: number; absent: number; unresolved: number }> {
     // Get rostered employees for this date
     const [rosterRows] = await db.execute<RowDataPacket[]>(
@@ -90,8 +90,12 @@ export const reconciliationService = {
        WHERE ra.roster_date = ?
          AND ra.publish_status = 'published'
          ${opts.processName ? "AND ra.process_name = ?" : ""}
-         ${opts.branchName  ? "AND ra.branch_name = ?"  : ""}`,
-      [date, ...(opts.processName ? [opts.processName] : []), ...(opts.branchName ? [opts.branchName] : [])]
+         ${opts.branchName ? "AND ra.branch_name = ?" : ""}`,
+      [
+        date,
+        ...(opts.processName ? [opts.processName] : []),
+        ...(opts.branchName ? [opts.branchName] : []),
+      ],
     );
 
     const [sessionRows] = await db.execute<RowDataPacket[]>(
@@ -99,7 +103,7 @@ export const reconciliationService = {
               s.current_status, s.punch_source
        FROM wfm_attendance_session s
        WHERE s.session_date = ?`,
-      [date]
+      [date],
     );
 
     // Get approved leaves for this date
@@ -107,17 +111,19 @@ export const reconciliationService = {
       `SELECT lr.employee_id FROM leave_request lr
        WHERE lr.status = 'approved'
          AND lr.from_date <= ? AND lr.to_date >= ?`,
-      [date, date]
+      [date, date],
     );
 
     const sessionMap = new Map<string, RowDataPacket>(
-      (sessionRows as RowDataPacket[]).map((s) => [s.employee_id as string, s])
+      (sessionRows as RowDataPacket[]).map((s) => [s.employee_id as string, s]),
     );
     const onLeaveSet = new Set<string>(
-      (leaveRows as RowDataPacket[]).map((l) => l.employee_id as string)
+      (leaveRows as RowDataPacket[]).map((l) => l.employee_id as string),
     );
 
-    let reconciled = 0, absent = 0, unresolved = 0;
+    let reconciled = 0,
+      absent = 0,
+      unresolved = 0;
 
     for (const roster of rosterRows as RowDataPacket[]) {
       const empId = roster.employee_id as string;
@@ -126,11 +132,11 @@ export const reconciliationService = {
 
       const requiredMins = Number(roster.required_minutes ?? 480);
       const shiftStart = roster.shift_start_time ?? roster.sm_start ?? null;
-      const shiftEnd   = roster.shift_end_time   ?? roster.sm_end   ?? null;
+      const shiftEnd = roster.shift_end_time ?? roster.sm_end ?? null;
 
       let status: string;
       let actualMins = 0;
-      let breakMins  = 0;
+      let breakMins = 0;
       let productiveMins = 0;
       let lateBy = 0;
       let earlyExit = 0;
@@ -142,22 +148,31 @@ export const reconciliationService = {
         status = "absent";
         absent++;
       } else {
-        actualMins    = Number(session.total_login_minutes ?? 0);
+        actualMins = Number(session.total_login_minutes ?? 0);
         productiveMins = actualMins; // break deducted separately
-        adherencePct   = requiredMins > 0 ? Math.min(100, Math.round((actualMins / requiredMins) * 100)) : 0;
+        adherencePct =
+          requiredMins > 0
+            ? Math.min(100, Math.round((actualMins / requiredMins) * 100))
+            : 0;
 
         // Late arrival
         if (shiftStart && session.login_time) {
           const planned = new Date(`${date}T${shiftStart}`);
-          const actual  = new Date(session.login_time as string);
-          lateBy = Math.max(0, Math.round((actual.getTime() - planned.getTime()) / 60000));
+          const actual = new Date(session.login_time as string);
+          lateBy = Math.max(
+            0,
+            Math.round((actual.getTime() - planned.getTime()) / 60000),
+          );
         }
 
         // Early exit
         if (shiftEnd && session.logout_time) {
           const planned = new Date(`${date}T${shiftEnd}`);
-          const actual  = new Date(session.logout_time as string);
-          earlyExit = Math.max(0, Math.round((planned.getTime() - actual.getTime()) / 60000));
+          const actual = new Date(session.logout_time as string);
+          earlyExit = Math.max(
+            0,
+            Math.round((planned.getTime() - actual.getTime()) / 60000),
+          );
         }
 
         if (adherencePct >= 90) status = "present";
@@ -189,13 +204,23 @@ export const reconciliationService = {
            reconciled_at        = NOW(),
            reconciled_by        = VALUES(reconciled_by)`,
         [
-          empId, date, roster.plan_id ?? null,
-          shiftStart, shiftEnd, requiredMins,
+          empId,
+          date,
+          roster.plan_id ?? null,
+          shiftStart,
+          shiftEnd,
+          requiredMins,
           session?.login_time ?? null,
           session?.logout_time ?? null,
-          actualMins, breakMins, productiveMins, status,
-          adherencePct, lateBy, earlyExit, opts.userId,
-        ]
+          actualMins,
+          breakMins,
+          productiveMins,
+          status,
+          adherencePct,
+          lateBy,
+          earlyExit,
+          opts.userId,
+        ],
       );
     }
 
@@ -203,17 +228,38 @@ export const reconciliationService = {
   },
 
   async listReconciliation(filters: {
-    fromDate: string; toDate: string;
-    employeeId?: string; processId?: string; processName?: string; status?: string; branchId?: string;
-    page: number; limit: number;
+    fromDate: string;
+    toDate: string;
+    employeeId?: string;
+    processId?: string;
+    processName?: string;
+    status?: string;
+    branchId?: string;
+    page: number;
+    limit: number;
   }) {
     const conds: string[] = ["r.roster_date BETWEEN ? AND ?"];
     const params: unknown[] = [filters.fromDate, filters.toDate];
-    if (filters.employeeId)  { conds.push("r.employee_id = ?");           params.push(filters.employeeId); }
-    if (filters.processId)   { conds.push("e.process_id = ?");            params.push(filters.processId); }
-    if (filters.processName) { conds.push("ra.process_name = ?");         params.push(filters.processName); }
-    if (filters.status)      { conds.push("r.attendance_status = ?");     params.push(filters.status); }
-    if (filters.branchId)    { conds.push("e.branch_id = ?");             params.push(filters.branchId); }
+    if (filters.employeeId) {
+      conds.push("r.employee_id = ?");
+      params.push(filters.employeeId);
+    }
+    if (filters.processId) {
+      conds.push("e.process_id = ?");
+      params.push(filters.processId);
+    }
+    if (filters.processName) {
+      conds.push("ra.process_name = ?");
+      params.push(filters.processName);
+    }
+    if (filters.status) {
+      conds.push("r.attendance_status = ?");
+      params.push(filters.status);
+    }
+    if (filters.branchId) {
+      conds.push("e.branch_id = ?");
+      params.push(filters.branchId);
+    }
 
     const offset = (filters.page - 1) * filters.limit;
     const where = conds.join(" AND ");
@@ -227,7 +273,7 @@ export const reconciliationService = {
        WHERE ${where}
         ORDER BY r.roster_date DESC, e.employee_code
         LIMIT ${filters.limit} OFFSET ${offset}`,
-      params
+      params,
     );
 
     const [cnt] = await db.execute<RowDataPacket[]>(
@@ -235,16 +281,21 @@ export const reconciliationService = {
        JOIN employees e ON e.id = r.employee_id
        LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = r.employee_id AND ra.roster_date = r.roster_date
        WHERE ${where}`,
-      params
+      params,
     );
 
-    return { data: rows as ReconciliationRecord[], total: Number((cnt as RowDataPacket[])[0]?.total ?? 0), page: filters.page, limit: filters.limit };
+    return {
+      data: rows as ReconciliationRecord[],
+      total: Number((cnt as RowDataPacket[])[0]?.total ?? 0),
+      page: filters.page,
+      limit: filters.limit,
+    };
   },
 };
 
 export async function getLiveAttendanceSummary(
   requestedDate: string,
-  filters: { processId?: string; branchId?: string }
+  filters: { processId?: string; branchId?: string },
 ) {
   const filterSql = `${filters.processId ? " AND adr.process_id = ?" : ""}${filters.branchId ? " AND adr.branch_id = ?" : ""}`;
   const filterParams = [
@@ -256,7 +307,7 @@ export async function getLiveAttendanceSummary(
     `SELECT COUNT(*) AS total
        FROM attendance_daily_record adr
       WHERE adr.record_date = ?${filterSql}`,
-    [requestedDate, ...filterParams]
+    [requestedDate, ...filterParams],
   );
 
   let dataDate = requestedDate;
@@ -266,7 +317,7 @@ export async function getLiveAttendanceSummary(
       `SELECT DATE_FORMAT(MAX(adr.record_date), '%Y-%m-%d') AS data_date
          FROM attendance_daily_record adr
         WHERE 1=1${filterSql}`,
-      filterParams
+      filterParams,
     );
     const rawDate = latest[0]?.data_date;
     if (rawDate) {
@@ -288,7 +339,7 @@ export async function getLiveAttendanceSummary(
        ROUND(AVG(LEAST(100, (COALESCE(adr.raw_minutes, 0) / 480) * 100)), 1) AS adherence_pct
      FROM attendance_daily_record adr
      WHERE adr.record_date = ?${filterSql}`,
-    [dataDate, ...filterParams]
+    [dataDate, ...filterParams],
   );
 
   const rostered = Number(rows[0]?.rostered ?? 0);
@@ -309,7 +360,10 @@ export async function getLiveAttendanceSummary(
     week_off: Number(rows[0]?.week_off ?? 0),
     late_count: Number(rows[0]?.late_count ?? 0),
     adherence_pct: Number(rows[0]?.adherence_pct ?? 0),
-    attendance_pct: expectedToWork > 0 ? Math.round((loggedIn / expectedToWork) * 1000) / 10 : 0,
+    attendance_pct:
+      expectedToWork > 0
+        ? Math.round((loggedIn / expectedToWork) * 1000) / 10
+        : 0,
   };
 }
 
@@ -318,7 +372,7 @@ export async function getLiveAttendanceSummary(
 export const shrinkageService = {
   async calculateSnapshot(
     date: string,
-    opts: { processId?: string; branchId?: string; userId: string }
+    opts: { processId?: string; branchId?: string; userId: string },
   ): Promise<ShrinkageSnapshot> {
     // Get reconciliation stats for this date/process
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -336,9 +390,13 @@ export const shrinkageService = {
        LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = r.employee_id AND ra.roster_date = r.roster_date
        WHERE r.roster_date = ?
          ${opts.processId ? "AND ra.process_name = (SELECT process_name FROM process_master WHERE id = ?)" : ""}
-         ${opts.branchId  ? "AND ra.branch_name  = (SELECT branch_name  FROM branch_master  WHERE id = ?)" : ""}
+         ${opts.branchId ? "AND ra.branch_name  = (SELECT branch_name  FROM branch_master  WHERE id = ?)" : ""}
        GROUP BY attendance_status`,
-      [date, ...(opts.processId ? [opts.processId] : []), ...(opts.branchId ? [opts.branchId] : [])]
+      [
+        date,
+        ...(opts.processId ? [opts.processId] : []),
+        ...(opts.branchId ? [opts.branchId] : []),
+      ],
     );
 
     const [adhRows] = await db.execute<RowDataPacket[]>(
@@ -349,7 +407,7 @@ export const shrinkageService = {
        LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = r.employee_id AND ra.roster_date = r.roster_date
        WHERE r.roster_date = ?
          ${opts.processId ? "AND ra.process_name = (SELECT process_name FROM process_master WHERE id = ?)" : ""}`,
-      [date, ...(opts.processId ? [opts.processId] : [])]
+      [date, ...(opts.processId ? [opts.processId] : [])],
     );
 
     const statusMap: Record<string, number> = {};
@@ -358,13 +416,18 @@ export const shrinkageService = {
     }
 
     const rosteredHc = Object.values(statusMap).reduce((a, b) => a + b, 0);
-    const presentHc  = (statusMap["present"] ?? 0) + (statusMap["half_day"] ?? 0) + (statusMap["late"] ?? 0);
-    const absentHc   = statusMap["absent"] ?? 0;
-    const onLeaveHc  = statusMap["leave_approved"] ?? 0;
-    const lateCount  = Number((adhRows as RowDataPacket[])[0]?.late_count ?? 0);
+    const presentHc =
+      (statusMap["present"] ?? 0) +
+      (statusMap["half_day"] ?? 0) +
+      (statusMap["late"] ?? 0);
+    const absentHc = statusMap["absent"] ?? 0;
+    const onLeaveHc = statusMap["leave_approved"] ?? 0;
+    const lateCount = Number((adhRows as RowDataPacket[])[0]?.late_count ?? 0);
 
-    const plannedShrinkage = rosteredHc > 0 ? (onLeaveHc / rosteredHc) * 100 : 0;
-    const unplannedShrinkage = rosteredHc > 0 ? (absentHc / rosteredHc) * 100 : 0;
+    const plannedShrinkage =
+      rosteredHc > 0 ? (onLeaveHc / rosteredHc) * 100 : 0;
+    const unplannedShrinkage =
+      rosteredHc > 0 ? (absentHc / rosteredHc) * 100 : 0;
     const totalShrinkage = plannedShrinkage + unplannedShrinkage;
 
     await db.execute(
@@ -383,32 +446,51 @@ export const shrinkageService = {
          total_shrinkage_pct = VALUES(total_shrinkage_pct),
          avg_adherence_pct = VALUES(avg_adherence_pct)`,
       [
-        date, opts.processId ?? null, opts.branchId ?? null,
-        rosteredHc, presentHc, absentHc, onLeaveHc, lateCount,
+        date,
+        opts.processId ?? null,
+        opts.branchId ?? null,
+        rosteredHc,
+        presentHc,
+        absentHc,
+        onLeaveHc,
+        lateCount,
         Math.round(plannedShrinkage * 100) / 100,
         Math.round(unplannedShrinkage * 100) / 100,
         Math.round(totalShrinkage * 100) / 100,
-        Math.round(Number((adhRows as RowDataPacket[])[0]?.avg_adh ?? 0) * 100) / 100,
+        Math.round(
+          Number((adhRows as RowDataPacket[])[0]?.avg_adh ?? 0) * 100,
+        ) / 100,
         Math.round(Number((adhRows as RowDataPacket[])[0]?.avg_prod ?? 0)),
         Math.round(Number((adhRows as RowDataPacket[])[0]?.total_break ?? 0)),
-      ]
+      ],
     );
 
     const [snap] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM shrinkage_daily_snapshot WHERE snapshot_date = ? AND process_id <=> ? AND branch_id <=> ?",
-      [date, opts.processId ?? null, opts.branchId ?? null]
+      [date, opts.processId ?? null, opts.branchId ?? null],
     );
     return (snap as RowDataPacket[])[0] as ShrinkageSnapshot;
   },
 
-  async listSnapshots(filters: { fromDate: string; toDate: string; processId?: string; branchId?: string }) {
+  async listSnapshots(filters: {
+    fromDate: string;
+    toDate: string;
+    processId?: string;
+    branchId?: string;
+  }) {
     const conds: string[] = ["snapshot_date BETWEEN ? AND ?"];
     const params: unknown[] = [filters.fromDate, filters.toDate];
-    if (filters.processId) { conds.push("process_id = ?"); params.push(filters.processId); }
-    if (filters.branchId)  { conds.push("branch_id = ?");  params.push(filters.branchId); }
+    if (filters.processId) {
+      conds.push("process_id = ?");
+      params.push(filters.processId);
+    }
+    if (filters.branchId) {
+      conds.push("branch_id = ?");
+      params.push(filters.branchId);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM shrinkage_daily_snapshot WHERE ${conds.join(" AND ")} ORDER BY snapshot_date DESC LIMIT 90`,
-      params
+      params,
     );
     return rows as ShrinkageSnapshot[];
   },
@@ -418,21 +500,24 @@ export const shrinkageService = {
 
 async function loadAlertThresholds() {
   const [lowAdh, critAdh, shrinkWarn, shrinkCrit] = await Promise.all([
-    getPolicyValue("rta", "login_adherence",  "warning_threshold_pct",  "70"),
-    getPolicyValue("rta", "login_adherence",  "critical_threshold_pct", "50"),
-    getPolicyValue("operations", "shrinkage", "warning_threshold_pct",  "15"),
+    getPolicyValue("rta", "login_adherence", "warning_threshold_pct", "70"),
+    getPolicyValue("rta", "login_adherence", "critical_threshold_pct", "50"),
+    getPolicyValue("operations", "shrinkage", "warning_threshold_pct", "15"),
     getPolicyValue("operations", "shrinkage", "critical_threshold_pct", "25"),
   ]);
   return {
-    low_adherence:      Number(lowAdh),
+    low_adherence: Number(lowAdh),
     critical_adherence: Number(critAdh),
-    shrinkage_warning:  Number(shrinkWarn),
+    shrinkage_warning: Number(shrinkWarn),
     shrinkage_critical: Number(shrinkCrit),
   };
 }
 
 export const alertService = {
-  async fireAlertsForDate(date: string, opts: { userId: string }): Promise<number> {
+  async fireAlertsForDate(
+    date: string,
+    opts: { userId: string },
+  ): Promise<number> {
     const THRESHOLDS = await loadAlertThresholds();
     let fired = 0;
 
@@ -442,17 +527,26 @@ export const alertService = {
        FROM attendance_reconciliation_record
        WHERE roster_date = ? AND attendance_status NOT IN ('leave_approved','absent')
          AND adherence_pct < ?`,
-      [date, THRESHOLDS.low_adherence]
+      [date, THRESHOLDS.low_adherence],
     );
 
     for (const row of lowAdh as RowDataPacket[]) {
-      const severity = Number(row.adherence_pct) < THRESHOLDS.critical_adherence ? "critical" : "warning";
+      const severity =
+        Number(row.adherence_pct) < THRESHOLDS.critical_adherence
+          ? "critical"
+          : "warning";
       await db.execute(
         `INSERT IGNORE INTO adherence_alert
            (id, alert_date, alert_type, severity, employee_id,
             threshold_pct, actual_pct, status)
          VALUES (UUID(), ?, 'low_adherence', ?, ?, ?, ?, 'open')`,
-        [date, severity, row.employee_id, THRESHOLDS.low_adherence, row.adherence_pct]
+        [
+          date,
+          severity,
+          row.employee_id,
+          THRESHOLDS.low_adherence,
+          row.adherence_pct,
+        ],
       );
       fired++;
     }
@@ -460,14 +554,14 @@ export const alertService = {
     // 2. No-show alerts
     const [noShows] = await db.execute<RowDataPacket[]>(
       "SELECT employee_id FROM attendance_reconciliation_record WHERE roster_date = ? AND attendance_status = 'absent'",
-      [date]
+      [date],
     );
     for (const row of noShows as RowDataPacket[]) {
       await db.execute(
         `INSERT IGNORE INTO adherence_alert
            (id, alert_date, alert_type, severity, employee_id, status)
          VALUES (UUID(), ?, 'no_show', 'critical', ?, 'open')`,
-        [date, row.employee_id]
+        [date, row.employee_id],
       );
       fired++;
     }
@@ -476,17 +570,26 @@ export const alertService = {
     const [shrinkSnaps] = await db.execute<RowDataPacket[]>(
       `SELECT process_id, branch_id, total_shrinkage_pct
        FROM shrinkage_daily_snapshot WHERE snapshot_date = ? AND total_shrinkage_pct >= ?`,
-      [date, THRESHOLDS.shrinkage_warning]
+      [date, THRESHOLDS.shrinkage_warning],
     );
     for (const snap of shrinkSnaps as RowDataPacket[]) {
-      const severity = Number(snap.total_shrinkage_pct) >= THRESHOLDS.shrinkage_critical ? "critical" : "warning";
+      const severity =
+        Number(snap.total_shrinkage_pct) >= THRESHOLDS.shrinkage_critical
+          ? "critical"
+          : "warning";
       await db.execute(
         `INSERT IGNORE INTO adherence_alert
            (id, alert_date, alert_type, severity, process_id, branch_id,
             threshold_pct, actual_pct, status)
          VALUES (UUID(), ?, 'shrinkage_spike', ?, ?, ?, ?, ?, 'open')`,
-        [date, severity, snap.process_id, snap.branch_id,
-         THRESHOLDS.shrinkage_warning, snap.total_shrinkage_pct]
+        [
+          date,
+          severity,
+          snap.process_id,
+          snap.branch_id,
+          THRESHOLDS.shrinkage_warning,
+          snap.total_shrinkage_pct,
+        ],
       );
       fired++;
     }
@@ -495,22 +598,46 @@ export const alertService = {
   },
 
   async listAlerts(filters: {
-    fromDate?: string; toDate?: string; status?: string;
-    processId?: string; employeeId?: string; branchId?: string; page: number; limit: number;
+    fromDate?: string;
+    toDate?: string;
+    status?: string;
+    processId?: string;
+    employeeId?: string;
+    branchId?: string;
+    page: number;
+    limit: number;
   }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
-    if (filters.fromDate)   { conds.push("alert_date >= ?");   params.push(filters.fromDate); }
-    if (filters.toDate)     { conds.push("alert_date <= ?");   params.push(filters.toDate); }
-    if (filters.status)     { conds.push("status = ?");        params.push(filters.status); }
-    if (filters.processId)  { conds.push("process_id = ?");    params.push(filters.processId); }
-    if (filters.employeeId) { conds.push("employee_id = ?");   params.push(filters.employeeId); }
-    if (filters.branchId)   { conds.push("branch_id = ?");     params.push(filters.branchId); }
+    if (filters.fromDate) {
+      conds.push("alert_date >= ?");
+      params.push(filters.fromDate);
+    }
+    if (filters.toDate) {
+      conds.push("alert_date <= ?");
+      params.push(filters.toDate);
+    }
+    if (filters.status) {
+      conds.push("status = ?");
+      params.push(filters.status);
+    }
+    if (filters.processId) {
+      conds.push("process_id = ?");
+      params.push(filters.processId);
+    }
+    if (filters.employeeId) {
+      conds.push("employee_id = ?");
+      params.push(filters.employeeId);
+    }
+    if (filters.branchId) {
+      conds.push("branch_id = ?");
+      params.push(filters.branchId);
+    }
     const offset = (filters.page - 1) * filters.limit;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM adherence_alert WHERE ${conds.join(" AND ")}
        ORDER BY alert_date DESC, severity DESC LIMIT ${filters.limit} OFFSET ${offset}`,
-      params
+      params,
     );
     return rows as AdherenceAlert[];
   },
@@ -518,7 +645,7 @@ export const alertService = {
   async acknowledgeAlert(id: string, userId: string) {
     await db.execute(
       "UPDATE adherence_alert SET status='acknowledged', acknowledged_by=?, acknowledged_at=NOW() WHERE id=?",
-      [userId, id]
+      [userId, id],
     );
   },
 };
@@ -529,7 +656,7 @@ export const payrollReadinessService = {
   async generateReadinessFlags(
     periodStart: string,
     periodEnd: string,
-    opts: { processId?: string; userId: string }
+    opts: { processId?: string; userId: string },
   ): Promise<{ flagged: number; errors: string[] }> {
     const errors: string[] = [];
     let flagged = 0;
@@ -538,7 +665,7 @@ export const payrollReadinessService = {
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT r.employee_id FROM attendance_reconciliation_record r
        WHERE r.roster_date BETWEEN ? AND ?`,
-      [periodStart, periodEnd]
+      [periodStart, periodEnd],
     );
 
     for (const emp of empRows as RowDataPacket[]) {
@@ -555,7 +682,7 @@ export const payrollReadinessService = {
              SUM(productive_minutes) AS total_productive_mins
            FROM attendance_reconciliation_record
            WHERE employee_id = ? AND roster_date BETWEEN ? AND ?`,
-          [empId, periodStart, periodEnd]
+          [empId, periodStart, periodEnd],
         );
 
         const stats = (statsRows as RowDataPacket[])[0] ?? {};
@@ -572,12 +699,18 @@ export const payrollReadinessService = {
              lwp_days = VALUES(lwp_days), total_productive_mins = VALUES(total_productive_mins),
              status = 'ready', flagged_at = NOW(), flagged_by = VALUES(flagged_by)`,
           [
-            empId, periodStart, periodEnd,
-            Number(stats.working_days ?? 0), Number(stats.present_days ?? 0),
-            Number(stats.absent_days ?? 0),  Number(stats.leave_days ?? 0),
-            Number(stats.half_days ?? 0),    Number(stats.lwp_days ?? 0),
-            Number(stats.total_productive_mins ?? 0), opts.userId,
-          ]
+            empId,
+            periodStart,
+            periodEnd,
+            Number(stats.working_days ?? 0),
+            Number(stats.present_days ?? 0),
+            Number(stats.absent_days ?? 0),
+            Number(stats.leave_days ?? 0),
+            Number(stats.half_days ?? 0),
+            Number(stats.lwp_days ?? 0),
+            Number(stats.total_productive_mins ?? 0),
+            opts.userId,
+          ],
         );
         flagged++;
       } catch (err: any) {
@@ -588,12 +721,27 @@ export const payrollReadinessService = {
     return { flagged, errors };
   },
 
-  async listFlags(filters: { periodStart?: string; status?: string; employeeId?: string; page: number; limit: number }) {
+  async listFlags(filters: {
+    periodStart?: string;
+    status?: string;
+    employeeId?: string;
+    page: number;
+    limit: number;
+  }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
-    if (filters.periodStart) { conds.push("period_start = ?"); params.push(filters.periodStart); }
-    if (filters.status)      { conds.push("status = ?");       params.push(filters.status); }
-    if (filters.employeeId)  { conds.push("employee_id = ?");  params.push(filters.employeeId); }
+    if (filters.periodStart) {
+      conds.push("period_start = ?");
+      params.push(filters.periodStart);
+    }
+    if (filters.status) {
+      conds.push("status = ?");
+      params.push(filters.status);
+    }
+    if (filters.employeeId) {
+      conds.push("employee_id = ?");
+      params.push(filters.employeeId);
+    }
     const offset = (filters.page - 1) * filters.limit;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT prf.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name, e.employee_code
@@ -602,9 +750,12 @@ export const payrollReadinessService = {
        WHERE ${conds.join(" AND ")}
        ORDER BY prf.period_start DESC, e.employee_code
         LIMIT ${filters.limit} OFFSET ${offset}`,
-      params
+      params,
     );
-    return rows as (PayrollReadinessFlag & { employee_name: string; employee_code: string })[];
+    return rows as (PayrollReadinessFlag & {
+      employee_name: string;
+      employee_code: string;
+    })[];
   },
 };
 
@@ -618,12 +769,12 @@ export const leaveImpactService = {
        LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = lr.employee_id
          AND ra.roster_date BETWEEN lr.from_date AND lr.to_date
        WHERE lr.id = ? LIMIT 1`,
-      [leaveRequestId]
+      [leaveRequestId],
     );
     if (!(leaveRows as RowDataPacket[]).length) return 0;
     const leave = (leaveRows as RowDataPacket[])[0];
     const fromDate = new Date(leave.from_date as string);
-    const toDate   = new Date(leave.to_date   as string);
+    const toDate = new Date(leave.to_date as string);
     let impacted = 0;
 
     for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
@@ -633,14 +784,18 @@ export const leaveImpactService = {
       const [covRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total FROM wfm_roster_assignment
          WHERE roster_date = ? AND process_name = ? AND publish_status = 'published'`,
-        [dateStr, leave.process_name ?? ""]
+        [dateStr, leave.process_name ?? ""],
       );
       const totalHc = Number((covRows as RowDataPacket[])[0]?.total ?? 0);
 
-      const impactLevel = totalHc <= 1 ? "critical"
-        : totalHc <= 3 ? "high"
-        : totalHc <= 6 ? "medium"
-        : "low";
+      const impactLevel =
+        totalHc <= 1
+          ? "critical"
+          : totalHc <= 3
+            ? "high"
+            : totalHc <= 6
+              ? "medium"
+              : "low";
 
       await db.execute(
         `INSERT INTO leave_roster_impact
@@ -651,11 +806,14 @@ export const leaveImpactService = {
            planned_hc = VALUES(planned_hc), coverage_after_leave = VALUES(coverage_after_leave),
            coverage_pct = VALUES(coverage_pct), impact_level = VALUES(impact_level)`,
         [
-          leaveRequestId, leave.employee_id as string, dateStr,
-          totalHc, Math.max(0, totalHc - 1),
+          leaveRequestId,
+          leave.employee_id as string,
+          dateStr,
+          totalHc,
+          Math.max(0, totalHc - 1),
           totalHc > 0 ? Math.round(((totalHc - 1) / totalHc) * 100) : 0,
           impactLevel,
-        ]
+        ],
       );
       impacted++;
     }
@@ -663,19 +821,33 @@ export const leaveImpactService = {
     return impacted;
   },
 
-  async listImpacts(filters: { fromDate?: string; toDate?: string; processId?: string; impactLevel?: string }) {
+  async listImpacts(filters: {
+    fromDate?: string;
+    toDate?: string;
+    processId?: string;
+    impactLevel?: string;
+  }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
-    if (filters.fromDate)    { conds.push("lri.impact_date >= ?"); params.push(filters.fromDate); }
-    if (filters.toDate)      { conds.push("lri.impact_date <= ?"); params.push(filters.toDate); }
-    if (filters.impactLevel) { conds.push("lri.impact_level = ?"); params.push(filters.impactLevel); }
+    if (filters.fromDate) {
+      conds.push("lri.impact_date >= ?");
+      params.push(filters.fromDate);
+    }
+    if (filters.toDate) {
+      conds.push("lri.impact_date <= ?");
+      params.push(filters.toDate);
+    }
+    if (filters.impactLevel) {
+      conds.push("lri.impact_level = ?");
+      params.push(filters.impactLevel);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT lri.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name, e.employee_code
        FROM leave_roster_impact lri
        JOIN employees e ON e.id = lri.employee_id
        WHERE ${conds.join(" AND ")}
        ORDER BY lri.impact_date DESC LIMIT 200`,
-      params
+      params,
     );
     return rows as RowDataPacket[];
   },

@@ -1,6 +1,9 @@
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import { getCachedAllocationSummary } from "./canonical-pnl.service.js";
-import { costComponentDataFlags, type CostComponentDataFlags } from "./pnl-cost-component-flags.js";
+import {
+  costComponentDataFlags,
+  type CostComponentDataFlags,
+} from "./pnl-cost-component-flags.js";
 import { cachedPnlRead } from "./pnl-read-cache.js";
 
 /**
@@ -84,7 +87,7 @@ export interface FullWaterfallTotals extends CostComponentDataFlags {
 
 function sumRows(rows: BpoPnlRow[]) {
   const totals = Object.fromEntries(
-    WATERFALL_FIELDS.map((field) => [field, 0])
+    WATERFALL_FIELDS.map((field) => [field, 0]),
   ) as Record<(typeof WATERFALL_FIELDS)[number], number>;
   for (const row of rows) {
     for (const field of WATERFALL_FIELDS) {
@@ -103,14 +106,24 @@ function sumRows(rows: BpoPnlRow[]) {
  * already scopes the SQL to that branch (bpoPnlService.getSummary's branchFilters), so `rows` here
  * contains only that branch's active processes — no extra filtering is applied on top.
  */
-export function getFullWaterfall(period: string, branchId?: string | null): Promise<FullWaterfallTotals> {
+export function getFullWaterfall(
+  period: string,
+  branchId?: string | null,
+): Promise<FullWaterfallTotals> {
   // 60s result cache + single-flight (pnl-read-cache.ts), keyed by period and the caller's
   // RESOLVED branch scope (the route passes resolveFinanceBranchScope's answer), so a branch-bound
   // user can never be served another branch's or the company's totals.
-  return cachedPnlRead("pnl-full-waterfall", { period, branchId: branchId ?? null }, () => buildFullWaterfall(period, branchId));
+  return cachedPnlRead(
+    "pnl-full-waterfall",
+    { period, branchId: branchId ?? null },
+    () => buildFullWaterfall(period, branchId),
+  );
 }
 
-async function buildFullWaterfall(period: string, branchId?: string | null): Promise<FullWaterfallTotals> {
+async function buildFullWaterfall(
+  period: string,
+  branchId?: string | null,
+): Promise<FullWaterfallTotals> {
   const filters = branchId ? { period, branchId } : { period };
   // Independent reads, run together.
   const [summary, flags] = await Promise.all([

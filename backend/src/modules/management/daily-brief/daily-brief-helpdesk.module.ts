@@ -52,16 +52,26 @@ function numberValue(value: unknown): number {
 }
 
 function emptySummary(): HelpdeskSummary {
-  return { newTickets: 0, resolvedTickets: 0, openTickets: 0, slaBreached: 0, urgentHighPriorityOpen: 0 };
+  return {
+    newTickets: 0,
+    resolvedTickets: 0,
+    openTickets: 0,
+    slaBreached: 0,
+    urgentHighPriorityOpen: 0,
+  };
 }
 
 function buildBusinessImpactLine(summary: HelpdeskSummary): string {
   if (summary.openTickets === 0 && summary.newTickets === 0) {
     return "No open helpdesk tickets affecting your team.";
   }
-  const parts = [`${summary.openTickets} ticket${summary.openTickets === 1 ? "" : "s"} affecting your team`];
+  const parts = [
+    `${summary.openTickets} ticket${summary.openTickets === 1 ? "" : "s"} affecting your team`,
+  ];
   if (summary.slaBreached > 0) {
-    parts.push(`${summary.slaBreached} SLA breach${summary.slaBreached === 1 ? "" : "es"}`);
+    parts.push(
+      `${summary.slaBreached} SLA breach${summary.slaBreached === 1 ? "" : "es"}`,
+    );
   }
   return parts.join(", ");
 }
@@ -75,9 +85,15 @@ export async function buildHelpdeskModule(
     return {
       detailLevel,
       summary: emptySummary(),
-      businessImpactLine: detailLevel === "operational" ? "No team members in scope." : null,
+      businessImpactLine:
+        detailLevel === "operational" ? "No team members in scope." : null,
       categoryBreakdown: detailLevel === "detailed" ? [] : null,
-      sourceHealth: { module: "helpdesk", state: "NOT_APPLICABLE", detail: "No team members in scope", asOfDate: reportingDate },
+      sourceHealth: {
+        module: "helpdesk",
+        state: "NOT_APPLICABLE",
+        detail: "No team members in scope",
+        asOfDate: reportingDate,
+      },
     };
   }
 
@@ -126,13 +142,21 @@ export async function buildHelpdeskModule(
       }));
     }
 
-    const hasAnyData = summary.newTickets > 0 || summary.resolvedTickets > 0 || summary.openTickets > 0;
+    const hasAnyData =
+      summary.newTickets > 0 ||
+      summary.resolvedTickets > 0 ||
+      summary.openTickets > 0;
     return {
       detailLevel,
       summary,
-      businessImpactLine: detailLevel === "operational" ? buildBusinessImpactLine(summary) : null,
+      businessImpactLine:
+        detailLevel === "operational" ? buildBusinessImpactLine(summary) : null,
       categoryBreakdown,
-      sourceHealth: { module: "helpdesk", state: hasAnyData ? "AVAILABLE" : "NO_DATA", asOfDate: reportingDate },
+      sourceHealth: {
+        module: "helpdesk",
+        state: hasAnyData ? "AVAILABLE" : "NO_DATA",
+        asOfDate: reportingDate,
+      },
     };
   } catch (err) {
     return {

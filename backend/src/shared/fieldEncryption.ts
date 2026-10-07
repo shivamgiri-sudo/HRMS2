@@ -16,27 +16,36 @@
  *   ct  — ciphertext, hex
  */
 
-import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  randomBytes,
+} from "crypto";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
-const DEV_ENCRYPTION_KEY = "0000000000000000000000000000000000000000000000000000000000000000";
-const DEV_BLIND_INDEX_KEY = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+const DEV_ENCRYPTION_KEY =
+  "0000000000000000000000000000000000000000000000000000000000000000";
+const DEV_BLIND_INDEX_KEY =
+  "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
 function loadKey(envVar: string, devFallback: string): Buffer {
   const raw = process.env[envVar];
   if (!raw) {
     if (process.env.NODE_ENV === "production") {
       throw new Error(
-        `[fieldEncryption] ${envVar} must be set in production (64-hex-char, 32 bytes).`
+        `[fieldEncryption] ${envVar} must be set in production (64-hex-char, 32 bytes).`,
       );
     }
     return Buffer.from(devFallback, "hex");
   }
   if (raw.length !== 64) {
-    throw new Error(`[fieldEncryption] ${envVar} must be exactly 64 hex characters (32 bytes).`);
+    throw new Error(
+      `[fieldEncryption] ${envVar} must be exactly 64 hex characters (32 bytes).`,
+    );
   }
   return Buffer.from(raw, "hex");
 }
@@ -70,7 +79,9 @@ export function encryptField(plaintext: string, keyVersion = 1): string {
 export const SUPPORTED_KEY_VERSION = 1;
 
 export function decryptField(ciphertext: string): string {
-  const payload: EncryptedField = JSON.parse(Buffer.from(ciphertext, "base64").toString("utf8"));
+  const payload: EncryptedField = JSON.parse(
+    Buffer.from(ciphertext, "base64").toString("utf8"),
+  );
 
   /**
    * Rotation is NOT implemented, despite everything around it implying otherwise: the envelope
@@ -91,7 +102,7 @@ export function decryptField(ciphertext: string): string {
   if (payload.v !== SUPPORTED_KEY_VERSION) {
     throw new Error(
       `[fieldEncryption] ciphertext declares key version ${payload.v}, but only version ` +
-      `${SUPPORTED_KEY_VERSION} can be read — key rotation is not implemented.`
+        `${SUPPORTED_KEY_VERSION} can be read — key rotation is not implemented.`,
     );
   }
 
@@ -106,7 +117,9 @@ export function decryptField(ciphertext: string): string {
 
 /** Blind index for exact-match lookup without exposing plaintext. */
 export function blindIndex(plaintext: string): string {
-  return createHmac("sha256", blindIndexKey).update(plaintext, "utf8").digest("hex");
+  return createHmac("sha256", blindIndexKey)
+    .update(plaintext, "utf8")
+    .digest("hex");
 }
 
 export interface KeyParityResult {
@@ -183,7 +196,11 @@ export function resolveAccountNumber(row: {
   account_number?: Buffer | string | null;
 }): string | null {
   if (row.account_number_enc) {
-    try { return decryptField(row.account_number_enc); } catch { /* fall through */ }
+    try {
+      return decryptField(row.account_number_enc);
+    } catch {
+      /* fall through */
+    }
   }
   if (row.account_number) {
     return Buffer.isBuffer(row.account_number)
@@ -194,11 +211,11 @@ export function resolveAccountNumber(row: {
 }
 
 export type AccountSourceStatus =
-  | "ok"               // single source, usable value
-  | "conflict"         // both sources present and decode to different values
-  | "missing"          // no usable value in either source
-  | "encrypt_only"     // encrypted source only (no legacy column)
-  | "legacy_only";     // legacy source only (no encrypted column)
+  | "ok" // single source, usable value
+  | "conflict" // both sources present and decode to different values
+  | "missing" // no usable value in either source
+  | "encrypt_only" // encrypted source only (no legacy column)
+  | "legacy_only"; // legacy source only (no encrypted column)
 
 export interface AccountResolution {
   resolved: string | null;
@@ -221,7 +238,11 @@ export function resolveAccountNumberWithConflict(row: {
 }): AccountResolution {
   let encValue: string | null = null;
   if (row.account_number_enc) {
-    try { encValue = decryptField(row.account_number_enc); } catch { /* decrypt failed */ }
+    try {
+      encValue = decryptField(row.account_number_enc);
+    } catch {
+      /* decrypt failed */
+    }
   }
 
   let legacyValue: string | null = null;
@@ -235,7 +256,12 @@ export function resolveAccountNumberWithConflict(row: {
   const hasLegacy = legacyValue !== null && legacyValue !== "";
 
   if (!hasEnc && !hasLegacy) {
-    return { resolved: null, status: "missing", encValue: null, legacyValue: null };
+    return {
+      resolved: null,
+      status: "missing",
+      encValue: null,
+      legacyValue: null,
+    };
   }
   if (hasEnc && hasLegacy) {
     if (encValue !== legacyValue) {
@@ -244,7 +270,17 @@ export function resolveAccountNumberWithConflict(row: {
     return { resolved: encValue, status: "ok", encValue, legacyValue };
   }
   if (hasEnc) {
-    return { resolved: encValue, status: "encrypt_only", encValue, legacyValue: null };
+    return {
+      resolved: encValue,
+      status: "encrypt_only",
+      encValue,
+      legacyValue: null,
+    };
   }
-  return { resolved: legacyValue, status: "legacy_only", encValue: null, legacyValue };
+  return {
+    resolved: legacyValue,
+    status: "legacy_only",
+    encValue: null,
+    legacyValue,
+  };
 }

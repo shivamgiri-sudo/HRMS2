@@ -47,13 +47,17 @@ describe("payroll read endpoints exclude the CEO", () => {
     const roles = rolesFor(secureRoutes, "/runs");
     expect(roles).not.toContain("ceo");
     // The roles that legitimately run payroll must survive.
-    expect(roles).toEqual(expect.arrayContaining(["admin", "hr", "finance", "payroll"]));
+    expect(roles).toEqual(
+      expect.arrayContaining(["admin", "hr", "finance", "payroll"]),
+    );
   });
 
   it("does not authorise ceo for employee-level salary records", () => {
     const roles = rolesFor(secureRoutes, "/records");
     expect(roles).not.toContain("ceo");
-    expect(roles).toEqual(expect.arrayContaining(["admin", "hr", "finance", "payroll"]));
+    expect(roles).toEqual(
+      expect.arrayContaining(["admin", "hr", "finance", "payroll"]),
+    );
   });
 
   it("stops resolving the CEO row scope to the whole organisation for payroll", () => {
@@ -72,7 +76,7 @@ describe("payroll read endpoints exclude the CEO", () => {
     for (const role of lineRoles) {
       expect(
         runsRoles.has(role),
-        `${role} can read payslip lines but not the run list — the payslip page needs both`
+        `${role} can read payslip lines but not the run list — the payslip page needs both`,
       ).toBe(true);
     }
   });
@@ -97,9 +101,14 @@ describe("payroll read endpoints admit the standard payroll-operator tier", () =
   for (const path of ["/runs", "/records"]) {
     it(`${path} admits finance_head, payroll_head, payroll_admin and super_admin`, () => {
       const roles = rolesFor(secureRoutes, path);
-      expect(roles).toEqual(expect.arrayContaining([
-        "finance_head", "payroll_head", "payroll_admin", "super_admin",
-      ]));
+      expect(roles).toEqual(
+        expect.arrayContaining([
+          "finance_head",
+          "payroll_head",
+          "payroll_admin",
+          "super_admin",
+        ]),
+      );
     });
 
     it(`${path} still excludes ceo even with the wider role list`, () => {
@@ -116,10 +125,17 @@ describe("payroll read endpoints admit the standard payroll-operator tier", () =
     // finance_head/payroll_head/payroll_admin caller passes requireRole and then falls
     // through buildScopeWhereClause's role check to 1=0 — a 200 with an empty result set,
     // which reads as "no data" rather than "you can't do this".
-    const match = secureRoutes.match(/const PAYROLL_READ_SCOPE_ROLES = \[([^\]]*)\];/);
-    expect(match, "PAYROLL_READ_SCOPE_ROLES declaration not found").not.toBeNull();
+    const match = secureRoutes.match(
+      /const PAYROLL_READ_SCOPE_ROLES = \[([^\]]*)\];/,
+    );
+    expect(
+      match,
+      "PAYROLL_READ_SCOPE_ROLES declaration not found",
+    ).not.toBeNull();
     const scopeRoles = [...match![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
-    expect(scopeRoles).toEqual(expect.arrayContaining(["finance_head", "payroll_head", "payroll_admin"]));
+    expect(scopeRoles).toEqual(
+      expect.arrayContaining(["finance_head", "payroll_head", "payroll_admin"]),
+    );
     // super_admin belongs only in requireRole, not here — it bypasses buildScopeWhereClause
     // unconditionally (shared/scopeAccess.ts), matching every other live payroll route's
     // convention of never listing it in a scope-roles array.
@@ -143,16 +159,20 @@ describe("payslip page dispatch", () => {
     expect(
       routeConfig,
       'dispatching on primaryRole === "employee" sends every other role — CEO, ' +
-        "trainer, team leader — to the org-wide admin console"
+        "trainer, team leader — to the org-wide admin console",
     ).not.toMatch(/primaryRole === "employee"/);
     expect(routeConfig).toContain("PAYSLIP_CENTER_ROLES");
   });
 
   it("does not grant the CEO the admin payslip centre", () => {
-    const listMatch = routeConfig.match(/PAYSLIP_CENTER_ROLES\s*=\s*\[([\s\S]*?)\]/);
+    const listMatch = routeConfig.match(
+      /PAYSLIP_CENTER_ROLES\s*=\s*\[([\s\S]*?)\]/,
+    );
     expect(listMatch, "PAYSLIP_CENTER_ROLES not found").toBeTruthy();
     const roles = [...listMatch![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
     expect(roles).not.toContain("ceo");
-    expect(roles).toEqual(expect.arrayContaining(["admin", "hr", "finance", "payroll"]));
+    expect(roles).toEqual(
+      expect.arrayContaining(["admin", "hr", "finance", "payroll"]),
+    );
   });
 });

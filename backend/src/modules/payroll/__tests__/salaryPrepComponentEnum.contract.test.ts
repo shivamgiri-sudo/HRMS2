@@ -45,13 +45,19 @@ const WRITERS = [
 ];
 
 /** Values that were live in the tree and each abort a run under strict mode. */
-const KNOWN_BAD = ["reimbursement_claim", "incentive_upload", "custom_deduction"];
+const KNOWN_BAD = [
+  "reimbursement_claim",
+  "incentive_upload",
+  "custom_deduction",
+];
 
 describe("salary_prep_line_component writers respect the live enums", () => {
   it.each(WRITERS)("%s uses no retired non-member value", (file) => {
     const src = code(read(file));
     for (const bad of KNOWN_BAD) {
-      expect(src, `${file} still writes source='${bad}'`).not.toContain(`'${bad}'`);
+      expect(src, `${file} still writes source='${bad}'`).not.toContain(
+        `'${bad}'`,
+      );
     }
   });
 
@@ -75,7 +81,16 @@ describe("salary_prep_line_component writers respect the live enums", () => {
     const idx = src.indexOf("INSERT INTO salary_prep_line_component");
     expect(idx, "dispute arrear INSERT not found").toBeGreaterThan(-1);
     const stmt = src.slice(idx, src.indexOf("`", idx + 40));
-    for (const col of ["run_id", "line_id", "employee_id", "component_code", "component_name", "amount", "component_type", "source"]) {
+    for (const col of [
+      "run_id",
+      "line_id",
+      "employee_id",
+      "component_code",
+      "component_name",
+      "amount",
+      "component_type",
+      "source",
+    ]) {
       expect(stmt, `dispute arrear INSERT omits ${col}`).toContain(col);
     }
   });

@@ -17,7 +17,11 @@ describe("daily-brief-helpdesk: query error handling", () => {
       throw new Error("ER_NO_SUCH_TABLE: simulated failure");
     });
 
-    const result = await buildHelpdeskModule(["e1"], "2026-08-18", "operational");
+    const result = await buildHelpdeskModule(
+      ["e1"],
+      "2026-08-18",
+      "operational",
+    );
 
     expect(result.sourceHealth.state).toBe("ERROR");
     expect(result.sourceHealth.detail).toContain("simulated failure");
@@ -34,12 +38,28 @@ describe("daily-brief-helpdesk: detailLevel difference", () => {
   });
 
   it("operational mode hides the ticket-type breakdown and gives a one-line rollup", async () => {
-    execute.mockResolvedValue([[{ new_tickets: 2, resolved_tickets: 1, open_tickets: 2, sla_breached: 1, urgent_high_open: 1 }]]);
+    execute.mockResolvedValue([
+      [
+        {
+          new_tickets: 2,
+          resolved_tickets: 1,
+          open_tickets: 2,
+          sla_breached: 1,
+          urgent_high_open: 1,
+        },
+      ],
+    ]);
 
-    const result = await buildHelpdeskModule(["e1", "e2"], "2026-08-18", "operational");
+    const result = await buildHelpdeskModule(
+      ["e1", "e2"],
+      "2026-08-18",
+      "operational",
+    );
 
     expect(result.categoryBreakdown).toBeNull();
-    expect(result.businessImpactLine).toContain("2 tickets affecting your team");
+    expect(result.businessImpactLine).toContain(
+      "2 tickets affecting your team",
+    );
     expect(result.businessImpactLine).toContain("1 SLA breach");
   });
 
@@ -50,10 +70,24 @@ describe("daily-brief-helpdesk: detailLevel difference", () => {
       if (sql.includes("GROUP BY t.category")) {
         return [[{ category: "IT", total: 2, open: 2, breached: 1 }]];
       }
-      return [[{ new_tickets: 2, resolved_tickets: 1, open_tickets: 2, sla_breached: 1, urgent_high_open: 1 }]];
+      return [
+        [
+          {
+            new_tickets: 2,
+            resolved_tickets: 1,
+            open_tickets: 2,
+            sla_breached: 1,
+            urgent_high_open: 1,
+          },
+        ],
+      ];
     });
 
-    const result = await buildHelpdeskModule(["e1", "e2"], "2026-08-18", "detailed");
+    const result = await buildHelpdeskModule(
+      ["e1", "e2"],
+      "2026-08-18",
+      "detailed",
+    );
 
     expect(result.businessImpactLine).toBeNull();
     expect(result.categoryBreakdown).not.toBeNull();

@@ -56,30 +56,30 @@
  * so any phase reverses with one UPDATE joined to that table.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import crypto from 'node:crypto';
-import mysql from 'mysql2/promise';
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
+import mysql from "mysql2/promise";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const APPLY = process.argv.includes('--apply');
-const FIX_MISMATCHES = process.argv.includes('--fix-mismatches');
-const MARK_VERIFIED = process.argv.includes('--mark-verified');
+const APPLY = process.argv.includes("--apply");
+const FIX_MISMATCHES = process.argv.includes("--fix-mismatches");
+const MARK_VERIFIED = process.argv.includes("--mark-verified");
 
 function readEnv(file) {
   const out = {};
-  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
-    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
+    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
   }
   return out;
 }
-const env = readEnv(path.join(__dirname, '..', '.env'));
+const env = readEnv(path.join(__dirname, "..", ".env"));
 
-const s = (v) => String(v ?? '').trim();
-const mask = (a) => (a.length > 4 ? '*'.repeat(a.length - 4) + a.slice(-4) : a);
+const s = (v) => String(v ?? "").trim();
+const mask = (a) => (a.length > 4 ? "*".repeat(a.length - 4) + a.slice(-4) : a);
 
 /**
  * An account number we are willing to write into a payment file.
@@ -89,7 +89,9 @@ const mask = (a) => (a.length > 4 ? '*'.repeat(a.length - 4) + a.slice(-4) : a);
  * to a bank. IFSC is required alongside: an account without one cannot be routed.
  */
 function usableAccount(acc, ifsc) {
-  return /^[0-9]{6,20}$/.test(s(acc)) && /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(s(ifsc));
+  return (
+    /^[0-9]{6,20}$/.test(s(acc)) && /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(s(ifsc))
+  );
 }
 
 const LOG_DDL = `
@@ -116,18 +118,25 @@ const LOG_DDL = `
 
 async function main() {
   const hrms = await mysql.createConnection({
-    host: env.DB_HOST, port: Number(env.DB_PORT || 3306),
-    user: env.DB_USER, password: env.DB_PASSWORD, database: env.DB_NAME,
+    host: env.DB_HOST,
+    port: Number(env.DB_PORT || 3306),
+    user: env.DB_USER,
+    password: env.DB_PASSWORD,
+    database: env.DB_NAME,
   });
   const bill = await mysql.createConnection({
-    host: env.BILL_DB_HOST, port: Number(env.BILL_DB_PORT || 3306),
-    user: env.BILL_DB_USER, password: env.BILL_DB_PASSWORD || env.BILL_DB_PASS,
+    host: env.BILL_DB_HOST,
+    port: Number(env.BILL_DB_PORT || 3306),
+    user: env.BILL_DB_USER,
+    password: env.BILL_DB_PASSWORD || env.BILL_DB_PASS,
     database: env.BILL_DB_NAME,
   });
 
-  console.log(`mode: ${APPLY ? 'APPLY' : 'DRY RUN'}`
-    + `${FIX_MISMATCHES ? ' +phase2(mismatches)' : ''}`
-    + `${MARK_VERIFIED ? ' +mark-verified' : ''}`);
+  console.log(
+    `mode: ${APPLY ? "APPLY" : "DRY RUN"}` +
+      `${FIX_MISMATCHES ? " +phase2(mismatches)" : ""}` +
+      `${MARK_VERIFIED ? " +mark-verified" : ""}`,
+  );
 
   const [employees] = await hrms.query(
     `SELECT id, employee_code FROM employees
@@ -148,7 +157,9 @@ async function main() {
   // db_bill is MySQL 5.5 — no CTEs, no window functions. Read and fold in JS.
   const [reg] = await bill.query(
     `SELECT EmpCode, AcNo, IFSCCode, AcBank, AcBranch, AccHolder, AccType, AcValidationStatus
-       FROM masjclrentry WHERE EmpCode IN (?)`, [codes]);
+       FROM masjclrentry WHERE EmpCode IN (?)`,
+    [codes],
+  );
   const register = new Map();
   for (const r of reg) {
     const k = s(r.EmpCode);
@@ -159,9 +170,15 @@ async function main() {
   // write into the map is the newest.
   const [sal] = await bill.query(
     `SELECT EmpCode, AcNo, SalDate FROM salary_data
-      WHERE EmpCode IN (?) AND TRIM(COALESCE(AcNo,'')) <> '' ORDER BY SalDate ASC`, [codes]);
+      WHERE EmpCode IN (?) AND TRIM(COALESCE(AcNo,'')) <> '' ORDER BY SalDate ASC`,
+    [codes],
+  );
   const paid = new Map();
-  for (const r of sal) paid.set(s(r.EmpCode), { acc: s(r.AcNo), on: String(r.SalDate).slice(0, 10) });
+  for (const r of sal)
+    paid.set(s(r.EmpCode), {
+      acc: s(r.AcNo),
+      on: String(r.SalDate).slice(0, 10),
+    });
 
   const inserts = [];
   const updates = [];
@@ -174,18 +191,31 @@ async function main() {
     const have = hrmsRow.get(code);
 
     // Prefer the account money actually reached; fall back to the register.
-    const chosen = p?.acc && usableAccount(p.acc, r?.IFSCCode) ? p.acc : s(r?.AcNo);
+    const chosen =
+      p?.acc && usableAccount(p.acc, r?.IFSCCode) ? p.acc : s(r?.AcNo);
     const ifsc = s(r?.IFSCCode);
 
-    if (!r) { skipped.noRegisterRow += 1; continue; }
-    if (!usableAccount(chosen, ifsc)) { skipped.unusableAccount += 1; continue; }
+    if (!r) {
+      skipped.noRegisterRow += 1;
+      continue;
+    }
+    if (!usableAccount(chosen, ifsc)) {
+      skipped.unusableAccount += 1;
+      continue;
+    }
 
     const row = {
-      employee_id: emp.id, employee_code: code, account: chosen, ifsc,
-      bank: s(r.AcBank), branch: s(r.AcBranch), holder: s(r.AccHolder), type: s(r.AccType),
+      employee_id: emp.id,
+      employee_code: code,
+      account: chosen,
+      ifsc,
+      bank: s(r.AcBank),
+      branch: s(r.AcBranch),
+      holder: s(r.AccHolder),
+      type: s(r.AccType),
       corroborated: Boolean(p && p.acc === chosen),
       paidOn: p?.on ?? null,
-      registerValidated: s(r.AcValidationStatus).toLowerCase() === 'yes',
+      registerValidated: s(r.AcValidationStatus).toLowerCase() === "yes",
     };
 
     // Three cases, and the difference matters: only the third is risky.
@@ -199,36 +229,60 @@ async function main() {
     //
     // The first dry run lumped case 2 into phase 2 and reported 75 "mismatches" when
     // only 14 are real — presenting 61 harmless fills as decisions to move a salary.
-    if (!have) { inserts.push(row); continue; }
-    const held = s(have.acc);
-    if (held === chosen) { skipped.alreadyCorrect += 1; continue; }
-    if (!usableAccount(held, have.ifsc)) {
-      inserts.push({ ...row, bankDetailId: have.id, before: held, ifscBefore: s(have.ifsc), fillEmpty: true });
+    if (!have) {
+      inserts.push(row);
       continue;
     }
-    updates.push({ ...row, bankDetailId: have.id, before: held, ifscBefore: s(have.ifsc) });
+    const held = s(have.acc);
+    if (held === chosen) {
+      skipped.alreadyCorrect += 1;
+      continue;
+    }
+    if (!usableAccount(held, have.ifsc)) {
+      inserts.push({
+        ...row,
+        bankDetailId: have.id,
+        before: held,
+        ifscBefore: s(have.ifsc),
+        fillEmpty: true,
+      });
+      continue;
+    }
+    updates.push({
+      ...row,
+      bankDetailId: have.id,
+      before: held,
+      ifscBefore: s(have.ifsc),
+    });
   }
 
   console.log(`\nactive employees            : ${employees.length}`);
   const newRows = inserts.filter((i) => !i.fillEmpty).length;
-  console.log(`phase 1  supply an account : ${inserts.length}  (${newRows} new row, ${inserts.length - newRows} fill blank/mangled)`
-    + `   (${inserts.filter((i) => i.corroborated).length} corroborated by an actual payment)`);
-  console.log(`phase 2  REDIRECT (real clash): ${updates.length}`
-    + `${FIX_MISMATCHES ? '' : '  (skipped — pass --fix-mismatches)'}`);
+  console.log(
+    `phase 1  supply an account : ${inserts.length}  (${newRows} new row, ${inserts.length - newRows} fill blank/mangled)` +
+      `   (${inserts.filter((i) => i.corroborated).length} corroborated by an actual payment)`,
+  );
+  console.log(
+    `phase 2  REDIRECT (real clash): ${updates.length}` +
+      `${FIX_MISMATCHES ? "" : "  (skipped — pass --fix-mismatches)"}`,
+  );
   console.log(`skipped  no masjclrentry row : ${skipped.noRegisterRow}`);
   console.log(`skipped  unusable acct/IFSC  : ${skipped.unusableAccount}`);
   console.log(`skipped  already correct     : ${skipped.alreadyCorrect}`);
 
   if (updates.length) {
-    console.log('\nPhase 2 detail — HRMS holds vs actually paid:');
+    console.log("\nPhase 2 detail — HRMS holds vs actually paid:");
     for (const u of updates) {
-      console.log(`  ${u.employee_code.padEnd(10)} ${mask(u.before).padEnd(20)} -> ${mask(u.account).padEnd(20)} paid ${u.paidOn ?? '—'}`);
+      console.log(
+        `  ${u.employee_code.padEnd(10)} ${mask(u.before).padEnd(20)} -> ${mask(u.account).padEnd(20)} paid ${u.paidOn ?? "—"}`,
+      );
     }
   }
 
   if (!APPLY) {
-    console.log('\nDry run — nothing written.');
-    await hrms.end(); await bill.end();
+    console.log("\nDry run — nothing written.");
+    await hrms.end();
+    await bill.end();
     return;
   }
 
@@ -245,7 +299,8 @@ async function main() {
         AND COALESCE(CONVERT(bd.account_number USING utf8mb4), '')
               COLLATE utf8mb4_unicode_ci <> l.account_after`,
   );
-  if (stale.affectedRows) console.log(`
+  if (stale.affectedRows)
+    console.log(`
 cleared ${stale.affectedRows} stale log entries from an earlier partial run`);
 
   let done = 0;
@@ -274,9 +329,17 @@ cleared ${stale.affectedRows} stale log entries from an earlier partial run`);
            (employee_id, employee_code, bank_detail_id, account_before, account_after,
             ifsc_before, ifsc_after, source, corroborated_by_payment, phase)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'fill_unusable')`,
-        [row.employee_id, row.employee_code, row.bankDetailId, row.before || null, row.account,
-         row.ifscBefore || null, row.ifsc, row.corroborated ? 'salary_data' : 'masjclrentry',
-         row.corroborated ? 1 : 0],
+        [
+          row.employee_id,
+          row.employee_code,
+          row.bankDetailId,
+          row.before || null,
+          row.account,
+          row.ifscBefore || null,
+          row.ifsc,
+          row.corroborated ? "salary_data" : "masjclrentry",
+          row.corroborated ? 1 : 0,
+        ],
       );
       done += 1;
       continue;
@@ -287,16 +350,32 @@ cleared ${stale.affectedRows} stale log entries from an earlier partial run`);
          (id, employee_id, is_primary, account_seq, bank_name, account_holder_name,
           bank_branch, account_number, ifsc_code, account_type, verified, active_status)
        VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [id, row.employee_id, row.bank || null, row.holder || null, row.branch || null,
-       row.account, row.ifsc, row.type || null, verified],
+      [
+        id,
+        row.employee_id,
+        row.bank || null,
+        row.holder || null,
+        row.branch || null,
+        row.account,
+        row.ifsc,
+        row.type || null,
+        verified,
+      ],
     );
     await hrms.query(
       `INSERT INTO employee_bank_detail_backfill_log
          (employee_id, employee_code, bank_detail_id, account_before, account_after,
           ifsc_before, ifsc_after, source, corroborated_by_payment, phase)
        VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, 'insert_missing')`,
-      [row.employee_id, row.employee_code, id, row.account, row.ifsc,
-       row.corroborated ? 'salary_data' : 'masjclrentry', row.corroborated ? 1 : 0],
+      [
+        row.employee_id,
+        row.employee_code,
+        id,
+        row.account,
+        row.ifsc,
+        row.corroborated ? "salary_data" : "masjclrentry",
+        row.corroborated ? 1 : 0,
+      ],
     );
     done += 1;
   }
@@ -308,9 +387,17 @@ cleared ${stale.affectedRows} stale log entries from an earlier partial run`);
            (employee_id, employee_code, bank_detail_id, account_before, account_after,
             ifsc_before, ifsc_after, source, corroborated_by_payment, phase)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'fix_mismatch')`,
-        [u.employee_id, u.employee_code, u.bankDetailId, u.before, u.account,
-         u.ifscBefore || null, u.ifsc, u.corroborated ? 'salary_data' : 'masjclrentry',
-         u.corroborated ? 1 : 0],
+        [
+          u.employee_id,
+          u.employee_code,
+          u.bankDetailId,
+          u.before,
+          u.account,
+          u.ifscBefore || null,
+          u.ifsc,
+          u.corroborated ? "salary_data" : "masjclrentry",
+          u.corroborated ? 1 : 0,
+        ],
       );
       // Guarded on the value we read, so a concurrent edit by HR wins rather than
       // being overwritten by a number this script decided on minutes earlier.
@@ -319,21 +406,34 @@ cleared ${stale.affectedRows} stale log entries from an earlier partial run`);
             SET account_number = ?, ifsc_code = ?,
                 verified = ?
           WHERE id = ? AND CONVERT(account_number USING utf8mb4) = ?`,
-        [u.account, u.ifsc, MARK_VERIFIED && u.corroborated ? 1 : 0, u.bankDetailId, u.before],
+        [
+          u.account,
+          u.ifsc,
+          MARK_VERIFIED && u.corroborated ? 1 : 0,
+          u.bankDetailId,
+          u.before,
+        ],
       );
       if (res.affectedRows) done += 1;
     }
   }
 
   console.log(`\nWrote ${done} rows. Reversal:`);
-  console.log(`  phase 1: DELETE bd FROM employee_bank_detail bd JOIN employee_bank_detail_backfill_log l `
-    + `ON l.bank_detail_id = bd.id WHERE l.phase = 'insert_missing';`);
-  console.log(`  phase 2: UPDATE employee_bank_detail bd JOIN employee_bank_detail_backfill_log l `
-    + `ON l.bank_detail_id = bd.id SET bd.account_number = l.account_before, bd.ifsc_code = l.ifsc_before `
-    + `WHERE l.phase = 'fix_mismatch';`);
+  console.log(
+    `  phase 1: DELETE bd FROM employee_bank_detail bd JOIN employee_bank_detail_backfill_log l ` +
+      `ON l.bank_detail_id = bd.id WHERE l.phase = 'insert_missing';`,
+  );
+  console.log(
+    `  phase 2: UPDATE employee_bank_detail bd JOIN employee_bank_detail_backfill_log l ` +
+      `ON l.bank_detail_id = bd.id SET bd.account_number = l.account_before, bd.ifsc_code = l.ifsc_before ` +
+      `WHERE l.phase = 'fix_mismatch';`,
+  );
 
   await hrms.end();
   await bill.end();
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

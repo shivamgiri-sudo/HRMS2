@@ -9,7 +9,10 @@
 import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import {
@@ -28,15 +31,28 @@ export const deductionEntryRouter = Router();
 // ---------------------------------------------------------------------------
 // Typed error-catching wrapper
 // ---------------------------------------------------------------------------
-type RouteHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+type RouteHandler = (
+  req: AuthenticatedRequest,
+  res: Response,
+) => Promise<unknown>;
 
 const h =
   (fn: RouteHandler) =>
-  (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void): void => {
+  (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: (err?: unknown) => void,
+  ): void => {
     void fn(req, res).catch(next);
   };
 
-const WRITE_ROLES = ["super_admin", "hr_admin", "payroll", "payroll_head", "finance"] as const;
+const WRITE_ROLES = [
+  "super_admin",
+  "hr_admin",
+  "payroll",
+  "payroll_head",
+  "finance",
+] as const;
 const READ_ROLES = [...WRITE_ROLES, "branch_head"] as const;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +69,7 @@ deductionEntryRouter.get(
     const activeOnly = req.query.active === "1" || req.query.active === "true";
     const data = await listDeductionTypes(activeOnly);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -69,7 +85,7 @@ deductionEntryRouter.post(
     }
     const data = await createDeductionType(req.body);
     return res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -94,7 +110,7 @@ deductionEntryRouter.patch(
 
     const data = await updateDeductionType(id, body);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -117,7 +133,7 @@ deductionEntryRouter.get(
       // Resolve branch_id from the user's employee record
       const [empRows] = await db.execute<RowDataPacket[]>(
         "SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
-        [userId]
+        [userId],
       );
       scopedBranchId = (empRows as RowDataPacket[])[0]?.branch_id ?? null;
     }
@@ -134,11 +150,11 @@ deductionEntryRouter.get(
         limit: q.limit ? parseInt(q.limit, 10) : undefined,
         offset: q.offset ? parseInt(q.offset, 10) : undefined,
       },
-      scopedBranchId
+      scopedBranchId,
     );
 
     return res.json({ success: true, entries, total });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -154,7 +170,7 @@ deductionEntryRouter.post(
     }
     const data = await createDeductionEntry(req.body, userId);
     return res.status(201).json({ success: true, data });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -170,11 +186,16 @@ deductionEntryRouter.patch(
     }
     const { reason } = req.body as { reason?: string };
     if (!reason || String(reason).trim().length < 5) {
-      return res.status(400).json({ success: false, message: "reason must be at least 5 characters" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "reason must be at least 5 characters",
+        });
     }
     await deactivateDeductionEntry(req.params.id, String(reason), userId);
     return res.json({ success: true, message: "Deduction entry deactivated" });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -190,14 +211,24 @@ deductionEntryRouter.post(
     }
     const { rows } = req.body as { rows?: unknown[] };
     if (!Array.isArray(rows) || rows.length === 0) {
-      return res.status(400).json({ success: false, message: "rows array is required and must not be empty" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "rows array is required and must not be empty",
+        });
     }
     if (rows.length > 500) {
-      return res.status(400).json({ success: false, message: "Maximum 500 rows per bulk request" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Maximum 500 rows per bulk request" });
     }
-    const result = await bulkCreateDeductionEntries(rows as Parameters<typeof bulkCreateDeductionEntries>[0], userId);
+    const result = await bulkCreateDeductionEntries(
+      rows as Parameters<typeof bulkCreateDeductionEntries>[0],
+      userId,
+    );
     return res.status(201).json({ success: true, ...result });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -220,9 +251,11 @@ deductionEntryRouter.get(
       })();
 
     const [types] = await db.execute<RowDataPacket[]>(
-      "SELECT deduction_code FROM payroll_deduction_type WHERE active_status = 1 ORDER BY deduction_name"
+      "SELECT deduction_code FROM payroll_deduction_type WHERE active_status = 1 ORDER BY deduction_name",
     );
-    const typeCodes = (types as RowDataPacket[]).map((t) => String(t.deduction_code));
+    const typeCodes = (types as RowDataPacket[]).map((t) =>
+      String(t.deduction_code),
+    );
 
     const [employees] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code, b.branch_name, cc.cost_centre_code
@@ -231,10 +264,17 @@ deductionEntryRouter.get(
          LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
         WHERE e.employment_status IN ('active','on_leave')
         ORDER BY e.employee_code
-        LIMIT 5000`
+        LIMIT 5000`,
     );
 
-    const headers = ["employee_code", "month", "branch", "cost_centre", ...typeCodes, "description"];
+    const headers = [
+      "employee_code",
+      "month",
+      "branch",
+      "cost_centre",
+      ...typeCodes,
+      "description",
+    ];
     const csvRows = (employees as RowDataPacket[]).map((emp) => [
       emp.employee_code,
       month,
@@ -244,11 +284,16 @@ deductionEntryRouter.get(
       "",
     ]);
 
-    const csv = [headers.join(","), ...csvRows.map((r) => r.join(","))].join("\n");
+    const csv = [headers.join(","), ...csvRows.map((r) => r.join(","))].join(
+      "\n",
+    );
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename="deduction_template_${month}.csv"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="deduction_template_${month}.csv"`,
+    );
     return res.send(csv);
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -267,10 +312,12 @@ deductionEntryRouter.get(
       // Allow employee to see their own history
       const [empRows] = await db.execute<RowDataPacket[]>(
         "SELECT id FROM employees WHERE id = ? AND user_id = ? AND active_status = 1 LIMIT 1",
-        [employeeId, userId]
+        [employeeId, userId],
       );
       if (!(empRows as RowDataPacket[])[0]) {
-        return res.status(403).json({ success: false, message: "Access denied" });
+        return res
+          .status(403)
+          .json({ success: false, message: "Access denied" });
       }
     }
 
@@ -292,9 +339,9 @@ deductionEntryRouter.get(
        JOIN payroll_deduction_type pdt ON pdt.deduction_code = ede.deduction_type_code
       WHERE ede.employee_id = ?
       ORDER BY ede.created_at DESC`,
-      [employeeId]
+      [employeeId],
     );
 
     return res.json({ success: true, data: rows });
-  })
+  }),
 );

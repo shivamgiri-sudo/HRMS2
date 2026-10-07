@@ -10,10 +10,16 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { employeeMaster } from "../src/modules/reporting/executors/employee.executor.js";
-import { buildCatalogWorkbook, type CatalogWorkbookColumn } from "../src/modules/reporting/catalog-workbook.js";
+import {
+  buildCatalogWorkbook,
+  type CatalogWorkbookColumn,
+} from "../src/modules/reporting/catalog-workbook.js";
 import { REPORT_CATALOG } from "../src/modules/reporting/report-catalog.js";
 import { buildSecureFilename } from "../src/modules/reporting/xlsx-secure-builder.js";
-import type { ExecScope, ExecOptions } from "../src/modules/reporting/executors/types.js";
+import type {
+  ExecScope,
+  ExecOptions,
+} from "../src/modules/reporting/executors/types.js";
 
 async function main() {
   const scope: ExecScope = {
@@ -37,12 +43,17 @@ async function main() {
     mode: "export",
   };
 
-  console.log("Running employeeMaster() executor against live DB (full org-wide scope)...");
+  console.log(
+    "Running employeeMaster() executor against live DB (full org-wide scope)...",
+  );
   const result = await employeeMaster({}, scope, options);
-  console.log(`Rows returned: ${result.rows.length} (rowCount=${result.rowCount}, truncated=${result.isTruncated})`);
+  console.log(
+    `Rows returned: ${result.rows.length} (rowCount=${result.rowCount}, truncated=${result.isTruncated})`,
+  );
 
   const catalogEntry = REPORT_CATALOG.find((r) => r.code === "employee-master");
-  if (!catalogEntry) throw new Error("employee-master not found in REPORT_CATALOG");
+  if (!catalogEntry)
+    throw new Error("employee-master not found in REPORT_CATALOG");
 
   const buffer = await buildCatalogWorkbook({
     rows: result.rows,
@@ -50,7 +61,10 @@ async function main() {
     sheetName: catalogEntry.name,
   });
 
-  const filename = buildSecureFilename(catalogEntry.name, `manual-run-v2-${Date.now()}`);
+  const filename = buildSecureFilename(
+    catalogEntry.name,
+    `manual-run-v2-${Date.now()}`,
+  );
   const downloadsDir = path.join(os.homedir(), "Downloads");
   const outPath = path.join(downloadsDir, filename);
   writeFileSync(outPath, buffer);

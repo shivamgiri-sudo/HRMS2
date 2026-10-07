@@ -7,13 +7,18 @@ import type { BranchDailyReport } from "./ats-daily-report.service.js";
 import { fmtWait } from "./ats-daily-report.service.js";
 
 function fmtDate(d: Date): string {
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", weekday: "long" });
+  return d.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    weekday: "long",
+  });
 }
 
 function attentionBadge(att: "Stable" | "At Risk" | "Critical"): string {
   const map: Record<string, string> = {
-    Stable:   "background:#dcfce7;color:#166534;",
-    "At Risk":"background:#fef9c3;color:#854d0e;",
+    Stable: "background:#dcfce7;color:#166534;",
+    "At Risk": "background:#fef9c3;color:#854d0e;",
     Critical: "background:#fee2e2;color:#991b1b;",
   };
   return `<span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;${map[att]}">${att}</span>`;
@@ -38,7 +43,10 @@ function periodRow(label: string, m: BranchDailyReport["ftd"]): string {
   </tr>`;
 }
 
-export function buildDailyReportEmail(report: BranchDailyReport, dashboardUrl: string): { subject: string; html: string } {
+export function buildDailyReportEmail(
+  report: BranchDailyReport,
+  dashboardUrl: string,
+): { subject: string; html: string } {
   const today = new Date();
   const dateStr = fmtDate(today);
   const branch = report.branchName;
@@ -72,7 +80,9 @@ export function buildDailyReportEmail(report: BranchDailyReport, dashboardUrl: s
     </table>`;
 
   const processRows = report.processFtd.length
-    ? report.processFtd.map((p) => `<tr>
+    ? report.processFtd
+        .map(
+          (p) => `<tr>
         <td ${TD}>${p.branch}</td>
         <td ${TD}>${p.process}</td>
         <td ${TD_NUM}>${p.walkin}</td>
@@ -84,7 +94,9 @@ export function buildDailyReportEmail(report: BranchDailyReport, dashboardUrl: s
         <td ${TD_NUM}>${p.pending}</td>
         <td ${TD_NUM}>${p.selectionPct}</td>
         <td ${TD_NUM}>${fmtWait(p.avgWaitMinutes)}</td>
-      </tr>`).join("")
+      </tr>`,
+        )
+        .join("")
     : `<tr><td colspan="11" style="padding:12px;text-align:center;color:#9ca3af;font-size:12px;border:1px solid #e5e7eb;">No walk-ins recorded today</td></tr>`;
 
   const processTable = `
@@ -99,7 +111,9 @@ export function buildDailyReportEmail(report: BranchDailyReport, dashboardUrl: s
     </table>`;
 
   const recruiterRows = report.recruiterFtd.length
-    ? report.recruiterFtd.map((r) => `<tr>
+    ? report.recruiterFtd
+        .map(
+          (r) => `<tr>
         <td ${TD}><strong>${r.recruiter}</strong></td>
         <td ${TD}>${r.branch}</td>
         <td ${TD_NUM}>${r.sourced}</td>
@@ -109,7 +123,9 @@ export function buildDailyReportEmail(report: BranchDailyReport, dashboardUrl: s
         <td ${TD_NUM}>${fmtWait(r.avgWaitMinutes)}</td>
         <td ${TD_NUM}>${r.pendingCount > 0 ? `<span style="color:#dc2626;font-weight:700;">${r.pendingCount}</span>` : "0"}</td>
         <td style="padding:7px 10px;border:1px solid #e5e7eb;">${attentionBadge(r.attention)}</td>
-      </tr>`).join("")
+      </tr>`,
+        )
+        .join("")
     : `<tr><td colspan="9" style="padding:12px;text-align:center;color:#9ca3af;font-size:12px;border:1px solid #e5e7eb;">No recruiter activity today</td></tr>`;
 
   const recruiterTable = `
@@ -125,7 +141,10 @@ export function buildDailyReportEmail(report: BranchDailyReport, dashboardUrl: s
 
   const pendingSummary = report.recruiterFtd
     .filter((r) => r.pendingCount > 0)
-    .map((r) => `<li style="font-size:13px;color:#374151;line-height:1.8;">${r.recruiter} — <strong style="color:#dc2626;">${r.pendingCount} pending</strong></li>`)
+    .map(
+      (r) =>
+        `<li style="font-size:13px;color:#374151;line-height:1.8;">${r.recruiter} — <strong style="color:#dc2626;">${r.pendingCount} pending</strong></li>`,
+    )
     .join("");
 
   const pendingSection = pendingSummary

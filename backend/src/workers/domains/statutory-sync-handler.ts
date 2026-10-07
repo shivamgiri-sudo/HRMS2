@@ -1,8 +1,11 @@
-import { db } from '../../db/mysql.js';
-import { DomainSyncBase } from './domain-sync-base.js';
-import { encryptPanForSync, blindIndexPan } from '../../shared/syncPiiEncryption.js';
+import { db } from "../../db/mysql.js";
+import { DomainSyncBase } from "./domain-sync-base.js";
+import {
+  encryptPanForSync,
+  blindIndexPan,
+} from "../../shared/syncPiiEncryption.js";
 
-const SYNC_MAP_ID = 'a1000000-0000-0000-0000-000000000004';
+const SYNC_MAP_ID = "a1000000-0000-0000-0000-000000000004";
 
 interface LegacyStatutory {
   id: number;
@@ -17,10 +20,13 @@ interface LegacyStatutory {
 
 export class StatutorySyncHandler extends DomainSyncBase {
   constructor() {
-    super('statutory', SYNC_MAP_ID);
+    super("statutory", SYNC_MAP_ID);
   }
 
-  protected async fetchBatch(lastWatermark: string, batchSize: number): Promise<LegacyStatutory[]> {
+  protected async fetchBatch(
+    lastWatermark: string,
+    batchSize: number,
+  ): Promise<LegacyStatutory[]> {
     const pool = await this.getLegacy();
     const [rows] = await pool.execute<any[]>(
       `SELECT id, EmpCode, EPFNo, ESICNo, UAN, PanNo, lastUpdated, EntryDate
@@ -29,28 +35,37 @@ export class StatutorySyncHandler extends DomainSyncBase {
          AND (EPFNo IS NOT NULL OR ESICNo IS NOT NULL OR UAN IS NOT NULL OR PanNo IS NOT NULL)
        ORDER BY COALESCE(lastUpdated, EntryDate) ASC
        LIMIT ?`,
-      [lastWatermark, lastWatermark, batchSize]
+      [lastWatermark, lastWatermark, batchSize],
     );
     return rows as LegacyStatutory[];
   }
 
   protected extractWatermark(rows: LegacyStatutory[]): string | null {
-    const last = [...rows].reverse().find(r => r.lastUpdated || r.EntryDate);
+    const last = [...rows].reverse().find((r) => r.lastUpdated || r.EntryDate);
     if (!last) return null;
     const d = new Date((last.lastUpdated ?? last.EntryDate)!);
     d.setSeconds(d.getSeconds() + 1);
-    return d.toISOString().slice(0, 19).replace('T', ' ');
+    return d.toISOString().slice(0, 19).replace("T", " ");
   }
 
   protected async processBatch(rows: LegacyStatutory[]): Promise<{
-    inserted: number; updated: number; skipped: number; failed: number;
+    inserted: number;
+    updated: number;
+    skipped: number;
+    failed: number;
   }> {
     const empMap = await this.loadEmployeeMap();
-    let inserted = 0, updated = 0, skipped = 0, failed = 0;
+    let inserted = 0,
+      updated = 0,
+      skipped = 0,
+      failed = 0;
 
     for (const row of rows) {
       const empId = this.resolveEmployeeId(empMap, row.EmpCode);
-      if (!empId) { skipped++; continue; }
+      if (!empId) {
+        skipped++;
+        continue;
+      }
 
       // Computed once and reused for all three PAN columns, so the plaintext, the
       // ciphertext and the blind index can never be derived from different values.
@@ -91,13 +106,13 @@ export class StatutorySyncHandler extends DomainSyncBase {
              updated_at  = NOW()`,
           [
             empId,
-            row.EPFNo?.trim()  || null,
+            row.EPFNo?.trim() || null,
             row.ESICNo?.trim() || null,
-            row.UAN?.trim()    || null,
+            row.UAN?.trim() || null,
             panNumber,
-            encryptPanForSync(panNumber, 'statutory-sync'),
-            blindIndexPan(panNumber, 'statutory-sync'),
-          ]
+            encryptPanForSync(panNumber, "statutory-sync"),
+            blindIndexPan(panNumber, "statutory-sync"),
+          ],
         );
         if (res.affectedRows === 1) inserted++;
         else updated++;

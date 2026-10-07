@@ -1,5 +1,5 @@
-import { computeStudioKpis } from '../modules/kpi/kpi-studio.compute.js';
-import { getStudioCapability } from '../modules/kpi/kpi-studio.service.js';
+import { computeStudioKpis } from "../modules/kpi/kpi-studio.compute.js";
+import { getStudioCapability } from "../modules/kpi/kpi-studio.service.js";
 
 /**
  * Nightly KPI Studio computation.
@@ -36,7 +36,7 @@ let initialTimeoutRef: ReturnType<typeof setTimeout> | undefined;
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
 function pad(n: number): string {
-  return String(n).padStart(2, '0');
+  return String(n).padStart(2, "0");
 }
 
 /** Local date, not toISOString: this host runs in IST and UTC would shift the day back. */
@@ -55,12 +55,12 @@ function msUntilHour(hour: number): number {
 }
 
 export function isStudioComputeEnabled(): boolean {
-  return process.env.KPI_STUDIO_COMPUTE_ENABLED === 'true';
+  return process.env.KPI_STUDIO_COMPUTE_ENABLED === "true";
 }
 
 /** True unless explicitly set to "false", so the first enabled night reports without writing. */
 export function isStudioComputeDryRun(): boolean {
-  return process.env.KPI_STUDIO_COMPUTE_DRY_RUN !== 'false';
+  return process.env.KPI_STUDIO_COMPUTE_DRY_RUN !== "false";
 }
 
 export async function runStudioCompute(): Promise<void> {
@@ -71,11 +71,15 @@ export async function runStudioCompute(): Promise<void> {
   // stack trace every night for a feature it does not have.
   const capability = await getStudioCapability();
   if (!capability.tables) {
-    console.log('[KpiStudioComputeWorker] Studio schema not installed; nothing to compute');
+    console.log(
+      "[KpiStudioComputeWorker] Studio schema not installed; nothing to compute",
+    );
     return;
   }
 
-  console.log(`[KpiStudioComputeWorker] Computing ${date}${dryRun ? ' (dry run — nothing will be written)' : ''}`);
+  console.log(
+    `[KpiStudioComputeWorker] Computing ${date}${dryRun ? " (dry run — nothing will be written)" : ""}`,
+  );
   try {
     const outcome = await computeStudioKpis({ date, dryRun });
     console.log(
@@ -85,24 +89,36 @@ export async function runStudioCompute(): Promise<void> {
     // Source failures are reported individually: "3 errors" does not tell an
     // operator that a client's database was unreachable all night.
     for (const failure of outcome.source_failures) {
-      console.error(`[KpiStudioComputeWorker] source ${failure.source_code}: ${failure.error}`);
+      console.error(
+        `[KpiStudioComputeWorker] source ${failure.source_code}: ${failure.error}`,
+      );
     }
   } catch (err) {
-    console.error('[KpiStudioComputeWorker] Compute failed:', (err as Error).message);
+    console.error(
+      "[KpiStudioComputeWorker] Compute failed:",
+      (err as Error).message,
+    );
   }
 }
 
 function startWorker(): void {
   if (!isStudioComputeEnabled()) {
-    console.log('[KpiStudioComputeWorker] Disabled (set KPI_STUDIO_COMPUTE_ENABLED=true to enable)');
+    console.log(
+      "[KpiStudioComputeWorker] Disabled (set KPI_STUDIO_COMPUTE_ENABLED=true to enable)",
+    );
     return;
   }
   const delay = msUntilHour(DAILY_HOUR);
-  console.log(`[KpiStudioComputeWorker] First run in ${Math.round(delay / 60000)} minutes`);
+  console.log(
+    `[KpiStudioComputeWorker] First run in ${Math.round(delay / 60000)} minutes`,
+  );
 
   initialTimeoutRef = setTimeout(() => {
     void runStudioCompute().then(() => {
-      intervalRef = setInterval(() => void runStudioCompute(), DAILY_INTERVAL_MS);
+      intervalRef = setInterval(
+        () => void runStudioCompute(),
+        DAILY_INTERVAL_MS,
+      );
     });
   }, delay);
 }
@@ -116,7 +132,10 @@ function stopWorker(): void {
     clearInterval(intervalRef);
     intervalRef = undefined;
   }
-  console.log('[KpiStudioComputeWorker] Stopped');
+  console.log("[KpiStudioComputeWorker] Stopped");
 }
 
-export { startWorker as startKpiStudioComputeWorker, stopWorker as stopKpiStudioComputeWorker };
+export {
+  startWorker as startKpiStudioComputeWorker,
+  stopWorker as stopKpiStudioComputeWorker,
+};

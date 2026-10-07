@@ -53,13 +53,17 @@ describe("resend onboarding link — targets a route that exists", () => {
 
 describe("resend onboarding link — reuses the hardened path", () => {
   it("send-token requires auth and a recruiting role", () => {
-    const handler = onboardingRoutes.slice(onboardingRoutes.indexOf("'/send-token/:candidateId'"));
+    const handler = onboardingRoutes.slice(
+      onboardingRoutes.indexOf("'/send-token/:candidateId'"),
+    );
     expect(handler).toContain("requireAuth");
     expect(handler).toContain("requireRole(");
   });
 
   it("send-token enforces branch/process row scope, not just a role", () => {
-    const handler = onboardingRoutes.slice(onboardingRoutes.indexOf("'/send-token/:candidateId'"));
+    const handler = onboardingRoutes.slice(
+      onboardingRoutes.indexOf("'/send-token/:candidateId'"),
+    );
     expect(handler).toContain("hasScopedAccess");
     expect(handler).toContain("Access denied");
   });
@@ -69,7 +73,9 @@ describe("resend onboarding link — reuses the hardened path", () => {
     // must be 'selected') was added 2026-08-23 alongside send-token — but every one of them
     // must delegate to the shared service function rather than re-implementing the scope/token
     // logic itself. That's the actual property worth guarding, not a literal call count.
-    const sendTokenCalls = [...onboardingRoutes.matchAll(/sendOnboardingToken\(/g)];
+    const sendTokenCalls = [
+      ...onboardingRoutes.matchAll(/sendOnboardingToken\(/g),
+    ];
     expect(sendTokenCalls.length).toBeGreaterThan(0);
     expect(onboardingRoutes).toContain("from './ats.onboarding.service");
   });
@@ -81,7 +87,14 @@ describe("resend onboarding link — every HR-department designation can use it,
   // in this route's own requireRole list. Same failure mode branch_hr/payroll_head/payroll_hr
   // already hit and got fixed above — guard the full HR-department set from the live role
   // matrix (uat/UAT_ROLE_MATRIX.csv) so it can't regress one designation at a time again.
-  const hrDesignations = ["hr", "hr_admin", "hr_branch", "hr_head", "ho_hr", "recruitment_hr"];
+  const hrDesignations = [
+    "hr",
+    "hr_admin",
+    "hr_branch",
+    "hr_head",
+    "ho_hr",
+    "recruitment_hr",
+  ];
 
   it("requireRole lists every HR-department designation", () => {
     const handler = onboardingRoutes.slice(
@@ -100,21 +113,32 @@ describe("resend onboarding link — every HR-department designation can use it,
     // an org-wide function, not a branch one, so this must be an unconditional bypass (like
     // super_admin/admin already get), never routed through the branch-scoped hasScopedAccess
     // check at all.
-    const start = onboardingRoutes.indexOf("const isHrDepartment = await hasAnyRole(");
+    const start = onboardingRoutes.indexOf(
+      "const isHrDepartment = await hasAnyRole(",
+    );
     const handler = onboardingRoutes.slice(start, start + 250);
     for (const role of hrDesignations) {
       expect(handler).toContain(`'${role}'`);
     }
-    expect(onboardingRoutes).toContain("const allowed = isHrDepartment || await hasScopedAccess(");
+    expect(onboardingRoutes).toContain(
+      "const allowed = isHrDepartment || await hasScopedAccess(",
+    );
   });
 
   it("non-HR-department roles stay properly branch/process-scoped", () => {
     // The org-wide bypass is deliberately narrower than requireRole's full list — recruiter/
     // branch_hr/payroll_head/payroll_hr are NOT HR-department designations and must still go
     // through the row-scope check.
-    const start = onboardingRoutes.indexOf("const allowed = isHrDepartment || await hasScopedAccess(");
+    const start = onboardingRoutes.indexOf(
+      "const allowed = isHrDepartment || await hasScopedAccess(",
+    );
     const handler = onboardingRoutes.slice(start, start + 300);
-    for (const role of ["recruiter", "branch_hr", "payroll_head", "payroll_hr"]) {
+    for (const role of [
+      "recruiter",
+      "branch_hr",
+      "payroll_head",
+      "payroll_hr",
+    ]) {
       expect(handler).toContain(`'${role}'`);
     }
     for (const role of hrDesignations) {
@@ -126,7 +150,9 @@ describe("resend onboarding link — every HR-department designation can use it,
 describe("resend onboarding link — calling it twice really does resend", () => {
   it("the service overwrites the previous token rather than failing", () => {
     expect(onboardingService).toContain("ON DUPLICATE KEY UPDATE");
-    expect(onboardingService).toContain("onboarding_token = VALUES(onboarding_token)");
+    expect(onboardingService).toContain(
+      "onboarding_token = VALUES(onboarding_token)",
+    );
     expect(onboardingService).toContain(
       "onboarding_token_expires_at = VALUES(onboarding_token_expires_at)",
     );

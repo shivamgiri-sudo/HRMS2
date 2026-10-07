@@ -6,11 +6,16 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { accountControlService } from "./account.control.service.js";
 
 const router = Router();
-type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+type AsyncHandler = (
+  req: AuthenticatedRequest,
+  res: Response,
+) => Promise<unknown>;
 
-const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  void fn(req, res).catch(next);
-};
+const h =
+  (fn: AsyncHandler) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    void fn(req, res).catch(next);
+  };
 
 /**
  * GET /api/account-control/forgot-password-info
@@ -19,7 +24,8 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 router.get("/forgot-password-info", (_req, res: Response) => {
   return res.json({
     message: "Password reset is handled via email OTP.",
-    instructions: "Use the forgot-password form to receive a reset link by email, or contact your HR/Admin for an admin-initiated reset.",
+    instructions:
+      "Use the forgot-password form to receive a reset link by email, or contact your HR/Admin for an admin-initiated reset.",
   });
 });
 
@@ -41,10 +47,10 @@ router.post(
       userId,
       "",
       req.authUser!.id,
-      req.ip ?? ""
+      req.ip ?? "",
     );
     return res.json({ data: result });
-  })
+  }),
 );
 
 router.post(
@@ -57,10 +63,10 @@ router.post(
       userId,
       req.authUser!.id,
       reason ?? "",
-      req.ip ?? ""
+      req.ip ?? "",
     );
     return res.json({ data: result });
-  })
+  }),
 );
 
 router.post(
@@ -73,10 +79,10 @@ router.post(
       userId,
       req.authUser!.id,
       reason ?? "",
-      req.ip ?? ""
+      req.ip ?? "",
     );
     return res.json({ data: result });
-  })
+  }),
 );
 
 router.post(
@@ -88,10 +94,10 @@ router.post(
     const result = await accountControlService.unlockAccount(
       userId,
       req.authUser!.id,
-      req.ip ?? ""
+      req.ip ?? "",
     );
     return res.json({ data: result });
-  })
+  }),
 );
 
 router.post(
@@ -104,10 +110,10 @@ router.post(
       userId,
       req.authUser!.id,
       reason ?? "",
-      req.ip ?? ""
+      req.ip ?? "",
     );
     return res.json({ data: result });
-  })
+  }),
 );
 
 router.post(
@@ -119,10 +125,10 @@ router.post(
     const result = await accountControlService.enableAccount(
       userId,
       req.authUser!.id,
-      req.ip ?? ""
+      req.ip ?? "",
     );
     return res.json({ data: result });
-  })
+  }),
 );
 
 router.post(
@@ -134,10 +140,10 @@ router.post(
     const result = await accountControlService.logSessionRevoke(
       userId,
       req.authUser!.id,
-      req.ip ?? ""
+      req.ip ?? "",
     );
     return res.json({ data: result });
-  })
+  }),
 );
 
 router.get(
@@ -145,10 +151,12 @@ router.get(
   requireRole("super_admin", "admin", "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { userId } = req.params;
-    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+    const limit = req.query.limit
+      ? parseInt(req.query.limit as string, 10)
+      : 50;
     const logs = await accountControlService.getAccountAuditLog(userId, limit);
     return res.json({ data: logs });
-  })
+  }),
 );
 
 export { router as accountControlRouter };

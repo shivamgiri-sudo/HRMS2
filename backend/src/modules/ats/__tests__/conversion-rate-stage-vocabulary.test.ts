@@ -39,14 +39,18 @@ describe("ATS conversion rate counts stages that exist", () => {
   it("counts the three stages that actually terminate the funnel", () => {
     expect(source).toMatch(/JOINED_STAGES\s*=\s*\[/);
     for (const stage of ["onboarded", "converted", "payroll_validated"]) {
-      expect(source, `${stage} missing from JOINED_STAGES`).toContain(`'${stage}'`);
+      expect(source, `${stage} missing from JOINED_STAGES`).toContain(
+        `'${stage}'`,
+      );
     }
   });
 
   it("compares case-insensitively, because current_stage mixes casing conventions", () => {
     const start = source.indexOf("const JOINED_STAGE_PREDICATE");
     expect(start, "JOINED_STAGE_PREDICATE not found").toBeGreaterThan(-1);
-    expect(source.slice(start, start + 240)).toMatch(/LOWER\(TRIM\(current_stage\)\)/);
+    expect(source.slice(start, start + 240)).toMatch(
+      /LOWER\(TRIM\(current_stage\)\)/,
+    );
   });
 
   it("routes every joined-stage filter through the constant, not just the conversion rate", () => {
@@ -55,11 +59,13 @@ describe("ATS conversion rate counts stages that exist", () => {
     // candidate-journey queries. Fixing only the conversion rate would have left an entire
     // time-to-hire surface still returning null on every call.
     const uses = source.match(/\$\{JOINED_STAGE_PREDICATE\}/g) ?? [];
-    expect(uses.length, "expected the predicate to be reused across the joined-stage queries")
-      .toBeGreaterThanOrEqual(8);
+    expect(
+      uses.length,
+      "expected the predicate to be reused across the joined-stage queries",
+    ).toBeGreaterThanOrEqual(8);
   });
 
-  it("does not compare current_stage to \"joined\" in double quotes either", () => {
+  it('does not compare current_stage to "joined" in double quotes either', () => {
     // getCustomReport's ad-hoc conversion_rate metric had the same dead comparison, just
     // double-quoted — invisible to the single-quote regex above, which is why it survived
     // the first pass at this fix. Both quote styles are equally dead; both must be gone.
@@ -90,7 +96,11 @@ describe("candidateBecameEmployee — the identity-match half of conversion", ()
   it("counts an identity match whose employer joined on/after the application", () => {
     expect(
       candidateBecameEmployee(
-        { current_stage: "round 2- op's", mobile: "9876543210", created_at: "2026-01-01" },
+        {
+          current_stage: "round 2- op's",
+          mobile: "9876543210",
+          created_at: "2026-01-01",
+        },
         mapOf([["9876543210", "2026-01-15"]]),
       ),
     ).toBe(true);
@@ -102,7 +112,11 @@ describe("candidateBecameEmployee — the identity-match half of conversion", ()
     // over-counted by roughly 2x in production (measured 2026-08-27).
     expect(
       candidateBecameEmployee(
-        { current_stage: "applied", mobile: "9876543210", created_at: "2026-06-01" },
+        {
+          current_stage: "applied",
+          mobile: "9876543210",
+          created_at: "2026-06-01",
+        },
         mapOf([["9876543210", "2025-01-15"]]),
       ),
     ).toBe(false);
@@ -111,7 +125,11 @@ describe("candidateBecameEmployee — the identity-match half of conversion", ()
   it("treats same-day joining as a match (>=, not >)", () => {
     expect(
       candidateBecameEmployee(
-        { current_stage: "applied", mobile: "9876543210", created_at: "2026-01-15" },
+        {
+          current_stage: "applied",
+          mobile: "9876543210",
+          created_at: "2026-01-15",
+        },
         mapOf([["9876543210", "2026-01-15"]]),
       ),
     ).toBe(true);
@@ -129,7 +147,11 @@ describe("candidateBecameEmployee — the identity-match half of conversion", ()
   it("rejects a mobile with no entry in the map", () => {
     expect(
       candidateBecameEmployee(
-        { current_stage: "applied", mobile: "0000000000", created_at: "2026-01-01" },
+        {
+          current_stage: "applied",
+          mobile: "0000000000",
+          created_at: "2026-01-01",
+        },
         mapOf([["9876543210", "2026-01-15"]]),
       ),
     ).toBe(false);
@@ -138,7 +160,11 @@ describe("candidateBecameEmployee — the identity-match half of conversion", ()
   it("matches case-insensitively on stage the same way the SQL predicate does", () => {
     expect(
       candidateBecameEmployee(
-        { current_stage: "  CONVERTED  ", mobile: null, created_at: "2026-01-01" },
+        {
+          current_stage: "  CONVERTED  ",
+          mobile: null,
+          created_at: "2026-01-01",
+        },
         mapOf([]),
       ),
     ).toBe(true);

@@ -34,7 +34,11 @@ export const LEAVE_STATUSES = ["leave_approved", "on_leave", "leave"] as const;
 export const NON_WORKING_STATUSES = ["holiday", "week_off"] as const;
 
 /** Anomalies that need operational follow-up. */
-export const EXCEPTION_STATUSES = ["absent", "missing_punch", "unreconciled"] as const;
+export const EXCEPTION_STATUSES = [
+  "absent",
+  "missing_punch",
+  "unreconciled",
+] as const;
 
 /**
  * Excluded from the attendance-rate denominator: non-working days plus approved leave.
@@ -69,7 +73,11 @@ export const EXPECTED_TO_WORK_EXCLUSIONS = [
 export const PRESENT_SESSION_STATUSES = ["Logged In", "Partial"] as const;
 
 /** Every value `current_status` actually holds — asserts code never invents one. */
-export const ALL_SESSION_STATUSES = ["Logged In", "Partial", "Logged Out"] as const;
+export const ALL_SESSION_STATUSES = [
+  "Logged In",
+  "Partial",
+  "Logged Out",
+] as const;
 
 /** Every status the live ENUM accepts — used to assert code never invents a value. */
 export const ALL_ATTENDANCE_STATUSES = [

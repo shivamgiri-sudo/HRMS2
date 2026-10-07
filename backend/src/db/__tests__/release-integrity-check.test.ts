@@ -16,7 +16,13 @@ const SCRIPT = resolve(process.cwd(), "scripts/release-integrity-check.mjs");
 const SRC = readFileSync(SCRIPT, "utf8");
 
 const tmp = mkdtempSync(join(tmpdir(), "release-gate-"));
-afterAll(() => { try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ } });
+afterAll(() => {
+  try {
+    rmSync(tmp, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
+});
 
 describe("the gate is wired to fail, not to reassure", () => {
   it("exits non-zero on any failure", () => {
@@ -43,8 +49,12 @@ describe("the gate is wired to fail, not to reassure", () => {
     // The pre gate runs straight after `npm run build`, when the processes are by definition
     // still on the previous commit. Failing there would fail every deploy at the moment it is
     // behaving correctly — so pre records a note and only --post treats it as the failure.
-    expect(SRC).toMatch(/if \(POST\) fail\(`\$\{msg\}\. The restart did not take\.`\);/);
-    expect(SRC).toMatch(/else notes\.push\(`\$\{msg\} — expected before the restart\.`\)/);
+    expect(SRC).toMatch(
+      /if \(POST\) fail\(`\$\{msg\}\. The restart did not take\.`\);/,
+    );
+    expect(SRC).toMatch(
+      /else notes\.push\(`\$\{msg\} — expected before the restart\.`\)/,
+    );
   });
 
   it("fails on a stale worker process only after the restart", () => {
@@ -89,34 +99,45 @@ describe("manifest parity is compared as a SET, not a count", () => {
     const start = txt.indexOf("MIGRATION_MANIFEST");
     const i = txt.indexOf("MigrationHealth", start);
     const body = txt.slice(start, i > 0 ? i : undefined);
-    return new Set([...body.matchAll(/["']([0-9]+_[A-Za-z0-9_.-]+\.sql)["']/g)].map((m) => m[1]));
+    return new Set(
+      [...body.matchAll(/["']([0-9]+_[A-Za-z0-9_.-]+\.sql)["']/g)].map(
+        (m) => m[1],
+      ),
+    );
   }
 
   it("detects an entry present in source but missing from the artifact", () => {
     // The exact production case: 1141/1142 in src, absent from a 4-hour-old dist.
     writePair(["1140_a.sql", "1141_b.sql", "1142_c.sql"], ["1140_a.sql"]);
-    const s = extract("src.ts"); const d = extract("dist.js");
+    const s = extract("src.ts");
+    const d = extract("dist.js");
     const missing = [...s].filter((x) => !d.has(x));
     expect(missing).toEqual(["1141_b.sql", "1142_c.sql"]);
   });
 
   it("detects an entry present in the artifact but missing from source", () => {
     writePair(["1140_a.sql"], ["1140_a.sql", "1199_ghost.sql"]);
-    const s = extract("src.ts"); const d = extract("dist.js");
+    const s = extract("src.ts");
+    const d = extract("dist.js");
     expect([...d].filter((x) => !s.has(x))).toEqual(["1199_ghost.sql"]);
   });
 
   it("catches a same-size swap that a count comparison would pass", () => {
     // This is why the gate compares sets. Both sides have 2 entries.
-    writePair(["1140_a.sql", "1141_b.sql"], ["1140_a.sql", "1141_DIFFERENT.sql"]);
-    const s = extract("src.ts"); const d = extract("dist.js");
+    writePair(
+      ["1140_a.sql", "1141_b.sql"],
+      ["1140_a.sql", "1141_DIFFERENT.sql"],
+    );
+    const s = extract("src.ts");
+    const d = extract("dist.js");
     expect(s.size).toBe(d.size);
     expect([...s].filter((x) => !d.has(x))).toEqual(["1141_b.sql"]);
   });
 
   it("reports parity when the two agree", () => {
     writePair(["1140_a.sql", "1141_b.sql"], ["1141_b.sql", "1140_a.sql"]); // order must not matter
-    const s = extract("src.ts"); const d = extract("dist.js");
+    const s = extract("src.ts");
+    const d = extract("dist.js");
     expect([...s].filter((x) => !d.has(x))).toEqual([]);
     expect([...d].filter((x) => !s.has(x))).toEqual([]);
   });
@@ -128,15 +149,29 @@ describe("the gate runs", () => {
     let out = "";
     let code = 0;
     try {
-      out = execFileSync("node", [SCRIPT, "--expected-sha", "0".repeat(40), "--api", "http://127.0.0.1:1"], {
-        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000,
-      });
+      out = execFileSync(
+        "node",
+        [
+          SCRIPT,
+          "--expected-sha",
+          "0".repeat(40),
+          "--api",
+          "http://127.0.0.1:1",
+        ],
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 60_000,
+        },
+      );
     } catch (e: any) {
       code = e.status ?? 1;
       out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
     }
     expect(out).toContain("RELEASE INTEGRITY");
-    expect(out).not.toMatch(/Cannot find module|SyntaxError|UnhandledPromiseRejection/);
+    expect(out).not.toMatch(
+      /Cannot find module|SyntaxError|UnhandledPromiseRejection/,
+    );
     // Without an artifact or a reachable runtime it cannot certify anything, so it must fail.
     expect(code).toBe(1);
   }, 90_000);

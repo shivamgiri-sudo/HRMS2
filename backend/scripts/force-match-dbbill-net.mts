@@ -41,30 +41,47 @@ const APPLY = process.env.APPLY === "1";
 const RUN = "5035d780-6cb4-4bb6-a0e3-3f282fed7575";
 const ACTOR = "a4a4902e-6222-11f1-adb1-00155d0ab410";
 const BRANCHES = ["NOIDA-2", "AHMEDABAD-JALDARSHAN"];
-const inr = (n: any) => "Rs " + Math.round(Number(n || 0)).toLocaleString("en-IN");
+const inr = (n: any) =>
+  "Rs " + Math.round(Number(n || 0)).toLocaleString("en-IN");
 
-async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 5): Promise<T> {
+async function withRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempts = 5,
+): Promise<T> {
   for (let i = 1; ; i++) {
-    try { return await fn(); }
-    catch (err: any) {
-      if ((err?.errno !== 1213 && err?.errno !== 1205) || i >= attempts) throw err;
+    try {
+      return await fn();
+    } catch (err: any) {
+      if ((err?.errno !== 1213 && err?.errno !== 1205) || i >= attempts)
+        throw err;
       const wait = 400 * 2 ** (i - 1);
-      console.log(`   ${label}: ${err.code} (attempt ${i}/${attempts}), retrying in ${wait}ms`);
-      await new Promise(r => setTimeout(r, wait));
+      console.log(
+        `   ${label}: ${err.code} (attempt ${i}/${attempts}), retrying in ${wait}ms`,
+      );
+      await new Promise((r) => setTimeout(r, wait));
     }
   }
 }
 
 const bill = await mysql.createConnection({
-  host: process.env.BILL_DB_HOST, port: Number(process.env.BILL_DB_PORT || 3306),
-  user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD,
-  database: process.env.BILL_DB_NAME, connectTimeout: 20000,
+  host: process.env.BILL_DB_HOST,
+  port: Number(process.env.BILL_DB_PORT || 3306),
+  user: process.env.BILL_DB_USER,
+  password: process.env.BILL_DB_PASSWORD,
+  database: process.env.BILL_DB_NAME,
+  connectTimeout: 20000,
 });
 const [billRows]: any = await bill.query(
-  "SELECT EmpCode, ROUND(NetSalary,2) net FROM salary_data WHERE SalDate='2026-08-31'");
+  "SELECT EmpCode, ROUND(NetSalary,2) net FROM salary_data WHERE SalDate='2026-08-31'",
+);
 await bill.end();
 const billNet = new Map<string, number>(
-  billRows.map((r: any) => [String(r.EmpCode).trim().toUpperCase(), Number(r.net)]));
+  billRows.map((r: any) => [
+    String(r.EmpCode).trim().toUpperCase(),
+    Number(r.net),
+  ]),
+);
 
 const [lines]: any = await db.query(
   `SELECT l.id, l.employee_id, e.employee_code c, COALESCE(bm.branch_name,'-') br,
@@ -77,7 +94,9 @@ const [lines]: any = await db.query(
       -- pay for real July attendance that a locked run never disbursed -- db_bill's August-only
       -- NetSalary was never going to include it, and forcing this delta would claw back wages
       -- already established as owed, not resolve an attendance-days disagreement.
-      AND (l.arrears_note IS NULL OR l.arrears_note NOT LIKE '%July 2026 arrears%')`, [RUN, BRANCHES]);
+      AND (l.arrears_note IS NULL OR l.arrears_note NOT LIKE '%July 2026 arrears%')`,
+  [RUN, BRANCHES],
+);
 
 const todo: any[] = [];
 for (const l of lines) {
@@ -90,9 +109,15 @@ for (const l of lines) {
 
 console.log(`${APPLY ? "APPLY" : "DRY RUN"}`);
 console.log(`Employees to force to db_bill's net: ${todo.length}`);
-console.log(`Total delta (positive = HRMS raised, negative = HRMS cut): ${inr(todo.reduce((s, r) => s + r.delta, 0))}\n`);
-for (const r of todo.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 20))
-  console.log(`  ${r.c.padEnd(10)} ${r.br.padEnd(22)} HRMS ${inr(r.net)} -> db_bill ${inr(r.target)}  (${r.delta >= 0 ? "+" : ""}${inr(r.delta)})`);
+console.log(
+  `Total delta (positive = HRMS raised, negative = HRMS cut): ${inr(todo.reduce((s, r) => s + r.delta, 0))}\n`,
+);
+for (const r of todo
+  .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+  .slice(0, 20))
+  console.log(
+    `  ${r.c.padEnd(10)} ${r.br.padEnd(22)} HRMS ${inr(r.net)} -> db_bill ${inr(r.target)}  (${r.delta >= 0 ? "+" : ""}${inr(r.delta)})`,
+  );
 if (todo.length > 20) console.log(`  ... and ${todo.length - 20} more`);
 
 if (!APPLY || !todo.length) {
@@ -100,7 +125,8 @@ if (!APPLY || !todo.length) {
   process.exit(0);
 }
 
-const NOTE = "Owner-directed reconciliation override, 2026-09-08: net_salary forced to match " +
+const NOTE =
+  "Owner-directed reconciliation override, 2026-09-08: net_salary forced to match " +
   "db_bill's reported NetSalary for the Aug-2026 run. NOT an evidence-based correction -- HRMS's " +
   "own figure was, for most of this population, closer to db_bill's own raw attendance punches " +
   "than db_bill's reported total. Confirmed explicitly by the owner after being told this in " +
@@ -114,17 +140,35 @@ for (const r of todo) {
           SET net_salary = ?, arrears_amount = COALESCE(arrears_amount,0) + ?,
               arrears_note = CONCAT(COALESCE(arrears_note,''), CASE WHEN arrears_note IS NULL OR arrears_note='' THEN '' ELSE ' | ' END, ?)
         WHERE id = ?`,
-      [r.target, r.delta, NOTE, r.id]));
+      [r.target, r.delta, NOTE, r.id],
+    ),
+  );
   n++;
 }
 await db.query(
   `INSERT INTO sensitive_action_log
      (id, actor_user_id, action_type, module_key, entity_type, change_summary, acted_at, reason)
    VALUES (UUID(), ?, 'NET_FORCED_TO_DBBILL', 'payroll', 'salary_prep_line', ?, NOW(), ?)`,
-  [ACTOR, JSON.stringify({ run: RUN, branches: BRANCHES, employees: todo.map(r => ({ code: r.c, from: r.net, to: r.target, delta: r.delta })) }), NOTE]);
+  [
+    ACTOR,
+    JSON.stringify({
+      run: RUN,
+      branches: BRANCHES,
+      employees: todo.map((r) => ({
+        code: r.c,
+        from: r.net,
+        to: r.target,
+        delta: r.delta,
+      })),
+    }),
+    NOTE,
+  ],
+);
 
 console.log(`\nForced ${n} employees to db_bill's exact net.`);
 const [after]: any = await db.query(
-  `SELECT COUNT(*) n, ROUND(SUM(net_salary)) net FROM salary_prep_line WHERE run_id=?`, [RUN]);
+  `SELECT COUNT(*) n, ROUND(SUM(net_salary)) net FROM salary_prep_line WHERE run_id=?`,
+  [RUN],
+);
 console.log(`Run total: ${after[0].n} lines, net ${inr(after[0].net)}`);
 process.exit(0);

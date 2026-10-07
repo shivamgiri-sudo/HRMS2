@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 // =============================================================================
 // Customization Rule Validation
@@ -18,13 +18,19 @@ export const createRuleSchema = z.object({
   employeeIds: z.array(z.string().uuid()).optional(),
 
   // Config
-  configType: z.enum(['override', 'merge', 'extend', 'disable']),
+  configType: z.enum(["override", "merge", "extend", "disable"]),
   configData: z.record(z.any()),
 
   // Metadata
   priority: z.number().int().default(0),
-  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  effectiveFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  effectiveTo: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
 });
 
 export const updateRuleSchema = createRuleSchema.partial().extend({
@@ -34,7 +40,7 @@ export const updateRuleSchema = createRuleSchema.partial().extend({
 export const getRulesSchema = z.object({
   entityType: z.string().optional(),
   entityId: z.string().uuid().optional(),
-  isActive: z.enum(['active', 'inactive', 'all']).optional().default('active'),
+  isActive: z.enum(["active", "inactive", "all"]).optional().default("active"),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });

@@ -15,7 +15,10 @@
  * Only for dialler-backed endpoints. Upload-driven tables (GS1, billing) must
  * not use it: a cached empty result would hide data just uploaded.
  */
-import { cacheInstance, type CacheValue } from '../../lib/cache/quality-cache.js';
+import {
+  cacheInstance,
+  type CacheValue,
+} from "../../lib/cache/quality-cache.js";
 
 const PAST_TTL_SECONDS = 6 * 60 * 60;
 const LIVE_TTL_SECONDS = 5 * 60;
@@ -28,7 +31,9 @@ function todayIst(): string {
 }
 
 export async function cachedLive<T>(
-  name: string, range: { from: string; to: string }, fetcher: () => Promise<T>,
+  name: string,
+  range: { from: string; to: string },
+  fetcher: () => Promise<T>,
 ): Promise<T> {
   const key = `process-live:${name}:${range.from}:${range.to}`;
   const hit = await cacheInstance.get<CacheValue>(key);
@@ -40,7 +45,11 @@ export async function cachedLive<T>(
   const job = (async () => {
     try {
       const value = await fetcher();
-      await cacheInstance.set(key, value as unknown as CacheValue, range.to < todayIst() ? PAST_TTL_SECONDS : LIVE_TTL_SECONDS);
+      await cacheInstance.set(
+        key,
+        value as unknown as CacheValue,
+        range.to < todayIst() ? PAST_TTL_SECONDS : LIVE_TTL_SECONDS,
+      );
       return value;
     } finally {
       inFlight.delete(key);

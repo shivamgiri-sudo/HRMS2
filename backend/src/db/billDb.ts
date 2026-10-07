@@ -1,6 +1,6 @@
-import mysql from 'mysql2/promise';
-import type { RowDataPacket } from 'mysql2';
-import { env } from '../config/env.js';
+import mysql from "mysql2/promise";
+import type { RowDataPacket } from "mysql2";
+import { env } from "../config/env.js";
 
 const config: mysql.PoolOptions = {
   host: env.BILL_DB_HOST,
@@ -14,14 +14,14 @@ const config: mysql.PoolOptions = {
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
   connectTimeout: 15000,
-  flags: ['-ALLOW_LOCAL_INFILE'],
+  flags: ["-ALLOW_LOCAL_INFILE"],
   connectAttributes: {
-    program_name: 'HRMS_ReadOnly_Bill',
+    program_name: "HRMS_ReadOnly_Bill",
   },
 };
 
 let pool: mysql.Pool | null = null;
-type BillExecuteParams = Parameters<mysql.Pool['execute']>[1];
+type BillExecuteParams = Parameters<mysql.Pool["execute"]>[1];
 
 /**
  * db_bill runs MySQL 5.5.44. `SET SESSION TRANSACTION READ ONLY` arrived in 5.6, so on
@@ -49,13 +49,19 @@ export async function getBillPool(): Promise<mysql.Pool> {
   try {
     const conn = await candidate.getConnection();
     try {
-      const [rows] = await conn.query<RowDataPacket[]>('SELECT VERSION() AS version');
-      const version = String(rows[0]?.version ?? '');
+      const [rows] = await conn.query<RowDataPacket[]>(
+        "SELECT VERSION() AS version",
+      );
+      const version = String(rows[0]?.version ?? "");
       if (supportsReadOnlyTransactions(version)) {
-        await conn.query('SET SESSION TRANSACTION READ ONLY');
-        console.log(`[BILL] Connected to ${config.host}:${config.port}/${config.database} (READ-ONLY session, MySQL ${version})`);
+        await conn.query("SET SESSION TRANSACTION READ ONLY");
+        console.log(
+          `[BILL] Connected to ${config.host}:${config.port}/${config.database} (READ-ONLY session, MySQL ${version})`,
+        );
       } else {
-        console.log(`[BILL] Connected to ${config.host}:${config.port}/${config.database} (MySQL ${version} predates SET SESSION TRANSACTION READ ONLY; reads are enforced by the billQuery allowlist and by GRANTs)`);
+        console.log(
+          `[BILL] Connected to ${config.host}:${config.port}/${config.database} (MySQL ${version} predates SET SESSION TRANSACTION READ ONLY; reads are enforced by the billQuery allowlist and by GRANTs)`,
+        );
       }
     } finally {
       conn.release();
@@ -65,7 +71,7 @@ export async function getBillPool(): Promise<mysql.Pool> {
     // the guard above entirely, which is how a failed init became a silent downgrade.
     await candidate.end().catch(() => {});
     const message = error instanceof Error ? error.message : String(error);
-    console.error('[BILL] Connection failed:', message);
+    console.error("[BILL] Connection failed:", message);
     throw error;
   }
 
@@ -77,14 +83,17 @@ export async function closeBillPool(): Promise<void> {
   if (pool) {
     await pool.end();
     pool = null;
-    console.log('[BILL] Connection pool closed');
+    console.log("[BILL] Connection pool closed");
   }
 }
 
-export async function testBillConnection(): Promise<{ ok: boolean; error?: string }> {
+export async function testBillConnection(): Promise<{
+  ok: boolean;
+  error?: string;
+}> {
   try {
     const p = await getBillPool();
-    await p.execute('SELECT 1 AS ok');
+    await p.execute("SELECT 1 AS ok");
     return { ok: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
@@ -97,15 +106,15 @@ export async function testBillConnection(): Promise<{ ok: boolean; error?: strin
  */
 export async function billQuery<T = RowDataPacket>(
   sql: string,
-  params?: BillExecuteParams
+  params?: BillExecuteParams,
 ): Promise<T[]> {
   const trimmedSql = sql.trim().toUpperCase();
-  const allowedStarts = ['SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN'];
-  const isAllowed = allowedStarts.some(start => trimmedSql.startsWith(start));
+  const allowedStarts = ["SELECT", "SHOW", "DESCRIBE", "EXPLAIN"];
+  const isAllowed = allowedStarts.some((start) => trimmedSql.startsWith(start));
 
   if (!isAllowed) {
     throw new Error(
-      `BILL_DB: Only SELECT/SHOW/DESCRIBE queries allowed (READ-ONLY). Blocked: ${trimmedSql.substring(0, 50)}`
+      `BILL_DB: Only SELECT/SHOW/DESCRIBE queries allowed (READ-ONLY). Blocked: ${trimmedSql.substring(0, 50)}`,
     );
   }
 

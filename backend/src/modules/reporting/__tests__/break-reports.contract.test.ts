@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { REPORT_CATALOG } from "../report-catalog.js";
 import { EXECUTOR_MAP } from "../executors/index.js";
 
-const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
+const read = (path: string) =>
+  readFileSync(resolve(process.cwd(), path), "utf8");
 
 /**
  * The Break Activity Daily Summary report was dead on arrival. Its executor queried
@@ -30,25 +31,58 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8"
  * list only after confirming the column exists in the live database.
  */
 const BREAK_SESSIONS_COLUMNS = new Set([
-  "id", "employee_id", "employee_code", "branch_id", "process_id", "department_id",
-  "manager_id", "shift_date", "break_start_time", "break_end_time", "duration_seconds",
-  "duration_minutes", "break_type", "break_reason", "status", "start_source",
-  "end_source", "kiosk_device_id", "biometric_punch_in_time", "biometric_punch_out_time",
-  "no_biometric_punch_flag", "exception_reason", "manager_approval_required",
-  "manager_approved_by", "manager_approved_at", "created_at", "updated_at",
+  "id",
+  "employee_id",
+  "employee_code",
+  "branch_id",
+  "process_id",
+  "department_id",
+  "manager_id",
+  "shift_date",
+  "break_start_time",
+  "break_end_time",
+  "duration_seconds",
+  "duration_minutes",
+  "break_type",
+  "break_reason",
+  "status",
+  "start_source",
+  "end_source",
+  "kiosk_device_id",
+  "biometric_punch_in_time",
+  "biometric_punch_out_time",
+  "no_biometric_punch_flag",
+  "exception_reason",
+  "manager_approval_required",
+  "manager_approved_by",
+  "manager_approved_at",
+  "created_at",
+  "updated_at",
 ]);
 
 /** Status values that exist on break_sessions.status in the live table. */
-const BREAK_SESSION_STATUSES = new Set(["ACTIVE", "COMPLETED", "AUTO_CLOSED", "EXCEPTION"]);
+const BREAK_SESSION_STATUSES = new Set([
+  "ACTIVE",
+  "COMPLETED",
+  "AUTO_CLOSED",
+  "EXCEPTION",
+]);
 
-const executorSource = read("src/modules/reporting/executors/attendance.executor.ts");
+const executorSource = read(
+  "src/modules/reporting/executors/attendance.executor.ts",
+);
 
 /** Slice out a single exported executor function body by name. */
 function functionBody(name: string): string {
   const start = executorSource.indexOf(`export async function ${name}(`);
-  expect(start, `${name} not found in attendance.executor.ts`).toBeGreaterThan(-1);
+  expect(start, `${name} not found in attendance.executor.ts`).toBeGreaterThan(
+    -1,
+  );
   const next = executorSource.indexOf("\nexport async function ", start + 1);
-  return executorSource.slice(start, next === -1 ? executorSource.length : next);
+  return executorSource.slice(
+    start,
+    next === -1 ? executorSource.length : next,
+  );
 }
 
 /**
@@ -60,7 +94,9 @@ function selectAliases(body: string): string[] {
   const start = body.indexOf("SELECT ");
   // Drop SQL line comments first, so a column name mentioned in prose — or a stray
   // bracket in an explanatory note — cannot be parsed as SQL.
-  const afterSelect = body.slice(start + "SELECT ".length).replace(/--[^\n]*/g, "");
+  const afterSelect = body
+    .slice(start + "SELECT ".length)
+    .replace(/--[^\n]*/g, "");
 
   // Split on the FROM that closes the select list, which is the first one at paren
   // depth zero. A correlated subquery in the select list carries its own FROM, and
@@ -72,7 +108,12 @@ function selectAliases(body: string): string[] {
     const ch = afterSelect[i];
     if (ch === "(") depth++;
     else if (ch === ")") depth--;
-    if (depth === 0 && /\s/.test(ch) && /^FROM\s/i.test(afterSelect.slice(i + 1))) break;
+    if (
+      depth === 0 &&
+      /\s/.test(ch) &&
+      /^FROM\s/i.test(afterSelect.slice(i + 1))
+    )
+      break;
     if (ch === "," && depth === 0) {
       aliases.push(current);
       current = "";
@@ -83,14 +124,14 @@ function selectAliases(body: string): string[] {
   aliases.push(current);
 
   return aliases
-    .map(expr => {
+    .map((expr) => {
       const trimmed = expr.trim();
       const asMatch = /\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\s*$/i.exec(trimmed);
       if (asMatch) return asMatch[1];
       const bare = /([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(trimmed);
       return bare ? bare[1] : "";
     })
-    .filter(alias => alias !== "" && alias !== "_cursor");
+    .filter((alias) => alias !== "" && alias !== "_cursor");
 }
 
 describe("break reports", () => {
@@ -103,11 +144,21 @@ describe("break reports", () => {
     it("references only columns that exist on break_sessions", () => {
       // The bug this pins: bs.session_date parsed fine, typechecked fine, and failed
       // only at the database. Anything aliased `bs.` must be a real column.
-      const referenced = [...body.matchAll(/\bbs\.([A-Za-z_][A-Za-z0-9_]*)/g)].map(m => m[1]);
-      expect(referenced.length, "expected the query to reference break_sessions").toBeGreaterThan(0);
+      const referenced = [
+        ...body.matchAll(/\bbs\.([A-Za-z_][A-Za-z0-9_]*)/g),
+      ].map((m) => m[1]);
+      expect(
+        referenced.length,
+        "expected the query to reference break_sessions",
+      ).toBeGreaterThan(0);
 
-      const unknown = [...new Set(referenced)].filter(col => !BREAK_SESSIONS_COLUMNS.has(col));
-      expect(unknown, `not columns on break_sessions: ${unknown.join(", ")}`).toEqual([]);
+      const unknown = [...new Set(referenced)].filter(
+        (col) => !BREAK_SESSIONS_COLUMNS.has(col),
+      );
+      expect(
+        unknown,
+        `not columns on break_sessions: ${unknown.join(", ")}`,
+      ).toEqual([]);
     });
 
     it("never uses the column name that broke the report", () => {
@@ -125,14 +176,19 @@ describe("break reports", () => {
         ...body.matchAll(/\bbs\.status\s+(?:NOT\s+)?IN\s*\(([^)]*)\)/gi),
       ];
 
-      const literals = comparisons.flatMap(m =>
+      const literals = comparisons.flatMap((m) =>
         [...m[1].matchAll(/'?([A-Za-z_][A-Za-z0-9_]*)'?/g)]
-          .map(x => x[1])
-          .filter(Boolean)
+          .map((x) => x[1])
+          .filter(Boolean),
       );
 
-      const bogus = [...new Set(literals)].filter(v => !BREAK_SESSION_STATUSES.has(v));
-      expect(bogus, `not valid break_sessions.status values: ${bogus.join(", ")}`).toEqual([]);
+      const bogus = [...new Set(literals)].filter(
+        (v) => !BREAK_SESSION_STATUSES.has(v),
+      );
+      expect(
+        bogus,
+        `not valid break_sessions.status values: ${bogus.join(", ")}`,
+      ).toEqual([]);
     });
 
     it("is registered so the report code actually resolves to an executor", () => {
@@ -145,10 +201,10 @@ describe("break reports", () => {
       // The drift that made the fixed report still render wrong: the grid maps
       // catalog column keys onto row keys, so a mismatch shows blank columns and
       // silently discards data the query did return.
-      const entry = REPORT_CATALOG.find(r => r.code === code);
+      const entry = REPORT_CATALOG.find((r) => r.code === code);
       expect(entry, `${code} missing from REPORT_CATALOG`).toBeDefined();
 
-      const declared = entry!.columns.map(c => c.key).sort();
+      const declared = entry!.columns.map((c) => c.key).sort();
       const produced = selectAliases(body).sort();
       expect(produced).toEqual(declared);
     });
@@ -167,20 +223,27 @@ describe("break reports", () => {
     // summary reports break minutes nobody has taken yet; excluding it from the log
     // hides the people who are on a break right now, which is the one thing a live
     // log is for.
-    expect(functionBody("breakDailySummary")).toContain("bs.status IN ('COMPLETED','AUTO_CLOSED','EXCEPTION')");
+    expect(functionBody("breakDailySummary")).toContain(
+      "bs.status IN ('COMPLETED','AUTO_CLOSED','EXCEPTION')",
+    );
     expect(functionBody("breakSessionLog")).not.toContain("bs.status IN (");
   });
 
   it("returns break minutes as a number, not a string", () => {
     // SUM() over a DECIMAL column arrives from mysql2 as a string. Left alone it
     // lands in the XLSX as text, so the column will not total in Excel.
-    expect(functionBody("breakDailySummary")).toContain("CAST(ROUND(SUM(COALESCE(bs.duration_minutes, 0))) AS SIGNED)");
+    expect(functionBody("breakDailySummary")).toContain(
+      "CAST(ROUND(SUM(COALESCE(bs.duration_minutes, 0))) AS SIGNED)",
+    );
   });
 
   it("declares both reports as downloadable by the roles that can view them", () => {
     for (const code of ["break-daily-summary", "break-session-log"]) {
-      const entry = REPORT_CATALOG.find(r => r.code === code)!;
-      expect(entry.exportRoles.length, `${code} has no exportRoles`).toBeGreaterThan(0);
+      const entry = REPORT_CATALOG.find((r) => r.code === code)!;
+      expect(
+        entry.exportRoles.length,
+        `${code} has no exportRoles`,
+      ).toBeGreaterThan(0);
       // Immediate XLSX download is refused above 'confidential' for non-super-admins
       // (report-suite.routes.ts), which would push these behind email delivery.
       expect(["internal", "confidential"]).toContain(entry.sensitivityLevel);

@@ -18,7 +18,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -41,7 +46,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -86,19 +91,22 @@ const LEAVE_BUCKET_SQL = `
  */
 function bucketAggregates(): string {
   const buckets: Array<[string, string]> = [
-    ['cl', 'CL'], ['ml', 'ML'], ['el', 'EL'], ['ptl_mtl', 'PTLMTL'],
+    ["cl", "CL"],
+    ["ml", "ML"],
+    ["el", "EL"],
+    ["ptl_mtl", "PTLMTL"],
   ];
   const parts: string[] = [];
   for (const [prefix, bucket] of buckets) {
     parts.push(
       `ROUND(COALESCE(SUM(CASE WHEN ${LEAVE_BUCKET_SQL} = '${bucket}' ` +
-      `THEN COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) END),0),2) AS ${prefix}_current`
+        `THEN COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) END),0),2) AS ${prefix}_current`,
     );
   }
   for (const [prefix, bucket] of buckets) {
     parts.push(
       `ROUND(COALESCE(SUM(CASE WHEN ${LEAVE_BUCKET_SQL} = '${bucket}' ` +
-      `THEN COALESCE(lbl.used_days,0) END),0),2) AS ${prefix}_taken`
+        `THEN COALESCE(lbl.used_days,0) END),0),2) AS ${prefix}_taken`,
     );
   }
   for (const [prefix, bucket] of buckets) {
@@ -107,11 +115,11 @@ function bucketAggregates(): string {
     // UI shows as 0 for the same employee/bucket. (2026-08-13 audit)
     parts.push(
       `GREATEST(0, ROUND(COALESCE(SUM(CASE WHEN ${LEAVE_BUCKET_SQL} = '${bucket}' ` +
-      `THEN COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) ` +
-      `- COALESCE(lbl.used_days,0) END),0),2)) AS ${prefix}_remain`
+        `THEN COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) ` +
+        `- COALESCE(lbl.used_days,0) END),0),2)) AS ${prefix}_remain`,
     );
   }
-  return parts.join(',\n           ');
+  return parts.join(",\n           ");
 }
 
 /**
@@ -129,11 +137,13 @@ function bucketAggregates(): string {
 export async function leaveBalance(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   // Month drives the report; fall back to `year` for backward compatibility.
   const month = monthParam(filters.month);
-  const year  = filters.month ? Number(month.slice(0, 4)) : yearParam(filters.year);
+  const year = filters.month
+    ? Number(month.slice(0, 4))
+    : yearParam(filters.year);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -147,9 +157,8 @@ export async function leaveBalance(
 
   // Worker mode keysets on e.id, so it must order by e.id to stay consistent.
   // Preview/export use the business default sort: EmpCode ascending.
-  const orderBy = options.mode === "worker"
-    ? "e.id ASC"
-    : "e.employee_code ASC, e.id ASC";
+  const orderBy =
+    options.mode === "worker" ? "e.id ASC" : "e.employee_code ASC, e.id ASC";
 
   const base = `
     SELECT e.id AS _cursor,
@@ -186,14 +195,18 @@ export async function leaveBalance(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    isTruncated: options.includeTotal
+      ? total > out.length
+      : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -204,7 +217,7 @@ export async function leaveBalance(
 export async function leaveAllocationRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -257,20 +270,30 @@ export async function leaveAllocationRegister(
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-    const rows  = await query(sql, params) as Record<string, unknown>[];
-    const nextCursor = (options.mode === "worker" && rows.length > 0)
-      ? (rows[rows.length - 1]._cursor as number) : null;
+    const sql =
+      options.mode === "worker"
+        ? `${base} LIMIT ${options.limit}`
+        : applyPagination(base, options);
+    const rows = (await query(sql, params)) as Record<string, unknown>[];
+    const nextCursor =
+      options.mode === "worker" && rows.length > 0
+        ? (rows[rows.length - 1]._cursor as number)
+        : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
     return {
       rows: out,
       rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+      isTruncated: options.includeTotal
+        ? total > out.length
+        : rows.length === options.limit,
       nextCursor,
     };
   } catch (err: unknown) {
     const mysqlCode = (err as Record<string, unknown>)?.["code"];
-    if (mysqlCode === "ER_NO_SUCH_TABLE" || mysqlCode === "ER_BAD_TABLE_ERROR") {
+    if (
+      mysqlCode === "ER_NO_SUCH_TABLE" ||
+      mysqlCode === "ER_BAD_TABLE_ERROR"
+    ) {
       return { rows: [], rowCount: 0, isTruncated: false };
     }
     throw err;
@@ -283,11 +306,11 @@ export async function leaveAllocationRegister(
 export async function leaveUtilization(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -353,14 +376,18 @@ export async function leaveUtilization(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    isTruncated: options.includeTotal
+      ? total > out.length
+      : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -374,10 +401,10 @@ export async function leaveUtilization(
 export async function leaveTrendMonthly(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, businessToday());
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, businessToday());
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -426,8 +453,8 @@ export async function leaveTrendMonthly(
      ORDER BY month ASC, lt.leave_name ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options); // always — aggregate report has no cursor
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const sql = applyPagination(base, options); // always — aggregate report has no cursor
+  const rows = (await query(sql, params)) as Record<string, unknown>[];
   return {
     rows,
     rowCount: options.includeTotal ? total : rows.length,
@@ -461,7 +488,7 @@ export async function leaveTrendMonthly(
 export async function leaveLwpReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
 
@@ -500,9 +527,14 @@ export async function leaveLwpReconciliation(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
+  const rows = paged.rows as Record<string, unknown>[];
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -511,20 +543,20 @@ export async function leaveLwpReconciliation(
 export async function maternityPaternityRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push(
-    "(lt.leave_code IN ('MAT','PAT','ML','PL') OR LOWER(lt.leave_name) LIKE '%maternity%' OR LOWER(lt.leave_name) LIKE '%paternity%')"
+    "(lt.leave_code IN ('MAT','PAT','ML','PL') OR LOWER(lt.leave_name) LIKE '%maternity%' OR LOWER(lt.leave_name) LIKE '%paternity%')",
   );
 
   if (filters.from || filters.to) {
     const today = new Date().toISOString().slice(0, 10);
-    const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-    const to    = dateParam(filters.to, today);
+    const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+    const to = dateParam(filters.to, today);
     clauses.push("lr.from_date BETWEEN ? AND ?");
     params.push(from, to);
   }
@@ -556,14 +588,18 @@ export async function maternityPaternityRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    isTruncated: options.includeTotal
+      ? total > out.length
+      : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -579,7 +615,7 @@ export async function maternityPaternityRegister(
 export async function leaveEncashmentRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -588,8 +624,8 @@ export async function leaveEncashmentRegister(
 
   if (filters.from || filters.to) {
     const today = new Date().toISOString().slice(0, 10);
-    const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-    const to    = dateParam(filters.to, today);
+    const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+    const to = dateParam(filters.to, today);
     clauses.push("ler.requested_date BETWEEN ? AND ?");
     params.push(from, to);
   }
@@ -623,27 +659,37 @@ export async function leaveEncashmentRegister(
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-    const rows  = await query(sql, params) as Record<string, unknown>[];
-    const nextCursor = (options.mode === "worker" && rows.length > 0)
-      ? (rows[rows.length - 1]._cursor as number) : null;
+    const sql =
+      options.mode === "worker"
+        ? `${base} LIMIT ${options.limit}`
+        : applyPagination(base, options);
+    const rows = (await query(sql, params)) as Record<string, unknown>[];
+    const nextCursor =
+      options.mode === "worker" && rows.length > 0
+        ? (rows[rows.length - 1]._cursor as number)
+        : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
     return {
       rows: out,
       rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+      isTruncated: options.includeTotal
+        ? total > out.length
+        : rows.length === options.limit,
       nextCursor,
     };
   } catch (err: unknown) {
     const mysqlCode = (err as Record<string, unknown>)?.["code"];
-    if (mysqlCode === "ER_NO_SUCH_TABLE" || mysqlCode === "ER_BAD_TABLE_ERROR") {
+    if (
+      mysqlCode === "ER_NO_SUCH_TABLE" ||
+      mysqlCode === "ER_BAD_TABLE_ERROR"
+    ) {
       // leave_encashment_request does not exist in mas_hrms (verified 2026-08-07), and
       // the leave_request fallback suggested in this file's header was never built. An
       // empty result made encashment look like a settled, zero-liability question.
       throw new ReportSourceUnavailableError(
         "leave-encashment-register",
         "leave_encashment_request",
-        "Leave encashment is not recorded in this database; the report is marked blocked in the catalog."
+        "Leave encashment is not recorded in this database; the report is marked blocked in the catalog.",
       );
     }
     throw err;
@@ -672,7 +718,7 @@ export async function leaveEncashmentRegister(
 export async function leaveLapseSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const currentYear = new Date().getFullYear();
 
@@ -704,9 +750,14 @@ export async function leaveLapseSummary(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
+  const rows = paged.rows as Record<string, unknown>[];
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor: null,
+  };
 }
 
 /**
@@ -722,7 +773,7 @@ export async function leaveLapseSummary(
 export async function holidayMasterList(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const year = Number(filters.year ?? new Date().getFullYear());
   const params: unknown[] = [year];
@@ -740,6 +791,11 @@ export async function holidayMasterList(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+    nextCursor: null,
+  };
 }

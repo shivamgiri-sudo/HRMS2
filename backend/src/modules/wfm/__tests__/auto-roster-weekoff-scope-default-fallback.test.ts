@@ -26,26 +26,37 @@ import { fileURLToPath } from "url";
 import path from "path";
 
 const SOURCE = readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), "../auto-roster-synced.service.ts"),
-  "utf-8"
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../auto-roster-synced.service.ts",
+  ),
+  "utf-8",
 );
 
 describe("generateDraft — week-off scope-default fallback (round 2 convergence)", () => {
   it("imports the shared governance-engine resolver, not a private copy", () => {
-    expect(SOURCE).toMatch(/import\s*\{\s*resolveWeekOffScopeDefault\s*\}\s*from\s*["']\.\.\/roster\/weekoff-policy\.service\.js["']/);
+    expect(SOURCE).toMatch(
+      /import\s*\{\s*resolveWeekOffScopeDefault\s*\}\s*from\s*["']\.\.\/roster\/weekoff-policy\.service\.js["']/,
+    );
   });
 
   it("resolves the scope default once per plan (not per employee, per date, or per slot)", () => {
-    const idx = SOURCE.indexOf("const scopeDefault = await resolveWeekOffScopeDefault(");
+    const idx = SOURCE.indexOf(
+      "const scopeDefault = await resolveWeekOffScopeDefault(",
+    );
     expect(idx).toBeGreaterThan(-1);
     // Must appear exactly once — a per-loop call would be a real behavioral
     // regression (redundant queries per date/employee instead of one per plan).
-    const occurrences = SOURCE.split("const scopeDefault = await resolveWeekOffScopeDefault(").length - 1;
+    const occurrences =
+      SOURCE.split("const scopeDefault = await resolveWeekOffScopeDefault(")
+        .length - 1;
     expect(occurrences).toBe(1);
   });
 
   it("degrades to null (not a thrown error) if the lookup fails — generation must still produce a roster", () => {
-    const idx = SOURCE.indexOf("const scopeDefault = await resolveWeekOffScopeDefault(");
+    const idx = SOURCE.indexOf(
+      "const scopeDefault = await resolveWeekOffScopeDefault(",
+    );
     const body = SOURCE.slice(idx, idx + 400);
     expect(body).toMatch(/\.catch\(\(error\)/);
     expect(body).toMatch(/week_off_policy_default lookup unavailable/);
@@ -76,6 +87,9 @@ describe("generateDraft — week-off scope-default fallback (round 2 convergence
     // preferredDayFor(...) calls may themselves contain nested parens
     // (e.g. String(a.id)), so match on the call opening + eventual === dow
     // rather than a single non-nested capture.
-    expect((SOURCE.match(/preferredDayFor\(String\([^)]*\)\)\s*===\s*dow/g) ?? []).length).toBe(3);
+    expect(
+      (SOURCE.match(/preferredDayFor\(String\([^)]*\)\)\s*===\s*dow/g) ?? [])
+        .length,
+    ).toBe(3);
   });
 });

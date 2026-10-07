@@ -41,7 +41,13 @@ describe("third-party COSEC ids", () => {
   });
 
   it("does not swallow MAS Callnet ids", () => {
-    for (const id of ["MAS52131", "MAS58767", "48673C", "Ranjeet", "Mahimapal"]) {
+    for (const id of [
+      "MAS52131",
+      "MAS58767",
+      "48673C",
+      "Ranjeet",
+      "Mahimapal",
+    ]) {
       expect(isThirdPartyCosecUser(id)).toBe(false);
     }
   });
@@ -50,7 +56,9 @@ describe("third-party COSEC ids", () => {
 describe("classification of a third-party id", () => {
   it("is excluded even when no employee record matches", () => {
     // Previously this returned "unmapped", which logged the attendance as dropped.
-    expect(classifySourceUser("IDC60168", noEmployees)).toEqual({ kind: "excluded" });
+    expect(classifySourceUser("IDC60168", noEmployees)).toEqual({
+      kind: "excluded",
+    });
   });
 
   it("is never reported as inactive or resigned", () => {
@@ -62,7 +70,9 @@ describe("classification of a third-party id", () => {
   it("still classifies a genuinely unmapped MAS id as unmapped", () => {
     // The fix must not mask real mapping gaps — Ranjeet had 271 punches dropped
     // on 2026-06-18 and that still needs linking.
-    expect(classifySourceUser("Ranjeet", noEmployees)).toEqual({ kind: "unmapped" });
+    expect(classifySourceUser("Ranjeet", noEmployees)).toEqual({
+      kind: "unmapped",
+    });
   });
 
   it("keeps honouring the explicit exclusion table", () => {
@@ -72,7 +82,14 @@ describe("classification of a third-party id", () => {
 
   it("still marks a resigned MAS employee inactive", () => {
     const maps = buildSourceUserMaps(
-      [{ employee_id: "e1", employee_code: "MAS54791", cosec_user_id: "MAS54791", employment_status: "resigned" }],
+      [
+        {
+          employee_id: "e1",
+          employee_code: "MAS54791",
+          cosec_user_id: "MAS54791",
+          employment_status: "resigned",
+        },
+      ],
       [],
     );
     expect(classifySourceUser("MAS54791", maps).kind).toBe("inactive");

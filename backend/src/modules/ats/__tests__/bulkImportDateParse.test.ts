@@ -61,12 +61,17 @@ describe("parseHistoricalDate — ambiguous inputs never land in the future", ()
     const fixable: string[] = [];
     for (let a = 1; a <= 12; a++) {
       for (let b = 1; b <= 12; b++) {
-        const us  = new Date(`${year}-${String(a).padStart(2, "0")}-${String(b).padStart(2, "0")}T00:00:00Z`).getTime();
-        const dmy = new Date(`${year}-${String(b).padStart(2, "0")}-${String(a).padStart(2, "0")}T00:00:00Z`).getTime();
+        const us = new Date(
+          `${year}-${String(a).padStart(2, "0")}-${String(b).padStart(2, "0")}T00:00:00Z`,
+        ).getTime();
+        const dmy = new Date(
+          `${year}-${String(b).padStart(2, "0")}-${String(a).padStart(2, "0")}T00:00:00Z`,
+        ).getTime();
         const onlyUsIsFuture = us > Date.now() && dmy <= Date.now();
         if (!onlyUsIsFuture) continue;
         const out = iso(parseHistoricalDate(`${a}/${b}/${year}`));
-        if (new Date(`${out}T00:00:00Z`).getTime() > Date.now()) fixable.push(`${a}/${b}/${year} -> ${out}`);
+        if (new Date(`${out}T00:00:00Z`).getTime() > Date.now())
+          fixable.push(`${a}/${b}/${year} -> ${out}`);
       }
     }
     expect(
@@ -75,7 +80,6 @@ describe("parseHistoricalDate — ambiguous inputs never land in the future", ()
         "historical records cannot have been created after today.",
     ).toEqual([]);
   });
-
 });
 
 describe("parseHistoricalDate — behaviour is unchanged where both readings are plausible", () => {
@@ -83,7 +87,9 @@ describe("parseHistoricalDate — behaviour is unchanged where both readings are
     // Both 2 March and 3 February are in the past, so the string is genuinely ambiguous and
     // nothing here can improve on a default. Preserving it keeps historical imports stable.
     const lastYear = new Date().getFullYear() - 1;
-    expect(iso(parseHistoricalDate(`3/2/${lastYear}`))).toBe(`${lastYear}-03-02`);
+    expect(iso(parseHistoricalDate(`3/2/${lastYear}`))).toBe(
+      `${lastYear}-03-02`,
+    );
   });
 
   it("does not rewrite a date that is only valid one way", () => {
@@ -92,6 +98,8 @@ describe("parseHistoricalDate — behaviour is unchanged where both readings are
   });
 
   it("preserves the time component", () => {
-    expect(parseHistoricalDate("9/3/2026", "14:30:00")).toBe("2026-03-09 14:30:00");
+    expect(parseHistoricalDate("9/3/2026", "14:30:00")).toBe(
+      "2026-03-09 14:30:00",
+    );
   });
 });

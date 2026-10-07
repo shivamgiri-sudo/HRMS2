@@ -1,5 +1,9 @@
 import type { Request, Response } from "express";
-import { createEmployeeSchema, employeeFiltersSchema, updateEmployeeSchema } from "./employee.validation.js";
+import {
+  createEmployeeSchema,
+  employeeFiltersSchema,
+  updateEmployeeSchema,
+} from "./employee.validation.js";
 import { employeeService } from "./employee.service.js";
 import { redactEmployeeIdentifiers } from "../../shared/employeeIdentifierRedaction.js";
 import { actorAuthority } from "../payroll/salary-start-date.service.js";
@@ -7,19 +11,31 @@ import { actorAuthority } from "../payroll/salary-start-date.service.js";
 export const employeeController = {
   async createEmployee(req: Request, res: Response) {
     const parsed = createEmployeeSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await employeeService.createEmployee(parsed.data, (req as any).authUser?.id ?? "system");
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
+    const data = await employeeService.createEmployee(
+      parsed.data,
+      (req as any).authUser?.id ?? "system",
+    );
     res.status(201).json({ data });
   },
 
   async listEmployees(req: Request, res: Response) {
     const parsed = employeeFiltersSchema.safeParse(req.query);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
     const result = await employeeService.listEmployees({
       ...parsed.data,
       scopeFilter: (req as any).scopeFilter,
     });
-    res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit, stats: result.stats, process_breakdown: result.process_breakdown });
+    res.json({
+      data: result.data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      stats: result.stats,
+      process_breakdown: result.process_breakdown,
+    });
   },
 
   async getEmployee(req: Request, res: Response) {
@@ -29,25 +45,45 @@ export const employeeController = {
     // it_head, none of which have a business need for those. Redact per role — see
     // shared/employeeIdentifierRedaction.ts for the split and what it deliberately leaves alone.
     const authUser = (req as any).authUser;
-    const roles: string[] = authUser?.roles?.length ? authUser.roles : (authUser?.role ? [authUser.role] : []);
-    res.json({ data: redactEmployeeIdentifiers(data as unknown as Record<string, unknown>, roles) });
+    const roles: string[] = authUser?.roles?.length
+      ? authUser.roles
+      : authUser?.role
+        ? [authUser.role]
+        : [];
+    res.json({
+      data: redactEmployeeIdentifiers(
+        data as unknown as Record<string, unknown>,
+        roles,
+      ),
+    });
   },
 
   async updateEmployee(req: Request, res: Response) {
     const parsed = updateEmployeeSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const roles = ((req as any).userRoles ?? (req as any).authUser?.roles ?? []) as string[];
-    const data = await employeeService.updateEmployee(req.params.id, parsed.data, (req as any).authUser?.id ?? "system", actorAuthority(roles));
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
+    const roles = ((req as any).userRoles ??
+      (req as any).authUser?.roles ??
+      []) as string[];
+    const data = await employeeService.updateEmployee(
+      req.params.id,
+      parsed.data,
+      (req as any).authUser?.id ?? "system",
+      actorAuthority(roles),
+    );
     res.json({ data });
   },
 
   async deactivateEmployee(req: Request, res: Response) {
-    const body = (req.body as {
-      reason?: string;
-      attrition_date?: string;
-      attrition_reason?: string;
-      attrition_reason_notes?: string;
-    } | undefined) ?? {};
+    const body =
+      (req.body as
+        | {
+            reason?: string;
+            attrition_date?: string;
+            attrition_reason?: string;
+            attrition_reason_notes?: string;
+          }
+        | undefined) ?? {};
     const reason = body.reason ?? (req.query.reason as string | undefined);
     await employeeService.deactivateEmployee(
       req.params.id,
@@ -57,7 +93,7 @@ export const employeeController = {
         attritionDate: body.attrition_date ?? null,
         attritionReason: body.attrition_reason ?? null,
         attritionReasonNotes: body.attrition_reason_notes ?? null,
-      }
+      },
     );
     res.status(204).send();
   },

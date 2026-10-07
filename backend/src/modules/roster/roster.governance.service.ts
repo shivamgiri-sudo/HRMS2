@@ -5,7 +5,11 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { notifyRosterPublished } from "./roster.notifications.js";
-import { isRestPolicyFeatureActive, validateMinimumRest, applyRestDecision } from "../wfm/rest-policy.service.js";
+import {
+  isRestPolicyFeatureActive,
+  validateMinimumRest,
+  applyRestDecision,
+} from "../wfm/rest-policy.service.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -122,7 +126,8 @@ export interface ChangeLog extends RowDataPacket {
 
 export interface CreateChangeLogInput {
   employee_id: string;
-  change_type: "shift_change" | "week_off_change" | "swap" | "addition" | "removal";
+  change_type:
+    "shift_change" | "week_off_change" | "swap" | "addition" | "removal";
   old_value_json?: unknown;
   new_value_json?: unknown;
   reason: string;
@@ -171,41 +176,70 @@ export interface PortalAggregate extends RowDataPacket {
 // ── Valid status transitions ──────────────────────────────────────────────────
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
-  draft:               ["submitted"],
-  submitted:           ["reviewed", "draft"],
-  reviewed:            ["published", "submitted"],
-  published:           ["acknowledged", "reviewed"],
-  acknowledged:        ["active"],
-  active:              ["variance_review", "attendance_locked"],
-  variance_review:     ["attendance_locked", "active"],
-  attendance_locked:   ["payroll_input_ready"],
+  draft: ["submitted"],
+  submitted: ["reviewed", "draft"],
+  reviewed: ["published", "submitted"],
+  published: ["acknowledged", "reviewed"],
+  acknowledged: ["active"],
+  active: ["variance_review", "attendance_locked"],
+  variance_review: ["attendance_locked", "active"],
+  attendance_locked: ["payroll_input_ready"],
   payroll_input_ready: ["closed"],
-  closed:              [],
+  closed: [],
 };
 
-const EDITABLE_ASSIGNMENT_STATUSES = new Set(["draft", "submitted", "reviewed"]);
+const EDITABLE_ASSIGNMENT_STATUSES = new Set([
+  "draft",
+  "submitted",
+  "reviewed",
+]);
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export const rosterGovernanceService = {
   // ── Shift Templates ─────────────────────────────────────────────────────────
 
-  async listShiftTemplates(filters: { process_id?: string; active_status?: string }): Promise<ShiftTemplate[]> {
+  async listShiftTemplates(filters: {
+    process_id?: string;
+    active_status?: string;
+  }): Promise<ShiftTemplate[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.process_id)    { conds.push("process_id = ?"); params.push(filters.process_id); }
-    if (filters.active_status !== undefined) { conds.push("active_status = ?"); params.push(filters.active_status); }
+    if (filters.process_id) {
+      conds.push("process_id = ?");
+      params.push(filters.process_id);
+    }
+    if (filters.active_status !== undefined) {
+      conds.push("active_status = ?");
+      params.push(filters.active_status);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<ShiftTemplate[]>(
       `SELECT * FROM wfm_shift_template ${where} ORDER BY shift_code ASC, version DESC`,
-      params
+      params,
     );
     return rows;
   },
 
-  async createShiftTemplate(input: CreateShiftTemplateInput, userId: string, req?: Request): Promise<ShiftTemplate> {
-    if (!input.shift_code || !input.shift_name || !input.process_id || !input.start_time || !input.end_time || !input.effective_from) {
-      throw Object.assign(new Error("shift_code, shift_name, process_id, start_time, end_time and effective_from are required"), { statusCode: 400 });
+  async createShiftTemplate(
+    input: CreateShiftTemplateInput,
+    userId: string,
+    req?: Request,
+  ): Promise<ShiftTemplate> {
+    if (
+      !input.shift_code ||
+      !input.shift_name ||
+      !input.process_id ||
+      !input.start_time ||
+      !input.end_time ||
+      !input.effective_from
+    ) {
+      throw Object.assign(
+        new Error(
+          "shift_code, shift_name, process_id, start_time, end_time and effective_from are required",
+        ),
+        { statusCode: 400 },
+      );
     }
     const id = randomUUID();
     await db.execute(
@@ -228,63 +262,140 @@ export const rosterGovernanceService = {
         input.break_entitlement ?? 30,
         input.weekly_off_pattern ?? "sunday",
         input.night_shift ?? 0,
-        input.eligibility_rules ? JSON.stringify(input.eligibility_rules) : null,
+        input.eligibility_rules
+          ? JSON.stringify(input.eligibility_rules)
+          : null,
         input.effective_from,
         input.effective_to ?? null,
         userId,
-      ]
+      ],
     );
-    await logSensitiveAction({ actor_user_id: userId, action_type: "SHIFT_TEMPLATE_CREATED", module_key: "roster_gov", entity_type: "wfm_shift_template", entity_id: id, change_summary: { process_id: input.process_id, branch_id: input.branch_id ?? null }, req });
-    const [rows] = await db.execute<ShiftTemplate[]>("SELECT * FROM wfm_shift_template WHERE id = ? LIMIT 1", [id]);
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "SHIFT_TEMPLATE_CREATED",
+      module_key: "roster_gov",
+      entity_type: "wfm_shift_template",
+      entity_id: id,
+      change_summary: {
+        process_id: input.process_id,
+        branch_id: input.branch_id ?? null,
+      },
+      req,
+    });
+    const [rows] = await db.execute<ShiftTemplate[]>(
+      "SELECT * FROM wfm_shift_template WHERE id = ? LIMIT 1",
+      [id],
+    );
     return rows[0];
   },
 
   // ── Weekly Roster Cycles ────────────────────────────────────────────────────
 
-  async listCycles(filters: { process_id?: string; status?: string; week_start_date?: string }): Promise<RosterCycle[]> {
+  async listCycles(filters: {
+    process_id?: string;
+    status?: string;
+    week_start_date?: string;
+  }): Promise<RosterCycle[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.process_id)      { conds.push("process_id = ?"); params.push(filters.process_id); }
-    if (filters.status)          { conds.push("status = ?"); params.push(filters.status); }
-    if (filters.week_start_date) { conds.push("week_start_date = ?"); params.push(filters.week_start_date); }
+    if (filters.process_id) {
+      conds.push("process_id = ?");
+      params.push(filters.process_id);
+    }
+    if (filters.status) {
+      conds.push("status = ?");
+      params.push(filters.status);
+    }
+    if (filters.week_start_date) {
+      conds.push("week_start_date = ?");
+      params.push(filters.week_start_date);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RosterCycle[]>(
       `SELECT * FROM weekly_roster_cycle ${where} ORDER BY week_start_date DESC`,
-      params
+      params,
     );
     return rows;
   },
 
-  async createCycle(input: CreateCycleInput, userId: string, req?: Request): Promise<RosterCycle> {
+  async createCycle(
+    input: CreateCycleInput,
+    userId: string,
+    req?: Request,
+  ): Promise<RosterCycle> {
     if (!input.process_id || !input.week_start_date || !input.week_end_date) {
-      throw Object.assign(new Error("process_id, week_start_date, week_end_date are required"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("process_id, week_start_date, week_end_date are required"),
+        { statusCode: 400 },
+      );
     }
     if (input.week_end_date < input.week_start_date) {
-      throw Object.assign(new Error("week_end_date must be >= week_start_date"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("week_end_date must be >= week_start_date"),
+        { statusCode: 400 },
+      );
     }
     const id = randomUUID();
     await db.execute(
       `INSERT INTO weekly_roster_cycle
          (id, process_id, branch_id, week_start_date, week_end_date, required_hc_json, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, input.process_id, input.branch_id ?? null, input.week_start_date, input.week_end_date, input.required_hc_json ? JSON.stringify(input.required_hc_json) : null, userId]
+      [
+        id,
+        input.process_id,
+        input.branch_id ?? null,
+        input.week_start_date,
+        input.week_end_date,
+        input.required_hc_json ? JSON.stringify(input.required_hc_json) : null,
+        userId,
+      ],
     );
-    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_CYCLE_CREATED", module_key: "roster_gov", entity_type: "weekly_roster_cycle", entity_id: id, change_summary: { process_id: input.process_id, branch_id: input.branch_id ?? null, week_start_date: input.week_start_date, week_end_date: input.week_end_date }, req });
-    const [rows] = await db.execute<RosterCycle[]>("SELECT * FROM weekly_roster_cycle WHERE id = ? LIMIT 1", [id]);
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "ROSTER_CYCLE_CREATED",
+      module_key: "roster_gov",
+      entity_type: "weekly_roster_cycle",
+      entity_id: id,
+      change_summary: {
+        process_id: input.process_id,
+        branch_id: input.branch_id ?? null,
+        week_start_date: input.week_start_date,
+        week_end_date: input.week_end_date,
+      },
+      req,
+    });
+    const [rows] = await db.execute<RosterCycle[]>(
+      "SELECT * FROM weekly_roster_cycle WHERE id = ? LIMIT 1",
+      [id],
+    );
     return rows[0];
   },
 
   async getCycle(id: string): Promise<RosterCycle> {
-    const [rows] = await db.execute<RosterCycle[]>("SELECT * FROM weekly_roster_cycle WHERE id = ? LIMIT 1", [id]);
-    if (!rows[0]) throw Object.assign(new Error("Cycle not found"), { statusCode: 404 });
+    const [rows] = await db.execute<RosterCycle[]>(
+      "SELECT * FROM weekly_roster_cycle WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (!rows[0])
+      throw Object.assign(new Error("Cycle not found"), { statusCode: 404 });
     return rows[0];
   },
 
-  async advanceCycleStatus(id: string, newStatus: string, userId: string, req?: Request): Promise<RosterCycle> {
+  async advanceCycleStatus(
+    id: string,
+    newStatus: string,
+    userId: string,
+    req?: Request,
+  ): Promise<RosterCycle> {
     const cycle = await this.getCycle(id);
     const allowed = VALID_TRANSITIONS[cycle.status] ?? [];
     if (!allowed.includes(newStatus)) {
-      throw Object.assign(new Error(`Invalid transition: ${cycle.status} → ${newStatus}. Allowed: ${allowed.join(", ") || "none"}`), { statusCode: 400 });
+      throw Object.assign(
+        new Error(
+          `Invalid transition: ${cycle.status} → ${newStatus}. Allowed: ${allowed.join(", ") || "none"}`,
+        ),
+        { statusCode: 400 },
+      );
     }
 
     // Part A.1 (2026-08-13): block publish when the most recent generation
@@ -300,7 +411,7 @@ export const rosterGovernanceService = {
         `SELECT error_details FROM roster_generation_run
           WHERE cycle_id = ? AND status IN ('completed', 'partial')
           ORDER BY started_at DESC LIMIT 1`,
-        [id]
+        [id],
       );
       const latestRun = runRows[0] as { error_details: unknown } | undefined;
       if (latestRun?.error_details) {
@@ -308,19 +419,24 @@ export const rosterGovernanceService = {
         if (Array.isArray(latestRun.error_details)) {
           errorList = latestRun.error_details;
         } else if (typeof latestRun.error_details === "string") {
-          try { errorList = JSON.parse(latestRun.error_details); } catch { errorList = []; }
+          try {
+            errorList = JSON.parse(latestRun.error_details);
+          } catch {
+            errorList = [];
+          }
         }
         const missing = errorList.filter(
-          (e): e is string => typeof e === "string" && e.startsWith("WEEK_OFF_POLICY_MISSING")
+          (e): e is string =>
+            typeof e === "string" && e.startsWith("WEEK_OFF_POLICY_MISSING"),
         );
         if (missing.length > 0) {
           throw Object.assign(
             new Error(
               `Cannot publish: ${missing.length} employee(s) in this cycle have no resolvable week-off policy ` +
-              `(no employee preference, roster template, or process/branch/org default configured). ` +
-              `Configure week_off_policy_default or an employee/process default, then regenerate before publishing.`
+                `(no employee preference, roster template, or process/branch/org default configured). ` +
+                `Configure week_off_policy_default or an employee/process default, then regenerate before publishing.`,
             ),
-            { statusCode: 409, weekOffPolicyMissing: missing }
+            { statusCode: 409, weekOffPolicyMissing: missing },
           );
         }
       }
@@ -343,12 +459,27 @@ export const rosterGovernanceService = {
     }
 
     const setClause = ["status = ?", ...extra].join(", ");
-    await db.execute(`UPDATE weekly_roster_cycle SET ${setClause} WHERE id = ?`, [newStatus, ...params, id]);
-    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_CYCLE_STATUS_CHANGED", module_key: "roster_gov", entity_type: "weekly_roster_cycle", entity_id: id, change_summary: { from: cycle.status, to: newStatus, process_id: cycle.process_id }, req });
+    await db.execute(
+      `UPDATE weekly_roster_cycle SET ${setClause} WHERE id = ?`,
+      [newStatus, ...params, id],
+    );
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "ROSTER_CYCLE_STATUS_CHANGED",
+      module_key: "roster_gov",
+      entity_type: "weekly_roster_cycle",
+      entity_id: id,
+      change_summary: {
+        from: cycle.status,
+        to: newStatus,
+        process_id: cycle.process_id,
+      },
+      req,
+    });
 
     // Email per rostered employee (fire-and-forget), alongside the SMS blast below
     // rather than instead of it. Ships in shadow.
-    if (newStatus === 'published') {
+    if (newStatus === "published") {
       setImmediate(async () => {
         try {
           const stats = await notifyRosterPublished({
@@ -357,17 +488,23 @@ export const rosterGovernanceService = {
             process_id: cycle.process_id,
             week_start_date: cycle.week_start_date,
             week_end_date: cycle.week_end_date,
-            ack_deadline: (cycle as { ack_deadline?: string | null }).ack_deadline ?? null,
+            ack_deadline:
+              (cycle as { ack_deadline?: string | null }).ack_deadline ?? null,
           });
-          console.log(`[roster-notify] cycle ${id}: ${stats.employees} employees`);
+          console.log(
+            `[roster-notify] cycle ${id}: ${stats.employees} employees`,
+          );
         } catch (err) {
-          console.error(`[roster-notify] cycle ${id} failed:`, (err as Error).message);
+          console.error(
+            `[roster-notify] cycle ${id} failed:`,
+            (err as Error).message,
+          );
         }
       });
     }
 
     // SMS blast to all employees on this roster when published (fire-and-forget)
-    if (newStatus === 'published') {
+    if (newStatus === "published") {
       setImmediate(async () => {
         try {
           const [empRows] = await db.execute<RowDataPacket[]>(
@@ -376,16 +513,21 @@ export const rosterGovernanceService = {
              FROM roster_daily_assignment rda
              JOIN employees e ON e.id = rda.employee_id
              WHERE rda.cycle_id = ? AND (e.mobile IS NOT NULL OR e.personal_phone IS NOT NULL)`,
-            [id]
+            [id],
           );
           const weekLabel = `${cycle.week_start_date ?? id}`;
           for (const emp of empRows as any[]) {
             const phone = emp.mobile ?? emp.personal_phone;
             if (phone) {
-              sendSMS(phone, 'roster_published', { name: emp.name, week: weekLabel }).catch(() => {});
+              sendSMS(phone, "roster_published", {
+                name: emp.name,
+                week: weekLabel,
+              }).catch(() => {});
             }
           }
-        } catch { /* non-fatal */ }
+        } catch {
+          /* non-fatal */
+        }
       });
     }
 
@@ -394,19 +536,34 @@ export const rosterGovernanceService = {
 
   // ── Daily Assignments ───────────────────────────────────────────────────────
 
-  async getAssignments(cycleId: string, employeeIdFilter?: string): Promise<DailyAssignment[]> {
+  async getAssignments(
+    cycleId: string,
+    employeeIdFilter?: string,
+  ): Promise<DailyAssignment[]> {
     const conds = ["cycle_id = ?"];
     const params: unknown[] = [cycleId];
-    if (employeeIdFilter) { conds.push("employee_id = ?"); params.push(employeeIdFilter); }
-    const [rows] = await db.execute<DailyAssignment[]>(`SELECT * FROM roster_daily_assignment WHERE ${conds.join(" AND ")} ORDER BY roster_date ASC, employee_id ASC`, params);
+    if (employeeIdFilter) {
+      conds.push("employee_id = ?");
+      params.push(employeeIdFilter);
+    }
+    const [rows] = await db.execute<DailyAssignment[]>(
+      `SELECT * FROM roster_daily_assignment WHERE ${conds.join(" AND ")} ORDER BY roster_date ASC, employee_id ASC`,
+      params,
+    );
     return rows;
   },
 
-  async validateAssignment(cycle: RosterCycle, row: BulkAssignRow): Promise<void> {
+  async validateAssignment(
+    cycle: RosterCycle,
+    row: BulkAssignRow,
+  ): Promise<void> {
     if (!row.employee_id || !row.roster_date) {
       throw new Error("employee_id and roster_date are required");
     }
-    if (row.roster_date < cycle.week_start_date || row.roster_date > cycle.week_end_date) {
+    if (
+      row.roster_date < cycle.week_start_date ||
+      row.roster_date > cycle.week_end_date
+    ) {
       throw new Error("roster_date is outside the weekly cycle");
     }
     const [employees] = await db.execute<RowDataPacket[]>(
@@ -414,10 +571,12 @@ export const rosterGovernanceService = {
         WHERE id = ? AND process_id = ? AND active_status = 1
           AND (branch_id = ? OR ? IS NULL)
         LIMIT 1`,
-      [row.employee_id, cycle.process_id, cycle.branch_id, cycle.branch_id]
+      [row.employee_id, cycle.process_id, cycle.branch_id, cycle.branch_id],
     );
     if (!employees[0]) {
-      throw new Error("employee is not active in the roster process/branch scope");
+      throw new Error(
+        "employee is not active in the roster process/branch scope",
+      );
     }
     if (row.shift_template_id) {
       const [shifts] = await db.execute<RowDataPacket[]>(
@@ -425,16 +584,34 @@ export const rosterGovernanceService = {
           WHERE id = ? AND process_id = ? AND active_status = 1
             AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
           LIMIT 1`,
-        [row.shift_template_id, cycle.process_id, row.roster_date, row.roster_date]
+        [
+          row.shift_template_id,
+          cycle.process_id,
+          row.roster_date,
+          row.roster_date,
+        ],
       );
-      if (!shifts[0]) throw new Error("shift template is not active for the roster process/date");
+      if (!shifts[0])
+        throw new Error(
+          "shift template is not active for the roster process/date",
+        );
     }
   },
 
-  async bulkUpsertAssignments(cycleId: string, assignments: BulkAssignRow[], userId: string, req?: Request): Promise<{ upserted: number; errors: string[]; warnings: string[] }> {
+  async bulkUpsertAssignments(
+    cycleId: string,
+    assignments: BulkAssignRow[],
+    userId: string,
+    req?: Request,
+  ): Promise<{ upserted: number; errors: string[]; warnings: string[] }> {
     const cycle = await this.getCycle(cycleId);
     if (!EDITABLE_ASSIGNMENT_STATUSES.has(cycle.status)) {
-      throw Object.assign(new Error("Published/active roster assignments cannot be bulk-overwritten; use controlled roster-change workflow"), { statusCode: 409 });
+      throw Object.assign(
+        new Error(
+          "Published/active roster assignments cannot be bulk-overwritten; use controlled roster-change workflow",
+        ),
+        { statusCode: 409 },
+      );
     }
     let upserted = 0;
     const errors: string[] = [];
@@ -454,13 +631,21 @@ export const rosterGovernanceService = {
         if (restPolicyFeatureActive && row.shift_template_id) {
           const [shiftRows] = await db.execute<RowDataPacket[]>(
             `SELECT start_time, end_time FROM wfm_shift_template WHERE id = ? LIMIT 1`,
-            [row.shift_template_id]
+            [row.shift_template_id],
           );
           const shiftTpl = shiftRows[0];
           if (shiftTpl?.start_time && shiftTpl?.end_time) {
             const restCheck = await validateMinimumRest(
-              { employeeId: row.employee_id, processId: cycle.process_id, branchId: cycle.branch_id, forDate: String(row.roster_date).slice(0, 10) },
-              { startTime: String(shiftTpl.start_time).slice(0, 5), endTime: String(shiftTpl.end_time).slice(0, 5) }
+              {
+                employeeId: row.employee_id,
+                processId: cycle.process_id,
+                branchId: cycle.branch_id,
+                forDate: String(row.roster_date).slice(0, 10),
+              },
+              {
+                startTime: String(shiftTpl.start_time).slice(0, 5),
+                endTime: String(shiftTpl.end_time).slice(0, 5),
+              },
             );
             if (!restCheck.ok) {
               // applyRestDecision persists a wfm_roster_conflict_log row (warn mode)
@@ -470,9 +655,10 @@ export const rosterGovernanceService = {
                 employeeId: String(row.employee_id),
                 rosterDate: String(row.roster_date).slice(0, 10),
               });
-              const msg = restCheck.reason === "REST_POLICY_MISSING"
-                ? `REST warning for emp ${row.employee_id} on ${String(row.roster_date).slice(0, 10)}: no minimum-rest policy configured`
-                : `REST warning for emp ${row.employee_id} on ${String(row.roster_date).slice(0, 10)}: only ${restCheck.actualRestMinutes}min rest against ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min)`;
+              const msg =
+                restCheck.reason === "REST_POLICY_MISSING"
+                  ? `REST warning for emp ${row.employee_id} on ${String(row.roster_date).slice(0, 10)}: no minimum-rest policy configured`
+                  : `REST warning for emp ${row.employee_id} on ${String(row.roster_date).slice(0, 10)}: only ${restCheck.actualRestMinutes}min rest against ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min)`;
               warnings.push(msg);
             }
           }
@@ -487,60 +673,154 @@ export const rosterGovernanceService = {
              is_week_off       = VALUES(is_week_off),
              is_holiday        = VALUES(is_holiday),
              notes             = VALUES(notes)`,
-          [cycleId, row.employee_id, row.roster_date, row.shift_template_id ?? null, row.is_week_off ?? 0, row.is_holiday ?? 0, row.notes ?? null]
+          [
+            cycleId,
+            row.employee_id,
+            row.roster_date,
+            row.shift_template_id ?? null,
+            row.is_week_off ?? 0,
+            row.is_holiday ?? 0,
+            row.notes ?? null,
+          ],
         );
         upserted++;
       } catch (err) {
-        errors.push(`${row.employee_id}/${row.roster_date}: ${err instanceof Error ? err.message : String(err)}`);
+        errors.push(
+          `${row.employee_id}/${row.roster_date}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
-    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_ASSIGNMENTS_BULK_UPSERTED", module_key: "roster_gov", entity_type: "weekly_roster_cycle", entity_id: cycleId, change_summary: { upserted, errors: errors.length, warnings: warnings.length, process_id: cycle.process_id }, req });
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "ROSTER_ASSIGNMENTS_BULK_UPSERTED",
+      module_key: "roster_gov",
+      entity_type: "weekly_roster_cycle",
+      entity_id: cycleId,
+      change_summary: {
+        upserted,
+        errors: errors.length,
+        warnings: warnings.length,
+        process_id: cycle.process_id,
+      },
+      req,
+    });
     return { upserted, errors, warnings };
   },
 
-  async acknowledgeRoster(cycleId: string, employeeId: string, userId: string, req?: Request): Promise<{ acknowledged: number }> {
+  async acknowledgeRoster(
+    cycleId: string,
+    employeeId: string,
+    userId: string,
+    req?: Request,
+  ): Promise<{ acknowledged: number }> {
     const cycle = await this.getCycle(cycleId);
     if (!["published", "acknowledged", "active"].includes(cycle.status)) {
-      throw Object.assign(new Error("Roster is not published for acknowledgement"), { statusCode: 409 });
+      throw Object.assign(
+        new Error("Roster is not published for acknowledgement"),
+        { statusCode: 409 },
+      );
     }
     const now = new Date().toISOString().slice(0, 19).replace("T", " ");
     const [result] = (await db.execute(
       `UPDATE roster_daily_assignment
           SET acknowledgement_status = 'acknowledged', acknowledged_at = ?
         WHERE cycle_id = ? AND employee_id = ? AND acknowledgement_status = 'pending'`,
-      [now, cycleId, employeeId]
-    ) as unknown) as [{ affectedRows: number }, unknown];
-    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_ACKNOWLEDGED", module_key: "roster_gov", entity_type: "weekly_roster_cycle", entity_id: cycleId, change_summary: { employee_id: employeeId, acknowledged: result.affectedRows }, req });
+      [now, cycleId, employeeId],
+    )) as unknown as [{ affectedRows: number }, unknown];
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "ROSTER_ACKNOWLEDGED",
+      module_key: "roster_gov",
+      entity_type: "weekly_roster_cycle",
+      entity_id: cycleId,
+      change_summary: {
+        employee_id: employeeId,
+        acknowledged: result.affectedRows,
+      },
+      req,
+    });
     return { acknowledged: result.affectedRows };
   },
 
   // ── Change Log ──────────────────────────────────────────────────────────────
 
-  async listChangeLogs(cycleId: string, employeeId?: string): Promise<ChangeLog[]> {
+  async listChangeLogs(
+    cycleId: string,
+    employeeId?: string,
+  ): Promise<ChangeLog[]> {
     const conds = ["cycle_id = ?"];
     const params: unknown[] = [cycleId];
-    if (employeeId) { conds.push("employee_id = ?"); params.push(employeeId); }
-    const [rows] = await db.execute<ChangeLog[]>(`SELECT * FROM roster_change_log WHERE ${conds.join(" AND ")} ORDER BY created_at DESC`, params);
+    if (employeeId) {
+      conds.push("employee_id = ?");
+      params.push(employeeId);
+    }
+    const [rows] = await db.execute<ChangeLog[]>(
+      `SELECT * FROM roster_change_log WHERE ${conds.join(" AND ")} ORDER BY created_at DESC`,
+      params,
+    );
     return rows;
   },
 
-  async logRosterChange(cycleId: string, input: CreateChangeLogInput, userId: string, req?: Request): Promise<ChangeLog> {
+  async logRosterChange(
+    cycleId: string,
+    input: CreateChangeLogInput,
+    userId: string,
+    req?: Request,
+  ): Promise<ChangeLog> {
     const cycle = await this.getCycle(cycleId);
     if (!input.reason || !input.reason.trim()) {
-      throw Object.assign(new Error("reason is required for roster change log"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("reason is required for roster change log"),
+        { statusCode: 400 },
+      );
     }
-    if (!["published", "acknowledged", "active", "variance_review"].includes(cycle.status)) {
-      throw Object.assign(new Error("Post-publication change records are allowed only after roster publication"), { statusCode: 409 });
+    if (
+      !["published", "acknowledged", "active", "variance_review"].includes(
+        cycle.status,
+      )
+    ) {
+      throw Object.assign(
+        new Error(
+          "Post-publication change records are allowed only after roster publication",
+        ),
+        { statusCode: 409 },
+      );
     }
     const id = randomUUID();
     await db.execute(
       `INSERT INTO roster_change_log
          (id, cycle_id, employee_id, change_type, old_value_json, new_value_json, reason, change_date, changed_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, cycleId, input.employee_id, input.change_type, input.old_value_json ? JSON.stringify(input.old_value_json) : null, input.new_value_json ? JSON.stringify(input.new_value_json) : null, input.reason, input.change_date, userId]
+      [
+        id,
+        cycleId,
+        input.employee_id,
+        input.change_type,
+        input.old_value_json ? JSON.stringify(input.old_value_json) : null,
+        input.new_value_json ? JSON.stringify(input.new_value_json) : null,
+        input.reason,
+        input.change_date,
+        userId,
+      ],
     );
-    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_POST_PUBLISH_CHANGE_RECORDED", module_key: "roster_gov", entity_type: "roster_change_log", entity_id: id, change_summary: { cycle_id: cycleId, employee_id: input.employee_id, change_type: input.change_type, process_id: cycle.process_id }, req });
-    const [rows] = await db.execute<ChangeLog[]>("SELECT * FROM roster_change_log WHERE id = ? LIMIT 1", [id]);
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "ROSTER_POST_PUBLISH_CHANGE_RECORDED",
+      module_key: "roster_gov",
+      entity_type: "roster_change_log",
+      entity_id: id,
+      change_summary: {
+        cycle_id: cycleId,
+        employee_id: input.employee_id,
+        change_type: input.change_type,
+        process_id: cycle.process_id,
+      },
+      req,
+    });
+    const [rows] = await db.execute<ChangeLog[]>(
+      "SELECT * FROM roster_change_log WHERE id = ? LIMIT 1",
+      [id],
+    );
     return rows[0];
   },
 
@@ -555,14 +835,20 @@ export const rosterGovernanceService = {
       shortNoticeThresholdHours?: number;
     },
     userId: string,
-    req?: Request
+    req?: Request,
   ): Promise<ChangeLog> {
     // 1. Fetch the cycle; must be post-publication
     const cycle = await this.getCycle(cycleId);
-    if (!["published", "acknowledged", "active", "variance_review"].includes(cycle.status)) {
+    if (
+      !["published", "acknowledged", "active", "variance_review"].includes(
+        cycle.status,
+      )
+    ) {
       throw Object.assign(
-        new Error(`Amendments only allowed on published or active cycles. Current status: ${cycle.status}`),
-        { statusCode: 400 }
+        new Error(
+          `Amendments only allowed on published or active cycles. Current status: ${cycle.status}`,
+        ),
+        { statusCode: 400 },
       );
     }
 
@@ -570,14 +856,16 @@ export const rosterGovernanceService = {
     const [assignRows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM roster_daily_assignment
        WHERE cycle_id = ? AND employee_id = ? AND roster_date = ? LIMIT 1`,
-      [cycleId, input.employeeId, input.date]
+      [cycleId, input.employeeId, input.date],
     );
     const currentAssignment = assignRows[0] ?? null;
 
     // 3. Calculate lead_time_hours from now to shift start date
     // Conservative estimate: treat shift start as midnight of the given date
     const shiftStartEstimate = new Date(`${input.date}T00:00:00`);
-    const leadTimeHours = Math.round((shiftStartEstimate.getTime() - Date.now()) / (1000 * 3600));
+    const leadTimeHours = Math.round(
+      (shiftStartEstimate.getTime() - Date.now()) / (1000 * 3600),
+    );
     const threshold = input.shortNoticeThresholdHours ?? 24;
     const isLateChange = leadTimeHours < threshold ? 1 : 0;
 
@@ -595,17 +883,25 @@ export const rosterGovernanceService = {
                ?, ?,
                ?, ?, ?)`,
       [
-        changeId, cycleId, input.employeeId,
+        changeId,
+        cycleId,
+        input.employeeId,
         JSON.stringify(currentAssignment ?? {}),
-        JSON.stringify({ newShiftId: input.newShiftId, newAssignmentType: input.newAssignmentType }),
-        input.reason, input.date, userId,
+        JSON.stringify({
+          newShiftId: input.newShiftId,
+          newAssignmentType: input.newAssignmentType,
+        }),
+        input.reason,
+        input.date,
+        userId,
         currentAssignment?.shift_template_id ?? null,
         input.newShiftId ?? null,
         null, // roster_daily_assignment has no assignment_type column
         input.newAssignmentType,
         input.reason,
-        isLateChange, leadTimeHours,
-      ]
+        isLateChange,
+        leadTimeHours,
+      ],
     );
 
     // 5. Update roster_daily_assignment shift if a new shift is specified
@@ -614,7 +910,7 @@ export const rosterGovernanceService = {
         `UPDATE roster_daily_assignment
             SET shift_template_id = ?, updated_at = NOW()
           WHERE cycle_id = ? AND employee_id = ? AND roster_date = ?`,
-        [input.newShiftId, cycleId, input.employeeId, input.date]
+        [input.newShiftId, cycleId, input.employeeId, input.date],
       );
     }
 
@@ -637,7 +933,7 @@ export const rosterGovernanceService = {
 
     const [rows] = await db.execute<ChangeLog[]>(
       "SELECT * FROM roster_change_log WHERE id = ? LIMIT 1",
-      [changeId]
+      [changeId],
     );
     return rows[0];
   },
@@ -645,14 +941,26 @@ export const rosterGovernanceService = {
   // ── Coverage Actions ────────────────────────────────────────────────────────
 
   async getCoverageAction(id: string): Promise<CoverageAction> {
-    const [rows] = await db.execute<CoverageAction[]>("SELECT * FROM roster_coverage_action WHERE id = ? LIMIT 1", [id]);
-    if (!rows[0]) throw Object.assign(new Error("Coverage action not found"), { statusCode: 404 });
+    const [rows] = await db.execute<CoverageAction[]>(
+      "SELECT * FROM roster_coverage_action WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (!rows[0])
+      throw Object.assign(new Error("Coverage action not found"), {
+        statusCode: 404,
+      });
     return rows[0];
   },
 
-  async createCoverageAction(input: CreateCoverageActionInput, userId: string, req?: Request): Promise<CoverageAction> {
+  async createCoverageAction(
+    input: CreateCoverageActionInput,
+    userId: string,
+    req?: Request,
+  ): Promise<CoverageAction> {
     if (!input.cycle_id || !input.action_date) {
-      throw Object.assign(new Error("cycle_id and action_date are required"), { statusCode: 400 });
+      throw Object.assign(new Error("cycle_id and action_date are required"), {
+        statusCode: 400,
+      });
     }
     const cycle = await this.getCycle(input.cycle_id);
     const id = randomUUID();
@@ -661,25 +969,67 @@ export const rosterGovernanceService = {
          (id, cycle_id, action_date, process_id, coverage_gap, root_cause, recovery_plan,
           owner_user_id, due_by, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, input.cycle_id, input.action_date, cycle.process_id, input.coverage_gap ?? 0, input.root_cause ?? null, input.recovery_plan ?? null, input.owner_user_id ?? null, input.due_by ?? null, userId]
+      [
+        id,
+        input.cycle_id,
+        input.action_date,
+        cycle.process_id,
+        input.coverage_gap ?? 0,
+        input.root_cause ?? null,
+        input.recovery_plan ?? null,
+        input.owner_user_id ?? null,
+        input.due_by ?? null,
+        userId,
+      ],
     );
-    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_COVERAGE_ACTION_CREATED", module_key: "roster_gov", entity_type: "roster_coverage_action", entity_id: id, change_summary: { cycle_id: input.cycle_id, process_id: cycle.process_id }, req });
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "ROSTER_COVERAGE_ACTION_CREATED",
+      module_key: "roster_gov",
+      entity_type: "roster_coverage_action",
+      entity_id: id,
+      change_summary: {
+        cycle_id: input.cycle_id,
+        process_id: cycle.process_id,
+      },
+      req,
+    });
     return this.getCoverageAction(id);
   },
 
-  async resolveCoverageAction(id: string, userId: string, req?: Request): Promise<CoverageAction> {
+  async resolveCoverageAction(
+    id: string,
+    userId: string,
+    req?: Request,
+  ): Promise<CoverageAction> {
     await this.getCoverageAction(id);
     const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-    await db.execute("UPDATE roster_coverage_action SET status = 'resolved', resolved_at = ? WHERE id = ?", [now, id]);
-    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_COVERAGE_ACTION_RESOLVED", module_key: "roster_gov", entity_type: "roster_coverage_action", entity_id: id, req });
+    await db.execute(
+      "UPDATE roster_coverage_action SET status = 'resolved', resolved_at = ? WHERE id = ?",
+      [now, id],
+    );
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "ROSTER_COVERAGE_ACTION_RESOLVED",
+      module_key: "roster_gov",
+      entity_type: "roster_coverage_action",
+      entity_id: id,
+      req,
+    });
     return this.getCoverageAction(id);
   },
 
   // ── Portal Aggregate ─────────────────────────────────────────────────────────
 
-  async getPortalAggregate(filters: { process_id: string; week_start_date: string }): Promise<PortalAggregate[]> {
+  async getPortalAggregate(filters: {
+    process_id: string;
+    week_start_date: string;
+  }): Promise<PortalAggregate[]> {
     if (!filters.process_id || !filters.week_start_date) {
-      throw Object.assign(new Error("process_id and week_start_date are required"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("process_id and week_start_date are required"),
+        { statusCode: 400 },
+      );
     }
     const [rows] = await db.execute<PortalAggregate[]>(
       `SELECT pra.*
@@ -690,7 +1040,7 @@ export const rosterGovernanceService = {
           AND wrc.status IN ('published','acknowledged','active','attendance_locked','payroll_input_ready','closed')
           AND pra.published_at IS NOT NULL
         ORDER BY pra.published_at DESC`,
-      [filters.process_id, filters.week_start_date]
+      [filters.process_id, filters.week_start_date],
     );
     return rows;
   },

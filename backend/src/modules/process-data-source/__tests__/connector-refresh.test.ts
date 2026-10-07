@@ -9,27 +9,40 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * and the aggregate must come from a fixed whitelist, never straight from the
  * request. These tests fail if either guard is removed.
  */
-const { execute, getPoolForKey, getCredentialsForKey, poolQuery } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  getPoolForKey: vi.fn(),
-  getCredentialsForKey: vi.fn(),
-  poolQuery: vi.fn(),
-}));
+const { execute, getPoolForKey, getCredentialsForKey, poolQuery } = vi.hoisted(
+  () => ({
+    execute: vi.fn(),
+    getPoolForKey: vi.fn(),
+    getCredentialsForKey: vi.fn(),
+    poolQuery: vi.fn(),
+  }),
+);
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../external-db/external-db.service.js", () => ({ getPoolForKey, getCredentialsForKey }));
+vi.mock("../../external-db/external-db.service.js", () => ({
+  getPoolForKey,
+  getCredentialsForKey,
+}));
 
 const svc = await import("../connector-refresh.service.js");
 
 const BASE = {
-  connectorKey: "proc_abc123", processId: "p1", metricKey: "abc_prepaid_pct",
-  table: "orders", valueColumn: "prepaid_flag", aggregate: "AVG" as const,
-  dateColumn: "order_date", from: "2026-08-01", to: "2026-08-31",
+  connectorKey: "proc_abc123",
+  processId: "p1",
+  metricKey: "abc_prepaid_pct",
+  table: "orders",
+  valueColumn: "prepaid_flag",
+  aggregate: "AVG" as const,
+  dateColumn: "order_date",
+  from: "2026-08-01",
+  to: "2026-08-31",
 };
 
 describe("refreshConnectorMetric", () => {
   beforeEach(() => {
-    execute.mockReset(); poolQuery.mockReset();
-    getPoolForKey.mockReset(); getCredentialsForKey.mockReset();
+    execute.mockReset();
+    poolQuery.mockReset();
+    getPoolForKey.mockReset();
+    getCredentialsForKey.mockReset();
     getPoolForKey.mockResolvedValue({ query: poolQuery });
     getCredentialsForKey.mockResolvedValue({ db_type: "mysql" });
     execute.mockResolvedValue([{ affectedRows: 1 }, []]);
@@ -40,30 +53,37 @@ describe("refreshConnectorMetric", () => {
     // and no backtick identifiers, so casting the pool union would produce an
     // opaque driver error rather than an answerable one.
     getCredentialsForKey.mockResolvedValue({ db_type: "mssql" });
-    await expect(svc.refreshConnectorMetric(BASE)).rejects.toThrow(/SQL Server .* not supported/i);
+    await expect(svc.refreshConnectorMetric(BASE)).rejects.toThrow(
+      /SQL Server .* not supported/i,
+    );
     expect(poolQuery).not.toHaveBeenCalled();
   });
 
   it("fails clearly when the connector has no stored credentials", async () => {
     getCredentialsForKey.mockResolvedValue(null);
-    await expect(svc.refreshConnectorMetric(BASE)).rejects.toThrow(/No credentials configured/);
+    await expect(svc.refreshConnectorMetric(BASE)).rejects.toThrow(
+      /No credentials configured/,
+    );
   });
 
   it("rejects an identifier that is not a plain column name", async () => {
-    await expect(svc.refreshConnectorMetric({ ...BASE, valueColumn: "x; DROP TABLE y" }))
-      .rejects.toThrow();
+    await expect(
+      svc.refreshConnectorMetric({ ...BASE, valueColumn: "x; DROP TABLE y" }),
+    ).rejects.toThrow();
     expect(poolQuery).not.toHaveBeenCalled();
   });
 
   it("rejects a table name carrying a quote", async () => {
-    await expect(svc.refreshConnectorMetric({ ...BASE, table: "orders`--" }))
-      .rejects.toThrow();
+    await expect(
+      svc.refreshConnectorMetric({ ...BASE, table: "orders`--" }),
+    ).rejects.toThrow();
     expect(poolQuery).not.toHaveBeenCalled();
   });
 
   it("rejects an aggregate outside the whitelist", async () => {
-    await expect(svc.refreshConnectorMetric({ ...BASE, aggregate: "SLEEP" as never }))
-      .rejects.toThrow(/aggregate/i);
+    await expect(
+      svc.refreshConnectorMetric({ ...BASE, aggregate: "SLEEP" as never }),
+    ).rejects.toThrow(/aggregate/i);
     expect(poolQuery).not.toHaveBeenCalled();
   });
 
@@ -76,13 +96,18 @@ describe("refreshConnectorMetric", () => {
   });
 
   it("writes one row per day returned, tagged as connector-sourced", async () => {
-    poolQuery.mockResolvedValue([[
-      { d: "2026-08-01", v: "0.82" },
-      { d: "2026-08-02", v: "0.79" },
-    ], []]);
+    poolQuery.mockResolvedValue([
+      [
+        { d: "2026-08-01", v: "0.82" },
+        { d: "2026-08-02", v: "0.79" },
+      ],
+      [],
+    ]);
     const out = await svc.refreshConnectorMetric(BASE);
     expect(out.written).toBe(2);
-    const insert = execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO process_metric_actual"));
+    const insert = execute.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO process_metric_actual"),
+    );
     expect(insert).toBeTruthy();
     // 'connector' is a SQL literal (the source is never caller-supplied);
     // the connector key it came from is bound.
@@ -101,6 +126,11 @@ describe("refreshConnectorMetric", () => {
   it("issues only a SELECT against the client's database", async () => {
     poolQuery.mockResolvedValue([[], []]);
     await svc.refreshConnectorMetric(BASE);
-    expect(String(poolQuery.mock.calls[0][0]).trim().toUpperCase().startsWith("SELECT")).toBe(true);
+    expect(
+      String(poolQuery.mock.calls[0][0])
+        .trim()
+        .toUpperCase()
+        .startsWith("SELECT"),
+    ).toBe(true);
   });
 });

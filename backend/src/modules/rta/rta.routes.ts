@@ -20,7 +20,8 @@ import type { RowDataPacket } from "mysql2";
 export const rtaRouter = Router();
 rtaRouter.use(requireAuth);
 
-const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h = (fn: Function) => (req: any, res: any, next: any) =>
+  fn(req, res).catch(next);
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -35,19 +36,25 @@ rtaRouter.post(
     const schema = z.object({
       date: z.string().regex(DATE_RE),
       processName: z.string().optional(),
-      branchName:  z.string().optional(),
+      branchName: z.string().optional(),
     });
     const { date, processName, branchName } = schema.parse(req.body);
 
     const result = await reconciliationService.reconcileDate(date, {
-      processName, branchName, userId: req.authUser!.id,
+      processName,
+      branchName,
+      userId: req.authUser!.id,
     });
 
     // Fire alerts after reconciliation
-    const alertCount = await alertService.fireAlertsForDate(date, { userId: req.authUser!.id });
+    const alertCount = await alertService.fireAlertsForDate(date, {
+      userId: req.authUser!.id,
+    });
 
     // Build shrinkage snapshot
-    await shrinkageService.calculateSnapshot(date, { userId: req.authUser!.id });
+    await shrinkageService.calculateSnapshot(date, {
+      userId: req.authUser!.id,
+    });
 
     void logSensitiveAction({
       actor_user_id: req.authUser!.id,
@@ -59,8 +66,11 @@ rtaRouter.post(
       req,
     });
 
-    return res.json({ success: true, data: { ...result, alerts_fired: alertCount } });
-  })
+    return res.json({
+      success: true,
+      data: { ...result, alerts_fired: alertCount },
+    });
+  }),
 );
 
 // GET /api/rta/reconciliation — list records
@@ -69,26 +79,34 @@ rtaRouter.get(
   requireRole("admin", "hr", "wfm", "process_manager", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
-      fromDate:    z.string().regex(DATE_RE),
-      toDate:      z.string().regex(DATE_RE),
-      employeeId:  z.string().uuid().optional(),
-      processId:   z.string().uuid().optional(),
+      fromDate: z.string().regex(DATE_RE),
+      toDate: z.string().regex(DATE_RE),
+      employeeId: z.string().uuid().optional(),
+      processId: z.string().uuid().optional(),
       processName: z.string().optional(),
-      status:      z.string().optional(),
-      branchId:    z.string().uuid().optional(),
-      page:        z.coerce.number().int().min(1).default(1),
-      limit:       z.coerce.number().int().min(1).max(200).default(50),
+      status: z.string().optional(),
+      branchId: z.string().uuid().optional(),
+      page: z.coerce.number().int().min(1).default(1),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
     });
     const filters = schema.parse(req.query);
-    const result  = await reconciliationService.listReconciliation(filters);
+    const result = await reconciliationService.listReconciliation(filters);
     return res.json({ success: true, ...result });
-  })
+  }),
 );
 
 // GET /api/rta/live-summary — bearer-authenticated live attendance summary.
 rtaRouter.get(
   "/live-summary",
-  requireRole("admin", "hr", "wfm", "process_manager", "team_leader", "assistant_manager", "manager"),
+  requireRole(
+    "admin",
+    "hr",
+    "wfm",
+    "process_manager",
+    "team_leader",
+    "assistant_manager",
+    "manager",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       date: z.string().regex(DATE_RE),
@@ -98,7 +116,7 @@ rtaRouter.get(
     const { date, processId, branchId } = schema.parse(req.query);
     const data = await getLiveAttendanceSummary(date, { processId, branchId });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Shrinkage ────────────────────────────────────────────────────────────────
@@ -109,15 +127,15 @@ rtaRouter.get(
   requireRole("admin", "hr", "wfm", "process_manager", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
-      fromDate:  z.string().regex(DATE_RE),
-      toDate:    z.string().regex(DATE_RE),
+      fromDate: z.string().regex(DATE_RE),
+      toDate: z.string().regex(DATE_RE),
       processId: z.string().uuid().optional(),
-      branchId:  z.string().uuid().optional(),
+      branchId: z.string().uuid().optional(),
     });
     const filters = schema.parse(req.query);
     const data = await shrinkageService.listSnapshots(filters);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // POST /api/rta/shrinkage/snapshot — manually compute snapshot for a date
@@ -126,14 +144,18 @@ rtaRouter.post(
   requireRole("admin", "hr", "wfm"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
-      date:      z.string().regex(DATE_RE),
+      date: z.string().regex(DATE_RE),
       processId: z.string().uuid().optional(),
-      branchId:  z.string().uuid().optional(),
+      branchId: z.string().uuid().optional(),
     });
     const { date, processId, branchId } = schema.parse(req.body);
-    const data = await shrinkageService.calculateSnapshot(date, { processId, branchId, userId: req.authUser!.id });
+    const data = await shrinkageService.calculateSnapshot(date, {
+      processId,
+      branchId,
+      userId: req.authUser!.id,
+    });
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Adherence Alerts ─────────────────────────────────────────────────────────
@@ -141,22 +163,31 @@ rtaRouter.post(
 // GET /api/rta/alerts
 rtaRouter.get(
   "/alerts",
-  requireRole("admin", "hr", "wfm", "process_manager", "team_leader", "assistant_manager"),
+  requireRole(
+    "admin",
+    "hr",
+    "wfm",
+    "process_manager",
+    "team_leader",
+    "assistant_manager",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
-      fromDate:   z.string().regex(DATE_RE).optional(),
-      toDate:     z.string().regex(DATE_RE).optional(),
-      status:     z.enum(["open", "acknowledged", "resolved", "suppressed"]).optional(),
-      processId:  z.string().uuid().optional(),
+      fromDate: z.string().regex(DATE_RE).optional(),
+      toDate: z.string().regex(DATE_RE).optional(),
+      status: z
+        .enum(["open", "acknowledged", "resolved", "suppressed"])
+        .optional(),
+      processId: z.string().uuid().optional(),
       employeeId: z.string().uuid().optional(),
-      branchId:   z.string().uuid().optional(),
-      page:       z.coerce.number().int().min(1).default(1),
-      limit:      z.coerce.number().int().min(1).max(200).default(50),
+      branchId: z.string().uuid().optional(),
+      page: z.coerce.number().int().min(1).default(1),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
     });
     const filters = schema.parse(req.query);
     const data = await alertService.listAlerts(filters);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // PATCH /api/rta/alerts/:id/acknowledge
@@ -166,7 +197,7 @@ rtaRouter.patch(
   h(async (req: AuthenticatedRequest, res: Response) => {
     await alertService.acknowledgeAlert(req.params.id, req.authUser!.id);
     return res.json({ success: true, message: "Alert acknowledged" });
-  })
+  }),
 );
 
 // ─── Leave Staffing Impact ────────────────────────────────────────────────────
@@ -176,9 +207,11 @@ rtaRouter.post(
   "/leave-impact/:leaveRequestId",
   requireRole("admin", "hr", "wfm"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const days = await leaveImpactService.calculateLeaveImpact(req.params.leaveRequestId);
+    const days = await leaveImpactService.calculateLeaveImpact(
+      req.params.leaveRequestId,
+    );
     return res.json({ success: true, data: { days_impacted: days } });
-  })
+  }),
 );
 
 // GET /api/rta/leave-impact — list impacts
@@ -187,14 +220,14 @@ rtaRouter.get(
   requireRole("admin", "hr", "wfm", "process_manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
-      fromDate:    z.string().regex(DATE_RE).optional(),
-      toDate:      z.string().regex(DATE_RE).optional(),
+      fromDate: z.string().regex(DATE_RE).optional(),
+      toDate: z.string().regex(DATE_RE).optional(),
       impactLevel: z.enum(["low", "medium", "high", "critical"]).optional(),
     });
     const filters = schema.parse(req.query);
     const data = await leaveImpactService.listImpacts(filters);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Payroll Readiness ────────────────────────────────────────────────────────
@@ -207,13 +240,15 @@ rtaRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       periodStart: z.string().regex(DATE_RE),
-      periodEnd:   z.string().regex(DATE_RE),
-      processId:   z.string().uuid().optional(),
+      periodEnd: z.string().regex(DATE_RE),
+      processId: z.string().uuid().optional(),
     });
     const { periodStart, periodEnd, processId } = schema.parse(req.body);
 
     const result = await payrollReadinessService.generateReadinessFlags(
-      periodStart, periodEnd, { processId, userId: req.authUser!.id }
+      periodStart,
+      periodEnd,
+      { processId, userId: req.authUser!.id },
     );
 
     void logSensitiveAction({
@@ -227,7 +262,7 @@ rtaRouter.post(
     });
 
     return res.json({ success: true, data: result });
-  })
+  }),
 );
 
 // GET /api/rta/payroll-readiness — list flags
@@ -237,15 +272,15 @@ rtaRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       periodStart: z.string().regex(DATE_RE).optional(),
-      status:      z.string().optional(),
-      employeeId:  z.string().uuid().optional(),
-      page:        z.coerce.number().int().min(1).default(1),
-      limit:       z.coerce.number().int().min(1).max(200).default(50),
+      status: z.string().optional(),
+      employeeId: z.string().uuid().optional(),
+      page: z.coerce.number().int().min(1).default(1),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
     });
     const filters = schema.parse(req.query);
     const data = await payrollReadinessService.listFlags(filters);
     return res.json({ success: true, data });
-  })
+  }),
 );
 
 // ─── Live Attendance SSE Stream ───────────────────────────────────────────────
@@ -263,16 +298,23 @@ rtaRouter.get("/live-stream", (req, res) => {
   res.flushHeaders();
 
   const processId = req.query.process_id as string | undefined;
-  const branchId  = req.query.branch_id  as string | undefined;
-  const date      = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+  const branchId = req.query.branch_id as string | undefined;
+  const date =
+    (req.query.date as string) || new Date().toISOString().slice(0, 10);
 
   const sendSnapshot = async () => {
     try {
       const conds: string[] = ["s.session_date = ?"];
       const params: unknown[] = [date];
 
-      if (processId) { conds.push("e.process_id = ?"); params.push(processId); }
-      if (branchId)  { conds.push("e.branch_id = ?");  params.push(branchId);  }
+      if (processId) {
+        conds.push("e.process_id = ?");
+        params.push(processId);
+      }
+      if (branchId) {
+        conds.push("e.branch_id = ?");
+        params.push(branchId);
+      }
 
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT
@@ -287,7 +329,7 @@ rtaRouter.get("/live-stream", (req, res) => {
          WHERE LOWER(e.employment_status) = 'active'
            AND e.active_status = 1
            ${processId ? "AND e.process_id = ?" : ""}
-           ${branchId  ? "AND e.branch_id = ?"  : ""}`,
+           ${branchId ? "AND e.branch_id = ?" : ""}`,
         [date, ...params],
       );
 
@@ -311,20 +353,31 @@ rtaRouter.get("/live-stream", (req, res) => {
 // GET /api/rta/final-roster-state?processId=&date=
 // Returns per-employee RTA state from wfm_roster_assignment.
 // Only returns records with final_roster_status suitable for live tracking.
-rtaRouter.get("/final-roster-state", requireRole("admin", "wfm", "hr", "manager", "operations_manager"), h(async (req: any, res: any) => {
-  const { processId, branchId, date } = req.query;
-  if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: "date (YYYY-MM-DD) is required" });
+rtaRouter.get(
+  "/final-roster-state",
+  requireRole("admin", "wfm", "hr", "manager", "operations_manager"),
+  h(async (req: any, res: any) => {
+    const { processId, branchId, date } = req.query;
+    if (!date || !DATE_RE.test(date))
+      return res.status(400).json({ error: "date (YYYY-MM-DD) is required" });
 
-  const params: unknown[] = [date];
-  let processCond = "";
-  if (processId) { processCond = " AND pm.id = ?"; params.push(processId); }
-  // wfm_roster_assignment stores branch_name, not branch_id (same shape the
-  // shrinkage snapshot query already works around) — resolve the id to a name.
-  let branchCond = "";
-  if (branchId) { branchCond = " AND wra.branch_name = (SELECT branch_name FROM branch_master WHERE id = ?)"; params.push(branchId); }
+    const params: unknown[] = [date];
+    let processCond = "";
+    if (processId) {
+      processCond = " AND pm.id = ?";
+      params.push(processId);
+    }
+    // wfm_roster_assignment stores branch_name, not branch_id (same shape the
+    // shrinkage snapshot query already works around) — resolve the id to a name.
+    let branchCond = "";
+    if (branchId) {
+      branchCond =
+        " AND wra.branch_name = (SELECT branch_name FROM branch_master WHERE id = ?)";
+      params.push(branchId);
+    }
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT wra.id, wra.employee_id, wra.roster_date, wra.is_week_off,
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT wra.id, wra.employee_id, wra.roster_date, wra.is_week_off,
             wra.final_roster_status, wra.employee_ack_status,
             wra.manager_action_status, wra.system_decision_reason,
             wst.shift_name, wst.start_time, wst.end_time,
@@ -358,7 +411,8 @@ rtaRouter.get("/final-roster-state", requireRole("admin", "wfm", "hr", "manager"
           'published_to_rta'
         )${processCond}${branchCond}
       ORDER BY e.employee_code ASC`,
-    params
-  );
-  return res.json({ success: true, data: rows });
-}));
+      params,
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { parseDateTime, cleanText, DALMIA_AFTER_HOUR_HEADERS } from "../dalmia-after-hour-bulk.service.js";
+import {
+  parseDateTime,
+  cleanText,
+  DALMIA_AFTER_HOUR_HEADERS,
+} from "../dalmia-after-hour-bulk.service.js";
 
 describe("parseDateTime", () => {
   it("reads the real Date sample", () => {

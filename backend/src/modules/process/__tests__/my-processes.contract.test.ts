@@ -18,7 +18,9 @@ import { processController } from "../process.controller.js";
 
 /** Literal paths in the order Express will try them. */
 function registeredGetPaths(): string[] {
-  const stack = (processRouter as unknown as { stack: Array<Record<string, any>> }).stack ?? [];
+  const stack =
+    (processRouter as unknown as { stack: Array<Record<string, any>> }).stack ??
+    [];
   return stack
     .filter((layer) => layer.route && layer.route.methods?.get)
     .map((layer) => String(layer.route.path));
@@ -34,10 +36,13 @@ describe("GET /my-processes route registration", () => {
     const mine = paths.indexOf("/my-processes");
     const wildcard = paths.indexOf("/:id");
 
-    expect(mine, "/my-processes is not registered on processRouter at all").toBeGreaterThan(-1);
+    expect(
+      mine,
+      "/my-processes is not registered on processRouter at all",
+    ).toBeGreaterThan(-1);
     expect(
       wildcard === -1 || mine < wildcard,
-      `"/my-processes" must be registered before "/:id". Current order: ${paths.join(", ")}`
+      `"/my-processes" must be registered before "/:id". Current order: ${paths.join(", ")}`,
     ).toBe(true);
   });
 });
@@ -51,8 +56,14 @@ describe("GET /my-processes identity handling", () => {
     let status = 0;
     let body: unknown = null;
     const res = {
-      status(code: number) { status = code; return this; },
-      json(payload: unknown) { body = payload; return this; },
+      status(code: number) {
+        status = code;
+        return this;
+      },
+      json(payload: unknown) {
+        body = payload;
+        return this;
+      },
     };
 
     const req = { authUser: undefined, query: { userId: "somebody-elses-id" } };
@@ -60,7 +71,10 @@ describe("GET /my-processes identity handling", () => {
     return processController
       .listMyProcesses(req as never, res as never)
       .then(() => {
-        expect(status, "an unauthenticated caller supplying ?userId must be refused").toBe(401);
+        expect(
+          status,
+          "an unauthenticated caller supplying ?userId must be refused",
+        ).toBe(401);
         expect(body).toMatchObject({ success: false });
       });
   });

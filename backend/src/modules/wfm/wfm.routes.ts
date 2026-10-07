@@ -35,7 +35,10 @@ wfmRouter.use(requireAuth);
 wfmRouter.use("/attendance", attendanceAprBulkRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 // WFM Analytics (Dashboard)
 wfmRouter.get(
@@ -44,79 +47,112 @@ wfmRouter.get(
   h(async (req, res) => {
     const summary = await getWfmAnalyticsSummary();
     res.json({ success: true, data: summary });
-  })
+  }),
 );
 
 // Attendance policy (customizable)
-wfmRouter.get("/attendance-policy/:employeeId", requireRole("admin", "wfm", "manager"), async (req, res, next) => {
-  try {
-    const policy = await wfmService.getAttendancePolicy(req.params.employeeId);
-    res.json(policy);
-  } catch (error) {
-    next(error);
-  }
-});
+wfmRouter.get(
+  "/attendance-policy/:employeeId",
+  requireRole("admin", "wfm", "manager"),
+  async (req, res, next) => {
+    try {
+      const policy = await wfmService.getAttendancePolicy(
+        req.params.employeeId,
+      );
+      res.json(policy);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // Shifts
-wfmRouter.get("/shifts",          requireRole("admin", "wfm", "manager"), h(wfmController.listShifts.bind(wfmController)));
-wfmRouter.post("/shifts",         requireRole("admin", "wfm"), h(wfmController.createShift.bind(wfmController)));
-wfmRouter.get("/shifts/:id",      requireRole("admin", "wfm", "manager"), h(wfmController.getShift.bind(wfmController)));
-wfmRouter.put("/shifts/:id",      requireRole("admin", "wfm"), h(wfmController.updateShift.bind(wfmController)));
+wfmRouter.get(
+  "/shifts",
+  requireRole("admin", "wfm", "manager"),
+  h(wfmController.listShifts.bind(wfmController)),
+);
+wfmRouter.post(
+  "/shifts",
+  requireRole("admin", "wfm"),
+  h(wfmController.createShift.bind(wfmController)),
+);
+wfmRouter.get(
+  "/shifts/:id",
+  requireRole("admin", "wfm", "manager"),
+  h(wfmController.getShift.bind(wfmController)),
+);
+wfmRouter.put(
+  "/shifts/:id",
+  requireRole("admin", "wfm"),
+  h(wfmController.updateShift.bind(wfmController)),
+);
 
 // Attendance calendar - daily attendance data for date range
-wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
-  const { employeeId, fromDate, toDate } = req.query;
-  if (!employeeId) {
-    // No employeeId means a self/team/branch/process-scoped, multi-employee
-    // query (e.g. "everyone on my team for today") rather than one
-    // employee's history across a date range — a different query shape than
-    // the rest of this handler builds below. TeamAttendanceTab.tsx calls
-    // exactly this way (date, no employeeId) and got a flat 400 here before
-    // this fix, because this route — mounted at app.ts:334 — always wins the
-    // full path /api/wfm/attendance/daily over attendance-daily-scoped.routes.ts's
-    // own matching mount (app.ts:516, registered later, Express resolves by
-    // registration order for an overlapping exact path). That router's
-    // handler already implements exactly this scoping correctly, so this
-    // delegates to it rather than duplicating ~130 lines of scope-building
-    // SQL; the employeeId-provided path below is completely unchanged for
-    // the five other callers (ADRAttendanceCalendar, useAttendance,
-    // useAttendanceHub, NativeEmployeeStatCard, MyAttendanceHistory) that
-    // already pass employeeId and depend on its exact response shape.
-    return scopedAttendanceDailyHandler(req, res);
-  }
-
-  // Ownership + role check: employees may only view their own attendance;
-  // admin/hr/wfm/manager/branch_head/process_manager may view any employee.
-  const PRIVILEGED_ROLES = new Set(['admin', 'hr', 'wfm', 'manager', 'branch_head', 'process_manager', 'super_admin', 'ceo']);
-  const { hasRole } = await import("../../shared/accessGuard.js");
-  const isPrivileged = await hasRole(req.authUser.id, ...PRIVILEGED_ROLES);
-  if (!isPrivileged) {
-    const selfEmp = await getEmployeeForUser(req.authUser.id);
-    if (!selfEmp || selfEmp.id !== employeeId) {
-      return res.status(403).json({ success: false, error: "Forbidden" });
+wfmRouter.get(
+  "/attendance/daily",
+  h(async (req: any, res: any) => {
+    const { employeeId, fromDate, toDate } = req.query;
+    if (!employeeId) {
+      // No employeeId means a self/team/branch/process-scoped, multi-employee
+      // query (e.g. "everyone on my team for today") rather than one
+      // employee's history across a date range — a different query shape than
+      // the rest of this handler builds below. TeamAttendanceTab.tsx calls
+      // exactly this way (date, no employeeId) and got a flat 400 here before
+      // this fix, because this route — mounted at app.ts:334 — always wins the
+      // full path /api/wfm/attendance/daily over attendance-daily-scoped.routes.ts's
+      // own matching mount (app.ts:516, registered later, Express resolves by
+      // registration order for an overlapping exact path). That router's
+      // handler already implements exactly this scoping correctly, so this
+      // delegates to it rather than duplicating ~130 lines of scope-building
+      // SQL; the employeeId-provided path below is completely unchanged for
+      // the five other callers (ADRAttendanceCalendar, useAttendance,
+      // useAttendanceHub, NativeEmployeeStatCard, MyAttendanceHistory) that
+      // already pass employeeId and depend on its exact response shape.
+      return scopedAttendanceDailyHandler(req, res);
     }
-  }
 
-  const { db } = await import("../../db/mysql.js");
-  // The aliased columns (date/status/clock_in/clock_out/location/source) are read by
-  // six callers — TeamAttendanceTab, MyAttendanceHistory, useAttendance, useAttendanceHub,
-  // NativeEmployeeStatCard and the ADR calendar — so they stay exactly as they were.
-  //
-  // The unaliased columns below are additive. ADRAttendanceCalendar reads the raw ADR
-  // column names (attendance_source, lwp_value, mismatch_flag, is_locked, …) and this
-  // query returned none of them, so the APR/BIO badge, LWP figure, late mark, lock icon,
-  // mismatch banner and "last processed" line rendered blank or zero on every day —
-  // including fully processed ones. Returning both spellings keeps existing callers
-  // working while the ADR surface gets the fields it was written against.
-  // record_date is formatted rather than returned raw, matching its two sibling queries
-  // (attendance-daily-scoped.routes.ts and attendance-engine.service.ts, which both
-  // DATE_FORMAT it). Raw, it is a bare "2026-08-01" only because the pool sets
-  // dateStrings: true (backend/src/db/mysql.ts). Every calendar that reads this endpoint
-  // keys its day cells on a strict YYYY-MM-DD, so if that flag ever changes - or any
-  // serializer lands in between - record_date becomes "2026-07-31T18:30:00.000Z", every
-  // lookup misses, and the whole month renders blank while the table view, which slices
-  // to 10 chars, keeps working. Formatting here removes the dependency on a pool flag.
-  let sql = `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS date,
+    // Ownership + role check: employees may only view their own attendance;
+    // admin/hr/wfm/manager/branch_head/process_manager may view any employee.
+    const PRIVILEGED_ROLES = new Set([
+      "admin",
+      "hr",
+      "wfm",
+      "manager",
+      "branch_head",
+      "process_manager",
+      "super_admin",
+      "ceo",
+    ]);
+    const { hasRole } = await import("../../shared/accessGuard.js");
+    const isPrivileged = await hasRole(req.authUser.id, ...PRIVILEGED_ROLES);
+    if (!isPrivileged) {
+      const selfEmp = await getEmployeeForUser(req.authUser.id);
+      if (!selfEmp || selfEmp.id !== employeeId) {
+        return res.status(403).json({ success: false, error: "Forbidden" });
+      }
+    }
+
+    const { db } = await import("../../db/mysql.js");
+    // The aliased columns (date/status/clock_in/clock_out/location/source) are read by
+    // six callers — TeamAttendanceTab, MyAttendanceHistory, useAttendance, useAttendanceHub,
+    // NativeEmployeeStatCard and the ADR calendar — so they stay exactly as they were.
+    //
+    // The unaliased columns below are additive. ADRAttendanceCalendar reads the raw ADR
+    // column names (attendance_source, lwp_value, mismatch_flag, is_locked, …) and this
+    // query returned none of them, so the APR/BIO badge, LWP figure, late mark, lock icon,
+    // mismatch banner and "last processed" line rendered blank or zero on every day —
+    // including fully processed ones. Returning both spellings keeps existing callers
+    // working while the ADR surface gets the fields it was written against.
+    // record_date is formatted rather than returned raw, matching its two sibling queries
+    // (attendance-daily-scoped.routes.ts and attendance-engine.service.ts, which both
+    // DATE_FORMAT it). Raw, it is a bare "2026-08-01" only because the pool sets
+    // dateStrings: true (backend/src/db/mysql.ts). Every calendar that reads this endpoint
+    // keys its day cells on a strict YYYY-MM-DD, so if that flag ever changes - or any
+    // serializer lands in between - record_date becomes "2026-07-31T18:30:00.000Z", every
+    // lookup misses, and the whole month renders blank while the table view, which slices
+    // to 10 chars, keeps working. Formatting here removes the dependency on a pool flag.
+    let sql = `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS date,
                    attendance_status AS status,
                    clock_in_time AS clock_in,
                    clock_out_time AS clock_out,
@@ -139,32 +175,49 @@ wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
                    processed_at
             FROM attendance_daily_record
             WHERE employee_id = ?`;
-  const params: unknown[] = [employeeId];
+    const params: unknown[] = [employeeId];
 
-  if (fromDate) {
-    sql += " AND record_date >= ?";
-    params.push(fromDate);
-  }
-  if (toDate) {
-    sql += " AND record_date <= ?";
-    params.push(toDate);
-  }
+    if (fromDate) {
+      sql += " AND record_date >= ?";
+      params.push(fromDate);
+    }
+    if (toDate) {
+      sql += " AND record_date <= ?";
+      params.push(toDate);
+    }
 
-  sql += " ORDER BY record_date ASC";
-  const [rows] = await db.execute(sql, params);
+    sql += " ORDER BY record_date ASC";
+    const [rows] = await db.execute(sql, params);
 
-  return res.json({ success: true, data: rows });
-}));
+    return res.json({ success: true, data: rows });
+  }),
+);
 
 // Attendance sessions
-wfmRouter.post("/sessions/clock-in",  h(wfmController.clockIn.bind(wfmController)));  // Employee self-service
-wfmRouter.post("/sessions/clock-out", h(wfmController.clockOut.bind(wfmController))); // Employee self-service
-wfmRouter.get("/sessions",            requireRole("admin", "wfm", "manager"), h(wfmController.listSessions.bind(wfmController)));
-wfmRouter.post("/sessions/break",     h(wfmController.logBreak.bind(wfmController))); // Employee self-service
-wfmRouter.get("/sessions/:sessionId/breaks", h(async (req: any, res: any) => {
-  const breaks = await wfmService.getBreaksForSession(req.params.sessionId);
-  return res.json({ success: true, data: breaks });
-}));
+wfmRouter.post(
+  "/sessions/clock-in",
+  h(wfmController.clockIn.bind(wfmController)),
+); // Employee self-service
+wfmRouter.post(
+  "/sessions/clock-out",
+  h(wfmController.clockOut.bind(wfmController)),
+); // Employee self-service
+wfmRouter.get(
+  "/sessions",
+  requireRole("admin", "wfm", "manager"),
+  h(wfmController.listSessions.bind(wfmController)),
+);
+wfmRouter.post(
+  "/sessions/break",
+  h(wfmController.logBreak.bind(wfmController)),
+); // Employee self-service
+wfmRouter.get(
+  "/sessions/:sessionId/breaks",
+  h(async (req: any, res: any) => {
+    const breaks = await wfmService.getBreaksForSession(req.params.sessionId);
+    return res.json({ success: true, data: breaks });
+  }),
+);
 /**
  * GET /attendance/breaks?recordIds=a,b,c — breaks for several attendance records at once.
  *
@@ -187,327 +240,465 @@ wfmRouter.get("/sessions/:sessionId/breaks", h(async (req: any, res: any) => {
  */
 const MAX_BREAK_RECORD_IDS = 200;
 
-wfmRouter.get("/attendance/breaks", h(async (req: any, res: any) => {
-  const raw = String(req.query.recordIds ?? "").trim();
-  const recordIds = raw
-    .split(",")
-    .map((id: string) => id.trim())
-    .filter(Boolean)
-    // A month of attendance is ~31 rows; the cap only stops an unbounded IN list.
-    .slice(0, MAX_BREAK_RECORD_IDS);
-  if (recordIds.length === 0) return res.json({ success: true, data: [] });
+wfmRouter.get(
+  "/attendance/breaks",
+  h(async (req: any, res: any) => {
+    const raw = String(req.query.recordIds ?? "").trim();
+    const recordIds = raw
+      .split(",")
+      .map((id: string) => id.trim())
+      .filter(Boolean)
+      // A month of attendance is ~31 rows; the cap only stops an unbounded IN list.
+      .slice(0, MAX_BREAK_RECORD_IDS);
+    if (recordIds.length === 0) return res.json({ success: true, data: [] });
 
-  const callerEmp = await getEmployeeForUser(req.authUser!.id);
-  // No employee record means no attendance of one's own — an empty list, not an error.
-  if (!callerEmp) return res.json({ success: true, data: [] });
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    // No employee record means no attendance of one's own — an empty list, not an error.
+    if (!callerEmp) return res.json({ success: true, data: [] });
 
-  const placeholders = recordIds.map(() => "?").join(",");
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, session_id, break_start, break_end, break_type, created_at
+    const placeholders = recordIds.map(() => "?").join(",");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, session_id, break_start, break_end, break_type, created_at
        FROM wfm_break_log
       WHERE session_id IN (${placeholders})
         AND employee_id = ?
       ORDER BY break_start ASC`,
-    [...recordIds, callerEmp.id]
-  );
+      [...recordIds, callerEmp.id],
+    );
 
-  return res.json({
-    success: true,
-    data: rows.map((row) => ({
-      id: row.id,
-      attendance_record_id: row.session_id,
-      pause_time: row.break_start,
-      resume_time: row.break_end ?? null,
-      // wfm_break_log.break_type is VARCHAR NOT NULL DEFAULT 'Break'. It was neither selected nor
-      // mapped, so the Attendance page's LONG/MINI badge read undefined and always fell back.
-      break_type: row.break_type ?? null,
-      // wfm_break_log carries no geolocation. Returned as null rather than omitted so the
-      // client's AttendanceBreak shape is satisfied and "no location" is explicit.
-      pause_latitude: null,
-      pause_longitude: null,
-      pause_location_name: null,
-      resume_latitude: null,
-      resume_longitude: null,
-      resume_location_name: null,
-      created_at: row.created_at,
-    })),
-  });
-}));
+    return res.json({
+      success: true,
+      data: rows.map((row) => ({
+        id: row.id,
+        attendance_record_id: row.session_id,
+        pause_time: row.break_start,
+        resume_time: row.break_end ?? null,
+        // wfm_break_log.break_type is VARCHAR NOT NULL DEFAULT 'Break'. It was neither selected nor
+        // mapped, so the Attendance page's LONG/MINI badge read undefined and always fell back.
+        break_type: row.break_type ?? null,
+        // wfm_break_log carries no geolocation. Returned as null rather than omitted so the
+        // client's AttendanceBreak shape is satisfied and "no location" is explicit.
+        pause_latitude: null,
+        pause_longitude: null,
+        pause_location_name: null,
+        resume_latitude: null,
+        resume_longitude: null,
+        resume_location_name: null,
+        created_at: row.created_at,
+      })),
+    });
+  }),
+);
 
-wfmRouter.patch("/breaks/:breakId/end", h(async (req: any, res: any) => {
-  await wfmService.endBreak(req.params.breakId, req.authUser!.id);
-  return res.json({ success: true, message: "Break ended" });
-}));
+wfmRouter.patch(
+  "/breaks/:breakId/end",
+  h(async (req: any, res: any) => {
+    await wfmService.endBreak(req.params.breakId, req.authUser!.id);
+    return res.json({ success: true, message: "Break ended" });
+  }),
+);
 
 // Regularization routes moved to wfm.regularization.secure.routes.ts
 
 // Live tracker
-wfmRouter.get("/live", requireRole("admin", "wfm", "manager", "branch_head", "process_manager", "team_leader", "operations_manager"), async (req: any, res: any, next: any) => {
-  try {
-    const schema = z.object({
-      date:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      processName: z.string().optional(),
-      branchName:  z.string().optional(),
-    });
-    const filters = schema.parse(req.query);
-    const data = await getLiveTracker(filters);
-    return res.json({ success: true, data });
-  } catch (err) {
-    next(err);
-  }
-});
+wfmRouter.get(
+  "/live",
+  requireRole(
+    "admin",
+    "wfm",
+    "manager",
+    "branch_head",
+    "process_manager",
+    "team_leader",
+    "operations_manager",
+  ),
+  async (req: any, res: any, next: any) => {
+    try {
+      const schema = z.object({
+        date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        processName: z.string().optional(),
+        branchName: z.string().optional(),
+      });
+      const filters = schema.parse(req.query);
+      const data = await getLiveTracker(filters);
+      return res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // Roster Preferences
-wfmRouter.post("/roster-preferences", requireAuth, h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser.id);
-  if (!emp) return res.status(403).json({ error: "Employee record not found" });
-  const { preferredShiftId, preferredWeekOff, flexibility, notes, effectiveFrom } = req.body;
-  if (!flexibility || !effectiveFrom) return res.status(400).json({ error: "flexibility and effectiveFrom required" });
-  const result = await rosterPreferenceService.submit(emp.id, { preferredShiftId, preferredWeekOff, flexibility, notes, effectiveFrom });
-  res.status(201).json({ data: result });
-}));
+wfmRouter.post(
+  "/roster-preferences",
+  requireAuth,
+  h(async (req: any, res: any) => {
+    const emp = await getEmployeeForUser(req.authUser.id);
+    if (!emp)
+      return res.status(403).json({ error: "Employee record not found" });
+    const {
+      preferredShiftId,
+      preferredWeekOff,
+      flexibility,
+      notes,
+      effectiveFrom,
+    } = req.body;
+    if (!flexibility || !effectiveFrom)
+      return res
+        .status(400)
+        .json({ error: "flexibility and effectiveFrom required" });
+    const result = await rosterPreferenceService.submit(emp.id, {
+      preferredShiftId,
+      preferredWeekOff,
+      flexibility,
+      notes,
+      effectiveFrom,
+    });
+    res.status(201).json({ data: result });
+  }),
+);
 
-wfmRouter.get("/roster-preferences/my", requireAuth, h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser.id);
-  if (!emp) return res.status(403).json({ error: "Employee record not found" });
-  const prefs = await rosterPreferenceService.getMyPreferences(emp.id);
-  res.json({ data: prefs });
-}));
+wfmRouter.get(
+  "/roster-preferences/my",
+  requireAuth,
+  h(async (req: any, res: any) => {
+    const emp = await getEmployeeForUser(req.authUser.id);
+    if (!emp)
+      return res.status(403).json({ error: "Employee record not found" });
+    const prefs = await rosterPreferenceService.getMyPreferences(emp.id);
+    res.json({ data: prefs });
+  }),
+);
 
-wfmRouter.get("/roster-preferences/pending", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), h(async (_req: any, res: any) => {
-  const prefs = await rosterPreferenceService.getPending();
-  res.json({ data: prefs });
-}));
+wfmRouter.get(
+  "/roster-preferences/pending",
+  requireAuth,
+  requireRole("admin", "hr", "super_admin", "manager", "wfm"),
+  h(async (_req: any, res: any) => {
+    const prefs = await rosterPreferenceService.getPending();
+    res.json({ data: prefs });
+  }),
+);
 
-wfmRouter.patch("/roster-preferences/:id/approve", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), h(async (req: any, res: any) => {
-  await rosterPreferenceService.approve(req.params.id, req.authUser!.id);
-  res.json({ success: true });
-}));
+wfmRouter.patch(
+  "/roster-preferences/:id/approve",
+  requireAuth,
+  requireRole("admin", "hr", "super_admin", "manager", "wfm"),
+  h(async (req: any, res: any) => {
+    await rosterPreferenceService.approve(req.params.id, req.authUser!.id);
+    res.json({ success: true });
+  }),
+);
 
-wfmRouter.patch("/roster-preferences/:id/reject", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), h(async (req: any, res: any) => {
-  const { reason } = req.body;
-  await rosterPreferenceService.reject(req.params.id, req.authUser!.id, reason || "Rejected");
-  res.json({ success: true });
-}));
+wfmRouter.patch(
+  "/roster-preferences/:id/reject",
+  requireAuth,
+  requireRole("admin", "hr", "super_admin", "manager", "wfm"),
+  h(async (req: any, res: any) => {
+    const { reason } = req.body;
+    await rosterPreferenceService.reject(
+      req.params.id,
+      req.authUser!.id,
+      reason || "Rejected",
+    );
+    res.json({ success: true });
+  }),
+);
 
 // ── Notification Rules (Roster Notification Hub) ────────────────────────────
 // Was pure front-end mock — RosterNotificationHub.tsx held 8 hardcoded rules in React
 // state and "Save All Settings" only awaited a setTimeout, no backend call anywhere in
 // the file. wfm_notification_rule (migration 1755) gives this a real, persisted store;
 // these two endpoints are its entire backend.
-wfmRouter.get("/notification-rules", requireAuth, requireRole("admin", "hr", "super_admin", "wfm", "operations_manager"), h(async (_req: any, res: any) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, alert_type, alert_name, description, recipients_json, channels_json,
+wfmRouter.get(
+  "/notification-rules",
+  requireAuth,
+  requireRole("admin", "hr", "super_admin", "wfm", "operations_manager"),
+  h(async (_req: any, res: any) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, alert_type, alert_name, description, recipients_json, channels_json,
             frequency, enabled, threshold_pct, schedule_time, updated_at
        FROM wfm_notification_rule
-      ORDER BY alert_type`
-  );
-  const data = (rows as any[]).map((r) => ({
-    id: r.id,
-    alertType: r.alert_type,
-    alertName: r.alert_name,
-    description: r.description,
-    recipients: typeof r.recipients_json === "string" ? JSON.parse(r.recipients_json) : r.recipients_json,
-    channels: typeof r.channels_json === "string" ? JSON.parse(r.channels_json) : r.channels_json,
-    frequency: r.frequency,
-    enabled: !!r.enabled,
-    threshold: r.threshold_pct ?? undefined,
-    scheduleTime: r.schedule_time ?? undefined,
-  }));
-  res.json({ success: true, data });
-}));
+      ORDER BY alert_type`,
+    );
+    const data = (rows as any[]).map((r) => ({
+      id: r.id,
+      alertType: r.alert_type,
+      alertName: r.alert_name,
+      description: r.description,
+      recipients:
+        typeof r.recipients_json === "string"
+          ? JSON.parse(r.recipients_json)
+          : r.recipients_json,
+      channels:
+        typeof r.channels_json === "string"
+          ? JSON.parse(r.channels_json)
+          : r.channels_json,
+      frequency: r.frequency,
+      enabled: !!r.enabled,
+      threshold: r.threshold_pct ?? undefined,
+      scheduleTime: r.schedule_time ?? undefined,
+    }));
+    res.json({ success: true, data });
+  }),
+);
 
 // PUT /api/wfm/notification-rules — bulk upsert (the page always saves the whole rule set
 // at once via "Save All Settings"; each rule already exists from the migration's seed, so
 // this always UPDATEs by alert_type rather than needing a separate create path).
-wfmRouter.put("/notification-rules", requireAuth, requireRole("admin", "hr", "super_admin", "wfm", "operations_manager"), h(async (req: any, res: any) => {
-  const rules = Array.isArray(req.body?.rules) ? req.body.rules : [];
-  if (rules.length === 0) return res.status(400).json({ error: "rules array required" });
-  for (const rule of rules) {
-    if (!rule.alertType) continue;
-    await db.execute(
-      `UPDATE wfm_notification_rule
+wfmRouter.put(
+  "/notification-rules",
+  requireAuth,
+  requireRole("admin", "hr", "super_admin", "wfm", "operations_manager"),
+  h(async (req: any, res: any) => {
+    const rules = Array.isArray(req.body?.rules) ? req.body.rules : [];
+    if (rules.length === 0)
+      return res.status(400).json({ error: "rules array required" });
+    for (const rule of rules) {
+      if (!rule.alertType) continue;
+      await db.execute(
+        `UPDATE wfm_notification_rule
           SET recipients_json = ?, channels_json = ?, frequency = ?, enabled = ?,
               threshold_pct = ?, schedule_time = ?, updated_by = ?
         WHERE alert_type = ?`,
-      [
-        JSON.stringify(rule.recipients ?? []),
-        JSON.stringify(rule.channels ?? []),
-        rule.frequency ?? "immediate",
-        rule.enabled ? 1 : 0,
-        rule.threshold ?? null,
-        rule.scheduleTime ?? null,
-        req.authUser!.id,
-        rule.alertType,
-      ]
-    );
-  }
-  res.json({ success: true });
-}));
+        [
+          JSON.stringify(rule.recipients ?? []),
+          JSON.stringify(rule.channels ?? []),
+          rule.frequency ?? "immediate",
+          rule.enabled ? 1 : 0,
+          rule.threshold ?? null,
+          rule.scheduleTime ?? null,
+          req.authUser!.id,
+          rule.alertType,
+        ],
+      );
+    }
+    res.json({ success: true });
+  }),
+);
 
 // ── Week-Off Preference ────────────────────────────────────────────────────
-const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const DAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
 // POST /api/wfm/week-off-preference — employee submits preferred weekly off day
-wfmRouter.post("/week-off-preference", requireAuth, h(async (req: any, res: any) => {
-  const { z: zod } = await import("zod");
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const schema = zod.object({
-    preferredDay: zod.number().int().min(0).max(6),
-    alternateDay: zod.number().int().min(0).max(6).nullable().optional(),
-  });
-  const body = schema.parse(req.body);
-  const emp = await getEmployeeForUser(req.authUser.id);
-  if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
+wfmRouter.post(
+  "/week-off-preference",
+  requireAuth,
+  h(async (req: any, res: any) => {
+    const { z: zod } = await import("zod");
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const schema = zod.object({
+      preferredDay: zod.number().int().min(0).max(6),
+      alternateDay: zod.number().int().min(0).max(6).nullable().optional(),
+    });
+    const body = schema.parse(req.body);
+    const emp = await getEmployeeForUser(req.authUser.id);
+    if (!emp)
+      return res
+        .status(403)
+        .json({ success: false, error: "No employee record" });
 
-  await dbConn.execute(
-    `INSERT INTO week_off_preference (id, employee_id, preferred_day, alternate_day, approved, auto_approved)
+    await dbConn.execute(
+      `INSERT INTO week_off_preference (id, employee_id, preferred_day, alternate_day, approved, auto_approved)
      VALUES (UUID(), ?, ?, ?, 0, 0)
      ON DUPLICATE KEY UPDATE preferred_day = VALUES(preferred_day),
        alternate_day = VALUES(alternate_day), approved = 0, approved_by = NULL, approved_at = NULL`,
-    [emp.id, body.preferredDay, body.alternateDay ?? null]
-  );
+      [emp.id, body.preferredDay, body.alternateDay ?? null],
+    );
 
-  // Notify WFM lead(s) + reporting manager
-  if ((emp as any).branch_id) {
-    try {
-      const { inboxService } = await import('../inbox/inbox.service.js');
-      const empName = `${(emp as any).first_name} ${(emp as any).last_name ?? ''}`.trim();
-      const [wfmRows] = await dbConn.execute(
-        `SELECT e.user_id FROM user_assignment_scope uas
+    // Notify WFM lead(s) + reporting manager
+    if ((emp as any).branch_id) {
+      try {
+        const { inboxService } = await import("../inbox/inbox.service.js");
+        const empName =
+          `${(emp as any).first_name} ${(emp as any).last_name ?? ""}`.trim();
+        const [wfmRows] = await dbConn.execute(
+          `SELECT e.user_id FROM user_assignment_scope uas
          JOIN employees e ON e.id = uas.manager_employee_id
          WHERE uas.role_key = 'wfm' AND uas.branch_id = ? AND e.user_id IS NOT NULL`,
-        [(emp as any).branch_id]
-      );
-      for (const wfm of wfmRows as any[]) {
-        if (!wfm.user_id) continue;
-        await inboxService.createItem({
-          user_id: wfm.user_id,
-          type: 'week_off_preference',
-          title: `Week Off Preference: ${empName}`,
-          description: `${empName} (${(emp as any).employee_code}) has requested ${DAYS[body.preferredDay]} as weekly off day.`,
-          entity_type: 'employee',
-          entity_id: emp.id,
-          action_url: '/attendance/week-off-preferences',
-          priority: 'normal',
-        });
-      }
-      // Notify RM with lower priority (visibility only)
-      if ((emp as any).reporting_manager_id) {
-        const [rmRows] = await dbConn.execute(
-          `SELECT user_id FROM employees WHERE id = ? LIMIT 1`, [(emp as any).reporting_manager_id]
+          [(emp as any).branch_id],
         );
-        const rmUserId = (rmRows as any[])[0]?.user_id;
-        if (rmUserId) {
+        for (const wfm of wfmRows as any[]) {
+          if (!wfm.user_id) continue;
           await inboxService.createItem({
-            user_id: rmUserId,
-            type: 'week_off_preference',
-            title: `Week Off Request Submitted: ${empName}`,
-            description: `${empName} submitted week-off preference for ${DAYS[body.preferredDay]}. WFM lead will review.`,
-            entity_type: 'employee',
+            user_id: wfm.user_id,
+            type: "week_off_preference",
+            title: `Week Off Preference: ${empName}`,
+            description: `${empName} (${(emp as any).employee_code}) has requested ${DAYS[body.preferredDay]} as weekly off day.`,
+            entity_type: "employee",
             entity_id: emp.id,
-            action_url: '/attendance/week-off-preferences',
-            priority: 'low',
+            action_url: "/attendance/week-off-preferences",
+            priority: "normal",
           });
         }
+        // Notify RM with lower priority (visibility only)
+        if ((emp as any).reporting_manager_id) {
+          const [rmRows] = await dbConn.execute(
+            `SELECT user_id FROM employees WHERE id = ? LIMIT 1`,
+            [(emp as any).reporting_manager_id],
+          );
+          const rmUserId = (rmRows as any[])[0]?.user_id;
+          if (rmUserId) {
+            await inboxService.createItem({
+              user_id: rmUserId,
+              type: "week_off_preference",
+              title: `Week Off Request Submitted: ${empName}`,
+              description: `${empName} submitted week-off preference for ${DAYS[body.preferredDay]}. WFM lead will review.`,
+              entity_type: "employee",
+              entity_id: emp.id,
+              action_url: "/attendance/week-off-preferences",
+              priority: "low",
+            });
+          }
+        }
+      } catch {
+        // Non-fatal
       }
-    } catch {
-      // Non-fatal
     }
-  }
 
-  const [rows] = await (await import("../../db/mysql.js")).db.execute(
-    `SELECT wop.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name, e.employee_code
+    const [rows] = await (
+      await import("../../db/mysql.js")
+    ).db.execute(
+      `SELECT wop.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name, e.employee_code
      FROM week_off_preference wop LEFT JOIN employees e ON e.id = wop.employee_id
-     WHERE wop.employee_id = ? ORDER BY wop.created_at DESC LIMIT 1`, [emp.id]
-  );
-  return res.status(201).json({ success: true, data: (rows as any[])[0] });
-}));
+     WHERE wop.employee_id = ? ORDER BY wop.created_at DESC LIMIT 1`,
+      [emp.id],
+    );
+    return res.status(201).json({ success: true, data: (rows as any[])[0] });
+  }),
+);
 
 // GET /api/wfm/week-off-preference — list (role-based: own/downline/branch/all)
-wfmRouter.get("/week-off-preference", requireAuth, h(async (req: any, res: any) => {
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-  const { db: dbConn } = await import("../../db/mysql.js");
+wfmRouter.get(
+  "/week-off-preference",
+  requireAuth,
+  h(async (req: any, res: any) => {
+    const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+    const { db: dbConn } = await import("../../db/mysql.js");
 
-  const isAdmin = await checkRole(req.authUser.id, 'admin', 'hr', 'wfm');
-  let cond = '', params: unknown[] = [];
+    const isAdmin = await checkRole(req.authUser.id, "admin", "hr", "wfm");
+    let cond = "",
+      params: unknown[] = [];
 
-  if (isAdmin) {
-    // Admin/HR/WFM see all or filtered by branchId
-    if (req.query.branchId) {
-      cond = 'WHERE e.branch_id = ?';
-      params = [req.query.branchId];
-    }
-    // else no filter, see all
-  } else {
-    const emp = await getEmployeeForUser(req.authUser.id);
-    if (!emp) return res.status(403).json({ success: false, error: 'Forbidden' });
-
-    // 'team_lead' (no trailing 'er') was a typo — it matches no real role_key in
-    // workforce_role_catalog, so this branch could never recognize a team_leader caller
-    // regardless of intent. Corrected to 'team_leader', the canonical spelling used
-    // elsewhere in the backend.
-    const isManager = await checkRole(req.authUser.id, 'manager', 'tl', 'team_leader');
-    if (isManager) {
-      // Manager/TL sees direct reports (downline)
-      cond = 'WHERE e.reporting_manager_id = ?';
-      params = [emp.id];
+    if (isAdmin) {
+      // Admin/HR/WFM see all or filtered by branchId
+      if (req.query.branchId) {
+        cond = "WHERE e.branch_id = ?";
+        params = [req.query.branchId];
+      }
+      // else no filter, see all
     } else {
-      // Employee sees own only
-      cond = 'WHERE wop.employee_id = ?';
-      params = [emp.id];
-    }
-  }
+      const emp = await getEmployeeForUser(req.authUser.id);
+      if (!emp)
+        return res.status(403).json({ success: false, error: "Forbidden" });
 
-  const [rows] = await dbConn.execute(
-    `SELECT wop.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+      // 'team_lead' (no trailing 'er') was a typo — it matches no real role_key in
+      // workforce_role_catalog, so this branch could never recognize a team_leader caller
+      // regardless of intent. Corrected to 'team_leader', the canonical spelling used
+      // elsewhere in the backend.
+      const isManager = await checkRole(
+        req.authUser.id,
+        "manager",
+        "tl",
+        "team_leader",
+      );
+      if (isManager) {
+        // Manager/TL sees direct reports (downline)
+        cond = "WHERE e.reporting_manager_id = ?";
+        params = [emp.id];
+      } else {
+        // Employee sees own only
+        cond = "WHERE wop.employee_id = ?";
+        params = [emp.id];
+      }
+    }
+
+    const [rows] = await dbConn.execute(
+      `SELECT wop.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
        e.employee_code, b.branch_name
      FROM week_off_preference wop
      LEFT JOIN employees e ON e.id = wop.employee_id
      LEFT JOIN branch_master b ON b.id = e.branch_id
      ${cond}
-     ORDER BY wop.created_at DESC`, params
-  );
-  return res.json({ success: true, data: rows });
-}));
+     ORDER BY wop.created_at DESC`,
+      params,
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
 
 // PATCH /api/wfm/week-off-preference/:id/approve — WFM lead approves/rejects
-wfmRouter.patch("/week-off-preference/:id/approve", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const { z: zod } = await import("zod");
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { approved } = zod.object({ approved: zod.boolean() }).parse(req.body);
-  await dbConn.execute(
-    `UPDATE week_off_preference SET approved = ?, approved_by = ?, approved_at = NOW() WHERE id = ?`,
-    [approved ? 1 : 0, req.authUser.id, req.params.id]
-  );
-  const [rows] = await dbConn.execute(
-    `SELECT * FROM week_off_preference WHERE id = ? LIMIT 1`, [req.params.id]
-  );
-  return res.json({ success: true, data: (rows as any[])[0] });
-}));
+wfmRouter.patch(
+  "/week-off-preference/:id/approve",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const { z: zod } = await import("zod");
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const { approved } = zod
+      .object({ approved: zod.boolean() })
+      .parse(req.body);
+    await dbConn.execute(
+      `UPDATE week_off_preference SET approved = ?, approved_by = ?, approved_at = NOW() WHERE id = ?`,
+      [approved ? 1 : 0, req.authUser.id, req.params.id],
+    );
+    const [rows] = await dbConn.execute(
+      `SELECT * FROM week_off_preference WHERE id = ? LIMIT 1`,
+      [req.params.id],
+    );
+    return res.json({ success: true, data: (rows as any[])[0] });
+  }),
+);
 
 // ── Shift Rotation Type ────────────────────────────────────────────────────────
 
 // GET /api/wfm/rotation-summary?processId=&branchId= — per-type employee counts
-wfmRouter.get("/rotation-summary", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
-  const { processId, branchId } = req.query;
-  if (!processId) return res.status(400).json({ error: "processId is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const params: unknown[] = [processId];
-  let branchWhere = "";
-  if (branchId) { branchWhere = " AND e.branch_id = ?"; params.push(branchId); }
+wfmRouter.get(
+  "/rotation-summary",
+  requireAuth,
+  requireRole(
+    "admin",
+    "super_admin",
+    "wfm",
+    "hr",
+    "manager",
+    "branch_head",
+    "operations_manager",
+  ),
+  h(async (req: any, res: any) => {
+    const { processId, branchId } = req.query;
+    if (!processId)
+      return res.status(400).json({ error: "processId is required" });
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const params: unknown[] = [processId];
+    let branchWhere = "";
+    if (branchId) {
+      branchWhere = " AND e.branch_id = ?";
+      params.push(branchId);
+    }
 
-  const [rows] = await dbConn.execute(
-    `SELECT COALESCE(e.shift_rotation_type, 'frozen') AS rotation_type,
+    const [rows] = await dbConn.execute(
+      `SELECT COALESCE(e.shift_rotation_type, 'frozen') AS rotation_type,
             COUNT(*) AS employee_count
        FROM employees e
       WHERE e.process_id = ? AND e.active_status = 1${branchWhere}
       GROUP BY rotation_type`,
-    params
-  );
+      params,
+    );
 
-  const [empRows] = await dbConn.execute(
-    `SELECT e.id, e.employee_code,
+    const [empRows] = await dbConn.execute(
+      `SELECT e.id, e.employee_code,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name,
             COALESCE(e.shift_rotation_type, 'frozen') AS shift_rotation_type,
             dm.designation_name AS designation
@@ -515,67 +706,126 @@ wfmRouter.get("/rotation-summary", requireAuth, requireRole("admin", "super_admi
        LEFT JOIN designation_master dm ON dm.id = e.designation_id
       WHERE e.process_id = ? AND e.active_status = 1${branchWhere}
       ORDER BY e.employee_code ASC`,
-    params
-  );
+      params,
+    );
 
-  return res.json({ success: true, data: { summary: rows, employees: empRows } });
-}));
+    return res.json({
+      success: true,
+      data: { summary: rows, employees: empRows },
+    });
+  }),
+);
 
 // PATCH /api/wfm/employees/:id/shift-rotation — set rotation type for one employee
-wfmRouter.patch("/employees/:id/shift-rotation", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), h(async (req: any, res: any) => {
-  const { shift_rotation_type } = req.body;
-  const allowed = ["frozen", "weekly", "daily", "rotating"];
-  if (!shift_rotation_type || !allowed.includes(shift_rotation_type)) {
-    return res.status(400).json({ error: `shift_rotation_type must be one of: ${allowed.join(", ")}` });
-  }
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const [result] = await dbConn.execute(
-    "UPDATE employees SET shift_rotation_type = ? WHERE id = ? AND active_status = 1",
-    [shift_rotation_type, req.params.id]
-  ) as any;
-  if (!result.affectedRows) return res.status(404).json({ error: "Employee not found or inactive" });
-  return res.json({ success: true, message: `shift_rotation_type set to '${shift_rotation_type}'` });
-}));
+wfmRouter.patch(
+  "/employees/:id/shift-rotation",
+  requireAuth,
+  requireRole("admin", "super_admin", "wfm", "hr"),
+  h(async (req: any, res: any) => {
+    const { shift_rotation_type } = req.body;
+    const allowed = ["frozen", "weekly", "daily", "rotating"];
+    if (!shift_rotation_type || !allowed.includes(shift_rotation_type)) {
+      return res
+        .status(400)
+        .json({
+          error: `shift_rotation_type must be one of: ${allowed.join(", ")}`,
+        });
+    }
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const [result] = (await dbConn.execute(
+      "UPDATE employees SET shift_rotation_type = ? WHERE id = ? AND active_status = 1",
+      [shift_rotation_type, req.params.id],
+    )) as any;
+    if (!result.affectedRows)
+      return res.status(404).json({ error: "Employee not found or inactive" });
+    return res.json({
+      success: true,
+      message: `shift_rotation_type set to '${shift_rotation_type}'`,
+    });
+  }),
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PLANNING RULES  /api/wfm/planning-rules
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/planning-rules?processId=&branchId=
-wfmRouter.get("/planning-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
-  const { processId, branchId } = req.query;
-  if (!processId) return res.status(400).json({ error: "processId is required" });
-  const data = await planningRuleService.list(processId, branchId);
-  return res.json({ success: true, data });
-}));
+wfmRouter.get(
+  "/planning-rules",
+  requireAuth,
+  requireRole(
+    "admin",
+    "super_admin",
+    "wfm",
+    "hr",
+    "manager",
+    "branch_head",
+    "operations_manager",
+  ),
+  h(async (req: any, res: any) => {
+    const { processId, branchId } = req.query;
+    if (!processId)
+      return res.status(400).json({ error: "processId is required" });
+    const data = await planningRuleService.list(processId, branchId);
+    return res.json({ success: true, data });
+  }),
+);
 
 // POST /api/wfm/planning-rules
-wfmRouter.post("/planning-rules", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const { process_id, workload_type, effective_from } = req.body;
-  if (!process_id || !workload_type || !effective_from) {
-    return res.status(400).json({ error: "process_id, workload_type and effective_from are required" });
-  }
-  const data = await planningRuleService.create(req.body, req.authUser!.id);
-  return res.status(201).json({ success: true, data });
-}));
+wfmRouter.post(
+  "/planning-rules",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const { process_id, workload_type, effective_from } = req.body;
+    if (!process_id || !workload_type || !effective_from) {
+      return res
+        .status(400)
+        .json({
+          error: "process_id, workload_type and effective_from are required",
+        });
+    }
+    const data = await planningRuleService.create(req.body, req.authUser!.id);
+    return res.status(201).json({ success: true, data });
+  }),
+);
 
 // PATCH /api/wfm/planning-rules/:id
-wfmRouter.patch("/planning-rules/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const data = await planningRuleService.update(req.params.id, req.body, req.authUser!.id);
-  return res.json({ success: true, data });
-}));
+wfmRouter.patch(
+  "/planning-rules/:id",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const data = await planningRuleService.update(
+      req.params.id,
+      req.body,
+      req.authUser!.id,
+    );
+    return res.json({ success: true, data });
+  }),
+);
 
 // DELETE /api/wfm/planning-rules/:id  (soft deactivate)
-wfmRouter.delete("/planning-rules/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  await planningRuleService.deactivate(req.params.id, req.authUser!.id);
-  return res.json({ success: true, message: "Planning rule deactivated" });
-}));
+wfmRouter.delete(
+  "/planning-rules/:id",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    await planningRuleService.deactivate(req.params.id, req.authUser!.id);
+    return res.json({ success: true, message: "Planning rule deactivated" });
+  }),
+);
 
 // POST /api/wfm/planning-rules/calculate  (pure HC calculation — no DB, for preview)
-wfmRouter.post("/planning-rules/calculate", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager"), h(async (req: any, res: any) => {
-  const result = calculate(req.body);
-  return res.json({ success: true, data: result });
-}));
+wfmRouter.post(
+  "/planning-rules/calculate",
+  requireAuth,
+  requireRole("admin", "super_admin", "wfm", "hr", "manager"),
+  h(async (req: any, res: any) => {
+    const result = calculate(req.body);
+    return res.json({ success: true, data: result });
+  }),
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MINIMUM-REST POLICY CONFIG  /api/wfm/rest-policy
@@ -588,195 +838,388 @@ wfmRouter.post("/planning-rules/calculate", requireAuth, requireRole("admin", "s
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/rest-policy?scope_type=&active_status=
-wfmRouter.get("/rest-policy", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), h(async (req: any, res: any) => {
-  const data = await restPolicyConfigService.list({
-    scope_type: req.query.scope_type as string | undefined,
-    active_status: req.query.active_status as string | undefined,
-  });
-  return res.json({ success: true, data });
-}));
+wfmRouter.get(
+  "/rest-policy",
+  requireAuth,
+  requireRole("admin", "super_admin", "wfm", "hr"),
+  h(async (req: any, res: any) => {
+    const data = await restPolicyConfigService.list({
+      scope_type: req.query.scope_type as string | undefined,
+      active_status: req.query.active_status as string | undefined,
+    });
+    return res.json({ success: true, data });
+  }),
+);
 
 // GET /api/wfm/rest-policy/:id
-wfmRouter.get("/rest-policy/:id", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), h(async (req: any, res: any) => {
-  const data = await restPolicyConfigService.get(req.params.id);
-  return res.json({ success: true, data });
-}));
+wfmRouter.get(
+  "/rest-policy/:id",
+  requireAuth,
+  requireRole("admin", "super_admin", "wfm", "hr"),
+  h(async (req: any, res: any) => {
+    const data = await restPolicyConfigService.get(req.params.id);
+    return res.json({ success: true, data });
+  }),
+);
 
 // POST /api/wfm/rest-policy
-wfmRouter.post("/rest-policy", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const data = await restPolicyConfigService.create(req.body, req.authUser!.id, req);
-  return res.status(201).json({ success: true, data });
-}));
+wfmRouter.post(
+  "/rest-policy",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const data = await restPolicyConfigService.create(
+      req.body,
+      req.authUser!.id,
+      req,
+    );
+    return res.status(201).json({ success: true, data });
+  }),
+);
 
 // PATCH /api/wfm/rest-policy/:id  (terms only — scope is immutable, create a new policy to change it)
-wfmRouter.patch("/rest-policy/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const data = await restPolicyConfigService.update(req.params.id, req.body, req.authUser!.id, req);
-  return res.json({ success: true, data });
-}));
+wfmRouter.patch(
+  "/rest-policy/:id",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const data = await restPolicyConfigService.update(
+      req.params.id,
+      req.body,
+      req.authUser!.id,
+      req,
+    );
+    return res.json({ success: true, data });
+  }),
+);
 
 // DELETE /api/wfm/rest-policy/:id  (soft deactivate — matches the rest of this module's pattern)
-wfmRouter.delete("/rest-policy/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  await restPolicyConfigService.deactivate(req.params.id, req.authUser!.id, req);
-  return res.json({ success: true, message: "Rest policy deactivated" });
-}));
+wfmRouter.delete(
+  "/rest-policy/:id",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    await restPolicyConfigService.deactivate(
+      req.params.id,
+      req.authUser!.id,
+      req,
+    );
+    return res.json({ success: true, message: "Rest policy deactivated" });
+  }),
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SLOT REQUIREMENTS  /api/wfm/slot-requirements
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/slot-requirements?processId=&fromDate=&toDate=&coverageStatus=
-wfmRouter.get("/slot-requirements", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
-  const { processId, branchId, fromDate, toDate, coverageStatus } = req.query;
-  if (!processId) return res.status(400).json({ error: "processId is required" });
-  const data = await slotRequirementService.list({ processId, branchId, fromDate, toDate, coverageStatus });
-  return res.json({ success: true, data });
-}));
+wfmRouter.get(
+  "/slot-requirements",
+  requireAuth,
+  requireRole(
+    "admin",
+    "super_admin",
+    "wfm",
+    "hr",
+    "manager",
+    "branch_head",
+    "operations_manager",
+  ),
+  h(async (req: any, res: any) => {
+    const { processId, branchId, fromDate, toDate, coverageStatus } = req.query;
+    if (!processId)
+      return res.status(400).json({ error: "processId is required" });
+    const data = await slotRequirementService.list({
+      processId,
+      branchId,
+      fromDate,
+      toDate,
+      coverageStatus,
+    });
+    return res.json({ success: true, data });
+  }),
+);
 
 // POST /api/wfm/slot-requirements  (manual entry / upsert)
-wfmRouter.post("/slot-requirements", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const data = await slotRequirementService.upsert(req.body, req.authUser!.id);
-  return res.status(201).json({ success: true, data });
-}));
+wfmRouter.post(
+  "/slot-requirements",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const data = await slotRequirementService.upsert(
+      req.body,
+      req.authUser!.id,
+    );
+    return res.status(201).json({ success: true, data });
+  }),
+);
 
 // POST /api/wfm/slot-requirements/calculate  (calculate HC for a single slot)
-wfmRouter.post("/slot-requirements/calculate", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const { slotId } = req.body;
-  if (!slotId) return res.status(400).json({ error: "slotId is required" });
-  const data = await slotRequirementService.calculateHc(slotId, req.authUser!.id);
-  return res.json({ success: true, data });
-}));
+wfmRouter.post(
+  "/slot-requirements/calculate",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const { slotId } = req.body;
+    if (!slotId) return res.status(400).json({ error: "slotId is required" });
+    const data = await slotRequirementService.calculateHc(
+      slotId,
+      req.authUser!.id,
+    );
+    return res.json({ success: true, data });
+  }),
+);
 
 // POST /api/wfm/slot-requirements/calculate-bulk  (recalculate all slots for process/date range)
-wfmRouter.post("/slot-requirements/calculate-bulk", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const { processId, fromDate, toDate } = req.body;
-  if (!processId || !fromDate || !toDate) {
-    return res.status(400).json({ error: "processId, fromDate and toDate are required" });
-  }
-  const data = await slotRequirementService.calculateHcBulk(processId, fromDate, toDate, req.authUser!.id);
-  return res.json({ success: true, data });
-}));
+wfmRouter.post(
+  "/slot-requirements/calculate-bulk",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const { processId, fromDate, toDate } = req.body;
+    if (!processId || !fromDate || !toDate) {
+      return res
+        .status(400)
+        .json({ error: "processId, fromDate and toDate are required" });
+    }
+    const data = await slotRequirementService.calculateHcBulk(
+      processId,
+      fromDate,
+      toDate,
+      req.authUser!.id,
+    );
+    return res.json({ success: true, data });
+  }),
+);
 
 // POST /api/wfm/slot-requirements/forecast-import  (bulk upsert volume rows + auto-recalculate HC)
-wfmRouter.post("/slot-requirements/forecast-import", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const rows = req.body?.rows;
-  if (!Array.isArray(rows)) {
-    return res.status(400).json({ error: "req.body.rows must be a JSON array of slot requirement objects" });
-  }
-  const data = await slotRequirementService.forecastImport(rows, req.authUser!.id);
-  return res.status(200).json({ success: true, data });
-}));
+wfmRouter.post(
+  "/slot-requirements/forecast-import",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const rows = req.body?.rows;
+    if (!Array.isArray(rows)) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "req.body.rows must be a JSON array of slot requirement objects",
+        });
+    }
+    const data = await slotRequirementService.forecastImport(
+      rows,
+      req.authUser!.id,
+    );
+    return res.status(200).json({ success: true, data });
+  }),
+);
 
 // PATCH /api/wfm/slot-requirements/:id
-wfmRouter.patch("/slot-requirements/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const data = await slotRequirementService.upsert({ ...req.body, id: req.params.id }, req.authUser!.id);
-  return res.json({ success: true, data });
-}));
+wfmRouter.patch(
+  "/slot-requirements/:id",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const data = await slotRequirementService.upsert(
+      { ...req.body, id: req.params.id },
+      req.authUser!.id,
+    );
+    return res.json({ success: true, data });
+  }),
+);
 
 // DELETE /api/wfm/slot-requirements/:id (soft delete with mandatory reason)
-wfmRouter.delete("/slot-requirements/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const { reason } = req.body;
-  if (!reason || String(reason).trim().length < 5) {
-    return res.status(400).json({ error: "delete_reason is required (minimum 5 characters)" });
-  }
-  await slotRequirementService.delete(req.params.id, req.authUser!.id, String(reason).trim());
-  return res.json({ success: true });
-}));
+wfmRouter.delete(
+  "/slot-requirements/:id",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const { reason } = req.body;
+    if (!reason || String(reason).trim().length < 5) {
+      return res
+        .status(400)
+        .json({ error: "delete_reason is required (minimum 5 characters)" });
+    }
+    await slotRequirementService.delete(
+      req.params.id,
+      req.authUser!.id,
+      String(reason).trim(),
+    );
+    return res.json({ success: true });
+  }),
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WEEK-OFF DAY RULES  /api/wfm/weekoff/day-rules
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/weekoff/day-rules?processId=&weekStartDate=
-wfmRouter.get("/weekoff/day-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
-  const { processId, weekStartDate } = req.query;
-  if (!processId) return res.status(400).json({ error: "processId is required" });
-  const data = await weekoffDayRuleService.list(processId, weekStartDate);
-  return res.json({ success: true, data });
-}));
+wfmRouter.get(
+  "/weekoff/day-rules",
+  requireAuth,
+  requireRole(
+    "admin",
+    "super_admin",
+    "wfm",
+    "hr",
+    "manager",
+    "branch_head",
+    "operations_manager",
+  ),
+  h(async (req: any, res: any) => {
+    const { processId, weekStartDate } = req.query;
+    if (!processId)
+      return res.status(400).json({ error: "processId is required" });
+    const data = await weekoffDayRuleService.list(processId, weekStartDate);
+    return res.json({ success: true, data });
+  }),
+);
 
 // POST /api/wfm/weekoff/day-rules  (upsert — create or update for that week)
-wfmRouter.post("/weekoff/day-rules", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const data = await weekoffDayRuleService.upsert(req.body, req.authUser!.id);
-  return res.status(201).json({ success: true, data });
-}));
+wfmRouter.post(
+  "/weekoff/day-rules",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const data = await weekoffDayRuleService.upsert(req.body, req.authUser!.id);
+    return res.status(201).json({ success: true, data });
+  }),
+);
 
 // PATCH /api/wfm/weekoff/day-rules/:id
-wfmRouter.patch("/weekoff/day-rules/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const data = await weekoffDayRuleService.upsert({ ...req.body, id: req.params.id }, req.authUser!.id);
-  return res.json({ success: true, data });
-}));
+wfmRouter.patch(
+  "/weekoff/day-rules/:id",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const data = await weekoffDayRuleService.upsert(
+      { ...req.body, id: req.params.id },
+      req.authUser!.id,
+    );
+    return res.json({ success: true, data });
+  }),
+);
 
 // DELETE /api/wfm/weekoff/day-rules/:id (soft delete with mandatory reason)
-wfmRouter.delete("/weekoff/day-rules/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
-  const { reason } = req.body;
-  if (!reason || String(reason).trim().length < 5) {
-    return res.status(400).json({ error: "delete_reason is required (minimum 5 characters)" });
-  }
-  await weekoffDayRuleService.delete(req.params.id, req.authUser!.id, String(reason).trim());
-  return res.json({ success: true });
-}));
+wfmRouter.delete(
+  "/weekoff/day-rules/:id",
+  requireAuth,
+  requireRole("admin", "wfm"),
+  h(async (req: any, res: any) => {
+    const { reason } = req.body;
+    if (!reason || String(reason).trim().length < 5) {
+      return res
+        .status(400)
+        .json({ error: "delete_reason is required (minimum 5 characters)" });
+    }
+    await weekoffDayRuleService.delete(
+      req.params.id,
+      req.authUser!.id,
+      String(reason).trim(),
+    );
+    return res.json({ success: true });
+  }),
+);
 
 // GET /api/wfm/weekoff/day-rules/capacity-grid?processId=&weekStartDate=
 // Returns 7-element capacity check grid including min_hc, max_weekoff, allocated counts
-wfmRouter.get("/weekoff/day-rules/capacity-grid", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
-  const { processId, weekStartDate } = req.query;
-  if (!processId || !weekStartDate) return res.status(400).json({ error: "processId and weekStartDate are required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
+wfmRouter.get(
+  "/weekoff/day-rules/capacity-grid",
+  requireAuth,
+  requireRole(
+    "admin",
+    "super_admin",
+    "wfm",
+    "hr",
+    "manager",
+    "branch_head",
+    "operations_manager",
+  ),
+  h(async (req: any, res: any) => {
+    const { processId, weekStartDate } = req.query;
+    if (!processId || !weekStartDate)
+      return res
+        .status(400)
+        .json({ error: "processId and weekStartDate are required" });
+    const { db: dbConn } = await import("../../db/mysql.js");
 
-  // Count currently-rostered employees per day-of-week for the week
-  const weekEnd = (() => {
-    const d = new Date(weekStartDate);
-    d.setDate(d.getDate() + 6);
-    return d.toISOString().slice(0, 10);
-  })();
-  const [empRows] = await dbConn.execute(
-    `SELECT DAYOFWEEK(roster_date) - 1 AS dow, COUNT(*) AS cnt
+    // Count currently-rostered employees per day-of-week for the week
+    const weekEnd = (() => {
+      const d = new Date(weekStartDate);
+      d.setDate(d.getDate() + 6);
+      return d.toISOString().slice(0, 10);
+    })();
+    const [empRows] = (await dbConn.execute(
+      `SELECT DAYOFWEEK(roster_date) - 1 AS dow, COUNT(*) AS cnt
        FROM wfm_roster_assignment
       WHERE process_name IN (SELECT process_name FROM process_master WHERE id = ?)
         AND roster_date BETWEEN ? AND ?
         AND (final_roster_status IS NULL OR final_roster_status != 'published_to_rta')
         AND is_week_off = 0
       GROUP BY dow`,
-    [processId, weekStartDate, weekEnd]
-  ) as any;
+      [processId, weekStartDate, weekEnd],
+    )) as any;
 
-  const rosteredByDay: Record<number, number> = {};
-  for (const r of empRows as any[]) rosteredByDay[r.dow] = Number(r.cnt);
+    const rosteredByDay: Record<number, number> = {};
+    for (const r of empRows as any[]) rosteredByDay[r.dow] = Number(r.cnt);
 
-  const data = await weekoffDayRuleService.getDayCapacityGrid(processId, weekStartDate, rosteredByDay);
-  return res.json({ success: true, data });
-}));
+    const data = await weekoffDayRuleService.getDayCapacityGrid(
+      processId,
+      weekStartDate,
+      rosteredByDay,
+    );
+    return res.json({ success: true, data });
+  }),
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MANAGER REVIEW ACTIONS  /api/wfm/manager/weekoff-review
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/manager/weekoff-review  — disputes needing manager action
-wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head", "team_leader", "assistant_manager"), h(async (req: any, res: any) => {
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-  const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
+wfmRouter.get(
+  "/manager/weekoff-review",
+  requireAuth,
+  requireRole(
+    "admin",
+    "hr",
+    "wfm",
+    "manager",
+    "branch_head",
+    "team_leader",
+    "assistant_manager",
+  ),
+  h(async (req: any, res: any) => {
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+    const isPrivileged = await checkRole(
+      req.authUser!.id,
+      "admin",
+      "hr",
+      "wfm",
+    );
 
-  let scopeWhere = "";
-  const params: unknown[] = [];
+    let scopeWhere = "";
+    const params: unknown[] = [];
 
-  if (!isPrivileged) {
-    // Manager can only see their mapped employees
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) return res.status(403).json({ error: "No employee record" });
-    scopeWhere = `AND (e.reporting_manager_id = ? OR EXISTS (
+    if (!isPrivileged) {
+      // Manager can only see their mapped employees
+      const emp = await getEmployeeForUser(req.authUser!.id);
+      if (!emp) return res.status(403).json({ error: "No employee record" });
+      scopeWhere = `AND (e.reporting_manager_id = ? OR EXISTS (
       SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
     ))`;
-    params.push(emp.id, req.authUser!.id);
-  }
+      params.push(emp.id, req.authUser!.id);
+    }
 
-  const lob = readLobFilter(req, res);
-  if (!lob) return;
-  const lobSql = lobAnd(lob, "e");
-  params.push(...lobSql.params);
-  const [rows] = await dbConn.execute(
-    `SELECT wra.*,
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const lobSql = lobAnd(lob, "e");
+    params.push(...lobSql.params);
+    const [rows] = await dbConn.execute(
+      `SELECT wra.*,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
             e.employee_code, e.lob_id AS employee_lob_id, dm.designation_name AS designation,
             pm.process_name, bm.branch_name,
@@ -793,10 +1236,14 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
         AND wra.employee_ack_status = 'rejected'
         ${scopeWhere}${lobSql.sql}
       ORDER BY wra.roster_date ASC`,
-    params
-  );
-  return res.json({ success: true, data: await withLobNames(rows as any[], "employee_lob_id") });
-}));
+      params,
+    );
+    return res.json({
+      success: true,
+      data: await withLobNames(rows as any[], "employee_lob_id"),
+    });
+  }),
+);
 
 /**
  * Blocks the ordinary manager-override roster actions (realign/force-approve/
@@ -821,26 +1268,35 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
  */
 async function assertRosterDateNotLocked(
   dbConn: (typeof import("../../db/mysql.js"))["db"],
-  assignmentId: string
+  assignmentId: string,
 ): Promise<{ blocked: true; error: string } | { blocked: false }> {
   return checkAssignmentDateNotLocked(dbConn, assignmentId);
 }
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/realign
-wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
-  const { assignmentId } = req.params;
-  const { new_roster_date, new_shift_template_id, reason } = req.body;
-  if (!reason) return res.status(400).json({ error: "reason is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+wfmRouter.post(
+  "/manager/weekoff-review/:assignmentId/realign",
+  requireAuth,
+  requireRole("admin", "hr", "wfm", "manager", "branch_head"),
+  h(async (req: any, res: any) => {
+    const { assignmentId } = req.params;
+    const { new_roster_date, new_shift_template_id, reason } = req.body;
+    if (!reason) return res.status(400).json({ error: "reason is required" });
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
 
-  // Verify manager scope before mutation
-  const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) return res.status(403).json({ error: "No employee record" });
-    const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT 1 FROM wfm_roster_assignment wra
+    // Verify manager scope before mutation
+    const isPrivileged = await checkRole(
+      req.authUser!.id,
+      "admin",
+      "hr",
+      "wfm",
+    );
+    if (!isPrivileged) {
+      const emp = await getEmployeeForUser(req.authUser!.id);
+      if (!emp) return res.status(403).json({ error: "No employee record" });
+      const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
+        `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
         -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
         -- inner join discards the row before the OR below is ever evaluated and the
@@ -852,90 +1308,113 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
        )) LIMIT 1`,
-      [assignmentId, emp.id, req.authUser!.id]
-    );
-    if (!(scopeCheck as RowDataPacket[])[0]) {
-      return res.status(403).json({ error: "Not authorized to act on this employee" });
+        [assignmentId, emp.id, req.authUser!.id],
+      );
+      if (!(scopeCheck as RowDataPacket[])[0]) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to act on this employee" });
+      }
     }
-  }
 
-  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
-  if (lockCheck.blocked) {
-    return res.status(409).json({ error: lockCheck.error });
-  }
+    const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
+    if (lockCheck.blocked) {
+      return res.status(409).json({ error: lockCheck.error });
+    }
 
-  // Round 2 (2026-08-13) minimum-rest audit finding: realign can move an
-  // employee onto a different shift_template_id, which can violate minimum
-  // rest against their neighboring shifts just as surely as any other
-  // roster write — but unlike manual assignment/bulk-upload, this endpoint
-  // never called into rest-policy.service.ts at all. Only checked when a
-  // new shift is actually being set (a pure date move with no shift change
-  // carries the assignment's already-validated times, unchanged). Blocking-
-  // only, no override support here yet — matches bulk-upload's posture,
-  // the more conservative of the two existing behaviors in this codebase.
-  if (new_shift_template_id) {
-    // process_id/branch_id joined in here too (not just employee_id) — without
-    // it, a process- or branch-scoped rest policy could never resolve on this
-    // endpoint, silently falling back to organization-only. Every other Area 2
-    // write path passes these; this one didn't originally.
-    const [assignRows] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT wra.employee_id, wra.roster_date, e.process_id, e.branch_id
+    // Round 2 (2026-08-13) minimum-rest audit finding: realign can move an
+    // employee onto a different shift_template_id, which can violate minimum
+    // rest against their neighboring shifts just as surely as any other
+    // roster write — but unlike manual assignment/bulk-upload, this endpoint
+    // never called into rest-policy.service.ts at all. Only checked when a
+    // new shift is actually being set (a pure date move with no shift change
+    // carries the assignment's already-validated times, unchanged). Blocking-
+    // only, no override support here yet — matches bulk-upload's posture,
+    // the more conservative of the two existing behaviors in this codebase.
+    if (new_shift_template_id) {
+      // process_id/branch_id joined in here too (not just employee_id) — without
+      // it, a process- or branch-scoped rest policy could never resolve on this
+      // endpoint, silently falling back to organization-only. Every other Area 2
+      // write path passes these; this one didn't originally.
+      const [assignRows] = await dbConn.execute<RowDataPacket[]>(
+        `SELECT wra.employee_id, wra.roster_date, e.process_id, e.branch_id
          FROM wfm_roster_assignment wra
          JOIN employees e ON e.id = wra.employee_id
         WHERE wra.id = ? LIMIT 1`,
-      [assignmentId]
-    );
-    const assignRow = (assignRows as RowDataPacket[])[0];
-    if (assignRow) {
-      const [shiftRows] = await dbConn.execute<RowDataPacket[]>(
-        `SELECT start_time, end_time FROM wfm_shift_template WHERE id = ? LIMIT 1`,
-        [new_shift_template_id]
+        [assignmentId],
       );
-      const shift = (shiftRows as RowDataPacket[])[0];
-      if (shift?.start_time && shift?.end_time) {
-        const effectiveDate = new_roster_date ? String(new_roster_date).slice(0, 10) : String(assignRow.roster_date).slice(0, 10);
-        const { validateMinimumRest, isRestPolicyFeatureActive } = await import("./rest-policy.service.js");
-        if (await isRestPolicyFeatureActive(dbConn)) {
-          const restResult = await validateMinimumRest(
-            { employeeId: String(assignRow.employee_id), processId: assignRow.process_id ?? null, branchId: assignRow.branch_id ?? null, forDate: effectiveDate },
-            { startTime: String(shift.start_time).slice(0, 5), endTime: String(shift.end_time).slice(0, 5) },
-            assignmentId,
-            dbConn
-          );
-          if (!restResult.ok) {
-            return res.status(409).json({
-              error: restResult.reason === "REST_POLICY_MISSING"
-                ? "No minimum-rest policy is configured for this employee/process/branch/organization — cannot verify this realignment is safe."
-                : `Realigning to this shift leaves only ${restResult.actualRestMinutes} minute(s) of rest against the ${restResult.against} shift (minimum required: ${restResult.requiredRestMinutes}).`,
-              reason: restResult.reason,
-            });
+      const assignRow = (assignRows as RowDataPacket[])[0];
+      if (assignRow) {
+        const [shiftRows] = await dbConn.execute<RowDataPacket[]>(
+          `SELECT start_time, end_time FROM wfm_shift_template WHERE id = ? LIMIT 1`,
+          [new_shift_template_id],
+        );
+        const shift = (shiftRows as RowDataPacket[])[0];
+        if (shift?.start_time && shift?.end_time) {
+          const effectiveDate = new_roster_date
+            ? String(new_roster_date).slice(0, 10)
+            : String(assignRow.roster_date).slice(0, 10);
+          const { validateMinimumRest, isRestPolicyFeatureActive } =
+            await import("./rest-policy.service.js");
+          if (await isRestPolicyFeatureActive(dbConn)) {
+            const restResult = await validateMinimumRest(
+              {
+                employeeId: String(assignRow.employee_id),
+                processId: assignRow.process_id ?? null,
+                branchId: assignRow.branch_id ?? null,
+                forDate: effectiveDate,
+              },
+              {
+                startTime: String(shift.start_time).slice(0, 5),
+                endTime: String(shift.end_time).slice(0, 5),
+              },
+              assignmentId,
+              dbConn,
+            );
+            if (!restResult.ok) {
+              return res.status(409).json({
+                error:
+                  restResult.reason === "REST_POLICY_MISSING"
+                    ? "No minimum-rest policy is configured for this employee/process/branch/organization — cannot verify this realignment is safe."
+                    : `Realigning to this shift leaves only ${restResult.actualRestMinutes} minute(s) of rest against the ${restResult.against} shift (minimum required: ${restResult.requiredRestMinutes}).`,
+                reason: restResult.reason,
+              });
+            }
           }
         }
       }
     }
-  }
 
-  const updates: string[] = [
-    "final_roster_status = 'realigned_by_manager'",
-    "manager_action_status = 'realigned'",
-    "manager_action_by = ?",
-    "manager_action_at = NOW()",
-    "manager_action_reason = ?",
-  ];
-  const vals: unknown[] = [req.authUser!.id, reason];
+    const updates: string[] = [
+      "final_roster_status = 'realigned_by_manager'",
+      "manager_action_status = 'realigned'",
+      "manager_action_by = ?",
+      "manager_action_at = NOW()",
+      "manager_action_reason = ?",
+    ];
+    const vals: unknown[] = [req.authUser!.id, reason];
 
-  if (new_roster_date) { updates.push("roster_date = ?"); vals.push(new_roster_date); }
-  if (new_shift_template_id) { updates.push("shift_template_id = ?"); vals.push(new_shift_template_id); }
-  vals.push(assignmentId);
+    if (new_roster_date) {
+      updates.push("roster_date = ?");
+      vals.push(new_roster_date);
+    }
+    if (new_shift_template_id) {
+      updates.push("shift_template_id = ?");
+      vals.push(new_shift_template_id);
+    }
+    vals.push(assignmentId);
 
-  // State change and audit row are one transaction: a failure between them would otherwise commit
-  // the realignment and lose the record of who made it. See inManagerDecisionTx.
-  await inManagerDecisionTx(async (tx) => {
-  await tx.execute(`UPDATE wfm_roster_assignment SET ${updates.join(", ")} WHERE id = ?`, vals);
+    // State change and audit row are one transaction: a failure between them would otherwise commit
+    // the realignment and lose the record of who made it. See inManagerDecisionTx.
+    await inManagerDecisionTx(async (tx) => {
+      await tx.execute(
+        `UPDATE wfm_roster_assignment SET ${updates.join(", ")} WHERE id = ?`,
+        vals,
+      );
 
-  // Write audit row
-  await tx.execute(
-    `INSERT INTO roster_decision_audit
+      // Write audit row
+      await tx.execute(
+        `INSERT INTO roster_decision_audit
        (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
         override_by, override_reason, override_at, acted_by_role, old_value_json, new_value_json)
      SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
@@ -943,34 +1422,50 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
             JSON_OBJECT('status','pending_manager_action'),
             JSON_OBJECT('status','realigned_by_manager','new_roster_date',?,'new_shift_template_id',?)
        FROM wfm_roster_assignment WHERE id = ?`,
-    [req.authUser!.id, reason, new_roster_date ?? null, new_shift_template_id ?? null, assignmentId]
-  );
-  });
+        [
+          req.authUser!.id,
+          reason,
+          new_roster_date ?? null,
+          new_shift_template_id ?? null,
+          assignmentId,
+        ],
+      );
+    });
 
-  // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
-  // published -> acknowledged check the employee path runs must happen here too. Without
-  // it a week whose final holdout was settled by a manager, rather than by the employee
-  // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
-  // this: 'escalated_to_hr' is still awaiting a human.
-  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  return res.json({ success: true, message: "Assignment realigned" });
-}));
+    // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
+    // published -> acknowledged check the employee path runs must happen here too. Without
+    // it a week whose final holdout was settled by a manager, rather than by the employee
+    // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
+    // this: 'escalated_to_hr' is still awaiting a human.
+    await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
+    return res.json({ success: true, message: "Assignment realigned" });
+  }),
+);
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/force-approve
-wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
-  const { assignmentId } = req.params;
-  const { reason } = req.body;
-  if (!reason) return res.status(400).json({ error: "reason is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+wfmRouter.post(
+  "/manager/weekoff-review/:assignmentId/force-approve",
+  requireAuth,
+  requireRole("admin", "hr", "wfm", "manager", "branch_head"),
+  h(async (req: any, res: any) => {
+    const { assignmentId } = req.params;
+    const { reason } = req.body;
+    if (!reason) return res.status(400).json({ error: "reason is required" });
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
 
-  // Verify manager scope before mutation
-  const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) return res.status(403).json({ error: "No employee record" });
-    const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT 1 FROM wfm_roster_assignment wra
+    // Verify manager scope before mutation
+    const isPrivileged = await checkRole(
+      req.authUser!.id,
+      "admin",
+      "hr",
+      "wfm",
+    );
+    if (!isPrivileged) {
+      const emp = await getEmployeeForUser(req.authUser!.id);
+      if (!emp) return res.status(403).json({ error: "No employee record" });
+      const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
+        `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
         -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
         -- inner join discards the row before the OR below is ever evaluated and the
@@ -982,64 +1477,76 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAut
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
        )) LIMIT 1`,
-      [assignmentId, emp.id, req.authUser!.id]
-    );
-    if (!(scopeCheck as RowDataPacket[])[0]) {
-      return res.status(403).json({ error: "Not authorized to act on this employee" });
+        [assignmentId, emp.id, req.authUser!.id],
+      );
+      if (!(scopeCheck as RowDataPacket[])[0]) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to act on this employee" });
+      }
     }
-  }
 
-  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
-  if (lockCheck.blocked) {
-    return res.status(409).json({ error: lockCheck.error });
-  }
+    const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
+    if (lockCheck.blocked) {
+      return res.status(409).json({ error: lockCheck.error });
+    }
 
-  // State change and audit row are one transaction — see inManagerDecisionTx.
-  await inManagerDecisionTx(async (tx) => {
-    await tx.execute(
-      `UPDATE wfm_roster_assignment
+    // State change and audit row are one transaction — see inManagerDecisionTx.
+    await inManagerDecisionTx(async (tx) => {
+      await tx.execute(
+        `UPDATE wfm_roster_assignment
           SET final_roster_status = 'force_approved_by_manager',
               manager_action_status = 'force_approved',
               manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
         WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
+        [req.authUser!.id, reason, assignmentId],
+      );
 
-    await tx.execute(
-      `INSERT INTO roster_decision_audit
+      await tx.execute(
+        `INSERT INTO roster_decision_audit
          (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
           override_by, override_reason, override_at, acted_by_role)
        SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
               'force_approved', 'manager_force_approve', ?, ?, NOW(), 'manager'
          FROM wfm_roster_assignment WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
-  });
+        [req.authUser!.id, reason, assignmentId],
+      );
+    });
 
-  // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
-  // published -> acknowledged check the employee path runs must happen here too. Without
-  // it a week whose final holdout was settled by a manager, rather than by the employee
-  // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
-  // this: 'escalated_to_hr' is still awaiting a human.
-  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  return res.json({ success: true, message: "Assignment force-approved" });
-}));
+    // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
+    // published -> acknowledged check the employee path runs must happen here too. Without
+    // it a week whose final holdout was settled by a manager, rather than by the employee
+    // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
+    // this: 'escalated_to_hr' is still awaiting a human.
+    await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
+    return res.json({ success: true, message: "Assignment force-approved" });
+  }),
+);
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/escalate
-wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
-  const { assignmentId } = req.params;
-  const { reason } = req.body;
-  if (!reason) return res.status(400).json({ error: "reason is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+wfmRouter.post(
+  "/manager/weekoff-review/:assignmentId/escalate",
+  requireAuth,
+  requireRole("admin", "hr", "wfm", "manager", "branch_head"),
+  h(async (req: any, res: any) => {
+    const { assignmentId } = req.params;
+    const { reason } = req.body;
+    if (!reason) return res.status(400).json({ error: "reason is required" });
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
 
-  // Verify manager scope before mutation
-  const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) return res.status(403).json({ error: "No employee record" });
-    const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT 1 FROM wfm_roster_assignment wra
+    // Verify manager scope before mutation
+    const isPrivileged = await checkRole(
+      req.authUser!.id,
+      "admin",
+      "hr",
+      "wfm",
+    );
+    if (!isPrivileged) {
+      const emp = await getEmployeeForUser(req.authUser!.id);
+      if (!emp) return res.status(403).json({ error: "No employee record" });
+      const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
+        `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
         -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
         -- inner join discards the row before the OR below is ever evaluated and the
@@ -1051,58 +1558,70 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, re
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
        )) LIMIT 1`,
-      [assignmentId, emp.id, req.authUser!.id]
-    );
-    if (!(scopeCheck as RowDataPacket[])[0]) {
-      return res.status(403).json({ error: "Not authorized to act on this employee" });
+        [assignmentId, emp.id, req.authUser!.id],
+      );
+      if (!(scopeCheck as RowDataPacket[])[0]) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to act on this employee" });
+      }
     }
-  }
 
-  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
-  if (lockCheck.blocked) {
-    return res.status(409).json({ error: lockCheck.error });
-  }
+    const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
+    if (lockCheck.blocked) {
+      return res.status(409).json({ error: lockCheck.error });
+    }
 
-  // State change and audit row are one transaction — see inManagerDecisionTx.
-  await inManagerDecisionTx(async (tx) => {
-    await tx.execute(
-      `UPDATE wfm_roster_assignment
+    // State change and audit row are one transaction — see inManagerDecisionTx.
+    await inManagerDecisionTx(async (tx) => {
+      await tx.execute(
+        `UPDATE wfm_roster_assignment
           SET final_roster_status = 'escalated_to_hr',
               manager_action_status = 'escalated',
               manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
         WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
+        [req.authUser!.id, reason, assignmentId],
+      );
 
-    await tx.execute(
-      `INSERT INTO roster_decision_audit
+      await tx.execute(
+        `INSERT INTO roster_decision_audit
          (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
           override_by, override_reason, override_at, acted_by_role)
        SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
               'escalated_to_hr', 'manager_escalate', ?, ?, NOW(), 'manager'
          FROM wfm_roster_assignment WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
-  });
+        [req.authUser!.id, reason, assignmentId],
+      );
+    });
 
-  return res.json({ success: true, message: "Escalated to HR/WFM" });
-}));
+    return res.json({ success: true, message: "Escalated to HR/WFM" });
+  }),
+);
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/reject-request
-wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
-  const { assignmentId } = req.params;
-  const { reason } = req.body;
-  if (!reason) return res.status(400).json({ error: "reason is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+wfmRouter.post(
+  "/manager/weekoff-review/:assignmentId/reject-request",
+  requireAuth,
+  requireRole("admin", "hr", "wfm", "manager", "branch_head"),
+  h(async (req: any, res: any) => {
+    const { assignmentId } = req.params;
+    const { reason } = req.body;
+    if (!reason) return res.status(400).json({ error: "reason is required" });
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
 
-  // Verify manager scope before mutation
-  const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) return res.status(403).json({ error: "No employee record" });
-    const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT 1 FROM wfm_roster_assignment wra
+    // Verify manager scope before mutation
+    const isPrivileged = await checkRole(
+      req.authUser!.id,
+      "admin",
+      "hr",
+      "wfm",
+    );
+    if (!isPrivileged) {
+      const emp = await getEmployeeForUser(req.authUser!.id);
+      if (!emp) return res.status(403).json({ error: "No employee record" });
+      const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
+        `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
         -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
         -- inner join discards the row before the OR below is ever evaluated and the
@@ -1114,48 +1633,54 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
        )) LIMIT 1`,
-      [assignmentId, emp.id, req.authUser!.id]
-    );
-    if (!(scopeCheck as RowDataPacket[])[0]) {
-      return res.status(403).json({ error: "Not authorized to act on this employee" });
+        [assignmentId, emp.id, req.authUser!.id],
+      );
+      if (!(scopeCheck as RowDataPacket[])[0]) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to act on this employee" });
+      }
     }
-  }
 
-  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
-  if (lockCheck.blocked) {
-    return res.status(409).json({ error: lockCheck.error });
-  }
+    const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
+    if (lockCheck.blocked) {
+      return res.status(409).json({ error: lockCheck.error });
+    }
 
-  // State change and audit row are one transaction — see inManagerDecisionTx.
-  await inManagerDecisionTx(async (tx) => {
-    await tx.execute(
-      `UPDATE wfm_roster_assignment
+    // State change and audit row are one transaction — see inManagerDecisionTx.
+    await inManagerDecisionTx(async (tx) => {
+      await tx.execute(
+        `UPDATE wfm_roster_assignment
           SET final_roster_status = 'manager_rejected_employee_request',
               manager_action_status = 'rejected_request',
               manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
         WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
+        [req.authUser!.id, reason, assignmentId],
+      );
 
-    await tx.execute(
-      `INSERT INTO roster_decision_audit
+      await tx.execute(
+        `INSERT INTO roster_decision_audit
          (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
           override_by, override_reason, override_at, acted_by_role)
        SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
               'manager_rejected_request', 'manager_reject_employee_request', ?, ?, NOW(), 'manager'
          FROM wfm_roster_assignment WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
-  });
+        [req.authUser!.id, reason, assignmentId],
+      );
+    });
 
-  // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
-  // published -> acknowledged check the employee path runs must happen here too. Without
-  // it a week whose final holdout was settled by a manager, rather than by the employee
-  // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
-  // this: 'escalated_to_hr' is still awaiting a human.
-  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  return res.json({ success: true, message: "Employee request rejected — original assignment retained" });
-}));
+    // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
+    // published -> acknowledged check the employee path runs must happen here too. Without
+    // it a week whose final holdout was settled by a manager, rather than by the employee
+    // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
+    // this: 'escalated_to_hr' is still awaiting a human.
+    await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
+    return res.json({
+      success: true,
+      message: "Employee request rejected — original assignment retained",
+    });
+  }),
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EMPLOYEE SELF-SERVICE  /api/wfm/my-weekoff
@@ -1170,9 +1695,11 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
  * inbox entry pointing at them.
  */
 async function closeRosterAckInboxItem(
-  dbConn: { execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]> },
+  dbConn: {
+    execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]>;
+  },
   employeeId: string,
-  assignmentId: string
+  assignmentId: string,
 ): Promise<void> {
   try {
     await dbConn.execute(
@@ -1188,7 +1715,7 @@ async function closeRosterAckInboxItem(
                WHERE a.employee_id = e.id
                  AND a.cycle_id = w.entity_id
                  AND a.final_roster_status = 'pending_employee_ack')`,
-      [employeeId, assignmentId]
+      [employeeId, assignmentId],
     );
   } catch {
     // Non-fatal: the employee's answer is already recorded, and a stale inbox row is far
@@ -1216,7 +1743,7 @@ async function closeRosterAckInboxItem(
 async function inManagerDecisionTx<T>(
   fn: (tx: {
     execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]>;
-  }) => Promise<T>
+  }) => Promise<T>,
 ): Promise<T> {
   const { db } = await import("../../db/mysql.js");
   const conn = await db.getConnection();
@@ -1253,8 +1780,10 @@ async function inManagerDecisionTx<T>(
  * POST_PUBLISH_STATUSES check exists to prevent.
  */
 async function advanceCycleIfFullyAcknowledged(
-  dbConn: { execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]> },
-  assignmentId: string
+  dbConn: {
+    execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]>;
+  },
+  assignmentId: string,
 ): Promise<void> {
   try {
     await dbConn.execute(
@@ -1267,13 +1796,16 @@ async function advanceCycleIfFullyAcknowledged(
                WHERE p.cycle_id = c.id
                  AND p.final_roster_status IN
                      ('pending_employee_ack', 'pending_manager_action', 'escalated_to_hr'))`,
-      [assignmentId]
+      [assignmentId],
     );
   } catch (err) {
     // Non-fatal for the same reason closeRosterAckInboxItem is: the employee's answer is already
     // committed, and refusing it because the cycle header did not move would be worse. Logged
     // rather than swallowed, so a cycle stuck at 'published' is diagnosable instead of silent.
-    console.error("[roster] failed to advance cycle to acknowledged", { assignmentId, err });
+    console.error("[roster] failed to advance cycle to acknowledged", {
+      assignmentId,
+      err,
+    });
   }
 }
 
@@ -1297,8 +1829,19 @@ async function advanceCycleIfFullyAcknowledged(
 // (whether/how to assign cycle_id retroactively) and is not made here.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const ACK_TERMINAL = ["acknowledged", "approved_final", "published_to_rta", "force_approved_by_manager", "realigned_by_manager"];
-const ACK_DISPUTED = ["rejected_by_employee", "pending_manager_action", "escalated_to_hr", "manager_rejected_employee_request"];
+const ACK_TERMINAL = [
+  "acknowledged",
+  "approved_final",
+  "published_to_rta",
+  "force_approved_by_manager",
+  "realigned_by_manager",
+];
+const ACK_DISPUTED = [
+  "rejected_by_employee",
+  "pending_manager_action",
+  "escalated_to_hr",
+  "manager_rejected_employee_request",
+];
 
 /** Map the 10-value final_roster_status enum onto the 3 states NativeMyRoster.tsx knows. */
 function mapAckStatus(finalRosterStatus: string): string {
@@ -1310,12 +1853,15 @@ function mapAckStatus(finalRosterStatus: string): string {
 
 // GET /api/wfm/my-roster/weeks — which weeks (Mon-Sun) this employee has assignments in,
 // 8 weeks back through 4 weeks ahead, most recent first.
-wfmRouter.get("/my-roster/weeks", requireAuth, h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser!.id);
-  if (!emp) return res.status(403).json({ error: "No employee record" });
+wfmRouter.get(
+  "/my-roster/weeks",
+  requireAuth,
+  h(async (req: any, res: any) => {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp) return res.status(403).json({ error: "No employee record" });
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
         DATE_SUB(roster_date, INTERVAL WEEKDAY(roster_date) DAY) AS week_start,
         SUM(final_roster_status <> 'generated') AS non_generated_count,
         SUM(final_roster_status IN (${ACK_TERMINAL.map(() => "?").join(",")})) AS terminal_count,
@@ -1325,27 +1871,34 @@ wfmRouter.get("/my-roster/weeks", requireAuth, h(async (req: any, res: any) => {
         AND roster_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 8 WEEK) AND DATE_ADD(CURDATE(), INTERVAL 4 WEEK)
       GROUP BY week_start
       ORDER BY week_start DESC`,
-    [...ACK_TERMINAL, (emp as any).id]
-  );
+      [...ACK_TERMINAL, (emp as any).id],
+    );
 
-  const weeks = (rows as any[]).map((r) => {
-    const weekStart: string = r.week_start instanceof Date ? r.week_start.toISOString().slice(0, 10) : String(r.week_start);
-    const end = new Date(`${weekStart}T00:00:00`);
-    end.setDate(end.getDate() + 6);
-    const status = Number(r.non_generated_count) === 0
-      ? "draft"
-      : Number(r.terminal_count) === Number(r.total_count) ? "acknowledged" : "published";
-    return {
-      id: weekStart,
-      process_id: "",
-      week_start_date: weekStart,
-      week_end_date: end.toISOString().slice(0, 10),
-      status,
-    };
-  });
+    const weeks = (rows as any[]).map((r) => {
+      const weekStart: string =
+        r.week_start instanceof Date
+          ? r.week_start.toISOString().slice(0, 10)
+          : String(r.week_start);
+      const end = new Date(`${weekStart}T00:00:00`);
+      end.setDate(end.getDate() + 6);
+      const status =
+        Number(r.non_generated_count) === 0
+          ? "draft"
+          : Number(r.terminal_count) === Number(r.total_count)
+            ? "acknowledged"
+            : "published";
+      return {
+        id: weekStart,
+        process_id: "",
+        week_start_date: weekStart,
+        week_end_date: end.toISOString().slice(0, 10),
+        status,
+      };
+    });
 
-  return res.json({ success: true, data: weeks });
-}));
+    return res.json({ success: true, data: weeks });
+  }),
+);
 
 // GET /api/wfm/my-roster/range?from=YYYY-MM-DD&to=YYYY-MM-DD — the caller's own uploaded/generated
 // roster as plain shift windows, for the Attendance page. That page used to read only the static
@@ -1392,20 +1945,25 @@ wfmRouter.get("/my-roster/range", requireAuth, h(async (req: any, res: any) => {
 }));
 
 // GET /api/wfm/my-roster/week/:weekStart — the 7 days for that week, shift/weekoff/ack state.
-wfmRouter.get("/my-roster/week/:weekStart", requireAuth, h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser!.id);
-  if (!emp) return res.status(403).json({ error: "No employee record" });
+wfmRouter.get(
+  "/my-roster/week/:weekStart",
+  requireAuth,
+  h(async (req: any, res: any) => {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp) return res.status(403).json({ error: "No employee record" });
 
-  const weekStart = String(req.params.weekStart);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
-    return res.status(400).json({ success: false, error: "weekStart must be YYYY-MM-DD" });
-  }
-  const weekEndDate = new Date(`${weekStart}T00:00:00`);
-  weekEndDate.setDate(weekEndDate.getDate() + 6);
-  const weekEnd = weekEndDate.toISOString().slice(0, 10);
+    const weekStart = String(req.params.weekStart);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "weekStart must be YYYY-MM-DD" });
+    }
+    const weekEndDate = new Date(`${weekStart}T00:00:00`);
+    weekEndDate.setDate(weekEndDate.getDate() + 6);
+    const weekEnd = weekEndDate.toISOString().slice(0, 10);
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT wra.id, wra.cycle_id, wra.employee_id, wra.roster_date, wra.is_week_off,
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT wra.id, wra.cycle_id, wra.employee_id, wra.roster_date, wra.is_week_off,
             wra.final_roster_status, wra.employee_ack_at,
             COALESCE(wst.shift_name, wsm.shift_name) AS shift_name,
             COALESCE(wst.start_time, wsm.start_time) AS start_time,
@@ -1416,34 +1974,41 @@ wfmRouter.get("/my-roster/week/:weekStart", requireAuth, h(async (req: any, res:
       WHERE wra.employee_id = ?
         AND wra.roster_date BETWEEN ? AND ?
       ORDER BY wra.roster_date`,
-    [(emp as any).id, weekStart, weekEnd]
-  );
+      [(emp as any).id, weekStart, weekEnd],
+    );
 
-  const data = (rows as any[]).map((r) => ({
-    id: r.id,
-    cycle_id: r.cycle_id ?? weekStart,
-    employee_id: r.employee_id,
-    roster_date: r.roster_date instanceof Date ? r.roster_date.toISOString().slice(0, 10) : String(r.roster_date),
-    shift_template_id: null,
-    shift_name: r.shift_name ?? null,
-    start_time: r.start_time ?? null,
-    end_time: r.end_time ?? null,
-    is_week_off: r.is_week_off,
-    is_holiday: 0,
-    acknowledgement_status: mapAckStatus(r.final_roster_status),
-    acknowledged_at: r.employee_ack_at ?? null,
-    notes: null,
-  }));
+    const data = (rows as any[]).map((r) => ({
+      id: r.id,
+      cycle_id: r.cycle_id ?? weekStart,
+      employee_id: r.employee_id,
+      roster_date:
+        r.roster_date instanceof Date
+          ? r.roster_date.toISOString().slice(0, 10)
+          : String(r.roster_date),
+      shift_template_id: null,
+      shift_name: r.shift_name ?? null,
+      start_time: r.start_time ?? null,
+      end_time: r.end_time ?? null,
+      is_week_off: r.is_week_off,
+      is_holiday: 0,
+      acknowledgement_status: mapAckStatus(r.final_roster_status),
+      acknowledged_at: r.employee_ack_at ?? null,
+      notes: null,
+    }));
 
-  return res.json({ success: true, data });
-}));
+    return res.json({ success: true, data });
+  }),
+);
 
-wfmRouter.get("/my-weekoff", requireAuth, h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser!.id);
-  if (!emp) return res.status(403).json({ error: "No employee record" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const [rows] = await dbConn.execute(
-    `SELECT wra.*,
+wfmRouter.get(
+  "/my-weekoff",
+  requireAuth,
+  h(async (req: any, res: any) => {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp) return res.status(403).json({ error: "No employee record" });
+    const { db: dbConn } = await import("../../db/mysql.js");
+    const [rows] = await dbConn.execute(
+      `SELECT wra.*,
             wst.shift_name, wst.start_time, wst.end_time,
             wrc.week_start_date, wrc.week_end_date, wrc.ack_deadline
        FROM wfm_roster_assignment wra
@@ -1454,78 +2019,107 @@ wfmRouter.get("/my-weekoff", requireAuth, h(async (req: any, res: any) => {
           'pending_manager_action','realigned_by_manager','force_approved_by_manager',
           'manager_rejected_employee_request')
       ORDER BY wra.roster_date DESC LIMIT 90`,
-    [(emp as any).id]
-  );
-  return res.json({ success: true, data: rows });
-}));
+      [(emp as any).id],
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
 
 // POST /api/wfm/my-weekoff/:assignmentId/acknowledge
-wfmRouter.post("/my-weekoff/:assignmentId/acknowledge", requireAuth, h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser!.id);
-  if (!emp) return res.status(403).json({ error: "No employee record" });
-  const { db: dbConn } = await import("../../db/mysql.js");
+wfmRouter.post(
+  "/my-weekoff/:assignmentId/acknowledge",
+  requireAuth,
+  h(async (req: any, res: any) => {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp) return res.status(403).json({ error: "No employee record" });
+    const { db: dbConn } = await import("../../db/mysql.js");
 
-  // Verify ownership
-  const [rows] = await dbConn.execute(
-    "SELECT id FROM wfm_roster_assignment WHERE id = ? AND employee_id = ? LIMIT 1",
-    [req.params.assignmentId, (emp as any).id]
-  ) as any;
-  if (!(rows as any[])[0]) return res.status(403).json({ error: "Assignment not found or not yours" });
+    // Verify ownership
+    const [rows] = (await dbConn.execute(
+      "SELECT id FROM wfm_roster_assignment WHERE id = ? AND employee_id = ? LIMIT 1",
+      [req.params.assignmentId, (emp as any).id],
+    )) as any;
+    if (!(rows as any[])[0])
+      return res
+        .status(403)
+        .json({ error: "Assignment not found or not yours" });
 
-  // Guarded on pending_employee_ack. Without the predicate this would happily "acknowledge"
-  // an assignment the manager had already realigned or force-approved, silently overwriting
-  // their decision with the employee's, and would let a double-submit re-stamp employee_ack_at.
-  const [ackResult] = await dbConn.execute<ResultSetHeader>(
-    `UPDATE wfm_roster_assignment
+    // Guarded on pending_employee_ack. Without the predicate this would happily "acknowledge"
+    // an assignment the manager had already realigned or force-approved, silently overwriting
+    // their decision with the employee's, and would let a double-submit re-stamp employee_ack_at.
+    const [ackResult] = await dbConn.execute<ResultSetHeader>(
+      `UPDATE wfm_roster_assignment
         SET employee_ack_status = 'acknowledged', employee_ack_at = NOW(),
             final_roster_status = 'acknowledged'
       WHERE id = ? AND employee_id = ? AND final_roster_status = 'pending_employee_ack'`,
-    [req.params.assignmentId, (emp as any).id]
-  );
-  if (ackResult.affectedRows !== 1) {
-    return res.status(409).json({
-      success: false,
-      error: "This assignment is no longer awaiting your acknowledgement",
-    });
-  }
-  await closeRosterAckInboxItem(dbConn, (emp as any).id, req.params.assignmentId);
-  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  return res.json({ success: true, message: "Acknowledged" });
-}));
+      [req.params.assignmentId, (emp as any).id],
+    );
+    if (ackResult.affectedRows !== 1) {
+      return res.status(409).json({
+        success: false,
+        error: "This assignment is no longer awaiting your acknowledgement",
+      });
+    }
+    await closeRosterAckInboxItem(
+      dbConn,
+      (emp as any).id,
+      req.params.assignmentId,
+    );
+    await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
+    return res.json({ success: true, message: "Acknowledged" });
+  }),
+);
 
 // POST /api/wfm/my-weekoff/:assignmentId/reject
-wfmRouter.post("/my-weekoff/:assignmentId/reject", requireAuth, h(async (req: any, res: any) => {
-  const emp = await getEmployeeForUser(req.authUser!.id);
-  if (!emp) return res.status(403).json({ error: "No employee record" });
-  const { reason } = req.body;
-  if (!reason || String(reason).trim().length < 5) return res.status(400).json({ error: "A reason of at least 5 characters is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
+wfmRouter.post(
+  "/my-weekoff/:assignmentId/reject",
+  requireAuth,
+  h(async (req: any, res: any) => {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp) return res.status(403).json({ error: "No employee record" });
+    const { reason } = req.body;
+    if (!reason || String(reason).trim().length < 5)
+      return res
+        .status(400)
+        .json({ error: "A reason of at least 5 characters is required" });
+    const { db: dbConn } = await import("../../db/mysql.js");
 
-  const [rows] = await dbConn.execute(
-    "SELECT id FROM wfm_roster_assignment WHERE id = ? AND employee_id = ? LIMIT 1",
-    [req.params.assignmentId, (emp as any).id]
-  ) as any;
-  if (!(rows as any[])[0]) return res.status(403).json({ error: "Assignment not found or not yours" });
+    const [rows] = (await dbConn.execute(
+      "SELECT id FROM wfm_roster_assignment WHERE id = ? AND employee_id = ? LIMIT 1",
+      [req.params.assignmentId, (emp as any).id],
+    )) as any;
+    if (!(rows as any[])[0])
+      return res
+        .status(403)
+        .json({ error: "Assignment not found or not yours" });
 
-  const [rejectResult] = await dbConn.execute<ResultSetHeader>(
-    `UPDATE wfm_roster_assignment
+    const [rejectResult] = await dbConn.execute<ResultSetHeader>(
+      `UPDATE wfm_roster_assignment
         SET employee_ack_status = 'rejected',
             employee_rejection_reason = ?,
             final_roster_status = 'pending_manager_action'
       WHERE id = ? AND employee_id = ? AND final_roster_status = 'pending_employee_ack'`,
-    [String(reason).trim(), req.params.assignmentId, (emp as any).id]
-  );
-  if (rejectResult.affectedRows !== 1) {
-    return res.status(409).json({
-      success: false,
-      error: "This assignment is no longer awaiting your acknowledgement",
+      [String(reason).trim(), req.params.assignmentId, (emp as any).id],
+    );
+    if (rejectResult.affectedRows !== 1) {
+      return res.status(409).json({
+        success: false,
+        error: "This assignment is no longer awaiting your acknowledgement",
+      });
+    }
+    await closeRosterAckInboxItem(
+      dbConn,
+      (emp as any).id,
+      req.params.assignmentId,
+    );
+    // The message promised the manager had been notified; nothing had told them. The assignment
+    // now sits in pending_manager_action, which is what GET /manager/weekoff-review lists.
+    return res.json({
+      success: true,
+      message: "Rejection recorded. Your reporting manager has been notified.",
     });
-  }
-  await closeRosterAckInboxItem(dbConn, (emp as any).id, req.params.assignmentId);
-  // The message promised the manager had been notified; nothing had told them. The assignment
-  // now sits in pending_manager_action, which is what GET /manager/weekoff-review lists.
-  return res.json({ success: true, message: "Rejection recorded. Your reporting manager has been notified." });
-}));
+  }),
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PUBLISH TO EMPLOYEES  /api/wfm/roster/publish-to-employees
@@ -1555,8 +2149,13 @@ wfmRouter.post(
   requireRole("admin", "super_admin", "wfm", "hr"),
   h(async (req: any, res: any) => {
     const cycleId = String(req.body?.cycleId ?? "").trim();
-    if (!cycleId) return res.status(400).json({ success: false, error: "cycleId is required" });
-    const ackDeadline = req.body?.ackDeadline ? String(req.body.ackDeadline) : null;
+    if (!cycleId)
+      return res
+        .status(400)
+        .json({ success: false, error: "cycleId is required" });
+    const ackDeadline = req.body?.ackDeadline
+      ? String(req.body.ackDeadline)
+      : null;
 
     const conn = await db.getConnection();
     try {
@@ -1564,7 +2163,7 @@ wfmRouter.post(
 
       const [cycleRows] = await conn.execute<RowDataPacket[]>(
         "SELECT id, status FROM weekly_roster_cycle WHERE id = ? FOR UPDATE",
-        [cycleId]
+        [cycleId],
       );
       if (!cycleRows[0]) {
         const err: any = new Error("Roster cycle not found");
@@ -1585,12 +2184,17 @@ wfmRouter.post(
       // Re-publishing from draft/submitted/reviewed/published itself stays allowed exactly as
       // designed — the comment above already documents that as safe and idempotent.
       const POST_PUBLISH_STATUSES = new Set([
-        "acknowledged", "active", "variance_review", "attendance_locked", "payroll_input_ready", "closed",
+        "acknowledged",
+        "active",
+        "variance_review",
+        "attendance_locked",
+        "payroll_input_ready",
+        "closed",
       ]);
       if (POST_PUBLISH_STATUSES.has(String(cycleRows[0].status))) {
         const err: any = new Error(
           `Cannot publish: cycle is already at status '${cycleRows[0].status}', past the publish step. ` +
-          `Publishing again would regress it and desynchronize downstream sync/dashboard reads.`
+            `Publishing again would regress it and desynchronize downstream sync/dashboard reads.`,
         );
         err.statusCode = 409;
         err.code = "CYCLE_ALREADY_ADVANCED";
@@ -1621,7 +2225,7 @@ wfmRouter.post(
                 employee_rejection_reason = NULL
           WHERE cycle_id = ?
             AND final_roster_status = 'generated'`,
-        [cycleId]
+        [cycleId],
       );
 
       await conn.execute(
@@ -1629,7 +2233,7 @@ wfmRouter.post(
             SET status = 'published', published_by = ?, published_at = NOW(),
                 ack_deadline = COALESCE(?, ack_deadline), updated_at = NOW()
           WHERE id = ?`,
-        [req.authUser!.id, ackDeadline, cycleId]
+        [req.authUser!.id, ackDeadline, cycleId],
       );
 
       // One work item per employee for the whole cycle, not one per assignment — a week is
@@ -1655,7 +2259,7 @@ wfmRouter.post(
                    AND w.type = 'ROSTER_ACK_PENDING'
                    AND w.entity_id = ?
                    AND w.is_actioned = 0)`,
-        [ackDeadline, cycleId, cycleId, cycleId]
+        [ackDeadline, cycleId, cycleId, cycleId],
       );
 
       await conn.commit();
@@ -1674,7 +2278,7 @@ wfmRouter.post(
       // 45 workers share this pool; one connection left unreleased has starved all of them.
       conn.release();
     }
-  })
+  }),
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1684,22 +2288,27 @@ wfmRouter.post(
 // POST /api/wfm/roster/publish-final
 // Transitions all approved_final / force_approved_by_manager / realigned_by_manager
 // assignments for a cycle to published_to_rta and sets published_to_rta_at.
-wfmRouter.post("/roster/publish-final", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), h(async (req: any, res: any) => {
-  const { cycleId } = req.body;
-  if (!cycleId) return res.status(400).json({ error: "cycleId is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
+wfmRouter.post(
+  "/roster/publish-final",
+  requireAuth,
+  requireRole("admin", "super_admin", "wfm", "hr"),
+  h(async (req: any, res: any) => {
+    const { cycleId } = req.body;
+    if (!cycleId) return res.status(400).json({ error: "cycleId is required" });
+    const { db: dbConn } = await import("../../db/mysql.js");
 
-  const [result] = await dbConn.execute(
-    `UPDATE wfm_roster_assignment
+    const [result] = (await dbConn.execute(
+      `UPDATE wfm_roster_assignment
         SET final_roster_status = 'published_to_rta',
             published_to_rta_at = NOW()
       WHERE cycle_id = ?
         AND final_roster_status IN ('approved_final','force_approved_by_manager','realigned_by_manager','acknowledged')`,
-    [cycleId]
-  ) as any;
+      [cycleId],
+    )) as any;
 
-  return res.json({ success: true, published: result.affectedRows });
-}));
+    return res.json({ success: true, published: result.affectedRows });
+  }),
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // RTA FINAL ROSTER STATE  /api/wfm/rta/final-roster-state
@@ -1708,17 +2317,24 @@ wfmRouter.post("/roster/publish-final", requireAuth, requireRole("admin", "super
 // GET /api/wfm/rta/final-roster-state?processId=&date=
 // Returns per-employee RTA state for today or a given date.
 // Only returns published/approved/force_approved/realigned records.
-wfmRouter.get("/rta/final-roster-state", requireAuth, requireRole("admin", "wfm", "hr", "manager", "operations_manager"), h(async (req: any, res: any) => {
-  const { processId, date } = req.query;
-  if (!date) return res.status(400).json({ error: "date is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
+wfmRouter.get(
+  "/rta/final-roster-state",
+  requireAuth,
+  requireRole("admin", "wfm", "hr", "manager", "operations_manager"),
+  h(async (req: any, res: any) => {
+    const { processId, date } = req.query;
+    if (!date) return res.status(400).json({ error: "date is required" });
+    const { db: dbConn } = await import("../../db/mysql.js");
 
-  const params: unknown[] = [date];
-  let processCond = "";
-  if (processId) { processCond = " AND pm.id = ?"; params.push(processId); }
+    const params: unknown[] = [date];
+    let processCond = "";
+    if (processId) {
+      processCond = " AND pm.id = ?";
+      params.push(processId);
+    }
 
-  const [rows] = await dbConn.execute(
-    `SELECT wra.id, wra.employee_id, wra.roster_date, wra.is_week_off,
+    const [rows] = await dbConn.execute(
+      `SELECT wra.id, wra.employee_id, wra.roster_date, wra.is_week_off,
             wra.final_roster_status, wra.employee_ack_status,
             wra.manager_action_status, wra.system_decision_reason,
             wst.shift_name, wst.start_time, wst.end_time,
@@ -1752,10 +2368,11 @@ wfmRouter.get("/rta/final-roster-state", requireAuth, requireRole("admin", "wfm"
           'approved_final','published_to_rta'
         )${processCond}
       ORDER BY e.employee_code ASC`,
-    params
-  );
-  return res.json({ success: true, data: rows });
-}));
+      params,
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
 
 // GET /api/wfm/attendance/day-detail/:employeeId/:date
 // Combined attendance + COSEC daily aggregate + individual punches for one employee on one date
@@ -1768,9 +2385,21 @@ wfmRouter.get(
     const { hasRole: checkRole2 } = await import("../../shared/accessGuard.js");
     const isPrivileged = await checkRole2(
       req.authUser!.id,
-      "super_admin", "admin", "hr", "wfm", "manager", "ceo",
-      "finance", "payroll", "payroll_head", "payroll_admin", "branch_head", "process_manager",
-      "recruiter", "qa", "trainer"
+      "super_admin",
+      "admin",
+      "hr",
+      "wfm",
+      "manager",
+      "ceo",
+      "finance",
+      "payroll",
+      "payroll_head",
+      "payroll_admin",
+      "branch_head",
+      "process_manager",
+      "recruiter",
+      "qa",
+      "trainer",
     );
     if (!isPrivileged) {
       const emp = await getEmployeeForUser(req.authUser!.id);
@@ -1780,11 +2409,19 @@ wfmRouter.get(
     }
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return res.status(400).json({ success: false, error: "Invalid date format. Use YYYY-MM-DD" });
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid date format. Use YYYY-MM-DD" });
     }
 
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employeeId)) {
-      return res.status(400).json({ success: false, error: "Invalid employeeId" });
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        employeeId,
+      )
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid employeeId" });
     }
 
     const { db: dbConn } = await import("../../db/mysql.js");
@@ -1793,16 +2430,20 @@ wfmRouter.get(
     // cosec_punch_sync on its own indexed `user_id` column. Joining employees to that table
     // and wrapping both sides in COLLATE made `idx_user_date (user_id, punch_time)` unusable
     // and turned every drawer open into a 3.19M-row full index scan (measured: 56s).
-    const [empKeyRows] = await dbConn.execute(
+    const [empKeyRows] = (await dbConn.execute(
       `SELECT employee_code, call_centre_code, biometric_code
          FROM employees WHERE id = ? LIMIT 1`,
-      [employeeId]
-    ) as any[];
+      [employeeId],
+    )) as any[];
     const empKeys = (empKeyRows as any[])[0] ?? null;
     // De-duplicated because employee_code and biometric_code are equal on most rows.
-    const punchUserIds = Array.from(new Set(
-      [empKeys?.employee_code, empKeys?.biometric_code].filter((v): v is string => !!v)
-    ));
+    const punchUserIds = Array.from(
+      new Set(
+        [empKeys?.employee_code, empKeys?.biometric_code].filter(
+          (v): v is string => !!v,
+        ),
+      ),
+    );
 
     // Night shift: punches belonging to this shift can land on the next calendar day up to
     // 06:00, so the window is a half-open datetime range — a range the index can seek,
@@ -1831,7 +2472,7 @@ wfmRouter.get(
              ON bal.employee_id = adr.employee_id AND bal.punch_date = adr.record_date
           WHERE adr.employee_id = ? AND adr.record_date = ?
           LIMIT 1`,
-        [employeeId, date]
+        [employeeId, date],
       ),
       // 2. Individual punch events — handle night shift (next-day punches before 06:00)
       punchUserIds.length === 0
@@ -1846,14 +2487,14 @@ wfmRouter.get(
                 AND cps.punch_time >= ?
                 AND cps.punch_time < ?
               ORDER BY cps.punch_time ASC`,
-            [...punchUserIds, punchWindowStart, punchWindowEnd]
+            [...punchUserIds, punchWindowStart, punchWindowEnd],
           ),
     ]);
 
     // cosec_daily_agg may not exist — query it separately with fallback to null
     let cosecAgg: any = null;
     try {
-      const [cosecRows] = await dbConn.execute(
+      const [cosecRows] = (await dbConn.execute(
         `SELECT cda.user_id, DATE_FORMAT(cda.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch_in,
                 DATE_FORMAT(cda.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
                 cda.work_minutes, cda.shift_date
@@ -1865,8 +2506,8 @@ wfmRouter.get(
              )
           WHERE e.id = ? AND cda.shift_date = ?
           LIMIT 1`,
-        [employeeId, date]
-      ) as any[];
+        [employeeId, date],
+      )) as any[];
       cosecAgg = (cosecRows as any[])[0] ?? null;
     } catch {
       // Table doesn't exist in this environment — return null safely
@@ -1877,19 +2518,25 @@ wfmRouter.get(
         const nextDate = new Date(`${date}T00:00:00+05:30`);
         nextDate.setUTCDate(nextDate.getUTCDate() + 1);
         const nextDateText = nextDate.toISOString().slice(0, 10);
-        const {
-          getBulkCosecMappings,
-          getMonthlyAttendanceFromNcosec,
-        } = await import("./attendance-realtime-ncosec.service.js");
+        const { getBulkCosecMappings, getMonthlyAttendanceFromNcosec } =
+          await import("./attendance-realtime-ncosec.service.js");
         const mappings = await getBulkCosecMappings([employeeId]);
-        const monthly = await getMonthlyAttendanceFromNcosec(mappings, date, nextDateText);
+        const monthly = await getMonthlyAttendanceFromNcosec(
+          mappings,
+          date,
+          nextDateText,
+        );
         const matched = monthly.find((row) => row.record_date === date) ?? null;
         if (matched) {
           cosecAgg = {
             user_id: matched.employee_code,
             shift_date: matched.record_date,
-            first_punch_in: matched.clock_in_time ? matched.clock_in_time.replace("T", " ").replace("+05:30", "") : null,
-            last_punch_out: matched.clock_out_time ? matched.clock_out_time.replace("T", " ").replace("+05:30", "") : null,
+            first_punch_in: matched.clock_in_time
+              ? matched.clock_in_time.replace("T", " ").replace("+05:30", "")
+              : null,
+            last_punch_out: matched.clock_out_time
+              ? matched.clock_out_time.replace("T", " ").replace("+05:30", "")
+              : null,
             work_minutes: matched.raw_minutes ?? matched.biometric_minutes ?? 0,
             synced_at: new Date().toISOString(),
           };
@@ -1914,13 +2561,29 @@ wfmRouter.get(
     // These two are derived bounds, not per-punch events, so they carry derived: true —
     // the client must not present them as a complete punch trail.
     let rawPunches = punchRows as any[];
-    if (rawPunches.length === 0 && cosecAgg && (cosecAgg.first_punch_in || cosecAgg.last_punch_out)) {
+    if (
+      rawPunches.length === 0 &&
+      cosecAgg &&
+      (cosecAgg.first_punch_in || cosecAgg.last_punch_out)
+    ) {
       rawPunches = [
         cosecAgg.first_punch_in
-          ? { punch_time: cosecAgg.first_punch_in, io_type: 1, io_label: "In", device_id: null, derived: true }
+          ? {
+              punch_time: cosecAgg.first_punch_in,
+              io_type: 1,
+              io_label: "In",
+              device_id: null,
+              derived: true,
+            }
           : null,
         cosecAgg.last_punch_out
-          ? { punch_time: cosecAgg.last_punch_out, io_type: 2, io_label: "Out", device_id: null, derived: true }
+          ? {
+              punch_time: cosecAgg.last_punch_out,
+              io_type: 2,
+              io_label: "Out",
+              device_id: null,
+              derived: true,
+            }
           : null,
       ].filter(Boolean) as any[];
     }
@@ -1938,13 +2601,18 @@ wfmRouter.get(
         const campaigns = await getAprDayCampaigns(empKeys, date);
         if (campaigns.length > 0) {
           const logins = campaigns
-            .map((c: any) => c.login_time).filter((t: any) => t && t !== '00:00:00').sort();
+            .map((c: any) => c.login_time)
+            .filter((t: any) => t && t !== "00:00:00")
+            .sort();
           const logouts = campaigns
-            .map((c: any) => c.logout_time).filter((t: any) => t && t !== '00:00:00').sort();
+            .map((c: any) => c.logout_time)
+            .filter((t: any) => t && t !== "00:00:00")
+            .sort();
           const loginTime = logins[0] ?? null;
           const logoutTime = logouts[logouts.length - 1] ?? null;
           const netMinutes = campaigns.reduce(
-            (sum: number, c: any) => sum + parseSqlTimeToMinutes(c.net_login), 0
+            (sum: number, c: any) => sum + parseSqlTimeToMinutes(c.net_login),
+            0,
           );
           aprRecord = {
             record_date: date,
@@ -1953,11 +2621,26 @@ wfmRouter.get(
             login_at: composeIstDateTime(date, loginTime),
             logout_at: composeIstDateTime(date, logoutTime),
             net_minutes: netMinutes,
-            calls: campaigns.reduce((s: number, c: any) => s + Number(c.calls ?? 0), 0),
-            break_bio: campaigns.reduce((s: number, c: any) => s + parseSqlTimeToMinutes(c.bio), 0),
-            break_lunch: campaigns.reduce((s: number, c: any) => s + parseSqlTimeToMinutes(c.lunch), 0),
-            break_qa: campaigns.reduce((s: number, c: any) => s + parseSqlTimeToMinutes(c.qa), 0),
-            break_training: campaigns.reduce((s: number, c: any) => s + parseSqlTimeToMinutes(c.training), 0),
+            calls: campaigns.reduce(
+              (s: number, c: any) => s + Number(c.calls ?? 0),
+              0,
+            ),
+            break_bio: campaigns.reduce(
+              (s: number, c: any) => s + parseSqlTimeToMinutes(c.bio),
+              0,
+            ),
+            break_lunch: campaigns.reduce(
+              (s: number, c: any) => s + parseSqlTimeToMinutes(c.lunch),
+              0,
+            ),
+            break_qa: campaigns.reduce(
+              (s: number, c: any) => s + parseSqlTimeToMinutes(c.qa),
+              0,
+            ),
+            break_training: campaigns.reduce(
+              (s: number, c: any) => s + parseSqlTimeToMinutes(c.training),
+              0,
+            ),
             campaigns,
           };
         }
@@ -1975,54 +2658,58 @@ wfmRouter.get(
         apr_record: aprRecord,
       },
     });
-  })
+  }),
 );
 
 // GET /api/wfm/my-attendance — employee's own attendance summary (month-to-date)
-wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
-  const { db } = await import("../../db/mysql.js");
-  const selfEmp = await getEmployeeForUser(req.authUser.id);
-  if (!selfEmp) {
-    return res.json({ success: true, data: {} });
-  }
+wfmRouter.get(
+  "/my-attendance",
+  h(async (req: any, res: any) => {
+    const { db } = await import("../../db/mysql.js");
+    const selfEmp = await getEmployeeForUser(req.authUser.id);
+    if (!selfEmp) {
+      return res.json({ success: true, data: {} });
+    }
 
-  // Get current month in IST
-  const now = new Date();
-  const istDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  const year = istDate.getFullYear();
-  const month = String(istDate.getMonth() + 1).padStart(2, '0');
-  const monthStr = `${year}-${month}`;
+    // Get current month in IST
+    const now = new Date();
+    const istDate = new Date(
+      now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
+    );
+    const year = istDate.getFullYear();
+    const month = String(istDate.getMonth() + 1).padStart(2, "0");
+    const monthStr = `${year}-${month}`;
 
-  // Calculate month-to-date attendance summary.
-  //
-  // This query used to hand-roll its status vocabulary, which produced the
-  // contradiction the CEO UAT reported on /my-dashboard: "Present 0 Days" shown
-  // beside "Attendance % 13.8%" for the same person and period. Three separate
-  // deviations from shared/attendanceStatus.ts caused it:
-  //
-  //   1. presentDays counted only 'present', while the percentage numerator also
-  //      credited half-days — so the two tiles measured different things. It also
-  //      dropped 'week_off_worked', a real ENUM member, so anyone working a week
-  //      off had that day counted nowhere.
-  //   2. The denominator excluded only holiday and week_off, leaving approved
-  //      leave in "expected to work" and depressing every percentage.
-  //   3. lateDays counted attendance_status = 'late', which is not a member of the
-  //      ENUM at all — lateness is the separate late_mark flag — so it has always
-  //      read 0. It now mirrors lateMarks rather than silently reporting nothing.
-  //
-  // All of it now derives from the shared helpers, so this endpoint, the org-wide
-  // metric and the dashboards agree by construction.
-  // Every aggregate is COALESCEd because an empty month returns one row of NULLs, not
-  // zero rows. SUM() over no rows is NULL, and an aggregate query without GROUP BY always
-  // produces exactly one row — so the `?? {...}` default below can never fire, and the
-  // response goes out as fourteen null fields.
-  //
-  // That is what blanked every tile on /my-dashboard on 1 August: it was the first day of
-  // the month, the caller had no rows yet in 2026-08, and asNumber(null) renders "—".
-  // Verified against production: the same query over an empty month returns
-  // presentDays NULL / attendancePct NULL, and returns 0 / 0.0 once COALESCEd.
-  const [rows] = await db.execute(
-    `SELECT
+    // Calculate month-to-date attendance summary.
+    //
+    // This query used to hand-roll its status vocabulary, which produced the
+    // contradiction the CEO UAT reported on /my-dashboard: "Present 0 Days" shown
+    // beside "Attendance % 13.8%" for the same person and period. Three separate
+    // deviations from shared/attendanceStatus.ts caused it:
+    //
+    //   1. presentDays counted only 'present', while the percentage numerator also
+    //      credited half-days — so the two tiles measured different things. It also
+    //      dropped 'week_off_worked', a real ENUM member, so anyone working a week
+    //      off had that day counted nowhere.
+    //   2. The denominator excluded only holiday and week_off, leaving approved
+    //      leave in "expected to work" and depressing every percentage.
+    //   3. lateDays counted attendance_status = 'late', which is not a member of the
+    //      ENUM at all — lateness is the separate late_mark flag — so it has always
+    //      read 0. It now mirrors lateMarks rather than silently reporting nothing.
+    //
+    // All of it now derives from the shared helpers, so this endpoint, the org-wide
+    // metric and the dashboards agree by construction.
+    // Every aggregate is COALESCEd because an empty month returns one row of NULLs, not
+    // zero rows. SUM() over no rows is NULL, and an aggregate query without GROUP BY always
+    // produces exactly one row — so the `?? {...}` default below can never fire, and the
+    // response goes out as fourteen null fields.
+    //
+    // That is what blanked every tile on /my-dashboard on 1 August: it was the first day of
+    // the month, the caller had no rows yet in 2026-08, and asNumber(null) renders "—".
+    // Verified against production: the same query over an empty month returns
+    // presentDays NULL / attendancePct NULL, and returns 0 / 0.0 once COALESCEd.
+    const [rows] = await db.execute(
+      `SELECT
        COALESCE(${presentSql()}, 0) AS presentDays,
        COALESCE(SUM(CASE WHEN attendance_status = '${HALF_DAY_STATUS}' THEN 1 ELSE 0 END), 0) AS halfDays,
        COALESCE(SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END), 0) AS absentDays,
@@ -2044,48 +2731,60 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
      WHERE employee_id = ?
        AND DATE_FORMAT(record_date, '%Y-%m') = ?
        AND record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
-    [selfEmp.id, monthStr]
-  );
+      [selfEmp.id, monthStr],
+    );
 
-  // No `?? {...}` fallback here on purpose. rows[0] is always present for an aggregate
-  // without GROUP BY, so a default object would be unreachable and would imply a guard
-  // that does not exist — which is exactly how the NULL month went unnoticed. The
-  // COALESCEs above are the guard.
-  const data = (rows as any[])[0];
+    // No `?? {...}` fallback here on purpose. rows[0] is always present for an aggregate
+    // without GROUP BY, so a default object would be unreachable and would imply a guard
+    // that does not exist — which is exactly how the NULL month went unnoticed. The
+    // COALESCEs above are the guard.
+    const data = (rows as any[])[0];
 
-  return res.json({
-    success: true,
-    data
-  });
-}));
+    return res.json({
+      success: true,
+      data,
+    });
+  }),
+);
 
 // GET /api/wfm/attendance/summary/:employeeId/:month — monthly attendance summary for specific employee/month
-wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: any) => {
-  const { employeeId, month } = req.params;
-  const { db } = await import("../../db/mysql.js");
+wfmRouter.get(
+  "/attendance/summary/:employeeId/:month",
+  h(async (req: any, res: any) => {
+    const { employeeId, month } = req.params;
+    const { db } = await import("../../db/mysql.js");
 
-  // Security: employee can only view own data unless privileged
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-  const isPrivileged = await checkRole(
-    req.authUser.id,
-    "super_admin", "admin", "hr", "wfm", "manager", "branch_head", "process_manager",
-    "payroll_head", "payroll_admin"
-  );
+    // Security: employee can only view own data unless privileged
+    const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+    const isPrivileged = await checkRole(
+      req.authUser.id,
+      "super_admin",
+      "admin",
+      "hr",
+      "wfm",
+      "manager",
+      "branch_head",
+      "process_manager",
+      "payroll_head",
+      "payroll_admin",
+    );
 
-  if (!isPrivileged) {
-    const selfEmp = await getEmployeeForUser(req.authUser.id);
-    if (!selfEmp || selfEmp.id !== employeeId) {
-      return res.status(403).json({ success: false, error: "Forbidden" });
+    if (!isPrivileged) {
+      const selfEmp = await getEmployeeForUser(req.authUser.id);
+      if (!selfEmp || selfEmp.id !== employeeId) {
+        return res.status(403).json({ success: false, error: "Forbidden" });
+      }
     }
-  }
 
-  // Validate month format (YYYY-MM)
-  if (!/^\d{4}-\d{2}$/.test(month)) {
-    return res.status(400).json({ success: false, error: "Invalid month format. Use YYYY-MM" });
-  }
+    // Validate month format (YYYY-MM)
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid month format. Use YYYY-MM" });
+    }
 
-  const [rows] = await db.execute(
-    `SELECT
+    const [rows] = await db.execute(
+      `SELECT
        -- Same canon as /my-attendance above. This endpoint had the identical
        -- defects plus one of its own: presentDays counted IN ('present','late'),
        -- and 'late' is not an ENUM member, so it contributed nothing while giving
@@ -2142,122 +2841,210 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
          ? <> DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m')
          OR record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
        )`,
-    [employeeId, month, month, employeeId, month, month]
-  );
-
-  // Unreachable default removed — see /my-attendance above. The COALESCEs are the guard.
-  const data = (rows as any[])[0];
-
-  // weekOffDays from SQL only counts rows with attendance_status='week_off'. For employees
-  // whose non-working days are never inserted as records (NCOSEC import skips them), that
-  // count is 0. Compute calendar-based eligible week-offs and use the larger value.
-  if (Number(data.weekOffDays) === 0) {
-    const [empRows] = await db.execute(
-      `SELECT working_days FROM employees WHERE id = ? LIMIT 1`,
-      [employeeId]
+      [employeeId, month, month, employeeId, month, month],
     );
-    const emp = (empRows as any[])[0];
-    if (emp) {
-      let workingDays: number[] = [1, 2, 3, 4, 5];
-      const wd = emp.working_days;
-      if (Array.isArray(wd)) {
-        workingDays = wd.map(Number).filter((d: number) => d >= 0 && d <= 6);
-      } else if (typeof wd === 'string' && wd.trim()) {
-        try {
-          const parsed = JSON.parse(wd);
-          if (Array.isArray(parsed)) workingDays = parsed.map(Number).filter((d: number) => d >= 0 && d <= 6);
-        } catch {
-          workingDays = wd.split(',').map((s: string) => Number(s.trim())).filter((d: number) => d >= 0 && d <= 6);
+
+    // Unreachable default removed — see /my-attendance above. The COALESCEs are the guard.
+    const data = (rows as any[])[0];
+
+    // weekOffDays from SQL only counts rows with attendance_status='week_off'. For employees
+    // whose non-working days are never inserted as records (NCOSEC import skips them), that
+    // count is 0. Compute calendar-based eligible week-offs and use the larger value.
+    if (Number(data.weekOffDays) === 0) {
+      const [empRows] = await db.execute(
+        `SELECT working_days FROM employees WHERE id = ? LIMIT 1`,
+        [employeeId],
+      );
+      const emp = (empRows as any[])[0];
+      if (emp) {
+        let workingDays: number[] = [1, 2, 3, 4, 5];
+        const wd = emp.working_days;
+        if (Array.isArray(wd)) {
+          workingDays = wd.map(Number).filter((d: number) => d >= 0 && d <= 6);
+        } else if (typeof wd === "string" && wd.trim()) {
+          try {
+            const parsed = JSON.parse(wd);
+            if (Array.isArray(parsed))
+              workingDays = parsed
+                .map(Number)
+                .filter((d: number) => d >= 0 && d <= 6);
+          } catch {
+            workingDays = wd
+              .split(",")
+              .map((s: string) => Number(s.trim()))
+              .filter((d: number) => d >= 0 && d <= 6);
+          }
         }
-      }
 
-      const [yr, mo] = month.split('-').map(Number);
-      const lastDay = new Date(yr, mo, 0).getDate();
-      const todayIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-      const isCurrentMonth = new Date(yr, mo - 1).getMonth() === todayIST.getMonth()
-        && new Date(yr, mo - 1).getFullYear() === todayIST.getFullYear();
-      const periodEndDay = isCurrentMonth ? todayIST.getDate() : lastDay;
+        const [yr, mo] = month.split("-").map(Number);
+        const lastDay = new Date(yr, mo, 0).getDate();
+        const todayIST = new Date(
+          new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
+        );
+        const isCurrentMonth =
+          new Date(yr, mo - 1).getMonth() === todayIST.getMonth() &&
+          new Date(yr, mo - 1).getFullYear() === todayIST.getFullYear();
+        const periodEndDay = isCurrentMonth ? todayIST.getDate() : lastDay;
 
-      let eligibleWeekoffs = 0;
-      for (let d = 1; d <= periodEndDay; d++) {
-        const dow = new Date(yr, mo - 1, d).getDay(); // 0=Sun … 6=Sat
-        if (!workingDays.includes(dow)) eligibleWeekoffs++;
+        let eligibleWeekoffs = 0;
+        for (let d = 1; d <= periodEndDay; d++) {
+          const dow = new Date(yr, mo - 1, d).getDay(); // 0=Sun … 6=Sat
+          if (!workingDays.includes(dow)) eligibleWeekoffs++;
+        }
+        data.weekOffDays = eligibleWeekoffs;
       }
-      data.weekOffDays = eligibleWeekoffs;
     }
-  }
 
-  return res.json({
-    success: true,
-    data
-  });
-}));
+    return res.json({
+      success: true,
+      data,
+    });
+  }),
+);
 
 // ── Week-off fairness scores ──────────────────────────────────────────────────
 
 // branch_head added 2026-09-16: view-only, matching the read/write split already used by
 // planning-rules/slot-requirements/weekoff-day-rules — branch heads can see fairness scores
 // for their branch, but /compute (which recalculates and writes scores) stays wfm/admin-only.
-wfmRouter.get("/weekoff/fairness-scores", requireRole("wfm", "admin", "super_admin", "branch_head"), h(async (req, res) => {
-  const { getFairnessScoresForWeek } = await import("./weekoff-fairness.service.js");
-  const processId = String(req.query.processId ?? "");
-  const weekStartDate = String(req.query.weekStartDate ?? "");
-  if (!processId || !weekStartDate) {
-    return res.status(400).json({ success: false, message: "processId and weekStartDate required" });
-  }
-  const data = await getFairnessScoresForWeek(processId, weekStartDate);
-  return res.json({ success: true, data });
-}));
+wfmRouter.get(
+  "/weekoff/fairness-scores",
+  requireRole("wfm", "admin", "super_admin", "branch_head"),
+  h(async (req, res) => {
+    const { getFairnessScoresForWeek } =
+      await import("./weekoff-fairness.service.js");
+    const processId = String(req.query.processId ?? "");
+    const weekStartDate = String(req.query.weekStartDate ?? "");
+    if (!processId || !weekStartDate) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "processId and weekStartDate required",
+        });
+    }
+    const data = await getFairnessScoresForWeek(processId, weekStartDate);
+    return res.json({ success: true, data });
+  }),
+);
 
-wfmRouter.post("/weekoff/fairness-scores/compute", requireRole("wfm", "admin", "super_admin"), h(async (req, res) => {
-  const { computeAndStoreFairnessScores } = await import("./weekoff-fairness.service.js");
-  const { processId, weekStartDate } = req.body;
-  if (!processId || !weekStartDate) {
-    return res.status(400).json({ success: false, message: "processId and weekStartDate required" });
-  }
-  await computeAndStoreFairnessScores(processId, weekStartDate);
-  return res.json({ success: true, message: "Fairness scores computed and stored" });
-}));
+wfmRouter.post(
+  "/weekoff/fairness-scores/compute",
+  requireRole("wfm", "admin", "super_admin"),
+  h(async (req, res) => {
+    const { computeAndStoreFairnessScores } =
+      await import("./weekoff-fairness.service.js");
+    const { processId, weekStartDate } = req.body;
+    if (!processId || !weekStartDate) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "processId and weekStartDate required",
+        });
+    }
+    await computeAndStoreFairnessScores(processId, weekStartDate);
+    return res.json({
+      success: true,
+      message: "Fairness scores computed and stored",
+    });
+  }),
+);
 
-wfmRouter.post("/weekoff/allocations/record", requireRole("wfm", "admin", "super_admin"), h(async (req, res) => {
-  const { recordWeekOffAllocation } = await import("./weekoff-fairness.service.js");
-  const { employeeId, processId, weekStartDate, assignedDay, exceptionReason } = req.body;
-  if (!employeeId || !processId || !weekStartDate) {
-    return res.status(400).json({ success: false, message: "employeeId, processId and weekStartDate required" });
-  }
-  await recordWeekOffAllocation(employeeId, processId, weekStartDate, assignedDay ?? null, exceptionReason);
-  return res.json({ success: true, message: "Allocation recorded" });
-}));
+wfmRouter.post(
+  "/weekoff/allocations/record",
+  requireRole("wfm", "admin", "super_admin"),
+  h(async (req, res) => {
+    const { recordWeekOffAllocation } =
+      await import("./weekoff-fairness.service.js");
+    const {
+      employeeId,
+      processId,
+      weekStartDate,
+      assignedDay,
+      exceptionReason,
+    } = req.body;
+    if (!employeeId || !processId || !weekStartDate) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "employeeId, processId and weekStartDate required",
+        });
+    }
+    await recordWeekOffAllocation(
+      employeeId,
+      processId,
+      weekStartDate,
+      assignedDay ?? null,
+      exceptionReason,
+    );
+    return res.json({ success: true, message: "Allocation recorded" });
+  }),
+);
 
 // ── Branch WFM SPOC config ────────────────────────────────────────────────────
 
-wfmRouter.get("/branch-spoc-config", requireRole("super_admin", "admin", "wfm"), h(async (req, res) => {
-  const { listSPOCConfigs } = await import("./branch-wfm-spoc.service.js");
-  const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
-  const data = await listSPOCConfigs(branchId);
-  return res.json({ success: true, data });
-}));
+wfmRouter.get(
+  "/branch-spoc-config",
+  requireRole("super_admin", "admin", "wfm"),
+  h(async (req, res) => {
+    const { listSPOCConfigs } = await import("./branch-wfm-spoc.service.js");
+    const branchId = req.query.branchId
+      ? String(req.query.branchId)
+      : undefined;
+    const data = await listSPOCConfigs(branchId);
+    return res.json({ success: true, data });
+  }),
+);
 
-wfmRouter.post("/branch-spoc-config", requireRole("super_admin", "admin"), h(async (req, res) => {
-  const { createSPOCConfig } = await import("./branch-wfm-spoc.service.js");
-  const { branch_id, primary_spoc_user_id, backup_spoc_user_id, effective_from, effective_to } = req.body;
-  if (!branch_id || !primary_spoc_user_id || !effective_from) {
-    return res.status(400).json({ success: false, message: "branch_id, primary_spoc_user_id and effective_from required" });
-  }
-  const id = await createSPOCConfig(
-    { branch_id, primary_spoc_user_id, backup_spoc_user_id: backup_spoc_user_id ?? null, effective_from, effective_to: effective_to ?? null },
-    String(req.authUser.id),
-  );
-  return res.status(201).json({ success: true, id });
-}));
+wfmRouter.post(
+  "/branch-spoc-config",
+  requireRole("super_admin", "admin"),
+  h(async (req, res) => {
+    const { createSPOCConfig } = await import("./branch-wfm-spoc.service.js");
+    const {
+      branch_id,
+      primary_spoc_user_id,
+      backup_spoc_user_id,
+      effective_from,
+      effective_to,
+    } = req.body;
+    if (!branch_id || !primary_spoc_user_id || !effective_from) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "branch_id, primary_spoc_user_id and effective_from required",
+        });
+    }
+    const id = await createSPOCConfig(
+      {
+        branch_id,
+        primary_spoc_user_id,
+        backup_spoc_user_id: backup_spoc_user_id ?? null,
+        effective_from,
+        effective_to: effective_to ?? null,
+      },
+      String(req.authUser.id),
+    );
+    return res.status(201).json({ success: true, id });
+  }),
+);
 
-wfmRouter.patch("/branch-spoc-config/:id", requireRole("super_admin", "admin"), h(async (req, res) => {
-  const { updateSPOCConfig } = await import("./branch-wfm-spoc.service.js");
-  const id = Number(req.params.id);
-  if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
-  await updateSPOCConfig(id, req.body);
-  return res.json({ success: true });
-}));
+wfmRouter.patch(
+  "/branch-spoc-config/:id",
+  requireRole("super_admin", "admin"),
+  h(async (req, res) => {
+    const { updateSPOCConfig } = await import("./branch-wfm-spoc.service.js");
+    const id = Number(req.params.id);
+    if (!id)
+      return res.status(400).json({ success: false, message: "Invalid id" });
+    await updateSPOCConfig(id, req.body);
+    return res.json({ success: true });
+  }),
+);
 
 // ─── G12 week_off_worked historical impact simulator (read-only) ─────────────
 //
@@ -2273,32 +3060,53 @@ wfmRouter.patch("/branch-spoc-config/:id", requireRole("super_admin", "admin"), 
 // Restricted to payroll_head, admin and super_admin to avoid exposing gross
 // salary data to non-payroll roles.
 
-wfmRouter.get("/wow-impact-simulator", requireRole("super_admin", "admin", "hr", "payroll_head"), h(async (req, res) => {
-  const { simulateWowImpact } = await import("./weekoff-worked-impact-simulator.service.js");
-  const from = typeof req.query.from === "string" ? req.query.from : undefined;
-  const to   = typeof req.query.to   === "string" ? req.query.to   : undefined;
-  const result = await simulateWowImpact(from, to);
-  return res.json({ success: true, data: result });
-}));
+wfmRouter.get(
+  "/wow-impact-simulator",
+  requireRole("super_admin", "admin", "hr", "payroll_head"),
+  h(async (req, res) => {
+    const { simulateWowImpact } =
+      await import("./weekoff-worked-impact-simulator.service.js");
+    const from =
+      typeof req.query.from === "string" ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    const result = await simulateWowImpact(from, to);
+    return res.json({ success: true, data: result });
+  }),
+);
 
-wfmRouter.get("/wow-impact-simulator/finalized", requireRole("super_admin", "admin", "payroll_head"), h(async (req, res) => {
-  const { simulateWowFinalizedImpact } = await import("./weekoff-worked-impact-simulator.service.js");
-  const from = typeof req.query.from === "string" ? req.query.from : undefined;
-  const to   = typeof req.query.to   === "string" ? req.query.to   : undefined;
-  const result = await simulateWowFinalizedImpact(from, to);
-  return res.json({ success: true, data: result });
-}));
+wfmRouter.get(
+  "/wow-impact-simulator/finalized",
+  requireRole("super_admin", "admin", "payroll_head"),
+  h(async (req, res) => {
+    const { simulateWowFinalizedImpact } =
+      await import("./weekoff-worked-impact-simulator.service.js");
+    const from =
+      typeof req.query.from === "string" ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    const result = await simulateWowFinalizedImpact(from, to);
+    return res.json({ success: true, data: result });
+  }),
+);
 
 // Diagnostic: why does HRMS show Present but APR says Absent?
-wfmRouter.post("/attendance/diagnose-mismatch", requireRole("super_admin", "admin", "wfm"), h(async (req, res) => {
-  const { batchDiagnose } = await import("./attendance-diagnostic.service.js");
-  const { emp_codes, date_from, date_to } = req.body as { emp_codes?: string[]; date_from?: string; date_to?: string };
-  if (!emp_codes?.length || !date_from || !date_to) {
-    return res.status(400).json({
-      success: false,
-      message: "Need emp_codes (array), date_from, date_to (YYYY-MM-DD)",
-    });
-  }
-  const results = await batchDiagnose(emp_codes, date_from, date_to);
-  return res.json({ success: true, data: results });
-}));
+wfmRouter.post(
+  "/attendance/diagnose-mismatch",
+  requireRole("super_admin", "admin", "wfm"),
+  h(async (req, res) => {
+    const { batchDiagnose } =
+      await import("./attendance-diagnostic.service.js");
+    const { emp_codes, date_from, date_to } = req.body as {
+      emp_codes?: string[];
+      date_from?: string;
+      date_to?: string;
+    };
+    if (!emp_codes?.length || !date_from || !date_to) {
+      return res.status(400).json({
+        success: false,
+        message: "Need emp_codes (array), date_from, date_to (YYYY-MM-DD)",
+      });
+    }
+    const results = await batchDiagnose(emp_codes, date_from, date_to);
+    return res.json({ success: true, data: results });
+  }),
+);

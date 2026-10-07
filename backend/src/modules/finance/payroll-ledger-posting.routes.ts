@@ -1,10 +1,17 @@
 import { Router } from "express";
 import { db } from "../../db/mysql.js";
-import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  requireWriteAccess,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { parseSerial, scopeVouchers } from "./salary-voucher.routes.js";
-import { salaryVoucherService, type Voucher } from "./salary-voucher.service.js";
+import {
+  salaryVoucherService,
+  type Voucher,
+} from "./salary-voucher.service.js";
 import { postSalaryVoucherToLedger } from "./payroll-journal-posting.service.js";
 
 /**
@@ -45,46 +52,90 @@ payrollLedgerPostingRouter.post(
   requireRole(...POST_TO_LEDGER_ROLES),
   h(async (req, res) => {
     const actorUserId = String(req.authUser?.id ?? "");
-    let generated: { period: string; vouchers: Voucher[]; unassigned: string[]; unpaid: string[] };
+    let generated: {
+      period: string;
+      vouchers: Voucher[];
+      unassigned: string[];
+      unpaid: string[];
+    };
     try {
       generated = await salaryVoucherService.generate(req.params.runId, {
-        companyCode: req.query.companyCode ? String(req.query.companyCode) : undefined,
+        companyCode: req.query.companyCode
+          ? String(req.query.companyCode)
+          : undefined,
         serialFrom: parseSerial(req.query.serialFrom),
       });
     } catch (error) {
-      res.status(400).json({ success: false, error: error instanceof Error ? error.message : "Unable to generate the salary voucher" });
+      res
+        .status(400)
+        .json({
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to generate the salary voucher",
+        });
       return;
     }
 
     const vouchers = await scopeVouchers(req, generated.vouchers);
-    const posted: { voucher_no: string; branch_id: string; journal_entry_id: string }[] = [];
-    const failed: { voucher_no: string; branch_id: string; error: string }[] = [];
+    const posted: {
+      voucher_no: string;
+      branch_id: string;
+      journal_entry_id: string;
+    }[] = [];
+    const failed: { voucher_no: string; branch_id: string; error: string }[] =
+      [];
 
     for (const voucher of vouchers) {
       const connection = await db.getConnection();
       try {
         await connection.beginTransaction();
-        const { journalEntryId } = await postSalaryVoucherToLedger(connection, req.params.runId, voucher, actorUserId);
+        const { journalEntryId } = await postSalaryVoucherToLedger(
+          connection,
+          req.params.runId,
+          voucher,
+          actorUserId,
+        );
         await connection.commit();
-        posted.push({ voucher_no: voucher.voucher_no, branch_id: voucher.branch_id, journal_entry_id: journalEntryId });
+        posted.push({
+          voucher_no: voucher.voucher_no,
+          branch_id: voucher.branch_id,
+          journal_entry_id: journalEntryId,
+        });
         await logSensitiveAction({
           actor_user_id: actorUserId,
-          actor_role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown"),
+          actor_role: String(
+            req.authUser?.role ?? req.userRoles?.[0] ?? "unknown",
+          ),
           action_type: "PAYROLL_VOUCHER_POSTED_TO_LEDGER",
           module_key: "FINANCE",
           entity_type: "payroll_ledger_voucher",
           entity_id: journalEntryId,
-          change_summary: { voucher_no: voucher.voucher_no, branch_id: voucher.branch_id, amount: voucher.totals.debit },
+          change_summary: {
+            voucher_no: voucher.voucher_no,
+            branch_id: voucher.branch_id,
+            amount: voucher.totals.debit,
+          },
         }).catch(() => undefined);
       } catch (error) {
         await connection.rollback();
-        failed.push({ voucher_no: voucher.voucher_no, branch_id: voucher.branch_id, error: error instanceof Error ? error.message : "Unable to post this voucher" });
+        failed.push({
+          voucher_no: voucher.voucher_no,
+          branch_id: voucher.branch_id,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to post this voucher",
+        });
       } finally {
         connection.release();
       }
     }
 
-    res.status(failed.length && !posted.length ? 400 : 200).json({ success: failed.length === 0, data: { posted, failed } });
+    res
+      .status(failed.length && !posted.length ? 400 : 200)
+      .json({ success: failed.length === 0, data: { posted, failed } });
   }),
 );
 

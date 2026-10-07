@@ -19,9 +19,13 @@ function clientError(message: string): Error {
   return Object.assign(new Error(message), { statusCode: 400 });
 }
 
-async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoiceResult> {
+async function approveInvoice(
+  input: ApproveInvoiceInput,
+): Promise<ApproveInvoiceResult> {
   if (input.poNumbers && input.poNumbers.length > 4) {
-    throw clientError("Cannot attach more than 4 PO numbers to a single invoice");
+    throw clientError(
+      "Cannot attach more than 4 PO numbers to a single invoice",
+    );
   }
 
   const conn = await db.getConnection();
@@ -31,10 +35,17 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
       `SELECT id, invoice_status, cost_centre_id, finance_year, grand_total, is_migrated
        FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
-      [input.invoiceId]
+      [input.invoiceId],
     );
     const invoice = invoiceRows[0] as
-      | { id: string; invoice_status: string; cost_centre_id: string; finance_year: string; grand_total: number; is_migrated: number }
+      | {
+          id: string;
+          invoice_status: string;
+          cost_centre_id: string;
+          finance_year: string;
+          grand_total: number;
+          is_migrated: number;
+        }
       | undefined;
     if (!invoice) {
       throw clientError(`Invoice ${input.invoiceId} not found`);
@@ -43,10 +54,14 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     // never re-approved/re-rejected. Checked before the status check below so the
     // error message is unambiguous about WHY the mutation is refused.
     if (invoice.is_migrated) {
-      throw clientError(`Invoice ${input.invoiceId} is a migrated historical record (is_migrated=1) and cannot be approved through the live workflow`);
+      throw clientError(
+        `Invoice ${input.invoiceId} is a migrated historical record (is_migrated=1) and cannot be approved through the live workflow`,
+      );
     }
     if (invoice.invoice_status !== "proforma") {
-      throw clientError(`Invoice ${input.invoiceId} is not in proforma status (currently: ${invoice.invoice_status})`);
+      throw clientError(
+        `Invoice ${input.invoiceId} is not in proforma status (currently: ${invoice.invoice_status})`,
+      );
     }
 
     let poRows: Array<{ id: string; balance_amount: number }> = [];
@@ -54,15 +69,16 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
       const placeholders = input.poNumbers.map(() => "?").join(", ");
       const [rows] = await conn.execute<RowDataPacket[]>(
         `SELECT id, balance_amount FROM client_po_number WHERE po_number IN (${placeholders}) AND cost_centre_id = ? FOR UPDATE`,
-        [...input.poNumbers, invoice.cost_centre_id]
+        [...input.poNumbers, invoice.cost_centre_id],
       );
       poRows = rows as Array<{ id: string; balance_amount: number }>;
       const totalPoBalance = poRows.reduce(
-        (sum, po) => sum + Number(po.balance_amount), 0
+        (sum, po) => sum + Number(po.balance_amount),
+        0,
       );
       if (totalPoBalance < Number(invoice.grand_total)) {
         throw clientError(
-          `Attached PO balance (${totalPoBalance}) is less than the invoice grand total (${invoice.grand_total})`
+          `Attached PO balance (${totalPoBalance}) is less than the invoice grand total (${invoice.grand_total})`,
         );
       }
     }
@@ -72,15 +88,21 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
        FROM cost_centre_master cc
        LEFT JOIN branch_master b ON b.id = cc.branch_id
        WHERE cc.id = ?`,
-      [invoice.cost_centre_id]
+      [invoice.cost_centre_id],
     );
-    const costCentre = costCentreRows[0] as { companyName: string; stateCode: string | null } | undefined;
+    const costCentre = costCentreRows[0] as
+      { companyName: string; stateCode: string | null } | undefined;
     if (!costCentre || !costCentre.stateCode) {
-      throw clientError(`Cost centre ${invoice.cost_centre_id} has no branch GST state code — cannot mint a bill number`);
+      throw clientError(
+        `Cost centre ${invoice.cost_centre_id} has no branch GST state code — cannot mint a bill number`,
+      );
     }
 
     const billNo = await clientBillingNumberingService.mintBillNumber(
-      costCentre.stateCode, costCentre.companyName, invoice.finance_year, conn
+      costCentre.stateCode,
+      costCentre.companyName,
+      invoice.finance_year,
+      conn,
     );
 
     if (poRows.length > 0) {
@@ -89,11 +111,11 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
         const consume = Math.min(remaining, Number(po.balance_amount));
         await conn.execute(
           `UPDATE client_po_number SET balance_amount = balance_amount - ? WHERE id = ?`,
-          [consume, po.id]
+          [consume, po.id],
         );
         await conn.execute(
           `INSERT INTO client_po_particular (id, po_id, invoice_id, amount_consumed) VALUES (?, ?, ?, ?)`,
-          [randomUUID(), po.id, input.invoiceId, consume]
+          [randomUUID(), po.id, input.invoiceId, consume],
         );
         remaining -= consume;
         if (remaining <= 0) break;
@@ -102,12 +124,12 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
 
     await conn.execute(
       `UPDATE client_invoice SET invoice_status = 'approved', bill_no = ? WHERE id = ?`,
-      [billNo, input.invoiceId]
+      [billNo, input.invoiceId],
     );
 
     await conn.execute(
       `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id) VALUES (?, ?, ?, ?)`,
-      [randomUUID(), input.invoiceId, 'approved', input.userId]
+      [randomUUID(), input.invoiceId, "approved", input.userId],
     );
 
     await conn.commit();
@@ -131,7 +153,9 @@ export interface RejectInvoiceResult {
   invoiceStatus: "rejected";
 }
 
-async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceResult> {
+async function rejectInvoice(
+  input: RejectInvoiceInput,
+): Promise<RejectInvoiceResult> {
   if (!input.reason || input.reason.trim().length === 0) {
     throw clientError("A reason is required to reject an invoice");
   }
@@ -142,15 +166,18 @@ async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceRe
 
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
       `SELECT id, invoice_status, is_migrated FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
-      [input.invoiceId]
+      [input.invoiceId],
     );
-    const invoice = invoiceRows[0] as { id: string; invoice_status: string; is_migrated: number } | undefined;
+    const invoice = invoiceRows[0] as
+      { id: string; invoice_status: string; is_migrated: number } | undefined;
     if (!invoice) {
       throw clientError(`Invoice ${input.invoiceId} not found`);
     }
     // design §3: a migrated historical row is read-only through the live workflow.
     if (invoice.is_migrated) {
-      throw clientError(`Invoice ${input.invoiceId} is a migrated historical record (is_migrated=1) and cannot be rejected through the live workflow`);
+      throw clientError(
+        `Invoice ${input.invoiceId} is a migrated historical record (is_migrated=1) and cannot be rejected through the live workflow`,
+      );
     }
     if (invoice.invoice_status === "rejected") {
       throw clientError(`Invoice ${input.invoiceId} is already rejected`);
@@ -158,14 +185,21 @@ async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceRe
 
     const [deductionRows] = await conn.execute<RowDataPacket[]>(
       `SELECT id, provision_id, amount_used FROM client_provision_deduction WHERE invoice_id = ?`,
-      [input.invoiceId]
+      [input.invoiceId],
     );
-    for (const deduction of deductionRows as Array<{ id: string; provision_id: string; amount_used: number }>) {
+    for (const deduction of deductionRows as Array<{
+      id: string;
+      provision_id: string;
+      amount_used: number;
+    }>) {
       await conn.execute(
         `UPDATE client_provision SET provision_balance = provision_balance + ? WHERE id = ?`,
-        [deduction.amount_used, deduction.provision_id]
+        [deduction.amount_used, deduction.provision_id],
       );
-      await conn.execute(`DELETE FROM client_provision_deduction WHERE id = ?`, [deduction.id]);
+      await conn.execute(
+        `DELETE FROM client_provision_deduction WHERE id = ?`,
+        [deduction.id],
+      );
     }
 
     // Mirrors the provision reversal immediately above — approveInvoice can consume PO
@@ -179,24 +213,30 @@ async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceRe
     // pattern already used for client_provision above.
     const [poParticularRows] = await conn.execute<RowDataPacket[]>(
       `SELECT id, po_id, amount_consumed FROM client_po_particular WHERE invoice_id = ?`,
-      [input.invoiceId]
+      [input.invoiceId],
     );
-    for (const particular of poParticularRows as Array<{ id: string; po_id: string; amount_consumed: number }>) {
+    for (const particular of poParticularRows as Array<{
+      id: string;
+      po_id: string;
+      amount_consumed: number;
+    }>) {
       await conn.execute(
         `UPDATE client_po_number SET balance_amount = balance_amount + ? WHERE id = ?`,
-        [particular.amount_consumed, particular.po_id]
+        [particular.amount_consumed, particular.po_id],
       );
-      await conn.execute(`DELETE FROM client_po_particular WHERE id = ?`, [particular.id]);
+      await conn.execute(`DELETE FROM client_po_particular WHERE id = ?`, [
+        particular.id,
+      ]);
     }
 
     await conn.execute(
       `UPDATE client_invoice SET invoice_status = 'rejected', rejected_reason = ?, rejected_by = ?, rejected_at = NOW() WHERE id = ?`,
-      [input.reason, input.userId, input.invoiceId]
+      [input.reason, input.userId, input.invoiceId],
     );
 
     await conn.execute(
       `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id, reason) VALUES (?, ?, ?, ?, ?)`,
-      [randomUUID(), input.invoiceId, 'rejected', input.userId, input.reason]
+      [randomUUID(), input.invoiceId, "rejected", input.userId, input.reason],
     );
 
     await conn.commit();

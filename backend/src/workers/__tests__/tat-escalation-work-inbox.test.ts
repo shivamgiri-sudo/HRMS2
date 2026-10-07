@@ -9,20 +9,32 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * breached (right after markBreached), so it's the correct trigger point.
  */
 
-const { findDueEscalations, recordEscalation, markBreached } = vi.hoisted(() => ({
-  findDueEscalations: vi.fn(),
-  recordEscalation: vi.fn(),
-  markBreached: vi.fn(),
+const { findDueEscalations, recordEscalation, markBreached } = vi.hoisted(
+  () => ({
+    findDueEscalations: vi.fn(),
+    recordEscalation: vi.fn(),
+    markBreached: vi.fn(),
+  }),
+);
+vi.mock("../../modules/governance/tat.service.js", () => ({
+  findDueEscalations,
+  recordEscalation,
+  markBreached,
 }));
-vi.mock("../../modules/governance/tat.service.js", () => ({ findDueEscalations, recordEscalation, markBreached }));
 
 const { notify } = vi.hoisted(() => ({ notify: vi.fn() }));
-vi.mock("../../modules/communication/notification.gateway.js", () => ({ notificationGateway: { notify } }));
+vi.mock("../../modules/communication/notification.gateway.js", () => ({
+  notificationGateway: { notify },
+}));
 
 const { triggerTatBreach } = vi.hoisted(() => ({ triggerTatBreach: vi.fn() }));
-vi.mock("../../modules/work-inbox/work-inbox.triggers.js", () => ({ triggerTatBreach }));
+vi.mock("../../modules/work-inbox/work-inbox.triggers.js", () => ({
+  triggerTatBreach,
+}));
 
-vi.mock("../../db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) } }));
+vi.mock("../../db/mysql.js", () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+}));
 vi.mock("../../shared/worker-config.js", () => ({
   isWorkerEnabled: vi.fn().mockResolvedValue(true),
   markWorkerRun: vi.fn(),
@@ -66,7 +78,12 @@ describe("runTatEscalationSweep creates a Work Inbox TAT_BREACH item", () => {
     await runTatEscalationSweep();
 
     expect(markBreached).toHaveBeenCalledWith("tat-1");
-    expect(triggerTatBreach).toHaveBeenCalledWith("tat-1", "onboarding_review", "cand-1", "hr");
+    expect(triggerTatBreach).toHaveBeenCalledWith(
+      "tat-1",
+      "onboarding_review",
+      "cand-1",
+      "hr",
+    );
     // markBreached must run first — the trigger asserts a genuine breach, not a pending one.
     const breachOrder = markBreached.mock.invocationCallOrder[0];
     const triggerOrder = triggerTatBreach.mock.invocationCallOrder[0];

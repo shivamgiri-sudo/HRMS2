@@ -55,7 +55,11 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getApplicableChecks, deriveApplicableChecksFromRow, APPLICABLE_CHECKS_ROW_SQL } from "../ats/bgv-verification.service.js";
+import {
+  getApplicableChecks,
+  deriveApplicableChecksFromRow,
+  APPLICABLE_CHECKS_ROW_SQL,
+} from "../ats/bgv-verification.service.js";
 import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
 
 export type EligibilityBlocker = {
@@ -91,7 +95,11 @@ export type EligibilityResult = {
 
 /** Statuses that mean a checklist item is genuinely finished. */
 export const TERMINAL_DOCUMENT_STATUSES = [
-  "verified", "completed", "esign_completed", "signed_verified", "wet_signed_uploaded",
+  "verified",
+  "completed",
+  "esign_completed",
+  "signed_verified",
+  "wet_signed_uploaded",
 ] as const;
 
 /**
@@ -111,8 +119,16 @@ export const TERMINAL_DOCUMENT_STATUSES = [
  */
 const EPF_DOCUMENT_CODES = ["EPF_DECLARATION", "EPF_NOMINATION_FORM2"] as const;
 
-type DocsRow = { mandatory_total: number; mandatory_done: number; pending_names: string | null };
-type SalaryRow = { status: string | null; package_accepted: number | null; salary_package_id: string | null };
+type DocsRow = {
+  mandatory_total: number;
+  mandatory_done: number;
+  pending_names: string | null;
+};
+type SalaryRow = {
+  status: string | null;
+  package_accepted: number | null;
+  salary_package_id: string | null;
+};
 
 /**
  * Every per-employee/per-candidate lookup `evaluateAppointmentLetterEligibility`
@@ -139,17 +155,25 @@ export type EligibilityBatch = {
   salary: Map<string, SalaryRow>;
 };
 
-export async function loadEligibilityBatch(employeeIds: string[]): Promise<EligibilityBatch> {
+export async function loadEligibilityBatch(
+  employeeIds: string[],
+): Promise<EligibilityBatch> {
   const empty: EligibilityBatch = {
-    employees: new Map(), issued: new Map(), contractSigned: new Set(),
-    bgv: new Map(), applicable: new Map(), docs: new Map(),
-    esignSignedCount: new Map(), salary: new Map(),
+    employees: new Map(),
+    issued: new Map(),
+    contractSigned: new Set(),
+    bgv: new Map(),
+    applicable: new Map(),
+    docs: new Map(),
+    esignSignedCount: new Map(),
+    salary: new Map(),
   };
   if (employeeIds.length === 0) return empty;
   const idPlaceholders = employeeIds.map(() => "?").join(",");
 
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining, e.created_at,
+  const [empRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining, e.created_at,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
             b.branch_name, COALESCE(b.address, '') AS branch_address,
             d.designation_name,
@@ -158,56 +182,77 @@ export async function loadEligibilityBatch(employeeIds: string[]): Promise<Eligi
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN designation_master d ON d.id = e.designation_id
       WHERE e.id IN (${idPlaceholders})`,
-    employeeIds,
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-  for (const row of empRows as RowDataPacket[]) empty.employees.set(String(row.id), row);
+      employeeIds,
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+  for (const row of empRows as RowDataPacket[])
+    empty.employees.set(String(row.id), row);
 
-  const candidateIds = [...new Set(
-    (empRows as RowDataPacket[]).map((r) => (r.candidate_id ? String(r.candidate_id) : null)).filter((v): v is string => v !== null),
-  )];
+  const candidateIds = [
+    ...new Set(
+      (empRows as RowDataPacket[])
+        .map((r) => (r.candidate_id ? String(r.candidate_id) : null))
+        .filter((v): v is string => v !== null),
+    ),
+  ];
 
-  const [issuedRows] = await db.execute<RowDataPacket[]>(
-    `SELECT employee_id, letter_number FROM appointment_letter_issue
+  const [issuedRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT employee_id, letter_number FROM appointment_letter_issue
       WHERE employee_id IN (${idPlaceholders}) AND status <> 'revoked'
       ORDER BY employee_id, issued_at DESC`,
-    employeeIds,
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      employeeIds,
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
   for (const row of issuedRows as RowDataPacket[]) {
     const key = String(row.employee_id);
-    if (!empty.issued.has(key)) empty.issued.set(key, { letter_number: String(row.letter_number) });
+    if (!empty.issued.has(key))
+      empty.issued.set(key, { letter_number: String(row.letter_number) });
   }
 
-  const [contractRows] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT employee_id FROM employee_joining_document_checklist
+  const [contractRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT DISTINCT employee_id FROM employee_joining_document_checklist
       WHERE employee_id IN (${idPlaceholders}) AND document_code = 'EMPLOYMENT_CONTRACT'
         AND status IN ('verified', 'signed_verified', 'completed', 'esign_completed', 'wet_signed_uploaded')`,
-    employeeIds,
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-  for (const row of contractRows as RowDataPacket[]) empty.contractSigned.add(String(row.employee_id));
+      employeeIds,
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+  for (const row of contractRows as RowDataPacket[])
+    empty.contractSigned.add(String(row.employee_id));
 
   if (candidateIds.length > 0) {
     const candPlaceholders = candidateIds.map(() => "?").join(",");
-    const [bgvRows] = await db.execute<RowDataPacket[]>(
-      `SELECT candidate_id, overall_status, is_auto_approved,
+    const [bgvRows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT candidate_id, overall_status, is_auto_approved,
               aadhaar_status, pan_status, digilocker_status, bank_status,
               education_status, address_status, employment_status, criminal_status
          FROM candidate_bgv_report WHERE candidate_id IN (${candPlaceholders})`,
-      candidateIds,
-    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-    for (const row of bgvRows as RowDataPacket[]) empty.bgv.set(String(row.candidate_id), row);
+        candidateIds,
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    for (const row of bgvRows as RowDataPacket[])
+      empty.bgv.set(String(row.candidate_id), row);
 
-    const [applicableRows] = await db.execute<RowDataPacket[]>(
-      `SELECT c.id AS candidate_id, ${APPLICABLE_CHECKS_ROW_SQL}
+    const [applicableRows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT c.id AS candidate_id, ${APPLICABLE_CHECKS_ROW_SQL}
         WHERE c.id IN (${candPlaceholders})`,
-      candidateIds,
-    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-    for (const row of applicableRows as RowDataPacket[]) empty.applicable.set(String(row.candidate_id), row);
+        candidateIds,
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    for (const row of applicableRows as RowDataPacket[])
+      empty.applicable.set(String(row.candidate_id), row);
   }
 
-  const terminalPlaceholders = TERMINAL_DOCUMENT_STATUSES.map(() => "?").join(",");
+  const terminalPlaceholders = TERMINAL_DOCUMENT_STATUSES.map(() => "?").join(
+    ",",
+  );
   const epfPlaceholders = EPF_DOCUMENT_CODES.map(() => "?").join(",");
-  const [docsRows] = await db.execute<RowDataPacket[]>(
-    `SELECT employee_id,
+  const [docsRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT employee_id,
             COUNT(*) AS mandatory_total,
             SUM(CASE WHEN status IN (${terminalPlaceholders}) THEN 1 ELSE 0 END) AS mandatory_done,
             GROUP_CONCAT(CASE WHEN status NOT IN (${terminalPlaceholders}) THEN document_name END SEPARATOR ', ') AS pending_names
@@ -215,8 +260,14 @@ export async function loadEligibilityBatch(employeeIds: string[]): Promise<Eligi
       WHERE employee_id IN (${idPlaceholders}) AND mandatory = 1
         AND document_code NOT IN (${epfPlaceholders})
       GROUP BY employee_id`,
-    [...TERMINAL_DOCUMENT_STATUSES, ...TERMINAL_DOCUMENT_STATUSES, ...employeeIds, ...EPF_DOCUMENT_CODES],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      [
+        ...TERMINAL_DOCUMENT_STATUSES,
+        ...TERMINAL_DOCUMENT_STATUSES,
+        ...employeeIds,
+        ...EPF_DOCUMENT_CODES,
+      ],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
   for (const row of docsRows as RowDataPacket[]) {
     empty.docs.set(String(row.employee_id), {
       mandatory_total: Number(row.mandatory_total ?? 0),
@@ -225,26 +276,37 @@ export async function loadEligibilityBatch(employeeIds: string[]): Promise<Eligi
     });
   }
 
-  const [esignRows] = await db.execute<RowDataPacket[]>(
-    `SELECT employee_id, COUNT(*) AS signed_count
+  const [esignRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT employee_id, COUNT(*) AS signed_count
        FROM employee_joining_document_checklist
       WHERE employee_id IN (${idPlaceholders}) AND mandatory = 1
         AND document_code NOT IN (${epfPlaceholders})
         AND status IN ('esign_completed', 'signed_verified', 'wet_signed_uploaded')
       GROUP BY employee_id`,
-    [...employeeIds, ...EPF_DOCUMENT_CODES],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-  for (const row of esignRows as RowDataPacket[]) empty.esignSignedCount.set(String(row.employee_id), Number(row.signed_count ?? 0));
+      [...employeeIds, ...EPF_DOCUMENT_CODES],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+  for (const row of esignRows as RowDataPacket[])
+    empty.esignSignedCount.set(
+      String(row.employee_id),
+      Number(row.signed_count ?? 0),
+    );
 
-  const [salaryRows] = await db.execute<RowDataPacket[]>(
-    `SELECT employee_id, status, package_accepted, salary_package_id
+  const [salaryRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT employee_id, status, package_accepted, salary_package_id
        FROM employee_payroll_head_review WHERE employee_id IN (${idPlaceholders})`,
-    employeeIds,
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      employeeIds,
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
   for (const row of salaryRows as RowDataPacket[]) {
     empty.salary.set(String(row.employee_id), {
       status: row.status ?? null,
-      package_accepted: row.package_accepted === null || row.package_accepted === undefined ? null : Number(row.package_accepted),
+      package_accepted:
+        row.package_accepted === null || row.package_accepted === undefined
+          ? null
+          : Number(row.package_accepted),
       salary_package_id: row.salary_package_id ?? null,
     });
   }
@@ -276,12 +338,18 @@ async function outstandingBgvCategories(
   const { includeEmployment, includeCriminal } = preloaded
     ? deriveApplicableChecksFromRow(preloaded.row)
     : await getApplicableChecks(candidateId)
-      // A failure here must not cost HR the blocker itself — fall back to the
-      // narrower base set rather than throwing away the whole eligibility answer.
-      .catch(() => ({ includeEmployment: false, includeCriminal: false, denominator: 80 }));
+        // A failure here must not cost HR the blocker itself — fall back to the
+        // narrower base set rather than throwing away the whole eligibility answer.
+        .catch(() => ({
+          includeEmployment: false,
+          includeCriminal: false,
+          denominator: 80,
+        }));
 
   const done = (col: string) => {
-    const v = String(report[col] ?? "").trim().toLowerCase();
+    const v = String(report[col] ?? "")
+      .trim()
+      .toLowerCase();
     return v === "passed" || v === "waived" || v === "verified";
   };
 
@@ -293,7 +361,8 @@ async function outstandingBgvCategories(
   if (!done("bank_status")) outstanding.push("bank");
   if (!done("education_status")) outstanding.push("education");
   if (!done("address_status")) outstanding.push("address");
-  if (includeEmployment && !done("employment_status")) outstanding.push("employment");
+  if (includeEmployment && !done("employment_status"))
+    outstanding.push("employment");
   if (includeCriminal && !done("criminal_status")) outstanding.push("criminal");
   return outstanding;
 }
@@ -307,8 +376,9 @@ export async function evaluateAppointmentLetterEligibility(
 
   let emp: RowDataPacket | undefined = batch?.employees.get(employeeId);
   if (!batch) {
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining, e.created_at,
+    const [empRows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining, e.created_at,
               COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
               b.branch_name, COALESCE(b.address, '') AS branch_address,
               d.designation_name,
@@ -317,29 +387,47 @@ export async function evaluateAppointmentLetterEligibility(
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN designation_master d ON d.id = e.designation_id
         WHERE e.id = ? LIMIT 1`,
-      [employeeId],
-    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+        [employeeId],
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
     emp = (empRows as RowDataPacket[])[0];
   }
   if (!emp) {
     return {
-      employeeId, employeeCode: null, employeeName: null, eligible: false,
-      blockers: [{ code: "employee_not_found", reason: "No such employee.", severity: "critical" }],
-      warnings: [], alreadyIssued: false, existingLetterNumber: null, contractAlreadySigned: false,
-      daysSinceIdCreated: 0, idCreationSlaBreached: false,
+      employeeId,
+      employeeCode: null,
+      employeeName: null,
+      eligible: false,
+      blockers: [
+        {
+          code: "employee_not_found",
+          reason: "No such employee.",
+          severity: "critical",
+        },
+      ],
+      warnings: [],
+      alreadyIssued: false,
+      existingLetterNumber: null,
+      contractAlreadySigned: false,
+      daysSinceIdCreated: 0,
+      idCreationSlaBreached: false,
     };
   }
 
   // ── already issued ────────────────────────────────────────────────────────
-  let existing: { letter_number: string } | undefined = batch?.issued.get(employeeId);
+  let existing: { letter_number: string } | undefined =
+    batch?.issued.get(employeeId);
   if (!batch) {
-    const [issued] = await db.execute<RowDataPacket[]>(
-      `SELECT letter_number FROM appointment_letter_issue
+    const [issued] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT letter_number FROM appointment_letter_issue
         WHERE employee_id = ? AND status <> 'revoked'
         ORDER BY issued_at DESC LIMIT 1`,
-      [employeeId],
-    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-    existing = (issued as RowDataPacket[])[0] as { letter_number: string } | undefined;
+        [employeeId],
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    existing = (issued as RowDataPacket[])[0] as
+      { letter_number: string } | undefined;
   }
 
   // ── already-signed employment contract, outside appointment_letter_issue ───
@@ -351,13 +439,15 @@ export async function evaluateAppointmentLetterEligibility(
   if (batch) {
     contractAlreadySigned = batch.contractSigned.has(employeeId);
   } else {
-    const [contractRows] = await db.execute<RowDataPacket[]>(
-      `SELECT status FROM employee_joining_document_checklist
+    const [contractRows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT status FROM employee_joining_document_checklist
         WHERE employee_id = ? AND document_code = 'EMPLOYMENT_CONTRACT'
           AND status IN ('verified', 'signed_verified', 'completed', 'esign_completed', 'wet_signed_uploaded')
         LIMIT 1`,
-      [employeeId],
-    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+        [employeeId],
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
     contractAlreadySigned = (contractRows as RowDataPacket[]).length > 0;
   }
   // contract_already_signed warning removed: Employment Agreement signed + no appointment letter
@@ -369,7 +459,8 @@ export async function evaluateAppointmentLetterEligibility(
   if (!candidateId) {
     warnings.push({
       code: "no_candidate_link",
-      reason: "This employee has no linked candidate record, so BGV cannot be checked automatically.",
+      reason:
+        "This employee has no linked candidate record, so BGV cannot be checked automatically.",
       severity: "warning",
     });
   } else {
@@ -377,17 +468,23 @@ export async function evaluateAppointmentLetterEligibility(
     if (batch) {
       report = batch.bgv.get(candidateId);
     } else {
-      const [bgv] = await db.execute<RowDataPacket[]>(
-        `SELECT overall_status, is_auto_approved,
+      const [bgv] = await db
+        .execute<RowDataPacket[]>(
+          `SELECT overall_status, is_auto_approved,
                 aadhaar_status, pan_status, digilocker_status, bank_status,
                 education_status, address_status, employment_status, criminal_status
            FROM candidate_bgv_report WHERE candidate_id = ? LIMIT 1`,
-        [candidateId],
-      ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+          [candidateId],
+        )
+        .catch(() => [[]] as unknown as [RowDataPacket[]]);
       report = (bgv as RowDataPacket[])[0];
     }
     if (!report) {
-      blockers.push({ code: "bgv_not_started", reason: "Background verification has not been run.", severity: "critical" });
+      blockers.push({
+        code: "bgv_not_started",
+        reason: "Background verification has not been run.",
+        severity: "critical",
+      });
     } else {
       const status = String(report.overall_status ?? "");
       if (Number(report.is_auto_approved) === 1) {
@@ -396,7 +493,8 @@ export async function evaluateAppointmentLetterEligibility(
         // so a 'clear' auto-approval cannot slip through as a mere warning.
         blockers.push({
           code: "bgv_auto_approved",
-          reason: "The BGV report was auto-approved and has not been reviewed by HR.",
+          reason:
+            "The BGV report was auto-approved and has not been reviewed by HR.",
           severity: "critical",
         });
       } else if (status === "refer" || status === "negative") {
@@ -427,7 +525,9 @@ export async function evaluateAppointmentLetterEligibility(
           code: "bgv_not_clear",
           reason:
             `Background verification is "${status || "pending"}", not yet clear.` +
-            (outstanding.length ? ` Outstanding: ${outstanding.join(", ")}.` : "") +
+            (outstanding.length
+              ? ` Outstanding: ${outstanding.join(", ")}.`
+              : "") +
             " Confirm before issuing.",
           severity: "warning",
         });
@@ -439,17 +539,30 @@ export async function evaluateAppointmentLetterEligibility(
   let d: DocsRow | undefined = batch?.docs.get(employeeId);
   if (!batch) {
     const placeholders = TERMINAL_DOCUMENT_STATUSES.map(() => "?").join(",");
-    const [docs] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS mandatory_total,
+    const [docs] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS mandatory_total,
               SUM(CASE WHEN status IN (${placeholders}) THEN 1 ELSE 0 END) AS mandatory_done,
               GROUP_CONCAT(CASE WHEN status NOT IN (${placeholders}) THEN document_name END SEPARATOR ', ') AS pending_names
          FROM employee_joining_document_checklist
         WHERE employee_id = ? AND mandatory = 1
           AND document_code NOT IN (${EPF_DOCUMENT_CODES.map(() => "?").join(",")})`,
-      [...TERMINAL_DOCUMENT_STATUSES, ...TERMINAL_DOCUMENT_STATUSES, employeeId, ...EPF_DOCUMENT_CODES],
-    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+        [
+          ...TERMINAL_DOCUMENT_STATUSES,
+          ...TERMINAL_DOCUMENT_STATUSES,
+          employeeId,
+          ...EPF_DOCUMENT_CODES,
+        ],
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
     const row = (docs as RowDataPacket[])[0];
-    d = row ? { mandatory_total: Number(row.mandatory_total ?? 0), mandatory_done: Number(row.mandatory_done ?? 0), pending_names: row.pending_names ?? null } : undefined;
+    d = row
+      ? {
+          mandatory_total: Number(row.mandatory_total ?? 0),
+          mandatory_done: Number(row.mandatory_done ?? 0),
+          pending_names: row.pending_names ?? null,
+        }
+      : undefined;
   }
   const total = Number(d?.mandatory_total ?? 0);
   const done = Number(d?.mandatory_done ?? 0);
@@ -483,23 +596,28 @@ export async function evaluateAppointmentLetterEligibility(
     if (batch) {
       signedCount = batch.esignSignedCount.get(employeeId) ?? 0;
     } else {
-      const [esignRows] = await db.execute<RowDataPacket[]>(
-        // EPF excluded here too, for the same reason as above and to keep the two
-        // gates consistent: an employee whose only signed document was an EPF form
-        // has not signed their joining kit, which is what this check is asking.
-        `SELECT COUNT(*) AS signed_count
+      const [esignRows] = await db
+        .execute<RowDataPacket[]>(
+          // EPF excluded here too, for the same reason as above and to keep the two
+          // gates consistent: an employee whose only signed document was an EPF form
+          // has not signed their joining kit, which is what this check is asking.
+          `SELECT COUNT(*) AS signed_count
            FROM employee_joining_document_checklist
           WHERE employee_id = ? AND mandatory = 1
             AND document_code NOT IN (${EPF_DOCUMENT_CODES.map(() => "?").join(",")})
             AND status IN ('esign_completed', 'signed_verified', 'wet_signed_uploaded')`,
-        [employeeId, ...EPF_DOCUMENT_CODES],
-      ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-      signedCount = Number((esignRows as RowDataPacket[])[0]?.signed_count ?? 0);
+          [employeeId, ...EPF_DOCUMENT_CODES],
+        )
+        .catch(() => [[]] as unknown as [RowDataPacket[]]);
+      signedCount = Number(
+        (esignRows as RowDataPacket[])[0]?.signed_count ?? 0,
+      );
     }
     if (signedCount === 0) {
       blockers.push({
         code: "joining_kit_not_esigned",
-        reason: "The candidate has not e-signed (or had a wet signature verified on) any joining kit document yet.",
+        reason:
+          "The candidate has not e-signed (or had a wet signature verified on) any joining kit document yet.",
         severity: "critical",
       });
     }
@@ -509,7 +627,8 @@ export async function evaluateAppointmentLetterEligibility(
   if (!emp.branch_id) {
     blockers.push({
       code: "branch_not_assigned",
-      reason: "No branch is assigned, so the issuing office cannot be printed on the letter.",
+      reason:
+        "No branch is assigned, so the issuing office cannot be printed on the letter.",
       severity: "critical",
     });
   } else if (!String(emp.branch_address ?? "").trim()) {
@@ -533,14 +652,25 @@ export async function evaluateAppointmentLetterEligibility(
   // situation: "not reviewed yet" and "rejected" need opposite actions from HR.
   let review: SalaryRow | undefined = batch?.salary.get(employeeId);
   if (!batch) {
-    const [sal] = await db.execute<RowDataPacket[]>(
-      `SELECT r.status, r.package_accepted, r.salary_package_id
+    const [sal] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT r.status, r.package_accepted, r.salary_package_id
          FROM employee_payroll_head_review r
         WHERE r.employee_id = ? LIMIT 1`,
-      [employeeId],
-    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+        [employeeId],
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
     const row = (sal as RowDataPacket[])[0];
-    review = row ? { status: row.status ?? null, package_accepted: row.package_accepted === null || row.package_accepted === undefined ? null : Number(row.package_accepted), salary_package_id: row.salary_package_id ?? null } : undefined;
+    review = row
+      ? {
+          status: row.status ?? null,
+          package_accepted:
+            row.package_accepted === null || row.package_accepted === undefined
+              ? null
+              : Number(row.package_accepted),
+          salary_package_id: row.salary_package_id ?? null,
+        }
+      : undefined;
   }
   const reviewStatus = String(review?.status ?? "");
 
@@ -555,7 +685,8 @@ export async function evaluateAppointmentLetterEligibility(
   } else if (reviewStatus === "rejected") {
     blockers.push({
       code: "salary_review_rejected",
-      reason: "The Payroll Head rejected this employee's salary review. Correct it and get it re-approved first.",
+      reason:
+        "The Payroll Head rejected this employee's salary review. Correct it and get it re-approved first.",
       severity: "critical",
     });
   } else if (reviewStatus !== "approved") {
@@ -564,7 +695,10 @@ export async function evaluateAppointmentLetterEligibility(
       reason: `The Payroll Head salary review is "${reviewStatus || "pending"}", not approved. The letter prints the approved salary.`,
       severity: "critical",
     });
-  } else if (Number(review.package_accepted ?? 0) !== 1 || !review.salary_package_id) {
+  } else if (
+    Number(review.package_accepted ?? 0) !== 1 ||
+    !review.salary_package_id
+  ) {
     blockers.push({
       code: "salary_package_missing",
       reason:
@@ -575,7 +709,9 @@ export async function evaluateAppointmentLetterEligibility(
   }
 
   // ── printable identity ────────────────────────────────────────────────────
-  const name = String(emp.full_name ?? "").replace(/\s+/g, " ").trim();
+  const name = String(emp.full_name ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (name.length < 3) {
     blockers.push({
       code: "employee_name_incomplete",
@@ -654,8 +790,7 @@ export type AppointmentLetterQueueFilters = {
 };
 
 /** The name as it is displayed everywhere else in this module. */
-const EMPLOYEE_DISPLAY_NAME_SQL =
-  `COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))))`;
+const EMPLOYEE_DISPLAY_NAME_SQL = `COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))))`;
 
 /**
  * % and _ are wildcards to LIKE, so an unescaped search box is a way to match
@@ -696,18 +831,25 @@ export async function listAppointmentLetterQueue(
   // find anyone past that cap.
   const search = String(filters.search ?? "").trim();
   if (search) {
-    conds.push(`(${EMPLOYEE_DISPLAY_NAME_SQL} LIKE ? OR e.employee_code LIKE ?)`);
-    params.push(appointmentLetterSearchTerm(search), appointmentLetterSearchTerm(search));
+    conds.push(
+      `(${EMPLOYEE_DISPLAY_NAME_SQL} LIKE ? OR e.employee_code LIKE ?)`,
+    );
+    params.push(
+      appointmentLetterSearchTerm(search),
+      appointmentLetterSearchTerm(search),
+    );
   }
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id
+  const [rows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT e.id
        FROM employees e
       WHERE ${conds.join("\n        AND ")}
       ORDER BY e.date_of_joining DESC
       LIMIT ${Number(limit) || 200}`,
-    params,
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      params,
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
 
   const ids = (rows as RowDataPacket[]).map((r) => String(r.id));
   // One batch of bulk `IN (...)` queries for the whole page instead of

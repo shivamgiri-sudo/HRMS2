@@ -1,7 +1,10 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import {
+  chunkedMasmisInsert,
+  type ChunkInsertRow,
+} from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's own "Quality Raw" sheet -- found while auditing every sheet of
@@ -13,10 +16,28 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  */
 
 export const CLOVIA_QUALITY_AUDIT_HEADERS = [
-  "Unique", "Chat_ID", "Chat_Mail_Date", "Audit_Date", "Emp_ID", "Emp_Name", "TL",
-  "Chat_Source", "Cx_Query", "FRT_Score", "Correct_Info_Score", "Soft_Skills_Score",
-  "Reminder_Score", "Concern_Resolved_Score", "Tagging_Score", "AOI", "LOB", "Week",
-  "CQ_Score", "Fatal", "ACPT", "ACPT_Reason",
+  "Unique",
+  "Chat_ID",
+  "Chat_Mail_Date",
+  "Audit_Date",
+  "Emp_ID",
+  "Emp_Name",
+  "TL",
+  "Chat_Source",
+  "Cx_Query",
+  "FRT_Score",
+  "Correct_Info_Score",
+  "Soft_Skills_Score",
+  "Reminder_Score",
+  "Concern_Resolved_Score",
+  "Tagging_Score",
+  "AOI",
+  "LOB",
+  "Week",
+  "CQ_Score",
+  "Fatal",
+  "ACPT",
+  "ACPT_Reason",
 ] as const;
 
 export function parseNullableDecimal(raw: unknown): number | null {
@@ -34,7 +55,9 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
+    const d = new Date(
+      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
+    );
     return d.toISOString().slice(0, 10);
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
@@ -47,7 +70,9 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket { id: string }
+interface Ref extends RowDataPacket {
+  id: string;
+}
 
 export async function importCloviaQualityAuditBatch(
   batchId: string,
@@ -59,7 +84,8 @@ export async function importCloviaQualityAuditBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0)
+    return { importedRows: 0, errorRows: 0, errors: [] };
 
   const [procRows] = await db.execute<Ref[]>(
     "SELECT id FROM process_master WHERE process_name = 'Clovia' AND active_status = 1 LIMIT 1",
@@ -78,7 +104,9 @@ export async function importCloviaQualityAuditBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     const uniqueRef = String(data["Unique"] ?? "").trim();
@@ -86,16 +114,22 @@ export async function importCloviaQualityAuditBatch(
     const reportDate = parseDate(data["Chat_Mail_Date"]);
     if (!uniqueRef || !chatId || !reportDate) {
       const msg = `Row ${row.row_no}: "Unique", "Chat_ID" and "Chat_Mail_Date" are all required — together they are the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(), processId, reportDate, reportDate,
+        randomUUID(),
+        processId,
+        reportDate,
+        reportDate,
         parseDate(data["Audit_Date"]),
-        uniqueRef, chatId,
+        uniqueRef,
+        chatId,
         String(data["Emp_ID"] ?? "").trim() || null,
         String(data["Emp_Name"] ?? "").trim() || null,
         String(data["TL"] ?? "").trim() || null,
@@ -114,7 +148,7 @@ export async function importCloviaQualityAuditBatch(
         String(data["Fatal"] ?? "").trim() || null,
         String(data["ACPT"] ?? "").trim() || null,
         String(data["ACPT_Reason"] ?? "").trim() || null,
-        'bulk_upload',
+        "bulk_upload",
         batchId,
         importedByUserId,
       ],
@@ -129,7 +163,8 @@ export async function importCloviaQualityAuditBatch(
             concern_resolved_score, tagging_shared_score, aoi, lob, week_label,
             cq_score, fatal, acpt, acpt_reason,
             data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup:
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
             chat_mail_date = VALUES(chat_mail_date),
             audit_date = VALUES(audit_date),
@@ -159,12 +194,17 @@ export async function importCloviaQualityAuditBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const cases = errorUpdates
+      .map(() => "WHEN ? THEN CAST(? AS JSON)")
+      .join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      [
+        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
+        ...ids,
+      ],
     );
   }
 
